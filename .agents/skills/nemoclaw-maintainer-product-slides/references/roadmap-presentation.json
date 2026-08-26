@@ -1,5 +1,5 @@
 {
-  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nMilestone aliases and optional Epic presentation seeds only. Each run creates and reviews an owner-only map for the selected set, then binds every retained summary to the collected body hash. Never pass this seed directly to model construction or publication. Live GitHub evidence controls Epic identity, inclusion, state, milestone, and progress.",
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nMilestone aliases and optional milestone-focus and Epic presentation seeds only. Each run creates and reviews an owner-only map for the selected set, then binds every retained Epic summary to the collected body hash. Never pass this seed directly to model construction or publication. Live GitHub evidence controls Epic identity, inclusion, state, milestone, and progress.",
   "schemaVersion": 1,
   "roadmapAreas": [
     "Usability and Onboarding",
@@ -11,6 +11,11 @@
     "Q3": "Roadmap: Q3 2026",
     "GTC Berlin": "Roadmap: GTC Berlin 2026",
     "Q4": "Roadmap: Q4 2026"
+  },
+  "milestoneFocusSeeds": {
+    "Q3": "First-Class Experiences and Express Installation",
+    "GTC Berlin": "Harness Intelligence and Native Runtimes",
+    "Q4": "Optimization and Enterprise Blueprints"
   },
   "epics": [
     {

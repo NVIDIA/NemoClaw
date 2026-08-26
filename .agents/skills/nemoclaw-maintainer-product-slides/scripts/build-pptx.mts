@@ -938,6 +938,46 @@ function roleMapTargetNames(contract: DynamicValue): string[] {
 
 export { managedOperationTextByIdentity };
 
+export function validateRoadmapExecutiveFocusRoleMap(roleMap: DynamicValue): void {
+  const contract = roleMap?.roles?.["roadmap-executive"];
+  const directOperations = Array.isArray(contract?.operations) ? contract.operations : [];
+  const focusBindings: DynamicValue[] = [];
+  const collectFocusBindings = (value: DynamicValue): void => {
+    if (Array.isArray(value)) {
+      for (const child of value) collectFocusBindings(child);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    if (/^milestones\.\d+\.focus$/u.test(value.valuePath ?? "")) focusBindings.push(value);
+    for (const child of Object.values(value)) collectFocusBindings(child);
+  };
+  collectFocusBindings(contract);
+  if (
+    focusBindings.length !== 3 ||
+    focusBindings.some((binding) => !directOperations.includes(binding))
+  ) {
+    throw new Error(
+      "Executive milestone focus operations require exactly three direct contract.operations bindings",
+    );
+  }
+  const seenTargets = new Set<string>();
+  for (const [index, operation] of focusBindings.entries()) {
+    if (
+      operation.valuePath !== `milestones.${index}.focus` ||
+      typeof operation.target?.name !== "string" ||
+      operation.target.name.length === 0 ||
+      seenTargets.has(operation.target.name) ||
+      Object.keys(operation).some((key) => !["target", "valuePath"].includes(key)) ||
+      Object.keys(operation.target).some((key) => key !== "name")
+    ) {
+      throw new Error(
+        "Executive milestone focus operations require distinct named, unlinked, direct targets without prefixes or style overrides",
+      );
+    }
+    seenTargets.add(operation.target.name);
+  }
+}
+
 export function validateWeeklyMilestoneRowRoleMap(roleMap: DynamicValue): void {
   const contract = roleMap?.roles?.["weekly-release"];
   if (!contract || !Array.isArray(contract.milestoneRowOperations)) {
@@ -6309,6 +6349,7 @@ export async function buildPptx(
       throw new Error(`Runtime role ${role} is missing or post-archive`);
   }
   validateWeeklyMilestoneRowRoleMap(roleMap);
+  if (options.mode !== "publish") validateRoadmapExecutiveFocusRoleMap(roleMap);
   const protectedTextSha256ByRole = protectedTextPolicyFromRoleMap(model, roleMap);
   let runtime: RuntimeModules | undefined;
   let presentationRuntime: PresentationRuntimePaths | undefined;
@@ -6331,6 +6372,7 @@ export async function buildPptx(
         "Publication requires --approval, --validation-evidence, --parity-evidence, --reviewed-preview-pptx, --repo-root, --snapshot, --docs, --presentation-map, --claims, and --narrative-input",
       );
     }
+    validateRoadmapExecutiveFocusRoleMap(roleMap);
     await validatePptxPublicationSourceModel({
       model,
       repoRoot: options.repoRoot,

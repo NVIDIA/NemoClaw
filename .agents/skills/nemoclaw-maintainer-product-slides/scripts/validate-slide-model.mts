@@ -25,13 +25,42 @@ export const ROADMAP_AREAS = [
 ] as const;
 
 export const ROADMAP_EXECUTIVE_ROW_MAX_CHARACTERS = 90;
+export const ROADMAP_MILESTONE_FOCUS_MAX_CHARACTERS = 80;
+export const ROADMAP_MILESTONE_FOCUS_MIN_WORDS = 3;
+export const ROADMAP_MILESTONE_FOCUS_MAX_WORDS = 7;
 export const ROADMAP_CAPABILITY_TITLE = "NemoClaw Feature Roadmap";
+
+const FORBIDDEN_MILESTONE_FOCUS_VALUES = [
+  ...ROADMAP_AREAS,
+  "Needs classification",
+  "No Epic outcomes",
+  "Needs focus review",
+].map((value) => value.toLowerCase());
+
+export function isForbiddenMilestoneFocus(value: string): boolean {
+  return FORBIDDEN_MILESTONE_FOCUS_VALUES.includes(value.toLowerCase());
+}
 
 export function roadmapPresentationWordCount(value: string): number {
   return value
     .trim()
     .split(/\s+/u)
     .filter((token) => /[\p{L}\p{N}]/u.test(token)).length;
+}
+
+function reviewedMilestoneFocusIsValid(value: unknown, publicationEligible: boolean): boolean {
+  if (typeof value !== "string") return false;
+  if (value === "Needs focus review") return !publicationEligible;
+  const wordCount = roadmapPresentationWordCount(value);
+  return (
+    value.replace(/\s+/gu, " ").trim() === value &&
+    value.length <= ROADMAP_MILESTONE_FOCUS_MAX_CHARACTERS &&
+    wordCount >= ROADMAP_MILESTONE_FOCUS_MIN_WORDS &&
+    wordCount <= ROADMAP_MILESTONE_FOCUS_MAX_WORDS &&
+    !value.includes(":") &&
+    !/^NemoClaw\b/iu.test(value) &&
+    !isForbiddenMilestoneFocus(value)
+  );
 }
 
 const MARKITECTURE_CONNECTOR_GRAPH = [
@@ -760,6 +789,23 @@ function structuralFindings(
           `Matrix page ${pageIndex} must use exactly ${ROADMAP_AREAS.join(", ")} in that order.`,
           "Use the reviewable roadmap presentation taxonomy on every capability page.",
           "roadmap-capability",
+        ),
+      );
+    }
+    const invalidFocuses = pageMilestones.filter(
+      (milestone) =>
+        !reviewedMilestoneFocusIsValid(
+          milestone.focus,
+          (model.publication as Record<string, unknown> | undefined)?.eligible === true,
+        ),
+    );
+    if (invalidFocuses.length > 0) {
+      errors.push(
+        finding(
+          "MILESTONE_PRESENTATION_FOCUS_INVALID",
+          `Roadmap page ${pageIndex} contains a generic, prefixed, or invalid milestone focus.`,
+          "Rebuild the model from one reviewed three-to-seven-word focus for each selected milestone.",
+          "roadmap-executive",
         ),
       );
     }

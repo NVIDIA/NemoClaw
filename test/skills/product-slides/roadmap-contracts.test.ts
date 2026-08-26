@@ -454,10 +454,12 @@ describe("NemoClaw product slide source and model contracts", () => {
     [4, 5, 6, 7].forEach((number) => {
       addSyntheticRoadmapMilestone({
         snapshot,
+        presentation,
         number,
         nodeId: `M_SYNTHETIC_${String(number)}`,
         title: `Roadmap: Window ${String(number)}`,
         displayTitle: `Window ${String(number)}`,
+        focus: `Delivery Outcomes for Window ${String(number)}`,
       });
       addSyntheticRoadmapEpic({
         snapshot,
@@ -488,6 +490,21 @@ describe("NemoClaw product slide source and model contracts", () => {
         .filter((slide) => slide.role === "roadmap-executive")
         .map((slide) => (slide.milestones as unknown[]).length),
     ).toEqual([3, 3, 1]);
+    expect(
+      slides
+        .filter((slide) => slide.role === "roadmap-executive")
+        .flatMap((slide) =>
+          (slide.milestones as Array<Record<string, unknown>>).map((milestone) => milestone.focus),
+        ),
+    ).toEqual([
+      "Onboarding and Voice Experiences",
+      "Routing and Contribution Patterns",
+      "Native Runtimes and Feedback Optimization",
+      "Delivery Outcomes for Window 4",
+      "Delivery Outcomes for Window 5",
+      "Delivery Outcomes for Window 6",
+      "Delivery Outcomes for Window 7",
+    ]);
     expect(slides[4].summary).toBe(
       "1 native GitHub Epic shown across 1 eligible milestone delivery window. Page 3 of 3.",
     );

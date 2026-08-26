@@ -487,10 +487,12 @@ export function addSyntheticPresentationMappedEpic(options: {
 
 export function addSyntheticRoadmapMilestone(options: {
   snapshot: Record<string, unknown>;
+  presentation: Record<string, unknown>;
   number: number;
   nodeId: string;
   title: string;
   displayTitle: string;
+  focus: string;
 }): void {
   const milestones = options.snapshot.milestones as Array<Record<string, unknown>>;
   milestones.push({
@@ -545,6 +547,11 @@ export function addSyntheticRoadmapMilestone(options: {
     declaredTotalCount: 0,
     sourceSha256: canonicalSha256([]),
   });
+  (options.presentation.milestones as Array<Record<string, unknown>>).push({
+    milestoneNodeId: options.nodeId,
+    milestoneNumber: options.number,
+    focus: options.focus,
+  });
 }
 
 export function finalizeSyntheticRoadmap(snapshot: Record<string, unknown>): void {
@@ -563,10 +570,12 @@ export function buildFourMilestoneModel(): Record<string, unknown> {
   const { presentation, snapshot } = syntheticFixtureInputs();
   addSyntheticRoadmapMilestone({
     snapshot,
+    presentation,
     number: 4,
     nodeId: "M_SYNTHETIC_4",
     title: "Roadmap: Window Four",
     displayTitle: "Window Four",
+    focus: "Delivery Outcomes for Window Four",
   });
   addSyntheticRoadmapEpic({
     snapshot,

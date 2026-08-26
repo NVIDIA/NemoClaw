@@ -148,8 +148,18 @@ Treat the exact `## Outcome` section and cleaned Epic title as review evidence o
 Do not render either source string as fallback presentation text.
 
 After snapshot collection, create one owner-only runtime presentation map for that run.
-The map must contain exactly one entry for every included Epic and no omitted Epic.
-Each entry must contain:
+Its `milestones` array must contain exactly one row for every selected eligible milestone and no
+other milestone.
+Each milestone row must contain the exact snapshot node ID, native number, and one reviewed
+three-to-seven-word `focus` of at most 80 characters.
+Review that focus against the milestone's complete ordered Epic summaries.
+Do not derive it from `roadmapArea`, use a taxonomy label, or prefix it with `NemoClaw:`.
+Missing, duplicate, identity-mismatched, or invalid milestone rows use `Needs focus review` for
+the affected selected milestone in preview and block publication. An unselected row blocks
+publication without replacing valid selected-milestone focus text.
+
+The map's `epics` array must contain exactly one entry for every included Epic and no omitted Epic.
+Each Epic entry must contain:
 
 - the exact Epic node ID and issue number;
 - `displayTitle` with two to four words;
@@ -178,8 +188,9 @@ Do not add `Needs classification:` to that label.
 Block publication until the runtime entry has one reviewed roadmap area.
 
 The checked-in `roadmap-presentation.json` may supply milestone aliases to snapshot collection.
-Its Epic entries may seed the owner-only runtime map after collection.
-Prune unselected rows, review every retained field, and rebind each row to the snapshot body hash.
+Its milestone-focus and Epic entries may seed the owner-only runtime map after collection.
+Prune unselected rows and review every retained field.
+Rebind each retained Epic row to its snapshot body hash.
 Never pass the checked-in seed directly to model construction or publication.
 Do not commit the per-run presentation map.
 Record that input in the model as `runtime/presentation-map.json` with the digest of its exact
@@ -351,6 +362,7 @@ Block publication on:
 - missing or ambiguous native issue-type evidence;
 - duplicate Epic carriers or identity mismatch;
 - a missing, stale, or out-of-budget Epic presentation summary;
+- a missing, duplicate, unselected, identity-mismatched, or invalid milestone focus row;
 - missing matrix classification;
 - invalid or unresolved work-tracking evidence;
 - tag dereference or default-branch ancestry failure;

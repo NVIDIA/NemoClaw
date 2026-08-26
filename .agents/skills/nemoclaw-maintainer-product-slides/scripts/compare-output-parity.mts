@@ -285,12 +285,8 @@ export function capabilityEpicDisplayText(item: Record<string, unknown>): string
   return `${prefix}${title} (${capabilityEpicReferenceText(item)})`;
 }
 
-export function roadmapFocusLabel(_item: Record<string, unknown>): string {
-  return "NemoClaw:";
-}
-
 export function roadmapFocusText(item: Record<string, unknown>): string {
-  return `${roadmapFocusLabel(item)}\n${modelString(item.focus, "Roadmap milestone focus")}`;
+  return modelString(item.focus, "Roadmap milestone focus");
 }
 
 function expectedHyperlinkEntry(
@@ -835,11 +831,7 @@ export function expectedManagedVisibleTextInventory(model: unknown): Array<{
     if (slide.role === "roadmap-executive") {
       values.push(...textParagraphs(slide.title), ...textParagraphs(slide.summary));
       for (const milestone of slide.milestones as Array<Record<string, unknown>>) {
-        values.push(
-          ...textParagraphs(milestone.title),
-          roadmapFocusLabel(milestone),
-          ...textParagraphs(milestone.focus),
-        );
+        values.push(...textParagraphs(milestone.title), ...textParagraphs(milestone.focus));
         for (const outcome of milestone.outcomes as Array<Record<string, unknown>>) {
           values.push(roadmapEpicDisplayText(outcome));
         }
@@ -1083,6 +1075,27 @@ function forbiddenCapabilityProtectedText(
       if (containsCapabilityForbiddenText(value, forbidden)) {
         violations.push({ identity, text: value.replace(/\r\n?/gu, "\n") });
       }
+    }
+  }
+  return violations;
+}
+
+function forbiddenExecutiveFocusPrefix(readback: unknown): string[] | null {
+  if (
+    !readback ||
+    typeof readback !== "object" ||
+    !Array.isArray((readback as { slides?: unknown }).slides)
+  ) {
+    return null;
+  }
+  const violations: string[] = [];
+  for (const slide of (readback as SemanticReadback).slides) {
+    if (slide.role !== "roadmap-executive") continue;
+    if (!Array.isArray(slide.visibleTextInventory)) return null;
+    for (const value of slide.visibleTextInventory) {
+      if (typeof value !== "string") return null;
+      const normalized = value.replace(/\r\n?/gu, "\n");
+      if (/^NemoClaw:(?:\n|$)/u.test(normalized)) violations.push(normalized);
     }
   }
   return violations;
@@ -1594,6 +1607,15 @@ export function compareParity(
         message: `${backend === "GOOGLE" ? "Google Slides" : "PowerPoint"} contains forbidden capability focus or milestone status text in the protected-text scope.`,
         remediation:
           "Remove Focus, Active, and column-focus text from every capability slide; keep milestone focus on the executive roadmap and keep Active as model-only status.",
+      });
+    }
+    const focusPrefixViolations = forbiddenExecutiveFocusPrefix(readback);
+    if (focusPrefixViolations && focusPrefixViolations.length > 0) {
+      errors.push({
+        code: `${backend}_ROADMAP_FOCUS_PREFIX_FORBIDDEN`,
+        message: `${backend === "GOOGLE" ? "Google Slides" : "PowerPoint"} contains the obsolete NemoClaw milestone-focus prefix.`,
+        remediation:
+          "Replace the complete executive focus target with the exact reviewed model focus and rerun readback.",
       });
     }
   }

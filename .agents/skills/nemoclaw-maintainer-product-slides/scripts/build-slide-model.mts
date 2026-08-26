@@ -34,8 +34,12 @@ import {
   calculateModelSha256,
   canonicalJson,
   canonicalSha256,
+  isForbiddenMilestoneFocus,
   ROADMAP_AREAS,
   ROADMAP_EXECUTIVE_ROW_MAX_CHARACTERS,
+  ROADMAP_MILESTONE_FOCUS_MAX_CHARACTERS,
+  ROADMAP_MILESTONE_FOCUS_MAX_WORDS,
+  ROADMAP_MILESTONE_FOCUS_MIN_WORDS,
   roadmapPresentationWordCount,
   sha256Text,
   type ValidationFinding,
@@ -164,6 +168,12 @@ type PresentationEntry = {
   presentationMilestoneNodeId?: string;
 };
 
+type PresentationMilestoneEntry = {
+  milestoneNodeId: string;
+  milestoneNumber: number;
+  focus: string;
+};
+
 type ResolvedPresentation = {
   displayTitle: string;
   shortenedOutcome: string;
@@ -174,6 +184,7 @@ type PresentationMap = {
   schemaVersion: 1;
   roadmapAreas: string[];
   milestoneAliases?: Record<string, string>;
+  milestones?: unknown[];
   epics: PresentationEntry[];
 };
 
@@ -245,6 +256,7 @@ const CANONICAL_REPOSITORY = "NVIDIA/NemoClaw";
 const CANONICAL_REPOSITORY_URL = "https://github.com/NVIDIA/NemoClaw";
 const MISSING_SUMMARY_TITLE = "Needs summary";
 const MISSING_SUMMARY_CONTEXT = "Review the Epic body recorded in the snapshot.";
+const MISSING_MILESTONE_FOCUS = "Needs focus review";
 
 function readJson<T>(filePath: string): T {
   return JSON.parse(readFileSync(path.resolve(filePath), "utf8")) as T;
@@ -1570,26 +1582,129 @@ function milestoneDisplayTitle(
   return alias ?? milestone.displayTitle ?? milestone.title;
 }
 
-function milestoneFocusLabel(
-  epics: SnapshotEpic[],
-  presentationByEpic: Map<string, ResolvedPresentation>,
-  roadmapAreas: string[],
-): string {
-  if (epics.length === 0) return "No Epic outcomes";
-  const countByArea = new Map<string, number>();
-  for (const epic of epics) {
-    const area = presentationByEpic.get(epic.nodeId)?.roadmapArea;
-    if (area) countByArea.set(area, (countByArea.get(area) ?? 0) + 1);
+function milestoneFocusIsValid(entry: PresentationMilestoneEntry): boolean {
+  return (
+    typeof entry.focus === "string" &&
+    conciseEvidenceText(entry.focus) === entry.focus &&
+    entry.focus.length <= ROADMAP_MILESTONE_FOCUS_MAX_CHARACTERS &&
+    !entry.focus.includes(":") &&
+    !/^NemoClaw\b/iu.test(entry.focus) &&
+    !isForbiddenMilestoneFocus(entry.focus) &&
+    roadmapPresentationWordCount(entry.focus) >= ROADMAP_MILESTONE_FOCUS_MIN_WORDS &&
+    roadmapPresentationWordCount(entry.focus) <= ROADMAP_MILESTONE_FOCUS_MAX_WORDS
+  );
+}
+
+function isPresentationMilestoneEntry(value: unknown): value is PresentationMilestoneEntry {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const entry = value as Record<string, unknown>;
+  return (
+    typeof entry.milestoneNodeId === "string" &&
+    Number.isSafeInteger(entry.milestoneNumber) &&
+    typeof entry.focus === "string"
+  );
+}
+
+function milestoneFocusIndex(
+  presentation: PresentationMap,
+  milestones: SnapshotMilestone[],
+  blockers: ValidationFinding[],
+): Map<string, string> {
+  const rawEntries = Array.isArray(presentation.milestones) ? presentation.milestones : [];
+  const entries: PresentationMilestoneEntry[] = [];
+  for (const [index, entry] of rawEntries.entries()) {
+    if (isPresentationMilestoneEntry(entry)) {
+      entries.push(entry);
+      continue;
+    }
+    blockers.push(
+      blocker(
+        "MILESTONE_PRESENTATION_FOCUS_INVALID",
+        `Milestone focus row ${String(index + 1)} does not contain a string node ID, native integer number, and string focus.`,
+        "Replace the malformed row with one reviewed focus row bound to a selected frozen milestone identity.",
+        "roadmap-executive",
+      ),
+    );
   }
-  if (countByArea.size === 0) return "Needs classification";
-  const areaOrder = new Map(roadmapAreas.map((area, index) => [area, index]));
-  return [...countByArea].sort(
-    ([leftArea, leftCount], [rightArea, rightCount]) =>
-      rightCount - leftCount ||
-      (areaOrder.get(leftArea) ?? Number.MAX_SAFE_INTEGER) -
-        (areaOrder.get(rightArea) ?? Number.MAX_SAFE_INTEGER) ||
-      (leftArea < rightArea ? -1 : leftArea > rightArea ? 1 : 0),
-  )[0][0];
+  const milestoneByNodeId = new Map(milestones.map((milestone) => [milestone.nodeId, milestone]));
+  const milestoneByNumber = new Map(milestones.map((milestone) => [milestone.number, milestone]));
+  const nodeCounts = new Map<string, number>();
+  const numberCounts = new Map<number, number>();
+  for (const entry of entries) {
+    nodeCounts.set(entry.milestoneNodeId, (nodeCounts.get(entry.milestoneNodeId) ?? 0) + 1);
+    numberCounts.set(entry.milestoneNumber, (numberCounts.get(entry.milestoneNumber) ?? 0) + 1);
+  }
+
+  const focusByMilestone = new Map<string, string>();
+  for (const entry of entries) {
+    const snapshotMilestone = milestoneByNodeId.get(entry.milestoneNodeId);
+    if (!snapshotMilestone) {
+      blockers.push(
+        blocker(
+          "MILESTONE_PRESENTATION_UNSELECTED",
+          `Milestone focus row ${entry.milestoneNodeId} / #${String(entry.milestoneNumber)} is not one of the selected eligible milestones.`,
+          "Remove the unselected row from the owner-only runtime presentation map, then rebuild the model.",
+          "roadmap-executive",
+        ),
+      );
+      continue;
+    }
+    if (
+      snapshotMilestone.number !== entry.milestoneNumber ||
+      milestoneByNumber.get(entry.milestoneNumber)?.nodeId !== entry.milestoneNodeId
+    ) {
+      blockers.push(
+        blocker(
+          "MILESTONE_PRESENTATION_IDENTITY_MISMATCH",
+          `Milestone focus row ${entry.milestoneNodeId} names #${String(entry.milestoneNumber)}, but the frozen snapshot records #${String(snapshotMilestone.number)}.`,
+          "Copy the exact milestone node ID and number from the frozen snapshot, then review the focus again.",
+          "roadmap-executive",
+        ),
+      );
+      continue;
+    }
+    if (
+      (nodeCounts.get(entry.milestoneNodeId) ?? 0) !== 1 ||
+      (numberCounts.get(entry.milestoneNumber) ?? 0) !== 1
+    ) {
+      blockers.push(
+        blocker(
+          "MILESTONE_PRESENTATION_DUPLICATE",
+          `Milestone focus mapping duplicates ${entry.milestoneNodeId} or #${String(entry.milestoneNumber)}.`,
+          "Keep one reviewed focus row for each selected milestone, then rebuild the model.",
+          "roadmap-executive",
+        ),
+      );
+      continue;
+    }
+    if (!milestoneFocusIsValid(entry)) {
+      blockers.push(
+        blocker(
+          "MILESTONE_PRESENTATION_FOCUS_INVALID",
+          `Milestone #${String(entry.milestoneNumber)} does not have a reviewed three-to-seven-word focus within the ${String(ROADMAP_MILESTONE_FOCUS_MAX_CHARACTERS)}-character limit.`,
+          "Replace the generic label with concise milestone-specific wording, then rebuild the model.",
+          "roadmap-executive",
+        ),
+      );
+      continue;
+    }
+    focusByMilestone.set(entry.milestoneNodeId, entry.focus);
+  }
+
+  for (const milestone of milestones) {
+    const hasMilestoneRow = entries.some((entry) => entry.milestoneNodeId === milestone.nodeId);
+    if (!hasMilestoneRow) {
+      blockers.push(
+        blocker(
+          "MILESTONE_PRESENTATION_FOCUS_MISSING",
+          `Milestone #${String(milestone.number)} has no reviewed focus in the owner-only runtime presentation map.`,
+          "Add one concise milestone-specific focus row bound to the frozen milestone identity, then rebuild the model.",
+          "roadmap-executive",
+        ),
+      );
+    }
+  }
+  return focusByMilestone;
 }
 
 type MilestoneStatus = { state: "open"; label: "Active" };
@@ -1922,6 +2037,11 @@ export function buildSlideModel(options: {
       ),
     );
   }
+  const focusByMilestone = milestoneFocusIndex(
+    options.presentation,
+    options.snapshot.milestones,
+    blockers,
+  );
   const epicNodeIds = new Set<string>();
   const epicNumbers = new Set<number>();
   const displayMilestoneByEpic = new Map<string, string>();
@@ -2107,18 +2227,13 @@ export function buildSlideModel(options: {
     const milestoneEpics = orderedEpics.filter(
       (epic) => displayMilestoneByEpic.get(epic.nodeId) === milestone.nodeId,
     );
-    const focus = milestoneFocusLabel(
-      milestoneEpics,
-      resolvedPresentationByEpic,
-      options.presentation.roadmapAreas,
-    );
     return {
       contentId: `milestone.${milestone.number}`,
       milestoneNodeId: milestone.nodeId,
       title: milestoneDisplayTitle(options.presentation, milestone),
       url: milestone.url,
       dueOn: milestone.dueOn,
-      focus,
+      focus: focusByMilestone.get(milestone.nodeId) ?? MISSING_MILESTONE_FOCUS,
       status: milestoneStatus(milestone, boundAsOf),
       outcomes: milestoneEpics.map((epic) => {
         const presentation = resolvedPresentationByEpic.get(epic.nodeId);

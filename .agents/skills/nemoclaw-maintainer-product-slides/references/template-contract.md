@@ -286,6 +286,11 @@ Populate every executive and weekly operation, the markitecture title and geomet
 For `weekly-release`, map exactly one distinct native target for `label`, `updates`, and `risks` at
 each row index from `0` through `2`.
 Do not declare `releaseBulletOperations` or `releaseOperations` for the lower scorecard rows.
+Keep exactly three direct executive milestone-focus operations.
+Bind them in order to `milestones.0.focus` through `milestones.2.focus` and the three inspected
+native focus targets.
+Each operation contains only one named target and its `valuePath`; do not add a literal, prefix,
+suffix, search, style override, link, fallback, or transform.
 Keep exactly three capability milestone-title operations.
 Bind them in order to `columns.0.title` through `columns.2.title` and the three inspected top-row
 `HOME_PLATE` shapes.
@@ -730,6 +735,9 @@ in a cell. Append each Epic's issue number in parentheses and link only its `#NN
 For a closed Epic, prefix the bold capability label with a checkmark (`✓`) and one space.
 Keep the issue number in regular text and link only its `#NNNN` run.
 Keep roadmap timeline lines, stems, and anchors native.
+Replace each used executive focus target's complete text with the exact reviewed model `focus`.
+Preserve the target's native typography, geometry, and wrapping.
+Do not add `NemoClaw:`, another prefix, or a manual line break.
 For a closed executive Epic, render a checkmark (`✓`) and one space with the bold label and colon.
 Render its context in regular gray `#5B5B5B` text with no hyperlink.
 Derive both treatments from the native Epic `state` in the model.

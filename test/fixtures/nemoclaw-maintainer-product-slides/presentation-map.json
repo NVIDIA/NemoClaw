@@ -6,6 +6,23 @@
 		"Acceleration and Optimization",
 		"Integrations and Blueprints"
 	],
+	"milestones": [
+		{
+			"milestoneNodeId": "M_SYNTHETIC_3",
+			"milestoneNumber": 3,
+			"focus": "Onboarding and Voice Experiences"
+		},
+		{
+			"milestoneNodeId": "M_SYNTHETIC_1",
+			"milestoneNumber": 1,
+			"focus": "Routing and Contribution Patterns"
+		},
+		{
+			"milestoneNodeId": "M_SYNTHETIC_2",
+			"milestoneNumber": 2,
+			"focus": "Native Runtimes and Feedback Optimization"
+		}
+	],
 	"epics": [
 		{
 			"epicNodeId": "E_SYNTHETIC_101",

@@ -820,6 +820,29 @@ describe("NemoClaw product slide backend parity", () => {
     });
   });
 
+  it("does not let protected text hide the obsolete executive focus prefix", () => {
+    const model = buildSyntheticModel();
+    const protectedText = "NemoClaw:\nUsability and Onboarding";
+    const google = semanticReadback(model);
+    const pptx = semanticReadback(model);
+    [google, pptx].forEach((readback) => {
+      const executive = (readback.slides as Array<Record<string, unknown>>)[0];
+      (executive.protectedVisibleTextInventory as string[]).push(protectedText);
+      (executive.visibleTextInventory as string[]).push(protectedText);
+    });
+
+    const result = compareParity(model, google, pptx, {
+      "roadmap-executive": [sha256(protectedText)],
+    });
+
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "GOOGLE_ROADMAP_FOCUS_PREFIX_FORBIDDEN" }),
+        expect.objectContaining({ code: "PPTX_ROADMAP_FOCUS_PREFIX_FORBIDDEN" }),
+      ]),
+    );
+  });
+
   it("classifies capability status as unexpected even when its digest is approved", () => {
     const model = buildSyntheticModel();
     const readback = semanticReadback(model);
@@ -1059,7 +1082,7 @@ describe("NemoClaw product slide backend parity", () => {
       .managedVisibleTextInventory as string[];
     const capabilityText = (readback.slides as Array<Record<string, unknown>>)[1]
       .managedVisibleTextInventory as string[];
-    expect(executiveText).toContain("NemoClaw:");
+    expect(executiveText).not.toContain("NemoClaw:");
     expect(executiveText).toContain(modelOnlyFocus);
     expect(capabilityText).toContain(capabilityColumn.title);
     expect(capabilityText).not.toContain("Focus");

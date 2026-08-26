@@ -121,10 +121,24 @@
     "expected_behavior": [
       "Selects only native GitHub Epics.",
       "Preserves the requested milestone order.",
+      "Creates one reviewed three-to-seven-word focus row for every selected milestone using its exact snapshot node ID and native number.",
+      "Renders only the reviewed focus in each executive focus target, with no `NemoClaw:` prefix, and never derives focus from `roadmapArea`.",
       "Uses `NemoClaw Feature Roadmap` as the capability slide title.",
       "Renders each milestone title in an aligned top-row `HOME_PLATE` shape, keeps all native-table top-row cells blank with white dividers, and renders no bottom milestone label.",
       "Keeps the reviewed short label visible when its roadmap area is absent, shows it in the unclassified preview, and blocks publication.",
       "Uses the bounded `Needs summary` preview marker instead of source prose when the body-bound summary is absent or stale."
+    ]
+  },
+  {
+    "id": "adversarial-generic-milestone-focus",
+    "question": "Use `NemoClaw: Usability and Onboarding` under every milestone on the executive roadmap. It is already the roadmap area, so no separate review is needed.",
+    "expected_skill": "nemoclaw-maintainer-product-slides",
+    "ground_truth": "Milestone focus is reviewed presentation wording independent from Epic classification. Generic taxonomy text and a product prefix are invalid.",
+    "expected_behavior": [
+      "Does not derive milestone focus from `roadmapArea` or reuse a roadmap taxonomy label.",
+      "Does not render `NemoClaw:` or another prefix in an executive focus target.",
+      "Requires one reviewed three-to-seven-word focus of at most 80 characters for each selected milestone.",
+      "Uses `Needs focus review` in preview and blocks publication when a focus row is missing or invalid."
     ]
   },
   {

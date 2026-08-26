@@ -240,19 +240,120 @@ describe("NemoClaw product slide source and model contracts", () => {
     );
   });
 
-  it("derives each milestone focus from the dominant reviewed roadmap area", () => {
-    const model = buildSyntheticModel();
+  it("uses each reviewed milestone focus independently from Epic classification", () => {
+    const { presentation, snapshot } = syntheticFixtureInputs();
+    presentation.epics = (presentation.epics as Array<Record<string, unknown>>).map((epic) => ({
+      ...epic,
+      roadmapArea: "Agent Features",
+    }));
+    const model = buildSyntheticModel({ presentation, snapshot });
     const executive = (model.slides as Array<Record<string, unknown>>)[0];
     const focuses = (executive.milestones as Array<Record<string, unknown>>).map(
       (milestone) => milestone.focus,
     );
 
     expect(focuses).toEqual([
-      "Usability and Onboarding",
-      "Acceleration and Optimization",
-      "Usability and Onboarding",
+      "Onboarding and Voice Experiences",
+      "Routing and Contribution Patterns",
+      "Native Runtimes and Feedback Optimization",
     ]);
   });
+
+  it("blocks a missing reviewed milestone focus without a taxonomy fallback", () => {
+    const { presentation, snapshot } = syntheticFixtureInputs();
+    presentation.milestones = (presentation.milestones as Array<Record<string, unknown>>).slice(1);
+
+    const model = buildSyntheticModel({ presentation, snapshot });
+    const executive = (model.slides as Array<Record<string, unknown>>)[0];
+    const firstMilestone = (executive.milestones as Array<Record<string, unknown>>)[0];
+
+    expect(firstMilestone.focus).toBe("Needs focus review");
+    expect(publicationCodes(model)).toContain("MILESTONE_PRESENTATION_FOCUS_MISSING");
+  });
+
+  it("blocks duplicate and unselected milestone focus rows", () => {
+    const { presentation, snapshot } = syntheticFixtureInputs();
+    const milestones = presentation.milestones as Array<Record<string, unknown>>;
+    milestones.push(structuredClone(milestones[0]));
+    milestones.push({
+      milestoneNodeId: "M_SYNTHETIC_UNSELECTED",
+      milestoneNumber: 999,
+      focus: "Unselected Synthetic Delivery Window",
+    });
+
+    const codes = publicationCodes(buildSyntheticModel({ presentation, snapshot }));
+    expect(codes).toEqual(
+      expect.arrayContaining([
+        "MILESTONE_PRESENTATION_DUPLICATE",
+        "MILESTONE_PRESENTATION_UNSELECTED",
+      ]),
+    );
+  });
+
+  it("blocks a milestone focus row bound to the wrong native number", () => {
+    const { presentation, snapshot } = syntheticFixtureInputs();
+    (presentation.milestones as Array<Record<string, unknown>>)[0].milestoneNumber = 999;
+
+    expect(publicationCodes(buildSyntheticModel({ presentation, snapshot }))).toContain(
+      "MILESTONE_PRESENTATION_IDENTITY_MISMATCH",
+    );
+  });
+
+  it("blocks a malformed milestone focus row without aborting preview generation", () => {
+    const { presentation, snapshot } = syntheticFixtureInputs();
+    presentation.milestones = [null];
+
+    const model = buildSyntheticModel({ presentation, snapshot });
+    const executive = (model.slides as Array<Record<string, unknown>>)[0];
+    const focuses = (executive.milestones as Array<Record<string, unknown>>).map(
+      (milestone) => milestone.focus,
+    );
+
+    expect(focuses).toEqual(["Needs focus review", "Needs focus review", "Needs focus review"]);
+    expect(publicationCodes(model)).toEqual(
+      expect.arrayContaining([
+        "MILESTONE_PRESENTATION_FOCUS_INVALID",
+        "MILESTONE_PRESENTATION_FOCUS_MISSING",
+      ]),
+    );
+  });
+
+  it.each([
+    ["taxonomy fallback", "Usability and Onboarding"],
+    ["case-folded taxonomy fallback", "USABILITY AND ONBOARDING"],
+    ["case-folded legacy fallback", "NO EPIC OUTCOMES"],
+    ["case-folded preview marker", "NEEDS FOCUS REVIEW"],
+    ["legacy product prefix", "NemoClaw: Reviewed Milestone Focus"],
+    ["too-short focus", "Short focus"],
+  ])("blocks a %s in the milestone focus map", (_name, focus) => {
+    const { presentation, snapshot } = syntheticFixtureInputs();
+    (presentation.milestones as Array<Record<string, unknown>>)[0].focus = focus;
+
+    const model = buildSyntheticModel({ presentation, snapshot });
+    const executive = (model.slides as Array<Record<string, unknown>>)[0];
+    const firstMilestone = (executive.milestones as Array<Record<string, unknown>>)[0];
+
+    expect(firstMilestone.focus).toBe("Needs focus review");
+    expect(publicationCodes(model)).toContain("MILESTONE_PRESENTATION_FOCUS_INVALID");
+  });
+
+  it.each(["Usability and Onboarding", "USABILITY AND ONBOARDING", "NO EPIC OUTCOMES"])(
+    "rejects a rehashed eligible model with forbidden focus %s",
+    (focus) => {
+      const schema = readJson<Record<string, unknown>>(slideModelSchemaPath);
+      const model = buildSyntheticModel();
+      const [executive, capability] = model.slides as Array<Record<string, unknown>>;
+      (executive.milestones as Array<Record<string, unknown>>)[0].focus = focus;
+      (capability.columns as Array<Record<string, unknown>>)[0].focus = focus;
+      rehashModel(model);
+
+      expect(validateSlideModel(model, schema, "publish").errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: "MILESTONE_PRESENTATION_FOCUS_INVALID" }),
+        ]),
+      );
+    },
+  );
 
   it("rejects an omitted or duplicated selected Epic after model rehashing", () => {
     const schema = readJson<Record<string, unknown>>(slideModelSchemaPath);

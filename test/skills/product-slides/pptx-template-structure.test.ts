@@ -23,6 +23,7 @@ import {
   validateCapabilityClassificationWarningAuthorization,
   validateRoadmapCapabilityDeleteAuthorization,
   validateRoadmapExecutiveDeleteAuthorization,
+  validateRoadmapExecutiveFocusRoleMap,
   validateWeeklyMilestoneRowLayout,
   validateWeeklyMilestoneRowRoleMap,
   weeklyMilestoneLabelText,
@@ -356,9 +357,16 @@ describe("NemoClaw PowerPoint template authoring contracts", () => {
       expect(unknownArgument.stderr).toMatch(/Unknown authoring argument: --unsupported/u);
 
       const executiveTitle = createFakeShape("executive-title", "Old roadmap");
+      const executiveFocus = createFakeShape(
+        "executive-focus",
+        "NemoClaw:\nUsability and Onboarding",
+      );
+      executiveFocus.position = { left: 12, top: 34, width: 56, height: 78 };
+      executiveFocus.text.style = { fontSize: 18, typeface: "NVIDIA Sans" };
       const executiveOutcomes = createFakeShape("executive-outcomes", "Old outcomes");
       const executiveSlide = createFakeSlide([
         executiveTitle as unknown as Record<string, unknown>,
+        executiveFocus as unknown as Record<string, unknown>,
         executiveOutcomes as unknown as Record<string, unknown>,
       ]);
 
@@ -423,7 +431,12 @@ describe("NemoClaw PowerPoint template authoring contracts", () => {
           {
             role: "roadmap-executive",
             title: "NemoClaw Feature Roadmap",
-            milestones: [{ outcomes: [closedExecutiveOutcome] }],
+            milestones: [
+              {
+                focus: "Harness Intelligence and Native Runtimes",
+                outcomes: [closedExecutiveOutcome],
+              },
+            ],
             managedNotes: "executive notes",
           },
           {
@@ -485,7 +498,10 @@ describe("NemoClaw PowerPoint template authoring contracts", () => {
       const roleMap = {
         roles: {
           "roadmap-executive": {
-            operations: [{ target: { name: "executive-title" }, valuePath: "title" }],
+            operations: [
+              { target: { name: "executive-title" }, valuePath: "title" },
+              { target: { name: "executive-focus" }, valuePath: "milestones.0.focus" },
+            ],
             outcomeListOperations: [
               {
                 target: { name: "executive-outcomes" },
@@ -620,6 +636,10 @@ describe("NemoClaw PowerPoint template authoring contracts", () => {
 
       expect(executiveTitle.text.value).toBe("NemoClaw Feature Roadmap");
       expect(executiveTitle.position).toEqual({ left: 10, top: 20, width: 100, height: 40 });
+      expect(executiveFocus.text.value).toBe("Harness Intelligence and Native Runtimes");
+      expect(executiveFocus.text.value).not.toContain("NemoClaw:");
+      expect(executiveFocus.position).toEqual({ left: 12, top: 34, width: 56, height: 78 });
+      expect(executiveFocus.text.style).toEqual({ fontSize: 18, typeface: "NVIDIA Sans" });
       expect(executiveOutcomes.text.value).toBe(
         "✓ Kubernetes In-Cluster: Qualify one external gateway workflow",
       );
@@ -958,6 +978,27 @@ describe("NemoClaw PowerPoint template authoring contracts", () => {
         modelSlide,
       }),
     ).toThrow(/deletes must equal its unused executive milestone targets/u);
+  });
+
+  it("requires direct unprefixed executive focus bindings for all three slots", () => {
+    const operations = Array.from({ length: 3 }, (_value, index) => ({
+      target: { name: `focus-${index + 1}` },
+      valuePath: `milestones.${index}.focus`,
+    }));
+    const roleMap = { roles: { "roadmap-executive": { operations } } };
+
+    expect(() => validateRoadmapExecutiveFocusRoleMap(roleMap)).not.toThrow();
+    expect(() =>
+      validateRoadmapExecutiveFocusRoleMap({
+        roles: {
+          "roadmap-executive": {
+            operations: operations.map((operation, index) =>
+              index === 0 ? { ...operation, prefix: "NemoClaw:\n" } : operation,
+            ),
+          },
+        },
+      }),
+    ).toThrow(/without prefixes or style overrides/u);
   });
 
   it("requires exact delete authorization for unused capability HOME_PLATE slots", () => {

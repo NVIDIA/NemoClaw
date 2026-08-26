@@ -223,9 +223,10 @@ The collector reads only milestone aliases from the checked-in file passed with
 `--presentation-map`.
 It retains each candidate's complete body, native subissue, `## Work Tracking`, and progress
 evidence so the owner can select a presentation grouping after collection.
-Checked-in Epic entries are optional seeds only.
+Checked-in milestone-focus and Epic entries are optional seeds only.
 Never pass them directly to model construction.
 After collection, the owner creates and reviews an owner-only runtime `presentation-map.json`.
+The builder validates one milestone focus row for every selected snapshot milestone.
 The model builder validates `epicNodeId`, `issueNumber`, and `boundBodySha256`.
 It uses `displayTitle` and `shortenedOutcome` for visible wording, `roadmapArea` for classification,
 `displayOrder` for order, and optional `presentationMilestoneNodeId` for grouping.
@@ -256,6 +257,13 @@ Give it mode `0600`.
     "Acceleration and Optimization",
     "Integrations and Blueprints"
   ],
+  "milestones": [
+    {
+      "milestoneNodeId": "MI_SYNTHETIC_Q3",
+      "milestoneNumber": 7,
+      "focus": "First-Class Experiences and Express Installation"
+    }
+  ],
   "epics": [
     {
       "epicNodeId": "E_SYNTHETIC_101",
@@ -281,10 +289,20 @@ Give it mode `0600`.
 ```
 
 The example is synthetic and does not describe a current roadmap commitment.
-Replace it with exactly one entry for every milestone-assigned included Epic and every
-owner-selected open unmilestoned Epic, with no other Epic.
-You may copy included Epic entries from the checked-in `roadmap-presentation.json` as a starting
-point.
+Replace its `milestones` array with exactly one row for every selected eligible milestone and no
+other milestone.
+Copy each milestone node ID and number from the frozen snapshot.
+Write a reviewed three-to-seven-word `focus` of at most 80 characters after reviewing that
+milestone's complete ordered Epic summaries.
+Do not derive focus from `roadmapArea`, reuse a taxonomy label, or prefix it with `NemoClaw:`.
+Missing, duplicate, identity-mismatched, or invalid focus rows use `Needs focus review` for the
+affected selected milestone in preview and block publication. An unselected focus row blocks
+publication without replacing valid selected-milestone focus text.
+
+Replace the `epics` array with exactly one entry for every milestone-assigned included Epic and
+every owner-selected open unmilestoned Epic, with no other Epic.
+You may copy milestone-focus and included Epic entries from the checked-in
+`roadmap-presentation.json` as a starting point.
 Never pass that checked-in seed directly to model construction or publication.
 Prune every unselected row and review every retained summary, classification, and order value.
 Copy `epicNodeId`, `issueNumber`, and `boundBodySha256` from the frozen snapshot.
@@ -630,7 +648,7 @@ native-table top-row cell blank.
 Every modeled roadmap milestone has normalized status
 `{ "state": "open", "label": "Active" }` and its exact valid `dueOn`.
 The selected snapshot evidence retains the native `OPEN` state and null `closedAt`.
-The executive focus uses `NemoClaw:` above the focus text.
+The executive focus is the exact reviewed model text with no product prefix or manual line break.
 Closed, past-due open, and undated open milestones remain outside the modeled roadmap slides.
 The capability slide shows the milestone title only in its top-row `HOME_PLATE` shape.
 
@@ -1601,6 +1619,10 @@ Every `geometryOperations` target must have an exact matching frame-map `rewrite
 For the approved template, repeat the inspected raw paragraph values for each rendered outcome.
 Keep each outcome's source-slot differences in the same order.
 Define three executive milestone slots.
+Define exactly three direct, unlinked executive focus operations from `milestones.0.focus` through
+`milestones.2.focus`.
+Each focus operation must contain only one inspected named target and its `valuePath`; do not add a
+literal, prefix, suffix, search, style override, link, fallback, or transform.
 Define exactly three capability milestone-title operations and set capability
 `milestoneColumnCount` to `3`.
 Each operation must target one inspected top-row `HOME_PLATE` shape in column order.

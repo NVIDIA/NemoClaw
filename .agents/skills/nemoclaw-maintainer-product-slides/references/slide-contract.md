@@ -46,15 +46,19 @@ For every milestone, include:
 
 - native milestone identity and display title;
 - optional display alias;
-- concise focus label from the dominant reviewed roadmap area;
+- concise owner-reviewed milestone focus from the runtime presentation map;
 - ordered Epic presentation summaries and Epic URLs;
 - native Epic state in the shared model;
 - progress in the shared model only when measurable.
 - normalized active milestone status and the exact native due date in the shared model.
 
-The focus label uses the roadmap area with the most classified Epic entries.
-Use `roadmapAreas` order to resolve a tie.
-Use `Needs classification` when none of the displayed Epics has a reviewed area.
+Require exactly one focus row for each selected milestone, bound to its exact snapshot node ID and
+native number.
+Use a reviewed three-to-seven-word focus of at most 80 characters after reviewing the milestone's
+complete ordered Epic set.
+Keep milestone focus independent from Epic classification.
+Do not derive it from `roadmapArea`, use a taxonomy label, or add `NemoClaw:` or another prefix.
+Missing or invalid focus uses `Needs focus review` in preview and blocks publication.
 
 The visible roadmap rows retain the native exemplar's black bullet, hanging indent,
 paragraph spacing, and 92% line spacing.
@@ -66,7 +70,8 @@ Render its `shortenedOutcome` in regular gray `#5B5B5B` text.
 The complete row must not exceed 90 characters, including any checkmark, the colon, and the space.
 Keep all roadmap text unlinked, as in the exemplar.
 Retain issue and milestone URLs in the shared model and speaker notes.
-Keep the two-line `NemoClaw:` plus focus treatment and the plain green milestone labels.
+Render the focus as the complete native focus-target text and keep the plain green milestone labels.
+Preserve the target's native typography, geometry, and wrapping without adding a manual line break.
 Keep native Epic state and progress in the model, source notes, and validation evidence.
 
 Do not render a closed milestone, a past-due open milestone, or an undated open milestone.

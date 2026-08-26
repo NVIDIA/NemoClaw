@@ -64,8 +64,9 @@ Do not preload references for a later stage.
 Run the stages in this order:
 
 1. Collect GitHub evidence with `scripts/collect-github-snapshot.mts`.
-2. Create the owner-only runtime presentation map from every Epic assigned to a selected native
-   milestone and each open unmilestoned candidate the owner selects for presentation grouping.
+2. Create the owner-only runtime presentation map with one reviewed focus for every selected
+   milestone, every Epic assigned to a selected native milestone, and each open unmilestoned
+   candidate the owner selects for presentation grouping.
 3. Collect documentation evidence from the snapshot's recorded Git commit with `scripts/collect-doc-evidence.mts`.
 4. Review and condense source-bound milestone updates and risks into a runtime narrative input.
 5. Build `slide-model.json` with `scripts/build-slide-model.mts`.
@@ -81,6 +82,13 @@ Never use stale cached GitHub data when the user did not supply `--snapshot`.
 Bind every narrative edit to its source object and body hash.
 
 Create `presentation-map.json` under the owner-only runtime directory after snapshot collection.
+Give every selected milestone exactly one `milestones` entry with its exact snapshot node ID,
+native number, and a reviewed three-to-seven-word `focus` of at most 80 characters.
+Write the milestone-specific presentation focus after reviewing its complete ordered Epic set.
+Do not derive it from `roadmapArea`, reuse a taxonomy label, or prefix it with `NemoClaw:`.
+Missing, duplicate, identity-mismatched, or invalid focus rows use `Needs focus review` for the
+affected selected milestone in preview and block publication. An unselected focus row blocks
+publication without replacing valid selected-milestone focus text.
 Give every Epic assigned to a selected native milestone and each selected unmilestoned candidate
 exactly one entry with the snapshot's node ID, issue number, and body SHA-256. Use a reviewed
 `displayTitle` of two to four words and a reviewed
@@ -108,13 +116,16 @@ Keep every cell in the native table's top row blank, including its first cell.
 Preserve the white table dividers.
 Do not render milestone focus or status on the capability slide.
 Do not render a bottom milestone label.
+On the executive slide, replace the complete native focus target with the exact model `focus`.
+Keep the target's native typography, geometry, and wrapping, and add no product prefix or manual
+line break.
 
 Keep presentation wording separate from classification.
 `roadmapArea` may be absent from a runtime entry.
 In that case, show the same short label in the unclassified preview and block publication until a
 reviewed area is present.
 The checked-in `roadmap-presentation.json` may resolve milestone aliases during collection.
-Its Epic entries are optional seeds for the owner-only runtime map.
+Its milestone-focus and Epic entries are optional seeds for the owner-only runtime map.
 After collection, keep every Epic assigned to a selected native milestone plus only the open
 unmilestoned candidates the owner selects for presentation grouping. Review every field and bind
 each entry to the current snapshot body hash.

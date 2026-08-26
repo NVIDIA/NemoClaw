@@ -161,22 +161,15 @@ function capabilityEpicRuns(
   ];
 }
 
-function roadmapFocusLabel(_item) {
-  return "NemoClaw:";
-}
-
 function roadmapFocusText(item) {
-  return `${roadmapFocusLabel(item)}\n${textValue(item?.focus)}`;
+  return textValue(item?.focus);
 }
 
 function replaceRoadmapFocusText(target, item) {
   if (!target?.text) throw new Error("Roadmap focus target is not text-editable");
-  const prefix = `${roadmapFocusLabel(item)}\n`;
   const current = String(target.text);
-  if (!current.startsWith(prefix) || current.length === prefix.length) {
-    throw new Error("Roadmap focus target does not match the template label structure");
-  }
-  target.text.replace(current.slice(prefix.length), textValue(item.focus));
+  if (current.length === 0) throw new Error("Roadmap focus target is empty");
+  target.text.replace(current, textValue(item.focus));
   return roadmapFocusText(item);
 }
 
@@ -243,8 +236,7 @@ function applyRichTextOperations(presentation, slide, slideModel, operations = [
     const target = resolveTarget(presentation, slide, operation.target);
     if (!target?.text) throw new Error("Runtime rich-text target is not text-editable");
     const value = textValue(bindingValue(slideModel, operation));
-    const focusItem = roadmapFocusItem(slideModel, operation);
-    const prefix = focusItem ? roadmapFocusLabel(focusItem) : (operation.prefix ?? "");
+    const prefix = operation.prefix ?? "";
     const splitAt = prefix && value.startsWith(prefix) ? prefix.length : 0;
     const runs = splitAt
       ? [
