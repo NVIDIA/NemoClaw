@@ -1427,13 +1427,15 @@ export function windowsMxcOpenClawStartupPreconditionsPass(input: {
   readonly openClawHealth: boolean;
   readonly openClawProcessPresentWhileReady: boolean;
   readonly registryPresentWhileReady: boolean;
+  readonly versionExitCode: number | null;
 }): boolean {
   return (
     input.filesystemControlWrite &&
     input.filesystemDeniedWrite &&
     input.openClawHealth &&
     input.openClawProcessPresentWhileReady &&
-    input.registryPresentWhileReady
+    input.registryPresentWhileReady &&
+    input.versionExitCode === 0
   );
 }
 
@@ -2166,7 +2168,12 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
       ...checks,
       sandboxCreateAccepted: create.exitCode === 0,
     };
-    if (!windowsMxcOpenClawStartupPreconditionsPass(checks)) {
+    if (
+      !windowsMxcOpenClawStartupPreconditionsPass({
+        ...checks,
+        versionExitCode: startup.versionExitCode,
+      })
+    ) {
       throw new Error("Windows MXC OpenClaw startup preconditions failed before forwarding");
     }
 

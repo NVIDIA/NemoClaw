@@ -544,7 +544,8 @@ It retains only bounded numeric child and version exit codes; it does not retain
 child output, error text, command arguments, paths, or credentials. Cleanup
 removes both test-owned run directories for every verdict because MXC can write
 the temporary gateway token to its agent environment file. A failed run retains
-only the secret-free receipt.
+the secret-free receipt and any secret-free forward-readiness artifact written
+before the failure.
 The host-preparation declaration is operator evidence, not an ACL attestation.
 Gateway mTLS, governed egress policy enforcement, managed inference,
 gateway-restart recovery, standard-user operation, and production activation

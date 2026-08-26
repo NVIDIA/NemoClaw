@@ -840,6 +840,7 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
       openClawHealth: true,
       openClawProcessPresentWhileReady: true,
       registryPresentWhileReady: true,
+      versionExitCode: 0,
     };
     checks[failedCheck] = false;
 
@@ -854,8 +855,22 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
         openClawHealth: true,
         openClawProcessPresentWhileReady: true,
         registryPresentWhileReady: true,
+        versionExitCode: 0,
       }),
     ).toBe(true);
+  });
+
+  it("rejects readiness when the OpenClaw version command fails (#8178)", () => {
+    expect(
+      windowsMxcOpenClawStartupPreconditionsPass({
+        filesystemControlWrite: true,
+        filesystemDeniedWrite: true,
+        openClawHealth: true,
+        openClawProcessPresentWhileReady: true,
+        registryPresentWhileReady: true,
+        versionExitCode: 1,
+      }),
+    ).toBe(false);
   });
 
   it.each([" CHAT_OK", "CHAT_OK ", "CHAT_OK\n", "\tCHAT_OK"])(
