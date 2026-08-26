@@ -19,6 +19,13 @@ export interface StageSandboxCredentialProvidersInput<Agent> {
   webSearchConfig: WebSearchConfig | null;
   agent: Agent;
   requiredBindings: readonly CheckpointProviderBinding[];
+  revalidatePolicyRequirements?(operation: string): void;
+}
+
+export interface MessagingProviderRegistrationOptions {
+  replaceExisting?: boolean;
+  allowedSandboxes?: readonly string[];
+  revalidatePolicyRequirements?(operation: string): void;
 }
 
 type PreparedCredentialProviders = {
@@ -46,21 +53,23 @@ function recordMigratedLegacyMessagingCredentials(
   tokenDefs: readonly MessagingTokenDef[],
   registeredProviderNames: readonly string[],
   deps: CredentialProviderRegistrationDeps,
+  revalidatePolicyRequirements?: (operation: string) => void,
 ): void {
   const registeredProviders = new Set(registeredProviderNames);
-  let mutated = false;
+  const migrations: Array<{ envKey: string; migrated: boolean }> = [];
   for (const def of tokenDefs) {
     if (!registeredProviders.has(def.name) || !def.token || !def.envKey) continue;
     const stagedValue = deps.stagedLegacyValues.get(def.envKey);
     if (stagedValue === undefined) continue;
-    if (def.token === stagedValue) {
-      deps.migratedLegacyKeys.add(def.envKey);
-    } else {
-      deps.migratedLegacyKeys.delete(def.envKey);
-    }
-    mutated = true;
+    migrations.push({ envKey: def.envKey, migrated: def.token === stagedValue });
   }
-  if (mutated) deps.persistMigratedLegacyKeys();
+  if (migrations.length === 0) return;
+  revalidatePolicyRequirements?.("record migrated messaging provider credentials");
+  for (const migration of migrations) {
+    if (migration.migrated) deps.migratedLegacyKeys.add(migration.envKey);
+    else deps.migratedLegacyKeys.delete(migration.envKey);
+  }
+  deps.persistMigratedLegacyKeys();
 }
 
 function setStagedCredentialProviderReceipts(
@@ -148,6 +157,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     baseUrl: string | null,
     env: NodeJS.ProcessEnv = {},
     gatewayName = deps.getGatewayName(),
+    options: MessagingProviderRegistrationOptions = {},
   ) {
     const result = providers.upsertProvider(
       name,
@@ -156,10 +166,14 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       baseUrl,
       env,
       gatewayRunner(gatewayName),
+      options,
     );
     if (result.ok && credentialEnv) {
       const stagedValue = deps.stagedLegacyValues.get(credentialEnv);
       if (stagedValue !== undefined) {
+        options.revalidatePolicyRequirements?.(
+          `record migrated credential for provider ${JSON.stringify(name)}`,
+        );
         const upsertedValue = env[credentialEnv] ?? deps.getCredential(credentialEnv);
         if (upsertedValue === stagedValue) {
           deps.migratedLegacyKeys.add(credentialEnv);
@@ -174,16 +188,26 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
 
   function upsertMessagingProviders(
     tokenDefs: MessagingTokenDef[],
-    options: { replaceExisting?: boolean; allowedSandboxes?: readonly string[] } = {},
+    options: MessagingProviderRegistrationOptions = {},
     runOpenshell: OpenshellCliHelpers["runOpenshell"] = deps.runOpenshell,
   ): string[] {
-    ensureWebSearchProviderProfiles(tokenDefs, runOpenshell);
+    const runWebSearchOpenshell = providers.policyAuthorityCheckedRunner(
+      runOpenshell,
+      options.revalidatePolicyRequirements,
+      "import a web-search provider profile",
+    );
+    ensureWebSearchProviderProfiles(tokenDefs, runWebSearchOpenshell);
     const upserted = providers.upsertMessagingProviders(
       tokenDefs,
       runOpenshell,
       options,
     ) as string[];
-    recordMigratedLegacyMessagingCredentials(tokenDefs, upserted, deps);
+    recordMigratedLegacyMessagingCredentials(
+      tokenDefs,
+      upserted,
+      deps,
+      options.revalidatePolicyRequirements,
+    );
     return upserted;
   }
 
@@ -211,10 +235,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     type: string,
     credentialEnv: string,
   ): boolean {
-    return credentialBindingMatchesGateway(
-      { name, type, credentialEnv },
-      gatewayRunner(),
-    );
+    return credentialBindingMatchesGateway({ name, type, credentialEnv }, gatewayRunner());
   }
 
   function preflightRequiredCredentialProviderBindings(
@@ -240,6 +261,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     prepareCredentialProviders: PrepareCredentialProviders<Agent>,
   ): Promise<readonly CheckpointProviderBinding[]> {
     const messaging = await prepareCredentialProviders(input);
+    input.revalidatePolicyRequirements?.("stage sandbox credential providers after planning");
     const plannedBindings = validatePlannedCredentialProviderBindings(
       messaging.messagingTokenDefs,
       input.requiredBindings,
@@ -257,12 +279,18 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       plannedTokenDefs,
       runOpenshell,
     );
+    input.revalidatePolicyRequirements?.("clear staged credential provider receipts");
     setStagedCredentialProviderReceipts(
       tokenDefs.map((tokenDef) => tokenDef.name),
       false,
       deps,
     );
-    const registered = upsertMessagingProviders(tokenDefs, {}, runOpenshell);
+    const registered = upsertMessagingProviders(
+      tokenDefs,
+      { revalidatePolicyRequirements: input.revalidatePolicyRequirements },
+      runOpenshell,
+    );
+    input.revalidatePolicyRequirements?.("record staged credential provider receipts");
     setStagedCredentialProviderReceipts(registered, true, deps);
     return registered.map((name) => {
       const binding = plannedBindings.get(name);

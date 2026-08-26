@@ -129,6 +129,8 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
   /** Force the provider-neutral inference.local proof for any supported agent. */
   forceCanonicalRoute?: boolean;
   hostLocalInferenceProofAuthority?: HostLocalInferenceSandboxProofAuthority;
+  /** Recheck policy authority after the sandbox proof and before success output. */
+  beforeSuccess?: () => void;
 }): void {
   if (
     options.forceCanonicalRoute !== true &&
@@ -239,6 +241,7 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
     process.exit(smokeResult.status || 1);
   }
 
+  options.beforeSuccess?.();
   console.log(
     options.forceCanonicalRoute
       ? "  \u2713 Provider responds through inference.local inside the sandbox"

@@ -16,7 +16,7 @@ Use the reported status or lifecycle error to choose the matching remediation.
 If `mcp status <server>` reports identical placeholder and control rejections, first confirm the stored credential is valid.
 Rotate it with `mcp restart` when in doubt.
 
-For identical HTTP 401 or 403 responses, a confirmed-valid credential means the OpenShell gateway on this host is not rewriting `openshell:resolve:env:KEY` on egress.
+For identical HTTP 401 or 403 responses, a confirmed-valid credential means the OpenShell gateway on this host is not rewriting the recorded resolver placeholder on egress.
 Every agent request receives the same authentication failure even when provider, attachment, readiness, and adapter checks report healthy.
 
 This is a host-side OpenShell defect rather than a NemoClaw registration problem.
@@ -39,6 +39,31 @@ If restart reports a missing provider and the original credential is not registe
 
 If restart or rebuild reports that the provider uses the profile-less legacy `generic` type, remove that server and add it again with the recorded credential variable exported.
 OpenShell cannot bind that provider to an MCP endpoint, and NemoClaw accepts it only for exact cleanup.
+
+## Rebuild or Destroy Cannot Prove a Credential Revision
+
+If rebuild or destroy reports that it could not prove a revision-scoped credential, a fresh sandbox process did not expose the exact OpenShell credential identity required for adapter cleanup.
+NemoClaw leaves the affected adapter and every provider unchanged.
+It attempts to restore adapter entries prepared earlier in the operation and reports rollback failures.
+
+Inspect the managed server:
+
+```bash
+$$nemoclaw <sandbox> mcp status <server> --json
+```
+
+If status cannot reach the sandbox, repair the reported gateway condition first.
+Export the recorded environment variable, then restart the server to publish and verify a fresh credential revision:
+
+```bash
+export <CREDENTIAL_ENV>='replacement-value'
+$$nemoclaw <sandbox> mcp restart <server>
+unset <CREDENTIAL_ENV>
+```
+
+Run status again.
+Retry rebuild or destroy only after `provider.credentialReady` and `adapter.registered` are both `true`.
+If restart still cannot prove the revision, repair the reported OpenShell provider, policy, or adapter condition before retrying teardown.
 
 ## Add Transaction Is Incomplete
 
