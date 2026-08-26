@@ -213,6 +213,32 @@ describe("createSetupNimOllamaHandlers", () => {
     expect(install).not.toHaveBeenCalled();
   });
 
+  it("stops before local Ollama install effects when policy authority changes (#9833)", async () => {
+    const selection = makeState();
+    selection.revalidatePolicyRequirements = () => {
+      throw new Error("external policy authority must supply local inference");
+    };
+    const install = vi.fn(() => ({ ok: true }));
+    const start = vi.fn(() => ({ kind: "ready" as const }));
+    const { handleInstallOllamaSelection } = createSetupNimOllamaHandlers(
+      makeDeps({
+        process: { ...process, platform: "linux" } as NodeJS.Process,
+        installOllamaOnLinux: install,
+        runOllamaStartupOrGate: start,
+      }),
+    );
+
+    await expect(
+      handleInstallOllamaSelection(null, "qwen3:8b", null, selection, {
+        hasUpgradableOllama: false,
+        binaryNeedsUpgrade: false,
+      }),
+    ).rejects.toThrow(/external policy authority must supply/u);
+
+    expect(install).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+  });
+
   it("installs a missing binary while recovering a stale daemon", async () => {
     const install = vi.fn(() => ({ ok: true }));
     const { handleInstallOllamaSelection } = createSetupNimOllamaHandlers(
@@ -262,6 +288,36 @@ describe("createSetupNimOllamaHandlers", () => {
     expect(switchHost).not.toHaveBeenCalled();
     expect(install).not.toHaveBeenCalled();
     expect(restart).not.toHaveBeenCalled();
+  });
+
+  it("stops before Windows Ollama install effects when policy authority changes (#9833)", async () => {
+    const selection = makeState();
+    selection.revalidatePolicyRequirements = () => {
+      throw new Error("external policy authority must supply local inference");
+    };
+    const install = vi.fn(async () => ({ ok: true, path: "C:/Ollama/ollama.exe" }));
+    const start = vi.fn(() => true);
+    const { handleWindowsHostOllamaSelection } = createSetupNimOllamaHandlers(
+      makeDeps({
+        installOllamaOnWindowsHost: install,
+        setupWindowsOllamaWith0000Binding: start,
+      }),
+    );
+
+    await expect(
+      handleWindowsHostOllamaSelection(
+        null,
+        "install-windows-ollama",
+        "qwen3:8b",
+        false,
+        false,
+        null,
+        selection,
+      ),
+    ).rejects.toThrow(/external policy authority must supply/u);
+
+    expect(install).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
   });
 
   it("preserves accepted tools-incompatible state for running Ollama", async () => {

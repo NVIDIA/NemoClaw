@@ -13,8 +13,10 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { isErrnoException } from "../core/errno";
 import { DEFAULT_GATEWAY_PORT } from "../core/ports";
-import { normalizeSession, type Session } from "../state/onboard-session";
+import { inspectCheckpoint } from "../state/onboard-checkpoint";
+import type { Session } from "../state/onboard-session";
 import { nemoclawStateRoot, resolveHome } from "../state/state-root";
 import { hasOpenShellGatewayUserService } from "./docker-driver-gateway-service";
 import { gatewayOwnerFromCheckpoint } from "./gateway-authority-checkpoint";
@@ -41,7 +43,10 @@ export interface GatewayTeardownAuthorityDeps {
   env?: NodeJS.ProcessEnv;
   hasPackagedService?: () => boolean;
   loadDeclaration?: (env: NodeJS.ProcessEnv) => GatewayManagementLoadResult;
-  loadSession?: (target: GatewayTeardownTarget, env: NodeJS.ProcessEnv) => Session | null;
+  loadSession?: (
+    target: GatewayTeardownTarget,
+    env: NodeJS.ProcessEnv,
+  ) => Pick<Session, "checkpoint"> | null;
 }
 
 export type GatewayTeardownAuthorityResolver = (
@@ -50,6 +55,9 @@ export type GatewayTeardownAuthorityResolver = (
 ) => GatewayOwner;
 
 type GatewayAuthorityEffect = "credential mutation" | "rebuild" | "teardown";
+
+const FRESH_ONBOARDING_CHECKPOINT_RECOVERY =
+  " Start a fresh onboarding run to replace the invalid checkpoint before retrying.";
 
 export function isManagedPackagedServiceMigration(
   recorded: GatewayOwner,
@@ -64,19 +72,44 @@ export function isManagedPackagedServiceMigration(
   );
 }
 
-function loadTargetSession(target: GatewayTeardownTarget, env: NodeJS.ProcessEnv): Session | null {
+function loadTargetSession(
+  target: GatewayTeardownTarget,
+  env: NodeJS.ProcessEnv,
+): Pick<Session, "checkpoint"> | null {
   const sessionFile = path.join(
     nemoclawStateRoot(resolveHome(env), target.gatewayPort),
     "onboard-session.json",
   );
+  let raw: unknown;
   try {
-    if (!fs.existsSync(sessionFile)) return null;
-    return normalizeSession(JSON.parse(fs.readFileSync(sessionFile, "utf-8")));
-  } catch {
-    // Preserve loadSession() compatibility for legacy or interrupted state.
-    // A valid selected authority still remains binding when it can be read.
-    return null;
+    raw = JSON.parse(fs.readFileSync(sessionFile, "utf-8"));
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") return null;
+    throw new GatewayAuthorityError(
+      "The persisted onboarding session is unreadable or is not valid JSON; gateway lifecycle authority cannot be revalidated." +
+        FRESH_ONBOARDING_CHECKPOINT_RECOVERY,
+    );
   }
+
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new GatewayAuthorityError(
+      "The persisted onboarding session is corrupt; gateway lifecycle authority cannot be revalidated." +
+        FRESH_ONBOARDING_CHECKPOINT_RECOVERY,
+    );
+  }
+
+  const inspected = inspectCheckpoint((raw as { checkpoint?: unknown }).checkpoint);
+  if (inspected.status === "loaded") return { checkpoint: inspected.checkpoint };
+  if (inspected.status === "none" || inspected.status === "legacy") return null;
+  if (inspected.status === "unsupported_future") {
+    throw new GatewayAuthorityError(
+      `The persisted onboarding checkpoint uses unsupported schema version ${String(inspected.foundVersion)}; gateway lifecycle authority cannot be revalidated.${FRESH_ONBOARDING_CHECKPOINT_RECOVERY}`,
+    );
+  }
+  throw new GatewayAuthorityError(
+    "The persisted onboarding checkpoint is corrupt; gateway lifecycle authority cannot be revalidated." +
+      FRESH_ONBOARDING_CHECKPOINT_RECOVERY,
+  );
 }
 
 /**

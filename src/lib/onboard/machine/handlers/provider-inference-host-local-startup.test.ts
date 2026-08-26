@@ -14,8 +14,18 @@ import type {
 import {
   createCachedHostLocalInferenceSetupResolver,
   handleProviderInferenceState,
+  type ProviderInferenceStateOptions,
 } from "./provider-inference";
-import { baseOptions, baseSelection, createDeps } from "./provider-inference.test-support";
+import {
+  baseOptions,
+  baseSelection,
+  createDeps,
+  type Agent,
+  type Gpu,
+  type Host,
+} from "./provider-inference.test-support";
+
+type TestProviderInferenceOptions = ProviderInferenceStateOptions<Gpu, Agent, Host>;
 
 const PROBE_IMAGE = `quay.io/curl/curl@sha256:${"b".repeat(64)}`;
 const NIM_IMAGE = `nvcr.io/nim/meta/llama@sha256:${"d".repeat(64)}`;
@@ -409,21 +419,46 @@ describe("provider inference host-local startup selection", () => {
     async ({ application, service }) => {
       const model = "qwen3.5-9b";
       const provider = service === "ollama" ? "ollama-local" : "vllm-local";
-      const setupNim = vi.fn(async () => ({
-        ...baseSelection,
-        provider,
-        model,
-        acceleration: "nvidia-gpu",
-        endpointUrl: null,
-        credentialEnv: null,
-        preferredInferenceApi: "openai-completions",
-      }));
+      const setupNim = vi.fn<TestProviderInferenceOptions["deps"]["setupNim"]>(
+        async (
+          _gpu,
+          _sandboxName,
+          _agent,
+          _allowRecordedProviderRecovery,
+          _gatewayName,
+          _assertRouteCompatible,
+          _canProbeRoute,
+          _recoverySessionId,
+          revalidatePolicyRequirements,
+        ) => {
+          const selection = {
+            ...baseSelection,
+            provider,
+            model,
+            acceleration: "nvidia-gpu" as const,
+            endpointUrl: null,
+            credentialEnv: null,
+            preferredInferenceApi: "openai-completions",
+          };
+          expect(revalidatePolicyRequirements).toBeTypeOf("function");
+          revalidatePolicyRequirements!(selection, "install managed local runtime");
+          return selection;
+        },
+      );
       const resolver = vi.fn((input: HostLocalInferenceStartupSelectionInput) =>
         hostLocalStartupSelection(input, service),
+      );
+      const preflightPolicyRequirements = vi.fn(
+        (requirements: { provider: string | null; hostLocalInferenceRouteOnly?: boolean }) => {
+          expect(
+            requirements.provider !== provider || requirements.hostLocalInferenceRouteOnly === true,
+          ).toBe(true);
+        },
       );
       const { deps, calls } = createDeps({
         setupNim,
         resolveHostLocalInferenceStartupSelection: resolver,
+        preflightPolicyRequirements,
       });
       const session = createSession();
       calls.complete.mockResolvedValue(session);
@@ -465,6 +500,13 @@ describe("provider inference host-local startup selection", () => {
           : null,
       );
       expect(calls.prepareLocalProviderForInference).not.toHaveBeenCalled();
+      expect(preflightPolicyRequirements).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider,
+          hostLocalInferenceRouteOnly: true,
+          operation: "record successful inference configuration",
+        }),
+      );
       expect(result).toMatchObject({
         endpointUrl: "https://inference.local/v1",
         endpointSource: "inference-set",

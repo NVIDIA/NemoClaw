@@ -17,6 +17,7 @@ import {
   type ChildProcessProgress,
   spawnObservedChild,
 } from "../fixtures/observed-child-process.ts";
+import { PollingError, pollUntil } from "../fixtures/polling.ts";
 
 type QualificationProgress = ChildProcessProgress & {
   hasReached(label: string): boolean;
@@ -30,6 +31,8 @@ const MAX_COMMAND_OUTPUT_BYTES = 1024 * 1024;
 const COMMAND_TIMEOUT_MS = 30_000;
 const READY_TIMEOUT_MS = 180_000;
 const TERMINATION_TIMEOUT_MS = 15_000;
+const FORWARD_HEALTH_READINESS_ATTEMPTS = 12;
+const FORWARD_HEALTH_READINESS_DELAY_MS = 1_000;
 const WINDOWS_PROCESS_ENVIRONMENT_NAMES = [
   "ComSpec",
   "LOCALAPPDATA",
@@ -104,6 +107,25 @@ export type CommandResult = {
   readonly stderr: string;
   readonly stdout: string;
 };
+
+export type WindowsMxcForwardHealthObservation = "ready" | "relay-not-ready" | "terminal";
+
+export interface WindowsMxcForwardHealthReadinessEvidence {
+  readonly schemaVersion: 1;
+  readonly operation: "windows-mxc-forward-authenticated-health";
+  readonly maxAttempts: number;
+  readonly delayMs: number;
+  readonly attempts: readonly {
+    readonly attempt: number;
+    readonly outcome: WindowsMxcForwardHealthObservation;
+  }[];
+  readonly outcome: "ready" | "terminal" | "exhausted";
+}
+
+export interface WindowsMxcForwardHealthReadinessResult {
+  readonly command: CommandResult;
+  readonly evidence: WindowsMxcForwardHealthReadinessEvidence;
+}
 
 export interface WindowsProcessIdentity {
   readonly commandLine: string;
@@ -1381,6 +1403,124 @@ export function parseOpenClawHealthResult(output: string): boolean {
   return typeof value === "object" && value !== null && "ok" in value && value.ok === true;
 }
 
+export function windowsMxcOpenClawStartupPreconditionsPass(input: {
+  readonly filesystemControlWrite: boolean;
+  readonly filesystemDeniedWrite: boolean;
+  readonly openClawHealth: boolean;
+  readonly openClawProcessPresentWhileReady: boolean;
+  readonly registryPresentWhileReady: boolean;
+}): boolean {
+  return (
+    input.filesystemControlWrite &&
+    input.filesystemDeniedWrite &&
+    input.openClawHealth &&
+    input.openClawProcessPresentWhileReady &&
+    input.registryPresentWhileReady
+  );
+}
+
+export function classifyWindowsMxcForwardHealthObservation(
+  result: CommandResult,
+): WindowsMxcForwardHealthObservation {
+  let value: unknown;
+  try {
+    value = parseEmbeddedJson(result.stdout, "OpenClaw health output");
+  } catch {
+    return "terminal";
+  }
+  if (result.exitCode === 0 && parseOpenClawHealthResult(result.stdout)) return "ready";
+  if (
+    result.exitCode !== 0 &&
+    typeof value === "object" &&
+    value !== null &&
+    "ok" in value &&
+    value.ok === false &&
+    "error" in value &&
+    typeof value.error === "object" &&
+    value.error !== null &&
+    "type" in value.error &&
+    value.error.type === "gateway_transport_error" &&
+    "kind" in value.error &&
+    value.error.kind === "closed" &&
+    "code" in value.error &&
+    value.error.code === 1006 &&
+    "reason" in value.error &&
+    value.error.reason === "no close reason"
+  ) {
+    return "relay-not-ready";
+  }
+  return "terminal";
+}
+
+export async function observeWindowsMxcForwardHealthReadiness(input: {
+  readonly probe: (attempt: number) => Promise<CommandResult>;
+  readonly attempts?: number;
+  readonly delayMs?: number;
+  readonly forwardActive?: () => boolean;
+  readonly sleep?: (ms: number) => Promise<void>;
+}): Promise<WindowsMxcForwardHealthReadinessResult> {
+  const maxAttempts = input.attempts ?? FORWARD_HEALTH_READINESS_ATTEMPTS;
+  const delayMs = input.delayMs ?? FORWARD_HEALTH_READINESS_DELAY_MS;
+  const attempts: Array<{
+    readonly attempt: number;
+    readonly outcome: WindowsMxcForwardHealthObservation;
+  }> = [];
+  try {
+    const accepted = await pollUntil({
+      artifactPrefix: "windows-mxc-forward-health-readiness",
+      attempts: maxAttempts,
+      delayMs,
+      sleep: input.sleep,
+      probe: async (attempt) => {
+        if (input.forwardActive?.() === false) {
+          const command = {
+            exitCode: 1,
+            stderr: "OpenShell forward exited before the health probe",
+            stdout: "",
+          };
+          const outcome = "terminal" as const;
+          attempts.push({ attempt, outcome });
+          return { command, outcome };
+        }
+        const command = await input.probe(attempt);
+        let outcome = classifyWindowsMxcForwardHealthObservation(command);
+        if (input.forwardActive?.() === false) {
+          outcome = "terminal";
+        }
+        attempts.push({ attempt, outcome });
+        return { command, outcome };
+      },
+      accept: ({ outcome }) => outcome === "ready",
+      terminal: ({ outcome }) =>
+        outcome === "terminal" ? "forwarded OpenClaw health failed" : undefined,
+    });
+    return {
+      command: accepted.value.command,
+      evidence: {
+        schemaVersion: 1,
+        operation: "windows-mxc-forward-authenticated-health",
+        maxAttempts,
+        delayMs,
+        attempts,
+        outcome: "ready",
+      },
+    };
+  } catch (error) {
+    if (!(error instanceof PollingError) || error.lastAttempt === undefined) throw error;
+    return {
+      command: error.lastAttempt.value.command,
+      evidence: {
+        schemaVersion: 1,
+        operation: "windows-mxc-forward-authenticated-health",
+        maxAttempts,
+        delayMs,
+        attempts,
+        outcome: error.reason === "terminal" ? "terminal" : "exhausted",
+      },
+    };
+  }
+}
+
 export function parseOpenClawExactChatReply(output: string): boolean {
   const value = parseEmbeddedJson(output, "OpenClaw agent output");
   if (
@@ -1765,6 +1905,10 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     inputs.artifactDirectory,
     `windows-mxc-openclaw-receipt-${runId}.json`,
   );
+  const forwardHealthReadinessPath = path.join(
+    inputs.artifactDirectory,
+    `windows-mxc-forward-health-readiness-${runId}.json`,
+  );
   const {
     clientEnvironment,
     clientHomeDirectory,
@@ -1974,6 +2118,9 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
       ...checks,
       sandboxCreateAccepted: create.exitCode === 0,
     };
+    if (!windowsMxcOpenClawStartupPreconditionsPass(checks)) {
+      throw new Error("Windows MXC OpenClaw startup preconditions failed before forwarding");
+    }
 
     if (
       !progress.hasReached(
@@ -2034,21 +2181,31 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     });
     checks = { ...checks, forwardListening: true };
 
-    const forwardedHealth = await runCommand(
-      inputs.openClaw.nodePath,
-      [inputs.openClaw.entryPath, "gateway", "health", "--json", "--timeout", "60000"],
-      clientEnvironment,
-      progress,
-      "command: windows-mxc-openclaw-forwarded-health",
-      90_000,
+    const forwardedHealth = await observeWindowsMxcForwardHealthReadiness({
+      forwardActive: () => forward?.exitCode === null,
+      probe: async (attempt) =>
+        await runCommand(
+          inputs.openClaw.nodePath,
+          [inputs.openClaw.entryPath, "gateway", "health", "--json", "--timeout", "60000"],
+          clientEnvironment,
+          progress,
+          `command: windows-mxc-openclaw-forwarded-health-attempt-${attempt}`,
+          90_000,
+        ),
+    });
+    fs.writeFileSync(
+      forwardHealthReadinessPath,
+      `${JSON.stringify(forwardedHealth.evidence, null, 2)}\n`,
+      { encoding: "utf8", flag: "wx", mode: 0o600 },
     );
     checks = {
       ...checks,
-      forwardAuthenticatedHealth:
-        forwardedHealth.exitCode === 0 && parseOpenClawHealthResult(forwardedHealth.stdout),
+      forwardAuthenticatedHealth: forwardedHealth.evidence.outcome === "ready",
     };
     if (!checks.forwardAuthenticatedHealth) {
-      throw new Error(`forwarded OpenClaw health failed: ${commandDetail(forwardedHealth)}`);
+      throw new Error(
+        `forwarded OpenClaw health ${forwardedHealth.evidence.outcome}: ${commandDetail(forwardedHealth.command)}`,
+      );
     }
 
     const forwardedChat = await runCommand(

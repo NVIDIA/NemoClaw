@@ -93,8 +93,8 @@ runner.runCapture = (command) => {
 };
 registry.getSandbox = () => ({
   name: "my-assistant",
-  gpuEnabled: false,
-  toolDisclosure: "progressive",
+  gpuEnabled: false, policyAuthority: "nemoclaw-managed",
+  policyAuthority: "nemoclaw-managed", toolDisclosure: "progressive",
 });
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
@@ -292,7 +292,7 @@ const mutations = [];
 const sourceEntry = {
   name: "my-assistant",
   agent: "openclaw",
-  gpuEnabled: false,
+  gpuEnabled: false, policyAuthority: "nemoclaw-managed",
   imageTag: "nemoclaw/my-assistant:1",
   toolDisclosure: "progressive",
 };
@@ -424,6 +424,7 @@ runner.runCapture = (command) => {
 registry.getSandbox = () => ({
   name: "my-assistant",
   gpuEnabled: false,
+  policyAuthority: "nemoclaw-managed",
   toolDisclosure: "progressive",
 });
 sandboxState.getLatestBackup = () => {
@@ -483,7 +484,7 @@ const { createSandbox } = require(${onboardPath});
     );
     assert.ok(
       output.includes("--recreate-sandbox") || output.includes("NEMOCLAW_RECREATE_SANDBOX"),
-      "should hint about --recreate-sandbox flag",
+      `should hint about --recreate-sandbox flag; output:\n${output}`,
     );
   });
 });
