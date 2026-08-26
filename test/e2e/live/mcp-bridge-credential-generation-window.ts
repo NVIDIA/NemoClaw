@@ -36,6 +36,67 @@ export type CredentialWindowRequestStep =
   | (typeof CREDENTIAL_WINDOW_STEPS)["deniedAfterDetach"]
   | (typeof CREDENTIAL_WINDOW_STEPS)["fallbackAfterRestart"];
 
+export interface CredentialWindowRequestObservation {
+  readonly step: CredentialWindowRequestStep;
+  readonly outcome: "allowed" | "denied";
+  readonly statusCode: number | null;
+  readonly errorCode: string | null;
+}
+
+const CREDENTIAL_WINDOW_REQUEST_STEPS: readonly CredentialWindowRequestStep[] = [
+  CREDENTIAL_WINDOW_STEPS.allowedBeforeExpiry,
+  CREDENTIAL_WINDOW_STEPS.deniedAfterExpiry,
+  CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction,
+  CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval,
+  CREDENTIAL_WINDOW_STEPS.deniedAfterDetach,
+  CREDENTIAL_WINDOW_STEPS.fallbackAfterRestart,
+];
+
+export function parseCredentialWindowRequestObservation(
+  output: string,
+): CredentialWindowRequestObservation | null {
+  try {
+    const parsed = JSON.parse(output.trim()) as Record<string, unknown>;
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed) ||
+      Object.keys(parsed).sort().join(",") !== "errorCode,outcome,statusCode,step" ||
+      typeof parsed.step !== "string" ||
+      !CREDENTIAL_WINDOW_REQUEST_STEPS.includes(parsed.step as CredentialWindowRequestStep) ||
+      (parsed.outcome !== "allowed" && parsed.outcome !== "denied")
+    ) {
+      return null;
+    }
+
+    const statusCode = parsed.statusCode;
+    const errorCode = parsed.errorCode;
+    const validStatusCode =
+      statusCode === null ||
+      (Number.isInteger(statusCode) &&
+        (statusCode as number) >= 100 &&
+        (statusCode as number) <= 599);
+    const validErrorCode =
+      errorCode === null || (typeof errorCode === "string" && /^[A-Z0-9_]{1,64}$/u.test(errorCode));
+    if (!validStatusCode || !validErrorCode) return null;
+
+    if (parsed.outcome === "allowed") {
+      if (statusCode !== 200 || errorCode !== null) return null;
+    } else if (statusCode === 200 || (statusCode === null) === (errorCode === null)) {
+      return null;
+    }
+
+    return {
+      step: parsed.step as CredentialWindowRequestStep,
+      outcome: parsed.outcome,
+      statusCode: statusCode as number | null,
+      errorCode: errorCode as string | null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function credentialWindowSecret(generation: number): string {
   return `${MCP_BRIDGE_TEST_CREDENTIALS.generationWindow}${String(generation).padStart(2, "0")}`;
 }
@@ -113,10 +174,20 @@ const requestSteps = new Set([
 const seen = new Set();
 const outcomes = [];
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+const normalizeErrorCode = (error) => {
+  const code = error && typeof error.code === "string" ? error.code.toUpperCase() : "UNKNOWN";
+  return /^[A-Z0-9_]{1,64}$/.test(code) ? code : "UNKNOWN";
+};
 const writePrivateJson = (file, value) => {
   fs.writeFileSync(file, JSON.stringify(value) + "\\n", { encoding: "utf8", mode: 0o600 });
 };
 const request = (step) => new Promise((resolve) => {
+  let settled = false;
+  const finish = (observation) => {
+    if (settled) return;
+    settled = true;
+    resolve({ step, ...observation });
+  };
   const body = JSON.stringify({
     jsonrpc: "2.0",
     id: config.requestPrefix + ":" + step,
@@ -134,10 +205,29 @@ const request = (step) => new Promise((resolve) => {
     },
   }, (response) => {
     response.resume();
-    response.on("end", () => resolve(response.statusCode === 200 ? "allowed" : "denied"));
+    response.on("end", () => {
+      const statusCode = Number.isInteger(response.statusCode) ? response.statusCode : null;
+      finish({
+        outcome: statusCode === 200 ? "allowed" : "denied",
+        statusCode,
+        errorCode: statusCode === null ? "MISSING_STATUS" : null,
+      });
+    });
+    response.on("close", () => {
+      if (!response.readableEnded) {
+        finish({ outcome: "denied", statusCode: null, errorCode: "PREMATURE_CLOSE" });
+      }
+    });
   });
-  outbound.on("error", () => resolve("denied"));
-  outbound.setTimeout(30_000, () => outbound.destroy());
+  outbound.on("error", (error) => finish({
+    outcome: "denied",
+    statusCode: null,
+    errorCode: normalizeErrorCode(error),
+  }));
+  outbound.setTimeout(30_000, () => {
+    finish({ outcome: "denied", statusCode: null, errorCode: "TIMEOUT" });
+    outbound.destroy();
+  });
   outbound.end(body);
 });
 
@@ -153,9 +243,9 @@ const deadline = Date.now() + config.maxRuntimeMs;
       stopped = true;
     } else if (requestSteps.has(step) && !seen.has(step)) {
       seen.add(step);
-      const outcome = await request(step);
-      outcomes.push({ step, outcome });
-      writePrivateJson(config.acknowledgementPath, { step, outcome });
+      const observation = await request(step);
+      outcomes.push(observation);
+      writePrivateJson(config.acknowledgementPath, observation);
     }
     if (!stopped) await delay(200);
   }

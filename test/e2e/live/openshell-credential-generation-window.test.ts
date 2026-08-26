@@ -11,6 +11,7 @@ import { assertExitZero as expectExitZero, resultText } from "../fixtures/client
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { expectSandboxProviderAttachment } from "../fixtures/gateway-providers.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { hostAddressForSandbox } from "./mcp-bridge-sandbox.ts";
@@ -30,11 +31,13 @@ import {
   CREDENTIAL_WINDOW_REQUEST_PREFIX,
   CREDENTIAL_WINDOW_ROTATION_COUNT,
   CREDENTIAL_WINDOW_STEPS,
+  type CredentialWindowRequestObservation,
   type CredentialWindowRequestStep,
   credentialWindowRequestId,
   credentialWindowSecrets,
   OPENSHELL_RETAINED_CREDENTIAL_GENERATIONS,
-} from "./openshell-credential-generation-window.ts";
+  parseCredentialWindowRequestObservation,
+} from "./mcp-bridge-credential-generation-window.ts";
 
 const SANDBOX_NAME = "e2e-cred-window";
 const SERVER_NAME = "fake";
@@ -50,7 +53,7 @@ interface CredentialWindowRequest {
 
 interface CredentialWindowChildResult {
   readonly revision: string;
-  readonly outcomes: Array<{ step: string; outcome: string }>;
+  readonly outcomes: CredentialWindowRequestObservation[];
 }
 
 function openshellEnv(): NodeJS.ProcessEnv {
@@ -231,9 +234,8 @@ async function waitForReadyRevision(sandbox: SandboxClient): Promise<string> {
 async function waitForAcknowledgement(
   sandbox: SandboxClient,
   step: CredentialWindowRequestStep,
-  outcome: "allowed" | "denied",
-): Promise<void> {
-  const expected = JSON.stringify({ step, outcome });
+): Promise<CredentialWindowRequestObservation> {
+  let matchingOutput = "";
   await expect
     .poll(
       async () => {
@@ -242,7 +244,14 @@ async function waitForAcknowledgement(
           CREDENTIAL_WINDOW_PATHS.acknowledgement,
           `credential-window-${step}-ack-poll`,
         );
-        return result.exitCode === 0 ? result.stdout.trim() : "";
+        try {
+          const output = result.exitCode === 0 ? result.stdout.trim() : "{}";
+          const parsed = JSON.parse(output) as { step?: unknown };
+          matchingOutput = parsed.step === step ? result.stdout : matchingOutput;
+          return parsed.step;
+        } catch {
+          return "";
+        }
       },
       {
         interval: 500,
@@ -250,7 +259,10 @@ async function waitForAcknowledgement(
         message: `old child acknowledgement for ${step}`,
       },
     )
-    .toBe(expected);
+    .toBe(step);
+  const observation = parseCredentialWindowRequestObservation(matchingOutput);
+  expect(observation, `old child acknowledgement for ${step} must be bounded`).not.toBeNull();
+  return observation!;
 }
 
 async function rotateCredential(
@@ -495,7 +507,14 @@ test("openshell-credential-generation-window", {
       CREDENTIAL_WINDOW_STEPS.allowedBeforeExpiry,
       "credential-window-signal-before-expiry",
     );
-    await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.allowedBeforeExpiry, "allowed");
+    expect(
+      await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.allowedBeforeExpiry),
+    ).toEqual({
+      step: CREDENTIAL_WINDOW_STEPS.allowedBeforeExpiry,
+      outcome: "allowed",
+      statusCode: 200,
+      errorCode: null,
+    });
     expect(
       requestEvidence(
         fakeMcp,
@@ -552,7 +571,12 @@ test("openshell-credential-generation-window", {
       CREDENTIAL_WINDOW_STEPS.deniedAfterExpiry,
       "credential-window-signal-after-expiry",
     );
-    await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.deniedAfterExpiry, "denied");
+    expect(
+      await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.deniedAfterExpiry),
+    ).toMatchObject({
+      step: CREDENTIAL_WINDOW_STEPS.deniedAfterExpiry,
+      outcome: "denied",
+    });
     expect(
       requestEvidence(
         fakeMcp,
@@ -576,7 +600,7 @@ test("openshell-credential-generation-window", {
 
   expect(expiryChildResult).toBeDefined();
   expectExitZero(expiryChildResult!, "retained-expiry credential-window child");
-  expect(parseLastJsonLine<CredentialWindowChildResult>(expiryChildResult!.stdout)).toEqual({
+  expect(parseLastJsonLine<CredentialWindowChildResult>(expiryChildResult!.stdout)).toMatchObject({
     revision: expiryChildRevision,
     outcomes: [
       {
@@ -620,6 +644,7 @@ test("openshell-credential-generation-window", {
   );
   let oldChildRevision = "";
   let oldChildResult: ShellProbeResult | undefined;
+  let providerDetachExitCode: number | null = null;
   let restartedRevision = "";
   const observedRevisions = [restoredRevision];
   try {
@@ -650,7 +675,12 @@ test("openshell-credential-generation-window", {
       CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction,
       "credential-window-signal-fallback-after-eviction",
     );
-    await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction, "denied");
+    expect(
+      await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction),
+    ).toMatchObject({
+      step: CREDENTIAL_WINDOW_STEPS.fallbackAfterEviction,
+      outcome: "denied",
+    });
     expect(
       requestEvidence(
         fakeMcp,
@@ -695,7 +725,12 @@ test("openshell-credential-generation-window", {
       CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval,
       "credential-window-signal-after-key-removal",
     );
-    await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval, "denied");
+    expect(
+      await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval),
+    ).toMatchObject({
+      step: CREDENTIAL_WINDOW_STEPS.deniedAfterKeyRemoval,
+      outcome: "denied",
+    });
     expect(
       requestEvidence(
         fakeMcp,
@@ -744,8 +779,11 @@ test("openshell-credential-generation-window", {
         timeoutMs: 90_000,
       },
     );
-    expectExitZero(detach, "detach credential-window provider");
-    expect(resultText(detach)).toMatch(/Detached provider/iu);
+    providerDetachExitCode = detach.exitCode;
+    await expectSandboxProviderAttachment(sandbox, SANDBOX_NAME, providerName, "absent", {
+      artifactName: "credential-window-provider-detached-state",
+      env: openshellEnv(),
+    });
     await expectFreshCredentialAbsent(
       sandbox,
       "credential-window-fresh-credential-absent-after-detach",
@@ -756,7 +794,12 @@ test("openshell-credential-generation-window", {
       CREDENTIAL_WINDOW_STEPS.deniedAfterDetach,
       "credential-window-signal-after-detach",
     );
-    await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.deniedAfterDetach, "denied");
+    expect(
+      await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.deniedAfterDetach),
+    ).toMatchObject({
+      step: CREDENTIAL_WINDOW_STEPS.deniedAfterDetach,
+      outcome: "denied",
+    });
     expect(
       requestEvidence(
         fakeMcp,
@@ -784,7 +827,14 @@ test("openshell-credential-generation-window", {
       CREDENTIAL_WINDOW_STEPS.fallbackAfterRestart,
       "credential-window-signal-fallback-after-restart",
     );
-    await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.fallbackAfterRestart, "allowed");
+    expect(
+      await waitForAcknowledgement(sandbox, CREDENTIAL_WINDOW_STEPS.fallbackAfterRestart),
+    ).toEqual({
+      step: CREDENTIAL_WINDOW_STEPS.fallbackAfterRestart,
+      outcome: "allowed",
+      statusCode: 200,
+      errorCode: null,
+    });
     await expect
       .poll(
         () =>
@@ -821,7 +871,7 @@ test("openshell-credential-generation-window", {
   expect(oldChildResult).toBeDefined();
   expectExitZero(oldChildResult!, "old credential-window child");
   const childSummary = parseLastJsonLine<CredentialWindowChildResult>(oldChildResult!.stdout);
-  expect(childSummary).toEqual({
+  expect(childSummary).toMatchObject({
     revision: oldChildRevision,
     outcomes: [
       {
@@ -915,6 +965,7 @@ test("openshell-credential-generation-window", {
     id: "openshell-credential-generation-window",
     expiryRevision,
     oldChildRevision,
+    providerDetachExitCode,
     rebuiltRevision,
     restartedRevision,
     rotations: CREDENTIAL_WINDOW_ROTATION_COUNT,

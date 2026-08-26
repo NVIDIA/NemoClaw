@@ -3620,7 +3620,8 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   openshell-credential-generation-window:
-    needs: generate-matrix
+    name: OpenShell / Credential Lifetime
+    needs: [base-image-publication, generate-matrix]
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openshell-credential-generation-window') }}
     runs-on: ubuntu-latest
     permissions:
@@ -3636,6 +3637,7 @@ jobs:
       E2E_OBSERVABLE_OUTCOME: "Credential expiry rotation detach and rebuild preserve the intended access window"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu Docker host; local compatible inference and MCP endpoint"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-credential-generation-window
+      E2E_MANAGED_IMAGE_REVISION: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_OPENSHELL_CHANNEL: stable
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"

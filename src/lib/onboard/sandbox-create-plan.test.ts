@@ -68,6 +68,18 @@ const channels = [
 
 const discordProviderName = "sandbox-discord-bridge";
 
+function prepareDiscordInitialSandboxPolicy(
+  _basePolicyPath: string,
+  activeMessagingChannels: string[],
+) {
+  const discordEnabled = activeMessagingChannels.includes("discord");
+  return {
+    policyPath: "/tmp/policy.yaml",
+    appliedPresets: discordEnabled ? ["discord"] : [],
+    credentialBindingProviders: discordEnabled ? [discordProviderName] : [],
+  };
+}
+
 function resolveDiscordCreateIntent(input: { selected: boolean; reusable?: boolean }) {
   const messagingTokenDefs: MessagingTokenDef[] = [
     {
@@ -122,6 +134,7 @@ function materializeDiscordCreatePlan(
     runProviderPreDeleteCleanup: vi.fn(),
     upsertMessagingProviders: vi.fn(() => [discordProviderName]),
     getHermesToolGatewayProviderName: vi.fn(),
+    prepareInitialSandboxCreatePolicy: prepareDiscordInitialSandboxPolicy,
     ...overrides,
   });
 }
@@ -630,8 +643,12 @@ describe("resolveSandboxCreateIntent", () => {
         policyPath: "/tmp/policy.yaml",
         appliedPresets: ["telegram"],
       }),
-      runProviderPreDeleteCleanup: () => events.push("cleanup"),
-      upsertMessagingProviders: vi.fn(() => {
+      runProviderPreDeleteCleanup: (revalidatePolicyRequirements) => {
+        revalidatePolicyRequirements?.("cleaning up deferred providers");
+        events.push("cleanup");
+      },
+      upsertMessagingProviders: vi.fn((_tokenDefs, options) => {
+        options.revalidatePolicyRequirements?.("upserting deferred providers");
         events.push("upsert");
         return ["sandbox-telegram-bridge"];
       }),
@@ -648,14 +665,23 @@ describe("resolveSandboxCreateIntent", () => {
       "sandbox-existing-discord",
     ]);
 
-    expect(plan.activateDeferredProviderEffects?.()).toEqual([
+    const revalidatePolicyRequirements = vi.fn((operation: string) =>
+      events.push(`policy: ${operation}`),
+    );
+    expect(plan.activateDeferredProviderEffects?.(revalidatePolicyRequirements)).toEqual([
       "nvidia-prod",
       "sandbox-telegram-bridge",
       "sandbox-existing-discord",
       "sandbox-hermes-tools",
       "custom-provider",
     ]);
-    expect(events).toEqual(["cleanup", "upsert", "hermes"]);
+    expect(events).toEqual([
+      "policy: cleaning up deferred providers",
+      "cleanup",
+      "policy: upserting deferred providers",
+      "upsert",
+      "hermes",
+    ]);
   });
 
   it("keeps the NemoClaw policy on a managed create when effects are deferred (#9833)", () => {
@@ -762,11 +788,18 @@ describe("resolveSandboxCreateIntent", () => {
       policyTier: null,
     });
 
-    const plan = materializeHermesPortableCreatePlan({
-      intent,
-      fromRef: "ghcr.io/nvidia/nemoclaw/hermes:test",
-      policyAuthority: "nemoclaw-managed",
-    });
+    const plan = materializeHermesPortableCreatePlan(
+      {
+        intent,
+        fromRef: "ghcr.io/nvidia/nemoclaw/hermes:test",
+        policyAuthority: "nemoclaw-managed",
+      },
+      () => ({
+        policyPath: "nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
+        appliedPresets: [],
+        sourceBytes: Buffer.from("sandbox: {}"),
+      }),
+    );
     const configIndex = plan.createArgs.indexOf("--driver-config-json");
 
     expect(JSON.parse(plan.createArgs[configIndex + 1]!)).toEqual({

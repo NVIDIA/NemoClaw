@@ -440,6 +440,15 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     expect(validateCliArtifactWorkflowBoundary(readWorkflow())).toEqual([]);
   });
 
+  it("keeps the credential-window image prerequisite alongside the CLI producer (#10155)", () => {
+    const workflow = workflowFixture();
+    workflow.jobs["openshell-credential-generation-window"].needs = "base-image-publication";
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
+      "openshell-credential-generation-window must depend directly on the CLI artifact producer",
+    );
+  });
+
   it("rejects dependency caching before trusted installation (#9051)", () => {
     const workflow = workflowFixture();
     const setupNode = requireStep(

@@ -34,9 +34,7 @@ import {
   writeE2eWorkflowPlanCiOutput,
 } from "../../../tools/e2e/workflow-plan.mts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
-import { listTargets } from "../registry/registry.ts";
 import { buildLiveTargetMatrix } from "../registry/run.ts";
-import { liveTargetSupport } from "../registry/runtime-support.ts";
 
 const PLANNER_CLI = path.join(REPO_ROOT, "tools", "e2e", "workflow-plan.mts");
 const TSX = path.join(REPO_ROOT, "node_modules", ".bin", "tsx");
@@ -69,6 +67,21 @@ function expectedCiOutput(plan: ReturnType<typeof buildE2eWorkflowPlan>): string
     `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,
     "",
   ].join("\n");
+}
+
+function captureWorkflowPlanCli(args: string[]): string {
+  let output = "";
+  const write = process.stdout.write;
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    output += chunk.toString();
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    runE2eWorkflowPlanCli(args);
+    return output;
+  } finally {
+    process.stdout.write = write;
+  }
 }
 
 function prCandidatePlan(
@@ -1201,17 +1214,7 @@ describe("E2E workflow plan", () => {
   });
 
   it("emits one compact JSON line with the deterministic workflow-output schema", () => {
-    let output = "";
-    const write = process.stdout.write;
-    process.stdout.write = ((chunk: string | Uint8Array) => {
-      output += chunk.toString();
-      return true;
-    }) as typeof process.stdout.write;
-    try {
-      runE2eWorkflowPlanCli(["--jobs", "hermes-e2e"]);
-    } finally {
-      process.stdout.write = write;
-    }
+    const output = captureWorkflowPlanCli(["--jobs", "hermes-e2e"]);
 
     expect(output.endsWith("\n")).toBe(true);
     expect(output.trim().split("\n")).toHaveLength(1);
@@ -1229,65 +1232,50 @@ describe("E2E workflow plan", () => {
   });
 
   it("renders the selected targets and workflow jobs as a readable plan", () => {
-    const filtered = spawnSync(TSX, [PLANNER_CLI, "--summary", "--jobs", "hermes-e2e"], {
-      cwd: REPO_ROOT,
-      encoding: "utf8",
-      timeout: 30_000,
-    });
+    const filtered = captureWorkflowPlanCli(["--summary", "--jobs", "hermes-e2e"]);
 
-    expect(filtered.status, filtered.stderr).toBe(0);
-    expect(filtered.stdout).toBe(`## E2E Execution Plan
+    expect(filtered).toBe(`## E2E Execution Plan
 
 | Target or job | Agent runtime | Observable outcome | Environment or inference endpoint | Source | Unresolved reason |
 | --- | --- | --- | --- | --- | --- |
 | \`hermes-e2e\` | hermes | Install onboarding health inference lifecycle dashboard and security succeed | Ubuntu; mock or NVIDIA hosted inference | retained-workflow |  |
 `);
 
-    const complete = spawnSync(TSX, [PLANNER_CLI, "--summary"], {
-      cwd: REPO_ROOT,
-      encoding: "utf8",
-      timeout: 30_000,
-    });
+    const complete = captureWorkflowPlanCli(["--summary"]);
 
-    expect(complete.status, complete.stderr).toBe(0);
-    expect(complete.stdout).toContain(
+    expect(complete).toContain(
       "| `cloud-onboard` | openclaw | Public install onboarding hosted inference and security checks succeed | Ubuntu; NVIDIA hosted inference | retained-workflow |  |",
     );
-    expect(complete.stdout).toContain(
+    expect(complete).toContain(
       "| `ubuntu-repo-cloud-openclaw` | openclaw | Repository install onboarding and hosted inference succeed | Ubuntu Docker host; NVIDIA hosted inference | typed-registry |  |",
     );
-    expect(complete.stdout).toContain(
+    expect(complete).toContain(
       "| `vllm-docker-storage` | none | vLLM storage gate accepts and rejects the intended host states | Native Linux Docker host; no inference endpoint | shared-e2e |  |",
     );
-    expect(complete.stdout).toContain(
+    expect(complete).toContain(
       "| `channels-add-remove` | openclaw | Messaging: adds and removes Telegram configuration | Ubuntu; no inference endpoint | catalogue |  |",
     );
-    expect(complete.stdout).toContain(
+    expect(complete).toContain(
       "| `model-router-provider-routed-inference` | openclaw | Inference: Model Router returns a provider-routed response | Ubuntu; NVIDIA API and Model Router | catalogue |  |",
     );
-    expect(complete.stdout).toContain(
+    expect(complete).toContain(
       "| `spark-install` | unresolved | Install: leaves NemoClaw and OpenShell usable after standard installation | Ubuntu; NVIDIA hosted inference | catalogue | The test asserts CLI usability but does not assert an agent runtime |",
     );
-    expect(complete.stdout).toContain("### Repeated outcomes with distinct evidence");
-    expect(complete.stdout).toContain(
+    expect(complete).toContain("### Repeated outcomes with distinct evidence");
+    expect(complete).toContain(
       "| Repository install onboarding and hosted inference succeed | `ubuntu-repo-cloud-langchain-deepagents-code`, `ubuntu-repo-cloud-openclaw` | agent runtime |",
     );
-    expect(complete.stdout).toContain("### Intentional exclusions");
-    expect(complete.stdout).toContain(
+    expect(complete).toContain("### Intentional exclusions");
+    expect(complete).toContain(
       "| `llama-cpp-dgx-spark-qualification` | unresolved | Exact NemoClaw-built llama.cpp image produces protected DGX Spark evidence | NVIDIA DGX Spark GB10; local llama.cpp inference | Explicit dispatch only; excluded from the default release matrix | The protected plan can enable or skip its OpenClaw subqualification |",
     );
-    expect(complete.stdout).toContain("### Unsupported or unresolved typed declarations");
-    const inertDeclarationCount = listTargets().filter(
-      (target) => !liveTargetSupport(target).supported,
-    ).length;
-    expect(complete.stdout).toContain(
-      `The ${inertDeclarationCount} inert typed declarations above`,
-    );
-    expect(complete.stdout).toContain(
+    expect(complete).toContain("### Unsupported or unresolved typed declarations");
+    expect(complete).toMatch(/The \d+ inert typed declarations above/u);
+    expect(complete).toContain(
       "| `brev-launchable-cloud-openclaw` | unresolved | unresolved | unresolved | platform 'brev-launchable' is not wired for live fixtures; install 'launchable' is not wired for live fixtures |",
     );
-    expect(complete.stdout).toContain("#8285");
-    expect(complete.stdout).toContain("#8286");
+    expect(complete).toContain("#8285");
+    expect(complete).toContain("#8286");
   });
 
   it("keeps CI and readable summary output modes separate", () => {

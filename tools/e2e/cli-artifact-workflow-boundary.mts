@@ -364,6 +364,8 @@ function validateConsumer(
     expectedNeeds = ["base-image-publication", CLI_ARTIFACT_PRODUCER_JOB];
   } else if (jobName === "cloud-onboard") {
     expectedNeeds = ["base-image-publication", CLI_ARTIFACT_PRODUCER_JOB];
+  } else if (jobName === "openshell-credential-generation-window") {
+    expectedNeeds = ["base-image-publication", CLI_ARTIFACT_PRODUCER_JOB];
   }
   if (!isDeepStrictEqual(job.needs, expectedNeeds)) {
     errors.push(`${jobName} must depend directly on the CLI artifact producer`);
