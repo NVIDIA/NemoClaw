@@ -76,17 +76,23 @@ function readyEvidence(
 }
 
 describe("inactive MXC native-artifact bootstrap", () => {
-  it("freezes drive-root launch authority before create and proves exact readiness (#8178)", async () => {
+  it("preserves drive-root launch authority across create and readiness checks (#8178)", async () => {
     let observedPlan: RuntimeProviderNativeArtifactBootstrapPlan | null = null;
     const operations: RuntimeProviderNativeArtifactBootstrapOperations = {
       create: vi.fn(async (plan) => {
         observedPlan = plan;
-        expect(Object.isFrozen(plan)).toBe(true);
-        expect(Object.isFrozen(plan.workload)).toBe(true);
-        expect(Object.isFrozen(plan.workload.launch.environmentNames)).toBe(true);
-        return { status: "created" as const, authoritySha256: plan.authoritySha256 };
+        const authoritySha256 = plan.authoritySha256;
+        Reflect.set(plan, "artifactRoot", SHARE_DIRECTORY);
+        Reflect.set(plan.workload.artifact, "digest", "sha256:" + "0".repeat(64));
+        Reflect.set(plan.workload.launch.environmentNames, "0", "MUTATED");
+        return { status: "created" as const, authoritySha256 };
       }),
-      verifyReadiness: vi.fn(async (plan) => readyEvidence(plan)),
+      verifyReadiness: vi.fn(async (plan) => {
+        expect(plan.artifactRoot).toBe("C:\\openclaw-2026-7-1");
+        expect(plan.workload.artifact.digest).toBe(NATIVE_RECEIPT.artifact.digest);
+        expect(plan.workload.launch.environmentNames[0]).toBe("HOME");
+        return readyEvidence(plan);
+      }),
     };
 
     const receipt = await nativeBootstrap().run(bootstrapInput(), operations);
@@ -162,6 +168,14 @@ describe("inactive MXC native-artifact bootstrap", () => {
       (input: RuntimeProviderNativeArtifactBootstrapInput) => ({
         ...input,
         artifactRoot: SHARE_DIRECTORY,
+      }),
+      /artifact root and provider-owned writable share must remain separate/u,
+    ],
+    [
+      "writable share with a trailing separator reused as the artifact root",
+      (input: RuntimeProviderNativeArtifactBootstrapInput) => ({
+        ...input,
+        artifactRoot: `${SHARE_DIRECTORY}\\`,
       }),
       /artifact root and provider-owned writable share must remain separate/u,
     ],

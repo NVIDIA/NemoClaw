@@ -138,7 +138,10 @@ function preparePlan(
     input.sandboxName,
     input.lifecycleGeneration,
   );
-  if (artifactRoot.toLowerCase() === shareDirectory.toLowerCase()) {
+  if (
+    path.win32.resolve(artifactRoot).toLowerCase() ===
+    path.win32.resolve(shareDirectory).toLowerCase()
+  ) {
     throw new MxcNativeArtifactBootstrapError(
       "artifact root and provider-owned writable share must remain separate",
     );
