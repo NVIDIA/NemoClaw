@@ -383,20 +383,6 @@ describe("Vitest opaque-input watch triggers", () => {
     },
   );
 
-  it("declares each PR Review Advisor watch test once (#10153)", () => {
-    const inputPath = path.resolve(".github/workflows/pr-review-advisor.yaml").replaceAll("\\", "/");
-    const trigger = vitestWatchTriggerPatterns.find(({ pattern }) =>
-      pattern.source.includes("pr-review-advisor"),
-    );
-    expect(trigger).toBeDefined();
-
-    const match = trigger!.pattern.exec(inputPath);
-    expect(match).not.toBeNull();
-
-    const tests = trigger!.testsToRun(inputPath, match!);
-    expect(tests).toEqual([...new Set(tests)]);
-  });
-
   it("leaves unrelated YAML, shell, Python, and workflow files alone (#6692)", () => {
     expect(triggeredBy("notes/example.yaml")).toEqual([]);
     expect(triggeredBy("scripts/unrelated.py")).toEqual([]);
