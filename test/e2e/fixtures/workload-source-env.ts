@@ -1,23 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import path from "node:path";
+import { loadAgent } from "../../../src/lib/agent/defs.ts";
 
-import { REPO_ROOT } from "./paths.ts";
-
-const LOCAL_DOCKERFILE_BY_AGENT = {
-  openclaw: "Dockerfile",
-  hermes: "agents/hermes/Dockerfile",
-  "langchain-deepagents-code": "agents/langchain-deepagents-code/Dockerfile",
-  pi: "agents/pi/Dockerfile",
-} as const;
-
-type LocalDockerfileAgent = keyof typeof LOCAL_DOCKERFILE_BY_AGENT;
-
-function localDockerfileAgent(env: NodeJS.ProcessEnv): LocalDockerfileAgent {
-  const agent = env.NEMOCLAW_AGENT ?? "openclaw";
-  if (agent in LOCAL_DOCKERFILE_BY_AGENT) return agent as LocalDockerfileAgent;
-  return "openclaw";
+function localDockerfilePath(env: NodeJS.ProcessEnv): string {
+  const agent = loadAgent(env.NEMOCLAW_AGENT ?? "openclaw", env);
+  const dockerfilePath = agent.dockerfilePath ?? agent.legacyPaths?.dockerfile;
+  if (!dockerfilePath) {
+    throw new Error(`Agent '${agent.name}' has no Dockerfile for local E2E workload source.`);
+  }
+  return dockerfilePath;
 }
 
 /**
@@ -32,9 +24,9 @@ export function resolveLiveE2eWorkloadSourceEnv(input: NodeJS.ProcessEnv): NodeJ
   const source = input.E2E_WORKLOAD_SOURCE ?? process.env.E2E_WORKLOAD_SOURCE;
   if (!targetId || source !== "local-dockerfile") return input;
   if (input.NEMOCLAW_FROM_DOCKERFILE) return input;
-  const agent = localDockerfileAgent({ ...process.env, ...input });
+  const dockerfilePath = localDockerfilePath({ ...process.env, ...input });
   return {
     ...input,
-    NEMOCLAW_FROM_DOCKERFILE: path.join(REPO_ROOT, LOCAL_DOCKERFILE_BY_AGENT[agent]),
+    NEMOCLAW_FROM_DOCKERFILE: dockerfilePath,
   };
 }
