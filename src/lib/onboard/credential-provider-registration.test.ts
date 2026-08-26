@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { getLegacyCredentialAliasKeys } from "../credentials/store";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { Session } from "../state/onboard-session";
 import { requiredMessagingProviderBindings } from "./checkpoint-replay";
@@ -70,6 +71,7 @@ function registrationDeps(
     stagedLegacyValues: new Map(),
     migratedLegacyKeys: new Set(),
     persistMigratedLegacyKeys: vi.fn(),
+    getLegacyCredentialAliasKeys,
   };
 }
 

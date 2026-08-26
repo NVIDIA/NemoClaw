@@ -333,6 +333,7 @@ const {
   normalizeCredentialValue,
   resolveProviderCredential,
   saveCredential,
+  getLegacyCredentialAliasKeys,
 } = credentials;
 const {
   hashCredential,
@@ -922,6 +923,7 @@ const registeredCredentialProviders =
     stagedLegacyValues,
     migratedLegacyKeys,
     persistMigratedLegacyKeys,
+    getLegacyCredentialAliasKeys,
   });
 const { upsertProvider, upsertMessagingProviders, providerMatchesGatewayCredential } =
   registeredCredentialProviders;

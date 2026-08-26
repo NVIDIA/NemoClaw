@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { getLegacyCredentialAliasKeys } from "../credentials/store";
 import type { WebSearchConfig } from "../inference/web-search";
 import type { CheckpointProviderBinding } from "../state/onboard-checkpoint-types";
 import type { Session } from "../state/onboard-session";
@@ -48,6 +47,7 @@ export interface CredentialProviderRegistrationDeps {
   stagedLegacyValues: ReadonlyMap<string, string>;
   migratedLegacyKeys: Set<string>;
   persistMigratedLegacyKeys(): void;
+  getLegacyCredentialAliasKeys(envName: string): readonly string[];
 }
 
 // stagedLegacyValues is keyed by the literal env key found in the legacy
@@ -59,6 +59,7 @@ export interface CredentialProviderRegistrationDeps {
 function findStagedLegacyKey(
   envKey: string,
   stagedLegacyValues: ReadonlyMap<string, string>,
+  getLegacyCredentialAliasKeys: CredentialProviderRegistrationDeps["getLegacyCredentialAliasKeys"],
 ): string | undefined {
   if (stagedLegacyValues.has(envKey)) return envKey;
   return getLegacyCredentialAliasKeys(envKey).find((alias) => stagedLegacyValues.has(alias));
@@ -74,7 +75,11 @@ function recordMigratedLegacyMessagingCredentials(
   const migrations: Array<{ stagedKey: string; migrated: boolean }> = [];
   for (const def of tokenDefs) {
     if (!registeredProviders.has(def.name) || !def.token || !def.envKey) continue;
-    const stagedKey = findStagedLegacyKey(def.envKey, deps.stagedLegacyValues);
+    const stagedKey = findStagedLegacyKey(
+      def.envKey,
+      deps.stagedLegacyValues,
+      deps.getLegacyCredentialAliasKeys,
+    );
     if (stagedKey === undefined) continue;
     const stagedValue = deps.stagedLegacyValues.get(stagedKey);
     migrations.push({ stagedKey, migrated: def.token === stagedValue });
@@ -185,7 +190,11 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       options,
     );
     if (result.ok && credentialEnv) {
-      const stagedKey = findStagedLegacyKey(credentialEnv, deps.stagedLegacyValues);
+      const stagedKey = findStagedLegacyKey(
+        credentialEnv,
+        deps.stagedLegacyValues,
+        deps.getLegacyCredentialAliasKeys,
+      );
       if (stagedKey !== undefined) {
         options.revalidatePolicyRequirements?.(
           `record migrated credential for provider ${JSON.stringify(name)}`,

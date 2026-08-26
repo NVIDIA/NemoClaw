@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import {
+  getLegacyCredentialAliasKeys,
   removeLegacyCredentialsFile,
   stageLegacyCredentialsToEnv,
 } from "../../src/lib/credentials/store.js";
@@ -146,6 +147,7 @@ describe("legacy credential reconciliation", () => {
             stagedLegacyValues,
             migratedLegacyKeys,
             persistMigratedLegacyKeys: () => undefined,
+            getLegacyCredentialAliasKeys,
           };
           const registration = createCredentialProviderRegistration(deps);
           const tokenDefs: MessagingTokenDef[] = [
@@ -250,6 +252,7 @@ describe("legacy credential reconciliation", () => {
             stagedLegacyValues,
             migratedLegacyKeys,
             persistMigratedLegacyKeys: () => undefined,
+            getLegacyCredentialAliasKeys,
           };
           const registration = createCredentialProviderRegistration(deps);
 
