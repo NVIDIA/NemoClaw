@@ -151,7 +151,7 @@ describe("fixture redaction entry point", () => {
     expect(redactString("nothing sensitive here", [])).toBe("nothing sensitive here");
   });
 
-  it("preserves long-revision managed credential references and JSON identifiers", () => {
+  it("preserves unversioned and 21-digit managed credential references and non-credential JSON identifiers", () => {
     const discordReference = "openshell:resolve:env:DISCORD_BOT_TOKEN";
     const revision = `v${"1".repeat(21)}`;
     const versionedReference = `openshell:resolve:env:${revision}_WECHAT_BOT_TOKEN`;
