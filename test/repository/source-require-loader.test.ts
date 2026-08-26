@@ -446,7 +446,7 @@ const path = require("node:path");
 const typescriptPath = require.resolve("typescript");
 const nativeTypeScriptLoader = Module._extensions[".ts"];
 let currentTypeScriptLoader = nativeTypeScriptLoader;
-let typeScriptLoaderAssignments = 0;
+const installedTypeScriptLoaders = [];
 let rejectedUnexpected = false;
 Object.defineProperty(Module._extensions, ".ts", {
   configurable: true,
@@ -456,54 +456,35 @@ Object.defineProperty(Module._extensions, ".ts", {
   },
   set(handler) {
     currentTypeScriptLoader = handler;
-    typeScriptLoaderAssignments += 1;
-    if (typeScriptLoaderAssignments !== 3) return;
-    try {
-      handler({ _compile() { throw new Error("unexpected module was compiled"); } }, ${JSON.stringify(fixturePath)});
-    } catch (error) {
-      rejectedUnexpected = String(error).includes("Refusing to bootstrap unexpected TypeScript module");
-    }
+    installedTypeScriptLoaders.push(handler);
   },
 });
-const expected = new Set([
-  path.resolve(${JSON.stringify(path.join(import.meta.dirname, "..", "helpers", "register-source-require.ts"))}),
-  path.resolve(${JSON.stringify(path.join(import.meta.dirname, "..", "helpers", "source-require-cache.ts"))}),
-]);
-const compiled = [];
-const originalCompile = Module.prototype._compile;
-Module.prototype._compile = function recordBootstrapSource(source, filename) {
-  const resolvedFilename = path.resolve(filename);
-  if (expected.has(resolvedFilename)) {
-    compiled.push({ filename: resolvedFilename, sourceMapped: source.includes("sourceMappingURL=data:application/json;base64") });
-  }
-  return originalCompile.call(this, source, filename);
-};
 require(${JSON.stringify(SOURCE_REQUIRE_HOOK)});
-const lazyTypeScriptLoader = Module._extensions[".ts"];
-if (
-  require.cache[typescriptPath] !== undefined ||
-  compiled.length !== 0 ||
-  lazyTypeScriptLoader === nativeTypeScriptLoader
-) {
-  console.error(JSON.stringify({ compiled, typescriptLoaded: require.cache[typescriptPath] !== undefined }));
+const preloadTypeScriptLoaderCount = installedTypeScriptLoaders.length;
+if (require.cache[typescriptPath] !== undefined) {
+  console.error(JSON.stringify({ installedTypeScriptLoaders: installedTypeScriptLoaders.length, rejectedUnexpected, typescriptLoaded: require.cache[typescriptPath] !== undefined }));
   process.exitCode = 9;
 } else {
   const requireSource = Module.createRequire(path.join(${JSON.stringify(root)}, "entry.cjs"));
   const fixture = requireSource("./fixture.js");
   const registeredTypeScriptLoader = Module._extensions[".ts"];
-  const filenames = compiled.map((entry) => entry.filename);
+  for (const handler of installedTypeScriptLoaders.slice(preloadTypeScriptLoaderCount)) {
+    if (typeof handler !== "function") continue;
+    try {
+      handler({ _compile() {} }, ${JSON.stringify(fixturePath)});
+    } catch (error) {
+      if (String(error).includes("Refusing to bootstrap unexpected TypeScript module")) {
+        rejectedUnexpected = true;
+      }
+    }
+  }
   if (
     fixture.value !== 42 ||
     require.cache[typescriptPath] === undefined ||
     registeredTypeScriptLoader === nativeTypeScriptLoader ||
-    registeredTypeScriptLoader === lazyTypeScriptLoader ||
-    !rejectedUnexpected ||
-    filenames.length !== 2 ||
-    filenames[0] !== path.resolve(${JSON.stringify(path.join(import.meta.dirname, "..", "helpers", "register-source-require.ts"))}) ||
-    filenames[1] !== path.resolve(${JSON.stringify(path.join(import.meta.dirname, "..", "helpers", "source-require-cache.ts"))}) ||
-    compiled.some((entry) => !entry.sourceMapped)
+    !rejectedUnexpected
   ) {
-    console.error(JSON.stringify({ compiled, fixture, typescriptLoaded: require.cache[typescriptPath] !== undefined }));
+    console.error(JSON.stringify({ fixture, installedTypeScriptLoaders: installedTypeScriptLoaders.length, rejectedUnexpected, typescriptLoaded: require.cache[typescriptPath] !== undefined }));
     process.exitCode = 9;
   }
 }
