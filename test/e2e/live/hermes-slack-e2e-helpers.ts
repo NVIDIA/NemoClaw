@@ -656,7 +656,9 @@ import sys
 import urllib.error
 import urllib.request
 
-TLS_CONTEXT = ssl._create_unverified_context()
+# Verified: this probe crosses the credential-rewrite boundary, so the proxy
+# chain has to be trusted, not just reachable.
+TLS_CONTEXT = ssl.create_default_context()
 INJECTED_RE = re.compile(r"^openshell:resolve:env:(v[0-9]+_)?(SLACK_BOT_TOKEN|SLACK_APP_TOKEN)$")
 
 def injected_token(env_key):
