@@ -585,8 +585,10 @@ Do not add links to third-party code repositories, community collections, or uno
 
 Links to official documentation for tools we depend on (e.g., Node.js and Python) and industry standards (e.g., Conventional Commits) are acceptable.
 
-The project-owned NVIDIA NemoClaw Community repository is the designated destination for independent solutions.
-Use the canonical [Community Solutions](docs/resources/community-contributions.mdx) page to route contributors there instead of adding direct repository links throughout the docs.
+The NVIDIA NemoClaw Community repository is the designated destination for independent solutions.
+It is an NVIDIA repository, not an external project.
+Link to it directly for examples or contribution instructions.
+Use the canonical [Community Solutions](docs/resources/community-contributions.mdx) page when readers need help choosing the appropriate repository.
 
 **Why:** External repositories are outside our control. They can change ownership, inject malicious content, or misrepresent an endorsement by NVIDIA. Keeping references within our own repo avoids these risks entirely.
 
