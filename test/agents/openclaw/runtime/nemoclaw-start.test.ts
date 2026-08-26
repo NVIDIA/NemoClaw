@@ -1589,35 +1589,7 @@ describe("nemoclaw-start auto-pair slow-mode keepalive (#4263)", () => {
     const stateDir = path.join(tmpDir, "state");
     const stateFile = path.join(tmpDir, "list-count");
     const approveLog = path.join(tmpDir, "approvals.log");
-    const publicKey = "y3vjb9p8tAecivI1l5f1Hdc9QdZJSt3BmLkJMM7wZD8";
-    const deviceId = "04a4c561c730435e9f6a2e38d2e7b929bcbec2ea1c37d3dd053f3341ecce4e47";
-    fs.mkdirSync(path.join(stateDir, "identity"), { recursive: true });
-    fs.writeFileSync(
-      path.join(stateDir, "identity", "device.json"),
-      JSON.stringify({
-        deviceId,
-        publicKeyPem:
-          "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAy3vjb9p8tAecivI1l5f1Hdc9QdZJSt3BmLkJMM7wZD8=\n-----END PUBLIC KEY-----\n",
-      }),
-    );
-
-    const canonicalCli = {
-      deviceId,
-      publicKey,
-      clientId: "cli",
-      clientMode: "cli",
-      role: "operator",
-      roles: ["operator"],
-      scopes: ["operator.pairing", "operator.write"],
-      approvedScopes: ["operator.pairing", "operator.write"],
-      tokens: {
-        operator: {
-          role: "operator",
-          revokedAtMs: null,
-          scopes: ["operator.pairing", "operator.read", "operator.write"],
-        },
-      },
-    };
+    const canonicalCli = createCanonicalCliFixture(stateDir);
     const initialPaired = JSON.stringify({
       pending: [],
       paired: [canonicalCli],
