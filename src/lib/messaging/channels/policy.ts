@@ -265,9 +265,9 @@ export function composeCredentialBoundMessagingPolicies(
           `${messagingRouteRecoveryAction(sandboxName, null)}.`,
       );
     }
-    const liveMessagingPolicy = messagingPolicies.find((policy) =>
-      livePolicyContainsMessagingRoute(liveNetworkPolicies, policy),
-    );
+    const liveMessagingPolicy = (["openclaw", "hermes"] as const)
+      .flatMap((knownAgent) => listMessagingPolicies(knownAgent))
+      .find((policy) => livePolicyContainsMessagingRoute(liveNetworkPolicies, policy));
     if (liveMessagingPolicy) {
       const channelId = normalizeMessagingChannelId(liveMessagingPolicy.channelId);
       throw new Error(

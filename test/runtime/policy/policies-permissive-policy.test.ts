@@ -311,33 +311,38 @@ describe("applyPermissivePolicy", () => {
     }
   });
 
-  it("rejects live messaging providers when the channel plan is unavailable (#10153)", () => {
-    const sandboxName = "missing-plan";
-    const observed = runPermissivePolicy({
-      agent: "openclaw",
-      expectPolicySet: false,
-      livePolicy: YAML.stringify({
-        network_policies: {
-          telegram_bot: {
-            endpoints: [{ credential_binding: { provider: `${sandboxName}-telegram-bridge` } }],
+  it.each([
+    ["OpenClaw", "telegram_bot", "missing-oc-plan"],
+    ["Hermes", "telegram", "missing-h-plan"],
+  ] as const)(
+    "rejects a live %s Telegram route when the channel plan is unavailable (#10153)",
+    (_liveAgent, policyKey, sandboxName) => {
+      const observed = runPermissivePolicy({
+        agent: "openclaw",
+        expectPolicySet: false,
+        livePolicy: YAML.stringify({
+          network_policies: {
+            [policyKey]: {
+              endpoints: [{ credential_binding: { provider: `${sandboxName}-telegram-bridge` } }],
+            },
           },
-        },
-      }),
-      policySetStatus: 0,
-      sandboxName,
-    });
-    try {
-      expect(observed.result.status).not.toBe(0);
-      expect(observed.result.stderr).toContain(
-        `sandbox '${sandboxName}', channel 'telegram' because the channel plan is unavailable. ` +
-          `Recovery: run \`nemoclaw ${sandboxName} channels add telegram\`; approve the rebuild ` +
-          `prompt in an interactive terminal, or run \`nemoclaw ${sandboxName} rebuild\` ` +
-          "afterward in non-interactive mode.",
-      );
-    } finally {
-      observed.cleanup();
-    }
-  });
+        }),
+        policySetStatus: 0,
+        sandboxName,
+      });
+      try {
+        expect(observed.result.status).not.toBe(0);
+        expect(observed.result.stderr).toContain(
+          `sandbox '${sandboxName}', channel 'telegram' because the channel plan is unavailable. ` +
+            `Recovery: run \`nemoclaw ${sandboxName} channels add telegram\`; approve the rebuild ` +
+            `prompt in an interactive terminal, or run \`nemoclaw ${sandboxName} rebuild\` ` +
+            "afterward in non-interactive mode.",
+        );
+      } finally {
+        observed.cleanup();
+      }
+    },
+  );
 
   it.each(CREDENTIAL_FREE_ROUTE_CASES)(
     "keeps the OpenClaw %s route %s in a direct permissive policy (#10153)",

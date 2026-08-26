@@ -79,6 +79,24 @@ const SLACK_PROVIDER_CASES = [
   ],
 ] as const;
 
+const INVALID_SANDBOX_MESSAGING_CASES = [
+  [
+    "Slack",
+    "slack",
+    "slack",
+    [
+      { credential_binding: { provider: "bad:provider-slack-app" } },
+      { credential_binding: { provider: "bad:provider-slack-bridge" } },
+    ],
+  ],
+  [
+    "Discord",
+    "discord",
+    "discord",
+    [{ credential_binding: { provider: "bad:provider-discord-bridge" } }],
+  ],
+] as const;
+
 type SlackEndpoint = {
   access?: string;
   credential_binding?: { provider?: string };
@@ -487,61 +505,26 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     },
   );
 
-  it("rejects an unsafe Hermes sandbox name before staging Slack Shields down", () => {
-    const writeTempPolicy = vi.fn(() => "/must-not-stage.yaml");
-    let message = "";
+  it.each(INVALID_SANDBOX_MESSAGING_CASES)(
+    "rejects an unsafe Hermes sandbox name before staging %s Shields down",
+    (_label, channelId, policyKey, endpoints) => {
+      const writeTempPolicy = vi.fn(() => "/must-not-stage.yaml");
 
-    try {
-      buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
-        livePolicyYaml: YAML.stringify({
-          network_policies: {
-            slack: {
-              endpoints: [
-                { credential_binding: { provider: "bad:provider-slack-app" } },
-                { credential_binding: { provider: "bad:provider-slack-bridge" } },
-              ],
-            },
-          },
+      expect(() =>
+        buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
+          livePolicyYaml: YAML.stringify({
+            network_policies: { [policyKey]: { endpoints } },
+          }),
+          messagingAgent: "hermes",
+          messagingPlan: enabledMessagingSelection(channelId),
+          readBasePolicy: () => EMPTY_NETWORK_PERMISSIVE,
+          sandboxName: "bad:provider",
+          writeTempPolicy,
         }),
-        messagingAgent: "hermes",
-        messagingPlan: enabledMessagingSelection("slack"),
-        readBasePolicy: () => EMPTY_NETWORK_PERMISSIVE,
-        sandboxName: "bad:provider",
-        writeTempPolicy,
-      });
-    } catch (error) {
-      message = error instanceof Error ? error.message : String(error);
-    }
-
-    expect(message).toContain("Cannot materialize the Shields-down credential provider binding");
-    expect(writeTempPolicy).not.toHaveBeenCalled();
-  });
-
-  it("rejects an unsafe Hermes sandbox name before staging Shields down", () => {
-    const writeTempPolicy = vi.fn(() => "/must-not-stage.yaml");
-
-    expect(() =>
-      buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
-        livePolicyYaml: YAML.stringify({
-          network_policies: {
-            discord: {
-              endpoints: [
-                {
-                  credential_binding: { provider: "bad:provider-discord-bridge" },
-                },
-              ],
-            },
-          },
-        }),
-        messagingAgent: "hermes",
-        messagingPlan: enabledMessagingSelection("discord"),
-        readBasePolicy: () => EMPTY_NETWORK_PERMISSIVE,
-        sandboxName: "bad:provider",
-        writeTempPolicy,
-      }),
-    ).toThrow("Cannot materialize the Shields-down credential provider binding");
-    expect(writeTempPolicy).not.toHaveBeenCalled();
-  });
+      ).toThrow("Cannot materialize the Shields-down credential provider binding");
+      expect(writeTempPolicy).not.toHaveBeenCalled();
+    },
+  );
 
   it("preserves exact managed MCP entries without copying unrelated live egress (#7952)", () => {
     const liveYaml = YAML.stringify({
