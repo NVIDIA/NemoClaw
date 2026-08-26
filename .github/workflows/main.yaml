@@ -22,6 +22,7 @@ concurrency:
 
 jobs:
   static-checks:
+    name: Static Checks
     permissions:
       contents: read
       packages: read
@@ -37,6 +38,7 @@ jobs:
         uses: ./.github/actions/ci-static-checks
 
   build-typecheck:
+    name: Build and type-check
     permissions:
       contents: read
       packages: read
@@ -52,6 +54,7 @@ jobs:
         uses: ./.github/actions/ci-build-typecheck
 
   installer-integration:
+    name: Installer Integration
     permissions:
       contents: read
       packages: read
@@ -67,6 +70,7 @@ jobs:
         uses: ./.github/actions/ci-installer-integration
 
   wechat-runtime-audit:
+    name: WeChat Runtime Audit
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -91,6 +95,7 @@ jobs:
           retention-days: 14
 
   reviewed-npm-audit:
+    name: npm Audit
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -106,6 +111,7 @@ jobs:
           report-dir: artifacts/reviewed-npm-audit
 
   real-openclaw-dist-harness:
+    name: Audit patched OpenClaw distribution and security contracts
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -148,6 +154,7 @@ jobs:
         run: npx vitest run --project integration test/agents/openclaw/openclaw-security-audit-suppressions-real.test.ts --silent=false --reporter=default
 
   cli-test-shards:
+    name: CLI / Shard ${{ matrix.shard }}
     permissions:
       contents: read
       packages: read
@@ -173,6 +180,7 @@ jobs:
           shard-count: "12"
 
   cli-tests:
+    name: CLI
     needs: cli-test-shards
     if: ${{ always() }}
     permissions:
@@ -250,6 +258,7 @@ jobs:
           shard-count: "12"
 
   plugin-tests:
+    name: Plugin
     permissions:
       code-quality: write
       contents: read
@@ -267,6 +276,7 @@ jobs:
         uses: ./.github/actions/ci-plugin-coverage
 
   checks:
+    name: Required Checks
     needs:
       - static-checks
       - build-typecheck
@@ -380,6 +390,7 @@ jobs:
           [ "$failed" -eq 0 ]
 
   sandbox-images-and-e2e:
+    name: Build sandbox images and run E2E
     needs: [static-checks, build-typecheck]
     uses: ./.github/workflows/sandbox-images-and-e2e.yaml
     secrets:

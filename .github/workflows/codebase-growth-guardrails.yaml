@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Governance / Enforce Codebase Growth Limits
+name: Governance / Codebase Growth
 
 # pull_request_target runs in the base repo context, so this policy cannot be
 # bypassed by editing workflow files or scripts in the PR. Keep this workflow
@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   codebase-growth-guardrails:
-    name: codebase-growth-guardrails
+    name: Enforce limits
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

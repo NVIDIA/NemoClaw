@@ -89,10 +89,7 @@ describe("handleSandboxState", () => {
         extraProviders: [],
       },
     );
-    expect(calls.finalizeRouteReservation).toHaveBeenCalledWith(
-      "my-assistant",
-      expect.any(String),
-    );
+    expect(calls.finalizeRouteReservation).not.toHaveBeenCalled();
     expect(calls.updateSandbox).toHaveBeenCalledWith(
       "my-assistant",
       expect.objectContaining({ model: "model", provider: "provider" }),
