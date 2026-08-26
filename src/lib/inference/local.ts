@@ -29,6 +29,7 @@ import { detectNvidiaPlatform } from "./nim";
 import {
   anyRegistryModelFits,
   effectiveGpuMemoryMB,
+  findOllamaModelEntry,
   fittableOllamaModelTags,
   largestFittableOllamaModelTag,
   modelFitsAvailableMemory,
@@ -1667,9 +1668,19 @@ export function selectDefaultOllamaModel(
   if (pool === null) {
     return largestFittableOllamaModelTag(gpu);
   }
-  return pool.includes(DEFAULT_OLLAMA_MODEL) && modelFitsAvailableMemory(DEFAULT_OLLAMA_MODEL, gpu)
-    ? DEFAULT_OLLAMA_MODEL
-    : pool[0];
+  if (pool.includes(DEFAULT_OLLAMA_MODEL) && modelFitsAvailableMemory(DEFAULT_OLLAMA_MODEL, gpu)) {
+    return DEFAULT_OLLAMA_MODEL;
+  }
+  // `ollama list`/`/api/tags` order reflects install/pull order, not size,
+  // so the largest fitting installed model is not necessarily first. Prefer
+  // the largest registry-known entry; unregistered tags (unmanaged user
+  // pulls) have no known size, so they sort after every registry entry but
+  // keep their relative order among themselves (Array.sort is stable).
+  return [...pool].sort(
+    (a, b) =>
+      (findOllamaModelEntry(b)?.requiredMemoryMB ?? -1) -
+      (findOllamaModelEntry(a)?.requiredMemoryMB ?? -1),
+  )[0];
 }
 
 export function getOllamaWarmupCommand(model: string, keepAlive = "15m"): string[] {
