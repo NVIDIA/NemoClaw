@@ -1019,6 +1019,41 @@ describe("ManifestCompiler", () => {
     );
   });
 
+  it("accepts a Google Chat service-account JSON with embedded newlines (#10383)", async () => {
+    const serviceAccountJson = [
+      "{",
+      '  "client_email": "bot@test-project.iam.gserviceaccount.com",',
+      '  "private_key": "-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----\\n"',
+      "}",
+    ].join("\n");
+    await withEnv(
+      {
+        GOOGLECHAT_SERVICE_ACCOUNT: serviceAccountJson,
+      },
+      async () => {
+        const plan = await compiler().compile({
+          sandboxName: "demo",
+          agent: "openclaw",
+          workflow: "onboard",
+          isInteractive: false,
+          configuredChannels: ["googlechat"],
+          credentialAvailability: {
+            "googlechat.serviceAccount": true,
+          },
+        });
+
+        expect(
+          plan.channels
+            .find((channel) => channel.channelId === "googlechat")
+            ?.inputs.find((input) => input.inputId === "serviceAccount"),
+        ).toMatchObject({
+          kind: "secret",
+          credentialAvailable: true,
+        });
+      },
+    );
+  });
+
   it("reads config default values when env keys are unset", async () => {
     const customManifest = {
       schemaVersion: 1,

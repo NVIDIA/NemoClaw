@@ -383,7 +383,7 @@ function normalizeInputValue(
   input: ChannelInputSpec,
   raw: string | null | undefined,
 ): string | undefined {
-  if (raw && /[\r\n]/.test(raw)) {
+  if (raw && !input.allowLineBreaks && /[\r\n]/.test(raw)) {
     throw new Error("Messaging input values must not contain line breaks.");
   }
   const normalized = raw?.trim();
