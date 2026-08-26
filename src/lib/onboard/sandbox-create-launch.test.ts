@@ -230,6 +230,24 @@ describe("buildSandboxRuntimeEnvArgs", () => {
 });
 
 describe("prepareSandboxCreateLaunch", () => {
+  it("removes an inherited sandbox policy when create omits caller policy (#9833)", () => {
+    const result = prepareSandboxCreateLaunch({
+      agent: null,
+      chatUiUrl: "",
+      createArgs: ["--from", "example.invalid/image", "--name", "demo"],
+      extraPlaceholderKeys: [],
+      getDashboardForwardPort: () => "",
+      hermesDashboardState: disabledHermesDashboardState,
+      openshellShellCommand: (args) => `openshell ${args.join(" ")}`,
+      buildEnv: () => ({
+        HOME: "/home/user",
+        OPENSHELL_SANDBOX_POLICY: "/tmp/inherited-policy.yaml",
+      }),
+    });
+
+    expect(result.sandboxEnv).toEqual({ HOME: "/home/user" });
+  });
+
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
     "renders one identity-bound held launch for %s without exposing the startup profile",
     (agentName) => {

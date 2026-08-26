@@ -5,15 +5,14 @@ name: Governance / Enforce Codebase Growth Limits
 
 # pull_request_target runs in the base repo context, so this policy cannot be
 # bypassed by editing workflow files or scripts in the PR. Keep this workflow
-# data-only: do not check out or execute PR code. It only reads GitHub's
-# file-level diff metadata.
+# data-only: do not check out or execute PR code. It reads the commit as
+# inert Git objects.
 on:
   pull_request_target:
     types: [opened, reopened, synchronize, ready_for_review]
 
 permissions:
   contents: read
-  pull-requests: read
 
 jobs:
   codebase-growth-guardrails:
@@ -32,12 +31,8 @@ jobs:
 
       - name: Test codebase growth guardrails
         env:
-          NEMOCLAW_GROWTH_PR: "1"
-          GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail

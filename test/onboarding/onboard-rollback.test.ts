@@ -13,7 +13,7 @@ type OnboardRollbackInternals = {
   buildOrphanedSandboxRollbackMessage: (
     sandboxName: string,
     err: unknown,
-    deleteSucceeded: boolean,
+    gatewayName?: string,
   ) => string[];
 };
 
@@ -35,35 +35,43 @@ if (!isOnboardRollbackInternals(onboardInternals)) {
 const { buildOrphanedSandboxRollbackMessage } = onboardInternals;
 
 describe("ghost-sandbox rollback message (#2174)", () => {
-  it("reports successful cleanup when delete returns 0", () => {
+  it("reports the surviving sandbox and manual identity-checked cleanup", () => {
     const lines = buildOrphanedSandboxRollbackMessage(
       "alpha",
       new Error("All dashboard ports in range 18789-18798 are occupied"),
-      true,
+      "nemoclaw-18080",
     );
     expect(lines[0]).toBe("");
     expect(lines).toContain("  Could not allocate a dashboard port for 'alpha'.");
     expect(lines).toContain("  All dashboard ports in range 18789-18798 are occupied");
     expect(lines).toContain(
-      "  The orphaned sandbox has been removed. Resolve the error above before retrying.",
+      "  NemoClaw left the sandbox running because OpenShell deletion targets a mutable name.",
     );
-    expect(lines.some((l: string) => l.includes("Manual cleanup"))).toBeFalsy();
-  });
-
-  it("falls back to manual-cleanup guidance when delete fails", () => {
-    const lines = buildOrphanedSandboxRollbackMessage("beta", new Error("range exhausted"), false);
-    expect(lines).toContain("  Could not remove the orphaned sandbox. Manual cleanup:");
-    expect(lines).toContain('    openshell sandbox delete "beta"');
-    expect(lines.some((l: string) => l.includes("orphaned sandbox has been removed"))).toBeFalsy();
+    expect(lines).toContain("  Verify the sandbox identity, then clean up manually:");
+    expect(lines).toContain('    openshell sandbox delete -g "nemoclaw-18080" "alpha"');
   });
 
   it("renders non-Error throwables via String coercion", () => {
-    const lines = buildOrphanedSandboxRollbackMessage("gamma", "raw string failure", true);
+    const lines = buildOrphanedSandboxRollbackMessage("gamma", "raw string failure");
     expect(lines).toContain("  raw string failure");
   });
 
   it("escapes the sandbox name into the manual-cleanup command exactly", () => {
-    const lines = buildOrphanedSandboxRollbackMessage("weird-name_42", new Error("oops"), false);
-    expect(lines).toContain('    openshell sandbox delete "weird-name_42"');
+    const lines = buildOrphanedSandboxRollbackMessage(
+      'weird-name_42"',
+      new Error("oops"),
+      'gateway"name',
+    );
+    expect(lines).toContain(
+      '    openshell sandbox delete -g "gateway\\\"name" "weird-name_42\\\""',
+    );
+  });
+
+  it("does not suggest deletion when the owning gateway is unknown", () => {
+    const lines = buildOrphanedSandboxRollbackMessage("alpha", new Error("oops"));
+    expect(lines).toContain(
+      "  The owning OpenShell gateway is unknown. Do not delete a same-name sandbox.",
+    );
+    expect(lines.join("\n")).not.toContain("openshell sandbox delete");
   });
 });

@@ -313,6 +313,63 @@ print(json.dumps({
     });
   });
 
+  it("validates but does not replace already-current applied-state anchors", () => {
+    const result = spawnSync(
+      "python3",
+      [
+        "-I",
+        "-c",
+        String.raw`
+import importlib.util, json, os, sys, tempfile
+spec = importlib.util.spec_from_file_location("hermes_guard", sys.argv[1])
+guard = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = guard
+spec.loader.exec_module(guard)
+root = tempfile.mkdtemp(prefix="hermes-mcp-current-apply-")
+hermes = os.path.join(root, ".hermes")
+os.mkdir(hermes)
+config = os.path.join(hermes, "config.yaml")
+env = os.path.join(hermes, ".env")
+strict = os.path.join(root, "hermes.config-hash")
+compat = os.path.join(hermes, ".config-hash")
+open(config, "w", encoding="utf-8").write("model: test\n")
+open(env, "w", encoding="utf-8").write("SAFE=1\n")
+hash_text, _config_snapshot, _env_snapshot = guard._hash_text(config, env)
+guard._write_hash(strict, hash_text)
+guard._write_hash(compat, hash_text)
+before = {path: os.stat(path).st_ino for path in (strict, compat)}
+writes = []
+original_write_hash = guard._write_hash
+
+def captured_write_hash(path, text):
+    writes.append(path)
+    original_write_hash(path, text)
+
+guard._write_hash = captured_write_hash
+guard.refresh_hashes(hermes, strict, "both", mcp_transition="apply")
+guard.refresh_hashes(hermes, strict, "compat", mcp_transition="apply")
+after = {path: os.stat(path).st_ino for path in (strict, compat)}
+print(json.dumps({
+    "state": guard.inspect_mcp_integrity(hermes, strict),
+    "writes": writes,
+    "strict_inode_stable": before[strict] == after[strict],
+    "compat_inode_stable": before[compat] == after[compat],
+}))
+`,
+        GUARD,
+      ],
+      { encoding: "utf-8", timeout: 10_000 },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      state: "current",
+      writes: [],
+      strict_inode_stable: true,
+      compat_inode_stable: true,
+    });
+  });
+
   it("runs startup-owned MCP inspection as a direct child", () => {
     const source = fs.readFileSync(START, "utf-8");
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-mcp-parent-"));

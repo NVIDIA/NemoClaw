@@ -20,11 +20,19 @@ function getProviderKeyBridgeHint(): string {
   return (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
 }
 
-export function stageRouterProviderKeyBridge(routerCredentialEnv: string): void {
+/** Resolve the compatibility bridge without staging a provider credential. */
+export function resolveRouterProviderKeyBridge(): string | null {
   const providerKeyHint = getProviderKeyBridgeHint();
-  if (!isProviderKeyCredentialCandidate(providerKeyHint)) return;
+  return isProviderKeyCredentialCandidate(providerKeyHint) ? providerKeyHint : null;
+}
+
+export function stageRouterProviderKeyBridge(
+  routerCredentialEnv: string,
+  resolvedProviderKeyHint: string | null = resolveRouterProviderKeyBridge(),
+): void {
+  if (!isProviderKeyCredentialCandidate(resolvedProviderKeyHint)) return;
   if (resolveProviderCredential(routerCredentialEnv)) return;
-  saveCredential(routerCredentialEnv, providerKeyHint);
+  saveCredential(routerCredentialEnv, resolvedProviderKeyHint);
 }
 
 export function stageBuildProviderKeyBridge(): void {
