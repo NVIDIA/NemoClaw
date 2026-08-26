@@ -528,6 +528,47 @@ describe("Docker state mutation owner", () => {
     expect(inspectFormats.every((format) => !format.includes("Config.Env"))).toBe(true);
   });
 
+  it("fully releases transport before a back-to-back provider transition (#10155)", () => {
+    const runtime = harness();
+
+    const completeTransition = (completedLedgerSha256: string) => {
+      const fence = runtime.owner.acquire({ ...runtime.context, plan: plan() });
+      runtime.owner.assertFenced(runtime.context, fence);
+      runtime.owner.publish(runtime.context, fence);
+      runtime.owner.assertFenced(runtime.context, fence);
+      const proof = runtime.owner.activate(runtime.context, fence);
+      runtime.owner.release(runtime.context, fence, proof, completedLedgerSha256);
+      return fence;
+    };
+
+    const first = completeTransition("e".repeat(64));
+    expect(runtime.transportBrokerActive()).toBe(false);
+    expect(runtime.lifecycleStore.listUnfinished()).toEqual([]);
+
+    const second = completeTransition("f".repeat(64));
+
+    expect(second.transactionId).not.toBe(first.transactionId);
+    expect(runtime.transportBrokerActive()).toBe(false);
+    expect(runtime.lifecycleStore.listUnfinished()).toEqual([]);
+    expect(runtime.helperActions).toEqual([
+      "acquire",
+      "assert",
+      "publish",
+      "assert",
+      "activate",
+      "activate",
+      "release",
+      "acquire",
+      "assert",
+      "publish",
+      "assert",
+      "activate",
+      "activate",
+      "release",
+    ]);
+    expect(runtime.supervisorSignals).toEqual(["SIGSTOP", "SIGCONT", "SIGSTOP", "SIGCONT"]);
+  });
+
   it("publishes without retiring the host lifecycle fence", async () => {
     const runtime = harness();
     const fence = await runtime.owner.acquire({ ...runtime.context, plan: plan() });

@@ -1419,13 +1419,14 @@ function readHelperTransportFile(
   containerPath: string,
   hostRoot: string,
   timeoutMs: number,
+  action: HelperAction | "startup",
 ): Buffer {
   return withHelperTransportHostDirectory(hostRoot, (temporary) => {
     const destination = path.join(temporary, "response");
     const deadline = Date.now() + timeoutMs;
     while (true) {
       const remainingMs = deadline - Date.now();
-      if (remainingMs <= 0) fail("root helper transport response did not arrive");
+      if (remainingMs <= 0) fail(`root helper ${action} transport response did not arrive`);
       fs.rmSync(destination, { force: true });
       const result = copyHelperTransportFile(
         capture,
@@ -1435,7 +1436,7 @@ function readHelperTransportFile(
       if (!result.error && result.status === 0 && result.stderr.length === 0) {
         const value = fs.readFileSync(destination);
         if (value.byteLength > MAX_HELPER_TRANSPORT_BYTES) {
-          fail("root helper transport response exceeds its byte bound");
+          fail(`root helper ${action} transport response exceeds its byte bound`);
         }
         return value;
       }
@@ -1444,8 +1445,8 @@ function readHelperTransportFile(
       if (Date.now() >= deadline) {
         fail(
           copyTimedOut
-            ? "root helper transport response copy timed out"
-            : "root helper transport response did not arrive",
+            ? `root helper ${action} transport response copy timed out`
+            : `root helper ${action} transport response did not arrive`,
         );
       }
       Atomics.wait(helperTransportPoll, 0, 0, HELPER_TRANSPORT_POLL_MS);
@@ -1500,6 +1501,7 @@ function ensureHelperTransportAuthorized(
       `${helperTransportSessionPath(transactionId)}/ready`,
       options.hostTransportRoot,
       HELPER_TRANSPORT_COMMAND_TIMEOUT_MS,
+      "startup",
     );
   } catch {
     fail("root helper transport did not become available");
@@ -1631,6 +1633,7 @@ function invokeHelperTransport(
       `${sessionPath}/${identity}.response`,
       options.hostTransportRoot,
       helperTimeoutMs(action) + HELPER_TRANSPORT_RESPONSE_ALLOWANCE_MS,
+      action,
     );
     const parsed = parseHelperTransportResult(response, action, identity);
     const acknowledgement = path.join(temporary, "ack");
