@@ -22,6 +22,7 @@ function controlPlane(): MxcNativeArtifactControlPlane {
     verifyReadiness: vi.fn(async () => {
       throw new Error("readiness unavailable");
     }),
+    recoverCreate: vi.fn(async () => ({ status: "absent" as const })),
   };
 }
 
@@ -66,7 +67,15 @@ describe("inactive MXC native-artifact control-plane adapter", () => {
         ...value,
         verifyReadiness: undefined,
       }),
-      message: /readiness operations/u,
+      message: /readiness, and recovery operations/u,
+    },
+    {
+      label: "missing recovery operation",
+      mutate: (value: MxcNativeArtifactControlPlane) => ({
+        ...value,
+        recoverCreate: undefined,
+      }),
+      message: /readiness, and recovery operations/u,
     },
   ])("rejects $label before the bundle can run (#8178)", ({ mutate, message }) => {
     expect(() =>

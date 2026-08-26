@@ -5,6 +5,7 @@ import type {
   RuntimeProviderNativeArtifactBootstrapOperations,
   RuntimeProviderNativeArtifactBootstrapPlan,
   RuntimeProviderNativeArtifactReadinessEvidence,
+  RuntimeProviderNativeArtifactRecoveryOutcome,
   RuntimeProviderNativeArtifactVerifyAndCreateOutcome,
 } from "./contract";
 
@@ -25,7 +26,11 @@ export interface MxcNativeArtifactControlPlane {
   ): Promise<RuntimeProviderNativeArtifactVerifyAndCreateOutcome>;
   verifyReadiness(
     plan: RuntimeProviderNativeArtifactBootstrapPlan,
+    created: Extract<RuntimeProviderNativeArtifactVerifyAndCreateOutcome, { status: "created" }>,
   ): Promise<RuntimeProviderNativeArtifactReadinessEvidence>;
+  recoverCreate(
+    plan: RuntimeProviderNativeArtifactBootstrapPlan,
+  ): Promise<RuntimeProviderNativeArtifactRecoveryOutcome>;
 }
 
 export class MxcNativeArtifactControlPlaneError extends Error {
@@ -47,16 +52,22 @@ export function createMxcNativeArtifactBootstrapOperations(
   }
   if (
     typeof controlPlane.verifyAndCreate !== "function" ||
-    typeof controlPlane.verifyReadiness !== "function"
+    typeof controlPlane.verifyReadiness !== "function" ||
+    typeof controlPlane.recoverCreate !== "function"
   ) {
     throw new MxcNativeArtifactControlPlaneError(
-      "atomic verify-and-create and readiness operations are required",
+      "atomic verify-and-create, readiness, and recovery operations are required",
     );
   }
   const verifyAndCreate = controlPlane.verifyAndCreate.bind(controlPlane);
   const verifyReadiness = controlPlane.verifyReadiness.bind(controlPlane);
+  const recoverCreate = controlPlane.recoverCreate.bind(controlPlane);
   return Object.freeze({
     verifyAndCreate: (plan: RuntimeProviderNativeArtifactBootstrapPlan) => verifyAndCreate(plan),
-    verifyReadiness: (plan: RuntimeProviderNativeArtifactBootstrapPlan) => verifyReadiness(plan),
+    verifyReadiness: (
+      plan: RuntimeProviderNativeArtifactBootstrapPlan,
+      created: Extract<RuntimeProviderNativeArtifactVerifyAndCreateOutcome, { status: "created" }>,
+    ) => verifyReadiness(plan, created),
+    recoverCreate: (plan: RuntimeProviderNativeArtifactBootstrapPlan) => recoverCreate(plan),
   });
 }

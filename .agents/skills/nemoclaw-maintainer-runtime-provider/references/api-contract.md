@@ -81,13 +81,17 @@ Lifecycle methods return normalized results. `verifyStarted()` must verify the s
 gateway after provider startup. `stop()` executes the supplied `beforeStop` hook at the required
 boundary and reports an already-stopped or stopped state when known.
 
-Bootstrap supplies provider-owned creation and readiness operations. A native-artifact provider
-must bind its atomic `verifyAndCreate` and readiness operations when it constructs the bundle. The
-generic caller supplies only the bootstrap input and cannot replace these operations.
+Bootstrap supplies provider-owned creation, readiness, and create-recovery operations. A
+native-artifact provider must bind its atomic `verifyAndCreate`, `verifyReadiness`, and
+`recoverCreate` operations when it constructs the bundle. The generic caller supplies only the
+bootstrap input and cannot replace these operations.
 
 Each operation must bind the provider ID, persisted sandbox identity, lifecycle generation, and
-provider resource handle to the same runtime resource. Atomic `verifyAndCreate` must verify the
-exact artifact and executable identities under one stable authority before it creates the resource.
+provider resource handle to the same runtime resource. The provider assigns the deterministic
+handle before mutation. Atomic `verifyAndCreate` must verify the exact artifact and executable
+identities under one stable authority before it creates the resource. Readiness evidence must
+repeat that identity. An ambiguous create or failed readiness check must use the handle for
+provider-owned, idempotent recovery and report whether the resource was removed or may remain.
 Separated measurement and creation do not satisfy this contract.
 
 ### Mutation authority and state mutation
