@@ -5,7 +5,7 @@ import type { AgentMcpAdapter } from "../../agent/defs";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
 import type { McpBridgeEntry } from "../../state/registry";
-import { registerAgentAdapterAtCurrentCredentialRevision } from "./mcp-bridge-adapters";
+import { registerAgentAdapter } from "./mcp-bridge-adapters";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { assertHermesMcpRuntimeIntent } from "./mcp-bridge-hermes-reconciliation";
 import { applyGeneratedPolicy, assertGeneratedPolicyMutationSafe } from "./mcp-bridge-policy";
@@ -179,14 +179,14 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
         ? { previousRevision: previousCredentialRevision }
         : {}),
     });
-    registerAgentAdapterAtCurrentCredentialRevision(
-      sandboxName,
-      entryAdapter,
-      entry,
-      adapterEnvValues,
+    registerAgentAdapter(sandboxName, entryAdapter, entry, adapterEnvValues, {
+      // The provider wait above already proved the same revision in
+      // consecutive fresh OpenShell execs. Re-entering revision reconciliation
+      // after a long Hermes reload can chase later sidecar projections until
+      // the bounded synchronization contract expires.
+      replaceExisting: true,
       credentialRevision,
-      { replaceExisting: true },
-    );
+    });
     writeBridgeEntry(sandboxName, {
       ...entry,
       adapter: (entry.adapter as AgentMcpAdapter | undefined) ?? adapter,
@@ -246,17 +246,14 @@ export async function restoreExistingMcpBridgeRuntime(
     const adapter = (entry.adapter as AgentMcpAdapter | undefined) ?? defaultAdapter;
     refreshMcpProviderEnvironment(entry);
     const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry);
-    registerAgentAdapterAtCurrentCredentialRevision(
-      sandboxName,
-      adapter,
-      entry,
-      {},
+    registerAgentAdapter(sandboxName, adapter, entry, {}, {
+      // The provider wait above is the credential-revision authority for this
+      // restoration. Adapter registration consumes that proven revision once;
+      // it must not start an independent post-reload revision chase.
+      replaceExisting: true,
+      teardownRollback: options.lifecyclePhase === "teardown-rollback",
       credentialRevision,
-      {
-        replaceExisting: true,
-        teardownRollback: options.lifecyclePhase === "teardown-rollback",
-      },
-    );
+    });
     writeBridgeEntry(sandboxName, { ...entry, adapter, updatedAt: nowIso() });
   }
   if (
