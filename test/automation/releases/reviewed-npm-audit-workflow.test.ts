@@ -127,7 +127,9 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
       registryOrigin: "https://registry.npmjs.org/",
       schemaVersion: 2,
       severityThreshold: "high",
+      sourceNestedShrinkwrapPackages: [],
       sourceRegistryPackages: [],
+      sourceRegistryPackagesWithoutIntegrity: [],
     };
 
     expect(() => parseAuditConfig(JSON.stringify(config))).toThrow(
@@ -142,6 +144,7 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     expect(config.archiveTarVersion).toBe("7.5.21");
     expect(config.sourceRegistryPackages).toEqual([
       {
+        artifactName: "nvidia-openshell-sdk-0.0.106.tgz",
         integrity:
           "sha512-dB4mLex23Pnw61caGMR2CMHQihy9bj7IK2elJJd718k3yevm+fOt/vG6dJg8/5us4la2BwcOdRwLvOia3tdwFw==",
         label: "OpenShell TypeScript SDK 0.0.106",
@@ -149,6 +152,16 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
         tarballUrl:
           "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.0.106/dc32180ba1d658fc4ec309bdf89d2b162196928d",
       },
+    ]);
+    expect(config.sourceNestedShrinkwrapPackages).toEqual([
+      "@earendil-works/pi-coding-agent@0.80.6",
+    ]);
+    expect(
+      config.sourceRegistryPackagesWithoutIntegrity.map(({ packageSpec }) => packageSpec),
+    ).toEqual([
+      "@earendil-works/pi-agent-core@0.80.6",
+      "@earendil-works/pi-ai@0.80.6",
+      "@earendil-works/pi-tui@0.80.6",
     ]);
     expect(reviewedArchiveGraphManifest(config.archiveTarVersion)).toEqual({
       name: "nemoclaw-reviewed-production-graph",

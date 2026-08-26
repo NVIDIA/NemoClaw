@@ -29,6 +29,12 @@ type ReviewedPackage = Readonly<{
   packageSpec: string;
   tarballUrl: string;
 }>;
+type SourceRegistryPackage = ReviewedPackage & Readonly<{ artifactName: string }>;
+type PackageWithoutIntegrity = Readonly<{
+  label: string;
+  packageSpec: string;
+  tarballUrl: string;
+}>;
 type LockedGraph = ReviewedPackage &
   Readonly<{
     directory: string;
@@ -47,7 +53,9 @@ type AuditConfig = Readonly<{
   registryOrigin: string;
   schemaVersion: 2;
   severityThreshold: Severity;
-  sourceRegistryPackages: readonly ReviewedPackage[];
+  sourceNestedShrinkwrapPackages: readonly string[];
+  sourceRegistryPackages: readonly SourceRegistryPackage[];
+  sourceRegistryPackagesWithoutIntegrity: readonly PackageWithoutIntegrity[];
 }>;
 type ReviewedAuditReport = Readonly<{ label: string; result: AuditPolicyResult }>;
 
@@ -144,9 +152,33 @@ export function parseAuditConfig(contents: string): AuditConfig {
     !parsed.registryOrigin ||
     !Array.isArray(parsed.archivePackages) ||
     !Array.isArray(parsed.lockedGraphs) ||
+    !Array.isArray(parsed.sourceNestedShrinkwrapPackages) ||
+    parsed.sourceNestedShrinkwrapPackages.some(
+      (packageSpec) =>
+        typeof packageSpec !== "string" ||
+        !/^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)@[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/.test(
+          packageSpec,
+        ),
+    ) ||
+    new Set(parsed.sourceNestedShrinkwrapPackages).size !==
+      parsed.sourceNestedShrinkwrapPackages.length ||
+    !Array.isArray(parsed.sourceRegistryPackagesWithoutIntegrity) ||
+    parsed.sourceRegistryPackagesWithoutIntegrity.some(
+      (reviewed) =>
+        typeof reviewed.label !== "string" ||
+        !reviewed.label ||
+        typeof reviewed.packageSpec !== "string" ||
+        !reviewed.packageSpec ||
+        typeof reviewed.tarballUrl !== "string" ||
+        !reviewed.tarballUrl,
+    ) ||
+    new Set(parsed.sourceRegistryPackagesWithoutIntegrity.map(({ packageSpec }) => packageSpec))
+      .size !== parsed.sourceRegistryPackagesWithoutIntegrity.length ||
     !Array.isArray(parsed.sourceRegistryPackages) ||
     parsed.sourceRegistryPackages.some(
       (reviewed) =>
+        typeof reviewed.artifactName !== "string" ||
+        !/^[a-z0-9][a-z0-9._-]*\.tgz$/.test(reviewed.artifactName) ||
         typeof reviewed.label !== "string" ||
         !reviewed.label ||
         typeof reviewed.packageSpec !== "string" ||
@@ -332,10 +364,12 @@ export function materializeSourceGraph(
   registryOrigin: string,
   installProductionDependencies: (directory: string) => void = installProductionSourceDependencies,
   sourceRegistryPackages: readonly ReviewedPackage[] = [],
+  sourceNestedShrinkwrapPackages: readonly string[] = [],
 ): string {
   assertRegularFile(sourcePackage, "NemoClaw CLI package manifest");
   assertRegularFile(sourceLock, "NemoClaw CLI lockfile");
   verifyReviewedNpmLockPackages({
+    allowedNestedShrinkwrapPackages: sourceNestedShrinkwrapPackages,
     lockfilePath: sourceLock,
     omitDev: true,
     registryOrigin,
@@ -486,6 +520,7 @@ function auditSourceGraph(
     config.registryOrigin,
     installProductionSourceDependencies,
     config.sourceRegistryPackages,
+    config.sourceNestedShrinkwrapPackages,
   );
   return auditMaterializedSourceGraph({
     directory,

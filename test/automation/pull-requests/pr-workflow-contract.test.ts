@@ -82,6 +82,13 @@ const trustedActionDirs = [
 
 const cliShardCount = "12";
 const cliShardTimeoutMinutes = 30;
+const dependencyInstallJobs = [
+  "build-typecheck",
+  "installer-integration",
+  "cli-test-shards",
+  "plugin-tests",
+  "static-checks",
+] as const;
 
 function stepRuns(jobOrAction: WorkflowJob | CompositeAction): string[] {
   const steps = "runs" in jobOrAction ? jobOrAction.runs.steps : (jobOrAction.steps ?? []);
@@ -368,13 +375,19 @@ describe("pull request and main workflow contracts", () => {
     expect(workflow.jobs["cli-test-shards"]?.["timeout-minutes"]).toBe(cliShardTimeoutMinutes);
   });
 
-  it.each([
-    ["pull_request", prWorkflow],
-    ["main", mainWorkflow],
-  ] as const)("limits %s package reads to dependency-install jobs", (_workflowName, workflow) => {
-    expect(workflow.permissions).toEqual({ contents: "read" });
+  // source-shape-contract: security -- Pull request jobs must never receive the GitHub Packages credential
+  it("does not grant package access to pull request jobs", () => {
+    expect(prWorkflow.permissions).toEqual({ contents: "read" });
     expect(
-      Object.entries(workflow.jobs)
+      Object.entries(prWorkflow.jobs).filter(([, job]) => job.permissions?.packages !== undefined),
+    ).toEqual([]);
+  });
+
+  // source-shape-contract: security -- Trusted main jobs may read packages only where the reviewed installer consumes the token
+  it("limits main package reads to dependency-install jobs", () => {
+    expect(mainWorkflow.permissions).toEqual({ contents: "read" });
+    expect(
+      Object.entries(mainWorkflow.jobs)
         .filter(([, job]) => job.permissions?.packages !== undefined)
         .map(([jobName, job]) => [jobName, job.permissions?.packages] as const)
         .sort(([left], [right]) => left.localeCompare(right)),
@@ -383,7 +396,66 @@ describe("pull request and main workflow contracts", () => {
       ["cli-test-shards", "read"],
       ["installer-integration", "read"],
       ["plugin-tests", "read"],
+      ["static-checks", "read"],
     ]);
+  });
+
+  // source-shape-contract: security -- The shared action must pass a package token only on trusted main pushes
+  it("provides the package token only to trusted main dependency installation", () => {
+    const actions = [
+      sharedActions.staticChecks,
+      sharedActions.buildTypecheck,
+      sharedActions.installerIntegration,
+      sharedActions.cliCoverageShard,
+      sharedActions.pluginCoverage,
+    ];
+    expect(
+      actions.map((action) => requiredStep(action, "Setup Node.js").with?.["registry-url"]),
+    ).toEqual(actions.map(() => undefined));
+    expect(actions.map((action) => requiredStep(action, "Setup Node.js").with?.scope)).toEqual(
+      actions.map(() => undefined),
+    );
+    expect(actions.map((action) => requiredStep(action, "Install dependencies").env)).toEqual(
+      actions.map(() => ({
+        NODE_AUTH_TOKEN: "${{ github.event_name == 'push' && github.token || '' }}",
+      })),
+    );
+    expect(actions.map((action) => requiredStep(action, "Install dependencies").run)).toEqual(
+      actions.map(() => 'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"'),
+    );
+  });
+
+  // source-shape-contract: security -- The PR workflow must select an exact base-controlled package run before publishing its archive internally
+  it("passes only the base-packaged SDK archive to pull request dependency jobs", () => {
+    const packageJob = prWorkflow.jobs["openshell-sdk-package"];
+    expect(packageJob.permissions).toEqual({ actions: "read", contents: "read" });
+    expect(packageJob.outputs).toEqual({ required: "${{ steps.locate.outputs.required }}" });
+    expect(
+      requiredWorkflowStep(packageJob, "Checkout base package workflow identity").with,
+    ).toMatchObject({
+      ref: "${{ github.event.pull_request.base.sha }}",
+      "sparse-checkout": ".github/workflows/openshell-sdk-package-pr.yaml",
+    });
+    const locate = requiredWorkflowStep(packageJob, "Locate exact base-controlled SDK package run");
+    expect(locate.run).toContain("actions/workflows/openshell-sdk-package-pr.yaml/runs");
+    expect(locate.run).toContain(".head.sha == $head and .base.sha == $base");
+    expect(locate.run).toContain("required=false");
+  });
+
+  // source-shape-contract: security -- Every PR dependency consumer must receive the verified archive without package access
+  it.each(dependencyInstallJobs)("passes the verified SDK archive to %s", (jobName) => {
+    const job = prWorkflow.jobs[jobName];
+    expect(job.needs).toEqual(["changes", "openshell-sdk-package"]);
+    expect(job.permissions?.packages).toBeUndefined();
+    const download = requiredWorkflowStep(job, "Download verified OpenShell SDK archive");
+    expect(download.uses).toBe(
+      "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+    );
+    expect(download.if).toBe("needs.openshell-sdk-package.outputs.required == 'true'");
+    expect(download.with).toMatchObject({
+      name: "openshell-sdk-package",
+      path: "${{ runner.temp }}/openshell-sdk",
+    });
   });
 
   // source-shape-contract: security -- PR base SHA action execution prevents pull-request code from authorizing installer hashes
@@ -643,6 +715,7 @@ describe("pull request and main workflow contracts", () => {
       CODE_CHANGED: "true",
       DOCS_ONLY_RESULT: "skipped",
       INSTALLER_INTEGRATION_RESULT: "success",
+      OPEN_SHELL_SDK_PACKAGE_RESULT: "success",
       PLUGIN_TESTS_RESULT: "success",
       REVIEWED_NPM_AUDIT_RESULT: "success",
       STATIC_RESULT: "success",
@@ -680,6 +753,7 @@ describe("pull request and main workflow contracts", () => {
       CODE_CHANGED: "false",
       DOCS_ONLY_RESULT: "success",
       INSTALLER_INTEGRATION_RESULT: "skipped",
+      OPEN_SHELL_SDK_PACKAGE_RESULT: "skipped",
       PLUGIN_TESTS_RESULT: "skipped",
       REVIEWED_NPM_AUDIT_RESULT: "skipped",
       STATIC_RESULT: "skipped",

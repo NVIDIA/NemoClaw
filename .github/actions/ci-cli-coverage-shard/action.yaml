@@ -56,8 +56,6 @@ runs:
       with:
         node-version: "22"
         cache: npm
-        registry-url: https://npm.pkg.github.com
-        scope: "@nvidia"
         cache-dependency-path: |
           package-lock.json
           nemoclaw/package-lock.json
@@ -104,7 +102,7 @@ runs:
     - name: Install dependencies
       shell: bash
       env:
-        NODE_AUTH_TOKEN: ${{ github.token }}
+        NODE_AUTH_TOKEN: ${{ github.event_name == 'push' && github.token || '' }}
       run: bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"
 
     - name: Validate changed live E2E mock parity

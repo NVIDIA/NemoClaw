@@ -162,6 +162,36 @@
       "category": "security"
     },
     {
+      "file": "test/automation/pull-requests/openshell-sdk-package-workflow.test.ts",
+      "test": "keeps package access out of pull request controlled execution",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "does not grant package access to pull request jobs",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "limits main package reads to dependency-install jobs",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "provides the package token only to trusted main dependency installation",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "passes only the base-packaged SDK archive to pull request dependency jobs",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "passes the verified SDK archive to %s",
+      "category": "security"
+    },
+    {
       "file": "test/automation/releases/release-daily-brev-image.test.ts",
       "test": "attests one daily request before the isolated dispatch job (#9799)",
       "category": "security"
