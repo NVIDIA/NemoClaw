@@ -540,6 +540,10 @@ state. After preflight and local setup succeed, it
 writes a secret-free receipt for either verdict and records whether sensitive
 runtime artifacts were removed. Receipt schema version 3 also classifies startup
 as not observed, spawn failed, exited before readiness, health timeout, or ready.
+The ready outcome means that the in-sandbox health probe succeeded.
+It does not mean that the qualification passed.
+Use `verdict` and `startup.versionExitCode` to diagnose the result.
+A nonzero version exit code produces a failed qualification.
 It retains only bounded numeric child and version exit codes; it does not retain
 child output, error text, command arguments, paths, or credentials. Cleanup
 removes both test-owned run directories for every verdict because MXC can write

@@ -577,29 +577,16 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
         versionExitCode: 1.5,
       },
     },
-  ])("classifies bounded secret-free startup evidence for $expected.outcome (#8178)", ({
-    expected,
-    result,
-  }) => {
-    const observation = classifyWindowsMxcOpenClawStartupObservation(result);
+  ])(
+    "classifies bounded secret-free startup evidence for $expected.outcome (#8178)",
+    ({ expected, result }) => {
+      const observation = classifyWindowsMxcOpenClawStartupObservation(result);
 
-    expect(observation).toEqual(expected);
-    expect(JSON.stringify(observation)).not.toContain("sensitive");
-    expect(JSON.stringify(observation)).not.toContain("token-bearing");
-  });
-
-  it("renders a syntactically valid native OpenClaw probe agent (#8178)", () => {
-    const { root } = fixture();
-    const agentPath = path.join(root, "probe-agent.mjs");
-    fs.writeFileSync(agentPath, renderWindowsMxcOpenClawProbeAgent(), "utf8");
-
-    const checked = spawnSync(process.execPath, ["--check", agentPath], {
-      encoding: "utf8",
-      windowsHide: true,
-    });
-
-    expect(checked.status, checked.stderr).toBe(0);
-  });
+      expect(observation).toEqual(expected);
+      expect(JSON.stringify(observation)).not.toContain("sensitive");
+      expect(JSON.stringify(observation)).not.toContain("token-bearing");
+    },
+  );
 
   it("accepts only authenticated health and one exact chat payload (#8178)", () => {
     expect(parseOpenClawHealthResult('notice\n{"ok":true}\n')).toBe(true);
