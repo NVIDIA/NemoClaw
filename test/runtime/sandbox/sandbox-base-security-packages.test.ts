@@ -40,6 +40,14 @@ const SECURITY_IMAGES = [
     additionalStartMarker: null,
     endMarker: "# Node remains available",
   },
+  {
+    name: "Pi",
+    dockerfile: path.join(ROOT, "agents", "pi", "Dockerfile.base"),
+    finalDockerfile: path.join(ROOT, "agents", "pi", "Dockerfile"),
+    startMarker: "# Install the reviewed libexpat, jq, and Vim packages",
+    additionalStartMarker: null,
+    endMarker: "# Pi runs on Node.js",
+  },
 ] as const;
 const ARCHITECTURES = ["amd64", "arm64"] as const;
 const EXPECTED_SECURITY_PACKAGE_INVENTORY = [
