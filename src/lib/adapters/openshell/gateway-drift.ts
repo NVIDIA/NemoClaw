@@ -22,18 +22,24 @@ import {
   isGatewayHealthy,
 } from "../../state/gateway";
 import { dockerContainerInspectFormat } from "../docker";
-import { parseVersionFromText, stripAnsi } from "./client";
+import {
+  classifyManagedGatewayEndpointBinding,
+  type ManagedGatewayEndpointBinding,
+  parseVersionFromText,
+  stripAnsi,
+} from "./client";
 import { resolveOpenshell } from "./resolve";
 import { captureOpenshell, getInstalledOpenshellVersionOrNull } from "./runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
 
-export type { GatewayReuseState };
+export type { GatewayReuseState, ManagedGatewayEndpointBinding };
 // Gateway observation consumers use the established drift adapter as their
 // OpenShell parsing and state boundary.
 export {
   getGatewayReuseState,
   isGatewayHealthy,
   OPENSHELL_PROBE_TIMEOUT_MS,
+  classifyManagedGatewayEndpointBinding,
   parseVersionFromText,
   stripAnsi,
 };
