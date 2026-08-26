@@ -5,7 +5,10 @@ import { isDeepStrictEqual } from "node:util";
 
 import type { AgentDefinition } from "../agent/defs";
 import type { InferenceEndpointSource, InferenceSelection } from "../inference/selection";
-import { inferenceSelectionRegistryFields, normalizeInferenceSelection } from "../inference/selection";
+import {
+  inferenceSelectionRegistryFields,
+  normalizeInferenceSelection,
+} from "../inference/selection";
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
 import * as onboardSession from "../state/onboard-session";
 import type { OpenClawImagePluginInstall } from "../state/openclaw-plugin-restore";
@@ -103,6 +106,7 @@ export interface CreatedSandboxRegistryEntryInput {
 
 export interface CreatedSandboxRegistrationInput extends CreatedSandboxRegistryEntryInput {
   portableLifecycle?: boolean;
+  reservationSessionId?: string;
   environment?: NodeJS.ProcessEnv;
   classifyPortableLifecycleReceipt?: typeof classifyPortableLifecycleReceipt;
   inferenceRouteReservation?: QualifiedSandboxInferenceRouteReservation;
@@ -389,11 +393,19 @@ export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): 
     );
   }
   const writeRegistry = input.registerSandbox ?? registry.registerSandbox;
+  const pendingOptions =
+    input.reservationSessionId && !input.verifiedCreate
+      ? {
+          pending: true as const,
+          reservationSessionId: input.reservationSessionId,
+        }
+      : undefined;
+  const registrationOptions = input.verifiedCreate
+    ? { verifiedCreate: input.verifiedCreate }
+    : pendingOptions;
   const registered =
-    input.inferenceRouteReservation || input.verifiedCreate
-      ? writeRegistry(entry, input.inferenceRouteReservation, {
-          ...(input.verifiedCreate ? { verifiedCreate: input.verifiedCreate } : {}),
-        })
+    input.inferenceRouteReservation || registrationOptions
+      ? writeRegistry(entry, input.inferenceRouteReservation, registrationOptions)
       : writeRegistry(entry);
   return registered ?? entry;
 }
