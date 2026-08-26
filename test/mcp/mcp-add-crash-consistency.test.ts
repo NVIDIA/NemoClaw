@@ -18,6 +18,7 @@ type CrashBoundary =
   | "credential-collision"
   | "credential-command-race"
   | "credential-projection-coalesced"
+  | "credential-projection-delayed-final"
   | "credential-projection-delayed-hostless"
   | "registered-credential-collision"
   | "registered-late-collision"
@@ -45,6 +46,7 @@ const path = require("node:path");
 const crashAfter = ${JSON.stringify(crashAfter)};
 if (
   crashAfter === "credential-projection-coalesced" ||
+  crashAfter === "credential-projection-delayed-final" ||
   crashAfter === "credential-projection-delayed-hostless"
 ) {
   process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS = "2";
@@ -66,6 +68,7 @@ let credentialRepublishBeforeObservationCountThisProcess = 0;
 let credentialRepublishAfterAbsenceCountThisProcess = 0;
 let credentialFreeRefreshBeforeObservationCountThisProcess = 0;
 let credentialFreeRefreshAfterAbsenceCountThisProcess = 0;
+let credentialObservationCountThisProcess = 0;
 
 const registry = require("./src/lib/state/registry.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
@@ -258,6 +261,14 @@ processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
       stderr: "",
     };
   }
+  if (crashAfter === "credential-projection-delayed-final" && isObservation) {
+    credentialObservationCountThisProcess += 1;
+    return {
+      status: 0,
+      stdout: credentialObservationCountThisProcess === 1 ? "v1" : "v" + providerVersion(),
+      stderr: "",
+    };
+  }
   return {
     status: crashAfter === "preupdate-observation-forbidden" && isPreupdateObservation ? 1 : 0,
     stdout: isObservation ? (marked("updated") ? "v" + providerVersion() : marked("provider") ? "v1" : "absent") : "",
@@ -270,6 +281,9 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => {
   }
   if (command.includes("config' 'add") || command.includes('"config", "add"')) {
     mark("adapter");
+    if (command.includes("openshell:resolve:env:v2_FAKE_MCP_SECRET")) {
+      mark("adapter-final-revision");
+    }
     if (crashAfter === "adapter") process.exit(86);
     return { status: 0, stdout: "", stderr: "" };
   }
@@ -705,6 +719,19 @@ describe("MCP add crash consistency", () => {
       expect(fs.existsSync(path.join(home, "updated.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(true);
+      expect(readBridge(home).addState).toBeUndefined();
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("registers the revision from the final provider publication", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-final-revision-"));
+    try {
+      const result = runAddProcess(home, "credential-projection-delayed-final");
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(fs.existsSync(path.join(home, "adapter-final-revision.marker"))).toBe(true);
       expect(readBridge(home).addState).toBeUndefined();
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
