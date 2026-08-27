@@ -219,16 +219,55 @@ describe("CLI OpenShell provider adapter", () => {
     ]);
   });
 
+  it("places a named gateway flag before detach arguments (#9806)", async () => {
+    const run = vi.fn(() => captured(0));
+    const adapter = createCliOpenShellProviderAdapter({ run });
+
+    await expect(
+      adapter.detachProvider({
+        target: namedOpenShellGateway("nemoclaw-18080"),
+        providerName: "search-prod",
+        sandboxName: "alpha",
+      }),
+    ).resolves.toEqual({ ok: true, value: { state: "detached" } });
+    expect(run).toHaveBeenCalledWith(
+      ["sandbox", "provider", "detach", "-g", "nemoclaw-18080", "alpha", "search-prod"],
+      expect.objectContaining({ ignoreError: true, timeout: 30_000 }),
+    );
+  });
+
+  it.each([
+    "provider is attached to sandbox(es): --gateway, invalid/name",
+    "provider is attached to sandbox(es):",
+  ])("does not return unvalidated attachment targets from %s (#9806)", async (diagnostic) => {
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () => captured(1, "", diagnostic),
+    });
+
+    const result = await adapter.deleteProvider({
+      target: selectedOpenShellGateway(),
+      providerName: "search-prod",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { kind: "command", reason: "failed" },
+    });
+    expect(JSON.stringify(result)).not.toContain("attachedSandboxes");
+  });
+
   it.each([
     [
       "authentication",
       captured(1, "", "authentication failed: credential-value"),
       "OpenShell could not authenticate the provider operation.",
+      undefined,
     ],
     [
       "transport",
       captured(1, "", "client error (Connect): connection refused"),
       "OpenShell could not reach the selected gateway.",
+      "unreachable",
     ],
     [
       "timeout",
@@ -241,6 +280,7 @@ describe("CLI OpenShell provider adapter", () => {
         }),
       ),
       "The OpenShell provider operation timed out.",
+      undefined,
     ],
     [
       "transport",
@@ -251,15 +291,19 @@ describe("CLI OpenShell provider adapter", () => {
         Object.assign(new Error("spawn openshell credential-value"), { code: "ENOENT" }),
       ),
       "OpenShell could not start the provider operation.",
+      "process_start",
     ],
   ])(
     "maps %s failures without returning CLI diagnostics (#9806)",
-    async (kind, result, message) => {
+    async (kind, result, message, reason) => {
       const adapter = createCliOpenShellProviderAdapter({ run: () => result });
 
       const mapped = await adapter.listProviders({ target: selectedOpenShellGateway() });
 
-      expect(mapped).toEqual({ ok: false, error: { kind, message } });
+      expect(mapped).toEqual({
+        ok: false,
+        error: { kind, ...(reason ? { reason } : {}), message },
+      });
       expect(JSON.stringify(mapped)).not.toContain("credential-value");
     },
   );

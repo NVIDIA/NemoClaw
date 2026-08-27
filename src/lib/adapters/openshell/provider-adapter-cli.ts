@@ -98,6 +98,7 @@ function commandError(
   if (errorCode === "ENOENT" || errorCode === "EACCES") {
     return {
       kind: "transport",
+      reason: "process_start",
       message: "OpenShell could not start the provider operation.",
     };
   }
@@ -122,7 +123,11 @@ function commandError(
       output,
     )
   ) {
-    return { kind: "transport", message: "OpenShell could not reach the selected gateway." };
+    return {
+      kind: "transport",
+      reason: "unreachable",
+      message: "OpenShell could not reach the selected gateway.",
+    };
   }
   if (/already exists/iu.test(output)) {
     return { kind: "command", reason: "already_exists", message };
@@ -141,9 +146,28 @@ function commandError(
   };
 }
 
-function scopedArgs(args: string[], target: OpenShellGatewayTarget): string[] {
+function scopedArgs(
+  args: string[],
+  target: OpenShellGatewayTarget,
+  gatewayFlagIndex = 2,
+): string[] {
   if (target.kind === "selected") return args;
-  return [...args.slice(0, 2), "-g", target.gatewayName, ...args.slice(2)];
+  return [
+    ...args.slice(0, gatewayFlagIndex),
+    "-g",
+    target.gatewayName,
+    ...args.slice(gatewayFlagIndex),
+  ];
+}
+
+export function parseCliOpenShellProviderNames(output: unknown): string[] {
+  return bufferOrStringToText(
+    typeof output === "string" || Buffer.isBuffer(output) ? output : String(output ?? ""),
+  )
+    .replace(ANSI_RE, "")
+    .split(/\r?\n/u)
+    .map((name) => name.trim())
+    .filter(Boolean);
 }
 
 function parseProfileCredentialKeys(output: string): string[] | null {
@@ -181,8 +205,9 @@ export function createCliOpenShellProviderAdapter(
     args: string[],
     request: OpenShellProviderRequest,
     env?: Record<string, string>,
+    gatewayFlagIndex = 2,
   ) =>
-    run(scopedArgs(args, request.target), {
+    run(scopedArgs(args, request.target, gatewayFlagIndex), {
       ...(env ? { env } : {}),
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
@@ -194,11 +219,7 @@ export function createCliOpenShellProviderAdapter(
     const error = commandError(result);
     if (error) return failure(error);
     return success({
-      names: bufferOrStringToText(result.stdout)
-        .replace(ANSI_RE, "")
-        .split(/\r?\n/u)
-        .map((name) => name.trim())
-        .filter(Boolean),
+      names: parseCliOpenShellProviderNames(result.stdout),
     });
   };
 
@@ -276,6 +297,8 @@ export function createCliOpenShellProviderAdapter(
     const result = invoke(
       ["sandbox", "provider", "detach", request.sandboxName, request.providerName],
       request,
+      undefined,
+      3,
     );
     const output = commandOutput(result);
     if (result.status !== 0 && TOLERATED_DETACH_OUTPUT_RE.test(output)) {

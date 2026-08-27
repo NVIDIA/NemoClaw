@@ -162,7 +162,12 @@ afterEach(() => {
     delete require.cache[modulePath];
   }
   delete require.cache[GLOBAL_ACTIONS_PATH];
-  delete require.cache[PROVIDER_COMMAND_PATH];
+  const providerCommands = require(PROVIDER_COMMAND_PATH) as {
+    setProviderCommandRuntimeHooksForTest: (hooks: {
+      runOpenshell?: RuntimeBridge["runOpenshell"];
+    }) => void;
+  };
+  providerCommands.setProviderCommandRuntimeHooksForTest({});
 });
 
 describe("credentials oclif commands", () => {
@@ -211,7 +216,9 @@ describe("credentials oclif commands", () => {
     expect(output.stdout).toContain("openai-prod");
     expect(output.stdout).toContain("nvidia-prod");
     expect(output.stdout).toContain("2 per-sandbox messaging bridge(s)");
-    expect(output.stdout).toContain("channels list/remove/stop");
+    expect(output.stdout).toContain("oclif <sandbox> channels list");
+    expect(output.stdout).toContain("oclif <sandbox> channels remove <channel>");
+    expect(output.stdout).toContain("oclif <sandbox> channels stop <channel>");
     expect(output.stdout).not.toContain("alpha-telegram-bridge");
   });
 
@@ -237,8 +244,9 @@ describe("credentials oclif commands", () => {
       expectExitCode(() => CredentialsListCommand.run([]), 1),
     );
 
-    expect(output.stderr).toContain("Could not query OpenShell gateway");
-    expect(output.stderr).toContain("Start the gateway again with `nemoclaw onboard`.");
+    expect(output.stderr).toContain("Could not query OpenShell providers");
+    expect(output.stderr).toContain("gateway unavailable");
+    expect(output.stderr).not.toContain("Start the gateway again");
   });
 
   it("records gateway recovery failures without calling provider list", async () => {

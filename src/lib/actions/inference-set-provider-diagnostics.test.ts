@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { isBridgeProviderName, parseGatewayProviderNames } from "../credentials/provider-list";
+import { parseCliOpenShellProviderNames } from "../adapters/openshell/provider-adapter-cli";
+import { classifyGatewayProviderNames, isBridgeProviderName } from "../credentials/provider-list";
 import { queryRegisteredGatewayProviders } from "./inference-set-provider-diagnostics";
 
 const STATIC_WARNING =
@@ -29,11 +30,17 @@ describe("inference set provider diagnostics", () => {
   });
 
   it("partitions empty and messaging-only provider output", () => {
-    expect(parseGatewayProviderNames("")).toEqual({ bridgeNames: [], credentialNames: [] });
-    expect(parseGatewayProviderNames("alpha-telegram-bridge\nalpha-slack-app\n")).toEqual({
-      bridgeNames: ["alpha-telegram-bridge", "alpha-slack-app"],
+    expect(classifyGatewayProviderNames(parseCliOpenShellProviderNames(""))).toEqual({
+      bridgeNames: [],
       credentialNames: [],
     });
+    expect(
+      classifyGatewayProviderNames(
+        parseCliOpenShellProviderNames(
+          "  \u001b[32malpha-telegram-bridge\u001b[0m  \r\n alpha-slack-app \r\n",
+        ),
+      ),
+    ).toEqual({ bridgeNames: ["alpha-telegram-bridge", "alpha-slack-app"], credentialNames: [] });
     expect(isBridgeProviderName("alpha-discord-bridge")).toBe(true);
     expect(isBridgeProviderName("nvidia-prod")).toBe(false);
   });

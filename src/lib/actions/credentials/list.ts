@@ -39,10 +39,11 @@ export async function runCredentialsListAction(
     timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
   });
   if (!result.ok) {
-    return fail([
-      "  Could not query OpenShell gateway. Is it running?",
-      `  ${gatewayStartGuidance()}`,
-    ]);
+    const failureLines = ["  Could not query OpenShell providers.", `  ${result.error.message}`];
+    if (result.error.kind === "transport" && result.error.reason === "unreachable") {
+      failureLines.push(`  ${gatewayStartGuidance()}`);
+    }
+    return fail(failureLines);
   }
 
   const { bridgeNames, credentialNames } = classifyGatewayProviderNames(result.value.names);
@@ -57,7 +58,9 @@ export async function runCredentialsListAction(
     outputLines.push(
       "",
       `  ${String(bridgeNames.length)} per-sandbox messaging bridge(s) are also registered.`,
-      `  Manage those with \`${cliName} <sandbox> channels list/remove/stop\` — not this command.`,
+      `    Inspect: \`${cliName} <sandbox> channels list\``,
+      `    Retire and clear credentials: \`${cliName} <sandbox> channels remove <channel>\``,
+      `    Pause without clearing credentials: \`${cliName} <sandbox> channels stop <channel>\``,
     );
   }
   return { exitCode: 0, outputLines, failureLines: [] };

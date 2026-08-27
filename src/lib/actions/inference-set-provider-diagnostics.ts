@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CaptureOpenshellOptions, CaptureOpenshellResult } from "../adapters/openshell/client";
-import { parseGatewayProviderNames } from "../credentials/provider-list";
+import { parseCliOpenShellProviderNames } from "../adapters/openshell/provider-adapter-cli";
+import { classifyGatewayProviderNames } from "../credentials/provider-list";
 import {
   buildOpenshellInferenceSetFailureMessage,
   OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
@@ -29,7 +30,8 @@ export function queryRegisteredGatewayProviders(
       timeout: OPEN_SHELL_DIAGNOSTIC_TIMEOUT_MS,
     });
     if (result.status === 0) {
-      return parseGatewayProviderNames(result.output).credentialNames;
+      return classifyGatewayProviderNames(parseCliOpenShellProviderNames(result.output))
+        .credentialNames;
     }
   } catch (_error: unknown) {
     // #5924: intentionally treat every thrown query or parsing error identically.

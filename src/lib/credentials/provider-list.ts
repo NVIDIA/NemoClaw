@@ -18,15 +18,3 @@ export function classifyGatewayProviderNames(names: readonly string[]): {
     credentialNames: names.filter((name) => !isBridgeProviderName(name)).sort(),
   };
 }
-
-/** @deprecated CLI output parsing belongs to the OpenShell CLI adapter. */
-export function parseGatewayProviderNames(output: unknown): {
-  bridgeNames: string[];
-  credentialNames: string[];
-} {
-  const allNames = String(output ?? "")
-    .split("\n")
-    .map((name) => name.trim())
-    .filter((name) => name.length > 0);
-  return classifyGatewayProviderNames(allNames);
-}

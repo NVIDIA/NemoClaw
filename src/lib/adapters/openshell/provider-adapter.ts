@@ -10,9 +10,16 @@ export type OpenShellProviderCommandReason =
   | "invalid_request"
   | "not_found";
 
+export type OpenShellProviderTransportReason = "process_start" | "unreachable";
+
 export type OpenShellProviderError =
   | Readonly<{
-      kind: "authentication" | "schema" | "timeout" | "transport" | "validation";
+      kind: "authentication" | "schema" | "timeout" | "validation";
+      message: string;
+    }>
+  | Readonly<{
+      kind: "transport";
+      reason: OpenShellProviderTransportReason;
       message: string;
     }>
   | Readonly<{

@@ -113,7 +113,49 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(result.outputLines).toContain("    alpha");
     expect(result.outputLines).toContain("    zeta");
     expect(result.outputLines.join("\n")).not.toContain("alpha-telegram-bridge");
+    expect(result.outputLines).toContain("    Inspect: `nemoclaw <sandbox> channels list`");
+    expect(result.outputLines).toContain(
+      "    Retire and clear credentials: `nemoclaw <sandbox> channels remove <channel>`",
+    );
+    expect(result.outputLines).toContain(
+      "    Pause without clearing credentials: `nemoclaw <sandbox> channels stop <channel>`",
+    );
   });
+
+  it.each([
+    [
+      "authentication",
+      "OpenShell could not authenticate the provider operation.",
+      false,
+      undefined,
+    ],
+    ["schema", "The OpenShell CLI and gateway provider schemas do not match.", false, undefined],
+    ["timeout", "The OpenShell provider operation timed out.", false, undefined],
+    ["command", "OpenShell rejected the provider query.", false, undefined],
+    ["transport", "OpenShell could not start the provider operation.", false, "process_start"],
+    ["transport", "OpenShell could not reach the selected gateway.", true, "unreachable"],
+  ] as const)(
+    "uses the typed %s provider-list failure for recovery guidance (#9806)",
+    async (kind, message, includesStartGuidance, reason) => {
+      const listProviders: OpenShellProviderAdapter["listProviders"] = async () => ({
+        ok: false,
+        error:
+          kind === "command"
+            ? { kind, reason: "failed", message }
+            : kind === "transport"
+              ? { kind, reason, message }
+              : { kind, message },
+      });
+      const adapter = providerAdapter({ listProviders: vi.fn(listProviders) });
+
+      const result = await runCredentialsListAction("nemoclaw", { providerAdapter: adapter });
+      const failure = result.failureLines.join("\n");
+
+      expect(result.exitCode).toBe(1);
+      expect(failure).toContain(message);
+      expect(result.failureLines).toHaveLength(includesStartGuidance ? 3 : 2);
+    },
+  );
 
   it("preserves detach-before-delete recovery with typed failures (#9806)", async () => {
     const operations: string[] = [];
@@ -155,4 +197,33 @@ describe("credential actions use typed OpenShell provider results", () => {
       timeoutMs: 30_000,
     });
   });
+
+  it.each([
+    ["absent", undefined],
+    ["empty", []],
+  ] as const)(
+    "does not detach an unvalidated %s attachment list (#9806)",
+    async (_label, attachedSandboxes) => {
+      const deleteProvider = vi.fn<OpenShellProviderAdapter["deleteProvider"]>().mockResolvedValue({
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "attached",
+          message: "provider remains attached",
+          ...(attachedSandboxes ? { attachedSandboxes: [...attachedSandboxes] } : {}),
+        },
+      });
+      const detachProvider = vi.fn<OpenShellProviderAdapter["detachProvider"]>();
+      const adapter = providerAdapter({ deleteProvider, detachProvider });
+
+      const result = await runCredentialsResetAction(
+        { provider: "custom-provider", confirmed: true },
+        { providerAdapter: adapter },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(deleteProvider).toHaveBeenCalledTimes(2);
+      expect(detachProvider).not.toHaveBeenCalled();
+    },
+  );
 });

@@ -60,7 +60,7 @@ export async function runCredentialsResetAction(
       `  '${key}' is a per-sandbox messaging bridge, not a credential.`,
       `  Use \`${CLI_NAME} <sandbox> channels remove <channel>\` to retire`,
       "  the integration (it tears down the bridge provider and rebuilds the sandbox),",
-      `  or \`${CLI_NAME} <sandbox> channels stop <…>\` to pause it without clearing tokens.`,
+      `  or \`${CLI_NAME} <sandbox> channels stop <channel>\` to pause it without clearing tokens.`,
     ]);
   }
 
