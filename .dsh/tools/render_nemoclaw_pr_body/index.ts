@@ -92,6 +92,8 @@ export default async function render_nemoclaw_pr_body(input: {
   if (input.noSecrets !== true) blockers.push("No-secrets confirmation is required.");
   if (!input.dco || input.dco.commitsVerified !== true)
     blockers.push("Every commit must appear as Verified.");
+  if (!input.dco?.name?.trim()) blockers.push("DCO name is required.");
+  if (!input.dco?.email?.trim()) blockers.push("DCO email is required.");
   const sensitive = input.sensitivePath ?? { changed: false };
   if (sensitive.changed && !sensitive.reviewEvidence)
     blockers.push("Sensitive-path review evidence or a waiver is required.");
@@ -187,9 +189,9 @@ export default async function render_nemoclaw_pr_body(input: {
   body = body.replace(
     /Signed-off-by: [^\n]*/u,
     "Signed-off-by: " +
-      line(input.dco.name, "DCO name") +
+      (input.dco?.name?.trim() || "Missing DCO name") +
       " <" +
-      line(input.dco.email, "DCO email") +
+      (input.dco?.email?.trim() || "missing-dco-email") +
       ">",
   );
   body = body.trim() + "\n";
