@@ -26,6 +26,7 @@ import {
   type MxcNativeArtifactControlPlane,
 } from "./mxc-bootstrap-operations";
 import {
+  MxcOpenShellAttachmentError,
   qualifyMxcOpenShellAttachment,
   type MxcOpenShellAttachmentAuthority,
   type MxcOpenShellAttachmentObservation,
@@ -245,7 +246,12 @@ export async function createMxcRuntimeProviderBundleFromExistingInstallation({
         return bootstrap.run(input);
       },
       recover: async (input) => {
-        await observeAndQualify();
+        try {
+          await observeAndQualify();
+        } catch (error) {
+          if (!(error instanceof MxcOpenShellAttachmentError)) throw error;
+          // Recovery can remove only the original exact resource; attachment drift must not retain it.
+        }
         return bootstrap.recover(input);
       },
     },

@@ -16,6 +16,7 @@ import {
 const MAX_PATH_BYTES = 4096;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
+const LOCAL_DRIVE_PATH_PATTERN = /^[A-Za-z]:\\/u;
 
 interface StableFileStat {
   readonly dev: bigint;
@@ -108,10 +109,13 @@ function canonicalWindowsPath(value: unknown, label: string): string {
     value.length === 0 ||
     Buffer.byteLength(value, "utf8") > MAX_PATH_BYTES ||
     CONTROL_CHARACTER_PATTERN.test(value) ||
+    !LOCAL_DRIVE_PATH_PATTERN.test(value) ||
     !path.win32.isAbsolute(value) ||
     path.win32.normalize(value) !== value
   ) {
-    throw new MxcOpenShellAttachmentError(`${label} must be a canonical absolute Windows path`);
+    throw new MxcOpenShellAttachmentError(
+      `${label} must be a canonical absolute local-drive Windows path`,
+    );
   }
   return value;
 }

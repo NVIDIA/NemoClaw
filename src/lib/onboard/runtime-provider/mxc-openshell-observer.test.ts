@@ -77,13 +77,19 @@ function testStat(overrides: Partial<TestStat> = {}): TestStat {
 
 function stableFileOperations(
   content: string,
-  options: { readonly pathAfter?: TestStat; readonly pathBefore?: TestStat } = {},
+  options: {
+    readonly handleAfter?: TestStat;
+    readonly handleBefore?: TestStat;
+    readonly pathAfter?: TestStat;
+    readonly pathBefore?: TestStat;
+  } = {},
 ) {
   const bytes = Buffer.from(content, "utf8");
   const base = testStat({ size: BigInt(bytes.length) });
   const close = vi.fn(async () => undefined);
   let pathStatCalls = 0;
   let handleStatCalls = 0;
+  const handleStats = [options.handleBefore ?? base, options.handleAfter ?? base];
   const operations: MxcOpenShellStableFileOperations = {
     lstat: vi.fn(async () => {
       pathStatCalls += 1;
@@ -91,8 +97,9 @@ function stableFileOperations(
     }),
     open: vi.fn(async () => ({
       stat: async () => {
+        const observed = handleStats[handleStatCalls] ?? base;
         handleStatCalls += 1;
-        return base;
+        return observed;
       },
       read: async (buffer: Buffer, offset: number, length: number, position: number) => {
         const chunk = bytes.subarray(position, position + length);
@@ -185,6 +192,31 @@ describe("inactive OpenShell MXC installation observer", () => {
   });
 
   it.each([
+    ["distributionArtifactPath", "\\\\host\\share\\openshell.zip"],
+    ["distributionRoot", "\\\\host\\share\\OpenShell"],
+    ["cliPath", "\\\\host\\share\\openshell.exe"],
+    ["gatewayPath", "\\\\host\\share\\openshell-gateway.exe"],
+    ["wxcExecPath", "\\\\host\\share\\wxc-exec.exe"],
+    ["gatewayConfigPath", "\\\\host\\share\\gateway.toml"],
+    ["distributionArtifactPath", "\\\\?\\C:\\OpenShell\\openshell.zip"],
+  ] as const)(
+    "rejects the non-local %s installation path before reading files (#8178)",
+    async (field, value) => {
+      const source = request();
+      const candidate = {
+        ...source,
+        installation: { ...source.installation, [field]: value },
+      };
+      const observeDigest = vi.fn(async (filePath: string) => acceptedDigest(filePath));
+
+      await expect(observeMxcOpenShellAttachment(candidate, observeDigest)).rejects.toThrow(
+        /local-drive Windows path/u,
+      );
+      expect(observeDigest).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
     { field: "acceptedIdentity", value: { distribution: "caller-controlled" } },
     { field: "attachmentAuthority", value: "caller-controlled" },
     { field: "providerToken", value: "must-not-enter-observation" },
@@ -232,6 +264,21 @@ describe("inactive OpenShell MXC installation observer", () => {
     ).rejects.toThrow(/stable regular-file handle/u);
     expect(close).toHaveBeenCalledOnce();
   });
+
+  it.each([
+    ["before hashing", { handleBefore: testStat({ ino: 9n }) }],
+    ["after hashing", { handleAfter: testStat({ ino: 9n }) }],
+  ] as const)(
+    "rejects handle identity drift %s and closes the handle (#8178)",
+    async (_phase, options) => {
+      const { close, operations } = stableFileOperations("accepted package bytes", options);
+
+      await expect(
+        readStableMxcOpenShellFileSha256("C:\\OpenShell\\package.zip", operations),
+      ).rejects.toThrow(/stable regular-file handle/u);
+      expect(close).toHaveBeenCalledOnce();
+    },
+  );
 
   it("rejects a symbolic link before opening it (#8178)", async () => {
     const symbolicLink = testStat({ isFile: () => false, isSymbolicLink: () => true });
