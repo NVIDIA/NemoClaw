@@ -306,6 +306,18 @@ export default async function commit_push_refresh_pr(input: {
         );
     } catch (error) {
       const detail = await diagnostic([String(error?.message ?? error)]);
+      let currentPr = null;
+      try {
+        currentPr = await tools.read_nemoclaw_pr({
+          workdir: input.workdir,
+          number: input.pullNumber,
+          repository: repo,
+        });
+      } catch {
+        // Recovery remains read-only until the PR can be read again.
+      }
+      const identityChanged =
+        currentPr !== null && (currentPr.state !== "OPEN" || currentPr.headRefOid !== localHead);
       return {
         applied: true,
         mode: "blocked",
@@ -317,8 +329,13 @@ export default async function commit_push_refresh_pr(input: {
           pullNumber: input.pullNumber,
           localHead,
           published: Boolean(pushResult?.pushed),
+          currentPrCommit: currentPr?.headRefOid ?? null,
           blocker: detail || "Publication failed",
-          recovery: "Publish localHead to the recorded PR branch without creating another commit.",
+          recovery: identityChanged
+            ? "Stop writing and reconcile the changed PR state. Create a new repair only if that state still requires it."
+            : currentPr
+              ? "Publish localHead to the recorded PR branch without creating another commit."
+              : "Re-read and reconcile the PR state before any publication retry.",
         }),
       };
     }
