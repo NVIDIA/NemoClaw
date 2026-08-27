@@ -54,6 +54,22 @@ describe("fresh create identity", () => {
       expectedOutcome: "post-create-authority-refusal" as const,
     },
     {
+      title: "retains recovery state when registry publication fails after create (#9833)",
+      apfInterceptorRequested: true,
+      provider: null,
+      model: null,
+      agent: null,
+      expectedOutcome: "post-create-registration-refusal" as const,
+    },
+    {
+      title: "retains recovery state when final checks fail after registration (#9833)",
+      apfInterceptorRequested: true,
+      provider: null,
+      model: null,
+      agent: null,
+      expectedOutcome: "post-create-finalization-refusal" as const,
+    },
+    {
       title: "rejects staged messaging intent before any onboarding side effect (#9833)",
       apfInterceptorRequested: true,
       provider: null,
@@ -161,6 +177,12 @@ const stagedMessagingRefusal = ${JSON.stringify(expectedOutcome === "staged-mess
 const postCreateAuthorityRefusal = ${JSON.stringify(
         expectedOutcome === "post-create-authority-refusal",
       )};
+const postCreateRegistrationRefusal = ${JSON.stringify(
+        expectedOutcome === "post-create-registration-refusal",
+      )};
+const postCreateFinalizationRefusal = ${JSON.stringify(
+        expectedOutcome === "post-create-finalization-refusal",
+      )};
 let cancelPrompt = false;
 const originalGetCredential = credentials.getCredential;
 credentials.getCredential = (...args) => {
@@ -189,7 +211,12 @@ runner.run = (command, opts = {}) => {
 	runner.runCapture = (command) => {
 	  const cmd = _n(command);
 	  if (cmd.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:8080";
-	  if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: effectivePolicy });
+	  if (cmd.includes("policy get") && cmd.includes("--output json")) {
+	    if (postCreateFinalizationRefusal && registeredSandbox) {
+	      throw new Error("final onboarding policy check failed");
+	    }
+	    return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: effectivePolicy });
+	  }
 	  if (cmd.includes("sandbox get") || cmd.includes("sandbox list")) {
 	    lifecycleObservationCommands.push(cmd);
 	  }
@@ -235,6 +262,9 @@ runner.run = (command, opts = {}) => {
 	    ).policy;
 	  },
 	  registerSandbox: (entry) => {
+	    if (postCreateRegistrationRefusal) {
+	      throw new Error("registry publication failed");
+	    }
 	    registeredSandbox = entry;
 	    registryMutationCalls.push({ operation: "register", name: entry.name });
 	  },
@@ -332,7 +362,10 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
     registryMutationCalls,
     currentRegistryEntry: cancelAfterCreate ? registry.getSandbox("my-assistant") : null,
     savedSession:
-      cancelAfterCreate || postCreateAuthorityRefusal
+      cancelAfterCreate ||
+      postCreateAuthorityRefusal ||
+      postCreateRegistrationRefusal ||
+      postCreateFinalizationRefusal
         ? onboardModule.onboardSession.loadSession()
         : null,
     createCommand: createCommand?.command ?? null,
@@ -556,6 +589,37 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
           identityFingerprint,
         );
       };
+      const assertPostCreateRegistrationRefusal = () => {
+        const identityFingerprint = createHash("sha256").update("sbx-fresh-create").digest("hex");
+        assert.equal(payload.sandboxName, null);
+        assert.equal(payload.sandboxCreated, true);
+        assert.equal(payload.deleted, false);
+        assert.equal(payload.registeredSandbox, null);
+        assert.match(payload.creationError, /registry publication failed/u);
+        assert.equal(payload.savedSession.status, "recovery_required");
+        assert.equal(payload.savedSession.resumable, false);
+        assert.equal(
+          payload.savedSession.cancellationRecovery.sandboxIdentityFingerprint,
+          identityFingerprint,
+        );
+      };
+      const assertPostCreateFinalizationRefusal = () => {
+        const identityFingerprint = createHash("sha256").update("sbx-fresh-create").digest("hex");
+        assert.equal(payload.sandboxName, null);
+        assert.equal(payload.sandboxCreated, true);
+        assert.equal(payload.deleted, false);
+        assert.equal(payload.registeredSandbox.name, "my-assistant");
+        assert.match(
+          payload.creationError,
+          /OpenShell sandbox policy authority inspection failed/u,
+        );
+        assert.equal(payload.savedSession.status, "recovery_required");
+        assert.equal(payload.savedSession.resumable, false);
+        assert.equal(
+          payload.savedSession.cancellationRecovery.sandboxIdentityFingerprint,
+          identityFingerprint,
+        );
+      };
       const assertCancellationRecovery = () => {
         const identityFingerprint = createHash("sha256").update("sbx-fresh-create").digest("hex");
         assert.equal(payload.exitCode, 1);
@@ -640,6 +704,8 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
         "provider-refusal": assertProviderBackedApfRefusal,
         "providerless-apf": assertProviderlessApfCreation,
         "post-create-authority-refusal": assertPostCreateAuthorityRefusal,
+        "post-create-registration-refusal": assertPostCreateRegistrationRefusal,
+        "post-create-finalization-refusal": assertPostCreateFinalizationRefusal,
         "staged-messaging-refusal": assertStagedMessagingRefusal,
         "cancel-after-create-tier": assertCancellationRecovery,
         "cancel-after-create-tier-presets": assertCancellationRecovery,

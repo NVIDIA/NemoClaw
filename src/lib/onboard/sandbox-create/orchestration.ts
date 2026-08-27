@@ -86,6 +86,63 @@ export function persistRetainedSandboxRecoveryMessage(
   }
 }
 
+function persistPostCreateRecovery(input: {
+  readonly stage: "registry publication" | "onboarding finalization";
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly lifecycleGeneration: string;
+  readonly exactIdentity?: string;
+  readonly markRetainedSandboxRecovery: (
+    sandboxName: string,
+    message: string,
+    sandboxIdentityFingerprint?: string,
+  ) => unknown | null;
+}): void {
+  const message =
+    `Sandbox '${input.sandboxName}' was retained after ${input.stage} failed. ` +
+    `Gateway '${input.gatewayName}'. Lifecycle generation '${input.lifecycleGeneration}'. ` +
+    "Do not delete the sandbox by mutable name; preserve it for identity-bound administrator recovery.";
+  const persisted = persistRetainedSandboxRecoveryMessage(
+    {
+      sandboxName: input.sandboxName,
+      message,
+      ...(input.exactIdentity
+        ? { sandboxIdentityFingerprint: input.exactIdentity }
+        : {}),
+    },
+    input.markRetainedSandboxRecovery,
+  );
+  if (!persisted) {
+    console.error(
+      "  NemoClaw could not save the retained sandbox recovery record. Preserve the terminal output and registry state for an OpenShell administrator.",
+    );
+  }
+}
+
+async function runAsyncWithPostCreateRecovery<Result>(
+  operation: () => Promise<Result>,
+  recordRecovery: () => void,
+): Promise<Result> {
+  try {
+    return await operation();
+  } catch (error) {
+    recordRecovery();
+    throw error;
+  }
+}
+
+function runWithPostCreateRecovery<Result>(
+  operation: () => Result,
+  recordRecovery: () => void,
+): Result {
+  try {
+    return operation();
+  } catch (error) {
+    recordRecovery();
+    throw error;
+  }
+}
+
 /** Select the policyless APF create plan only when no active global policy exists. */
 export function resolveSandboxCreatePolicyAuthority(
   observedAuthority: "nemoclaw-managed" | "externally-managed",
@@ -1834,6 +1891,19 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         pendingSandboxPolicyVerificationForBoundary(boundary),
       );
     };
+    const recordPostCreateRecovery = (
+      stage: "registry publication" | "onboarding finalization",
+    ): void =>
+      persistPostCreateRecovery({
+        stage,
+        sandboxName,
+        gatewayName: GATEWAY_NAME,
+        lifecycleGeneration: createdSandboxLifecycle.generation,
+        ...(verifiedPolicyGate
+          ? { exactIdentity: verifiedPolicyGate.lifecycleLiveIdentityFingerprint }
+          : {}),
+        markRetainedSandboxRecovery: onboardSession.markRetainedSandboxRecovery,
+      });
     const runCreateFlow = async (
       attemptCreateArgv: string[],
       hermesPortableReadyCapture?: import("../sandbox-gpu-create-flow").HermesPortableReadyCapture,
@@ -2182,36 +2252,44 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         providerEffectBoundary.runAfterVerifiedCreate,
       );
       try {
-        await completeCreatedSandboxRegistration(created, null);
+        await runAsyncWithPostCreateRecovery(
+          () => completeCreatedSandboxRegistration(created, null),
+          () => recordPostCreateRecovery("registry publication"),
+        );
         apfPolicyRegistrationFinalized = apfInterceptorRequested;
       } finally {
         cleanupInitialCreateSource();
       }
     }
-    hermesStateVolumeLifecycle?.commit();
-    if ("complete" in recreateRuntime) recreateRuntime.complete();
-    if (agentCreateInput.hermesPortableLifecycle) return sandboxName;
-    return completeOrdinaryOnboardSandboxCreation(
-      {
-        sandboxName,
-        sandboxWasLiveDefault,
-        runtimeFields: sandboxRuntimeFields,
-        messagingProviders,
-        liveExists,
-        ...cancelRecoveryIdentity(liveExists, requireVerifiedPolicyGate),
+    return runWithPostCreateRecovery(
+      () => {
+        hermesStateVolumeLifecycle?.commit();
+        if ("complete" in recreateRuntime) recreateRuntime.complete();
+        if (agentCreateInput.hermesPortableLifecycle) return sandboxName;
+        return completeOrdinaryOnboardSandboxCreation(
+          {
+            sandboxName,
+            sandboxWasLiveDefault,
+            runtimeFields: sandboxRuntimeFields,
+            messagingProviders,
+            liveExists,
+            ...cancelRecoveryIdentity(liveExists, requireVerifiedPolicyGate),
+          },
+          {
+            setDefault: registry.setDefault,
+            runFile,
+            scriptsDir: SCRIPTS,
+            gatewayName: GATEWAY_NAME,
+            providerExistsInGateway,
+            armCancelRollback: sandboxCancelRollback.arm,
+            markCancellationRecovery: onboardSession.markCancellationRecovery,
+            dockerInfoFormat,
+            runCapture,
+            revalidatePolicyAuthority: (operation) => revalidatePolicyAuthority(true, operation),
+          },
+        );
       },
-      {
-        setDefault: registry.setDefault,
-        runFile,
-        scriptsDir: SCRIPTS,
-        gatewayName: GATEWAY_NAME,
-        providerExistsInGateway,
-        armCancelRollback: sandboxCancelRollback.arm,
-        markCancellationRecovery: onboardSession.markCancellationRecovery,
-        dockerInfoFormat,
-        runCapture,
-        revalidatePolicyAuthority: (operation) => revalidatePolicyAuthority(true, operation),
-      },
+      () => recordPostCreateRecovery("onboarding finalization"),
     );
   };
 }
