@@ -616,63 +616,70 @@ test(
       expect(beforeGateway.ppid).toBe(supervisor.pid);
 
       const managedEnvBackup = `/tmp/hermes-managed-env-before-${Date.now()}`;
-      const introduceManagedRawSecret = await sandbox.execShell(
-        SANDBOX_NAME,
-        trustedSandboxShellScript(
-          [
-            "set -eu",
-            `backup=${shellQuote(managedEnvBackup)}`,
-            'cp /sandbox/.hermes/.env "$backup"',
-            'printf "\\nNEMOCLAW_E2E_SECRET_TOKEN=raw-managed-restart-secret\\n" >> /sandbox/.hermes/.env',
-          ].join("; "),
-        ),
-        {
-          artifactName: "phase-4-managed-hermes-introduce-raw-secret",
+      let restoreManagedEnv: ShellProbeResult | undefined;
+      try {
+        const introduceManagedRawSecret = await sandbox.execShell(
+          SANDBOX_NAME,
+          trustedSandboxShellScript(
+            [
+              "set -eu",
+              `backup=${shellQuote(managedEnvBackup)}`,
+              'cp /sandbox/.hermes/.env "$backup"',
+              'printf "\\nNEMOCLAW_E2E_SECRET_TOKEN=raw-managed-restart-secret\\n" >> /sandbox/.hermes/.env',
+            ].join("; "),
+          ),
+          {
+            artifactName: "phase-4-managed-hermes-introduce-raw-secret",
+            env: commandEnv(),
+            timeoutMs: 30_000,
+          },
+        );
+        expect(introduceManagedRawSecret.exitCode, resultText(introduceManagedRawSecret)).toBe(0);
+
+        const refuseManagedRawSecret = await host.command(
+          "nemohermes",
+          [SANDBOX_NAME, "gateway", "restart", "--quiet"],
+          {
+            artifactName: "phase-4-managed-hermes-refuse-raw-secret-restart",
+            env: commandEnv(),
+            timeoutMs: 180_000,
+          },
+        );
+        expect(refuseManagedRawSecret.exitCode, resultText(refuseManagedRawSecret)).not.toBe(0);
+        expect(resultText(refuseManagedRawSecret)).toMatch(
+          /secret.boundary refusal|SECRET_BOUNDARY_REFUSED/i,
+        );
+
+        const afterManagedRefusal = await sandbox.execShell(SANDBOX_NAME, gatewayProcessScript, {
+          artifactName: "phase-4-managed-hermes-gateway-after-boundary-refusal",
           env: commandEnv(),
           timeoutMs: 30_000,
-        },
-      );
-      expect(introduceManagedRawSecret.exitCode, resultText(introduceManagedRawSecret)).toBe(0);
-
-      const refuseManagedRawSecret = await host.command(
-        "nemohermes",
-        [SANDBOX_NAME, "gateway", "restart", "--quiet"],
-        {
-          artifactName: "phase-4-managed-hermes-refuse-raw-secret-restart",
-          env: commandEnv(),
-          timeoutMs: 180_000,
-        },
-      );
-      expect(refuseManagedRawSecret.exitCode, resultText(refuseManagedRawSecret)).not.toBe(0);
-      expect(resultText(refuseManagedRawSecret)).toMatch(
-        /secret.boundary refusal|SECRET_BOUNDARY_REFUSED/i,
-      );
-
-      const afterManagedRefusal = await sandbox.execShell(SANDBOX_NAME, gatewayProcessScript, {
-        artifactName: "phase-4-managed-hermes-gateway-after-boundary-refusal",
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      });
-      expect(afterManagedRefusal.exitCode, resultText(afterManagedRefusal)).toBe(0);
-      expect(parseGatewayProcess(afterManagedRefusal.stdout).pid).toBe(beforeGateway.pid);
-
-      const restoreManagedEnv = await sandbox.execShell(
-        SANDBOX_NAME,
-        trustedSandboxShellScript(
-          [
-            "set -eu",
-            `backup=${shellQuote(managedEnvBackup)}`,
-            'cat "$backup" > /sandbox/.hermes/.env',
-            'rm -f "$backup"',
-          ].join("; "),
-        ),
-        {
-          artifactName: "phase-4-managed-hermes-restore-env",
-          env: commandEnv(),
-          timeoutMs: 30_000,
-        },
-      );
-      expect(restoreManagedEnv.exitCode, resultText(restoreManagedEnv)).toBe(0);
+        });
+        expect(afterManagedRefusal.exitCode, resultText(afterManagedRefusal)).toBe(0);
+        expect(parseGatewayProcess(afterManagedRefusal.stdout).pid).toBe(beforeGateway.pid);
+      } finally {
+        restoreManagedEnv = await sandbox.execShell(
+          SANDBOX_NAME,
+          trustedSandboxShellScript(
+            [
+              "set -eu",
+              `backup=${shellQuote(managedEnvBackup)}`,
+              'test ! -f "$backup" || { cat "$backup" > /sandbox/.hermes/.env; rm -f "$backup"; }',
+            ].join("; "),
+          ),
+          {
+            artifactName: "phase-4-managed-hermes-restore-env",
+            env: commandEnv(),
+            timeoutMs: 30_000,
+          },
+        );
+      }
+      expect(
+        restoreManagedEnv?.exitCode,
+        restoreManagedEnv
+          ? resultText(restoreManagedEnv)
+          : "managed environment restoration did not run",
+      ).toBe(0);
 
       const stopApiForward = await sandbox.openshell(["forward", "stop", "8642", SANDBOX_NAME], {
         artifactName: "phase-4-stop-managed-hermes-api-forward",
@@ -849,15 +856,11 @@ test(
           /config hash mismatch|GATEWAY_CONFIG_HASH_MISMATCH/,
         );
 
-        const afterLockedRefusal = await sandbox.execShell(
-          SANDBOX_NAME,
-          gatewayProcessScript,
-          {
-            artifactName: "phase-6-hermes-gateway-after-locked-configuration-refusal",
-            env: commandEnv(),
-            timeoutMs: 30_000,
-          },
-        );
+        const afterLockedRefusal = await sandbox.execShell(SANDBOX_NAME, gatewayProcessScript, {
+          artifactName: "phase-6-hermes-gateway-after-locked-configuration-refusal",
+          env: commandEnv(),
+          timeoutMs: 30_000,
+        });
         expect(afterLockedRefusal.exitCode, resultText(afterLockedRefusal)).toBe(0);
         expect(parseGatewayProcess(afterLockedRefusal.stdout).pid).toBe(recoveredRootGatewayPid);
       } finally {
@@ -883,10 +886,7 @@ test(
             timeoutMs: 30_000,
           },
         );
-        expect(
-          restoreLockedConfiguration.exitCode,
-          resultText(restoreLockedConfiguration),
-        ).toBe(0);
+        expect(restoreLockedConfiguration.exitCode, resultText(restoreLockedConfiguration)).toBe(0);
       }
     }
 
