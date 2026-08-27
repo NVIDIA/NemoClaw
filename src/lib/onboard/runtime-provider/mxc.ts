@@ -264,10 +264,3 @@ export async function attachMxcRuntimeProviderBundleFromExistingInstallation({
     attachmentReceipt: initialAttachment.attachmentReceipt,
   });
 }
-
-/** Observe one existing installation before constructing the inactive provider candidate. */
-export async function createMxcRuntimeProviderBundleFromExistingInstallation(
-  options: MxcExistingInstallationRuntimeProviderOptions,
-): Promise<RuntimeProviderBundle> {
-  return (await attachMxcRuntimeProviderBundleFromExistingInstallation(options)).provider;
-}

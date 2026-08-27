@@ -6,7 +6,6 @@ import { describe, expect, it } from "vitest";
 import {
   MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
   MxcOpenShellAttachmentError,
-  createMxcOpenShellAttachmentAuthority,
   qualifyMxcOpenShellAttachment,
   type MxcOpenShellAttachmentObservation,
 } from "./mxc-openshell-attachment";
@@ -150,17 +149,15 @@ describe("inactive OpenShell MXC installation attachment", () => {
     ).toThrow(/local-drive Windows path/u);
   });
 
-  it("rejects an unsupported backend before attachment (#8178)", () => {
-    const { observation } = mxcOpenShellAttachmentFixture();
-    const accepted = {
-      distribution: observation.distribution,
-      components: observation.components,
-      gateway: { ...observation.gateway, backend: "isolation_session" },
-    };
+  it("rejects an unsupported observed backend before attachment (#8178)", () => {
+    const { authority, observation } = mxcOpenShellAttachmentFixture();
 
-    expect(() => createMxcOpenShellAttachmentAuthority(accepted)).toThrow(
-      /backend must be 'process_container'/u,
-    );
+    expect(() =>
+      qualifyMxcOpenShellAttachment(authority, {
+        ...observation,
+        gateway: { ...observation.gateway, backend: "isolation_session" },
+      }),
+    ).toThrow(/backend must be 'process_container'/u);
   });
 
   it("rejects credential-bearing fields instead of copying them into the receipt (#8178)", () => {
@@ -184,22 +181,6 @@ describe("inactive OpenShell MXC installation attachment", () => {
 
     expect(() => qualifyMxcOpenShellAttachment(copied, observation)).toThrow(
       /accepted identity authority is not provider-owned/u,
-    );
-  });
-
-  it("retains an owned accepted identity after the caller mutates its input (#8178)", () => {
-    const { observation } = mxcOpenShellAttachmentFixture();
-    const accepted = {
-      distribution: { ...observation.distribution },
-      components: { ...observation.components },
-      gateway: { ...observation.gateway },
-    };
-    const authority = createMxcOpenShellAttachmentAuthority(accepted);
-
-    accepted.components.gatewaySha256 = "6".repeat(64);
-
-    expect(qualifyMxcOpenShellAttachment(authority, observation).components.gateway.sha256).toBe(
-      DIGESTS.gateway,
     );
   });
 

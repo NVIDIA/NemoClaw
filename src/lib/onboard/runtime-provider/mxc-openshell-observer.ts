@@ -78,6 +78,21 @@ export interface MxcOpenShellAttachmentObservationRequest {
  */
 export type MxcOpenShellFileDigestObserver = (filePath: string) => Promise<string>;
 
+export type MxcOpenShellObservationFailure =
+  | "unsupported-platform"
+  | "invalid-path"
+  | "observer-unavailable"
+  | "observation-rejected"
+  | "invalid-output";
+
+/** Redacted failure from a trusted installation-file observation boundary. */
+export class MxcOpenShellObservationError extends MxcOpenShellAttachmentError {
+  constructor(readonly failure: MxcOpenShellObservationFailure) {
+    super(`native Windows stable-file boundary failed (${failure})`);
+    this.name = "MxcOpenShellObservationError";
+  }
+}
+
 function stableOpenFlags(): number {
   if (typeof fsConstants.O_NOFOLLOW !== "number" || typeof fsConstants.O_NONBLOCK !== "number") {
     throw new Error("stable no-follow file observation is unavailable");
@@ -339,8 +354,9 @@ export async function observeMxcOpenShellAttachment(
     let observedDigest: string;
     try {
       observedDigest = await observeDigest(filePath);
-    } catch {
-      throw new MxcOpenShellAttachmentError(`${label} could not be observed`);
+    } catch (error) {
+      const category = error instanceof MxcOpenShellObservationError ? ` (${error.failure})` : "";
+      throw new MxcOpenShellAttachmentError(`${label} could not be observed${category}`);
     }
     if (!SHA256_PATTERN.test(observedDigest)) {
       throw new MxcOpenShellAttachmentError(`${label} returned an invalid digest`);

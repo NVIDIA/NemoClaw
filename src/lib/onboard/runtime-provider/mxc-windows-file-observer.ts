@@ -7,7 +7,11 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import { MxcOpenShellAttachmentError } from "./mxc-openshell-attachment";
-import type { MxcOpenShellFileDigestObserver } from "./mxc-openshell-observer";
+import {
+  MxcOpenShellObservationError,
+  type MxcOpenShellFileDigestObserver,
+  type MxcOpenShellObservationFailure,
+} from "./mxc-openshell-observer";
 
 const execFileAsync = promisify(execFile);
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
@@ -16,10 +20,16 @@ const LOCAL_DRIVE_PATH_PATTERN = /^[A-Za-z]:\\/u;
 const MAX_PATH_BYTES = 4096;
 const OBSERVATION_TIMEOUT_MS = 30_000;
 const WINDOWS_SYSTEM_ROOT = "C:\\Windows";
+const OBSERVER_FAILURE_PREFIX = "NEMOCLAW_MXC_OBSERVER_ERROR:";
 
 const STABLE_WINDOWS_FILE_DIGEST_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
-Add-Type -TypeDefinition @'
+if ($ExecutionContext.SessionState.LanguageMode -ne 'FullLanguage') {
+    [Console]::Out.Write('NEMOCLAW_MXC_OBSERVER_ERROR:observer-unavailable')
+    exit 0
+}
+try {
+    Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -83,6 +93,7 @@ public static class NemoClawStableFileObserver
         SafeFileHandle handle = CreateFileW(
             fileName,
             access,
+            // Excluding FILE_SHARE_WRITE and FILE_SHARE_DELETE pins every opened path component.
             FILE_SHARE_READ,
             IntPtr.Zero,
             OPEN_EXISTING,
@@ -227,10 +238,20 @@ public static class NemoClawStableFileObserver
     }
 }
 '@
+}
+catch {
+    [Console]::Out.Write('NEMOCLAW_MXC_OBSERVER_ERROR:observer-unavailable')
+    exit 0
+}
 
 $pathBytes = [Convert]::FromBase64String($env:NEMOCLAW_MXC_OBSERVER_PATH_B64)
 $observedPath = [Text.Encoding]::UTF8.GetString($pathBytes)
-[Console]::Out.Write([NemoClawStableFileObserver]::ObserveSha256($observedPath))
+try {
+    [Console]::Out.Write([NemoClawStableFileObserver]::ObserveSha256($observedPath))
+}
+catch {
+    [Console]::Out.Write('NEMOCLAW_MXC_OBSERVER_ERROR:observation-rejected')
+}
 `;
 
 export interface MxcWindowsFileObserverCommand {
@@ -295,16 +316,34 @@ function commandEnvironment(source: NodeJS.ProcessEnv, observedPath: string): No
   return environment;
 }
 
-/** Create the native Windows stable-file digest boundary for inactive MXC attachment. */
+function observationFailure(output: string): MxcOpenShellObservationFailure | undefined {
+  if (!output.startsWith(OBSERVER_FAILURE_PREFIX)) return undefined;
+  const failure = output.slice(OBSERVER_FAILURE_PREFIX.length);
+  return failure === "observer-unavailable" || failure === "observation-rejected"
+    ? failure
+    : "invalid-output";
+}
+
+/**
+ * Create the native Windows stable-file digest boundary for inactive MXC attachment.
+ *
+ * Windows PowerShell must permit FullLanguage and Add-Type. Hosts that block the required native
+ * API observer fail closed as `observer-unavailable`; installation rejection remains distinct.
+ */
 export function createMxcWindowsOpenShellFileDigestObserver(
   runtime: MxcWindowsFileObserverRuntime = DEFAULT_RUNTIME,
 ): MxcOpenShellFileDigestObserver {
   return async (filePath) => {
+    if (runtime.platform !== "win32") {
+      throw new MxcOpenShellObservationError("unsupported-platform");
+    }
+    let observedPath: string;
     try {
-      if (runtime.platform !== "win32") {
-        throw new Error("native Windows is required");
-      }
-      const observedPath = canonicalLocalWindowsPath(filePath, "installation file path");
+      observedPath = canonicalLocalWindowsPath(filePath, "installation file path");
+    } catch {
+      throw new MxcOpenShellObservationError("invalid-path");
+    }
+    try {
       const powershellPath = path.win32.join(
         WINDOWS_SYSTEM_ROOT,
         "System32",
@@ -331,12 +370,13 @@ export function createMxcWindowsOpenShellFileDigestObserver(
           timeoutMs: OBSERVATION_TIMEOUT_MS,
         })
       ).trim();
-      if (!SHA256_PATTERN.test(output)) throw new Error("invalid observation output");
+      const failure = observationFailure(output);
+      if (failure) throw new MxcOpenShellObservationError(failure);
+      if (!SHA256_PATTERN.test(output)) throw new MxcOpenShellObservationError("invalid-output");
       return output;
-    } catch {
-      throw new MxcOpenShellAttachmentError(
-        "an installation file could not be observed through the native Windows stable-file boundary",
-      );
+    } catch (error) {
+      if (error instanceof MxcOpenShellObservationError) throw error;
+      throw new MxcOpenShellObservationError("observer-unavailable");
     }
   };
 }

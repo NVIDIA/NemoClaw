@@ -63,7 +63,9 @@ describe("inactive native Windows OpenShell file observation", () => {
       }),
     );
 
-    await expect(observeDigest(sensitivePath)).rejects.not.toThrow(sensitivePath);
+    const failure = observeDigest(sensitivePath);
+    await expect(failure).rejects.toThrow(/stable-file boundary failed \(observer-unavailable\)/u);
+    await expect(failure).rejects.not.toThrow(sensitivePath);
   });
 
   it.each([
@@ -86,8 +88,23 @@ describe("inactive native Windows OpenShell file observation", () => {
       runtime(async () => `${DIGEST}\nextra output`),
     );
 
-    await expect(observeDigest("C:\\OpenShell\\a.exe")).rejects.toThrow(/stable-file boundary/u);
+    await expect(observeDigest("C:\\OpenShell\\a.exe")).rejects.toThrow(
+      /stable-file boundary failed \(invalid-output\)/u,
+    );
   });
+
+  it.each(["observer-unavailable", "observation-rejected"] as const)(
+    "preserves the redacted %s category from PowerShell (#8178)",
+    async (category) => {
+      const observeDigest = createMxcWindowsOpenShellFileDigestObserver(
+        runtime(async () => `NEMOCLAW_MXC_OBSERVER_ERROR:${category}`),
+      );
+
+      await expect(observeDigest("C:\\OpenShell\\a.exe")).rejects.toThrow(
+        new RegExp(`stable-file boundary failed \\(${category}\\)`, "u"),
+      );
+    },
+  );
 
   it("does not use a caller-supplied Windows system root (#8178)", async () => {
     const runCommand = vi.fn<MxcWindowsFileObserverCommandRunner>(async () => DIGEST);

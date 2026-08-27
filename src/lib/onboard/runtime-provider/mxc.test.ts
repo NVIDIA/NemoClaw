@@ -15,8 +15,8 @@ import type {
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./current";
 import { createDockerRuntimeProviderBundle } from "./docker";
 import {
+  attachMxcRuntimeProviderBundleFromExistingInstallation,
   createMxcRuntimeProviderBundle,
-  createMxcRuntimeProviderBundleFromExistingInstallation,
 } from "./mxc";
 import type { MxcNativeArtifactControlPlane } from "./mxc-bootstrap-operations";
 import { mxcOpenShellAttachmentFixture } from "./mxc-openshell-attachment-test-fixture";
@@ -126,7 +126,7 @@ describe("inactive OpenShell MXC runtime provider", () => {
     ]);
     const observeFileDigest = vi.fn(async (filePath: string) => digests.get(filePath)!);
 
-    const provider = await createMxcRuntimeProviderBundleFromExistingInstallation({
+    const { provider } = await attachMxcRuntimeProviderBundleFromExistingInstallation({
       hostFacts: {
         platform: "win32",
         nativeArchitecture: "x64",
@@ -169,7 +169,7 @@ describe("inactive OpenShell MXC runtime provider", () => {
     const verifyAndCreate = vi.fn(async () => ({ status: "unknown" as const }));
     const verifyReadiness = vi.fn();
     const recoverCreate = vi.fn(async () => ({ status: "absent" as const }));
-    const provider = await createMxcRuntimeProviderBundleFromExistingInstallation({
+    const { provider } = await attachMxcRuntimeProviderBundleFromExistingInstallation({
       hostFacts: {
         platform: "win32",
         nativeArchitecture: "x64",
@@ -216,7 +216,7 @@ describe("inactive OpenShell MXC runtime provider", () => {
     const verifyAndCreate = vi.fn(async () => ({ status: "unknown" as const }));
     const verifyReadiness = vi.fn();
     const recoverCreate = vi.fn(async () => ({ status: "absent" as const }));
-    const provider = await createMxcRuntimeProviderBundleFromExistingInstallation({
+    const { provider } = await attachMxcRuntimeProviderBundleFromExistingInstallation({
       hostFacts: {
         platform: "win32",
         nativeArchitecture: "x64",
@@ -270,7 +270,7 @@ describe("inactive OpenShell MXC runtime provider", () => {
     const verifyAndCreate = vi.fn(async () => ({ status: "unknown" as const }));
 
     await expect(
-      createMxcRuntimeProviderBundleFromExistingInstallation({
+      attachMxcRuntimeProviderBundleFromExistingInstallation({
         hostFacts: {
           platform: "win32",
           nativeArchitecture: "x64",

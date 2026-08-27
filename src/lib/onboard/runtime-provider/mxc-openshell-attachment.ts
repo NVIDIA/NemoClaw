@@ -36,7 +36,7 @@ type ExactGatewayIdentity = {
   readonly backend: "process_container";
 };
 
-export interface MxcOpenShellAttachmentExpectation {
+interface MxcOpenShellAttachmentExpectation {
   readonly distribution: ExactDistributionIdentity;
   readonly components: ExactComponentIdentity;
   readonly gateway: ExactGatewayIdentity;
@@ -265,7 +265,7 @@ function sameIdentity(
  * The caller must obtain the expectation from a trusted provider source, not
  * from the host observation that will be qualified against it.
  */
-export function createMxcOpenShellAttachmentAuthority(
+function createMxcOpenShellAttachmentAuthority(
   expectation: unknown,
 ): MxcOpenShellAttachmentAuthority {
   const accepted = cloneAndDeepFreeze(parseExpectation(expectation, "accepted attachment"));
@@ -288,6 +288,34 @@ export function createMxcOpenShellAttachmentAuthority(
   });
   ACCEPTED_IDENTITIES.set(authority, accepted);
   return authority;
+}
+
+/**
+ * Create the fixed, non-production authority used by attachment contract tests.
+ *
+ * The caller may vary only the SemVer value under test. Component identities stay fixed so this
+ * helper cannot turn caller-observed digests into accepted provider authority.
+ */
+export function createMxcOpenShellAttachmentTestAuthority(
+  version: string,
+): MxcOpenShellAttachmentAuthority {
+  return createMxcOpenShellAttachmentAuthority({
+    distribution: {
+      version,
+      revision: "a".repeat(40),
+      sha256: "1".repeat(64),
+    },
+    components: {
+      cliSha256: "2".repeat(64),
+      gatewaySha256: "3".repeat(64),
+      wxcExecSha256: "4".repeat(64),
+    },
+    gateway: {
+      configSha256: "5".repeat(64),
+      driver: "mxc",
+      backend: "process_container",
+    },
+  });
 }
 
 function acceptedIdentity(authority: unknown): MxcOpenShellAttachmentExpectation {

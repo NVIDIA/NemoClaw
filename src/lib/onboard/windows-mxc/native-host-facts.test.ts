@@ -25,7 +25,7 @@ describe("inactive native Windows MXC host observation", () => {
     });
   });
 
-  it("does not classify WSL as a native Windows host (#8178)", () => {
+  it("reports a WSL host with its observed Linux platform (#8178)", () => {
     expect(
       observeWindowsMxcNativeHostFacts({
         platform: "linux",

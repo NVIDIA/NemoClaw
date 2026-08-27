@@ -157,4 +157,25 @@ describe("inactive native Windows OpenShell MXC existing-installation compositio
     ).rejects.toThrow(/currently qualifies x64 only/u);
     expect(nativeBoundary.observeFileDigest).not.toHaveBeenCalled();
   });
+
+  it("rejects a caller-constructed attachment authority before provider composition (#8178)", async () => {
+    const attachment = mxcOpenShellAttachmentFixture("0.0.24");
+    const digests = acceptedDigests(attachment.observation);
+    nativeBoundary.observeHostFacts.mockReturnValue({
+      platform: "win32",
+      nativeArchitecture: "x64",
+      release: "10.0.28120.2760",
+    });
+    nativeBoundary.observeFileDigest.mockImplementation(async (filePath: string) =>
+      digests.get(filePath)!,
+    );
+
+    await expect(
+      attachMxcWindowsExistingInstallation({
+        openshellAttachmentAuthority: { ...attachment.authority },
+        attachmentObservation: observationRequest(attachment.observation),
+        bootstrapControlPlane: controlPlane(),
+      }),
+    ).rejects.toThrow(/accepted identity authority is not provider-owned/u);
+  });
 });

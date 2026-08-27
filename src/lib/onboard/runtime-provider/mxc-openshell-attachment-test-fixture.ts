@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  createMxcOpenShellAttachmentAuthority,
+  createMxcOpenShellAttachmentTestAuthority,
   type MxcOpenShellAttachmentAuthority,
-  type MxcOpenShellAttachmentExpectation,
   type MxcOpenShellAttachmentObservation,
 } from "./mxc-openshell-attachment";
 
@@ -20,7 +19,7 @@ export function mxcOpenShellAttachmentFixture(version = "0.0.21"): {
   readonly authority: MxcOpenShellAttachmentAuthority;
   readonly observation: MxcOpenShellAttachmentObservation;
 } {
-  const accepted: MxcOpenShellAttachmentExpectation = {
+  const accepted = {
     distribution: {
       version,
       revision: "a".repeat(40),
@@ -33,12 +32,12 @@ export function mxcOpenShellAttachmentFixture(version = "0.0.21"): {
     },
     gateway: {
       configSha256: MXC_OPENSHELL_ATTACHMENT_TEST_DIGESTS.config,
-      driver: "mxc",
-      backend: "process_container",
+      driver: "mxc" as const,
+      backend: "process_container" as const,
     },
   };
   return {
-    authority: createMxcOpenShellAttachmentAuthority(accepted),
+    authority: createMxcOpenShellAttachmentTestAuthority(version),
     observation: {
       ...structuredClone(accepted),
       distributionRoot: "C:\\OpenShell",
