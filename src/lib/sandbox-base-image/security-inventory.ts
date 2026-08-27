@@ -19,15 +19,22 @@ export const SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY = [
   "perl=5.44.0-1nemoclaw1",
 ] as const;
 
-const SECURITY_PACKAGE_INVENTORY_SHELL_ARGUMENTS = SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY.map(
-  (packageSpec) => `"${packageSpec}"`,
-).join(" ");
+export const OPENCLAW_SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY = [
+  ...SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY,
+  "libevent-core-2.1-7t64=2.1.13-stable-1",
+] as const;
 
 /**
  * Reject a published or cached base that predates the immutable security
  * package inventory consumed by completed-image verification.
  */
-export function sandboxBaseImageHasSecurityInventory(imageRef: string): boolean {
+function sandboxBaseImageHasPackageInventory(
+  imageRef: string,
+  packageInventory: readonly string[],
+): boolean {
+  const packageInventoryShellArguments = packageInventory
+    .map((packageSpec) => `"${packageSpec}"`)
+    .join(" ");
   const output = dockerCapture(
     [
       "run",
@@ -50,11 +57,22 @@ export function sandboxBaseImageHasSecurityInventory(imageRef: string): boolean 
         'test -f "$security_inventory"',
         'test ! -L "$security_inventory"',
         `test "$(stat -c '%u:%g:%a' "$security_inventory")" = "0:0:444"`,
-        `printf '%s\\n' "architecture=$arch" ${SECURITY_PACKAGE_INVENTORY_SHELL_ARGUMENTS} | cmp -s - "$security_inventory"`,
+        `printf '%s\\n' "architecture=$arch" ${packageInventoryShellArguments} | cmp -s - "$security_inventory"`,
         `printf '%s\\n' "${SECURITY_INVENTORY_PROBE_OK}"`,
       ].join("; "),
     ],
     { ignoreError: true, timeout: 20_000 },
   );
   return output.trim() === SECURITY_INVENTORY_PROBE_OK;
+}
+
+export function sandboxBaseImageHasSecurityInventory(imageRef: string): boolean {
+  return sandboxBaseImageHasPackageInventory(imageRef, SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY);
+}
+
+export function openClawSandboxBaseImageHasSecurityInventory(imageRef: string): boolean {
+  return sandboxBaseImageHasPackageInventory(
+    imageRef,
+    OPENCLAW_SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY,
+  );
 }

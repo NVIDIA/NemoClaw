@@ -9,7 +9,7 @@ import {
   OPENCLAW_SANDBOX_BASE_IMAGE as SANDBOX_BASE_IMAGE,
   type SandboxBaseImageResolutionMetadata,
 } from "../sandbox-base-image";
-import { sandboxBaseImageHasSecurityInventory } from "../sandbox-base-image/security-inventory";
+import { openClawSandboxBaseImageHasSecurityInventory } from "../sandbox-base-image/security-inventory";
 import { getInstalledOpenshellVersion } from "./openshell-version";
 
 /**
@@ -18,7 +18,7 @@ import { getInstalledOpenshellVersion } from "./openshell-version";
  * Accepting that base only defers the mismatch to the last Dockerfile layer,
  * after the expensive final image has already been built.
  */
-export const openClawBaseImageHasSecurityInventory = sandboxBaseImageHasSecurityInventory;
+export const openClawBaseImageHasSecurityInventory = openClawSandboxBaseImageHasSecurityInventory;
 
 /**
  * Resolve a compatible sandbox-base image and pin it to a repo digest when

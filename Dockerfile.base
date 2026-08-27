@@ -107,11 +107,11 @@ ENV AWS_EC2_METADATA_DISABLED=true
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Trixie has not published fixes for the reviewed libexpat, jq, or Vim
+# Trixie has not published fixes for the reviewed libevent, libexpat, jq, or Vim
 # advisories. Install fixed Expat packages from the 20260811T082421Z snapshot
-# and fixed jq and Vim packages from the 20260724T000000Z and
-# 20260727T143429Z snapshots, respectively, with architecture-specific hashes,
-# until Trixie carries them.
+# and fixed libevent, jq, and Vim packages from the 20260703T143212Z,
+# 20260724T000000Z, and 20260727T143429Z snapshots, respectively, with
+# architecture-specific hashes, until Trixie carries them.
 # The checksum and runtime probes put the validating command last in each pipe.
 # The runtime Vim probe verifies the package that this layer installs.
 # hadolint ignore=DL3001,DL4006
@@ -139,6 +139,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && case "$arch" in \
         amd64) \
             libexpat_sha256="978e9d30b84893a4c8191d8dae4d1b93c9b7ecaa772ada2fdb892ae3765cab4e"; \
+            libevent_core_sha256="544ca760ced0fba6c4c24f8078726031a04e8b7d9890f576ea9cd724cdbb8ee1"; \
             libonig_sha256="3abee130696244050500bcc7870e3b4cb82ddd87149ece3fd55010c3d4e1d18c"; \
             libjq_sha256="9a5bf964cef39ed8f0f162e20d856e31961d28a57772b5313989b42a8be7e941"; \
             jq_sha256="b973a5d304f666845e8ccefab492e3850d4bc2e7aa2a1e7450862095125f2cc0"; \
@@ -146,6 +147,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
             ;; \
         arm64) \
             libexpat_sha256="660f5f598a06aa56613a2fbf1ffbd408708175f1a6c2fac833842148f0228176"; \
+            libevent_core_sha256="bfc3f57347da0fa26c9cf5229c918c80dfd84fa52f52ca3d4da7148f0f7d7a43"; \
             libonig_sha256="137e708575c0622d347815d19cb471a107546b16e9602805ee27afad7bba107f"; \
             libjq_sha256="eae4a828df2eb53d728f88109d9f9549e0983a90b573cf0c7fa1e4bbc7533a7e"; \
             jq_sha256="c25086443abd04d1457cbb322a0837f9ba986f82b28f44670467c8dc9be1f696"; \
@@ -157,6 +159,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && security_deb_dir="/tmp/nemoclaw-debian-security" \
     && snapshot_url="https://snapshot.debian.org/archive/debian/20260724T000000Z/pool/main" \
     && expat_snapshot_url="https://snapshot.debian.org/archive/debian/20260811T082421Z/pool/main" \
+    && libevent_snapshot_url="https://snapshot.debian.org/archive/debian/20260703T143212Z/pool/main" \
     && vim_snapshot_url="https://snapshot.debian.org/archive/debian/20260727T143429Z/pool/main" \
     && vim_common_sha256="c21aad77632ef790d2352f1c38e688069980bbd530034248dd5e1158da9c9fe3" \
     && mkdir -p "$security_deb_dir" \
@@ -164,6 +167,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/libexpat1.deb" \
         "$expat_snapshot_url/e/expat/libexpat1_2.8.3-1_${arch}.deb" \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        -o "$security_deb_dir/libevent-core-2.1-7t64.deb" \
+        "$libevent_snapshot_url/libe/libevent/libevent-core-2.1-7t64_2.1.13-stable-1_${arch}.deb" \
     && curl --proto '=https' --tlsv1.2 -fsSL \
         --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
         -o "$security_deb_dir/libonig5.deb" \
@@ -186,6 +193,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         "$vim_snapshot_url/v/vim/vim-tiny_9.2.0858-1_${arch}.deb" \
     && printf '%s  %s\n' \
         "$libexpat_sha256" "$security_deb_dir/libexpat1.deb" \
+        "$libevent_core_sha256" "$security_deb_dir/libevent-core-2.1-7t64.deb" \
         "$libonig_sha256" "$security_deb_dir/libonig5.deb" \
         "$libjq_sha256" "$security_deb_dir/libjq1.deb" \
         "$jq_sha256" "$security_deb_dir/jq.deb" \
@@ -194,6 +202,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         | sha256sum -c - \
     && dpkg -i \
         "$security_deb_dir/libexpat1.deb" \
+        "$security_deb_dir/libevent-core-2.1-7t64.deb" \
         "$security_deb_dir/libonig5.deb" \
         "$security_deb_dir/libjq1.deb" \
         "$security_deb_dir/jq.deb" \
@@ -202,6 +211,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         /tmp/nemoclaw-native-security/libssh2-1t64.deb \
         /tmp/nemoclaw-native-security/nemoclaw-python3.13-htmlparser-fix.deb \
     && test "$(dpkg-query -W -f='${Version}' libexpat1)" = "2.8.3-1" \
+    && test "$(dpkg-query -W -f='${Version}' libevent-core-2.1-7t64)" = "2.1.13-stable-1" \
     && test "$(dpkg-query -W -f='${Version}' libonig5)" = "6.9.9-1+b1" \
     && test "$(dpkg-query -W -f='${Version}' libjq1)" = "1.8.2-1" \
     && test "$(dpkg-query -W -f='${Version}' jq)" = "1.8.2-1" \
@@ -213,6 +223,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && test "$(dpkg-query -W -f='${Version}' perl)" = "$perl_version_before" \
     && test "$(jq --version)" = "jq-1.8.2" \
     && ldd /usr/bin/jq | grep -Eq 'libonig[.]so[.]5' \
+    && test "$(tmux -V)" = "tmux 3.5a" \
+    && ldd /usr/bin/tmux | grep -Eq 'libevent_core-2[.]1[.]so[.]7' \
     && printf '%s\n' '{"sandbox":"healthy"}' | jq -e '.sandbox == "healthy"' >/dev/null \
     && python3 -c "import pyexpat; assert pyexpat.EXPAT_VERSION == 'expat_2.8.3', pyexpat.EXPAT_VERSION" \
     && printf '%s  %s\n' \
@@ -264,6 +276,7 @@ RUN apt-get update \
     && printf '%s\n' \
         "perl-base=5.44.0-1nemoclaw1" \
         "perl=5.44.0-1nemoclaw1" \
+        "libevent-core-2.1-7t64=2.1.13-stable-1" \
         >> /usr/local/share/nemoclaw/security-packages.txt \
     && chmod 0444 /usr/local/share/nemoclaw/security-packages.txt \
     && git --version \
