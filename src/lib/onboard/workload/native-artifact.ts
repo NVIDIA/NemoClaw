@@ -22,8 +22,8 @@ export type NativeArtifactDigest = `sha256:${string}`;
 /**
  * Inactive OpenClaw-on-Windows workload receipt.
  *
- * This schema records immutable identity and launch intent. The future staging
- * authority must verify each digest before a runtime provider consumes it.
+ * This schema records immutable identity and launch intent. The bootstrap provider
+ * must verify each digest and create without releasing stable artifact authority.
  */
 export interface NativeArtifactWorkloadReceiptV1 {
   readonly schemaVersion: typeof NATIVE_ARTIFACT_WORKLOAD_RECEIPT_SCHEMA_VERSION;

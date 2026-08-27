@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../../messaging/provider-profile";
 import {
+  attachProvidersAfterSandboxCreation,
   publishAttachedProvidersBeforeDockerSandboxCreation,
   validateAttachedMessagingProvidersBeforeSandboxCreation,
 } from "./provider-publication";
@@ -21,6 +22,17 @@ const exactState: ProviderState = {
   credentialKey: "TELEGRAM_BOT_TOKEN",
   configKeys: "<none>",
 };
+const exactProfile = {
+  status: 0,
+  stdout: JSON.stringify({
+    id: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+    credentials: [],
+    endpoints: [],
+    binaries: [],
+    inference_capable: false,
+  }),
+  stderr: "",
+};
 
 function providerOutput(name: string, state: ProviderState): string {
   return [
@@ -36,7 +48,7 @@ function createHarness(
   initialState: ProviderState | null = exactState,
   postUpdateState: ProviderState = initialState || exactState,
   profileImportResult = { status: 0, stdout: "", stderr: "" },
-  profileExportResult = { status: 0, stdout: "", stderr: "" },
+  profileExportResult = exactProfile,
 ) {
   let updated = false;
   const cleanupCreateSources = vi.fn();
@@ -105,6 +117,58 @@ function prepareProviders(
 }
 
 describe("sandbox provider preparation", () => {
+  it("identity-fences every deferred provider attachment (#9833)", () => {
+    const events: string[] = [];
+    const runOpenshell = vi.fn((args: string[]) => {
+      events.push(args.join(" "));
+      return { status: 0 };
+    });
+
+    attachProvidersAfterSandboxCreation(
+      {
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        providerNames: ["inference", "alpha-telegram"],
+      },
+      {
+        runOpenshell: runOpenshell as never,
+        revalidateSandboxIdentity: (operation) => events.push(operation),
+      },
+    );
+
+    expect(events).toEqual([
+      "attaching provider 'inference' to sandbox 'alpha'",
+      "sandbox provider attach -g nemoclaw alpha inference",
+      "confirming provider 'inference' on sandbox 'alpha'",
+      "attaching provider 'alpha-telegram' to sandbox 'alpha'",
+      "sandbox provider attach -g nemoclaw alpha alpha-telegram",
+      "confirming provider 'alpha-telegram' on sandbox 'alpha'",
+    ]);
+  });
+
+  it("redacts deferred attachment command output on failure (#9833)", () => {
+    const revalidateSandboxIdentity = vi.fn();
+
+    expect(() =>
+      attachProvidersAfterSandboxCreation(
+        {
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          providerNames: ["alpha-telegram"],
+        },
+        {
+          runOpenshell: vi.fn(() => ({
+            status: 1,
+            stdout: "secret-stdout",
+            stderr: "secret-stderr",
+          })) as never,
+          revalidateSandboxIdentity,
+        },
+      ),
+    ).toThrow("OpenShell did not attach provider 'alpha-telegram' to the verified sandbox.");
+    expect(revalidateSandboxIdentity).toHaveBeenCalledOnce();
+  });
+
   it("confirms an exact messaging binding before and after publication (#9875)", () => {
     const harness = createHarness();
 
@@ -116,9 +180,10 @@ describe("sandbox provider preparation", () => {
         "profile",
         "-g",
         "nemoclaw",
-        "import",
-        "--file",
-        expect.stringContaining("nemoclaw-mcp-v1.yaml"),
+        "export",
+        MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+        "--output",
+        "json",
       ],
       ["provider", "get", "-g", "nemoclaw", providerName],
       ["provider", "update", "-g", "nemoclaw", providerName],
@@ -167,9 +232,10 @@ describe("sandbox provider preparation", () => {
         "profile",
         "-g",
         "nemoclaw",
-        "import",
-        "--file",
-        expect.stringContaining("nemoclaw-mcp-v1.yaml"),
+        "export",
+        MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+        "--output",
+        "json",
       ],
       ["provider", "get", "-g", "nemoclaw", providerName],
       ["provider", "update", "-g", "nemoclaw", providerName],
@@ -233,9 +299,14 @@ describe("sandbox provider preparation", () => {
     ).toThrowError(/does not match NemoClaw's endpointless messaging credential contract/u);
     expect(
       harness.runOpenshell.mock.calls.some(([args]) =>
-        args.join(" ").startsWith("provider profile -g nemoclaw import"),
+        args.join(" ").startsWith("provider profile -g nemoclaw export"),
       ),
     ).toBe(true);
+    expect(
+      harness.runOpenshell.mock.calls.some(([args]) =>
+        args.join(" ").startsWith("provider profile -g nemoclaw import"),
+      ),
+    ).toBe(false);
     expect(
       harness.runOpenshell.mock.calls.some(
         ([args]) => args.slice(0, 2).join(" ") === "provider update",

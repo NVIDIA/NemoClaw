@@ -170,6 +170,84 @@ describe("inference selection validation", () => {
     }
   });
 
+  it("withholds OpenAI-like availability and capability caching when policy authority changes during the probe (#9833)", async () => {
+    const capabilityCache = new OnboardInferenceCapabilityCache();
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "test-key",
+      probeOpenAiLikeEndpoint: vi.fn(async () => ({
+        ok: true,
+        api: "openai-completions",
+        label: "Chat Completions API",
+      })),
+      promptValidationRecovery: vi.fn(async () => "selection" as const),
+    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await expect(
+        helpers.validateOpenAiLikeSelection(
+          "OpenAI",
+          "https://api.example.test/v1",
+          "model-a",
+          "OPENAI_API_KEY",
+          undefined,
+          undefined,
+          {
+            capabilityCache,
+            revalidatePolicyRequirements: () => {
+              throw new Error("policy authority changed");
+            },
+          },
+        ),
+      ).rejects.toThrow("policy authority changed");
+      expect(log.mock.calls.flat().join("\n")).not.toContain("available");
+      expect(
+        capabilityCache.takeCompletedOpenAiChat({
+          endpointUrl: "https://api.example.test/v1",
+          model: "model-a",
+        }),
+      ).toBe(false);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("withholds Anthropic availability when policy authority changes during the probe (#9833)", async () => {
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "test-key",
+      probeAnthropicEndpoint: vi.fn(() => ({
+        ok: true,
+        api: "anthropic-messages",
+        label: "Anthropic Messages API",
+      })),
+      promptValidationRecovery: vi.fn(async () => "selection" as const),
+    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await expect(
+        helpers.validateAnthropicSelectionWithRetryMessage(
+          "Anthropic",
+          "https://api.anthropic.example.test",
+          "model-a",
+          "ANTHROPIC_API_KEY",
+          undefined,
+          undefined,
+          () => {
+            throw new Error("policy authority changed");
+          },
+        ),
+      ).rejects.toThrow("policy authority changed");
+      expect(log.mock.calls.flat().join("\n")).not.toContain("available");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("distinguishes a Gemini runtime 404 from native model catalog validation (#9298)", async () => {
     const apiKey = "gemini-test-secret";
     const probeOpenAiLikeEndpoint = vi.fn(() => ({
@@ -209,9 +287,7 @@ describe("inference selection validation", () => {
       expect(errorOutput).toContain(
         "This 404 came from Google's OpenAI-compatible Chat Completions runtime route, not the native /v1beta/models catalog.",
       );
-      expect(errorOutput).toContain(
-        "the sandbox uses that Chat Completions route at runtime",
-      );
+      expect(errorOutput).toContain("the sandbox uses that Chat Completions route at runtime");
       expect(errorOutput).not.toContain(apiKey);
     } finally {
       log.mockRestore();
@@ -528,6 +604,7 @@ describe("inference selection validation", () => {
         expect.objectContaining({ kind: "transport", retry: "retry" }),
         "COMPATIBLE_API_KEY",
         null,
+        undefined,
       );
     } finally {
       error.mockRestore();

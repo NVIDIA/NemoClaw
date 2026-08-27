@@ -16,6 +16,7 @@ import {
 } from "../fixtures/corporate-ca.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
+import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
@@ -221,6 +222,11 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
     },
   );
   expect(install.exitCode, resultText(install)).toBe(0);
+  assertStockManagedImageReceipt({
+    environment: testEnv(),
+    expectedAgent: "openclaw",
+    sandboxName: SANDBOX_NAME,
+  });
   expect(resultText(install)).toContain("Installing NemoClaw from GitHub");
   expect(resultText(install)).toContain("Cloning NemoClaw source");
   expect(resultText(install)).toContain(
