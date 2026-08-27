@@ -45,17 +45,21 @@ export function buildCancelRollbackMessage(
 ): string[] {
   return [
     "",
-    `  Onboarding cancelled — preserved incomplete sandbox '${sandboxName}' because OpenShell cannot delete it by immutable identity.`,
+    `  Onboarding cancelled — preserved incomplete sandbox '${sandboxName}'.`,
     ...(sandboxIdentityFingerprint
       ? [
           `  Durable sandbox identity fingerprint: ${sandboxIdentityFingerprint}`,
-          "  Preserve this fingerprint and give it to an OpenShell administrator for identity-bound recovery or removal.",
+          "  Preserve this fingerprint for identity-bound inspection, recovery, or removal.",
         ]
       : [
           "  Its durable identity fingerprint is unavailable; preserve the registry and onboarding recovery state.",
-          "  Ask an OpenShell administrator to establish the immutable sandbox identity before recovery or removal.",
+          "  Ask an OpenShell administrator to establish the exact sandbox identity before recovery or removal.",
         ]),
+    "  NemoClaw did not run OpenShell's mutable-name deletion command because the name may now identify a replacement sandbox.",
     "  Do not delete the sandbox by mutable sandbox name.",
+    "  Provider registrations and gateway-bound credentials created before cancellation may remain.",
+    "  Ask an OpenShell administrator to inspect the exact sandbox identity, provider registrations, and gateway-bound credentials. Retain them or remove only resources whose ownership is confirmed.",
+    "  Before reusing the sandbox name, confirm that the exact sandbox is absent and rotate any credential that may have been configured or exposed before cancellation.",
   ];
 }
 

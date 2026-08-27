@@ -896,7 +896,12 @@ Pairing and `TELEGRAM_ALLOWED_IDS` still govern direct messages.
 </AgentOnly>
 
 If you cancel a brand-new onboarding run at the policy-tier selector or either policy-preset selector after sandbox creation, NemoClaw preserves the incomplete sandbox, registry entry, and onboarding session for identity-bound recovery.
-NemoClaw reports the durable sandbox identity fingerprint when it is available and never deletes the sandbox by mutable name.
+NemoClaw reports the durable sandbox identity fingerprint when it is available.
+It does not run OpenShell's mutable-name deletion command because the name may now identify a replacement sandbox.
+Do not delete the sandbox by mutable name.
+Provider registrations and gateway-bound credentials created before cancellation may remain.
+Ask an OpenShell administrator to inspect the exact sandbox identity, provider registrations, and gateway-bound credentials, then retain them or remove only resources whose ownership is confirmed.
+Before reusing the sandbox name, confirm that the exact sandbox is absent and rotate any credential that may have been configured or exposed before cancellation.
 Do not resume or recreate that incomplete sandbox.
 After an OpenShell administrator verifies the live durable ID, removes that exact sandbox through an identity-bound procedure, and confirms removal, rerun the original onboarding command with the same required provider, model, agent, policy, and environment inputs, add `--fresh`, and change only the sandbox name.
 `--fresh` starts a new session and does not retain those selections.

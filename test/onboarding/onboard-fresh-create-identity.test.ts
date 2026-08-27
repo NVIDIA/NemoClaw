@@ -495,6 +495,10 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
         assert.match(result.stderr, /preserved incomplete sandbox 'my-assistant'/u);
         assert.match(result.stderr, new RegExp(identityFingerprint, "u"));
         assert.match(result.stderr, /Do not delete the sandbox by mutable sandbox name/u);
+        assert.match(result.stderr, /Provider registrations and gateway-bound credentials/u);
+        assert.match(result.stderr, /remove only resources whose ownership is confirmed/u);
+        assert.match(result.stderr, /confirm that the exact sandbox is absent/u);
+        assert.match(result.stderr, /rotate any credential/u);
       };
       const assertions = {
         "managed-provider": assertManagedProviderCreation,

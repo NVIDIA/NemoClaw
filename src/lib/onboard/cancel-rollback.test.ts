@@ -29,7 +29,12 @@ describe("createSandboxCancelRollback", () => {
     expect(guidance).toContain("preserved incomplete sandbox 'new-sb'");
     expect(guidance).toContain(SANDBOX_FINGERPRINT);
     expect(guidance).toContain("OpenShell administrator");
+    expect(guidance).toContain("did not run OpenShell's mutable-name deletion command");
     expect(guidance).toContain("Do not delete the sandbox by mutable sandbox name");
+    expect(guidance).toContain("Provider registrations and gateway-bound credentials");
+    expect(guidance).toContain("remove only resources whose ownership is confirmed");
+    expect(guidance).toContain("confirm that the exact sandbox is absent");
+    expect(guidance).toContain("rotate any credential");
   });
 
   it.each([
@@ -164,7 +169,8 @@ describe("buildCancelRollbackMessage", () => {
 
     expect(message).toContain("preserved incomplete sandbox 'sb'");
     expect(message).toContain(SANDBOX_FINGERPRINT);
-    expect(message).toContain("identity-bound recovery or removal");
+    expect(message).toContain("identity-bound inspection, recovery, or removal");
     expect(message).not.toContain("openshell sandbox delete");
+    expect(message).not.toContain("cannot delete it by immutable identity");
   });
 });
