@@ -8,13 +8,16 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import {
+  applyWebSocketRewritePolicy,
   buildSandboxNodeInvocation,
   buildSandboxShellInvocation,
   isNvidiaEndpointRateLimitFailure,
   OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES,
   parseRuntimeProofPort,
+  slackAliasToCanonicalPlaceholder,
 } from "../live/messaging-providers-helpers.ts";
 import {
   parseInstalledSlackProof,
@@ -53,6 +56,81 @@ async function waitFor(predicate: () => boolean, message: string): Promise<void>
 }
 
 describe("messaging provider installed-runtime proofs", () => {
+  it("derives the canonical Slack placeholder from the live revision-scoped alias", () => {
+    expect(
+      slackAliasToCanonicalPlaceholder(
+        "xoxb-OPENSHELL-RESOLVE-ENV-v13240931448544943707_SLACK_BOT_TOKEN",
+      ),
+    ).toBe("openshell:resolve:env:v13240931448544943707_SLACK_BOT_TOKEN");
+    expect(() =>
+      slackAliasToCanonicalPlaceholder("xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN"),
+    ).toThrow("revision-scoped credential key");
+  });
+
+  it("binds the fake Discord WebSocket endpoint to its credential provider", async () => {
+    const calls: Array<{
+      command: string;
+      args: string[];
+      options: { artifactName?: string };
+    }> = [];
+    const host = {
+      openshellCommandPath: "/opt/openshell/bin/openshell",
+      async command(
+        command: string,
+        args: string[],
+        options: { artifactName?: string } = {},
+      ) {
+        calls.push({ command, args, options });
+        return {
+          command: [command, ...args],
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          stdout: "",
+          stderr: "",
+          artifacts: { stdout: "", stderr: "", result: "" },
+        };
+      },
+    } as unknown as HostCliClient;
+
+    await applyWebSocketRewritePolicy(
+      host,
+      {
+        kind: "discord-gateway",
+        port: "43117",
+        dir: "/tmp/fake-discord-gateway",
+        captureFile: "/tmp/fake-discord-gateway/capture.jsonl",
+        container: "fake-discord-gateway",
+      },
+      {},
+      [],
+      "e2e-discord-bridge",
+    );
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toEqual(
+      expect.objectContaining({
+        command: "openshell",
+        args: expect.arrayContaining([
+          "host.openshell.internal:43117:read-write:websocket:enforce:websocket-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16",
+        ]),
+      }),
+    );
+    expect(calls[1]).toEqual(
+      expect.objectContaining({
+        command: "bash",
+        args: expect.arrayContaining([
+          "e2e-discord-bridge",
+          "43117",
+          "websocket",
+        ]),
+        options: expect.objectContaining({
+          artifactName: "apply-discord-gateway-websocket-policy-credential-binding",
+        }),
+      }),
+    );
+  });
+
   it("publishes independent fake Slack REST and websocket ports", async () => {
     expect(MESSAGING_PROVIDERS_HELPERS_SOURCE.match(/"0:8080"/gu)).toHaveLength(1);
     expect(MESSAGING_PROVIDERS_HELPERS_SOURCE).toContain('"0:8081"');

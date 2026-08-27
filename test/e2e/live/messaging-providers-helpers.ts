@@ -163,6 +163,15 @@ export function isUnresolvedPlaceholderRejection(text: string): boolean {
   return /credential_injection_failed|unresolved credential placeholder/i.test(text);
 }
 
+export function slackAliasToCanonicalPlaceholder(alias: string): string {
+  const credentialKey =
+    /^xoxb-OPENSHELL-RESOLVE-ENV-(v[1-9][0-9]*_SLACK_BOT_TOKEN)$/u.exec(alias)?.[1];
+  if (!credentialKey) {
+    throw new Error("Slack bot alias must contain a revision-scoped credential key");
+  }
+  return `openshell:resolve:env:${credentialKey}`;
+}
+
 export function isNvidiaEndpointRateLimitFailure(text: string): boolean {
   return (
     /NVIDIA Endpoints endpoint validation failed/i.test(text) &&
@@ -743,6 +752,17 @@ export async function applyRestRewritePolicy(
   expectExitZero(result, `apply ${api.kind} fake REST policy`);
   if (!providerName) return;
 
+  await bindRewriteProvider(host, api, "rest", providerName, env, redactionValues);
+}
+
+async function bindRewriteProvider(
+  host: HostCliClient,
+  api: FakeDockerApi,
+  protocol: "rest" | "websocket",
+  providerName: string,
+  env: NodeJS.ProcessEnv,
+  redactionValues: string[],
+): Promise<void> {
   const binding = await runHost(
     host,
     "bash",
@@ -752,24 +772,25 @@ export async function applyRestRewritePolicy(
 policy_file="$(mktemp)"
 trap 'rm -f "$policy_file"' EXIT
 "$1" policy get --base "$2" >"$policy_file"
-node --import tsx "$5" "$policy_file" "$3" host.openshell.internal "$4" rest
+node --import tsx "$5" "$policy_file" "$3" host.openshell.internal "$4" "$6"
 "$1" policy set --policy "$policy_file" --wait "$2"`,
-      `bind-fake-${api.kind}-rest-policy`,
+      `bind-fake-${api.kind}-${protocol}-policy`,
       host.openshellCommandPath,
       SANDBOX_NAME,
       providerName,
       api.port,
       path.join(REPO_ROOT, "test/e2e/fixtures/hermes-discord-policy-binding.ts"),
+      protocol,
     ],
     {
-      artifactName: `apply-${api.kind}-rest-policy-credential-binding`,
+      artifactName: `apply-${api.kind}-${protocol}-policy-credential-binding`,
       cwd: REPO_ROOT,
       env,
       redactionValues,
       timeoutMs: 120_000,
     },
   );
-  expectExitZero(binding, `bind ${api.kind} fake REST policy credential`);
+  expectExitZero(binding, `bind ${api.kind} fake ${protocol} policy credential`);
 }
 
 export async function applyWebSocketRewritePolicy(
@@ -777,6 +798,7 @@ export async function applyWebSocketRewritePolicy(
   api: FakeDockerApi,
   env: NodeJS.ProcessEnv,
   redactionValues: string[],
+  providerName?: string,
 ): Promise<void> {
   const result = await runHost(
     host,
@@ -805,6 +827,9 @@ export async function applyWebSocketRewritePolicy(
     },
   );
   expectExitZero(result, `apply ${api.kind} fake WebSocket policy`);
+  if (!providerName) return;
+
+  await bindRewriteProvider(host, api, "websocket", providerName, env, redactionValues);
 }
 
 export function lastJsonLine(

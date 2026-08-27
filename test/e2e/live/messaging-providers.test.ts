@@ -48,6 +48,7 @@ import {
   sandboxOutput,
   shellQuote,
   skipNote,
+  slackAliasToCanonicalPlaceholder,
   startFakeDockerApi,
   stripAnsi,
   tokenValues,
@@ -910,12 +911,12 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       sandbox,
       fakeSlack.port,
       "/api/auth.test",
-      "Bearer openshell:resolve:env:SLACK_BOT_TOKEN",
+      `Bearer ${slackAliasToCanonicalPlaceholder(slackBotToken)}`,
       redactionValues,
     );
     check(
       /^200\b/.test(slackCanonical) && /invalid_auth|not_authed|ok":true/.test(slackCanonical),
-      "M-S15b: L7 proxy substitutes canonical SLACK_BOT_TOKEN placeholder",
+      "M-S15b: L7 proxy substitutes revision-scoped SLACK_BOT_TOKEN placeholder",
     );
     const slackUnset = await runSlackApiRequest(
       sandbox,
@@ -1063,13 +1064,16 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       env: state.env,
       redactionValues,
     });
-    await applyWebSocketRewritePolicy(host, fakeGateway, state.env, redactionValues);
+    await applyWebSocketRewritePolicy(
+      host,
+      fakeGateway,
+      state.env,
+      redactionValues,
+      `${SANDBOX_NAME}-discord-bridge`,
+    );
     const gatewayProof = await runDiscordGatewayClient(sandbox, {
       port: fakeGateway.port,
-      identifyToken: {
-        kind: "explicit",
-        value: "openshell:resolve:env:DISCORD_BOT_TOKEN",
-      },
+      identifyToken: { kind: "revisioned-discord-env" },
       redactionValues,
     });
     check(
