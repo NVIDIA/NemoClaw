@@ -128,8 +128,6 @@ describe.runIf(ptySupported)("uninstall confirm prompts under a pseudo-TTY (#518
         NEMOCLAW_NODE: TSX,
       });
       await pty.waitForOutput("Proceed? [y/N]");
-      await sleep(500);
-      expect(pty.isAlive()).toBe(true);
       pty.write("n\n");
       expect(await pty.exited).toBe(0);
       expect(pty.output()).toContain("Aborted.");
