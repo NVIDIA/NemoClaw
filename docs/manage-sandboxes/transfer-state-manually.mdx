@@ -108,11 +108,14 @@ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/IDENTITY.md" /sandbox/.openclaw
 openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/AGENTS.md" /sandbox/.openclaw/workspace/
 openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/TOOLS.md" /sandbox/.openclaw/workspace/
 openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/HEARTBEAT.md" /sandbox/.openclaw/workspace/
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/POLICY.md" /sandbox/.openclaw/workspace/
 # If long-term or daily memory was backed up:
 # openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/MEMORY.md" /sandbox/.openclaw/workspace/
 # openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/memory/" /sandbox/.openclaw/workspace/memory/
 ```
+
+Do not upload a downloaded `POLICY.md` back into a sandbox.
+NemoClaw regenerates that file from the managed policy whenever a preset is added or removed and at the end of onboarding, so restoring a stale copy can reintroduce drift.
+Run `$$nemoclaw my-assistant policy explain --write` to refresh it in place instead.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -171,6 +174,8 @@ Expected output:
 
 ```text
 Backing up workspace from sandbox 'my-assistant'...
+Skipped MEMORY.md (not found or download failed)
+Skipped memory/ (not found or download failed)
 Backup saved to /home/user/.nemoclaw/backups/20260320-120000/ (7 items)
 ```
 
