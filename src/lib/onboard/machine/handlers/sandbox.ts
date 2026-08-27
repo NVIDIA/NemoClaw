@@ -702,6 +702,8 @@ class SandboxStateFlow<
       this.options.env[WEB_SEARCH_PROVIDER_ENV],
     ).provider;
     const hasProviderIntent =
+      this.options.provider.trim().length > 0 ||
+      this.options.model.trim().length > 0 ||
       this.options.webSearchConfig !== null ||
       explicitWebSearch !== null ||
       this.options.selectedMessagingChannels.length > 0 ||
@@ -2211,6 +2213,16 @@ class SandboxStateFlow<
         requestedSandboxName,
         registryMessagingAuthoritySnapshot,
       );
+      if (
+        this.options.apfInterceptorRequested === true &&
+        (extraProviderPlan.extraProviders.length > 0 ||
+          extraProviderPlan.staleExtraProviders.length > 0 ||
+          effectiveHermesToolGateways.length > 0)
+      ) {
+        throw new Error(
+          "Interceptor onboarding supports providerless sandbox creation only. No sandbox or provider was created.",
+        );
+      }
       // Build the complete create plan after acquiring the sandbox lock. A
       // baseline transaction may have started while onboarding waited, and a
       // pre-lock snapshot must never survive a destructive recreate.

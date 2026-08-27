@@ -136,6 +136,7 @@ describe("APF sandbox create selection", () => {
       }),
     ).rejects.toThrow(/supports providerless sandbox creation only/u);
 
+    expect(calls.resolveCreateIntent).not.toHaveBeenCalled();
     expect(calls.stageCredentialProviders).not.toHaveBeenCalled();
     expect(calls.createSandbox).not.toHaveBeenCalled();
   });
@@ -149,6 +150,9 @@ describe("APF sandbox create selection", () => {
         ...baseOptions(deps, session),
         fresh: true,
         apfInterceptorRequested: true,
+        model: "",
+        provider: "",
+        preferredInferenceApi: null,
       }),
     ).rejects.toThrow(/cannot adopt registered sandbox/u);
 
@@ -174,6 +178,9 @@ describe("APF sandbox create selection", () => {
         ...baseOptions(deps, session),
         fresh: true,
         apfInterceptorRequested: true,
+        model: "",
+        provider: "",
+        preferredInferenceApi: null,
       }),
     ).rejects.toThrow(/cannot adopt live sandbox/u);
 

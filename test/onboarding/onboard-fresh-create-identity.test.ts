@@ -523,6 +523,7 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
         assert.equal(payload.registeredSandbox.policyCreationReceipt, undefined);
         assert.doesNotMatch(payload.createCommand, /(?:^|\s)--policy(?:\s|$)/u);
         assert.doesNotMatch(payload.createCommand, /(?:^|\s)--provider(?:\s|$)/u);
+        assert.equal(payload.credentialReadCalls, 0);
         assert.deepEqual(providerExposureCommands, []);
       };
       const assertPostCreateAuthorityRefusal = () => {
