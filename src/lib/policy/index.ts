@@ -112,6 +112,7 @@ type SelectionOptions = {
 type PresetLoadOptions = {
   agent?: string | null;
   sandboxName?: string;
+  credentialBoundMessagingChannels?: readonly string[];
 };
 
 type PresetListOptions = {
@@ -122,6 +123,11 @@ type MergePresetNamesOptions = {
   agent?: string | null;
   sandboxName?: string;
   excludedBaselineKeys?: readonly string[];
+  credentialBoundMessagingChannels?: readonly string[];
+};
+
+type SandboxPresetLoadOptions = {
+  includeMessagingCredentialBindings?: boolean;
 };
 
 type SetupPolicyPresetSupportOptions = {
@@ -181,12 +187,49 @@ function loadCentralPreset(name: string, options: { reportMissing?: boolean } = 
   return name === "local-inference" ? materializeLocalInferencePresetPorts(content) : content;
 }
 
+function messagingChannelIdForPreset(presetName: string): string | null {
+  return (
+    listMessagingPolicyPresetMetadata().find((preset) => preset.presetName === presetName)
+      ?.channelId ?? null
+  );
+}
+
+function stripMessagingCredentialBindings(content: string): string | null {
+  let parsed: PolicyValue;
+  try {
+    parsed = YAML.parse(content);
+  } catch {
+    return null;
+  }
+  if (!isPolicyDocument(parsed)) return null;
+  const networkPolicies = parsed.network_policies;
+  if (!networkPolicies || !isPolicyObject(networkPolicies)) return content;
+
+  let changed = false;
+  for (const policy of Object.values(networkPolicies)) {
+    if (!isPolicyObject(policy) || !Array.isArray(policy.endpoints)) continue;
+    for (const endpoint of policy.endpoints) {
+      if (!isPolicyObject(endpoint) || !Object.hasOwn(endpoint, "credential_binding")) continue;
+      delete endpoint.credential_binding;
+      changed = true;
+    }
+  }
+  return changed ? YAML.stringify(parsed) : content;
+}
+
 function loadPresetForAgent(name: string, options: PresetLoadOptions = {}): string | null {
   const channelPreset = loadMessagingChannelPolicyPreset(name, {
     agent: options.agent,
     sandboxName: options.sandboxName,
   });
-  if (channelPreset) return channelPreset;
+  if (channelPreset) {
+    const credentialBoundChannels = options.credentialBoundMessagingChannels;
+    if (credentialBoundChannels === undefined) return channelPreset;
+    const channelId = messagingChannelIdForPreset(name);
+    return channelId && !credentialBoundChannels.includes(channelId)
+      ? stripMessagingCredentialBindings(channelPreset)
+      : channelPreset;
+  }
   if (isMessagingChannelPolicyPreset(name)) return null;
   return loadCentralPreset(name);
 }
@@ -344,30 +387,44 @@ function isAgentBasePreset(sandboxName: string, presetName: string): boolean {
   return loadAgentPresetContent(sandboxName, presetName, builtinPresetContent ?? "") !== null;
 }
 
-function loadPresetForSandbox(sandboxName: string, presetName: string): string | null {
+function loadPresetForSandbox(
+  sandboxName: string,
+  presetName: string,
+  options: SandboxPresetLoadOptions = {},
+): string | null {
   let sandboxAgent: string | null = null;
-  let sandboxPolicies: string[] = [];
+  let configuredMessagingChannels: string[] = [];
   try {
     const sandbox = registry.getSandbox(sandboxName);
     sandboxAgent = sandbox?.agent ?? null;
-    sandboxPolicies = sandbox?.policies ?? [];
+    configuredMessagingChannels = registry.getConfiguredMessagingChannelsFromEntry(sandbox);
   } catch {
     sandboxAgent = null;
-    sandboxPolicies = [];
+    configuredMessagingChannels = [];
   }
 
+  const channelId = messagingChannelIdForPreset(presetName);
+  if (options.includeMessagingCredentialBindings && channelId) {
+    configuredMessagingChannels = [...new Set([...configuredMessagingChannels, channelId])];
+  }
   const channelPresetContent = loadMessagingChannelPolicyPreset(presetName, {
     agent: sandboxAgent,
     sandboxName,
   });
-  if (channelPresetContent) return channelPresetContent;
+  if (channelPresetContent) {
+    return channelId && !configuredMessagingChannels.includes(channelId)
+      ? stripMessagingCredentialBindings(channelPresetContent)
+      : channelPresetContent;
+  }
   if (isMessagingChannelPolicyPreset(presetName)) return null;
 
   const builtinPresetContent = loadCentralPreset(presetName);
   if (!builtinPresetContent) return null;
   const resolvedPresetContent =
     loadAgentPresetContent(sandboxName, presetName, builtinPresetContent) || builtinPresetContent;
-  return presetName === "outlook" && sandboxAgent !== "hermes" && sandboxPolicies.includes("teams")
+  return presetName === "outlook" &&
+    sandboxAgent !== "hermes" &&
+    configuredMessagingChannels.includes("teams")
     ? reconcileTeamsOutlookLoginCredentialBinding(resolvedPresetContent, sandboxName, true)
     : resolvedPresetContent;
 }
@@ -1775,6 +1832,7 @@ function mergePresetNamesIntoPolicy(
     const presetContent = loadPresetForAgent(presetName, {
       agent: options.agent,
       sandboxName: options.sandboxName,
+      credentialBoundMessagingChannels: options.credentialBoundMessagingChannels,
     });
     const presetEntries = extractPresetEntries(presetContent);
     if (!presetEntries) {
@@ -1824,7 +1882,11 @@ function mergePresetNamesIntoPolicy(
     ).policy;
   }
   if (appliedPresets.some((name) => name === "teams" || name === "outlook")) {
-    policy = reconcileTeamsOutlookLoginCredentialBinding(policy, options.sandboxName);
+    policy = reconcileTeamsOutlookLoginCredentialBinding(
+      policy,
+      options.sandboxName,
+      options.credentialBoundMessagingChannels?.includes("teams"),
+    );
   }
   return {
     policy: normalizePersonalOpenInternetPolicy(policy),
@@ -2037,7 +2099,13 @@ function removePreset(
   let updated = removePresetFromPolicy(currentPolicy, presetEntries);
   if (!isCustom && (presetName === "teams" || presetName === "outlook")) {
     try {
-      updated = reconcileTeamsOutlookLoginCredentialBinding(updated, sandboxName);
+      const teamsActive =
+        presetName === "teams"
+          ? false
+          : registry
+              .getConfiguredMessagingChannelsFromEntry(registry.getSandbox(sandboxName))
+              .includes("teams");
+      updated = reconcileTeamsOutlookLoginCredentialBinding(updated, sandboxName, teamsActive);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`  Refusing to remove preset '${presetName}': ${message}`);
@@ -2884,6 +2952,7 @@ function applyPresetContent(
     skipRegistryUpdate?: boolean;
     suppressDisclosure?: boolean;
     disclosedPresetState?: PresetPolicyState | null;
+    includeMessagingCredentialBindings?: boolean;
   } = {},
 ): boolean {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
@@ -3023,7 +3092,12 @@ function applyPresetContent(
   try {
     merged = mergePresetIntoPolicy(currentPolicy, presetEntries);
     if (!options.custom && (presetName === "teams" || presetName === "outlook")) {
-      merged = reconcileTeamsOutlookLoginCredentialBinding(merged, sandboxName);
+      const teamsConfigured =
+        options.includeMessagingCredentialBindings === true ||
+        registry
+          .getConfiguredMessagingChannelsFromEntry(registry.getSandbox(sandboxName))
+          .includes("teams");
+      merged = reconcileTeamsOutlookLoginCredentialBinding(merged, sandboxName, teamsConfigured);
     }
   } catch (error) {
     if (!options.nonFatal) throw error;
@@ -3177,7 +3251,9 @@ function applyPreset(
   presetName: string,
   options: Record<string, unknown> = {},
 ): boolean {
-  const presetContent = loadPresetForSandbox(sandboxName, presetName);
+  const presetContent = loadPresetForSandbox(sandboxName, presetName, {
+    includeMessagingCredentialBindings: options.includeMessagingCredentialBindings === true,
+  });
   if (!presetContent) {
     console.error(`  Cannot load preset: ${presetName}`);
     return false;
@@ -3293,7 +3369,10 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
   }
   if (uniquePresetNames.some((name) => name === "teams" || name === "outlook")) {
     try {
-      merged = reconcileTeamsOutlookLoginCredentialBinding(merged, sandboxName);
+      const teamsConfigured = registry
+        .getConfiguredMessagingChannelsFromEntry(registry.getSandbox(sandboxName))
+        .includes("teams");
+      merged = reconcileTeamsOutlookLoginCredentialBinding(merged, sandboxName, teamsConfigured);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`  Refusing to apply policy presets: ${message}`);
