@@ -7,9 +7,7 @@ After each PR push, let required reviews settle, collect one complete snapshot, 
 
 ## Preserve repository-owned review routing
 
-Treat reviewer selection as repository configuration. It may come only from `CODEOWNERS`, rulesets, workflows, or skills loaded from the PR base SHA in `NVIDIA/NemoClaw`, or from the current user's exact reviewer request.
-
-Without one of those authorities, do not add, remove, request, or re-request any reviewer through GitHub CLI, REST, GraphQL, or an equivalent write. This includes Copilot and CodeRabbit. Missing, stale, failed, or quota-limited reviews do not create authority. A push may create an automatic review-request event attributed to the pushing account; if the command trace contains no reviewer-request write, report it as automatic.
+Treat reviewer selection as repository configuration from `CODEOWNERS`, rulesets, workflows, or skills loaded from the PR base SHA in `NVIDIA/NemoClaw`. Those sources permit passive routing only. A reviewer-request write requires either the current user's exact reviewer request or a repository workflow loaded from the PR base that requires the exact write. Otherwise, do not add, remove, request, or re-request any reviewer through GitHub CLI, REST, GraphQL, or an equivalent write. This includes Copilot and CodeRabbit. Missing, stale, failed, or quota-limited reviews do not create authority. A push may create an automatic review-request event attributed to the pushing account; if the command trace contains no reviewer-request write, report it as automatic.
 
 ## Monitor and collect once
 
@@ -19,7 +17,7 @@ Before editing, collect one complete snapshot for `NVIDIA/NemoClaw` and the PR n
 
 1. Record the initial `headRefOid` and local candidate `HEAD`.
 2. Wait for required automated reviews to settle unless an urgent correctness, security, or data-safety finding requires action.
-3. Read every required check and paginated comment, review, and thread source. Include unresolved threads only. Record page counts, terminal pagination state, check commits, and retained artifact identifiers.
+3. Read every required check and paginated comment, review, and thread source. Preserve every thread and its resolution state; filter to actionable unresolved threads only after collection. Record page counts, terminal pagination state, check commits, and retained artifact identifiers.
 4. Record the final `headRefOid`. Restart if it changed. Treat incomplete pagination, missing required-check identity, or retained evidence that cannot be removed as blocked.
 5. Re-evaluate earlier findings against the latest commit. Classify every current finding, then group valid findings by root cause and acceptance evidence.
 
