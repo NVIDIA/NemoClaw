@@ -86,6 +86,7 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
     const root = temporaryRoot();
     const credentialHome = path.join(root, "brev-home");
     vi.stubEnv("HOME", credentialHome);
+    vi.stubEnv("PATH", "/usr/local/bin:/usr/bin:/bin");
     const expected = stagingHandoff();
     const identity = runtimeIdentity(expected);
     const command = vi.fn(ownedExecCommand(`probe\n${JSON.stringify(identity)}`));
@@ -94,6 +95,7 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
     await expect(fixture.verifyIdentity(recordedOwnership(), expected)).resolves.toEqual(identity);
     expect(command.mock.calls.find((call) => call[1][0] === "exec")?.[2]?.env).toEqual({
       HOME: credentialHome,
+      PATH: "/usr/local/bin:/usr/bin:/bin",
     });
     expect(
       JSON.parse(fs.readFileSync(path.join(root, "brev-runtime-identity.json"), "utf8")),
@@ -124,6 +126,7 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
     const root = temporaryRoot();
     const credentialHome = path.join(root, "brev-home");
     vi.stubEnv("HOME", credentialHome);
+    vi.stubEnv("PATH", "/usr/local/bin:/usr/bin:/bin");
     const lifecycle = lifecycleCommand();
     const command = vi.fn(lifecycle.command);
     const fixture = createFixture(root, command);
@@ -145,9 +148,11 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
     ]);
     expect(command.mock.calls.find((call) => call[1][0] === "create")?.[2]?.env).toEqual({
       HOME: credentialHome,
+      PATH: "/usr/local/bin:/usr/bin:/bin",
     });
     expect(command.mock.calls.find((call) => call[1][0] === "delete")?.[2]?.env).toEqual({
       HOME: credentialHome,
+      PATH: "/usr/local/bin:/usr/bin:/bin",
     });
     expect(command.mock.calls.every((call) => call[2]?.env?.HOME === credentialHome)).toBe(true);
     expect(
@@ -386,6 +391,7 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
     const root = temporaryRoot();
     const credentialHome = path.join(root, "brev-home");
     vi.stubEnv("HOME", credentialHome);
+    vi.stubEnv("PATH", "/usr/local/bin:/usr/bin:/bin");
     let observedScript = "";
     const command = vi.fn(
       async (_binary: string, args: string[], options?: ShellProbeRunOptions) => {
@@ -393,7 +399,11 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
           case "ls":
             return workspaceResult("owned-id");
           case "exec": {
-            expect(options?.env).toEqual({ FIXTURE_VALUE: "fixture", HOME: credentialHome });
+            expect(options?.env).toEqual({
+              FIXTURE_VALUE: "fixture",
+              HOME: credentialHome,
+              PATH: "/usr/local/bin:/usr/bin:/bin",
+            });
             observedScript = args[2]?.slice(1) ?? "";
             const descriptor = fs.openSync(observedScript, "r");
             try {
