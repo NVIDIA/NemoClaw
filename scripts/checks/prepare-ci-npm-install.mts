@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { redactFullWithUrls } from "../../src/lib/security/redact.ts";
 import { parseAuditConfig } from "../audit-reviewed-npm-graph.mts";
 import {
   readReviewedNpmArchiveFile,
@@ -17,6 +18,7 @@ import {
 
 const TRUSTED_REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const MAXIMUM_ARCHIVE_BYTES = 32 * 1024 * 1024;
+const MAXIMUM_NPM_DIAGNOSTIC_CHARACTERS = 512;
 
 type PreparationRequest = Readonly<{
   artifactDirectory?: string;
@@ -34,6 +36,19 @@ type NpmCacheStageRequest = Readonly<{
 }>;
 
 type NpmCacheStager = (request: NpmCacheStageRequest) => void;
+
+function npmCacheFailureDiagnostic(
+  stderr: string,
+  request: NpmCacheStageRequest,
+  stagingRoot: string,
+): string {
+  return redactFullWithUrls(stderr)
+    .replaceAll(stagingRoot, "<staging-root>")
+    .replaceAll(request.cacheDirectory, "<npm-cache>")
+    .replace(/[\u0000-\u001f\u007f]+/gu, " ")
+    .trim()
+    .slice(0, MAXIMUM_NPM_DIAGNOSTIC_CHARACTERS);
+}
 
 export type ReviewedSourceRegistryPackage = Readonly<{
   artifactName: string;
@@ -82,7 +97,11 @@ function stageReviewedArchiveWithNpm(request: NpmCacheStageRequest): void {
     );
     if (result.error) throw result.error;
     if (result.status !== 0) {
-      throw new Error("npm could not stage the reviewed OpenShell SDK archive");
+      const diagnostic = npmCacheFailureDiagnostic(result.stderr, request, stagingRoot);
+      const detail = diagnostic ? `: ${diagnostic}` : "";
+      throw new Error(
+        `npm could not stage the reviewed OpenShell SDK archive (exit ${String(result.status ?? "unavailable")})${detail}`,
+      );
     }
   } finally {
     rmSync(stagingRoot, { force: true, recursive: true });
