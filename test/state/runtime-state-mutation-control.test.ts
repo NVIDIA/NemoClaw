@@ -95,6 +95,8 @@ describe("runtime state mutation controller", () => {
     expect(harnessResult.writer_scans_remaining).toBe(0);
     expect(harnessResult.unstoppable_writer).toBe("writer-exclusion-timeout");
     expect(harnessResult.unknown_writer).toBe("unreadable-writer-process");
+    expect(harnessResult.vanished_process).toBe(true);
+    expect(harnessResult.unreadable_process_io).toBe("unreadable-writer-process");
   });
 
   it("rescans when an unexpected writer changes identity before signalling (#10155)", () => {

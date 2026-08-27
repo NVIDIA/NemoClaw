@@ -2509,9 +2509,11 @@ def _capture_process(pid: int) -> ProcessIdentity | None:
         command_raw = _read_proc_file(os.path.join(process_path, "cmdline"))
         second_stat = _read_proc_file(os.path.join(process_path, "stat"))
         after = os.stat(process_path, follow_symlinks=False)
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         return None
     except PermissionError:
+        _fail("unreadable-writer-process")
+    except OSError:
         _fail("unreadable-writer-process")
     _first_state, parent, start = _parse_proc_stat(pid, first_stat)
     second_state, second_parent, second_start = _parse_proc_stat(pid, second_stat)

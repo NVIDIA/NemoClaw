@@ -41,6 +41,7 @@ real_health_status = control._health_status
 real_release_activation_hold = control._release_activation_hold
 real_parse_proc_uids = control._parse_proc_uids
 real_recapture_reference = control._recapture_reference
+real_capture_process = control._capture_process
 real_signal_exact_process = control._signal_exact_process
 real_wait_for_reference_running = control._wait_for_reference_running
 real_prove_fence_shape = control._prove_fence_shape
@@ -245,6 +246,23 @@ activation = control.ActivationProof(
 )
 
 results = {}
+with tempfile.TemporaryDirectory() as process_probe:
+    process_metadata = os.stat(process_probe, follow_symlinks=False)
+    real_os_stat = control.os.stat
+    real_read_proc_file = control._read_proc_file
+    control.os.stat = lambda _path, follow_symlinks=False: process_metadata
+    try:
+        control._read_proc_file = lambda _path, _maximum=control.MAX_PROC_FILE_BYTES: (
+            _ for _ in ()
+        ).throw(ProcessLookupError())
+        results["vanished_process"] = real_capture_process(42) is None
+        control._read_proc_file = lambda _path, _maximum=control.MAX_PROC_FILE_BYTES: (
+            _ for _ in ()
+        ).throw(OSError())
+        results["unreadable_process_io"] = code(lambda: real_capture_process(42))
+    finally:
+        control.os.stat = real_os_stat
+        control._read_proc_file = real_read_proc_file
 with tempfile.TemporaryDirectory() as atomic_root:
     atomic_root_fd = os.open(atomic_root, os.O_RDONLY | os.O_DIRECTORY)
     atomic_creation_modes = []
