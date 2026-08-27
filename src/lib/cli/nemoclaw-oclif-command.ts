@@ -8,6 +8,7 @@ import {
   classifyHermesPortableCommand,
   HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE,
   HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE,
+  inspectPortableAgentReceiptDisposition,
 } from "../onboard/experimental/portable-agent-lifecycle";
 import { defaultPortableDemoStateDir } from "../onboard/experimental/portable-runtime-receipt-readiness";
 import { redactForLog } from "../security/redact";
@@ -111,12 +112,25 @@ export abstract class NemoClawCommand extends Command {
       }
       return super._run<T>();
     };
-    if (commandId === "sandbox:destroy") {
-      return await withMcpLifecycleLock(sandboxName, runLocked, {
-        recoverAbandonedExpiredTimer: true,
-      });
+    const runWithLifecycleFence = () =>
+      commandId === "sandbox:destroy"
+        ? withMcpLifecycleLock(sandboxName, runLocked, {
+            recoverAbandonedExpiredTimer: true,
+          })
+        : withMcpLifecycleLock(sandboxName, runLocked);
+    if (
+      this.isProbeOnlyConnect(commandId) &&
+      inspectPortableAgentReceiptDisposition(sandboxName).kind === "hermes"
+    ) {
+      return await withCurrentPortableHostFence(runWithLifecycleFence);
     }
-    return await withMcpLifecycleLock(sandboxName, runLocked);
+    return await runWithLifecycleFence();
+  }
+
+  private isProbeOnlyConnect(commandId: string | undefined): boolean {
+    return (
+      commandId === "sandbox:connect" && this.lifecycleParserOutput?.flags["probe-only"] === true
+    );
   }
 
   private isInteractiveConnect(commandId: string | undefined): boolean {

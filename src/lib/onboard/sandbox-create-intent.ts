@@ -22,29 +22,31 @@ function filterEnabledChannelNames(
 
 function filterMessagingProviderRequestsByEnabledChannel(
   requests: readonly SandboxCreateMessagingProviderRequest[],
+  selectedChannelNames: ReadonlySet<string> | null,
   disabledChannelNames: ReadonlySet<string>,
 ): SandboxCreateMessagingProviderRequest[] {
-  return requests.filter(({ channel }) => !channel || !disabledChannelNames.has(channel));
+  return requests.filter(
+    ({ channel }) =>
+      !channel ||
+      ((!selectedChannelNames || selectedChannelNames.has(channel)) &&
+        !disabledChannelNames.has(channel)),
+  );
 }
 
-function resolveTokenProviderChannelMap(
+export function filterMessagingProvidersForSandboxCreate(
+  providerNames: readonly string[],
   requests: readonly SandboxCreateMessagingProviderRequest[],
-): Map<string, string> {
+  activeChannelNames: Iterable<string>,
+  disabledChannelNames: Iterable<string>,
+): string[] {
   const providerChannels = new Map<string, string>();
   for (const { channel, name } of requests) {
     if (channel) providerChannels.set(name, channel);
   }
-  return providerChannels;
-}
-
-function filterMessagingProvidersByEnabledChannel(
-  providerNames: string[],
-  providerChannels: ReadonlyMap<string, string>,
-  disabledChannelNames: ReadonlySet<string>,
-): string[] {
-  return providerNames.filter((providerName) => {
+  const eligibleChannels = new Set([...activeChannelNames, ...disabledChannelNames]);
+  return [...new Set(providerNames)].filter((providerName) => {
     const channel = providerChannels.get(providerName);
-    return !channel || !disabledChannelNames.has(channel);
+    return !channel || eligibleChannels.has(channel);
   });
 }
 
@@ -64,6 +66,7 @@ function resolveActiveMessagingChannels({
   | "primaryMessagingCredentialEnvKeys"
   | "reusableMessagingChannels"
 >): string[] {
+  const selectedChannelNames = enabledChannels == null ? null : new Set(enabledChannels);
   const primaryCredentialEnvKeys = new Set(primaryMessagingCredentialEnvKeys);
   const qrSelectedChannels = resolveQrSelectedChannels(
     [...channels],
@@ -76,9 +79,15 @@ function resolveActiveMessagingChannels({
         ...messagingProviderRequests
           .filter(({ credentialConfigured }) => credentialConfigured)
           .flatMap(({ channel, envKey }) => {
-            return channel && primaryCredentialEnvKeys.has(envKey) ? [channel] : [];
+            return channel &&
+              (!selectedChannelNames || selectedChannelNames.has(channel)) &&
+              primaryCredentialEnvKeys.has(envKey)
+              ? [channel]
+              : [];
           }),
-        ...reusableMessagingChannels,
+        ...reusableMessagingChannels.filter(
+          (channel) => !selectedChannelNames || selectedChannelNames.has(channel),
+        ),
         ...qrSelectedChannels,
       ]),
     ],
@@ -153,11 +162,12 @@ export function resolveSandboxCreateIntent({
   policyTier,
   baselineExclusions = [],
 }: ResolveSandboxCreateIntentInput): SandboxCreateIntent {
+  const selectedChannelNames = enabledChannels == null ? null : new Set(enabledChannels);
   const enabledMessagingProviderRequests = filterMessagingProviderRequestsByEnabledChannel(
     messagingProviderRequests,
+    selectedChannelNames,
     disabledChannelNames,
   );
-  const providerChannels = resolveTokenProviderChannelMap(messagingProviderRequests);
   const activeMessagingChannels = resolveActiveMessagingChannels({
     channels,
     disabledChannelNames,
@@ -166,9 +176,10 @@ export function resolveSandboxCreateIntent({
     primaryMessagingCredentialEnvKeys,
     reusableMessagingChannels,
   });
-  const enabledReusableMessagingProviders = filterMessagingProvidersByEnabledChannel(
-    [...new Set(reusableMessagingProviders)],
-    providerChannels,
+  const enabledReusableMessagingProviders = filterMessagingProvidersForSandboxCreate(
+    reusableMessagingProviders,
+    messagingProviderRequests,
+    activeMessagingChannels,
     disabledChannelNames,
   );
 

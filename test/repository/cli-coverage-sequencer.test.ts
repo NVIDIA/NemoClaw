@@ -116,10 +116,10 @@ describe("stable CLI coverage sharding", () => {
 
     expect(Object.fromEntries(owners)).toEqual({
       "cli:src/lib/example.test.ts": 6,
-      "e2e-support:test/e2e/support/example.test.ts": 8,
-      "integration:test/agents/hermes/hermes-restart-config-seal-write-lock.test.ts": 1,
-      "integration:test/credentials/local-credential-helper-fields.test.ts": 7,
-      "integration:test/regular-0.test.ts": 2,
+      "e2e-support:test/e2e/support/example.test.ts": 1,
+      "integration:test/agents/hermes/hermes-restart-config-seal-write-lock.test.ts": 2,
+      "integration:test/credentials/local-credential-helper-fields.test.ts": 5,
+      "integration:test/regular-0.test.ts": 5,
     });
   });
 

@@ -655,7 +655,7 @@ describe("shields — unit logic", () => {
           deadlineAuthoritative: true,
           expiredTimerRecovery: true,
         }),
-      ).toThrow(/policy authority inspection failed/i);
+      ).toThrow(/policy authority is unavailable/i);
 
       expect(createTempDirectory).not.toHaveBeenCalled();
       expect(run).not.toHaveBeenCalled();

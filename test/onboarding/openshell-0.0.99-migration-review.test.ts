@@ -156,6 +156,7 @@ describe("OpenShell 0.0.99 migration review", () => {
         runtimeProvider: {
           bootstrap: {
             supported: true,
+            bootstrapKind: "managed-image",
             createAuthorityStore: () => authorityStore,
           },
         },
