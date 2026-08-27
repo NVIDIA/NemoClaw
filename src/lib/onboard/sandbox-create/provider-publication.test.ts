@@ -123,6 +123,10 @@ describe("sandbox provider preparation", () => {
       events.push(args.join(" "));
       return { status: 0 };
     });
+    const waitForSandboxReady = vi.fn((...args: unknown[]) => {
+      events.push(`ready ${args.join(" ")}`);
+      return true;
+    });
 
     attachProvidersAfterSandboxCreation(
       {
@@ -132,6 +136,7 @@ describe("sandbox provider preparation", () => {
       },
       {
         runOpenshell: runOpenshell as never,
+        waitForSandboxReady,
         revalidateSandboxIdentity: (operation) => events.push(operation),
       },
     );
@@ -143,6 +148,60 @@ describe("sandbox provider preparation", () => {
       "attaching provider 'alpha-telegram' to sandbox 'alpha'",
       "sandbox provider attach -g nemoclaw alpha alpha-telegram",
       "confirming provider 'alpha-telegram' on sandbox 'alpha'",
+      "refreshing attached providers on sandbox 'alpha'",
+      "sandbox stop -g nemoclaw alpha",
+      "sandbox start -g nemoclaw alpha",
+      "ready alpha 30 2",
+      "confirming refreshed providers on sandbox 'alpha'",
+    ]);
+  });
+
+  it("does not restart a sandbox when the deferred plan has no providers", () => {
+    const runOpenshell = vi.fn();
+    const waitForSandboxReady = vi.fn();
+    const revalidateSandboxIdentity = vi.fn();
+
+    attachProvidersAfterSandboxCreation(
+      { sandboxName: "alpha", gatewayName: "nemoclaw", providerNames: [] },
+      {
+        runOpenshell: runOpenshell as never,
+        waitForSandboxReady,
+        revalidateSandboxIdentity,
+      },
+    );
+
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(waitForSandboxReady).not.toHaveBeenCalled();
+    expect(revalidateSandboxIdentity).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the refreshed sandbox does not become ready", () => {
+    const runOpenshell = vi.fn(() => ({
+      status: 0,
+      stdout: "secret-stdout",
+      stderr: "secret-stderr",
+    }));
+
+    expect(() =>
+      attachProvidersAfterSandboxCreation(
+        {
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          providerNames: ["alpha-telegram"],
+        },
+        {
+          runOpenshell: runOpenshell as never,
+          waitForSandboxReady: vi.fn(() => false),
+          revalidateSandboxIdentity: vi.fn(),
+        },
+      ),
+    ).toThrow(
+      "OpenShell did not report sandbox 'alpha' ready after refreshing its attached providers.",
+    );
+    expect(runOpenshell.mock.calls.map(([args]) => args)).toEqual([
+      ["sandbox", "provider", "attach", "-g", "nemoclaw", "alpha", "alpha-telegram"],
+      ["sandbox", "stop", "-g", "nemoclaw", "alpha"],
+      ["sandbox", "start", "-g", "nemoclaw", "alpha"],
     ]);
   });
 
@@ -162,6 +221,7 @@ describe("sandbox provider preparation", () => {
             stdout: "secret-stdout",
             stderr: "secret-stderr",
           })) as never,
+          waitForSandboxReady: vi.fn(() => true),
           revalidateSandboxIdentity,
         },
       ),

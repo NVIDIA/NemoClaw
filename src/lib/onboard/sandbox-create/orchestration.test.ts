@@ -95,6 +95,7 @@ describe("deferred provider effect authority", () => {
       },
       revalidatePolicyAuthorityBeforeCreate: vi.fn(),
       runOpenshell: runOpenshell as never,
+      waitForSandboxReady: vi.fn(() => true),
       revalidateSandboxIdentity,
     });
     const runAfterVerifiedCreate = boundary.runAfterVerifiedCreate;

@@ -1656,6 +1656,7 @@ const sandboxCreateOrchestrationRuntime = {
   validateName,
   verifyDirectSandboxGpu,
   waitForSandboxRecreateDeleteAbsence,
+  waitForSandboxReady,
   wasSandboxDefault,
   updateReusedSandboxMetadata,
   getSandboxInferenceConfig,

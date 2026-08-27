@@ -444,6 +444,7 @@ export function createProviderEffectBoundary(input: {
     | null;
   readonly revalidatePolicyAuthorityBeforeCreate: () => void;
   readonly runOpenshell: SandboxCreateOrchestrationRuntime["runOpenshell"];
+  readonly waitForSandboxReady: SandboxCreateOrchestrationRuntime["waitForSandboxReady"];
   readonly revalidateSandboxIdentity: (exactIdentity: string, operation: string) => void;
 }): ProviderEffectBoundary {
   const validate = () =>
@@ -495,6 +496,7 @@ export function createProviderEffectBoundary(input: {
         },
         {
           runOpenshell: input.runOpenshell,
+          waitForSandboxReady: input.waitForSandboxReady,
           revalidateSandboxIdentity: (operation) => {
             input.revalidateSandboxIdentity(context.lifecycleLiveIdentityFingerprint, operation);
             context.revalidatePolicyRequirements(operation);
@@ -658,6 +660,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       validateName,
       verifyDirectSandboxGpu,
       waitForSandboxRecreateDeleteAbsence,
+      waitForSandboxReady,
       wasSandboxDefault,
       updateReusedSandboxMetadata,
       getSandboxInferenceConfig,
@@ -1947,6 +1950,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           `publishing providers before creating sandbox gateway '${GATEWAY_NAME}'`,
         ),
       runOpenshell,
+      waitForSandboxReady,
       revalidateSandboxIdentity: (exactIdentity, operation) =>
         sandboxRecreateTransaction.revalidateCreatedSandboxLifecycleRegistration(
           { sandboxName, gatewayName: GATEWAY_NAME },

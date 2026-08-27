@@ -35,7 +35,15 @@ type DeferredProviderAttachmentInput = {
 
 type DeferredProviderAttachmentDeps = Pick<SandboxCreateOrchestrationRuntime, "runOpenshell"> & {
   readonly revalidateSandboxIdentity: (operation: string) => void;
+  readonly waitForSandboxReady: (
+    sandboxName: string,
+    attempts?: number,
+    delaySeconds?: number,
+  ) => boolean;
 };
+
+const PROVIDER_REFRESH_READY_ATTEMPTS = 30;
+const PROVIDER_REFRESH_READY_DELAY_SECONDS = 2;
 
 function expectedCredentialBindings(input: ProviderPreparationInput) {
   return new Map(
@@ -157,11 +165,19 @@ export function publishAttachedProvidersBeforeDockerSandboxCreation(
   }
 }
 
-/** Attach the planned providers only after the created sandbox passed its exact policy gate. */
+/**
+ * Attach the planned providers only after the created sandbox passed its exact policy gate.
+ *
+ * OpenShell resolves attached provider revisions when the sandbox starts. A provider attached to
+ * an already-running sandbox is visible in control-plane metadata, but its credential placeholders
+ * are not available to the running supervisor or a fresh exec until the sandbox starts again.
+ */
 export function attachProvidersAfterSandboxCreation(
   input: DeferredProviderAttachmentInput,
   deps: DeferredProviderAttachmentDeps,
 ): void {
+  if (input.providerNames.length === 0) return;
+
   for (const providerName of input.providerNames) {
     deps.revalidateSandboxIdentity(
       `attaching provider '${providerName}' to sandbox '${input.sandboxName}'`,
@@ -179,4 +195,41 @@ export function attachProvidersAfterSandboxCreation(
       `confirming provider '${providerName}' on sandbox '${input.sandboxName}'`,
     );
   }
+
+  deps.revalidateSandboxIdentity(
+    `refreshing attached providers on sandbox '${input.sandboxName}'`,
+  );
+  const stopped = deps.runOpenshell(
+    ["sandbox", "stop", "-g", input.gatewayName, input.sandboxName],
+    { ignoreError: true, suppressOutput: true },
+  );
+  if (stopped.status !== 0) {
+    throw new Error(
+      `OpenShell did not stop sandbox '${input.sandboxName}' to refresh its attached providers.`,
+    );
+  }
+
+  const started = deps.runOpenshell(
+    ["sandbox", "start", "-g", input.gatewayName, input.sandboxName],
+    { ignoreError: true, suppressOutput: true },
+  );
+  if (started.status !== 0) {
+    throw new Error(
+      `OpenShell did not restart sandbox '${input.sandboxName}' after refreshing its attached providers.`,
+    );
+  }
+  if (
+    !deps.waitForSandboxReady(
+      input.sandboxName,
+      PROVIDER_REFRESH_READY_ATTEMPTS,
+      PROVIDER_REFRESH_READY_DELAY_SECONDS,
+    )
+  ) {
+    throw new Error(
+      `OpenShell did not report sandbox '${input.sandboxName}' ready after refreshing its attached providers.`,
+    );
+  }
+  deps.revalidateSandboxIdentity(
+    `confirming refreshed providers on sandbox '${input.sandboxName}'`,
+  );
 }
