@@ -157,7 +157,9 @@ describe("post-policy messaging provider synchronization", () => {
       ["sandbox", "exec", "-g"],
     ]);
     expect(sleepSeconds).toHaveBeenCalledTimes(2);
-    expect(waitForSandboxReady).toHaveBeenCalledWith("alpha", 30, 2);
+    expect(waitForSandboxReady).toHaveBeenCalledTimes(2);
+    expect(waitForSandboxReady).toHaveBeenNthCalledWith(1, "alpha", 30, 2);
+    expect(waitForSandboxReady).toHaveBeenNthCalledWith(2, "alpha", 30, 2);
   });
 
   it("records every identity-checked refresh phase before registry publication (#10153)", async () => {
@@ -243,6 +245,25 @@ describe("post-policy messaging provider synchronization", () => {
       ),
     ).toThrow(/missing: TELEGRAM_BOT_TOKEN/u);
     expect(runOpenshell.mock.calls.some(([args]) => args[1] === "stop")).toBe(false);
+  });
+
+  it("waits for a bound provider update to settle before checking sandbox identity", () => {
+    const runOpenshell = vi.fn();
+    const revalidateSandboxIdentity = vi.fn();
+
+    expect(() =>
+      finalizePostPolicyMessagingProviderSync(
+        { sandboxName: "alpha", gatewayName: "nemoclaw", envKeys: ["WECHAT_BOT_TOKEN"] },
+        {
+          runOpenshell,
+          sleepSeconds: vi.fn(),
+          waitForSandboxReady: vi.fn(() => false),
+          revalidateSandboxIdentity,
+        },
+      ),
+    ).toThrow(/ready after messaging provider synchronization/u);
+    expect(revalidateSandboxIdentity).not.toHaveBeenCalled();
+    expect(runOpenshell).not.toHaveBeenCalled();
   });
 
   it("completes the refresh journal when no credential projection is required (#10153)", () => {

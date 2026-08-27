@@ -947,6 +947,17 @@ function finalizePostPolicyMessagingProviderSync(input, deps) {
     input.advanceProviderRefresh?.("ready");
     return;
   }
+  if (
+    !deps.waitForSandboxReady(
+      input.sandboxName,
+      PROVIDER_SYNC_READY_ATTEMPTS,
+      PROVIDER_SYNC_READY_DELAY_SECONDS,
+    )
+  ) {
+    throw new Error(
+      `OpenShell did not report sandbox '${input.sandboxName}' ready after messaging provider synchronization.`,
+    );
+  }
   waitForStableProviderPlaceholders(input.sandboxName, input.gatewayName, input.envKeys, deps);
 
   deps.revalidatePolicyRequirements?.(
