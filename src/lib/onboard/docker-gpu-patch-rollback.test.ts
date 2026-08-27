@@ -273,9 +273,10 @@ describe("recreateOpenShellDockerSandboxWithGpu rollback path", () => {
       dockerRename,
       dockerStart,
       dockerLogs: vi.fn(() => ""),
-      runOpenshell: vi.fn((args: readonly string[]) =>
-        args[1] === "list" ? { status: 0, stdout: "No sandboxes found.\n" } : { status: 0 },
-      ),
+      runOpenshell: vi.fn((args: readonly string[]) => {
+        startTargets.push(...(args[1] === "start" ? [retryId] : []));
+        return { status: 0 };
+      }),
       runCaptureOpenshell: vi.fn(() =>
         !restoredPresent && !startTargets.includes(retryId)
           ? "No sandboxes found.\n"

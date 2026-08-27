@@ -7,70 +7,10 @@ import {
   getDockerGpuSupervisorReconnectErrorDebouncePolls,
   getDockerGpuSupervisorReconnectTimeoutSecs,
   waitForOpenShellFinalHandoff,
-  waitForOpenShellSandboxLifecycleRelease,
   waitForOpenShellSupervisorReconnect,
 } from "./docker-gpu-supervisor-reconnect";
 
-describe("Docker GPU final lifecycle release", () => {
-  it.each([
-    ["an explicit empty list", "No sandboxes found.\n"],
-    ["another phase-bearing sandbox", "beta  2026-08-21 05:53:18  Ready\n"],
-  ])("accepts %s as a captured release receipt (#9531)", (_receipt, output) => {
-    const runCaptureOpenshell = vi.fn(() => output);
-
-    expect(
-      waitForOpenShellSandboxLifecycleRelease("alpha", 1, {
-        runCaptureOpenshell,
-        sleep: vi.fn(),
-      }),
-    ).toBe(true);
-    expect(runCaptureOpenshell).toHaveBeenCalledOnce();
-    expect(runCaptureOpenshell).toHaveBeenCalledWith(
-      ["sandbox", "list"],
-      expect.objectContaining({
-        killProcessTreeOnTimeout: true,
-        killSignal: "SIGKILL",
-        timeout: expect.any(Number),
-      }),
-    );
-  });
-
-  it.each([
-    ["a header", "NAME  CREATED  PHASE\n"],
-    ["a gateway error", "Error: gateway unavailable\n"],
-    ["a phase-free row", "beta  2026-08-21 05:53:18\n"],
-    ["an unrecognized phase", "beta  2026-08-21 05:53:18  Retiring\n"],
-    ["the selected sandbox in Deleting", "alpha  2026-08-21 05:53:18  Deleting\n"],
-    ["the selected sandbox in Ready", "alpha  2026-08-21 05:53:18  Ready\n"],
-    ["the selected sandbox in Provisioning", "alpha  2026-08-21 05:53:18  Provisioning\n"],
-    ["the selected sandbox in Error", "alpha  2026-08-21 05:53:18  Error\n"],
-    ["the selected sandbox in Failed", "alpha  2026-08-21 05:53:18  Failed\n"],
-  ])("rejects %s as a captured release receipt (#9531)", (_case, output) => {
-    const runCaptureOpenshell = vi.fn(() => output);
-
-    expect(
-      waitForOpenShellSandboxLifecycleRelease("alpha", 1, {
-        runCaptureOpenshell,
-        sleep: vi.fn(),
-      }),
-    ).toBe(false);
-    expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
-  });
-
-  it("does not release the lifecycle when the captured sandbox list is unavailable (#10153)", () => {
-    const runCaptureOpenshell = vi.fn(() => {
-      throw new Error("sandbox list transport unavailable");
-    });
-
-    expect(
-      waitForOpenShellSandboxLifecycleRelease("alpha", 1, {
-        runCaptureOpenshell,
-        sleep: vi.fn(),
-      }),
-    ).toBe(false);
-    expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
-  });
-
+describe("Docker GPU supervisor reconnect", () => {
   it("does not report reconnect without an OpenShell execution boundary (#9531)", () => {
     expect(waitForOpenShellSupervisorReconnect("alpha", 1, { sleep: vi.fn() })).toBe(false);
   });

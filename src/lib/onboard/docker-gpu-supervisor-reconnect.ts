@@ -73,11 +73,6 @@ export type DockerGpuSupervisorReconnectDeps = {
   errorPhaseDebouncePolls?: number;
 };
 
-type DockerLifecycleReleaseDeps = Pick<
-  DockerGpuSupervisorReconnectDeps,
-  "runCaptureOpenshell" | "sleep"
->;
-
 type DockerFinalHandoffDeps = Required<
   Pick<DockerGpuSupervisorReconnectDeps, "runCaptureOpenshell" | "runOpenshell">
 > &
@@ -101,56 +96,6 @@ const PROCESS_TREE_BOUNDED_OPENSHELL_OPTIONS = {
   killSignal: "SIGKILL",
 } as const;
 
-/**
- * Wait for OpenShell to retire the pre-replacement lifecycle record before
- * restarting the replacement. The selected sandbox name must be absent from
- * a phase-bearing list receipt because a row cannot prove which container
- * owns the lifecycle, even when Docker still exposes the exact replacement.
- */
-export function waitForOpenShellSandboxLifecycleRelease(
-  sandboxName: string,
-  timeoutSecs: number,
-  deps: DockerLifecycleReleaseDeps,
-): boolean {
-  if (!deps.runCaptureOpenshell) return false;
-  const sleep = deps.sleep ?? defaultSleep;
-  const deadline = Date.now() + Math.max(1, Math.round(timeoutSecs)) * 1000;
-  const maxAttempts = Math.max(1, Math.ceil(Math.max(1, Math.round(timeoutSecs)) / 2) + 1);
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) break;
-    let output = "";
-    try {
-      // The streaming runner does not return sandbox-list stdout. Capture the
-      // row so a successful command cannot hide a retiring lifecycle phase.
-      output = deps
-        .runCaptureOpenshell(["sandbox", "list"], {
-          ignoreError: true,
-          ...PROCESS_TREE_BOUNDED_OPENSHELL_OPTIONS,
-          suppressOutput: true,
-          timeout: Math.min(DOCKER_GPU_PATCH_TIMEOUT_MS, remainingMs),
-        })
-        .trim();
-    } catch {
-      output = "";
-    }
-    if (output) {
-      const entries = parseLiveSandboxEntries(output);
-      const sandboxPresent = entries.some((entry) => entry.name === sandboxName);
-      const explicitEmptyList = output === "No sandboxes found" || output === "No sandboxes found.";
-      if (explicitEmptyList || (entries.some((entry) => entry.phase !== null) && !sandboxPresent)) {
-        return true;
-      }
-    }
-    const remainingBeforeSleepMs = deadline - Date.now();
-    if (attempt < maxAttempts && remainingBeforeSleepMs > 0) {
-      sleep(Math.min(2, remainingBeforeSleepMs / 1000));
-    }
-  }
-  return false;
-}
-
 function exactReplacementIsRunning(
   callback: DockerFinalHandoffDeps["replacementIsExactAndRunning"],
   remainingMs: number,
@@ -166,7 +111,7 @@ function exactReplacementIsRunning(
 /**
  * Confirm the final Docker replacement handoff through OpenShell and Docker.
  *
- * The final replacement start is the authoritative lifecycle event. Success
+ * The preceding OpenShell start is the authoritative lifecycle event. Success
  * requires both an OpenShell Ready row with a working sandbox exec and a
  * bounded Docker proof that the exact transaction-owned replacement is the
  * sole running labeled container. Deleting is terminal after that start.

@@ -790,7 +790,7 @@ const { createSandbox } = require(${onboardPath});
 
       const result = spawnSync(process.execPath, [scriptPath], {
         cwd: repoRoot,
-        encoding: "utf-8",
+        encoding: "utf-8", timeout: 30_000,
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -801,7 +801,7 @@ const { createSandbox } = require(${onboardPath});
         },
       });
 
-      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.status, 0, result.stderr || result.error?.message);
       const payload = parseStdoutJson(result.stdout);
 
       const createCommand = payload.commands.find((entry: CommandEntry) =>

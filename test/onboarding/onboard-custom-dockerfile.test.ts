@@ -464,6 +464,7 @@ createSandbox(
           NEMOCLAW_RECREATE_SANDBOX: "1",
           SANDBOX_LIVE: sandboxLive,
         },
+        timeout: 30_000,
       });
 
       assert.equal(result.status, 1, result.stderr);
@@ -533,6 +534,7 @@ const { createSandbox } = require(${onboardPath});
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
       },
+      timeout: 30_000,
     });
 
     assert.equal(result.status, 1, "should exit 1 when fromDockerfile path is missing");
@@ -597,6 +599,7 @@ const { createSandbox } = require(${onboardPath});
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
       },
+      timeout: 30_000,
     });
 
     assert.equal(result.status, 1, "should exit 1 when fromDockerfile path is a directory");
@@ -671,6 +674,7 @@ const { createSandbox } = require(${onboardPath});
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
       },
+      timeout: 30_000,
     });
 
     assert.equal(result.status, 1, "should exit 1 when fromDockerfile is ignored");
@@ -773,6 +777,7 @@ const { createSandbox } = require(${onboardPath});
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
       },
+      timeout: 30_000,
     });
 
     assert.equal(result.status, 0, result.stderr);

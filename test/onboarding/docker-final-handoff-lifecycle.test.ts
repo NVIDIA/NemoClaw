@@ -14,30 +14,35 @@ const OLD_CONTAINER_ID = "a".repeat(64);
 const NEW_CONTAINER_ID = "b".repeat(64);
 
 describe("Docker final handoff lifecycle integration", () => {
-  it("restarts only after Error and Deleting release the selected sandbox name (#10153)", () => {
+  it("commits only between authoritative OpenShell stop and start receipts (#10153)", () => {
     const events: string[] = [];
-    const dockerStart = vi.fn(() => {
-      events.push("start replacement");
+    const dockerStop = vi.fn((containerId: string) => {
+      events.push(
+        containerId === OLD_CONTAINER_ID ? "stop original for recreate" : "stop exact replacement",
+      );
       return { status: 0 };
     });
-    const runCaptureOpenshell = vi
-      .fn()
-      .mockImplementationOnce(() => {
-        events.push("observe error");
-        return "alpha  2026-08-23 10:00:00  Error\n";
-      })
-      .mockImplementationOnce(() => {
-        events.push("observe deleting");
-        return "alpha  2026-08-23 10:00:02  Deleting\n";
-      })
-      .mockImplementationOnce(() => {
-        events.push("observe name absence");
-        return "beta  2026-08-23 10:00:04  Ready\n";
-      })
-      .mockImplementationOnce(() => {
-        events.push("observe replacement ready");
-        return "alpha  2026-08-23 10:00:06  Ready\n";
-      });
+    const dockerRm = vi.fn(() => {
+      events.push("remove exact backup");
+      return { status: 0 };
+    });
+    const dockerStart = vi.fn(() => ({ status: 0 }));
+    const runCaptureOpenshell = vi.fn(() => {
+      events.push("observe replacement ready");
+      return "alpha  2026-08-23 10:00:06  Ready\n";
+    });
+    const runOpenshell = vi.fn((args: string[]) => {
+      events.push(
+        args[1] === "stop"
+          ? "stop through OpenShell"
+          : args[1] === "start"
+            ? "start through OpenShell"
+            : args[1] === "exec" && events.includes("stop through OpenShell")
+              ? "exec final ready"
+              : "exec supervisor ready",
+      );
+      return { status: 0 };
+    });
 
     const result = recreateOpenShellDockerSandboxWithStartupCommand(
       {
@@ -51,11 +56,11 @@ describe("Docker final handoff lifecycle integration", () => {
         dockerRun: vi.fn(createDockerFinalHandoffRunFixture(NEW_CONTAINER_ID)),
         dockerRunDetached: vi.fn(() => ({ status: 0, stdout: `${NEW_CONTAINER_ID}\n` })),
         dockerRename: vi.fn(() => ({ status: 0 })),
-        dockerStop: vi.fn(() => ({ status: 0 })),
-        dockerRm: vi.fn(() => ({ status: 0 })),
+        dockerStop,
+        dockerRm,
         dockerStart,
         runCaptureOpenshell,
-        runOpenshell: vi.fn(() => ({ status: 0 })),
+        runOpenshell,
         sleep: vi.fn(),
         now: () => new Date("2026-05-12T00:00:00Z"),
         detectSandboxFallbackDns: vi.fn(() => null),
@@ -71,20 +76,28 @@ describe("Docker final handoff lifecycle integration", () => {
       oldContainerId: OLD_CONTAINER_ID,
     });
     expect(events).toEqual([
-      "observe error",
-      "observe deleting",
-      "observe name absence",
-      "start replacement",
+      "stop original for recreate",
+      "exec supervisor ready",
+      "stop through OpenShell",
+      "stop exact replacement",
+      "remove exact backup",
+      "start through OpenShell",
       "observe replacement ready",
+      "exec final ready",
     ]);
+    expect(dockerRm).toHaveBeenCalledWith(OLD_CONTAINER_ID, expect.any(Object));
+    expect(dockerStart).not.toHaveBeenCalled();
   });
 
-  it("never restarts when Error advances to Deleting without a name-absence receipt (#10153)", () => {
+  it("does not cross the final Docker commit when authoritative OpenShell stop fails (#10153)", () => {
+    const dockerStop = vi.fn(() => ({ status: 0 }));
+    const dockerRm = vi.fn(() => ({ status: 0 }));
     const dockerStart = vi.fn(() => ({ status: 0 }));
-    const runCaptureOpenshell = vi
+    const runCaptureOpenshell = vi.fn(() => "alpha  2026-08-23 10:00:00  Ready\n");
+    const runOpenshell = vi
       .fn()
-      .mockReturnValueOnce("alpha  2026-08-23 10:00:00  Error\n")
-      .mockReturnValue("alpha  2026-08-23 10:00:02  Deleting\n");
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 1 });
     let failure: unknown;
 
     try {
@@ -100,11 +113,11 @@ describe("Docker final handoff lifecycle integration", () => {
           dockerRun: vi.fn(createDockerFinalHandoffRunFixture(NEW_CONTAINER_ID)),
           dockerRunDetached: vi.fn(() => ({ status: 0, stdout: `${NEW_CONTAINER_ID}\n` })),
           dockerRename: vi.fn(() => ({ status: 0 })),
-          dockerStop: vi.fn(() => ({ status: 0 })),
-          dockerRm: vi.fn(() => ({ status: 0 })),
+          dockerStop,
+          dockerRm,
           dockerStart,
           runCaptureOpenshell,
-          runOpenshell: vi.fn(() => ({ status: 0 })),
+          runOpenshell,
           sleep: vi.fn(),
           now: () => new Date("2026-05-12T00:00:00Z"),
           detectSandboxFallbackDns: vi.fn(() => null),
@@ -119,12 +132,15 @@ describe("Docker final handoff lifecycle integration", () => {
     expect(failure).toBeInstanceOf(Error);
     expect((failure as Error).message).toContain("final replacement handoff");
     expect(getDockerGpuPatchFailureContext(failure)).toMatchObject({
-      backupRemoved: true,
+      backupRemoved: false,
       newContainerId: NEW_CONTAINER_ID,
       oldContainerId: OLD_CONTAINER_ID,
       rolledBack: false,
     });
-    expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    expect(runCaptureOpenshell).not.toHaveBeenCalled();
+    expect(dockerStop).toHaveBeenCalledTimes(1);
+    expect(dockerStop).toHaveBeenCalledWith(OLD_CONTAINER_ID, expect.any(Object));
+    expect(dockerRm).not.toHaveBeenCalled();
     expect(dockerStart).not.toHaveBeenCalled();
   });
 });

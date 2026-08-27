@@ -484,14 +484,14 @@ function waitForFinalRelaunchManagedSupervisor(
 function finalRelaunchContainerFailureDetail(
   completion: ReturnType<ManagedSupervisorRelaunch["finalize"]>,
 ): string | null {
+  if (completion.lifecycleStopAcknowledged === false) {
+    return "OpenShell did not acknowledge the authoritative stop before the final replacement handoff. NemoClaw did not start the primary dashboard/API host forward";
+  }
   if (completion.replacementStoppedForCommit === false) {
     return "Docker could not stop the replacement container for the final recovery handoff. NemoClaw did not start the primary dashboard/API host forward";
   }
-  if (completion.lifecycleReleaseObserved === false) {
-    return "OpenShell did not retire the previous lifecycle record before the final replacement start. NemoClaw did not start the primary dashboard/API host forward";
-  }
   if (completion.replacementRestarted === false) {
-    return "Docker could not start the replacement container to complete the final recovery handoff. NemoClaw did not start the primary dashboard/API host forward";
+    return "OpenShell could not start the replacement container through the authoritative lifecycle path. NemoClaw did not start the primary dashboard/API host forward";
   }
   if (completion.finalHandoffAcknowledged === false) {
     return `OpenShell did not acknowledge the final replacement container handoff${

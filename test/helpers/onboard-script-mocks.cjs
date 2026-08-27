@@ -631,7 +631,7 @@ function mockDockerSandboxLifecycleReleaseFromRunner() {
   const runner = require(path.resolve(__dirname, "../../src/lib/runner.ts"));
   const state = runner.run.__nemoclawDockerLifecycleState ?? {
     finalCommitReleased: false,
-    lifecycleReleased: false,
+    lifecycleStopped: false,
     replacementRestarted: false,
   };
   const captureOutput = (normalized) => {
@@ -660,8 +660,8 @@ function mockDockerSandboxLifecycleReleaseFromRunner() {
     if (state.replacementRestarted && normalized.includes("sandbox list")) {
       return "my-assistant  2026-08-27  Ready\n";
     }
-    if (state.lifecycleReleased && normalized.includes("sandbox list")) {
-      return "No sandboxes found\n";
+    if (state.lifecycleStopped && normalized.includes("sandbox list")) {
+      return "my-assistant  2026-08-27  Stopped\n";
     }
     return null;
   };
@@ -679,13 +679,17 @@ function mockDockerSandboxLifecycleReleaseFromRunner() {
       }
       const result = run(command, options);
       if (normalized.startsWith("docker rm ") && result?.status === 0) {
-        state.lifecycleReleased = true;
         if (normalized === `docker rm ${ONBOARD_SANDBOX_OLD_CONTAINER_ID}`) {
           state.finalCommitReleased = true;
         }
       }
+      if (normalized.includes("sandbox stop my-assistant") && result?.status === 0) {
+        state.lifecycleStopped = true;
+        state.replacementRestarted = false;
+      }
       if (
-        normalized === `docker start ${ONBOARD_SANDBOX_NEW_CONTAINER_ID}` &&
+        state.finalCommitReleased &&
+        normalized.includes("sandbox start my-assistant") &&
         result?.status === 0
       ) {
         state.replacementRestarted = true;

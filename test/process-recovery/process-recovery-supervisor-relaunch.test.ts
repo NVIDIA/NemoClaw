@@ -81,7 +81,10 @@ function composedRelaunchTransaction(
     .fn()
     .mockReturnValueOnce(containerIds.old)
     .mockReturnValue(containerIds.replacement);
-  const runOpenshell = vi.fn(() => ({ status: 0, stdout: "No sandboxes found.\n" }));
+  const runOpenshell = vi.fn((args: readonly string[]) => {
+    order.push(`openshell-${args[1]}`);
+    return { status: 0, stdout: "No sandboxes found.\n" };
+  });
   let activeSandboxName = "";
   const runCaptureOpenshell = vi.fn(() =>
     runCaptureOpenshell.mock.calls.length === 1
@@ -586,14 +589,10 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       oldContainerId,
       expect.objectContaining({ ignoreError: true }),
     );
-    expect(dockerStart).toHaveBeenCalledWith(
-      replacementContainerId,
-      expect.objectContaining({ ignoreError: true }),
-    );
+    expect(dockerStart).not.toHaveBeenCalled();
+    expect(order).toContain("openshell-stop");
+    expect(order).toContain("openshell-start");
     expect(waitForRecreatedSandboxOpenShellReadyImpl).toHaveBeenCalledTimes(2);
-    expect(dockerStart.mock.invocationCallOrder[0]).toBeLessThan(
-      waitForRecreatedSandboxOpenShellReadyImpl.mock.invocationCallOrder[1],
-    );
     expect(waitForRecreatedSandboxOpenShellReadyImpl.mock.invocationCallOrder[1]).toBeLessThan(
       runOpenshell.mock.invocationCallOrder[0],
     );
@@ -625,22 +624,22 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       finalReadinessReady: true,
     },
     {
-      condition: "OpenShell does not retire the previous lifecycle record",
+      condition: "OpenShell does not acknowledge the authoritative stop",
       finalizeOutcome: () => ({
-        backupRemoved: true,
-        lifecycleReleaseObserved: false,
+        backupRemoved: false,
+        lifecycleStopAcknowledged: false,
         replacementRestarted: false,
-        replacementStoppedForCommit: true,
+        replacementStoppedForCommit: false,
         rolledBack: false,
         stateRestored: true,
       }),
-      expectedDetail: "OpenShell did not retire the previous lifecycle record",
+      expectedDetail: "OpenShell did not acknowledge the authoritative stop",
       expectedReadinessCalls: 1,
       finalPinnedAction: () => ACCEPTED_MANAGED_PROBE,
       finalReadinessReady: true,
     },
     {
-      condition: "Docker cannot start the replacement container",
+      condition: "OpenShell cannot start the replacement container",
       finalizeOutcome: () => ({
         backupRemoved: true,
         replacementRestarted: false,
@@ -648,7 +647,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
         rolledBack: false,
         stateRestored: true,
       }),
-      expectedDetail: "Docker could not start the replacement container",
+      expectedDetail: "OpenShell could not start the replacement container",
       expectedReadinessCalls: 1,
       finalPinnedAction: () => ACCEPTED_MANAGED_PROBE,
       finalReadinessReady: true,
