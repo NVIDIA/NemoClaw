@@ -238,7 +238,7 @@ const { createSandbox } = require(${onboardPath});
       null,
       [],
       null,
-      { sessionId: createFixture.sessionId },
+      { sessionId: createFixture.sessionId, selection: createFixture.selection },
       null,
       null,
       preparedBuildContext,

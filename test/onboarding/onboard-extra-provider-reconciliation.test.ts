@@ -146,7 +146,7 @@ const createReservedSandbox = () => createSandbox(
   null,
   [],
   null,
-  { sessionId: createFixture.sessionId },
+  { sessionId: createFixture.sessionId, selection: createFixture.selection },
 );
 
 (async () => {

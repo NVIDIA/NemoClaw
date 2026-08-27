@@ -114,7 +114,20 @@ describe("sandbox route publication", () => {
       (_name: string, sessionId: string) => sessionId === registryEntry.reservationSessionId,
     );
     const createSandbox = vi.fn(async (...args: unknown[]) => {
-      expect(args[14]).toEqual({ sessionId: session.sessionId });
+      expect(args[14]).toEqual({
+        sessionId: session.sessionId,
+        selection: {
+          provider: "provider",
+          model: "model",
+          endpointUrl: null,
+          endpointSource: null,
+          credentialEnv: null,
+          preferredInferenceApi: "openai-completions",
+          compatibleEndpointReasoning: null,
+          compatibleEndpointReasoningEffort: null,
+          nimContainer: null,
+        },
+      });
       throw new Error("route reservation changed at the verified create boundary");
     });
     const { deps, calls } = createDeps(
