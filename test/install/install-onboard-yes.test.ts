@@ -7,10 +7,10 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, onTestFinished } from "vitest";
+import { buildDeferredOnboardingPlan } from "../../src/lib/actions/installer/deferred-onboarding";
 import { runInstallerSourcedBody } from "../helpers/installer-run-fixture";
 
 const INSTALLER_PAYLOAD = path.join(import.meta.dirname, "../..", "scripts", "install.sh");
-const CLI = path.join(import.meta.dirname, "../..", "bin", "nemoclaw.js");
 
 type StubAssignments = {
   cliBin?: string;
@@ -582,8 +582,78 @@ type DeferredOnboardingMainOptions = {
   registeredSandboxCount?: number;
 };
 
+type PublicOnboardAtHomeResult = {
+  argv: string[];
+  home: string;
+  onboardArgs: string;
+  output: string;
+  result: ReturnType<typeof runInstallerSourcedBody>["result"];
+};
+
+function runPublicOnboardAtHome(
+  home: string,
+  agent: string,
+  credential: string,
+): PublicOnboardAtHomeResult {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-follow-up-"));
+  const cliPath = path.join(tempRoot, "nemo-deepagents");
+  const argvLog = path.join(home, "onboard-args.log");
+  fs.writeFileSync(cliPath, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argvLog}"\nexit 0\n`, {
+    mode: 0o755,
+  });
+
+  const result = runInstallerSourcedBody(
+    `
+set -e
+_CLI_BIN="nemo-deepagents"
+_CLI_PATH=${JSON.stringify(cliPath)}
+NON_INTERACTIVE=1
+show_usage_notice() { :; }
+info() { :; }
+warn() { :; }
+error() { return 0; }
+command_exists() { return 1; }
+run_onboard
+`,
+    {
+      home,
+      extraEnv: {
+        NEMOCLAW_AGENT: agent,
+        NVIDIA_INFERENCE_API_KEY: credential,
+      },
+      includeNodeOnPath: true,
+    },
+  );
+  onTestFinished(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+
+  const onboardArgs = fs.existsSync(argvLog) ? fs.readFileSync(argvLog, "utf-8") : "";
+  return {
+    argv: onboardArgs.split("\n").filter((line) => line.length > 0),
+    home,
+    onboardArgs,
+    output: result.output,
+    result: result.result,
+  };
+}
+
 function runDeferredOnboardingMain(options: DeferredOnboardingMainOptions = {}) {
   const registeredSandboxCount = options.registeredSandboxCount ?? 0;
+  const agent = options.agent ?? "hermes";
+  const requested = options.deferFlag === true || options.deferEnv === true;
+  const deferredDecision = buildDeferredOnboardingPlan(
+    {
+      NEMOCLAW_AGENT: agent,
+      NEMOCLAW_PROVIDER: options.provider,
+      NEMOCLAW_PROVIDER_KEY: options.providerKey,
+      NVIDIA_API_KEY: options.nvidiaApiKey,
+      NVIDIA_INFERENCE_API_KEY: options.inferenceKey,
+    },
+    {
+      registeredSandboxCount,
+      requested,
+      runtimeSupported: agent === "hermes" || agent === "langchain-deepagents-code",
+    },
+  ).decision;
   const result = runInstallerSourcedBody(
     `
 set -e
@@ -605,9 +675,10 @@ fix_npm_permissions() { :; }
 preinstall_backup_and_retire_legacy_gateway() { :; }
 install_nemoclaw() { record install-nemoclaw; }
 verify_nemoclaw() {
-  _CLI_PATH=${JSON.stringify(CLI)}
+  _CLI_PATH=${JSON.stringify(process.execPath)}
   NEMOCLAW_READY_NOW=true
 }
+resolve_deferred_onboarding_decision() { printf '%s\n' ${JSON.stringify(deferredDecision)}; }
 require_reportable_openshell_version() { :; }
 registered_sandbox_count() { printf '%s\n' "$REGISTERED_SANDBOX_COUNT"; }
 run_installer_host_preflight() { record host-preflight; return 0; }
@@ -631,7 +702,7 @@ main --non-interactive --yes-i-accept-third-party-software ${options.deferFlag ?
 `,
     {
       extraEnv: {
-        NEMOCLAW_AGENT: options.agent ?? "hermes",
+        NEMOCLAW_AGENT: agent,
         NEMOCLAW_DEFER_ONBOARDING: options.deferEnv ? "1" : "",
         NVIDIA_INFERENCE_API_KEY: options.inferenceKey ?? "",
         NVIDIA_API_KEY: options.nvidiaApiKey ?? "",
@@ -708,19 +779,17 @@ describe("deferred onboarding", () => {
     expect(prepared.output).toContain("nemo-deepagents onboard");
 
     const credential = "nvapi-dcode-runtime-test";
-    const completed = runDeferredOnboardingMain({
-      agent: "langchain-deepagents-code",
-      deferFlag: true,
-      inferenceKey: credential,
-    });
-
-    expect(completed.result.status, completed.output).toBe(0);
-    expect(completed.calls).toContain("host-preflight");
-    expect(completed.calls).toContain("onboard");
-    expect(completed.output).not.toContain(credential);
-    expect(fs.readFileSync(path.join(completed.home, "onboard-args.log"), "utf-8")).not.toContain(
+    const completed = runPublicOnboardAtHome(
+      prepared.home,
+      "langchain-deepagents-code",
       credential,
     );
+
+    expect(completed.result.status, completed.output).toBe(0);
+    expect(completed.home).toBe(prepared.home);
+    expect(completed.argv).toEqual(expect.arrayContaining(["onboard", "--non-interactive", "--yes"]));
+    expect(completed.output).not.toContain(credential);
+    expect(completed.onboardArgs).not.toContain(credential);
   });
 
   it.each(["build", "routed", "custom"])(
