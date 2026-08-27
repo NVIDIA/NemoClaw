@@ -663,4 +663,5 @@ alpha-mcp-slack   generic  1                 0
     );
     expect(exec).toHaveBeenCalledTimes(1);
   });
+
 });

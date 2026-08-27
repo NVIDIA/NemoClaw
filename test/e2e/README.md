@@ -91,8 +91,9 @@ If the version command fails, the action stops before the live test runs.
 This boundary keeps candidate source separate from the trusted workflow implementation.
 
 For a same-repository PR that changes a managed-image workflow path, the trusted planner also
-requires one successful `Images / Build, Test, and Publish Managed Images` run for the candidate commit. Before candidate
-checkout, the planner downloads the three nonexpired contract artifacts by immutable artifact ID.
+requires one successful `Images / Build, Test, and Publish Managed Images` run for the candidate
+commit. Before candidate checkout, the planner downloads the three nonexpired contract artifacts by
+immutable artifact ID.
 It verifies each artifact digest, producer run, attempt, and candidate commit. The planner rejects a
 missing, incomplete, or mixed all-agent publication before E2E jobs start.
 
@@ -101,10 +102,11 @@ Each live E2E consumer verifies that the catalog source revision matches `checko
 does not change a managed-image workflow path keeps the released catalog behavior. The GitHub token
 is available only to the trusted planner job and is not included in the candidate CLI artifact.
 
-The same-repository `Images / Build, Test, and Publish Managed Images` PR workflow also runs the OpenClaw managed-image MCP
-discovery and lifecycle scope in two independent matrix jobs. Each job assembles one exact candidate
-catalog from the workflow's published contracts, uses a fresh runner and sandbox, records the
-authenticated discovery diagnostics, scans the evidence for fixture credentials, and must pass.
+The same-repository `Images / Build, Test, and Publish Managed Images` PR workflow also runs the
+OpenClaw managed-image MCP discovery and lifecycle scope in two independent matrix jobs. Each job
+assembles one exact candidate catalog from the workflow's published contracts, uses a fresh runner
+and sandbox, records the authenticated discovery diagnostics, scans the evidence for fixture
+credentials, and must pass.
 These are two required acceptance executions, not retries; either failure remains a failed check.
 The managed-image scope does not claim trusted-private DNS-rebinding coverage: host and sandbox
 `/etc/hosts` fixtures do not control the OpenShell supervisor's egress resolver. Full MCP bridge E2E
@@ -303,11 +305,11 @@ The execution profile owns the credentials available to its target step:
 - `brave-nvidia-inference` displays `Brave and NVIDIA inference API keys` and receives `BRAVE_API_KEY` and `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs and authenticated NVIDIA-owned PR runs.
 
 `common-egress-agent` runs 4 isolated scenario shards.
-The Personal stock-price shard exercises ordinary onboarding with an explicit Personal selection; it does not exercise Portable profile selection.
-It uses OpenClaw as one representative agent witness, runs with `nvidia-inference`, sets web search to `none`, and receives no Brave Search or Tavily Search API key.
-The Personal stock assertion disables the ordinary agent-attempt shell artifact because OpenClaw stdout can contain the complete source URL.
-Raw OpenClaw session and trajectory JSONL stay inside the sandbox; uploaded evidence contains only the price and source date, the source hostname and protocol, and bounded reduced evidence such as tool names, public target hosts, provider labels, final statuses, and quote-match booleans.
-The live assertions require `web_fetch`, reject `web_search` and search-provider use, permit public access from curl and Python, and deny loopback and link-local targets.
+The Personal public-fetch shard exercises ordinary onboarding with an explicit Personal selection; it does not exercise Portable profile selection.
+It uses OpenClaw as one representative agent witness, runs with `nvidia-inference`, sets web search to `none`, and receives neither a Brave Search nor a Tavily Search API key.
+The Personal agent assertion disables the ordinary agent-attempt shell artifact because OpenClaw stdout can contain fetched content and the complete URL. OpenShell SSH configuration stays in a private temporary file outside the artifact directory. The assertion attempts removal after it finishes and fails if the directory remains. A failed agent attempt retains only schema metadata, the attempt number, failure class, exit code, signal, timeout state, and one allowlisted diagnostic summary.
+Raw OpenClaw session and trajectory JSONL stay inside the sandbox. Reduced agent evidence artifacts retain schema metadata, the source hostname and protocol, bounded aggregate counts, and status booleans while omitting fetched content, complete URLs and queries, tool names, and provider values.
+The live assertions require `web_fetch` for one fixed public reference, reject `web_search` and Brave Search or Tavily Search use, permit public access from curl, and deny loopback and link-local targets.
 
 GitHub Actions renders each catalogue execution as `<display name> / <credential boundary>`.
 All catalogue profiles call `.github/workflows/e2e-standard-profile.yaml`.
@@ -1010,7 +1012,7 @@ concrete job executions.
 
 The two extra instrumented executions come from the 3 `common-egress-agent`
 scenario shards that enable runner comparison.
-The Personal stock-price shard runs without runner-comparison telemetry.
+The Personal public-fetch shard runs without runner-comparison telemetry.
 The OpenClaw matrix entries for `mcp-bridge`,
 `channels-stop-start`, and `security-posture` are not instrumented.
 The #7145 standard-versus-larger-runner cohort compares the same lane and
