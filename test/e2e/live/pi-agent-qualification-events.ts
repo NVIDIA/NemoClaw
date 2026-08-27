@@ -194,13 +194,12 @@ export function qualifyPiReadTask(
     throw new Error("Pi task did not issue the exact read tool call");
   }
   const completions = events.flatMap((event, index) =>
-    event.type === "tool_execution_end" && event.toolCallId === start.toolCallId
-      ? [{ event, index }]
-      : [],
+    event.type === "tool_execution_end" ? [{ event, index }] : [],
   );
   if (
     completions.length !== 1 ||
     completions[0]!.index <= startIndex ||
+    completions[0]!.event.toolCallId !== start.toolCallId ||
     completions[0]!.event.toolName !== "read" ||
     completions[0]!.event.isError !== false
   ) {

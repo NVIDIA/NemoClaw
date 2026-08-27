@@ -123,6 +123,13 @@ describe("Pi qualification event oracle", () => {
     ).toThrow("must start exactly one tool");
     expect(() =>
       qualifyPiReadTask(
+        [...valid, { ...valid[2], toolCallId: "unmatched-completion" }],
+        PATH,
+        TOKEN,
+      ),
+    ).toThrow("did not complete successfully");
+    expect(() =>
+      qualifyPiReadTask(
         parsePiJsonEvents(eventStream({ args: { path: "/sandbox/other" } })),
         PATH,
         TOKEN,
