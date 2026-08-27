@@ -2193,8 +2193,9 @@ def _wait_for_release_ack_publisher(fence: FenceProof) -> None:
             ):
                 _fail("activation-release-ack-invalid")
             if publisher.state in ("T", "t") and resumed_publisher is None:
-                _signal_exact_process(publisher, signal.SIGCONT)
-                resumed_publisher = _process_reference(publisher)
+                publisher_reference = _process_reference(publisher)
+                _signal_reference(publisher_reference, signal.SIGCONT)
+                resumed_publisher = publisher_reference
         elif not publishers and start.state in ("T", "t"):
             return
         remaining = deadline - time.monotonic()
@@ -2757,8 +2758,17 @@ def _signal_exact_process(process: ProcessIdentity, requested_signal: int) -> No
 
 
 def _signal_reference(reference: ProcessReference, requested_signal: int) -> None:
-    process = _recapture_reference(reference)
-    _signal_exact_process(process, requested_signal)
+    for attempt in range(2):
+        process = _recapture_reference(reference)
+        try:
+            _signal_exact_process(process, requested_signal)
+            return
+        except ControlError as error:
+            if error.code != "writer-pid-reused" or attempt > 0:
+                raise
+            # Re-open the persisted exact reference once. A real replacement
+            # fails recapture; a process that still matches can be signalled
+            # through a fresh pidfd without weakening the identity check.
 
 
 def _wait_for_reference_state(
@@ -2778,7 +2788,7 @@ def _wait_for_reference_state(
 def _stop_reference(reference: ProcessReference) -> None:
     process = _recapture_reference(reference)
     if process.state not in ("T", "t"):
-        _signal_exact_process(process, signal.SIGSTOP)
+        _signal_reference(reference, signal.SIGSTOP)
     _wait_for_reference_state(reference, ("T", "t"))
 
 
@@ -4228,7 +4238,7 @@ def _wait_for_reference_running(reference: ProcessReference) -> ProcessIdentity:
 def _resume_reference(reference: ProcessReference) -> ProcessIdentity:
     process = _recapture_reference(reference)
     if process.state in ("T", "t"):
-        _signal_exact_process(process, signal.SIGCONT)
+        _signal_reference(reference, signal.SIGCONT)
     return _wait_for_reference_running(reference)
 
 

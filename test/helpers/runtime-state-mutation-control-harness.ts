@@ -43,6 +43,7 @@ real_parse_proc_uids = control._parse_proc_uids
 real_recapture_reference = control._recapture_reference
 real_capture_process = control._capture_process
 real_signal_exact_process = control._signal_exact_process
+real_signal_reference = control._signal_reference
 real_wait_for_reference_running = control._wait_for_reference_running
 real_prove_fence_shape = control._prove_fence_shape
 real_resume_reference = control._resume_reference
@@ -263,6 +264,29 @@ with tempfile.TemporaryDirectory() as process_probe:
     finally:
         control.os.stat = real_os_stat
         control._read_proc_file = real_read_proc_file
+reference_signal_attempts = []
+control._recapture_reference = lambda _reference, _code="fenced-process-drift": start
+def signal_reference_after_rescan(selected, requested):
+    reference_signal_attempts.append([selected.pid, requested])
+    if len(reference_signal_attempts) == 1:
+        raise control.ControlError("writer-pid-reused")
+control._signal_exact_process = signal_reference_after_rescan
+real_signal_reference(control._process_reference(start), signal.SIGSTOP)
+results["reference_signal_attempts"] = reference_signal_attempts
+replacement_recaptures = [start]
+control._recapture_reference = lambda _reference, _code="fenced-process-drift": (
+    replacement_recaptures.pop(0)
+    if replacement_recaptures
+    else (_ for _ in ()).throw(control.ControlError(_code))
+)
+control._signal_exact_process = lambda _selected, _requested: (_ for _ in ()).throw(
+    control.ControlError("writer-pid-reused")
+)
+results["replaced_reference_signal"] = code(
+    lambda: real_signal_reference(control._process_reference(start), signal.SIGSTOP)
+)
+control._recapture_reference = real_recapture_reference
+control._signal_exact_process = real_signal_exact_process
 with tempfile.TemporaryDirectory() as atomic_root:
     atomic_root_fd = os.open(atomic_root, os.O_RDONLY | os.O_DIRECTORY)
     atomic_creation_modes = []

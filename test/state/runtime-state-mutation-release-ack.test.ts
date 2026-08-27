@@ -151,16 +151,20 @@ with tempfile.TemporaryDirectory() as root:
             publisher_scans["count"] += 1
             return (publisher,) if publisher_scans["count"] == 1 else ()
         control._capture_writer_processes = capture_publishers
-        control._recapture_reference = lambda *_args: control.ProcessIdentity(
-            start.pid,
-            start_state["value"],
-            start.parent_pid,
-            start.start_identity,
-            start.uids,
-            (control.NEMOCLAW_START_PATH,),
-            start.proc_device,
-            start.proc_inode,
-        )
+        def recapture(reference, *_args):
+            if reference.pid == publisher.pid:
+                return publisher
+            return control.ProcessIdentity(
+                start.pid,
+                start_state["value"],
+                start.parent_pid,
+                start.start_identity,
+                start.uids,
+                (control.NEMOCLAW_START_PATH,),
+                start.proc_device,
+                start.proc_inode,
+            )
+        control._recapture_reference = recapture
         def signal_publisher(selected, requested):
             publisher_signals.append(
                 [selected.pid, requested == signal.SIGCONT]
