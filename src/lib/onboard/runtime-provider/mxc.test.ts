@@ -1,17 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import type { SandboxWorkloadReceipt } from "../../state/registry/types";
 import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
 import { encodeManagedStartupProfile } from "../managed-startup/profile";
 import { nativeArtifactWorkloadReceiptFixture } from "../workload/native-artifact-test-fixture";
+import type { RuntimeProviderNativeArtifactBootstrapSurface } from "./contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./current";
 import { createDockerRuntimeProviderBundle } from "./docker";
 import { createMxcRuntimeProviderBundle } from "./mxc";
 import type { MxcNativeArtifactControlPlane } from "./mxc-bootstrap-operations";
+import { mxcOpenShellAttachmentFixture } from "./mxc-openshell-attachment-test-fixture";
 import {
   createRuntimeProviderBundleRegistry,
   RuntimeProviderRegistrationError,
@@ -35,12 +37,15 @@ function inactiveBootstrapControlPlane(): MxcNativeArtifactControlPlane {
 }
 
 function candidateBundle() {
+  const attachment = mxcOpenShellAttachmentFixture();
   return createMxcRuntimeProviderBundle({
     hostFacts: {
       platform: "win32",
       nativeArchitecture: "x64",
       release: "10.0.28000.1836",
     },
+    openshellAttachmentAuthority: attachment.authority,
+    openshellObservation: attachment.observation,
     bootstrapControlPlane: inactiveBootstrapControlPlane(),
   });
 }
@@ -95,22 +100,93 @@ describe("inactive OpenShell MXC runtime provider", () => {
       group: "Host",
       label: "OpenShell MXC process_container candidate",
       status: "info",
-      detail: "Windows x64 build 28000 meets the inactive host floor.",
-      hint: "MXC remains unavailable until the OpenShell package and live E2E gates pass.",
+      detail:
+        "Windows x64 build 28000 and OpenShell 0.0.21 match the inactive attachment contract.",
+      hint:
+        "This check does not enable MXC. Maintainers must qualify the accepted OpenShell " +
+        "distribution and required live E2E coverage before adding production selection.",
     });
 
+    const attachment = mxcOpenShellAttachmentFixture();
     const rejected = createMxcRuntimeProviderBundle({
       hostFacts: {
         platform: "linux",
         nativeArchitecture: "x64",
         release: "6.6.87.2-microsoft-standard-WSL2",
       },
+      openshellAttachmentAuthority: attachment.authority,
+      openshellObservation: attachment.observation,
       bootstrapControlPlane: inactiveBootstrapControlPlane(),
     });
     expect(rejected.preflightDoctor.inspectHost()).toMatchObject({
       status: "fail",
       detail: expect.stringMatching(/WSL is not a native Windows host/u),
     });
+  });
+
+  it("rejects OpenShell distribution drift during host preflight (#8178)", () => {
+    const attachment = mxcOpenShellAttachmentFixture();
+    const observation = structuredClone(attachment.observation);
+    const observed = observation as unknown as {
+      components: { gatewaySha256: string };
+    };
+    observed.components.gatewaySha256 = "6".repeat(64);
+    const rejected = createMxcRuntimeProviderBundle({
+      hostFacts: {
+        platform: "win32",
+        nativeArchitecture: "x64",
+        release: "10.0.28000.1836",
+      },
+      openshellAttachmentAuthority: attachment.authority,
+      openshellObservation: observation,
+      bootstrapControlPlane: inactiveBootstrapControlPlane(),
+    });
+
+    expect(rejected.preflightDoctor.inspectHost()).toMatchObject({
+      status: "fail",
+      detail: expect.stringMatching(/observed distribution identity does not match/u),
+    });
+  });
+
+  it("blocks attachment drift before every bootstrap control-plane operation (#8178)", async () => {
+    const attachment = mxcOpenShellAttachmentFixture();
+    const observation = structuredClone(attachment.observation);
+    const observed = observation as unknown as {
+      components: { gatewaySha256: string };
+    };
+    observed.components.gatewaySha256 = "6".repeat(64);
+    const verifyAndCreate = vi.fn(async () => ({ status: "unknown" as const }));
+    const verifyReadiness = vi.fn(async () => {
+      throw new Error("attachment drift must block readiness");
+    });
+    const recoverCreate = vi.fn(async () => ({ status: "absent" as const }));
+    const provider = createMxcRuntimeProviderBundle({
+      hostFacts: {
+        platform: "win32",
+        nativeArchitecture: "x64",
+        release: "10.0.28000.1836",
+      },
+      openshellAttachmentAuthority: attachment.authority,
+      openshellObservation: observation,
+      bootstrapControlPlane: {
+        contractVersion: 1,
+        providerId: "mxc",
+        verifyAndCreate,
+        verifyReadiness,
+        recoverCreate,
+      },
+    });
+    const bootstrap = provider.bootstrap as RuntimeProviderNativeArtifactBootstrapSurface;
+
+    await expect(bootstrap.run({} as never)).rejects.toThrow(
+      /observed distribution identity does not match/u,
+    );
+    await expect(bootstrap.recover({} as never)).rejects.toThrow(
+      /observed distribution identity does not match/u,
+    );
+    expect(verifyAndCreate).not.toHaveBeenCalled();
+    expect(verifyReadiness).not.toHaveBeenCalled();
+    expect(recoverCreate).not.toHaveBeenCalled();
   });
 
   it.each([

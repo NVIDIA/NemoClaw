@@ -515,6 +515,11 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
         assert.equal(payload.creationError, null, result.stderr);
         assert.equal(payload.sandboxName, "my-assistant");
         assert.ok(payload.sandboxListCalls >= 2);
+        assert.deepEqual(payload.groupKillCalls, [{ pid: -4242, signal: "SIGTERM" }]);
+        assert.deepEqual(payload.killCalls, []);
+        assert.equal(payload.unrefCalls, 0);
+        assert.equal(payload.stdoutDestroyCalls, 0);
+        assert.equal(payload.stderrDestroyCalls, 0);
         assert.equal(payload.registeredSandbox.workload.kind, "managed-image");
         assert.match(payload.registeredSandbox.lifecycleGeneration, /^[0-9a-f-]{36}$/u);
         assert.equal(
@@ -543,11 +548,6 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
       };
       const assertManagedProviderCreation = () => {
         assertSuccessfulCreation();
-        assert.deepEqual(payload.groupKillCalls, [{ pid: -4242, signal: "SIGTERM" }]);
-        assert.deepEqual(payload.killCalls, []);
-        assert.equal(payload.unrefCalls, 0);
-        assert.equal(payload.stdoutDestroyCalls, 0);
-        assert.equal(payload.stderrDestroyCalls, 0);
         assert.equal(payload.registeredSandbox.policyAuthority, "nemoclaw-managed");
         assert.ok(payload.registeredSandbox.policyCreationReceipt);
         assert.match(payload.createCommand, /--policy \S+/u);

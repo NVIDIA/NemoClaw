@@ -15,6 +15,7 @@ import type {
   RuntimeProviderNativeArtifactBootstrapSurface,
 } from "./contract";
 import { createMxcRuntimeProviderBundle } from "./mxc";
+import { mxcOpenShellAttachmentFixture } from "./mxc-openshell-attachment-test-fixture";
 
 const NATIVE_RECEIPT = nativeArtifactWorkloadReceiptFixture(
   encodeManagedStartupProfile(managedStartupE2eProfile("openclaw")),
@@ -55,12 +56,15 @@ function nativeBootstrap(
   operations: Omit<RuntimeProviderNativeArtifactBootstrapOperations, "recoverCreate"> &
     Partial<Pick<RuntimeProviderNativeArtifactBootstrapOperations, "recoverCreate">>,
 ) {
+  const attachment = mxcOpenShellAttachmentFixture();
   const surface = createMxcRuntimeProviderBundle({
     hostFacts: {
       platform: "win32",
       nativeArchitecture: "x64",
       release: "10.0.28120",
     },
+    openshellAttachmentAuthority: attachment.authority,
+    openshellObservation: attachment.observation,
     bootstrapControlPlane: {
       contractVersion: 1,
       providerId: "mxc",
