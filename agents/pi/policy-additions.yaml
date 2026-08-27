@@ -12,6 +12,7 @@ filesystem_policy:
     - /lib
     - /proc
     - /dev/urandom
+    - /app
     - /etc
     - /var/log
     - /var/lib/dpkg # Allow package-version inspection without package mutation.

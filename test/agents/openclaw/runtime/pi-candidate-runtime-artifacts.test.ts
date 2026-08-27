@@ -470,7 +470,7 @@ describe("Pi runtime boundaries", () => {
       policy.filesystem_policy.read_only.push("/run/credentials");
     });
     expect(verifyPiTrustBoundary(sources).join("\n")).toContain(
-      "read-only paths must stay /dev/urandom, /etc, /lib, /proc, /usr, /var/lib/dpkg, /var/log",
+      "read-only paths must stay /app, /dev/urandom, /etc, /lib, /proc, /usr, /var/lib/dpkg, /var/log",
     );
   });
 

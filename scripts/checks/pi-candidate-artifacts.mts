@@ -85,6 +85,7 @@ const APPROVED_NETWORK_BINARIES = [
 ];
 const REQUIRED_INCLUDE_WORKDIR = true;
 const APPROVED_READ_ONLY_PATHS = [
+  "/app",
   "/dev/urandom",
   "/etc",
   "/lib",
