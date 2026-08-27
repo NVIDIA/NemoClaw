@@ -138,6 +138,8 @@ on:
         "src/lib/adapters/podman/index.test.ts",
         "src/lib/adapters/podman/index.ts",
         "src/lib/inference/serving/profile-list.test.ts",
+        "src/lib/onboard/credential-provider-registration.test.ts",
+        "src/lib/onboard/credential-provider-registration.ts",
         "src/lib/onboard/managed-bootstrap/docker-runtime.test.ts",
         "src/lib/onboard/managed-bootstrap/docker-runtime.ts",
         "src/lib/onboard/managed-bootstrap/podman-bootstrap-replacement.test.ts",
@@ -152,6 +154,8 @@ on:
         "src/lib/onboard/managed-workload/onboard-orchestration.ts",
         "src/lib/onboard/machine/finalization-deps.test.ts",
         "src/lib/onboard/machine/finalization-deps.ts",
+        "src/lib/onboard/machine/messaging-credential-convergence.test.ts",
+        "src/lib/onboard/machine/messaging-credential-convergence.ts",
         "src/lib/onboard/runtime-provider/docker-state-mutation.ts",
         "src/lib/onboard/runtime-provider/podman-runtime-surfaces.ts",
         "src/lib/onboard/runtime-provider/podman-state-mutation.test.ts",
@@ -183,8 +187,10 @@ on:
     expect(source).not.toContain("src/lib/actions/sandbox/mcp-bridge-tool-discovery.ts");
     expect(source).not.toContain("src/lib/actions/sandbox/stopped-sandbox-backup.ts");
     expect(source).not.toContain("src/lib/adapters/podman/index.ts");
+    expect(source).not.toContain("src/lib/onboard/credential-provider-registration.ts");
     expect(source).not.toContain("src/lib/onboard/managed-bootstrap/docker-runtime.ts");
     expect(source).not.toContain("src/lib/onboard/machine/finalization-deps.ts");
+    expect(source).not.toContain("src/lib/onboard/machine/messaging-credential-convergence.ts");
     expect(source).not.toContain(
       "src/lib/onboard/managed-bootstrap/podman-bootstrap-replacement.ts",
     );

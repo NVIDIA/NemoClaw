@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { SandboxMessagingPlan } from "../../messaging";
 import { MessagingSetupApplier } from "../../messaging";
@@ -130,17 +130,13 @@ function convergenceDeps(
 ) {
   return {
     runOpenshell: scope.runOpenshell as never,
-    getCredential: () => null,
-    normalizeCredentialValue: (value: unknown) => (typeof value === "string" ? value.trim() : ""),
     restartManagedGateway: scope.restartManagedGateway,
     ...overrides,
   };
 }
 
 describe("managed messaging credential convergence", () => {
-  afterEach(() => vi.unstubAllEnvs());
-
-  it("republishes an absent credential and projects its exact revision", async () => {
+  it("republishes an absent credential from OpenShell custody and projects its exact revision", async () => {
     const durablePlan = plan();
     const scope = harness("absent");
 
@@ -151,7 +147,6 @@ describe("managed messaging credential convergence", () => {
           gatewayName: "nemoclaw",
           openshellDriver: "podman",
           plan: durablePlan,
-          environment: { TELEGRAM_BOT_TOKEN: "raw-token" },
           expectedProviderIds: new Map([[PROVIDER, PROVIDER_ID]]),
         },
         convergenceDeps(scope),
@@ -164,17 +159,8 @@ describe("managed messaging credential convergence", () => {
     });
 
     const update = scope.calls.find(({ args }) => args[0] === "provider" && args[1] === "update");
-    expect(update?.args).toEqual([
-      "provider",
-      "update",
-      "-g",
-      "nemoclaw",
-      PROVIDER,
-      "--credential",
-      "TELEGRAM_BOT_TOKEN",
-    ]);
-    expect(update?.options.env).toEqual({ TELEGRAM_BOT_TOKEN: "raw-token" });
-    expect(update?.args.join(" ")).not.toContain("raw-token");
+    expect(update?.args).toEqual(["provider", "update", "-g", "nemoclaw", PROVIDER]);
+    expect(update?.options.env).toBeUndefined();
     expect(JSON.parse(scope.getConfig()).channels.telegram.accounts.default.botToken).toBe(CURRENT);
     expect(durablePlan.credentialBindings[0]?.placeholder).toBe(CANONICAL);
     expect(scope.restartManagedGateway).toHaveBeenCalledExactlyOnceWith("alpha");
@@ -190,7 +176,6 @@ describe("managed messaging credential convergence", () => {
           gatewayName: "nemoclaw",
           openshellDriver: "docker",
           plan: plan(),
-          environment: {},
           expectedProviderIds: new Map([[PROVIDER, PROVIDER_ID]]),
         },
         convergenceDeps(scope),
@@ -212,28 +197,6 @@ describe("managed messaging credential convergence", () => {
       projectedTargets: [],
       restartRequired: false,
     });
-    expect(scope.calls.some(({ args }) => args[0] === "provider" && args[1] === "update")).toBe(
-      false,
-    );
-    expect(scope.restartManagedGateway).not.toHaveBeenCalled();
-  });
-
-  it("fails closed when an absent revision cannot be republished from trusted host custody", async () => {
-    const scope = harness("absent");
-
-    await expect(
-      convergeManagedMessagingCredentials(
-        {
-          sandboxName: "alpha",
-          gatewayName: "nemoclaw",
-          openshellDriver: "podman",
-          plan: plan(),
-          environment: {},
-          expectedProviderIds: new Map([[PROVIDER, PROVIDER_ID]]),
-        },
-        convergenceDeps(scope),
-      ),
-    ).rejects.toThrow("is unavailable for final provider convergence");
     expect(scope.calls.some(({ args }) => args[0] === "provider" && args[1] === "update")).toBe(
       false,
     );
@@ -289,7 +252,7 @@ describe("managed messaging credential convergence", () => {
     expect(scope.restartManagedGateway).not.toHaveBeenCalled();
   });
 
-  it("rejects a same-shaped replacement provider before exposing the raw credential", async () => {
+  it("rejects a same-shaped replacement provider before refreshing its credential", async () => {
     const scope = harness("absent", CANONICAL, { providerId: "replacement-456" });
 
     await expect(
@@ -299,7 +262,6 @@ describe("managed messaging credential convergence", () => {
           gatewayName: "nemoclaw",
           openshellDriver: "podman",
           plan: plan(),
-          environment: { TELEGRAM_BOT_TOKEN: "raw-token" },
           expectedProviderIds: new Map([[PROVIDER, PROVIDER_ID]]),
         },
         convergenceDeps(scope),
@@ -320,7 +282,6 @@ describe("managed messaging credential convergence", () => {
           gatewayName: "nemoclaw",
           openshellDriver: "podman",
           plan: plan(),
-          environment: { TELEGRAM_BOT_TOKEN: "raw-token" },
           expectedProviderIds: new Map([[PROVIDER, PROVIDER_ID]]),
         },
         convergenceDeps(scope),
@@ -362,7 +323,6 @@ describe("managed messaging credential convergence", () => {
           gatewayName: "nemoclaw",
           openshellDriver: "podman",
           plan: plan(),
-          environment: { TELEGRAM_BOT_TOKEN: "raw-token" },
           expectedProviderIds: new Map([[PROVIDER, PROVIDER_ID]]),
         },
         convergenceDeps(scope, { now: () => now, sleep }),

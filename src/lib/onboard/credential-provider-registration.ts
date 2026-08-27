@@ -303,7 +303,6 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
         gatewayName,
         openshellDriver,
         plan,
-        environment: process.env,
         expectedProviderIds: new Map(
           plan.credentialBindings.flatMap((binding) => {
             const id = messagingProviderIds.get(
@@ -315,8 +314,6 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       },
       {
         runOpenshell: deps.runOpenshell,
-        getCredential: deps.getCredential,
-        normalizeCredentialValue: deps.normalizeCredentialValue,
         restartManagedGateway,
       },
     );

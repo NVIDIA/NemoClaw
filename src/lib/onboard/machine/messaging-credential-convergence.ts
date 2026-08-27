@@ -28,7 +28,6 @@ export interface ManagedMessagingCredentialConvergenceInput {
   readonly gatewayName: string;
   readonly openshellDriver: SandboxEntry["openshellDriver"];
   readonly plan: SandboxMessagingPlan | null;
-  readonly environment?: NodeJS.ProcessEnv;
   readonly expectedProviderIds: ReadonlyMap<string, string>;
 }
 
@@ -36,8 +35,6 @@ export interface ManagedMessagingCredentialConvergenceDeps {
   readonly runOpenshell: OpenshellCliHelpers["runOpenshell"];
   readonly sleep?: (milliseconds: number) => Promise<void>;
   readonly now?: () => number;
-  readonly getCredential: (envKey: string) => string | null;
-  readonly normalizeCredentialValue: (value: unknown) => string;
   readonly restartManagedGateway: (sandboxName: string) => {
     readonly ok: boolean;
     readonly detail?: string;
@@ -118,15 +115,6 @@ function observeCredential(
   return output as CredentialObservation;
 }
 
-function readCredential(
-  envKey: string,
-  environment: NodeJS.ProcessEnv,
-  credentialReader: (envKey: string) => string | null,
-  normalize: (value: unknown) => string,
-): string | null {
-  return normalize(environment[envKey]) || credentialReader(envKey) || null;
-}
-
 async function waitForRevision(
   sandboxName: string,
   envKey: string,
@@ -193,7 +181,6 @@ export async function convergeManagedMessagingCredentials(
   const bindings = genericCredentialBindings(input.plan);
   if (bindings.length === 0) return { kind: "skipped" };
 
-  const environment = input.environment ?? process.env;
   const runOpenshell = createGatewayScopedOpenshellRunner(deps.runOpenshell, input.gatewayName);
   const placeholders = new Map<string, string>();
   const expectedVersions = new Map<string, number>();
@@ -220,25 +207,13 @@ export async function convergeManagedMessagingCredentials(
     const previous = observeCredential(input.sandboxName, binding.providerEnvKey, runOpenshell);
     let current = previous;
     if (!previous.startsWith("openshell:resolve:env:v")) {
-      const credential = readCredential(
-        binding.providerEnvKey,
-        environment,
-        deps.getCredential,
-        deps.normalizeCredentialValue,
-      );
-      if (!credential) {
-        throw new Error(
-          `Messaging credential '${binding.providerEnvKey}' is unavailable for final provider convergence.`,
-        );
-      }
-      const result = runOpenshell(
-        ["provider", "update", binding.providerName, "--credential", binding.providerEnvKey],
-        {
-          ignoreError: true,
-          env: { [binding.providerEnvKey]: credential },
-          stdio: ["ignore", "pipe", "pipe"],
-        },
-      );
+      // The provider already owns the credential. A no-field update asks
+      // OpenShell to republish that stored value after final policy binding
+      // without returning the raw credential to NemoClaw host memory.
+      const result = runOpenshell(["provider", "update", binding.providerName], {
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
       if (result.status !== 0) {
         throw new Error(
           `OpenShell did not republish messaging provider '${binding.providerName}' after final policy binding.`,
