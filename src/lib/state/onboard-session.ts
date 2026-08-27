@@ -423,6 +423,62 @@ function assertSessionDirectoryHasNoSymlinks(): void {
   }
 }
 
+interface PinnedSessionDirectory {
+  readonly descriptor: number;
+  readonly stat: fs.Stats;
+}
+
+function sameSessionFileIdentity(left: fs.Stats, right: fs.Stats): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function revalidatePinnedSessionDirectory(directory: PinnedSessionDirectory): void {
+  assertSessionDirectoryHasNoSymlinks();
+  const descriptorStat = fs.fstatSync(directory.descriptor);
+  const pathStat = fs.lstatSync(SESSION_DIR);
+  if (
+    !descriptorStat.isDirectory() ||
+    pathStat.isSymbolicLink() ||
+    !pathStat.isDirectory() ||
+    !sameSessionFileIdentity(directory.stat, descriptorStat) ||
+    !sameSessionFileIdentity(directory.stat, pathStat)
+  ) {
+    throw new Error("NemoClaw onboarding state directory changed during validation.");
+  }
+}
+
+function openPinnedSessionDirectory(): PinnedSessionDirectory {
+  ensureSessionDir();
+  const descriptor = fs.openSync(
+    SESSION_DIR,
+    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_DIRECTORY ?? 0),
+  );
+  try {
+    const directory = { descriptor, stat: fs.fstatSync(descriptor) };
+    revalidatePinnedSessionDirectory(directory);
+    return directory;
+  } catch (error) {
+    fs.closeSync(descriptor);
+    throw error;
+  }
+}
+
+function assertTemporarySessionFile(descriptor: number, temporary: string): fs.Stats {
+  const descriptorStat = fs.fstatSync(descriptor);
+  const pathStat = fs.lstatSync(temporary);
+  if (
+    !descriptorStat.isFile() ||
+    descriptorStat.nlink !== 1 ||
+    pathStat.isSymbolicLink() ||
+    !pathStat.isFile() ||
+    pathStat.nlink !== 1 ||
+    !sameSessionFileIdentity(descriptorStat, pathStat)
+  ) {
+    throw new Error("NemoClaw onboarding temporary state changed during validation.");
+  }
+  return descriptorStat;
+}
+
 export function sessionPath(): string {
   return SESSION_FILE;
 }
@@ -1142,16 +1198,53 @@ function serializeSessionForDisk(session: Session): Record<string, unknown> {
 export function saveSession(session: Session): Session {
   const normalized = normalizeSession(session) || createSession();
   normalized.updatedAt = new Date().toISOString();
-  ensureSessionDir();
+  const directory = openPinnedSessionDirectory();
   const tmpFile = path.join(
     SESSION_DIR,
     `.onboard-session.${process.pid}.${Date.now()}.${randomUUID()}.tmp`,
   );
-  fs.writeFileSync(tmpFile, JSON.stringify(serializeSessionForDisk(normalized), null, 2), {
-    mode: 0o600,
-  });
-  fs.renameSync(tmpFile, SESSION_FILE);
-  return normalized;
+  let descriptor: number | null = null;
+  let temporaryStat: fs.Stats | null = null;
+  try {
+    descriptor = fs.openSync(
+      tmpFile,
+      fs.constants.O_WRONLY |
+        fs.constants.O_CREAT |
+        fs.constants.O_EXCL |
+        (fs.constants.O_NOFOLLOW ?? 0),
+      0o600,
+    );
+    revalidatePinnedSessionDirectory(directory);
+    temporaryStat = assertTemporarySessionFile(descriptor, tmpFile);
+    fs.writeFileSync(descriptor, JSON.stringify(serializeSessionForDisk(normalized), null, 2));
+    fs.fchmodSync(descriptor, 0o600);
+    fs.fsyncSync(descriptor);
+    temporaryStat = assertTemporarySessionFile(descriptor, tmpFile);
+    fs.closeSync(descriptor);
+    descriptor = null;
+    revalidatePinnedSessionDirectory(directory);
+    fs.renameSync(tmpFile, SESSION_FILE);
+    revalidatePinnedSessionDirectory(directory);
+    fs.fsyncSync(directory.descriptor);
+    return normalized;
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
+    try {
+      revalidatePinnedSessionDirectory(directory);
+      const pathStat = fs.lstatSync(tmpFile);
+      if (
+        temporaryStat !== null &&
+        pathStat.isFile() &&
+        pathStat.nlink === 1 &&
+        sameSessionFileIdentity(temporaryStat, pathStat)
+      ) {
+        fs.unlinkSync(tmpFile);
+      }
+    } catch {
+      // Preserve the original result. Ambiguous paths are left untouched.
+    }
+    fs.closeSync(directory.descriptor);
+  }
 }
 
 export function clearSession(): void {

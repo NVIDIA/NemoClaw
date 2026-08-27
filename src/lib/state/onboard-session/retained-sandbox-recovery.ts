@@ -239,6 +239,22 @@ function readStateFile(filePath: string): unknown {
   }
 }
 
+function assertTemporaryStateFile(descriptor: number, temporary: string): fs.Stats {
+  const descriptorStat = fs.fstatSync(descriptor);
+  const pathStat = fs.lstatSync(temporary);
+  if (
+    !descriptorStat.isFile() ||
+    descriptorStat.nlink !== 1 ||
+    pathStat.isSymbolicLink() ||
+    !pathStat.isFile() ||
+    pathStat.nlink !== 1 ||
+    !sameFileIdentity(descriptorStat, pathStat)
+  ) {
+    throw new Error("Retained sandbox recovery temporary state changed during validation.");
+  }
+  return descriptorStat;
+}
+
 function writeStateFile(filePath: string, state: RetainedSandboxRecoveryState): void {
   const directory = openStateDirectory(filePath, true)!;
   try {
@@ -273,22 +289,12 @@ function writeStateFile(filePath: string, state: RetainedSandboxRecoveryState): 
         (fs.constants.O_NOFOLLOW ?? 0),
       0o600,
     );
+    revalidateStateDirectory(directory);
+    temporaryStat = assertTemporaryStateFile(descriptor, temporary);
     fs.writeFileSync(descriptor, JSON.stringify(state, null, 2));
     fs.fchmodSync(descriptor, 0o600);
     fs.fsyncSync(descriptor);
-    const descriptorStat = fs.fstatSync(descriptor);
-    temporaryStat = descriptorStat;
-    const pathStat = fs.lstatSync(temporary);
-    if (
-      !descriptorStat.isFile() ||
-      descriptorStat.nlink !== 1 ||
-      pathStat.isSymbolicLink() ||
-      !pathStat.isFile() ||
-      pathStat.nlink !== 1 ||
-      !sameFileIdentity(descriptorStat, pathStat)
-    ) {
-      throw new Error("Retained sandbox recovery temporary state changed during validation.");
-    }
+    temporaryStat = assertTemporaryStateFile(descriptor, temporary);
     fs.closeSync(descriptor);
     descriptor = null;
     revalidateStateDirectory(directory);

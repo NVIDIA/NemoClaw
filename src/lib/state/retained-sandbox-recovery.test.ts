@@ -157,6 +157,83 @@ describe("retained sandbox recovery state", () => {
     expect(fs.existsSync(path.join(displacedDirectory, "onboard.lock"))).toBe(true);
   });
 
+  it("writes no recovery evidence after the state directory changes at temporary open (#9833)", async () => {
+    const recovery = await import("./onboard-session");
+    const stateDirectory = path.dirname(recovery.RETAINED_SANDBOX_RECOVERY_FILE);
+    const displacedDirectory = `${stateDirectory}.displaced`;
+    const openSync = fs.openSync.bind(fs);
+    let replaced = false;
+    vi.spyOn(fs, "openSync").mockImplementation((file, flags, mode) => {
+      !replaced &&
+        path.basename(String(file)).startsWith(".retained-sandbox-recovery.") &&
+        (() => {
+          replaced = true;
+          fs.renameSync(stateDirectory, displacedDirectory);
+          fs.mkdirSync(stateDirectory, { mode: 0o700 });
+        })();
+      return openSync(file, flags, mode);
+    });
+
+    expect(() =>
+      recovery.recordRetainedSandboxRecovery({
+        sandboxName: "retained-sb",
+        sandboxIdentityFingerprint: "f".repeat(64),
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        lifecycleGeneration: "generation-1",
+        verifiedEffectivePolicyIdentity: null,
+        resources: evidence,
+        reason: "retained_after_sandbox_creation_failure",
+      }),
+    ).toThrow(/state directory changed|lock ownership changed/u);
+    expect(replaced).toBe(true);
+    expect(
+      fs
+        .readdirSync(stateDirectory)
+        .map((name) => fs.statSync(path.join(stateDirectory, name)).size)
+        .filter((size) => size > 0),
+    ).toEqual([]);
+  });
+
+  it("writes no session evidence after the state directory changes at temporary open (#9833)", async () => {
+    const recovery = await import("./onboard-session");
+    const stateDirectory = path.dirname(recovery.SESSION_FILE);
+    const displacedDirectory = `${stateDirectory}.displaced`;
+    const openSync = fs.openSync.bind(fs);
+    let replaced = false;
+    vi.spyOn(fs, "openSync").mockImplementation((file, flags, mode) => {
+      !replaced &&
+        path.basename(String(file)).startsWith(".onboard-session.") &&
+        (() => {
+          replaced = true;
+          fs.renameSync(stateDirectory, displacedDirectory);
+          fs.mkdirSync(stateDirectory, { mode: 0o700 });
+        })();
+      return openSync(file, flags, mode);
+    });
+
+    expect(() =>
+      recovery.markRetainedSandboxRecovery(
+        "retained-sb",
+        "Sandbox creation failed after identity verification.",
+        "f".repeat(64),
+        {
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          lifecycleGeneration: "generation-1",
+          verifiedEffectivePolicyIdentity: null,
+        },
+      ),
+    ).toThrow(/state directory changed|lock ownership changed/u);
+    expect(replaced).toBe(true);
+    expect(
+      fs
+        .readdirSync(stateDirectory)
+        .map((name) => fs.statSync(path.join(stateDirectory, name)).size)
+        .filter((size) => size > 0),
+    ).toEqual([]);
+  });
+
   it("does not expose a caller-supplied recovery resolution path (#9833)", async () => {
     const recovery = await import("./onboard-session");
     const recoveryStore = await import("./onboard-session/retained-sandbox-recovery");
