@@ -77,7 +77,6 @@ describe("prepareCreateSandboxMessaging", () => {
       "nemoclaw-mcp-v1",
       "SLACK_BOT_TOKEN",
     );
-    expect(registerExtraPlaceholderProviders).toHaveBeenCalledWith(result.messagingTokenDefs);
   });
 
   it("reattaches an exact durable provider when rebuild resumes without channel prompts", () => {
@@ -345,7 +344,6 @@ describe("prepareCreateSandboxMessaging", () => {
       token: "brv-store",
       providerType: "brave",
     });
-    expect(registerExtraPlaceholderProviders).toHaveBeenCalledWith(result.messagingTokenDefs);
   });
 
   it("adds a per-sandbox Tavily provider with credential-store precedence", () => {

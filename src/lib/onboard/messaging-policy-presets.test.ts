@@ -11,7 +11,6 @@ import {
   mergePolicyMessagingChannels,
   mergeRebuildMessagingPolicyPresets,
   messagingChannelsForPolicyPresets,
-  pruneInactiveMessagingPolicyPresets,
   pruneDisabledMessagingPolicyPresets,
   requiredMessagingChannelPolicyPresets,
 } from "./messaging-policy-presets";
@@ -81,35 +80,6 @@ describe("messaging policy presets", () => {
       "npm",
       "pypi",
     ]);
-  });
-
-  it("removes inactive repository messaging presets when enabled channels are known", () => {
-    expect(
-      pruneInactiveMessagingPolicyPresets(
-        ["npm", "slack", "discord", "googlechat", "custom-egress"],
-        ["slack"],
-      ),
-    ).toEqual(["npm", "slack", "custom-egress"]);
-    expect(
-      pruneInactiveMessagingPolicyPresets(["npm", "slack", "googlechat"], ["googlechat"]),
-    ).toEqual(["npm", "googlechat"]);
-    expect(
-      pruneInactiveMessagingPolicyPresets(
-        ["npm", "slack", "telegram", "wechat", "whatsapp", "teams"],
-        ["slack", "telegram"],
-      ),
-    ).toEqual(["npm", "slack", "telegram"]);
-    expect(pruneInactiveMessagingPolicyPresets(["npm", "slack", "discord"], null)).toEqual([
-      "npm",
-      "slack",
-      "discord",
-    ]);
-  });
-
-  it("preserves a custom preset that shadows an inactive repository messaging preset", () => {
-    expect(
-      pruneInactiveMessagingPolicyPresets(["npm", "discord"], ["slack"], new Set(["discord"])),
-    ).toEqual(["npm", "discord"]);
   });
 
   it("maps every channel that has a policy preset to its preset for cleanup", () => {

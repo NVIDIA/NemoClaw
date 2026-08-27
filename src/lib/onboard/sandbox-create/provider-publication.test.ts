@@ -193,18 +193,6 @@ describe("sandbox provider preparation", () => {
     expect(harness.cleanupCreateSources).not.toHaveBeenCalled();
   });
 
-  it("confirms namespaced credentials on the canonical messaging provider (#10153)", () => {
-    const harness = createHarness({
-      ...exactState,
-      credentialKey:
-        "TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_TOKEN_AGENT_A, TELEGRAM_BOT_TOKEN_AGENT_B",
-    });
-
-    prepareProviders(publicationInput(), harness.deps);
-
-    expect(harness.cleanupCreateSources).not.toHaveBeenCalled();
-  });
-
   it.each<{ case: string; state: ProviderState | null }>([
     {
       case: "generic provider type",

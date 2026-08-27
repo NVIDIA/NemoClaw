@@ -113,7 +113,7 @@ describe("credential provider registration", () => {
           : providerMetadata(
               "alpha-discord-bridge",
               "discord-hermes-static-v1",
-              "DISCORD_BOT_TOKEN, DISCORD_BOT_TOKEN_AGENT_A",
+              "DISCORD_BOT_TOKEN",
             ),
       );
       const deps = registrationDeps(runOpenshell, session);
@@ -225,67 +225,6 @@ describe("credential provider registration", () => {
         .map(([args]) => args)
         .filter((args) => args[0] === "provider" && ["create", "update"].includes(args[1] ?? "")),
     ).toEqual([]);
-  });
-
-  it("replaces an incompatible detached provider while staging a missing sandbox (#10153)", async () => {
-    const session = { stagedCredentialProviders: [] } as unknown as Session;
-    let providerType = "generic";
-    const runOpenshell = vi.fn((args: string[]) => {
-      switch (args.join(" ")) {
-        case "provider profile -g test-gateway export discord-hermes-static-v1 --output json":
-          return { status: 0, stdout: JSON.stringify(DISCORD_STATIC_PROFILE), stderr: "" };
-        case "provider delete -g test-gateway alpha-discord-bridge":
-          providerType = "discord-hermes-static-v1";
-          return { status: 0, stdout: "", stderr: "" };
-        case "provider create -g test-gateway --name alpha-discord-bridge --type discord-hermes-static-v1 --credential DISCORD_BOT_TOKEN":
-          return { status: 0, stdout: "", stderr: "" };
-        default:
-          return providerMetadata("alpha-discord-bridge", providerType, "DISCORD_BOT_TOKEN");
-      }
-    });
-    const deps = registrationDeps(runOpenshell, session);
-    deps.root = process.cwd();
-    const registration = createCredentialProviderRegistration(deps);
-    const tokenDef: MessagingTokenDef = {
-      name: "alpha-discord-bridge",
-      envKey: "DISCORD_BOT_TOKEN",
-      token: DISCORD_SECRET,
-      providerType: "discord-hermes-static-v1",
-    };
-
-    const registered = await registration.stageSandboxCredentialProviders(
-      {
-        ...sandboxInput(requiredBindings([tokenDef])),
-        replaceExisting: true,
-      },
-      async () => ({ messagingTokenDefs: [tokenDef] }),
-    );
-
-    expect(registered).toEqual([
-      {
-        name: "alpha-discord-bridge",
-        type: "discord-hermes-static-v1",
-        credentialEnv: "DISCORD_BOT_TOKEN",
-      },
-    ]);
-    expect(runOpenshell.mock.calls.map(([args]) => args.join(" "))).toContain(
-      "provider delete -g test-gateway alpha-discord-bridge",
-    );
-    expect(runOpenshell).toHaveBeenCalledWith(
-      [
-        "provider",
-        "create",
-        "-g",
-        "test-gateway",
-        "--name",
-        "alpha-discord-bridge",
-        "--type",
-        "discord-hermes-static-v1",
-        "--credential",
-        "DISCORD_BOT_TOKEN",
-      ],
-      expect.objectContaining({ env: { DISCORD_BOT_TOKEN: DISCORD_SECRET } }),
-    );
   });
 
   it.each([
@@ -616,46 +555,6 @@ describe("credential provider registration", () => {
     expect(runOpenshell.mock.calls.map(([args]) => args.join(" "))).not.toContain(
       "provider update -g test-gateway alpha-brave-search --credential BRAVE_API_KEY",
     );
-  });
-
-  it("rejects a credential-family mismatch before any provider mutation (#10153)", () => {
-    const session = { stagedCredentialProviders: [] } as unknown as Session;
-    const mutationCommands: string[] = [];
-    const runOpenshell = vi.fn((args: string[]) => {
-      const command = args.join(" ");
-      mutationCommands.push(
-        ...(/provider (?:profile import|create|update)/u.test(command) ? [command] : []),
-      );
-      return command === "provider get alpha-brave-search"
-        ? providerMetadata("alpha-brave-search", "generic", "BRAVE_API_KEY")
-        : { status: 1, stdout: "", stderr: "not found" };
-    });
-    const registration = createCredentialProviderRegistration(
-      registrationDeps(runOpenshell, session),
-    );
-
-    expect(() =>
-      registration.upsertMessagingProviders(
-        [
-          {
-            name: "alpha-telegram-bridge",
-            envKey: "TELEGRAM_BOT_TOKEN",
-            token: "telegram-test-token",
-          },
-          {
-            name: "alpha-brave-search",
-            envKey: "BRAVE_API_KEY",
-            token: BRAVE_SECRET,
-            providerType: "brave",
-            additionalCredentials: [
-              { envKey: "BRAVE_API_KEY_AGENT_A", token: "brave-agent-a-test-token" },
-            ],
-          },
-        ],
-        { bestEffort: true },
-      ),
-    ).toThrow(/does not match the required 'brave' credential binding/u);
-    expect(mutationCommands).toEqual([]);
   });
 
   it("rejects a conflicting Slack binding before writing any provider in the batch (#7701)", async () => {

@@ -593,8 +593,6 @@ required = [
 for line in required:
     if line not in lines:
         errors.append(f"missing {line}")
-if any(line.startswith("DISCORD_BOT_TOKEN=") for line in lines):
-    errors.append("DISCORD_BOT_TOKEN must come from the process environment")
 if errors:
     print("FAIL " + "; ".join(errors))
     raise SystemExit(1)

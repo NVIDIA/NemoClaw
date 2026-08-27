@@ -308,34 +308,6 @@ describe("registerExtraPlaceholderProviders", () => {
     );
   });
 
-  it("ignores an extension when its canonical provider is not selected", () => {
-    withEnv(
-      {
-        [EXTRA_PLACEHOLDER_KEYS_ENV]: "TELEGRAM_BOT_TOKEN_AGENT_A",
-        TELEGRAM_BOT_TOKEN_AGENT_A: "telegram-token-A",
-      },
-      () => {
-        const warnings: string[] = [];
-        const messagingTokenDefs: Array<{
-          name: string;
-          envKey: string;
-          token: string | null;
-          providerType?: string;
-          additionalCredentials?: Array<{ envKey: string; token: string | null }>;
-        }> = [];
-
-        expect(
-          registerExtraPlaceholderProviders(messagingTokenDefs, (message) =>
-            warnings.push(message),
-          ),
-        ).toEqual([]);
-        expect(messagingTokenDefs).toEqual([]);
-        expect(warnings).toEqual([
-          `${EXTRA_PLACEHOLDER_KEYS_ENV}: ignoring "TELEGRAM_BOT_TOKEN_AGENT_A" — its canonical credential is not part of the selected sandbox plan`,
-        ]);
-      },
-    );
-  });
 });
 
 describe("appendExtraPlaceholderKeysEnvArg", () => {

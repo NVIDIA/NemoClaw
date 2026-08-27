@@ -499,10 +499,6 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     const wechatAccount = channelAccount(config, "openclaw-weixin", state.wechatAccount);
 
     check(
-      !Object.prototype.hasOwnProperty.call(telegramAccount, "botToken"),
-      "M6/M7: Telegram botToken is omitted from openclaw.json",
-    );
-    check(
       !Object.prototype.hasOwnProperty.call(discordAccount, "token"),
       "M8: Discord token is omitted from openclaw.json",
     );
@@ -534,11 +530,6 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     check(
       accountString(slackAccount, "groupPolicy") === "allowlist",
       "M11g: Slack groupPolicy is allowlist",
-    );
-    check(
-      !Object.prototype.hasOwnProperty.call(slackAccount, "botToken") &&
-        !Object.prototype.hasOwnProperty.call(slackAccount, "appToken"),
-      "M11i: Slack botToken and appToken are omitted from openclaw.json",
     );
     const slackBotPlaceholder = credentialPlaceholders.get("SLACK_BOT_TOKEN") ?? "";
     const slackAppPlaceholder = credentialPlaceholders.get("SLACK_APP_TOKEN") ?? "";

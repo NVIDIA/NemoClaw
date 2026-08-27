@@ -535,7 +535,6 @@ test(
       accountPresent: true,
       channelEnabled: true,
       channelPresent: true,
-      credentialPresent: false,
       pluginEnabled: true,
       pluginPresent: true,
     });

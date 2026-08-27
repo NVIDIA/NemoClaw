@@ -5120,7 +5120,7 @@ Hermes-specific onboarding configuration:
 | `NEMOCLAW_HERMES_TOOL_GATEWAYS` | comma-separated list | Selects managed Hermes tool gateways in non-interactive onboarding. Valid values are `nous-web`, `nous-image`, `nous-audio`, `nous-browser`, and `nous-code`; the `nous-` prefix is optional. Unknown values fail before sandbox creation. |
 | `NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS` | comma-separated list | Back-compatible alias for `NEMOCLAW_HERMES_TOOL_GATEWAYS`. |
 | `NEMOCLAW_CONTEXT_WINDOW` | positive integer, at least `64000` tokens | Overrides `model.context_length` in the generated Hermes config. Fresh and resumed Local Ollama onboarding, including sandbox rebuilds, must verify a loaded runtime context at least as large as this value. |
-| `NEMOCLAW_EXTRA_PLACEHOLDER_KEYS` | whitespace- or comma-separated list of upper-snake env keys | Adds operator-supplied credentials to the matching canonical OpenShell provider. Per-profile credentials such as `TELEGRAM_BOT_TOKEN_AGENT_A` use the canonical credential's policy-bound, out-of-process placeholder injection instead of raw text in each Hermes profile `.env`. Refer to [Extra placeholder keys](#extra-placeholder-keys) for the entry shape and validation rules. |
+| `NEMOCLAW_EXTRA_PLACEHOLDER_KEYS` | whitespace- or comma-separated list of upper-snake env keys | Adds credentials to matching canonical OpenShell providers. Refer to [Extra placeholder keys](#extra-placeholder-keys). |
 
 </AgentOnly>
 
@@ -5137,12 +5137,8 @@ export TELEGRAM_BOT_TOKEN_AGENT_B=<bot-B-token>
 $$nemoclaw onboard --agent hermes
 ```
 
-For each entry, NemoClaw adds the credential to the selected canonical channel or web search provider.
-This keeps the extension under the canonical provider's explicit policy binding instead of creating an unbound generic provider.
-OpenShell resolves the named credential placeholder to the operator-supplied value at the bound egress boundary.
-The Hermes profile `.env` files are operator-owned: write `TELEGRAM_BOT_TOKEN_AGENT_A=openshell:resolve:env:TELEGRAM_BOT_TOKEN_AGENT_A` in the applicable profile `.env` and use the matching assignment for each configured credential.
-Do not write a raw token.
-NemoClaw never reads, writes, or rewrites these `.env` files; verify after onboarding that each profile's `.env` references the placeholder and that no raw bot token value sits on disk.
+NemoClaw adds each credential to its matching canonical provider, and OpenShell resolves it at that provider's policy-bound egress.
+In the operator-owned profile `.env`, use an assignment such as `TELEGRAM_BOT_TOKEN_AGENT_A=openshell:resolve:env:TELEGRAM_BOT_TOKEN_AGENT_A`; never store the raw token.
 
 Entries are split on whitespace and commas and must match `^[A-Z][A-Z0-9_]{0,127}$`.
 Each entry must extend a canonical channel envKey with a non-empty `_<suffix>` (for example `TELEGRAM_BOT_TOKEN_AGENT_A`); the canonical envKeys are `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `WECHAT_BOT_TOKEN`, `BRAVE_API_KEY`, and `TAVILY_API_KEY`.
@@ -5150,12 +5146,7 @@ Bare canonical envKeys, the control env itself, and arbitrary host secret names 
 Duplicates are dropped silently.
 The list is capped at 32 entries per sandbox.
 Offending tokens emit one warning each and are skipped.
-The selected sandbox plan must include the corresponding canonical channel or web search provider.
-Otherwise, NemoClaw warns and ignores the extension.
-
-If neither the credential store nor the host environment has a value for an entry at onboarding time, NemoClaw omits the extension from provider registration.
-The canonical provider does not receive the credential key, so the corresponding placeholder cannot resolve inside Hermes.
-Add the credential before running `$$nemoclaw onboard` for that profile.
+NemoClaw skips an entry when its canonical provider is not selected or its credential is unavailable.
 
 </AgentOnly>
 

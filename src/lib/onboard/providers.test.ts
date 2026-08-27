@@ -21,8 +21,9 @@ type RunOptions = {
 };
 type RunOpenshell = (command: string[], opts?: RunOptions) => RunResult;
 
-const messagingBridgeProvider =
-  require("./messaging-bridge-provider") as typeof import("./messaging-bridge-provider");
+const messagingBridgeProvider = require(
+  "./messaging-bridge-provider"
+) as typeof import("./messaging-bridge-provider");
 
 const DISCORD_STATIC_PROFILE_EXPORT = JSON.stringify({
   id: "discord-hermes-static-v1",
@@ -123,7 +124,6 @@ const {
       envKey: string;
       token: string | null;
       providerType?: string;
-      additionalCredentials?: Array<{ envKey: string; token: string | null }>;
     }>,
     runOpenshell: RunOpenshell,
     options?: {
@@ -1054,6 +1054,7 @@ describe("onboard provider helpers", () => {
       "provider update alpha-discord-bridge --credential DISCORD_BOT_TOKEN",
     ]);
   });
+
 
   it("throws instead of exiting when best-effort messaging provider upsert fails", () => {
     const originalExit = process.exit;
