@@ -91,8 +91,9 @@ If the version command fails, the action stops before the live test runs.
 This boundary keeps candidate source separate from the trusted workflow implementation.
 
 For a same-repository PR that changes a managed-image workflow path, the trusted planner also
-requires one successful `Images / Build, Test, and Publish Managed Images` run for the candidate commit. Before candidate
-checkout, the planner downloads the three nonexpired contract artifacts by immutable artifact ID.
+requires one successful `Images / Build, Test, and Publish Managed Images` run for the candidate
+commit. Before candidate checkout, the planner downloads the three nonexpired contract artifacts by
+immutable artifact ID.
 It verifies each artifact digest, producer run, attempt, and candidate commit. The planner rejects a
 missing, incomplete, or mixed all-agent publication before E2E jobs start.
 
@@ -101,10 +102,11 @@ Each live E2E consumer verifies that the catalog source revision matches `checko
 does not change a managed-image workflow path keeps the released catalog behavior. The GitHub token
 is available only to the trusted planner job and is not included in the candidate CLI artifact.
 
-The same-repository `Images / Build, Test, and Publish Managed Images` PR workflow also runs the OpenClaw managed-image MCP
-discovery and lifecycle scope in two independent matrix jobs. Each job assembles one exact candidate
-catalog from the workflow's published contracts, uses a fresh runner and sandbox, records the
-authenticated discovery diagnostics, scans the evidence for fixture credentials, and must pass.
+The same-repository `Images / Build, Test, and Publish Managed Images` PR workflow also runs the
+OpenClaw managed-image MCP discovery and lifecycle scope in two independent matrix jobs. Each job
+assembles one exact candidate catalog from the workflow's published contracts, uses a fresh runner
+and sandbox, records the authenticated discovery diagnostics, scans the evidence for fixture
+credentials, and must pass.
 These are two required acceptance executions, not retries; either failure remains a failed check.
 The managed-image scope does not claim trusted-private DNS-rebinding coverage: host and sandbox
 `/etc/hosts` fixtures do not control the OpenShell supervisor's egress resolver. Full MCP bridge E2E
