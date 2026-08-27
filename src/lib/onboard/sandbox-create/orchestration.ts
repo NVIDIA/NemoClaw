@@ -60,6 +60,14 @@ function cancelRecoveryIdentity(
   };
 }
 
+/** Persist one create-attempt recovery message through the onboard session owner. */
+export function persistRetainedSandboxRecoveryMessage(
+  message: string,
+  finalizeIncompleteOnboardStep: (stepName: string, message: string) => unknown | null,
+): boolean {
+  return finalizeIncompleteOnboardStep("sandbox", message) !== null;
+}
+
 /** Select the policyless APF create plan only when no active global policy exists. */
 export function resolveSandboxCreatePolicyAuthority(
   observedAuthority: "nemoclaw-managed" | "externally-managed",
@@ -1875,13 +1883,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               ...(apfInterceptorRequested
                 ? {
                     requirePolicylessCreate: true as const,
-                    persistRetainedApfSandboxRecovery: (
-                      recovery: import("../sandbox-gpu-create-flow").RetainedApfSandboxRecovery,
-                    ) =>
-                      onboardSession.finalizeIncompleteOnboardStep("sandbox", recovery.message) !==
-                      null,
                   }
                 : {}),
+              persistRetainedSandboxRecovery: (message) =>
+                persistRetainedSandboxRecoveryMessage(
+                  message,
+                  onboardSession.finalizeIncompleteOnboardStep,
+                ),
               provider,
               sandboxGpuConfig: effectiveSandboxGpuConfig,
               gpuRoutePlan,
