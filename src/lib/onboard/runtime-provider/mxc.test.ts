@@ -12,6 +12,7 @@ import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./current";
 import { createDockerRuntimeProviderBundle } from "./docker";
 import { createMxcRuntimeProviderBundle } from "./mxc";
 import type { MxcNativeArtifactControlPlane } from "./mxc-bootstrap-operations";
+import type { MxcOpenShellAttachmentInput } from "./mxc-openshell-attachment";
 import {
   createRuntimeProviderBundleRegistry,
   RuntimeProviderRegistrationError,
@@ -34,6 +35,40 @@ function inactiveBootstrapControlPlane(): MxcNativeArtifactControlPlane {
   };
 }
 
+function openshellAttachment(): MxcOpenShellAttachmentInput {
+  const identity = {
+    distribution: {
+      version: "0.0.21",
+      revision: "a".repeat(40),
+      sha256: "1".repeat(64),
+    },
+    components: {
+      cliSha256: "2".repeat(64),
+      gatewaySha256: "3".repeat(64),
+      wxcExecSha256: "4".repeat(64),
+    },
+    gateway: {
+      configSha256: "5".repeat(64),
+      driver: "mxc" as const,
+      backend: "process_container" as const,
+    },
+  };
+  return {
+    contractVersion: 1,
+    providerId: "mxc",
+    mode: "attach-existing",
+    expected: identity,
+    observed: {
+      ...structuredClone(identity),
+      distributionRoot: "C:\\OpenShell",
+      cliPath: "C:\\OpenShell\\bin\\openshell.exe",
+      gatewayPath: "C:\\OpenShell\\bin\\openshell-gateway.exe",
+      wxcExecPath: "C:\\OpenShell\\mxc\\wxc-exec.exe",
+      gatewayConfigPath: "C:\\ProgramData\\NVIDIA\\OpenShell\\gateway.toml",
+    },
+  };
+}
+
 function candidateBundle() {
   return createMxcRuntimeProviderBundle({
     hostFacts: {
@@ -41,6 +76,7 @@ function candidateBundle() {
       nativeArchitecture: "x64",
       release: "10.0.28000.1836",
     },
+    openshellAttachment: openshellAttachment(),
     bootstrapControlPlane: inactiveBootstrapControlPlane(),
   });
 }
@@ -95,8 +131,9 @@ describe("inactive OpenShell MXC runtime provider", () => {
       group: "Host",
       label: "OpenShell MXC process_container candidate",
       status: "info",
-      detail: "Windows x64 build 28000 meets the inactive host floor.",
-      hint: "MXC remains unavailable until the OpenShell package and live E2E gates pass.",
+      detail:
+        "Windows x64 build 28000 and OpenShell 0.0.21 match the inactive attachment contract.",
+      hint: "MXC remains unavailable until the OpenShell distribution and live E2E gates pass.",
     });
 
     const rejected = createMxcRuntimeProviderBundle({
@@ -105,11 +142,34 @@ describe("inactive OpenShell MXC runtime provider", () => {
         nativeArchitecture: "x64",
         release: "6.6.87.2-microsoft-standard-WSL2",
       },
+      openshellAttachment: openshellAttachment(),
       bootstrapControlPlane: inactiveBootstrapControlPlane(),
     });
     expect(rejected.preflightDoctor.inspectHost()).toMatchObject({
       status: "fail",
       detail: expect.stringMatching(/WSL is not a native Windows host/u),
+    });
+  });
+
+  it("rejects OpenShell distribution drift during host preflight (#8178)", () => {
+    const attachment = structuredClone(openshellAttachment());
+    const observed = attachment.observed as unknown as {
+      components: { gatewaySha256: string };
+    };
+    observed.components.gatewaySha256 = "6".repeat(64);
+    const rejected = createMxcRuntimeProviderBundle({
+      hostFacts: {
+        platform: "win32",
+        nativeArchitecture: "x64",
+        release: "10.0.28000.1836",
+      },
+      openshellAttachment: attachment,
+      bootstrapControlPlane: inactiveBootstrapControlPlane(),
+    });
+
+    expect(rejected.preflightDoctor.inspectHost()).toMatchObject({
+      status: "fail",
+      detail: expect.stringMatching(/observed distribution identity does not match/u),
     });
   });
 

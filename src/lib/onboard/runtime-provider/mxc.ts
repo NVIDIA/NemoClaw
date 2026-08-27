@@ -24,9 +24,14 @@ import {
   createMxcNativeArtifactBootstrapOperations,
   type MxcNativeArtifactControlPlane,
 } from "./mxc-bootstrap-operations";
+import {
+  qualifyMxcOpenShellAttachment,
+  type MxcOpenShellAttachmentInput,
+} from "./mxc-openshell-attachment";
 
 export interface MxcRuntimeProviderOptions {
   readonly hostFacts: WindowsMxcHostFacts;
+  readonly openshellAttachment: MxcOpenShellAttachmentInput;
   readonly bootstrapControlPlane: MxcNativeArtifactControlPlane;
 }
 
@@ -50,23 +55,38 @@ function unsupported(reason: string) {
   return { providerId: MXC_PROVIDER_ID, supported: false as const, reason };
 }
 
-function inspectMxcHost(hostFacts: WindowsMxcHostFacts): RuntimeProviderDoctorCheck {
+function inspectMxcHost(
+  hostFacts: WindowsMxcHostFacts,
+  openshellAttachment: MxcOpenShellAttachmentInput,
+): RuntimeProviderDoctorCheck {
   const assessment = assessWindowsMxcProcessContainerCandidate(hostFacts);
-  if (assessment.candidate) {
+  if (!assessment.candidate) {
+    return {
+      group: "Host",
+      label: "OpenShell MXC process_container candidate",
+      status: "fail",
+      detail: assessment.detail,
+    };
+  }
+  try {
+    const attachment = qualifyMxcOpenShellAttachment(openshellAttachment);
     return {
       group: "Host",
       label: "OpenShell MXC process_container candidate",
       status: "info",
-      detail: `Windows x64 build ${assessment.windowsBuild} meets the inactive host floor.`,
-      hint: "MXC remains unavailable until the OpenShell package and live E2E gates pass.",
+      detail:
+        `Windows x64 build ${assessment.windowsBuild} and OpenShell ${attachment.distribution.version} ` +
+        "match the inactive attachment contract.",
+      hint: "MXC remains unavailable until the OpenShell distribution and live E2E gates pass.",
+    };
+  } catch (error) {
+    return {
+      group: "Host",
+      label: "OpenShell MXC process_container candidate",
+      status: "fail",
+      detail: error instanceof Error ? error.message : "OpenShell attachment validation failed.",
     };
   }
-  return {
-    group: "Host",
-    label: "OpenShell MXC process_container candidate",
-    status: "fail",
-    detail: assessment.detail,
-  };
 }
 
 function acceptsNativeArtifactReceipt(receipt: SandboxWorkloadReceipt | undefined): boolean {
@@ -87,6 +107,7 @@ function acceptsNativeArtifactReceipt(receipt: SandboxWorkloadReceipt | undefine
  */
 export function createMxcRuntimeProviderBundle({
   hostFacts,
+  openshellAttachment,
   bootstrapControlPlane,
 }: MxcRuntimeProviderOptions): RuntimeProviderBundle {
   const lifecycleReason =
@@ -119,7 +140,7 @@ export function createMxcRuntimeProviderBundle({
     preflightDoctor: {
       providerId: MXC_PROVIDER_ID,
       supported: true,
-      inspectHost: () => inspectMxcHost(hostFacts),
+      inspectHost: () => inspectMxcHost(hostFacts, openshellAttachment),
       preflightLifecycle: () => ({ exitCode: 1, message: lifecycleReason }),
     },
     gateway: {
