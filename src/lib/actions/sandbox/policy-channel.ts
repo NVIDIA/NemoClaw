@@ -1798,10 +1798,8 @@ function syncSessionPolicyPresetsWithRegistry(
 // Mirror of applyChannelPresetIfAvailable. When the channel-named built-in
 // preset is currently applied to the sandbox, un-apply it so `policy-list`
 // no longer reports it active and the L7 proxy stops allow-listing the
-// channel's upstream API (defense-in-depth: bridge is gone, egress to
-// api.telegram.org / discord.com / slack.com should follow). Warns but does
-// not abort the remove flow — the bridge teardown has already succeeded;
-// the operator can run `policy-remove <channel>` manually if cleanup falters.
+// channel's upstream API. Removal marks the channel disabled before this
+// policy release, so a later provider failure remains retryable.
 export function removeChannelPresetIfPresent(sandboxName: string, channelName: string): void {
   const builtinPresets = new Set(policies.listPresets().map((p) => p.name));
   if (!builtinPresets.has(channelName)) {
@@ -1928,9 +1926,36 @@ async function removeSandboxChannelUnlocked(
     process.exit(1);
   }
 
-  clearChannelTokens(channel);
+  const configuredChannels = registry.getConfiguredMessagingChannelsFromEntry(registryEntry);
+  if (
+    registryEntry?.messaging?.plan &&
+    configuredChannels.includes(canonical) &&
+    !registry.getDisabledChannels(sandboxName).includes(canonical)
+  ) {
+    const disabledPlan = await persistManifestChannelDisabledPlan(sandboxName, canonical, true);
+    if (!disabledPlan) {
+      console.error(`  Could not mark '${canonical}' disabled before removing it.`);
+      process.exit(1);
+    }
+  }
+
   removeChannelPresetIfPresent(sandboxName, canonical);
-  await applyChannelRemoveToGatewayAndRegistry(sandboxName, canonical, tokenKeys);
+  const teardown = await applyChannelRemoveToGatewayAndRegistry(
+    sandboxName,
+    canonical,
+    tokenKeys,
+    { bestEffort: true },
+  );
+  if (!teardown.ok) {
+    console.error(
+      `  ${YW}⚠${R} Channel '${canonical}' remains disabled while ${teardown.residual.join(", ")} cleanup is incomplete.`,
+    );
+    console.error(
+      `  Resolve the gateway error, then re-run: ${CLI_NAME} ${sandboxName} channels remove ${canonical}`,
+    );
+    process.exit(1);
+  }
+  clearChannelTokens(channel);
   if (tokenKeys.length > 0) {
     console.log(`  ${G}✓${R} Removed ${canonical} bridge from the OpenShell gateway.`);
   } else {
