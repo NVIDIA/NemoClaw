@@ -300,7 +300,6 @@ describe("Pi runtime boundaries", () => {
         port: 443,
         protocol: "rest",
         enforcement: "enforce",
-        allow_encoded_slash: false,
         rules: [{ allow: { method: "POST", path: "/v1/chat/completions" } }],
       });
     });
@@ -351,7 +350,7 @@ describe("Pi runtime boundaries", () => {
       policy.network_policies.managed_inference.endpoints[0][field] = value;
     });
     expect(verifyPiTrustBoundary(sources).join("\n")).toContain(
-      "agents/pi/policy-additions.yaml: managed inference endpoint fields must stay allow_encoded_slash, enforcement, host, port, protocol, rules",
+      "agents/pi/policy-additions.yaml: managed inference endpoint fields must stay enforcement, host, port, protocol, rules",
     );
   });
 
@@ -389,16 +388,16 @@ describe("Pi runtime boundaries", () => {
       policy.network_policies.managed_inference.endpoints[0].allow_encoded_slash = true;
     });
     expect(verifyPiTrustBoundary(sources)).toContain(
-      "agents/pi/policy-additions.yaml: inference.local must set allow_encoded_slash to false",
+      "agents/pi/policy-additions.yaml: inference.local must omit allow_encoded_slash to use OpenShell's false default",
     );
   });
 
-  it("rejects a managed inference endpoint without the encoded-slash restriction (#7924)", () => {
+  it("rejects an explicit false encoded-slash field that OpenShell omits on readback (#7924)", () => {
     const sources = withPolicy((policy) => {
-      delete policy.network_policies.managed_inference.endpoints[0].allow_encoded_slash;
+      policy.network_policies.managed_inference.endpoints[0].allow_encoded_slash = false;
     });
     expect(verifyPiTrustBoundary(sources)).toContain(
-      "agents/pi/policy-additions.yaml: inference.local must set allow_encoded_slash to false",
+      "agents/pi/policy-additions.yaml: inference.local must omit allow_encoded_slash to use OpenShell's false default",
     );
   });
 

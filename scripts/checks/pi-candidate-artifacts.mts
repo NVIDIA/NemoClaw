@@ -61,9 +61,7 @@ const MANAGED_INFERENCE_POLICY = "managed_inference";
 const MANAGED_INFERENCE_HOST = "inference.local";
 const MANAGED_INFERENCE_PORT = 443;
 const MANAGED_INFERENCE_PROTOCOL = "rest";
-const REQUIRED_ALLOW_ENCODED_SLASH = false;
 const APPROVED_ENDPOINT_FIELDS = [
-  "allow_encoded_slash",
   "enforcement",
   "host",
   "port",
@@ -516,9 +514,9 @@ function verifyNetworkBoundary(policy: LooseRecord): string[] {
         `${PI_POLICY_PATH}: ${MANAGED_INFERENCE_HOST} must enforce protocol ${MANAGED_INFERENCE_PROTOCOL}, not ${typeof endpoint.protocol === "string" ? endpoint.protocol : "an unset protocol"}`,
       );
     }
-    if (endpoint.allow_encoded_slash !== REQUIRED_ALLOW_ENCODED_SLASH) {
+    if (endpoint.allow_encoded_slash !== undefined) {
       failures.push(
-        `${PI_POLICY_PATH}: ${MANAGED_INFERENCE_HOST} must set allow_encoded_slash to false`,
+        `${PI_POLICY_PATH}: ${MANAGED_INFERENCE_HOST} must omit allow_encoded_slash to use OpenShell's false default`,
       );
     }
     if (endpoint.enforcement !== "enforce") {
