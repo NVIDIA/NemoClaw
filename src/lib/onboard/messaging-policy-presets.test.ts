@@ -136,7 +136,12 @@ describe("messaging policy presets", () => {
     "preserves a custom preset that shadows an inactive repository messaging preset for %s",
     (agent) => {
       expect(
-        pruneInactiveMessagingPolicyPresets(["npm", "discord"], ["slack"], agent, new Set(["discord"])),
+        pruneInactiveMessagingPolicyPresets(
+          ["npm", "discord"],
+          ["slack"],
+          agent,
+          new Set(["discord"]),
+        ),
       ).toEqual(["npm", "discord"]);
     },
   );
@@ -235,5 +240,4 @@ describe("messaging policy presets", () => {
     expect(allMessagingChannelPolicyPresets(["nonexistent"])).toEqual([]);
     expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["nonexistent"])).toEqual(["npm"]);
   });
-
 });

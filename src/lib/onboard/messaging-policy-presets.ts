@@ -105,6 +105,9 @@ const MESSAGING_AGENT_IDS = new Set<string>(
   listSupportedMessagingAgentIds(listBuiltInMessagingChannelManifests()),
 );
 
+// An array means the caller knows the complete enabled-channel set. Remove only
+// repository-owned messaging presets outside that set; null preserves an
+// unknown selection, and a custom preset with the same name keeps user intent.
 export function pruneInactiveMessagingPolicyPresets(
   selectedPresets: string[],
   enabledChannels: string[] | null | undefined,

@@ -55,9 +55,7 @@ export function excludePolicyPresetsByName(
   excludedNames: readonly (string | undefined)[],
 ): string[] {
   const excluded = new Set(
-    excludedNames.filter(
-      (name): name is string => typeof name === "string" && name.length > 0,
-    ),
+    excludedNames.filter((name): name is string => typeof name === "string" && name.length > 0),
   );
   return presets.filter((name) => !excluded.has(name));
 }

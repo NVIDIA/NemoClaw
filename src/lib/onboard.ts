@@ -916,10 +916,8 @@ const registeredCredentialProviders =
   credentialProviderRegistration.createCredentialProviderRegistration({
     root: ROOT,
     runOpenshell,
-    redact,
     getGatewayName: () => GATEWAY_NAME,
     getCredential,
-    normalizeCredentialValue,
     updateSession: onboardSession.updateSession,
     stagedLegacyValues,
     migratedLegacyKeys,

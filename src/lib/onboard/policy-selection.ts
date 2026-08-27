@@ -252,24 +252,12 @@ export function computeSetupPresetSuggestions(
     env = process.env,
   } = options;
   const known = Array.isArray(options.knownPresetNames) ? new Set(options.knownPresetNames) : null;
-  const activeMessagingPresets = Array.isArray(enabledChannels)
-    ? new Set(allMessagingChannelPolicyPresets(enabledChannels))
-    : null;
   const supportOptions = { webSearchSupported: options.webSearchSupported };
   const suggestions = pruneInactiveMessagingPolicyPresets(
     deps.tiers
       .resolveTierPresets(tierName)
       .map((preset) => preset.name)
       .filter((name) => setupPolicyPresetAppliesToAgent(name, agent))
-      // Discord egress names a sandbox-scoped credential provider. An open tier
-      // may contain the preset, but OpenShell rejects it unless the channel is
-      // active and its provider is attached to the sandbox.
-      .filter(
-        (name) =>
-          name !== "discord" ||
-          activeMessagingPresets === null ||
-          activeMessagingPresets.has(name),
-      )
       .filter(
         (name) =>
           !isStaleBuiltinWebSearchPolicyPreset(name, {
