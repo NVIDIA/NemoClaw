@@ -162,6 +162,7 @@ type SdkPackageLocatorFixture = Readonly<{
   artifactsByRunId?: Readonly<Record<string, unknown>>;
   runs: readonly unknown[];
   step: WorkflowStep;
+  workflowRunFailure?: boolean;
 }>;
 
 function runSdkPackageLocator(fixture: SdkPackageLocatorFixture): Readonly<{
@@ -188,13 +189,20 @@ function runSdkPackageLocator(fixture: SdkPackageLocatorFixture): Readonly<{
         "#!/usr/bin/env node",
         'const request = process.argv.slice(2).join(" ");',
         'if (request.includes("actions/workflows/openshell-sdk-package-pr.yaml/runs")) {',
+        '  if (process.env.FAKE_WORKFLOW_RUN_FAILURE === "true") {',
+        '    process.stderr.write("untrusted API failure detail\\n");',
+        "    process.exit(1);",
+        "  }",
         "  process.stdout.write(JSON.stringify({ workflow_runs: JSON.parse(process.env.FAKE_WORKFLOW_RUNS) }));",
         "  process.exit(0);",
         "}",
         "const artifactMatch = request.match(/actions\\/runs\\/(\\d+)\\/artifacts/);",
         "if (!artifactMatch) process.exit(64);",
         "const runId = Number(artifactMatch[1]);",
-        "if (runId === Number(process.env.FAKE_ARTIFACT_FAILURE_RUN_ID)) process.exit(1);",
+        "if (runId === Number(process.env.FAKE_ARTIFACT_FAILURE_RUN_ID)) {",
+        '  process.stderr.write("untrusted artifact API failure detail\\n");',
+        "  process.exit(1);",
+        "}",
         "const listings = JSON.parse(process.env.FAKE_ARTIFACTS_BY_RUN_ID);",
         "process.stdout.write(JSON.stringify(listings[String(runId)] ?? { artifacts: [] }));",
       ].join("\n"),
@@ -208,6 +216,7 @@ function runSdkPackageLocator(fixture: SdkPackageLocatorFixture): Readonly<{
         FAKE_ARTIFACTS_BY_RUN_ID: JSON.stringify(fixture.artifactsByRunId ?? {}),
         FAKE_ARTIFACT_FAILURE_RUN_ID: String(fixture.artifactFailureRunId ?? 0),
         FAKE_WORKFLOW_RUNS: JSON.stringify(fixture.runs),
+        FAKE_WORKFLOW_RUN_FAILURE: String(fixture.workflowRunFailure ?? false),
         GH_TOKEN: "test-token",
         GITHUB_OUTPUT: outputPath,
         GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
@@ -720,6 +729,27 @@ describe("pull request and main workflow contracts", () => {
       "rerun the failed openshell-sdk-package job in CI / Pull Request",
     );
     expect(result.stdout).not.toContain("Rerun Security / Package OpenShell SDK for PR");
+    expect(result.stderr).not.toContain("untrusted artifact API failure detail");
+    expect(githubOutput).not.toContain("run_id=");
+  });
+
+  it("explains how to retry an SDK workflow-run-listing failure", () => {
+    const { githubOutput, result } = runSdkPackageLocator({
+      runs: [],
+      step: requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      ),
+      workflowRunFailure: true,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("Could not inspect reviewed SDK package workflow runs");
+    expect(result.stdout).toContain("After GitHub Actions access returns");
+    expect(result.stdout).toContain(
+      "rerun the failed openshell-sdk-package job in CI / Pull Request",
+    );
+    expect(result.stderr).not.toContain("untrusted API failure detail");
     expect(githubOutput).not.toContain("run_id=");
   });
 

@@ -232,8 +232,12 @@ jobs:
           printf 'artifact_name=%s\n' "$artifact_name" >> "$GITHUB_OUTPUT"
           echo "required=true" >> "$GITHUB_OUTPUT"
           for attempt in $(seq 1 96); do
-            runs="$(gh api \
-              "repos/$GITHUB_REPOSITORY/actions/workflows/openshell-sdk-package-pr.yaml/runs?event=pull_request_target&per_page=100")"
+            if ! runs="$(gh api \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/openshell-sdk-package-pr.yaml/runs?event=pull_request_target&per_page=100" \
+              2>/dev/null)"; then
+              echo "::error title=SDK package workflow unavailable::Could not inspect reviewed SDK package workflow runs. After GitHub Actions access returns, rerun the failed openshell-sdk-package job in CI / Pull Request."
+              exit 1
+            fi
             matches="$(jq -cer \
               --arg base "$BASE_SHA" \
               --arg head "$HEAD_SHA" \
@@ -263,7 +267,7 @@ jobs:
                 fi
                 run_id="$(jq -er '.id | select(type == "number" and . > 0 and . <= 9007199254740991)' <<<"$match")"
                 artifact_listing_url="repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?per_page=100"
-                if ! artifacts="$(gh api "$artifact_listing_url")"; then
+                if ! artifacts="$(gh api "$artifact_listing_url" 2>/dev/null)"; then
                   echo "::error title=SDK package artifact unavailable::Could not inspect the reviewed SDK archive from $run_url. After GitHub Actions access returns, rerun the failed openshell-sdk-package job in CI / Pull Request."
                   exit 1
                 fi
