@@ -32,6 +32,12 @@ const runtimeSnapshotMocks = vi.hoisted(() => ({
 const sandboxCreateMocks = vi.hoisted(() => ({
   isDockerDesktopWslRuntime: vi.fn(),
 }));
+const dockerClientIsolationMocks = vi.hoisted(() => ({
+  prepare: vi.fn<typeof import("../docker-client-isolation").prepareDockerBuildEnvironment>(),
+  original: undefined as
+    | undefined
+    | typeof import("../docker-client-isolation").prepareDockerBuildEnvironment,
+}));
 
 vi.mock("../../adapters/docker/inspect", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../adapters/docker/inspect")>()),
@@ -54,6 +60,12 @@ vi.mock("../docker-gpu-sandbox-create", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../docker-gpu-sandbox-create")>()),
   isDockerDesktopWslRuntime: sandboxCreateMocks.isDockerDesktopWslRuntime,
 }));
+
+vi.mock("../docker-client-isolation", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../docker-client-isolation")>();
+  dockerClientIsolationMocks.original = original.prepareDockerBuildEnvironment;
+  return { ...original, prepareDockerBuildEnvironment: dockerClientIsolationMocks.prepare };
+});
 
 vi.mock("../openshell-docker-sandbox-containers", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../openshell-docker-sandbox-containers")>()),
@@ -169,6 +181,14 @@ beforeEach(() => {
     timeoutKind: null,
   });
   sandboxCreateMocks.isDockerDesktopWslRuntime.mockReturnValue(false);
+  dockerClientIsolationMocks.prepare.mockImplementation(
+    (input) =>
+      dockerClientIsolationMocks.original?.(input) ?? {
+        env: {},
+        isolatedCredentialConfig: false,
+        cleanup: () => {},
+      },
+  );
   runtimeSnapshotMocks.query.mockReturnValue({
     ok: true,
     imageId: `sha256:${"a".repeat(64)}`,
@@ -268,6 +288,13 @@ describe("Docker managed-bootstrap GPU probe image", () => {
     sandboxCreateMocks.isDockerDesktopWslRuntime.mockReturnValue(true);
     dockerAdapterMocks.imageInspect.mockReturnValue({ status: 1 });
     dockerRun.mockReturnValueOnce({ status: 1, stderr: "probe rejected" });
+    const isolatedConfig = "/tmp/nemoclaw-wsl-buildkit-docker-config";
+    const cleanup = vi.fn();
+    dockerClientIsolationMocks.prepare.mockReturnValue({
+      env: { DOCKER_BUILDKIT: "1", DOCKER_CONFIG: isolatedConfig },
+      isolatedCredentialConfig: true,
+      cleanup,
+    });
 
     await runCompatibilityCreate(input, seed);
 
@@ -280,8 +307,10 @@ describe("Docker managed-bootstrap GPU probe image", () => {
       expect.objectContaining({ maxTimeoutMs: 30 * 60 * 1000 }),
     );
     const pullEnv = dockerAdapterMocks.pullWithProgressWatchdog.mock.calls[0]?.[1]?.env;
-    expect(pullEnv).toEqual(expect.objectContaining({ DOCKER_BUILDKIT: "1" }));
+    expect(pullEnv?.DOCKER_CONFIG).toBe(isolatedConfig);
+    expect(pullEnv?.DOCKER_BUILDKIT).toBe("1");
     expect(pullEnv).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
+    expect(cleanup).toHaveBeenCalled();
     expect(dockerAdapterMocks.pullWithProgressWatchdog.mock.invocationCallOrder[0]).toBeLessThan(
       dockerRun.mock.invocationCallOrder[0] ?? 0,
     );

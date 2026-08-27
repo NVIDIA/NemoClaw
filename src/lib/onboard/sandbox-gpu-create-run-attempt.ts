@@ -76,7 +76,13 @@ async function streamSandboxCreateWithPublicImageCredentialIsolation(
   run: (env: NodeJS.ProcessEnv) => Promise<StreamSandboxCreateResult>,
 ): Promise<StreamSandboxCreateResult> {
   if (!isolate) return run(sandboxEnv);
-  const prepared = prepareDockerBuildEnvironment({ allowCredentialIsolation: true });
+  // Detect against the same environment the create command runs with. The
+  // sandbox env drops DOCKER_CONFIG and DOCKER_CONTEXT, so process.env can
+  // report a credential store or a context the create never uses.
+  const prepared = prepareDockerBuildEnvironment({
+    env: sandboxEnv,
+    allowCredentialIsolation: true,
+  });
   try {
     if (prepared.isolatedCredentialConfig) {
       console.log(
