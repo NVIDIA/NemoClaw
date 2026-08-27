@@ -56,6 +56,52 @@ function exactString(value: unknown, expected: string, label: string): void {
   if (value !== expected) throw new Error(`${label} must be ${expected}`);
 }
 
+function boundedRunAttempt(
+  value: unknown,
+  prefix: string,
+  maximumAttempt: number,
+  label: string,
+): number {
+  if (typeof value !== "string" || !value.startsWith(prefix)) {
+    throw new Error(`${label} must bind the selected publication run`);
+  }
+  const attemptText = value.slice(prefix.length);
+  if (!/^[1-9][0-9]*$/u.test(attemptText)) {
+    throw new Error(`${label} must bind a positive producer attempt`);
+  }
+  const producerAttempt = positiveInteger(Number(attemptText), `${label} producer attempt`);
+  if (producerAttempt > maximumAttempt) {
+    throw new Error(`${label} producer attempt must not exceed the selected publication attempt`);
+  }
+  return producerAttempt;
+}
+
+function boundedBuilderId(
+  value: unknown,
+  expected: { readonly runAttempt: number; readonly runId: number },
+  label: string,
+): void {
+  boundedRunAttempt(
+    value,
+    `https://github.com/${REPOSITORY}/actions/runs/${expected.runId}/attempts/`,
+    expected.runAttempt,
+    label,
+  );
+}
+
+function boundedCohortIdentity(
+  value: unknown,
+  expected: { readonly runAttempt: number; readonly runId: number },
+): { readonly attempt: number; readonly identity: string } {
+  const attempt = boundedRunAttempt(
+    value,
+    `ghrun-${expected.runId}-`,
+    expected.runAttempt,
+    "managed-image cohort identity",
+  );
+  return { attempt, identity: String(value) };
+}
+
 function digest(value: unknown, label: string): string {
   if (typeof value !== "string" || !DIGEST_PATTERN.test(value)) {
     throw new Error(`${label} must be an immutable SHA-256 digest`);
@@ -157,11 +203,7 @@ function validatePlatformEvidence(
     workloadDigest,
     `${expected.agent} ${expected.platform} SLSA subject workload digest`,
   );
-  exactString(
-    statement.builderId,
-    `https://github.com/${REPOSITORY}/actions/runs/${expected.runId}/attempts/${expected.runAttempt}`,
-    `${expected.agent} ${expected.platform} builder`,
-  );
+  boundedBuilderId(statement.builderId, expected, `${expected.agent} ${expected.platform} builder`);
   const bindings = record(
     statement.bindings,
     `${expected.agent} ${expected.platform} SLSA bindings`,
@@ -212,8 +254,8 @@ export function validateManagedImageCohort(
   const cohort = record(value, "managed-image cohort");
   if (cohort.contractVersion !== 2)
     throw new Error("managed-image cohort contract version must be 2");
-  const expectedCohort = `ghrun-${expected.runId}-${expected.runAttempt}`;
-  exactString(cohort.cohort, expectedCohort, "managed-image cohort identity");
+  const boundedCohort = boundedCohortIdentity(cohort.cohort, expected);
+  const cohortIdentity = boundedCohort.identity;
   const source = record(cohort.source, "managed-image cohort source");
   exactString(source.repository, REPOSITORY, "managed-image cohort source repository");
   exactString(source.revision, expected.revision, "managed-image cohort source revision");
@@ -233,7 +275,7 @@ export function validateManagedImageCohort(
     const manifestDigest = digest(contract.digest, `${agent} cohort digest`);
     exactString(contract.image, image, `${agent} cohort image`);
     exactString(contract.reference, `${image}@${manifestDigest}`, `${agent} cohort reference`);
-    exactString(contract.alias, `${image}:cohort-${expectedCohort}`, `${agent} cohort alias`);
+    exactString(contract.alias, `${image}:cohort-${cohortIdentity}`, `${agent} cohort alias`);
     exactString(
       record(contract.descriptor, `${agent} cohort descriptor`).digest,
       manifestDigest,
@@ -244,7 +286,7 @@ export function validateManagedImageCohort(
     for (const platform of PLATFORMS) {
       validatePlatformEvidence(platforms[platform], {
         agent,
-        cohort: expectedCohort,
+        cohort: cohortIdentity,
         platform,
         revision: expected.revision,
         runAttempt: expected.runAttempt,
@@ -281,15 +323,15 @@ export function validateManagedImageCohort(
   ) as ManagedImageCohortReceipt["images"];
   const receipt: ManagedImageCohortReceipt = {
     kind: "nemoclaw-managed-image-cohort-receipt-v1",
-    cohort: expectedCohort,
+    cohort: cohortIdentity,
     revision: expected.revision,
-    runAttempt: expected.runAttempt,
+    runAttempt: boundedCohort.attempt,
     runId: expected.runId,
     images,
   };
 
   return {
-    cohort: expectedCohort,
+    cohort: cohortIdentity,
     receipt,
     revision: expected.revision,
     runAttempt: expected.runAttempt,

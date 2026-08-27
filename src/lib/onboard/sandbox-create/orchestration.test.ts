@@ -5,18 +5,198 @@ import { describe, expect, it, vi } from "vitest";
 
 import { PolicyAuthorityRefusalError } from "../../adapters/openshell/policy-authority";
 import type { SandboxEntry } from "../../state/registry";
+import { createHermesStateVolumeDockerHarness } from "../__test-helpers__/hermes-state-volume";
+import { createManagedHermesStateVolumeOnboardLifecycle } from "../managed-workload/onboard-orchestration";
 import {
   applyManagedSandboxRebuildPolicyCarryForward,
   assertApfCreateIntent,
   backfillVerifiedExternalSandboxPolicyAuthority,
+  cleanupRecreatedSourceHermesStateVolume,
   completeHermesPortableSandboxRegistration,
   createProviderEffectBoundary,
+  finalizeRecreatedSourceHermesStateVolume,
   hasManagedMcpRebuildHandoff,
   readManagedDcodeCreateSelectionDrift,
   readSandboxRecreateRegistryEntry,
   resolveSandboxCreatePolicyAuthority,
   runSandboxCreateWithPolicyAuthorityChecks,
 } from "./orchestration";
+
+function managedHermesSource(): SandboxEntry {
+  return {
+    name: "alpha",
+    agent: "hermes",
+    openshellDriver: "docker-linux",
+    workload: {
+      schemaVersion: 1,
+      kind: "managed-image",
+      reference: `ghcr.io/nvidia/nemoclaw/hermes@sha256:${"a".repeat(64)}`,
+      release: "v0.0.100",
+      sourceRevision: "b".repeat(40),
+      sourceCohort: "ghrun-100-1",
+      capabilityContractVersion: 1,
+      startupProfileContractVersion: 1,
+      encodedProfile: "fixture-profile",
+      startupProfileSha256: "c".repeat(64),
+      credentialProxyReplayRequired: false,
+      shared: true,
+    },
+  };
+}
+
+type HermesVolumeCleanupDeps = Parameters<typeof cleanupRecreatedSourceHermesStateVolume>[1];
+
+function hermesVolumeCleanupDeps(
+  removeManagedHermesStateVolume: HermesVolumeCleanupDeps["removeManagedHermesStateVolume"],
+): HermesVolumeCleanupDeps {
+  return {
+    normalizeRuntimeProviderIdentity: vi.fn(() => "docker"),
+    removeManagedHermesStateVolume,
+    note: vi.fn(),
+    warn: vi.fn(),
+    redact: vi.fn((message: string) => message.replace("secret", "[REDACTED]")),
+  };
+}
+
+describe("recreated managed Hermes state volume", () => {
+  it("preserves the volume when managed Docker Hermes replaces managed Docker Hermes", () => {
+    const docker = createHermesStateVolumeDockerHarness({
+      name: "nemoclaw-hermes-state-v1-alpha",
+      labels: {
+        "io.nvidia.nemoclaw.hermes-state.managed": "true",
+        "io.nvidia.nemoclaw.hermes-state.schema": "1",
+        "io.nvidia.nemoclaw.hermes-state.sandbox": "alpha",
+        "io.nvidia.nemoclaw.hermes-state.target": "/sandbox/.hermes",
+      },
+    });
+    const targetLifecycle = createManagedHermesStateVolumeOnboardLifecycle(
+      {
+        agentName: "hermes",
+        runtimeProvider: { identity: { id: "docker" } } as never,
+        sandboxName: "alpha",
+        workloadKind: "managed-image",
+      },
+      {
+        runDocker: docker.runDocker as never,
+        registerExitCleanup: () => vi.fn(),
+      },
+    );
+    const removeManagedHermesStateVolume =
+      vi.fn<HermesVolumeCleanupDeps["removeManagedHermesStateVolume"]>();
+    const deps = hermesVolumeCleanupDeps(removeManagedHermesStateVolume);
+
+    cleanupRecreatedSourceHermesStateVolume(
+      {
+        sandboxName: "alpha",
+        sourceEntry: managedHermesSource(),
+        targetKeepsManagedHermesStateVolume: targetLifecycle !== null,
+      },
+      deps,
+    );
+
+    expect(targetLifecycle).not.toBeNull();
+    expect(docker.calls.some((args) => args[0] === "create")).toBe(false);
+    expect(removeManagedHermesStateVolume).not.toHaveBeenCalled();
+    targetLifecycle?.commit();
+  });
+
+  it.each([
+    ["OpenClaw", "openclaw", "docker", "managed-image"],
+    ["custom Dockerfile Hermes", "hermes", "docker", "legacy-dockerfile"],
+    ["managed-image Hermes on a non-Docker runtime", "hermes", "kubernetes", "managed-image"],
+  ])(
+    "removes the owned volume when managed Docker Hermes changes to %s",
+    (_replacement, agentName, runtimeProviderId, workloadKind) => {
+      const runDocker = vi.fn(() => {
+        throw new Error("a replacement that does not own the volume must not access Docker");
+      });
+      const targetLifecycle = createManagedHermesStateVolumeOnboardLifecycle(
+        {
+          agentName,
+          runtimeProvider: { identity: { id: runtimeProviderId } } as never,
+          sandboxName: "alpha",
+          workloadKind,
+        },
+        { runDocker: runDocker as never },
+      );
+      const removeManagedHermesStateVolume = vi.fn<
+        HermesVolumeCleanupDeps["removeManagedHermesStateVolume"]
+      >(() => ({ status: "removed" as const }));
+      const deps = hermesVolumeCleanupDeps(removeManagedHermesStateVolume);
+
+      cleanupRecreatedSourceHermesStateVolume(
+        {
+          sandboxName: "alpha",
+          sourceEntry: managedHermesSource(),
+          targetKeepsManagedHermesStateVolume: targetLifecycle !== null,
+        },
+        deps,
+      );
+
+      expect(targetLifecycle).toBeNull();
+      expect(runDocker).not.toHaveBeenCalled();
+      expect(removeManagedHermesStateVolume).toHaveBeenCalledExactlyOnceWith({
+        agentName: "hermes",
+        runtimeProviderId: "docker",
+        sandboxName: "alpha",
+        workloadKind: "managed-image",
+      });
+      expect(deps.note).toHaveBeenCalledWith("  Removed managed Hermes state volume for 'alpha'.");
+    },
+  );
+
+  it("leaves a foreign same-name volume untouched", () => {
+    const removeManagedHermesStateVolume = vi.fn<
+      HermesVolumeCleanupDeps["removeManagedHermesStateVolume"]
+    >(() => ({
+      status: "not-owned" as const,
+      detail: "the exact NemoClaw ownership labels are absent or changed",
+      volumeName: "nemoclaw-hermes-state-v1-alpha",
+    }));
+    const deps = hermesVolumeCleanupDeps(removeManagedHermesStateVolume);
+
+    cleanupRecreatedSourceHermesStateVolume(
+      {
+        sandboxName: "alpha",
+        sourceEntry: managedHermesSource(),
+        targetKeepsManagedHermesStateVolume: false,
+      },
+      deps,
+    );
+
+    expect(deps.warn).toHaveBeenCalledWith(
+      "  Left Docker volume 'nemoclaw-hermes-state-v1-alpha' untouched because the exact NemoClaw ownership labels are absent or changed.",
+    );
+  });
+
+  it("fails with redacted recovery evidence and allows an exact retry", () => {
+    const removeManagedHermesStateVolume = vi
+      .fn<HermesVolumeCleanupDeps["removeManagedHermesStateVolume"]>()
+      .mockReturnValueOnce({
+        status: "failed" as const,
+        detail: "secret Docker failure",
+        volumeName: "nemoclaw-hermes-state-v1-alpha",
+      })
+      .mockReturnValueOnce({ status: "removed" as const });
+    const deps = hermesVolumeCleanupDeps(removeManagedHermesStateVolume);
+    const removeSourceRegistryEntry = vi.fn();
+    const finalizationDeps = { ...deps, removeSourceRegistryEntry };
+    const input = {
+      sandboxName: "alpha",
+      sourceEntry: managedHermesSource(),
+      sourceConfirmedAbsent: true,
+      targetKeepsManagedHermesStateVolume: false,
+    };
+
+    expect(() => finalizeRecreatedSourceHermesStateVolume(input, finalizationDeps)).toThrow(
+      "[REDACTED] Docker failure",
+    );
+    expect(removeSourceRegistryEntry).not.toHaveBeenCalled();
+    expect(() => finalizeRecreatedSourceHermesStateVolume(input, finalizationDeps)).not.toThrow();
+    expect(removeManagedHermesStateVolume).toHaveBeenCalledTimes(2);
+    expect(removeSourceRegistryEntry).toHaveBeenCalledExactlyOnceWith(input.sourceEntry, "alpha");
+  });
+});
 
 describe("APF create policy selection", () => {
   it("selects a policyless external plan only from an absent global policy (#9833)", () => {
