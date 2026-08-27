@@ -4,7 +4,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  derivePiImageSourcePaths,
   parsePiJsonEvents,
   parsePiInferenceEvidence,
   parsePiRuntimePackageEvidence,
@@ -64,27 +63,6 @@ describe("Pi qualification event oracle", () => {
       "--name",
       "pi-qualification",
     ]);
-  });
-
-  it("derives source parity paths from Dockerfile inputs", () => {
-    expect(
-      derivePiImageSourcePaths([
-        "COPY agents/pi/start.sh /usr/local/bin/start\nCOPY extra/runtime.txt /runtime.txt",
-        "COPY --from=builder /built/runtime /runtime",
-      ]),
-    ).toEqual([
-      ".dockerignore",
-      "agents/pi",
-      "agents/pi/Dockerfile",
-      "agents/pi/Dockerfile.base",
-      "extra/runtime.txt",
-    ]);
-  });
-
-  it("rejects ambiguous Dockerfile copy inputs", () => {
-    expect(() => derivePiImageSourcePaths(['COPY ["source", "/destination"]'])).toThrow(
-      "must use plain path operands",
-    );
   });
 
   it("accepts one successful read and an exact final response", () => {

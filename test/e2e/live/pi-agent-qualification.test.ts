@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { directDockerfileCopySources } from "../../../scripts/lib/dockerfile-copy-sources.mts";
 import {
   CANDIDATE_AGENT_FEATURE_ENV,
   CANDIDATE_QUALIFICATION_RECEIPT_ENV,
@@ -30,7 +31,6 @@ import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { driveInteractiveCommand } from "./onboard-interactive-pty.ts";
 import {
-  derivePiImageSourcePaths,
   parsePiJsonEvents,
   parsePiInferenceEvidence,
   parsePiRuntimePackageEvidence,
@@ -324,10 +324,18 @@ test(
     expect(receipt.contract.agent).toBe("pi");
     expect(receipt.contract.platform).toBe(platform);
     expect(receipt.contract.source.repository).toBe("NVIDIA/NemoClaw");
-    const piDockerfiles = ["agents/pi/Dockerfile", "agents/pi/Dockerfile.base"].map((file) =>
-      fs.readFileSync(path.join(REPO_ROOT, file), "utf8"),
-    );
-    const imageSourcePaths = derivePiImageSourcePaths(piDockerfiles);
+    const piDockerfiles = ["agents/pi/Dockerfile", "agents/pi/Dockerfile.base"];
+    const imageSourcePaths = [
+      ...new Set([
+        ".dockerignore",
+        ...piDockerfiles,
+        ...piDockerfiles.flatMap((dockerfile) =>
+          directDockerfileCopySources(path.join(REPO_ROOT, dockerfile), dockerfile).map(
+            ({ source }) => (source.startsWith("agents/pi/") ? "agents/pi" : source),
+          ),
+        ),
+      ]),
+    ].sort();
     const sourceParity = await host.command(
       "git",
       ["diff", "--quiet", receipt.contract.source.revision, "HEAD", "--", ...imageSourcePaths],

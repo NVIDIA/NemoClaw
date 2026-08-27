@@ -49,7 +49,7 @@ describe("optimized build-context Dockerfile sources", () => {
       directory,
       [
         "FROM base AS build",
-        "COPY --chmod=0444 \\",
+        "copy --chmod=0444 \\",
         "  scripts/lib/corporate-ca-runtime.sh \\",
         "  scripts/lib/sandbox-init.sh \\",
         "  /usr/local/lib/nemoclaw/",
