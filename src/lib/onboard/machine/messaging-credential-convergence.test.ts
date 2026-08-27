@@ -74,7 +74,7 @@ function exactProviderOutput(id: string, resourceVersion: number): string {
 }
 
 function harness(
-  initialObservation: "absent" | typeof CURRENT,
+  initialObservation: "absent" | "canonical" | typeof CURRENT,
   initialConfig = CANONICAL,
   behavior: {
     readonly advanceVersion?: boolean;
@@ -226,6 +226,33 @@ describe("managed messaging credential convergence", () => {
     expect(scope.calls.some(({ args }) => args[0] === "provider" && args[1] === "update")).toBe(
       false,
     );
+    expect(scope.restartManagedGateway).not.toHaveBeenCalled();
+  });
+
+  it("accepts OpenShell's canonical current-credential alias without republishing", async () => {
+    const scope = harness("canonical", CANONICAL);
+
+    await expect(
+      convergeManagedMessagingCredentials(
+        {
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          openshellDriver: "podman",
+          plan: plan(),
+          expectedProviderIds: new Map([[PROVIDER, PROVIDER_ID]]),
+        },
+        convergenceDeps(scope),
+      ),
+    ).resolves.toEqual({
+      kind: "converged",
+      updatedProviders: [],
+      projectedTargets: [],
+      restartRequired: false,
+    });
+    expect(scope.calls.some(({ args }) => args[0] === "provider" && args[1] === "update")).toBe(
+      false,
+    );
+    expect(scope.calls.some(({ args }) => args[1] === "provider")).toBe(false);
     expect(scope.restartManagedGateway).not.toHaveBeenCalled();
   });
 

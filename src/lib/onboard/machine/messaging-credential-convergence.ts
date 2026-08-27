@@ -115,24 +115,24 @@ function observeCredential(
   return output as CredentialObservation;
 }
 
-async function waitForRevision(
+async function waitForCredentialProjection(
   sandboxName: string,
   envKey: string,
   previous: CredentialObservation,
   runOpenshell: OpenshellCliHelpers["runOpenshell"],
   deps: Pick<ManagedMessagingCredentialConvergenceDeps, "sleep" | "now">,
-): Promise<Extract<CredentialObservation, `openshell:resolve:env:v${number}_${string}`>> {
+): Promise<Exclude<CredentialObservation, "absent">> {
   const now = deps.now ?? Date.now;
   const sleep =
     deps.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
   const deadline = now() + PROVIDER_SYNC_TIMEOUT_MS;
   while (true) {
     const observation = observeCredential(sandboxName, envKey, runOpenshell);
-    if (observation.startsWith("openshell:resolve:env:v") && observation !== previous) {
-      return observation as Extract<
-        CredentialObservation,
-        `openshell:resolve:env:v${number}_${string}`
-      >;
+    if (
+      observation === "canonical" ||
+      (observation.startsWith("openshell:resolve:env:v") && observation !== previous)
+    ) {
+      return observation as Exclude<CredentialObservation, "absent">;
     }
     if (now() >= deadline) {
       throw new Error(
@@ -160,9 +160,9 @@ function genericCredentialBindings(plan: SandboxMessagingPlan): CredentialBindin
 
 /**
  * Converge generic messaging credentials only after the final bound policy is
- * active. Durable plans retain canonical placeholders; an ephemeral projection
- * carries exact current revisions into agent-owned config before one managed
- * gateway restart.
+ * active. Durable plans retain canonical placeholders. When OpenShell exposes
+ * a revision-scoped value, an ephemeral projection carries that exact revision
+ * into agent-owned config before one managed gateway restart.
  */
 export async function convergeManagedMessagingCredentials(
   input: ManagedMessagingCredentialConvergenceInput,
@@ -206,7 +206,7 @@ export async function convergeManagedMessagingCredentials(
     }
     const previous = observeCredential(input.sandboxName, binding.providerEnvKey, runOpenshell);
     let current = previous;
-    if (!previous.startsWith("openshell:resolve:env:v")) {
+    if (previous === "absent") {
       // The provider already owns the credential. A no-field update asks
       // OpenShell to republish that stored value after final policy binding
       // without returning the raw credential to NemoClaw host memory.
@@ -258,7 +258,7 @@ export async function convergeManagedMessagingCredentials(
           `OpenShell did not refresh messaging provider '${binding.providerName}' on sandbox '${input.sandboxName}'.`,
         );
       }
-      current = await waitForRevision(
+      current = await waitForCredentialProjection(
         input.sandboxName,
         binding.providerEnvKey,
         previous,
@@ -267,7 +267,7 @@ export async function convergeManagedMessagingCredentials(
       );
       updatedProviders.push(binding.providerName);
     }
-    placeholders.set(binding.providerEnvKey, current);
+    if (current !== "canonical") placeholders.set(binding.providerEnvKey, current);
     expectedVersions.set(binding.providerName, providerState.resourceVersion);
   }
 
