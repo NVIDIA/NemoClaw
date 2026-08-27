@@ -761,6 +761,40 @@ describe("startSandbox", () => {
       {},
       30_000,
     );
+    expect(probeInferenceInvocation).toHaveBeenCalledOnce();
+    expect(probeInferenceInvocation.mock.invocationCallOrder[0]).toBeGreaterThan(
+      h.verifyGateway.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("pins a Hermes start probe to its recorded OpenShell gateway (#10302)", async () => {
+    const probeInferenceInvocation = vi.fn(() => ({ ok: true }) as const);
+    const h = harness({ probeInferenceInvocation });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        agent: "hermes",
+        gatewayName: "nemoclaw-19080",
+        provider: "ollama-local",
+        model: "nemotron-3-nano:30b",
+        preferredInferenceApi: "openai-completions",
+      }),
+    );
+
+    const result = await startSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(probeInferenceInvocation).toHaveBeenCalledWith(
+      {
+        sandboxName: "my-sandbox",
+        gatewayName: "nemoclaw-19080",
+        provider: "ollama-local",
+        model: "nemotron-3-nano:30b",
+        preferredInferenceApi: "openai-completions",
+      },
+      {},
+      30_000,
+    );
+    expect(probeInferenceInvocation).toHaveBeenCalledOnce();
     expect(probeInferenceInvocation.mock.invocationCallOrder[0]).toBeGreaterThan(
       h.verifyGateway.mock.invocationCallOrder[0],
     );

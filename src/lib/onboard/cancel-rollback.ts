@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
+
+import { inspectOpenShellSandboxIdentityFingerprint } from "../adapters/openshell/policy-authority";
+import type { SandboxEntry } from "../state/registry";
+
 // Re-exported so the onboard entrypoint imports its sandbox default/cancel
 // lifecycle helpers from a single module.
 export { restoreDefaultAfterRecreate, wasSandboxDefault } from "./default-preservation";
@@ -24,7 +29,12 @@ export { restoreDefaultAfterRecreate, wasSandboxDefault } from "./default-preser
  */
 export interface SandboxCancelRollbackDeps {
   /** Delete the OpenShell sandbox container. Returns true when the delete succeeded. */
-  deleteSandboxContainer(sandboxName: string): boolean;
+  deleteSandboxContainer(sandboxName: string, gatewayName?: string): boolean;
+  /** Prove a pending create checkpoint immediately before its name-based delete. */
+  prepareSandboxContainerDeletion?(sandboxName: string): {
+    readonly gatewayName: string;
+    readonly sandboxIdentityFingerprint: string;
+  } | null;
   /** Remove the sandbox entry from the NemoClaw registry (clears default). */
   removeSandboxFromRegistry(sandboxName: string): void;
   /**
@@ -53,6 +63,7 @@ export interface SandboxCancelRollback {
 export function buildCancelRollbackMessage(
   sandboxName: string,
   deleteSucceeded: boolean,
+  sandboxIdentityFingerprint?: string,
 ): string[] {
   if (deleteSucceeded) {
     return [
@@ -62,15 +73,24 @@ export function buildCancelRollbackMessage(
   }
   return [
     "",
-    `  Onboarding cancelled — unregistered incomplete sandbox '${sandboxName}'.`,
-    "  The sandbox container may still be running. Remove it with:",
-    `    openshell sandbox delete "${sandboxName}"`,
+    `  Onboarding cancelled — preserved incomplete sandbox '${sandboxName}' because OpenShell did not confirm its deletion.`,
+    ...(sandboxIdentityFingerprint
+      ? [
+          `  Durable sandbox identity fingerprint: ${sandboxIdentityFingerprint}`,
+          "  Preserve this fingerprint and give it to an OpenShell administrator for identity-bound recovery.",
+        ]
+      : ["  Preserve its registry and onboarding recovery state for identity-bound recovery."]),
+    "  Do not delete this sandbox by mutable sandbox name.",
   ];
 }
 
 export interface InstallSandboxCancelRollbackOptions {
   runOpenshell: (args: string[], opts: { ignoreError: boolean }) => { status: number | null };
-  registry: { removeSandbox(name: string): void };
+  registry: {
+    getSandbox(name: string): SandboxEntry | null;
+    removeSandbox(name: string): void;
+  };
+  inspectOpenShellSandboxIdentityFingerprint?: typeof inspectOpenShellSandboxIdentityFingerprint;
   clearOnboardSession: () => void;
   log?: (message: string) => void;
   /** Override for tests; defaults to `process.on("exit", ...)`. */
@@ -90,8 +110,33 @@ export function installSandboxCancelRollback(
   opts: InstallSandboxCancelRollbackOptions,
 ): SandboxCancelRollback {
   const rollback = createSandboxCancelRollback({
-    deleteSandboxContainer: (name) =>
-      opts.runOpenshell(["sandbox", "delete", name], { ignoreError: true }).status === 0,
+    prepareSandboxContainerDeletion: (name) => {
+      const checkpoint = opts.registry.getSandbox(name)?.pendingPolicyVerification;
+      if (!checkpoint) return null;
+      const inspectIdentity =
+        opts.inspectOpenShellSandboxIdentityFingerprint ??
+        inspectOpenShellSandboxIdentityFingerprint;
+      const liveFingerprint = inspectIdentity({
+        sandboxName: name,
+        gatewayName: checkpoint.gatewayName,
+      });
+      const currentCheckpoint = opts.registry.getSandbox(name)?.pendingPolicyVerification;
+      if (
+        liveFingerprint !== checkpoint.sandboxIdentityFingerprint ||
+        !isDeepStrictEqual(currentCheckpoint, checkpoint)
+      ) {
+        throw new Error("pending sandbox policy verification identity changed");
+      }
+      return {
+        gatewayName: checkpoint.gatewayName,
+        sandboxIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
+      };
+    },
+    deleteSandboxContainer: (name, gatewayName) =>
+      opts.runOpenshell(
+        gatewayName ? ["sandbox", "delete", "-g", gatewayName, name] : ["sandbox", "delete", name],
+        { ignoreError: true },
+      ).status === 0,
     removeSandboxFromRegistry: (name) => opts.registry.removeSandbox(name),
     clearOnboardSession: opts.clearOnboardSession,
     log: opts.log ?? ((message) => console.error(message)),
@@ -148,14 +193,42 @@ export function createSandboxCancelRollback(
       const sandboxName = armedSandboxName;
       armedSandboxName = null;
 
-      // Delete the container first, then unregister regardless of the delete
-      // result — leaving a registry entry pointing at a half-built sandbox is
-      // worse than an orphaned container the operator can clean up manually.
-      const deleteSucceeded = deps.deleteSandboxContainer(sandboxName);
+      let deletionAuthority: {
+        readonly gatewayName: string;
+        readonly sandboxIdentityFingerprint: string;
+      } | null = null;
+      try {
+        deletionAuthority = deps.prepareSandboxContainerDeletion?.(sandboxName) ?? null;
+      } catch {
+        deps.log("");
+        deps.log(
+          `  Onboarding cancelled — preserved incomplete sandbox '${sandboxName}' because its durable creation identity could not be proved immediately before deletion.`,
+        );
+        return;
+      }
+
+      let deleteSucceeded = false;
+      try {
+        deleteSucceeded = deletionAuthority
+          ? deps.deleteSandboxContainer(sandboxName, deletionAuthority.gatewayName)
+          : deps.deleteSandboxContainer(sandboxName);
+      } catch {
+        deleteSucceeded = false;
+      }
+      if (!deleteSucceeded) {
+        for (const line of buildCancelRollbackMessage(
+          sandboxName,
+          false,
+          deletionAuthority?.sandboxIdentityFingerprint,
+        )) {
+          deps.log(line);
+        }
+        return;
+      }
       deps.removeSandboxFromRegistry(sandboxName);
       // Discard the aborted session so `nemoclaw list` recovery doesn't resurrect it.
       deps.clearOnboardSession();
-      for (const line of buildCancelRollbackMessage(sandboxName, deleteSucceeded)) {
+      for (const line of buildCancelRollbackMessage(sandboxName, true)) {
         deps.log(line);
       }
     },

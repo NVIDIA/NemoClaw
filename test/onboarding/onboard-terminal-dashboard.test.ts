@@ -55,6 +55,7 @@ const os = require("node:os");
 const path = require("node:path");
 const runner = require(${runnerPath});
 const registry = require(${registryPath});
+const fixtureMocks = require(${onboardScriptMocksPath});
 const agentDefs = require(${agentDefsPath});
 const agentOnboard = require(${agentOnboardPath});
 const dockerGpuSandboxCreate = require(${dockerGpuSandboxCreatePath});
@@ -107,6 +108,10 @@ runner.runFile = (file, args = [], opts = {}) => {
 };
 runner.runCapture = (command) => {
   const normalized = _n(command);
+  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command, {
+    sandboxName,
+  });
+  if (createdIdentity !== null) return createdIdentity;
   commands.push({ command: normalized, env: null });
   if (
     normalized.includes(
@@ -134,15 +139,14 @@ runner.runCapture = (command) => {
 
 registry.getSandbox = () =>
   scenario === "reuse"
-    ? {
+    ? fixtureMocks.managedSandboxPolicyReceiptFixture({
         name: sandboxName,
         gpuEnabled: false,
         agent: "langchain-deepagents-code",
         dashboardPort: 18789,
         observabilityEnabled: false,
-        policyAuthority: "nemoclaw-managed",
         toolDisclosure: "progressive",
-      }
+      })
     : null;
 registry.registerSandbox = (entry) => {
   registerCalls.push(entry);
@@ -154,6 +158,16 @@ registry.updateSandbox = (name, updates) => {
 };
 registry.setDefault = () => true;
 registry.removeSandbox = () => true;
+const createFixture =
+  scenario === "create"
+    ? fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+        sandboxName,
+        provider: "nvidia-prod",
+        model: "gpt-5.4",
+        registerSandbox: (entry) => registerCalls.push(entry),
+        updateSandbox: (name, updates) => updateCalls.push({ name, updates }),
+      })
+    : null;
 
 childProcess.spawn = (...args) => {
   if (scenario === "reuse") throw new Error("unexpected sandbox create");
@@ -177,7 +191,26 @@ const agent = agentDefs.loadAgent("langchain-deepagents-code");
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.CHAT_UI_URL = "https://chat.example.test:19000";
   process.env.NEMOCLAW_DASHBOARD_PORT = "19000";
-  const resultName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, sandboxName, null, null, null, agent);
+  const createArgs = [
+    null,
+    "gpt-5.4",
+    "nvidia-prod",
+    null,
+    sandboxName,
+    null,
+    null,
+    null,
+    agent,
+    null,
+    null,
+    null,
+    [],
+  ];
+  const resultName = await createSandbox(
+    ...(createFixture
+      ? fixtureMocks.sandboxCreateArgsWithVerifiedReservation(createArgs, createFixture)
+      : createArgs),
+  );
   console.log(JSON.stringify({ resultName, commands, registerCalls, updateCalls }));
   clearInterval(keepAlive);
 })().catch((error) => {

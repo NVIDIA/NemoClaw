@@ -16,6 +16,7 @@ import {
   assertExpectedOpenClawProcessIdentity,
   assertExpectedOpenShellForwardProcessIdentity,
   assertExpectedOpenShellGatewayProcessIdentity,
+  classifyWindowsMxcOpenClawStartupObservation,
   classifyWindowsMxcForwardHealthObservation,
   createWindowsMxcQualificationFailure,
   normalizeReportedVersion,
@@ -85,6 +86,16 @@ function fixture(): { readonly environment: NodeJS.ProcessEnv; readonly root: st
       NEMOCLAW_WINDOWS_MXC_WORK_ROOT: root,
     },
   };
+}
+
+function withProcessPlatform(platform: NodeJS.Platform, operation: () => void): void {
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { value: platform });
+  try {
+    operation();
+  } finally {
+    Object.defineProperty(process, "platform", descriptor);
+  }
 }
 
 afterEach(() => {
@@ -157,6 +168,7 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
 
   it("continues forward cleanup after a trusted process query fails (#8178)", async () => {
     const events: string[] = [];
+    let processExitChecks = 0;
     const result = await runWindowsMxcForwardCleanup({
       childWasRunning: true,
       sandboxDeleteAccepted: true,
@@ -169,7 +181,8 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
       },
       waitForProcessExit: async () => {
         events.push("wait-for-process-exit");
-        return true;
+        processExitChecks += 1;
+        return processExitChecks > 1;
       },
       waitForListenerClosed: async () => {
         events.push("wait-for-listener-close");
@@ -178,6 +191,7 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     });
 
     expect(events).toEqual([
+      "wait-for-process-exit",
       "stop-child",
       "query-trusted-process",
       "wait-for-process-exit",
@@ -190,6 +204,41 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     });
     expect(result.failures).toHaveLength(1);
     expect(result.failures[0]).toEqual(new Error("injected process query failure"));
+  });
+
+  it("allows a bounded natural forward exit after sandbox deletion (#8178)", async () => {
+    const events: string[] = [];
+    const result = await runWindowsMxcForwardCleanup({
+      childWasRunning: true,
+      sandboxDeleteAccepted: true,
+      stopChild: async () => {
+        events.push("stop-child");
+      },
+      terminateTrustedProcessIfAlive: async () => {
+        events.push("query-trusted-process");
+        return false;
+      },
+      waitForProcessExit: async () => {
+        events.push("wait-for-process-exit");
+        return true;
+      },
+      waitForListenerClosed: async () => {
+        events.push("wait-for-listener-close");
+        return true;
+      },
+    });
+
+    expect(events).toEqual([
+      "wait-for-process-exit",
+      "query-trusted-process",
+      "wait-for-listener-close",
+    ]);
+    expect(result).toEqual({
+      emergencyTerminationNeeded: false,
+      failures: [],
+      listenerStopped: true,
+      processStopped: true,
+    });
   });
 
   it("records the retained sandbox when cleanup cannot confirm deletion (#8178)", () => {
@@ -243,6 +292,47 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     expect(() => parseWindowsMxcOpenClawQualificationEnvironment(environment)).toThrow(
       /must be a child of the OpenClaw artifact root/u,
     );
+  });
+
+  it("rejects a nested OpenClaw artifact root before qualification (#8178)", () => {
+    const { environment, root } = fixture();
+    const openClawRoot = path.join(root, "openclaw");
+    const nestedRoot = path.join(root, "nested", "openclaw");
+    fs.mkdirSync(path.dirname(nestedRoot), { recursive: true });
+    fs.renameSync(openClawRoot, nestedRoot);
+    environment.NEMOCLAW_WINDOWS_MXC_OPENCLAW_ROOT = nestedRoot;
+    environment.NEMOCLAW_WINDOWS_MXC_NODE = path.join(nestedRoot, "node", "node.exe");
+    environment.NEMOCLAW_WINDOWS_MXC_OPENCLAW_ENTRY = path.join(
+      nestedRoot,
+      "runtime",
+      "openclaw.mjs",
+    );
+
+    expect(() => parseWindowsMxcOpenClawQualificationEnvironment(environment)).toThrow(
+      /artifact root must be a direct child of the qualification work root/u,
+    );
+  });
+
+  it("rejects an OpenClaw artifact root that is the work root parent (#8178)", () => {
+    const { environment, root } = fixture();
+    const openClawRoot = path.join(root, "openclaw");
+    const workRoot = path.join(openClawRoot, "work");
+    fs.mkdirSync(workRoot);
+    environment.NEMOCLAW_WINDOWS_MXC_WORK_ROOT = workRoot;
+
+    expect(() => parseWindowsMxcOpenClawQualificationEnvironment(environment)).toThrow(
+      /artifact root must be a direct child of the qualification work root/u,
+    );
+  });
+
+  it("rejects a nested Windows qualification work root during parsing (#8178)", () => {
+    const { environment } = fixture();
+
+    withProcessPlatform("win32", () => {
+      expect(() => parseWindowsMxcOpenClawQualificationEnvironment(environment)).toThrow(
+        /work root must be a drive root/u,
+      );
+    });
   });
 
   it("rejects moving aliases instead of exact digest and revision identities (#8178)", () => {
@@ -460,6 +550,10 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     );
     expect(config).toContain("pc_relay_target_port = 18889");
     expect(config).toContain('"NEMOCLAW_MXC_E2E_TOKEN"');
+    expect(config).toContain('"TEMP=C:/probe/share/temp"');
+    expect(config).toContain('"TMP=C:/probe/share/temp"');
+    expect(config).not.toMatch(/^\s*"TEMP",$/mu);
+    expect(config).not.toMatch(/^\s*"TMP",$/mu);
     expect(config).not.toContain("credential-value");
     expect(config).not.toContain("--token");
   });
@@ -490,18 +584,102 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     expect(agent).not.toMatch(/[A-Za-z0-9_-]{40,}/u);
   });
 
-  it("renders a syntactically valid native OpenClaw probe agent (#8178)", () => {
+  it("serializes a generated probe spawn failure without raw diagnostics (#8178)", async () => {
     const { root } = fixture();
     const agentPath = path.join(root, "probe-agent.mjs");
+    const home = path.join(root, "probe-home");
+    const resultPath = path.join(root, "probe-result.json");
+    const outcomePath = path.join(root, "probe-outcome.json");
+    const token = "runtime-only-secret";
+    const missingNodePath = path.join(root, "missing-node.exe");
     fs.writeFileSync(agentPath, renderWindowsMxcOpenClawProbeAgent(), "utf8");
 
-    const checked = spawnSync(process.execPath, ["--check", agentPath], {
+    const executed = spawnSync(process.execPath, [agentPath], {
       encoding: "utf8",
+      env: {
+        ...process.env,
+        NEMOCLAW_MXC_E2E_DENY_PATH: path.join(root, "missing-parent", "denied.txt"),
+        NEMOCLAW_MXC_E2E_ENTRY: path.join(root, "missing-openclaw.mjs"),
+        NEMOCLAW_MXC_E2E_HEARTBEAT_PATH: path.join(root, "heartbeat.txt"),
+        NEMOCLAW_MXC_E2E_HOME: home,
+        NEMOCLAW_MXC_E2E_MOCK_PORT: "0",
+        NEMOCLAW_MXC_E2E_NODE: missingNodePath,
+        NEMOCLAW_MXC_E2E_OPENCLAW_PID_PATH: path.join(root, "openclaw.pid"),
+        NEMOCLAW_MXC_E2E_OPENCLAW_PORT: "0",
+        NEMOCLAW_MXC_E2E_OUTCOME_PATH: outcomePath,
+        NEMOCLAW_MXC_E2E_READY_PATH: path.join(root, "ready.json"),
+        NEMOCLAW_MXC_E2E_RESULT_PATH: resultPath,
+        NEMOCLAW_MXC_E2E_STOP_PATH: path.join(root, "stop.txt"),
+        NEMOCLAW_MXC_E2E_TOKEN: token,
+      },
+      timeout: 15_000,
       windowsHide: true,
     });
 
-    expect(checked.status, checked.stderr).toBe(0);
+    expect(executed.status, executed.stderr).toBe(1);
+    const resultText = fs.readFileSync(resultPath, "utf8");
+    const outcomeText = fs.readFileSync(outcomePath, "utf8");
+    const result = JSON.parse(resultText) as Record<string, unknown>;
+    expect(result).toMatchObject({
+      gatewaySpawnFailed: true,
+      healthObserved: false,
+      versionExitCode: 1,
+    });
+    expect(result).not.toHaveProperty("gatewaySpawnError");
+    expect(Number.isSafeInteger(result.gatewayExitCode)).toBe(true);
+    expect(classifyWindowsMxcOpenClawStartupObservation(result)).toEqual({
+      outcome: "spawn-failed",
+      gatewayExitCode: result.gatewayExitCode,
+      versionExitCode: 1,
+    });
+    expect(outcomeText).toBe(resultText);
+    expect(resultText).not.toContain(missingNodePath);
+    expect(resultText).not.toContain(token);
   });
+
+  it.each([
+    {
+      expected: { outcome: "ready", gatewayExitCode: null, versionExitCode: 0 },
+      result: { healthObserved: true, versionExitCode: 0 },
+    },
+    {
+      expected: { outcome: "spawn-failed", gatewayExitCode: null, versionExitCode: 0 },
+      result: { gatewaySpawnFailed: true, versionExitCode: 0 },
+    },
+    {
+      expected: {
+        outcome: "exited-before-readiness",
+        gatewayExitCode: 3221225794,
+        versionExitCode: 0,
+      },
+      result: {
+        gatewayExitCode: 3221225794,
+        gatewayExitedBeforeReadiness: true,
+        versionExitCode: 0,
+      },
+    },
+    {
+      expected: { outcome: "health-timeout", gatewayExitCode: null, versionExitCode: null },
+      result: { healthObserved: false },
+    },
+    {
+      expected: { outcome: "not-observed", gatewayExitCode: null, versionExitCode: null },
+      result: {
+        gatewayExitCode: "C:\\sensitive\\path",
+        gatewaySpawnError: "token-bearing raw diagnostic",
+        versionExitCode: 1.5,
+      },
+    },
+  ])(
+    "classifies bounded secret-free startup evidence for $expected.outcome (#8178)",
+    ({ expected, result }) => {
+      const observation = classifyWindowsMxcOpenClawStartupObservation(result);
+
+      expect(observation).toEqual(expected);
+      expect(JSON.stringify(observation)).not.toContain("sensitive");
+      expect(JSON.stringify(observation)).not.toContain("token-bearing");
+    },
+  );
 
   it("accepts only authenticated health and one exact chat payload (#8178)", () => {
     expect(parseOpenClawHealthResult('notice\n{"ok":true}\n')).toBe(true);
@@ -742,6 +920,7 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
       openClawHealth: true,
       openClawProcessPresentWhileReady: true,
       registryPresentWhileReady: true,
+      versionExitCode: 0,
     };
     checks[failedCheck] = false;
 
@@ -756,8 +935,22 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
         openClawHealth: true,
         openClawProcessPresentWhileReady: true,
         registryPresentWhileReady: true,
+        versionExitCode: 0,
       }),
     ).toBe(true);
+  });
+
+  it("rejects readiness when the OpenClaw version command fails (#8178)", () => {
+    expect(
+      windowsMxcOpenClawStartupPreconditionsPass({
+        filesystemControlWrite: true,
+        filesystemDeniedWrite: true,
+        openClawHealth: true,
+        openClawProcessPresentWhileReady: true,
+        registryPresentWhileReady: true,
+        versionExitCode: 1,
+      }),
+    ).toBe(false);
   });
 
   it.each([" CHAT_OK", "CHAT_OK ", "CHAT_OK\n", "\tCHAT_OK"])(

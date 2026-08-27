@@ -66,6 +66,9 @@ describe("sandboxName command hardening in onboard.js", () => {
     const preflightPath = sourceModule("onboard", "preflight.ts");
     const credentialsPath = sourceModule("credentials", "store.ts");
     const streamPath = sourceModule("sandbox", "create-stream.ts");
+    const onboardScriptMocksPath = JSON.stringify(
+      path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
+    );
 
     fs.mkdirSync(fakeBin, { recursive: true });
     writeOkOpenshell(fakeBin, { readySandboxGet: true });
@@ -74,6 +77,7 @@ describe("sandboxName command hardening in onboard.js", () => {
       String.raw`
 const runner = require(${runnerPath});
 const registry = require(${registryPath});
+const fixtureMocks = require(${onboardScriptMocksPath});
 const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});
 const sandboxCreateStream = require(${streamPath});
@@ -116,14 +120,14 @@ runner.runFile = (file, args = [], opts = {}) => {
 };
 runner.runCapture = (command) => {
   const text = asText(command);
+  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
+  if (createdIdentity !== null) return createdIdentity;
   if (text.includes("sandbox get") && text.includes("my-assistant")) return "";
   if (text.includes("sandbox list")) return "my-assistant Ready";
   if (text.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   if (text.includes("sandbox exec") && text.includes("http://localhost:") && text.includes("/health")) return "200";
   if (text === "uname -r") return "6.8.0";
-  const mockedCapture = require(${JSON.stringify(
-    path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
-  )}).mockOnboardRunCapture(command);
+  const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);
   if (mockedCapture !== null) return mockedCapture;
   return "";
 };
@@ -132,6 +136,11 @@ registry.getDisabledChannels = () => [];
 registry.registerSandbox = () => true;
 registry.removeSandbox = () => true;
 registry.updateSandbox = () => true;
+const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+  sandboxName: "my-assistant",
+  provider: "nvidia-prod",
+  model: "gpt-5.4",
+});
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 sandboxCreateStream.streamSandboxCreate = async () => ({
@@ -147,7 +156,26 @@ try {
   process.env.NEMOCLAW_HEALTH_POLL_COUNT = "1";
   Object.defineProperty(process, "platform", { value: "darwin" });
   Object.defineProperty(process, "arch", { value: "x64" });
-  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+  const sandboxName = await createSandbox(
+    ...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+      [
+        null,
+        "gpt-5.4",
+        "nvidia-prod",
+        null,
+        "my-assistant",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        [],
+      ],
+      createFixture,
+    ),
+  );
   console.log(JSON.stringify({ sandboxName, commands }));
 } catch (error) {
   console.error(error && error.stack ? error.stack : String(error));

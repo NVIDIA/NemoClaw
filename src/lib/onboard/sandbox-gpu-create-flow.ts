@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentDefinition } from "../agent/defs";
+import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../adapters/openshell/sandbox-identity";
 import type { StreamSandboxCreateResult } from "../sandbox/create-stream";
 import { redactFull } from "../security/redact";
 import type { CheckpointPortableRuntimeAuthority } from "../state/onboard-checkpoint-types";
@@ -32,6 +33,7 @@ import { installPortableDemoSandboxLifecycle } from "./experimental/portable-dem
 import {
   buildHermesPortableCommandAuthority,
   buildHermesPortableOnboardingCommandAuthority,
+  inspectPortableAgentReceiptDisposition,
 } from "./experimental/portable-agent-lifecycle";
 import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 import {
@@ -48,8 +50,8 @@ import { assertPortableManagedBootstrapNotSelected } from "./managed-workload/on
 import type { ManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers";
 import type {
-  RuntimeProviderBootstrapSurface,
   RuntimeProviderBundle,
+  RuntimeProviderManagedImageBootstrapSurface,
 } from "./runtime-provider/contract";
 import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
 import { createSandboxGpuCreateAttemptRunner } from "./sandbox-gpu-create-run-attempt";
@@ -77,6 +79,7 @@ export {
   runHermesPortableOnboardingTransaction,
   shouldManageHermesPortableDashboard,
   buildHermesPortableCommandAuthority,
+  inspectPortableAgentReceiptDisposition,
 };
 export type HermesPortableReadyCapture = ReturnType<typeof createHermesPortableReadyCapture>;
 export type HermesPortableReadyRunner = ReturnType<typeof createHermesPortableReadyRunner>;
@@ -207,12 +210,17 @@ type LifecycleRegistrationFields = Pick<SandboxEntry, "lifecycleGeneration">;
 
 export interface SandboxGpuCreateFlowInput {
   sandboxName: string;
+  /** Reject every initial or fallback create attempt that carries a caller policy. */
+  requirePolicylessCreate?: true;
+  /** Durably retain exact create-attempt recovery evidence before identity-bound recovery stops. */
+  persistRetainedSandboxRecovery?: (message: string) => boolean;
   provider: string;
   sandboxGpuConfig: SandboxGpuConfig;
   gpuRoutePlan: import("./docker-gpu-route").DockerGpuRoutePlan;
   initialGpuRoute: SelectedDockerGpuRoute;
   compatibilityPolicyPath: string | null;
   dockerDriverGateway: boolean;
+  gatewayName: string;
   gatewayPort: number;
   sandboxReadyTimeoutSecs: number;
   createArgv: string[];
@@ -234,7 +242,7 @@ export interface SandboxGpuCreateFlowInput {
     readonly bootstrapIdentity: string;
     readonly stateRoot: string;
     readonly runtimeProvider: RuntimeProviderBundle & {
-      readonly bootstrap: Extract<RuntimeProviderBootstrapSurface, { readonly supported: true }>;
+      readonly bootstrap: RuntimeProviderManagedImageBootstrapSurface;
     };
     readonly authorityStore: ManagedBootstrapAuthorityStore;
     readonly request: ManagedStartupRootApplyRequest;
@@ -244,6 +252,30 @@ export interface SandboxGpuCreateFlowInput {
     readonly expectedSupervisorArgv: readonly string[];
   } | null;
   requiredUlimits?: readonly DockerUlimit[] | null;
+  /**
+   * Verify the exact sandbox created by each attempt before runtime activation,
+   * readiness, GPU, service, dashboard, or registry effects continue.
+   */
+  verifyCreatedSandboxBeforeEffects?: (identity: CreatedSandboxIdentity) => void | Promise<void>;
+  /** Re-read the exact durable policy checkpoint before each post-create effect. */
+  revalidateVerifiedSandboxBeforeEffect?: (operation: string) => void;
+}
+
+export interface CreatedSandboxIdentity {
+  readonly sandboxId: string;
+  readonly liveIdentityFingerprint: string;
+  readonly route: SelectedDockerGpuRoute;
+}
+
+/** Refuse APF fallback when OpenShell can remove the failed sandbox only by mutable name. */
+export function refuseApfMutableNameFallbackCleanup(sandboxName: string) {
+  return {
+    safe: false,
+    reason: `APF-selected sandbox '${sandboxName}' cannot be deleted by mutable name for a compatibility retry`,
+    deleteStatus: null,
+    sandboxPresent: null,
+    containerIds: null,
+  } as const;
 }
 
 export interface SandboxGpuCreateFlowDeps {
@@ -319,6 +351,19 @@ export async function runSandboxGpuCreateFlow(
   input: SandboxGpuCreateFlowInput,
   deps: SandboxGpuCreateFlowDeps,
 ): Promise<SandboxGpuCreateFlowResult> {
+  if (
+    input.requirePolicylessCreate &&
+    (!input.verifyCreatedSandboxBeforeEffects ||
+      !input.revalidateVerifiedSandboxBeforeEffect ||
+      !input.persistRetainedSandboxRecovery)
+  ) {
+    throw new Error(
+      "APF interceptor sandbox creation requires exact post-create verification and durable fallback recovery.",
+    );
+  }
+  if (input.verifyCreatedSandboxBeforeEffects && !input.persistRetainedSandboxRecovery) {
+    throw new Error("Verified sandbox creation requires durable create-attempt recovery evidence.");
+  }
   const hermesPortableLifecycle = input.hermesPortableLifecycle === true;
   assertPortableManagedBootstrapNotSelected(
     input.portableLifecycle === true,
@@ -360,6 +405,9 @@ export async function runSandboxGpuCreateFlow(
         if (diagnostics) console.error(`  Native GPU diagnostics saved: ${diagnostics.dir}`);
       },
       cleanupNativeFailure: (failure) => {
+        if (input.requirePolicylessCreate) {
+          return refuseApfMutableNameFallbackCleanup(input.sandboxName);
+        }
         return sandboxGpuCreateAttempt.cleanupNativeGpuFailureForFallback(
           input.sandboxName,
           failure,
@@ -388,10 +436,7 @@ export async function runSandboxGpuCreateFlow(
             ),
           ];
           const prepared = attemptRunner.managedRouting.prepareCompatibilityLaunch({
-            createArgs: managedBootstrapCreateArgs(
-              input.prebuild.createArgs,
-              bootstrapIdentity,
-            ),
+            createArgs: managedBootstrapCreateArgs(input.prebuild.createArgs, bootstrapIdentity),
             currentRegistryImageRef: registryImageRef,
             prebuildImageId: input.prebuild.imageId,
             allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
@@ -477,14 +522,55 @@ export async function runSandboxGpuCreateFlow(
       gpuCreateOutcome.nativeCleanupHandoff
         ? `  Managed bootstrap retained exact owner-cleanup authority for sandbox '${input.sandboxName}'. Do not delete a runtime by mutable sandbox name; preserve it for identity-bound recovery.`
         : hermesPortableLifecycle
-        ? `  Hermes portable sandbox '${input.sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`
-        : `  Manual cleanup: openshell sandbox delete "${input.sandboxName}"`,
+          ? `  Hermes portable sandbox '${input.sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`
+          : `  Sandbox '${input.sandboxName}' may still exist. Verify its durable identity before manual cleanup; do not act by mutable name alone.`,
     );
+    if (input.requirePolicylessCreate) {
+      const persistRetainedSandboxRecovery = input.persistRetainedSandboxRecovery;
+      if (!persistRetainedSandboxRecovery) {
+        throw new Error("APF interceptor sandbox creation requires durable fallback recovery.");
+      }
+      const evidence = gpuCreateOutcome.retainedSandboxRecovery;
+      if (!evidence) {
+        console.error(
+          "  APF recovery is blocked because the create attempt returned no durable identity or create-attempt label.",
+        );
+      } else {
+        const identityGuidance = evidence.liveIdentityFingerprint
+          ? "Use that fingerprint only to compare the surviving sandbox with this create attempt."
+          : "OpenShell did not return one exact durable sandbox identity for this create attempt. Recovery is blocked until an OpenShell administrator resolves the create-attempt label to one sandbox.";
+        const message =
+          `Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${evidence.createAttemptNonce}. ` +
+          `${evidence.liveIdentityFingerprint ? `Durable sandbox identity fingerprint: ${evidence.liveIdentityFingerprint}. ` : ""}` +
+          `APF sandbox '${input.sandboxName}' may have been retained after native GPU fallback stopped. ` +
+          `Gateway '${input.gatewayName}'. ${identityGuidance} ` +
+          "Do not delete a sandbox by mutable name; use an identity-bound administrator recovery procedure.";
+        let persisted = false;
+        try {
+          persisted = persistRetainedSandboxRecovery(message);
+        } catch {
+          persisted = false;
+        }
+        console.error(`  ${message}`);
+        if (!persisted) {
+          console.error(
+            "  APF recovery is blocked because NemoClaw could not save this create-attempt evidence. Preserve the terminal output for an OpenShell administrator.",
+          );
+        }
+      }
+    }
     process.exit(1);
   }
 
   let portableLifecycleGeneration = attemptRunner.state.portableLifecycleGeneration;
   if (!input.portableLifecycle && !input.hermesPortableLifecycle && !portableLifecycleGeneration) {
+    if (input.verifyCreatedSandboxBeforeEffects) {
+      const revalidate = input.revalidateVerifiedSandboxBeforeEffect;
+      if (!revalidate) {
+        throw new Error("Verified sandbox creation has no post-create effect revalidation.");
+      }
+      revalidate(`record portable lifecycle for sandbox '${input.sandboxName}'`);
+    }
     try {
       portableLifecycleGeneration =
         (deps.installPortableDemoLifecycle ?? installPortableDemoSandboxLifecycle)(
