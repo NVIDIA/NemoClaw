@@ -122,12 +122,21 @@ export function createSandboxCancelRollback(
   } | null = null;
   let cancelRequested = false;
   let recoveryRecorded = false;
+  let recoveryPersistenceFailed = false;
   let done = false;
 
-  const recordArmedRecovery = (): void => {
-    if (recoveryRecorded || armedSandbox === null) return;
-    deps.recordRecovery?.(armedSandbox.name, armedSandbox.identityFingerprint ?? undefined);
-    recoveryRecorded = true;
+  const recordArmedRecovery = (): boolean => {
+    if (recoveryRecorded) return true;
+    if (armedSandbox === null) return false;
+    try {
+      deps.recordRecovery?.(armedSandbox.name, armedSandbox.identityFingerprint ?? undefined);
+      recoveryRecorded = true;
+      recoveryPersistenceFailed = false;
+      return true;
+    } catch {
+      recoveryPersistenceFailed = true;
+      return false;
+    }
   };
 
   return {
@@ -160,6 +169,11 @@ export function createSandboxCancelRollback(
       recordArmedRecovery();
       done = true;
       armedSandbox = null;
+      if (recoveryPersistenceFailed) {
+        deps.log(
+          "  NemoClaw could not save the onboarding recovery record; preserve the registry entry and exact sandbox identity for administrator recovery.",
+        );
+      }
       for (const line of buildCancelRollbackMessage(
         sandboxName,
         identityFingerprint ?? undefined,

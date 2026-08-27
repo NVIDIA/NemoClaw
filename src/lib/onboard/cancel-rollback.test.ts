@@ -172,13 +172,39 @@ describe("installSandboxCancelRollback", () => {
     });
 
     rollback.arm("new-sb", SANDBOX_FINGERPRINT);
-    expect(() => rollback.markCancelled()).toThrow("recovery write failed");
+    expect(() => rollback.markCancelled()).not.toThrow();
     expect(recordRecovery).toHaveBeenCalledOnce();
 
     exitHandlers[0]();
     expect(recordRecovery).toHaveBeenCalledTimes(2);
     expect(recordRecovery).toHaveBeenLastCalledWith("new-sb", SANDBOX_FINGERPRINT);
-    expect(log.mock.calls.flat().join("\n")).toContain(SANDBOX_FINGERPRINT);
+    const guidance = log.mock.calls.flat().join("\n");
+    expect(guidance).toContain(SANDBOX_FINGERPRINT);
+    expect(guidance).not.toContain("could not save the onboarding recovery record");
+  });
+
+  it("exits and reports identity recovery when both durable writes fail (#9833)", () => {
+    const log = vi.fn();
+    const recordRecovery = vi.fn(() => {
+      throw new Error("recovery write failed");
+    });
+    const exitHandlers: Array<() => void> = [];
+    const rollback = installSandboxCancelRollback({
+      log,
+      recordRecovery,
+      registerExitHandler: (handler) => exitHandlers.push(handler),
+    });
+    const exit = vi.fn();
+
+    rollback.arm("new-sb", SANDBOX_FINGERPRINT);
+    expect(() => makeOnboardCancelExit(rollback, vi.fn(), exit)()).not.toThrow();
+    expect(exit).toHaveBeenCalledWith(1);
+
+    expect(() => exitHandlers[0]()).not.toThrow();
+    expect(recordRecovery).toHaveBeenCalledTimes(2);
+    const guidance = log.mock.calls.flat().join("\n");
+    expect(guidance).toContain(SANDBOX_FINGERPRINT);
+    expect(guidance).toContain("could not save the onboarding recovery record");
   });
 
   it("preserves missing-checkpoint recovery state without a mutable-name fallback (#9833)", () => {
