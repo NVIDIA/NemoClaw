@@ -6,7 +6,7 @@ import { gatewayStartGuidance } from "../gateway-start-guidance";
 import type { GatewayInference } from "../inference/config";
 import { getActiveChannelIdsFromPlan } from "../messaging/plan-validation";
 import type { GatewayOwnerDescription } from "../onboard/gateway-ownership";
-import { redactFull } from "../security/redact";
+import { redactFull, redactUrl } from "../security/redact";
 import {
   getSandboxEntryDisplayInference,
   isPendingReservationForSession,
@@ -20,6 +20,9 @@ export interface SandboxEntry {
   name: string;
   model?: string | null;
   provider?: string | null;
+  // Upstream endpoint the stored route points at. Recorded by onboarding and
+  // `inference set`; absent on legacy rows that predate the field.
+  endpointUrl?: string | null;
   gpuEnabled?: boolean;
   hostGpuDetected?: boolean;
   sandboxGpuEnabled?: boolean;
@@ -198,6 +201,28 @@ export interface StatusSandboxRow {
   phase?: "pending" | "configuring" | "active";
   dashboardPort?: number | null;
   isDefault: boolean;
+  // Upstream endpoint of the configured route, or `null` when the registry has
+  // none or the live gateway route has drifted off the stored provider.
+  endpointUrl: string | null;
+}
+
+/**
+ * Resolve the upstream endpoint to show beside a sandbox's configured route.
+ *
+ * The registry endpoint belongs to the *stored* provider. The default sandbox's
+ * row prefers the live gateway provider (#2369), so when that live provider has
+ * drifted away from the stored one, pairing it with the stored endpoint would
+ * name an upstream the sandbox is no longer routed to. Suppress the endpoint in
+ * that case rather than report a stale one. Always redact: a legacy or custom
+ * route may carry credentials in userinfo or a query parameter.
+ */
+function resolveConfiguredEndpoint(
+  sandbox: SandboxEntry,
+  displayedProvider: string | null,
+): string | null {
+  const storedProvider = getSandboxEntryDisplayInference(sandbox).provider;
+  if (displayedProvider !== storedProvider) return null;
+  return redactUrl(sandbox.endpointUrl);
 }
 
 export interface StatusServiceRow {
@@ -506,6 +531,7 @@ function buildStatusSandboxRow(
     ...(portablePhase ? { phase: portablePhase } : {}),
     ...(dashboardPort != null ? { dashboardPort } : {}),
     isDefault,
+    endpointUrl: resolveConfiguredEndpoint(sandbox, liveProvider || inference.provider),
   };
 }
 
@@ -674,9 +700,18 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
       // SSH-session count as labeled fields. Bare `nemoclaw status` previously
       // only had the model in parens above — users had to run
       // `nemoclaw <name> status` to see provider and session state.
+      //
+      // #10221: qualify the label as `(configured)` and name the upstream
+      // endpoint. This view reports the registry route and deliberately runs no
+      // health probe, while `nemoclaw <name> status` prints its probe result
+      // under the same bare `Inference:` label (`healthy (<endpoint>)`). Two
+      // different meanings behind one field name read as a formatting bug, so
+      // the qualifier follows the per-sandbox `Inference (<probe>):` convention
+      // and makes this row self-describing without probing anything.
       if (provider || model) {
         const parts = [provider, model].filter(Boolean).join(" / ");
-        log(`      Inference: ${parts}`);
+        const endpoint = resolveConfiguredEndpoint(sb, provider);
+        log(`      Inference (configured): ${parts}${endpoint ? ` (${endpoint})` : ""}`);
       }
       if (deps.getActiveSessionCount && !portablePhase) {
         const count = deps.getActiveSessionCount(sb.name);
