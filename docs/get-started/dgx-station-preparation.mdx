@@ -18,14 +18,14 @@ DGX Station GB300 Express install accepts these host images:
 
 - Generic Ubuntu 24.04 ARM64.
 - Stock OTA-form DGX OS `7.2.0`, `7.4.0`, or `7.5.0`.
-- Stock no-OTA DGX OS `7.6.x` with `DGX_PRETTY_NAME=NVIDIA DGX GB300WS`.
+- Stock no-OTA DGX OS `7.6.x` with `DGX_PRETTY_NAME=NVIDIA DGX GB300WS` or `DGX_PRETTY_NAME=NVIDIA DGX Server`.
 
 Every stock DGX OS form requires `/etc/dgx-release` to be a nonempty regular non-symlink file of at most 4096 bytes, owned by UID and GID 0, and not writable by group or other users.
 The marker must include `DGX_PLATFORM=DGX Server for GALAXY-GB300`.
 OTA-form qualification uses the latest `DGX_OTA_VERSION` and accepts `7.2.0`, `7.4.0`, or `7.5.0`.
 When `DGX_OTA_PRETTY_NAME` is present, it must equal `DGX OS`.
 An OTA-upgraded host can omit `DGX_OTA_PRETTY_NAME`.
-When that field is absent, `DGX_PRETTY_NAME` must equal `NVIDIA DGX GB300WS`.
+On that OTA-form path, `DGX_PRETTY_NAME` must equal `NVIDIA DGX GB300WS`.
 The no-OTA DGX OS `7.6.x` profile must omit every `DGX_OTA_*` field.
 NemoClaw rejects partial OTA metadata.
 It requires a numeric `7.6.x` `DGX_SWBUILD_VERSION` and a present `DGX_SWBUILD_DATE`, but does not match the date against an exact build.
@@ -103,7 +103,9 @@ If registration or a post-change acceptance probe fails, preparation restores th
 After successful registration, the runtime remains configured until the same acceptance probe succeeds through a replacement Docker and NVIDIA runtime integration.
 
 Preparation requires Secure Boot to be disabled, matching headers for the running kernel, at least 20 GiB free on the root filesystem, and no active agent, inference, or Docker workloads.
-It also stops when systemd reports a failed unit unless the unit matches an exact, condition-qualified state from the generic Station image: the pinned OEM `cloud-init` telemetry failure, a network-wait failure while current network health is established, masked `fwupd`, or an SSSD socket on a host without SSSD configuration.
+It also stops when systemd reports a failed unit unless the unit matches an exact, condition-qualified state reviewed for the active Station profile.
+The generic Ubuntu profile permits the pinned OEM `cloud-init` telemetry failure, a network-wait failure while current network health is established, masked `fwupd`, or an SSSD socket on a host without SSSD configuration.
+Stock DGX OS and Colossus BaseOS require exact reviewed systemd, unit-file, configuration-file, and failure-cause fingerprints for `cloud-init`, Fluent Bit, `fwupd`, and SSSD.
 Any other failed unit blocks preparation for administrator review.
 If `openibd.service` is the failed unit, follow [Resolve a Failed OpenIB Service](#resolve-a-failed-openib-service) before you rerun the installer.
 On the `--force-station-install` path, preparation also tolerates the InfiniBand communication manager (`ibacm`) and the realtime audio scheduler (`rtkit-daemon`) as failed units, because neither affects GPU or container capability; the required GPU, container, and preparation-critical service checks still apply.
@@ -156,7 +158,7 @@ It stops with service diagnostics if packaged refresh fails or omits the device.
 It never generates CDI directly, rewrites the Docker runtime, or restarts Docker or containerd.
 The qualified May and June 2026 AI Developer Tools factory-image boundary defines this compatibility repair because those images can leave their packaged CDI units disabled.
 NemoClaw maintainers can remove the repair after repeated clean-host qualification confirms that the qualified images consistently advertise `nvidia.com/gpu=all` at boot.
-The Colossus BaseOS path requires the exact reviewed package and failed-service fingerprints, preserves the factory kernel, driver, DKMS, Docker, and NVIDIA Container Toolkit packages, and prepares only Docker access and packaged CDI.
+The Colossus BaseOS path also requires the exact reviewed package fingerprint, preserves the factory kernel, driver, DKMS, Docker, and NVIDIA Container Toolkit packages, and prepares only Docker access and packaged CDI.
 Only the Colossus BaseOS path registers the NVIDIA Docker runtime when the launch probe proves that the runtime is missing, and it restores the prior daemon configuration if registration fails.
 The preparation helper writes a private audit log under `~/station-bootstrap-logs`.
 Aside from the installer's separately disclosed `docker`-group membership grant when the current trusted account needs Docker access, the stock DGX OS path leaves only the digest-pinned visibility-test image in the Docker cache.

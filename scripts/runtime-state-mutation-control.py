@@ -40,6 +40,7 @@ import signal
 import stat
 import sys
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Literal
 
@@ -110,6 +111,13 @@ HERMES_GATEWAY_PATHS = (b"/usr/local/bin/hermes", b"/usr/local/bin/hermes.real")
 HERMES_INTERNAL_PORT = 18642
 HERMES_HEALTH_PATH = "/health"
 HERMES_CONFIG_GENERATION_PATH = "/sandbox/.hermes/.config-hash"
+START_LOG_PATH = b"/tmp/nemoclaw-start.log"
+START_LOG_DRAIN_PATHS = (b"tee", b"/usr/bin/tee", b"/bin/tee")
+TRANSPORT_BROKER_BOOTSTRAP = (
+    b"import base64,sys,zlib;source=zlib.decompress(base64.b64decode(sys.argv.pop(1)),-15);"
+    b"exec(compile(source,'<nemoclaw-state-mutation-transport>','exec'))"
+)
+TRANSPORT_BROKER_HELPER_PATH = b"/usr/local/lib/nemoclaw/runtime-state-mutation-control.py"
 
 HEX_64 = re.compile(r"[0-9a-f]{64}\Z")
 SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
@@ -117,6 +125,7 @@ PROVIDER_ID = re.compile(r"[a-z][a-z0-9-]{0,62}\Z")
 RUNTIME_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/=+\-]{0,511}\Z")
 MOUNT_NAMESPACE = re.compile(r"mnt:\[[1-9][0-9]*\]\Z")
 PID_NAMESPACE = re.compile(r"pid:\[[1-9][0-9]*\]\Z")
+NETWORK_NAMESPACE = re.compile(r"net:\[[1-9][0-9]*\]\Z")
 DECIMAL = re.compile(r"(?:0|[1-9][0-9]*)\Z")
 TOP_LEVEL = re.compile(r"[A-Za-z0-9._-]+\Z")
 CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
@@ -215,6 +224,7 @@ class ProcessReference:
 class FenceProof:
     supervisor: ProcessReference
     start: ProcessReference
+    start_support: tuple[ProcessReference, ...]
     writer_uids: tuple[int, ...]
 
 
@@ -866,7 +876,7 @@ PROCESS_REFERENCE_KEYS = (
     "procInode",
 )
 
-FENCE_KEYS = ("supervisor", "start", "writerUids")
+FENCE_KEYS = ("supervisor", "start", "startSupport", "writerUids")
 ACTIVATION_PERMIT_KEYS = (
     "schemaVersion",
     "protocol",
@@ -984,6 +994,10 @@ def _fence_payload(fence: FenceProof) -> dict[str, object]:
     return {
         "supervisor": _process_reference_payload(fence.supervisor),
         "start": _process_reference_payload(fence.start),
+        "startSupport": [
+            _process_reference_payload(reference)
+            for reference in fence.start_support
+        ],
         "writerUids": list(fence.writer_uids),
     }
 
@@ -992,6 +1006,7 @@ def _fence_from_value(value: object, code: str = "fence-marker-invalid") -> Fenc
     fence = _exact_keys(value, FENCE_KEYS, code)
     supervisor = _process_reference_from_value(fence["supervisor"], code)
     start = _process_reference_from_value(fence["start"], code)
+    start_support = fence["startSupport"]
     writer_uids = fence["writerUids"]
     if (
         supervisor.pid != 1
@@ -999,6 +1014,8 @@ def _fence_from_value(value: object, code: str = "fence-marker-invalid") -> Fenc
         or supervisor.uids != (ROOT_UID,) * 4
         or start.pid <= 1
         or start.parent_pid != 1
+        or not isinstance(start_support, list)
+        or len(start_support) != 2
         or not isinstance(writer_uids, list)
         or not writer_uids
         or len(writer_uids) > len(SUPPORTED_WRITER_ACCOUNTS)
@@ -1007,7 +1024,23 @@ def _fence_from_value(value: object, code: str = "fence-marker-invalid") -> Fenc
         or not any(uid in writer_uids for uid in start.uids)
     ):
         _fail(code)
-    return FenceProof(supervisor, start, tuple(writer_uids))
+    support = tuple(
+        _process_reference_from_value(reference, code)
+        for reference in start_support
+    )
+    if (
+        tuple(sorted(reference.pid for reference in support))
+        != tuple(reference.pid for reference in support)
+        or len({reference.pid for reference in support}) != 2
+        or any(
+            reference.parent_pid != start.pid
+            or reference.uids != start.uids
+            or not any(uid in writer_uids for uid in reference.uids)
+            for reference in support
+        )
+    ):
+        _fail(code)
+    return FenceProof(supervisor, start, support, tuple(writer_uids))
 
 
 def _startup_candidate_directory(marker: dict[str, object]) -> str:
@@ -2420,6 +2453,38 @@ def _is_nemoclaw_start(process: ProcessIdentity, sandbox_uid: int) -> bool:
     )
 
 
+def _is_start_log_drain(
+    process: ProcessIdentity, start: ProcessIdentity, sandbox_uid: int
+) -> bool:
+    return bool(
+        process.pid > 1
+        and process.parent_pid == start.pid
+        and process.state != "Z"
+        and process.uids == (sandbox_uid,) * 4
+        and len(process.command) == 3
+        and process.command[0] in START_LOG_DRAIN_PATHS
+        and process.command[1:] == (b"-a", START_LOG_PATH)
+    )
+
+
+def _start_log_drains(
+    writers: tuple[ProcessIdentity, ...], start: ProcessIdentity, sandbox_uid: int
+) -> tuple[ProcessIdentity, ...]:
+    drains = tuple(
+        sorted(
+            (
+                process
+                for process in writers
+                if _is_start_log_drain(process, start, sandbox_uid)
+            ),
+            key=lambda process: process.pid,
+        )
+    )
+    if len(drains) != 2:
+        _fail("startup-support-unavailable")
+    return drains
+
+
 def _process_matches_reference(
     process: ProcessIdentity, reference: ProcessReference
 ) -> bool:
@@ -2471,8 +2536,10 @@ def _discover_fence(expected_mount_namespace: str) -> FenceProof:
     if len(starts) != 1:
         _fail("supervisor-unavailable")
     start = starts[0]
+    support = _start_log_drains(writers, start, sandbox_uid)
     supervisor_reference = _process_reference(supervisor)
     start_reference = _process_reference(start)
+    support_references = tuple(_process_reference(process) for process in support)
     second_supervisor = _recapture_reference(
         supervisor_reference, "supervisor-identity-drift"
     )
@@ -2482,13 +2549,28 @@ def _discover_fence(expected_mount_namespace: str) -> FenceProof:
         for process in second_writers
         if _is_nemoclaw_start(process, sandbox_uid)
     ]
+    second_support = (
+        _start_log_drains(second_writers, second_starts[0], sandbox_uid)
+        if len(second_starts) == 1
+        else ()
+    )
     if (
         len(second_starts) != 1
         or not _process_matches_reference(second_starts[0], start_reference)
+        or len(second_support) != len(support_references)
+        or any(
+            not _process_matches_reference(process, reference)
+            for process, reference in zip(second_support, support_references)
+        )
         or not _is_openshell_supervisor(second_supervisor)
     ):
         _fail("supervisor-identity-drift")
-    return FenceProof(supervisor_reference, start_reference, writer_uids)
+    return FenceProof(
+        supervisor_reference,
+        start_reference,
+        support_references,
+        writer_uids,
+    )
 
 
 def _signal_exact_process(process: ProcessIdentity, requested_signal: int) -> None:
@@ -2646,8 +2728,16 @@ def _prove_fence_shape(
         _fail("supervisor-identity-drift")
     supervisor = _recapture_reference(fence.supervisor, "supervisor-identity-drift")
     start = _recapture_reference(fence.start, "supervisor-identity-drift")
+    support = tuple(
+        _recapture_reference(reference, "supervisor-identity-drift")
+        for reference in fence.start_support
+    )
+    sandbox_uid = _sandbox_uid()
     if not _is_openshell_supervisor(supervisor) or not _is_nemoclaw_start(
-        start, _sandbox_uid()
+        start, sandbox_uid
+    ) or any(
+        not _is_start_log_drain(process, start, sandbox_uid)
+        for process in support
     ):
         _fail("supervisor-identity-drift")
     return supervisor, start
@@ -2657,7 +2747,7 @@ def _held_writer_references(
     fence: FenceProof, activation: ActivationProof | None
 ) -> tuple[ProcessReference, ...]:
     if activation is None:
-        return (fence.start,)
+        return (fence.start, *fence.start_support)
     retained: list[ProcessReference] = []
     persistent = set(activation.persistent_pids)
     for reference in activation.processes:
@@ -2682,9 +2772,19 @@ def _hold_exact_processes(
     # workload writer inside the already-proven private namespace.
     _wait_for_host_stopped_supervisor(fence.supervisor)
     _stop_reference(fence.start)
+    for reference in fence.start_support:
+        _stop_reference(reference)
     if activation is not None:
         persistent = set(activation.persistent_pids)
+        support_by_pid = {
+            reference.pid: reference for reference in fence.start_support
+        }
         for reference in activation.processes:
+            support = support_by_pid.get(reference.pid)
+            if support is not None:
+                if reference != support:
+                    _fail("activation-process-drift")
+                continue
             if _reference_is_terminated(reference):
                 if reference.pid in persistent:
                     _fail("activation-process-drift")
@@ -2798,11 +2898,45 @@ def _open_activation_guard_pidfd(reference: ProcessReference) -> int:
     return pidfd
 
 
-def _stop_activation_guard_pidfd(pidfd: int) -> None:
+def _open_activation_guard_current_pidfd() -> int:
+    if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
+        return _fail("activation-guard-unavailable")
     try:
+        pidfd = os.pidfd_open(os.getpid(), 0)
+        os.set_inheritable(pidfd, False)
+    except OSError:
+        return _fail("activation-guard-unavailable")
+    return pidfd
+
+
+def _stop_activation_guard_pidfd(pidfd: int) -> None:
+    with suppress(AttributeError, OSError, ValueError):
         signal.pidfd_send_signal(pidfd, signal.SIGSTOP, None, 0)
-    except BaseException:
-        pass
+
+
+def _resume_activation_guard_pidfd(pidfd: int) -> None:
+    with suppress(AttributeError, OSError, ValueError):
+        signal.pidfd_send_signal(pidfd, signal.SIGCONT, None, 0)
+
+
+def _transport_broker_reference() -> ProcessReference | None:
+    process = _capture_process(os.getppid())
+    if process is None:
+        return None
+    command = process.command
+    if (
+        process.pid <= 1
+        or process.state in ("Z", "X", "x")
+        or process.uids != (ROOT_UID,) * 4
+        or len(command) != 7
+        or command[1] != b"-I"
+        or command[2] != b"-c"
+        or command[3] != TRANSPORT_BROKER_BOOTSTRAP
+        or command[5] != TRANSPORT_BROKER_HELPER_PATH
+        or re.fullmatch(rb"[0-9a-f]{64}", command[6]) is None
+    ):
+        return None
+    return _process_reference(process)
 
 
 def _kernel_pid_namespace_stop() -> None:
@@ -2810,6 +2944,38 @@ def _kernel_pid_namespace_stop() -> None:
     # guardian handles PID 1 through its pre-opened pidfd; excluding the sender
     # is what lets it keep the transaction lock and repeat this broadcast.
     os.kill(-1, signal.SIGSTOP)
+
+
+def _stop_pid_namespace_fail_closed(pidfds: tuple[int, ...]) -> None:
+    for pidfd in pidfds:
+        _stop_activation_guard_pidfd(pidfd)
+    with suppress(OSError):
+        _kernel_pid_namespace_stop()
+    # Enumeration is defense in depth only. The kernel broadcast above is the
+    # fail-closed primitive when procfs is missing or unreadable.
+    try:
+        pids = _pid_namespace_process_ids()
+    except OSError:
+        pids = ()
+    own_pid = os.getpid()
+    for pid in pids:
+        if pid == own_pid:
+            continue
+        with suppress(OSError):
+            os.kill(pid, signal.SIGSTOP)
+
+
+def _hold_pid_namespace_for_live_controller(
+    stopped_pidfds: tuple[int, ...], resumed_pidfds: tuple[int, ...]
+) -> None:
+    # An authenticated H command proves the root controller is still alive and
+    # owns the transaction lock. Stop the complete private namespace, then
+    # resume only that pidfd-bound controller lineage so it can return the
+    # fixed failure receipt and invoke the durable retry protocol. Workload
+    # writers and PID 1 remain stopped throughout the handoff.
+    _stop_pid_namespace_fail_closed(stopped_pidfds)
+    for pidfd in resumed_pidfds:
+        _resume_activation_guard_pidfd(pidfd)
 
 
 def _park_pid_namespace_fail_closed(pidfds: tuple[int, ...]) -> None:
@@ -2829,31 +2995,12 @@ def _park_pid_namespace_fail_closed(pidfds: tuple[int, ...]) -> None:
             signal.signal(ignored, signal.SIG_IGN)
         except BaseException:
             pass
-    own_pid = os.getpid()
     while True:
-        for pidfd in pidfds:
-            _stop_activation_guard_pidfd(pidfd)
-        try:
-            # The child inherited the already-proven private PID namespace,
-            # and Linux never moves an existing process into another PID
-            # namespace. This broadcast therefore cannot reach host processes
-            # and cannot stop the guardian itself.
-            _kernel_pid_namespace_stop()
-        except BaseException:
-            pass
-        # Enumeration is defense in depth only. The kernel broadcast above is
-        # the fail-closed primitive when procfs is missing or unreadable.
-        try:
-            pids = _pid_namespace_process_ids()
-        except BaseException:
-            pids = ()
-        for pid in pids:
-            if pid == own_pid:
-                continue
-            try:
-                os.kill(pid, signal.SIGSTOP)
-            except BaseException:
-                pass
+        # The child inherited the already-proven private PID namespace, and
+        # Linux never moves an existing process into another PID namespace.
+        # This broadcast therefore cannot reach host processes and cannot stop
+        # the guardian itself.
+        _stop_pid_namespace_fail_closed(pidfds)
         try:
             time.sleep(max(POLL_SECONDS, 0.01))
         except BaseException:
@@ -2868,13 +3015,18 @@ def _activation_guard_child(
     lock_fd: int | None,
     supervisor_pidfd: int,
     start_pidfd: int,
+    controller_pidfd: int,
+    broker_pidfd: int | None,
 ) -> None:
     retained = [
         command_fd,
         acknowledgement_fd,
         supervisor_pidfd,
         start_pidfd,
+        controller_pidfd,
     ]
+    if broker_pidfd is not None:
+        retained.append(broker_pidfd)
     if lock_fd is not None:
         retained.append(lock_fd)
     _close_activation_guard_inherited_fds(tuple(retained))
@@ -2891,6 +3043,7 @@ def _activation_guard_child(
         if command == b"D":
             os.write(acknowledgement_fd, b"D")
             os._exit(0)
+        live_controller_hold = command == b"H"
         # EOF is the kernel-backed controller-death signal. Any malformed
         # command is treated identically: restore the original exact hold and
         # exclude every other writer before this orphan exits.
@@ -2900,10 +3053,22 @@ def _activation_guard_child(
         except OSError:
             pass
         os._exit(0)
-    except BaseException:
+    except Exception:
+        if "live_controller_hold" in locals() and live_controller_hold:
+            _hold_pid_namespace_for_live_controller(
+                (supervisor_pidfd, start_pidfd),
+                tuple(
+                    pidfd
+                    for pidfd in (broker_pidfd, controller_pidfd)
+                    if pidfd is not None
+                ),
+            )
+            with suppress(OSError):
+                os.write(acknowledgement_fd, b"H")
+            os._exit(0)
         try:
             _hold_exact_processes(fence, mount_namespace, None)
-        except BaseException:
+        except Exception:
             _park_pid_namespace_fail_closed((supervisor_pidfd, start_pidfd))
         os._exit(70)
 
@@ -2940,8 +3105,7 @@ class ActivationGuard:
             return
         child_held = False
         try:
-            os.close(self.command_fd)
-            self.command_fd = -1
+            os.write(self.command_fd, b"H")
             child_held = (
                 _read_activation_guard_byte(
                     self.acknowledgement_fd, "activation-guard-hold-failed"
@@ -2972,6 +3136,14 @@ def _start_activation_guard(
         descriptors.append(supervisor_pidfd)
         start_pidfd = _open_activation_guard_pidfd(fence.start)
         descriptors.append(start_pidfd)
+        controller_pidfd = _open_activation_guard_current_pidfd()
+        descriptors.append(controller_pidfd)
+        broker = _transport_broker_reference()
+        broker_pidfd = (
+            None if broker is None else _open_activation_guard_pidfd(broker)
+        )
+        if broker_pidfd is not None:
+            descriptors.append(broker_pidfd)
         command_read, command_write = os.pipe()
         descriptors.extend((command_read, command_write))
         acknowledgement_read, acknowledgement_write = os.pipe()
@@ -3003,10 +3175,15 @@ def _start_activation_guard(
             lock_fd,
             supervisor_pidfd,
             start_pidfd,
+            controller_pidfd,
+            broker_pidfd,
         )
         os._exit(70)
     os.close(supervisor_pidfd)
     os.close(start_pidfd)
+    os.close(controller_pidfd)
+    if broker_pidfd is not None:
+        os.close(broker_pidfd)
     os.close(command_read)
     os.close(acknowledgement_write)
     guard = ActivationGuard(
@@ -3320,7 +3497,31 @@ def _listener_identity(process: ProcessIdentity) -> str:
     return f"tcp:{HERMES_INTERNAL_PORT}:{next(iter(listeners))}"
 
 
-def _health_status() -> int:
+def _network_namespace_identity(path: str) -> str:
+    try:
+        identity = os.readlink(path)
+    except OSError:
+        return _fail("activation-network-namespace-unavailable")
+    if NETWORK_NAMESPACE.fullmatch(identity) is None:
+        return _fail("activation-network-namespace-unavailable")
+    return identity
+
+
+def _open_network_namespace(path: str, expected_identity: str) -> int:
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC)
+    except OSError:
+        return _fail("activation-network-namespace-unavailable")
+    try:
+        if _network_namespace_identity(path) != expected_identity:
+            _fail("activation-network-namespace-unavailable")
+        return descriptor
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
+def _health_status_in_current_namespace() -> int:
     connection = http.client.HTTPConnection(
         "127.0.0.1", HERMES_INTERNAL_PORT, timeout=HEALTH_SECONDS
     )
@@ -3333,11 +3534,59 @@ def _health_status() -> int:
             _fail("activation-health-unavailable")
         return response.status
     except (OSError, http.client.HTTPException):
-        _fail("activation-health-unavailable")
+        return _fail("activation-health-unavailable")
     finally:
         if response is not None:
             response.close()
         connection.close()
+
+
+def _health_status(process: ProcessIdentity) -> int:
+    reference = _process_reference(process)
+    current_path = os.path.join(PROC_ROOT, "self", "ns", "net")
+    target_path = os.path.join(PROC_ROOT, str(process.pid), "ns", "net")
+    current_identity = _network_namespace_identity(current_path)
+    target_identity = _network_namespace_identity(target_path)
+    _recapture_reference(reference, "activation-service-drift")
+    if target_identity == current_identity:
+        status = _health_status_in_current_namespace()
+        _recapture_reference(reference, "activation-service-drift")
+        return status
+    if not hasattr(os, "setns"):
+        _fail("activation-network-namespace-unavailable")
+
+    current_fd = _open_network_namespace(current_path, current_identity)
+    try:
+        target_fd = _open_network_namespace(target_path, target_identity)
+    except Exception:
+        os.close(current_fd)
+        raise
+    switched = False
+    restore_failed = False
+    try:
+        _recapture_reference(reference, "activation-service-drift")
+        try:
+            os.setns(target_fd, 0x40000000)
+        except OSError:
+            _fail("activation-network-namespace-unavailable")
+        switched = True
+        if _network_namespace_identity(current_path) != target_identity:
+            _fail("activation-network-namespace-unavailable")
+        status = _health_status_in_current_namespace()
+        _recapture_reference(reference, "activation-service-drift")
+        return status
+    finally:
+        if switched:
+            try:
+                os.setns(current_fd, 0x40000000)
+                if _network_namespace_identity(current_path) != current_identity:
+                    restore_failed = True
+            except (OSError, ControlError):
+                restore_failed = True
+        os.close(target_fd)
+        os.close(current_fd)
+        if restore_failed:
+            _fail("activation-network-namespace-restore-failed")
 
 
 def _prove_live_activation(
@@ -3352,7 +3601,7 @@ def _prove_live_activation(
     reference = _process_reference(gateway)
     generation = _configuration_generation()
     listener = _listener_identity(gateway)
-    status = _health_status()
+    status = _health_status(gateway)
     current = _recapture_reference(reference, "activation-service-drift")
     if current.state in ("T", "t"):
         _fail("activation-health-unavailable")
@@ -3522,6 +3771,8 @@ def _reset_activation_attempt(
         # optional checkpoint. Queue the signal while the exact shell is held;
         # its immutable trap validates that receipt before execing the fixed
         # entrypoint path with the same PID/starttime/parent identity.
+        for reference in fence.start_support:
+            _resume_reference(reference)
         _signal_reference(fence.start, signal.SIGUSR2)
         _signal_reference(fence.start, signal.SIGCONT)
         _wait_for_startup_retry_ack(marker, fence, retry_payload)
@@ -3549,6 +3800,8 @@ def _activate_exact(
         else:
             _assert_exact_process_fence(fence, mount_namespace, None)
         _publish_activation_permit(durable_fd, marker, fence)
+        for reference in fence.start_support:
+            _resume_reference(reference)
         _signal_reference(fence.start, signal.SIGCONT)
         checkpoint_sha256 = _wait_for_startup_checkpoint(marker, fence)
         live = _wait_for_activation(marker, fence, checkpoint_sha256)
@@ -3690,19 +3943,29 @@ def _retire_activation_tree(
     _prove_fence_shape(fence, str(marker["mountNamespace"]))
     _wait_for_host_stopped_supervisor(fence.supervisor)
     _stop_reference(fence.start)
+    support_by_pid = {reference.pid: reference for reference in fence.start_support}
+    retired: list[ProcessReference] = []
     for reference in activation.processes:
+        support = support_by_pid.get(reference.pid)
+        if support is not None:
+            if reference != support:
+                _fail("activation-process-drift")
+            _stop_reference(support)
+            continue
+        retired.append(reference)
         if not _reference_is_terminated(reference):
             _signal_reference(reference, signal.SIGKILL)
     deadline = time.monotonic() + KILL_SECONDS
     while not all(
-        _reference_is_terminated(reference) for reference in activation.processes
+        _reference_is_terminated(reference) for reference in retired
     ):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             _fail("activation-retirement-timeout")
         time.sleep(min(POLL_SECONDS, remaining))
-    _exclude_writers(fence.writer_uids, (fence.start,))
-    _assert_writer_exclusion(fence.writer_uids, (fence.start,))
+    held = (fence.start, *fence.start_support)
+    _exclude_writers(fence.writer_uids, held)
+    _assert_writer_exclusion(fence.writer_uids, held)
     _unlink_private(runtime_fd, ACTIVATION_RECEIPT_NAME)
 
 
@@ -3815,6 +4078,9 @@ def _prove_released_activation(
     start = _recapture_reference(fence.start, "supervisor-identity-drift")
     if start.state in ("T", "t"):
         _fail("start-process-stopped")
+    supervisor = _recapture_reference(fence.supervisor, "supervisor-identity-drift")
+    if supervisor.state in ("T", "t"):
+        _fail("supervisor-process-stopped")
     service_reference = next(
         process
         for process in activation.processes
@@ -3840,6 +4106,10 @@ def _release_activation_hold(durable_fd: int, marker: dict[str, object]) -> None
             continue
         _resume_reference(reference)
     _resume_reference(fence.start)
+    # Resume the exact pinned OpenShell supervisor last. Until the proven
+    # workload is live, keeping PID 1 stopped prevents it from advertising a
+    # transient Ready state or admitting unrelated sandbox commands.
+    _resume_reference(fence.supervisor)
     _prove_released_activation(marker, fence, activation)
 
 

@@ -72,13 +72,10 @@ function stubMissingBedrockAuth(): void {
 function expectNoPostFailureSideEffects(
   harness: DirectSetupInferenceHarness,
   expectedCommands: string[] = [],
-  expectOpenAiProfileImport = false,
+  expectOpenAiProfileValidation = false,
 ): void {
-  const expected = expectOpenAiProfileImport
-    ? [
-        expect.stringMatching(/^provider profile -g nemoclaw import --file .*openai\.yaml$/u),
-        ...expectedCommands,
-      ]
+  const expected = expectOpenAiProfileValidation
+    ? ["provider profile -g nemoclaw export openai --output json", ...expectedCommands]
     : expectedCommands;
   expect(harness.commands.map(({ command }) => command)).toEqual(expected);
   expect(harness.verifyInferenceRoute).not.toHaveBeenCalled();
@@ -102,6 +99,12 @@ function expectNemoclawScopedRunner(
 }
 
 describe("setupInference dependency failures", () => {
+  it("fails closed before sandbox inference setup without policy authority revalidation", async () => {
+    await expect(
+      onboard.createSetupInference()("test-box", "gpt-test", "openai-api"),
+    ).rejects.toThrow("Sandbox inference setup requires policy authority revalidation.");
+  });
+
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
@@ -200,6 +203,7 @@ describe("setupInference dependency failures", () => {
       expect.any(String),
       { OPENAI_API_KEY: "openai-secret" },
       "nemoclaw",
+      { revalidatePolicyRequirements: expect.any(Function) },
     );
     expect(promptValidationRecovery).not.toHaveBeenCalled();
     expect(exitProcess).toHaveBeenCalledOnce();
@@ -991,6 +995,7 @@ describe("setupInference dependency failures", () => {
       "http://host.openshell.internal:4000/v1",
       { NVIDIA_INFERENCE_API_KEY: "test-secret" },
       "nemoclaw",
+      { revalidatePolicyRequirements: expect.any(Function) },
     );
     expect(exitProcess).toHaveBeenCalledOnce();
     expect(exitProcess).toHaveBeenCalledWith(29);

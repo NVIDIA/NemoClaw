@@ -62,8 +62,9 @@ Review the [Prerequisites](prerequisites) before you begin.
     If the installer does not offer Express setup, or if you enter `n` at the Express prompt on a supported non-N1x host, choose an inference provider and model, then provide its credential when prompted.
     For that interactive path, skip optional web search and messaging setup on a first run, then accept the suggested network policy tier.
     With the OpenShell Docker driver, stock Hermes onboarding normally uses the release's exact managed-image digest.
-    If registry or catalog availability prevents resolution, it builds the shipped repository Dockerfile instead; it never selects an unpinned `:latest` image.
+    If registry or catalog availability prevents resolution, stock onboarding stops before sandbox creation and does not build a shipped Dockerfile.
     Invalid or inconsistent catalog evidence fails closed before sandbox creation.
+    An explicit `nemohermes onboard --from <Dockerfile>` remains a separate custom-image path.
   </Step>
 
   <Step title="Confirm the Sandbox Is Ready">

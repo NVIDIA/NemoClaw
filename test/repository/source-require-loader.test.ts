@@ -433,8 +433,8 @@ fs.linkSync = function replaceSourceRequireLock(existingPath, claimPath) {
 const Module = require("node:module");
 const path = require("node:path");
 const expected = new Set([
-  path.resolve(${JSON.stringify(path.join(import.meta.dirname, "..", "helpers", "register-source-require.ts"))}),
-  path.resolve(${JSON.stringify(path.join(import.meta.dirname, "..", "helpers", "source-require-cache.ts"))}),
+  path.resolve(${JSON.stringify(path.join(import.meta.dirname, "../helpers", "register-source-require.ts"))}),
+  path.resolve(${JSON.stringify(path.join(import.meta.dirname, "../helpers", "source-require-cache.ts"))}),
 ]);
 const compiled = [];
 const originalCompile = Module.prototype._compile;

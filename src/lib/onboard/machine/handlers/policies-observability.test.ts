@@ -10,7 +10,7 @@ type Agent = { name: string };
 
 describe("handlePoliciesState observability", () => {
   it("threads durable observability intent into policy reconciliation", async () => {
-    const session = createSession({ observabilityEnabled: true });
+    const session = createSession({ observabilityEnabled: true, policyAuthority: "nemoclaw-managed" });
     const prepareResume = vi.fn(() => ({
       policyPresets: [],
       recordedPolicyPresetsNeedReconcile: false,
@@ -33,7 +33,7 @@ describe("handlePoliciesState observability", () => {
       updateSession: () => session,
       recordStepComplete: vi.fn(async () => session),
       toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
-      persistAppliedPolicyPresets: vi.fn(),
+      persistAppliedPolicyPresets: vi.fn(() => true),
     } satisfies PoliciesStateOptions<Agent, never>["deps"];
 
     await handlePoliciesState({
@@ -64,6 +64,7 @@ describe("handlePoliciesState observability", () => {
   it("keeps an authoritative rebuild tier through resume preparation and policy setup", async () => {
     const session = createSession({
       observabilityEnabled: true,
+      policyAuthority: "nemoclaw-managed",
       policyPresets: ["observability-otlp-local"],
     });
     const prepareResume = vi.fn(() => ({
@@ -88,7 +89,7 @@ describe("handlePoliciesState observability", () => {
       updateSession: () => session,
       recordStepComplete: vi.fn(async () => session),
       toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
-      persistAppliedPolicyPresets: vi.fn(),
+      persistAppliedPolicyPresets: vi.fn(() => true),
     } satisfies PoliciesStateOptions<Agent, never>["deps"];
 
     await handlePoliciesState({
