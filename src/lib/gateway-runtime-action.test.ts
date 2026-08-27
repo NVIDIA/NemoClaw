@@ -155,6 +155,46 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
   });
 
   describe("recoverNamedGatewayRuntime", () => {
+    it.each([
+      { label: "authentication", status: 1, output: "gateway info requires admin privileges" },
+      { label: "schema validation", status: 1, output: "protobuf decode error: invalid wire type" },
+      { label: "gateway identity validation", status: 1, output: "handshake verification failed" },
+      { label: "request validation", status: 2, output: "unknown option: --json" },
+    ] as const)(
+      "does not select or start a gateway when $label lifecycle probe fails (#10421)",
+      async ({ status, output }) => {
+        captureSpy.mockReturnValue({ status, output });
+        runSpy.mockReturnValue({ status: 0 } as never);
+
+        const result = await gatewayRuntime.recoverNamedGatewayRuntime({
+          gatewayName: "nemoclaw-8090",
+        });
+
+        expect(result).toMatchObject({ recovered: false, attempted: false });
+        expect(runSpy).not.toHaveBeenCalled();
+        expect(startGatewaySpy).not.toHaveBeenCalled();
+      },
+    );
+
+    it("does not start a gateway when the post-selection lifecycle probe fails (#10421)", async () => {
+      captureSpy
+        .mockReturnValueOnce({
+          status: 0,
+          output: "Status: Connected\nGateway: nemoclaw\n",
+        })
+        .mockReturnValueOnce({ status: 0, output: "Gateway: nemoclaw\n" })
+        .mockReturnValue({ status: 1, output: "gateway info requires admin privileges" });
+      runSpy.mockReturnValue({ status: 0 } as never);
+
+      const result = await gatewayRuntime.recoverNamedGatewayRuntime({
+        gatewayName: "nemoclaw-8090",
+      });
+
+      expect(result).toMatchObject({ recovered: false, attempted: true });
+      expect(runSpy).toHaveBeenCalledOnce();
+      expect(startGatewaySpy).not.toHaveBeenCalled();
+    });
+
     it("selects the supplied gateway name on the recovery path", async () => {
       captureSpy
         .mockReturnValueOnce({ status: 0, output: "Status: Disconnected\nGateway: nemoclaw\n" })
