@@ -148,7 +148,14 @@ describe("finalizeDockerGpuPatchBackup", () => {
       inspect: { event: "confirm running replacement", result: { status: 0, stdout: "true\n" } },
     } as const;
     const dockerRun = vi.fn((args: readonly string[]) => {
-      const response = dockerResults[String(args[0]) as keyof typeof dockerResults];
+      const namespaceInspect =
+        args[0] === "inspect" && String(args[4]).includes("sandbox-namespace");
+      const response = namespaceInspect
+        ? {
+            event: "read replacement namespace",
+            result: { status: 0, stdout: "current-gateway\n" },
+          }
+        : dockerResults[String(args[0]) as keyof typeof dockerResults];
       events.push(response.event);
       return response.result;
     });
@@ -187,6 +194,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
       "start replacement",
       "observe ready",
       "exec ready",
+      "read replacement namespace",
       "confirm sole replacement",
       "confirm running replacement",
     ]);
@@ -260,15 +268,14 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
-  it("accepts a retiring Error row only when the exact replacement has the OpenShell label (#9962)", () => {
+  it("scopes the final sole-container proof to the replacement gateway namespace", () => {
     const result = exactDeferredCreateResult();
-    const dockerRunResults = {
-      inspect: { status: 0, stdout: "true\n" },
-      ps: { status: 0, stdout: `${result.newContainerId}\n` },
-    } as const;
-    const dockerRun = vi.fn(
-      (args: readonly string[]) =>
-        dockerRunResults[String(args[0]) as keyof typeof dockerRunResults],
+    const dockerRun = vi.fn((args: readonly string[]) =>
+      args[0] === "inspect"
+        ? String(args[4]).includes("sandbox-namespace")
+          ? { status: 0, stdout: "current-gateway\n" }
+          : { status: 0, stdout: "true\n" }
+        : { status: 0, stdout: `${result.newContainerId}\n` },
     );
 
     const outcome = finalizeDockerGpuPatchBackup(
@@ -303,12 +310,75 @@ describe("finalizeDockerGpuPatchBackup", () => {
       "-a",
       "--no-trunc",
       "--filter",
-      "label=openshell.ai/managed-by=openshell",
+      `id=${result.newContainerId}`,
       "--filter",
-      "label=openshell.ai/sandbox-name=restored-name",
+      "label=openshell.ai/managed-by=openshell",
       "--format",
       "{{.ID}}",
     ]);
+    expect(dockerRun.mock.calls[1]?.[0]).toEqual([
+      "inspect",
+      "--type",
+      "container",
+      "--format",
+      '{{ index .Config.Labels "openshell.ai/sandbox-namespace" }}',
+      result.newContainerId,
+    ]);
+    expect(dockerRun.mock.calls[2]?.[0]).toEqual([
+      "ps",
+      "-a",
+      "--no-trunc",
+      "--filter",
+      "label=openshell.ai/managed-by=openshell",
+      "--filter",
+      "label=openshell.ai/sandbox-name=restored-name",
+      "--filter",
+      "label=openshell.ai/sandbox-namespace=current-gateway",
+      "--format",
+      "{{.ID}}",
+    ]);
+  });
+
+  it("rejects multiple same-name containers within the replacement gateway namespace", () => {
+    const result = exactDeferredCreateResult();
+    const dockerRun = vi.fn((args: readonly string[]) =>
+      args[0] === "inspect"
+        ? String(args[4]).includes("sandbox-namespace")
+          ? { status: 0, stdout: "current-gateway\n" }
+          : { status: 0, stdout: "true\n" }
+        : args.includes("label=openshell.ai/sandbox-namespace=current-gateway")
+          ? { status: 0, stdout: `${result.newContainerId}\n${"c".repeat(64)}\n` }
+          : { status: 0, stdout: `${result.newContainerId}\n` },
+    );
+
+    const outcome = finalizeDockerGpuPatchBackup(
+      {
+        result,
+        supervisorReady: true,
+        sandboxName: "alpha",
+        finalHandoffTimeoutSecs: 60,
+      },
+      {
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        dockerStart: vi.fn(() => ({ status: 0 })),
+        dockerRun,
+        runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 01:40:35  Ready\n"),
+        runOpenshell: vi.fn((args: readonly string[]) =>
+          args[1] === "list"
+            ? { status: 0, stdout: "beta  2026-08-23 01:40:35  Ready\n" }
+            : { status: 0 },
+        ),
+        sleep: vi.fn(),
+      },
+    );
+
+    expect(outcome).toMatchObject({
+      backupRemoved: true,
+      lifecycleReleaseObserved: true,
+      replacementRestarted: true,
+      finalHandoffAcknowledged: false,
+    });
   });
 
   it.each([

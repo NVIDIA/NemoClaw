@@ -291,8 +291,12 @@ export function createHermesShieldsProviderConsumerHarness(
       .spyOn(policy, "inspectPolicyMutationAuthority")
       .mockReturnValue(managedPolicyMutationAuthority),
     vi
+      .spyOn(policy, "inspectPolicyRecoveryAuthority")
+      .mockReturnValue(managedPolicyMutationAuthority),
+    vi
       .spyOn(policy, "recheckPolicyMutationAuthority")
       .mockReturnValue(managedPolicyMutationAuthority),
+    vi.spyOn(policy, "finalizePolicyMutationReceipt").mockImplementation(() => undefined),
     registrySpy,
     vi
       .spyOn(privilegedExec, "privilegedSandboxExecArgv")
@@ -340,6 +344,11 @@ export function createHermesShieldsProviderConsumerHarness(
         command.includes("--help")
       ) {
         return `${SEALED_PLAN_HELP}\n`;
+      }
+      const gatewayControlIndex = command.indexOf("/usr/local/bin/nemoclaw-gateway-control");
+      if (gatewayControlIndex >= 0 && command[gatewayControlIndex + 1] === "restart") {
+        const nonce = String(command[gatewayControlIndex + 2]);
+        return `v1 ${nonce} complete ok 10 11\nGATEWAY_PID=11\n`;
       }
       if (command[0] === "stat" && command.at(-1) === hermesProviderConsumerTarget.configDir) {
         return "3770 sandbox:sandbox\n";

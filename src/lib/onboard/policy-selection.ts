@@ -254,21 +254,17 @@ export function computeSetupPresetSuggestions(
   const activeMessagingPresets = Array.isArray(enabledChannels)
     ? new Set(allMessagingChannelPolicyPresets(enabledChannels))
     : null;
-  const hermesAgent = typeof agent === "string" && agent.trim().toLowerCase() === "hermes";
   const supportOptions = { webSearchSupported: options.webSearchSupported };
   const suggestions = deps.tiers
     .resolveTierPresets(tierName)
     .map((preset) => preset.name)
     .filter((name) => setupPolicyPresetAppliesToAgent(name, agent))
-    // Hermes Discord egress names a sandbox-scoped credential provider. An
-    // open tier may contain the preset, but OpenShell rejects it unless the
-    // channel is active and its provider is attached to the sandbox.
+    // Discord egress names a sandbox-scoped credential provider. An open tier
+    // may contain the preset, but OpenShell rejects it unless the channel is
+    // active and its provider is attached to the sandbox.
     .filter(
       (name) =>
-        !hermesAgent ||
-        name !== "discord" ||
-        activeMessagingPresets === null ||
-        activeMessagingPresets.has(name),
+        name !== "discord" || activeMessagingPresets === null || activeMessagingPresets.has(name),
     )
     .filter(
       (name) =>
