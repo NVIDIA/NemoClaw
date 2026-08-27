@@ -777,94 +777,10 @@ function managedReceiptBoundary(
   return boundary;
 }
 
-/** Refresh only the mutable policy identity after a stable external sandbox-policy update. */
-function reconcileManagedReceiptBoundary(
-  live: LivePolicyBoundary,
-  sandboxName: string,
-  operation: string,
-): {
-  readonly live: LivePolicyBoundary;
-  readonly receipt: NemoClawPolicyCreationReceipt;
-} {
-  const boundary = managedReceiptSandboxBoundary(live, sandboxName, operation);
-  try {
-    assertNemoClawPolicyCreationReceiptMatches(boundary.receipt, {
-      origin: "sandbox-create",
-      gatewayName: live.gatewayName,
-      gatewayPort: live.gatewayPort,
-      sandboxName,
-      lifecycleGeneration: live.sandbox.lifecycleGeneration as string,
-      sandboxIdentityFingerprint: boundary.liveIdentityFingerprint,
-      policyHash: live.inspection.policyIdentity.hash,
-      policyVersion: live.inspection.policyIdentity.activeVersion,
-    });
-    return { live, receipt: boundary.receipt };
-  } catch {
-    // A sandbox-scoped OpenShell update may advance only the mutable policy identity.
-  }
-
-  let beforePolicy: string;
-  try {
-    beforePolicy = captureSandboxBasePolicy(sandboxName, live.gatewayName);
-  } catch {
-    throw new PolicyAuthorityRefusalError(
-      `Refusing to ${operation}: the live sandbox policy could not be read for receipt reconciliation.`,
-      "owner-unknown",
-    );
-  }
-  const confirmed = inspectLivePolicyBoundary(sandboxName, operation, live.gatewayName);
-  const confirmedBoundary = managedReceiptSandboxBoundary(confirmed, sandboxName, operation);
-  let afterPolicy: string;
-  try {
-    afterPolicy = captureSandboxBasePolicy(sandboxName, live.gatewayName);
-  } catch {
-    throw new PolicyAuthorityRefusalError(
-      `Refusing to ${operation}: the live sandbox policy could not be re-read for receipt reconciliation.`,
-      "owner-unknown",
-    );
-  }
-  if (
-    !isDeepStrictEqual(confirmedBoundary.receipt, boundary.receipt) ||
-    confirmedBoundary.liveIdentityFingerprint !== boundary.liveIdentityFingerprint ||
-    confirmed.inspection.policyIdentity.hash !== live.inspection.policyIdentity.hash ||
-    confirmed.inspection.policyIdentity.activeVersion !==
-      live.inspection.policyIdentity.activeVersion ||
-    !policyDocumentsMatch(beforePolicy, afterPolicy)
-  ) {
-    throw new PolicyAuthorityRefusalError(
-      `Refusing to ${operation}: the live sandbox policy changed during policy receipt reconciliation.`,
-      "owner-unknown",
-    );
-  }
-
-  const replacementReceipt: NemoClawPolicyCreationReceipt = {
-    ...boundary.receipt,
-    policyHash: confirmed.inspection.policyIdentity.hash,
-    policyVersion: confirmed.inspection.policyIdentity.activeVersion,
-  };
-  if (
-    !registry.compareAndSetSandboxPolicyCreationReceipt(
-      sandboxName,
-      boundary.receipt,
-      replacementReceipt,
-    )
-  ) {
-    throw new PolicyAuthorityRefusalError(
-      `Refusing to ${operation}: the policy creation receipt changed during reconciliation.`,
-      "owner-unknown",
-    );
-  }
-
-  const completed = inspectLivePolicyBoundary(sandboxName, operation, live.gatewayName);
-  const completedBoundary = managedReceiptBoundary(completed, sandboxName, operation);
-  return { live: completed, receipt: completedBoundary.receipt };
-}
-
 function resolvePolicyAuthority(
   live: LivePolicyBoundary,
   sandboxName: string,
   operation: string,
-  reconcileMutablePolicyIdentity = false,
 ): PolicyMutationAuthority {
   if (live.inspection.authority === "externally-managed") {
     if (live.sandbox.policyAuthority === "nemoclaw-managed") {
@@ -888,9 +804,10 @@ function resolvePolicyAuthority(
       "owner-unknown",
     );
   }
-  const managed = reconcileMutablePolicyIdentity
-    ? reconcileManagedReceiptBoundary(live, sandboxName, operation)
-    : { live, receipt: managedReceiptBoundary(live, sandboxName, operation).receipt };
+  const managed = {
+    live,
+    receipt: managedReceiptBoundary(live, sandboxName, operation).receipt,
+  };
   return {
     authority: "nemoclaw-managed",
     authorityRecordedNow: false,
@@ -927,7 +844,7 @@ export function inspectPolicyMutationAuthority(
   );
 }
 
-/** Reconcile a stable mutable policy identity immediately before a local mutation. */
+/** Require the durable policy receipt immediately before a local mutation. */
 function preparePolicyMutationAuthority(
   sandboxName: string,
   operation: string,
@@ -937,7 +854,6 @@ function preparePolicyMutationAuthority(
     inspectLivePolicyBoundary(sandboxName, operation, requestedGatewayName),
     sandboxName,
     operation,
-    true,
   );
 }
 
