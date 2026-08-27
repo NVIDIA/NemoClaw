@@ -269,6 +269,13 @@ Follow `.agents/skills/_shared/pr-follow-up.md`.
 - Keep `agents/hermes/generate-config.ts` as a thin build-time entrypoint; add Hermes env parsing, config construction, registry handling, and serialization under `agents/hermes/config/`
 - Do not add Hermes behavior for an OpenClaw issue without a Hermes-specific repro or acceptance test
 
+### Blueprint Image Pins
+
+When the managed sandbox image changes, update `digest` and `components.sandbox.image` in
+`nemoclaw-blueprint/blueprint.yaml` with the same immutable SHA-256 digest. Release tooling must
+update both fields together. `test/onboarding/validate-blueprint.test.ts` rejects mutable tags and
+mismatched digests.
+
 ### Gotchas
 
 - `npm install` at root triggers `prek install` which sets up git hooks. If hooks fail, check that `core.hooksPath` is unset: `git config --unset core.hooksPath`

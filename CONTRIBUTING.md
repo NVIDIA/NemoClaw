@@ -91,7 +91,7 @@ Use these guides to find the relevant contract:
 | Explanatory text and test titles | [`WRITING.md`](WRITING.md) |
 | Available npm commands | [`package.json`](package.json) |
 | Git-hook configuration | [`.pre-commit-config.yaml`](.pre-commit-config.yaml) |
-| Blueprint contribution rules | [`nemoclaw-blueprint/AGENTS.md`](nemoclaw-blueprint/AGENTS.md) |
+| Blueprint image pins | [`AGENTS.md`](AGENTS.md#blueprint-image-pins) |
 
 Do not copy detailed component rules into this guide. Update the owning guide when a change alters a
 component contract.
