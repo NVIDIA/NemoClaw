@@ -121,6 +121,10 @@ export function isCoreFlowCompleteBeforeFinalization(result: {
 }
 
 function hasProviderBackedApfIntent(context: OnboardFlowContext): boolean {
+  const requestedAgentName = (context.agent as { readonly name?: unknown } | null)?.name;
+  const requestsNondefaultAgent =
+    typeof requestedAgentName === "string" &&
+    requestedAgentName.trim().toLowerCase() !== "openclaw";
   const routeValues = [
     context.provider,
     context.model,
@@ -133,6 +137,7 @@ function hasProviderBackedApfIntent(context: OnboardFlowContext): boolean {
     context.nimContainer,
   ];
   return (
+    requestsNondefaultAgent ||
     routeValues.some((value) => typeof value === "string" && value.trim().length > 0) ||
     context.endpointSource != null ||
     context.selectedMessagingChannels.length > 0 ||

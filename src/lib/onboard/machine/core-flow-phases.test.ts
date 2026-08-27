@@ -587,11 +587,15 @@ describe("core onboard flow phases", () => {
     expect(events).toEqual(["credential-provider-effect", "sandbox-create"]);
   });
 
-  it("rejects provider-backed APF before provider inference or sandbox effects", async () => {
+  it.each([
+    ["provider-backed input", { model: "gpt-5.4", provider: "nvidia-prod" }],
+    ["a nondefault agent", { agent: { name: "hermes" }, model: null, provider: null }],
+  ])("rejects %s before provider inference or sandbox effects", async (_label, patch) => {
     const setupInference = vi.fn(async () => ({ ok: true as const }));
+    const reserveSandboxInferenceRoute = vi.fn(() => true);
     const createSandbox = vi.fn(async () => "created-sandbox");
     const { providerInference: providerPhase } = createPhases({
-      providerDeps: { setupInference },
+      providerDeps: { reserveSandboxInferenceRoute, setupInference },
       sandboxOptions: { apfInterceptorRequested: true },
       sandboxDeps: { createSandbox },
     });
@@ -600,14 +604,14 @@ describe("core onboard flow phases", () => {
       providerPhase.run(
         context({
           fresh: true,
-          model: "gpt-5.4",
-          provider: "nvidia-prod",
           selectedMessagingChannels: [],
+          ...patch,
         }),
       ),
     ).rejects.toThrow(/supports providerless sandbox creation only/u);
 
     expect(setupInference).not.toHaveBeenCalled();
+    expect(reserveSandboxInferenceRoute).not.toHaveBeenCalled();
     expect(createSandbox).not.toHaveBeenCalled();
   });
 
