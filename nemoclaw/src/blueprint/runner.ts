@@ -603,8 +603,10 @@ function assertReusableInferenceProvider(
 
 async function inspectOwnedInferenceProvider(
   expected: Parameters<typeof assertReusableInferenceProvider>[1],
+  gateway: string,
 ): Promise<"absent" | "matching"> {
   const result = await runCmd(["openshell", "provider", "get", expected.name], {
+    gateway,
     reject: false,
   });
   const output = `${result.stderr}\n${result.stdout}`;
@@ -726,13 +728,14 @@ export function loadBlueprint(): Blueprint {
 async function runCmd(
   args: string[],
   options?: {
+    gateway?: string;
     maxBuffer?: number;
     omitSandboxPolicy?: boolean;
     reject?: boolean;
     timeout?: number;
   },
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  const env = buildSubprocessEnv();
+  const env = buildBlueprintOpenShellEnv(options?.gateway);
   if (options?.omitSandboxPolicy) {
     delete env.OPENSHELL_SANDBOX_POLICY;
   }
@@ -750,6 +753,19 @@ async function runCmd(
     stdout: result.stdout,
     stderr: result.stderr,
   };
+}
+
+function buildBlueprintOpenShellEnv(
+  gateway?: string,
+  extra?: Record<string, string>,
+): Record<string, string> {
+  const env = buildSubprocessEnv(extra);
+  if (gateway !== undefined) {
+    env.OPENSHELL_GATEWAY = gateway;
+  }
+  delete env.OPENSHELL_GATEWAY_ENDPOINT;
+  delete env.OPENSHELL_GATEWAY_INSECURE;
+  return env;
 }
 
 async function inspectActiveGatewayBinding(): Promise<GatewayBinding> {
@@ -777,10 +793,12 @@ async function inspectActiveGatewayBinding(): Promise<GatewayBinding> {
 async function runBlueprintPolicyAuthorityCommand(
   command: string[],
   subject: "global" | "sandbox",
+  gateway: string,
 ): Promise<Awaited<ReturnType<typeof runCmd>>> {
   let result: Awaited<ReturnType<typeof runCmd>>;
   try {
     result = await runCmd(command, {
+      gateway,
       maxBuffer: POLICY_AUTHORITY_MAX_BYTES,
       reject: false,
       timeout: POLICY_AUTHORITY_TIMEOUT_MS,
@@ -805,10 +823,12 @@ async function runBlueprintPolicyAuthorityCommand(
 async function runBlueprintReceiptInspectionCommand(
   command: string[],
   subject: "gateway" | "policy" | "sandbox",
+  gateway: string,
 ): Promise<Awaited<ReturnType<typeof runCmd>>> {
   let result: Awaited<ReturnType<typeof runCmd>>;
   try {
     result = await runCmd(command, {
+      gateway,
       maxBuffer: POLICY_AUTHORITY_MAX_BYTES,
       reject: false,
       timeout: POLICY_AUTHORITY_TIMEOUT_MS,
@@ -842,6 +862,7 @@ async function inspectBlueprintPolicyAuthority(
     const history = await runBlueprintPolicyAuthorityCommand(
       ["openshell", "policy", "list", "-g", gateway, "--global", "--limit", "1"],
       subject,
+      gateway,
     );
     const historyState = classifyOpenShellGlobalPolicyHistory(history.stdout, history.stderr);
     if (historyState === "absent") {
@@ -857,7 +878,7 @@ async function inspectBlueprintPolicyAuthority(
     sandboxName === undefined
       ? ["openshell", "policy", "get", "-g", gateway, "--global", "--full", "--output", "json"]
       : ["openshell", "policy", "get", "-g", gateway, "--full", "--output", "json", sandboxName];
-  const result = await runBlueprintPolicyAuthorityCommand(command, subject);
+  const result = await runBlueprintPolicyAuthorityCommand(command, subject, gateway);
   if (sandboxName === undefined) {
     try {
       const activeGlobalPolicy = parseActiveGlobalPolicyAuthorityMetadata(result.stdout);
@@ -951,6 +972,7 @@ async function inspectGatewayEndpoint(name: string): Promise<{ host: string; por
   const info = await runBlueprintReceiptInspectionCommand(
     ["openshell", "gateway", "info", "-g", name],
     "gateway",
+    name,
   );
   return parseSingleManagedGatewayEndpoint(`${info.stderr}\n${info.stdout}`);
 }
@@ -963,6 +985,7 @@ async function inspectSandboxIdentityFingerprint(
   const result = await runBlueprintReceiptInspectionCommand(
     ["openshell", "sandbox", "get", "-g", gateway, sandboxName],
     "sandbox",
+    gateway,
   );
   const output = `${result.stderr}\n${result.stdout}`;
   const lines = output.replace(/\u001b\[[0-9;]*m/g, "").split(/\r?\n/);
@@ -1081,12 +1104,13 @@ async function inspectReceiptSandboxBinding(
 async function runRuntimeIdentityCommand(
   args: string[],
   options?: RuntimeIdentityCommandOptions,
+  gateway?: string,
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const result = await execa(args[0], args.slice(1), {
     reject: false,
     stdout: "pipe",
     stderr: "pipe",
-    env: buildSubprocessEnv(options?.env),
+    env: buildBlueprintOpenShellEnv(gateway, options?.env),
     extendEnv: false,
   });
   return {
@@ -1110,6 +1134,7 @@ function isRuntimeIdentityMutationCommand(args: readonly string[]): boolean {
 }
 
 function runtimeIdentityCommandDeps(
+  gateway: string,
   validateBeforeMutation?: () => Promise<unknown>,
 ): RuntimeIdentityCommandDeps {
   return {
@@ -1117,7 +1142,7 @@ function runtimeIdentityCommandDeps(
       if (validateBeforeMutation && isRuntimeIdentityMutationCommand(args)) {
         await validateBeforeMutation();
       }
-      return runRuntimeIdentityCommand(args, options);
+      return runRuntimeIdentityCommand(args, options, gateway);
     },
     formatError: boundedCommandError,
   };
@@ -1125,11 +1150,12 @@ function runtimeIdentityCommandDeps(
 
 function runtimeIdentityDeps(
   persistReceipt: (receipt: RuntimeIdentityReceipt) => void,
+  gateway: string,
   profilePolicy?: RuntimeIdentityProfilePolicy,
   validateBeforeMutation?: () => Promise<unknown>,
 ): RuntimeIdentityDeps {
   return {
-    ...runtimeIdentityCommandDeps(validateBeforeMutation),
+    ...runtimeIdentityCommandDeps(gateway, validateBeforeMutation),
     validateEndpointUrl,
     persistReceipt,
     blueprintPath: process.env.NEMOCLAW_BLUEPRINT_PATH ?? ".",
@@ -1851,6 +1877,7 @@ export async function actionApply(
         throw error;
       }
     },
+    policyGateway.name,
     options?.runtimeIdentityProfilePolicy,
     requireUsablePolicyBoundary,
   );
@@ -1892,6 +1919,7 @@ export async function actionApply(
 
     await requireCreatePolicyBoundary();
     const createResult = await runCmd(createArgs, {
+      gateway: policyGateway.name,
       omitSandboxPolicy: true,
       reject: false,
     });
@@ -1999,6 +2027,7 @@ export async function actionApply(
 
     if (runtimeIdentityConfig) {
       const providerResult = await runCmd(["openshell", "provider", "get", providerName], {
+        gateway: policyGateway.name,
         reject: false,
       });
       const providerOutput = `${providerResult.stderr}\n${providerResult.stdout}`;
@@ -2016,7 +2045,10 @@ export async function actionApply(
         );
       }
       if (reuseExistingInferenceProvider) {
-        const routeResult = await runCmd(["openshell", "inference", "get"], { reject: false });
+        const routeResult = await runCmd(["openshell", "inference", "get"], {
+          gateway: policyGateway.name,
+          reject: false,
+        });
         if (routeResult.exitCode !== 0) {
           throw new Error(
             `Failed to inspect the active inference route before runtime identity apply: ${boundedCommandError(`${routeResult.stderr}\n${routeResult.stdout}`)}`,
@@ -2072,7 +2104,7 @@ export async function actionApply(
         reject: false,
         stdout: "pipe",
         stderr: "pipe",
-        env: buildSubprocessEnv(credEnv),
+        env: buildBlueprintOpenShellEnv(policyGateway.name, credEnv),
         extendEnv: false,
       });
       // A required mutation: a silently-ignored failure would persist plan.json and
@@ -2085,6 +2117,7 @@ export async function actionApply(
         if (providerResult.stderr.includes("already exists")) {
           if (runtimeIdentityConfig) {
             const racedProvider = await runCmd(["openshell", "provider", "get", providerName], {
+              gateway: policyGateway.name,
               reject: false,
             });
             if (racedProvider.exitCode !== 0) {
@@ -2135,7 +2168,10 @@ export async function actionApply(
         inferenceArgs.push("--timeout", String(inferenceCfg.timeout_secs));
       }
       await requireUsablePolicyBoundary();
-      const inferenceResult = await runCmd(inferenceArgs, { reject: false });
+      const inferenceResult = await runCmd(inferenceArgs, {
+        gateway: policyGateway.name,
+        reject: false,
+      });
       // Another required mutation: without a routed provider the sandbox cannot
       // perform inference, so a non-zero result must abort the apply. (#6703)
       if (inferenceResult.exitCode !== 0) {
@@ -2176,6 +2212,7 @@ export async function actionApply(
         const currentPolicy = await runBlueprintReceiptInspectionCommand(
           ["openshell", "policy", "get", "-g", policyGateway.name, "--base", sandboxName],
           "policy",
+          policyGateway.name,
         );
 
         const mergedPolicyFile = join(stateDir, "merged-policy.yaml");
@@ -2214,7 +2251,7 @@ export async function actionApply(
             "--wait",
             sandboxName,
           ],
-          { reject: false },
+          { gateway: policyGateway.name, reject: false },
         );
         if (policySet.exitCode !== 0) {
           throw new Error(
@@ -2315,18 +2352,22 @@ export async function actionApply(
     }
     if (inferenceProviderCreatedByApply) {
       try {
-        const providerState = await inspectOwnedInferenceProvider({
-          name: providerName,
-          type: providerType,
-          requiresEndpointConfig: endpoint !== "",
-          requiresCredential: credential !== "",
-        });
+        const providerState = await inspectOwnedInferenceProvider(
+          {
+            name: providerName,
+            type: providerType,
+            requiresEndpointConfig: endpoint !== "",
+            requiresCredential: credential !== "",
+          },
+          policyGateway.name,
+        );
         if (providerState === "absent") {
           inferenceProviderCreatedByApply = false;
           persistRunPlan();
         } else {
           await requireUsablePolicyBoundary();
           const removeProvider = await runCmd(["openshell", "provider", "delete", providerName], {
+            gateway: policyGateway.name,
             reject: false,
           });
           if (
@@ -2351,12 +2392,13 @@ export async function actionApply(
       try {
         await requireUsablePolicyBoundary();
         await runCmd(["openshell", "sandbox", "stop", "-g", policyGateway.name, sandboxName], {
+          gateway: policyGateway.name,
           reject: false,
         });
         await validateBlueprintPolicyAuthorityReceipt(policyAuthorityReceipt, sandboxName, false);
         const remove = await runCmd(
           ["openshell", "sandbox", "remove", "-g", policyGateway.name, sandboxName],
-          { reject: false },
+          { gateway: policyGateway.name, reject: false },
         );
         if (remove.exitCode !== 0 && !MISSING_SANDBOX_PATTERN.test(remove.stderr)) {
           throw new Error(
@@ -2691,21 +2733,24 @@ export async function actionRollback(rid: string): Promise<void> {
     await removeRuntimeIdentity(
       runtimeIdentityReceipt,
       sandboxName,
-      runtimeIdentityCommandDeps(requireRollbackPolicyBoundary),
+      runtimeIdentityCommandDeps(policyAuthorityReceipt!.gateway, requireRollbackPolicyBoundary),
     );
   }
 
   if (inferenceProviderCreatedByApply) {
     progress(40, `Removing inference provider ${inferenceProviderName!}`);
-    const providerState = await inspectOwnedInferenceProvider({
-      ...inferenceProviderBinding!,
-      requiresCredential: false,
-    });
+    const providerState = await inspectOwnedInferenceProvider(
+      {
+        ...inferenceProviderBinding!,
+        requiresCredential: false,
+      },
+      policyAuthorityReceipt!.gateway,
+    );
     if (providerState === "matching") {
       await requireRollbackPolicyBoundary();
       const removeProvider = await runCmd(
         ["openshell", "provider", "delete", inferenceProviderName!],
-        { reject: false },
+        { gateway: policyAuthorityReceipt!.gateway, reject: false },
       );
       if (
         removeProvider.exitCode !== 0 &&
@@ -2723,14 +2768,14 @@ export async function actionRollback(rid: string): Promise<void> {
     await requireRollbackPolicyBoundary();
     const stop = await runCmd(
       ["openshell", "sandbox", "stop", "-g", policyAuthorityReceipt!.gateway, sandboxName],
-      { reject: false },
+      { gateway: policyAuthorityReceipt!.gateway, reject: false },
     );
 
     progress(70, `Removing sandbox ${sandboxName}`);
     await requireRollbackPolicyBoundary(false);
     const remove = await runCmd(
       ["openshell", "sandbox", "remove", "-g", policyAuthorityReceipt!.gateway, sandboxName],
-      { reject: false },
+      { gateway: policyAuthorityReceipt!.gateway, reject: false },
     );
     if (remove.exitCode !== 0 && !MISSING_SANDBOX_PATTERN.test(remove.stderr)) {
       const stopFailure =
