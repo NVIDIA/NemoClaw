@@ -84,9 +84,11 @@ export async function cleanupBraveNemoClawSandbox(host: HostCliClient): Promise<
 
 function parsePlaceholder(configText: string): string | undefined {
   const parsed = JSON.parse(configText) as {
-    tools?: { web?: { search?: { apiKey?: unknown } } };
+    plugins?: {
+      entries?: { brave?: { config?: { webSearch?: { apiKey?: unknown } } } };
+    };
   };
-  const value = parsed.tools?.web?.search?.apiKey;
+  const value = parsed.plugins?.entries?.brave?.config?.webSearch?.apiKey;
   return typeof value === "string" && value ? value : undefined;
 }
 
@@ -204,7 +206,7 @@ export async function onboardBrave(
 
 export function assertBraveConfig(configText: string): string {
   const parsedConfig = JSON.parse(configText) as {
-    tools?: { web?: { search?: { enabled?: unknown; provider?: unknown; apiKey?: unknown } } };
+    tools?: { web?: { search?: { enabled?: unknown; provider?: unknown } } };
   };
   const searchConfig = parsedConfig.tools?.web?.search;
   expect(searchConfig?.enabled, configText).toBe(true);
