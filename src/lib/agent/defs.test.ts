@@ -177,6 +177,16 @@ describe("agent definitions", () => {
     expect(choices.map((choice) => choice.name)).toContain("hermes");
   });
 
+  it("uses agent display names in interactive choices", () => {
+    const choices = getAgentChoices();
+    expect(choices).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "openclaw", displayName: "OpenClaw" }),
+        expect.objectContaining({ name: "hermes", displayName: "Hermes Agent" }),
+      ]),
+    );
+  });
+
   it("requires a readable regular policy-additions file for non-OpenClaw baselines (#7194)", () => {
     const agentName = `missing-baseline-${String(Date.now())}`;
     writeTempAgentManifest(agentName, `name: ${agentName}\ndisplay_name: Missing Baseline\n`);
