@@ -335,16 +335,31 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       "M-W1: WeChat provider exists in gateway",
     );
     check(
-      providerListText.includes(`${SANDBOX_NAME}-extra-telegram-bot-token-agent-a`),
-      "X1: provider registered for TELEGRAM_BOT_TOKEN_AGENT_A",
-    );
-    check(
-      !providerListText.includes(`${SANDBOX_NAME}-extra-telegram-bot-token-agent-missing`),
-      "X2: missing extra key produced no provider row",
-    );
-    check(
       !providerListText.includes(`${SANDBOX_NAME}-extra-github-token`),
       "X3: GITHUB_TOKEN refused by parser; no provider row registered",
+    );
+
+    const telegramProvider = await runHost(
+      host,
+      "openshell",
+      ["provider", "get", `${SANDBOX_NAME}-telegram-bridge`],
+      {
+        artifactName: "provider-get-telegram-messaging-providers",
+        env: state.env,
+        redactionValues,
+        timeoutMs: 60_000,
+      },
+    );
+    expectExitZero(telegramProvider, "X1: canonical Telegram provider is inspectable");
+    const telegramProviderText = stripAnsi(outputText(telegramProvider));
+    check(
+      telegramProviderText.includes("TELEGRAM_BOT_TOKEN_AGENT_A") &&
+        telegramProviderText.includes("TELEGRAM_BOT_TOKEN_AGENT_B"),
+      "X1: extra Telegram credentials share the canonical policy-bound provider",
+    );
+    check(
+      !telegramProviderText.includes("TELEGRAM_BOT_TOKEN_AGENT_MISSING"),
+      "X2: missing extra key adds no provider credential",
     );
 
     const envDump = await sandboxOutput(

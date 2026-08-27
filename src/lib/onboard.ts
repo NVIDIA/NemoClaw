@@ -3390,6 +3390,16 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           toSessionUpdates: (updates) =>
             toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
           persistAppliedPolicyPresets: policyPresetCarry.persistFinalizedPolicyPresets,
+          synchronizeMessagingProvidersAfterPolicy: (input) =>
+            onboardProviders.synchronizeMessagingProvidersAfterPolicy(input, {
+              rebindMessagingCapabilities: sandboxCreateIntentResolver.rebind,
+              upsertMessagingProviders,
+              runGatewayOpenshell: runCoreGatewayOpenshell,
+              runOpenshell,
+              sleepSeconds,
+              waitForSandboxReady,
+              gatewayName: GATEWAY_NAME,
+            }),
         },
         finalization: {
           stagedLegacyKeys,

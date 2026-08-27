@@ -20,6 +20,40 @@ function createDeps(overrides: Parameters<typeof createPolicyHandlerDeps>[0] = {
 }
 
 describe("handlePoliciesState", () => {
+  it("synchronizes messaging providers after the matching policy is live", async () => {
+    const synchronizeMessagingProvidersAfterPolicy = vi.fn(async () => undefined);
+    const { deps, calls } = createDeps({
+      setupPoliciesWithSelection: vi.fn(async () => ["telegram"]),
+      synchronizeMessagingProvidersAfterPolicy,
+    });
+
+    await handlePoliciesState(baseOptions(deps));
+
+    expect(synchronizeMessagingProvidersAfterPolicy).toHaveBeenCalledWith({
+      sandboxName: "my-assistant",
+      enabledChannels: ["telegram"],
+      agent: null,
+      webSearchConfig: null,
+      revalidatePolicyRequirements: undefined,
+    });
+    expect(calls.complete).toHaveBeenCalledOnce();
+    expect(synchronizeMessagingProvidersAfterPolicy.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.complete.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("does not synchronize messaging providers without a live channel policy", async () => {
+    const synchronizeMessagingProvidersAfterPolicy = vi.fn(async () => undefined);
+    const { deps } = createDeps({
+      setupPoliciesWithSelection: vi.fn(async () => []),
+      synchronizeMessagingProvidersAfterPolicy,
+    });
+
+    await handlePoliciesState(baseOptions(deps));
+
+    expect(synchronizeMessagingProvidersAfterPolicy).not.toHaveBeenCalled();
+  });
+
   it("runs compatible endpoint smoke before policy selection", async () => {
     const { deps, calls } = createDeps();
 

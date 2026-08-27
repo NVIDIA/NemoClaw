@@ -510,13 +510,7 @@ export function createProviderEffectBoundary(input: {
     | null;
   readonly revalidatePolicyAuthorityBeforeCreate: () => void;
   readonly runOpenshell: SandboxCreateOrchestrationRuntime["runOpenshell"];
-  readonly waitForSandboxReady: SandboxCreateOrchestrationRuntime["waitForSandboxReady"];
   readonly revalidateSandboxIdentity: (exactIdentity: string, operation: string) => void;
-  readonly inspectSandbox: () => import("../sandbox-recreate-transaction").SandboxRecreateObservation;
-  readonly recordProviderRefresh: (
-    phase: import("../../state/registry/types").PendingSandboxProviderRefreshPhase,
-    attachedProviders: readonly string[],
-  ) => void;
 }): ProviderEffectBoundary {
   const validate = () =>
     validateAttachedMessagingProvidersBeforeSandboxCreation(
@@ -567,9 +561,6 @@ export function createProviderEffectBoundary(input: {
         },
         {
           runOpenshell: input.runOpenshell,
-          waitForSandboxReady: input.waitForSandboxReady,
-          inspectSandbox: input.inspectSandbox,
-          recordProviderRefresh: input.recordProviderRefresh,
           revalidateSandboxIdentity: (operation) => {
             input.revalidateSandboxIdentity(context.lifecycleLiveIdentityFingerprint, operation);
             context.revalidatePolicyRequirements(operation);
@@ -1800,24 +1791,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         requirePendingPolicyVerification(),
       );
     };
-    const recordPendingProviderRefresh = (
-      phase: import("../../state/registry/types").PendingSandboxProviderRefreshPhase,
-      attachedProviders: readonly string[],
-    ): void => {
-      const current = requirePendingPolicyVerification();
-      const next: PendingSandboxPolicyVerification = {
-        ...current,
-        providerRefresh: {
-          schemaVersion: 1,
-          phase,
-          attachedProviders: [...attachedProviders],
-        },
-      };
-      registry.recordPendingSandboxPolicyVerification(requireCreateReservation(), next, {
-        expected: current,
-      });
-      pendingPolicyVerification = next;
-    };
     const runCreateFlow = async (
       attemptCreateArgv: string[],
       hermesPortableReadyCapture?: import("../sandbox-gpu-create-flow").HermesPortableReadyCapture,
@@ -2069,9 +2042,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           `publishing providers before creating sandbox gateway '${GATEWAY_NAME}'`,
         ),
       runOpenshell,
-      waitForSandboxReady,
-      inspectSandbox: () => getSandboxRecreateObservation(sandboxName, GATEWAY_NAME),
-      recordProviderRefresh: recordPendingProviderRefresh,
       revalidateSandboxIdentity: (exactIdentity, operation) =>
         sandboxRecreateTransaction.revalidateCreatedSandboxLifecycleRegistration(
           { sandboxName, gatewayName: GATEWAY_NAME },

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { inspectGatewayCredentialOnlyProviderBinding } from "../../onboard/gateway-provider-metadata";
+import { inspectGatewayCredentialFamilyProviderBinding } from "../../onboard/gateway-provider-metadata";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import { redact } from "../../security/redact";
 import type { SandboxMessagingCredentialBindingPlan, SandboxMessagingPlan } from "../manifest";
@@ -40,11 +40,12 @@ export function applyCredentialsAtOpenShell(
 
   for (const binding of activeBindings) {
     const credential = readCredentialEnv(env, binding.providerEnvKey);
-    const providerState = inspectGatewayCredentialOnlyProviderBinding(
+    const providerState = inspectGatewayCredentialFamilyProviderBinding(
       {
         name: binding.providerName,
         type: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
         credentialKey: binding.providerEnvKey,
+        allowExtendedCredentialKeys: true,
       },
       runOpenshell,
     );
@@ -79,11 +80,12 @@ export function applyCredentialsAtOpenShell(
         `Failed to ${action} messaging provider '${binding.providerName}': ${compactOutput(result)}`,
       );
     }
-    const verified = inspectGatewayCredentialOnlyProviderBinding(
+    const verified = inspectGatewayCredentialFamilyProviderBinding(
       {
         name: binding.providerName,
         type: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
         credentialKey: binding.providerEnvKey,
+        allowExtendedCredentialKeys: true,
       },
       runOpenshell,
     );

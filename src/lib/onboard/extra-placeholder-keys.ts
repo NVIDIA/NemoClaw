@@ -10,6 +10,7 @@ interface MessagingTokenDefShape {
   envKey: string;
   token: string | null;
   providerType?: string;
+  additionalCredentials?: Array<{ envKey: string; token: string | null }>;
 }
 
 export const EXTRA_PLACEHOLDER_KEYS_ENV = "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS";
@@ -92,7 +93,7 @@ export function extraPlaceholderProviderSlug(envKey: string): string {
 }
 
 export function registerExtraPlaceholderProviders(
-  sandboxName: string,
+  _sandboxName: string,
   messagingTokenDefs: MessagingTokenDefShape[],
   log: (message: string) => void = (m) => console.warn(`  ${m}`),
 ): string[] {
@@ -100,6 +101,8 @@ export function registerExtraPlaceholderProviders(
     process.env[EXTRA_PLACEHOLDER_KEYS_ENV],
     canonicalPlaceholderKeys(),
   );
+  const canonicalKeys = canonicalPlaceholderKeys();
+  const acceptedKeys: string[] = [];
   for (const warning of parsed.warnings) log(warning);
   for (const envKey of parsed.keys) {
     // Match web-search precedence: the credential
@@ -108,16 +111,24 @@ export function registerExtraPlaceholderProviders(
     // set`. Collapse the empty-string result from normalizeCredentialValue to
     // null so callers see one unambiguous "missing" sentinel.
     const token = getCredential(envKey) || normalizeCredentialValue(process.env[envKey]) || null;
-    messagingTokenDefs.push({
-      name: `${sandboxName}-extra-${extraPlaceholderProviderSlug(envKey)}`,
-      envKey,
-      token,
-      // Extra keys are not owned by a single credential-bound channel route;
-      // keep them generic so OpenShell exposes their attached placeholders.
-      providerType: "generic",
-    });
+    const canonicalEnvKey = findExtendedCanonicalPrefix(envKey, canonicalKeys);
+    const canonicalProvider = messagingTokenDefs.find(
+      (definition) => definition.envKey === canonicalEnvKey,
+    );
+    if (!canonicalProvider) {
+      log(
+        `${EXTRA_PLACEHOLDER_KEYS_ENV}: ignoring "${envKey}" — its canonical credential is not part of the selected sandbox plan`,
+      );
+      continue;
+    }
+    // Providers v2 withholds profileless static credentials. Keep extension
+    // credentials on the canonical provider so the channel's explicit policy
+    // binding authorizes the same endpoint boundary without widening policy.
+    canonicalProvider.additionalCredentials ??= [];
+    canonicalProvider.additionalCredentials.push({ envKey, token });
+    acceptedKeys.push(envKey);
   }
-  return [...parsed.keys];
+  return acceptedKeys;
 }
 
 export function appendExtraPlaceholderKeysEnvArg(

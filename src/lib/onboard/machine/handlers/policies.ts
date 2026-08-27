@@ -12,7 +12,10 @@ import {
   getActiveChannelsFromPlan,
   getDisabledChannelsFromPlan,
 } from "../../messaging-plan-session";
-import { messagingChannelsForPolicyPresets } from "../../messaging-policy-presets";
+import {
+  allMessagingChannelPolicyPresets,
+  messagingChannelsForPolicyPresets,
+} from "../../messaging-policy-presets";
 import type { HostLocalInferenceSandboxProofAuthority } from "../../runtime-provider/host-local-inference-routing";
 import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
@@ -141,6 +144,13 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
     // re-onboard reintroduces removed tier defaults (e.g. a removed Balanced
     // `npm`). See #4621.
     persistAppliedPolicyPresets(sandboxName: string, appliedPolicyPresets: string[]): void;
+    synchronizeMessagingProvidersAfterPolicy?(input: {
+      sandboxName: string;
+      enabledChannels: string[];
+      agent: Agent;
+      webSearchConfig: WebSearchConfig | null;
+      revalidatePolicyRequirements?: (operation: string) => void;
+    }): Promise<void>;
   };
 }
 
@@ -299,6 +309,27 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     !policyResumeSelection.disabledMessagingPolicyPresetApplied &&
     !policyResumeSelection.suppressedAgentRequiredPresetsLive &&
     deps.arePolicyPresetsApplied(sandboxName, recordedPolicyPresetsForSupport);
+  const synchronizeMessagingProvidersAfterPolicy = async (
+    knownLivePresets: readonly string[],
+  ): Promise<void> => {
+    const requiredMessagingPresets = allMessagingChannelPolicyPresets(policyMessagingChannels);
+    if (
+      requiredMessagingPresets.length === 0 ||
+      !requiredMessagingPresets.every((preset) => knownLivePresets.includes(preset))
+    ) {
+      return;
+    }
+    revalidatePolicyRequirements?.(
+      `synchronize messaging providers after policy binding for sandbox '${sandboxName}'`,
+    );
+    await deps.synchronizeMessagingProvidersAfterPolicy?.({
+      sandboxName,
+      enabledChannels: policyMessagingChannels,
+      agent,
+      webSearchConfig,
+      revalidatePolicyRequirements,
+    });
+  };
 
   let appliedPolicyPresets = recordedPolicyPresetsForSupport;
   let session: Session | null;
@@ -324,6 +355,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       reason: "resume",
       policyPresets: recordedPolicyPresetsForSupport,
     });
+    await synchronizeMessagingProvidersAfterPolicy(recordedPolicyPresetsForSupport);
     revalidatePolicyRequirements?.(`complete resumed policy setup for sandbox '${sandboxName}'`);
     session = await deps.recordStepComplete(
       "policies",
@@ -391,6 +423,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       deps.persistAppliedPolicyPresets(sandboxName, appliedPolicyPresets);
     }
     if (hostLocalInferenceRouteOnly) verifySandboxInferenceRoute();
+    await synchronizeMessagingProvidersAfterPolicy(appliedPolicyPresets);
     revalidatePolicyRequirements?.(`complete policy setup for sandbox '${sandboxName}'`);
     session = await deps.recordStepComplete(
       "policies",

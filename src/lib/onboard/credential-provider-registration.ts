@@ -25,6 +25,7 @@ export interface StageSandboxCredentialProvidersInput<Agent> {
 export interface MessagingProviderRegistrationOptions {
   replaceExisting?: boolean;
   allowedSandboxes?: readonly string[];
+  requireExactBindings?: boolean;
   revalidatePolicyRequirements?(operation: string): void;
 }
 
@@ -220,12 +221,13 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       { root: deps.root, runOpenshell },
     );
     if (staticProfileMatches === false) return false;
-    return gatewayProviderMetadata.matchesGatewayCredentialOnlyProviderBinding(
+    return gatewayProviderMetadata.matchesGatewayCredentialFamilyProviderBinding(
       providers.readGatewayProviderMetadata(binding.name, runOpenshell, deps.getGatewayName()),
       {
         name: binding.name,
         type: binding.type,
         credentialKey: binding.credentialEnv,
+        allowExtendedCredentialKeys: true,
       },
     );
   }
