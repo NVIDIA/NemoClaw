@@ -17,6 +17,7 @@ import {
   backfillVerifiedExternalSandboxPolicyAuthority,
   completeHermesPortableSandboxRegistration,
   createProviderEffectBoundary,
+  finalizeCreatedSandboxBeforeHermesCredentialReconciliation,
   finalizeRecreatedSourceHermesStateVolume,
   hasManagedMcpRebuildHandoff,
   persistRetainedSandboxRecoveryMessage,
@@ -362,6 +363,26 @@ describe("managed Hermes state volume failed-create cleanup", () => {
 describe("created Hermes credential environment reconciliation", () => {
   const plan = { agent: "hermes" } as never;
 
+  it("finalizes policy registration before reconciling credentials (#9833)", async () => {
+    const events: string[] = [];
+
+    await finalizeCreatedSandboxBeforeHermesCredentialReconciliation(
+      async () => {
+        events.push("registration:start");
+        await Promise.resolve();
+        events.push("registration:complete");
+        return { sandboxName: "alpha" };
+      },
+      () => events.push("credentials:reconcile"),
+    );
+
+    expect(events).toEqual([
+      "registration:start",
+      "registration:complete",
+      "credentials:reconcile",
+    ]);
+  });
+
   it("restarts and rechecks the managed gateway after changing the env file", () => {
     const events: string[] = [];
     const restart = { status: 0, stdout: "managed completion", stderr: "" };
@@ -491,6 +512,23 @@ describe("retained create recovery persistence", () => {
     expect(finalizeIncompleteOnboardStep).toHaveBeenCalledExactlyOnceWith(
       "sandbox",
       "Create-attempt label: ai.nvidia.nemoclaw.create-attempt=authority",
+    );
+  });
+
+  it("reports persistence failure when the saved recovery readback differs (#9833)", () => {
+    const message = `Create-attempt label: ai.nvidia.nemoclaw.create-attempt=${"a".repeat(62)}`;
+    const changedMessage = `Create-attempt label: ai.nvidia.nemoclaw.create-attempt=${"b".repeat(62)}`;
+    const finalizeIncompleteOnboardStep = vi.fn(() => ({
+      failure: { message: changedMessage },
+      steps: { sandbox: { error: changedMessage } },
+    }));
+
+    expect(
+      persistRetainedSandboxRecoveryMessage(message, finalizeIncompleteOnboardStep),
+    ).toBe(false);
+    expect(finalizeIncompleteOnboardStep).toHaveBeenCalledExactlyOnceWith(
+      "sandbox",
+      message,
     );
   });
 
@@ -889,6 +927,7 @@ describe("sandbox create policy authority checks", () => {
   });
   const exactIdentityBoundary = () => ({
     captureCreatedSandboxIdentity: vi.fn(() => exactIdentity),
+    persistCreatedSandboxIdentity: vi.fn(),
     revalidateCreatedSandboxIdentity: vi.fn(),
     ...verifiedPolicyBoundary(),
   });
@@ -924,6 +963,7 @@ describe("sandbox create policy authority checks", () => {
         events.push("capture-identity");
         return exactIdentity;
       },
+      persistCreatedSandboxIdentity: () => events.push("persist-identity"),
       revalidateCreatedSandboxIdentity: () => events.push("identity-check"),
       verifyCreatedPolicy: () => {
         events.push("policy-check");
@@ -940,6 +980,7 @@ describe("sandbox create policy authority checks", () => {
       "create-check",
       "create",
       "capture-identity",
+      "persist-identity",
       "identity-check",
       "policy-check",
       "identity-check",
@@ -1000,6 +1041,7 @@ describe("sandbox create policy authority checks", () => {
         return "created";
       },
       captureCreatedSandboxIdentity: () => exactIdentity,
+      persistCreatedSandboxIdentity: vi.fn(),
       revalidateCreatedSandboxIdentity,
       ...verifiedPolicyBoundary(),
       revalidateVerifiedPolicy: () => {
@@ -1081,6 +1123,7 @@ describe("sandbox create policy authority checks", () => {
         events.push("capture");
         return exactIdentity;
       },
+      persistCreatedSandboxIdentity: () => events.push("persist-identity"),
       revalidateCreatedSandboxIdentity: () => events.push("identity"),
       verifyCreatedPolicy: () => {
         events.push("policy");
@@ -1096,6 +1139,7 @@ describe("sandbox create policy authority checks", () => {
       "preflight",
       "create-without-policy",
       "capture",
+      "persist-identity",
       "identity",
       "policy",
       "identity",
@@ -1119,6 +1163,7 @@ describe("sandbox create policy authority checks", () => {
         return "created";
       },
       captureCreatedSandboxIdentity: () => exactIdentity,
+      persistCreatedSandboxIdentity: vi.fn(),
       revalidateCreatedSandboxIdentity: vi.fn(),
       verifyCreatedPolicy: () => {
         throw new PolicyAuthorityRefusalError("policy verification failed");
@@ -1148,6 +1193,7 @@ describe("sandbox create policy authority checks", () => {
           return "created";
         },
         captureCreatedSandboxIdentity: () => exactIdentity,
+        persistCreatedSandboxIdentity: vi.fn(),
         revalidateCreatedSandboxIdentity: vi.fn(),
         verifyCreatedPolicy: () => "verified",
         persistVerifiedPolicy: () => {
@@ -1176,6 +1222,7 @@ describe("sandbox create policy authority checks", () => {
           return "created";
         },
         captureCreatedSandboxIdentity: () => exactIdentity,
+        persistCreatedSandboxIdentity: vi.fn(),
         revalidateCreatedSandboxIdentity: vi.fn(),
         verifyCreatedPolicy: () => "verified",
         persistVerifiedPolicy,
@@ -1203,6 +1250,7 @@ describe("sandbox create policy authority checks", () => {
           return "created";
         },
         captureCreatedSandboxIdentity: () => exactIdentity,
+        persistCreatedSandboxIdentity: vi.fn(),
         revalidateCreatedSandboxIdentity: vi.fn(),
         verifyCreatedPolicy: () => "verified",
         persistVerifiedPolicy,
@@ -1240,6 +1288,7 @@ describe("sandbox create policy authority checks", () => {
           return "created";
         },
         captureCreatedSandboxIdentity: () => exactIdentity,
+        persistCreatedSandboxIdentity: vi.fn(),
         revalidateCreatedSandboxIdentity,
         ...verifiedPolicyBoundary(),
         cleanupTemporarySources: vi.fn(),
@@ -1247,6 +1296,39 @@ describe("sandbox create policy authority checks", () => {
     ).rejects.toThrow("automatic sandbox cleanup was not safe");
 
     expect(continuationEffect).not.toHaveBeenCalled();
+  });
+
+  it("stops before policy verification when the exact identity cannot be persisted (#9833)", async () => {
+    const revalidateCreatedSandboxIdentity = vi.fn();
+    const verifyCreatedPolicy = vi.fn();
+    const persistVerifiedPolicy = vi.fn();
+    const runVerifiedCreateEffects = vi.fn();
+
+    await expect(
+      runSandboxCreateWithPolicyAuthorityChecks({
+        sandboxName: "alpha",
+        revalidate: vi.fn(),
+        create: async (verifyCreatedSandbox) => {
+          await verifyCreatedSandbox("created");
+          return "created";
+        },
+        captureCreatedSandboxIdentity: () => exactIdentity,
+        persistCreatedSandboxIdentity: () => {
+          throw new Error("durable identity journal unavailable");
+        },
+        revalidateCreatedSandboxIdentity,
+        verifyCreatedPolicy,
+        persistVerifiedPolicy,
+        revalidateVerifiedPolicy: vi.fn(),
+        runVerifiedCreateEffects,
+        cleanupTemporarySources: vi.fn(),
+      }),
+    ).rejects.toThrow("automatic sandbox cleanup was not safe");
+
+    expect(revalidateCreatedSandboxIdentity).not.toHaveBeenCalled();
+    expect(verifyCreatedPolicy).not.toHaveBeenCalled();
+    expect(persistVerifiedPolicy).not.toHaveBeenCalled();
+    expect(runVerifiedCreateEffects).not.toHaveBeenCalled();
   });
 
   it("fails closed when a create implementation skips the post-create gate (#9833)", async () => {

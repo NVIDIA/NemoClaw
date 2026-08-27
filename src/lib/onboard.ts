@@ -2635,11 +2635,7 @@ const onboardRuntimeBoundary = new OnboardRuntimeBoundary({
   maybeForceE2eStepFailure,
 });
 
-const sandboxCancelRollback = installSandboxCancelRollback({
-  runOpenshell,
-  registry,
-  clearOnboardSession: onboardSession.clearSession,
-}); // #4614
+const sandboxCancelRollback = installSandboxCancelRollback({ cliName: cliName() }); // #4614, #9833
 
 const {
   arePolicyPresetsApplied,
