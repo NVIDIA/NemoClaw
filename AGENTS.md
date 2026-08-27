@@ -190,9 +190,11 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 
 ### Maintainer Git Workflow
 
-NemoClaw maintainers must create feature branches directly in `NVIDIA/NemoClaw` from the latest upstream `main` commit.
-Maintainers must not create or use a fork for NemoClaw work.
-If an upstream push is denied, stop and ask the user to correct the access problem.
+For changes authored by a NemoClaw maintainer:
+
+- Fetch the latest `main` commit from `NVIDIA/NemoClaw`.
+- Create the feature branch from the fetched `main` commit.
+- Push the feature branch to `NVIDIA/NemoClaw` instead of a personal fork.
 
 ### Before Making Changes
 
