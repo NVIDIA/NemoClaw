@@ -160,7 +160,7 @@ runner.run = (command, opts = {}) => {
   const cmd = _n(command);
   const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
-  if (cmd.includes("sandbox delete")) createdSandbox.delete();
+  if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   commands.push({ command: cmd, env: opts.env || null });
   return createdSandbox.run(command) ?? { status: 0 };
 };
@@ -194,7 +194,7 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 
 childProcess.spawn = (...args) => {
   const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
-  if (command.includes("sandbox create")) createdSandbox.recreate(args.flat());
+  if (command.includes("sandbox create") && createdSandbox.state.lifecycleState === "deleted") createdSandbox.recreate(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -316,7 +316,7 @@ runner.run = (command) => {
   const cmd = _n(command);
   const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
-  if (cmd.includes("sandbox delete")) createdSandbox.delete();
+  if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   events.push({ kind: "run", cmd });
   return createdSandbox.run(command) ?? { status: 0 };
 };
@@ -374,7 +374,7 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 
 	childProcess.spawn = (...args) => {
 	  const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
-	  if (command.includes("sandbox create")) createdSandbox.recreate(args.flat());
+	  if (command.includes("sandbox create") && createdSandbox.state.lifecycleState === "deleted") createdSandbox.recreate(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -495,7 +495,7 @@ runner.run = (command) => {
   const cmd = _n(command);
   const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
-  if (cmd.includes("sandbox delete")) createdSandbox.delete();
+  if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   events.push({ kind: "run", cmd });
   return createdSandbox.run(command) ?? { status: 0 };
 };
@@ -540,7 +540,7 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 
 	childProcess.spawn = (...args) => {
 	  const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
-	  if (command.includes("sandbox create")) createdSandbox.recreate(args.flat());
+	  if (command.includes("sandbox create") && createdSandbox.state.lifecycleState === "deleted") createdSandbox.recreate(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -645,7 +645,7 @@ runner.run = (command) => {
   const cmd = _n(command);
   const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
-  if (cmd.includes("sandbox delete")) createdSandbox.delete();
+  if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   events.push({ kind: "run", cmd });
   return createdSandbox.run(command) ?? { status: 0 };
 };
@@ -703,7 +703,7 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 
 	childProcess.spawn = (...args) => {
 	  const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
-	  if (command.includes("sandbox create")) {
+	  if (command.includes("sandbox create") && createdSandbox.state.lifecycleState === "deleted") {
 	    createdSandbox.recreate(args.flat());
 	    createdSandbox.setPhase("Ready");
 	  }
@@ -814,7 +814,7 @@ runner.run = (command, opts = {}) => {
   const cmd = _n(command);
   const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
-  if (cmd.includes("sandbox delete")) createdSandbox.delete();
+  if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   commands.push({ command: cmd, env: opts.env || null });
   return createdSandbox.run(command) ?? { status: 0 };
 };
@@ -856,7 +856,7 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 
 	childProcess.spawn = (...args) => {
 	  const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
-	  if (command.includes("sandbox create")) createdSandbox.recreate(args.flat());
+	  if (command.includes("sandbox create") && createdSandbox.state.lifecycleState === "deleted") createdSandbox.recreate(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -958,7 +958,7 @@ runner.run = (command, opts = {}) => {
   const cmd = _n(command);
   const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
-  if (cmd.includes("sandbox delete")) createdSandbox.delete();
+  if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   const commandString = Array.isArray(command) ? command.join(" ") : String(command);
   if (cmd.includes("sandbox download")) {
     const parts = commandString.match(/'([^']*)'/g) || [];
@@ -1108,7 +1108,7 @@ runner.run = (command, opts = {}) => {
   const cmd = _n(command);
   const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
-  if (cmd.includes("sandbox delete")) createdSandbox.delete();
+  if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   const commandString = Array.isArray(command) ? command.join(" ") : String(command);
   if (cmd.includes("sandbox download")) {
     const parts = commandString.match(/'([^']*)'/g) || [];
@@ -1167,7 +1167,7 @@ credentials.prompt = async () => "y";
 
 	childProcess.spawn = (...args) => {
 	  const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
-	  if (command.includes("sandbox create")) createdSandbox.recreate(args.flat());
+	  if (command.includes("sandbox create") && createdSandbox.state.lifecycleState === "deleted") createdSandbox.recreate(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -1284,7 +1284,7 @@ runner.run = (command, opts = {}) => {
   const cmd = _n(command);
   const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
-  if (cmd.includes("sandbox delete")) createdSandbox.delete();
+  if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") createdSandbox.delete();
   commands.push({ command: cmd, env: opts.env || null });
   return createdSandbox.run(command) ?? { status: 0 };
 };

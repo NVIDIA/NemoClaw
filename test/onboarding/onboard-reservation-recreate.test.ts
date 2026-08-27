@@ -491,8 +491,10 @@ process.kill = (pid, signal) => {
 };
 childProcess.spawn = (...args) => {
   const command = normalize([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
-  if (command.includes("sandbox create")) fs.appendFileSync(createCountPath, "create\n");
-  createdSandbox.create(args.flat());
+  if (command.includes("sandbox create")) {
+    fs.appendFileSync(createCountPath, "create\n");
+    createdSandbox.create(args.flat());
+  }
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();

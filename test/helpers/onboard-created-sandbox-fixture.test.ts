@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import { createRequire } from "node:module";
 
 import {
+  NEMOCLAW_CREATE_ATTEMPT_LABEL,
+  NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH,
   parseOpenShellSandboxId,
   parseStrictOpenShellSandboxListJson,
 } from "../../src/lib/adapters/openshell/sandbox-identity";
@@ -27,11 +30,12 @@ type CreatedSandboxFixture = {
   }>;
 };
 
-const { createCreatedSandboxFixture } = require("./onboard-script-mocks.cjs") as {
+const requireCjs = createRequire(import.meta.url);
+const { createCreatedSandboxFixture } = requireCjs("./onboard-script-mocks.cjs") as {
   createCreatedSandboxFixture: (options?: Record<string, unknown>) => CreatedSandboxFixture;
 };
 
-const CREATE_ATTEMPT_NONCE = "a".repeat(62);
+const CREATE_ATTEMPT_NONCE = "a".repeat(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH);
 
 function selectorListCommand(gatewayName: string | null, nonce = CREATE_ATTEMPT_NONCE): string[] {
   return [
@@ -40,7 +44,7 @@ function selectorListCommand(gatewayName: string | null, nonce = CREATE_ATTEMPT_
     "list",
     ...(gatewayName === null ? [] : ["-g", gatewayName]),
     "--selector",
-    `ai.nvidia.nemoclaw.create-attempt=${nonce}`,
+    `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`,
     "--output",
     "json",
     "--limit",
@@ -49,13 +53,7 @@ function selectorListCommand(gatewayName: string | null, nonce = CREATE_ATTEMPT_
 }
 
 function createCommand(nonce = CREATE_ATTEMPT_NONCE): string[] {
-  return [
-    "openshell",
-    "sandbox",
-    "create",
-    "--label",
-    `ai.nvidia.nemoclaw.create-attempt=${nonce}`,
-  ];
+  return ["openshell", "sandbox", "create", "--label", `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`];
 }
 
 describe("created sandbox fixture", () => {

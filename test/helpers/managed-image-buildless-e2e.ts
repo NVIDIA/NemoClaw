@@ -424,7 +424,10 @@ runner.run = (command, options = {}) => {
   const argv = Array.isArray(command) ? command.map(String) : [];
   const normalized = normalize(command);
   runnerCommands.push(normalized);
-  if (normalized.includes("sandbox delete")) {
+  if (
+    normalized.includes("sandbox delete") &&
+    createdSandbox.state.lifecycleState === "created"
+  ) {
     createdSandbox.delete();
     existingEntryAvailable = false;
   }

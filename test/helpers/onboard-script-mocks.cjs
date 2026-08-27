@@ -98,7 +98,11 @@ function mockManagedEndpointlessProviderProfileRun(command) {
   );
 }
 
-function createStatefulMessagingProviderRunner({ commands, initialProviders = [] }) {
+function createStatefulMessagingProviderRunner({
+  commands,
+  initialProviders = [],
+  createdSandbox = null,
+}) {
   const providers = new Map(
     initialProviders.map(([name, type, credential]) => [name, { type, credential }]),
   );
@@ -116,6 +120,8 @@ function createStatefulMessagingProviderRunner({ commands, initialProviders = []
     const args = normalized.split(/\s+/);
     const providerIndex = args.indexOf("provider");
     commands.push({ command: normalized, env: options.env || null });
+    const sandboxResult = createdSandbox?.run(command) ?? null;
+    if (sandboxResult !== null) return sandboxResult;
 
     const providerAction = providerIndex >= 0 ? args[providerIndex + 1] : null;
     if (providerAction === "profile") {

@@ -82,9 +82,7 @@ const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
 const commands = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ sandboxName: "my-assistant" });
-const messagingProviderRunner = fixtureMocks.createStatefulMessagingProviderRunner({ commands });
-runner.run = (command, options = {}) =>
-  createdSandbox.run(command) ?? messagingProviderRunner(command, options);
+runner.run = fixtureMocks.createStatefulMessagingProviderRunner({ commands, createdSandbox });
 runner.runCapture = (command) => {
   const sandboxCapture = createdSandbox.capture(command);
   if (sandboxCapture !== null) return sandboxCapture;
@@ -365,9 +363,7 @@ const nonSlackMessagingEnvKeys = [
 const commands = [];
 let registeredSandbox = null;
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ sandboxName: "my-assistant" });
-const messagingProviderRunner = fixtureMocks.createStatefulMessagingProviderRunner({ commands });
-runner.run = (command, options = {}) =>
-  createdSandbox.run(command) ?? messagingProviderRunner(command, options);
+runner.run = fixtureMocks.createStatefulMessagingProviderRunner({ commands, createdSandbox });
 runner.runCapture = (command) => {
   const sandboxCapture = createdSandbox.capture(command);
   if (sandboxCapture !== null) return sandboxCapture;
@@ -1275,13 +1271,14 @@ const commands = [];
 const existingSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
 const messagingProviderRunner = require(${onboardScriptMocksPath}).createStatefulMessagingProviderRunner({
   commands,
+  createdSandbox: existingSandbox,
   initialProviders: [
     ["my-assistant-discord-bridge", "nemoclaw-mcp-v1", "DISCORD_BOT_TOKEN"],
     ["my-assistant-slack-bridge", "nemoclaw-mcp-v1", "SLACK_BOT_TOKEN"],
     ["my-assistant-slack-app", "nemoclaw-mcp-v1", "SLACK_APP_TOKEN"],
   ],
 });
-runner.run = (command, options = {}) => existingSandbox.run(command) ?? messagingProviderRunner(command, options);
+runner.run = messagingProviderRunner;
 runner.runCapture = (command) => {
   const sandboxCapture = existingSandbox.capture(command);
   if (sandboxCapture !== null) return sandboxCapture;
@@ -1384,8 +1381,10 @@ const { EventEmitter } = require("node:events");
 
 const commands = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture();
-const providerRunner = require(${onboardScriptMocksPath}).createStatefulMessagingProviderRunner({ commands });
-runner.run = (command, opts = {}) => createdSandbox.run(command) ?? providerRunner(command, opts);
+runner.run = require(${onboardScriptMocksPath}).createStatefulMessagingProviderRunner({
+  commands,
+  createdSandbox,
+});
 runner.runCapture = (command) => {
   const createdIdentity = createdSandbox.capture(command);
   if (createdIdentity !== null) return createdIdentity;
