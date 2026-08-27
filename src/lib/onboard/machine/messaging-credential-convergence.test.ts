@@ -79,6 +79,7 @@ function harness(
   behavior: {
     readonly advanceVersion?: boolean;
     readonly attachStatus?: number;
+    readonly detachStatus?: number;
     readonly providerId?: string;
     readonly publishObservation?: boolean;
     readonly replacementIdOnRestart?: string;
@@ -114,6 +115,13 @@ function harness(
               status: behavior.attachStatus ?? 0,
               stdout: "",
               stderr: (behavior.attachStatus ?? 0) === 0 ? "" : "attach failed",
+            };
+          case args[0] === "sandbox" && args[1] === "provider" && args[2] === "detach":
+            observation = (behavior.detachStatus ?? 0) === 0 ? "absent" : observation;
+            return {
+              status: behavior.detachStatus ?? 0,
+              stdout: "",
+              stderr: (behavior.detachStatus ?? 0) === 0 ? "" : "detach failed",
             };
           case args[0] === "sandbox" && args.includes("cat"):
             return { status: 0, stdout: config, stderr: "" };
@@ -172,10 +180,13 @@ describe("managed messaging credential convergence", () => {
     expect(update?.args).toEqual(["provider", "update", "-g", "nemoclaw", PROVIDER]);
     expect(update?.options.env).toBeUndefined();
     expect(
-      scope.calls.some(
-        ({ args }) => args.join(" ") === `sandbox provider attach -g nemoclaw alpha ${PROVIDER}`,
-      ),
-    ).toBe(true);
+      scope.calls
+        .map(({ args }) => args.join(" "))
+        .filter((command) => command.startsWith("sandbox provider")),
+    ).toEqual([
+      `sandbox provider detach -g nemoclaw alpha ${PROVIDER}`,
+      `sandbox provider attach -g nemoclaw alpha ${PROVIDER}`,
+    ]);
     expect(JSON.parse(scope.getConfig()).channels.telegram.accounts.default.botToken).toBe(CURRENT);
     expect(durablePlan.credentialBindings[0]?.placeholder).toBe(CANONICAL);
     expect(scope.restartManagedGateway).toHaveBeenCalledExactlyOnceWith("alpha");
@@ -305,26 +316,32 @@ describe("managed messaging credential convergence", () => {
     expect(scope.restartManagedGateway).not.toHaveBeenCalled();
   });
 
-  it("fails closed when OpenShell cannot refresh the sandbox provider attachment", async () => {
-    const scope = harness("absent", CANONICAL, { attachStatus: 1 });
+  it.each([
+    ["detach", { detachStatus: 1 }, "did not detach messaging provider"],
+    ["reattach", { attachStatus: 1 }, "did not refresh messaging provider"],
+  ])(
+    "fails closed when OpenShell cannot %s the sandbox provider",
+    async (_label, behavior, error) => {
+      const scope = harness("absent", CANONICAL, behavior);
 
-    await expect(
-      convergeManagedMessagingCredentials(
-        {
-          sandboxName: "alpha",
-          gatewayName: "nemoclaw",
-          openshellDriver: "podman",
-          plan: plan(),
-          expectedProviderIds: new Map([[PROVIDER, PROVIDER_ID]]),
-        },
-        convergenceDeps(scope),
-      ),
-    ).rejects.toThrow("did not refresh messaging provider");
-    expect(JSON.parse(scope.getConfig()).channels.telegram.accounts.default.botToken).toBe(
-      CANONICAL,
-    );
-    expect(scope.restartManagedGateway).not.toHaveBeenCalled();
-  });
+      await expect(
+        convergeManagedMessagingCredentials(
+          {
+            sandboxName: "alpha",
+            gatewayName: "nemoclaw",
+            openshellDriver: "podman",
+            plan: plan(),
+            expectedProviderIds: new Map([[PROVIDER, PROVIDER_ID]]),
+          },
+          convergenceDeps(scope),
+        ),
+      ).rejects.toThrow(error);
+      expect(JSON.parse(scope.getConfig()).channels.telegram.accounts.default.botToken).toBe(
+        CANONICAL,
+      );
+      expect(scope.restartManagedGateway).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects provider replacement during the managed gateway restart", async () => {
     const scope = harness(CURRENT, CANONICAL, {
