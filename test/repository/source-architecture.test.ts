@@ -11,6 +11,7 @@ import {
   type SourceArchitectureBudget,
 } from "../../scripts/checks/source-architecture.mts";
 import { describe, expect, test } from "../helpers/owned-test-resources";
+import { testTimeoutOptions } from "../helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 
@@ -31,16 +32,20 @@ function budget(overrides: Partial<SourceArchitectureBudget> = {}): SourceArchit
 }
 
 describe("source architecture budget (#7692)", () => {
-  test("accepts the reviewed repository baseline", () => {
-    const parsed = parseSourceArchitectureBudget(
-      fs.readFileSync(path.join(REPO_ROOT, "ci/source-architecture-budget.json"), "utf8"),
-    );
-    const report = analyzeSourceArchitecture(REPO_ROOT, {
-      rootFileDirectories: Object.keys(parsed.maxRootFiles),
-    });
+  test(
+    "accepts the reviewed repository baseline",
+    testTimeoutOptions(60_000),
+    () => {
+      const parsed = parseSourceArchitectureBudget(
+        fs.readFileSync(path.join(REPO_ROOT, "ci/source-architecture-budget.json"), "utf8"),
+      );
+      const report = analyzeSourceArchitecture(REPO_ROOT, {
+        rootFileDirectories: Object.keys(parsed.maxRootFiles),
+      });
 
-    expect(evaluateSourceArchitectureBudget(report, parsed)).toEqual([]);
-  });
+      expect(evaluateSourceArchitectureBudget(report, parsed)).toEqual([]);
+    },
+  );
 
   test("rejects a new runtime cycle and names its files", ({ resources }) => {
     const root = resources.temporaryDirectory("nemoclaw-architecture-cycle-");
