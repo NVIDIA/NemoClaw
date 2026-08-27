@@ -329,8 +329,11 @@ function assertProviderlessApfCreateInput(input: {
   if (input.createIntent?.apfInterceptorRequested !== true) return;
   const resolved = input.createIntent.resolved;
   const requestedAgent = input.agent?.name.trim().toLowerCase() ?? "openclaw";
+  const resolvedAgent = resolved?.policy.options.agentName?.trim().toLowerCase() || null;
   const hasProviderIntent =
     requestedAgent !== "openclaw" ||
+    (resolvedAgent !== null &&
+      (resolvedAgent !== "openclaw" || resolvedAgent !== requestedAgent)) ||
     input.webSearchConfig !== null ||
     input.createIntent.reuseRegisteredCredentials === true ||
     [
