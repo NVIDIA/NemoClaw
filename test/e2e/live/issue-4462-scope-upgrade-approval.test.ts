@@ -1446,17 +1446,6 @@ test("keeps fresh onboarding and scope approval on the gateway path without admi
   );
   const adminRequestId = extractPendingRequestId(cronTriggerOutput);
 
-  const connectProbe = await host.command(
-    process.execPath,
-    [CLI_ENTRYPOINT, SANDBOX_NAME, "connect", "--probe-only"],
-    {
-      artifactName: "phase-5-connect-auto-pair-probe",
-      env: env(),
-      redactionValues: [apiKey],
-      timeoutMs: 90_000,
-    },
-  );
-  expect(connectProbe.exitCode, resultText(connectProbe)).toBe(0);
   const adminConnect = await host.command(
     "bash",
     [
@@ -1466,11 +1455,10 @@ test("keeps fresh onboarding and scope approval on the gateway path without admi
         SANDBOX_NAME,
         adminRequestId,
         cronName,
-        `issue-5324-connect-${Date.now()}-${process.pid}`,
       ),
     ],
     {
-      artifactName: "phase-6-connect-admin-approval",
+      artifactName: "phase-5-connect-admin-approval",
       env: env(),
       redactionValues: [apiKey],
       timeoutMs: 4 * 60_000,

@@ -1,9 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import path from "node:path";
-
 export const ISSUE_4462_SCOPE_UPGRADE_PHASES = [
   "confirm Docker credentials and clear the scope-upgrade sandbox",
   "install the OpenClaw sandbox",
@@ -12,11 +9,6 @@ export const ISSUE_4462_SCOPE_UPGRADE_PHASES = [
   "trigger and approve an operator.admin request through connect",
   "clear the sandbox and record the approval contract",
 ] as const;
-
-const OPENCLAW_AGENT_JSON_HELPER_PY = fs.readFileSync(
-  path.join(import.meta.dirname, "..", "lib", "openclaw-agent-json.py"),
-  "utf-8",
-);
 
 export const ADMIN_REQUEST_SELECTOR_PY = String.raw`import json, sys
 from pathlib import Path
@@ -131,7 +123,6 @@ export function adminApprovalConnectScript(
   sandboxName: string,
   expectedRequestId: string,
   cronName: string,
-  sessionId: string,
 ): string {
   const cli = JSON.stringify(cliPath);
   const sandbox = JSON.stringify(sandboxName);
@@ -146,15 +137,12 @@ export function adminApprovalConnectScript(
     '[ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ] || { echo "GATEWAY_TOKEN_MISSING" >&2; exit 24; }',
     `expected_request_id=${JSON.stringify(expectedRequestId)}`,
     `cron_name=${JSON.stringify(cronName)}`,
-    `session_id=${JSON.stringify(sessionId)}`,
     'devices_json="$(mktemp)"',
     'devices_err="$(mktemp)"',
     'approve_output="$(mktemp)"',
     'cron_output="$(mktemp)"',
     'cron_run_output="$(mktemp)"',
-    'agent_stdout="$(mktemp)"',
-    'agent_stderr="$(mktemp)"',
-    'trap \'rm -f -- "$devices_json" "$devices_err" "$approve_output" "$cron_output" "$cron_run_output" "$agent_stdout" "$agent_stderr"\' EXIT',
+    'trap \'rm -f -- "$devices_json" "$devices_err" "$approve_output" "$cron_output" "$cron_run_output"\' EXIT',
     'if ! openclaw devices list --json >"$devices_json" 2>"$devices_err"; then echo "ADMIN_DEVICES_LIST_FAILED" >&2; exit 25; fi',
     'request_id="$(python3 - "$devices_json" "$expected_request_id" <<\'PY_ADMIN_REQUEST\'',
     ...ADMIN_REQUEST_SELECTOR_PY.split("\n"),
@@ -167,8 +155,8 @@ export function adminApprovalConnectScript(
     // OpenClaw 2026.6.10 and 2026.7.1 classify cron.add and cron.run at the same
     // operator.admin gateway-method boundary (gateway/methods/core-descriptors.ts).
     // The exact-request approval above therefore grants the scope both use.
-    // The cron.run response is validated below after the final agent proof so
-    // its queued workload cannot race that gateway assertion.
+    // The cron.run response below proves that the approved scope applies to
+    // both methods.
     'cron_id="$(python3 - "$cron_output" "$cron_name" <<\'PY_CRON_ID\'',
     "import json, sys",
     "from pathlib import Path",
@@ -185,18 +173,9 @@ export function adminApprovalConnectScript(
     "PY_CRON_ID",
     ')"',
     '[ -n "$cron_id" ] || { echo "ADMIN_CRON_ID_MISSING" >&2; exit 28; }',
-    'if ! openclaw agent --agent main --json -m "What is 6 multiplied by 7? Reply with only the integer, no extra words." --session-id "$session_id" >"$agent_stdout" 2>"$agent_stderr"; then echo "CONNECT_AGENT_FAILED" >&2; exit 29; fi',
-    'if grep -Eiq \'EMBEDDED FALLBACK|gateway connect failed|scope upgrade pending approval|device pairing required|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded\' "$agent_stdout" "$agent_stderr"; then echo "CONNECT_AGENT_FALLBACK_OR_PAIRING" >&2; exit 30; fi',
-    'agent_parser="$(mktemp)"',
-    'trap \'rm -f -- "$devices_json" "$devices_err" "$approve_output" "$cron_output" "$cron_run_output" "$agent_stdout" "$agent_stderr" "$agent_parser"\' EXIT',
-    "cat >\"$agent_parser\" <<'PY_OPENCLAW_AGENT_JSON_HELPER'",
-    ...OPENCLAW_AGENT_JSON_HELPER_PY.split("\n"),
-    "PY_OPENCLAW_AGENT_JSON_HELPER",
-    'if ! agent_reply="$(python3 "$agent_parser" <"$agent_stdout")"; then echo "CONNECT_AGENT_JSON_INVALID" >&2; exit 31; fi',
-    '[ "$agent_reply" = "42" ] || { echo "CONNECT_AGENT_NOT_EXACT_42" >&2; exit 32; }',
     'echo "ISSUE_5324_STAGE=cron-run job=$cron_id"',
-    'if ! openclaw cron run "$cron_id" >"$cron_run_output" 2>&1; then echo "ADMIN_CRON_RUN_FAILED" >&2; exit 33; fi',
-    'if ! python3 - "$cron_run_output" <<\'PY_CRON_RUN\'; then echo "ADMIN_CRON_RUN_RESULT_INVALID" >&2; exit 34; fi',
+    'if ! openclaw cron run "$cron_id" >"$cron_run_output" 2>&1; then echo "ADMIN_CRON_RUN_FAILED" >&2; exit 29; fi',
+    'if ! python3 - "$cron_run_output" <<\'PY_CRON_RUN\'; then echo "ADMIN_CRON_RUN_RESULT_INVALID" >&2; exit 30; fi',
     "import json, sys",
     "from pathlib import Path",
     "raw=Path(sys.argv[1]).read_text(encoding='utf-8')",

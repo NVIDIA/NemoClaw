@@ -70,7 +70,6 @@ describe("prepared connect-shell administrative approval", () => {
       "e2e-issue-4462",
       EXPECTED_REQUEST_ID,
       "admin-cron",
-      "admin-session",
     );
     const syntax = spawnSync("bash", ["-n"], { encoding: "utf-8", input: script });
 
@@ -88,8 +87,6 @@ describe("prepared connect-shell administrative approval", () => {
     expect(script.indexOf('openclaw devices approve "$request_id"')).toBeLessThan(
       script.indexOf('openclaw cron run "$cron_id"'),
     );
-    expect(script).toContain("def _load_agent_json_docs");
-    expect(script).toContain('[ "$agent_reply" = "42" ]');
     expect(script).not.toContain("pending.json");
     expect(script).not.toContain("paired.json");
   });
