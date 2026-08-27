@@ -122,7 +122,11 @@ function assertFreshDistArtifacts(): void {
 
 function writeSuccessfulOpenShell(tmpDir: string): string {
   const openshellPath = path.join(tmpDir, "openshell");
-  fs.writeFileSync(openshellPath, `#!${process.execPath}\nprocess.exit(0);\n`, { mode: 0o755 });
+  fs.writeFileSync(
+    openshellPath,
+    `#!${process.execPath}\nif (process.argv[2] === "policy" && process.argv[3] === "list" && process.argv.includes("--global")) process.stderr.write("No global policy history found\\n");\nprocess.exit(0);\n`,
+    { mode: 0o755 },
+  );
   return openshellPath;
 }
 

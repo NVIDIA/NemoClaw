@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { MANAGED_SLACK_CREDENTIAL_REFERENCE_SOURCE } from "../fixtures/redaction.ts";
 
-describe("Hermes Slack credential-reference validation", () => {
+describe("Hermes sandbox Slack credential-reference validation", () => {
   it("accepts unversioned and 21-digit managed Slack references and rejects a raw Slack token (#10153)", () => {
     const longRevision = `v${"1".repeat(21)}_`;
     const aliasPatternSource = String.raw`^${MANAGED_SLACK_CREDENTIAL_REFERENCE_SOURCE}$`;

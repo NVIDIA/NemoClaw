@@ -40,7 +40,6 @@ export default async function wait_for_nemoclaw_pr_check(input: {
     throw new Error("expectedHeadSha must be a lowercase 40-character commit SHA");
   const timeoutMs = Math.max(1000, Math.min(1800000, input.timeoutMs ?? 600000));
   const intervalMs = Math.max(1000, Math.min(120000, input.intervalMs ?? 15000));
-  const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
   const cut = (value, size) => (typeof value === "string" ? value.slice(0, size) : null);
   const runGh = async (args) => {
     const result = await tools.run_github_cli({
@@ -68,7 +67,6 @@ export default async function wait_for_nemoclaw_pr_check(input: {
       app: cut(check.app?.slug || check.app?.name, 500),
     };
   };
-  const sleep = () => new Promise((resolve) => setTimeout(resolve, intervalMs));
   const initial = await readHead();
   const headSha = String(initial?.headRefOid || "");
   if (!/^[0-9a-f]{40}$/.test(headSha))
@@ -85,7 +83,9 @@ export default async function wait_for_nemoclaw_pr_check(input: {
     name,
   };
   const deadline = Date.now() + timeoutMs;
-  let last = null;
+  let last = null,
+    currentInterval = intervalMs,
+    lastFingerprint = null;
   while (Date.now() <= deadline) {
     const current = await readHead();
     const currentHeadSha = String(current?.headRefOid || "");
@@ -125,7 +125,18 @@ export default async function wait_for_nemoclaw_pr_check(input: {
         check: checkView(last),
       };
     }
-    await sleep();
+    const fingerprint = JSON.stringify([
+      currentHeadSha,
+      Number.isInteger(last?.id) ? last.id : null,
+      last?.status ?? null,
+      last?.conclusion ?? null,
+    ]);
+    if (lastFingerprint === null || fingerprint !== lastFingerprint) currentInterval = intervalMs;
+    else currentInterval = Math.min(Math.max(60000, intervalMs), currentInterval * 2);
+    lastFingerprint = fingerprint;
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(currentInterval, remainingMs)));
   }
   return {
     done: false,

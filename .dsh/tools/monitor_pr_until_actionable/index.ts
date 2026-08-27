@@ -96,7 +96,9 @@ export default async function monitor_pr_until_actionable(input: {
     deadline = Date.now() + timeout,
     snapshots = [],
     observedSettlePrefixes = new Set();
-  let observedChecks = false,
+  let currentInterval = interval,
+    lastFingerprint = null,
+    observedChecks = false,
     lastPendingChecks = [],
     lastFailedChecks = [],
     lastFindings = [],
@@ -245,6 +247,19 @@ export default async function monitor_pr_until_actionable(input: {
             ),
         ),
     );
+    const fingerprint = JSON.stringify({
+      head,
+      checks: checks
+        .map((check) => [check.name, check.state])
+        .sort(([leftName, leftState], [rightName, rightState]) =>
+          (leftName + "\0" + leftState).localeCompare(rightName + "\0" + rightState),
+        ),
+      findings: findings.map((finding) => [finding.type, finding.id]),
+      settlePrefixes: [...observedSettlePrefixes].sort(),
+    });
+    if (lastFingerprint === null || fingerprint !== lastFingerprint) currentInterval = interval;
+    else currentInterval = Math.min(Math.max(60000, interval), currentInterval * 2);
+    lastFingerprint = fingerprint;
     if (
       (failedChecks.length && !waitingForReviewChecks) ||
       (findings.length && !waitingForReviewChecks) ||
@@ -264,7 +279,9 @@ export default async function monitor_pr_until_actionable(input: {
         findings,
         snapshots,
       };
-    await new Promise((resolve) => setTimeout(resolve, interval));
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(currentInterval, remainingMs)));
   }
   return {
     done: false,
