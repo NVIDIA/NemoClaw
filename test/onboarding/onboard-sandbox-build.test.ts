@@ -296,7 +296,7 @@ runner.run = (command, opts = {}) => {
   if (normalized.includes("sandbox list")) {
     return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
   }
-  return normalized.includes("sandbox get hermes-sandbox") ? { status: 0, stdout: Buffer.from("Name: hermes-sandbox\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
+  return normalized.includes("sandbox get") && normalized.split(/\s+/).includes("hermes-sandbox") ? { status: 0, stdout: Buffer.from("Name: hermes-sandbox\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
 runner.runFile = (file, args = [], opts = {}) => {
   commands.push({ command: _n([file, ...args]), env: opts.env || null });
@@ -306,7 +306,7 @@ runner.runCapture = (command) => {
   const normalized = _n(command);
   const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command, { sandboxName: "hermes-sandbox" });
   if (createdIdentity !== null) return createdIdentity;
-  if (normalized.includes("sandbox get hermes-sandbox")) return "";
+  if (normalized.includes("sandbox get") && normalized.split(/\s+/).includes("hermes-sandbox")) return "";
   if (normalized.includes("sandbox list")) return "hermes-sandbox Ready";
   {
     const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);
@@ -528,7 +528,7 @@ runner.runCapture = (command) => {
   const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command, { sandboxName: "my-assistant" });
   if (createdIdentity !== null) return createdIdentity;
   if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) {
-    return sandboxCreated ? "Name: my-assistant\\nId: fixture-created-sandbox\\nPhase: Ready\\n" : "";
+    return sandboxCreated ? "Name: my-assistant\\nId: sbx-4f2a91c0d7\\nPhase: Ready\\n" : "";
   }
   if (normalized.includes("sandbox list")) return "my-assistant Ready";
   {

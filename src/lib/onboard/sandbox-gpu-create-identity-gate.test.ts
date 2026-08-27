@@ -62,11 +62,19 @@ import {
   setupGpuFlowMocks,
 } from "./__test-helpers__/sandbox-gpu-create-flow";
 import { formatRetainedApfSandboxRecoveryReceipt } from "./created-sandbox-failure";
+import {
+  createHermesPortableReadyCapture,
+  createHermesPortableReadyRunner,
+} from "./experimental/hermes-portable-onboarding";
 import { runSandboxGpuCreateFlow } from "./sandbox-gpu-create-flow";
 import { fingerprintSandboxRecreateValue } from "./sandbox-recreate-transaction";
 import { printOnboardResumeHint, resetOnboardResumeHintForTests } from "./resume-hint";
 
-function sandboxListJson(sandboxId: string, labels: Readonly<Record<string, string>>): string {
+function sandboxListJson(
+  sandboxId: string,
+  labels: Readonly<Record<string, string>>,
+  overrides: Readonly<Record<string, unknown>> = {},
+): string {
   return JSON.stringify([
     {
       id: sandboxId,
@@ -76,6 +84,7 @@ function sandboxListJson(sandboxId: string, labels: Readonly<Record<string, stri
       created_at: "2026-08-25T00:00:00Z",
       phase: "Ready",
       current_policy_version: 1,
+      ...overrides,
     },
   ]);
 }
@@ -140,6 +149,7 @@ describe("created sandbox identity gate", () => {
     mocks.streamSandboxCreate.mockImplementation(async (_command, args, _env, options) => {
       events.push("create");
       expect(options.onPoll).toBeUndefined();
+      expect(options.waitForReadyTermination).toBe(true);
       expect(args.indexOf("--label")).toBeGreaterThan(0);
       expect(args.indexOf("--label")).toBeLessThan(args.indexOf("--"));
       nonce = createAttemptNonce(args);
@@ -157,14 +167,46 @@ describe("created sandbox identity gate", () => {
       events.push("portable-lifecycle");
       return "generation-1";
     });
-    vi.mocked(deps.runCaptureOpenshell).mockImplementationOnce(() =>
-      sandboxListJson("alpha-sandbox-id", { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce }),
-    );
+    vi.mocked(deps.runCaptureOpenshell)
+      .mockImplementationOnce((args) => {
+        expect(args).not.toContain("--selector");
+        events.push("ready-visible");
+        return "alpha Ready";
+      })
+      .mockImplementationOnce((args) => {
+        expect(args).toContain("--selector");
+        events.push("identity-metadata-pending");
+        expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
+        expect(patch.exitOnPatchError).not.toHaveBeenCalled();
+        return sandboxListJson(
+          "alpha-sandbox-id",
+          { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce },
+          {
+            resource_version: null,
+            created_at: null,
+            phase: null,
+            current_policy_version: null,
+          },
+        );
+      })
+      .mockImplementationOnce((args) => {
+        expect(args).toContain("--selector");
+        events.push("identity-matched");
+        expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
+        expect(patch.exitOnPatchError).not.toHaveBeenCalled();
+        return sandboxListJson("alpha-sandbox-id", {
+          [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce,
+        });
+      });
 
     await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "none" });
 
     expect(events).toEqual([
       "create",
+      "ready-visible",
+      "identity-metadata-pending",
+      "identity-settle",
+      "identity-matched",
       "verify-created",
       "revalidate:validate runtime patch for sandbox 'alpha'",
       "runtime-check",
@@ -199,6 +241,268 @@ describe("created sandbox identity gate", () => {
         killProcessTreeOnTimeout: true,
       },
     );
+  });
+
+  it("carries Hermes receipt authority from selector settlement through publication lookup (#10423)", async () => {
+    const events: string[] = [];
+    let nonce = "";
+    const input = noGpuInput();
+    const patch = createGpuPatchFixture();
+    input.verifyCreatedSandboxBeforeEffects = vi.fn(async () => {
+      events.push("verify-policy");
+    });
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mocks.streamSandboxCreate.mockImplementation(async (_command, args, _env, options) => {
+      events.push("create");
+      nonce = createAttemptNonce(args);
+      expect(options.readyCheck?.()).toBe(true);
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+    mocks.waitForCreatedSandboxReadyWithTrace.mockReturnValue({
+      ready: true,
+      reason: "ready",
+      failurePhase: null,
+    });
+    const capture = vi.fn((args: readonly string[]) => {
+      const results = {
+        [["sandbox", "list", "-g", "nemoclaw"].join("\0")]: () => {
+          events.push("ready-visible");
+          return { status: 0, stdout: Buffer.from("alpha Ready"), stderr: Buffer.alloc(0) };
+        },
+        [[
+          "sandbox",
+          "list",
+          "-g",
+          "nemoclaw",
+          "--selector",
+          `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`,
+          "--output",
+          "json",
+          "--limit",
+          "2",
+        ].join("\0")]: () => {
+          events.push("selector-settled");
+          return {
+            status: 0,
+            stdout: Buffer.from(
+              sandboxListJson("alpha-sandbox-id", {
+                [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce,
+              }),
+            ),
+            stderr: Buffer.alloc(0),
+          };
+        },
+        [["sandbox", "get", "-g", "nemoclaw", "alpha"].join("\0")]: () => {
+          events.push("publication-get");
+          return {
+            status: 0,
+            stdout: Buffer.from("ID: alpha-sandbox-id\n"),
+            stderr: Buffer.alloc(0),
+          };
+        },
+      } satisfies Readonly<
+        Record<string, () => { status: number; stdout: Buffer; stderr: Buffer }>
+      >;
+      return (
+        results[args.join("\0") as keyof typeof results] ??
+        (() => ({ status: 1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) }))
+      )();
+    });
+    const deps = createGpuFlowDeps();
+    deps.runOpenshell = createHermesPortableReadyRunner("alpha", "nemoclaw", capture);
+    deps.runCaptureOpenshell = createHermesPortableReadyCapture("alpha", "nemoclaw", capture);
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "none" });
+
+    expect(events.slice(0, 5)).toEqual([
+      "create",
+      "ready-visible",
+      "selector-settled",
+      "publication-get",
+      "verify-policy",
+    ]);
+    expect(input.verifyCreatedSandboxBeforeEffects).toHaveBeenCalledOnce();
+    expect(capture).toHaveBeenCalledWith(["sandbox", "get", "-g", "nemoclaw", "alpha"]);
+  });
+
+  it.each([
+    [
+      "changes durable ID",
+      (nonce: string) => [
+        sandboxListJson(
+          "alpha-sandbox-id",
+          { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce },
+          { resource_version: null },
+        ),
+        sandboxListJson("replacement-sandbox-id", {
+          [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce,
+        }),
+      ],
+      2,
+    ],
+    [
+      "disappears",
+      (nonce: string) => [
+        sandboxListJson(
+          "alpha-sandbox-id",
+          { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce },
+          { resource_version: null },
+        ),
+        "[]",
+      ],
+      2,
+    ],
+    [
+      "publishes malformed metadata",
+      (nonce: string) => [
+        sandboxListJson(
+          "alpha-sandbox-id",
+          { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce },
+          { resource_version: "1" },
+        ),
+      ],
+      1,
+    ],
+  ])(
+    "withholds post-create effects when the nonce-owned row %s (#10423)",
+    async (_case, observationsForNonce, expectedSelectorCalls) => {
+      let nonce = "";
+      let captureIndex = 0;
+      const input = noGpuInput();
+      input.verifyCreatedSandboxBeforeEffects = vi.fn();
+      input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+      const patch = createGpuPatchFixture();
+      mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+      mocks.streamSandboxCreate.mockImplementation(async (_command, args, _env, options) => {
+        nonce = createAttemptNonce(args);
+        expect(options.readyCheck?.()).toBe(true);
+        return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+      });
+      const deps = createGpuFlowDeps();
+      vi.mocked(deps.runCaptureOpenshell).mockImplementation(
+        () => ["alpha Ready", ...observationsForNonce(nonce)][captureIndex++] ?? "[]",
+      );
+
+      await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+        "OpenShell did not return one exact durable sandbox identity before post-create effects",
+      );
+
+      expect(
+        vi
+          .mocked(deps.runCaptureOpenshell)
+          .mock.calls.filter(([args]) => args.includes("--selector")),
+      ).toHaveLength(expectedSelectorCalls);
+      expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledOnce();
+      expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
+      expect(input.revalidateVerifiedSandboxBeforeEffect).not.toHaveBeenCalled();
+      expect(patch.exitOnPatchError).not.toHaveBeenCalled();
+      expect(patch.ensureApplied).not.toHaveBeenCalled();
+      expect(mocks.waitForCreatedSandboxReadyWithTrace).not.toHaveBeenCalled();
+    },
+  );
+
+  it("waits for the exact created sandbox to appear through its owning gateway (#9833)", async () => {
+    let nonce = "";
+    const input = noGpuInput();
+    input.verifyCreatedSandboxBeforeEffects = vi.fn();
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    const patch = createGpuPatchFixture();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mocks.streamSandboxCreate.mockImplementation(async (_command, args) => {
+      nonce = createAttemptNonce(args);
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+    const deps = createGpuFlowDeps();
+    vi.mocked(deps.runCaptureOpenshell).mockImplementationOnce(() =>
+      sandboxListJson("alpha-sandbox-id", { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce }),
+    );
+    vi.mocked(deps.runOpenshell)
+      .mockReturnValueOnce({
+        status: 1,
+        stdout: "",
+        stderr:
+          "Error:   × code: 'Some requested entity was not found', message: \"sandbox not found\"",
+      })
+      .mockReturnValue({
+        status: 0,
+        stdout: "Name: alpha\nId: alpha-sandbox-id\nState: Ready\n",
+        stderr: "",
+      });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "none" });
+
+    expect(deps.sleep).toHaveBeenCalledExactlyOnceWith(1);
+    expect(deps.runOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["sandbox", "get", "-g", "nemoclaw", "alpha"],
+      expect.objectContaining({ ignoreError: true, suppressOutput: true }),
+    );
+    expect(input.verifyCreatedSandboxBeforeEffects).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a different owner-scoped sandbox identity before post-create effects (#9833)", async () => {
+    let nonce = "";
+    const input = noGpuInput();
+    input.verifyCreatedSandboxBeforeEffects = vi.fn();
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    const patch = createGpuPatchFixture();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mocks.streamSandboxCreate.mockImplementation(async (_command, args) => {
+      nonce = createAttemptNonce(args);
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+    const deps = createGpuFlowDeps();
+    vi.mocked(deps.runCaptureOpenshell).mockImplementationOnce(() =>
+      sandboxListJson("alpha-sandbox-id", { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce }),
+    );
+    vi.mocked(deps.runOpenshell).mockReturnValue({
+      status: 0,
+      stdout: "Name: alpha\nId: replacement-sandbox-id\nState: Ready\n",
+      stderr: "",
+    });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "changed identity before policy verification",
+    );
+
+    expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
+    expect(patch.exitOnPatchError).not.toHaveBeenCalled();
+    expect(patch.ensureApplied).not.toHaveBeenCalled();
+    expect(mocks.waitForCreatedSandboxReadyWithTrace).not.toHaveBeenCalled();
+  });
+
+  it("stops when owner-scoped sandbox publication exceeds the deadline (#9833)", async () => {
+    let nonce = "";
+    const input = noGpuInput();
+    input.sandboxReadyTimeoutSecs = 0.001;
+    input.verifyCreatedSandboxBeforeEffects = vi.fn();
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    const patch = createGpuPatchFixture();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mocks.streamSandboxCreate.mockImplementation(async (_command, args) => {
+      nonce = createAttemptNonce(args);
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+    const deps = createGpuFlowDeps();
+    vi.mocked(deps.runCaptureOpenshell).mockImplementationOnce(() =>
+      sandboxListJson("alpha-sandbox-id", { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce }),
+    );
+    vi.mocked(deps.runOpenshell).mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr:
+        "Error:   × code: 'Some requested entity was not found', message: \"sandbox not found\"",
+    });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "did not become visible through its owning gateway before policy verification",
+    );
+
+    expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
+    expect(patch.exitOnPatchError).not.toHaveBeenCalled();
+    expect(patch.ensureApplied).not.toHaveBeenCalled();
+    expect(mocks.waitForCreatedSandboxReadyWithTrace).not.toHaveBeenCalled();
   });
 
   it("rejects a same-name replacement before post-create effects (#9833)", async () => {
