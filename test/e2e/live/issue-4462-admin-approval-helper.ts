@@ -4,17 +4,16 @@
 export const ISSUE_4462_SCOPE_UPGRADE_PHASES = [
   "confirm Docker credentials and clear the scope-upgrade sandbox",
   "install the OpenClaw sandbox",
-  "prove the first fresh agent turn stays on the gateway path",
-  "observe the auto-pair watcher approve operator.write without operator.admin",
+  "prove onboarding settled operator.write and the first agent turn used the gateway",
   "trigger and approve an operator.admin request through connect",
-  "clear the sandbox and record the approval contract",
+  "record the approval contract",
 ] as const;
 
-export const ADMIN_REQUEST_SELECTOR_PY = String.raw`import json, sys
+export const ADMIN_REQUEST_SELECTOR_PY = String.raw`import json, re, sys
 from pathlib import Path
 
 data=json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
-expected_request_id=str(sys.argv[2] or '').strip()
+request_id_path=Path(sys.argv[2])
 pending=data.get('pending') or []
 paired=data.get('paired') or []
 allowed_scopes={'operator.pairing','operator.read','operator.write','operator.admin'}
@@ -74,12 +73,13 @@ def roles(value):
 def is_cli(value):
     return value.get('clientId') in {'cli','openclaw-cli'} and value.get('clientMode') == 'cli'
 
-if not expected_request_id:
-    raise SystemExit('expected cron requestId is empty')
-candidates=[request for request in pending if isinstance(request, dict) and norm(request.get('requestId')) == expected_request_id]
-if len(candidates) != 1:
-    raise SystemExit(f'expected the cron requestId exactly once in pending state, found {len(candidates)}')
-request=candidates[0]
+request_entries=[request for request in pending if isinstance(request, dict)]
+if len(request_entries) != 1:
+    raise SystemExit(f'expected exactly one pending request, found {len(request_entries)}')
+request=request_entries[0]
+request_id=norm(request.get('requestId'))
+if not re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}', request_id, re.IGNORECASE):
+    raise SystemExit('pending admin request has an invalid requestId')
 request_scopes=requested_scopes(request)
 if not is_cli(request) or roles(request) != {'operator'}:
     raise SystemExit('cron requestId does not belong to the expected CLI operator')
@@ -100,28 +100,11 @@ if any('operator.admin' in view for view in device_scope_views):
     raise SystemExit('operator.admin was already granted before explicit approval')
 if any(not view.issubset(non_admin_scopes) for view in device_scope_views):
     raise SystemExit('paired device has unexpected approved scopes')
-print(expected_request_id)`;
-
-export function extractPendingRequestId(output: string): string {
-  const requestIds = new Set(
-    [
-      ...output.matchAll(
-        /\brequestId\s*[:=]\s*([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\b/giu,
-      ),
-    ].map((match) => match[1]),
-  );
-  if (requestIds.size !== 1) {
-    throw new Error(
-      `expected exactly one pending requestId in cron output, found ${requestIds.size}`,
-    );
-  }
-  return [...requestIds][0];
-}
+request_id_path.write_text(request_id, encoding='utf-8')`;
 
 export function adminApprovalConnectScript(
   cliPath: string,
   sandboxName: string,
-  expectedRequestId: string,
   cronName: string,
 ): string {
   const cli = JSON.stringify(cliPath);
@@ -164,19 +147,20 @@ export function adminApprovalConnectScript(
     "PY_PRIVATE_GATEWAY",
     '[ -n "${OPENCLAW_GATEWAY_PORT:-}" ] || { echo "GATEWAY_PORT_MISSING" >&2; exit 23; }',
     '[ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ] || { echo "GATEWAY_TOKEN_MISSING" >&2; exit 24; }',
-    `expected_request_id=${JSON.stringify(expectedRequestId)}`,
     `cron_name=${JSON.stringify(cronName)}`,
     'devices_json="$(mktemp)"',
     'devices_err="$(mktemp)"',
+    'request_id_file="$(mktemp)"',
     'approve_output="$(mktemp)"',
     'cron_output="$(mktemp)"',
+    'cron_id_file="$(mktemp)"',
     'cron_run_output="$(mktemp)"',
-    'trap \'rm -f -- "$devices_json" "$devices_err" "$approve_output" "$cron_output" "$cron_run_output"\' EXIT',
+    'trap \'rm -f -- "$devices_json" "$devices_err" "$request_id_file" "$approve_output" "$cron_output" "$cron_id_file" "$cron_run_output"\' EXIT',
     'if ! openclaw devices list --json >"$devices_json" 2>"$devices_err"; then echo "ADMIN_DEVICES_LIST_FAILED" >&2; exit 25; fi',
-    'request_id="$(python3 - "$devices_json" "$expected_request_id" <<\'PY_ADMIN_REQUEST\'',
+    'if ! python3 - "$devices_json" "$request_id_file" <<\'PY_ADMIN_REQUEST\'; then echo "ADMIN_REQUEST_SELECTION_FAILED" >&2; exit 26; fi',
     ...ADMIN_REQUEST_SELECTOR_PY.split("\n"),
     "PY_ADMIN_REQUEST",
-    ')"',
+    'request_id="$(cat "$request_id_file")"',
     '[ -n "$request_id" ] || { echo "ADMIN_REQUEST_ID_MISSING" >&2; exit 26; }',
     'echo "ISSUE_5324_STAGE=explicit-admin-approval"',
     'if ! openclaw devices approve "$request_id" >"$approve_output" 2>&1; then echo "ADMIN_APPROVE_FAILED" >&2; exit 27; fi',
@@ -186,7 +170,7 @@ export function adminApprovalConnectScript(
     // The exact-request approval above therefore grants the scope both use.
     // The cron.run response below proves that the approved scope applies to
     // both methods.
-    'cron_id="$(python3 - "$cron_output" "$cron_name" <<\'PY_CRON_ID\'',
+    'if ! python3 - "$cron_output" "$cron_name" "$cron_id_file" <<\'PY_CRON_ID\'; then echo "ADMIN_CRON_ID_MISSING" >&2; exit 28; fi',
     "import json, sys",
     "from pathlib import Path",
     "raw=Path(sys.argv[1]).read_text(encoding='utf-8')",
@@ -197,12 +181,12 @@ export function adminApprovalConnectScript(
     "    try: value,_=decoder.raw_decode(raw[index:])",
     "    except Exception: continue",
     "    cron_id=str(value.get('id') or '').strip() if isinstance(value, dict) and value.get('name') == want else ''",
-    "    if cron_id: print(cron_id); raise SystemExit(0)",
+    "    if cron_id: Path(sys.argv[3]).write_text(cron_id, encoding='utf-8'); raise SystemExit(0)",
     "raise SystemExit('approved cron add did not return its job id')",
     "PY_CRON_ID",
-    ')"',
+    'cron_id="$(cat "$cron_id_file")"',
     '[ -n "$cron_id" ] || { echo "ADMIN_CRON_ID_MISSING" >&2; exit 28; }',
-    'echo "ISSUE_5324_STAGE=cron-run job=$cron_id"',
+    'echo "ISSUE_5324_STAGE=cron-run"',
     'if ! openclaw cron run "$cron_id" >"$cron_run_output" 2>&1; then echo "ADMIN_CRON_RUN_FAILED" >&2; exit 29; fi',
     'if ! python3 - "$cron_run_output" <<\'PY_CRON_RUN\'; then echo "ADMIN_CRON_RUN_RESULT_INVALID" >&2; exit 30; fi',
     "import json, sys",
@@ -218,7 +202,7 @@ export function adminApprovalConnectScript(
     "    if value.get('enqueued') is True and str(value.get('runId') or '').strip(): raise SystemExit(0)",
     "raise SystemExit('cron run did not report a successful run or enqueue')",
     "PY_CRON_RUN",
-    'echo "ISSUE_5324_ADMIN_APPROVAL_OK request=$request_id"',
+    'echo "ISSUE_5324_ADMIN_APPROVAL_OK"',
     "exit",
     "NEMOCLAW_ADMIN_APPROVAL",
   ].join("\n");

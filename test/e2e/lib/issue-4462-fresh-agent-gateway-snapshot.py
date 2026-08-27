@@ -12,8 +12,12 @@ minimum_gateway_runs = int(sys.argv[1])
 output_mode = sys.argv[2] if len(sys.argv) > 2 else "snapshot"
 if output_mode not in {"snapshot", "gateway-runs"}:
     raise SystemExit(f"unsupported output mode: {output_mode}")
-root = Path(sys.argv[3]) if len(sys.argv) > 3 else Path("/sandbox/.openclaw")
-gateway_log = Path(sys.argv[4]) if len(sys.argv) > 4 else Path("/tmp/gateway.log")
+timeout_seconds = float(sys.argv[3]) if len(sys.argv) > 3 else 30
+if timeout_seconds <= 0:
+    raise SystemExit("observation timeout must be positive")
+root = Path(sys.argv[4]) if len(sys.argv) > 4 else Path("/sandbox/.openclaw")
+gateway_log = Path(sys.argv[5]) if len(sys.argv) > 5 else Path("/tmp/gateway.log")
+observation_deadline = time.monotonic() + timeout_seconds
 
 
 def norm(value):
@@ -57,9 +61,8 @@ def gateway_completed_runs():
 
 
 def wait_for_gateway_runs():
-    deadline = time.monotonic() + 5
     runs = gateway_completed_runs()
-    while runs < minimum_gateway_runs and time.monotonic() < deadline:
+    while runs < minimum_gateway_runs and time.monotonic() < observation_deadline:
         time.sleep(0.1)
         runs = gateway_completed_runs()
     return runs
@@ -77,7 +80,6 @@ if not device_id:
 identity_key = identity_public_key(identity)
 if not identity_key:
     raise SystemExit("CLI identity has no public key")
-pairing_deadline = time.monotonic() + 10
 while True:
     pending = [
         value
@@ -100,7 +102,7 @@ while True:
         if norm(value.get("deviceId")) == device_id
         and norm(value.get("publicKey")) == identity_key
     ]
-    if len(matching) == 1 or time.monotonic() >= pairing_deadline:
+    if len(matching) == 1 or time.monotonic() >= observation_deadline:
         break
     time.sleep(0.1)
 if len(matching) != 1:

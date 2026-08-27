@@ -56,7 +56,7 @@ describe("fresh-agent gateway snapshot artifacts", () => {
     try {
       const result = spawnSync(
         "python3",
-        [SNAPSHOT_SCRIPT, "1", "snapshot", stateRoot, gatewayLog],
+        [SNAPSHOT_SCRIPT, "1", "snapshot", "30", stateRoot, gatewayLog],
         { encoding: "utf8", timeout: 10_000 },
       );
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);

@@ -10,7 +10,6 @@ import { describe, expect, it } from "vitest";
 import {
   ADMIN_REQUEST_SELECTOR_PY,
   adminApprovalConnectScript,
-  extractPendingRequestId,
 } from "../e2e/live/issue-4462-admin-approval-helper.ts";
 
 const EXPECTED_REQUEST_ID = "12345678-1234-4123-8123-123456789abc";
@@ -49,15 +48,20 @@ function adminState(tokenShape: "array" | "object" = "array"): Record<string, un
   };
 }
 
-function runSelector(state: Record<string, unknown>, requestId = EXPECTED_REQUEST_ID) {
+function runSelector(state: Record<string, unknown>) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-admin-selector-"));
   const statePath = path.join(root, "devices.json");
+  const requestIdPath = path.join(root, "selected-request-id");
   fs.writeFileSync(statePath, JSON.stringify(state));
   try {
-    return spawnSync("python3", ["-", statePath, requestId], {
+    const result = spawnSync("python3", ["-", statePath, requestIdPath], {
       encoding: "utf-8",
       input: ADMIN_REQUEST_SELECTOR_PY,
     });
+    const selectedRequestId = fs.existsSync(requestIdPath)
+      ? fs.readFileSync(requestIdPath, "utf8")
+      : "";
+    return Object.assign(result, { selectedRequestId });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -113,12 +117,7 @@ esac
     const result = spawnSync("bash", [], {
       encoding: "utf-8",
       env: childEnv,
-      input: adminApprovalConnectScript(
-        cliPath,
-        "e2e-issue-4462",
-        EXPECTED_REQUEST_ID,
-        "admin-cron",
-      ),
+      input: adminApprovalConnectScript(cliPath, "e2e-issue-4462", "admin-cron"),
     });
     const commands = fs.existsSync(commandLogPath)
       ? fs.readFileSync(commandLogPath, "utf8").trim().split("\n")
@@ -139,6 +138,9 @@ describe("prepared connect-shell administrative approval", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(
+      /12345678-1234-4123-8123-123456789abc|device-1|public-key-1|cron-1|test-gateway-token/u,
+    );
     expect(commands).toEqual([
       "devices list --json",
       `devices approve ${EXPECTED_REQUEST_ID}`,
@@ -159,36 +161,13 @@ describe("prepared connect-shell administrative approval", () => {
     expect(commands).toEqual([]);
   });
 
-  it("extracts one exact requestId even when the gateway repeats it (#5324)", () => {
-    expect(
-      extractPendingRequestId(
-        `scope upgrade pending (requestId: ${EXPECTED_REQUEST_ID})\npairing required requestId=${EXPECTED_REQUEST_ID}`,
-      ),
-    ).toBe(EXPECTED_REQUEST_ID);
-    expect(() => extractPendingRequestId("pairing required without an id")).toThrow("found 0");
-    expect(() =>
-      extractPendingRequestId(
-        `requestId: ${EXPECTED_REQUEST_ID}\nrequestId: 87654321-4321-4321-8321-cba987654321`,
-      ),
-    ).toThrow("found 2");
-  });
-
-  it("ignores a truncated diagnostic copy of the same canonical request UUID (#5324)", () => {
-    expect(
-      extractPendingRequestId(
-        `scope upgrade pending (requestId: ${EXPECTED_REQUEST_ID})\n` +
-          `gateway closed (1008): pairing required (requestId: ${EXPECTED_REQUEST_ID.slice(0, -2)}`,
-      ),
-    ).toBe(EXPECTED_REQUEST_ID);
-    expect(() => extractPendingRequestId("requestId: not-a-canonical-uuid")).toThrow("found 0");
-  });
-
   it.each(["array", "object"] as const)(
     "accepts exact paired CLI grants, including compact device scopes [case %#] (#5324)",
     (tokenShape) => {
       const result = runSelector(adminState(tokenShape));
       expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout.trim()).toBe(EXPECTED_REQUEST_ID);
+      expect(result.stdout).toBe("");
+      expect(result.selectedRequestId).toBe(EXPECTED_REQUEST_ID);
     },
   );
 
@@ -209,9 +188,15 @@ describe("prepared connect-shell administrative approval", () => {
     expect(result.stderr).toContain("approved scope arrays disagree");
   });
 
-  it("rejects unrelated IDs, contradictory roles, unrequested admin, broad scopes, or pre-approved admin (#5324)", () => {
-    const unrelated = runSelector(adminState(), "87654321-4321-4321-8321-cba987654321");
-    expect(unrelated.status).not.toBe(0);
+  it("rejects ambiguous requests, contradictory roles, unrequested operator.admin, broad scopes, or pre-approved operator.admin (#5324)", () => {
+    const ambiguous = adminState();
+    (ambiguous.pending as Array<Record<string, unknown>>).push({
+      ...(ambiguous.pending as Array<Record<string, unknown>>)[0],
+      requestId: "87654321-4321-4321-8321-cba987654321",
+    });
+    const ambiguousResult = runSelector(ambiguous);
+    expect(ambiguousResult.status).not.toBe(0);
+    expect(ambiguousResult.stderr).toContain("exactly one pending request");
 
     const contradictoryRole = adminState();
     (contradictoryRole.pending as Array<{ role: string }>)[0].role = "node";
