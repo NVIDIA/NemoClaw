@@ -8,8 +8,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as openshellRuntimeModule from "./runtime";
 import {
   assertExternalPolicyRequirements,
+  assertOpenShellGatewayPortBinding,
   assertRecordedPolicyAuthority,
+  captureSandboxBasePolicy,
   inspectActiveGlobalPolicy,
+  inspectOpenShellSandboxPolicyReadiness,
   inspectOpenShellSandboxIdentityFingerprint,
   inspectSandboxPolicyAuthority,
   isExternalPolicyAuthorityRefusalError,
@@ -51,6 +54,21 @@ function sandboxMetadata(overrides: Record<string, unknown> = {}): Record<string
   };
 }
 
+function sandboxReadiness(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify([
+    {
+      id: "sandbox-alpha",
+      name: "alpha",
+      labels: {},
+      resource_version: 9,
+      created_at: "2026-08-25T00:00:00Z",
+      phase: "Ready",
+      current_policy_version: 7,
+      ...overrides,
+    },
+  ]);
+}
+
 function errorFrom(action: () => unknown): Error {
   try {
     action();
@@ -68,6 +86,7 @@ describe("OpenShell policy authority inspection", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it("leaves a sandbox-scoped effective policy owner unknown (#9833)", () => {
@@ -93,6 +112,65 @@ describe("OpenShell policy authority inspection", () => {
         timeout: policyAuthorityInternals.captureTimeoutMs,
       }),
     );
+  });
+
+  it("requires the exact Ready sandbox row to report the effective policy version (#9833)", () => {
+    const captureOpenshell = vi
+      .spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValue(captureResult(sandboxReadiness()));
+    const sandboxIdentityFingerprint = createHash("sha256").update("sandbox-alpha").digest("hex");
+
+    expect(
+      inspectOpenShellSandboxPolicyReadiness({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw-18080",
+        sandboxIdentityFingerprint,
+        policyVersion: 7,
+      }),
+    ).toEqual({ state: "ready" });
+    expect(captureOpenshell.mock.calls[0]?.[0]).toEqual([
+      "sandbox",
+      "list",
+      "-g",
+      "nemoclaw-18080",
+      "--output",
+      "json",
+      "--limit",
+      "1000",
+    ]);
+  });
+
+  it.each([
+    ["sandbox phase", { phase: "Provisioning" }, "sandbox-not-ready"],
+    ["policy version", { current_policy_version: 6 }, "policy-version-pending"],
+  ] as const)("classifies a pending %s as transient (#9833)", (_name, change, reason) => {
+    vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell").mockReturnValue(
+      captureResult(sandboxReadiness(change)),
+    );
+
+    expect(
+      inspectOpenShellSandboxPolicyReadiness({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw-18080",
+        sandboxIdentityFingerprint: createHash("sha256").update("sandbox-alpha").digest("hex"),
+        policyVersion: 7,
+      }),
+    ).toEqual({ state: "transient", reason });
+  });
+
+  it("fails closed when the Ready row belongs to a replacement sandbox (#9833)", () => {
+    vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell").mockReturnValue(
+      captureResult(sandboxReadiness({ id: "sandbox-replacement" })),
+    );
+
+    expect(() =>
+      inspectOpenShellSandboxPolicyReadiness({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw-18080",
+        sandboxIdentityFingerprint: createHash("sha256").update("sandbox-alpha").digest("hex"),
+        policyVersion: 7,
+      }),
+    ).toThrow(/live sandbox identity changed/u);
   });
 
   it("recognizes a global policy source as externally managed on the recorded gateway (#9833)", () => {
@@ -155,6 +233,123 @@ describe("OpenShell policy authority inspection", () => {
       ["policy", "list", "-g", "nemoclaw-18080", "--global", "--limit", "1"],
       ["policy", "get", "-g", "nemoclaw-18080", "--global", "--full", "--output", "json"],
     ]);
+  });
+
+  it("recognizes the OpenShell 0.0.106 fresh-gateway history response as absent (#9833)", () => {
+    const captureOpenshell = vi
+      .spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValue(captureResult("", { stderr: "No global policy history found\n" }));
+
+    expect(inspectActiveGlobalPolicy({ gatewayName: "nemoclaw-18080" })).toEqual({
+      state: "absent",
+    });
+    expect(captureOpenshell).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["empty output", ""],
+    ["an unexpected diagnostic", "captured-stderr-secret"],
+  ])("fails closed on %s from a successful global history read (#9833)", (_name, stderr) => {
+    vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell").mockReturnValue(
+      captureResult("", { stderr }),
+    );
+
+    const error = errorFrom(() => inspectActiveGlobalPolicy({ gatewayName: "nemoclaw-18080" }));
+    expect(error.message).toContain("invalid global policy history");
+    expect(error.message).not.toContain("captured-stderr-secret");
+  });
+
+  it("keeps a canonical absence response non-authoritative after a failed command (#9833)", () => {
+    vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell").mockReturnValue(
+      captureResult("", { status: 7, stderr: "No global policy history found\n" }),
+    );
+
+    expect(() => inspectActiveGlobalPolicy({ gatewayName: "nemoclaw-18080" })).toThrow(
+      /did not complete successfully/u,
+    );
+  });
+
+  it("preserves fresh-gateway config and workspace without accepting endpoint overrides (#9833)", () => {
+    vi.stubEnv("XDG_CONFIG_HOME", "/tmp/nemoclaw-openshell-config");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "selected-workspace");
+    vi.stubEnv("OPENSHELL_GATEWAY", "ambient-sibling");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://ambient.invalid");
+    vi.stubEnv("OPENSHELL_GATEWAY_INSECURE", "true");
+    vi.stubEnv("OPENAI_API_KEY", "must-not-cross-policy-boundary");
+    const captureOpenshell = vi
+      .spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValue(captureResult("", { stderr: "No global policy history found\n" }));
+
+    expect(inspectActiveGlobalPolicy({ gatewayName: "nemoclaw-18080" })).toEqual({
+      state: "absent",
+    });
+    const options = captureOpenshell.mock.calls[0]?.[1];
+    expect(options?.env).toMatchObject({
+      OPENSHELL_GATEWAY: "nemoclaw-18080",
+      OPENSHELL_WORKSPACE: "selected-workspace",
+      XDG_CONFIG_HOME: "/tmp/nemoclaw-openshell-config",
+    });
+    expect(options?.env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
+    expect(options?.env).not.toHaveProperty("OPENSHELL_GATEWAY_INSECURE");
+    expect(options?.env).not.toHaveProperty("OPENAI_API_KEY");
+  });
+
+  it("binds sandbox and gateway authority reads to the selected config (#9833)", () => {
+    vi.stubEnv("XDG_CONFIG_HOME", "/tmp/nemoclaw-openshell-config");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "selected-workspace");
+    vi.stubEnv("OPENSHELL_GATEWAY", "ambient-sibling");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://ambient.invalid");
+    vi.stubEnv("OPENAI_API_KEY", "must-not-cross-policy-boundary");
+    const captureOpenshell = vi
+      .spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValueOnce(captureResult(JSON.stringify(sandboxMetadata())))
+      .mockReturnValueOnce(captureResult("version: 1\n"))
+      .mockReturnValueOnce(captureResult("Name: alpha\nId: sandbox-alpha\nPhase: Ready\n"))
+      .mockReturnValueOnce(captureResult("Gateway endpoint: http://127.0.0.1:18080\n"));
+
+    inspectSandboxPolicyAuthority({
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw-18080",
+    });
+    expect(captureSandboxBasePolicy("alpha", "nemoclaw-18080")).toBe("version: 1\n");
+    inspectOpenShellSandboxIdentityFingerprint({
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw-18080",
+    });
+    assertOpenShellGatewayPortBinding({ gatewayName: "nemoclaw-18080", gatewayPort: 18080 });
+
+    expect(captureOpenshell).toHaveBeenCalledTimes(4);
+    const environments = captureOpenshell.mock.calls.map(([, options]) => options?.env);
+    expect(environments).toEqual([
+      expect.objectContaining({
+        OPENSHELL_GATEWAY: "nemoclaw-18080",
+        OPENSHELL_WORKSPACE: "selected-workspace",
+        XDG_CONFIG_HOME: "/tmp/nemoclaw-openshell-config",
+      }),
+      expect.objectContaining({
+        OPENSHELL_GATEWAY: "nemoclaw-18080",
+        OPENSHELL_WORKSPACE: "selected-workspace",
+        XDG_CONFIG_HOME: "/tmp/nemoclaw-openshell-config",
+      }),
+      expect.objectContaining({
+        OPENSHELL_GATEWAY: "nemoclaw-18080",
+        OPENSHELL_WORKSPACE: "selected-workspace",
+        XDG_CONFIG_HOME: "/tmp/nemoclaw-openshell-config",
+      }),
+      expect.objectContaining({
+        OPENSHELL_GATEWAY: "nemoclaw-18080",
+        OPENSHELL_WORKSPACE: "selected-workspace",
+        XDG_CONFIG_HOME: "/tmp/nemoclaw-openshell-config",
+      }),
+    ]);
+    expect(
+      environments.map((environment) =>
+        Object.hasOwn(environment ?? {}, "OPENSHELL_GATEWAY_ENDPOINT"),
+      ),
+    ).toEqual([false, false, false, false]);
+    expect(
+      environments.map((environment) => Object.hasOwn(environment ?? {}, "OPENAI_API_KEY")),
+    ).toEqual([false, false, false, false]);
   });
 
   it("rejects invalid sandbox and gateway identities before querying policy (#9833)", () => {

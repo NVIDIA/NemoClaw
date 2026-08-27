@@ -31,9 +31,9 @@ export const HERMES_PORTABLE_TEST_POLICY = "version: 1\nnetwork_policies: {}\n";
 
 const CONTAINER_ID = "a".repeat(64);
 const IMAGE_ID = "b".repeat(64);
-const SANDBOX_ID = "sandbox-id-1";
+export const HERMES_PORTABLE_TEST_SANDBOX_ID = "sandbox-id-1";
 export const HERMES_PORTABLE_TEST_LIVE_IDENTITY = createHash("sha256")
-  .update(SANDBOX_ID)
+  .update(HERMES_PORTABLE_TEST_SANDBOX_ID)
   .digest("hex");
 const ROUTE_SESSION_ID = "session-alpha";
 
@@ -71,11 +71,11 @@ export function createHermesPortableContainerInspectResult(
       {
         Id: CONTAINER_ID,
         Image: IMAGE_ID,
-        Name: `openshell-default--${sandboxName}-${SANDBOX_ID}`,
+        Name: `openshell-default--${sandboxName}-${HERMES_PORTABLE_TEST_SANDBOX_ID}`,
         Config: {
           Labels: {
             "openshell.managed": "true",
-            "openshell.ai/sandbox-id": SANDBOX_ID,
+            "openshell.ai/sandbox-id": HERMES_PORTABLE_TEST_SANDBOX_ID,
             "openshell.ai/sandbox-name": sandboxName,
             "openshell.ai/sandbox-namespace": "",
             "openshell.ai/sandbox-workspace": "default",
@@ -408,7 +408,7 @@ export function createHermesPortableTransactionFixture(
         present
           ? {
               kind: "present",
-              sandboxId: SANDBOX_ID,
+              sandboxId: HERMES_PORTABLE_TEST_SANDBOX_ID,
               liveIdentityFingerprint: HERMES_PORTABLE_TEST_LIVE_IDENTITY,
             }
           : { kind: "absent" }),

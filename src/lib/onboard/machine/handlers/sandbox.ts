@@ -100,6 +100,7 @@ import {
 import {
   assertBaselineExclusionsMatchCreateIntent,
   baselineExclusionsForCreate,
+  sandboxCreateInferenceSelection,
 } from "../../sandbox-registration";
 
 import { withSandboxPhaseTrace } from "../../tracing";
@@ -488,14 +489,6 @@ function requiredWebSearchProviderBindings(
 
 function hasResourceProfileEnvOverride(env: NodeJS.ProcessEnv): boolean {
   return Boolean(env.NEMOCLAW_RESOURCE_PROFILE || env.NEMOCLAW_CPU || env.NEMOCLAW_RAM);
-}
-
-function endpointSourceForCreateIntent(
-  fresh: boolean,
-  endpointSource: InferenceEndpointSource | null | undefined,
-  preserveSelectedEndpointSource: boolean,
-): InferenceEndpointSource | null {
-  return fresh && !preserveSelectedEndpointSource ? "onboard" : (endpointSource ?? null);
 }
 
 function compatibleEndpointReasoningForCreateIntent(
@@ -1184,6 +1177,8 @@ class SandboxStateFlow<
     state: SandboxStepState<WebSearchConfig>,
     sandboxName: string,
   ): void {
+    const entry = this.deps.getSandboxRegistryEntry(sandboxName);
+    if (entry?.pendingRouteReservation !== true) return;
     const sessionId = state.session?.sessionId;
     if (sessionId && this.deps.finalizeSandboxRouteReservation(sandboxName, sessionId)) return;
     this.deps.error(
@@ -1838,12 +1833,7 @@ class SandboxStateFlow<
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true as const } : {}),
       ...(this.options.endpointUrl ? { endpointUrl: this.options.endpointUrl } : {}),
       ...compatibleEndpointReasoningForCreateIntent(this.options.compatibleEndpointReasoning),
-      endpointSource: endpointSourceForCreateIntent(
-        this.options.fresh,
-        this.options.endpointSource,
-        this.options.hostLocalInferenceRouteOnly === true ||
-          this.options.hermesPortableLifecycle === true,
-      ),
+      endpointSource: this.options.endpointSource ?? null,
       ...(state.session?.observabilityRequestedExplicitly === true
         ? { observabilityRequestedExplicitly: true as const }
         : {}),
@@ -1900,7 +1890,12 @@ class SandboxStateFlow<
     sourceEntry: SandboxEntry | null,
   ): CheckpointSandboxRecreateTransaction | null {
     const existing = state.session?.checkpoint?.sandboxRecreate ?? null;
-    if (!this.options.resume && !existing && sourceEntry) return null;
+    const ownsPendingCreateReservation =
+      sourceEntry?.pendingRouteReservation === true &&
+      sourceEntry.reservationSessionId === state.session?.sessionId;
+    if (!this.options.resume && !existing && sourceEntry && !ownsPendingCreateReservation) {
+      return null;
+    }
     const gateway = selectedGatewayForSandboxRecreate(
       state.session?.checkpoint,
       this.options.gatewayName,
@@ -2212,7 +2207,22 @@ class SandboxStateFlow<
               resourceProfile,
               effectiveHermesToolGateways,
               this.options.hermesAuthMethod,
-              this.options.session ? { sessionId: this.options.session.sessionId } : null,
+              this.options.session
+                ? {
+                    sessionId: this.options.session.sessionId,
+                    selection: sandboxCreateInferenceSelection({
+                      provider: this.options.provider,
+                      model: this.options.model,
+                      endpointUrl: this.options.endpointUrl,
+                      endpointSource: this.options.endpointSource,
+                      credentialEnv: this.options.credentialEnv,
+                      preferredInferenceApi: this.options.preferredInferenceApi,
+                      compatibleEndpointReasoning: this.options.compatibleEndpointReasoning,
+                      compatibleEndpointReasoningEffort: null,
+                      nimContainer: this.options.nimContainer,
+                    }),
+                  }
+                : null,
               effectiveCreateIntent,
               ...(activateVerifiedCredentialProviders
                 ? [
