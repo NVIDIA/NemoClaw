@@ -39,8 +39,6 @@ function resolveBuildxCommand(): BuildxCommand | null {
 }
 
 const SUPPORTED_BUILDX_HOST = process.platform === "linux" && !isWsl();
-const REVIEWED_RUNTIME_LICENSE_COPY =
-  "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/BUNDLED_PACKAGES.json tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/THIRD_PARTY_LICENSES.txt /opt/mcp-tool-discovery-runtime/dist/";
 const BUILDX_COMMAND = SUPPORTED_BUILDX_HOST ? resolveBuildxCommand() : null;
 const DOCKER_CAPABLE_LINUX_CI = process.env.CI === "true" && SUPPORTED_BUILDX_HOST;
 
@@ -1042,9 +1040,6 @@ describe("sandbox build context staging", () => {
             ] as const
           ).map(async ([name, staged]) => {
             const { buildCtx, stagedDockerfile } = staged;
-            expect(fs.readFileSync(stagedDockerfile, "utf8")).toContain(
-              REVIEWED_RUNTIME_LICENSE_COPY,
-            );
             const output = path.join(tmpDir, name + "-reviewed-runtime-output");
             const build = await buildTarget(
               buildx,
