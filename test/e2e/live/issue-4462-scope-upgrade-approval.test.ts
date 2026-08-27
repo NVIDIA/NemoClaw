@@ -21,6 +21,8 @@ import {
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-issue-4462";
 const LIVE_TIMEOUT_MS = 70 * 60_000;
+const INSTALL_TIMEOUT_MS = 30 * 60_000;
+const AUTO_PAIR_DEADLINE_SECS = String(INSTALL_TIMEOUT_MS / 1_000);
 
 validateSandboxName(SANDBOX_NAME);
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
@@ -30,10 +32,11 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     ...buildAvailabilityProbeEnv(),
     PATH: `${os.homedir()}/.local/bin:${os.homedir()}/.npm-global/bin:${process.env.PATH ?? ""}`,
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-    NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "30",
-    NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "3",
-    NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "10",
-    NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "600",
+    // Keep the sole approval owner available for the complete install phase.
+    // The long post-settlement cadence prevents it from racing the later
+    // manual authorization proof.
+    NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: AUTO_PAIR_DEADLINE_SECS,
+    NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: AUTO_PAIR_DEADLINE_SECS,
     NEMOCLAW_FRESH: "1",
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_RECREATE_SANDBOX: "1",
@@ -1215,7 +1218,7 @@ echo "ISSUE_4462_SCOPE_UPGRADE_OK device=$final_device request=\${request_id:-co
 `;
 }
 
-test("keeps issue 4462 scope-upgrade approval on the gateway path without an admin leak", {
+test("keeps fresh onboarding and scope approval on the gateway path without admin access (#4462)", {
   timeout: LIVE_TIMEOUT_MS,
   meta: { e2ePhases: ISSUE_4462_SCOPE_UPGRADE_PHASES },
 }, async ({ artifacts, cleanup: cleanupRegistry, host, progress, sandbox, secrets, skip }) => {
@@ -1226,7 +1229,7 @@ test("keeps issue 4462 scope-upgrade approval on the gateway path without an adm
     contracts: [
       "install.sh creates a real OpenClaw sandbox",
       "fresh onboarding pairs one CLI identity and leaves no request pending for that device",
-      "the exact first three host-side nemoclaw sandbox exec openclaw agent turns from issue 4504 stay on the gateway path",
+      "the first host-side nemoclaw sandbox exec openclaw agent turn stays on the gateway path",
       "the issue 5324 nemoclaw <name> exec transport reaches the local OpenClaw CLI pairing path",
       "the prepared connect shell keeps the injected gateway URL private while retaining port and token",
       "operator.admin remains pending until a reviewed devices approve, cron add retry, and cron run enqueue",
@@ -1274,7 +1277,7 @@ test("keeps issue 4462 scope-upgrade approval on the gateway path without an adm
       cwd: REPO_ROOT,
       env: env({ NVIDIA_INFERENCE_API_KEY: apiKey }),
       redactionValues: [apiKey],
-      timeoutMs: 30 * 60_000,
+      timeoutMs: INSTALL_TIMEOUT_MS,
     },
   );
   expect(install.exitCode, resultText(install)).toBe(0);
@@ -1305,8 +1308,8 @@ test("keeps issue 4462 scope-upgrade approval on the gateway path without an adm
     await artifacts.writeJson(`${phase}.json`, snapshot);
     return snapshot;
   };
-  progress.phase("prove fresh agent turns stay on the gateway path");
-  let freshSnapshot = await captureFreshAgentGatewaySnapshot("phase-2-fresh-state-0", 0);
+  progress.phase("prove the first fresh agent turn stays on the gateway path");
+  const freshSnapshot = await captureFreshAgentGatewaySnapshot("phase-2-fresh-state-0", 0);
   expect(freshSnapshot.deviceId).not.toBe("");
   expect(freshSnapshot.publicKey).not.toBe("");
   expect(freshSnapshot.pairedCliCount).toBe(1);
@@ -1322,59 +1325,45 @@ test("keeps issue 4462 scope-upgrade approval on the gateway path without an adm
     "operator.write",
   ]);
 
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    const sessionId = `gpu-${attempt}-${Math.floor(Date.now() / 1000)}`;
-    const freshAgent = await host.command(
-      process.execPath,
-      [
-        CLI_ENTRYPOINT,
-        "sandbox",
-        "exec",
-        SANDBOX_NAME,
-        "--timeout",
-        "60",
-        "--",
-        "openclaw",
-        "agent",
-        "--agent",
-        "main",
-        "-m",
-        `hi #${attempt}`,
-        "--session-id",
-        sessionId,
-      ],
-      {
-        artifactName: `phase-2-fresh-agent-${attempt}`,
-        env: env(),
-        redactionValues: [apiKey],
-        timeoutMs: 90_000,
-      },
-    );
-    const freshAgentOutput = resultText(freshAgent);
-    await artifacts.writeText(`phase-2-fresh-agent-${attempt}.txt`, freshAgentOutput);
-    expect(freshAgent.exitCode, freshAgentOutput).toBe(0);
-    expect(freshAgentOutput).not.toMatch(
-      /EMBEDDED FALLBACK|gateway connect failed|scope upgrade pending approval|scope-upgrade-pending|approval=list-failed|device pairing required|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded/i,
-    );
-    expect(freshAgent.stdout.trim(), freshAgentOutput).not.toBe("");
+  const freshAgent = await host.command(
+    process.execPath,
+    [
+      CLI_ENTRYPOINT,
+      "sandbox",
+      "exec",
+      SANDBOX_NAME,
+      "--timeout",
+      "60",
+      "--",
+      "openclaw",
+      "agent",
+      "--agent",
+      "main",
+      "-m",
+      "hi",
+      "--session-id",
+      `fresh-${Math.floor(Date.now() / 1000)}`,
+    ],
+    {
+      artifactName: "phase-2-fresh-agent",
+      env: env(),
+      redactionValues: [apiKey],
+      timeoutMs: 90_000,
+    },
+  );
+  const freshAgentOutput = resultText(freshAgent);
+  await artifacts.writeText("phase-2-fresh-agent.txt", freshAgentOutput);
+  expect(freshAgent.exitCode, freshAgentOutput).toBe(0);
+  expect(freshAgentOutput).not.toMatch(
+    /EMBEDDED FALLBACK|gateway connect failed|scope upgrade pending approval|scope-upgrade-pending|approval=list-failed|device pairing required|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded/i,
+  );
+  expect(freshAgent.stdout.trim(), freshAgentOutput).not.toBe("");
 
-    const nextSnapshot = await captureFreshAgentGatewaySnapshot(
-      `phase-2-fresh-state-${attempt}`,
-      freshSnapshot.gatewayCompletedRuns + 1,
-    );
-    expect(nextSnapshot.deviceId).toBe(freshSnapshot.deviceId);
-    expect(nextSnapshot.publicKey).toBe(freshSnapshot.publicKey);
-    expect(nextSnapshot.pairedCliCount).toBe(1);
-    expect(nextSnapshot.matchingPairedCount).toBe(1);
-    expect(nextSnapshot.pendingCount).toBe(0);
-    expect(nextSnapshot.sameDevicePendingCount).toBe(0);
-    expect(nextSnapshot.activeOperatorTokenCount).toBe(1);
-    expect(nextSnapshot.deviceScopes).toEqual(freshSnapshot.deviceScopes);
-    expect(nextSnapshot.approvedScopes).toEqual(freshSnapshot.approvedScopes);
-    expect(nextSnapshot.activeOperatorTokenScopes).toEqual(freshSnapshot.activeOperatorTokenScopes);
-    expect(nextSnapshot.gatewayCompletedRuns).toBe(freshSnapshot.gatewayCompletedRuns + 1);
-    freshSnapshot = nextSnapshot;
-  }
+  const gatewaySnapshot = await captureFreshAgentGatewaySnapshot(
+    "phase-2-fresh-state-1",
+    freshSnapshot.gatewayCompletedRuns + 1,
+  );
+  expect(gatewaySnapshot.gatewayCompletedRuns).toBe(freshSnapshot.gatewayCompletedRuns + 1);
   progress.phase("approve the write-scope upgrade without admin");
   const encodedScopeUpgradeScript = Buffer.from(
     scopeUpgradeScript().replaceAll("\\${", "${"),

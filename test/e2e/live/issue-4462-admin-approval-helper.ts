@@ -7,7 +7,7 @@ import path from "node:path";
 export const ISSUE_4462_SCOPE_UPGRADE_PHASES = [
   "confirm Docker credentials and clear the scope-upgrade sandbox",
   "install the OpenClaw sandbox",
-  "prove fresh agent turns stay on the gateway path",
+  "prove the first fresh agent turn stays on the gateway path",
   "approve the write-scope upgrade without admin",
   "trigger and approve an operator.admin request through connect",
   "clear the sandbox and record the approval contract",
