@@ -39,7 +39,7 @@ const EXPLICIT_REDACTED = "[REDACTED]";
 // embedded in a longer credential value remains eligible for canonical
 // redaction instead of becoming a bypass.
 const SAFE_EXPLICIT_REDACTION_PATTERN = /(^|[\s=:,'"(]|\[|\{)\[REDACTED\](?=$|[\s,;:.'")\]}])/g;
-export const MANAGED_SLACK_CREDENTIAL_REFERENCE_SOURCE = String.raw`(?:xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(?:v[0-9]+_)?[A-Z][A-Z0-9_]{0,127}`;
+const MANAGED_SLACK_CREDENTIAL_REFERENCE_SOURCE = String.raw`(?:xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(?:v[0-9]+_)?[A-Z][A-Z0-9_]{0,127}`;
 const MANAGED_CREDENTIAL_REFERENCE_SOURCE = String.raw`(?:(?:Bearer[ \t]+)?openshell:resolve:env:(?:v[0-9]+_)?[A-Z][A-Z0-9_]{0,127}|${MANAGED_SLACK_CREDENTIAL_REFERENCE_SOURCE})`;
 const SAFE_QUOTED_CREDENTIAL_REFERENCE_PATTERN = new RegExp(
   `(["'])${MANAGED_CREDENTIAL_REFERENCE_SOURCE}\\1`,
