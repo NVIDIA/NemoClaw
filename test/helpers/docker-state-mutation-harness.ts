@@ -362,7 +362,7 @@ function createContainerStateMutationHarness(
                   "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py",
                   action,
                 ],
-                Math.max(1, helperDeadline - Date.now()),
+                helperTimeout,
                 request,
               );
               if (helperResult.status !== null && helperResult.status < 0) {
