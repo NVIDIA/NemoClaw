@@ -618,6 +618,7 @@ describe("policy tier setup", () => {
   it.each([
     { tier: "balanced", nonInteractive: true, preserved: true },
     { tier: "balanced", nonInteractive: false, preserved: true },
+    { tier: "open", nonInteractive: true, preserved: true },
     { tier: "restricted", nonInteractive: true, preserved: false },
   ])(
     "re-onboard reuse on $tier with web search declined keeps a previously-applied Brave preset only where the tier defaults it, non-interactive $nonInteractive (#10404)",
