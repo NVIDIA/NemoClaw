@@ -260,13 +260,6 @@ function verifyReadOnlyPolicyBoundary(
   };
 }
 
-function verifyExternalPolicyBoundary(
-  input: CreatedSandboxPolicyRegistrationInput,
-  deps: CreatedSandboxPolicyReceiptDeps,
-): VerifiedSandboxPolicyRegistration {
-  return verifyReadOnlyPolicyBoundary(input, deps, "externally-managed");
-}
-
 /** Verify a policyless APF-selected create without claiming APF provenance. */
 export function verifyCreatedApfInterceptorPolicyRegistration(
   input: Omit<CreatedSandboxPolicyRegistrationInput, "plannedAuthority">,
@@ -287,7 +280,7 @@ export function verifyCreatedSandboxPolicyRegistration(
       observedPolicyAuthority: "owner-unknown",
     };
   }
-  return verifyExternalPolicyBoundary(input, deps);
+  return verifyReadOnlyPolicyBoundary(input, deps, "externally-managed");
 }
 
 /** Revalidate one in-memory gate result against the exact live policy identity. */
