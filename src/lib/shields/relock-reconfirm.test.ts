@@ -32,6 +32,19 @@ describe("relockAndReconfirm", () => {
     expect(sleep).toHaveBeenCalledWith(5);
   });
 
+  it("observes the settled posture without applying the lock twice (#10155)", () => {
+    const lock = vi.fn(() => okResult());
+    const confirm = vi.fn(() => okResult());
+    const sleep = vi.fn();
+
+    const result = relockAndReconfirm(lock, { confirm, sleep, settleMs: 5 });
+
+    expect(result).toMatchObject({ ok: true, attempts: 1, lastResult: okResult() });
+    expect(lock).toHaveBeenCalledOnce();
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(sleep).toHaveBeenCalledWith(5);
+  });
+
   it("fails closed (bounded) when the re-confirm always throws after a clean apply", () => {
     // Apply succeeds every time, but the reconciler reverts before each
     // re-confirm so every re-confirm throws.

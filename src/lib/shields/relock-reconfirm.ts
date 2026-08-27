@@ -13,7 +13,9 @@
 //
 // `relockAndReconfirm` runs a bounded "lock -> settle -> re-confirm -> re-lock
 // if drifted" cycle and only declares the lock UP when a re-confirmation passes
-// after the reconciler has had a chance to settle.
+// after the reconciler has had a chance to settle. Callers whose lock operation
+// restarts a runtime can supply a read-only confirmation instead of repeating
+// that transition while the runtime is still settling.
 //
 // IMPORTANT — this NARROWS the race window, it does NOT close it. After the
 // final re-confirm returns, the same reconciler can revert perms one settle
@@ -50,6 +52,8 @@ export interface RelockReconfirmOptions {
   settleMs?: number;
   /** Injectable synchronous sleep, for unit tests. Defaults to `sleepMs`. */
   sleep?: (ms: number) => void;
+  /** Observe the settled lock without applying it again. Defaults to `lock`. */
+  confirm?: LockFn;
 }
 
 export interface RelockReconfirmResult {
@@ -96,8 +100,9 @@ export function resolveSettleMs(): number {
  *   1. `lock()` — apply + verify. If this throws, fail immediately (the lock
  *      could not even be applied/verified once).
  *   2. `sleep(settleMs)` — give the gateway/reconciler time to settle.
- *   3. `lock()` — re-confirm. Success => re-confirmed, return ok. Throw => the
- *      reconciler reverted during the settle window; retry the whole cycle.
+ *   3. `confirm()` — observe the settled posture (defaults to `lock`). Success
+ *      => re-confirmed, return ok. Throw => the reconciler reverted during the
+ *      settle window; retry the whole cycle.
  *
  * Returns ok:false (fail closed) when attempts are exhausted or the first
  * apply of an attempt throws. NOTE: ok:true means the lock re-confirmed after
@@ -114,6 +119,7 @@ export function relockAndReconfirm(
       : DEFAULT_MAX_ATTEMPTS;
   const settleMs = opts.settleMs !== undefined ? opts.settleMs : resolveSettleMs();
   const sleep = opts.sleep ?? sleepMs;
+  const confirm = opts.confirm ?? lock;
 
   let lastError = "Config re-lock did not re-confirm after settle window";
 
@@ -135,7 +141,7 @@ export function relockAndReconfirm(
     sleep(settleMs);
 
     try {
-      const confirmed = lock();
+      const confirmed = confirm();
       return { ok: true, attempts: attempt, lastResult: confirmed };
     } catch (error: unknown) {
       // The reconciler reverted perms during the settle window. Retry the
