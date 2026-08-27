@@ -26,7 +26,6 @@ import {
 } from "./provider-inference.test-support";
 
 type TestProviderInferenceOptions = ProviderInferenceStateOptions<Gpu, Agent, Host>;
-
 const PROBE_IMAGE = `quay.io/curl/curl@sha256:${"b".repeat(64)}`;
 const NIM_IMAGE = `nvcr.io/nim/meta/llama@sha256:${"d".repeat(64)}`;
 const MANAGED_IMAGE = `nvcr.io/nvidia/vllm@sha256:${"c".repeat(64)}`;
@@ -39,7 +38,6 @@ const receiptWriter = {
   targetSha256: "1".repeat(64),
   writeExact: (value: string) => value,
 };
-
 function publishedManagedReceipt(
   service: "nim" | "vllm",
   model: string,
@@ -245,6 +243,25 @@ function llamaCppLifecycleSelection(
 }
 
 describe("provider inference host-local startup selection", () => {
+  it("does not require host-local application support for a hosted candidate provider", () => {
+    const resolver = vi.fn();
+    const resolve = createCachedHostLocalInferenceSetupResolver({
+      resolver,
+      application: "pi",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      acceleration: "cpu",
+      requireToolCalling: null,
+      freshRequireToolCalling: true,
+      allowPublishedResume: false,
+      recover: false,
+      recordToolCallingRequirement: vi.fn(),
+    });
+
+    expect(resolve("pi-sandbox")).toEqual({});
+    expect(resolver).not.toHaveBeenCalled();
+  });
+
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
     "dispatches a published %s llama.cpp route through the common lifecycle exactly once",
     async (application) => {

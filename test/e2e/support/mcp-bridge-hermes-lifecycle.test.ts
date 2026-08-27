@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { HERMES_SHIELDS_COMMAND_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
 import { type CommandRunner, HostCliClient, SandboxClient } from "../fixtures/clients/index.ts";
 import type {
   ShellProbeResult,
@@ -16,6 +17,7 @@ import type {
 } from "../fixtures/shell-probe.ts";
 import {
   assertHermesConfig,
+  assertHermesManagedAddSurvivesLockedGatewayRestartAndStateLayout,
   assertHermesReloadRollback,
   lowerHermesShieldsForCleanup,
   reopenHermesMcpMaintenanceWindow,
@@ -189,6 +191,45 @@ describe("Hermes MCP managed configuration assertion", () => {
   });
 });
 
+describe("Hermes MCP managed Shields restoration", () => {
+  it("keeps every Shields client alive for the owned provider mutation", async () => {
+    const mcpUrl = "https://mcp.example.test/mcp";
+    const hostRunner = new RecordingRunner([
+      shellResult(),
+      shellResult(0, "Shields: UP\n"),
+      shellResult(0, "Gateway restarted\nhealth passed\n"),
+      shellResult(
+        0,
+        `${JSON.stringify({
+          bridges: [{ server: "fake", url: mcpUrl, adapter: { registered: true } }],
+        })}\n`,
+      ),
+      shellResult(),
+    ]);
+    const sandboxRunner = new RecordingRunner([
+      shellResult(0, "HERMES_MCP_LOCKED_INTEGRITY_CURRENT\n"),
+      shellResult(0, `${JSON.stringify({ state: "matched" })}\n`),
+    ]);
+
+    await assertHermesManagedAddSurvivesLockedGatewayRestartAndStateLayout(
+      new HostCliClient(hostRunner, { cliPath: "nemoclaw" }),
+      new SandboxClient(sandboxRunner),
+      "hermes-e2e",
+      mcpUrl,
+    );
+
+    expect(
+      hostRunner.calls
+        .filter(({ args }) => args[1] === "shields")
+        .map(({ options }) => options?.timeoutMs),
+    ).toEqual([
+      HERMES_SHIELDS_COMMAND_TIMEOUT_MS,
+      HERMES_SHIELDS_COMMAND_TIMEOUT_MS,
+      HERMES_SHIELDS_COMMAND_TIMEOUT_MS,
+    ]);
+  });
+});
+
 describe("Hermes MCP post-rebuild maintenance", () => {
   it("opens a fresh Shields-down timer before the final config mutation", async () => {
     const runner = new RecordingRunner();
@@ -202,7 +243,7 @@ describe("Hermes MCP post-rebuild maintenance", () => {
         args: ["hermes-e2e", "shields", "up"],
         options: expect.objectContaining({
           artifactName: "hermes-mcp-shields-up-before-post-rebuild-remove",
-          timeoutMs: 3 * 60_000,
+          timeoutMs: HERMES_SHIELDS_COMMAND_TIMEOUT_MS,
         }),
       }),
       expect.objectContaining({
@@ -218,7 +259,7 @@ describe("Hermes MCP post-rebuild maintenance", () => {
         ],
         options: expect.objectContaining({
           artifactName: "hermes-mcp-shields-down-before-post-rebuild-remove",
-          timeoutMs: 3 * 60_000,
+          timeoutMs: HERMES_SHIELDS_COMMAND_TIMEOUT_MS,
         }),
       }),
     ]);

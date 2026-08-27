@@ -450,7 +450,15 @@ function receiveSlackSocketEvent() {
   const appToken = parseManagedCredentialReference("SLACK_APP_TOKEN");
   return new Promise((resolve, reject) => {
     const socket = proxy ? net.createConnection({ host: proxy.host, port: proxy.port }) : net.createConnection({ host, port });
-    const timer = setTimeout(() => { socket.destroy(); reject(new Error("timed out waiting for fake Slack Socket Mode event")); }, 30000);
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      reject(error);
+    };
+    const timer = setTimeout(() => fail(new Error("timed out waiting for fake Slack Socket Mode event")), 30000);
     let handshake = Buffer.alloc(0);
     let framed = Buffer.alloc(0);
     let upgraded = false;
@@ -474,9 +482,7 @@ function receiveSlackSocketEvent() {
         if (end === -1) return;
         const statusLine = handshake.slice(0, end).toString("latin1").split("\r\n")[0] || "";
         if (!statusLine.includes("101")) {
-          clearTimeout(timer);
-          socket.destroy();
-          reject(new Error("fake Slack websocket upgrade failed: " + statusLine));
+          fail(new Error("fake Slack websocket upgrade failed: " + statusLine));
           return;
         }
         upgraded = true;
@@ -489,9 +495,14 @@ function receiveSlackSocketEvent() {
         const frame = decodeServerFrame(framed);
         if (!frame) break;
         framed = framed.slice(frame.totalLength);
+        if (frame.opcode === 8) {
+          fail(new Error("fake Slack websocket closed before the Socket Mode event"));
+          return;
+        }
         if (frame.opcode !== 1) continue;
         const envelope = JSON.parse(frame.payload.toString("utf8"));
         socket.write(encodeClientText(JSON.stringify({ envelope_id: envelope.envelope_id })));
+        settled = true;
         clearTimeout(timer);
         socket.end();
         socket.destroy();
@@ -499,7 +510,8 @@ function receiveSlackSocketEvent() {
         return;
       }
     });
-    socket.on("error", (error) => { clearTimeout(timer); reject(error); });
+    socket.on("error", fail);
+    socket.on("close", () => fail(new Error("fake Slack websocket closed before the Socket Mode event")));
   });
 }
 function postPairingReply(text, channel) {

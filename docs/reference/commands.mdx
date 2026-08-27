@@ -396,8 +396,9 @@ It also rejects stored authority or filesystem ownership drift without falling b
 
 OpenClaw onboarding does not enter the `complete` state until NemoClaw proves that the local CLI operator pairing is settled.
 Ordinary onboarding first observes the canonical local CLI device.
-If the device is not settled and has no exact pending request, NemoClaw runs one bounded request producer on the owning gateway.
-It waits for the same-device request, approves at most once, and verifies the final settled state.
+If the device is pairing-only, the host runs one bounded request producer on the owning gateway.
+The in-sandbox watcher is the only component that approves the ordinary onboarding upgrade.
+The host observes through any same-device pending state and verifies the final settled state without sending an approval.
 Portable onboarding accepts one exact already-pending canonical write upgrade, avoids a duplicate producer, and still requires strict same-device settlement before completion.
 The paired device must have exactly the `operator.pairing` and `operator.write` scopes.
 Any pairing request considered during bounded repair must request exactly those scopes.
@@ -731,6 +732,7 @@ Onboarding applies tier defaults and preserves any presets you previously added 
 Use `custom` with `NEMOCLAW_POLICY_PRESETS` when you want the explicit list to be authoritative for optional presets.
 Onboarding removes any optional preset that is not in the list.
 `skip` does not add optional tier defaults and retains eligible optional presets already applied.
+It still applies the required preset for each messaging channel enabled during the same onboarding run so the configured channel can reach its service.
 For Personal, all modes still apply or retain the mandatory `personal-open-internet` preset.
 NemoClaw filters tier suggestions and resume selections by active agent support and the selected web search provider.
 During automatic suggestion and resume reconciliation, it removes stale web-search selections when they conflict with the active agent or selected provider.
@@ -976,8 +978,8 @@ Docker and Podman gateways cannot reuse one state directory. For NemoClaw-manage
 
 Without `--from`, onboarding through the OpenShell Docker driver for OpenClaw, Hermes, and LangChain Deep Agents Code selects an immutable managed image for the installed release and host architecture.
 NemoClaw validates the complete three-agent publication cohort before selecting any member.
-If registry or catalog availability prevents resolution, the ordinary `prefer-managed` path builds the shipped, reviewed repository Dockerfile instead; it never selects an unpinned `:latest` image.
-Available catalog evidence that is incomplete, mixed, mutable, wrong-platform, or identity-inconsistent fails closed before sandbox creation.
+If registry or catalog availability prevents resolution, stock onboarding stops before sandbox creation and does not build a shipped Dockerfile.
+Catalog evidence that is incomplete, mixed, mutable, wrong-platform, or identity-inconsistent also fails closed before sandbox creation.
 The portable experimental profile and native Podman are not part of this activation.
 
 Build the sandbox image from a custom Dockerfile instead of the stock NemoClaw image.
@@ -5084,7 +5086,7 @@ OpenClaw-specific onboarding configuration:
 | `TAVILY_API_KEY` | Tavily Search API key | Supplies and implicitly selects Tavily Search when no provider is set and no Brave key is available. NemoClaw validates the key and stores it in OpenShell rather than the sandbox. |
 | `NEMOCLAW_AGENT_TIMEOUT` | positive integer (seconds) | Onboarding setting that overrides `agents.defaults.timeoutSeconds` and `models.providers.<provider-id>.timeoutSeconds` in the generated OpenClaw config. Set it before onboarding creates or recreates the sandbox. Setting it only for a later `$$nemoclaw <name> agent` invocation does not change the existing sandbox. Raise for slow inference. |
 | `NEMOCLAW_MCP_SHADOW_DIAGNOSTICS` | literal `1` to enable | Forwards opt-in successful Streamable HTTP MCP timing diagnostics to a newly created or rebuilt OpenClaw sandbox. It does not change timeouts, retries, requests, or responses. Unset it and rebuild after evidence collection to restore failure-only logging. Other values are ignored. |
-| `NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS` | positive number of seconds | Sets the post-pairing poll cadence for the in-sandbox OpenClaw auto-pair watcher. Defaults to `5` so late allowlisted CLI and browser scope upgrades are approved before clients time out. Raise only on load-sensitive gateways. |
+| `NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS` | positive number of seconds | Sets the in-sandbox OpenClaw auto-pair watcher cadence after the canonical local CLI device reaches the exact baseline scopes and has no same-device pending request. Defaults to `5` seconds. Before that settlement, the watcher polls every `1` second. Raise only on load-sensitive gateways. |
 | `NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS` | positive integer | Sets how many fast polls run after the watcher observes a fresh allowlisted scope-upgrade request. Defaults to `5`; set lower only when you need to reduce gateway polling. |
 | `NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS` | positive number of seconds | Sets the fast-reentry interval after a fresh allowlisted scope-upgrade request. Defaults to `1`. |
 | `NEMOCLAW_CONTEXT_WINDOW` | positive integer (tokens) | Overrides the model's context-window value in the generated OpenClaw config. |

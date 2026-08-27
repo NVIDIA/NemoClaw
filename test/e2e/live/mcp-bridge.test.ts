@@ -57,6 +57,7 @@ import {
 import { MCP_BRIDGE_PHASES } from "./mcp-bridge-phases.ts";
 import {
   restartBridgeWithoutHostSecret,
+  retryOpenClawBaselineScopeOnboardFailure,
   retryAfterHermesRestartTransportFailure,
   retryHermesGatewayDraining,
 } from "./mcp-bridge-reliability.ts";
@@ -81,7 +82,10 @@ import {
   runHermesInitialMcpReadiness,
 } from "./mcp-bridge-tool-discovery.ts";
 import { assertTrustedPrivateMcpRebindingDenied } from "./mcp-bridge-trusted-private.ts";
-import { MCP_PROVIDER_REWRITE_PROBE_SOURCE } from "./mcp-provider-rewrite-probe.ts";
+import {
+  buildRevisionScopedMcpAuthorizationPattern,
+  MCP_PROVIDER_REWRITE_PROBE_SOURCE,
+} from "./mcp-provider-rewrite-probe.ts";
 import { assertRawOpenShellAllowedIpsRebindingDenied } from "./openshell-allowed-ips-rebinding.ts";
 import { prepareExactMainMcpProof } from "./openshell-exact-main-mcp-proof.ts";
 
@@ -105,11 +109,12 @@ function mcpBridgeShardTest(shard: McpBridgeShard) {
 const test = mcpBridgeShardTest("openclaw");
 type McpAgent = "openclaw" | "hermes" | "langchain-deepagents-code";
 
-function expectManagedImageQualificationReceipt(sandboxName: string): void {
+function expectManagedImageQualificationReceipt(sandboxName: string, agent: McpAgent): void {
   const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
     sandboxes?: Record<string, { workload?: Record<string, unknown> }>;
   };
   assertMcpBridgeManagedImageReceipt({
+    expectedAgent: agent,
     workload: registry.sandboxes?.[sandboxName]?.workload,
   });
 }
@@ -134,25 +139,33 @@ async function onboardAgent(
     artifactName: "precleanup-destroy-sandbox",
     timeoutMs: 15 * 60_000,
   });
-  const result = await host.nemoclaw(
-    buildMcpBridgeOnboardArgs(),
-    {
-      artifactName: options.artifactName,
-      env: buildMcpBridgeOnboardEnv({
-        agent: options.agent,
-        compatibleKey: COMPATIBLE_KEY,
-        compatibleModel: COMPATIBLE_MODEL,
-        corporateCaBundle,
-        endpointUrl,
-        envOverlay: options.envOverlay,
-        sandboxName: options.sandboxName,
+  const args = buildMcpBridgeOnboardArgs();
+  const commandOptions = {
+    artifactName: options.artifactName,
+    env: buildMcpBridgeOnboardEnv({
+      agent: options.agent,
+      compatibleKey: COMPATIBLE_KEY,
+      compatibleModel: COMPATIBLE_MODEL,
+      corporateCaBundle,
+      endpointUrl,
+      envOverlay: options.envOverlay,
+      sandboxName: options.sandboxName,
+    }),
+    redactionValues: [COMPATIBLE_KEY],
+    timeoutMs: 20 * 60_000,
+  };
+  const result = await retryOpenClawBaselineScopeOnboardFailure({
+    agent: options.agent,
+    sandboxName: options.sandboxName,
+    initialResult: await host.nemoclaw(args, commandOptions),
+    retry: () =>
+      host.nemoclaw(args, {
+        ...commandOptions,
+        artifactName: `${options.artifactName}-baseline-scope-retry`,
       }),
-      redactionValues: [COMPATIBLE_KEY],
-      timeoutMs: 20 * 60_000,
-    },
-  );
+  });
   expectExitZero(result, `onboard ${options.agent} sandbox for MCP bridge`);
-  expectManagedImageQualificationReceipt(options.sandboxName);
+  expectManagedImageQualificationReceipt(options.sandboxName, options.agent);
 }
 async function assertSecretAbsentFromSandbox(
   sandbox: SandboxClient,
@@ -527,17 +540,18 @@ async function assertDeepAgentsConfig(
   sandboxName: string,
   mcpUrl: string,
 ): Promise<void> {
+  const authorizationPattern = buildRevisionScopedMcpAuthorizationPattern("FAKE_MCP_SECRET");
   const script = [
     "set -eu",
     "python3 - <<'PY'",
-    "import json, pathlib",
+    "import json, pathlib, re",
     "path = pathlib.Path('/sandbox/.deepagents/.nemoclaw-mcp.json')",
     "text = path.read_text(encoding='utf-8')",
     "data = json.loads(text)",
     `entry = data['mcpServers'][${JSON.stringify(SERVER_NAME)}]`,
     "assert entry['type'] == 'http'",
     `assert entry['url'] == ${JSON.stringify(mcpUrl)}`,
-    "assert entry['headers']['Authorization'] == 'Bearer openshell:resolve:env:FAKE_MCP_SECRET'",
+    `assert re.fullmatch(${JSON.stringify(authorizationPattern)}, entry['headers']['Authorization'])`,
     `assert ${JSON.stringify(HOST_SECRET)} not in text`,
     "PY",
   ].join("\n");

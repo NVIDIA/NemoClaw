@@ -7,6 +7,7 @@ import { mergeRequiredHermesToolGatewayPolicyPresets } from "./hermes-managed-to
 import {
   mergeEnabledMessagingChannelPolicyPresets,
   pruneDisabledMessagingPolicyPresets,
+  pruneInactiveHermesMessagingPolicyPresets,
 } from "./messaging-policy-presets";
 import {
   isInactiveObservabilityPolicyPreset,
@@ -48,6 +49,12 @@ export function mergeRequiredSetupPolicyPresets(
         customOwnsObservability: options.customOwnsObservability,
       }),
   );
+  const activeAgentPresets = pruneInactiveHermesMessagingPolicyPresets(
+    agentFilteredPresets,
+    options.enabledChannels,
+    options.agent,
+    options.customPresetNames,
+  );
   const effectiveHermesToolGateways = (options.hermesToolGateways ?? []).filter(
     (name) =>
       !isStaleBuiltinWebSearchPolicyPreset(name, {
@@ -59,7 +66,7 @@ export function mergeRequiredSetupPolicyPresets(
     mergeRequiredOpenclawOtelPolicyPresets(
       mergeEnabledMessagingChannelPolicyPresets(
         mergeRequiredHermesToolGatewayPolicyPresets(
-          agentFilteredPresets,
+          activeAgentPresets,
           effectiveHermesToolGateways,
           options.knownPresetNames,
         ),
@@ -137,6 +144,7 @@ export function isStaleBuiltinWebSearchPolicyPreset(
 
 export function createUnavailablePolicyPresetPruner(options: {
   disabledChannels?: string[] | null;
+  enabledChannels?: string[] | null;
   agent?: string | null;
   observabilityEnabled?: boolean | null;
   webSearchConfig?: WebSearchConfig | null;
@@ -152,7 +160,12 @@ export function createUnavailablePolicyPresetPruner(options: {
   // Custom and interactive selections may explicitly opt into a built-in web-search
   // preset without storing provider config. Inactive observability remains ineligible.
   return (presetNames, pruning = {}) =>
-    pruneDisabledMessagingPolicyPresets(presetNames, options.disabledChannels).filter(
+    pruneInactiveHermesMessagingPolicyPresets(
+      pruneDisabledMessagingPolicyPresets(presetNames, options.disabledChannels),
+      options.enabledChannels,
+      options.agent,
+      options.customPresetNames,
+    ).filter(
       (name) =>
         (pruning.preserveExplicitWebSearch ||
           !isStaleBuiltinWebSearchPolicyPreset(name, {
