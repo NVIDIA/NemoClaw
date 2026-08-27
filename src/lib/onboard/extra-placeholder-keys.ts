@@ -3,7 +3,6 @@
 
 import { getCredential, normalizeCredentialValue } from "../credentials/store";
 import * as webSearch from "../inference/web-search";
-import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../messaging/provider-profile";
 import { getChannelTokenKeys, listChannels } from "../sandbox/channels";
 
 interface MessagingTokenDefShape {
@@ -11,6 +10,7 @@ interface MessagingTokenDefShape {
   envKey: string;
   token: string | null;
   providerType?: string;
+  additionalCredentials?: Array<{ envKey: string; token: string | null }>;
 }
 
 export const EXTRA_PLACEHOLDER_KEYS_ENV = "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS";
@@ -88,19 +88,17 @@ export function parseExtraPlaceholderKeys(
   return { keys, warnings };
 }
 
-export function extraPlaceholderProviderSlug(envKey: string): string {
-  return envKey.toLowerCase().replace(/_/g, "-");
-}
-
 export function registerExtraPlaceholderProviders(
-  sandboxName: string,
+  _sandboxName: string,
   messagingTokenDefs: MessagingTokenDefShape[],
   log: (message: string) => void = (m) => console.warn(`  ${m}`),
 ): string[] {
+  const canonicalKeys = canonicalPlaceholderKeys();
   const parsed = parseExtraPlaceholderKeys(
     process.env[EXTRA_PLACEHOLDER_KEYS_ENV],
-    canonicalPlaceholderKeys(),
+    canonicalKeys,
   );
+  const acceptedKeys: string[] = [];
   for (const warning of parsed.warnings) log(warning);
   for (const envKey of parsed.keys) {
     // Match web-search precedence: the credential
@@ -109,14 +107,21 @@ export function registerExtraPlaceholderProviders(
     // set`. Collapse the empty-string result from normalizeCredentialValue to
     // null so callers see one unambiguous "missing" sentinel.
     const token = getCredential(envKey) || normalizeCredentialValue(process.env[envKey]) || null;
-    messagingTokenDefs.push({
-      name: `${sandboxName}-extra-${extraPlaceholderProviderSlug(envKey)}`,
-      envKey,
-      token,
-      providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
-    });
+    const canonicalEnvKey = findExtendedCanonicalPrefix(envKey, canonicalKeys);
+    const canonicalProvider = messagingTokenDefs.find(
+      (definition) => definition.envKey === canonicalEnvKey,
+    );
+    if (!canonicalProvider) {
+      log(
+        `${EXTRA_PLACEHOLDER_KEYS_ENV}: ignoring "${envKey}" — its canonical credential is not part of the selected sandbox plan`,
+      );
+      continue;
+    }
+    canonicalProvider.additionalCredentials ??= [];
+    canonicalProvider.additionalCredentials.push({ envKey, token });
+    acceptedKeys.push(envKey);
   }
-  return [...parsed.keys];
+  return acceptedKeys;
 }
 
 export function appendExtraPlaceholderKeysEnvArg(

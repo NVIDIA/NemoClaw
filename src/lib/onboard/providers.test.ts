@@ -124,6 +124,7 @@ const {
       envKey: string;
       token: string | null;
       providerType?: string;
+      additionalCredentials?: Array<{ envKey: string; token: string | null }>;
     }>,
     runOpenshell: RunOpenshell,
     options?: {

@@ -236,6 +236,28 @@ describe("messaging provider installed-runtime proofs", () => {
     );
     expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE.match(/allowLegacyTestApi &&/gu)).toHaveLength(2);
     expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE).toContain("/api/chat.postMessage");
+    expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE).toContain("process.env.SLACK_BOT_TOKEN");
+    expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE).toContain("process.env.SLACK_APP_TOKEN");
+    expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE).not.toContain("slackAccount.botToken");
+    expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE).not.toContain("slackAccount.appToken");
+  });
+
+  it("uses revision-scoped Slack environment placeholders in the live proof", () => {
+    expect(LIVE_MESSAGING_PROVIDERS_SOURCE).toContain(
+      'credentialPlaceholders.get("SLACK_BOT_TOKEN")',
+    );
+    expect(LIVE_MESSAGING_PROVIDERS_SOURCE).toContain(
+      'credentialPlaceholders.get("SLACK_APP_TOKEN")',
+    );
+    expect(LIVE_MESSAGING_PROVIDERS_SOURCE).not.toContain(
+      "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+    );
+    expect(LIVE_MESSAGING_PROVIDERS_SOURCE).not.toContain(
+      "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+    );
+    expect(LIVE_MESSAGING_PROVIDERS_SOURCE).not.toContain(
+      "Bearer openshell:resolve:env:SLACK_BOT_TOKEN",
+    );
   });
 
   it("finds Slack only in its canonical managed npm project", () => {

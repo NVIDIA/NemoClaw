@@ -113,7 +113,7 @@ describe("credential provider registration", () => {
           : providerMetadata(
               "alpha-discord-bridge",
               "discord-hermes-static-v1",
-              "DISCORD_BOT_TOKEN",
+              "DISCORD_BOT_TOKEN, DISCORD_BOT_TOKEN_AGENT_A",
             ),
       );
       const deps = registrationDeps(runOpenshell, session);

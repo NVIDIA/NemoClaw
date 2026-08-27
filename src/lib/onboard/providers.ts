@@ -22,7 +22,8 @@ const {
   LLAMA_CPP_PROVIDER_NAME,
 } = require("../inference/llama-cpp/contract");
 const {
-  inspectGatewayCredentialOnlyProviderBinding,
+  inspectGatewayCredentialFamilyProviderBinding,
+  matchesGatewayCredentialFamilyProviderBinding,
   matchesGatewayCredentialOnlyProviderBinding,
   readGatewayProviderMetadata,
 } = require("./gateway-provider-metadata");
@@ -424,7 +425,7 @@ function getRequestedModelHint(nonInteractive, allowHostedInferenceStaging = tru
  * @param {string} type - Provider type (for example, "openai" or "nemoclaw-mcp-v1").
  * @param {string} credentialEnv - Credential environment variable name.
  * @param {string|null} baseUrl - Optional base URL for API-compatible endpoints.
- * @param {{ includeCredential?: boolean }} [opts] - When `includeCredential` is
+ * @param {{ includeCredential?: boolean, credentialEnvs?: string[] }} [opts] - When `includeCredential` is
  *   false, the `--credential` flag is omitted from the args. Used on the
  *   `provider update` path when the host env does not carry the credential and
  *   the gateway already holds it (no rotation needed). OpenShell's CLI rejects
@@ -433,13 +434,15 @@ function getRequestedModelHint(nonInteractive, allowHostedInferenceStaging = tru
  * @returns {string[]} Argument array for runOpenshell().
  */
 function buildProviderArgs(action, name, type, credentialEnv, baseUrl, opts = {}) {
-  const { includeCredential = true } = opts;
+  const { includeCredential = true, credentialEnvs } = opts;
   const args =
     action === "create"
       ? ["provider", "create", "--name", name, "--type", type]
       : ["provider", "update", name];
   if (includeCredential) {
-    args.push("--credential", credentialEnv);
+    for (const envKey of credentialEnvs ?? [credentialEnv]) {
+      args.push("--credential", envKey);
+    }
   }
   if (baseUrl && type === "openai") {
     args.push("--config", `OPENAI_BASE_URL=${baseUrl}`);
@@ -501,7 +504,7 @@ function policyAuthorityCheckedRunner(runOpenshell, revalidatePolicyRequirements
  * @param {string|null} baseUrl - Optional base URL for the provider endpoint.
  * @param {Record<string, string>} env - Environment variables for the openshell command.
  * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
- * @param {{replaceExisting?: boolean, knownExists?: boolean, allowedSandboxes?: readonly string[], requireExactBinding?: boolean, revalidatePolicyRequirements?: (operation: string) => void}} options - Optional replacement controls.
+ * @param {{replaceExisting?: boolean, knownExists?: boolean, allowedSandboxes?: readonly string[], requireExactBinding?: boolean, allowExtendedCredentialKeys?: boolean, credentialEnvs?: string[], revalidatePolicyRequirements?: (operation: string) => void}} options - Optional replacement controls.
  * @returns {{ ok: boolean, status?: number, message?: string, reason?: string }}
  */
 function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, options = {}) {
@@ -511,15 +514,24 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
     `inspect or change provider ${JSON.stringify(name)}`,
   );
   const exists = options.knownExists ?? providerExistsInGateway(name, runOpenshell);
+  const credentialEnvs = options.credentialEnvs ?? [credentialEnv];
+  const bindingMatches = (metadata) =>
+    options.allowExtendedCredentialKeys
+      ? matchesGatewayCredentialFamilyProviderBinding(metadata, {
+          name,
+          type,
+          credentialKey: credentialEnv,
+        })
+      : matchesGatewayCredentialOnlyProviderBinding(metadata, {
+          name,
+          type,
+          credentialKey: credentialEnv,
+        });
   if (
     exists &&
     options.requireExactBinding &&
     !options.replaceExisting &&
-    !matchesGatewayCredentialOnlyProviderBinding(readGatewayProviderMetadata(name, runOpenshell), {
-      name,
-      type,
-      credentialKey: credentialEnv,
-    })
+    !bindingMatches(readGatewayProviderMetadata(name, runOpenshell))
   ) {
     return {
       ok: false,
@@ -552,10 +564,26 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
   // a credential value (rebuild after `channels add` with the original env
   // unset), drop the flag so `provider update` becomes a no-op merge — the
   // gateway already holds the secret.
-  const credentialValueAvailable =
-    !!credentialEnv && typeof env[credentialEnv] === "string" && env[credentialEnv].length > 0;
-  const includeCredential = action === "create" || credentialValueAvailable;
-  const args = buildProviderArgs(action, name, type, credentialEnv, baseUrl, { includeCredential });
+  const availableCredentialEnvs = credentialEnvs.filter(
+    (envKey) => typeof env[envKey] === "string" && env[envKey].length > 0,
+  );
+  if (
+    action === "create" &&
+    options.allowExtendedCredentialKeys &&
+    !availableCredentialEnvs.includes(credentialEnv)
+  ) {
+    return {
+      ok: false,
+      status: 1,
+      message: `Cannot create provider '${name}' without its canonical credential '${credentialEnv}'.`,
+    };
+  }
+  const submittedCredentialEnvs = action === "create" ? credentialEnvs : availableCredentialEnvs;
+  const includeCredential = submittedCredentialEnvs.length > 0;
+  const args = buildProviderArgs(action, name, type, credentialEnv, baseUrl, {
+    includeCredential,
+    credentialEnvs: submittedCredentialEnvs,
+  });
   const runOpts = { ignoreError: true, env, stdio: ["ignore", "pipe", "pipe"] };
   const result = runOpenshell(args, runOpts);
   if (result.status !== 0) {
@@ -568,18 +596,51 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
   return { ok: true };
 }
 
+function plannedMessagingCredentialKeys(tokenDef) {
+  return [
+    tokenDef.envKey,
+    ...(tokenDef.additionalCredentials ?? []).map(({ envKey }) => envKey),
+  ];
+}
+
+function containsOnlyPlannedMessagingCredentialKeys(metadata, plannedKeys) {
+  const expected = new Set(plannedKeys);
+  return Boolean(metadata && metadata.credentialKeys.every((key) => expected.has(key)));
+}
+
+function containsPlannedMessagingCredentialKeys(metadata, plannedKeys) {
+  if (!metadata) return false;
+  const observed = new Set(metadata.credentialKeys);
+  return plannedKeys.every((key) => observed.has(key));
+}
+
 function preflightMessagingProviderBindings(tokenDefs, _runOpenshell) {
   const failures = [];
-  for (const { name, envKey, token, providerType } of tokenDefs) {
-    if (!token || !providerType || !providerExistsInGateway(name, _runOpenshell)) continue;
-    const matches = matchesGatewayCredentialOnlyProviderBinding(
-      readGatewayProviderMetadata(name, _runOpenshell),
-      { name, type: providerType, credentialKey: envKey },
+  for (const tokenDef of tokenDefs) {
+    const { name, envKey, providerType } = tokenDef;
+    if (!providerType) continue;
+    const inspection = inspectGatewayCredentialFamilyProviderBinding(
+      {
+        name,
+        type: providerType,
+        credentialKey: envKey,
+      },
+      _runOpenshell,
     );
+    if (inspection.kind === "missing") continue;
+    const metadata =
+      inspection.kind === "exact" ? readGatewayProviderMetadata(name, _runOpenshell) : null;
+    const plannedKeys = plannedMessagingCredentialKeys(tokenDef);
+    const matches =
+      containsOnlyPlannedMessagingCredentialKeys(metadata, plannedKeys) &&
+      containsPlannedMessagingCredentialKeys(metadata, plannedKeys);
     if (matches) continue;
     failures.push({
       name,
-      message: `Existing provider '${name}' does not match the required '${providerType}' credential binding.`,
+      message:
+        inspection.kind === "indeterminate" || (inspection.kind === "exact" && !metadata)
+          ? `Could not inspect messaging provider '${name}'; no provider mutation was attempted.`
+          : `Existing provider '${name}' does not match the required '${providerType}' credential binding.`,
     });
   }
   return failures;
@@ -596,7 +657,7 @@ function preflightMessagingProviderBindings(tokenDefs, _runOpenshell) {
  * providers. Pass `options.bestEffort` only from rollback paths that must
  * continue restoring registry state and report residual gateway work instead
  * of terminating the CLI.
- * @param {Array<{name: string, envKey: string, token: string|null, providerType?: string}>} tokenDefs
+ * @param {Array<{name: string, envKey: string, token: string|null, providerType?: string, additionalCredentials?: Array<{envKey: string, token: string|null}>}>} tokenDefs
  * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
  * @param {{replaceExisting?: boolean, bestEffort?: boolean, allowedSandboxes?: readonly string[], requireExactBindings?: boolean, revalidatePolicyRequirements?: (operation: string) => void}} options - Forwarded to every upsertProvider call.
  * @returns {string[]} Provider names that were upserted.
@@ -665,13 +726,17 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   const upserted = [];
   const mutatedProviderNames = [];
   const failures = [];
-  for (const { name, envKey, token, providerType } of tokenDefs) {
-    if (!token) continue;
+  for (const { name, envKey, token, providerType, additionalCredentials = [] } of tokenDefs) {
+    if (!token && !additionalCredentials.some((credential) => Boolean(credential.token))) continue;
     let knownExists;
     let result;
     if (providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE) {
-      const inspection = inspectGatewayCredentialOnlyProviderBinding(
-        { name, type: providerType, credentialKey: envKey },
+      const inspection = inspectGatewayCredentialFamilyProviderBinding(
+        {
+          name,
+          type: providerType,
+          credentialKey: envKey,
+        },
         runMessagingBridgeOpenshell,
       );
       if (inspection.kind === "indeterminate") {
@@ -696,7 +761,11 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
         providerType || "generic",
         envKey,
         null,
-        { [envKey]: token },
+        Object.fromEntries(
+          [{ envKey, token }, ...additionalCredentials]
+            .filter((credential) => Boolean(credential.token))
+            .map((credential) => [credential.envKey, credential.token]),
+        ),
         _runOpenshell,
         {
           replaceExisting: Boolean(options.replaceExisting),
@@ -704,15 +773,31 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
           allowedSandboxes: options.allowedSandboxes,
           revalidatePolicyRequirements: options.revalidatePolicyRequirements,
           requireExactBinding: Boolean(options.requireExactBindings && providerType),
+          credentialEnvs: [
+            envKey,
+            ...additionalCredentials
+              .filter(({ token }) => Boolean(token))
+              .map((credential) => credential.envKey),
+          ],
+          allowExtendedCredentialKeys: additionalCredentials.length > 0,
         },
       );
       if (result.ok) mutatedProviderNames.push(name);
-      if (result.ok && providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE) {
-        const verified = inspectGatewayCredentialOnlyProviderBinding(
-          { name, type: providerType, credentialKey: envKey },
-          runMessagingBridgeOpenshell,
-        );
-        if (verified.kind !== "exact") {
+      if (
+        result.ok &&
+        (providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE || additionalCredentials.length > 0)
+      ) {
+        const verifiedMetadata = readGatewayProviderMetadata(name, runMessagingBridgeOpenshell);
+        const plannedKeys = plannedMessagingCredentialKeys({ envKey, additionalCredentials });
+        const verified =
+          matchesGatewayCredentialFamilyProviderBinding(verifiedMetadata, {
+            name,
+            type: providerType || "generic",
+            credentialKey: envKey,
+          }) &&
+          containsOnlyPlannedMessagingCredentialKeys(verifiedMetadata, plannedKeys) &&
+          containsPlannedMessagingCredentialKeys(verifiedMetadata, plannedKeys);
+        if (!verified) {
           result = {
             ok: false,
             status: 1,

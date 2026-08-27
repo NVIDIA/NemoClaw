@@ -220,7 +220,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       { root: deps.root, runOpenshell },
     );
     if (staticProfileMatches === false) return false;
-    return gatewayProviderMetadata.matchesGatewayCredentialOnlyProviderBinding(
+    return gatewayProviderMetadata.matchesGatewayCredentialFamilyProviderBinding(
       providers.readGatewayProviderMetadata(binding.name, runOpenshell, deps.getGatewayName()),
       {
         name: binding.name,
@@ -270,8 +270,12 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     const plannedTokenDefs = new Map(
       messaging.messagingTokenDefs.map((tokenDef) => [tokenDef.name, tokenDef]),
     );
-    const tokenDefs = messaging.messagingTokenDefs.filter((tokenDef) =>
-      deps.normalizeCredentialValue(tokenDef.token),
+    const tokenDefs = messaging.messagingTokenDefs.filter(
+      (tokenDef) =>
+        deps.normalizeCredentialValue(tokenDef.token) ||
+        tokenDef.additionalCredentials?.some((credential) =>
+          deps.normalizeCredentialValue(credential.token),
+        ),
     );
     const runOpenshell = gatewayRunner();
     preflightRequiredCredentialProviderBindings(

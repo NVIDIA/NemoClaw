@@ -367,7 +367,16 @@ const baseMessage = {
   text: "<@B1> channel mention proof",
 };
 const proofText = "NemoClaw Slack channel mention proof";
-const token = slackAccount.botToken;
+const token = process.env.SLACK_BOT_TOKEN;
+const appToken = process.env.SLACK_APP_TOKEN;
+invariant(
+  /^openshell:resolve:env:v[0-9]+_SLACK_BOT_TOKEN$/.test(token || ""),
+  "missing revision-scoped SLACK_BOT_TOKEN environment placeholder",
+);
+invariant(
+  /^openshell:resolve:env:v[0-9]+_SLACK_APP_TOKEN$/.test(appToken || ""),
+  "missing revision-scoped SLACK_APP_TOKEN environment placeholder",
+);
 
 function createPipelineSlackProofContext(appClient) {
   const assistantThreads = new Map();
@@ -493,7 +502,7 @@ Object.assign(ctx, { botToken: token, botUserId: "B1", botId: "B1", teamId: "T1"
 const account = {
   accountId: "default",
   botToken: token,
-  appToken: slackAccount.appToken,
+  appToken,
   config: slackAccount,
 };
 const allowedPrepared = await prepareSlackMessage({

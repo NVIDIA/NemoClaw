@@ -21,6 +21,7 @@ export interface MessagingTokenDef {
   envKey: string;
   token: string | null;
   providerType?: string;
+  additionalCredentials?: Array<{ envKey: string; token: string | null }>;
 }
 
 type MessagingCredentialDef = MessagingTokenDef & {
@@ -143,7 +144,10 @@ export function prepareCreateSandboxMessaging(
       disabledChannelNames,
       messagingTokenDefs,
       extraPlaceholderKeys: [],
-      hasMessagingTokens: messagingTokenDefs.some(({ token }) => !!token),
+      hasMessagingTokens: messagingTokenDefs.some(
+        ({ token, additionalCredentials }) =>
+          Boolean(token) || additionalCredentials?.some((credential) => Boolean(credential.token)),
+      ),
       reusableMessagingProviders: [],
       reusableMessagingChannels: [],
       missingBridgeChannels: [],
@@ -186,7 +190,10 @@ export function prepareCreateSandboxMessaging(
     input.sandboxName,
     messagingTokenDefs,
   );
-  const hasMessagingTokens = messagingTokenDefs.some(({ token }) => !!token);
+  const hasMessagingTokens = messagingTokenDefs.some(
+    ({ token, additionalCredentials }) =>
+      Boolean(token) || additionalCredentials?.some((credential) => Boolean(credential.token)),
+  );
   const reusableMessagingProviders: string[] = reusableWebSearchProvider
     ? [webSearchProviderName]
     : [];

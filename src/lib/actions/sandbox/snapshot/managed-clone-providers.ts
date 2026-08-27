@@ -14,7 +14,7 @@ import {
 import { isValidName, isValidProviderName } from "../../../name-validation";
 import { reportsExactProviderNotFound } from "../../../onboard/extra-provider-diagnostic-parser";
 import {
-  matchesGatewayCredentialOnlyProviderBinding,
+  matchesGatewayCredentialFamilyProviderBinding,
   parseGatewayProviderMetadata,
 } from "../../../onboard/gateway-provider-metadata";
 import type { ManagedStartupProfile } from "../../../onboard/managed-startup/profile";
@@ -184,7 +184,7 @@ function inspectProvider(
   const metadata = parseGatewayProviderMetadata(
     `${commandStreamText(result.stdout)}\n${commandStreamText(result.stderr)}`,
   );
-  return matchesGatewayCredentialOnlyProviderBinding(metadata, {
+  return matchesGatewayCredentialFamilyProviderBinding(metadata, {
     name: binding.providerName,
     type: binding.providerType,
     credentialKey: binding.providerEnvKey,

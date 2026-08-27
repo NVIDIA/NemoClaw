@@ -4,7 +4,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  inspectGatewayCredentialFamilyProviderBinding,
   inspectGatewayCredentialOnlyProviderBinding,
+  matchesGatewayCredentialFamilyProviderBinding,
   matchesGatewayCredentialOnlyProviderBinding,
   matchesGatewayProviderBinding,
   parseGatewayProviderMetadata,
@@ -92,6 +94,38 @@ describe("gateway provider metadata", () => {
     ).toBe(false);
   });
 
+  it("matches only namespaced extensions of a canonical credential", () => {
+    const expected = {
+      name: "alpha-telegram-bridge",
+      type: "nemoclaw-mcp-v1",
+      credentialKey: "TELEGRAM_BOT_TOKEN",
+    };
+    const metadata = {
+      name: expected.name,
+      type: expected.type,
+      credentialKeys: [
+        expected.credentialKey,
+        "TELEGRAM_BOT_TOKEN_AGENT_A",
+        "TELEGRAM_BOT_TOKEN_AGENT_B",
+      ],
+      configKeys: [],
+    };
+
+    expect(matchesGatewayCredentialFamilyProviderBinding(metadata, expected)).toBe(true);
+    expect(
+      matchesGatewayCredentialFamilyProviderBinding(
+        { ...metadata, credentialKeys: [...metadata.credentialKeys, "GITHUB_TOKEN"] },
+        expected,
+      ),
+    ).toBe(false);
+    expect(
+      matchesGatewayCredentialFamilyProviderBinding(
+        { ...metadata, configKeys: ["EXTRA_CONFIG"] },
+        expected,
+      ),
+    ).toBe(false);
+  });
+
   it("distinguishes exact, missing, incompatible, and indeterminate credential providers", () => {
     const expected = {
       name: "alpha-telegram-bridge",
@@ -128,6 +162,34 @@ describe("gateway provider metadata", () => {
         throw new Error("transport failure");
       }),
     ).toEqual({ kind: "indeterminate" });
+  });
+
+  it("inspects a namespaced credential family", () => {
+    const expected = {
+      name: "alpha-telegram-bridge",
+      type: "nemoclaw-mcp-v1",
+      credentialKey: "TELEGRAM_BOT_TOKEN",
+    };
+    const family = [
+      "Name: alpha-telegram-bridge",
+      "Type: nemoclaw-mcp-v1",
+      "Credential keys: TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_TOKEN_AGENT_A",
+      "Config keys: <none>",
+      "",
+    ].join("\n");
+
+    expect(
+      inspectGatewayCredentialFamilyProviderBinding(expected, () => ({
+        status: 0,
+        stdout: family,
+      })),
+    ).toEqual({ kind: "exact" });
+    expect(
+      inspectGatewayCredentialFamilyProviderBinding(expected, () => ({
+        status: 0,
+        stdout: family.replace("TELEGRAM_BOT_TOKEN_AGENT_A", "GITHUB_TOKEN"),
+      })),
+    ).toEqual({ kind: "collision" });
   });
 
   it("parses one complete ANSI-decorated provider identity", () => {

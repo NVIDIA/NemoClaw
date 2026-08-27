@@ -283,7 +283,10 @@ describe("preflightRebuildTargetRuntime web search credential", () => {
   }
 
   it("reuses the gateway-registered web search credential when no host key is staged (#7097)", async () => {
-    mocks.readGatewayProviderMetadata.mockReturnValue(GATEWAY_BINDING_METADATA);
+    mocks.readGatewayProviderMetadata.mockReturnValue({
+      ...GATEWAY_BINDING_METADATA,
+      credentialKeys: ["BRAVE_API_KEY", "BRAVE_API_KEY_AGENT_A"],
+    });
 
     const { result, log, bail } = await runPreflight();
 
