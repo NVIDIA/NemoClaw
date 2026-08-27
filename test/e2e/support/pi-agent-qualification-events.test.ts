@@ -52,7 +52,6 @@ describe("Pi qualification event oracle", () => {
       "--temp-managed-runtime",
       "--temp-managed-runtime-catalog",
       "/tmp/pi-catalog.json",
-      "--fresh",
       "--non-interactive",
       "--yes",
       "--yes-i-accept-third-party-software",
