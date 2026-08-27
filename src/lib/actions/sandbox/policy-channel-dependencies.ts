@@ -18,9 +18,10 @@ type MessagingProviderUpsertOptions = {
 };
 
 type LegacyOnboardProvidersModule = {
-  isMessagingProviderBindingConflict(
-    error: unknown,
-  ): error is Error & { readonly mutatedProviderNames: readonly string[] };
+  isMessagingProviderBindingConflict(error: unknown): error is Error & {
+    readonly mutatedProviderNames: readonly string[];
+    readonly createdProviderNames?: readonly string[];
+  };
   upsertMessagingProviders(
     tokenDefs: MessagingProviderTokenDefinition[],
     run: typeof runOpenshell,
@@ -30,6 +31,8 @@ type LegacyOnboardProvidersModule = {
 
 type RebuildModule = typeof import("./rebuild");
 type SetupInferenceModule = typeof import("../../onboard/setup-inference");
+type SandboxProviderCleanupModule = typeof import("../../onboard/sandbox-provider-cleanup");
+type PolicyModule = typeof import("../../policy");
 type GooglechatWebhookLifecycleModule =
   typeof import("../../messaging/channels/googlechat/tunnel/lifecycle");
 type GooglechatTunnelRuntimeDeps =
@@ -57,6 +60,25 @@ function gatewayRunner(gatewayName: string): typeof runOpenshell {
  * onboarding and rebuild modules at policy-channel import time.
  */
 export const policyChannelDependencies = {
+  deleteMessagingProviderWithRecovery(
+    providerName: string,
+    sandboxName: string,
+    gatewayName: string,
+  ): ReturnType<SandboxProviderCleanupModule["deleteProviderWithRecovery"]> {
+    const cleanup =
+      require("../../onboard/sandbox-provider-cleanup") as SandboxProviderCleanupModule;
+    return cleanup.deleteProviderWithRecovery(providerName, {
+      allowedSandboxes: [sandboxName],
+      runOpenshell: gatewayRunner(gatewayName),
+    });
+  },
+  revalidateChannelProviderPolicyAuthority(sandboxName: string, gatewayName: string): void {
+    const policy = require("../../policy") as PolicyModule;
+    const operation = `change messaging providers for sandbox '${sandboxName}'`;
+    const authority = policy.inspectPolicyMutationAuthority(sandboxName, operation, gatewayName);
+    policy.assertNemoClawManagedPolicy(authority, operation);
+    policy.recheckPolicyMutationAuthority(sandboxName, operation, authority);
+  },
   runGatewayOpenshell(
     gatewayName: string,
     args: Parameters<typeof runOpenshell>[0],
@@ -70,9 +92,10 @@ export const policyChannelDependencies = {
       gatewayName,
     });
   },
-  isMessagingProviderBindingConflict(
-    error: unknown,
-  ): error is Error & { readonly mutatedProviderNames: readonly string[] } {
+  isMessagingProviderBindingConflict(error: unknown): error is Error & {
+    readonly mutatedProviderNames: readonly string[];
+    readonly createdProviderNames?: readonly string[];
+  } {
     const providers = require("../../onboard/providers") as LegacyOnboardProvidersModule;
     return providers.isMessagingProviderBindingConflict(error);
   },

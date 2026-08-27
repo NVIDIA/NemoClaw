@@ -848,7 +848,8 @@ async function applyChannelAddToGatewayAndRegistry(
   sandboxName: string,
   channelName: string,
   acquired: Record<string, string>,
-): Promise<boolean> {
+  applyPolicyBeforeAttachment?: () => boolean,
+): Promise<boolean | null> {
   const sandboxAgent = registry.getSandbox(sandboxName)?.agent;
   const staticProviderType = staticMessagingProviderTypeForChannel(channelName, sandboxAgent);
   const tokenDefs: MessagingTokenDef[] = Object.entries(acquired).map(([envKey, token]) => ({
@@ -899,6 +900,7 @@ async function applyChannelAddToGatewayAndRegistry(
     console.error(`  ${gatewayStartGuidance(gatewayName)}`);
     process.exit(1);
   }
+  policyChannelDependencies.revalidateChannelProviderPolicyAuthority(sandboxName, gatewayName);
   try {
     // bestEffort: failures throw (instead of process.exit inside the helper)
     // so a partial add can be torn down below before exiting.
@@ -910,6 +912,9 @@ async function applyChannelAddToGatewayAndRegistry(
         requireExactBindings: true,
       },
     );
+    if (applyPolicyBeforeAttachment && !applyPolicyBeforeAttachment()) {
+      return null;
+    }
     for (const providerName of providerNames) {
       revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName);
       const attached = runOpenshell(
@@ -930,9 +935,28 @@ async function applyChannelAddToGatewayAndRegistry(
       }`,
     );
     if (policyChannelDependencies.isMessagingProviderBindingConflict(err)) {
-      if (err.mutatedProviderNames.length > 0) {
+      const createdProviderNames = [...(err.createdProviderNames ?? [])];
+      const createdProviders = new Set(createdProviderNames);
+      const cleanupFailures = createdProviderNames.filter((providerName) => {
+        const result = policyChannelDependencies.runGatewayOpenshell(
+          gatewayName,
+          ["provider", "delete", providerName],
+          { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+        );
+        const output = `${result.stdout || ""}${result.stderr || ""}`;
+        return result.status !== 0 && !/\bNotFound\b|not found/i.test(output);
+      });
+      const updatedProviderNames = err.mutatedProviderNames.filter(
+        (providerName) => !createdProviders.has(providerName),
+      );
+      if (updatedProviderNames.length > 0) {
         console.error(
-          `  ${YW}⚠${R} Provider state changed before the identity conflict; inspect ${err.mutatedProviderNames.join(", ")} before retrying.`,
+          `  ${YW}⚠${R} Updated provider state remains for ${updatedProviderNames.join(", ")}; resolve the conflicting provider, then rerun '${CLI_NAME} ${sandboxName} channels add ${channelName}'.`,
+        );
+      }
+      if (cleanupFailures.length > 0) {
+        console.error(
+          `  ${YW}⚠${R} Could not remove newly created providers ${cleanupFailures.join(", ")}; rerun '${CLI_NAME} ${sandboxName} channels remove ${channelName}'.`,
         );
       }
       process.exit(1);
@@ -1076,16 +1100,13 @@ async function applyChannelRemoveToGatewayAndRegistry(
     const detachFailedSet = new Set(detachFailures.map((f) => f.name));
     for (const name of providerNames) {
       if (detachFailedSet.has(name)) continue;
-      const result = policyChannelDependencies.runGatewayOpenshell(
+      const result = policyChannelDependencies.deleteMessagingProviderWithRecovery(
+        name,
+        sandboxName,
         gatewayName,
-        ["provider", "delete", name],
-        {
-          ignoreError: true,
-          stdio: ["ignore", "pipe", "pipe"],
-        },
       );
-      if (result.status !== 0) {
-        const output = `${result.stdout || ""}${result.stderr || ""}`;
+      if (!result.ok) {
+        const output = `${result.stdout}${result.stderr}`;
         if (!/\bNotFound\b|not found/i.test(output)) {
           deleteFailures.push({ name, output: output.trim() });
         }
@@ -1510,31 +1531,29 @@ async function addSandboxChannelUnlocked(
     const existing = getCredential(key);
     if (existing != null) priorCreds[key] = existing;
   }
-  // Register every provider before credentials or durable channel state are
-  // saved. Exact-binding preflight can then reject the complete set without
-  // leaving a partial add behind. Credentials still persist before the policy
-  // and rebuild steps, so choosing "rebuild later" keeps the queued token.
+  // Register providers before credentials or durable channel state are saved.
+  // Apply and verify the channel policy before attaching those providers to the
+  // live sandbox, so policy failure cannot expose a credential to the workload.
   const registeredBridge = await applyChannelAddToGatewayAndRegistry(
     sandboxName,
     canonical,
     acquired,
+    () =>
+      applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
+        disclosedPresetState,
+      }),
   );
-  if (registeredBridge) {
-    console.log(`  ${G}✓${R} Registered ${canonical} bridge with the OpenShell gateway.`);
-  }
-  persistChannelTokens(acquired);
-
-  if (
-    !applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
-      disclosedPresetState,
-    })
-  ) {
+  if (registeredBridge === null) {
     await rollbackChannelAdd(sandboxName, channelDef, canonical, {
       wasAlreadyEnabled,
       priorCreds,
     });
     process.exit(1);
   }
+  if (registeredBridge) {
+    console.log(`  ${G}✓${R} Registered ${canonical} bridge with the OpenShell gateway.`);
+  }
+  persistChannelTokens(acquired);
 
   if (!MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan)) {
     console.error(`  ${YW}⚠${R} Could not persist messaging plan for '${sandboxName}'.`);

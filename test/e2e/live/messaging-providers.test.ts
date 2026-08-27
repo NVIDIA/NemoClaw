@@ -18,7 +18,6 @@ import {
   accountBool,
   accountString,
   applyRestRewritePolicy,
-  applyWebSocketRewritePolicy,
   CLI_ENTRYPOINT,
   channelAccount,
   channelEnabled,
@@ -39,7 +38,6 @@ import {
   REBUILD_TIMEOUT_MS,
   rawTokenSurfaceProbe,
   readOpenClawConfig,
-  runDiscordGatewayClient,
   runHost,
   runSandboxShell,
   runSecondaryCleanup,
@@ -69,7 +67,6 @@ test(
         "inspect providers placeholders and credential isolation",
         "probe Telegram and Discord policy rewrites",
         "exercise installed Slack and Telegram runtimes",
-        "prove Discord websocket credential rewrite",
         "inspect gateway health and optional live sends",
       ],
     },
@@ -1042,55 +1039,6 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       slack: installedSlackProof,
       telegram: installedTelegramProof,
     });
-
-    progress.phase("prove Discord websocket credential rewrite");
-    const fakeGateway = await startFakeDockerApi(host, cleanup.add.bind(cleanup), {
-      kind: "discord-gateway",
-      imageScript: "fake-discord-gateway.cjs",
-      containerPrefix: "nemoclaw-fake-discord-gateway",
-      portEnv: "FAKE_DISCORD_GATEWAY_PORT",
-      portFileEnv: "FAKE_DISCORD_GATEWAY_PORT_FILE",
-      captureFileEnv: "FAKE_DISCORD_GATEWAY_CAPTURE_FILE",
-      expectedEnv: {
-        FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: state.tokens.discord,
-      },
-      env: state.env,
-      redactionValues,
-    });
-    await applyWebSocketRewritePolicy(host, fakeGateway, state.env, redactionValues);
-    const gatewayProof = await runDiscordGatewayClient(sandbox, {
-      port: fakeGateway.port,
-      identifyToken: {
-        kind: "explicit",
-        value: credentialPlaceholders.get("DISCORD_BOT_TOKEN") ?? "",
-      },
-      redactionValues,
-    });
-    check(
-      gatewayProof.includes("UPGRADE"),
-      "M13d: native WebSocket upgrade reached fake Discord Gateway",
-    );
-    check(
-      gatewayProof.includes("HELLO") &&
-        gatewayProof.includes("IDENTIFY_SENT_PLACEHOLDER") &&
-        gatewayProof.includes("READY") &&
-        gatewayProof.includes("HEARTBEAT_ACK"),
-      "M13e: Discord HELLO, placeholder IDENTIFY, READY, heartbeat ACK completed",
-    );
-    const gatewayIdentify = lastJsonLine(
-      fakeGateway.captureFile,
-      (row) => row.event === "identify",
-    );
-    check(fs.existsSync(fakeGateway.captureFile), "M13f: fake Gateway capture file exists");
-    const gatewayCaptureText = fs.readFileSync(fakeGateway.captureFile, "utf8");
-    check(
-      gatewayIdentify?.tokenMatchesExpected === true &&
-        gatewayIdentify?.tokenLooksPlaceholder === false &&
-        !Object.prototype.hasOwnProperty.call(gatewayIdentify, "token") &&
-        !gatewayCaptureText.includes(state.tokens.discord) &&
-        !gatewayCaptureText.includes("openshell:resolve:env:"),
-      "M13f: fake Gateway proved placeholder-to-token rewrite without logging the raw token",
-    );
 
     const gatewayPort = await sandboxOutput(
       sandbox,

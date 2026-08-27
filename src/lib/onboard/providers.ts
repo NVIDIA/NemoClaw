@@ -35,11 +35,12 @@ const {
 const MESSAGING_PROVIDER_BINDING_CONFLICT = "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT";
 
 class MessagingProviderBindingConflictError extends Error {
-  constructor(message, mutatedProviderNames = []) {
+  constructor(message, mutatedProviderNames = [], createdProviderNames = []) {
     super(message);
     this.name = "MessagingProviderBindingConflictError";
     this.code = MESSAGING_PROVIDER_BINDING_CONFLICT;
     this.mutatedProviderNames = mutatedProviderNames;
+    this.createdProviderNames = createdProviderNames;
   }
 }
 
@@ -47,11 +48,15 @@ function isMessagingProviderBindingConflict(error) {
   return error instanceof Error && error.code === MESSAGING_PROVIDER_BINDING_CONFLICT;
 }
 
-function attachMutatedProviderNames(error, names) {
+function attachMutatedProviderNames(error, names, createdNames = []) {
   if (names.length === 0) return error;
   const failure = error instanceof Error ? error : new Error(String(error));
   const existing = Array.isArray(failure.mutatedProviderNames) ? failure.mutatedProviderNames : [];
   failure.mutatedProviderNames = [...new Set([...existing, ...names])];
+  const existingCreated = Array.isArray(failure.createdProviderNames)
+    ? failure.createdProviderNames
+    : [];
+  failure.createdProviderNames = [...new Set([...existingCreated, ...createdNames])];
   const providerNames = failure.mutatedProviderNames.map((name) => JSON.stringify(name)).join(", ");
   const diagnostic = `Provider registration changed gateway state for ${providerNames} before the operation stopped. Inspect those providers before retrying.`;
   if (!failure.message.includes(diagnostic)) failure.message = `${failure.message} ${diagnostic}`;
@@ -766,6 +771,7 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   });
   const upserted = [];
   const mutatedProviderNames = [];
+  const createdProviderNames = [];
   const failures = [];
   for (const { name, envKey, token, providerType, additionalCredentials = [] } of tokenDefs) {
     if (!token && !additionalCredentials.some((credential) => Boolean(credential.token))) continue;
@@ -804,6 +810,8 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
       } else {
         knownExists = inspection.kind !== "missing";
       }
+    } else {
+      knownExists = providerExistsInGateway(name, runMessagingBridgeOpenshell);
     }
     try {
       result ??= upsertProvider(
@@ -834,7 +842,10 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
           allowExtendedCredentialKeys: additionalCredentials.length > 0,
         },
       );
-      if (result.ok) mutatedProviderNames.push(name);
+      if (result.ok) {
+        mutatedProviderNames.push(name);
+        if (!knownExists) createdProviderNames.push(name);
+      }
       if (result.ok && requiresFamilyBinding) {
         const verifiedMetadata = readGatewayProviderMetadata(name, runMessagingBridgeOpenshell);
         const plannedKeys = plannedMessagingCredentialKeys({ envKey, additionalCredentials });
@@ -853,14 +864,18 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
         }
       }
     } catch (error) {
-      throw attachMutatedProviderNames(error, mutatedProviderNames);
+      throw attachMutatedProviderNames(error, mutatedProviderNames, createdProviderNames);
     }
     if (!result.ok) {
       if (options.bestEffort) {
         failures.push({ name, message: result.message, reason: result.reason });
         continue;
       }
-      const failure = attachMutatedProviderNames(new Error(result.message), mutatedProviderNames);
+      const failure = attachMutatedProviderNames(
+        new Error(result.message),
+        mutatedProviderNames,
+        createdProviderNames,
+      );
       console.error(`\n  ✗ Failed to create messaging provider '${name}': ${failure.message}`);
       process.exit(1);
     }
@@ -869,7 +884,11 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   if (failures.length > 0) {
     const message = failures.map(({ name, message }) => `${name}: ${message}`).join("; ");
     if (failures.every(({ reason }) => reason === "binding-conflict")) {
-      throw new MessagingProviderBindingConflictError(message, mutatedProviderNames);
+      throw new MessagingProviderBindingConflictError(
+        message,
+        mutatedProviderNames,
+        createdProviderNames,
+      );
     }
     throw new Error(message);
   }
@@ -886,7 +905,7 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
       normalizeCredentialValue,
     });
   } catch (error) {
-    throw attachMutatedProviderNames(error, mutatedProviderNames);
+    throw attachMutatedProviderNames(error, mutatedProviderNames, createdProviderNames);
   }
   // Fail-closed: an active bridge channel whose gateway token minting was not
   // configured can receive webhooks but cannot authenticate outbound replies.
@@ -897,6 +916,7 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
     const failure = attachMutatedProviderNames(
       new Error("Failed to configure gateway token minting for a messaging bridge."),
       mutatedProviderNames,
+      createdProviderNames,
     );
     if (options.bestEffort) {
       throw failure;
