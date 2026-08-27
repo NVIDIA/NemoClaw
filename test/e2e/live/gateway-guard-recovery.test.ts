@@ -471,6 +471,7 @@ test(
       timeoutMs: 120_000,
     });
     expect(restart.exitCode, resultText(restart)).toBe(0);
+    await waitForSandboxExecReady(host, instance.sandboxName, progress, "restart-openshell-ready");
 
     progress.phase("recover managed supervisor and inference");
     const credentialCanary = "nemoclaw-e2e-recovery-secret-restart";
