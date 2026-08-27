@@ -63,6 +63,7 @@ describe("created Hermes credential environment reconciliation", () => {
           return true;
         },
       },
+      vi.fn(),
     );
 
     expect(events).toEqual([
@@ -89,6 +90,7 @@ describe("created Hermes credential environment reconciliation", () => {
         parseRestartCompletion: vi.fn(),
         waitForGateway,
       },
+      vi.fn(),
     );
 
     expect(restartGateway).not.toHaveBeenCalled();
@@ -96,6 +98,7 @@ describe("created Hermes credential environment reconciliation", () => {
   });
 
   it("fails onboarding when the changed gateway cannot prove restart completion", () => {
+    const recordRecovery = vi.fn();
     expect(() =>
       reconcileCreatedHermesCredentialEnvironment(
         { sandboxName: "alpha", plan },
@@ -106,8 +109,10 @@ describe("created Hermes credential environment reconciliation", () => {
           parseRestartCompletion: () => null,
           waitForGateway: vi.fn(),
         },
+        recordRecovery,
       ),
     ).toThrow("managed gateway restart did not complete");
+    expect(recordRecovery).toHaveBeenCalledOnce();
   });
 });
 

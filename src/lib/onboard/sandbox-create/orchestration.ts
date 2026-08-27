@@ -539,32 +539,35 @@ export function reconcileCreatedHermesCredentialEnvironment(
     readonly plan: SandboxMessagingPlan | null;
   },
   deps: CreatedHermesCredentialEnvReconciliationDeps,
+  recordRecovery: () => void,
 ): void {
-  if (input.plan?.agent !== "hermes") return;
+  return runWithPostCreateRecovery(() => {
+    if (input.plan?.agent !== "hermes") return;
 
-  deps.revalidatePolicyAuthority(
-    `reconciling Hermes messaging credentials for sandbox '${input.sandboxName}'`,
-  );
-  const reconciliation = deps.reconcileCredentialEnv(input.plan);
-  deps.revalidatePolicyAuthority(
-    `confirming Hermes messaging credential reconciliation for sandbox '${input.sandboxName}'`,
-  );
-  if (!reconciliation.changed) return;
+    deps.revalidatePolicyAuthority(
+      `reconciling Hermes messaging credentials for sandbox '${input.sandboxName}'`,
+    );
+    const reconciliation = deps.reconcileCredentialEnv(input.plan);
+    deps.revalidatePolicyAuthority(
+      `confirming Hermes messaging credential reconciliation for sandbox '${input.sandboxName}'`,
+    );
+    if (!reconciliation.changed) return;
 
-  const restart = deps.restartGateway(input.sandboxName);
-  if (!deps.parseRestartCompletion(restart)) {
-    throw new Error(
-      `Hermes messaging credential reconciliation changed the gateway environment for sandbox '${input.sandboxName}', but the managed gateway restart did not complete.`,
+    const restart = deps.restartGateway(input.sandboxName);
+    if (!deps.parseRestartCompletion(restart)) {
+      throw new Error(
+        `Hermes messaging credential reconciliation changed the gateway environment for sandbox '${input.sandboxName}', but the managed gateway restart did not complete.`,
+      );
+    }
+    if (!deps.waitForGateway(input.sandboxName)) {
+      throw new Error(
+        `Hermes messaging credential reconciliation restarted sandbox '${input.sandboxName}', but the managed gateway did not remain healthy.`,
+      );
+    }
+    deps.revalidatePolicyAuthority(
+      `completing Hermes messaging credential reconciliation for sandbox '${input.sandboxName}'`,
     );
-  }
-  if (!deps.waitForGateway(input.sandboxName)) {
-    throw new Error(
-      `Hermes messaging credential reconciliation restarted sandbox '${input.sandboxName}', but the managed gateway did not remain healthy.`,
-    );
-  }
-  deps.revalidatePolicyAuthority(
-    `completing Hermes messaging credential reconciliation for sandbox '${input.sandboxName}'`,
-  );
+  }, recordRecovery);
 }
 
 /**
@@ -2569,6 +2572,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             (args, options) => runOpenshell([...args], options),
             (operation) => revalidatePolicyAuthority(true, operation),
           ),
+          () => recordPostCreateRecovery("onboarding finalization"),
         );
       } finally {
         cleanupInitialCreateSource();
