@@ -7,6 +7,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
   remote?: string;
   baseBranch?: string;
   expectedHeadSha: string;
+  pullNumber?: Integer;
   apply?: true;
 }): Promise<{
   apply: boolean;
@@ -31,6 +32,11 @@ export default async function publish_nemoclaw_pr_branch(input: {
     !/^[0-9a-f]{40}$/.test(input.expectedHeadSha)
   )
     throw new Error("workdir and expectedHeadSha are required");
+  if (
+    input.pullNumber !== undefined &&
+    (!Number.isSafeInteger(input.pullNumber) || input.pullNumber < 1)
+  )
+    throw new Error("pullNumber must be a positive integer");
   if (
     !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo) ||
     !/^[A-Za-z0-9_.-]+$/.test(remote) ||
@@ -81,7 +87,13 @@ export default async function publish_nemoclaw_pr_branch(input: {
     timeoutMs: 120000,
   });
   const prs = JSON.parse(existing.stdout || "[]");
-  if (prs.length) throw new Error("An open pull request already exists for this branch");
+  if (prs.length > 1) throw new Error("Multiple open pull requests exist for this branch");
+  if (prs.length === 1 && prs[0]?.number !== input.pullNumber)
+    throw new Error(
+      "An open pull request already exists for this branch; pass its pullNumber to update it",
+    );
+  if (prs.length === 0 && input.pullNumber !== undefined)
+    throw new Error("The requested open pull request does not match this branch");
   const commits = (
     await run(
       "git rev-list --reverse " + q(remote + "/" + baseBranch + "..HEAD"),
@@ -91,6 +103,8 @@ export default async function publish_nemoclaw_pr_branch(input: {
     .split(/\r?\n/)
     .filter(Boolean);
   if (!commits.length) throw new Error("No commits are ahead of the trusted base");
+  if (commits.length > 100)
+    throw new Error("Publication exceeds the 100-commit verification bound");
   if (input.apply !== true)
     return {
       apply: false,
