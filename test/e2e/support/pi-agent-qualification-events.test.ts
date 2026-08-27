@@ -8,6 +8,7 @@ import {
   parsePiJsonEvents,
   parsePiInferenceEvidence,
   parsePiRuntimePackageEvidence,
+  piQualificationOnboardArgs,
   qualifyPiReadTask,
 } from "../live/pi-agent-qualification-events.ts";
 
@@ -46,6 +47,25 @@ function events(...values: Record<string, unknown>[]): string {
 }
 
 describe("Pi qualification event oracle", () => {
+  it("enables candidate managed runtime before supplying the exact catalog (#10155)", () => {
+    expect(piQualificationOnboardArgs("/tmp/pi-catalog.json", "pi-qualification")).toEqual([
+      "onboard",
+      "--temp-managed-runtime",
+      "--temp-managed-runtime-catalog",
+      "/tmp/pi-catalog.json",
+      "--fresh",
+      "--recreate-sandbox",
+      "--non-interactive",
+      "--yes",
+      "--yes-i-accept-third-party-software",
+      "--no-gpu",
+      "--agent",
+      "pi",
+      "--name",
+      "pi-qualification",
+    ]);
+  });
+
   it("derives source parity paths from Dockerfile inputs", () => {
     expect(
       derivePiImageSourcePaths([

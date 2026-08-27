@@ -39,6 +39,25 @@ export interface PiRuntimePackageEvidence {
   readonly version: string;
 }
 
+export function piQualificationOnboardArgs(catalogPath: string, sandboxName: string): string[] {
+  return [
+    "onboard",
+    "--temp-managed-runtime",
+    "--temp-managed-runtime-catalog",
+    catalogPath,
+    "--fresh",
+    "--recreate-sandbox",
+    "--non-interactive",
+    "--yes",
+    "--yes-i-accept-third-party-software",
+    "--no-gpu",
+    "--agent",
+    "pi",
+    "--name",
+    sandboxName,
+  ];
+}
+
 function record(value: unknown, label: string): JsonRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be an object`);
