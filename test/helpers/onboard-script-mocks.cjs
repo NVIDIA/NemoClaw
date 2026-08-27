@@ -247,9 +247,7 @@ const OPENCLAW_SECURITY_INVENTORY_PROBE = [
 
 const ONBOARD_SANDBOX_OLD_CONTAINER_ID = "a".repeat(64);
 const ONBOARD_SANDBOX_NEW_CONTAINER_ID = "b".repeat(64);
-const { ONBOARD_CREATED_SANDBOX_ID } = require(
-  path.resolve(__dirname, "./onboard-openshell-fixture.ts"),
-);
+const { createdSandboxId: ONBOARD_CREATED_SANDBOX_ID } = require("./onboard-fixture-contract.json");
 const ONBOARD_SANDBOX_INSPECT = {
   Id: ONBOARD_SANDBOX_OLD_CONTAINER_ID,
   Image: `sha256:${"c".repeat(64)}`,
