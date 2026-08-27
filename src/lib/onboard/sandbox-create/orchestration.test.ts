@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { PolicyAuthorityRefusalError } from "../../adapters/openshell/policy-authority";
 import type { SandboxEntry } from "../../state/registry";
+import * as policyCreationReceipt from "./policy-creation-receipt";
 import {
   applyManagedSandboxRebuildPolicyCarryForward,
   assertApfCreateIntent,
@@ -23,6 +24,7 @@ import {
   reconcileCreatedHermesCredentialEnvironment,
   resolveSandboxCreatePolicyAuthority,
   runSandboxCreateWithPolicyAuthorityChecks,
+  verifyCreatedSandboxEffectivePolicy,
 } from "./orchestration";
 
 describe("created Hermes credential environment reconciliation", () => {
@@ -188,13 +190,10 @@ describe("retained create recovery persistence", () => {
       steps: { sandbox: { error: changedMessage } },
     }));
 
-    expect(
-      persistRetainedSandboxRecoveryMessage(message, finalizeIncompleteOnboardStep),
-    ).toBe(false);
-    expect(finalizeIncompleteOnboardStep).toHaveBeenCalledExactlyOnceWith(
-      "sandbox",
-      message,
+    expect(persistRetainedSandboxRecoveryMessage(message, finalizeIncompleteOnboardStep)).toBe(
+      false,
     );
+    expect(finalizeIncompleteOnboardStep).toHaveBeenCalledExactlyOnceWith("sandbox", message);
   });
 
   it("reports persistence failure when the onboard session is already terminal (#9211)", async () => {
@@ -1014,5 +1013,109 @@ describe("sandbox create policy authority checks", () => {
       ]),
     );
     expect(cleanupTemporarySources).toHaveBeenCalledOnce();
+  });
+});
+
+describe("created sandbox effective policy verification", () => {
+  const commonInput = {
+    sandboxName: "alpha",
+    gatewayName: "nemoclaw",
+    gatewayPort: 8080,
+    lifecycleGeneration: "11111111-1111-4111-8111-111111111111",
+    lifecycleLiveIdentityFingerprint: "a".repeat(64),
+    route: "native" as const,
+    hermesPortable: false,
+    policySourcePathForRoute: () => "/policy/native.yaml",
+    apfInterceptorRequested: false,
+    operation: "verify effective policy for sandbox 'alpha'",
+  };
+
+  it.each(["nemoclaw-managed", "externally-managed"] as const)(
+    "routes %s creation through the shared verifier (#9833)",
+    (plannedAuthority) => {
+      const registration = { plannedAuthority } as never;
+      const sleep = vi.fn();
+      const verify = vi
+        .spyOn(policyCreationReceipt, "verifyCreatedSandboxPolicyRegistration")
+        .mockReturnValue(registration);
+
+      const boundary = verifyCreatedSandboxEffectivePolicy({
+        ...commonInput,
+        plannedAuthority,
+        sleep,
+      });
+
+      expect(verify).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          policySourcePath: "/policy/native.yaml",
+          plannedAuthority,
+        }),
+        { sleep },
+      );
+      expect(boundary.registration).toBe(registration);
+    },
+  );
+
+  it("routes APF creation through the read-only verifier (#9833)", () => {
+    const registration = { apf: true } as never;
+    const sleep = vi.fn();
+    const verify = vi
+      .spyOn(policyCreationReceipt, "verifyCreatedApfInterceptorPolicyRegistration")
+      .mockReturnValue(registration);
+
+    const boundary = verifyCreatedSandboxEffectivePolicy({
+      ...commonInput,
+      apfInterceptorRequested: true,
+      plannedAuthority: "externally-managed",
+      sleep,
+    });
+
+    expect(verify).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ policySourcePath: "/policy/native.yaml" }),
+      { sleep },
+    );
+    expect(boundary.registration).toBe(registration);
+  });
+
+  it("uses the Hermes portable policy source through the shared verifier (#9833)", () => {
+    const registration = { portable: true } as never;
+    const verify = vi
+      .spyOn(policyCreationReceipt, "verifyCreatedSandboxPolicyRegistration")
+      .mockReturnValue(registration);
+
+    const boundary = verifyCreatedSandboxEffectivePolicy({
+      ...commonInput,
+      hermesPortable: true,
+      effectivePolicySourcePath: "/policy/hermes-portable.yaml",
+      plannedAuthority: "externally-managed",
+    });
+
+    expect(verify).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ policySourcePath: "/policy/hermes-portable.yaml" }),
+      {},
+    );
+    expect(boundary.policySourcePath).toBe("/policy/hermes-portable.yaml");
+  });
+
+  it("revalidates a resumed registration through the shared verifier (#9833)", () => {
+    const existingRegistration = { existing: true } as never;
+    const verify = vi
+      .spyOn(policyCreationReceipt, "revalidateCreatedSandboxPolicyRegistration")
+      .mockReturnValue(existingRegistration);
+
+    const boundary = verifyCreatedSandboxEffectivePolicy({
+      ...commonInput,
+      plannedAuthority: "nemoclaw-managed",
+      existingRegistration,
+    });
+
+    expect(verify).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        policySourcePath: "/policy/native.yaml",
+        registration: existingRegistration,
+      }),
+      {},
+    );
+    expect(boundary.registration).toBe(existingRegistration);
   });
 });

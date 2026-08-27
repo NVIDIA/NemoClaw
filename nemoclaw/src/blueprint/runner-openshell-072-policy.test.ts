@@ -1364,11 +1364,18 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
       policy_transition: {
         status: "incomplete",
         reconciliation_required: true,
-        reconciliation_action: expect.stringMatching(
-          /blueprint runner integration.*reconcile.*incomplete-policy-transition.*no standalone/su,
+        reconciliation_action: expect.stringContaining(
+          "`reconcile --run-id incomplete-policy-transition`",
         ),
       },
     });
+    expect(
+      (
+        stdoutCapture.jsonOutput() as {
+          policy_transition: { reconciliation_action: string };
+        }
+      ).policy_transition.reconciliation_action,
+    ).not.toContain("no standalone");
   });
 
   it("rejects a malformed managed receipt before rollback mutation (#9833)", async () => {

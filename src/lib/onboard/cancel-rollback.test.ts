@@ -62,15 +62,6 @@ describe("createSandboxCancelRollback", () => {
     expect(log).toHaveBeenCalledTimes(buildCancelRollbackMessage("new-sb", "nemohermes").length);
   });
 
-  it("reports whether a sandbox is armed", () => {
-    const { guard } = createGuard();
-    expect(guard.isArmed()).toBe(false);
-    guard.arm("new-sb");
-    expect(guard.isArmed()).toBe(true);
-    guard.disarm();
-    expect(guard.isArmed()).toBe(false);
-  });
-
   it("uses the latest sandbox name after rearming (#9833)", () => {
     const { guard, log } = createGuard();
     guard.arm("first");

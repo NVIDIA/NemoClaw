@@ -37,8 +37,6 @@ export interface SandboxCancelRollback {
   markCancelled(): void;
   /** Run the rollback iff armed AND cancelled. Idempotent. */
   runIfArmed(): void;
-  /** Test/introspection helper. */
-  isArmed(): boolean;
 }
 
 export function buildCancelRollbackMessage(sandboxName: string, cliName: string): string[] {
@@ -115,9 +113,6 @@ export function createSandboxCancelRollback(
     },
     markCancelled(): void {
       cancelRequested = true;
-    },
-    isArmed(): boolean {
-      return armedSandboxName !== null;
     },
     runIfArmed(): void {
       if (done || !cancelRequested || armedSandboxName === null) return;

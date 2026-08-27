@@ -207,7 +207,7 @@ type StatusPolicyCreationTransition = BlueprintPolicyCreationTransition & {
 };
 
 function policyTransitionReconciliationAction(runId: string): string {
-  return `Do not retry \`apply\` or \`rollback\`. Through the NemoClaw blueprint runner integration that created this run, invoke its \`reconcile\` action with run ID ${runId}. There is no standalone \`reconcile\` host command.`;
+  return `Do not retry \`apply\` or \`rollback\`. Through the NemoClaw blueprint runner integration that created this run, invoke its \`reconcile --run-id ${runId}\` action.`;
 }
 
 function policyCreationRecoveryAction(
@@ -1525,8 +1525,18 @@ function buildStatusRunPlan(source: unknown, fallbackRunId: string): StatusRunPl
     return null;
   }
 
+  try {
+    validateRunId(fallbackRunId);
+  } catch {
+    return null;
+  }
+  const recordedRunId = optionalString(source.run_id);
+  if (recordedRunId !== undefined && recordedRunId !== fallbackRunId) {
+    return null;
+  }
+
   const safePlan: StatusRunPlan = {
-    run_id: optionalString(source.run_id) ?? fallbackRunId,
+    run_id: fallbackRunId,
   };
 
   const profile = optionalString(source.profile);

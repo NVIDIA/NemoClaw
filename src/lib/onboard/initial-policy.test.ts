@@ -744,6 +744,41 @@ network_policies: {}
     expect(fs.existsSync(prepared.policyPath)).toBe(false);
   });
 
+  it("preserves exact Hermes runtime state paths while preparing a policy (#9833)", () => {
+    const receipts = "/var/lib/nemoclaw/runtime-state-mutation";
+    const startupHandoff = "/run/nemoclaw/runtime-state-mutation-startup";
+    const basePolicyPath = tmpPolicy(
+      [
+        "version: 1",
+        "filesystem_policy:",
+        "  read_only:",
+        `    - ${receipts}`,
+        "  read_write:",
+        `    - ${startupHandoff}`,
+        "network_policies:",
+        "  base: {}",
+        "",
+      ].join("\n"),
+    );
+
+    const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, ["slack"], {
+      agentName: "hermes",
+    });
+    const policy = YAML.parse(fs.readFileSync(prepared.policyPath, "utf-8")) as {
+      filesystem_policy?: { read_only?: string[]; read_write?: string[] };
+    };
+    const readOnly = policy.filesystem_policy?.read_only ?? [];
+    const readWrite = policy.filesystem_policy?.read_write ?? [];
+
+    expect(readOnly).toContain(receipts);
+    expect(readWrite).not.toContain(receipts);
+    expect(readWrite).toContain(startupHandoff);
+    expect(readOnly).not.toContain(startupHandoff);
+    expect([...readOnly, ...readWrite]).not.toContain("/var/lib/nemoclaw");
+    expect([...readOnly, ...readWrite]).not.toContain("/run/nemoclaw");
+    expect(prepared.cleanup?.()).toBe(true);
+  });
+
   it("merges additional create-time presets with channel presets", () => {
     const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
 

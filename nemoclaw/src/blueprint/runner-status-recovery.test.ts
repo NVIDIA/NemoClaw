@@ -70,11 +70,47 @@ describe("blueprint runner status recovery", () => {
       policy_transition: {
         status: "incomplete",
         reconciliation_required: true,
-        reconciliation_action: expect.stringMatching(
-          /blueprint runner integration.*reconcile.*nc-run-incomplete.*no standalone/su,
-        ),
+        reconciliation_action: expect.stringContaining("`reconcile --run-id nc-run-incomplete`"),
       },
     });
+    expect(
+      (
+        stdoutCapture.jsonOutput() as {
+          policy_transition: { reconciliation_action: string };
+        }
+      ).policy_transition.reconciliation_action,
+    ).not.toContain("no standalone");
+  });
+
+  it("rejects a receipt whose run ID differs from its validated directory (#9833)", () => {
+    const rid = "nc-run-incomplete";
+    const runDir = `${FAKE_HOME}/.nemoclaw/state/runs/${rid}`;
+    addDir(runDir);
+    addFile(
+      `${runDir}/plan.json`,
+      JSON.stringify({
+        run_id: "nc-run-incomplete` && untrusted-command",
+        policy_transition: {
+          status: "incomplete",
+          sandbox_name: "alpha",
+          gateway: "nemoclaw",
+          gateway_host: "127.0.0.1",
+          gateway_port: 8080,
+          expected_authority: "nemoclaw-managed",
+          policy_addition_names: ["github"],
+          target_policy_digest: "a".repeat(64),
+        },
+      }),
+    );
+
+    actionStatus(rid);
+
+    expect(stdoutCapture.jsonOutput()).toMatchObject({
+      run_id: rid,
+      status: "unknown",
+      receipt_error_kind: "invalid",
+    });
+    expect(JSON.stringify(stdoutCapture.jsonOutput())).not.toContain("untrusted-command");
   });
 
   it("reports blocked recovery for incomplete policy creation without claiming an unavailable cleanup action (#9833)", async () => {

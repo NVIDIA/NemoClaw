@@ -101,6 +101,8 @@ interface VerifyCreatedSandboxEffectivePolicyInput {
   readonly policySourcePathForRoute: () => string;
   readonly apfInterceptorRequested: boolean;
   readonly plannedAuthority: Exclude<SandboxPolicyAuthority, "owner-unknown">;
+  readonly existingRegistration?: VerifiedSandboxPolicyRegistration;
+  readonly sleep?: (seconds: number) => void;
   readonly operation: string;
 }
 
@@ -125,12 +127,24 @@ export function verifyCreatedSandboxEffectivePolicy(
     route: input.route,
     operation: input.operation,
   };
-  const registration = input.apfInterceptorRequested
-    ? verifyCreatedApfInterceptorPolicyRegistration(registrationInput)
-    : verifyCreatedSandboxPolicyRegistration({
-        ...registrationInput,
-        plannedAuthority: input.plannedAuthority,
-      });
+  const deps = input.sleep ? { sleep: input.sleep } : {};
+  const registration = input.existingRegistration
+    ? revalidateCreatedSandboxPolicyRegistration(
+        {
+          ...registrationInput,
+          registration: input.existingRegistration,
+        },
+        deps,
+      )
+    : input.apfInterceptorRequested
+      ? verifyCreatedApfInterceptorPolicyRegistration(registrationInput, deps)
+      : verifyCreatedSandboxPolicyRegistration(
+          {
+            ...registrationInput,
+            plannedAuthority: input.plannedAuthority,
+          },
+          deps,
+        );
   return {
     registration,
     sandboxName: input.sandboxName,
@@ -2187,49 +2201,25 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         revalidateCreatedSandboxIdentity,
         verifyCreatedPolicy: (
           identity: import("../sandbox-gpu-create-flow").CreatedSandboxIdentity,
-        ) => {
-          if (effectivePolicySourcePath && identity.route === "compatibility") {
-            throw new Error("Hermes portable create selected an unsupported GPU route.");
-          }
-          const policySourcePath =
-            effectivePolicySourcePath ?? policySourcePathForRoute(identity.route);
-          const registrationInput = {
+        ) =>
+          verifyCreatedSandboxEffectivePolicy({
             sandboxName,
             gatewayName: GATEWAY_NAME,
             gatewayPort: GATEWAY_PORT,
             lifecycleGeneration: createdSandboxLifecycle.generation,
             lifecycleLiveIdentityFingerprint: identity.liveIdentityFingerprint,
-            policySourcePath,
             route: identity.route,
+            hermesPortable: Boolean(hermesPortableAuthority),
+            ...(effectivePolicySourcePath ? { effectivePolicySourcePath } : {}),
+            policySourcePathForRoute: () => policySourcePathForRoute(identity.route),
+            apfInterceptorRequested,
+            plannedAuthority: resolvedPolicyAuthority,
+            ...(resumeVerifiedCreateInput
+              ? { existingRegistration: requireVerifiedPolicyGate().registration }
+              : {}),
+            sleep: sleepSeconds,
             operation: `verify effective policy for sandbox '${sandboxName}'`,
-          };
-          const registration = resumeVerifiedCreateInput
-            ? revalidateCreatedSandboxPolicyRegistration({
-                ...registrationInput,
-                registration: requireVerifiedPolicyGate().registration,
-              })
-            : apfInterceptorRequested
-              ? verifyCreatedApfInterceptorPolicyRegistration(registrationInput, {
-                  sleep: sleepSeconds,
-                })
-              : verifyCreatedSandboxPolicyRegistration(
-                  {
-                    ...registrationInput,
-                    plannedAuthority: resolvedPolicyAuthority,
-                  },
-                  { sleep: sleepSeconds },
-                );
-          return {
-            registration,
-            sandboxName,
-            gatewayName: GATEWAY_NAME,
-            gatewayPort: GATEWAY_PORT,
-            lifecycleGeneration: createdSandboxLifecycle.generation,
-            lifecycleLiveIdentityFingerprint: identity.liveIdentityFingerprint,
-            route: identity.route,
-            policySourcePath,
-          };
-        },
+          }),
         persistVerifiedPolicy: (_identity, _exactIdentity, boundary) => {
           requireDurableCreatedSandboxIdentity(boundary.lifecycleLiveIdentityFingerprint);
           const checkpoint = pendingSandboxPolicyVerificationForBoundary(boundary);
