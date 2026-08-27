@@ -210,6 +210,40 @@ describe("installSandboxCancelRollback", () => {
     expect(guidance).toContain("could not save the onboarding recovery record");
   });
 
+  it("retries recovery on a repeated exit callback after two durable writer failures (#9833)", () => {
+    const log = vi.fn();
+    const recordRecovery = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw new Error("immediate recovery write failed");
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("first exit recovery write failed");
+      })
+      .mockImplementationOnce(() => undefined);
+    const exitHandlers: Array<() => void> = [];
+    const rollback = installSandboxCancelRollback({
+      log,
+      recordRecovery,
+      registerExitHandler: (handler) => exitHandlers.push(handler),
+    });
+
+    rollback.arm("new-sb", SANDBOX_FINGERPRINT);
+    rollback.markCancelled();
+    exitHandlers[0]();
+    exitHandlers[0]();
+
+    expect(recordRecovery).toHaveBeenCalledTimes(3);
+    expect(recordRecovery).toHaveBeenNthCalledWith(3, "new-sb", SANDBOX_FINGERPRINT);
+    const guidanceCalls = log.mock.calls.filter(([message]) =>
+      String(message).includes("preserved incomplete sandbox"),
+    );
+    expect(guidanceCalls).toHaveLength(1);
+
+    exitHandlers[0]();
+    expect(recordRecovery).toHaveBeenCalledTimes(3);
+  });
+
   it("preserves missing-checkpoint recovery state without a mutable-name fallback (#9833)", () => {
     const log = vi.fn();
     const exitHandlers: Array<() => void> = [];

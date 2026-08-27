@@ -228,15 +228,17 @@ describe("resolveOnboardEntryOptions", () => {
           stdoutIsTty: true,
           persistedSessionStatus: "recovery_required",
           persistedRecoverySandboxName: "retained-sb",
+          persistedSessionSandboxName: "retained-sb",
+          retainedRecoverySandboxNames: ["retained-sb"],
         },
         deps,
       ),
     ).toThrow(ExitError);
     expect(deps.error).toHaveBeenCalledWith(
-      expect.stringContaining("preserved sandbox 'retained-sb' in recovery-only state"),
+      expect.stringContaining("cannot use retained sandbox 'retained-sb'"),
     );
     expect(deps.error).toHaveBeenCalledWith(
-      expect.stringContaining("resume, reuse, and recreation are disabled"),
+      expect.stringContaining("resume, reuse, recreation, and same-name fresh onboarding"),
     );
   });
 
@@ -275,6 +277,7 @@ describe("resolveOnboardEntryOptions", () => {
         stdoutIsTty: true,
         persistedSessionStatus: "recovery_required",
         persistedRecoverySandboxName: "retained-sb",
+        retainedRecoverySandboxNames: ["retained-sb"],
       },
       deps,
     );
@@ -285,6 +288,28 @@ describe("resolveOnboardEntryOptions", () => {
       requestedSandboxName: "replacement-sb",
     });
     expect(deps.error).not.toHaveBeenCalled();
+  });
+
+  it("rejects a different fresh name when recovery has no independent durable record", () => {
+    const deps = createDeps();
+
+    expect(() =>
+      resolveOnboardEntryOptions(
+        {
+          opts: { fresh: true, sandboxName: "replacement-sb" },
+          env: {},
+          stdinIsTty: true,
+          stdoutIsTty: true,
+          persistedSessionStatus: "recovery_required",
+          persistedRecoverySandboxName: "retained-sb",
+          retainedRecoverySandboxNames: [],
+        },
+        deps,
+      ),
+    ).toThrow(ExitError);
+    expect(deps.error).toHaveBeenCalledWith(
+      expect.stringContaining("independent retained sandbox recovery record"),
+    );
   });
 
   it("blocks a retained name after a different fresh session replaced the active session", () => {

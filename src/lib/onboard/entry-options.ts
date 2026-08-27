@@ -369,6 +369,15 @@ export function resolveOnboardEntryOptions(
       );
       deps.exitProcess(1);
     }
+    if (!retainedRecoverySandboxNames.has(recoverySandboxName)) {
+      deps.error(
+        "  Onboarding cannot replace the recovery-only session because its independent retained sandbox recovery record is unavailable.",
+      );
+      deps.error(
+        "  Preserve the session and registry state for identity-bound administrator recovery.",
+      );
+      deps.exitProcess(1);
+    }
   }
   if (cannotPrompt && !resume && requestedFromDockerfile && !requestedSandboxName) {
     deps.error(

@@ -16,11 +16,15 @@ import {
   completeHermesPortableSandboxRegistration,
   createProviderEffectBoundary,
   hasManagedMcpRebuildHandoff,
+  installPostCreateRecoveryRetryOwner,
+  persistPostCreateRecovery,
   persistRetainedSandboxRecoveryMessage,
   readManagedDcodeCreateSelectionDrift,
   readSandboxRecreateRegistryEntry,
   resolveSandboxCreatePolicyAuthority,
+  runAsyncWithPostCreateRecovery,
   runSandboxCreateWithPolicyAuthorityChecks,
+  runWithPostCreateRecovery,
 } from "./orchestration";
 
 describe("retained create recovery persistence", () => {
@@ -129,6 +133,118 @@ describe("retained create recovery persistence", () => {
       vi.unstubAllEnvs();
     }
   });
+
+  it.each([
+    ["registry publication", "false"],
+    ["registry publication", "throw"],
+    ["registry publication", "journal readback mismatch"],
+    ["onboarding finalization", "false"],
+    ["onboarding finalization", "throw"],
+    ["onboarding finalization", "journal readback mismatch"],
+  ] as const)(
+    "keeps the original %s error when recovery persistence returns %s (#9833)",
+    async (stage, failureMode) => {
+      const operationError = new Error(`${stage} failed`);
+      const recoveryFailures = {
+        false: () => false,
+        throw: () => {
+          throw new Error("retained sandbox recovery writer threw");
+        },
+        "journal readback mismatch": () => {
+          throw new Error("Retained sandbox recovery record did not survive durable readback.");
+        },
+      } satisfies Record<typeof failureMode, () => false | never>;
+      const markRetainedSandboxRecovery = vi.fn(recoveryFailures[failureMode]);
+      const recordRecovery = () =>
+        persistPostCreateRecovery({
+          stage,
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          lifecycleGeneration: "generation-1",
+          exactIdentity: "f".repeat(64),
+          markRetainedSandboxRecovery,
+        });
+
+      const caught =
+        stage === "registry publication"
+          ? await runAsyncWithPostCreateRecovery(
+              async () => Promise.reject(operationError),
+              recordRecovery,
+            ).catch((error: unknown) => error)
+          : (() => {
+              try {
+                return runWithPostCreateRecovery(() => {
+                  throw operationError;
+                }, recordRecovery);
+              } catch (error) {
+                return error;
+              }
+            })();
+
+      expect(caught).toBeInstanceOf(AggregateError);
+      expect((caught as AggregateError).errors).toEqual(
+        expect.arrayContaining([
+          operationError,
+          expect.objectContaining({
+            message: expect.stringContaining("could not save the retained sandbox recovery"),
+          }),
+        ]),
+      );
+      expect(((caught as AggregateError).errors[1] as Error).cause).toEqual(
+        failureMode === "false"
+          ? undefined
+          : expect.objectContaining({
+              message: expect.stringMatching(/writer threw|did not survive durable readback/u),
+            }),
+      );
+    },
+  );
+
+  it.each(["registry publication", "onboarding finalization"] as const)(
+    "retries %s recovery at exit without rerunning the failed operation (#9833)",
+    async (stage) => {
+      const exitHandlers: Array<() => void> = [];
+      const owner = installPostCreateRecoveryRetryOwner({
+        log: vi.fn(),
+        registerExitHandler: (handler) => exitHandlers.push(handler),
+      });
+      const operationError = new Error(`${stage} failed`);
+      const operation = vi.fn(() => {
+        throw operationError;
+      });
+      const recordRecovery = vi
+        .fn()
+        .mockImplementationOnce(() => {
+          throw new Error("retained recovery write failed");
+        })
+        .mockImplementationOnce(() => undefined);
+      const recordWithOwner = () => owner.record(recordRecovery);
+
+      const caught =
+        stage === "registry publication"
+          ? await runAsyncWithPostCreateRecovery(async () => operation(), recordWithOwner).catch(
+              (error: unknown) => error,
+            )
+          : (() => {
+              try {
+                return runWithPostCreateRecovery(operation, recordWithOwner);
+              } catch (error) {
+                return error;
+              }
+            })();
+
+      expect(caught).toBeInstanceOf(AggregateError);
+      expect(operation).toHaveBeenCalledOnce();
+      expect(recordRecovery).toHaveBeenCalledOnce();
+
+      exitHandlers[0]();
+      expect(recordRecovery).toHaveBeenCalledTimes(2);
+      expect(operation).toHaveBeenCalledOnce();
+
+      exitHandlers[0]();
+      expect(recordRecovery).toHaveBeenCalledTimes(2);
+    },
+  );
 });
 
 describe("APF create policy selection", () => {

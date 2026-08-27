@@ -62,6 +62,22 @@ describe("fresh create identity", () => {
       expectedOutcome: "post-create-registration-refusal" as const,
     },
     {
+      title: "blocks every reentry when registry-failure recovery has no durable journal (#9833)",
+      apfInterceptorRequested: true,
+      provider: null,
+      model: null,
+      agent: null,
+      expectedOutcome: "post-create-registration-recovery-readback-failure" as const,
+    },
+    {
+      title: "retries registry-failure recovery from the process-exit owner (#9833)",
+      apfInterceptorRequested: true,
+      provider: null,
+      model: null,
+      agent: null,
+      expectedOutcome: "post-create-registration-recovery-retry" as const,
+    },
+    {
       title: "retains recovery state when final checks fail after registration (#9833)",
       apfInterceptorRequested: true,
       provider: null,
@@ -186,7 +202,16 @@ const postCreateAuthorityRefusal = ${JSON.stringify(
         expectedOutcome === "post-create-authority-refusal",
       )};
 const postCreateRegistrationRefusal = ${JSON.stringify(
-        expectedOutcome === "post-create-registration-refusal",
+        expectedOutcome === "post-create-registration-refusal" ||
+          expectedOutcome === "post-create-registration-recovery-readback-failure" ||
+          expectedOutcome === "post-create-registration-recovery-retry",
+      )};
+let recoveryJournalReadbackFailuresRemaining = ${JSON.stringify(
+        expectedOutcome === "post-create-registration-recovery-readback-failure"
+          ? 100
+          : expectedOutcome === "post-create-registration-recovery-retry"
+            ? 1
+            : 0,
       )};
 const postCreateFinalizationRefusal = ${JSON.stringify(
         expectedOutcome === "post-create-finalization-refusal",
@@ -336,6 +361,22 @@ childProcess.spawn = (...args) => {
 
 const onboardModule = require(${onboardPath});
 const { createSandbox } = onboardModule;
+if (recoveryJournalReadbackFailuresRemaining > 0) {
+  const renameSync = fs.renameSync.bind(fs);
+  fs.renameSync = (source, destination) => {
+    renameSync(source, destination);
+    if (
+      recoveryJournalReadbackFailuresRemaining > 0 &&
+      String(destination).endsWith("retained-sandbox-recovery.json")
+    ) {
+      recoveryJournalReadbackFailuresRemaining -= 1;
+      fs.writeFileSync(
+        destination,
+        JSON.stringify({ schemaVersion: 1, unresolved: [], resolutions: [] }),
+      );
+    }
+  };
+}
 if (cancelAfterCreate && !recoveryReentry) {
   const session = onboardModule.onboardSession.createSession({
     mode: "interactive",
@@ -381,10 +422,32 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
     commandNames: commands.map((entry) => entry.command),
   }));
 };
+let finalCreationError = null;
+if (${JSON.stringify(expectedOutcome === "post-create-registration-recovery-retry")}) {
+  process.on("exit", (code) => writePayload(null, finalCreationError, code));
+}
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
 	  if (recoveryReentry) {
+	    if (recoveryReentry === "fresh-different-no-journal") {
+	      try {
+	        await onboardModule.onboard({
+	          fresh: true,
+	          sandboxName: "replacement-sb",
+	          deferProcessExit: true,
+	        });
+	        writePayload(null, "recovery-only onboarding unexpectedly continued", 0);
+	      } catch (error) {
+	        writePayload(
+	          null,
+	          error instanceof Error ? error.message : String(error),
+	          typeof error?.code === "number" ? error.code : 1,
+	        );
+	      }
+	      clearInterval(keepAlive);
+	      return;
+	    }
 	    if (recoveryReentry === "fresh-different") {
 	      const retainedNames = retainedRecovery
 	        .listRetainedSandboxRecoveryRecords()
@@ -465,7 +528,8 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
 	  } catch (error) {
 	    if (cancelAfterCreate) throw error;
 	    if (!apfInterceptorRequested) throw error;
-    writePayload(null, error instanceof Error ? error.message : String(error));
+	    finalCreationError = error instanceof Error ? error.message : String(error);
+    writePayload(null, finalCreationError);
 	  }
   clearInterval(keepAlive);
 })().catch((error) => {
@@ -656,6 +720,69 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
           reason: "cancelled_after_sandbox_creation",
         });
       };
+      const assertPostCreateRegistrationRecoveryReadbackFailure = () => {
+        const identityFingerprint = createHash("sha256").update("sbx-fresh-create").digest("hex");
+        assert.equal(payload.sandboxName, null);
+        assert.equal(payload.sandboxCreated, true);
+        assert.equal(payload.deleted, false);
+        assert.equal(payload.registeredSandbox, null);
+        assert.match(payload.creationError, /recovery record could not be persisted/u);
+        assert.equal(payload.savedSession.status, "recovery_required");
+        assert.equal(payload.savedSession.resumable, false);
+        assert.equal(
+          payload.savedSession.cancellationRecovery.sandboxIdentityFingerprint,
+          identityFingerprint,
+        );
+        assert.deepEqual(payload.retainedRecoveryRecords, []);
+
+        const reentryCases = [
+          {
+            mode: "fresh-different-no-journal",
+            message: /independent retained sandbox recovery record is unavailable/u,
+          },
+          {
+            mode: "fresh-same",
+            message: /explicit sandbox name different from the retained sandbox/u,
+          },
+        ] as const;
+        for (const { message, mode } of reentryCases) {
+          const reentry = spawnSync(process.execPath, [scriptPath], {
+            cwd: repoRoot,
+            encoding: "utf-8",
+            env: {
+              ...childEnv,
+              NEMOCLAW_RECOVERY_REENTRY: mode,
+            },
+            timeout: 30000,
+          });
+          assert.equal(reentry.status, 0, reentry.stderr);
+          const reentryPayload = JSON.parse(fs.readFileSync(payloadPath, "utf8"));
+          assert.equal(reentryPayload.exitCode, 1);
+          assert.match(reentry.stderr, message);
+          assert.deepEqual(reentryPayload.commandNames, []);
+          assert.equal(reentryPayload.credentialReadCalls, 0);
+          assert.equal(reentryPayload.routeReservationCalls, 0);
+          assert.deepEqual(reentryPayload.registryMutationCalls, []);
+          assert.equal(reentryPayload.savedSession.sandboxName, "my-assistant");
+          assert.deepEqual(reentryPayload.retainedRecoveryRecords, []);
+        }
+      };
+      const assertPostCreateRegistrationRecoveryRetry = () => {
+        assert.equal(payload.sandboxName, null);
+        assert.equal(payload.sandboxCreated, true);
+        assert.equal(payload.deleted, false);
+        assert.equal(payload.registeredSandbox, null);
+        assert.match(payload.creationError, /recovery record could not be persisted/u);
+        assert.equal(payload.savedSession.status, "recovery_required");
+        assert.equal(payload.savedSession.resumable, false);
+        assert.equal(payload.retainedRecoveryRecords.length, 1);
+        assert.equal(payload.retainedRecoveryRecords[0].sandboxName, "my-assistant");
+        assert.equal(
+          payload.commandNames.filter((command: string) => command.includes("sandbox create"))
+            .length,
+          1,
+        );
+      };
       const assertPostCreateFinalizationRefusal = () => {
         const identityFingerprint = createHash("sha256").update("sbx-fresh-create").digest("hex");
         assert.equal(payload.sandboxName, null);
@@ -795,6 +922,9 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
         "providerless-apf": assertProviderlessApfCreation,
         "post-create-authority-refusal": assertPostCreateAuthorityRefusal,
         "post-create-registration-refusal": assertPostCreateRegistrationRefusal,
+        "post-create-registration-recovery-readback-failure":
+          assertPostCreateRegistrationRecoveryReadbackFailure,
+        "post-create-registration-recovery-retry": assertPostCreateRegistrationRecoveryRetry,
         "post-create-finalization-refusal": assertPostCreateFinalizationRefusal,
         "staged-messaging-refusal": assertStagedMessagingRefusal,
         "cancel-after-create-tier": assertCancellationRecovery,

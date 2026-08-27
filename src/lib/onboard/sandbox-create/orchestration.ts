@@ -73,20 +73,63 @@ export function persistRetainedSandboxRecoveryMessage(
     sandboxIdentityFingerprint?: string,
   ) => unknown | null,
 ): boolean {
-  try {
-    return (
-      markRetainedSandboxRecovery(
-        input.sandboxName,
-        input.message,
-        input.sandboxIdentityFingerprint,
-      ) !== null
-    );
-  } catch {
-    return false;
+  return Boolean(
+    markRetainedSandboxRecovery(input.sandboxName, input.message, input.sandboxIdentityFingerprint),
+  );
+}
+
+export class RetainedSandboxRecoveryPersistenceError extends Error {
+  constructor(
+    readonly stage: "registry publication" | "onboarding finalization",
+    options?: ErrorOptions,
+  ) {
+    super(`NemoClaw could not save the retained sandbox recovery record after ${stage}.`, options);
+    this.name = "RetainedSandboxRecoveryPersistenceError";
   }
 }
 
-function persistPostCreateRecovery(input: {
+export interface PostCreateRecoveryRetryOwner {
+  record(recordRecovery: () => void): void;
+}
+
+export function installPostCreateRecoveryRetryOwner(
+  options: {
+    readonly log?: (message: string) => void;
+    readonly registerExitHandler?: (handler: () => void) => void;
+  } = {},
+): PostCreateRecoveryRetryOwner {
+  let pending: (() => void) | null = null;
+  const log = options.log ?? ((message: string) => console.error(message));
+  const attemptPending = (propagateFailure: boolean): void => {
+    if (pending === null) return;
+    const attempt = pending;
+    try {
+      attempt();
+      if (pending === attempt) pending = null;
+    } catch (error) {
+      if (propagateFailure) throw error;
+      log(
+        "  NemoClaw still could not save the retained sandbox recovery record; the recovery-only session remains blocked for administrator recovery.",
+      );
+    }
+  };
+  const owner: PostCreateRecoveryRetryOwner = {
+    record(recordRecovery): void {
+      attemptPending(true);
+      pending = recordRecovery;
+      attemptPending(true);
+    },
+  };
+  const register =
+    options.registerExitHandler ??
+    ((handler: () => void) => {
+      process.on("exit", handler);
+    });
+  register(() => attemptPending(false));
+  return owner;
+}
+
+export function persistPostCreateRecovery(input: {
   readonly stage: "registry publication" | "onboarding finalization";
   readonly sandboxName: string;
   readonly gatewayName: string;
@@ -102,44 +145,55 @@ function persistPostCreateRecovery(input: {
     `Sandbox '${input.sandboxName}' was retained after ${input.stage} failed. ` +
     `Gateway '${input.gatewayName}'. Lifecycle generation '${input.lifecycleGeneration}'. ` +
     "Do not delete the sandbox by mutable name; preserve it for identity-bound administrator recovery.";
-  const persisted = persistRetainedSandboxRecoveryMessage(
-    {
-      sandboxName: input.sandboxName,
-      message,
-      ...(input.exactIdentity
-        ? { sandboxIdentityFingerprint: input.exactIdentity }
-        : {}),
-    },
-    input.markRetainedSandboxRecovery,
-  );
-  if (!persisted) {
-    console.error(
-      "  NemoClaw could not save the retained sandbox recovery record. Preserve the terminal output and registry state for an OpenShell administrator.",
+  let persisted = false;
+  try {
+    persisted = persistRetainedSandboxRecoveryMessage(
+      {
+        sandboxName: input.sandboxName,
+        message,
+        ...(input.exactIdentity ? { sandboxIdentityFingerprint: input.exactIdentity } : {}),
+      },
+      input.markRetainedSandboxRecovery,
     );
+  } catch (cause) {
+    throw new RetainedSandboxRecoveryPersistenceError(input.stage, { cause });
+  }
+  if (!persisted) {
+    throw new RetainedSandboxRecoveryPersistenceError(input.stage);
   }
 }
 
-async function runAsyncWithPostCreateRecovery<Result>(
+function throwPostCreateFailure(error: unknown, recordRecovery: () => void): never {
+  try {
+    recordRecovery();
+  } catch (recoveryError) {
+    throw new AggregateError(
+      [error, recoveryError],
+      "The sandbox operation failed, and its retained recovery record could not be persisted.",
+    );
+  }
+  throw error;
+}
+
+export async function runAsyncWithPostCreateRecovery<Result>(
   operation: () => Promise<Result>,
   recordRecovery: () => void,
 ): Promise<Result> {
   try {
     return await operation();
   } catch (error) {
-    recordRecovery();
-    throw error;
+    return throwPostCreateFailure(error, recordRecovery);
   }
 }
 
-function runWithPostCreateRecovery<Result>(
+export function runWithPostCreateRecovery<Result>(
   operation: () => Result,
   recordRecovery: () => void,
 ): Result {
   try {
     return operation();
   } catch (error) {
-    recordRecovery();
-    throw error;
+    return throwPostCreateFailure(error, recordRecovery);
   }
 }
 
@@ -700,6 +754,7 @@ function readHermesPortableLifecycleGeneration(input: {
 }
 
 export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrchestrationRuntime) {
+  const postCreateRecoveryRetryOwner = installPostCreateRecoveryRetryOwner();
   return async function createSandboxWithBaseImageResolution(
     baseImageResolutionContext: import("../base-image-resolution-flow").BaseImageResolutionContext,
     portableRuntimeContext: PortableOnboardRuntimeContext | null,
@@ -1894,16 +1949,18 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const recordPostCreateRecovery = (
       stage: "registry publication" | "onboarding finalization",
     ): void =>
-      persistPostCreateRecovery({
-        stage,
-        sandboxName,
-        gatewayName: GATEWAY_NAME,
-        lifecycleGeneration: createdSandboxLifecycle.generation,
-        ...(verifiedPolicyGate
-          ? { exactIdentity: verifiedPolicyGate.lifecycleLiveIdentityFingerprint }
-          : {}),
-        markRetainedSandboxRecovery: onboardSession.markRetainedSandboxRecovery,
-      });
+      postCreateRecoveryRetryOwner.record(() =>
+        persistPostCreateRecovery({
+          stage,
+          sandboxName,
+          gatewayName: GATEWAY_NAME,
+          lifecycleGeneration: createdSandboxLifecycle.generation,
+          ...(verifiedPolicyGate
+            ? { exactIdentity: verifiedPolicyGate.lifecycleLiveIdentityFingerprint }
+            : {}),
+          markRetainedSandboxRecovery: onboardSession.markRetainedSandboxRecovery,
+        }),
+      );
     const runCreateFlow = async (
       attemptCreateArgv: string[],
       hermesPortableReadyCapture?: import("../sandbox-gpu-create-flow").HermesPortableReadyCapture,
