@@ -158,6 +158,7 @@ export default async function prepare_pr_for_human_review(input: {
       baseBranch: pr.baseRefName,
       expectedHeadSha: localHead,
       pullNumber: input.pullNumber,
+      expectedPullHeadSha: pr.headRefOid,
       apply: true,
     });
     if (push.remoteState !== "expected-commit")
@@ -190,6 +191,9 @@ export default async function prepare_pr_for_human_review(input: {
           headSha: push.headSha,
           commits: push.commits,
           blocker: push.blocker,
+          recovery: push.commits.some((commit) => !commit.verified && commit.reason !== null)
+            ? "GitHub reports an unverified published commit. Replace that commit before continuing."
+            : "Re-read verification for the published commit without creating or pushing another commit. Continue only after every commit is verified.",
         }),
       };
   } else if (localHead !== pr.headRefOid)

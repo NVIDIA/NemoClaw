@@ -8,6 +8,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
   baseBranch?: string;
   expectedHeadSha: string;
   pullNumber?: Integer;
+  expectedPullHeadSha?: string;
   requireClean?: boolean;
   apply?: true;
 }): Promise<{
@@ -34,6 +35,8 @@ export default async function publish_nemoclaw_pr_branch(input: {
     !/^[0-9a-f]{40}$/.test(input.expectedHeadSha)
   )
     throw new Error("workdir and expectedHeadSha are required");
+  if (input.expectedPullHeadSha !== undefined && !/^[0-9a-f]{40}$/.test(input.expectedPullHeadSha))
+    throw new Error("expectedPullHeadSha must be a full commit SHA");
   if (
     input.pullNumber !== undefined &&
     (!Number.isSafeInteger(input.pullNumber) || input.pullNumber < 1)
@@ -179,6 +182,34 @@ export default async function publish_nemoclaw_pr_branch(input: {
     beforePush.branch !== branch
   )
     throw new Error("Publication candidate changed after validation");
+  if (input.pullNumber !== undefined) {
+    const latest = await tools.run_github_cli({
+      workdir: input.workdir,
+      args: [
+        "pr",
+        "view",
+        String(input.pullNumber),
+        "--repo",
+        repo,
+        "--json",
+        "state,headRefOid,headRefName,headRepository,headRepositoryOwner",
+      ],
+      timeoutMs: 120000,
+    });
+    const pull = JSON.parse(latest.stdout || "{}");
+    const pullRepo =
+      pull?.headRepository?.nameWithOwner ??
+      (pull?.headRepository?.name && pull?.headRepositoryOwner?.login
+        ? `${pull.headRepositoryOwner.login}/${pull.headRepository.name}`
+        : "");
+    if (
+      pull.state !== "OPEN" ||
+      pull.headRefName !== branch ||
+      pullRepo.toLowerCase() !== repo.toLowerCase() ||
+      (input.expectedPullHeadSha !== undefined && pull.headRefOid !== input.expectedPullHeadSha)
+    )
+      throw new Error("Pull request identity changed before publication");
+  }
   const remoteBeforeRead = await run(
     "git ls-remote --heads " + q(remote) + " " + q("refs/heads/" + branch),
     "Read publication branch before push",

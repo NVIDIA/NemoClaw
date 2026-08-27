@@ -248,6 +248,7 @@ export default async function commit_push_refresh_pr(input: {
         baseBranch: pr.baseRefName,
         expectedHeadSha: localHead,
         pullNumber: input.pullNumber,
+        expectedPullHeadSha: localHeadBefore,
         requireClean: false,
         apply: true,
       });
@@ -281,6 +282,11 @@ export default async function commit_push_refresh_pr(input: {
             headSha: pushResult.headSha,
             commits: pushResult.commits,
             blocker: pushResult.blocker,
+            recovery: pushResult.commits.some(
+              (commit) => !commit.verified && commit.reason !== null,
+            )
+              ? "GitHub reports an unverified published commit. Replace that commit before continuing."
+              : "Re-read verification for the published commit without creating or pushing another commit. Continue only after every commit is verified.",
           }),
         };
       let remoteHead = "";
