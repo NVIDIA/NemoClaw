@@ -1272,7 +1272,8 @@ const registry = require(${registryPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
 
 const commands = [];
-runner.run = require(${onboardScriptMocksPath}).createStatefulMessagingProviderRunner({
+const existingSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
+const messagingProviderRunner = require(${onboardScriptMocksPath}).createStatefulMessagingProviderRunner({
   commands,
   initialProviders: [
     ["my-assistant-discord-bridge", "nemoclaw-mcp-v1", "DISCORD_BOT_TOKEN"],
@@ -1280,12 +1281,10 @@ runner.run = require(${onboardScriptMocksPath}).createStatefulMessagingProviderR
     ["my-assistant-slack-app", "nemoclaw-mcp-v1", "SLACK_APP_TOKEN"],
   ],
 });
+runner.run = (command, options = {}) => existingSandbox.run(command) ?? messagingProviderRunner(command, options);
 runner.runCapture = (command) => {
-  // Existing sandbox that is ready
-  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) {
-    return "Name: my-assistant\nId: sbx-4f2a91c0d7\n";
-  }
-  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  const sandboxCapture = existingSandbox.capture(command);
+  if (sandboxCapture !== null) return sandboxCapture;
   // All messaging providers already exist in gateway
   if (_n(command).includes("provider get")) return "Provider: exists";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
@@ -1293,6 +1292,7 @@ runner.runCapture = (command) => {
 };
 registry.getSandbox = () => fixtureMocks.managedSandboxPolicyReceiptFixture(
   { name: "my-assistant", toolDisclosure: "progressive" },
+  { sandboxId: existingSandbox.state.sandboxId },
 );
 const { createSandbox } = require(${onboardPath});
 

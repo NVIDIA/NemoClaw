@@ -93,6 +93,9 @@ const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry,
 });
 const runner = require(${runnerPath});
 const preflight = require(${preflightPath});
+const policyAuthorityPreflight = require(${JSON.stringify(
+    path.join(repoRoot, "src", "lib", "onboard", "policy-authority", "preflight.ts"),
+  )});
 const credentials = require(${credentialsPath});
 const buildContextStage = require(${buildContextStagePath});
 const dockerfilePatchFlow = require(${dockerfilePatchFlowPath});
@@ -182,6 +185,9 @@ runner.runCapture = (command) => {
 registry.getDefault = () => null;
 registry.listExtraProviders = () => [];
 preflight.checkPortAvailable = async () => ({ ok: true });
+policyAuthorityPreflight.qualifySandboxPolicyAuthority = () => ({
+  authority: "nemoclaw-managed",
+});
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
@@ -219,24 +225,29 @@ const { createSandbox } = require(${onboardPath});
   let errorMessage = null;
   try {
     await createSandbox(
-      null,
-      "nvidia/nemotron-3-super-120b-a12b",
-      "nvidia-prod",
-      null,
-      sandboxName,
-      null,
-      null,
-      scenario === "custom-dockerfile" ? "/tmp/custom/Dockerfile" : null,
-      agent,
-      null,
-      null,
-      null,
-      [],
-      null,
-      { sessionId: createFixture.sessionId },
-      null,
-      null,
-      preparedBuildContext,
+      ...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+        [
+          null,
+          "nvidia/nemotron-3-super-120b-a12b",
+          "nvidia-prod",
+          null,
+          sandboxName,
+          null,
+          null,
+          scenario === "custom-dockerfile" ? "/tmp/custom/Dockerfile" : null,
+          agent,
+          null,
+          null,
+          null,
+          [],
+          null,
+          null,
+          null,
+          null,
+          preparedBuildContext,
+        ],
+        createFixture,
+      ),
     );
   } catch (error) {
     errorMessage = error instanceof Error ? error.message : String(error);

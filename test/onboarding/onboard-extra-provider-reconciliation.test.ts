@@ -59,6 +59,9 @@ const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry,
 });
 const runner = require(${runnerPath});
 const preflight = require(${preflightPath});
+const policyAuthorityPreflight = require(${JSON.stringify(
+          path.join(repoRoot, "src", "lib", "onboard", "policy-authority", "preflight.ts"),
+        )});
 const credentials = require(${credentialsPath});
 const sandboxBaseImage = require(${sandboxBaseImagePath});
 const childProcess = require("node:child_process");
@@ -73,6 +76,9 @@ runner.run = (command, opts = {}) => {
   commands.push({ command: normalized, env: opts.env || null });
   const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
+  if (normalized.includes("sandbox delete") && normalized.includes("my-assistant")) {
+    if (createdSandbox?.state.lifecycleState === "created") createdSandbox.delete();
+  }
   if (normalized.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   if (normalized.includes("provider get -g nemoclaw tavily-search")) {
     const stderr = Buffer.from("Error: provider 'tavily-search' not found");
@@ -102,6 +108,9 @@ runner.runCapture = (command) => {
 };
 require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 preflight.checkPortAvailable = async () => ({ ok: true });
+policyAuthorityPreflight.qualifySandboxPolicyAuthority = () => ({
+  authority: "nemoclaw-managed",
+});
 credentials.prompt = async () => "";
 sandboxBaseImage.resolveSandboxBaseImage = () => ({
   ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -135,28 +144,20 @@ const createReservedSandbox = () => {
     sandboxName: "my-assistant",
   });
   return createSandbox(
-    null,
-    "gpt-5.4",
-    "nvidia-prod",
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    [],
-    null,
-    { sessionId: createFixture.sessionId },
+    ...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+      [null, "gpt-5.4", "nvidia-prod", null, null, null, null, null, null, null, null, null, []],
+      createFixture,
+    ),
   );
 };
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  const firstSandboxName = await createReservedSandbox();
+  registry.removeSandbox("my-assistant");
+  createdSandbox.delete();
   const sandboxNames = [
-    await createReservedSandbox(),
+    firstSandboxName,
     await createReservedSandbox(),
   ];
   console.log(JSON.stringify({

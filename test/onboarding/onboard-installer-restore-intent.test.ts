@@ -429,6 +429,10 @@ const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "")
 const registry = require(${registryPath});
 const sandboxState = require(${sandboxStatePath});
 const childProcess = require("node:child_process");
+const existingSandbox = fixtureMocks.createCreatedSandboxFixture({
+  lifecycleState: "created",
+  phase: "NotReady",
+});
 
 runner.run = (command) => {
   if (_n(command).includes("sandbox delete")) {
@@ -440,8 +444,8 @@ runner.runCapture = (command) => {
   const normalized = _n(command);
   if (normalized.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:8080";
   if (normalized.includes("policy get") && normalized.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
-  if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) return ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
-  if (normalized.includes("sandbox list")) return "my-assistant NotReady";
+  const sandboxCapture = existingSandbox.capture(command);
+  if (sandboxCapture !== null) return sandboxCapture;
   // Keep dashboard allocation inside this restore-intent fixture; host port
   // occupancy is unrelated to the not-ready decision under test.
   if (normalized.includes("forward list")) {
@@ -453,7 +457,7 @@ registry.getSandbox = () => fixtureMocks.managedSandboxPolicyReceiptFixture({
   name: "my-assistant",
   gpuEnabled: false,
   toolDisclosure: "progressive",
-});
+}, { sandboxId: existingSandbox.state.sandboxId });
 sandboxState.getLatestBackup = () => {
   throw new Error("unexpected getLatestBackup without installer restore intent");
 };
