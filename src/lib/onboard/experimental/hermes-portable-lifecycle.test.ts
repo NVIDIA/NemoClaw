@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { loadAgent } from "../../agent/defs";
 import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock";
+import { withPortableHostFence } from "../../state/portable-uninstall-retirement";
 import type { SandboxEntry } from "../../state/registry";
 import { fingerprintOpenShellSandboxLiveIdentity } from "../../adapters/openshell/sandbox-identity";
 import type { HermesPortableOpenShellExecutableAuthority } from "../../adapters/openshell/resolve-shared";
@@ -22,6 +23,7 @@ import {
   hermesPortableLifecycleInternals,
   prepareHermesPortableSandboxRemoval,
   recoverHermesPortableSandboxLifecycle,
+  requalifyHermesPortableSandboxAuthority,
   stopHermesPortableSandboxLifecycle,
   type HermesPortableLifecycleDeps,
 } from "./hermes-portable-lifecycle";
@@ -33,6 +35,8 @@ import {
   captureHermesPortablePolicySource,
   publishHermesPortableDurablePolicySource,
   publishHermesPortableLifecycleReceipt,
+  publishHermesPortableSuccessorReceipt,
+  readHermesPortableLifecycleReceipt,
   type HermesPortableConfiguredReceipt,
   type HermesPortablePendingReceipt,
 } from "./hermes-portable-receipt";
@@ -166,7 +170,7 @@ function podmanExecutableAuthorityDeps(): PodmanExecutableAuthorityDeps {
   };
 }
 
-function activeReceipt(): HermesPortableConfiguredReceipt {
+function activeReceipt(homeDir = "/home/test"): HermesPortableConfiguredReceipt {
   const uid = process.getuid!();
   const socketPath = `/run/user/${String(uid)}/podman/podman.sock`;
   const transactionId = randomUUID();
@@ -193,8 +197,8 @@ function activeReceipt(): HermesPortableConfiguredReceipt {
       kind: "podman",
       ownership: "current-user",
       uid,
-      homeDir: "/home/test",
-      configHome: "/home/test/.config",
+      homeDir,
+      configHome: path.join(homeDir, ".config"),
       runtimeDir: `/run/user/${String(uid)}`,
       socketPath,
     },
@@ -334,10 +338,10 @@ function lifecycleDeps(
     deps: {
       stateDir,
       env: {
-        HOME: "/home/test",
+        HOME: receipt.runtimeAuthority.homeDir,
         PATH: "/usr/bin",
-        XDG_CONFIG_HOME: "/home/test/.config",
-        XDG_RUNTIME_DIR: `/run/user/${String(process.getuid!())}`,
+        XDG_CONFIG_HOME: receipt.runtimeAuthority.configHome,
+        XDG_RUNTIME_DIR: receipt.runtimeAuthority.runtimeDir,
       },
       readRegistry: () =>
         ({
@@ -353,6 +357,17 @@ function lifecycleDeps(
       captureOpenShell,
       launchOpenShell,
       assertOpenShellExecutableAuthority: vi.fn(() => "/usr/bin/openshell"),
+      operatingAuthority: {
+        env: {
+          HOME: receipt.runtimeAuthority.homeDir,
+          PATH: "/usr/bin",
+          XDG_CONFIG_HOME: receipt.runtimeAuthority.configHome,
+          XDG_RUNTIME_DIR: receipt.runtimeAuthority.runtimeDir,
+        },
+        captureSocketAuthority: () => ({ ...receipt.socketAuthority, inode: "102" }),
+        captureOpenShellExecutableAuthority: () => receipt.openshellExecutableAuthority,
+        capturePodmanExecutableAuthority: () => receipt.podmanExecutableAuthority,
+      },
       container: { podman, assertSocketAuthority: vi.fn() },
       sleep: vi.fn(),
     },
@@ -384,6 +399,78 @@ afterEach(() => {
 });
 
 describe("Hermes portable lifecycle", () => {
+  it("migrates an identical same-path schema-5 copy only under both probe fences (#10423)", async () => {
+    const receipt = activeReceipt(stateDir);
+    const copiedPolicy = `${receipt.policy.sourcePath}.copy`;
+    fs.writeFileSync(copiedPolicy, fs.readFileSync(receipt.policy.sourcePath), { mode: 0o600 });
+    fs.renameSync(copiedPolicy, receipt.policy.sourcePath);
+    const fixture = lifecycleDeps(receipt);
+
+    expect(() =>
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), fixture.deps),
+        { stateDir: path.join(stateDir, "state") },
+      ),
+    ).toThrow("durable policy source disagrees with its receipt authority");
+
+    expect(() =>
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () => requalifyHermesPortableSandboxAuthority(SANDBOX, lifecycleContext(), fixture.deps),
+        { stateDir: path.join(stateDir, "state") },
+      ),
+    ).toThrow("Portable host authority mutation requires the current HOME fence");
+
+    const migrated = await withPortableHostFence(stateDir, () =>
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () => requalifyHermesPortableSandboxAuthority(SANDBOX, lifecycleContext(), fixture.deps),
+        { stateDir: path.join(stateDir, "state") },
+      ),
+    );
+
+    expect(migrated.kind).toBe("migrated");
+    expect(readHermesPortableLifecycleReceipt(SANDBOX, stateDir)?.successor).toBeDefined();
+    expect(
+      fixture.podman.mock.calls.some(([args]) => args[1] === "start" || args[1] === "stop"),
+    ).toBe(false);
+    const removal = withMcpLifecycleLockSync(
+      SANDBOX,
+      () => prepareHermesPortableSandboxRemoval(SANDBOX, lifecycleContext(), fixture.deps),
+      { stateDir: path.join(stateDir, "state") },
+    );
+    expect(removal.receipt.socketAuthority.inode).toBe("102");
+  });
+
+  it("reconciles an interrupted schema-6 publication through the public probe path (#10423)", async () => {
+    const receipt = activeReceipt(stateDir);
+    expect(() =>
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () =>
+          publishHermesPortableSuccessorReceipt(SANDBOX, stateDir, {
+            afterCanonicalLink: () => {
+              throw new Error("simulated schema-6 process exit");
+            },
+          }),
+        { stateDir: path.join(stateDir, "state") },
+      ),
+    ).toThrow("simulated schema-6 process exit");
+    const fixture = lifecycleDeps(receipt);
+
+    const recovered = await withPortableHostFence(stateDir, () =>
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () => requalifyHermesPortableSandboxAuthority(SANDBOX, lifecycleContext(), fixture.deps),
+        { stateDir: path.join(stateDir, "state") },
+      ),
+    );
+
+    expect(recovered.kind).toBe("already-current");
+    expect(readHermesPortableLifecycleReceipt(SANDBOX, stateDir)?.successor).toBeDefined();
+  });
+
   it("passes only private state, terminal, locale, and TLS variables to child commands (#9203)", () => {
     const runtimeAuthority = {
       schemaVersion: 1 as const,
