@@ -78,6 +78,18 @@ describe("retained sandbox recovery state", () => {
     });
   });
 
+  it("refuses a symbolic-link recovery state without reading its target", async () => {
+    const recovery = await import("./onboard-session");
+    const externalState = path.join(home, "external-recovery.json");
+    const externalContents = "{not recovery json";
+    fs.writeFileSync(externalState, externalContents);
+    fs.mkdirSync(path.dirname(recovery.RETAINED_SANDBOX_RECOVERY_FILE), { recursive: true });
+    fs.symlinkSync(externalState, recovery.RETAINED_SANDBOX_RECOVERY_FILE);
+
+    expect(() => recovery.listRetainedSandboxRecoveryRecords()).toThrow(/symbolic link/u);
+    expect(fs.readFileSync(externalState, "utf8")).toBe(externalContents);
+  });
+
   it("clears only after a durable exact-identity administrator receipt", async () => {
     const recovery = await import("./onboard-session");
     const fingerprint = "b".repeat(64);

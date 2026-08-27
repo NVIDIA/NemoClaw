@@ -5,6 +5,8 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
+
 const SCHEMA_VERSION = 1;
 const FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/u;
 const SAFE_EVIDENCE_PATTERN = /^[A-Za-z0-9._:@/-]{1,256}$/u;
@@ -91,11 +93,12 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
 
 function readStateFile(filePath: string): unknown {
   try {
-    const stat = fs.lstatSync(filePath);
-    if (stat.isSymbolicLink()) {
-      throw new Error("Retained sandbox recovery state cannot be a symbolic link.");
+    const file = openRegularFileNoFollow(filePath);
+    try {
+      return JSON.parse(file.readUtf8());
+    } finally {
+      file.close();
     }
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
   } catch (error) {
     if (
       error instanceof Error &&
@@ -103,6 +106,14 @@ function readStateFile(filePath: string): unknown {
       (error as NodeJS.ErrnoException).code === "ENOENT"
     ) {
       return emptyState();
+    }
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      ((error as NodeJS.ErrnoException).code === "ELOOP" ||
+        (error as NodeJS.ErrnoException).code === "EMLINK")
+    ) {
+      throw new Error("Retained sandbox recovery state cannot be a symbolic link.");
     }
     throw error;
   }

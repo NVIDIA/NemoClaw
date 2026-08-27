@@ -717,7 +717,7 @@ if (${JSON.stringify(expectedOutcome === "post-create-registration-recovery-retr
           identityWasUnavailable: false,
           gatewayName: "nemoclaw",
           gatewayPort: 8080,
-          reason: "cancelled_after_sandbox_creation",
+          reason: "retained_after_sandbox_creation_failure",
         });
       };
       const assertPostCreateRegistrationRecoveryReadbackFailure = () => {
