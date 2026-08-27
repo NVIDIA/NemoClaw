@@ -191,8 +191,8 @@ const replace = (target, name, value) => {
   if (target[name] !== value) throw new Error("could not install test boundary for " + name);
 };
 const childProcess = require("node:child_process");
-require(${source("test/helpers/onboard-script-mocks.cjs")})
-  .mockStandaloneGatewayTeardownAuthority();
+const fixtureMocks = require(${source("test/helpers/onboard-script-mocks.cjs")});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
 
 const coreVersion = require(${source("src/lib/core/version.ts")});
 replace(coreVersion, "getVersion", () => catalogRelease);
@@ -427,7 +427,7 @@ runner.run = (command, options = {}) => {
   }
   if (normalized.includes("sandbox get") && normalized.includes(sandboxName)) {
     return sandboxCreated
-      ? { status: 0, stdout: "Name: " + sandboxName + "\nId: sbx-managed-fixture\n", stderr: "" }
+      ? { status: 0, stdout: "Name: " + sandboxName + "\nId: fixture-managed-sandbox\n", stderr: "" }
       : { status: 1, stdout: "", stderr: "sandbox not found" };
   }
   if (argv[0] === "docker" && argv[1] === "volume") {
@@ -455,9 +455,28 @@ runner.runFile = (file, args = []) => runner.run([file, ...args]);
 runner.runCapture = (command) => {
   const normalized = normalize(command);
   runnerCommands.push(normalized);
+  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command, {
+    sandboxName,
+    sandboxId: "fixture-managed-sandbox",
+  });
+  if (createdIdentity !== null) return createdIdentity;
+  if (normalized.includes("policy get") && normalized.includes("--output json")) {
+    return JSON.stringify({
+      scope: "sandbox",
+      sandbox: sandboxName,
+      status: "effective",
+      policy_source: "sandbox",
+      hash: "fixture-policy",
+      active_version: 1,
+      policy: {},
+    });
+  }
+  if (normalized.includes("gateway info")) {
+    return "Gateway endpoint: http://127.0.0.1:8080";
+  }
   if (normalized.includes("sandbox get") && normalized.includes(sandboxName)) {
     return sandboxCreated
-      ? "Name: " + sandboxName + "\nId: " + sandboxName + "-id\nState: Ready"
+      ? "Name: " + sandboxName + "\nId: fixture-managed-sandbox\nState: Ready"
       : "";
   }
   if (normalized.includes("sandbox list")) return sandboxName + " Ready";
@@ -497,7 +516,7 @@ runner.runCaptureEx = (command) => {
 };
 
 const registry = require(${source("src/lib/state/registry.ts")});
-const sourceEntry = recreate ? {
+const sourceEntry = recreate ? fixtureMocks.managedSandboxPolicyReceiptFixture({
   name: sandboxName,
   agent: "hermes",
   gpuEnabled: false,
@@ -505,7 +524,6 @@ const sourceEntry = recreate ? {
   imageTag: catalogTemplate.hermes.reference,
   model,
   provider,
-  policyAuthority: "nemoclaw-managed",
   toolDisclosure: "progressive",
   workload: {
     schemaVersion: 1,
@@ -522,7 +540,7 @@ const sourceEntry = recreate ? {
     credentialProxyReplayRequired: true,
     shared: true,
   },
-} : null;
+}, { sandboxName, sandboxId: "fixture-managed-sandbox" }) : null;
 registry.getSandbox = () => registeredSandbox ?? (existingEntryAvailable ? sourceEntry : null);
 registry.getDefault = () => null;
 registry.listExtraProviders = () => [];
@@ -534,6 +552,17 @@ registry.registerSandbox = (entry) => {
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
 registry.removeSandbox = () => true;
+const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+  sandboxName,
+  provider,
+  model,
+  preferredInferenceApi: "openai-completions",
+  getSandbox: registry.getSandbox,
+  registerSandbox: (entry) => {
+    registerCalls.push(entry);
+    registeredSandbox = entry;
+  },
+});
 
 const preflight = require(${source("src/lib/onboard/preflight.ts")});
 preflight.checkPortAvailable = async () => ({ ok: true });
@@ -567,15 +596,24 @@ const { createSandbox } = require(${source("src/lib/onboard.ts")});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   await createSandbox(
-    null,
-    model,
-    provider,
-    "openai-completions",
-    sandboxName,
-    null,
-    [],
-    null,
-    loadAgent(agentName),
+    ...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+      [
+        null,
+        model,
+        provider,
+        "openai-completions",
+        sandboxName,
+        null,
+        [],
+        null,
+        loadAgent(agentName),
+        null,
+        null,
+        null,
+        [],
+      ],
+      createFixture,
+    ),
   );
   console.log(JSON.stringify({
     agent: agentName,

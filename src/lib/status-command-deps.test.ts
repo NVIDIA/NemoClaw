@@ -4,8 +4,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as receiptAuthority from "./onboard/experimental/hermes-portable-receipt";
+import * as registry from "./state/registry";
 import { buildStatusCommandDeps } from "./status-command-deps";
 
 function writeExecutable(target: string, body: string): void {
@@ -27,12 +29,44 @@ describe("buildStatusCommandDeps", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     if (previousOverride === undefined) {
       delete process.env.NEMOCLAW_OPENSHELL_BIN;
     } else {
       process.env.NEMOCLAW_OPENSHELL_BIN = previousOverride;
     }
     fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("classifies copied Hermes authority for status before probe migration (#10423)", () => {
+    const classify = vi
+      .spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthorityForClassification")
+      .mockReturnValue({
+        kind: "hermes",
+        snapshot: {
+          receipt: {
+            phase: "active",
+            sandboxName: "alpha",
+            gatewayName: "nemoclaw",
+            lifecycleGeneration: "generation-1",
+            openshellExecutableAuthority: { version: "0.0.106" },
+          },
+        } as never,
+      });
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      agent: "hermes",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleGeneration: "generation-1",
+      openshellDriver: "docker",
+      openshellVersion: "0.0.106",
+    } as never);
+
+    const deps = buildStatusCommandDeps(tmp);
+
+    expect(deps.getHermesPortablePhase?.("alpha")).toBe("active");
+    expect(classify).toHaveBeenCalledOnce();
   });
 
   it("detects Telegram conflict signatures from the gateway log", () => {

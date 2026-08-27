@@ -15,9 +15,11 @@ import {
 } from "./llama-cpp/contract";
 import type { ManagedLlamaCppOwnership } from "./llama-cpp/managed-state";
 import { DEFAULT_OLLAMA_MODEL } from "./local";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "./ollama/contract";
 import { OPENROUTER_CREDENTIAL_ENV, OPENROUTER_PROVIDER_NAME } from "./openrouter";
 
 export { isSafeModelId };
+export { OLLAMA_LOCAL_CREDENTIAL_ENV };
 
 export const INFERENCE_ROUTE_URL = "https://inference.local/v1";
 export const NOUS_RECOMMENDED_MODELS_URL =
@@ -72,7 +74,6 @@ export const DEFAULT_ROUTE_CREDENTIAL_ENV = "OPENAI_API_KEY";
 // Dedicated credential env names for local inference. Decoupled from
 // OPENAI_API_KEY so the sandbox-side OpenClaw and the host-side gateway
 // never read the user's host OpenAI key for local providers. See GH #2519.
-export const OLLAMA_LOCAL_CREDENTIAL_ENV = "NEMOCLAW_OLLAMA_PROXY_TOKEN";
 export const VLLM_LOCAL_CREDENTIAL_ENV = "NEMOCLAW_VLLM_LOCAL_TOKEN";
 export const LLAMA_CPP_LOCAL_CREDENTIAL_ENV = LLAMA_CPP_CREDENTIAL_ENV;
 export const MANAGED_PROVIDER_ID = "inference";

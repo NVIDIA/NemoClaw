@@ -286,32 +286,37 @@ describe("Hermes portable container authority", () => {
     const podman = vi
       .fn()
       .mockReturnValueOnce(inspect("unless-stopped"))
-      .mockReturnValueOnce({ status: 0, stdout: "200\n", stderr: "" })
       .mockReturnValueOnce(inspect("unless-stopped"));
+    const authenticatedHealth = vi.fn((_script: string, _timeoutMs: number) => ({
+      status: 0,
+      stdout: "200\n",
+      stderr: "",
+    }));
 
     probeHermesPortableAuthenticatedHealth(activeReceipt(), {
       podman,
+      authenticatedHealth,
       assertSocketAuthority: vi.fn(),
     });
 
-    const argv = podman.mock.calls[1]?.[0] as string[];
-    expect(argv.slice(0, 4)).toEqual(["container", "exec", ID, "python3"]);
-    expect(argv.join(" ")).toContain("API_SERVER_KEY");
-    expect(argv.join(" ")).toContain("NoRedirect");
-    expect(argv.join(" ")).toContain("ProxyHandler({})");
-    expect(argv.join(" ")).toContain("redirect refused");
-    expect(argv.join(" ")).not.toContain("Bearer test-token");
+    expect(podman).toHaveBeenCalledTimes(2);
+    const [script, timeout] = authenticatedHealth.mock.calls[0]!;
+    expect(timeout).toBe(40_000);
+    expect(script).toContain("API_SERVER_KEY");
+    expect(script).toContain("NoRedirect");
+    expect(script).toContain("ProxyHandler({})");
+    expect(script).toContain("redirect refused");
+    expect(script).not.toContain("Bearer test-token");
   });
 
   it("rejects redirected authenticated health without exposing credentials (#9203)", () => {
-    const podman = vi
-      .fn()
-      .mockReturnValueOnce(inspect("unless-stopped"))
-      .mockReturnValueOnce({ status: 0, stdout: "302\n", stderr: "" });
+    const podman = vi.fn().mockReturnValueOnce(inspect("unless-stopped"));
+    const authenticatedHealth = vi.fn(() => ({ status: 0, stdout: "302\n", stderr: "" }));
 
     expect(() =>
       probeHermesPortableAuthenticatedHealth(activeReceipt(), {
         podman,
+        authenticatedHealth,
         assertSocketAuthority: vi.fn(),
       }),
     ).toThrow("returned status '302'");
@@ -325,17 +330,28 @@ describe("Hermes portable container authority", () => {
   });
 
   it("does not accept unauthenticated health status (#9203)", () => {
-    const podman = vi
-      .fn()
-      .mockReturnValueOnce(inspect("unless-stopped"))
-      .mockReturnValueOnce({ status: 0, stdout: "401\n", stderr: "" });
+    const podman = vi.fn().mockReturnValueOnce(inspect("unless-stopped"));
+    const authenticatedHealth = vi.fn(() => ({ status: 0, stdout: "401\n", stderr: "" }));
+
+    expect(() =>
+      probeHermesPortableAuthenticatedHealth(activeReceipt(), {
+        podman,
+        authenticatedHealth,
+        assertSocketAuthority: vi.fn(),
+      }),
+    ).toThrow("returned status '401'");
+  });
+
+  it("does not fall back to Podman exec when the OpenShell health observer is missing (#9211)", () => {
+    const podman = vi.fn().mockReturnValueOnce(inspect("unless-stopped"));
 
     expect(() =>
       probeHermesPortableAuthenticatedHealth(activeReceipt(), {
         podman,
         assertSocketAuthority: vi.fn(),
       }),
-    ).toThrow("returned status '401'");
+    ).toThrow("authenticated Hermes health observer is unavailable");
+    expect(podman).toHaveBeenCalledTimes(1);
   });
 
   it("does not expose inspect output or error text in command failures (#9203)", () => {
