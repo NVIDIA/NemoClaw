@@ -1632,6 +1632,7 @@ async function rollbackChannelAdd(
     `  ${YW}⚠${R} Rolling back '${canonical}' bridge registration to keep messaging plan and policy state aligned.`,
   );
   clearChannelTokens(channel);
+  removeChannelPresetIfPresent(sandboxName, canonical);
   const result = await applyChannelRemoveToGatewayAndRegistry(
     sandboxName,
     canonical,
@@ -1925,6 +1926,7 @@ async function removeSandboxChannelUnlocked(
   }
 
   clearChannelTokens(channel);
+  removeChannelPresetIfPresent(sandboxName, canonical);
   await applyChannelRemoveToGatewayAndRegistry(sandboxName, canonical, tokenKeys);
   if (tokenKeys.length > 0) {
     console.log(`  ${G}✓${R} Removed ${canonical} bridge from the OpenShell gateway.`);
@@ -1932,7 +1934,6 @@ async function removeSandboxChannelUnlocked(
     console.log(`  ${G}✓${R} Removed ${canonical} channel.`);
   }
 
-  removeChannelPresetIfPresent(sandboxName, canonical);
   if (!(await persistManifestChannelRemovePlan(sandboxName, canonical))) {
     console.error(`  ${YW}⚠${R} Could not persist messaging plan for '${sandboxName}'.`);
     process.exit(1);

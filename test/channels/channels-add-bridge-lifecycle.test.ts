@@ -169,6 +169,10 @@ beforeEach(() => {
   providerSpy = vi.spyOn(policyChannelDependencies, "upsertMessagingProviders");
   vi.spyOn(
     policyChannelDependencies,
+    "revalidateChannelProviderPolicyAuthority",
+  ).mockImplementation(() => undefined);
+  vi.spyOn(
+    policyChannelDependencies,
     "inspectMessagingProviderAttachmentTarget",
   ).mockReturnValue(LIVE_IDENTITY_FINGERPRINT);
   vi.spyOn(policyChannelDependencies, "rebuildSandbox").mockImplementation(async () => undefined);
