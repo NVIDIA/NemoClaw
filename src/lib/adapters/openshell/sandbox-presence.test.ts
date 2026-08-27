@@ -61,5 +61,11 @@ describe("structured OpenShell sandbox identity", () => {
     expect(observeOpenShellSandboxIdentity("alpha", list([row({ phase: "" })]))).toEqual({
       kind: "unknown",
     });
+    expect(observeOpenShellSandboxIdentity("alpha", list([row({ labels: { owner: 1 } })]))).toEqual(
+      { kind: "unknown" },
+    );
+    expect(
+      observeOpenShellSandboxIdentity("alpha", list([row({ resource_version: null })])),
+    ).toEqual({ kind: "unknown" });
   });
 });

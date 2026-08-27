@@ -212,8 +212,8 @@ export interface SandboxGpuCreateFlowInput {
   sandboxName: string;
   /** Reject every initial or fallback create attempt that carries a caller policy. */
   requirePolicylessCreate?: true;
-  /** Durably retain exact APF create-attempt recovery evidence before a fallback refusal exits. */
-  persistRetainedApfSandboxRecovery?: (recovery: RetainedApfSandboxRecovery) => boolean;
+  /** Durably retain exact create-attempt recovery evidence before identity-bound recovery stops. */
+  persistRetainedSandboxRecovery?: (message: string) => boolean;
   provider: string;
   sandboxGpuConfig: SandboxGpuConfig;
   gpuRoutePlan: import("./docker-gpu-route").DockerGpuRoutePlan;
@@ -265,14 +265,6 @@ export interface CreatedSandboxIdentity {
   readonly sandboxId: string;
   readonly liveIdentityFingerprint: string;
   readonly route: SelectedDockerGpuRoute;
-}
-
-export interface RetainedApfSandboxRecovery {
-  readonly sandboxName: string;
-  readonly gatewayName: string;
-  readonly createAttemptNonce: string;
-  readonly liveIdentityFingerprint: string | null;
-  readonly message: string;
 }
 
 /** Refuse APF fallback when OpenShell can remove the failed sandbox only by mutable name. */
@@ -363,11 +355,14 @@ export async function runSandboxGpuCreateFlow(
     input.requirePolicylessCreate &&
     (!input.verifyCreatedSandboxBeforeEffects ||
       !input.revalidateVerifiedSandboxBeforeEffect ||
-      !input.persistRetainedApfSandboxRecovery)
+      !input.persistRetainedSandboxRecovery)
   ) {
     throw new Error(
       "APF interceptor sandbox creation requires exact post-create verification and durable fallback recovery.",
     );
+  }
+  if (input.verifyCreatedSandboxBeforeEffects && !input.persistRetainedSandboxRecovery) {
+    throw new Error("Verified sandbox creation requires durable create-attempt recovery evidence.");
   }
   const hermesPortableLifecycle = input.hermesPortableLifecycle === true;
   assertPortableManagedBootstrapNotSelected(
@@ -531,8 +526,8 @@ export async function runSandboxGpuCreateFlow(
           : `  Sandbox '${input.sandboxName}' may still exist. Verify its durable identity before manual cleanup; do not act by mutable name alone.`,
     );
     if (input.requirePolicylessCreate) {
-      const persistRetainedApfSandboxRecovery = input.persistRetainedApfSandboxRecovery;
-      if (!persistRetainedApfSandboxRecovery) {
+      const persistRetainedSandboxRecovery = input.persistRetainedSandboxRecovery;
+      if (!persistRetainedSandboxRecovery) {
         throw new Error("APF interceptor sandbox creation requires durable fallback recovery.");
       }
       const evidence = gpuCreateOutcome.retainedSandboxRecovery;
@@ -541,23 +536,18 @@ export async function runSandboxGpuCreateFlow(
           "  APF recovery is blocked because the create attempt returned no durable identity or create-attempt label.",
         );
       } else {
-        const identity = evidence.liveIdentityFingerprint
-          ? `Durable sandbox identity fingerprint: ${evidence.liveIdentityFingerprint}. Use it only to compare the surviving sandbox with this create attempt.`
+        const identityGuidance = evidence.liveIdentityFingerprint
+          ? "Use that fingerprint only to compare the surviving sandbox with this create attempt."
           : "OpenShell did not return one exact durable sandbox identity for this create attempt. Recovery is blocked until an OpenShell administrator resolves the create-attempt label to one sandbox.";
         const message =
+          `Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${evidence.createAttemptNonce}. ` +
+          `${evidence.liveIdentityFingerprint ? `Durable sandbox identity fingerprint: ${evidence.liveIdentityFingerprint}. ` : ""}` +
           `APF sandbox '${input.sandboxName}' may have been retained after native GPU fallback stopped. ` +
-          `${identity} Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${evidence.createAttemptNonce}. ` +
+          `Gateway '${input.gatewayName}'. ${identityGuidance} ` +
           "Do not delete a sandbox by mutable name; use an identity-bound administrator recovery procedure.";
-        const recovery: RetainedApfSandboxRecovery = {
-          sandboxName: input.sandboxName,
-          gatewayName: input.gatewayName,
-          createAttemptNonce: evidence.createAttemptNonce,
-          liveIdentityFingerprint: evidence.liveIdentityFingerprint,
-          message,
-        };
         let persisted = false;
         try {
-          persisted = persistRetainedApfSandboxRecovery(recovery);
+          persisted = persistRetainedSandboxRecovery(message);
         } catch {
           persisted = false;
         }

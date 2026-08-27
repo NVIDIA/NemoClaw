@@ -48,7 +48,12 @@ afterEach(() => {
 });
 
 describe("checkAndRecoverSandboxProcesses managed startup", () => {
-  it.each(["SUPERVISOR_NOT_RUNNING", "PRIVILEGED_CONTROL_UNAVAILABLE", "GATEWAY_HEALTH_TIMEOUT"])(
+  it.each([
+    "SUPERVISOR_NOT_RUNNING",
+    "SUPERVISOR_DISCOVERY_PENDING",
+    "PRIVILEGED_CONTROL_UNAVAILABLE",
+    "GATEWAY_HEALTH_TIMEOUT",
+  ])(
     "waits through the exact %s startup transition (#9466)",
     (startupMarker) => {
       const sandboxName = "startup-box";
@@ -80,6 +85,34 @@ describe("checkAndRecoverSandboxProcesses managed startup", () => {
       expect(relaunchManagedSupervisorSessionImpl).not.toHaveBeenCalled();
     },
   );
+
+  it("does not retry a diagnostic-bearing supervisor-discovery result", () => {
+    const sandboxName = "diagnostic-start";
+    mockOpenClawSandbox(sandboxName);
+    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS", "0");
+    const requestGatewaySupervisorAction = vi.fn(() => ({
+      status: 1,
+      stdout: "",
+      stderr: "SUPERVISOR_DISCOVERY_PENDING\nunexpected diagnostic",
+    }));
+    const relaunchManagedSupervisorSessionImpl = vi.fn(() => null);
+
+    const result = checkAndRecoverSandboxProcesses(sandboxName, {
+      quiet: true,
+      isSandboxGatewayRunningImpl: () => false,
+      requestGatewaySupervisorAction,
+      relaunchManagedSupervisorSessionImpl,
+    });
+
+    expect(result).toMatchObject({
+      checked: true,
+      wasRunning: false,
+      recovered: false,
+      forwardRecovered: false,
+    });
+    expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
+    expect(relaunchManagedSupervisorSessionImpl).not.toHaveBeenCalled();
+  });
 
   it("does not retry a managed-container identity mismatch (#9466)", () => {
     const sandboxName = "identity-box";

@@ -80,12 +80,11 @@ runner.run = (command) => {
     ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
 };
-require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 runner.runCapture = (command) => {
   const cmd = _n(command);
   const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
   if (createdIdentity !== null) return createdIdentity;
-  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return sandboxRecreated ? ["my-assistant", "Id: fixture-created-sandbox"].join(String.fromCharCode(10)) : sandboxDeleted ? "" : ["my-assistant", "Id: fixture-created-sandbox"].join(String.fromCharCode(10));
+  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return sandboxRecreated ? ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10)) : sandboxDeleted ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
   if (cmd.includes("sandbox list")) {
     return sandboxRecreated ? "my-assistant Ready" : sandboxDeleted ? "" : "my-assistant NotReady";
   }
@@ -98,6 +97,7 @@ runner.runCapture = (command) => {
   }
   return "";
 };
+require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 
 onboardSession.loadSession = () => ({ sessionId: "session-owner" });
 
