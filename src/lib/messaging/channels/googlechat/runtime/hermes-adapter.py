@@ -9,7 +9,8 @@ adapter, and everything else runs unchanged through a subclass:
 * Inbound — the OpenShell L7 protocol set has no gRPC, so StreamingPull cannot
   be inspected; pull the same subscription over the Pub/Sub REST API.
 * Outbound — the service-account key stays gateway-side, so requests carry the
-  `openshell:resolve:env:GOOGLE_CHAT_ACCESS_TOKEN` placeholder over aiohttp.
+  placeholder OpenShell injected as `GOOGLE_CHAT_ACCESS_TOKEN`, verbatim, over
+  aiohttp. See `_gc_outbound_bearer`.
 
 It attaches through published seams: `platform_registry.get()` forces the
 deferred loader, `dataclasses.replace` keeps every `PlatformEntry` field, and
@@ -25,8 +26,10 @@ import dataclasses
 import importlib.util
 import logging
 
-# Not a credential: the L7 proxy swaps this resolver placeholder at egress.
-_GC_REST_PLACEHOLDER_TOKEN = "openshell:resolve:env:GOOGLE_CHAT_ACCESS_TOKEN"  # noqa: S105
+# Credential key carrying the outbound bearer. Its value is a resolver
+# placeholder, not a credential: the L7 proxy swaps it at egress.
+_GC_TOKEN_ENV = "GOOGLE_CHAT_ACCESS_TOKEN"  # noqa: S105
+_GC_BEARER_CACHE: dict[str, str] = {}
 _GC_PULL_TIMEOUT = 95.0  # aiohttp cap > the Pub/Sub server long-poll hold (~90s)
 _GC_LOG = logging.getLogger("gateway.platforms.google_chat")
 
@@ -59,19 +62,22 @@ def _gc_placeholder_credentials():
     class _PlaceholderCredentials(ga_credentials.Credentials):
         def __init__(self):
             super().__init__()
-            self.token = _GC_REST_PLACEHOLDER_TOKEN
+            self.token = _gc_outbound_bearer()
 
         def refresh(self, request):  # signed gateway-side; nothing to do here
-            self.token = _GC_REST_PLACEHOLDER_TOKEN
+            self.token = _gc_outbound_bearer()
 
     return _PlaceholderCredentials()
 
 
-def _gc_gateway_proxy_url():
-    """Return the egress proxy URL, or ``""`` for direct egress.
+def _gc_gateway_environs():
+    """Yield the environment of each candidate Hermes gateway process.
 
-    Read from the gateway's ``/proc/<pid>/environ``: it clears the proxy vars
-    during a turn, and replies run in a worker thread that never carried them.
+    - ``os.environ`` is unreliable at reply time: the gateway clears variables
+      during a turn, and replies run in a worker thread that never carried them.
+    - ``/proc/<pid>/environ`` keeps what the process started with.
+    - Yields instead of returning the first match, so a candidate missing the
+      wanted key does not end the search.
     """
     import glob
 
@@ -92,6 +98,12 @@ def _gc_gateway_proxy_url():
                         env[key.decode("utf-8", "replace")] = value.decode("utf-8", "replace")
         except OSError:
             continue
+        yield env
+
+
+def _gc_gateway_proxy_url():
+    """Return the egress proxy URL, or ``""`` for direct egress."""
+    for env in _gc_gateway_environs():
         url = (
             env.get("https_proxy")
             or env.get("HTTPS_PROXY")
@@ -102,6 +114,46 @@ def _gc_gateway_proxy_url():
         if url:
             return url
     return ""
+
+
+def _gc_outbound_bearer():
+    """Return the resolver placeholder OpenShell injected for the Chat bearer.
+
+    Forwarded verbatim:
+
+    - 0.0.106 binds this credential to its endpoints, then refuses any
+      placeholder without a revision. The canonical form this module used to
+      hardcode is denied as ``credential_unavailable``.
+    - The injected value is the revision-scoped form issued to this workload,
+      which the proxy accepts.
+    - It survives gateway token refreshes: a refreshed generation adds its
+      revision to the credential's identity epoch rather than replacing it, so
+      the boot revision stays resolvable and falls back to the current secret.
+      Only replacing the provider resets that, and that needs a rebuild.
+    - Older OpenShell issues the canonical form as revision zero, so reading the
+      environment is correct there too. No version branch needed.
+    - Resolved once and cached: the value is stable for the sandbox's lifetime,
+      and reply-time lookups cannot rely on ``os.environ``.
+    """
+    import os
+
+    cached = _GC_BEARER_CACHE.get(_GC_TOKEN_ENV)
+    if cached:
+        return cached
+    value = (os.environ.get(_GC_TOKEN_ENV) or "").strip()
+    if not value:
+        for env in _gc_gateway_environs():
+            value = (env.get(_GC_TOKEN_ENV) or "").strip()
+            if value:
+                break
+    if not value:
+        raise RuntimeError(
+            f"nemoclaw googlechat: {_GC_TOKEN_ENV} is not set; the gateway-minted "
+            "outbound bearer is unavailable. Check that the Google Chat bridge "
+            "provider is attached to this sandbox."
+        )
+    _GC_BEARER_CACHE[_GC_TOKEN_ENV] = value
+    return value
 
 
 class _GcAiohttpTransport:
@@ -214,7 +266,7 @@ def _sandbox_adapter_class():
             pull_url = f"https://pubsub.googleapis.com/v1/{sub}:pull"
             ack_url = f"https://pubsub.googleapis.com/v1/{sub}:acknowledge"
             headers = {
-                "Authorization": f"Bearer {_GC_REST_PLACEHOLDER_TOKEN}",
+                "Authorization": f"Bearer {_gc_outbound_bearer()}",
                 "Content-Type": "application/json",
             }
             _GC_LOG.info(

@@ -969,6 +969,8 @@ const AUTHORIZATION_AGENT_FAILURE_RE = /authorization failed|forbidden|HTTP 403\
 const POLICY_AGENT_FAILURE_RE =
   /SsrFBlockedError|Blocked hostname|denied by network policy|network policy denied|policy (?:update |validation )?failed/iu;
 const MALFORMED_AGENT_FAILURE_RE = /malformed|invalid request/iu;
+const TOOL_APPROVAL_AGENT_REPLY_RE =
+  /(?:waiting for|requires?) (?:your )?approval|please approve(?: it)? to proceed/iu;
 const TERMINAL_PROVIDER_VALIDATION_RE =
   /invalid.*(api[_ -]?key|credential|configuration|request|json)|authentication failed|authorization failed|unauthorized|forbidden|HTTP 40[13]\b|\b40[13]\b|denied by network policy|network policy denied|policy .*failed|routing .*failed|route .*failed|proxy .*failed|hop-by-hop|header stripping|malformed/iu;
 const TRANSIENT_AGENT_FAILURE_RE =
@@ -1064,8 +1066,9 @@ export function classifyHermesAgentAssertion(
   };
 }
 
-/** Recognize transport/provider failures without retrying a successful product response. */
+/** Recognize retryable Hermes turn failures without accepting an incomplete product response. */
 export function isHermesTransientAgentFailure(httpStatus: string, output: string): boolean {
+  if (httpStatus === "200" && TOOL_APPROVAL_AGENT_REPLY_RE.test(output)) return true;
   if (
     httpStatus === "200" ||
     /^(401|403)$/u.test(httpStatus) ||

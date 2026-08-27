@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
+
 import YAML from "yaml";
 
 export type OpenShellPolicyMapping = Record<string, unknown>;
@@ -51,6 +53,19 @@ export type ActiveGlobalPolicyInspection =
       };
     };
 
+export type OpenShellGlobalPolicyHistoryState = "absent" | "present" | "invalid";
+
+const OPENSHELL_GLOBAL_POLICY_HISTORY_ABSENT = "No global policy history found";
+
+/** Classify the exact OpenShell 0.0.106 global-policy history output contract. */
+export function classifyOpenShellGlobalPolicyHistory(
+  stdout: string,
+  stderr: string,
+): OpenShellGlobalPolicyHistoryState {
+  if (stdout.trim().length > 0) return "present";
+  return stderr.trim() === OPENSHELL_GLOBAL_POLICY_HISTORY_ABSENT ? "absent" : "invalid";
+}
+
 const MISSING_POLICY_DOCUMENT =
   "Current policy from openshell policy get --base does not contain a policy YAML document";
 
@@ -84,13 +99,16 @@ function positiveInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
-function parsePolicyIdentity(metadata: OpenShellPolicyMapping): OpenShellPolicyIdentity {
+function parsePolicyIdentity(
+  metadata: OpenShellPolicyMapping,
+  invalidMessage: string,
+): OpenShellPolicyIdentity {
   if (
     typeof metadata.hash !== "string" ||
     !RECEIPT_POLICY_HASH_PATTERN.test(metadata.hash) ||
     !positiveInteger(metadata.active_version)
   ) {
-    throw new Error("OpenShell returned invalid sandbox policy identity metadata");
+    throw new Error(invalidMessage);
   }
   return { hash: metadata.hash, activeVersion: metadata.active_version };
 }
@@ -188,7 +206,10 @@ export function parseSandboxPolicyAuthorityMetadata(
   return {
     authority: metadata.policy_source === "sandbox" ? "owner-unknown" : "externally-managed",
     effectivePolicy: metadata.policy,
-    policyIdentity: parsePolicyIdentity(metadata),
+    policyIdentity: parsePolicyIdentity(
+      metadata,
+      "OpenShell returned invalid sandbox policy identity metadata",
+    ),
   };
 }
 
@@ -220,7 +241,10 @@ export function parseActiveGlobalPolicyAuthorityMetadata(
     inspection: {
       authority: "externally-managed",
       effectivePolicy: metadata.policy,
-      policyIdentity: parsePolicyIdentity(metadata),
+      policyIdentity: parsePolicyIdentity(
+        metadata,
+        "OpenShell returned invalid global policy authority metadata",
+      ),
     },
   };
 }
@@ -241,33 +265,6 @@ export function assertMatchingPolicyAuthority(recorded: unknown, observed: unkno
 function policyMapping(value: unknown, invalidMessage: string): OpenShellPolicyMapping {
   if (!isMapping(value)) throw new Error(invalidMessage);
   return value;
-}
-
-function policyValuesEqual(left: unknown, right: unknown): boolean {
-  if (Object.is(left, right)) return true;
-  if (Array.isArray(left) && Array.isArray(right)) {
-    return (
-      left.length === right.length &&
-      left.every((value, index) => policyValuesEqual(value, right[index]))
-    );
-  }
-  if (!isMapping(left) || !isMapping(right)) return false;
-  const leftKeys = Object.keys(left).sort();
-  const rightKeys = Object.keys(right).sort();
-  return (
-    leftKeys.length === rightKeys.length &&
-    leftKeys.every(
-      (key, index) =>
-        key === rightKeys[index] &&
-        Object.hasOwn(right, key) &&
-        policyValuesEqual(left[key], right[key]),
-    )
-  );
-}
-
-/** Compare two parsed policy values without serializing their contents. */
-export function openShellPolicyValuesEqual(left: unknown, right: unknown): boolean {
-  return policyValuesEqual(left, right);
 }
 
 function formatPolicyKeys(keys: readonly string[]): string {
@@ -299,7 +296,7 @@ function assertPolicyRequirementContainmentForOwner(
   for (const key of Object.keys(requiredNetwork).sort()) {
     if (!observedNetwork || !Object.hasOwn(observedNetwork, key)) {
       missing.push(key);
-    } else if (!policyValuesEqual(observedNetwork[key], requiredNetwork[key])) {
+    } else if (!isDeepStrictEqual(observedNetwork[key], requiredNetwork[key])) {
       drifted.push(key);
     }
   }
@@ -311,7 +308,7 @@ function assertPolicyRequirementContainmentForOwner(
   for (const key of requiredSections) {
     if (!Object.hasOwn(effectivePolicy, key)) {
       missingSections.push(key);
-    } else if (!policyValuesEqual(effectivePolicy[key], required[key])) {
+    } else if (!isDeepStrictEqual(effectivePolicy[key], required[key])) {
       driftedSections.push(key);
     }
   }
