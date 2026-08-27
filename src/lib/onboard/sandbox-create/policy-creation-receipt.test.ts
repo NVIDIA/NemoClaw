@@ -40,6 +40,10 @@ const ENRICHED_NATIVE_GPU_POLICY = NATIVE_GPU_POLICY.replace(
     - /dev/nvidia0
 `,
 );
+const PROXY_ONLY_NATIVE_GPU_POLICY = NATIVE_GPU_POLICY.replace(
+  "    - /dev/urandom\n",
+  "    - /dev/urandom\n    - /proc\n",
+);
 const COMPATIBILITY_GPU_POLICY = NATIVE_GPU_POLICY.replace(
   "  read_write:\n    - /tmp\n",
   "  read_write:\n    - /tmp\n    - /proc\n",
@@ -277,6 +281,11 @@ describe("created sandbox policy receipt", () => {
       livePolicy: ENRICHED_NATIVE_GPU_POLICY,
     },
     {
+      route: "native" as const,
+      intendedPolicy: NATIVE_GPU_POLICY,
+      livePolicy: PROXY_ONLY_NATIVE_GPU_POLICY,
+    },
+    {
       route: "compatibility" as const,
       intendedPolicy: COMPATIBILITY_GPU_POLICY,
       livePolicy: ENRICHED_COMPATIBILITY_GPU_POLICY,
@@ -321,6 +330,14 @@ describe("created sandbox policy receipt", () => {
       label: "the native live policy contains an arbitrary added path",
       input: { ...INPUT, route: "native" as const },
       livePolicy: ENRICHED_NATIVE_GPU_POLICY.replace("/dev/nvidia0", "/home"),
+    },
+    {
+      label: "the proxy-only native live policy contains a GPU device path",
+      input: { ...INPUT, route: "native" as const },
+      livePolicy: PROXY_ONLY_NATIVE_GPU_POLICY.replace(
+        "  read_write:\n    - /tmp\n",
+        "  read_write:\n    - /tmp\n    - /dev/nvidia0\n",
+      ),
     },
     {
       label: "the compatibility live policy contains an arbitrary added path",

@@ -131,19 +131,30 @@ export function isOpenShellGpuBaselineEnrichment(
   ) {
     return false;
   }
-  if (liveReadOnly.has(PROC_PATH) || !liveReadWrite.has(PROC_PATH)) return false;
+  // A native request can reach Ready without injected devices. OpenShell then restores only the
+  // proxy /proc read grant; accepting that exact shape lets the verified GPU proof own fallback.
+  const nativeProxyOnlyEnrichment =
+    route === "native" && liveReadOnly.has(PROC_PATH) && !liveReadWrite.has(PROC_PATH);
+  const gpuEnrichment = !liveReadOnly.has(PROC_PATH) && liveReadWrite.has(PROC_PATH);
+  if (!nativeProxyOnlyEnrichment && !gpuEnrichment) return false;
   if (!isSubset(intendedReadOnly, liveReadOnly) || !isSubset(intendedReadWrite, liveReadWrite)) {
     return false;
   }
 
   for (const path of liveReadOnly) {
-    if (!intendedReadOnly.has(path) && !OPENSHELL_GPU_READ_ONLY_PATHS.has(path)) return false;
+    if (
+      !intendedReadOnly.has(path) &&
+      path !== PROC_PATH &&
+      (!gpuEnrichment || !OPENSHELL_GPU_READ_ONLY_PATHS.has(path))
+    ) {
+      return false;
+    }
   }
   for (const path of liveReadWrite) {
     if (
       !intendedReadWrite.has(path) &&
-      !OPENSHELL_GPU_READ_WRITE_PATHS.has(path) &&
-      !OPENSHELL_GPU_DEVICE_PATH.test(path)
+      (!gpuEnrichment ||
+        (!OPENSHELL_GPU_READ_WRITE_PATHS.has(path) && !OPENSHELL_GPU_DEVICE_PATH.test(path)))
     ) {
       return false;
     }
