@@ -68,7 +68,7 @@ describe("blueprint runner status recovery", () => {
         status: "incomplete",
         reconciliation_required: true,
         reconciliation_action:
-          "Do not retry `apply` or `rollback`. Ask a NemoClaw maintainer to call `actionReconcile(runId)` through the direct blueprint runner API for this exact run.",
+          "Do not retry `apply` or `rollback`. Run the NemoClaw blueprint runner's `reconcile --run-id nc-run-incomplete` action for this exact run.",
       },
     });
   });

@@ -687,7 +687,7 @@ describe("runner", () => {
       expect(stdoutText()).toContain("Apply complete");
     });
 
-    it("compensates an owned inference provider when inference set fails (#6703)", async () => {
+    it("preserves an owned inference provider when name-only cleanup is unsafe (#9833)", async () => {
       mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
         if (args.join(" ") === "provider get my-provider") {
           return {
@@ -706,14 +706,14 @@ describe("runner", () => {
       });
 
       await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
-        /Failed to set inference route .*model 'gpt-4'.*inference route rejected/i,
+        /Failed to set inference route .*inference route rejected.*automatic cleanup was refused/iu,
       );
 
       expect(hasPlanJson()).toBe(true);
-      expect(mockExeca).toHaveBeenCalledWith(
+      expect(mockExeca).not.toHaveBeenCalledWith(
         "openshell",
         ["provider", "delete", "my-provider"],
-        expect.objectContaining({ reject: false }),
+        expect.anything(),
       );
       expect(stdoutText()).not.toContain("Apply complete");
       expect(stdoutText()).not.toContain("PROGRESS:100");

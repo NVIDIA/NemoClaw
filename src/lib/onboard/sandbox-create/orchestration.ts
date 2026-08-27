@@ -327,6 +327,15 @@ export function reconcileCreatedHermesCredentialEnvironment(
   );
 }
 
+export async function finalizeCreatedSandboxBeforeHermesCredentialReconciliation<T>(
+  completeRegistration: () => Promise<T>,
+  reconcileCredentialEnvironment: () => void,
+): Promise<T> {
+  const registration = await completeRegistration();
+  reconcileCredentialEnvironment();
+  return registration;
+}
+
 /**
  * Keep every effect after an unverified create behind one exact-identity policy gate.
  *
@@ -2455,17 +2464,23 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         providerEffectBoundary.runAfterVerifiedCreate,
       );
       try {
-        await completeCreatedSandboxRegistration(created, null);
-        verifiedPolicyRegistrationFinalized = true;
-        reconcileCreatedHermesCredentialEnvironment(
-          {
-            sandboxName,
-            plan: plannedMessagingState?.plan ?? null,
+        await finalizeCreatedSandboxBeforeHermesCredentialReconciliation(
+          async () => {
+            const registration = await completeCreatedSandboxRegistration(created, null);
+            verifiedPolicyRegistrationFinalized = true;
+            return registration;
           },
-          createHermesCredentialEnvReconciliationRuntime(
-            (args, options) => runOpenshell([...args], options),
-            (operation) => revalidatePolicyAuthority(true, operation),
-          ),
+          () =>
+            reconcileCreatedHermesCredentialEnvironment(
+              {
+                sandboxName,
+                plan: plannedMessagingState?.plan ?? null,
+              },
+              createHermesCredentialEnvReconciliationRuntime(
+                (args, options) => runOpenshell([...args], options),
+                (operation) => revalidatePolicyAuthority(true, operation),
+              ),
+            ),
         );
       } finally {
         cleanupInitialCreateSource();

@@ -42,7 +42,6 @@ import type { SanitizedExternalOpenShellTargetPlan } from "../shared/openshell-e
 import {
   attachRuntimeIdentity,
   buildRuntimeIdentityPlan,
-  compensateRuntimeIdentityApply,
   isRuntimeIdentityConfig,
   isRuntimeIdentityReceipt,
   mintRuntimeIdentityCredential,
@@ -55,7 +54,6 @@ import {
   type RuntimeIdentityPlan,
   type RuntimeIdentityProfilePolicy,
   type RuntimeIdentityReceipt,
-  removeRuntimeIdentity,
 } from "./runtime-identity.js";
 import type { SnapshotCommandOptions } from "./snapshot-command.js";
 import { actionSnapshots } from "./snapshot-command.js";
@@ -202,14 +200,14 @@ type StatusPolicyTransition = BlueprintPolicyTransitionReceipt & {
   reconciliation_action?: string;
 };
 
-const POLICY_TRANSITION_RECONCILIATION_ACTION =
-  "Do not retry `apply` or `rollback`. Ask a NemoClaw maintainer to call `actionReconcile(runId)` through the direct blueprint runner API for this exact run.";
+function policyTransitionReconciliationAction(runId: string): string {
+  return `Do not retry \`apply\` or \`rollback\`. Run the NemoClaw blueprint runner's \`reconcile --run-id ${runId}\` action for this exact run.`;
+}
 
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 const REST_PROTOCOLS = new Set(["rest"]);
 const ENDPOINT_ENFORCEMENT_MODES = new Set(["enforce", "audit"]);
 const ENDPOINT_TLS_MODES = new Set(["terminate", "passthrough", "skip"]);
-const MISSING_SANDBOX_PATTERN = /\b(?:not found|does not exist)\b/i;
 const MISSING_PROVIDER_INSPECTION_PATTERN =
   /(?:\bprovider\b[^\r\n]*\b(?:not found|does not exist)\b|\b(?:not found|does not exist)\b[^\r\n]*\bprovider\b|\bunknown provider\b)/i;
 const POLICY_AUTHORITY_MAX_BYTES = 1024 * 1024;
@@ -599,25 +597,6 @@ function assertReusableInferenceProvider(
       `Inference provider '${expected.name}' does not match the requested non-secret binding; refusing runtime identity apply`,
     );
   }
-}
-
-async function inspectOwnedInferenceProvider(
-  expected: Parameters<typeof assertReusableInferenceProvider>[1],
-  gateway: string,
-): Promise<"absent" | "matching"> {
-  const result = await runCmd(["openshell", "provider", "get", expected.name], {
-    gateway,
-    reject: false,
-  });
-  const output = `${result.stderr}\n${result.stdout}`;
-  if (result.exitCode !== 0) {
-    if (MISSING_PROVIDER_INSPECTION_PATTERN.test(output)) return "absent";
-    throw new Error(
-      `Failed to inspect inference provider '${expected.name}' before cleanup: ${boundedCommandError(output)}`,
-    );
-  }
-  assertReusableInferenceProvider(result.stdout, expected);
-  return "matching";
 }
 
 // ── Utilities ───────────────────────────────────────────────────
@@ -1600,7 +1579,7 @@ function buildStatusRunPlan(source: unknown, fallbackRunId: string): StatusRunPl
       ...source.policy_transition,
       reconciliation_required: reconciliationRequired,
       ...(reconciliationRequired
-        ? { reconciliation_action: POLICY_TRANSITION_RECONCILIATION_ACTION }
+        ? { reconciliation_action: policyTransitionReconciliationAction(safePlan.run_id) }
         : {}),
     };
   }
@@ -1796,7 +1775,6 @@ export async function actionApply(
   let policyTransition: BlueprintPolicyTransitionReceipt | undefined;
   let sandboxCreatedByApply = false;
   let inferenceProviderCreatedByApply = false;
-  let runtimeIdentityCleanupAllowed = true;
   const persistRunPlan = (): void => {
     persistRunReceipt(
       join(stateDir, "plan.json"),
@@ -1860,7 +1838,6 @@ export async function actionApply(
         persistRunPlan();
       } catch (error) {
         runtimeIdentityReceipt = previousReceipt;
-        runtimeIdentityCleanupAllowed = false;
         throw error;
       }
     },
@@ -2182,7 +2159,6 @@ export async function actionApply(
       try {
         persistRunPlan();
       } catch (error) {
-        runtimeIdentityCleanupAllowed = false;
         throw error;
       }
       await mintRuntimeIdentityCredential(runtimeIdentityReceipt, identityDeps);
@@ -2314,99 +2290,16 @@ export async function actionApply(
     log(`Sandbox '${sandboxName}' is ready.`);
     log(`Inference: ${providerName} -> ${model} @ ${endpoint}`);
   } catch (error) {
-    const cleanupFailures: string[] = [];
-    let preserveSandboxForCleanup = false;
-    if (runtimeIdentityReceipt && runtimeIdentityCleanupAllowed) {
-      try {
-        await compensateRuntimeIdentityApply(runtimeIdentityReceipt, sandboxName, identityDeps);
-        runtimeIdentityReceipt = {
-          ...runtimeIdentityReceipt,
-          provider_created: false,
-          attachment_created: false,
-        };
-        persistRunPlan();
-      } catch (cleanupError) {
-        preserveSandboxForCleanup = true;
-        cleanupFailures.push(
-          cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
-        );
-      }
-    } else if (runtimeIdentityReceipt) {
-      preserveSandboxForCleanup = true;
-      cleanupFailures.push(
-        "Runtime identity resources were preserved because their latest ownership state was not durably recorded.",
-      );
-    }
-    if (inferenceProviderCreatedByApply) {
-      try {
-        const providerState = await inspectOwnedInferenceProvider(
-          {
-            name: providerName,
-            type: providerType,
-            requiresEndpointConfig: endpoint !== "",
-            requiresCredential: credential !== "",
-          },
-          policyGateway.name,
-        );
-        if (providerState === "absent") {
-          inferenceProviderCreatedByApply = false;
-          persistRunPlan();
-        } else {
-          await requireUsablePolicyBoundary();
-          const removeProvider = await runCmd(["openshell", "provider", "delete", providerName], {
-            gateway: policyGateway.name,
-            reject: false,
-          });
-          if (
-            removeProvider.exitCode !== 0 &&
-            !MISSING_PROVIDER_INSPECTION_PATTERN.test(removeProvider.stderr)
-          ) {
-            throw new Error(
-              `Failed to remove inference provider '${providerName}': ${boundedCommandError(removeProvider.stderr)}`,
-            );
-          }
-          inferenceProviderCreatedByApply = false;
-          persistRunPlan();
-        }
-      } catch (cleanupError) {
-        preserveSandboxForCleanup = true;
-        cleanupFailures.push(
-          cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
-        );
-      }
-    }
-    if (sandboxCreatedByApply && !preserveSandboxForCleanup) {
-      try {
-        await requireUsablePolicyBoundary();
-        await runCmd(["openshell", "sandbox", "stop", "-g", policyGateway.name, sandboxName], {
-          gateway: policyGateway.name,
-          reject: false,
-        });
-        await validateBlueprintPolicyAuthorityReceipt(policyAuthorityReceipt, sandboxName, false);
-        const remove = await runCmd(
-          ["openshell", "sandbox", "remove", "-g", policyGateway.name, sandboxName],
-          { gateway: policyGateway.name, reject: false },
-        );
-        if (remove.exitCode !== 0 && !MISSING_SANDBOX_PATTERN.test(remove.stderr)) {
-          throw new Error(
-            `Failed to remove sandbox '${sandboxName}': ${boundedCommandError(remove.stderr)}`,
-          );
-        }
-        sandboxCreatedByApply = false;
-        if (policyCreationTransition) {
-          policyAuthorityReceipt = undefined;
-        }
-        persistRunPlan();
-      } catch (cleanupError) {
-        cleanupFailures.push(
-          `Sandbox ${JSON.stringify(sandboxName)} may still exist because its exact creation receipt could not be validated for cleanup: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
-        );
-      }
-    }
-
     const message = error instanceof Error ? error.message : String(error);
-    if (cleanupFailures.length > 0) {
-      throw new Error(`${message}; cleanup failed: ${cleanupFailures.join("; ")}`);
+    if (
+      runtimeIdentityReceipt !== undefined ||
+      inferenceProviderCreatedByApply ||
+      sandboxCreatedByApply
+    ) {
+      throw new Error(
+        `${message}; automatic cleanup was refused because OpenShell can remove or detach the retained resources only by mutable resource names. Preserve run ${rid} for identity-bound recovery.`,
+        { cause: error },
+      );
     }
     throw error;
   }
@@ -2636,12 +2529,7 @@ export async function actionRollback(rid: string): Promise<void> {
   let sandboxName: string;
   let sandboxCreatedByApply = false;
   let inferenceProviderCreatedByApply = false;
-  let inferenceProviderName: string | undefined;
-  let inferenceProviderBinding:
-    | { name: string; type: string; requiresEndpointConfig: boolean }
-    | undefined;
   let runtimeIdentityReceipt: RuntimeIdentityReceipt | undefined;
-  let policyAuthorityReceipt: BlueprintPolicyAuthorityReceipt | undefined;
   let policyTransition: BlueprintPolicyTransitionReceipt | undefined;
   try {
     const planData = readFileSync(planFile, "utf-8");
@@ -2654,8 +2542,7 @@ export async function actionRollback(rid: string): Promise<void> {
     sandboxCreatedByApply = rollbackPlan?.sandbox_created_by_apply === true;
     inferenceProviderCreatedByApply = rollbackPlan?.inference_provider_created_by_apply === true;
     if (inferenceProviderCreatedByApply) {
-      inferenceProviderBinding = readRollbackInferenceProviderBinding(rollbackPlan!);
-      inferenceProviderName = inferenceProviderBinding.name;
+      readRollbackInferenceProviderBinding(rollbackPlan!);
     }
     if (rollbackPlan?.identity !== undefined) {
       if (!isRuntimeIdentityReceipt(rollbackPlan.identity)) {
@@ -2675,7 +2562,6 @@ export async function actionRollback(rid: string): Promise<void> {
       if (!isBlueprintPolicyAuthorityReceipt(rollbackPlan.policy_authority)) {
         throw new Error("policy authority receipt is invalid");
       }
-      policyAuthorityReceipt = rollbackPlan.policy_authority;
     }
     if (rollbackPlan?.policy_transition !== undefined) {
       if (!isBlueprintPolicyTransitionReceipt(rollbackPlan.policy_transition)) {
@@ -2690,90 +2576,18 @@ export async function actionRollback(rid: string): Promise<void> {
 
   if (policyTransition && policyTransition.status !== "complete") {
     throw new Error(
-      `Cannot roll back run ${rid}: the policy transition for reused sandbox ${JSON.stringify(policyTransition.sandbox_name)} through gateway ${JSON.stringify(policyTransition.gateway)} is ${policyTransition.status}. ${POLICY_TRANSITION_RECONCILIATION_ACTION}`,
+      `Cannot roll back run ${rid}: the policy transition for reused sandbox ${JSON.stringify(policyTransition.sandbox_name)} through gateway ${JSON.stringify(policyTransition.gateway)} is ${policyTransition.status}. ${policyTransitionReconciliationAction(rid)}`,
     );
   }
-
-  const requireRollbackPolicyBoundary = async (requireReady = true): Promise<void> => {
-    try {
-      await validateBlueprintPolicyAuthorityReceipt(
-        policyAuthorityReceipt,
-        sandboxName,
-        requireReady,
-      );
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new Error(`Cannot roll back run ${rid}: ${detail}.`);
-    }
-  };
 
   if (
     runtimeIdentityReceipt !== undefined ||
     sandboxCreatedByApply ||
     inferenceProviderCreatedByApply
   ) {
-    await requireRollbackPolicyBoundary();
-  }
-
-  if (runtimeIdentityReceipt) {
-    progress(20, `Removing runtime identity provider ${runtimeIdentityReceipt.provider_name}`);
-    await removeRuntimeIdentity(
-      runtimeIdentityReceipt,
-      sandboxName,
-      runtimeIdentityCommandDeps(policyAuthorityReceipt!.gateway, requireRollbackPolicyBoundary),
+    throw new Error(
+      `Cannot roll back run ${rid}: OpenShell exposes cleanup only through mutable sandbox and provider names. The sandbox, providers, and ownership receipt were preserved for identity-bound recovery.`,
     );
-  }
-
-  if (inferenceProviderCreatedByApply) {
-    progress(40, `Removing inference provider ${inferenceProviderName!}`);
-    const providerState = await inspectOwnedInferenceProvider(
-      {
-        ...inferenceProviderBinding!,
-        requiresCredential: false,
-      },
-      policyAuthorityReceipt!.gateway,
-    );
-    if (providerState === "matching") {
-      await requireRollbackPolicyBoundary();
-      const removeProvider = await runCmd(
-        ["openshell", "provider", "delete", inferenceProviderName!],
-        { gateway: policyAuthorityReceipt!.gateway, reject: false },
-      );
-      if (
-        removeProvider.exitCode !== 0 &&
-        !MISSING_PROVIDER_INSPECTION_PATTERN.test(removeProvider.stderr)
-      ) {
-        throw new Error(
-          `Failed to remove owned inference provider '${inferenceProviderName!}': ${boundedCommandError(removeProvider.stderr)}`,
-        );
-      }
-    }
-  }
-
-  if (sandboxCreatedByApply) {
-    progress(60, `Stopping sandbox ${sandboxName}`);
-    await requireRollbackPolicyBoundary();
-    const stop = await runCmd(
-      ["openshell", "sandbox", "stop", "-g", policyAuthorityReceipt!.gateway, sandboxName],
-      { gateway: policyAuthorityReceipt!.gateway, reject: false },
-    );
-
-    progress(70, `Removing sandbox ${sandboxName}`);
-    await requireRollbackPolicyBoundary(false);
-    const remove = await runCmd(
-      ["openshell", "sandbox", "remove", "-g", policyAuthorityReceipt!.gateway, sandboxName],
-      { gateway: policyAuthorityReceipt!.gateway, reject: false },
-    );
-    if (remove.exitCode !== 0 && !MISSING_SANDBOX_PATTERN.test(remove.stderr)) {
-      const stopFailure =
-        stop.exitCode !== 0 && !MISSING_SANDBOX_PATTERN.test(stop.stderr)
-          ? `; sandbox stop also failed: ${boundedCommandError(stop.stderr)}`
-          : "";
-      throw new Error(
-        `Failed to remove owned sandbox '${sandboxName}': ${boundedCommandError(remove.stderr)}` +
-          stopFailure,
-      );
-    }
   } else {
     progress(70, `Preserving unowned sandbox ${sandboxName}`);
   }

@@ -289,7 +289,9 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
 
     const error = await actionApply("default", blueprint()).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toBe("OpenShell policy receipt inspection failed.");
+    expect((error as Error).message).toMatch(
+      /^OpenShell policy receipt inspection failed\.; automatic cleanup was refused/u,
+    );
     expect((error as Error).message).not.toContain("MY_API_KEY");
     expect((error as Error).message).not.toContain("super-secret");
     expect((error as Error).message.length).toBeLessThan(600);
@@ -1210,7 +1212,9 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
       run_id: runId,
       policy_transition: {
         status: "incomplete",
-        reconciliation_action: expect.stringContaining("actionReconcile(runId)"),
+        reconciliation_action: expect.stringContaining(
+          "reconcile --run-id incomplete-transition",
+        ),
       },
     });
     stdoutCapture.reset();
@@ -1377,7 +1381,9 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
       policy_transition: {
         status: "incomplete",
         reconciliation_required: true,
-        reconciliation_action: expect.stringContaining("actionReconcile(runId)"),
+        reconciliation_action: expect.stringContaining(
+          "reconcile --run-id incomplete-policy-transition",
+        ),
       },
     });
   });

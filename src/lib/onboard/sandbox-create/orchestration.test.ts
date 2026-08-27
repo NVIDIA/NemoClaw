@@ -15,6 +15,7 @@ import {
   backfillVerifiedExternalSandboxPolicyAuthority,
   completeHermesPortableSandboxRegistration,
   createProviderEffectBoundary,
+  finalizeCreatedSandboxBeforeHermesCredentialReconciliation,
   hasManagedMcpRebuildHandoff,
   persistRetainedSandboxRecoveryMessage,
   readManagedDcodeCreateSelectionDrift,
@@ -27,15 +28,24 @@ import {
 describe("created Hermes credential environment reconciliation", () => {
   const plan = { agent: "hermes" } as never;
 
-  it("finalizes policy registration before reconciling credentials (#9833)", () => {
-    const source = fs.readFileSync(new URL("./orchestration.ts", import.meta.url), "utf8");
-    const completed = source.indexOf("await completeCreatedSandboxRegistration(created, null);");
-    const finalized = source.indexOf("verifiedPolicyRegistrationFinalized = true;", completed);
-    const reconciled = source.indexOf("reconcileCreatedHermesCredentialEnvironment(", completed);
+  it("finalizes policy registration before reconciling credentials (#9833)", async () => {
+    const events: string[] = [];
 
-    expect(completed).toBeGreaterThan(-1);
-    expect(finalized).toBeGreaterThan(completed);
-    expect(reconciled).toBeGreaterThan(finalized);
+    await finalizeCreatedSandboxBeforeHermesCredentialReconciliation(
+      async () => {
+        events.push("registration:start");
+        await Promise.resolve();
+        events.push("registration:complete");
+        return { sandboxName: "alpha" };
+      },
+      () => events.push("credentials:reconcile"),
+    );
+
+    expect(events).toEqual([
+      "registration:start",
+      "registration:complete",
+      "credentials:reconcile",
+    ]);
   });
 
   it("restarts and rechecks the managed gateway after changing the env file", () => {
