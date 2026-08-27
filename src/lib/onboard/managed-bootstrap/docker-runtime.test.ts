@@ -279,6 +279,9 @@ describe("Docker managed-bootstrap GPU probe image", () => {
       sandboxImage,
       expect.objectContaining({ maxTimeoutMs: 30 * 60 * 1000 }),
     );
+    expect(dockerAdapterMocks.pullWithProgressWatchdog.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({ env: expect.any(Object) }),
+    );
     expect(dockerAdapterMocks.pullWithProgressWatchdog.mock.invocationCallOrder[0]).toBeLessThan(
       dockerRun.mock.invocationCallOrder[0] ?? 0,
     );

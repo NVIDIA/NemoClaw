@@ -19,7 +19,9 @@ import { withStdoutRedirectedToStderr } from "../cli/stdout-guard";
 import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
 import {
   dockerBuildSubprocessEnv,
+  mergeIsolatedDockerClientEnv,
   prebuildSandboxImageIfEligible,
+  prepareDockerBuildEnvironment,
   resolveSandboxPrebuildEnabled,
   sandboxLocalImageRef,
 } from "./sandbox-prebuild";
@@ -418,6 +420,7 @@ describe("sandbox BuildKit prebuild", () => {
         },
         buildImage,
         credentialHelperResponds,
+        dockerContextIsDefault: () => true,
         isWslHost: true,
         inspectImageId: () => IMAGE_ID,
         log,
@@ -428,6 +431,72 @@ describe("sandbox BuildKit prebuild", () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining("isolated credential-free config"));
     expect(fs.existsSync(isolatedConfig)).toBe(false);
     expect(fs.readFileSync(path.join(dockerConfig, "config.json"), "utf-8")).toBe(originalConfig);
+  });
+
+  it("overlays the isolated Docker config onto a managed-image create env (#10349)", () => {
+    const dockerConfig = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wsl-docker-config-"));
+    temporaryDirectories.push(dockerConfig);
+    fs.writeFileSync(
+      path.join(dockerConfig, "config.json"),
+      JSON.stringify({ credsStore: "desktop.exe" }),
+    );
+    const prepared = prepareDockerBuildEnvironment({
+      env: { DOCKER_CONFIG: dockerConfig, WSL_DISTRO_NAME: "Ubuntu" },
+      credentialHelperResponds: () => false,
+      dockerContextIsDefault: () => true,
+      isWslHost: true,
+    });
+    const merged = mergeIsolatedDockerClientEnv(
+      { PATH: "/usr/bin", OPENSHELL_GATEWAY: "1", DOCKER_CONFIG: dockerConfig },
+      prepared,
+    );
+    const dockerOnly = mergeIsolatedDockerClientEnv({}, prepared);
+    expect(prepared.isolatedCredentialConfig).toBe(true);
+    expect(merged.DOCKER_CONFIG).toContain("nemoclaw-wsl-buildkit-docker-config-");
+    expect(merged.DOCKER_CONFIG).not.toBe(dockerConfig);
+    expect(merged.PATH).toBe("/usr/bin");
+    expect(merged.OPENSHELL_GATEWAY).toBe("1");
+    expect(dockerOnly).toEqual({ DOCKER_CONFIG: merged.DOCKER_CONFIG });
+    expect(dockerOnly).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
+    prepared.cleanup();
+    expect(fs.existsSync(String(merged.DOCKER_CONFIG))).toBe(false);
+  });
+
+  it("keeps the caller Docker config when the Desktop helper responds (#10349)", () => {
+    const dockerConfig = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wsl-docker-config-"));
+    temporaryDirectories.push(dockerConfig);
+    fs.writeFileSync(
+      path.join(dockerConfig, "config.json"),
+      JSON.stringify({ credsStore: "desktop.exe" }),
+    );
+    const prepared = prepareDockerBuildEnvironment({
+      env: { DOCKER_CONFIG: dockerConfig, WSL_DISTRO_NAME: "Ubuntu" },
+      credentialHelperResponds: () => true,
+      isWslHost: true,
+    });
+    const merged = mergeIsolatedDockerClientEnv({ DOCKER_CONFIG: dockerConfig }, prepared);
+    expect(prepared.isolatedCredentialConfig).toBe(false);
+    expect(merged.DOCKER_CONFIG).toBe(dockerConfig);
+    prepared.cleanup();
+  });
+
+  it("keeps the caller Docker config for a non-default Docker context (#10349)", () => {
+    const dockerConfig = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wsl-docker-config-"));
+    temporaryDirectories.push(dockerConfig);
+    fs.writeFileSync(
+      path.join(dockerConfig, "config.json"),
+      JSON.stringify({ credsStore: "desktop.exe", currentContext: "remote-builder" }),
+    );
+    const prepared = prepareDockerBuildEnvironment({
+      env: { DOCKER_CONFIG: dockerConfig, WSL_DISTRO_NAME: "Ubuntu" },
+      credentialHelperResponds: () => false,
+      dockerContextIsDefault: () => false,
+      isWslHost: true,
+    });
+    const merged = mergeIsolatedDockerClientEnv({ DOCKER_CONFIG: dockerConfig }, prepared);
+    expect(prepared.isolatedCredentialConfig).toBe(false);
+    expect(merged.DOCKER_CONFIG).toBe(dockerConfig);
+    prepared.cleanup();
   });
 
   it("removes the isolated WSL Docker config after a failed required build (#9748)", async () => {
@@ -457,6 +526,7 @@ describe("sandbox BuildKit prebuild", () => {
         env: { DOCKER_CONFIG: dockerConfig, WSL_DISTRO_NAME: "Ubuntu" },
         buildImage,
         credentialHelperResponds: () => false,
+        dockerContextIsDefault: () => true,
         isWslHost: true,
         log: () => {},
       }),

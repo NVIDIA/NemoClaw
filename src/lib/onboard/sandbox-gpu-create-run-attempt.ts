@@ -12,7 +12,7 @@ import {
   settleCreatedOpenShellSandboxId,
 } from "../adapters/openshell/sandbox-identity";
 import { printSandboxCreateRecoveryHints } from "../build-context";
-import { streamSandboxCreate } from "../sandbox/create-stream";
+import { streamSandboxCreate, type StreamSandboxCreateResult } from "../sandbox/create-stream";
 import { getReadyCheckOutputPatternsForAgent } from "../sandbox/create-stream-ready-gate";
 import { getSandboxFailurePhase, isSandboxReady } from "../state/gateway";
 import type { SandboxGpuProofResult } from "../state/registry";
@@ -42,6 +42,7 @@ import type {
 } from "./sandbox-gpu-create-flow";
 import { fingerprintSandboxRecreateValue } from "./sandbox-recreate-transaction";
 import * as sandboxGpuPreflight from "./sandbox-gpu-preflight";
+import { mergeIsolatedDockerClientEnv, prepareDockerBuildEnvironment } from "./sandbox-prebuild";
 import { SANDBOX_RECREATE_PROBE_TIMEOUT_MS } from "./sandbox-recreate-probe";
 import type { CreatedSandboxReadyIdentityCheck } from "./sandbox-readiness-tracing";
 import * as sandboxReadinessTracing from "./sandbox-readiness-tracing";
@@ -65,6 +66,25 @@ export type SandboxGpuCreateAttemptState = {
 const REPLACEMENT_STABLE_READY_POLLS = 2;
 const SANDBOX_READY_PROBE_TIMEOUT_MS = 5_000;
 const CREATED_SANDBOX_PUBLICATION_POLL_INTERVAL_SECONDS = 1;
+
+async function streamSandboxCreateWithPublicImageCredentialIsolation(
+  isolate: boolean,
+  sandboxEnv: NodeJS.ProcessEnv,
+  run: (env: NodeJS.ProcessEnv) => Promise<StreamSandboxCreateResult>,
+): Promise<StreamSandboxCreateResult> {
+  if (!isolate) return run(sandboxEnv);
+  const prepared = prepareDockerBuildEnvironment({ allowCredentialIsolation: true });
+  try {
+    if (prepared.isolatedCredentialConfig) {
+      console.log(
+        "  Docker Desktop credential helper is unavailable in this WSL session; using an isolated credential-free config for the managed sandbox image pull.",
+      );
+    }
+    return await run(mergeIsolatedDockerClientEnv(sandboxEnv, prepared));
+  } finally {
+    prepared.cleanup();
+  }
+}
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/gu;
 const OPENSHELL_SANDBOX_NOT_READY =
@@ -532,35 +552,40 @@ export function createSandboxGpuCreateAttemptRunner(
     const [createExecutable, ...createExecutableArgs] = managedLifecycle?.launchArgv ?? attemptArgv;
     if (!createExecutable) throw new Error("Sandbox create executable is missing.");
     const streamCreate = () =>
-      streamSandboxCreate(createExecutable, createExecutableArgs, input.sandboxEnv, {
-        ...(input.createWorkingDirectory ? { cwd: input.createWorkingDirectory } : {}),
-        readyCheck: () => {
-          const list = deps.runCaptureOpenshell(["sandbox", "list"], {
-            ignoreError: true,
-            timeout: SANDBOX_READY_PROBE_TIMEOUT_MS,
-          });
-          return isSandboxReady(list, input.sandboxName);
-        },
-        ...(deferPostCreateEffects
-          ? {}
-          : {
-              onPoll: () => {
-                if (!deferRestartSafeCutover) void runtimePatch.maybeApplyDuringCreate();
-              },
+      streamSandboxCreateWithPublicImageCredentialIsolation(
+        managedBootstrap != null,
+        input.sandboxEnv,
+        (createEnv) =>
+          streamSandboxCreate(createExecutable, createExecutableArgs, createEnv, {
+            ...(input.createWorkingDirectory ? { cwd: input.createWorkingDirectory } : {}),
+            readyCheck: () => {
+              const list = deps.runCaptureOpenshell(["sandbox", "list"], {
+                ignoreError: true,
+                timeout: SANDBOX_READY_PROBE_TIMEOUT_MS,
+              });
+              return isSandboxReady(list, input.sandboxName);
+            },
+             ...(deferPostCreateEffects
+               ? {}
+               : {
+                   onPoll: () => {
+                     if (!deferRestartSafeCutover) void runtimePatch.maybeApplyDuringCreate();
+                   },
+                 }),
+            readyCheckOutputPatterns: getReadyCheckOutputPatternsForAgent({
+              isTerminalAgent: input.terminalAgent,
+              startupRunsDuringCreate: managedLifecycle === null,
+              env: createEnv,
             }),
-        readyCheckOutputPatterns: getReadyCheckOutputPatternsForAgent({
-          isTerminalAgent: input.terminalAgent,
-          startupRunsDuringCreate: managedLifecycle === null,
-          env: input.sandboxEnv,
-        }),
-        failureCheck: runtimePatch.createFailureMessage,
-        traceEvent: addTraceEvent,
-        waitForReadyTermination: deferRestartSafeCutover || deferPostCreateEffects,
-        initialPhase:
-          compatibility && (input.prebuild.imageRef || state.compatibilityArgv)
-            ? "create"
-            : undefined,
-      });
+            failureCheck: runtimePatch.createFailureMessage,
+            traceEvent: addTraceEvent,
+             waitForReadyTermination: deferRestartSafeCutover || deferPostCreateEffects,
+            initialPhase:
+              compatibility && (input.prebuild.imageRef || state.compatibilityArgv)
+                ? "create"
+                : undefined,
+          }),
+      );
     let createResult: Awaited<ReturnType<typeof streamSandboxCreate>>;
     let managedIncompleteCreateRecovered = false;
     let createdSandboxVerified = false;

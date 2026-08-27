@@ -59,6 +59,7 @@ export interface SandboxPrebuildInput {
   ) => Promise<number | null>;
   inspectImageId?: (imageRef: string) => string;
   credentialHelperResponds?: (credsStore: string) => boolean;
+  dockerContextIsDefault?: (env: NodeJS.ProcessEnv) => boolean;
   isWslHost?: boolean;
   log?: (message: string) => void;
 }
@@ -73,6 +74,7 @@ export interface SandboxPrebuildResult {
 export interface DockerBuildEnvironmentInput {
   env?: NodeJS.ProcessEnv;
   credentialHelperResponds?: (credsStore: string) => boolean;
+  dockerContextIsDefault?: (env: NodeJS.ProcessEnv) => boolean;
   isWslHost?: boolean;
   allowCredentialIsolation?: boolean;
 }
@@ -89,9 +91,7 @@ interface TrustedStagedBuildContext {
 }
 
 function createCredentialFreeDockerConfig(purpose: "portable" | "wsl-buildkit"): string {
-  const directory = fs.mkdtempSync(
-    path.join(os.tmpdir(), `nemoclaw-${purpose}-docker-config-`),
-  );
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-${purpose}-docker-config-`));
   fs.chmodSync(directory, 0o700);
   fs.writeFileSync(path.join(directory, "config.json"), '{"auths":{}}\n', {
     encoding: "utf-8",
@@ -221,6 +221,18 @@ function dockerDesktopCredentialHelperRespondsFromBuild(
   });
 }
 
+function dockerContextIsDefaultFromBuild(env: NodeJS.ProcessEnv): boolean {
+  if (env.DOCKER_HOST) return true;
+  const result = spawnSync("docker", ["context", "show"], {
+    encoding: "utf-8",
+    env: dockerBuildSubprocessEnv(env),
+    shell: false,
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 5_000,
+  });
+  return !result.error && result.status === 0 && String(result.stdout).trim() === "default";
+}
+
 /**
  * Prepare the Docker environment shared by normal creation and rebuild image
  * preflight. Docker Desktop can leave WSL pointing at a Windows credential
@@ -235,11 +247,13 @@ export function prepareDockerBuildEnvironment(
   const helperResponds =
     input.credentialHelperResponds ??
     ((credsStore: string) => dockerDesktopCredentialHelperRespondsFromBuild(credsStore, sourceEnv));
+  const contextIsDefault = input.dockerContextIsDefault ?? dockerContextIsDefaultFromBuild;
   const credentialFreeConfig =
     input.allowCredentialIsolation !== false &&
-    requiresCredentialFreeWslBuildConfig(sourceEnv, helperResponds, input.isWslHost)
-    ? createCredentialFreeDockerConfig("wsl-buildkit")
-    : null;
+    requiresCredentialFreeWslBuildConfig(sourceEnv, helperResponds, input.isWslHost) &&
+    contextIsDefault(sourceEnv)
+      ? createCredentialFreeDockerConfig("wsl-buildkit")
+      : null;
   return {
     env: {
       ...dockerBuildSubprocessEnv(sourceEnv),
@@ -253,6 +267,15 @@ export function prepareDockerBuildEnvironment(
       }
     },
   };
+}
+
+/** Overlay a credential-free Docker client config onto a host subprocess env. */
+export function mergeIsolatedDockerClientEnv(
+  targetEnv: NodeJS.ProcessEnv,
+  prepared: PreparedDockerBuildEnvironment,
+): NodeJS.ProcessEnv {
+  const isolatedConfig = prepared.isolatedCredentialConfig ? prepared.env.DOCKER_CONFIG : undefined;
+  return isolatedConfig === undefined ? targetEnv : { ...targetEnv, DOCKER_CONFIG: isolatedConfig };
 }
 
 export function resolveSandboxPrebuildEnabled(
@@ -374,6 +397,7 @@ export async function prebuildSandboxImageIfEligible(
       : prepareDockerBuildEnvironment({
           env,
           credentialHelperResponds: input.credentialHelperResponds,
+          dockerContextIsDefault: input.dockerContextIsDefault,
           isWslHost: input.isWslHost,
         });
     const buildEnv = preparedDockerEnvironment?.env ?? dockerBuildSubprocessEnv(env);
