@@ -5,6 +5,8 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import path from "node:path";
 
+import { cloneAndDeepFreeze } from "../../core/immutable";
+
 export const MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION = 1 as const;
 
 const PROVIDER_ID = "mxc";
@@ -247,12 +249,6 @@ function sameIdentity(
   );
 }
 
-function frozen<T>(value: T): T {
-  if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
-  for (const child of Object.values(value)) frozen(child);
-  return Object.freeze(value);
-}
-
 /**
  * Bind a provider-owned accepted identity to an opaque attachment authority.
  *
@@ -262,7 +258,7 @@ function frozen<T>(value: T): T {
 export function createMxcOpenShellAttachmentAuthority(
   expectation: unknown,
 ): MxcOpenShellAttachmentAuthority {
-  const accepted = frozen(parseExpectation(expectation, "accepted attachment"));
+  const accepted = cloneAndDeepFreeze(parseExpectation(expectation, "accepted attachment"));
   const acceptedIdentitySha256 = createHash("sha256")
     .update(
       JSON.stringify({
@@ -331,5 +327,5 @@ export function qualifyMxcOpenShellAttachment(
   const authoritySha256 = createHash("sha256")
     .update(JSON.stringify(receiptIdentity), "utf8")
     .digest("hex");
-  return frozen({ ...receiptIdentity, authoritySha256 });
+  return cloneAndDeepFreeze({ ...receiptIdentity, authoritySha256 });
 }

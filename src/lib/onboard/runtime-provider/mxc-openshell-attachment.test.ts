@@ -157,6 +157,22 @@ describe("inactive OpenShell MXC installation attachment", () => {
     );
   });
 
+  it("retains an owned accepted identity after the caller mutates its input (#8178)", () => {
+    const { observation } = mxcOpenShellAttachmentFixture();
+    const accepted = {
+      distribution: { ...observation.distribution },
+      components: { ...observation.components },
+      gateway: { ...observation.gateway },
+    };
+    const authority = createMxcOpenShellAttachmentAuthority(accepted);
+
+    accepted.components.gatewaySha256 = "6".repeat(64);
+
+    expect(qualifyMxcOpenShellAttachment(authority, observation).components.gateway.sha256).toBe(
+      DIGESTS.gateway,
+    );
+  });
+
   it.each(["0.0.21-rc.1+build.2", "1.0.0-alpha.0", "1.0.0+build.2"])(
     "accepts complete SemVer identity %s (#8178)",
     (version) => {
