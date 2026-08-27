@@ -215,6 +215,8 @@ export interface SandboxGpuCreateFlowInput {
   sandboxName: string;
   /** Reject every initial or fallback create attempt that carries a caller policy. */
   requirePolicylessCreate?: true;
+  /** Durably retain create-attempt recovery evidence before identity-bound recovery stops. */
+  persistRetainedSandboxRecovery?: (message: string) => boolean;
   /** Durably retain exact APF create-attempt recovery evidence before a fallback refusal exits. */
   persistRetainedApfSandboxRecovery?: (recovery: RetainedApfSandboxRecovery) => boolean;
   provider: string;
@@ -365,6 +367,9 @@ export async function runSandboxGpuCreateFlow(
     throw new Error(
       "APF interceptor sandbox creation requires exact post-create verification and durable fallback recovery.",
     );
+  }
+  if (input.verifyCreatedSandboxBeforeEffects && !input.persistRetainedSandboxRecovery) {
+    throw new Error("Verified sandbox creation requires durable create-attempt recovery evidence.");
   }
   const hermesPortableLifecycle = input.hermesPortableLifecycle === true;
   assertPortableManagedBootstrapNotSelected(

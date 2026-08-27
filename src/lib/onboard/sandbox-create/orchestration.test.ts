@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { PolicyAuthorityRefusalError } from "../../adapters/openshell/policy-authority";
@@ -12,11 +16,99 @@ import {
   completeHermesPortableSandboxRegistration,
   createProviderEffectBoundary,
   hasManagedMcpRebuildHandoff,
+  persistRetainedSandboxRecoveryMessage,
   readManagedDcodeCreateSelectionDrift,
   readSandboxRecreateRegistryEntry,
   resolveSandboxCreatePolicyAuthority,
   runSandboxCreateWithPolicyAuthorityChecks,
 } from "./orchestration";
+
+describe("retained create recovery persistence", () => {
+  it.each([
+    ["available fingerprint", "f".repeat(64)],
+    ["unavailable fingerprint", null],
+  ])(
+    "keeps the create-attempt authority after session sanitization with %s (#9211)",
+    async (_case, fingerprint) => {
+      const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-recovery-"));
+      const nonce = "a".repeat(62);
+      const createAttemptLabel = `ai.nvidia.nemoclaw.create-attempt=${nonce}`;
+      const message =
+        `Create-attempt label: ${createAttemptLabel}. ` +
+        `${fingerprint ? `Durable sandbox identity fingerprint: ${fingerprint}. ` : ""}` +
+        "Recovery guidance follows after the authority fields. " +
+        "x".repeat(400);
+
+      try {
+        vi.stubEnv("HOME", tempHome);
+        vi.resetModules();
+        const session = await import("../../state/onboard-session");
+        session.saveSession(session.createSession({ sandboxName: "alpha" }));
+
+        expect(
+          persistRetainedSandboxRecoveryMessage(message, session.finalizeIncompleteOnboardStep),
+        ).toBe(true);
+
+        const stored = session.loadSession();
+        expect(stored?.machine.state).toBe("failed");
+        expect(stored?.steps.sandbox?.status).toBe("failed");
+        expect(stored?.failure?.message).toContain(createAttemptLabel);
+        expect(stored?.steps.sandbox?.error).toContain(createAttemptLabel);
+        const fingerprintExpectation = fingerprint
+          ? expect.stringContaining(fingerprint)
+          : expect.not.stringContaining("Durable sandbox identity fingerprint:");
+        expect(stored?.failure?.message).toEqual(fingerprintExpectation);
+        expect(stored?.steps.sandbox?.error).toEqual(fingerprintExpectation);
+      } finally {
+        vi.resetModules();
+        fs.rmSync(tempHome, { force: true, recursive: true });
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
+  it("reports persistence failure when no onboard session owns the recovery (#9211)", () => {
+    const finalizeIncompleteOnboardStep = vi.fn(() => null);
+
+    expect(
+      persistRetainedSandboxRecoveryMessage(
+        "Create-attempt label: ai.nvidia.nemoclaw.create-attempt=authority",
+        finalizeIncompleteOnboardStep,
+      ),
+    ).toBe(false);
+    expect(finalizeIncompleteOnboardStep).toHaveBeenCalledExactlyOnceWith(
+      "sandbox",
+      "Create-attempt label: ai.nvidia.nemoclaw.create-attempt=authority",
+    );
+  });
+
+  it("reports persistence failure when the onboard session is already terminal (#9211)", async () => {
+    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-recovery-"));
+
+    try {
+      vi.stubEnv("HOME", tempHome);
+      vi.resetModules();
+      const session = await import("../../state/onboard-session");
+      session.saveSession(session.createSession({ sandboxName: "alpha" }));
+      session.finalizeIncompleteOnboardStep("sandbox", "Earlier sandbox failure");
+
+      expect(
+        persistRetainedSandboxRecoveryMessage(
+          "Create-attempt label: ai.nvidia.nemoclaw.create-attempt=unpersisted",
+          session.finalizeIncompleteOnboardStep,
+        ),
+      ).toBe(false);
+
+      const stored = session.loadSession();
+      expect(stored?.failure?.message).toBe("Earlier sandbox failure");
+      expect(stored?.steps.sandbox?.error).toBe("Earlier sandbox failure");
+    } finally {
+      vi.resetModules();
+      fs.rmSync(tempHome, { force: true, recursive: true });
+      vi.unstubAllEnvs();
+    }
+  });
+});
 
 describe("APF create policy selection", () => {
   it("selects a policyless external plan only from an absent global policy (#9833)", () => {

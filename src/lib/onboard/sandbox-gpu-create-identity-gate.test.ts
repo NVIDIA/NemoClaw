@@ -233,6 +233,48 @@ describe("created sandbox identity gate", () => {
     expect(mocks.waitForCreatedSandboxReadyWithTrace).not.toHaveBeenCalled();
   });
 
+  it("persists create-attempt recovery when Ready identity settlement reaches its deadline (#9211)", async () => {
+    const events: string[] = [];
+    let nonce = "";
+    const input = noGpuInput();
+    input.verifyCreatedSandboxBeforeEffects = vi.fn();
+    input.persistRetainedSandboxRecovery = vi.fn(() => {
+      events.push("persist-recovery");
+      return true;
+    });
+    const patch = createGpuPatchFixture();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mocks.streamSandboxCreate.mockImplementation(async (_command, args) => {
+      nonce = createAttemptNonce(args);
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+    const deps = createGpuFlowDeps();
+    vi.mocked(deps.runCaptureOpenshell).mockReturnValue("[]");
+
+    const error = await runSandboxGpuCreateFlow(input, deps).catch((caught: unknown) => {
+      events.push("rejected");
+      return caught;
+    });
+
+    expect(error).toBeInstanceOf(Error);
+    expect(String(error)).toContain(
+      "did not return one exact durable sandbox identity before post-create effects",
+    );
+    expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
+      expect.stringMatching(
+        new RegExp(
+          `^Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}\\. Sandbox 'alpha'.*Gateway 'nemoclaw'`,
+          "u",
+        ),
+      ),
+    );
+    expect(events).toEqual(["persist-recovery", "rejected"]);
+    expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
+    expect(patch.exitOnPatchError).not.toHaveBeenCalled();
+    expect(patch.ensureApplied).not.toHaveBeenCalled();
+    expect(mocks.waitForCreatedSandboxReadyWithTrace).not.toHaveBeenCalled();
+  });
+
   it("persists unresolved APF recovery before rejecting a missing post-create identity (#9833)", async () => {
     let nonce = "";
     const input = noGpuInput();

@@ -1793,6 +1793,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                     },
                   }
                 : {}),
+              persistRetainedSandboxRecovery: (message) =>
+                persistRetainedSandboxRecoveryMessage(
+                  message,
+                  onboardSession.finalizeIncompleteOnboardStep,
+                ),
               provider,
               sandboxGpuConfig: effectiveSandboxGpuConfig,
               gpuRoutePlan,

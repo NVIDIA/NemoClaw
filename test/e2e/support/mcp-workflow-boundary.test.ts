@@ -101,7 +101,7 @@ describe("MCP workflow artifact boundary", () => {
       expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toEqual(
         expect.arrayContaining([
           "mcp-bridge must not serialize the independent credential generation-window proof",
-          "openshell-credential-generation-window must depend only on matrix generation so it can run in parallel",
+          "openshell-credential-generation-window must depend on publication and matrix generation",
         ]),
       );
     } finally {
