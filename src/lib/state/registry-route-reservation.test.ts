@@ -1239,7 +1239,7 @@ describe("sandbox inference route reservation", () => {
           route,
           { verifiedCreate: { reservation: create, checkpoint } },
         ),
-      ).toThrow(/verified create checkpoint/u);
+      ).toThrow(/requested lifecycle generation/u);
       expect(() =>
         registry.registerSandbox(
           {
@@ -1249,7 +1249,7 @@ describe("sandbox inference route reservation", () => {
           route,
           { verifiedCreate: { reservation: create, checkpoint } },
         ),
-      ).toThrow(/verified create checkpoint/u);
+      ).toThrow(/requested lifecycle identity/u);
     } finally {
       await fs.rm(home, { recursive: true, force: true });
     }

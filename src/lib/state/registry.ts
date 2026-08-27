@@ -208,36 +208,62 @@ function assertPendingPolicyVerificationMatchesRegistration(
       "Cannot publish a sandbox registration after its verified create transaction changed",
     );
   }
-  const commonMatches =
-    recordedEntry?.pendingRouteReservation === true &&
-    recordedEntry.reservationSessionId === reservation.authority.sessionId &&
-    recordedEntry.policyAuthority === undefined &&
-    recordedEntry.policyCreationReceipt === undefined &&
-    recordedEntry.lifecycleGeneration === checkpoint.lifecycleGeneration &&
-    recordedEntry.lifecycleLiveIdentityFingerprint === checkpoint.sandboxIdentityFingerprint &&
-    checkpoint.sandboxName === requestedEntry.name &&
-    checkpoint.gatewayName === requestedEntry.gatewayName &&
-    checkpoint.gatewayPort === requestedEntry.gatewayPort &&
-    checkpoint.lifecycleGeneration === requestedEntry.lifecycleGeneration &&
-    checkpoint.sandboxIdentityFingerprint === requestedEntry.lifecycleLiveIdentityFingerprint &&
-    checkpoint.policyAuthority === requestedEntry.policyAuthority &&
-    reservation.authority.sandboxName === requestedEntry.name &&
-    reservation.authority.gatewayName === requestedEntry.gatewayName &&
-    isDeepStrictEqual(
-      normalizeSandboxInferenceRouteSelection(normalizeInferenceSelection(recordedEntry)),
-      normalizeSandboxInferenceRouteSelection(reservation.authority.selection),
-    ) &&
-    isDeepStrictEqual(
-      normalizeSandboxInferenceRouteSelection(normalizeInferenceSelection(requestedEntry)),
-      normalizeSandboxInferenceRouteSelection(reservation.authority.selection),
-    );
+  const commonChecks = [
+    ["pending route reservation", recordedEntry?.pendingRouteReservation === true],
+    [
+      "reservation session",
+      recordedEntry?.reservationSessionId === reservation.authority.sessionId,
+    ],
+    ["recorded policy authority", recordedEntry?.policyAuthority === undefined],
+    ["recorded policy receipt", recordedEntry?.policyCreationReceipt === undefined],
+    [
+      "recorded lifecycle generation",
+      recordedEntry?.lifecycleGeneration === checkpoint.lifecycleGeneration,
+    ],
+    [
+      "recorded lifecycle identity",
+      recordedEntry?.lifecycleLiveIdentityFingerprint === checkpoint.sandboxIdentityFingerprint,
+    ],
+    ["sandbox name", checkpoint.sandboxName === requestedEntry.name],
+    ["gateway name", checkpoint.gatewayName === requestedEntry.gatewayName],
+    ["gateway port", checkpoint.gatewayPort === requestedEntry.gatewayPort],
+    [
+      "requested lifecycle generation",
+      checkpoint.lifecycleGeneration === requestedEntry.lifecycleGeneration,
+    ],
+    [
+      "requested lifecycle identity",
+      checkpoint.sandboxIdentityFingerprint === requestedEntry.lifecycleLiveIdentityFingerprint,
+    ],
+    ["policy authority", checkpoint.policyAuthority === requestedEntry.policyAuthority],
+    ["reservation sandbox", reservation.authority.sandboxName === requestedEntry.name],
+    ["reservation gateway", reservation.authority.gatewayName === requestedEntry.gatewayName],
+    [
+      "recorded inference route",
+      isDeepStrictEqual(
+        normalizeSandboxInferenceRouteSelection(normalizeInferenceSelection(recordedEntry)),
+        normalizeSandboxInferenceRouteSelection(reservation.authority.selection),
+      ),
+    ],
+    [
+      "requested inference route",
+      isDeepStrictEqual(
+        normalizeSandboxInferenceRouteSelection(normalizeInferenceSelection(requestedEntry)),
+        normalizeSandboxInferenceRouteSelection(reservation.authority.selection),
+      ),
+    ],
+  ] as const;
   const authorityMatches =
     checkpoint.policyAuthority === "nemoclaw-managed"
       ? isDeepStrictEqual(checkpoint.policyCreationReceipt, requestedEntry.policyCreationReceipt)
       : requestedEntry.policyCreationReceipt === undefined;
-  if (!commonMatches || !authorityMatches) {
+  const mismatches: string[] = commonChecks
+    .filter(([, matches]) => !matches)
+    .map(([name]) => name);
+  if (!authorityMatches) mismatches.push("policy receipt");
+  if (mismatches.length > 0) {
     throw new PolicyAuthorityRefusalError(
-      "Cannot publish a sandbox registration that differs from its verified create checkpoint",
+      `Cannot publish a sandbox registration that differs from its verified create checkpoint (${mismatches.join(", ")})`,
     );
   }
 }
