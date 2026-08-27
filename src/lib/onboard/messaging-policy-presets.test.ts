@@ -11,7 +11,7 @@ import {
   mergePolicyMessagingChannels,
   mergeRebuildMessagingPolicyPresets,
   messagingChannelsForPolicyPresets,
-  pruneInactiveHermesMessagingPolicyPresets,
+  pruneInactiveMessagingPolicyPresets,
   pruneDisabledMessagingPolicyPresets,
   requiredMessagingChannelPolicyPresets,
 } from "./messaging-policy-presets";
@@ -83,45 +83,32 @@ describe("messaging policy presets", () => {
     ]);
   });
 
-  it("removes inactive repository messaging presets only for Hermes", () => {
+  it("removes inactive repository messaging presets when enabled channels are known", () => {
     expect(
-      pruneInactiveHermesMessagingPolicyPresets(
+      pruneInactiveMessagingPolicyPresets(
         ["npm", "slack", "discord", "googlechat", "custom-egress"],
         ["slack"],
-        "hermes",
       ),
     ).toEqual(["npm", "slack", "custom-egress"]);
     expect(
-      pruneInactiveHermesMessagingPolicyPresets(
-        ["npm", "slack", "googlechat"],
-        ["googlechat"],
-        "hermes",
-      ),
+      pruneInactiveMessagingPolicyPresets(["npm", "slack", "googlechat"], ["googlechat"]),
     ).toEqual(["npm", "googlechat"]);
     expect(
-      pruneInactiveHermesMessagingPolicyPresets(
-        ["npm", "slack", "discord"],
-        ["slack"],
-        "openclaw",
+      pruneInactiveMessagingPolicyPresets(
+        ["npm", "slack", "telegram", "wechat", "whatsapp", "teams"],
+        ["slack", "telegram"],
       ),
-    ).toEqual(["npm", "slack", "discord"]);
-    expect(
-      pruneInactiveHermesMessagingPolicyPresets(
-        ["npm", "slack", "discord"],
-        null,
-        "hermes",
-      ),
-    ).toEqual(["npm", "slack", "discord"]);
+    ).toEqual(["npm", "slack", "telegram"]);
+    expect(pruneInactiveMessagingPolicyPresets(["npm", "slack", "discord"], null)).toEqual([
+      "npm",
+      "slack",
+      "discord",
+    ]);
   });
 
   it("preserves a custom preset that shadows an inactive repository messaging preset", () => {
     expect(
-      pruneInactiveHermesMessagingPolicyPresets(
-        ["npm", "discord"],
-        ["slack"],
-        "hermes",
-        new Set(["discord"]),
-      ),
+      pruneInactiveMessagingPolicyPresets(["npm", "discord"], ["slack"], new Set(["discord"])),
     ).toEqual(["npm", "discord"]);
   });
 
@@ -219,5 +206,4 @@ describe("messaging policy presets", () => {
     expect(allMessagingChannelPolicyPresets(["nonexistent"])).toEqual([]);
     expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["nonexistent"])).toEqual(["npm"]);
   });
-
 });

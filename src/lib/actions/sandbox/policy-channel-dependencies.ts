@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/policy-authority";
 import { runOpenshell } from "../../adapters/openshell/runtime";
 
 type MessagingProviderTokenDefinition = {
@@ -49,6 +50,12 @@ type GooglechatWebhookProxy = Pick<
  * onboarding and rebuild modules at policy-channel import time.
  */
 export const policyChannelDependencies = {
+  inspectMessagingProviderAttachmentTarget(sandboxName: string, gatewayName: string): string {
+    return inspectOpenShellSandboxIdentityFingerprint({
+      sandboxName,
+      gatewayName,
+    });
+  },
   isMessagingProviderBindingConflict(
     error: unknown,
   ): error is Error & { readonly mutatedProviderNames: readonly string[] } {

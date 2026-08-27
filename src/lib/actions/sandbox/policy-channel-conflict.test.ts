@@ -92,7 +92,12 @@ function makePlanEntry(
 }
 
 function makeEmptyEntry(name: string): SandboxEntry {
-  return { name } as SandboxEntry;
+  return {
+    name,
+    gatewayName: "nemoclaw",
+    lifecycleGeneration: "generation-1",
+    lifecycleLiveIdentityFingerprint: "a".repeat(64),
+  } as SandboxEntry;
 }
 
 function makeTeamsEntry(
@@ -276,6 +281,7 @@ let getCredentialMock: MockInstance;
 let saveCredentialMock: MockInstance;
 let updateSandboxMock: MockInstance;
 let upsertMock: MockInstance;
+let inspectAttachmentTargetMock: MockInstance;
 let runOpenshellMock: MockInstance;
 let applyPresetMock: MockInstance;
 let getSandboxMock: MockInstance;
@@ -353,6 +359,9 @@ beforeEach(() => {
 
   // Lazy legacy-provider seam: no onboarding graph is loaded for this suite.
   upsertMock = vi.spyOn(policyChannelDependencies, "upsertMessagingProviders").mockReturnValue([]);
+  inspectAttachmentTargetMock = vi
+    .spyOn(policyChannelDependencies, "inspectMessagingProviderAttachmentTarget")
+    .mockReturnValue("a".repeat(64));
 
   // openshell runtime + gateway recovery.
   runOpenshellMock = vi.spyOn(runtime, "runOpenshell").mockReturnValue(successfulOpenshellResult());
@@ -597,6 +606,81 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     );
   });
 
+  it("attaches a verified messaging provider before applying its policy", async () => {
+    arrangeRegistry({ current: makeEmptyEntry("alpha") });
+    getCredentialMock.mockImplementation((key: string) =>
+      key === "TELEGRAM_BOT_TOKEN" ? TELEGRAM_TOKEN : null,
+    );
+    upsertMock.mockReturnValue(["alpha-telegram-bridge"]);
+
+    await addSandboxChannel("alpha", { channel: "telegram" });
+
+    expect(runOpenshellMock).toHaveBeenCalledWith(
+      ["sandbox", "provider", "attach", "-g", "nemoclaw", "alpha", "alpha-telegram-bridge"],
+      { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    const attachCall = runOpenshellMock.mock.calls.findIndex(
+      (call: unknown[]) =>
+        Array.isArray(call[0]) && (call[0] as string[]).join(" ").includes("provider attach"),
+    );
+    expect(attachCall).toBeGreaterThanOrEqual(0);
+    expect(runOpenshellMock.mock.invocationCallOrder[attachCall]).toBeLessThan(
+      applyPresetMock.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("rolls back provider state when attachment fails before policy application", async () => {
+    arrangeRegistry({ current: makeEmptyEntry("alpha") });
+    getCredentialMock.mockImplementation((key: string) =>
+      key === "TELEGRAM_BOT_TOKEN" ? TELEGRAM_TOKEN : null,
+    );
+    upsertMock.mockReturnValue(["alpha-telegram-bridge"]);
+    runOpenshellMock.mockImplementation((args: string[]) =>
+      args.includes("attach")
+        ? { ...successfulOpenshellResult(), status: 1, stderr: "attachment rejected" }
+        : successfulOpenshellResult(),
+    );
+
+    await expect(addSandboxChannel("alpha", { channel: "telegram" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(applyPresetMock).not.toHaveBeenCalled();
+    expect(
+      runOpenshellMock.mock.calls.some(
+        (call: unknown[]) =>
+          Array.isArray(call[0]) &&
+          (call[0] as string[]).join(" ") === "sandbox provider detach alpha alpha-telegram-bridge",
+      ),
+    ).toBe(true);
+    expect(loggedText()).toContain(
+      "OpenShell did not attach messaging provider 'alpha-telegram-bridge'",
+    );
+  });
+
+  it("refuses to attach a provider after the sandbox identity changes", async () => {
+    arrangeRegistry({ current: makeEmptyEntry("alpha") });
+    getCredentialMock.mockImplementation((key: string) =>
+      key === "TELEGRAM_BOT_TOKEN" ? TELEGRAM_TOKEN : null,
+    );
+    upsertMock.mockReturnValue(["alpha-telegram-bridge"]);
+    inspectAttachmentTargetMock.mockImplementationOnce(() => {
+      throw new Error("sandbox identity changed");
+    });
+
+    await expect(addSandboxChannel("alpha", { channel: "telegram" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(
+      runOpenshellMock.mock.calls.some(
+        (call: unknown[]) => Array.isArray(call[0]) && (call[0] as string[]).includes("attach"),
+      ),
+    ).toBe(false);
+    expect(applyPresetMock).not.toHaveBeenCalled();
+    expect(loggedText()).toContain("sandbox identity changed");
+  });
+
   it("does not remove a pre-existing provider after a Hermes Discord identity conflict", async () => {
     const originalEntry = { ...makeEmptyEntry("alpha"), agent: "hermes" } as SandboxEntry;
     arrangeRegistry({ current: originalEntry });
@@ -605,13 +689,10 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
       key === "DISCORD_BOT_TOKEN" ? DISCORD_TOKEN : null,
     );
     upsertMock.mockImplementationOnce(() => {
-      throw Object.assign(
-        new Error("alpha-discord-bridge does not match the required binding"),
-        {
-          code: "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT",
-          mutatedProviderNames: [],
-        },
-      );
+      throw Object.assign(new Error("alpha-discord-bridge does not match the required binding"), {
+        code: "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT",
+        mutatedProviderNames: [],
+      });
     });
 
     await expect(addSandboxChannel("alpha", { channel: "discord" })).rejects.toThrow(

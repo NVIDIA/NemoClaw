@@ -581,12 +581,12 @@ PY`,
     SANDBOX_NAME,
     `EXPECTED_ALLOWED_USERS=${shellQuote(normalizedCsv(DISCORD_ALLOWED_IDS))} EXPECTED_GUILD_IDS=${shellQuote(normalizedCsv(DISCORD_SERVER_IDS))} python3 - <<'PY'
 import os
+import re
 from pathlib import Path
 text = Path("/sandbox/.hermes/.env").read_text(encoding="utf-8")
 lines = text.splitlines()
 errors = []
 required = [
-    "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
     f"NEMOCLAW_DISCORD_GUILD_IDS={os.environ['EXPECTED_GUILD_IDS']}",
     f"DISCORD_ALLOWED_USERS={os.environ['EXPECTED_ALLOWED_USERS']}",
     "API_SERVER_PORT=18642",
@@ -594,6 +594,8 @@ required = [
 for line in required:
     if line not in lines:
         errors.append(f"missing {line}")
+if not any(re.fullmatch(r"DISCORD_BOT_TOKEN=openshell:resolve:env:v[1-9][0-9]*_DISCORD_BOT_TOKEN", line) for line in lines):
+    errors.append("missing revision-scoped DISCORD_BOT_TOKEN placeholder")
 if errors:
     print("FAIL " + "; ".join(errors))
     raise SystemExit(1)

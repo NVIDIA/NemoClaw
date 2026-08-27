@@ -902,10 +902,23 @@ async function applyChannelAddToGatewayAndRegistry(
   try {
     // bestEffort: failures throw (instead of process.exit inside the helper)
     // so a partial add can be torn down below before exiting.
-    policyChannelDependencies.upsertMessagingProviders(tokenDefs, {
+    const providerNames = policyChannelDependencies.upsertMessagingProviders(tokenDefs, {
       bestEffort: true,
       requireExactBindings: true,
     });
+    for (const providerName of providerNames) {
+      revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName);
+      const attached = runOpenshell(
+        ["sandbox", "provider", "attach", "-g", gatewayName, sandboxName, providerName],
+        { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      if (attached.status !== 0) {
+        throw new Error(
+          `OpenShell did not attach messaging provider '${providerName}' to sandbox '${sandboxName}'.`,
+        );
+      }
+      revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName);
+    }
   } catch (err) {
     console.error(
       `  ✗ Failed to register '${channelName}' providers with the gateway: ${
@@ -934,6 +947,40 @@ async function applyChannelAddToGatewayAndRegistry(
     process.exit(1);
   }
   return true;
+}
+
+export function revalidateMessagingProviderAttachmentTarget(
+  sandboxName: string,
+  gatewayName: string,
+): void {
+  const expected = registry.getSandbox(sandboxName);
+  const lifecycleGeneration = expected?.lifecycleGeneration;
+  const expectedFingerprint = expected?.lifecycleLiveIdentityFingerprint;
+  if (
+    !expected ||
+    typeof lifecycleGeneration !== "string" ||
+    typeof expectedFingerprint !== "string" ||
+    (expected.gatewayName && expected.gatewayName !== gatewayName)
+  ) {
+    throw new Error(
+      `Sandbox '${sandboxName}' has incomplete lifecycle identity for messaging provider attachment.`,
+    );
+  }
+  const liveFingerprint = policyChannelDependencies.inspectMessagingProviderAttachmentTarget(
+    sandboxName,
+    gatewayName,
+  );
+  const confirmed = registry.getSandbox(sandboxName);
+  if (
+    liveFingerprint !== expectedFingerprint ||
+    confirmed?.lifecycleGeneration !== lifecycleGeneration ||
+    confirmed.lifecycleLiveIdentityFingerprint !== expectedFingerprint ||
+    (confirmed.gatewayName && confirmed.gatewayName !== gatewayName)
+  ) {
+    throw new Error(
+      `Sandbox '${sandboxName}' changed before messaging provider attachment completed.`,
+    );
+  }
 }
 
 // Remove a channel's bridge providers from the gateway and drop it from the
