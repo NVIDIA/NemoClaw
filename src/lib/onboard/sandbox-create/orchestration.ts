@@ -2371,6 +2371,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       return {
         route: checkpoint.route,
         liveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
+        createAttemptNonce: checkpoint.createAttemptNonce,
       };
     })();
     const revalidateVerifiedPolicyRegistration = (

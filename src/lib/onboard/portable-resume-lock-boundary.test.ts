@@ -214,7 +214,9 @@ describe("portable resume command lock boundary", () => {
             resolveResumeIntent: () => ({ effectiveResume: false, snapshot: null }),
             runOnboard: (options) => runWithObservedPreparation(onboardModule, options),
           }),
-        ).rejects.toThrow("exit:1");
+        ).rejects.toThrow(
+          "Cannot update onboarding recovery while another onboarding run owns the lock.",
+        );
         expect(preparePortableHost).not.toHaveBeenCalled();
         expect(fs.existsSync(configWriteMarker)).toBe(false);
         expect(fs.existsSync(socketActivationMarker)).toBe(false);

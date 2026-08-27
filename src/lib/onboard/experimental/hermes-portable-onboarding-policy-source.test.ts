@@ -52,7 +52,7 @@ function metadata(): { status: number; output: string; stdout: string; stderr: s
     policy_source: "sandbox",
     active_version: 4,
     hash: "sha256:effective",
-    policy: { version: 1 },
+    policy: { version: 1, network_policies: {} },
   });
   return { status: 0, output: stdout, stdout, stderr: "" };
 }
