@@ -168,10 +168,9 @@ describe("post-policy messaging provider synchronization", () => {
   it("records every refresh phase without requiring Ready during the relaunch (#10153)", async () => {
     const placeholder = "TELEGRAM_BOT_TOKEN\topenshell:resolve:env:v12_TELEGRAM_BOT_TOKEN";
     const phases: string[] = [];
-    let sandboxReady = true;
-    const revalidateSandboxIdentity = vi.fn(() => {
-      if (!sandboxReady) throw new Error("sandbox is not Ready");
-    });
+    const lifecycleEvents: string[] = [];
+    const commandStdout: Record<string, string> = { exec: placeholder };
+    const revalidateSandboxIdentity = vi.fn(() => lifecycleEvents.push("revalidate"));
     const checkpoint = {
       schemaVersion: 1,
       state: "verified-create",
@@ -212,15 +211,12 @@ describe("post-policy messaging provider synchronization", () => {
         upsertMessagingProviders: vi.fn(),
         runGatewayOpenshell: vi.fn(),
         runOpenshell: vi.fn((args: string[]) => {
-          if (args[1] === "stop") sandboxReady = false;
-          return {
-            status: 0,
-            stdout: args[1] === "exec" ? placeholder : "",
-          };
+          lifecycleEvents.push(args[1] ?? "unknown");
+          return { status: 0, stdout: commandStdout[args[1]] ?? "" };
         }),
         sleepSeconds: vi.fn(),
         waitForSandboxReady: vi.fn(() => {
-          sandboxReady = true;
+          lifecycleEvents.push("wait");
           return true;
         }),
         gatewayName: "nemoclaw",
@@ -241,6 +237,24 @@ describe("post-policy messaging provider synchronization", () => {
 
     expect(phases).toEqual(["attaching", "stopping", "stopped", "started", "ready"]);
     expect(revalidateSandboxIdentity).toHaveBeenCalled();
+    expect(lifecycleEvents).toEqual([
+      "revalidate",
+      "wait",
+      "revalidate",
+      "exec",
+      "revalidate",
+      "exec",
+      "revalidate",
+      "revalidate",
+      "stop",
+      "start",
+      "wait",
+      "revalidate",
+      "exec",
+      "revalidate",
+      "exec",
+      "revalidate",
+    ]);
   });
 
   it("publishes the staged registration after the production refresh reaches ready (#10153)", async () => {
