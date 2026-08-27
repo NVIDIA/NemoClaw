@@ -165,38 +165,84 @@ describe("MCP bridge onboarding environment", () => {
     const catalogPath = path.join(fixtureRoot, "catalog.json");
     fs.writeFileSync(
       catalogPath,
-      JSON.stringify({
-        "langchain-deepagents-code": {
-          contractVersion: 1,
-          agent: "langchain-deepagents-code",
-          platform: PLATFORM,
-          image: MANAGED_IMAGE_REPOSITORIES["langchain-deepagents-code"],
-          digest: `sha256:${"d".repeat(64)}`,
-          reference,
-          source: { repository: "NVIDIA/NemoClaw", revision, release: "v0.0.114", cohort },
-          startupProfileContractVersion: 1,
-          capabilityContractVersion: 1,
-        },
-      }),
+      JSON.stringify(
+        Object.fromEntries(
+          SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => {
+            const digest =
+              agent === "langchain-deepagents-code"
+                ? `sha256:${"d".repeat(64)}`
+                : `sha256:${String(index + 1).repeat(64)}`;
+            return [
+              agent,
+              {
+                contractVersion: 1,
+                agent,
+                platform: PLATFORM,
+                image: MANAGED_IMAGE_REPOSITORIES[agent],
+                digest,
+                reference:
+                  agent === "langchain-deepagents-code"
+                    ? reference
+                    : `${MANAGED_IMAGE_REPOSITORIES[agent]}@${digest}`,
+                source: {
+                  repository: "NVIDIA/NemoClaw",
+                  revision,
+                  release: "v0.0.114",
+                  cohort,
+                },
+                startupProfileContractVersion: 1,
+                capabilityContractVersion: 1,
+              },
+            ];
+          }),
+        ),
+      ),
       { mode: 0o600 },
     );
     try {
       expect(() =>
         assertMcpBridgeManagedImageReceipt({
           environment: {
+            GITHUB_ACTIONS: "true",
             NEMOCLAW_E2E_EXPECTED_SHA: revision,
             NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
+            NEMOCLAW_RUN_LIVE_E2E: "1",
           },
           expectedAgent: "langchain-deepagents-code",
           workload: {
             kind: "managed-image",
             platform: PLATFORM,
             reference,
+            release: "v0.0.114",
             sourceCohort: cohort,
             sourceRevision: revision,
           },
         }),
       ).not.toThrow();
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a symbolic-link candidate catalog", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-catalog-link-"));
+    const targetPath = path.join(fixtureRoot, "catalog.json");
+    const linkPath = path.join(fixtureRoot, "selected.json");
+    fs.writeFileSync(targetPath, "{}", { mode: 0o600 });
+    fs.symlinkSync(targetPath, linkPath);
+    try {
+      expect(() =>
+        assertMcpBridgeManagedImageReceipt({
+          environment: {
+            GITHUB_ACTIONS: "true",
+            NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+            NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: linkPath,
+            NEMOCLAW_RUN_LIVE_E2E: "1",
+          },
+          expectedAgent: "langchain-deepagents-code",
+          workload: selectedWorkload("langchain-deepagents-code"),
+        }),
+      ).toThrow("candidate managed-image catalog is invalid");
     } finally {
       fs.rmSync(fixtureRoot, { recursive: true, force: true });
     }

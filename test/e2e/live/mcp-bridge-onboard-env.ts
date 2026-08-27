@@ -1,15 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-
-import {
-  MANAGED_IMAGE_PLATFORMS,
-  MANAGED_IMAGE_REPOSITORIES,
-  parseManagedImageContractV1,
-  type ManagedImagePlatform,
-  type ShippedManagedImageAgent,
-} from "../../../src/lib/onboard/managed-image/contract.ts";
+import type { ShippedManagedImageAgent } from "../../../src/lib/onboard/managed-image/contract.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertManagedImageReceiptMatchesSelectedCohort } from "../fixtures/managed-image-receipt.ts";
 
@@ -63,58 +55,11 @@ export function assertMcpBridgeManagedImageReceipt(options: {
   if (!/^[0-9a-f]{40}$/u.test(expectedRevision)) {
     throw new Error("managed-image MCP qualification requires an exact cohort revision");
   }
-
-  const workloadPlatform = options.workload?.platform;
-  if (
-    typeof workloadPlatform !== "string" ||
-    !(MANAGED_IMAGE_PLATFORMS as readonly string[]).includes(workloadPlatform)
-  ) {
-    throw new Error("managed-image MCP qualification requires an exact workload platform");
-  }
-  const expectedPlatform = workloadPlatform as ManagedImagePlatform;
-
-  let expectedReference: string;
-  let expectedCohort: string;
-  if (selectedRevision) {
-    assertManagedImageReceiptMatchesSelectedCohort({
-      environment,
-      expectedAgent: options.expectedAgent,
-      workload: options.workload,
-    });
-    return;
-  } else {
-    let catalog: Record<string, unknown>;
-    try {
-      const parsed = JSON.parse(fs.readFileSync(exactCandidateCatalog!, "utf8")) as unknown;
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
-      catalog = parsed as Record<string, unknown>;
-    } catch {
-      throw new Error("managed-image MCP qualification catalog is invalid");
-    }
-    const contract = parseManagedImageContractV1(
-      catalog[options.expectedAgent],
-      options.expectedAgent,
-      expectedPlatform,
-    );
-    if (contract.source.revision !== expectedRevision) {
-      throw new Error("managed-image MCP qualification catalog revision is invalid");
-    }
-    expectedReference = contract.reference;
-    expectedCohort = contract.source.cohort;
-  }
-
-  if (
-    typeof expectedReference !== "string" ||
-    !expectedReference.startsWith(`${MANAGED_IMAGE_REPOSITORIES[options.expectedAgent]}@sha256:`) ||
-    options.workload?.kind !== "managed-image" ||
-    options.workload.sourceRevision !== expectedRevision ||
-    options.workload.sourceCohort !== expectedCohort ||
-    options.workload.reference !== expectedReference
-  ) {
-    throw new Error(
-      "MCP qualification must use the exact agent image from the selected cohort receipt",
-    );
-  }
+  assertManagedImageReceiptMatchesSelectedCohort({
+    environment,
+    expectedAgent: options.expectedAgent,
+    workload: options.workload,
+  });
 }
 
 export function buildMcpBridgeExactMainEnv(options: {
