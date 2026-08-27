@@ -3,10 +3,11 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { SessionUpdates } from "../../state/onboard-session";
+import type { FinalizationStateOptions } from "./handlers/finalization";
+
 const mocks = vi.hoisted(() => ({
   handleSandboxState: vi.fn(),
-  handleFinalizationState: vi.fn(),
-  handlePostVerifyState: vi.fn(),
 }));
 
 vi.mock("./handlers/sandbox", async (importOriginal) => ({
@@ -14,19 +15,17 @@ vi.mock("./handlers/sandbox", async (importOriginal) => ({
   handleSandboxState: mocks.handleSandboxState,
 }));
 
-vi.mock("./handlers/finalization", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./handlers/finalization")>()),
-  handleFinalizationState: mocks.handleFinalizationState,
-  handlePostVerifyState: mocks.handlePostVerifyState,
-}));
-
 import { createSandboxOnboardFlowPhase } from "./core-flow-phases";
 import { createFinalOnboardFlowPhases } from "./final-flow-phases";
 import type { OnboardFlowContext } from "./flow-context";
-import { advanceTo, branchTo, completeOnboardMachine } from "./result";
+import { branchTo } from "./result";
 import { createSession } from "../../state/onboard-session";
 
-function context(): OnboardFlowContext<null, null, Record<string, never>> {
+type Agent = { name: string } | null;
+type VerifyChain = { port: number };
+type VerificationResult = { ok: boolean };
+
+function context(): OnboardFlowContext<Agent, null, Record<string, never>> {
   return {
     resume: true,
     fresh: false,
@@ -55,6 +54,72 @@ function context(): OnboardFlowContext<null, null, Record<string, never>> {
   };
 }
 
+/**
+ * Dependencies for the real finalization handlers used by the rebuild handoff
+ * test. The settlement and verification spies let the flow test prove the
+ * public path: a journaled rebuild handoff must settle ordinary OpenClaw
+ * pairing and finish settlement before deployment verification.
+ */
+function finalizationDeps(
+  calls: ReturnType<typeof createFinalizationCalls>["calls"],
+): FinalizationStateOptions<Agent, VerifyChain, VerificationResult>["deps"] {
+  return {
+    ensureAgentDashboardForward: calls.ensureAgentDashboard,
+    persistDashboardPort: calls.persistDashboardPort,
+    setDefaultSandbox: calls.setDefaultSandbox,
+    toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
+    removeLegacyCredentialsFile: calls.removeLegacy,
+    cleanupStaleHostFiles: calls.cleanupHost,
+    checkAndRecoverSandboxProcesses: calls.recoverProcesses,
+    settleOrdinaryOpenClawPairing: calls.settleOrdinaryPairing,
+    ordinaryOpenClawPairingIncompleteMessage: calls.ordinaryPairingIncompleteMessage,
+    readRegistryAgent: calls.readRegistryAgent,
+    settlePortablePairing: calls.settlePortablePairing,
+    portablePairingIncompleteMessage: calls.portablePairingIncompleteMessage,
+    getChatUiUrl: calls.getChatUiUrl,
+    buildVerifyChain: calls.buildChain,
+    verifyDeployment: calls.verify,
+    formatVerificationDiagnostics: calls.diagnostics,
+    verifyWebSearchInsideSandbox: calls.verifyWebSearch,
+    printDashboard: calls.dashboard,
+    isDeploymentHealthy: calls.isHealthy,
+    reportDeploymentReadiness: calls.reportReadiness,
+    error: calls.error,
+    log: calls.log,
+  };
+}
+
+function createFinalizationCalls() {
+  const calls = {
+    ensureAgentDashboard: vi.fn(() => 18789),
+    persistDashboardPort: vi.fn(),
+    setDefaultSandbox: vi.fn(),
+    removeLegacy: vi.fn(),
+    cleanupHost: vi.fn(),
+    recoverProcesses: vi.fn(),
+    settleOrdinaryPairing: vi.fn(async () => ({ kind: "settled" as const })),
+    ordinaryPairingIncompleteMessage: vi.fn(
+      () => "OpenClaw onboarding is incomplete; resume onboarding.",
+    ),
+    readRegistryAgent: vi.fn(() => "openclaw"),
+    settlePortablePairing: vi.fn(async () => ({ kind: "settled" as const })),
+    portablePairingIncompleteMessage: vi.fn(
+      () => "Portable onboarding is incomplete; resume onboarding.",
+    ),
+    getChatUiUrl: vi.fn(() => "http://127.0.0.1:18789"),
+    buildChain: vi.fn(() => ({ port: 18789 })),
+    verify: vi.fn(async () => ({ ok: true })),
+    diagnostics: vi.fn(() => []),
+    verifyWebSearch: vi.fn(() => true),
+    dashboard: vi.fn(),
+    isHealthy: vi.fn(() => true),
+    reportReadiness: vi.fn(),
+    error: vi.fn(),
+    log: vi.fn(),
+  };
+  return { calls };
+}
+
 describe("rebuild pairing handoff", () => {
   beforeEach(() => {
     mocks.handleSandboxState.mockReset().mockResolvedValue({
@@ -66,15 +131,6 @@ describe("rebuild pairing handoff", () => {
       webSearchSupported: false,
       session: createSession(),
       stateResult: branchTo("openclaw", { metadata: { state: "sandbox" } }),
-    });
-    mocks.handleFinalizationState.mockReset().mockResolvedValue({
-      stateResult: advanceTo("post_verify", { metadata: { state: "finalizing" } }),
-      unmigratedLegacyKeys: [],
-    });
-    mocks.handlePostVerifyState.mockReset().mockResolvedValue({
-      stateResult: completeOnboardMachine({}, { metadata: { state: "post_verify" } }),
-      verificationDiagnostics: [],
-      deploymentHealthy: true,
     });
   });
 
@@ -101,11 +157,12 @@ describe("rebuild pairing handoff", () => {
     },
   );
 
-  it("does not suppress ordinary OpenClaw pairing settlement on a rebuild handoff (#10479)", async () => {
+  it("settles ordinary OpenClaw pairing before deployment verification on a rebuild handoff (#10479)", async () => {
     // Container recreation wipes the machine-local pairing state
     // (identity/devices are `backup: false` and removed on destroy), so a
     // rebuild handoff must reach finalization exactly like fresh onboarding:
-    // the final handlers settle ordinary OpenClaw pairing before readiness.
+    // the real final handlers settle ordinary OpenClaw pairing before the
+    // deployment probe (and never carry the obsolete suppress field).
     const sandboxPhase = createSandboxOnboardFlowPhase({
       gatewayName: "nemoclaw",
       recreateJournalTargetIntentFingerprint: "intent-1",
@@ -118,10 +175,13 @@ describe("rebuild pairing handoff", () => {
       deps: {} as never,
     });
     const sandboxResult = await sandboxPhase.run(context());
+    const { calls } = createFinalizationCalls();
 
     const phases = createFinalOnboardFlowPhases({
       branchState: "openclaw",
-      agentSetupDeps: {} as never,
+      agentSetupDeps: {
+        persistDashboardPort: calls.persistDashboardPort,
+      } as never,
       policiesDeps: {} as never,
       finalization: {
         stagedLegacyKeys: [],
@@ -129,17 +189,23 @@ describe("rebuild pairing handoff", () => {
         webSearchEnabled: () => false,
         webSearchProvider: () => "brave",
       },
-      finalizationDeps: {} as never,
+      finalizationDeps: finalizationDeps(calls),
     });
 
     await phases[2].run(sandboxResult.context);
     await phases[3].run(sandboxResult.context);
 
-    expect(mocks.handleFinalizationState).toHaveBeenCalledWith(
-      expect.not.objectContaining({ recreateJournalHandoff: expect.anything() }),
+    expect(calls.settleOrdinaryPairing).toHaveBeenCalledExactlyOnceWith("alpha");
+    expect(calls.settleOrdinaryPairing.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.verify.mock.invocationCallOrder[0],
     );
-    expect(mocks.handlePostVerifyState).toHaveBeenCalledWith(
-      expect.not.objectContaining({ recreateJournalHandoff: expect.anything() }),
+    expect(calls.settleOrdinaryPairing.mock.invocationCallOrder[0]).toBeGreaterThan(
+      calls.recoverProcesses.mock.invocationCallOrder[0],
     );
+    // The obsolete handoff field is no longer part of the flow context, so the
+    // suppress-if-rebuild branch cannot execute (#10479).
+    expect(
+      (sandboxResult.context as unknown as Record<string, unknown>).recreateJournalHandoff,
+    ).toBeUndefined();
   });
 });
