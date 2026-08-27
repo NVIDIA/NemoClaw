@@ -68,16 +68,21 @@ export default async function publish_nemoclaw_pr_branch(input: {
   if (!checkout.clean) throw new Error("Publication candidate has uncommitted changes");
   const branch = checkout.branch ?? "";
   if (!branch || branch === baseBranch) throw new Error("Publication requires a feature branch");
-  const remoteUrl = (
-    await run("git remote get-url " + q(remote), "Read publication remote URL")
-  ).stdout.text.trim();
-  const httpsMatch = remoteUrl.match(/^https:\/\/github[.]com\/([^/]+)\/([^/]+?)(?:[.]git)?$/);
-  const sshMatch = remoteUrl.match(
-    /^(?:git@github[.]com:|ssh:\/\/git@github[.]com\/)([^/]+)\/([^/]+?)(?:[.]git)?$/,
-  );
-  const remoteRepo = httpsMatch ?? sshMatch;
-  if (!remoteRepo || `${remoteRepo[1]}/${remoteRepo[2]}`.toLowerCase() !== repo.toLowerCase())
-    throw new Error("Publication remote must match the declared GitHub repository");
+  const pushUrls = (
+    await run("git remote get-url --push --all " + q(remote), "Read publication push URLs")
+  ).stdout.text
+    .split(/\r?\n/)
+    .filter(Boolean);
+  if (!pushUrls.length) throw new Error("Publication remote has no push URL");
+  for (const pushUrl of pushUrls) {
+    const httpsMatch = pushUrl.match(/^https:\/\/github[.]com\/([^/]+)\/([^/]+?)(?:[.]git)?$/);
+    const sshMatch = pushUrl.match(
+      /^(?:git@github[.]com:|ssh:\/\/git@github[.]com\/)([^/]+)\/([^/]+?)(?:[.]git)?$/,
+    );
+    const remoteRepo = httpsMatch ?? sshMatch;
+    if (!remoteRepo || `${remoteRepo[1]}/${remoteRepo[2]}`.toLowerCase() !== repo.toLowerCase())
+      throw new Error("Every publication push URL must match the declared GitHub repository");
+  }
   const existing = await tools.run_github_cli({
     workdir: input.workdir,
     args: [

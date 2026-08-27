@@ -27,7 +27,7 @@ export default async function read_nemoclaw_advisor_run_summaries(input: {
   if (!Number.isSafeInteger(input.runId) || input.runId < 1)
     throw new Error("runId must be a positive integer");
   const maxArtifacts = input.maxArtifacts ?? 12;
-  const maxCharacters = input.maxSummaryCharacters ?? 30000;
+  const maxCharacters = input.maxSummaryCharacters ?? 15000;
   if (!Number.isSafeInteger(maxArtifacts) || maxArtifacts < 1 || maxArtifacts > 20)
     throw new Error("maxArtifacts must be an integer from 1 through 20");
   if (!Number.isSafeInteger(maxCharacters) || maxCharacters < 1000 || maxCharacters > 15000)

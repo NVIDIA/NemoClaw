@@ -662,7 +662,7 @@ describe("review support DSH tools", () => {
       exitCode: 0,
       stdout: {
         text:
-          description === "Read publication remote URL" ? "git@github.com:someone/other.git\n" : "",
+          description === "Read publication push URLs" ? "git@github.com:someone/other.git\n" : "",
         truncated: false,
       },
       stderr: { text: "", truncated: false },
@@ -681,7 +681,7 @@ describe("review support DSH tools", () => {
 
     await expect(
       publishNemoclawPrBranch({ workdir: "/workspace", expectedHeadSha: HEAD_SHA }),
-    ).rejects.toThrow("Publication remote must match the declared GitHub repository");
+    ).rejects.toThrow("Every publication push URL must match the declared GitHub repository");
     expect(runGithubCli).not.toHaveBeenCalled();
   });
 });
