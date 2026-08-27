@@ -50,6 +50,9 @@ describe("onboard helpers", () => {
       const script = String.raw`
 const runner = require(${runnerPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
+  sandboxName: "my-assistant",
+});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
@@ -66,19 +69,13 @@ runner.run = (command, opts = {}) => {
   commands.push({ command: normalized, env: opts.env || null });
   const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
-  if (normalized.includes("sandbox list")) {
-    return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
-  }
-  return normalized.includes("sandbox get") && normalized.includes("my-assistant")
-    ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
-    : { status: 0 };
+  const sandboxResult = createdSandbox.run(command);
+  return sandboxResult ?? { status: 0 };
 };
 runner.runCapture = (command) => {
   const normalized = _n(command);
-  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command, { sandboxName: "my-assistant" });
-  if (createdIdentity !== null) return createdIdentity;
-  if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) return "";
-  if (normalized.includes("sandbox list")) return "my-assistant Ready";
+  const sandboxCapture = createdSandbox.capture(command);
+  if (sandboxCapture !== null) return sandboxCapture;
   {
     const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
@@ -98,6 +95,7 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
+  createdSandbox.create();
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -226,6 +224,9 @@ const os = require("node:os");
 const path = require("node:path");
 const runner = require(${runnerPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
+  sandboxName: "hermes-sandbox",
+});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
@@ -293,10 +294,8 @@ runner.run = (command, opts = {}) => {
   commands.push({ command: normalized, env: opts.env || null });
   const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
-  if (normalized.includes("sandbox list")) {
-    return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
-  }
-  return normalized.includes("sandbox get hermes-sandbox") ? { status: 0, stdout: Buffer.from("Name: hermes-sandbox\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
+  const sandboxResult = createdSandbox.run(command);
+  return sandboxResult ?? { status: 0 };
 };
 runner.runFile = (file, args = [], opts = {}) => {
   commands.push({ command: _n([file, ...args]), env: opts.env || null });
@@ -304,10 +303,8 @@ runner.runFile = (file, args = [], opts = {}) => {
 };
 runner.runCapture = (command) => {
   const normalized = _n(command);
-  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command, { sandboxName: "hermes-sandbox" });
-  if (createdIdentity !== null) return createdIdentity;
-  if (normalized.includes("sandbox get hermes-sandbox")) return "";
-  if (normalized.includes("sandbox list")) return "hermes-sandbox Ready";
+  const sandboxCapture = createdSandbox.capture(command);
+  if (sandboxCapture !== null) return sandboxCapture;
   {
     const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
@@ -324,6 +321,7 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
+  createdSandbox.create();
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -463,11 +461,13 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 platform.isWsl = () => false;
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
+  sandboxName: "my-assistant",
+});
 
 const commands = [];
 const logs = [];
 const baseResolutionCalls = [];
-let sandboxCreated = false;
 const originalLog = console.log;
 console.log = (...args) => {
   logs.push(args.join(" "));
@@ -512,12 +512,8 @@ runner.run = (command, opts = {}) => {
   commands.push({ command: normalized, env: opts.env || null });
   const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
-  if (normalized.includes("sandbox list")) {
-    return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
-  }
-  return normalized.includes("sandbox get") && normalized.includes("my-assistant")
-    ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
-    : { status: 0 };
+  const sandboxResult = createdSandbox.run(command);
+  return sandboxResult ?? { status: 0 };
 };
 runner.runFile = (file, args = [], opts = {}) => {
   commands.push({ command: _n([file, ...args]), env: opts.env || null });
@@ -525,12 +521,8 @@ runner.runFile = (file, args = [], opts = {}) => {
 };
 runner.runCapture = (command) => {
   const normalized = _n(command);
-  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command, { sandboxName: "my-assistant" });
-  if (createdIdentity !== null) return createdIdentity;
-  if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) {
-    return sandboxCreated ? "Name: my-assistant\\nId: fixture-created-sandbox\\nPhase: Ready\\n" : "";
-  }
-  if (normalized.includes("sandbox list")) return "my-assistant Ready";
+  const sandboxCapture = createdSandbox.capture(command);
+  if (sandboxCapture !== null) return sandboxCapture;
   {
     const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
@@ -547,7 +539,7 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
-  sandboxCreated = true;
+  createdSandbox.create();
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -630,24 +622,21 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const commands = [];
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
+  sandboxName: "my-assistant",
+});
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
   const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
-  if (normalized.includes("sandbox list")) {
-    return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
-  }
-  return normalized.includes("sandbox get") && normalized.includes("my-assistant")
-    ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
-    : { status: 0 };
+  const sandboxResult = createdSandbox.run(command);
+  return sandboxResult ?? { status: 0 };
 };
 runner.runCapture = (command) => {
   const normalized = _n(command);
-  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command, { sandboxName: "my-assistant" });
-  if (createdIdentity !== null) return createdIdentity;
-  if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) return "";
-  if (normalized.includes("sandbox list")) return "my-assistant Ready";
+  const sandboxCapture = createdSandbox.capture(command);
+  if (sandboxCapture !== null) return sandboxCapture;
   {
     const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
@@ -664,6 +653,7 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
+  createdSandbox.create();
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -744,17 +734,16 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const commands = [];
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
+  sandboxName: "my-assistant",
+});
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
   const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
-  if (normalized.includes("sandbox list")) {
-    return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
-  }
-  return normalized.includes("sandbox get") && normalized.includes("my-assistant")
-    ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
-    : { status: 0 };
+  const sandboxResult = createdSandbox.run(command);
+  return sandboxResult ?? { status: 0 };
 };
 runner.runFile = (file, args = [], opts = {}) => {
   commands.push({ command: _n([file, ...args]), env: opts.env || null });
@@ -762,10 +751,8 @@ runner.runFile = (file, args = [], opts = {}) => {
 };
 runner.runCapture = (command) => {
   const normalized = _n(command);
-  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command, { sandboxName: "my-assistant" });
-  if (createdIdentity !== null) return createdIdentity;
-  if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) return "";
-  if (normalized.includes("sandbox list")) return "my-assistant Ready";
+  const sandboxCapture = createdSandbox.capture(command);
+  if (sandboxCapture !== null) return sandboxCapture;
   // Custom port: dashboard readiness curl uses 19000 (DASHBOARD_PORT from env)
   {
     const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);
@@ -783,6 +770,7 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
+  createdSandbox.create();
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();

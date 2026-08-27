@@ -66,6 +66,7 @@ const { EventEmitter } = require("node:events");
 const _n = (command) => (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
 
 const commands = [];
+let createdSandbox = null;
 
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
@@ -85,16 +86,13 @@ runner.run = (command, opts = {}) => {
   if (normalized.includes("provider get -g nemoclaw ")) {
     return { status: 0, stdout: "" };
   }
-  return normalized.includes("sandbox get") && normalized.includes("my-assistant")
-    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
-    : { status: 0 };
+  const sandboxResult = createdSandbox?.run(command) ?? null;
+  return sandboxResult ?? { status: 0 };
 };
 runner.runCapture = (command) => {
   const normalized = _n(command);
-  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
-  if (createdIdentity !== null) return createdIdentity;
-  if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) return "";
-  if (normalized.includes("sandbox list")) return "my-assistant Ready";
+  const sandboxCapture = createdSandbox?.capture(command) ?? null;
+  if (sandboxCapture !== null) return sandboxCapture;
   const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
   if (mockedCapture !== null) return mockedCapture;
   if (normalized.includes("forward list")) {
@@ -113,6 +111,7 @@ sandboxBaseImage.resolveSandboxBaseImage = () => ({
 });
 
 childProcess.spawn = (...args) => {
+  createdSandbox.create();
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -131,23 +130,28 @@ childProcess.spawn = (...args) => {
 
 const { createSandbox } = require(${onboardPath});
 
-const createReservedSandbox = () => createSandbox(
-  null,
-  "gpt-5.4",
-  "nvidia-prod",
-  null,
-  null,
-  null,
-  null,
-  null,
-  null,
-  null,
-  null,
-  null,
-  [],
-  null,
-  { sessionId: createFixture.sessionId },
-);
+const createReservedSandbox = () => {
+  createdSandbox = fixtureMocks.createCreatedSandboxFixture({
+    sandboxName: "my-assistant",
+  });
+  return createSandbox(
+    null,
+    "gpt-5.4",
+    "nvidia-prod",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    [],
+    null,
+    { sessionId: createFixture.sessionId },
+  );
+};
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";

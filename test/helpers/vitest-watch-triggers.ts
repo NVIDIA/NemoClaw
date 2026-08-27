@@ -53,13 +53,19 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)test\/helpers\/onboard-script-mocks\.cjs$/,
     testsToRun: runTests(
+      "test/helpers/onboard-created-sandbox-fixture.test.ts",
+      "test/onboarding/onboard-custom-dockerfile.test.ts",
       "test/onboarding/onboard-extra-provider-reconciliation.test.ts",
+      "test/onboarding/onboard-fresh-create-identity.test.ts",
       "test/onboarding/onboard-installer-restore-intent.test.ts",
+      "test/onboarding/onboard-managed-image-buildless-e2e.test.ts",
       "test/onboarding/onboard-messaging.test.ts",
+      "test/onboarding/onboard-prepared-build-context.test.ts",
       "test/onboarding/onboard-reservation-recreate.test.ts",
       "test/onboarding/onboard-sandbox-build.test.ts",
       "test/onboarding/onboard-sandbox-recreation.test.ts",
       "test/onboarding/onboard-terminal-dashboard.test.ts",
+      "test/security/shellquote-sandbox.test.ts",
     ),
   },
   {

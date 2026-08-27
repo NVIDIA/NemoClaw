@@ -63,6 +63,10 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const scenario = ${JSON.stringify(scenario)};
 const sandboxName = "deepagents-box";
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
+  sandboxName,
+  lifecycleState: scenario === "reuse" ? "created" : "absent",
+});
 const commands = [];
 const registerCalls = [];
 const updateCalls = [];
@@ -98,9 +102,8 @@ runner.run = (command, opts = {}) => {
   commands.push({ command: normalized, env: opts.env || null });
   const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
-  return normalized.includes("sandbox get") && normalized.includes(sandboxName)
-    ? { status: 0, stdout: Buffer.from("Name: " + sandboxName + "\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
-    : { status: 0 };
+  const sandboxResult = createdSandbox.run(command);
+  return sandboxResult ?? { status: 0 };
 };
 runner.runFile = (file, args = [], opts = {}) => {
   commands.push({ command: _n([file, ...args]), env: opts.env || null });
@@ -108,10 +111,8 @@ runner.runFile = (file, args = [], opts = {}) => {
 };
 runner.runCapture = (command) => {
   const normalized = _n(command);
-  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command, {
-    sandboxName,
-  });
-  if (createdIdentity !== null) return createdIdentity;
+  const sandboxCapture = createdSandbox.capture(command);
+  if (sandboxCapture !== null) return sandboxCapture;
   commands.push({ command: normalized, env: null });
   if (
     normalized.includes(
@@ -127,12 +128,6 @@ runner.runCapture = (command) => {
       "Endpoint: https://inference.local/v1",
     ].join("\n");
   }
-  if (normalized.includes("sandbox get") && normalized.includes(sandboxName)) {
-    return scenario === "reuse"
-      ? [sandboxName, "Id: fixture-created-sandbox"].join(String.fromCharCode(10))
-      : "";
-  }
-  if (normalized.includes("sandbox list")) return sandboxName + " Ready";
   if (normalized.includes("forward list")) return sandboxName + " 127.0.0.1 18789 12345 running";
   return "";
 };
@@ -171,6 +166,7 @@ const createFixture =
 
 childProcess.spawn = (...args) => {
   if (scenario === "reuse") throw new Error("unexpected sandbox create");
+  createdSandbox.create();
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();

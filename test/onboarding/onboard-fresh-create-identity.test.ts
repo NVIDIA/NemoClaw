@@ -54,11 +54,10 @@ describe("fresh create identity", () => {
       writeOkOpenshell(fakeBin);
 
       const script = String.raw`
-	const runner = require(${runnerPath});
+const runner = require(${runnerPath});
 	const fixtureMocks = require(${onboardScriptMocksPath});
 	fixtureMocks.mockStandaloneGatewayTeardownAuthority();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-let _deleted = false;
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});
@@ -74,9 +73,12 @@ const fs = require("node:fs");
 
 const commands = [];
 const lifecycleObservationCommands = [];
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
+  sandboxName: "my-assistant",
+  sandboxId: "sbx-fresh-create",
+});
 let sandboxListCalls = 0;
 let dockerPsCalls = 0;
-let sandboxCreated = false;
 let registeredSandbox = null;
 let effectivePolicy = {};
 const keepAlive = setInterval(() => {}, 1000);
@@ -85,14 +87,12 @@ runner.run = (command, opts = {}) => {
   const cmd = _n(command);
   const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
-  _deleted = _deleted || cmd.includes("sandbox delete");
-  commands.push({ command: cmd, env: opts.env || null });
-  if (cmd.includes("sandbox list")) {
-    return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
+  if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") {
+    createdSandbox.delete();
   }
-  return cmd.includes("sandbox get") && cmd.includes("my-assistant") && sandboxCreated
-    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-fresh-create\n"), stderr: Buffer.alloc(0) }
-    : { status: 0 };
+  commands.push({ command: cmd, env: opts.env || null });
+  const sandboxResult = createdSandbox.run(command);
+  return sandboxResult ?? { status: 0 };
 };
 	runner.runCapture = (command) => {
 	  const cmd = _n(command);
@@ -101,21 +101,15 @@ runner.run = (command, opts = {}) => {
 	  if (cmd.includes("sandbox get") || cmd.includes("sandbox list")) {
 	    lifecycleObservationCommands.push(cmd);
 	  }
-	  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command, {
-	    sandboxName: "my-assistant",
-	    sandboxId: "sbx-fresh-create",
-	  });
-	  if (createdIdentity !== null) return createdIdentity;
+  if (cmd.includes("sandbox list") && !cmd.includes("--selector")) {
+    sandboxListCalls += 1;
+    createdSandbox.setPhase(sandboxListCalls >= 2 ? "Ready" : "Pending");
+  }
+	  const sandboxCapture = createdSandbox.capture(command);
+	  if (sandboxCapture !== null) return sandboxCapture;
   if (cmd.startsWith("docker ps -a --no-trunc ")) {
     dockerPsCalls += 1;
     if (dockerPsCalls === 1) return "a".repeat(64);
-  }
-  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) {
-    return sandboxCreated ? ["my-assistant", "Id: sbx-fresh-create"].join(String.fromCharCode(10)) : "";
-  }
-  if (cmd.includes("sandbox list")) {
-    sandboxListCalls += 1;
-    return sandboxListCalls >= 2 ? "my-assistant Ready" : "my-assistant Pending";
   }
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
@@ -152,8 +146,7 @@ process.kill = (pid, signal) => {
 };
 
 childProcess.spawn = (...args) => {
-  sandboxCreated = true;
-  _deleted = false;
+  createdSandbox.create();
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -213,6 +206,7 @@ const { createSandbox } = require(${onboardPath});
     stdoutDestroyCalls: createCommand.child.stdout.destroyCalls,
     stderrDestroyCalls: createCommand.child.stderr.destroyCalls,
     lifecycleObservationCommands,
+    sandboxId: createdSandbox.state.sandboxId,
     registeredSandbox,
     createCommand: createCommand.command,
     commandNames: commands.map((entry) => entry.command),
@@ -251,7 +245,7 @@ const { createSandbox } = require(${onboardPath});
       assert.match(payload.registeredSandbox.lifecycleGeneration, /^[0-9a-f-]{36}$/u);
       assert.equal(
         payload.registeredSandbox.lifecycleLiveIdentityFingerprint,
-        createHash("sha256").update("sbx-fresh-create").digest("hex"),
+        createHash("sha256").update(payload.sandboxId).digest("hex"),
       );
       const assertPolicyMode = apfInterceptorRequested
         ? () => {

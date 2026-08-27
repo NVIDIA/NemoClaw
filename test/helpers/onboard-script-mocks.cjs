@@ -96,11 +96,7 @@ function mockManagedEndpointlessProviderProfileRun(command) {
   );
 }
 
-function createStatefulMessagingProviderRunner({
-  commands,
-  initialProviders = [],
-  readySandboxName = null,
-}) {
+function createStatefulMessagingProviderRunner({ commands, initialProviders = [] }) {
   const providers = new Map(
     initialProviders.map(([name, type, credential]) => [name, { type, credential }]),
   );
@@ -201,18 +197,6 @@ function createStatefulMessagingProviderRunner({
       return {
         status: 0,
         stdout: Buffer.from("No sandboxes found\n"),
-        stderr: Buffer.alloc(0),
-      };
-    }
-    if (
-      readySandboxName &&
-      args.includes("sandbox") &&
-      args.includes("get") &&
-      args.includes(readySandboxName)
-    ) {
-      return {
-        status: 0,
-        stdout: Buffer.from(`Name: ${readySandboxName}\nId: sbx-4f2a91c0d7\n`),
         stderr: Buffer.alloc(0),
       };
     }
@@ -333,33 +317,152 @@ function mockOnboardRunCapture(command, options = {}) {
   return mockSandboxExecCurl(command, options);
 }
 
-function mockCreatedSandboxIdentityList(command, options = {}) {
-  const args = Array.isArray(command) ? command.map(String) : [];
-  const sandboxIndex = args.indexOf("sandbox");
-  if (
-    sandboxIndex < 0 ||
-    args[sandboxIndex + 1] !== "list" ||
-    !args.includes("--output") ||
-    args[args.indexOf("--output") + 1] !== "json"
-  ) {
-    return null;
-  }
-  const selectorIndex = args.indexOf("--selector");
-  const selector = selectorIndex >= 0 ? args[selectorIndex + 1] || "" : "";
-  const prefix = "ai.nvidia.nemoclaw.create-attempt=";
-  if (!selector.startsWith(prefix)) return null;
-  const nonce = selector.slice(prefix.length);
-  return JSON.stringify([
-    {
-      id: options.sandboxId || "fixture-created-sandbox",
-      name: options.sandboxName || "my-assistant",
-      labels: { "ai.nvidia.nemoclaw.create-attempt": nonce },
-      resource_version: 1,
-      created_at: "2026-08-25T00:00:00Z",
-      phase: "Ready",
-      current_policy_version: 1,
+function createCreatedSandboxFixture(options = {}) {
+  const sandboxIdentity = require(
+    path.resolve(__dirname, "../../src/lib/adapters/openshell/sandbox-identity.ts"),
+  );
+  const initialSandboxId = hasOwn(options, "sandboxId")
+    ? options.sandboxId
+    : "fixture-created-sandbox";
+  const initialLifecycleState = hasOwn(options, "lifecycleState")
+    ? options.lifecycleState
+    : "absent";
+  const state = {
+    sandboxName: hasOwn(options, "sandboxName") ? options.sandboxName : "my-assistant",
+    sandboxId: initialSandboxId,
+    gatewayName: hasOwn(options, "gatewayName") ? options.gatewayName : "nemoclaw",
+    phase: hasOwn(options, "phase") ? options.phase : "Ready",
+    lifecycleState: initialLifecycleState,
+    generation: initialLifecycleState === "created" ? 1 : 0,
+  };
+  const lifecycleStates = new Set(["absent", "created", "deleted"]);
+
+  const assertState = () => {
+    if (
+      typeof state.sandboxName !== "string" ||
+      state.sandboxName.length === 0 ||
+      state.sandboxName.trim() !== state.sandboxName
+    ) {
+      throw new Error("Created sandbox fixture requires one sandbox name.");
+    }
+    if (!sandboxIdentity.isOpenShellSandboxId(state.sandboxId)) {
+      throw new Error("Created sandbox fixture requires one durable sandbox ID.");
+    }
+    if (
+      typeof state.gatewayName !== "string" ||
+      state.gatewayName.length === 0 ||
+      state.gatewayName.trim() !== state.gatewayName
+    ) {
+      throw new Error("Created sandbox fixture requires one gateway name.");
+    }
+    if (typeof state.phase !== "string" || state.phase.length === 0) {
+      throw new Error("Created sandbox fixture requires one sandbox phase.");
+    }
+    if (!lifecycleStates.has(state.lifecycleState)) {
+      throw new Error("Created sandbox fixture requires one known lifecycle state.");
+    }
+  };
+
+  const commandDetails = (command) => {
+    const args = Array.isArray(command) ? command.map(String) : [];
+    const sandboxIndex = args.indexOf("sandbox");
+    if (sandboxIndex < 0) return null;
+    const gatewayIndex = args.findIndex((arg) => arg === "-g" || arg === "--gateway");
+    const gatewayName = gatewayIndex >= 0 ? args[gatewayIndex + 1] || null : null;
+    if (gatewayName !== null && gatewayName !== state.gatewayName) return null;
+    return { args, action: args[sandboxIndex + 1] || null };
+  };
+
+  const isCreated = () => state.lifecycleState === "created";
+  const capture = (command) => {
+    const details = commandDetails(command);
+    if (!details) return null;
+    const { args, action } = details;
+    if (action === "get") {
+      const sandboxName = args.at(-1);
+      if (sandboxName !== state.sandboxName) return null;
+      return isCreated()
+        ? `Name: ${state.sandboxName}\nId: ${state.sandboxId}\nPhase: ${state.phase}\n`
+        : "";
+    }
+    if (action !== "list") return null;
+
+    const selectorIndex = args.indexOf("--selector");
+    if (selectorIndex >= 0) {
+      const selector = args[selectorIndex + 1] || "";
+      const prefix = `${sandboxIdentity.NEMOCLAW_CREATE_ATTEMPT_LABEL}=`;
+      if (!selector.startsWith(prefix)) return null;
+      if (!args.includes("--output") || args[args.indexOf("--output") + 1] !== "json") {
+        return null;
+      }
+      if (!isCreated()) return "[]";
+      const nonce = selector.slice(prefix.length);
+      return JSON.stringify([
+        {
+          id: state.sandboxId,
+          name: state.sandboxName,
+          labels: { [sandboxIdentity.NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce },
+          resource_version: state.generation,
+          created_at: "2026-08-25T00:00:00Z",
+          phase: state.phase,
+          current_policy_version: 1,
+        },
+      ]);
+    }
+
+    return isCreated() ? `${state.sandboxName} ${state.phase}\n` : "No sandboxes found.\n";
+  };
+
+  const run = (command) => {
+    const output = capture(command);
+    return output === null
+      ? null
+      : { status: 0, stdout: Buffer.from(output), stderr: Buffer.alloc(0) };
+  };
+
+  const create = () => {
+    if (state.lifecycleState === "created") return;
+    if (state.lifecycleState !== "absent") {
+      throw new Error("Created sandbox fixture cannot create a deleted sandbox.");
+    }
+    state.lifecycleState = "created";
+    state.generation += 1;
+  };
+
+  const deleteSandbox = () => {
+    if (state.lifecycleState !== "created") {
+      throw new Error("Created sandbox fixture can delete only a created sandbox.");
+    }
+    state.lifecycleState = "deleted";
+  };
+
+  const recreate = () => {
+    if (state.lifecycleState !== "deleted") {
+      throw new Error("Created sandbox fixture can recreate only a deleted sandbox.");
+    }
+    state.generation += 1;
+    state.sandboxId = `${initialSandboxId}-recreated-${state.generation - 1}`;
+    assertState();
+    state.lifecycleState = "created";
+  };
+
+  const setPhase = (phase) => {
+    state.phase = phase;
+    assertState();
+  };
+
+  assertState();
+  return Object.freeze({
+    capture,
+    create,
+    delete: deleteSandbox,
+    recreate,
+    run,
+    setPhase,
+    get state() {
+      return Object.freeze({ ...state });
     },
-  ]);
+  });
 }
 
 function installVerifiedSandboxCreateFixture(registry, options) {
@@ -930,7 +1033,7 @@ module.exports = {
   isOpenClawSecurityInventoryProbe,
   mockDockerSandboxLifecycleReleaseFromRunner,
   mockFreshOpenClawPluginDiscovery,
-  mockCreatedSandboxIdentityList,
+  createCreatedSandboxFixture,
   installVerifiedSandboxCreateFixture,
   managedSandboxPolicyReceiptFixture,
   mockOnboardRunCapture,
