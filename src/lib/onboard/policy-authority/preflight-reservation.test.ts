@@ -122,6 +122,8 @@ describe("receipt-bound policy authority during inference route reservation", ()
       expect(inspectSandboxForCreate).toHaveBeenCalledTimes(2);
       expect(prepareAgentPolicy).not.toHaveBeenCalled();
     } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
       await fs.rm(home, { recursive: true, force: true });
     }
   });
