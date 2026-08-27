@@ -110,6 +110,9 @@ describe("Podman runtime-provider state mutation", () => {
     runtime.owner.release(runtime.context, fence, proof, "e".repeat(64));
 
     expect(runtime.lifecycleStore.listUnfinished()).toEqual([]);
+    expect(runtime.transportBrokerActive()).toBe(false);
+    expect(runtime.transportCopySourceModes.length).toBeGreaterThan(0);
+    expect(runtime.transportCopySourceModes.every((mode) => mode === 0o644)).toBe(true);
     expect(runtime.helperActions).toEqual([
       "acquire",
       "rollback",
@@ -128,12 +131,21 @@ describe("Podman runtime-provider state mutation", () => {
       inspectCommands.every((args) => args.every((value) => !value.includes("{{json .Id}}"))),
     ).toBe(true);
     expect(
-      runtime.capture.mock.calls.every(([, args]) =>
-        (args as readonly string[])
-          .slice(0, 2)
-          .every((value, index) =>
-            index === 0 ? value === "--url" : value === "unix:///run/user/1000/podman/podman.sock",
-          ),
+      runtime.capture.mock.calls
+        .filter(([, args]) => !(args as readonly string[]).includes("--nemoclaw-broker"))
+        .every(([, args]) =>
+          (args as readonly string[])
+            .slice(0, 2)
+            .every((value, index) =>
+              index === 0
+                ? value === "--url"
+                : value === "unix:///run/user/1000/podman/podman.sock",
+            ),
+        ),
+    ).toBe(true);
+    expect(
+      runtime.capture.mock.calls.some(([, args]) =>
+        (args as readonly string[]).includes("--detach"),
       ),
     ).toBe(true);
   });

@@ -196,6 +196,7 @@ function probeExactOpenShellSandboxId(
     suppressOutput: true,
     timeout,
     killSignal: "SIGKILL",
+    killProcessTreeOnTimeout: true,
   });
   if (result.status === 0 && !result.error) {
     const sandboxId = parseOpenShellSandboxId(String(result.stdout ?? ""));
@@ -258,6 +259,7 @@ function checkSandboxExecutableReadiness(
     suppressOutput: true,
     timeout,
     killSignal: "SIGKILL",
+    killProcessTreeOnTimeout: true,
   });
   if (result.status === 0 && !result.error) return "ready";
   if (result.error || result.status === null || ("signal" in result && result.signal)) {
@@ -335,6 +337,15 @@ export function createSandboxGpuCreateAttemptRunner(
     }
     revalidate(operation);
   };
+  const captureSandboxReadiness: SandboxGpuCreateFlowDeps["runCaptureOpenshell"] = (
+    args,
+    options = {},
+  ) =>
+    deps.runCaptureOpenshell(args, {
+      ...options,
+      killProcessTreeOnTimeout: true,
+      timeout: SANDBOX_READY_PROBE_TIMEOUT_MS,
+    });
   const managedRouting = input.managedBootstrap?.runtimeProvider.bootstrap.createOnboardRouting({
     sandboxName: input.sandboxName,
     openshellArgv: deps.openshellArgv,
@@ -488,10 +499,7 @@ export function createSandboxGpuCreateAttemptRunner(
       streamSandboxCreate(createExecutable, createExecutableArgs, input.sandboxEnv, {
         ...(input.createWorkingDirectory ? { cwd: input.createWorkingDirectory } : {}),
         readyCheck: () => {
-          const list = deps.runCaptureOpenshell(["sandbox", "list"], {
-            ignoreError: true,
-            timeout: SANDBOX_READY_PROBE_TIMEOUT_MS,
-          });
+          const list = captureSandboxReadiness(["sandbox", "list"], { ignoreError: true });
           return isSandboxReady(list, input.sandboxName);
         },
         ...(deferPostCreateEffects
@@ -540,7 +548,7 @@ export function createSandboxGpuCreateAttemptRunner(
               const readiness = sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
                 sandboxName: input.sandboxName,
                 timeoutSecs: input.sandboxReadyTimeoutSecs,
-                runCaptureOpenshell: deps.runCaptureOpenshell,
+                runCaptureOpenshell: captureSandboxReadiness,
                 isSandboxReady,
                 getSandboxFailurePhase,
                 stableReadyPolls: REPLACEMENT_STABLE_READY_POLLS,
@@ -558,9 +566,8 @@ export function createSandboxGpuCreateAttemptRunner(
                 );
               }
             } else {
-              const list = deps.runCaptureOpenshell(["sandbox", "list"], {
+              const list = captureSandboxReadiness(["sandbox", "list"], {
                 ignoreError: true,
-                timeout: SANDBOX_READY_PROBE_TIMEOUT_MS,
               });
               if (!isSandboxReady(list, input.sandboxName)) {
                 throw new Error(
@@ -743,7 +750,7 @@ export function createSandboxGpuCreateAttemptRunner(
     const readiness = sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
       sandboxName: input.sandboxName,
       timeoutSecs: input.sandboxReadyTimeoutSecs,
-      runCaptureOpenshell: deps.runCaptureOpenshell,
+      runCaptureOpenshell: captureSandboxReadiness,
       isSandboxReady,
       getSandboxFailurePhase,
       stableReadyPolls:

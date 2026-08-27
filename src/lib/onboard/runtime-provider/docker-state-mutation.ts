@@ -1316,24 +1316,6 @@ function inspectCommand(
   });
 }
 
-function helperCommand(runtimeId: string, action: HelperAction) {
-  return Object.freeze({
-    args: Object.freeze([
-      "container",
-      "exec",
-      "--interactive",
-      "--user",
-      "root",
-      runtimeId,
-      HELPER_PYTHON_PATH,
-      "-I",
-      HELPER_PATH,
-      action,
-    ]),
-    targetIndex: 5,
-  });
-}
-
 type HelperTransportCapture = (
   command: PersistedEngineLifecycleExactCommand,
   timeoutMs: number,
@@ -1527,7 +1509,6 @@ function finishReleasedHelperTransport(
   bindingSha256: string,
   transactionId: string,
 ): void {
-  if (options.providerId !== DOCKER_PROVIDER_ID) return;
   const capture: HelperTransportCapture = (command, timeoutMs) => {
     requireCurrentEngineAuthority(options, bindingSha256);
     const result = options.authority.engine.capture(command.args, timeoutMs);
@@ -1791,21 +1772,9 @@ function invokeHelperAuthorized(
   action: HelperAction,
   input: Buffer,
 ): DockerStateMutationHelperReceipt {
-  if (options.providerId === DOCKER_PROVIDER_ID) {
-    const capture: HelperTransportCapture = (command, timeoutMs) =>
-      scope.captureExact("target", () => command, timeoutMs);
-    return invokeHelperTransport(capture, options, scope.record.transactionId, action, input);
-  }
-  const result = scope.captureExact(
-    "target",
-    (runtimeId) => helperCommand(runtimeId, action),
-    helperTimeoutMs(action),
-    input,
-  );
-  return parseHelperReceipt(
-    requireCommandSuccess(result, `root helper ${action}`),
-    options.providerId,
-  );
+  const capture: HelperTransportCapture = (command, timeoutMs) =>
+    scope.captureExact("target", () => command, timeoutMs);
+  return invokeHelperTransport(capture, options, scope.record.transactionId, action, input);
 }
 
 function lifecycleInput(
@@ -2208,9 +2177,7 @@ function acquireAuthorizedReceipt(
   ) {
     fail("persisted state mutation intent does not match the lifecycle transaction");
   }
-  if (options.providerId === DOCKER_PROVIDER_ID) {
-    ensureHelperTransportAuthorized(scope, options, exactTransactionId);
-  }
+  ensureHelperTransportAuthorized(scope, options, exactTransactionId);
   signalSupervisorAuthorized(scope, options, "SIGSTOP");
   const receipt = invokeHelperAuthorized(
     scope,
@@ -2264,31 +2231,18 @@ function queryEstablishedReceipt(
       execution.transactionId,
       expectedFence?.providerHandle,
     );
-    const result =
-      options.providerId === DOCKER_PROVIDER_ID
-        ? invokeHelperTransport(
-            (command, timeoutMs) => {
-              guard();
-              const captured = options.authority.engine.capture(command.args, timeoutMs);
-              guard();
-              return captured;
-            },
-            options,
-            execution.transactionId,
-            action,
-            request,
-          )
-        : parseHelperReceipt(
-            requireCommandSuccess(
-              options.authority.engine.capture(
-                helperCommand(options.runtimeId, action).args,
-                helperTimeoutMs(action),
-                request,
-              ),
-              `root helper ${action}`,
-            ),
-            options.providerId,
-          );
+    const result = invokeHelperTransport(
+      (command, timeoutMs) => {
+        guard();
+        const captured = options.authority.engine.capture(command.args, timeoutMs);
+        guard();
+        return captured;
+      },
+      options,
+      execution.transactionId,
+      action,
+      request,
+    );
     guard();
     const receipt = result;
     validateReceipt(receipt, options, bindingSha256, before, currentRecord);

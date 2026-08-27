@@ -86,7 +86,7 @@ import {
   type SandboxGpuCreateFlowInput,
 } from "./sandbox-gpu-create-flow";
 
-const READY_CHECK_OPTIONS = { ignoreError: true, timeout: 5_000 };
+const READY = { ignoreError: true, killProcessTreeOnTimeout: true, timeout: 5_000 };
 const FAILED_PROOF: SandboxGpuProofResult = {
   status: "failed",
   cudaVerified: false,
@@ -410,7 +410,7 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
 
     vi.mocked(deps.runCaptureOpenshell).mockClear();
     await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "none" });
-    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(["sandbox", "list"], READY_CHECK_OPTIONS);
+    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(["sandbox", "list"], READY);
 
     expect(vi.mocked(console.warn).mock.calls.flat().join("\n")).toContain(
       "unrelated sandbox 'bravo'",
@@ -627,7 +627,7 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
 
     const result = await runSandboxGpuCreateFlow(createInput(), deps);
     expect(result).toMatchObject({ route: "native" });
-    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(["sandbox", "list"], READY_CHECK_OPTIONS);
+    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(["sandbox", "list"], READY);
   });
 
   it("defers restart-safe no-GPU recreation until the create process exits (#8720)", async () => {
