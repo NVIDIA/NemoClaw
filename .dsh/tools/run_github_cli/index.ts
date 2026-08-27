@@ -53,6 +53,7 @@ export default async function run_github_cli(input: {
     throw new Error("GitHub API method option must not be specified more than once");
   const method = (methods[0] ?? "GET").toUpperCase();
   const fieldFlags = input.args.some((arg) => /^(?:-f|-F|--field|--raw-field)(?:=|$)/u.test(arg));
+  const inputFlag = input.args.some((arg) => arg === "--input" || arg.startsWith("--input="));
   const queryArgument = input.args.find((arg) =>
     /^(?:query=|--raw-field=query=|--field=query=)/u.test(arg),
   );
@@ -71,7 +72,7 @@ export default async function run_github_cli(input: {
     (command === "api" &&
       (operation === "graphql"
         ? !graphQlRead
-        : method !== "GET" || (fieldFlags && methods.length === 0))) ||
+        : method !== "GET" || ((fieldFlags || inputFlag) && methods.length === 0))) ||
     (command === "pr" && new Set(["create", "merge", "ready", "review"]).has(operation));
   if (mutating && input.apply !== true)
     throw new Error("mutating GitHub CLI operations require apply: true");
@@ -100,23 +101,46 @@ export default async function run_github_cli(input: {
     throw new Error("GitHub CLI operation exceeded bounded process output");
   const code = result.exitCode ?? 1;
   const acceptedStatus = accepted.includes(code);
+  const redact = (value) =>
+    value
+      .replace(/(authorization\s*:)[^\r\n]*/giu, "$1 [REDACTED]")
+      .replace(
+        /((?:[A-Z_][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD)|TOKEN|KEY|SECRET|PASSWORD)\s*=).*/giu,
+        "$1[REDACTED]",
+      )
+      .replace(/((?:cookie|set-cookie)\s*:)[^\r\n]*/giu, "$1 [REDACTED]")
+      .replace(/\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]+/giu, "[REDACTED]")
+      .replace(
+        /([?&](?:access_token|api_key|token|key|secret|password)=)[^&#\s]*/giu,
+        "$1[REDACTED]",
+      )
+      .replace(/(https?:\/\/)[^/@\s]+@/giu, "$1[REDACTED]@")
+      .replace(/\b(?:gh[opusr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b/gu, "[REDACTED]")
+      .replace(/\/(?:home|Users)\/[^/\s]+/gu, "/[HOME]")
+      .replace(/(?:[A-Za-z]:\\Users\\)[^\\\r\n]+/gu, "C:\\Users\\[HOME]")
+      .replace(/\/root(?=\/|\s|$)/gu, "/[HOME]");
+  const redactJson = (value) => {
+    if (typeof value === "string") return redact(value);
+    if (Array.isArray(value)) return value.map(redactJson);
+    if (value && typeof value === "object")
+      return Object.fromEntries(
+        Object.entries(value).map(([key, item]) => [key, redactJson(item)]),
+      );
+    return value;
+  };
+  const clip = (value, maxCharacters, maxLines, maxLineCharacters) => {
+    const physical = String(value ?? "").split(/\r?\n/u);
+    const selected = physical.slice(0, maxLines);
+    const bounded = selected.map((line) => [...line].slice(0, maxLineCharacters).join(""));
+    return [...bounded.join("\n")].slice(0, maxCharacters).join("");
+  };
   if (!acceptedStatus) {
-    const redact = (value) =>
-      value
-        .replace(/(https?:\/\/)[^/@\s]+@/giu, "$1[REDACTED]@")
-        .replace(/(authorization\s*[:=]\s*)(?:bearer|token|basic)\s+[^\s]+/giu, "$1[REDACTED]")
-        .replace(/\b([A-Z][A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|KEY))=([^\s]+)/gu, "$1=[REDACTED]")
-        .replace(/\/(?:home|Users)\/[^/\s]+/gu, "/home/[USER]");
-    const projected = await tools.project_diagnostic_text({
-      lines: [redact(result.stderr.text || result.stdout.text || "no diagnostic output")],
-      clipMode: "head",
-      lineClipMode: "head",
-      maxLines: 20,
-      maxCharacters: 2000,
-      maxLineCharacters: 500,
-      sourceTruncated: false,
-    });
-    const detail = projected.text;
+    const detail = clip(
+      redact(result.stderr.text || result.stdout.text || "no diagnostic output"),
+      2000,
+      20,
+      500,
+    );
     const access =
       /(?:authentication|authorization|permission|forbidden|unauthorized|not logged|HTTP 40[13]|resource not accessible)/iu.test(
         detail,
@@ -127,43 +151,17 @@ export default async function run_github_cli(input: {
         : "GitHub CLI operation failed: ") + detail,
     );
   }
-  const redactedStderr = result.stderr.text
-    .replace(/(https?:\/\/)[^/@\s]+@/giu, "$1[REDACTED]@")
-    .replace(/(authorization\s*[:=]\s*)(?:bearer|token|basic)\s+[^\s]+/giu, "$1[REDACTED]")
-    .replace(/\b([A-Z][A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|KEY))=([^\s]+)/gu, "$1=[REDACTED]")
-    .replace(/\/(?:home|Users)\/[^/\s]+/gu, "/home/[USER]");
-  const redactedStdout = result.stdout.text
-    .replace(/(https?:\/\/)[^/@\s]+@/giu, "$1[REDACTED]@")
-    .replace(/\b(?:gh[opusr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b/gu, "[REDACTED]");
-  const project = async (value) => {
-    const projected = await tools.project_diagnostic_text({
-      lines: [value],
-      clipMode: "head",
-      lineClipMode: "head",
-      maxLines: 20000,
-      maxCharacters: 4000000,
-      maxLineCharacters: 4000000,
-      sourceTruncated: false,
-    });
-    if (projected.truncated)
-      throw new Error("GitHub CLI output exceeded bounded diagnostic projection");
-    return projected.text;
-  };
-  const [stdout, stderr] = await Promise.all([project(redactedStdout), project(redactedStderr)]);
-  const wasJson = (() => {
-    try {
-      JSON.parse(redactedStdout);
-      return true;
-    } catch {
-      return false;
-    }
-  })();
-  if (wasJson) {
-    try {
-      JSON.parse(stdout);
-    } catch {
-      throw new Error("GitHub CLI diagnostic projection did not preserve complete JSON output");
-    }
+  let stdout;
+  try {
+    stdout = JSON.stringify(redactJson(JSON.parse(result.stdout.text)));
+    if (result.stdout.text.endsWith("\n")) stdout += "\n";
+  } catch {
+    stdout = redact(result.stdout.text);
   }
+  const stderr = clip(redact(result.stderr.text), 20000, 200, 2000);
+  if (stdout.length > 4000000)
+    throw new Error(
+      "GitHub CLI stdout exceeded the transport bound; project it with --jq or --json",
+    );
   return { ok: acceptedStatus, code, stdout, stderr };
 }

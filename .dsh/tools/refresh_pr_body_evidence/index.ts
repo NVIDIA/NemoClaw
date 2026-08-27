@@ -135,7 +135,12 @@ export default async function refresh_pr_body_evidence(input: {
         }),
         github({
           workdir: input.workdir,
-          args: ["api", "repos/" + repo + "/pulls/" + input.number],
+          args: [
+            "api",
+            "repos/" + repo + "/pulls/" + input.number,
+            "--jq",
+            '{body: (.body // ""), updated_at}',
+          ],
           timeoutMs: 30000,
         }),
       ]);
@@ -301,6 +306,8 @@ export default async function refresh_pr_body_evidence(input: {
         "PATCH",
         "-F",
         "body=@" + temporary,
+        "--jq",
+        "{updated_at}",
       ],
       timeoutMs: 30000,
       apply: true,
