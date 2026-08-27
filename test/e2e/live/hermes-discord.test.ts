@@ -181,7 +181,7 @@ async function applyHermesFakeDiscordPolicy(options: {
 policy_file="$(mktemp)"
 trap 'rm -f "$policy_file"' EXIT
 "$1" policy get --base "$2" >"$policy_file"
-node --import tsx "$6" "$policy_file" "$3" "$4" "$5"
+node --import tsx "$6" "$policy_file" "$3" "$4" "$5" websocket
 "$1" policy set --policy "$policy_file" --wait "$2"`,
       "bind-hermes-fake-discord-policy",
       options.host.openshellCommandPath,
@@ -206,7 +206,7 @@ const HERMES_DISCORD_PYTHON_GATEWAY_PROOF = String.raw`
 import asyncio
 import inspect
 import os
-from pathlib import Path
+import re
 
 try:
     import aiohttp
@@ -219,11 +219,10 @@ except Exception as exc:
 
 
 def read_env_token():
-    env_text = Path("/sandbox/.hermes/.env").read_text(encoding="utf-8")
-    for line in env_text.splitlines():
-        if line.startswith("DISCORD_BOT_TOKEN="):
-            return line.split("=", 1)[1]
-    raise RuntimeError("missing DISCORD_BOT_TOKEN in /sandbox/.hermes/.env")
+    token = os.environ.get("DISCORD_BOT_TOKEN", "")
+    if not re.fullmatch(r"openshell:resolve:env:v[1-9][0-9]*_DISCORD_BOT_TOKEN", token):
+        raise RuntimeError("DISCORD_BOT_TOKEN is not the revision-scoped process placeholder")
+    return token
 
 
 def note_heartbeat_ack(ws, results, previous_ack=None):
@@ -263,11 +262,13 @@ async def wait_for_heartbeat_ack(ws, results):
     raise AssertionError("timed out waiting for HEARTBEAT_ACK")
 
 
+results = []
+
+
 async def main():
     port = int(os.environ["FAKE_DISCORD_GATEWAY_CLIENT_PORT"])
     host = os.environ.get("FAKE_DISCORD_GATEWAY_CLIENT_HOST", "host.docker.internal")
     token = read_env_token()
-    results = []
     client = discord.Client(intents=discord.Intents.none())
     setup = getattr(client, "_async_setup_hook", None)
     if setup is not None:
@@ -326,6 +327,8 @@ async def main():
 try:
     asyncio.run(main())
 except Exception as exc:
+    if results:
+        print("\n".join(results))
     print(f"ERROR {type(exc).__name__}: {exc}")
 `;
 
@@ -623,6 +626,22 @@ PY`,
     fakeGateway.port,
     redactionValues,
   );
+  const gatewayCapture = await host.command(
+    "bash",
+    [
+      "-lc",
+      'if [ -f "$1" ]; then sed -n "1,80p" "$1"; else printf "MISSING_CAPTURE\\n"; fi',
+      "read-hermes-discord-gateway-capture",
+      fakeGateway.captureFile,
+    ],
+    {
+      artifactName: "hermes-discord-gateway-capture",
+      env,
+      redactionValues,
+      timeoutMs: 30_000,
+    },
+  );
+  expectExitZero(gatewayCapture, "Hermes Discord Gateway capture");
   expectExitZero(nativeGateway, "Hermes Python Discord Gateway protocol proof");
   expect(resultText(nativeGateway)).toContain("UPGRADE");
   expect(resultText(nativeGateway)).toContain("HELLO");
@@ -669,15 +688,11 @@ PY`,
     sandbox,
     SANDBOX_NAME,
     `
-import fs from "node:fs";
 import https from "node:https";
-const env = fs.readFileSync("/sandbox/.hermes/.env", "utf8");
-const line = env.split(/\\n/).find((entry) => entry.startsWith("DISCORD_BOT_TOKEN="));
-const token = line ? line.slice("DISCORD_BOT_TOKEN=".length) : "";
-switch (token ? "present" : "missing") {
-  case "missing":
-    console.log(JSON.stringify({ error: "missing_token" }));
-    process.exit(0);
+const token = process.env.DISCORD_BOT_TOKEN ?? "";
+if (!/^openshell:resolve:env:v[1-9][0-9]*_DISCORD_BOT_TOKEN$/.test(token)) {
+  console.log(JSON.stringify({ error: "invalid_token_placeholder" }));
+  process.exit(0);
 }
 const req = https.request({
   hostname: "discord.com",

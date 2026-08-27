@@ -238,7 +238,6 @@ runner.run = (command, opts = {}) => {
     ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
 };
-fixtureMocks.mockDockerSandboxLifecycleReleaseFromRunner();
 runner.runCapture = (command) => {
   const normalized = _n(command);
   if (normalized.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:8080";
@@ -256,6 +255,7 @@ runner.runCapture = (command) => {
   if (normalized.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
+fixtureMocks.mockDockerSandboxLifecycleReleaseFromRunner();
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
   sandboxName: "my-assistant",
   provider: "openai-api",
@@ -464,6 +464,7 @@ createSandbox(
           NEMOCLAW_RECREATE_SANDBOX: "1",
           SANDBOX_LIVE: sandboxLive,
         },
+        timeout: 30_000,
       });
 
       assert.equal(result.status, 1, result.stderr);
@@ -533,6 +534,7 @@ const { createSandbox } = require(${onboardPath});
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
       },
+      timeout: 30_000,
     });
 
     assert.equal(result.status, 1, "should exit 1 when fromDockerfile path is missing");
@@ -597,6 +599,7 @@ const { createSandbox } = require(${onboardPath});
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
       },
+      timeout: 30_000,
     });
 
     assert.equal(result.status, 1, "should exit 1 when fromDockerfile path is a directory");
@@ -671,6 +674,7 @@ const { createSandbox } = require(${onboardPath});
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
       },
+      timeout: 30_000,
     });
 
     assert.equal(result.status, 1, "should exit 1 when fromDockerfile is ignored");
@@ -773,6 +777,7 @@ const { createSandbox } = require(${onboardPath});
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
       },
+      timeout: 30_000,
     });
 
     assert.equal(result.status, 0, result.stderr);

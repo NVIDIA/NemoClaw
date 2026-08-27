@@ -429,6 +429,9 @@ export function createOnboardPolicyAuthorityBindings<Session extends PolicyAutho
                 observabilityEnabled: requirements.observabilityEnabled,
               }),
               agentName: agent.name,
+              // Channel presets bind `{sandboxName}-<channel>-bridge`; without
+              // the name, composing them throws.
+              sandboxName,
               policyTier: observed.existingEntry?.policyTier ?? policyTier,
               baselineExclusions: observed.existingEntry?.baselineExclusions ?? [],
             },

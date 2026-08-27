@@ -64,6 +64,7 @@ export type SandboxGpuCreateAttemptState = {
 // to live validation or the GPU proof.
 const REPLACEMENT_STABLE_READY_POLLS = 2;
 const SANDBOX_READY_PROBE_TIMEOUT_MS = 5_000;
+const CREATED_SANDBOX_PUBLICATION_POLL_INTERVAL_SECONDS = 1;
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/gu;
 const OPENSHELL_SANDBOX_NOT_READY =
@@ -217,6 +218,53 @@ async function verifyCreatedSandboxBeforeEffects(
     liveIdentityFingerprint: fingerprintSandboxRecreateValue(sandboxId),
     route,
   });
+}
+
+function waitForCreatedOpenShellSandboxPublication(
+  sandboxId: string,
+  input: SandboxGpuCreateFlowInput,
+  deps: SandboxGpuCreateFlowDeps,
+): void {
+  const timeoutMs = Math.max(1, Math.round(input.sandboxReadyTimeoutSecs * 1_000));
+  const deadlineMs = Date.now() + timeoutMs;
+  const maxPolls =
+    Math.ceil(timeoutMs / (CREATED_SANDBOX_PUBLICATION_POLL_INTERVAL_SECONDS * 1_000)) + 1;
+  for (let poll = 0; poll < maxPolls; poll += 1) {
+    const remainingMs = Math.max(1, deadlineMs - Date.now());
+    const result = deps.runOpenshell(
+      ["sandbox", "get", "-g", input.gatewayName, input.sandboxName],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: Math.min(SANDBOX_READY_PROBE_TIMEOUT_MS, remainingMs),
+        killSignal: "SIGKILL",
+      },
+    );
+    if (result.status === 0 && !result.error) {
+      const publishedSandboxId = parseOpenShellSandboxId(String(result.stdout ?? ""));
+      if (!publishedSandboxId) {
+        throw new Error(
+          `OpenShell returned no exact durable ID for created sandbox '${input.sandboxName}'.`,
+        );
+      }
+      if (publishedSandboxId !== sandboxId) {
+        throw new Error(
+          `Created sandbox '${input.sandboxName}' changed identity before policy verification.`,
+        );
+      }
+      return;
+    }
+    if (poll + 1 >= maxPolls || Date.now() >= deadlineMs) break;
+    deps.sleep(
+      Math.min(
+        CREATED_SANDBOX_PUBLICATION_POLL_INTERVAL_SECONDS,
+        Math.max(0, (deadlineMs - Date.now()) / 1_000),
+      ),
+    );
+  }
+  throw new Error(
+    `Created sandbox '${input.sandboxName}' did not become visible through its owning gateway before policy verification.`,
+  );
 }
 
 function checkRecreatedSandboxReadyIdentity(
@@ -507,7 +555,7 @@ export function createSandboxGpuCreateAttemptRunner(
         }),
         failureCheck: runtimePatch.createFailureMessage,
         traceEvent: addTraceEvent,
-        waitForReadyTermination: deferRestartSafeCutover,
+        waitForReadyTermination: deferRestartSafeCutover || deferPostCreateEffects,
         initialPhase:
           compatibility && (input.prebuild.imageRef || state.compatibilityArgv)
             ? "create"
@@ -587,6 +635,7 @@ export function createSandboxGpuCreateAttemptRunner(
                 { cause: error },
               );
             }
+            waitForCreatedOpenShellSandboxPublication(sandboxId, input, deps);
             await verifyCreatedSandboxBeforeEffects(sandboxId, route, input);
             createdSandboxVerified = true;
             if (deferPostCreateEffects) {
@@ -714,6 +763,7 @@ export function createSandboxGpuCreateAttemptRunner(
           { cause: error },
         );
       }
+      waitForCreatedOpenShellSandboxPublication(sandboxId, input, deps);
       await verifyCreatedSandboxBeforeEffects(sandboxId, route, input);
       createdSandboxVerified = true;
     }
