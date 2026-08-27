@@ -150,6 +150,8 @@ on:
         "src/lib/onboard/managed-startup/state-roots.ts",
         "src/lib/onboard/managed-workload/onboard-orchestration.test.ts",
         "src/lib/onboard/managed-workload/onboard-orchestration.ts",
+        "src/lib/onboard/machine/finalization-deps.test.ts",
+        "src/lib/onboard/machine/finalization-deps.ts",
         "src/lib/onboard/runtime-provider/docker-state-mutation.ts",
         "src/lib/onboard/runtime-provider/podman-runtime-surfaces.ts",
         "src/lib/onboard/runtime-provider/podman-state-mutation.test.ts",
@@ -182,6 +184,7 @@ on:
     expect(source).not.toContain("src/lib/actions/sandbox/stopped-sandbox-backup.ts");
     expect(source).not.toContain("src/lib/adapters/podman/index.ts");
     expect(source).not.toContain("src/lib/onboard/managed-bootstrap/docker-runtime.ts");
+    expect(source).not.toContain("src/lib/onboard/machine/finalization-deps.ts");
     expect(source).not.toContain(
       "src/lib/onboard/managed-bootstrap/podman-bootstrap-replacement.ts",
     );
