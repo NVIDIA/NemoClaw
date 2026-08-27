@@ -45,6 +45,16 @@ function pendingSandboxEntry(
   };
 }
 
+function registeredSandboxEntry(): SandboxEntry {
+  return {
+    name: "new-sb",
+    gatewayName: "nemoclaw",
+    gatewayPort: 8080,
+    lifecycleGeneration: "generation-1",
+    lifecycleLiveIdentityFingerprint: SANDBOX_FINGERPRINT,
+  };
+}
+
 function createDeps(overrides: Partial<SandboxCancelRollbackDeps> = {}) {
   const calls = {
     deleteContainer: vi.fn((_name: string) => true),
@@ -179,13 +189,15 @@ describe("createSandboxCancelRollback", () => {
 
 describe("installSandboxCancelRollback", () => {
   it("wires delete to openshell and unregister to the registry, and registers an exit hook", () => {
+    const entry = registeredSandboxEntry();
     const runOpenshell = vi.fn(() => ({ status: 0 }));
     const removeSandbox = vi.fn();
     const exitHandlers: Array<() => void> = [];
 
     const rollback = installSandboxCancelRollback({
       runOpenshell,
-      registry: { getSandbox: () => null, removeSandbox },
+      registry: { getSandbox: () => entry, removeSandbox },
+      inspectOpenShellSandboxIdentityFingerprint: () => SANDBOX_FINGERPRINT,
       clearOnboardSession: () => {},
       registerExitHandler: (h) => exitHandlers.push(h),
     });
@@ -196,10 +208,38 @@ describe("installSandboxCancelRollback", () => {
     rollback.markCancelled();
     exitHandlers[0]();
 
-    expect(runOpenshell).toHaveBeenCalledWith(["sandbox", "delete", "new-sb"], {
+    expect(runOpenshell).toHaveBeenCalledWith(["sandbox", "delete", "-g", "nemoclaw", "new-sb"], {
       ignoreError: true,
     });
     expect(removeSandbox).toHaveBeenCalledWith("new-sb");
+  });
+
+  it("preserves a same-name replacement after completed registration (#9833)", () => {
+    const entry = registeredSandboxEntry();
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const removeSandbox = vi.fn();
+    const clearOnboardSession = vi.fn();
+    const log = vi.fn();
+    const exitHandlers: Array<() => void> = [];
+
+    const rollback = installSandboxCancelRollback({
+      runOpenshell,
+      registry: { getSandbox: () => entry, removeSandbox },
+      clearOnboardSession,
+      inspectOpenShellSandboxIdentityFingerprint: () => "b".repeat(64),
+      log,
+      registerExitHandler: (handler) => exitHandlers.push(handler),
+    });
+    rollback.arm("new-sb");
+    rollback.markCancelled();
+    exitHandlers[0]();
+
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(removeSandbox).not.toHaveBeenCalled();
+    expect(clearOnboardSession).not.toHaveBeenCalled();
+    expect(log.mock.calls.flat().join("\n")).toContain(
+      "durable creation identity could not be proved",
+    );
   });
 
   it("does not fire the rollback on a non-cancel exit", () => {
