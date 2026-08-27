@@ -129,24 +129,24 @@ describe("onboard session", () => {
     );
   });
 
-  it.each([
-    true,
-    false,
-  ])("persists explicit observability intent when enabled=$enabled", (observabilityEnabled) => {
-    session.saveSession(
-      session.createSession({
-        observabilityEnabled,
-        observabilityRequestedExplicitly: true,
-      }),
-    );
-    const loaded = requireLoadedSession(session.loadSession());
-    const summary = requireDebugSummary(session.summarizeForDebug());
+  it.each([true, false])(
+    "persists explicit observability intent when enabled=$enabled",
+    (observabilityEnabled) => {
+      session.saveSession(
+        session.createSession({
+          observabilityEnabled,
+          observabilityRequestedExplicitly: true,
+        }),
+      );
+      const loaded = requireLoadedSession(session.loadSession());
+      const summary = requireDebugSummary(session.summarizeForDebug());
 
-    expect(loaded.observabilityEnabled).toBe(observabilityEnabled);
-    expect(loaded.observabilityRequestedExplicitly).toBe(true);
-    expect(summary.observabilityEnabled).toBe(observabilityEnabled);
-    expect(summary.observabilityRequestedExplicitly).toBe(true);
-  });
+      expect(loaded.observabilityEnabled).toBe(observabilityEnabled);
+      expect(loaded.observabilityRequestedExplicitly).toBe(true);
+      expect(summary.observabilityEnabled).toBe(observabilityEnabled);
+      expect(summary.observabilityRequestedExplicitly).toBe(true);
+    },
+  );
 
   it("defaults legacy observability intent and provenance off", () => {
     const legacy = session.createSession() as unknown as Record<string, unknown>;
