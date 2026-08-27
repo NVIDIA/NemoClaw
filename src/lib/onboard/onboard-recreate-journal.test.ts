@@ -352,4 +352,32 @@ describe("non-resumed onboard replacement journal (#7735)", () => {
     expect(session.checkpoint?.sandboxRecreate?.phase).toBe("deleted");
     expect(session.checkpoint?.sandboxRecreate?.sourceLiveIdentityFingerprint).toBeNull();
   });
+
+  it("starts a fresh journal when the stranded one no longer owns a replacement (#10473)", () => {
+    mocks.captureOpenshell.mockReturnValue(absentProbe());
+    const stranded = open();
+    expect(session.checkpoint?.sandboxRecreate?.phase).toBe("deleted");
+
+    // The source was never deleted: OpenShell reports it again, and the
+    // preserved registry row still identifies that same live sandbox.
+    mocks.captureOpenshell.mockReturnValue(livePresentProbe());
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw-9090",
+      gatewayPort: 9090,
+      lifecycleGeneration: "44444444-4444-4444-8444-444444444444",
+      lifecycleLiveIdentityFingerprint: SANDBOX_FINGERPRINT,
+    } as registry.SandboxEntry);
+
+    const restarted = open();
+
+    expect(restarted.targetGeneration).not.toBe(stranded.targetGeneration);
+    expect(restarted.acceptedTarget).toBe(false);
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({
+      phase: "planned",
+      revision: 0,
+      sourceLiveIdentityFingerprint: SANDBOX_FINGERPRINT,
+    });
+  });
 });

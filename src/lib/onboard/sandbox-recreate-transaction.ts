@@ -206,14 +206,56 @@ const RECEIPT_BOUND_PROJECTION_FIELDS: readonly (keyof SandboxEntry)[] = [
   "policies",
   "customPolicies",
   "mcp",
+  // `messaging` is a rehydrated projection, not durable sandbox identity: the
+  // channel commands own it (`channels add|stop|start|remove` rewrite the plan
+  // workflow label, disabledChannels, and the derived per-channel active,
+  // disabled, and hostForward fields), and loading the registry re-derives the
+  // rest of it from the built-in channel manifests and the ambient environment.
+  // Binding it made a `channels stop` plus `channels start` between two rebuilds
+  // change the fingerprint of an untouched sandbox, which left every later
+  // rebuild rejecting its own journal (#10473).
+  "messaging",
 ];
 
-export function fingerprintSandboxRegistryEntry(entry: SandboxEntry): string {
+function fingerprintDurableSandboxEntry(
+  entry: SandboxEntry,
+  excluded: readonly (keyof SandboxEntry)[],
+): string {
   const durable: Record<string, unknown> = { ...entry };
-  for (const field of [...ROUTE_RESERVATION_FIELDS, ...RECEIPT_BOUND_PROJECTION_FIELDS]) {
-    delete durable[field];
-  }
+  for (const field of excluded) delete durable[field];
   return fingerprintSandboxRecreateValue(durable);
+}
+
+export function fingerprintSandboxRegistryEntry(entry: SandboxEntry): string {
+  return fingerprintDurableSandboxEntry(entry, [
+    ...ROUTE_RESERVATION_FIELDS,
+    ...RECEIPT_BOUND_PROJECTION_FIELDS,
+  ]);
+}
+
+/**
+ * Accept a source row against a journal written before `messaging` left the
+ * durable fingerprint.
+ *
+ * Such a journal recorded a digest that still covered the messaging projection,
+ * so recomputing it the new way never matches. Because a journal parked past the
+ * delete boundary outlives an upgrade, refusing it would strand a rebuild whose
+ * source sandbox is already deleted. The compatibility digest reproduces the
+ * exact pre-#10473 field set, so it accepts only what the previous release
+ * already accepted.
+ */
+function sandboxRecreateSourceRowMatches(
+  entry: SandboxEntry | null,
+  recordedFingerprint: string,
+): boolean {
+  if (!entry) return recordedFingerprint === fingerprintSandboxRecreateValue(null);
+  if (fingerprintSandboxRegistryEntry(entry) === recordedFingerprint) return true;
+  return (
+    fingerprintDurableSandboxEntry(entry, [
+      ...ROUTE_RESERVATION_FIELDS,
+      ...RECEIPT_BOUND_PROJECTION_FIELDS.filter((field) => field !== "messaging"),
+    ]) === recordedFingerprint
+  );
 }
 
 export function fingerprintSandboxLiveIdentity(getOutput: string): string | null {
@@ -453,7 +495,7 @@ export function assertSandboxRecreateSourceProof(
     );
   }
   if (!check.registryEntry) return fail("the source registry row is absent");
-  if (fingerprintSandboxRegistryEntry(check.registryEntry) !== proof.sourceRegistryFingerprint) {
+  if (!sandboxRecreateSourceRowMatches(check.registryEntry, proof.sourceRegistryFingerprint)) {
     return fail("the source registry row changed after the transaction recorded it");
   }
   if (check.observation.state === "missing") {
@@ -686,6 +728,42 @@ export function abandonSandboxRecreateTransaction(session: Session, id: string):
   };
 }
 
+/**
+ * Retire a journal that `planSandboxRecreateRecovery` decided is void.
+ *
+ * Unlike `abandonSandboxRecreateTransaction` this accepts a journal that already
+ * advanced past `planned`, because the decision that reaches here proved the
+ * recorded replacement never took: the registry row and the live same-name
+ * sandbox name one identity. Re-presenting that proof keeps the discard bound to
+ * that decision instead of becoming a general escape hatch for a future caller.
+ * It also re-reads the journal from the session it is handed, so a journal that
+ * changed since the decision is not retired.
+ */
+export function discardVoidSandboxRecreateTransaction(
+  session: Session,
+  id: string,
+  observation: SandboxRecreateObservation,
+  registryEntry: SandboxEntry | null,
+): void {
+  const checkpoint = baseCheckpoint(session);
+  const current = checkpoint.sandboxRecreate;
+  if (!current || current.id !== id) {
+    throw new Error("Sandbox recreate transaction ownership changed and cannot be discarded.");
+  }
+  if (!replacementIsVoid(current, observation, registryEntry)) {
+    throw new Error(
+      `Sandbox '${current.sandboxName}' recreate transaction still owns a replacement and cannot be discarded.`,
+    );
+  }
+  const now = new Date().toISOString();
+  session.checkpoint = {
+    ...checkpoint,
+    machineState: session.machine.state,
+    updatedAt: now,
+    sandboxRecreate: null,
+  };
+}
+
 export function clearCompletedSandboxRecreateTransaction(session: Session, id: string): void {
   const checkpoint = baseCheckpoint(session);
   const current = checkpoint.sandboxRecreate;
@@ -705,10 +783,46 @@ export type SandboxRecreateRecoveryPlan =
   | { readonly action: "continue_delete" }
   | { readonly action: "continue_create" }
   | { readonly action: "accept_target" }
+  | { readonly action: "restart_from_source" }
   | { readonly action: "reject"; readonly reason: string };
 
 function reject(reason: string): SandboxRecreateRecoveryPlan {
   return { action: "reject", reason };
+}
+
+/**
+ * A journal whose replacement provably never happened.
+ *
+ * The caller has already ruled out the registered replacement, so the journal
+ * still claims a replacement is in flight. When the registry row and a live
+ * same-name sandbox name the same OpenShell identity, that claim is false: the
+ * sandbox this row describes is intact and there is no unregistered replacement
+ * to converge on. The recorded replacement is void, and the owner may retire it
+ * and open a fresh transaction against the live source instead of refusing every
+ * later rebuild for the rest of the session (#10473).
+ *
+ * The identity equality is what makes this safe. A replacement that was created
+ * but not yet registered carries a fresh OpenShell Id while the preserved row
+ * still carries the source's, so it can never satisfy this and stays protected
+ * by the fail-closed refusals in `planUnregisteredReplacementRecovery`.
+ *
+ * The name equality binds the evidence to the journal. `checkpoint.sandboxRecreate`
+ * holds one journal for the whole session, so a caller can present the row and
+ * observation of a different sandbox; that pairing must keep refusing rather than
+ * retire a journal protecting another sandbox's replacement.
+ */
+function replacementIsVoid(
+  transaction: CheckpointSandboxRecreateTransaction,
+  observation: SandboxRecreateObservation,
+  registryEntry: SandboxEntry | null,
+): boolean {
+  return Boolean(
+    registryEntry?.name === transaction.sandboxName &&
+    registryEntry.lifecycleLiveIdentityFingerprint &&
+    observation.state !== "missing" &&
+    observation.liveIdentityFingerprint === registryEntry.lifecycleLiveIdentityFingerprint &&
+    observation.liveIdentityFingerprint !== transaction.targetLiveIdentityFingerprint,
+  );
 }
 
 export function planSandboxRecreateRecovery(
@@ -734,9 +848,30 @@ export function planSandboxRecreateRecovery(
     return { action: "accept_target" };
   }
 
-  const sourceStateUnchanged = registryEntry
-    ? fingerprintSandboxRegistryEntry(registryEntry) === transaction.sourceRegistryFingerprint
-    : transaction.sourceRegistryFingerprint === fingerprintSandboxRecreateValue(null);
+  const unregistered = planUnregisteredReplacementRecovery(transaction, observation, registryEntry);
+  // Every refusal below is terminal for the session: no command retires a
+  // journal the guard already refused to open. Downgrade one to a restart when
+  // the live sandbox and the registry row prove the recorded replacement never
+  // took, so a void journal stops blocking rebuild forever (#10473).
+  if (
+    unregistered.action === "reject" &&
+    replacementIsVoid(transaction, observation, registryEntry)
+  ) {
+    return { action: "restart_from_source" };
+  }
+  return unregistered;
+}
+
+/** The recovery decision for a journal whose replacement is not registered. */
+function planUnregisteredReplacementRecovery(
+  transaction: CheckpointSandboxRecreateTransaction,
+  observation: SandboxRecreateObservation,
+  registryEntry: SandboxEntry | null,
+): SandboxRecreateRecoveryPlan {
+  const sourceStateUnchanged = sandboxRecreateSourceRowMatches(
+    registryEntry,
+    transaction.sourceRegistryFingerprint,
+  );
   if (transaction.phase === "completed") {
     return reject("the completed transaction no longer matches its replacement registry row");
   }
@@ -884,6 +1019,13 @@ export function createSandboxRecreateRuntime(
   );
   if (recovery.action === "reject") {
     throw new Error(`Cannot resume sandbox '${sandboxName}' recreation: ${recovery.reason}.`);
+  }
+  // A handed-off runtime does not own the journal it was given, so it cannot
+  // retire a void one. Its callers discard that journal before handing off.
+  if (recovery.action === "restart_from_source") {
+    throw new Error(
+      `Cannot resume sandbox '${sandboxName}' recreation: its journal no longer owns a replacement.`,
+    );
   }
   if (recovery.action === "accept_target") {
     note(`  [resume] Recovering journaled replacement sandbox '${sandboxName}'.`);

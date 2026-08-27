@@ -18,6 +18,7 @@ import {
   beginSandboxRecreateTransaction,
   clearCompletedSandboxRecreateTransaction,
   createSandboxRecreateRuntime,
+  discardVoidSandboxRecreateTransaction,
   fingerprintSandboxRecreateValue,
   planSandboxRecreateRecovery,
   type SandboxRecreateRuntime,
@@ -97,6 +98,17 @@ export function openOnboardRecreateJournal(
     if (recovery.action === "reject") {
       throw new Error(
         `Cannot resume sandbox '${target.sandboxName}' replacement: ${recovery.reason}.`,
+      );
+    }
+    // The recorded replacement never took, so this run owns a fresh transaction
+    // against the live source rather than a journal it can never resume (#10473).
+    if (recovery.action === "restart_from_source") {
+      onboardSession.updateSession((current) => {
+        discardVoidSandboxRecreateTransaction(current, active.id, observation, sourceEntry);
+        return current;
+      });
+      note(
+        `  Discarded the void replacement journal ${active.id} for '${target.sandboxName}'; its source sandbox is still registered and live.`,
       );
     }
   }
