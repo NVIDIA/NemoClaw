@@ -344,6 +344,7 @@ const { createSandbox } = require(${onboardPath});
   const agent = {
     name: "hermes",
     displayName: "Hermes Agent",
+    dockerfilePath: ${JSON.stringify(path.join(repoRoot, "agents", "hermes", "Dockerfile"))},
     forwardPort: 18789,
     forward_ports: [18789, 8642],
     healthProbe: { url: "http://127.0.0.1:8642/health", port: 8642, timeout_seconds: 90 },
