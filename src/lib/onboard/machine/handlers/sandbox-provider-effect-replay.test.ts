@@ -39,6 +39,67 @@ function createImmutableSessionPersistence(initial: Session) {
 }
 
 describe("handleSandboxState provider effect replay", () => {
+  it("stages credential-bound messaging providers before sandbox creation", async () => {
+    const discordToken = "discord-current-token";
+    const binding = {
+      name: "my-assistant-discord-bridge",
+      type: "discord-hermes-static-v1",
+      credentialEnv: "DISCORD_BOT_TOKEN",
+    };
+    const messagingPlan: SandboxMessagingPlan = {
+      ...makeMinimalPlan("my-assistant", "hermes", ["discord"]),
+      credentialBindings: [
+        {
+          channelId: "discord",
+          credentialId: "bot-token",
+          sourceInput: "botToken",
+          providerName: binding.name,
+          providerEnvKey: binding.credentialEnv,
+          placeholder: "openshell:resolve:env:DISCORD_BOT_TOKEN",
+          credentialAvailable: true,
+          credentialHash: hashCredential(discordToken) ?? undefined,
+        },
+      ],
+    };
+    let providerIsLive = false;
+    const events: string[] = [];
+    const stageSandboxCredentialProviders = vi.fn(async () => {
+      events.push("provider-staged");
+      providerIsLive = true;
+      return [binding];
+    });
+    const createSandbox = vi.fn(async (...args: unknown[]) => {
+      events.push("sandbox-create");
+      const createIntent = args.at(-1) as {
+        deferSandboxEffectsUntilPolicyVerification?: boolean;
+      };
+      expect(createIntent.deferSandboxEffectsUntilPolicyVerification).toBeUndefined();
+      return "my-assistant";
+    });
+    const session = createSession({ sandboxName: "my-assistant", agent: "hermes" });
+    const { deps } = createDeps(
+      {
+        createSandbox,
+        readMessagingPlanFromEnv: () => messagingPlan,
+        stageSandboxCredentialProviders,
+        providerMatchesGatewayCredential: (name, type, credentialEnv) =>
+          providerIsLive &&
+          name === binding.name &&
+          type === binding.type &&
+          credentialEnv === binding.credentialEnv,
+      },
+      session,
+    );
+
+    await withEnv("DISCORD_BOT_TOKEN", discordToken, () =>
+      handleSandboxState({ ...baseOptions(deps, session), resume: false }),
+    );
+
+    expect(events).toEqual(["provider-staged", "sandbox-create"]);
+    expect(stageSandboxCredentialProviders).toHaveBeenCalledOnce();
+    expect(createSandbox).toHaveBeenCalledOnce();
+  });
+
   it("registers staged Slack providers when a Telegram receipt still matches the gateway (#7702)", async () => {
     const slackBotToken = "xoxb-current-token";
     const slackAppToken = "xapp-current-token";
