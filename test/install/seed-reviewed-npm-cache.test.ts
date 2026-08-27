@@ -241,7 +241,7 @@ describe("reviewed npm cache seed", () => {
     ).rejects.toThrow("received unlocked archives: unexpected@9.9.9");
     fs.writeFileSync(input.archivePath, "drifted archive bytes");
     await expect(seedReviewedNpmCache(request(input), async () => undefined)).rejects.toThrow(
-      `integrity mismatch for ${PACKAGE_SPEC}`,
+      `${PACKAGE_SPEC} archive integrity mismatch`,
     );
   });
 
@@ -261,5 +261,16 @@ describe("reviewed npm cache seed", () => {
         async () => undefined,
       ),
     ).rejects.toThrow("registry origin is invalid");
+  });
+
+  it("rejects an archive larger than the configured seed limit", async () => {
+    const input = fixture();
+
+    await expect(
+      seedReviewedNpmCache(
+        { ...request(input), maximumArchiveBytes: input.archive.length - 1 },
+        async () => undefined,
+      ),
+    ).rejects.toThrow("archive must be a bounded regular file");
   });
 });

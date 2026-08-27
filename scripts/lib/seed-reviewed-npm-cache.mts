@@ -3,16 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import {
-  closeSync,
-  existsSync,
-  fstatSync,
-  lstatSync,
-  openSync,
-  readdirSync,
-  readFileSync,
-} from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -22,6 +13,7 @@ import {
   type NpmPlatformTarget,
 } from "../checks/materialize-locked-npm-cache-seed.mts";
 import {
+  readReviewedNpmArchiveFile,
   type ReviewedNpmArchiveRequest,
   type ReviewedNpmPackageWithoutIntegrity,
   verifyReviewedNpmLockPackages,
@@ -156,42 +148,6 @@ function readLockedPackages(
   return locked;
 }
 
-function readArchive(
-  archivePath: string,
-  packageSpec: string,
-  maximumArchiveBytes?: number,
-): Buffer {
-  if (!isAbsolute(archivePath)) {
-    throw new Error(`reviewed npm cache seed archive must be absolute: ${packageSpec}`);
-  }
-  const resolvedPath = resolve(archivePath);
-  let descriptor: number | undefined;
-  try {
-    descriptor = openSync(resolvedPath, "r");
-    const opened = fstatSync(descriptor);
-    const pathEntry = lstatSync(resolvedPath);
-    if (
-      !opened.isFile() ||
-      !pathEntry.isFile() ||
-      pathEntry.isSymbolicLink() ||
-      opened.dev !== pathEntry.dev ||
-      opened.ino !== pathEntry.ino
-    ) {
-      throw new Error("archive must be a non-symlink regular file");
-    }
-    if (maximumArchiveBytes !== undefined && opened.size > maximumArchiveBytes) {
-      throw new Error("archive must be a bounded regular file");
-    }
-    return readFileSync(descriptor);
-  } catch (error) {
-    throw new Error(
-      `reviewed npm cache seed archive is unreadable: ${packageSpec}: ${String(error)}`,
-    );
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
-  }
-}
-
 export function lockedArchivesFromDirectory(
   archiveDirectory: string,
   lockfilePath: string,
@@ -314,13 +270,12 @@ export async function seedReviewedNpmCache(
         throw new Error(`reviewed npm cache seed archive is missing: ${packageSpec}`);
       expectedArchives.delete(packageSpec);
       unexpectedArchives.delete(packageSpec);
-      const archive = readArchive(archivePath, packageSpec, request.maximumArchiveBytes);
-      const actualIntegrity = `sha512-${createHash("sha512").update(archive).digest("base64")}`;
-      if (actualIntegrity !== entry.integrity) {
-        throw new Error(
-          `reviewed npm cache seed integrity mismatch for ${packageSpec}\nExpected: ${entry.integrity}\nActual:   ${actualIntegrity}`,
-        );
-      }
+      const archive = readReviewedNpmArchiveFile({
+        archivePath,
+        expectedIntegrity: entry.integrity,
+        label: `reviewed npm cache seed ${packageSpec}`,
+        maximumBytes: request.maximumArchiveBytes,
+      });
       await put(cachePath, `make-fetch-happen:request-cache:${entry.resolved}`, archive, {
         metadata: {
           options: { compress: true },

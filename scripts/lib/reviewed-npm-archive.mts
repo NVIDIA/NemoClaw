@@ -76,7 +76,7 @@ export type ReviewedNpmArchiveFileRequest = Readonly<{
   archivePath: string;
   expectedIntegrity: string;
   label: string;
-  maximumBytes: number;
+  maximumBytes?: number;
 }>;
 
 type NpmRunner = (args: readonly string[], request: ReviewedNpmArchiveRequest) => string;
@@ -129,7 +129,7 @@ export function readReviewedNpmArchiveFile(request: ReviewedNpmArchiveFileReques
     ) {
       throw new Error("archive must be a non-symlink regular file");
     }
-    if (opened.size > request.maximumBytes) {
+    if (request.maximumBytes !== undefined && opened.size > request.maximumBytes) {
       throw new Error("archive must be a bounded regular file");
     }
     const archive = readFileSync(descriptor);

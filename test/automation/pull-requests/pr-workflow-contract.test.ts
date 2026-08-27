@@ -575,6 +575,70 @@ describe("pull request and main workflow contracts", () => {
     }
   });
 
+  it("explains how to recover when the exact SDK package artifact expired", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "nemoclaw-sdk-package-expired-"));
+    try {
+      const trustedRoot = join(tempRoot, ".trusted-sdk-package-decision");
+      const inspectorDirectory = join(trustedRoot, "scripts/checks");
+      const workflowDirectory = join(trustedRoot, ".github/workflows");
+      const fakeBin = join(tempRoot, "bin");
+      mkdirSync(inspectorDirectory, { recursive: true });
+      mkdirSync(workflowDirectory, { recursive: true });
+      mkdirSync(fakeBin);
+      writeFileSync(
+        join(inspectorDirectory, "prepare-ci-npm-install.mts"),
+        'process.stdout.write(JSON.stringify({ required: true, artifactName: "reviewed-sdk.tgz" }));\n',
+      );
+      writeFileSync(join(workflowDirectory, "openshell-sdk-package-pr.yaml"), "name: test\n");
+      writeFileSync(
+        join(fakeBin, "gh"),
+        [
+          "#!/usr/bin/env node",
+          'const request = process.argv.slice(2).join(" ");',
+          'if (request.includes("actions/workflows/openshell-sdk-package-pr.yaml/runs")) {',
+          '  process.stdout.write(JSON.stringify({ workflow_runs: [{ id: 321, event: "pull_request_target", status: "completed", conclusion: "success", created_at: "2026-08-27T00:00:00Z", html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/321", pull_requests: [{ number: 10368, head: { sha: "head-sha" }, base: { sha: "base-sha" } }] }] }));',
+          '} else if (request.includes("actions/runs/321/artifacts")) {',
+          '  process.stdout.write(JSON.stringify({ artifacts: [{ name: "openshell-sdk-head-sha", expired: true }] }));',
+          "} else {",
+          "  process.exit(64);",
+          "}",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      const outputPath = join(tempRoot, "github-output");
+      const locate = requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      );
+
+      const result = runWorkflowShellStep(
+        locate,
+        {
+          BASE_SHA: "base-sha",
+          GH_TOKEN: "test-token",
+          GITHUB_OUTPUT: outputPath,
+          GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+          GITHUB_WORKSPACE: tempRoot,
+          HEAD_REPOSITORY: "NVIDIA/NemoClaw",
+          HEAD_SHA: "head-sha",
+          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+          PR_NUMBER: "10368",
+        },
+        tempRoot,
+      );
+
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("reviewed SDK archive");
+      expect(result.stdout).toContain("https://github.com/NVIDIA/NemoClaw/actions/runs/321");
+      expect(result.stdout).toContain("Rerun the SDK package workflow");
+      expect(existsSync(outputPath) ? readFileSync(outputPath, "utf8") : "").not.toContain(
+        "run_id=",
+      );
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   // source-shape-contract: security -- Every PR dependency consumer must receive the verified archive without package access
   it.each(dependencyInstallJobs)("passes the verified SDK archive to %s", (jobName) => {
     const job = prWorkflow.jobs[jobName];

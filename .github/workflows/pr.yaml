@@ -253,6 +253,19 @@ jobs:
                   exit 1
                 fi
                 run_id="$(jq -er '.id | select(type == "number" and . > 0 and . <= 9007199254740991)' <<<"$match")"
+                run_url="$(jq -er '.html_url | select(type == "string" and startswith("https://github.com/"))' <<<"$match")"
+                artifact_listing_url="repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?per_page=100"
+                if ! artifacts="$(gh api "$artifact_listing_url")"; then
+                  echo "::error title=SDK package artifact unavailable::Could not inspect the reviewed SDK archive from $run_url. Rerun the SDK package workflow for this latest PR commit."
+                  exit 1
+                fi
+                expected_artifact="openshell-sdk-$HEAD_SHA"
+                if ! jq -e --arg name "$expected_artifact" '
+                  [.artifacts[]? | select(.name == $name and .expired == false)] | length == 1
+                ' <<<"$artifacts" >/dev/null; then
+                  echo "::error title=SDK package artifact unavailable::The reviewed SDK archive from $run_url is missing or expired. Rerun the SDK package workflow for this latest PR commit."
+                  exit 1
+                fi
                 echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
                 exit 0
               fi
