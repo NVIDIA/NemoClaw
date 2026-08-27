@@ -3,7 +3,7 @@
 
 import { parseOpenShellPolicy } from "../../policy/merge";
 import { runCaptureEx } from "../../runner";
-import { buildOpenshellCommand } from "./command-argv";
+import { openshellNotFoundDiagnosticLines, tryResolveOpenshellBinary } from "./command-argv";
 import { type OpenShellSandboxError, type OpenShellSandboxResult } from "./sandbox-observer";
 import {
   type OpenShellSandboxPolicyRead,
@@ -50,7 +50,15 @@ const ANSI_RE = /\x1b\[[0-9;]*m/gu;
 const DEFAULT_POLICY_READ_TIMEOUT_MS = 15_000;
 
 const capturePolicyWithRunner: CapturePolicyCommand = (args, options) => {
-  const captured = runCaptureEx(buildOpenshellCommand(args), { timeout: options.timeout });
+  const executable = tryResolveOpenshellBinary();
+  if (!executable) {
+    return {
+      status: null,
+      output: "",
+      error: Object.assign(new Error("OpenShell binary not found"), { code: "ENOENT" }),
+    };
+  }
+  const captured = runCaptureEx([executable, ...args], { timeout: options.timeout });
   const output = [captured.stdout, captured.stderr].filter(Boolean).join("\n");
   const error = captured.timedOut
     ? Object.assign(new Error("OpenShell policy read timed out"), { code: "ETIMEDOUT" })
@@ -74,6 +82,13 @@ function diagnostic(result: CapturedPolicyCommandResult): string {
 
 function classifyCommandFailure(result: CapturedPolicyCommandResult): OpenShellSandboxError | null {
   const errorCode = (result.error as NodeJS.ErrnoException | undefined)?.code;
+  if (errorCode === "ENOENT") {
+    return {
+      kind: "command",
+      reason: "failed",
+      message: openshellNotFoundDiagnosticLines().join("\n"),
+    };
+  }
   if (errorCode === "ETIMEDOUT") {
     return { kind: "timeout", message: "The OpenShell sandbox policy read timed out." };
   }

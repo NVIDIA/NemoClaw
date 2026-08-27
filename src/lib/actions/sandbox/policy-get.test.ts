@@ -13,6 +13,7 @@ import {
   createCliOpenShellSandboxPolicyRead,
   type CliOpenShellSandboxPolicyRead,
 } from "../../adapters/openshell/sandbox-policy-cli";
+import * as openshellResolveModule from "../../adapters/openshell/resolve";
 import { getSandboxPolicy } from "./policy-get";
 
 type FakeOpenShell = {
@@ -52,6 +53,7 @@ function createFakeOpenShell(output: string, exitCode = 0): FakeOpenShell {
 
 describe("getSandboxPolicy", () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
     for (const tempDir of tempDirs.splice(0)) {
       fs.rmSync(tempDir, { recursive: true, force: true });
@@ -117,6 +119,25 @@ describe("getSandboxPolicy", () => {
       /Failed to retrieve base policy for sandbox 'alpha'\. The OpenShell sandbox policy read failed/,
     );
     expect(fs.readFileSync(fake.argsPath, "utf8").trim()).toBe("policy get --base alpha");
+  });
+
+  it("preserves actionable guidance when the OpenShell binary is missing (#9805)", async () => {
+    vi.spyOn(openshellResolveModule, "resolveOpenshell").mockReturnValue(null);
+    vi.stubEnv("HOME", "/home/nemoclaw-test");
+    vi.stubEnv("PATH", "/nonexistent-nemoclaw-path");
+    vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", "/nonexistent/openshell");
+
+    const failure = await getSandboxPolicy("alpha").catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    const message = String((failure as Error).message);
+    expect(message).toContain("openshell binary not found. Checked:");
+    expect(message).toContain("NEMOCLAW_OPENSHELL_BIN=/nonexistent/openshell");
+    expect(message).toContain("PATH=/nonexistent-nemoclaw-path");
+    expect(message).toContain("/home/nemoclaw-test/.local/bin/openshell");
+    expect(message).toContain("/usr/local/bin/openshell");
+    expect(message).toContain("/usr/bin/openshell");
+    expect(message).toContain("Install OpenShell");
   });
 
   it("requests the base policy through a typed policy fake (#9805)", async () => {
