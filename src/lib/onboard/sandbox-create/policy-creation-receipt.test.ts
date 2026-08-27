@@ -7,6 +7,7 @@ import * as openshellRuntimeModule from "../../adapters/openshell/runtime";
 import {
   revalidateCreatedSandboxPolicyRegistration,
   verifyCreatedApfInterceptorPolicyRegistration,
+  verifyCreatedSandboxPolicyRegistration,
   verifyCreatedSandboxPolicyCreationReceipt,
 } from "./policy-creation-receipt";
 
@@ -306,6 +307,29 @@ describe("created sandbox policy receipt", () => {
       policyAuthority: "externally-managed",
       policyCreationReceipt: null,
       observedPolicyAuthority: "owner-unknown",
+      policyIdentity: { hash: "sha256:effective", activeVersion: 4 },
+    });
+  });
+
+  it("verifies externally managed policy through the production entrypoint (#9833)", () => {
+    vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValueOnce(gatewayInfo())
+      .mockReturnValueOnce(metadata({ policy_source: "global" }))
+      .mockReturnValueOnce(metadata({ policy_source: "global" }));
+
+    expect(
+      verifyCreatedSandboxPolicyRegistration(
+        {
+          ...INPUT,
+          operation: "verify externally managed policy",
+          plannedAuthority: "externally-managed",
+        },
+        { readFile: vi.fn(() => POLICY) as never },
+      ),
+    ).toEqual({
+      policyAuthority: "externally-managed",
+      policyCreationReceipt: null,
+      observedPolicyAuthority: "externally-managed",
       policyIdentity: { hash: "sha256:effective", activeVersion: 4 },
     });
   });
