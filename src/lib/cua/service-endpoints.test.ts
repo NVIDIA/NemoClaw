@@ -43,21 +43,25 @@ describe("NemoCUA service endpoint projection", () => {
     expect(requireCuaServiceEndpoints(serviceEnv)).toEqual([
       {
         role: "browser",
+        targetHost: "127.0.0.1",
         path: "/",
         port: 18001,
       },
       {
         role: "computer",
+        targetHost: "localhost",
         path: "/",
         port: 18002,
       },
       {
         role: "terminal",
+        targetHost: "::1",
         path: "/",
         port: 18003,
       },
       {
         role: "fixture",
+        targetHost: "127.0.0.1",
         path: "/fixture",
         port: 18004,
       },
@@ -103,6 +107,7 @@ describe("NemoCUA service endpoint projection", () => {
       "duplicate port",
       { ...serviceEnv, [CUA_SERVICE_ENDPOINT_ENV.fixture]: "http://127.0.0.1:18001/fixture" },
     ],
+    ["unsupported role", { ...serviceEnv, NEMOCLAW_CUA_EXTRA_ENDPOINT: "http://127.0.0.1:19000/" }],
   ])("rejects %s before sandbox creation (#10289)", (_label, env) => {
     expect(() => requireCuaServiceEndpoints(env as NodeJS.ProcessEnv)).toThrow();
   });

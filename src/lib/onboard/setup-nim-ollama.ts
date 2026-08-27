@@ -217,8 +217,10 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
     if (!proceed) return "retry-selection";
 
     if (isSwitch) {
+      state.revalidatePolicyRequirements?.("switch to the Windows Ollama runtime");
       deps.switchToWindowsOllamaHost();
     } else if (isInstall) {
+      state.revalidatePolicyRequirements?.("install the Windows Ollama runtime");
       const installResult = await deps.installOllamaOnWindowsHost();
       if (!installResult.ok) {
         console.error(
@@ -229,6 +231,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
       }
       if (!deps.awaitWindowsOllamaReady()) {
         console.log("  Installer did not leave a reachable Ollama daemon; restarting it...");
+        state.revalidatePolicyRequirements?.("start the Windows Ollama runtime");
         if (!deps.setupWindowsOllamaWith0000Binding({ installedPath: installResult.path })) {
           deps.printWindowsOllamaTimeoutDiagnostics();
           if (deps.isNonInteractive()) deps.process.exit(1);
@@ -237,6 +240,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
       }
       console.log(`  ✓ Using Ollama on host.docker.internal:${deps.OLLAMA_PORT}`);
     } else {
+      state.revalidatePolicyRequirements?.("start the Windows Ollama runtime");
       if (
         !deps.setupWindowsOllamaWith0000Binding({
           announceStop: isRestart,
@@ -272,6 +276,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
     // Linux systemd service. Applying the loopback override targets an
     // unrelated local ollama.service and exits 1 (#8596, regression of #4208).
     if (!isWindowsHostOllama) {
+      state.revalidatePolicyRequirements?.("configure the local Ollama runtime");
       const overrideState = deps.ensureOllamaLoopbackSystemdOverride({
         isNonInteractive: deps.isNonInteractive,
         contextWindowFloor: state.ollamaContextWindowFloor,
@@ -285,6 +290,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
         deps.process.exit(1);
       }
     }
+    state.revalidatePolicyRequirements?.("start the local Ollama runtime");
     const startup = deps.runOllamaStartupOrGate({
       ollamaReady,
       ollamaPort: deps.OLLAMA_PORT,
@@ -328,6 +334,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
     }
     const lockedModel = preflightOllamaRoute(state, requestedModel, recoveredModel);
     const isUpgrade = ollamaInstallMenu.hasUpgradableOllama;
+    state.revalidatePolicyRequirements?.("install the local Ollama runtime");
     const installResult =
       deps.process.platform === "darwin"
         ? deps.installOllamaOnMacOS({

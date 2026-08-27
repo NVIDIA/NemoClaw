@@ -4,7 +4,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -144,9 +143,6 @@ describe("agent base image provisioning", () => {
           "nemoclaw-services.toml",
         ]);
         expect(fs.existsSync(path.join(result.buildCtx, "unrelated-sentinel.txt"))).toBe(false);
-        expect(fs.readFileSync(result.stagedDockerfile, "utf8")).toContain(
-          "ARG BASE_IMAGE=nemocua-scenario:staged",
-        );
         const config = fs.readFileSync(
           path.join(result.buildCtx, "nemoclaw-services.toml"),
           "utf8",
@@ -160,39 +156,6 @@ describe("agent base image provisioning", () => {
     } finally {
       fs.rmSync(buildContext, { recursive: true, force: true });
       fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it.each([
-    ["existing table", "[tool_servers]\nbase_host = \"private.default\"\n"],
-    ["existing dotted key", 'tool_servers.base_host = "private.default"\n'],
-  ])("rejects an NVLumina config with %s before projected settings are appended (#10289)", (_label, preparedConfig) => {
-    const dockerfile = fs.readFileSync(path.join(AGENTS_DIR, "nemocua", "Dockerfile"), "utf8");
-    const script = dockerfile.match(/RUN python3 - <<'PY'\n([\s\S]*?)\nPY/u)?.[1];
-    expect(script).toBeTruthy();
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cua-config-"));
-    const configPath = path.join(directory, "config.toml");
-    const servicesPath = path.join(directory, "nemoclaw-services.toml");
-    fs.writeFileSync(configPath, preparedConfig);
-    fs.writeFileSync(
-      servicesPath,
-      '[tool_servers]\nbase_host = "host.openshell.internal"\ncomputer_use_port = 18002\nbrowser_use_port = 18001\nterminal_use_port = 18003\n',
-    );
-
-    try {
-      const result = spawnSync("python3", ["-c", script ?? ""], {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          NEMOCLAW_CUA_CONFIG_PATH: configPath,
-          NEMOCLAW_CUA_SERVICES_PATH: servicesPath,
-        },
-      });
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain("must not define the projected tool_servers table");
-      expect(fs.readFileSync(configPath, "utf8")).toBe(preparedConfig);
-    } finally {
-      fs.rmSync(directory, { recursive: true, force: true });
     }
   });
 

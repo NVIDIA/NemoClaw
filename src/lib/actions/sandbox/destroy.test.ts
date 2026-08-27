@@ -49,6 +49,26 @@ describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
     warn.mockRestore();
   });
 
+  it("removes an orphaned NemoCUA relay after confirmed sandbox absence (#10289)", () => {
+    const stopCuaServiceRelay = vi.fn();
+
+    cleanupSandboxServices(
+      SANDBOX,
+      { stopCuaRelay: true },
+      {
+        stopAll: vi.fn(),
+        getSandbox: vi.fn(() => null),
+        rmSync: vi.fn(),
+        runOpenshell: vi.fn(() => ({ status: 0 })),
+        stopGooglechatWebhookTunnel: vi.fn(() => googlechatPidDir),
+        googlechatWebhookTunnelPidDir: vi.fn(() => googlechatPidDir),
+        stopCuaServiceRelay,
+      },
+    );
+
+    expect(stopCuaServiceRelay).toHaveBeenCalledWith(SANDBOX, true);
+  });
+
   it("removes the Google Chat PID directory after a successful tunnel stop", () => {
     const rmSync = vi.fn();
     const stopGooglechatWebhookTunnel = vi.fn(() => googlechatPidDir);

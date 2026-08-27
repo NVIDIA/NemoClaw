@@ -241,6 +241,52 @@ describe("sandbox registry metadata", () => {
     expect(persisted.sandboxes.alpha.agent).toBe("hermes");
   });
 
+  it("rechecks authority between reused metadata and default registry writes (#9833)", async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "nemoclaw-reuse-policy-authority-"));
+    process.env.HOME = tmpDir;
+    vi.resetModules();
+
+    const configDir = join(tmpDir, ".nemoclaw");
+    const registryFile = join(configDir, "sandboxes.json");
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(
+      registryFile,
+      JSON.stringify({
+        sandboxes: {
+          alpha: { name: "alpha", model: "old-model", provider: "old-provider" },
+          beta: { name: "beta", model: "model", provider: "provider" },
+        },
+        defaultSandbox: "beta",
+      }),
+    );
+
+    const helpers = await makeHelpers("docker");
+    const revalidatePolicyAuthority = vi
+      .fn<(operation: string) => void>()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("policy authority changed");
+      });
+
+    expect(() =>
+      helpers.updateReusedSandboxMetadata(
+        "alpha",
+        openclawAgent("2026.5.22"),
+        "new-model",
+        "nvidia-prod",
+        18789,
+        true,
+        null,
+        revalidatePolicyAuthority,
+      ),
+    ).toThrow("policy authority changed");
+
+    const persisted = JSON.parse(readFileSync(registryFile, "utf8"));
+    expect(persisted.sandboxes.alpha.model).toBe("new-model");
+    expect(persisted.defaultSandbox).toBe("beta");
+    expect(revalidatePolicyAuthority).toHaveBeenCalledTimes(2);
+  });
+
   it("persists a reused terminal sandbox without a dashboard port for host allocation (#7020)", async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "nemoclaw-reuse-terminal-metadata-"));
     process.env.HOME = tmpDir;

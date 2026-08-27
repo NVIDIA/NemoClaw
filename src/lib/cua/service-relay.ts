@@ -112,12 +112,6 @@ function processOwnsRelay(state: RelayState): boolean {
   }
 }
 
-function targetHost(endpoint: string): string {
-  const host = new URL(endpoint).hostname;
-  if (host === "[::1]" || host === "::1") return "::1";
-  return host === "localhost" ? host : "127.0.0.1";
-}
-
 export function stopCuaServiceRelay(sandboxName: string, removeState = false): void {
   const file = statePath(sandboxName);
   const state = readState(file);
@@ -165,12 +159,10 @@ export function ensureCuaServiceRelay(
     (key) => key.startsWith("NEMOCLAW_CUA_") && key.endsWith("_ENDPOINT"),
   );
   const requested = configured
-    ? requireCuaServiceEndpoints(env).map((endpoint) => ({
-        role: endpoint.role,
-        targetHost: targetHost(
-          env[`NEMOCLAW_CUA_${endpoint.role.toUpperCase()}_ENDPOINT`] as string,
-        ),
-        port: endpoint.port,
+    ? requireCuaServiceEndpoints(env).map(({ role, targetHost, port }) => ({
+        role,
+        targetHost,
+        port,
       }))
     : undefined;
   if (previous && requested && JSON.stringify(previous.endpoints) !== JSON.stringify(requested)) {

@@ -300,8 +300,14 @@ export function createDirectSetupInferenceHarnessFactory(
       }
       return directRunResult();
     };
-    const setupInference = createSetupInference({
+    const setupInferenceWithoutPolicyAuthority = createSetupInference({
       checkGatewayRouteCompatibility: () => ({ ok: true }),
+      withGatewayRouteMutationLock: async <T>(
+        _gatewayName: string,
+        operation: () => Promise<T> | T,
+      ) => await operation(),
+      withSandboxMutationLock: async <T>(_sandboxName: string, operation: () => Promise<T> | T) =>
+        await operation(),
       step: () => {},
       getGatewayName: () => "nemoclaw",
       runOpenshell,
@@ -378,12 +384,38 @@ export function createDirectSetupInferenceHarnessFactory(
       withOllamaModelOwnershipLock: (operation) => operation(),
       ...options.overrides,
     });
+    const revalidatePolicyRequirements = vi.fn();
+    const setupInference: SetupInference = (
+      sandboxName,
+      model,
+      provider,
+      endpointUrl,
+      credentialEnv,
+      hermesAuthMethod,
+      hermesToolGateways,
+      inferenceOptions = {},
+    ) =>
+      setupInferenceWithoutPolicyAuthority(
+        sandboxName,
+        model,
+        provider,
+        endpointUrl,
+        credentialEnv,
+        hermesAuthMethod,
+        hermesToolGateways,
+        {
+          ...inferenceOptions,
+          revalidatePolicyRequirements:
+            inferenceOptions.revalidatePolicyRequirements ?? revalidatePolicyRequirements,
+        },
+      );
     return {
       commands,
       errors,
       logs,
       runOpenshell,
       setupInference,
+      revalidatePolicyRequirements,
       unloadOllamaModels,
       updateSandbox,
       verifyInferenceRoute,

@@ -24,6 +24,9 @@ on:
       managed_image_catalog:
         required: true
         type: string
+      managed_image_revision:
+        required: true
+        type: string
       credential_boundary:
         required: true
         type: string
@@ -106,6 +109,7 @@ jobs:
     timeout-minutes: ${{ inputs.timeout_minutes }}
     env:
       E2E_JOB: "1"
+      E2E_MANAGED_IMAGE_REVISION: ${{ inputs.managed_image_revision }}
       E2E_TARGET_ID: ${{ inputs.target_id }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.candidate_sha }}

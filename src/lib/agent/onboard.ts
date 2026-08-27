@@ -63,6 +63,7 @@ export interface OnboardContext {
   recordStepComplete: (stepName: string, updates: LooseObject) => Promise<unknown>;
   recordStepFailed: (stepName: string, message: string | null) => Promise<unknown>;
   skippedStepMessage: (stepName: string, sandboxName: string) => void;
+  revalidatePolicyRequirements?: (operation: string) => void;
   now?: () => number;
   sleepSeconds?: (seconds: number) => void;
   ensureCuaServiceRelay?: (sandboxName: string) => void;
@@ -249,7 +250,9 @@ async function failAgentSetup(
   message: string,
   recordStepFailed: OnboardContext["recordStepFailed"],
   details: string[] = [],
+  revalidatePolicyRequirements?: OnboardContext["revalidatePolicyRequirements"],
 ): Promise<never> {
+  revalidatePolicyRequirements?.(`record failed agent setup for sandbox '${sandboxName}'`);
   await recordStepFailed(
     "agent_setup",
     details.length > 0 ? `${message}\n${details.join("\n")}` : message,
@@ -318,6 +321,7 @@ export async function handleAgentSetup(
     recordStepComplete,
     recordStepFailed,
     skippedStepMessage,
+    revalidatePolicyRequirements,
   } = ctx;
 
   if (agent.name === "nemocua") (ctx.ensureCuaServiceRelay ?? ensureCuaServiceRelay)(sandboxName);
@@ -328,6 +332,7 @@ export async function handleAgentSetup(
       : runCaptureOpenshell;
 
   const syncNemoClawConfig = (): void => {
+    revalidatePolicyRequirements?.(`synchronize agent configuration in sandbox '${sandboxName}'`);
     runSandboxConfigSync(sandboxName, {
       getSelectionConfig: () => {
         const cfg = getProviderSelectionConfig(provider, model);
@@ -354,9 +359,25 @@ export async function handleAgentSetup(
         const smokeResult = runAgentSmokeCommands(sandboxName, agent, runSmokeCapture);
         if (smokeResult.ok) {
           await enforceTerminalAgentVersion(sandboxName, agent, runCaptureOpenshell, {
-            beforeFailure: () => startRecordedStep("agent_setup", { sandboxName, provider, model }),
-            onFailure: (message) => failAgentSetup(sandboxName, agent, message, recordStepFailed),
+            beforeFailure: () => {
+              revalidatePolicyRequirements?.(
+                `start failed agent setup recording for sandbox '${sandboxName}'`,
+              );
+              return startRecordedStep("agent_setup", { sandboxName, provider, model });
+            },
+            onFailure: (message) =>
+              failAgentSetup(
+                sandboxName,
+                agent,
+                message,
+                recordStepFailed,
+                [],
+                revalidatePolicyRequirements,
+              ),
           });
+          revalidatePolicyRequirements?.(
+            `record resumed agent setup for sandbox '${sandboxName}'`,
+          );
           skippedStepMessage("agent_setup", sandboxName);
           await recordStepComplete("agent_setup", { sandboxName, provider, model });
           return;
@@ -380,18 +401,22 @@ export async function handleAgentSetup(
         { ignoreError: true },
       );
       if (isHealthProbeOk(result)) {
-        skippedStepMessage("agent_setup", sandboxName);
         // Re-sync `~/.nemoclaw/config.json` even on the resume skip path —
         // a rebuild destroys/recreates the container and the file reverts
         // to the Dockerfile's zero-byte placeholder. Mirrors the OpenClaw
         // path in src/lib/onboard.ts. Fixes #3999 for non-OpenClaw agents.
         syncNemoClawConfig();
+        revalidatePolicyRequirements?.(
+          `record resumed agent setup for sandbox '${sandboxName}'`,
+        );
+        skippedStepMessage("agent_setup", sandboxName);
         await recordStepComplete("agent_setup", { sandboxName, provider, model });
         return;
       }
     }
   }
 
+  revalidatePolicyRequirements?.(`start agent setup for sandbox '${sandboxName}'`);
   await startRecordedStep("agent_setup", { sandboxName, provider, model });
   step(7, 8, `Setting up ${agent.displayName} inside sandbox`);
 
@@ -402,6 +427,8 @@ export async function handleAgentSetup(
       agent,
       describeAgentBinaryFailure(sandboxName, agent, binaryAvailability),
       recordStepFailed,
+      [],
+      revalidatePolicyRequirements,
     );
   }
 
@@ -416,11 +443,21 @@ export async function handleAgentSetup(
         `${agent.displayName} terminal smoke command failed: ${smokeResult.command}`,
         recordStepFailed,
         smokeResult.output ? [String(redact(smokeResult.output)).slice(0, 500)] : [],
+        revalidatePolicyRequirements,
       );
     }
     await enforceTerminalAgentVersion(sandboxName, agent, runCaptureOpenshell, {
-      onFailure: (message) => failAgentSetup(sandboxName, agent, message, recordStepFailed),
+      onFailure: (message) =>
+        failAgentSetup(
+          sandboxName,
+          agent,
+          message,
+          recordStepFailed,
+          [],
+          revalidatePolicyRequirements,
+        ),
     });
+    revalidatePolicyRequirements?.(`record completed agent setup for sandbox '${sandboxName}'`);
     console.log(`  \u2713 ${agent.displayName} terminal runtime is ready`);
     await recordStepComplete("agent_setup", { sandboxName, provider, model });
     return;
@@ -452,6 +489,7 @@ export async function handleAgentSetup(
       },
     });
     if (healthy) {
+      revalidatePolicyRequirements?.(`record completed agent setup for sandbox '${sandboxName}'`);
       console.log(`  \u2713 ${agent.displayName} gateway is healthy`);
     } else {
       const diagnostics =
@@ -464,9 +502,11 @@ export async function handleAgentSetup(
         `${agent.displayName} gateway did not respond within ${timeoutSecs}s`,
         recordStepFailed,
         diagnostics,
+        revalidatePolicyRequirements,
       );
     }
   } else {
+    revalidatePolicyRequirements?.(`record completed agent setup for sandbox '${sandboxName}'`);
     console.log(`  \u2713 ${agent.displayName} configured inside sandbox`);
   }
 

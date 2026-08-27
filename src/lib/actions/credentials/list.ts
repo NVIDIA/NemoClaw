@@ -3,7 +3,6 @@
 
 import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
-import { CLI_NAME } from "../../cli/branding";
 import { recoverGatewayOrExit } from "../../credentials/command-support";
 import { parseGatewayProviderNames } from "../../credentials/provider-list";
 import { gatewayStartGuidance } from "../../gateway-start-guidance";
@@ -18,7 +17,7 @@ function fail(failureLines: readonly string[]): CredentialsListResult {
   return { exitCode: 1, outputLines: [], failureLines };
 }
 
-export async function runCredentialsListAction(): Promise<CredentialsListResult> {
+export async function runCredentialsListAction(cliName: string): Promise<CredentialsListResult> {
   const recoveryFailureLines: string[] = [];
   const recovered = await recoverGatewayOrExit("query", (lines) => {
     recoveryFailureLines.push(...lines);
@@ -49,7 +48,7 @@ export async function runCredentialsListAction(): Promise<CredentialsListResult>
     outputLines.push(
       "",
       `  ${String(bridgeNames.length)} per-sandbox messaging bridge(s) are also registered.`,
-      `  Manage those with \`${CLI_NAME} <sandbox> channels list/remove/stop\` — not this command.`,
+      `  Manage those with \`${cliName} <sandbox> channels list/remove/stop\` — not this command.`,
     );
   }
   return { exitCode: 0, outputLines, failureLines: [] };

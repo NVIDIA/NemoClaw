@@ -12,6 +12,8 @@ import {
 } from "../helpers/vitest-watch-triggers";
 
 const E2E_WORKFLOW_CONTRACTS = [
+  "test/e2e/support/base-image-publication-workflow-boundary.test.ts",
+  "test/e2e/support/cli-artifact-workflow-boundary.test.ts",
   "test/e2e/support/dcode-profile-import-gate-workflow-boundary.test.ts",
   "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
   "test/e2e/support/e2e-host-dependency-workflow-boundary.test.ts",
@@ -27,6 +29,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
   "test/e2e/support/mcp-workflow-boundary.test.ts",
   "test/e2e/support/mcp-workflow-compatibility.test.ts",
+  "test/e2e/support/native-runtime-qualification-producer-workflow.test.ts",
   "test/e2e/support/openclaw-plugin-runtime-exdev-workflow-boundary.test.ts",
   "test/e2e/support/onboard-timeout-contract.test.ts",
   "test/e2e/support/openshell-gateway-auth-contract-workflow-boundary.test.ts",
@@ -230,6 +233,7 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy("agents/hermes/mcp-config-transaction.py")).toEqual([
       "src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts",
+      "test/agents/hermes/hermes-mcp-credential-revision.test.ts",
     ]);
     expect(triggeredBy("test/e2e/lib/ci-compatible-inference.sh")).toEqual([
       "test/e2e/support/hosted-inference.test.ts",
@@ -260,6 +264,11 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".github/actions/build-base-image-platform/action.yaml")).toEqual([
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
       "test/agents/openclaw/openclaw-dependency-review.test.ts",
+      "test/inference/managed/managed-image-publication-workflow.test.ts",
+    ]);
+    expect(triggeredBy(".github/actions/publish-base-image-manifest/action.yaml")).toEqual([
+      "test/inference/managed/managed-image-publication-workflow.test.ts",
+      "test/platform/images/publish-base-image-manifest.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/base-image-platform.yaml")).toEqual([
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
@@ -327,10 +336,9 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy(".github/workflows/pr-review-advisor.yaml")).toEqual([
       "test/automation/pull-requests/pr-review-advisor-workflow-boundary.test.ts",
-      "test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts",
     ]);
     expect(triggeredBy("tools/pr-review-advisor/openshell-policy.yaml")).toEqual([
-      "test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test/automation/pull-requests/pr-review-advisor-workflow-boundary.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/hosted-runner-recovery.yaml")).toEqual([
       "test/automation/pull-requests/hosted-runner-recovery-workflow.test.ts",

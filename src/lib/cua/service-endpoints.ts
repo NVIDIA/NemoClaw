@@ -17,6 +17,7 @@ export const CUA_SERVICE_ENDPOINT_ENV = {
 
 export interface CuaServiceEndpoint {
   role: CuaServiceRole;
+  targetHost: "127.0.0.1" | "localhost" | "::1";
   path: string;
   port: number;
 }
@@ -56,13 +57,29 @@ function parseServiceEndpoint(role: CuaServiceRole, raw: string): CuaServiceEndp
       `${CUA_SERVICE_ENDPOINT_ENV[role]} must use the root path required by the pinned NVLumina tool-server contract`,
     );
   }
-  return { role, path: endpointPath, port };
+  const hostname = parsed.hostname.toLowerCase();
+  const targetHost = hostname === "::1" || hostname === "[::1]" ? "::1" : hostname;
+  return {
+    role,
+    targetHost: targetHost as CuaServiceEndpoint["targetHost"],
+    path: endpointPath,
+    port,
+  };
 }
 
 /** Read the closed four-service host adapter contract when NemoCUA is enabled. */
 export function requireCuaServiceEndpoints(
   env: NodeJS.ProcessEnv = process.env,
 ): readonly CuaServiceEndpoint[] {
+  const supported = new Set(Object.values(CUA_SERVICE_ENDPOINT_ENV));
+  const unsupported = Object.keys(env).find(
+    (name) =>
+      name.startsWith("NEMOCLAW_CUA_") &&
+      name.endsWith("_ENDPOINT") &&
+      !supported.has(name as never),
+  );
+  if (unsupported) throw new Error(`${unsupported} is not a supported NemoCUA service endpoint`);
+
   const endpoints = CUA_SERVICE_ROLES.map((role) => {
     const raw = env[CUA_SERVICE_ENDPOINT_ENV[role]];
     if (typeof raw !== "string") {

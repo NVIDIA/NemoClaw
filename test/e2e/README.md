@@ -303,11 +303,11 @@ The execution profile owns the credentials available to its target step:
 - `brave-nvidia-inference` displays `Brave and NVIDIA inference API keys` and receives `BRAVE_API_KEY` and `NVIDIA_INFERENCE_API_KEY` on trusted `main` runs and authenticated NVIDIA-owned PR runs.
 
 `common-egress-agent` runs 4 isolated scenario shards.
-The Personal stock-price shard exercises ordinary onboarding with an explicit Personal selection; it does not exercise Portable profile selection.
-It uses OpenClaw as one representative agent witness, runs with `nvidia-inference`, sets web search to `none`, and receives no Brave Search or Tavily Search API key.
-The Personal stock assertion disables the ordinary agent-attempt shell artifact because OpenClaw stdout can contain the complete source URL.
-Raw OpenClaw session and trajectory JSONL stay inside the sandbox; uploaded evidence contains only the price and source date, the source hostname and protocol, and bounded reduced evidence such as tool names, public target hosts, provider labels, final statuses, and quote-match booleans.
-The live assertions require `web_fetch`, reject `web_search` and search-provider use, permit public access from curl and Python, and deny loopback and link-local targets.
+The Personal public-fetch shard exercises ordinary onboarding with an explicit Personal selection; it does not exercise Portable profile selection.
+It uses OpenClaw as one representative agent witness, runs with `nvidia-inference`, sets web search to `none`, and receives neither a Brave Search nor a Tavily Search API key.
+The Personal agent assertion disables the ordinary agent-attempt shell artifact because OpenClaw stdout can contain fetched content and the complete URL. OpenShell SSH configuration stays in a private temporary file outside the artifact directory. The assertion attempts removal after it finishes and fails if the directory remains. A failed agent attempt retains only schema metadata, the attempt number, failure class, exit code, signal, timeout state, and one allowlisted diagnostic summary.
+Raw OpenClaw session and trajectory JSONL stay inside the sandbox. Reduced agent evidence artifacts retain schema metadata, the source hostname and protocol, bounded aggregate counts, and status booleans while omitting fetched content, complete URLs and queries, tool names, and provider values.
+The live assertions require `web_fetch` for one fixed public reference, reject `web_search` and Brave Search or Tavily Search use, permit public access from curl, and deny loopback and link-local targets.
 
 GitHub Actions renders each catalogue execution as `<display name> / <credential boundary>`.
 All catalogue profiles call `.github/workflows/e2e-standard-profile.yaml`.
@@ -435,15 +435,29 @@ qualification target for epic #8178. It exercises an operator-supplied native
 Windows OpenShell package and a staged OpenClaw artifact through the OpenShell
 `process_container` driver. It does not register MXC, call `wxc-exec.exe`
 directly, or establish Windows support.
-The generated driver configuration requests the stricter less-privileged
-AppContainer mode and records that choice in the receipt.
+The generated driver configuration records the exact prototype configuration
+qualified by this target: normal AppContainer mode,
+`privateNetworkClientServer`, the host egress proxy, and an exact
+operator-supplied supervisor relay. This configuration broadens the candidate
+sandbox relative to the earlier less-privileged probe and is not a production
+default.
 
 The target requires a Windows x64 host that passes the minimum MXC candidate
 check. It rejects a dirty NemoClaw checkout and requires exact expected
-identities for that checkout, the OpenShell CLI and gateway, the
-OpenShell-supplied `wxc-exec.exe`, the complete OpenClaw artifact tree, Node.js,
-and the OpenClaw entrypoint. Compute the canonical artifact-tree digest after
-staging:
+identities for that checkout, the OpenShell CLI, gateway, supervisor relay,
+OpenShell-supplied `wxc-exec.exe`, complete OpenClaw artifact tree, Node.js, and
+OpenClaw entrypoint. The target also requires an existing work root and records
+the operator's exact host-preparation declaration. It observes whether the test
+process is elevated but does not change host ACLs or elevation. Compute the
+canonical artifact-tree digest after staging:
+
+The OpenClaw artifact, share, and host-state directories must be fresh siblings
+directly beneath the declared drive root. This matches the current package's
+shallow-share requirement and the qualified workaround for MXC parent-path
+traversal. The generated agent environment redirects `TEMP` and `TMP` into a
+test-owned directory beneath the writable share; it does not expose the host
+temporary directory to the sandbox. Host-only configuration remains outside
+the sandbox share.
 
 ```powershell
 npx tsx tools/e2e/windows-mxc-openclaw-artifact-tree.mts $env:NEMOCLAW_WINDOWS_MXC_OPENCLAW_ROOT
@@ -454,17 +468,21 @@ values. Do not put credentials in them.
 
 | Variable | Meaning |
 | --- | --- |
-| `E2E_ARTIFACT_DIR` | Existing directory for the secret-free qualification receipt |
+| `E2E_ARTIFACT_DIR` | Existing directory outside the NemoClaw checkout for secret-free qualification receipts |
 | `NEMOCLAW_E2E_EXPECTED_SHA` | Exact 40-character NemoClaw checkout revision |
 | `NEMOCLAW_WINDOWS_MXC_OPENSHELL_CLI` | Extracted `openshell.exe` path |
 | `NEMOCLAW_WINDOWS_MXC_OPENSHELL_GATEWAY` | Extracted `openshell-gateway.exe` path |
+| `NEMOCLAW_WINDOWS_MXC_OPENSHELL_RELAY` | Extracted `openshell-supervisor-relay.exe` path from the same package |
 | `NEMOCLAW_WINDOWS_MXC_WXC_EXEC` | `wxc-exec.exe` supplied for that OpenShell package |
 | `NEMOCLAW_WINDOWS_MXC_OPENSHELL_VERSION` | Exact OpenShell package version |
 | `NEMOCLAW_WINDOWS_MXC_OPENSHELL_REVISION` | Exact 40-character OpenShell source revision |
 | `NEMOCLAW_WINDOWS_MXC_OPENSHELL_CLI_SHA256` | Expected OpenShell CLI SHA-256 |
 | `NEMOCLAW_WINDOWS_MXC_OPENSHELL_GATEWAY_SHA256` | Expected OpenShell gateway SHA-256 |
+| `NEMOCLAW_WINDOWS_MXC_OPENSHELL_RELAY_SHA256` | Expected OpenShell supervisor relay SHA-256 |
 | `NEMOCLAW_WINDOWS_MXC_WXC_EXEC_SHA256` | Expected `wxc-exec.exe` SHA-256 |
-| `NEMOCLAW_WINDOWS_MXC_OPENCLAW_ROOT` | Staged native OpenClaw artifact root |
+| `NEMOCLAW_WINDOWS_MXC_HOST_PREPARATION` | Exact declaration `wxc-host-prep-prepare-system-drive`; the target records but does not perform or verify this persistent host mutation |
+| `NEMOCLAW_WINDOWS_MXC_WORK_ROOT` | Existing Windows drive root for fresh, test-owned sibling share and host-state directories |
+| `NEMOCLAW_WINDOWS_MXC_OPENCLAW_ROOT` | Staged native OpenClaw artifact root directly beneath the declared drive root |
 | `NEMOCLAW_WINDOWS_MXC_NODE` | Node.js executable beneath the artifact root |
 | `NEMOCLAW_WINDOWS_MXC_OPENCLAW_ENTRY` | OpenClaw entrypoint beneath the artifact root |
 | `NEMOCLAW_WINDOWS_MXC_OPENCLAW_VERSION` | Expected OpenClaw version |
@@ -472,23 +490,25 @@ values. Do not put credentials in them.
 | `NEMOCLAW_WINDOWS_MXC_NODE_SHA256` | Expected Node.js SHA-256 |
 | `NEMOCLAW_WINDOWS_MXC_OPENCLAW_ENTRY_SHA256` | Expected OpenClaw entrypoint SHA-256 |
 
-The target creates a random OpenClaw gateway token for readiness checks. It
-passes that token through the MXC agent environment; current OpenShell
+The target creates a random OpenClaw gateway token for readiness, forwarding,
+and chat checks. It passes that token through the MXC agent environment. Current OpenShell
 `process_container` packaging can therefore expose its encoded configuration,
 including the token, to privileged host process inspection while `wxc-exec.exe`
 starts the sandbox. The token is never written to the receipt or supplied in
 the OpenClaw command arguments, is not reused, and is useful only for the
-temporary loopback OpenClaw gateway. Cleanup attempts sandbox deletion, stops
+temporary loopback OpenClaw gateway. The host client uses a temporary config
+file that is deleted before a passing receipt is written. Cleanup attempts sandbox deletion, stops
 the recorded OpenClaw process, clears the in-memory environment value, and
-removes the runtime home, state, configuration, and gateway logs. A direct
+removes both test-owned run directories, including the MXC agent environment
+file, runtime home, state, configuration, and gateway logs. A direct
 process-tree termination is an emergency cleanup fallback only. The host-side
 OpenShell processes receive an allowlist of Windows runtime variables rather
 than the complete caller environment. Before using a termination fallback,
 the host binds the process ID to the expected executable, command arguments,
 and creation time. For OpenClaw, it also validates the probe-parent ancestry.
 The host rejects a mismatched or reused PID. The fallback uses the
-`taskkill.exe` beneath the validated Windows system root. If either the
-OpenClaw process or OpenShell gateway needs that fallback, the qualification
+`taskkill.exe` beneath the validated Windows system root. If the OpenClaw
+process, OpenShell forward, or OpenShell gateway needs that fallback, the qualification
 fails. The delete retry and process-termination paths are failure containment,
 not compatibility workarounds that permit a passing result; their presence does
 not assume a specific upstream defect. Remove them only when failed or partial
@@ -504,13 +524,51 @@ npx vitest run --project e2e-live test/e2e/live/windows-mxc-openclaw-process-con
 ```
 
 The target verifies OpenClaw startup and in-sandbox health, read-write and denied
-filesystem behavior, registry cleanup, and termination of the recorded
-OpenClaw process on sandbox delete. After preflight and local setup succeed, it
+filesystem behavior, an authenticated host-loopback forward, and one
+provider-credential-free mock-backed agent turn that returns exactly `CHAT_OK`. It keeps
+the forward active while deleting the sandbox and requires the listener,
+forward process, sandbox registry entry, and recorded OpenClaw process to stop.
+The target starts forwarding only after in-sandbox OpenClaw health, the exact
+OpenClaw process identity, filesystem enforcement, and the sandbox registry
+entry pass. After the owned host listener appears, the target makes at most 12
+authenticated health observations at one-second intervals. It observes again
+only while the owned forward process remains active and OpenClaw reports a
+nonzero structured transport error with kind `closed`, code `1006`, and reason
+`no close reason`. Authentication, authorization, policy, timeout,
+malformed-output, forward-process exit, and all other failures stop the qualification. The
+target writes a secret-free `windows-mxc-forward-health-readiness-<run-id>.json`
+artifact with the bound, delay, sanitized attempt outcomes, and final result.
+It does not inspect OpenShell terminal wording or repeat the forward mutation.
+The complete create, forward, chat, and cleanup flow runs twice to detect stale
+state. After preflight and local setup succeed, it
 writes a secret-free receipt for either verdict and records whether sensitive
-runtime artifacts were removed. When that cleanup succeeds, a failed run retains
-only non-sensitive probe files for diagnosis.
-Gateway mTLS, governed egress, managed inference, gateway-restart recovery, and
-production activation remain outside this target.
+runtime artifacts were removed. Receipt schema version 3 also classifies startup
+as not observed, spawn failed, exited before readiness, health timeout, or ready.
+The ready outcome means that the in-sandbox health probe succeeded.
+It does not mean that the qualification passed.
+Use `verdict` and `startup.versionExitCode` to diagnose the result.
+A nonzero version exit code produces a failed qualification.
+It retains only bounded numeric child and version exit codes; it does not retain
+child output, error text, command arguments, paths, or credentials. Cleanup
+removes both test-owned run directories for every verdict because MXC can write
+the temporary gateway token to its agent environment file. A failed run retains
+the secret-free receipt and any secret-free forward-readiness artifact written
+before the failure.
+The host-preparation declaration is operator evidence, not an ACL attestation.
+Gateway mTLS, governed egress policy enforcement, managed inference,
+gateway-restart recovery, standard-user operation, and production activation
+remain outside this target.
+
+If a failed receipt has a non-null `cleanup.retainedSandboxName`, OpenShell did
+not confirm removal of that exact sandbox. The retained process environment can
+hold the temporary gateway token until sandbox deletion is confirmed. Inspect
+the registry and delete only the recorded name:
+
+```powershell
+$receipt = Get-Content "C:\path\to\receipt.json" -Raw | ConvertFrom-Json
+& $env:NEMOCLAW_WINDOWS_MXC_OPENSHELL_CLI sandbox list -o json
+& $env:NEMOCLAW_WINDOWS_MXC_OPENSHELL_CLI sandbox delete $receipt.cleanup.retainedSandboxName
+```
 
 The retired `hermes-dashboard` selector remains a compatibility alias for
 `hermes-e2e` in both selector inputs. Reports use the canonical
@@ -916,7 +974,7 @@ An ordinary assertion failure, mixed failure set, incomplete listing, custom or 
 For eligible `E2E main` push runs, `E2E / Main Retry Evidence` records `passed-first-attempt`, `passed-after-retry`, `failed-no-retry`, or `ignored` without requesting a workflow rerun.
 A failed job can represent a deterministic product assertion, authentication or authorization failure, policy denial, malformed input, ambiguous mutation, cleanup failure, or an external transient.
 GitHub job conclusions do not distinguish those classes, so a broad failed-job rerun is not authorized evidence.
-External operations use the checked-in retry inventory and an explicit bounded policy; new shared paths use the bounded operation helper.
+External operations use an explicit bounded retry policy at the operation level; new shared paths use the bounded operation helper.
 Operation-level retry artifacts retain each attempt.
 Hosted runner loss remains owned by `Automation / Recover Platform CI Runner`.
 The observer ignores manual source runs and source runs superseded by a newer `main` push, checks out only trusted default-branch code, and receives no repository secrets.
@@ -952,7 +1010,7 @@ concrete job executions.
 
 The two extra instrumented executions come from the 3 `common-egress-agent`
 scenario shards that enable runner comparison.
-The Personal stock-price shard runs without runner-comparison telemetry.
+The Personal public-fetch shard runs without runner-comparison telemetry.
 The OpenClaw matrix entries for `mcp-bridge`,
 `channels-stop-start`, and `security-posture` are not instrumented.
 The #7145 standard-versus-larger-runner cohort compares the same lane and
