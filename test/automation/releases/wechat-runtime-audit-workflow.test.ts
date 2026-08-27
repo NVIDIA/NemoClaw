@@ -281,6 +281,9 @@ describe("WeChat runtime audit and install-cache gates (#5896)", () => {
           { output: "verified signatures", status: 0 },
         ],
       );
+      fs.writeFileSync(path.join(targetRoot, "bin", "sleep"), "#!/bin/sh\nexit 0\n", {
+        mode: 0o755,
+      });
     });
 
     expect(result.status, result.stderr).toBe(0);
