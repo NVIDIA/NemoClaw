@@ -204,7 +204,7 @@ describe("runtime state mutation controller", () => {
     });
   });
 
-  it("records release intent before resuming exact writers and leaves PID1 to host authority (#9485)", () => {
+  it("records release intent before resuming exact writers and waits for parent acknowledgement (#10155)", () => {
     expect(harnessResult).toMatchObject({
       release: "activation-proven",
       released_marker: true,
@@ -224,11 +224,13 @@ describe("runtime state mutation controller", () => {
       ["resume", 10],
       ["resume", 1],
       ["health"],
+      ["release-ack"],
     ]);
     expect(harnessResult.release_retry_events).toEqual([
       ["verify-checkpoint"],
       ["release-receipt"],
       ["health"],
+      ["release-ack"],
     ]);
     expect(harnessResult.transient_exit_release_events).toEqual([
       ["verify-checkpoint"],
@@ -239,6 +241,7 @@ describe("runtime state mutation controller", () => {
       ["resume", 10],
       ["resume", 1],
       ["health"],
+      ["release-ack"],
     ]);
     expect(harnessResult.persistent_exit_release).toBe("activation-process-drift");
     const events = harnessResult.state_events as unknown[][];

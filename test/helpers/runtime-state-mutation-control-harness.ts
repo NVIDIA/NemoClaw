@@ -973,6 +973,7 @@ with tempfile.TemporaryDirectory() as root:
 
 release_states = {1: "T", 10: "T", 75: "T", 76: "T", 77: "T", 78: "T"}
 release_events = []
+control._wait_for_startup_release_ack = lambda *_args: release_events.append(["release-ack"])
 def state_process(original):
     return control.ProcessIdentity(
         original.pid,
