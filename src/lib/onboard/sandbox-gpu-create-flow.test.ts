@@ -353,9 +353,9 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     const deps = createDeps();
     const adapterOverride = {} as never;
     deps.createManagedBootstrapAdapter = vi.fn(() => adapterOverride);
-    deps.runOpenshell = vi.fn(() => readySandboxGetResult("mxc-alpha"));
+    deps.runOpenshell = vi.fn(() => readySandboxGetResult("alpha-sandbox-id"));
     vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
-      args[1] === "get" ? "ID: mxc-alpha\n" : "alpha Ready",
+      args[1] === "get" ? "ID: alpha-sandbox-id\n" : "alpha Ready",
     );
     recoverUnfinished.mockRejectedValueOnce(new Error("unfinished recovery failed"));
 

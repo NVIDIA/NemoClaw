@@ -213,7 +213,7 @@ function createStatefulMessagingProviderRunner({
       return {
         status: 0,
         stdout: Buffer.from(
-          `Name: ${readySandboxName}\nId: fixture-created-sandbox\nPhase: Ready\n`,
+          `Name: ${readySandboxName}\nId: sbx-4f2a91c0d7\nPhase: Ready\n`,
         ),
         stderr: Buffer.alloc(0),
       };
@@ -355,7 +355,7 @@ function mockCreatedSandboxIdentityList(command, options = {}) {
   if (!selector.startsWith(prefix)) return null;
   const nonce = selector.slice(prefix.length);
   publishedCreatedSandboxIdentity = {
-    id: options.sandboxId || "fixture-created-sandbox",
+    id: options.sandboxId || "sbx-4f2a91c0d7",
     name: options.sandboxName || "my-assistant",
     labels: { "ai.nvidia.nemoclaw.create-attempt": nonce },
     resource_version: 1,
@@ -651,7 +651,7 @@ function managedSandboxPolicyReceiptFixture(entry, options = {}) {
   const gatewayName = options.gatewayName || "nemoclaw";
   const gatewayPort = options.gatewayPort || 8080;
   const lifecycleGeneration = options.lifecycleGeneration || "123e4567-e89b-42d3-a456-426614174983";
-  const sandboxId = options.sandboxId || "fixture-created-sandbox";
+  const sandboxId = options.sandboxId || "sbx-4f2a91c0d7";
   const sandboxIdentityFingerprint = require("node:crypto")
     .createHash("sha256")
     .update(sandboxId)
@@ -932,7 +932,7 @@ function mockManagedImageBootstrap() {
     path.resolve(__dirname, "../../src/lib/adapters/openshell/sandbox-identity.ts"),
   );
 
-  sandboxIdentity.resolveOpenShellSandboxId = () => "fixture-created-sandbox";
+  sandboxIdentity.resolveOpenShellSandboxId = () => "sbx-4f2a91c0d7";
   authorityStore.createDockerManagedBootstrapAuthorityStore = () => ({
     async recordPreparedAuthority(authority) {
       return {
