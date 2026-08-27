@@ -8,11 +8,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   isLifecycleLockHeld: vi.fn(),
   inspect: vi.fn(),
+  inspectClassification: vi.fn(),
   readRegistry: vi.fn(),
   buildOpenShellCommandAuthority: vi.fn(),
   buildOpenShellEnv: vi.fn(),
   assertHermesAuthority: vi.fn(),
   recoverHermes: vi.fn(),
+  requalifyHermes: vi.fn(),
+  qualifyOperatingAuthority: vi.fn(),
   recoverOpenClaw: vi.fn(),
   stopHermes: vi.fn(),
   stopOpenClaw: vi.fn(),
@@ -24,13 +27,18 @@ vi.mock("../../state/mcp-lifecycle-lock-acquisition", () => ({
 
 vi.mock("./hermes-portable-receipt", () => ({
   inspectPortableAgentReceiptAuthority: mocks.inspect,
+  inspectPortableAgentReceiptAuthorityForClassification: mocks.inspectClassification,
 }));
 vi.mock("./hermes-portable-lifecycle", () => ({
   assertHermesPortableSandboxLifecycleAuthority: mocks.assertHermesAuthority,
   buildHermesPortableOpenShellCommandAuthority: mocks.buildOpenShellCommandAuthority,
   buildHermesPortableOpenShellEnv: mocks.buildOpenShellEnv,
   recoverHermesPortableSandboxLifecycle: mocks.recoverHermes,
+  requalifyHermesPortableSandboxAuthority: mocks.requalifyHermes,
   stopHermesPortableSandboxLifecycle: mocks.stopHermes,
+}));
+vi.mock("./hermes-portable-operating-authority", () => ({
+  qualifyHermesPortableOperatingAuthority: mocks.qualifyOperatingAuthority,
 }));
 vi.mock("./portable-demo-lifecycle", () => ({
   recoverPortableDemoSandboxLifecycle: mocks.recoverOpenClaw,
@@ -45,6 +53,7 @@ import {
   inspectPortableAgentReceiptDisposition,
   qualifyPortableAgentLifecycleAuthority,
   recoverPortableAgentSandboxLifecycle,
+  requalifyPortableAgentSandboxAuthority,
   requireHermesPortableActiveLifecycleAuthority,
   stopPortableAgentSandboxLifecycle,
 } from "./portable-agent-lifecycle";
@@ -106,6 +115,7 @@ const lifecycleAuthorityDeps = {
 describe("portable agent lifecycle dispatch", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.inspectClassification.mockImplementation((...args) => mocks.inspect(...args));
     mocks.buildOpenShellEnv.mockImplementation(
       (env: NodeJS.ProcessEnv, authority: Record<string, string>) => ({
         PATH: env.PATH,
@@ -121,7 +131,50 @@ describe("portable agent lifecycle dispatch", () => {
       env: { HOME: "/home/test" },
       executablePath: "/usr/bin/openshell",
     });
+    mocks.qualifyOperatingAuthority.mockImplementation((snapshot) => ({
+      receipt: snapshot.receipt,
+      assertCurrent: vi.fn(),
+    }));
     mocks.readRegistry.mockReturnValue(null);
+  });
+
+  it("directs copied active schema-5 authority to probe instead of migrating on launch (#10423)", () => {
+    mocks.isLifecycleLockHeld.mockReturnValue(true);
+    mocks.inspectClassification.mockReturnValue({
+      kind: "hermes",
+      snapshot: { receipt: { phase: "active" } },
+    });
+    mocks.inspect.mockImplementation(() => {
+      throw new Error("durable policy source disagrees with its receipt authority");
+    });
+
+    expect(() => buildHermesPortableCommandAuthority("alpha", {}, "/state")).toThrow(
+      "nemoclaw alpha connect --probe-only",
+    );
+    expect(mocks.requalifyHermes).not.toHaveBeenCalled();
+  });
+
+  it("routes probe-only schema migration to the exact Hermes lifecycle owner (#10423)", () => {
+    mocks.inspect.mockReturnValue(hermes("active"));
+    mocks.readRegistry.mockReturnValue(hermesRegistryEntry({ provider: "ollama-local" }));
+    mocks.requalifyHermes.mockReturnValue({ kind: "migrated" });
+
+    expect(
+      requalifyPortableAgentSandboxAuthority("alpha", {
+        ...lifecycleAuthorityDeps,
+        stateDir: "/state",
+      }),
+    ).toEqual({ kind: "migrated" });
+    expect(mocks.requalifyHermes).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        agent: "hermes",
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "generation-1",
+      }),
+      expect.objectContaining({ stateDir: "/state" }),
+    );
+    expect(mocks.recoverOpenClaw).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -148,6 +201,26 @@ describe("portable agent lifecycle dispatch", () => {
       });
     },
   );
+
+  it("uses operation-local schema-6 authority for a direct command (#10423)", () => {
+    const historical = hermes("active").snapshot.receipt;
+    const current = { ...historical, socketAuthority: { dev: "current" } };
+    const assertCurrent = vi.fn();
+    mocks.inspect.mockReturnValue({
+      kind: "hermes",
+      snapshot: { receipt: historical, successor: { receipt: { schemaVersion: 6 } } },
+    });
+    mocks.qualifyOperatingAuthority.mockReturnValue({ receipt: current, assertCurrent });
+
+    expect(buildHermesPortableCommandAuthority("alpha", { HOME: "/home/test" }, "/state")).toEqual({
+      env: { HOME: "/home/test" },
+      executablePath: "/usr/bin/openshell",
+    });
+    expect(mocks.buildOpenShellCommandAuthority).toHaveBeenCalledWith(current, {
+      HOME: "/home/test",
+    });
+    expect(assertCurrent).toHaveBeenCalledOnce();
+  });
 
   it("permits an incomplete receipt without a registry row and rejects active absence (#9203)", () => {
     mocks.inspect.mockReturnValue(hermes("pending"));

@@ -12,8 +12,10 @@ import {
   OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS,
   type OpenClawPairingSettlementObservation,
 } from "../../actions/sandbox/launch-readiness/openclaw-pairing-qualification";
-import { WARMUP_TIMEOUT_MS } from "../../actions/sandbox/auto-pair-warmup";
-import { CONNECT_AUTO_PAIR_TIMEOUT_MS } from "../../actions/sandbox/connect-autopair-budget";
+import {
+  WARMUP_TIMEOUT_MS,
+  WATCHER_STATUS_TIMEOUT_MS,
+} from "../../actions/sandbox/auto-pair-warmup";
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import {
@@ -59,10 +61,13 @@ function ordinaryPairingDeps(
     observePairing: vi.fn(() => SETTLED),
     runWarmup: vi.fn(() => {
       calls.push("warmup");
+      return "request-issued" as const;
     }),
-    runApproval: vi.fn(() => {
-      calls.push("approval");
-    }),
+    readWatcherStatus: vi.fn(() => ({
+      schemaVersion: 1 as const,
+      state: "request-observed" as const,
+      watcherActive: true,
+    })),
     withSandboxLock: vi.fn(async (_name, operation) => operation()),
     withGatewayLock: vi.fn(async (_gatewayName, operation) => operation()),
     now: vi.fn(() => now),
@@ -94,7 +99,6 @@ describe("ordinary OpenClaw pairing settlement", () => {
       "/sandbox/.openclaw",
     );
     expect(scope.deps.runWarmup).not.toHaveBeenCalled();
-    expect(scope.deps.runApproval).not.toHaveBeenCalled();
   });
 
   it("reuses an exact pending upgrade without running another producer (#10014)", async () => {
@@ -110,12 +114,11 @@ describe("ordinary OpenClaw pairing settlement", () => {
     });
 
     expect(scope.deps.runWarmup).not.toHaveBeenCalled();
-    expect(scope.deps.runApproval).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
   });
 
-  it("runs the canonical request probe before waiting for fresh pairing (#10014)", async () => {
+  it("waits for canonical pairing before running the request probe (#10269)", async () => {
     const observePairing = vi
-      .fn(() => SCOPE_UPGRADE_PENDING)
+      .fn(() => SETTLED)
       .mockImplementationOnce(() => {
         throw new Error("not published");
       })
@@ -124,10 +127,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
       observePairing,
       runWarmup: vi.fn(() => {
         scope.calls.push("warmup");
-      }),
-      runApproval: vi.fn(() => {
-        scope.calls.push("approval");
-        vi.mocked(scope.deps.observePairing).mockReturnValue(SETTLED);
+        return "request-issued" as const;
       }),
     });
 
@@ -135,12 +135,11 @@ describe("ordinary OpenClaw pairing settlement", () => {
       kind: "settled",
     });
 
-    expect(scope.calls).toEqual(["warmup", "sleep", "approval"]);
+    expect(scope.calls).toEqual(["warmup"]);
     expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
-    expect(scope.deps.runApproval).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
   });
 
-  it("stops before the request producer and approval when authority changes during pairing observation (#9833)", async () => {
+  it("stops before the request producer when authority changes during pairing observation (#9833)", async () => {
     let revalidatePolicyRequirements = () => undefined;
     const scope = ordinaryPairingDeps({
       observePairing: vi.fn(() => {
@@ -157,7 +156,6 @@ describe("ordinary OpenClaw pairing settlement", () => {
     );
 
     expect(scope.deps.runWarmup).not.toHaveBeenCalled();
-    expect(scope.deps.runApproval).not.toHaveBeenCalled();
   });
 
   it("does not publish settled pairing when authority changes during observation (#9833)", async () => {
@@ -177,7 +175,6 @@ describe("ordinary OpenClaw pairing settlement", () => {
     );
 
     expect(scope.deps.runWarmup).not.toHaveBeenCalled();
-    expect(scope.deps.runApproval).not.toHaveBeenCalled();
   });
 
   it("holds lifecycle then gateway-route ownership across the full settlement (#9844)", async () => {
@@ -199,9 +196,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
         }),
       runWarmup: vi.fn(() => {
         events.push("warmup");
-      }),
-      runApproval: vi.fn(() => {
-        events.push("approval");
+        return "request-issued" as const;
       }),
       withSandboxLock: vi.fn(async (_name, operation) => {
         events.push("sandbox-lock:start");
@@ -227,7 +222,6 @@ describe("ordinary OpenClaw pairing settlement", () => {
       "observe:precheck",
       "warmup",
       "observe:pending",
-      "approval",
       "observe:final",
       "gateway-lock:end",
       "sandbox-lock:end",
@@ -237,16 +231,15 @@ describe("ordinary OpenClaw pairing settlement", () => {
   it("blocks real lifecycle and route mutations until pairing settlement exits (#9844)", async () => {
     const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-pairing-locks-"));
     let currentTarget = PAIRING_TARGET;
-    let releaseApproval = () => {};
-    let reportApprovalStarted = () => {};
-    const approvalPending = new Promise<void>((resolve) => {
-      releaseApproval = resolve;
+    let releaseObservation = () => {};
+    let reportObservationStarted = () => {};
+    const observationPending = new Promise<void>((resolve) => {
+      releaseObservation = resolve;
     });
-    const approvalStarted = new Promise<void>((resolve) => {
-      reportApprovalStarted = resolve;
+    const observationStarted = new Promise<void>((resolve) => {
+      reportObservationStarted = resolve;
     });
     const mutationEvents: string[] = [];
-    const approvalTargets: string[] = [];
     const lockOptions = { pollIntervalMs: 1, stateDir, timeoutMs: 5_000 };
     let replacement: Promise<void> | undefined;
     let routeReuse: Promise<void> | undefined;
@@ -255,13 +248,12 @@ describe("ordinary OpenClaw pairing settlement", () => {
         getTarget: vi.fn(() => currentTarget),
         observePairing: vi
           .fn()
-          .mockReturnValueOnce(PAIRING_ONLY)
+          .mockReturnValueOnce(SCOPE_UPGRADE_PENDING)
           .mockReturnValueOnce(SCOPE_UPGRADE_PENDING)
           .mockReturnValue(SETTLED),
-        runApproval: vi.fn(async (_name, gatewayName) => {
-          approvalTargets.push(`${currentTarget.lifecycleGeneration}:${gatewayName}`);
-          reportApprovalStarted();
-          await approvalPending;
+        sleep: vi.fn(async () => {
+          reportObservationStarted();
+          await observationPending;
         }),
         withSandboxLock: (name, operation) => withMcpLifecycleLock(name, operation, lockOptions),
         withGatewayLock: (gatewayName, operation) =>
@@ -269,7 +261,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
       });
 
       const settlement = settleOrdinaryOpenClawPairing("alpha", scope.deps);
-      await approvalStarted;
+      await observationStarted;
       replacement = withMcpLifecycleLock(
         "alpha",
         () => {
@@ -288,9 +280,8 @@ describe("ordinary OpenClaw pairing settlement", () => {
 
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(mutationEvents).toEqual([]);
-      expect(approvalTargets).toEqual(["generation-1:nemoclaw"]);
 
-      releaseApproval();
+      releaseObservation();
       await expect(settlement).resolves.toEqual({ kind: "settled" });
       await Promise.all([replacement, routeReuse]);
       expect(mutationEvents).toEqual(
@@ -298,7 +289,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
       );
       expect(currentTarget.lifecycleGeneration).toBe("generation-2");
     } finally {
-      releaseApproval();
+      releaseObservation();
       const pendingMutations = [replacement, routeReuse].filter(
         (mutation): mutation is Promise<void> => mutation !== undefined,
       );
@@ -320,7 +311,6 @@ describe("ordinary OpenClaw pairing settlement", () => {
     });
     expect(scope.deps.observePairing).not.toHaveBeenCalled();
     expect(scope.deps.runWarmup).not.toHaveBeenCalled();
-    expect(scope.deps.runApproval).not.toHaveBeenCalled();
   });
 
   it("does not enter settlement when lifecycle lock acquisition fails (#9844)", async () => {
@@ -349,7 +339,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
     await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).rejects.toBe(failure);
   });
 
-  it("stops before approval when the runtime changes during warm-up (#9844)", async () => {
+  it("stops before observation when the runtime changes during warm-up (#9844)", async () => {
     let currentTarget = PAIRING_TARGET;
     let reportWarmupStarted: () => void = () => {};
     let releaseWarmup: () => void = () => {};
@@ -368,6 +358,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
       runWarmup: vi.fn(async () => {
         reportWarmupStarted();
         await warmupPending;
+        return "request-issued" as const;
       }),
     });
 
@@ -381,43 +372,41 @@ describe("ordinary OpenClaw pairing settlement", () => {
       reason: "runtime-identity-invalid",
     });
     expect(scope.deps.runWarmup).toHaveBeenCalledOnce();
-    expect(scope.deps.runApproval).not.toHaveBeenCalled();
     expect(scope.deps.observePairing).toHaveBeenCalledOnce();
   });
 
-  it("does not observe replacement state when the runtime changes during approval (#9844)", async () => {
+  it("does not observe replacement state when the runtime changes during watcher settlement (#9844)", async () => {
     let currentTarget = PAIRING_TARGET;
-    let reportApprovalStarted: () => void = () => {};
-    let releaseApproval: () => void = () => {};
-    const approvalStarted = new Promise<void>((resolve) => {
-      reportApprovalStarted = resolve;
+    let reportSleepStarted: () => void = () => {};
+    let releaseSleep: () => void = () => {};
+    const sleepStarted = new Promise<void>((resolve) => {
+      reportSleepStarted = resolve;
     });
-    const approvalPending = new Promise<void>((resolve) => {
-      releaseApproval = resolve;
+    const sleepPending = new Promise<void>((resolve) => {
+      releaseSleep = resolve;
     });
     const scope = ordinaryPairingDeps({
       getTarget: vi.fn(() => currentTarget),
       observePairing: vi
         .fn()
-        .mockReturnValueOnce(PAIRING_ONLY)
+        .mockReturnValueOnce(SCOPE_UPGRADE_PENDING)
         .mockReturnValue(SCOPE_UPGRADE_PENDING),
-      runApproval: vi.fn(async () => {
-        reportApprovalStarted();
-        await approvalPending;
+      sleep: vi.fn(async () => {
+        reportSleepStarted();
+        await sleepPending;
       }),
     });
 
     const settlement = settleOrdinaryOpenClawPairing("alpha", scope.deps);
-    await approvalStarted;
+    await sleepStarted;
     currentTarget = { ...PAIRING_TARGET, lifecycleGeneration: "generation-2" };
-    releaseApproval();
+    releaseSleep();
 
     await expect(settlement).resolves.toEqual({
       kind: "incomplete",
       reason: "runtime-identity-invalid",
     });
-    expect(scope.deps.runApproval).toHaveBeenCalledOnce();
-    expect(scope.deps.observePairing).toHaveBeenCalledTimes(2);
+    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
   });
 
   it("rejects device identity drift between precheck and pending upgrade (#10014)", async () => {
@@ -437,7 +426,6 @@ describe("ordinary OpenClaw pairing settlement", () => {
     });
 
     expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
-    expect(scope.deps.runApproval).not.toHaveBeenCalled();
   });
 
   it("keeps pairing appearance and final observation independently bounded (#9844)", async () => {
@@ -451,14 +439,13 @@ describe("ordinary OpenClaw pairing settlement", () => {
 
     await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
       kind: "incomplete",
-      reason: "scope-upgrade-incomplete",
+      reason: "scope-upgrade-not-approved",
     });
-    expect(scope.deps.sleep).toHaveBeenCalledTimes(39);
-    expect(scope.deps.runWarmup).toHaveBeenCalledOnce();
-    expect(scope.deps.runApproval).toHaveBeenCalledOnce();
+    expect(scope.deps.sleep).toHaveBeenCalled();
+    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
   });
 
-  it("reserves approval and final observation after bounded child caps (#9844)", async () => {
+  it("reserves watcher observation after bounded child caps (#9844)", async () => {
     let now = 0;
     const scope = ordinaryPairingDeps({
       now: vi.fn(() => now),
@@ -474,13 +461,11 @@ describe("ordinary OpenClaw pairing settlement", () => {
         .mockImplementationOnce(() => {
           throw new Error("not pending");
         })
-        .mockReturnValueOnce(SCOPE_UPGRADE_PENDING)
+        .mockReturnValueOnce(PAIRING_ONLY)
         .mockReturnValue(SETTLED),
       runWarmup: vi.fn(() => {
         now += WARMUP_TIMEOUT_MS;
-      }),
-      runApproval: vi.fn(() => {
-        now += CONNECT_AUTO_PAIR_TIMEOUT_MS;
+        return "request-issued" as const;
       }),
     });
 
@@ -489,21 +474,19 @@ describe("ordinary OpenClaw pairing settlement", () => {
     });
 
     expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
-    expect(scope.deps.runApproval).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
     expect(scope.deps.observePairing).toHaveBeenCalledTimes(4);
     expect(now).toBe(
       OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS +
         OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS -
         1_000 +
-        WARMUP_TIMEOUT_MS +
-        CONNECT_AUTO_PAIR_TIMEOUT_MS,
+        WARMUP_TIMEOUT_MS,
     );
     expect(OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS).toBe(
       OPENCLAW_PAIRING_OBSERVATION_TIMEOUT_MS +
         OPENCLAW_ONBOARDING_PAIRING_TIMEOUT_MS +
         WARMUP_TIMEOUT_MS +
-        CONNECT_AUTO_PAIR_TIMEOUT_MS +
-        OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS,
+        OPENCLAW_ONBOARDING_PAIRING_FINAL_OBSERVATION_TIMEOUT_MS +
+        WATCHER_STATUS_TIMEOUT_MS,
     );
   });
 
@@ -527,11 +510,10 @@ describe("ordinary OpenClaw pairing settlement", () => {
       reason: "pairing-unavailable",
     });
     expect(scope.deps.sleep).not.toHaveBeenCalled();
-    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
-    expect(scope.deps.runApproval).not.toHaveBeenCalled();
+    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
   });
 
-  it("performs one request-producer write when a canonical CLI pairing never appears (#9844)", async () => {
+  it("does not run a request producer before a canonical CLI pairing appears (#10269)", async () => {
     const scope = ordinaryPairingDeps({
       observePairing: vi.fn(() => {
         throw new Error("not published");
@@ -543,20 +525,91 @@ describe("ordinary OpenClaw pairing settlement", () => {
       reason: "pairing-unavailable",
     });
 
-    expect(scope.deps.runWarmup).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
-    expect(scope.deps.runApproval).not.toHaveBeenCalled();
+    expect(scope.deps.runWarmup).not.toHaveBeenCalled();
   });
 
-  it("does not approve before the exact pending upgrade appears (#10014)", async () => {
+  it("reports when the request producer never creates the exact upgrade (#10269)", async () => {
     const scope = ordinaryPairingDeps({ observePairing: vi.fn(() => PAIRING_ONLY) });
 
     await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
       kind: "incomplete",
-      reason: "scope-upgrade-incomplete",
+      reason: "scope-upgrade-not-requested",
     });
 
     expect(scope.deps.runWarmup).toHaveBeenCalledOnce();
-    expect(scope.deps.runApproval).not.toHaveBeenCalled();
+  });
+
+  it("reports a bounded warm-up transport failure while the device stays pairing-only (#10269)", async () => {
+    let now = 0;
+    const scope = ordinaryPairingDeps({
+      now: vi.fn(() => now),
+      observePairing: vi.fn(() => PAIRING_ONLY),
+      runWarmup: vi.fn(() => "exec-timeout" as const),
+      sleep: vi.fn(async () => {
+        now += OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS;
+      }),
+    });
+
+    await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+      kind: "incomplete",
+      reason: "scope-warmup-failed",
+    });
+    expect(scope.deps.runWarmup).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["approval timeout", "approval-timeout", true, "scope-upgrade-approval-timeout"],
+    ["approval failure", "approval-failed", true, "scope-upgrade-approval-failed"],
+    ["policy rejection", "request-rejected", true, "scope-upgrade-rejected"],
+    ["watcher death", "request-observed", false, "scope-upgrade-watcher-unavailable"],
+    ["persistent pending", "request-observed", true, "scope-upgrade-not-approved"],
+  ] as const)(
+    "classifies %s without trusting watcher status as success (#10269)",
+    async (_label, state, watcherActive, reason) => {
+      let now = 0;
+      const scope = ordinaryPairingDeps({
+        now: vi.fn(() => now),
+        observePairing: vi.fn(() => SCOPE_UPGRADE_PENDING),
+        sleep: vi.fn(async () => {
+          now += OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS;
+        }),
+        readWatcherStatus: vi.fn(() => ({ schemaVersion: 1 as const, state, watcherActive })),
+      });
+
+      await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).resolves.toEqual({
+        kind: "incomplete",
+        reason,
+      });
+      expect(scope.deps.runWarmup).not.toHaveBeenCalled();
+    },
+  );
+
+  it("accepts canonical late settlement after an earlier approval timeout (#10269)", async () => {
+    let now = 0;
+    const observePairing = vi.fn(() => SCOPE_UPGRADE_PENDING);
+    const first = ordinaryPairingDeps({
+      now: vi.fn(() => now),
+      observePairing,
+      sleep: vi.fn(async () => {
+        now += OPENCLAW_ONBOARDING_PAIRING_SETTLEMENT_TIMEOUT_MS;
+      }),
+      readWatcherStatus: vi.fn(() => ({
+        schemaVersion: 1 as const,
+        state: "approval-timeout" as const,
+        watcherActive: true,
+      })),
+    });
+    await expect(settleOrdinaryOpenClawPairing("alpha", first.deps)).resolves.toEqual({
+      kind: "incomplete",
+      reason: "scope-upgrade-approval-timeout",
+    });
+
+    observePairing.mockReturnValue(SETTLED);
+    const rerun = ordinaryPairingDeps({ observePairing });
+    await expect(settleOrdinaryOpenClawPairing("alpha", rerun.deps)).resolves.toEqual({
+      kind: "settled",
+    });
+    expect(rerun.deps.runWarmup).not.toHaveBeenCalled();
   });
 
   it("fails closed without writes when the recorded runtime target changes (#9844)", async () => {
@@ -574,7 +627,6 @@ describe("ordinary OpenClaw pairing settlement", () => {
 
     expect(scope.deps.observePairing).toHaveBeenCalledOnce();
     expect(scope.deps.runWarmup).not.toHaveBeenCalled();
-    expect(scope.deps.runApproval).not.toHaveBeenCalled();
   });
 
   it("resolves the finalized default OpenClaw runtime before observation (#9844)", async () => {
@@ -610,14 +662,18 @@ describe("ordinary OpenClaw pairing settlement", () => {
     expect(runSandboxScopeWarmupRun).not.toHaveBeenCalled();
   });
 
-  it("wires the device-authenticated request producer and approval (#10014)", async () => {
+  it("wires the device-authenticated request producer without a host approval (#10269)", async () => {
     const observePairing = vi
       .fn()
       .mockReturnValueOnce(PAIRING_ONLY)
       .mockReturnValueOnce(SCOPE_UPGRADE_PENDING)
       .mockReturnValueOnce(SETTLED);
-    const runSandboxScopeWarmupRun = vi.fn();
-    const runSandboxAutoPairApprovalPass = vi.fn();
+    const runSandboxScopeWarmupRun = vi.fn(() => "request-issued" as const);
+    const readSandboxAutoPairWatcherStatus = vi.fn(() => ({
+      schemaVersion: 1 as const,
+      state: "approval-completed" as const,
+      watcherActive: true,
+    }));
     vi.spyOn(finalizationHandlerRuntime, "loadLaunchReadiness").mockReturnValue({
       resolveOrdinaryOpenClawPairingTarget: vi.fn(() => PAIRING_TARGET),
     } as never);
@@ -626,9 +682,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
     } as never);
     vi.spyOn(finalizationHandlerRuntime, "loadAutoPairWarmup").mockReturnValue({
       runSandboxScopeWarmupRun,
-    } as never);
-    vi.spyOn(finalizationHandlerRuntime, "loadAutoPairApproval").mockReturnValue({
-      runSandboxAutoPairApprovalPass,
+      readSandboxAutoPairWatcherStatus,
     } as never);
     vi.spyOn(finalizationHandlerRuntime, "loadSandboxLifecycleLock").mockReturnValue({
       withMcpLifecycleLock: async (_name: string, operation: () => unknown) => operation(),
@@ -641,16 +695,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
       kind: "settled",
     });
     expect(runSandboxScopeWarmupRun).toHaveBeenCalledExactlyOnceWith("alpha", "nemoclaw");
-    expect(runSandboxAutoPairApprovalPass).toHaveBeenCalledExactlyOnceWith("alpha", {
-      budget: {
-        timeoutMs: CONNECT_AUTO_PAIR_TIMEOUT_MS,
-        listTimeoutS: 5,
-        approveTimeoutS: 8,
-        maxApprovals: 1,
-      },
-      gatewayName: "nemoclaw",
-      localDeviceOnly: true,
-    });
+    expect(readSandboxAutoPairWatcherStatus).not.toHaveBeenCalled();
   });
 
   it("explains the bounded failure without exposing runtime identifiers (#9844)", () => {

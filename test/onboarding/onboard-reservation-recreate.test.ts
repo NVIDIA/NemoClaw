@@ -80,7 +80,6 @@ runner.run = (command) => {
     ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
 };
-require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 runner.runCapture = (command) => {
   const cmd = _n(command);
   const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
@@ -98,6 +97,7 @@ runner.runCapture = (command) => {
   }
   return "";
 };
+require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 
 onboardSession.loadSession = () => ({ sessionId: "session-owner" });
 

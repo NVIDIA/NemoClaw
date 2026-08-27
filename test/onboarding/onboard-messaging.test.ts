@@ -99,7 +99,7 @@ runner.runCapture = (command) => {
     if (mockedCapture !== null) return mockedCapture;
   }
   return "";
-};
+}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -382,7 +382,7 @@ runner.runCapture = (command) => {
     if (mockedCapture !== null) return mockedCapture;
   }
   return "";
-};
+}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 registry.registerSandbox = (entry) => {
   registeredSandbox = entry;
   return true;
@@ -541,7 +541,7 @@ runner.run = (command, opts = {}) => {
   if (refresh && gatewaySecrets.has(refresh)) { if (refresh === process.env.NEMOCLAW_TEST_FAIL_PROVIDER) return { status: 1 }; revisions.set(refresh, revisions.get(refresh) + 1); return { status: 0 }; }
   if (normalized.includes("provider get")) return { status: 1 };
   return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
-}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
+};
 runner.runCapture = (command) => {
   const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
   if (createdIdentity !== null) return createdIdentity;
@@ -551,7 +551,7 @@ runner.runCapture = (command) => {
   if (mockedCapture !== null) return mockedCapture;
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
   return "";
-};
+}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 registry.registerSandbox = (entry) => { registered = entry; return true; }; registry.updateSandbox = () => true; registry.setDefault = () => true; registry.removeSandbox = () => true;
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
   sandboxName: "my-assistant",
@@ -718,7 +718,7 @@ runner.run = (command, opts = {}) => {
   if (normalized.includes("provider get -g nemoclaw my-assistant-telegram-bridge")) return { status: 0, stdout: "Name: my-assistant-telegram-bridge\nType: nemoclaw-mcp-v1\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n" };
   if (normalized.includes("provider get")) return { status: 1 };
   return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
-}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
+};
 runner.runCapture = (command) => {
   const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
   if (createdIdentity !== null) return createdIdentity;
@@ -730,7 +730,7 @@ runner.runCapture = (command) => {
   }
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
   return "";
-};
+}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 registry.registerSandbox = (entry) => {
   registerCalls.push(entry);
   return true;
@@ -790,7 +790,7 @@ const { createSandbox } = require(${onboardPath});
 
       const result = spawnSync(process.execPath, [scriptPath], {
         cwd: repoRoot,
-        encoding: "utf-8",
+        encoding: "utf-8", timeout: 30_000,
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -801,7 +801,7 @@ const { createSandbox } = require(${onboardPath});
         },
       });
 
-      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.status, 0, result.stderr || result.error?.message);
       const payload = parseStdoutJson(result.stdout);
 
       const createCommand = payload.commands.find((entry: CommandEntry) =>
@@ -892,7 +892,7 @@ runner.runCapture = (command) => {
   }
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
   return "";
-};
+}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 registry.registerSandbox = (entry) => {
   registerCalls.push(entry);
   return true;
@@ -1062,7 +1062,7 @@ runner.runCapture = (command) => {
   }
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
   return "";
-};
+}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 registry.registerSandbox = (entry) => {
   registerCalls.push(entry);
   return true;
@@ -1206,7 +1206,7 @@ runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get")) return "";
   if (_n(command).includes("sandbox list")) return "";
   return "";
-};
+}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -1398,7 +1398,7 @@ runner.runCapture = (command) => {
   }
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
   return "";
-};
+}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -1539,7 +1539,7 @@ runner.runCapture = (command) => {
   }
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
   return "";
-};
+}; require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;

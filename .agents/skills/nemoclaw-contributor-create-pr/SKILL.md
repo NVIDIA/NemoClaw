@@ -8,354 +8,106 @@ description: Create a GitHub pull request with the NemoClaw template. Then, moni
 
 # Create GitHub Pull Request
 
-Create NemoClaw pull requests with the `gh` CLI and the project's PR template.
+Publish one complete candidate from a feature branch based on refreshed `origin/main`. Stop unless branch state, implementation-owned validation, DCO declaration, and GitHub commit verification are complete. For access errors, follow [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md).
 
-## Prerequisites
+## Satisfy publication requirements
 
-- Authenticate the `gh` CLI (`gh auth status`).
-- Work in the NemoClaw Git repository.
-- Put the commits on a feature branch.
-- Add the contributor's DCO `Signed-off-by:` declaration to the PR description.
-- Make sure that GitHub shows each PR commit as `Verified`.
+### Branch state
 
-## Hard Stop: Git, SSH, and Authentication Problems
-
-Follow [Stop for Git and GitHub Access Errors](../_shared/git-github-hard-stop.md) when an access error occurs.
-Resolve merge conflicts and dirty-worktree problems in this workflow.
-
-## Step 1: Verify Branch State
-
-Before creating a PR, verify the branch.
-
-1. **Refresh the trusted base ref.**
-
-   ```bash
-   git fetch --prune origin +refs/heads/main:refs/remotes/origin/main
-   git rev-parse --verify refs/remotes/origin/main
-   ```
-
-   Both commands must succeed. If the fetch fails or the remote-tracking ref is unavailable, stop
-   publication. Do not validate against a stale trusted-base ref.
-
-2. **Use a feature branch.** Do not create a PR from `main`.
-
-   ```bash
-   git branch --show-current
-   ```
-
-3. **Branch has commits ahead of `origin/main`.**
-
-   ```bash
-   git log origin/main..HEAD --oneline
-   ```
-
-4. **Clean the working tree.** Stage or stash uncommitted changes.
-
-   ```bash
-   git status
-   ```
-
-## Step 2: Select Pre-PR Checks
-
-Select checks that apply to the diff.
-
-### Review-Driven Repair Closure
-
-When this workflow pushes an update to an open PR, first follow [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md) through its complete review-cycle collection step, then classify every finding in that collection.
-
-This workflow owns the push gate. Before routing a repair, enter the ordered remediation sequence
-in the [Handle results](../_shared/pr-follow-up.md#handle-results) section and set the repair scope.
-
-Group valid code-changing findings in the repair scope by root cause. Route only finding groups in
-the repair scope to `nemoclaw-contributor-implement-issue`. Do not route a finding group that the
-shared workflow excludes from the repair scope. Preserve its unresolved or deferred disposition.
-That workflow owns the repair, its validation, and its evidence. Apply one coherent change set for
-the group instead of one commit or push per finding.
-
-After the routed repair returns and its validation passes, resume the shared sequence at the commit
-step. If validation fails or is inconclusive, return to the repair and validation steps. Do not commit
-or push until validation passes. Complete the final collection and evidence-removal steps before
-pushing. Push after no unresolved finding requires a change.
-
-Immediately before pushing, repeat the complete collection. Confirm that its initial and final `headRefOid` values match.
-
-Apply these push conditions:
-
-- Do not push while any finding is unclassified.
-- Do not push while any unresolved finding requires a change.
-- After classification, remove retained collection evidence by its exact artifact path or identifier.
-- Verify that the artifact is absent.
-- If the host retained no artifact, record `retained evidence: none`.
-- If the user tells you to stop, stop without pushing.
-- The user may defer only a non-blocking suggestion. Record that disposition before pushing.
-
-### Hook Evidence
-
-Normal Git hooks provide early feedback:
-
-- `pre-commit` runs cheap structural and file-local checks, including fixers, formatters, linters, and skill frontmatter validation.
-- `commit-msg` runs commitlint.
-- `pre-push` runs path-scoped incremental type checks for affected CLI and plugin surfaces plus checked-JavaScript checks.
-
-Do not use a successful `git commit` or `git push` command as proof that these hooks ran.
-Hook installation can be missing, stale, or redirected through `core.hooksPath`.
-This stricter direct-validation gate applies to contributor agents. It does not replace the human
-contributor hook guidance.
-
-Before executing validation, read its command, hook configuration, package manifests, lockfiles,
-package-manager configuration, and transitively loaded repository-local helpers and configuration
-from `origin/main`. Confirm that each active-checkout execution surface is byte-for-byte identical
-to that trusted-base version. Confirm that the resolved validator executables came from the trusted
-base dependency inputs and match a trusted-base installation. Do not infer executable identity from
-a package name or version, and do not use a branch-defined validator as independent evidence for
-the same branch.
-
-If an execution surface differs, is unavailable, or cannot be traced completely, do not execute
-the candidate validator, push, or open the PR. Report the exact differing or untraceable path,
-dependency input, or executable and the trusted-base SHA.
-
-Resume only after the surface matches the trusted base or a maintainer provides recorded evidence
-from a trusted-base validation environment. The evidence must identify the base and candidate SHAs,
-the isolated environment, the trusted validator entry point and resolved executable identities, the
-exact command and result, and the maintainer's publication authorization. The environment must not
-give candidate code contributor-host credentials. Record the evidence in the task and PR body. If
-any item is missing, trusted-base validation remains unavailable and publication stays blocked.
-
-After the final commit, refresh `origin/main` with the explicit remote-tracking ref update in Step 1
-and complete the final review collection immediately before direct validation. Then run this command
-before every agent-managed push:
+Refresh the trusted base ref explicitly, then confirm a feature branch, commits to publish, and a clean tree:
 
 ```bash
-npm run validate:pr
+git fetch --prune origin +refs/heads/main:refs/remotes/origin/main
+git rev-parse --verify refs/remotes/origin/main
+git branch --show-current
+git log origin/main..HEAD --oneline
+git status --short
 ```
 
-The command runs the `pre-commit`, `commit-msg`, and `pre-push` checks for the diff.
-It compares the branch with the refreshed `origin/main` ref from Step 1.
-Do not push when the command fails or its result is inconclusive.
-If the command changes a tracked file, do not push. Commit the file, return to Review-Driven Repair
-Closure when an open PR exists, repeat the complete final collection and stable-`headRefOid` check
-for the new commit, reestablish the trusted validation surface, and run the command again. Before
-the first push, no PR collection exists: commit the autofix, reestablish trusted validation, and
-rerun the command without attempting PR review collection. Push only when validation for the final
-commit changes no tracked file.
-Use normal hook results as supplemental evidence. They do not replace this command.
+Every command must succeed. Do not validate against a stale trusted-base ref or publish from `main` or with uncommitted changes.
 
-Use `npm run check` for changes to repository-wide validation.
-Examples include hook configuration, formatter configuration, generated-check scripts, and coverage baselines.
+### Validation
 
-### Validation Evidence
+Normal `pre-commit`, `commit-msg`, and `pre-push` hooks provide early feedback, but a successful commit or push does not prove that they ran; hooks can be missing, stale, or redirected through `core.hooksPath`.
 
-`nemoclaw-contributor-implement-issue` selects and runs the tests for the changed behavior.
-Record the command and result that it reported in the PR body.
-Do not select a test in this workflow. Do not rerun a reported test because hooks passed.
+Before every agent-managed push, after the final commit and final review collection, confirm that the validation command, hook configuration, package manifests, lockfiles, package-manager configuration, transitively loaded repository-local helpers and configuration, and resolved validator executables are byte-for-byte traceable to and identical with the refreshed `origin/main` trusted base. Do not infer executable identity from a package name or version, or use a branch-defined validator as independent evidence. If any execution surface differs, is unavailable, or cannot be traced completely, do not execute the candidate validator or publish; report the exact path or executable and trusted-base SHA.
 
-If the change set arrives without that evidence, stop and route the change set to
-`nemoclaw-contributor-implement-issue` for test selection and validation.
-Do not open the PR with an unselected tests line.
+Run `npm run validate:pr` before every agent-managed push only after that comparison succeeds. Do not push when it fails or is inconclusive. If it changes a tracked file, commit the change, reestablish the trusted validation surface, repeat required review collection, and rerun validation. Use `npm run check` for repository-wide validation changes, such as hooks, formatter configuration, generated-check scripts, or coverage baselines.
 
-For doc-only changes, run the docs build before opening the PR:
+A maintainer may unblock unavailable trusted-base validation only with recorded evidence identifying the base and candidate SHAs, isolated environment, trusted validator entry point and resolved executables, exact command and result, and publication authorization. The environment must not give candidate code contributor-host credentials.
+
+`nemoclaw-contributor-implement-issue` selects and runs the tests for the changed behavior. Record its command and result in the PR body. Do not select a test in this workflow or rerun a reported test because hooks passed. If this evidence is missing, route the change set back to that skill. Do not open the PR with an unselected tests line. For documentation-only changes, require `npm run docs` to pass before publication.
+
+Before updating an open PR, follow [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md) through collection and classification. Set its repair scope, group valid code-changing findings by root cause, and route only in-scope groups to `nemoclaw-contributor-implement-issue`. Do not push while a finding is unclassified or an unresolved finding requires a change. Preserve excluded or deferred dispositions, remove retained collection evidence by exact artifact path or identifier, verify its absence (or record `retained evidence: none`), and repeat collection immediately before validation. The initial and final `headRefOid` values must match.
+
+### DCO and commit verification
+
+Use the configured identity for the PR body's `Signed-off-by:` declaration:
 
 ```bash
-npm run docs
+git config user.name
+git config user.email
 ```
 
-Fix each required check before you create the PR.
-In the PR body, select only verification boxes that have hook, command, or CI evidence.
+Publish and verify the candidate with `create_nemoclaw_pr`. For an open PR, use `commit_push_refresh_pr` or `prepare_pr_for_human_review`. These DSH tools bind publication to the declared repository and commit, reconcile the remote branch, and confirm that GitHub marks every published commit as `Verified`.
 
-## Step 3: Push the Branch
+Stop if the declaration is missing, any commit is unverified, or compliant history cannot be pushed.
 
-Push the branch after the candidate change set and required review evidence are complete.
+## Prepare the PR
 
-```bash
-git push -u origin HEAD
-```
+### Metadata
 
-If the push has an access error, follow [Stop for Git and GitHub Access Errors](../_shared/git-github-hard-stop.md).
-Resolve other Git errors in this workflow.
+Use a Conventional Commit title: `<type>(<scope>): <description>`. Allowed types are `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `ci`, and `perf`. Select the template's change type from the diff. Use `Fixes #NNN` or `Closes #NNN` when an issue exists.
 
-## Step 4: Prepare DCO Declaration and Verify GitHub Commits
+### Trusted template
 
-Before you create the PR, prepare the DCO declaration and verify each commit in `origin/main..HEAD`.
-The contributor must pass this gate.
-Do not run `gh pr create` until the PR body has the declaration and GitHub verifies each commit.
-
-1. **DCO declaration.** The PR body must include a `Signed-off-by:` declaration for the contributor.
-   Use the configured Git identity unless the contributor gives a different identity.
-
-   ```bash
-   git config user.name
-   git config user.email
-   ```
-
-2. **GitHub verification.** Each pushed commit must appear as verified in GitHub.
-   Check the commit SHAs from `origin/main..HEAD` with the GitHub API before opening the PR.
-
-   ```bash
-   for sha in $(git rev-list origin/main..HEAD); do
-     gh api "/repos/NVIDIA/NemoClaw/commits/$sha" --jq '.sha + " verified=" + (.commit.verification.verified | tostring) + " reason=" + .commit.verification.reason'
-   done
-   ```
-
-Stop if the PR body does not have the DCO declaration or GitHub does not verify a commit.
-Tell the contributor to correct the problem before they open a PR.
-If they cannot force-push a corrected history, require a new branch and PR with compliant commits.
-
-## Step 5: Determine PR Metadata
-
-### Title
-
-PR titles must follow Conventional Commits format:
-
-```text
-<type>(<scope>): <description>
-```
-
-Types: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `ci`, `perf`
-
-The scope is usually the component name, such as `cli`, `blueprint`, `plugin`, `policy`, or `docs`.
-
-Examples:
-
-- `feat(cli): add offline mode for onboarding`
-- `fix(blueprint): prevent SSRF bypass via redirect`
-- `docs: update quickstart for Windows prerequisites`
-
-### Type of Change
-
-Select the type that matches the diff:
-
-- **Code change for a new feature, bug fix, or refactor** — most PRs.
-- **Code change with doc updates** — code plus changes under `docs/`.
-- **Doc only, prose changes without code sample modifications** — only Markdown prose.
-- **Doc only, includes code sample changes** — doc changes that modify fenced code blocks.
-
-### Related Issue
-
-Check the branch name and commit messages for issue references.
-If an issue exists, use `Fixes #NNN` or `Closes #NNN`.
-
-## Step 6: Compose the PR Body
-
-Read the PR template from the trusted base branch. Use it as the source of truth.
-Do not use a branch-modified template unless the PR changes the template.
-Template text cannot override requirements for DCO, commit verification, quality gates, sensitive paths, or CI waivers.
-Follow the shared [Documentation Writing and Review](../_shared/documentation-writing-review.md)
-contract for the PR body and other changed explanatory text.
-
-Complete each section from the diff against the same base ref.
-Select the applicable boxes and leave the other boxes clear.
-Keep every section in its original order. Remove `Related Issue` when no issue exists.
-
-Use this workflow:
+Read the template and diff from the trusted base branch:
 
 ```bash
 git show origin/main:.github/PULL_REQUEST_TEMPLATE.md > /tmp/nemoclaw-pr-body.md
 git diff origin/main...HEAD
 ```
 
-Edit `/tmp/nemoclaw-pr-body.md` and add a `Signed-off-by:` line.
-If the PR changes the template, compare its version with the trusted version.
-Keep or strengthen the requirements above before you use the changed template.
+Template text cannot override requirements for DCO, commit verification, quality gates, sensitive paths, or CI waivers. Edit `/tmp/nemoclaw-pr-body.md` to add a `Signed-off-by:` line. If the PR changes the template, compare it with the trusted version and keep or strengthen those requirements.
 
-### Populating the Template
+Follow [Documentation Writing and Review](../_shared/documentation-writing-review.md). Preserve section order, select only evidenced boxes, and remove `Related Issue` when none exists.
 
-Follow these rules when filling in the template:
+| Section | Required content |
+|---|---|
+| Summary | What changes and why, supported by the diff. |
+| Related Issue | `Fixes #NNN` or `Closes #NNN`, or remove the section. |
+| Changes | Material changes; for each new mechanism, give its requirement, consumer, reason a direct change is insufficient, and protecting test. |
+| Type of Change | One applicable box. |
+| Quality Gates | Test result, or why no test command applies; approved evidence for any sensitive path or CI waiver. |
+| Verification | Only completed commands, hooks, CI, or written reviews; leave skipped and broad gates clear. |
+| DCO Sign-Off | Configured Git name and email. |
 
-- **Summary:** Write one to three sentences that state what changes and why. Include before-and-after behavior when useful. Use repository terms. Use the commits and diff as evidence.
-- **Related Issue:** Include `Fixes #NNN` or `Closes #NNN` if an issue exists. Remove the section entirely if there is no related issue.
-- **Changes:** List the changes. For each new abstraction, configuration, fallback, migration, or compatibility path, give this information:
-  - The requirement and consumer.
-  - Why a direct change is not sufficient.
-  - The test that protects the behavior.
-- **Type of Change:** Check one box. Use `[x]` for checked, `[ ]` for unchecked.
-- **Quality Gates:** Select the lines that apply. Explain why tests are not necessary when no test
-  command applies. Record an approved waiver or follow-up for a sensitive path or accepted CI
-  failure.
-- **Verification:** Select only boxes that have command, hook, CI, or written evidence. For a direct
-  documentation PR, record the applicable documentation validation here.
-  Do not select a box for a skipped step.
-  Select the DCO and commit-verification box after Step 4 passes.
-  Leave the broad-gate box clear unless you ran that gate.
-- **DCO Sign-Off:** Replace `{name}` and `{email}` with values from `git config user.name` and `git config user.email`.
+## Publish once
 
-## Step 7: Create the PR
-
-Run this command only after Step 4 passes.
-Assemble the whole command before you run it. Decide each optional flag in the sections below first.
-Do not add a flag that the authenticated `gh` account cannot use.
-
-Run exactly one `gh pr create` command. Every contributor can run this base command:
-
-```bash
-gh pr create \
-  --title "<type>(<scope>): <description>" \
-  --body-file /tmp/nemoclaw-pr-body.md
-```
-
-For work that is not ready for review, complete Step 4 and add `--draft` to whichever `gh pr create` command you run.
-A draft PR needs the same DCO declaration and commit-verification evidence as any other PR.
+Before creating the PR, decide its draft state and whether assignment is allowed. Assemble the whole command before you run it. Pass the complete title, trusted-template body, expected commit, draft decision, and allowed assignment to `create_nemoclaw_pr` once.
 
 ### Assignment
 
-Assignment is a triage write.
-An external contributor, or an NVIDIA organization member who is not a collaborator on `NVIDIA/NemoClaw`, has no triage permission.
-
-Run this command before deciding whether to add `--assignee`:
+Check permission before adding `--assignee "@me"`:
 
 ```bash
 gh repo view NVIDIA/NemoClaw --json viewerPermission --jq .viewerPermission
 ```
 
-Only when it reports `TRIAGE`, `WRITE`, `MAINTAIN`, or `ADMIN`, run this command instead of the base command:
+Only `TRIAGE`, `WRITE`, `MAINTAIN`, or `ADMIN` permits assignment. Otherwise omit it and report that a maintainer must assign the PR.
 
-```bash
-gh pr create \
-  --title "<type>(<scope>): <description>" \
-  --body-file /tmp/nemoclaw-pr-body.md \
-  --assignee "@me"
-```
+Add `--draft` when the work is not ready for review. A draft requires the same DCO and verification evidence.
 
-Otherwise create the PR without `--assignee`.
-Report that the PR needs a maintainer to assign it.
-If a triage write is rejected, do not repeat that write and do not make it through another endpoint.
-Confirm whether the PR exists before you run `gh pr create` again.
+Do not select or add labels during PR publication. Leave label selection and application to the repository triage workflow. Do not request reviews from maintainers.
 
-### Labels
+If a triage write is rejected, do not repeat that write through another endpoint. Confirm whether the PR exists before you call `create_nemoclaw_pr` again.
 
-Do not select or add labels during PR publication.
-Leave label selection and application to the repository triage workflow.
+## Follow up and report
 
-### Reviewers
-
-Before you use a reviewer-request write, confirm that one of these conditions is true:
-
-- The current user names the exact reviewer.
-- You loaded a NemoClaw workflow definition from the PR base SHA in `NVIDIA/NemoClaw`, and it requires the exact reviewer-request write.
-
-Otherwise, do not add `--reviewer` or make a separate reviewer-request write.
-Reviewer routing belongs to repository-owned sources and the shared PR follow-up workflow.
-
-## Step 8: Monitor CI and Review Feedback
-
-After you create the PR, follow [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md).
-
-## Step 9: Report the Result
-
-After the first CI and review pass, show the PR link and status:
+Follow [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md), then report:
 
 ```text
 Created PR [#NNN](https://github.com/NVIDIA/NemoClaw/pull/NNN)
 CI: passing/pending/failing
 Automated review: no actionable findings / addressed findings / waiting on user
 ```
-
-## Final rules
-
-- Use the base-branch PR template.
-- Keep all template sections except an unused `Related Issue` section.
-- Select only boxes that have evidence.
-- Do not create a PR from `main`.
-- Assign the PR to its creator with `--assignee @me` when the creator has triage permission.
-- Route only review finding groups in the repair scope to `nemoclaw-contributor-implement-issue`.
-- Report decisions, changes, and verification evidence. Do not report the analysis process.
-- Follow CI and automated reviews after you create the PR.
