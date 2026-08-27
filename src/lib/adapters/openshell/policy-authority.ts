@@ -25,7 +25,11 @@ import {
   type SandboxPolicyAuthorityInspection as CanonicalSandboxPolicyAuthorityInspection,
 } from "../../policy/merge";
 import * as openshellRuntime from "./runtime";
-import { fingerprintOpenShellSandboxLiveIdentity } from "./sandbox-identity";
+import {
+  fingerprintOpenShellSandboxId,
+  fingerprintOpenShellSandboxLiveIdentity,
+  parseStrictOpenShellSandboxListJson,
+} from "./sandbox-identity";
 const POLICY_AUTHORITY_CAPTURE_MAX_BYTES = 1024 * 1024;
 const POLICY_AUTHORITY_CAPTURE_TIMEOUT_MS = 30_000;
 
@@ -34,6 +38,13 @@ type JsonObject = Record<string, unknown>;
 export type SandboxPolicyAuthority = OpenShellPolicyAuthority;
 export type SandboxPolicyAuthorityInspection = CanonicalSandboxPolicyAuthorityInspection;
 export type { ActiveGlobalPolicyInspection } from "../../policy/merge";
+
+export type OpenShellSandboxPolicyReadiness =
+  | { readonly state: "ready" }
+  | {
+      readonly state: "transient";
+      readonly reason: "sandbox-not-ready" | "policy-version-pending";
+    };
 
 const POLICY_AUTHORITY_REFUSAL_CODE = "NEMOCLAW_POLICY_AUTHORITY_REFUSAL";
 
@@ -187,6 +198,49 @@ export function inspectSandboxPolicyAuthority({
       error instanceof Error ? error.message : "OpenShell returned invalid policy metadata",
     );
   }
+}
+
+/**
+ * Bind one effective policy version to the exact live Ready sandbox row.
+ * A phase or version lag is an explicit convergence state; malformed,
+ * ambiguous, or replacement identity observations fail closed.
+ */
+export function inspectOpenShellSandboxPolicyReadiness(options: {
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly sandboxIdentityFingerprint: string;
+  readonly policyVersion: number;
+}): OpenShellSandboxPolicyReadiness {
+  const sandboxName = validatePolicyAuthorityName(options.sandboxName, "sandbox name");
+  const gatewayName = validatePolicyAuthorityName(options.gatewayName, "gateway name");
+  if (!/^[0-9a-f]{64}$/u.test(options.sandboxIdentityFingerprint)) {
+    failInspection("sandbox", "the expected sandbox identity is invalid");
+  }
+  if (!Number.isSafeInteger(options.policyVersion) || options.policyVersion < 0) {
+    failInspection("sandbox", "the expected policy version is invalid");
+  }
+  const result = captureAuthorityRead(
+    ["sandbox", "list", "-g", gatewayName, "--output", "json", "--limit", "1000"],
+    "sandbox",
+    { gatewayName },
+  );
+  const rows = parseStrictOpenShellSandboxListJson(result.stdout);
+  if (!rows) failInspection("sandbox", "OpenShell returned invalid sandbox readiness metadata");
+  const matches = rows.filter((row) => row.name === sandboxName);
+  if (matches.length !== 1) {
+    failInspection("sandbox", "OpenShell did not return one exact sandbox readiness row");
+  }
+  const row = matches[0]!;
+  if (fingerprintOpenShellSandboxId(row.id) !== options.sandboxIdentityFingerprint) {
+    failInspection("sandbox", "the live sandbox identity changed during policy verification");
+  }
+  if (row.phase !== "Ready") {
+    return { state: "transient", reason: "sandbox-not-ready" };
+  }
+  if (row.current_policy_version !== options.policyVersion) {
+    return { state: "transient", reason: "policy-version-pending" };
+  }
+  return { state: "ready" };
 }
 
 /** Inspect active global policy presence without assigning absent policy ownership. */

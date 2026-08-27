@@ -8,6 +8,7 @@ import {
   assertObservedPolicyRequirements,
   assertOpenShellGatewayPortBinding,
   captureSandboxBasePolicy,
+  inspectOpenShellSandboxPolicyReadiness,
   inspectSandboxPolicyAuthority,
   PolicyAuthorityRefusalError,
   type SandboxPolicyAuthority,
@@ -36,13 +37,12 @@ export interface CreatedSandboxPolicyReceiptInput {
 
 export interface CreatedSandboxPolicyReceiptDeps {
   readonly readFile?: typeof fs.readFileSync;
+  readonly inspectPolicyReadiness?: typeof inspectOpenShellSandboxPolicyReadiness;
   readonly sleep?: (seconds: number) => void;
 }
 
-// The create gate verifies the immutable sandbox identity on both sides of this
-// interval. Two separated policy samples prevent a transient early policy
-// identity from reaching the durable receipt or post-create effects.
-const POLICY_IDENTITY_STABILITY_INTERVAL_SECONDS = 2;
+const POLICY_READINESS_MAX_OBSERVATIONS = 5;
+const POLICY_READINESS_POLL_INTERVAL_SECONDS = 1;
 
 export interface CreatedSandboxPolicyRegistrationInput extends CreatedSandboxPolicyReceiptInput {
   readonly plannedAuthority: Exclude<SandboxPolicyAuthority, "owner-unknown">;
@@ -89,6 +89,32 @@ function refusal(reason: string): never {
   );
 }
 
+function waitForCreatedSandboxPolicyReadiness(
+  input: CreatedSandboxPolicyReceiptInput,
+  policyVersion: number,
+  deps: CreatedSandboxPolicyReceiptDeps,
+): void {
+  const inspectReadiness = deps.inspectPolicyReadiness ?? inspectOpenShellSandboxPolicyReadiness;
+  for (let observation = 0; observation < POLICY_READINESS_MAX_OBSERVATIONS; observation += 1) {
+    const readiness = inspectReadiness({
+      sandboxName: input.sandboxName,
+      gatewayName: input.gatewayName,
+      sandboxIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
+      policyVersion,
+    });
+    if (readiness.state === "ready") return;
+    if (observation === POLICY_READINESS_MAX_OBSERVATIONS - 1) {
+      refusal(
+        readiness.reason === "sandbox-not-ready"
+          ? "the exact sandbox did not reach Ready during policy verification"
+          : "the exact sandbox did not activate the verified policy version",
+      );
+    }
+    if (!deps.sleep) refusal("the bounded policy readiness check could not continue");
+    deps.sleep(POLICY_READINESS_POLL_INTERVAL_SECONDS);
+  }
+}
+
 /**
  * Bind one successful create to its exact sandbox and effective policy.
  * Policy bytes are compared in memory and never enter the receipt or error.
@@ -121,9 +147,7 @@ export function verifyCreatedSandboxPolicyCreationReceipt(
   } catch {
     refusal("the live base policy could not be compared");
   }
-  const sleep = deps.sleep;
-  if (!sleep) refusal("the policy identity stability interval could not be observed");
-  sleep(POLICY_IDENTITY_STABILITY_INTERVAL_SECONDS);
+  waitForCreatedSandboxPolicyReadiness(input, before.policyIdentity.activeVersion, deps);
   const after = inspectSandboxPolicyAuthority({
     sandboxName: input.sandboxName,
     gatewayName: input.gatewayName,

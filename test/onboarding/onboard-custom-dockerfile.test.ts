@@ -629,9 +629,7 @@ const { createSandbox } = require(${onboardPath});
       ].join("\n"),
     );
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-      mode: 0o755,
-    });
+    writeOkOpenshell(fakeBin);
 
     const customDockerfilePath = JSON.stringify(path.join(ignoredDir, "Dockerfile"));
 
@@ -703,9 +701,7 @@ const { createSandbox } = require(${onboardPath});
       ].join("\n"),
     );
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-      mode: 0o755,
-    });
+    writeOkOpenshell(fakeBin);
 
     const customDockerfilePath = JSON.stringify(path.join(customBuildDir, "Dockerfile"));
     const customBuildDirLiteral = JSON.stringify(customBuildDir);

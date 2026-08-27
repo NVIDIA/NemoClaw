@@ -10,6 +10,7 @@ import {
   assertExternalPolicyRequirements,
   assertRecordedPolicyAuthority,
   inspectActiveGlobalPolicy,
+  inspectOpenShellSandboxPolicyReadiness,
   inspectOpenShellSandboxIdentityFingerprint,
   inspectSandboxPolicyAuthority,
   isExternalPolicyAuthorityRefusalError,
@@ -49,6 +50,21 @@ function sandboxMetadata(overrides: Record<string, unknown> = {}): Record<string
     policy: { version: 1, network_policies: { baseline: { endpoints: ["base.test"] } } },
     ...overrides,
   };
+}
+
+function sandboxReadiness(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify([
+    {
+      id: "sandbox-alpha",
+      name: "alpha",
+      labels: {},
+      resource_version: 9,
+      created_at: "2026-08-25T00:00:00Z",
+      phase: "Ready",
+      current_policy_version: 7,
+      ...overrides,
+    },
+  ]);
 }
 
 function errorFrom(action: () => unknown): Error {
@@ -94,6 +110,67 @@ describe("OpenShell policy authority inspection", () => {
         timeout: policyAuthorityInternals.captureTimeoutMs,
       }),
     );
+  });
+
+  it("requires the exact Ready sandbox row to report the effective policy version (#9833)", () => {
+    const captureOpenshell = vi
+      .spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValue(captureResult(sandboxReadiness()));
+    const sandboxIdentityFingerprint = createHash("sha256")
+      .update("sandbox-alpha")
+      .digest("hex");
+
+    expect(
+      inspectOpenShellSandboxPolicyReadiness({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw-18080",
+        sandboxIdentityFingerprint,
+        policyVersion: 7,
+      }),
+    ).toEqual({ state: "ready" });
+    expect(captureOpenshell.mock.calls[0]?.[0]).toEqual([
+      "sandbox",
+      "list",
+      "-g",
+      "nemoclaw-18080",
+      "--output",
+      "json",
+      "--limit",
+      "1000",
+    ]);
+  });
+
+  it.each([
+    ["sandbox phase", { phase: "Provisioning" }, "sandbox-not-ready"],
+    ["policy version", { current_policy_version: 6 }, "policy-version-pending"],
+  ] as const)("classifies a pending %s as transient (#9833)", (_name, change, reason) => {
+    vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell").mockReturnValue(
+      captureResult(sandboxReadiness(change)),
+    );
+
+    expect(
+      inspectOpenShellSandboxPolicyReadiness({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw-18080",
+        sandboxIdentityFingerprint: createHash("sha256").update("sandbox-alpha").digest("hex"),
+        policyVersion: 7,
+      }),
+    ).toEqual({ state: "transient", reason });
+  });
+
+  it("fails closed when the Ready row belongs to a replacement sandbox (#9833)", () => {
+    vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell").mockReturnValue(
+      captureResult(sandboxReadiness({ id: "sandbox-replacement" })),
+    );
+
+    expect(() =>
+      inspectOpenShellSandboxPolicyReadiness({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw-18080",
+        sandboxIdentityFingerprint: createHash("sha256").update("sandbox-alpha").digest("hex"),
+        policyVersion: 7,
+      }),
+    ).toThrow(/live sandbox identity changed/u);
   });
 
   it("recognizes a global policy source as externally managed on the recorded gateway (#9833)", () => {

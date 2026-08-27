@@ -24,21 +24,50 @@ describe("onboard sandbox recreate reservation safety", () => {
       name: "preserves a current-session pending route reservation across a not-ready recreate",
       reservationSessionId: "session-owner",
       expectedRemoval: false,
+      replaceBeforeCleanup: false,
+      expectedRetainedReservation: {
+        name: "my-assistant",
+        gpuEnabled: false,
+        pendingRouteReservation: true,
+        reservationSessionId: "session-owner",
+      },
     },
     {
       name: "removes a foreign-session pending route reservation before a not-ready recreate",
       reservationSessionId: "session-other",
       expectedRemoval: true,
+      replaceBeforeCleanup: false,
+      expectedRetainedReservation: null,
     },
     {
       name: "removes an unstamped pending route reservation before a not-ready recreate",
       reservationSessionId: null,
       expectedRemoval: true,
+      replaceBeforeCleanup: false,
+      expectedRetainedReservation: null,
+    },
+    {
+      name: "preserves a replacement written after stale reservation classification",
+      reservationSessionId: "session-other",
+      expectedRemoval: false,
+      replaceBeforeCleanup: true,
+      expectedRetainedReservation: {
+        name: "my-assistant",
+        gpuEnabled: false,
+        pendingRouteReservation: true,
+        reservationSessionId: "session-replacement",
+        model: "replacement-model",
+      },
     },
   ] as const)(
     "$name (#6562)",
     { timeout: 60_000 },
-    async ({ reservationSessionId, expectedRemoval }) => {
+    async ({
+      reservationSessionId,
+      expectedRemoval,
+      replaceBeforeCleanup,
+      expectedRetainedReservation,
+    }) => {
       const workspace = createOnboardProcessWorkspace("nemoclaw-onboard-reservation-survives-");
       onTestFinished(() => workspace.remove());
       const scriptPath = workspace.path("reservation-survives.js");
@@ -102,11 +131,30 @@ runner.runCapture = (command) => {
 onboardSession.loadSession = () => ({ sessionId: "session-owner" });
 
 const reservationSessionId = ${JSON.stringify(reservationSessionId)};
-let sourceEntry = {
+const initialSourceEntry = {
   name: "my-assistant",
   gpuEnabled: false,
   pendingRouteReservation: true,
   ...(reservationSessionId === null ? {} : { reservationSessionId }),
+};
+registry.save({ defaultSandbox: null, sandboxes: { "my-assistant": initialSourceEntry } });
+let sourceEntry = registry.getSandbox("my-assistant");
+if (!sourceEntry) throw new Error("failed to seed the stale route reservation");
+const removeReservationIfCurrent = registry.removeSandboxRouteReservationIfCurrent;
+registry.removeSandboxRouteReservationIfCurrent = (expected) => {
+  if (${JSON.stringify(replaceBeforeCleanup)}) {
+    const data = registry.load();
+    data.sandboxes[expected.name] = {
+      ...expected,
+      reservationSessionId: "session-replacement",
+      model: "replacement-model",
+    };
+    registry.save(data);
+    events.push({ kind: "replacementWritten", name: expected.name });
+  }
+  const removed = removeReservationIfCurrent(expected);
+  events.push({ kind: "removeReservation", name: expected.name, removed });
+  return removed;
 };
 registry.getSandbox = () => sourceEntry;
 registry.registerSandbox = () => true;
@@ -156,27 +204,37 @@ const { createSandbox } = require(${onboardPath});
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
   process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
-  const sandboxName = await createSandbox(
-    ...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
-      [
-        null,
-        "gpt-5.4",
-        "nvidia-prod",
-        null,
-        "my-assistant",
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        [],
-      ],
-      createFixture,
-    ),
-  );
-  console.log(JSON.stringify({ sandboxName, events }));
+  const lock = onboardSession.acquireOnboardLock("integration recreate reservation cleanup");
+  if (!lock.acquired) throw new Error("failed to acquire the real onboarding writer lock");
+  try {
+    const sandboxName = await createSandbox(
+      ...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+        [
+          null,
+          "gpt-5.4",
+          "nvidia-prod",
+          null,
+          "my-assistant",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          [],
+        ],
+        createFixture,
+      ),
+    );
+    console.log(JSON.stringify({
+      sandboxName,
+      events,
+      retainedReservation: registry.load().sandboxes["my-assistant"] || null,
+    }));
+  } finally {
+    onboardSession.releaseOnboardLock();
+  }
 })().catch((error) => {
   console.error(error);
   process.exit(1);
@@ -196,13 +254,14 @@ const { createSandbox } = require(${onboardPath});
       assert.equal(result.status, 0, result.stderr || result.error?.message);
       const payload = trailingJsonPayload<{
         sandboxName: string;
-        events: Array<{ kind: string; cmd?: string; name?: string }>;
+        events: Array<{ kind: string; cmd?: string; name?: string; removed?: boolean }>;
+        retainedReservation: { reservationSessionId?: string; model?: string } | null;
       }>(result.stdout);
       assert.equal(payload.sandboxName, "my-assistant");
 
       const events = payload.events;
       const removedReservation = events.some(
-        (e) => e.kind === "removeSandbox" && e.name === "my-assistant",
+        (e) => e.kind === "removeReservation" && e.name === "my-assistant" && e.removed === true,
       );
       assert.equal(
         removedReservation,
@@ -215,6 +274,7 @@ const { createSandbox } = require(${onboardPath});
         events.some((e) => e.kind === "run" && (e.cmd || "").includes("sandbox delete")),
         "should still delete the not-ready gateway sandbox before rebuilding",
       );
+      assert.deepEqual(payload.retainedReservation, expectedRetainedReservation);
     },
   );
 });

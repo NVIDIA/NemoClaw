@@ -582,6 +582,19 @@ function mockStructuredOpenShellCaptureFromRunner() {
   const runner = require(path.resolve(__dirname, "../../src/lib/runner.ts"));
   const client = require(path.resolve(__dirname, "../../src/lib/adapters/openshell/client.ts"));
   client.captureOpenshellCommand = (binary, args, options = {}) => {
+    const isFreshGlobalPolicyHistoryRead =
+      args[0] === "policy" &&
+      args[1] === "list" &&
+      args.includes("--global") &&
+      !args.includes("--sandbox");
+    if (isFreshGlobalPolicyHistoryRead) {
+      const stderr = "No global policy history found\n";
+      return {
+        status: 0,
+        output: options.includeStderr === true ? stderr.trim() : "",
+        ...(options.includeStreams === true ? { stdout: "", stderr } : {}),
+      };
+    }
     const stdout = String(
       runner.runCapture([binary, ...args], {
         ...options,

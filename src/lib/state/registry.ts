@@ -659,41 +659,6 @@ export function reserveSandboxInferenceRoute(
     const data = load();
     const existing = data.sandboxes[name];
     const normalized = normalizeInferenceSelection(route);
-    if (existing?.pendingRouteReservation === true) {
-      const sameReservation =
-        Boolean(route.reservationSessionId) &&
-        existing.reservationSessionId === route.reservationSessionId &&
-        existing.gatewayName === route.gatewayName &&
-        existing.gatewayPort === (route.gatewayPort ?? existing.gatewayPort) &&
-        existing.openshellDriver === (route.openshellDriver ?? existing.openshellDriver) &&
-        existing.hostLocalInferenceReceipt ===
-          (route.hostLocalInferenceReceipt === undefined
-            ? existing.hostLocalInferenceReceipt
-            : route.hostLocalInferenceReceipt) &&
-        isDeepStrictEqual(
-          existing.hostLocalInferenceProvenance,
-          route.hostLocalInferenceProvenance ?? existing.hostLocalInferenceProvenance,
-        ) &&
-        isDeepStrictEqual(
-          normalizeInferenceSelection(existing),
-          normalizeInferenceSelection(route),
-        );
-      if (!sameReservation) {
-        if (existing.pendingPolicyVerification) {
-          throw new PolicyAuthorityRefusalError(
-            `Cannot replace sandbox '${name}' while its verified create checkpoint is incomplete`,
-          );
-        }
-        const detail =
-          existing.reservationSessionId !== route.reservationSessionId
-            ? "belongs to another onboarding session"
-            : "cannot change before the owning create transaction completes";
-        throw new PolicyAuthorityRefusalError(
-          `Cannot replace sandbox '${name}': its inference route reservation ${detail}`,
-        );
-      }
-      return true;
-    }
     const provenance = cloneSandboxHostLocalInferenceProvenance(route.hostLocalInferenceProvenance);
     if (
       route.hostLocalInferenceProvenance !== undefined &&
@@ -715,24 +680,61 @@ export function reserveSandboxInferenceRoute(
         );
       }
     }
-    if (existing?.hostLocalInferenceProvenance !== undefined) {
-      if (
-        !provenance ||
-        typeof route.hostLocalInferenceReceipt !== "string" ||
-        existing.hostLocalInferenceReceipt !== route.hostLocalInferenceReceipt ||
-        !isDeepStrictEqual(existing.hostLocalInferenceProvenance, provenance) ||
-        existing.provider !== normalized.provider ||
-        existing.model !== normalized.model ||
-        existing.endpointUrl !== normalized.endpointUrl ||
-        existing.endpointSource !== normalized.endpointSource ||
-        existing.credentialEnv !== normalized.credentialEnv ||
-        existing.preferredInferenceApi !== normalized.preferredInferenceApi ||
-        existing.gatewayName !== route.gatewayName ||
-        existing.gatewayPort !== route.gatewayPort ||
-        existing.openshellDriver !== route.openshellDriver
-      ) {
-        throw new Error("Cannot change an explicit host-local inference lifecycle reservation");
+    const sameExplicitHostLocalRoute =
+      existing?.hostLocalInferenceProvenance !== undefined &&
+      Boolean(provenance) &&
+      typeof route.hostLocalInferenceReceipt === "string" &&
+      existing.hostLocalInferenceReceipt === route.hostLocalInferenceReceipt &&
+      isDeepStrictEqual(existing.hostLocalInferenceProvenance, provenance) &&
+      existing.provider === normalized.provider &&
+      existing.model === normalized.model &&
+      existing.endpointUrl === normalized.endpointUrl &&
+      existing.endpointSource === normalized.endpointSource &&
+      existing.credentialEnv === normalized.credentialEnv &&
+      existing.preferredInferenceApi === normalized.preferredInferenceApi &&
+      existing.gatewayName === route.gatewayName &&
+      existing.gatewayPort === route.gatewayPort &&
+      existing.openshellDriver === route.openshellDriver;
+    if (existing?.hostLocalInferenceProvenance !== undefined && !sameExplicitHostLocalRoute) {
+      throw new Error("Cannot change an explicit host-local inference lifecycle reservation");
+    }
+    if (existing?.pendingRouteReservation === true) {
+      const sameReservation =
+        (sameExplicitHostLocalRoute &&
+          existing.reservationSessionId === undefined &&
+          route.reservationSessionId === undefined) ||
+        (Boolean(route.reservationSessionId) &&
+          existing.reservationSessionId === route.reservationSessionId &&
+          existing.gatewayName === route.gatewayName &&
+          existing.gatewayPort === (route.gatewayPort ?? existing.gatewayPort) &&
+          existing.openshellDriver === (route.openshellDriver ?? existing.openshellDriver) &&
+          existing.hostLocalInferenceReceipt ===
+            (route.hostLocalInferenceReceipt === undefined
+              ? existing.hostLocalInferenceReceipt
+              : route.hostLocalInferenceReceipt) &&
+          isDeepStrictEqual(
+            existing.hostLocalInferenceProvenance,
+            route.hostLocalInferenceProvenance ?? existing.hostLocalInferenceProvenance,
+          ) &&
+          isDeepStrictEqual(
+            normalizeInferenceSelection(existing),
+            normalizeInferenceSelection(route),
+          ));
+      if (!sameReservation) {
+        if (existing.pendingPolicyVerification) {
+          throw new PolicyAuthorityRefusalError(
+            `Cannot replace sandbox '${name}' while its verified create checkpoint is incomplete`,
+          );
+        }
+        const detail =
+          existing.reservationSessionId !== route.reservationSessionId
+            ? "belongs to another onboarding session"
+            : "cannot change before the owning create transaction completes";
+        throw new PolicyAuthorityRefusalError(
+          `Cannot replace sandbox '${name}': its inference route reservation ${detail}`,
+        );
       }
+      return true;
     }
     const existingForReservation: SandboxEntry = existing
       ? { ...existing }
