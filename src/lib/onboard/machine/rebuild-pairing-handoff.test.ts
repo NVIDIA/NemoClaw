@@ -26,13 +26,10 @@ import type { OnboardFlowContext } from "./flow-context";
 import { advanceTo, branchTo, completeOnboardMachine } from "./result";
 import { createSession } from "../../state/onboard-session";
 
-function context(
-  recreateJournalHandoff?: boolean,
-): OnboardFlowContext<null, null, Record<string, never>> {
+function context(): OnboardFlowContext<null, null, Record<string, never>> {
   return {
     resume: true,
     fresh: false,
-    recreateJournalHandoff,
     session: createSession(),
     agent: null,
     recordedSandboxName: "alpha",
@@ -81,12 +78,9 @@ describe("rebuild pairing handoff", () => {
     });
   });
 
-  it.each([
-    { fingerprint: "intent-1", expected: true },
-    { fingerprint: null, expected: false },
-  ])(
-    "maps journal fingerprint $fingerprint to handoff=$expected (#9844)",
-    async ({ fingerprint, expected }) => {
+  it.each([{ fingerprint: "intent-1" }, { fingerprint: null }])(
+    "keeps routing journal fingerprint $fingerprint to the sandbox resume decision (#9844)",
+    async ({ fingerprint }) => {
       const phase = createSandboxOnboardFlowPhase({
         gatewayName: "nemoclaw",
         recreateJournalTargetIntentFingerprint: fingerprint,
@@ -99,41 +93,53 @@ describe("rebuild pairing handoff", () => {
         deps: {} as never,
       });
 
-      const result = await phase.run(context());
+      await phase.run(context());
 
-      expect(result.context.recreateJournalHandoff).toBe(expected);
       expect(mocks.handleSandboxState).toHaveBeenCalledWith(
         expect.objectContaining({ recreateJournalTargetIntentFingerprint: fingerprint }),
       );
     },
   );
 
-  it.each([true, false])(
-    "passes handoff=%s from final-flow context to both final handlers (#9844)",
-    async (recreateJournalHandoff) => {
-      const phases = createFinalOnboardFlowPhases({
-        branchState: "openclaw",
-        agentSetupDeps: {} as never,
-        policiesDeps: {} as never,
-        finalization: {
-          stagedLegacyKeys: [],
-          migratedLegacyKeys: new Set(),
-          webSearchEnabled: () => false,
-          webSearchProvider: () => "brave",
-        },
-        finalizationDeps: {} as never,
-      });
-      const finalContext = context(recreateJournalHandoff);
+  it("does not suppress ordinary OpenClaw pairing settlement on a rebuild handoff (#10479)", async () => {
+    // Container recreation wipes the machine-local pairing state
+    // (identity/devices are `backup: false` and removed on destroy), so a
+    // rebuild handoff must reach finalization exactly like fresh onboarding:
+    // the final handlers settle ordinary OpenClaw pairing before readiness.
+    const sandboxPhase = createSandboxOnboardFlowPhase({
+      gatewayName: "nemoclaw",
+      recreateJournalTargetIntentFingerprint: "intent-1",
+      resumeAgentChanged: false,
+      endpointProvenance: { getSandboxRegistryEntry: () => null },
+      recreateSandbox: () => true,
+      controlUiPort: null,
+      rootDir: "/repo",
+      env: {},
+      deps: {} as never,
+    });
+    const sandboxResult = await sandboxPhase.run(context());
 
-      await phases[2].run(finalContext);
-      await phases[3].run(finalContext);
+    const phases = createFinalOnboardFlowPhases({
+      branchState: "openclaw",
+      agentSetupDeps: {} as never,
+      policiesDeps: {} as never,
+      finalization: {
+        stagedLegacyKeys: [],
+        migratedLegacyKeys: new Set(),
+        webSearchEnabled: () => false,
+        webSearchProvider: () => "brave",
+      },
+      finalizationDeps: {} as never,
+    });
 
-      expect(mocks.handleFinalizationState).toHaveBeenCalledWith(
-        expect.objectContaining({ recreateJournalHandoff }),
-      );
-      expect(mocks.handlePostVerifyState).toHaveBeenCalledWith(
-        expect.objectContaining({ recreateJournalHandoff }),
-      );
-    },
-  );
+    await phases[2].run(sandboxResult.context);
+    await phases[3].run(sandboxResult.context);
+
+    expect(mocks.handleFinalizationState).toHaveBeenCalledWith(
+      expect.not.objectContaining({ recreateJournalHandoff: expect.anything() }),
+    );
+    expect(mocks.handlePostVerifyState).toHaveBeenCalledWith(
+      expect.not.objectContaining({ recreateJournalHandoff: expect.anything() }),
+    );
+  });
 });

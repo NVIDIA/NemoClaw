@@ -664,7 +664,7 @@ describe("finalization handlers", () => {
     expect(calls.reportReadiness).toHaveBeenCalledWith(false);
   });
 
-  it("settles ordinary OpenClaw pairing after recovery and before verification (#9844)", async () => {
+  it("settles ordinary OpenClaw pairing after recovery and before verification (#9844, #10479)", async () => {
     const { deps, calls } = createDeps();
 
     await runFinalizationHandlers(baseOptions(deps));
@@ -679,20 +679,6 @@ describe("finalization handlers", () => {
     expect(calls.recoverProcesses.mock.invocationCallOrder[1]).toBeLessThan(
       calls.verify.mock.invocationCallOrder[0],
     );
-  });
-
-  it("does not settle ordinary OpenClaw pairing during an inner rebuild handoff (#9844)", async () => {
-    const { deps, calls } = createDeps();
-
-    const result = await runFinalizationHandlers({
-      ...baseOptions(deps),
-      recreateJournalHandoff: true,
-    });
-
-    expect(result.stateResult.type).toBe("complete");
-    expect(calls.settleOrdinaryPairing).not.toHaveBeenCalled();
-    expect(calls.ensureAgentDashboard).toHaveBeenCalledWith("my-assistant", null);
-    expect(calls.verify).toHaveBeenCalledOnce();
   });
 
   it("does not run OpenClaw pairing settlement for Hermes (#9844)", async () => {

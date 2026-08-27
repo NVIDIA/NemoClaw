@@ -28,7 +28,6 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   webSearchEnabled: boolean;
   webSearchProvider: WebSearchVerifyProvider | null;
   portableProfileSelected?: boolean;
-  recreateJournalHandoff?: boolean;
   deps: {
     ensureAgentDashboardForward(
       sandboxName: string,
@@ -185,7 +184,6 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   sandboxName,
   agent,
   portableProfileSelected,
-  recreateJournalHandoff,
   stagedLegacyKeys,
   migratedLegacyKeys,
   deps,
@@ -201,10 +199,12 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     portableProfileSelected,
     deps.readRegistryAgent,
   );
+  // Rebuild recreates the container from the image, which wipes the
+  // machine-local pairing state (`identity` and `devices` are declared
+  // `backup: false` and removed on destroy), so the pairing gate must run on
+  // rebuild handoff exactly as on fresh onboarding (#10479).
   const ordinaryOpenClawPairingRequired =
-    portableAgent === "ordinary" &&
-    selectedAgentName(agent) === "openclaw" &&
-    recreateJournalHandoff !== true;
+    portableAgent === "ordinary" && selectedAgentName(agent) === "openclaw";
   const revalidate = (operation: string) => deps.revalidatePolicyRequirements?.(operation);
 
   // Reaching finalization means the policy-preset step was confirmed, so it is
@@ -276,7 +276,6 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
   webSearchEnabled,
   webSearchProvider,
   portableProfileSelected,
-  recreateJournalHandoff,
   deps,
 }: FinalizationStateOptions<
   Agent,
@@ -290,10 +289,12 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
     portableProfileSelected,
     deps.readRegistryAgent,
   );
+  // Rebuild recreates the container from the image, which wipes the
+  // machine-local pairing state (`identity` and `devices` are declared
+  // `backup: false` and removed on destroy), so the pairing gate must run on
+  // rebuild handoff exactly as on fresh onboarding (#10479).
   const ordinaryOpenClawPairingRequired =
-    portableAgent === "ordinary" &&
-    selectedAgentName(agent) === "openclaw" &&
-    recreateJournalHandoff !== true;
+    portableAgent === "ordinary" && selectedAgentName(agent) === "openclaw";
   const revalidate = (operation: string) => deps.revalidatePolicyRequirements?.(operation);
 
   let verificationDiagnostics: string[] = [];
