@@ -456,11 +456,18 @@ export function createCreatedSandboxCompletionActions(
           register: (openclawImagePluginInstalls) => {
             const verifiedCreate = options.policy.getVerifiedCreateRegistrationAuthority();
             assertVerifiedCreateMatchesPolicyBoundary(verifiedPolicyBoundary, verifiedCreate);
+            const verifiedInferenceRouteReservation = verifiedCreate.reservation;
+            if (
+              inferenceRouteReservation &&
+              !isDeepStrictEqual(inferenceRouteReservation, verifiedInferenceRouteReservation)
+            ) {
+              throw new Error(
+                "Sandbox registration inference route differs from its verified create reservation.",
+              );
+            }
             return (deps.registerCreatedSandbox ?? registerCreatedSandbox)({
               ...options.registration,
-              inferenceSelection:
-                inferenceRouteReservation?.authority.selection ??
-                options.registration.inferenceSelection,
+              inferenceSelection: verifiedInferenceRouteReservation.authority.selection,
               runtimeFields: {
                 ...options.registration.runtimeFields,
                 sandboxGpuProof:
@@ -488,7 +495,7 @@ export function createCreatedSandboxCompletionActions(
                       verifiedPolicyRegistration.policyCreationReceipt,
                   }
                 : {}),
-              inferenceRouteReservation,
+              inferenceRouteReservation: verifiedInferenceRouteReservation,
               verifiedCreate,
             });
           },

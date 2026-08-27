@@ -1005,8 +1005,27 @@ describe("created sandbox completion actions", () => {
         lifecycleLiveIdentityFingerprint: "a".repeat(64),
         route: "native" as const,
       };
+      const inferenceRouteReservation = {
+        authority: {
+          sandboxName: "hermes",
+          gatewayName: "nemoclaw",
+          sessionId: "session-1",
+          selection: {
+            provider: "ollama",
+            model: "qwen3-vl:4b",
+            endpointUrl: "http://host.openshell.internal:11436/v1",
+            endpointSource: "onboard" as const,
+            credentialEnv: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN",
+            preferredInferenceApi: "openai-completions",
+            compatibleEndpointReasoning: null,
+            compatibleEndpointReasoningEffort: null,
+            nimContainer: null,
+          },
+        },
+        entry: { name: "hermes" },
+      } satisfies QualifiedSandboxInferenceRouteReservation;
       const verifiedCreate = {
-        reservation: {} as never,
+        reservation: inferenceRouteReservation,
         checkpoint: pendingSandboxPolicyVerificationForBoundary(verifiedPolicyBoundary),
       } as NonNullable<CreatedSandboxRegistrationInput["verifiedCreate"]>;
       const completion = createCreatedSandboxCompletionActions(
@@ -1153,26 +1172,6 @@ describe("created sandbox completion actions", () => {
             container: { imageId: "hermes:test" },
           } as unknown as HermesPortableConfiguredReceipt)
         : null;
-      const inferenceRouteReservation = {
-        authority: {
-          sandboxName: "hermes",
-          gatewayName: "nemoclaw",
-          sessionId: "session-1",
-          selection: {
-            provider: "ollama",
-            model: "qwen3-vl:4b",
-            endpointUrl: "http://host.openshell.internal:11436/v1",
-            endpointSource: "onboard" as const,
-            credentialEnv: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN",
-            preferredInferenceApi: "openai-completions",
-            compatibleEndpointReasoning: null,
-            compatibleEndpointReasoningEffort: null,
-            nimContainer: null,
-          },
-        },
-        entry: { name: "hermes" },
-      } satisfies QualifiedSandboxInferenceRouteReservation;
-
       await completion.complete(
         schema5 ? null : created,
         configuredReceipt,
@@ -1180,7 +1179,7 @@ describe("created sandbox completion actions", () => {
         manageDashboard,
         () => ({ lifecycleGeneration: "generation-1" }),
         lifecycle,
-        inferenceRouteReservation,
+        schema5 ? inferenceRouteReservation : undefined,
       );
 
       expect(order).toEqual([
