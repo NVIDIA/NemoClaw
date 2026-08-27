@@ -3398,7 +3398,7 @@ Keep them down until the command returns; a concurrent relock refuses the config
 <AgentOnly variant="openclaw">
 
 OpenClaw shields must be down for this config mutation; the managed Mcporter config is locked with the rest of the `workspace` state root.
-`$$nemoclaw <name> mcp remove <server> --force` reports the refusal and continues with the host-side provider and policy cleanup instead.
+`--force` does not bypass this refusal: the posture is checked before any provider, policy, or adapter side effect, so the ownership state is preserved for a retry once shields are down.
 
 </AgentOnly>
 

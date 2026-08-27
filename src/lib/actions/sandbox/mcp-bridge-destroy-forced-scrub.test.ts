@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   assertMcpAdapterConfigMutationsAllowed: vi.fn(),
   assertMcpAdapterTeardownRuntimeCapabilities: vi.fn(),
   detachProvider: vi.fn(),
+  discardSafeIncompleteMcpAdds: vi.fn(),
+  getSandboxOrThrow: vi.fn(),
   removeGeneratedPolicy: vi.fn(),
   scrubManagedMcpAdapterOrThrow: vi.fn(),
   updateSandbox: vi.fn(),
@@ -27,6 +29,14 @@ const ENTRY: McpBridgeEntry = {
 } as McpBridgeEntry;
 
 const SANDBOX = { name: "alpha", agent: "openclaw", mcp: { bridges: { github: ENTRY } } };
+const PREPARED_SANDBOX = {
+  ...SANDBOX,
+  mcp: { bridges: { github: ENTRY }, destroyPreparedAt: "2026-08-27T00:00:00Z" },
+};
+const PENDING_SANDBOX = {
+  ...SANDBOX,
+  mcp: { bridges: { github: ENTRY }, destroyPendingAt: "2026-08-27T00:00:00Z" },
+};
 
 vi.mock("./mcp-bridge-adapter-teardown", () => ({
   rollbackScrubbedMcpAdapters: vi.fn(() => []),
@@ -40,7 +50,7 @@ vi.mock("./mcp-bridge-policy", () => ({
 vi.mock("./mcp-bridge-destroy-preflight", () => ({
   assertMcpDestroySnapshotCurrent: vi.fn(() => SANDBOX),
   cloneMcpBridgeEntry: (entry: McpBridgeEntry) => ({ ...entry }),
-  discardSafeIncompleteMcpAdds: vi.fn(async () => SANDBOX),
+  discardSafeIncompleteMcpAdds: mocks.discardSafeIncompleteMcpAdds,
   inspectExactMcpDestroyProvider: vi.fn(() => ({ exists: true })),
   prepareMcpBridgesForAbsentSandboxDestroy: vi.fn(),
 }));
@@ -65,7 +75,7 @@ vi.mock("./mcp-bridge-state", () => ({
   bridgeState: (sandbox: { mcp?: { bridges?: Record<string, McpBridgeEntry> } }) =>
     sandbox.mcp?.bridges ?? {},
   ensureSandboxGatewaySelected: vi.fn(async () => undefined),
-  getSandboxOrThrow: vi.fn(() => SANDBOX),
+  getSandboxOrThrow: mocks.getSandboxOrThrow,
   nowIso: () => "2026-08-27T00:00:00Z",
 }));
 
@@ -96,6 +106,8 @@ describe("prepareMcpBridgesForDestroy adapter-scrub refusal", () => {
     mocks.detachProvider.mockReset().mockReturnValue("detached");
     mocks.waitForDetachedMcpCredential.mockReset();
     mocks.updateSandbox.mockReset().mockReturnValue(SANDBOX);
+    mocks.getSandboxOrThrow.mockReset().mockReturnValue(SANDBOX);
+    mocks.discardSafeIncompleteMcpAdds.mockReset().mockResolvedValue(SANDBOX);
   });
 
   it("rethrows a config-mutation refusal without --force and touches nothing", async () => {
@@ -154,5 +166,36 @@ describe("prepareMcpBridgesForDestroy adapter-scrub refusal", () => {
     const preparation = await prepareMcpBridgesForDestroy("alpha");
     expect(preparation.adapterScrubSkipped).toBeUndefined();
     expect(mocks.scrubManagedMcpAdapterOrThrow).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a prepared destroy without the config-mutation preflight (#10469)", async () => {
+    // Phase one already scrubbed the adapter, so this pass mutates nothing in
+    // the sandbox. A posture that legitimately refuses a first attempt must not
+    // strand recovery of an interrupted destroy.
+    mocks.assertMcpAdapterConfigMutationsAllowed.mockImplementation(() => {
+      throw new Error(SHIELDS_REFUSAL);
+    });
+    mocks.getSandboxOrThrow.mockReturnValue(PREPARED_SANDBOX);
+    mocks.discardSafeIncompleteMcpAdds.mockResolvedValue(PREPARED_SANDBOX);
+
+    const preparation = await prepareMcpBridgesForDestroy("alpha");
+
+    expect(preparation.destroyAlreadyPrepared).toBe(true);
+    expect(preparation.adapterScrubSkipped).toBeUndefined();
+    expect(mocks.assertMcpAdapterConfigMutationsAllowed).not.toHaveBeenCalled();
+    expect(mocks.scrubManagedMcpAdapterOrThrow).not.toHaveBeenCalled();
+  });
+
+  it("retries a pending destroy without the config-mutation preflight (#10469)", async () => {
+    mocks.assertMcpAdapterConfigMutationsAllowed.mockImplementation(() => {
+      throw new Error(SHIELDS_REFUSAL);
+    });
+    mocks.getSandboxOrThrow.mockReturnValue(PENDING_SANDBOX);
+    mocks.discardSafeIncompleteMcpAdds.mockResolvedValue(PENDING_SANDBOX);
+
+    const preparation = await prepareMcpBridgesForDestroy("alpha");
+
+    expect(preparation.destroyAlreadyPending).toBe(true);
+    expect(mocks.assertMcpAdapterConfigMutationsAllowed).not.toHaveBeenCalled();
   });
 });

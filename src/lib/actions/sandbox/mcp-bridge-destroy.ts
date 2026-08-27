@@ -98,20 +98,28 @@ export async function prepareMcpBridgesForDestroy(
   const entriesRequiringExternalCleanup = Object.values(bridgeState(currentSandbox)).filter(
     (entry) => entry.addState !== "prepared",
   );
+  // A destroy that already completed phase one, or that reached the
+  // confirmed-delete pending marker, scrubs no adapter entry on this pass. The
+  // posture that legitimately refuses a first attempt must not strand that
+  // retry, so skip the preflight exactly as `prepareSandboxDestroy` does.
+  const adapterScrubAlreadySettled =
+    !!currentSandbox.mcp?.destroyPreparedAt || !!currentSandbox.mcp?.destroyPendingAt;
   // Run the host-visible config preflight before
   // discardSafeIncompleteMcpAdds, which may remove an owned policy for a
   // providerless preflighted add. That cleanup has no adapter/provider to
   // probe; complete entries get the teardown runtime probe after retry markers.
-  let adapterScrubRefusal = classifyForcedAdapterScrubRefusal(
-    sandboxName,
-    () =>
-      assertMcpAdapterConfigMutationsAllowed(
+  let adapterScrubRefusal = adapterScrubAlreadySettled
+    ? ""
+    : classifyForcedAdapterScrubRefusal(
         sandboxName,
-        currentSandbox,
-        entriesRequiringExternalCleanup,
-      ),
-    force,
-  );
+        () =>
+          assertMcpAdapterConfigMutationsAllowed(
+            sandboxName,
+            currentSandbox,
+            entriesRequiringExternalCleanup,
+          ),
+        force,
+      );
   const sandbox = await discardSafeIncompleteMcpAdds(sandboxName, currentSandbox);
   const entries = Object.values(bridgeState(sandbox)).map(cloneMcpBridgeEntry);
   const destroyAlreadyPrepared = !!sandbox.mcp?.destroyPreparedAt;

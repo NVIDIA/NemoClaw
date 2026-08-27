@@ -1081,7 +1081,7 @@ describe("destroySandbox flow", () => {
   // #10469: OpenClaw's managed Mcporter config lives under the locked
   // `workspace` state root, so a shields-up sandbox cannot have its adapter
   // entry scrubbed. Destroy must say so before any teardown starts.
-  it("refuses shields-up OpenClaw MCP destroy before stopping services or preparing MCP state", async () => {
+  it("refuses shields-up OpenClaw MCP destroy before stopping services or preparing MCP state (#10469)", async () => {
     const harness = createDestroyHarness({
       agent: "openclaw",
       mcpServers: ["github"],
@@ -1095,7 +1095,7 @@ describe("destroySandbox flow", () => {
     expectShieldsUpRefusalBeforeMutation(harness);
   });
 
-  it("lets --force past the shields-up OpenClaw refusal into MCP preparation", async () => {
+  it("lets --force past the shields-up OpenClaw refusal into MCP preparation (#10469)", async () => {
     const harness = createDestroyHarness({
       agent: "openclaw",
       mcpServers: ["github"],

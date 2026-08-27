@@ -24,7 +24,10 @@ vi.mock("../../shields", () => ({
   isShieldsDown: mocks.isShieldsDown,
 }));
 
-import { assertAgentMcpConfigMutationAllowed } from "./mcp-bridge-adapters";
+import {
+  assertAgentMcpConfigMutationAllowed,
+  assertAgentMcpTeardownRuntimeCapability,
+} from "./mcp-bridge-adapters";
 import { assertOpenClawMcpConfigMutationAllowed } from "./mcp-bridge-adapter-openclaw";
 
 // #10469: Mcporter's managed project config is
@@ -85,6 +88,17 @@ describe("assertAgentMcpConfigMutationAllowed adapter routing", () => {
     mocks.isShieldsDown.mockReturnValue(false);
     expect(() => assertAgentMcpConfigMutationAllowed("alpha", "hermes-config")).toThrow(
       /Hermes sandbox 'alpha' has shields up/,
+    );
+  });
+
+  it("guards the mcporter teardown capability probe too (#10469)", () => {
+    // `mcp remove` calls this before any provider, policy, or adapter side
+    // effect, and reaches it through the same predicate, so a locked config
+    // refuses there as well. `--force` does not bypass it: the ownership state
+    // is preserved for a retry once shields are down.
+    mocks.isShieldsDown.mockReturnValue(false);
+    expect(() => assertAgentMcpTeardownRuntimeCapability("alpha", "mcporter")).toThrow(
+      /OpenClaw sandbox 'alpha' has shields up/,
     );
   });
 
