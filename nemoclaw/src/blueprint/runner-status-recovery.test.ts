@@ -77,7 +77,7 @@ describe("blueprint runner status recovery", () => {
     });
   });
 
-  it("reports identity-bound recovery for incomplete policy creation without mutating by name (#9833)", async () => {
+  it("reports blocked recovery for incomplete policy creation without claiming an unavailable cleanup action (#9833)", async () => {
     const rid = "nc-run-incomplete-create";
     const runDir = `${FAKE_HOME}/.nemoclaw/state/runs/${rid}`;
     const identity = "b".repeat(64);
@@ -107,7 +107,9 @@ describe("blueprint runner status recovery", () => {
       policy_creation_transition: {
         status: "incomplete",
         recovery_required: true,
-        recovery_action: expect.stringContaining("identity-bound recovery"),
+        recovery_action: expect.stringContaining(
+          "no safe automatic or manual cleanup action is currently supported",
+        ),
         sandbox_identity_fingerprint: identity,
       },
     });
@@ -121,6 +123,8 @@ describe("blueprint runner status recovery", () => {
     expect(recovery).toContain("alpha");
     expect(recovery).toContain("11111111-1111-4111-8111-111111111111");
     expect(recovery).toContain(identity);
+    expect(recovery).toContain("Recovery is blocked");
+    expect(recovery).not.toContain("perform identity-bound recovery");
     await expect(actionRollback(rid)).rejects.toThrow(/policy creation is incomplete/u);
     expect(mockExeca).not.toHaveBeenCalled();
   });
