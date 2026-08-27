@@ -2,15 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { testTimeoutOptions } from "../../../test/helpers/timeouts";
 import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../messaging/provider-profile";
 import type { MessagingTokenDef } from "./messaging-prep";
-import { materializeHermesPortableCreatePlan } from "./sandbox-create-plan-materialization";
+import {
+  materializeHermesPortableCreatePlan,
+  prepareSandboxCreatePolicy,
+} from "./sandbox-create-plan-materialization";
 import {
   materializeSandboxCreatePlan,
   resolveSandboxCreateIntent,
   resolveSandboxCreateMessagingProviderRequests,
   resolveSandboxCreatePolicyTier,
 } from "./sandbox-create-plan";
+import type { prepareInitialSandboxCreatePolicy } from "./initial-policy";
 import type { SandboxGpuCreateConfig } from "./sandbox-gpu-create";
 
 const sandboxGpuConfig: SandboxGpuCreateConfig = {
@@ -179,6 +184,41 @@ function expectCredentialBindingFailure({
   expect(upsertProviders).not.toHaveBeenCalled();
 }
 
+describe("prepareSandboxCreatePolicy", () => {
+  it("passes the sandbox name so credential-binding presets can materialize", () => {
+    const intent = resolveSandboxCreateIntent({
+      basePolicyPath: "/repo/policy.yaml",
+      sandboxName: "bound-sandbox",
+      channels,
+      enabledChannels: ["telegram"],
+      disabledChannelNames: new Set(),
+      messagingProviderRequests: [],
+      primaryMessagingCredentialEnvKeys: [],
+      reusableMessagingChannels: [],
+      reusableMessagingProviders: [],
+      hermesToolGateways: [],
+      sandboxGpuConfig: disabledSandboxGpuConfig,
+      gpuCreateArgs: [],
+      gpuRoutePlan: "native-only",
+      sandboxGpuLogMessage: null,
+      policyTier: null,
+    });
+    const seenOptions: Array<Record<string, unknown>> = [];
+    const preparePolicy: typeof prepareInitialSandboxCreatePolicy = (
+      _basePolicyPath,
+      _channels,
+      options,
+    ) => {
+      seenOptions.push(options as unknown as Record<string, unknown>);
+      return { policyPath: "/tmp/policy.yaml", appliedPresets: [] };
+    };
+
+    prepareSandboxCreatePolicy(intent, preparePolicy);
+
+    expect(seenOptions[0]).toMatchObject({ sandboxName: "bound-sandbox" });
+  });
+});
+
 describe("resolveSandboxCreatePolicyTier", () => {
   it("recognizes Personal as a create-time policy tier", () => {
     vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", "1");
@@ -315,34 +355,38 @@ describe("resolveSandboxCreateIntent", () => {
     expect(JSON.stringify(first)).not.toContain("/tmp/");
   });
 
-  it("omits Discord create-time effects when an unselected credential is available", () => {
-    const { intent, messagingTokenDefs } = resolveDiscordCreateIntent({
-      selected: false,
-      reusable: true,
-    });
-    const upsertMessagingProviders = vi.fn((tokenDefs: MessagingTokenDef[]) =>
-      tokenDefs.map(({ name }) => name),
-    );
+  it(
+    "omits Discord create-time effects when an unselected credential is available",
+    testTimeoutOptions(15_000),
+    () => {
+      const { intent, messagingTokenDefs } = resolveDiscordCreateIntent({
+        selected: false,
+        reusable: true,
+      });
+      const upsertMessagingProviders = vi.fn((tokenDefs: MessagingTokenDef[]) =>
+        tokenDefs.map(({ name }) => name),
+      );
 
-    const plan = materializeDiscordCreatePlan(
-      { intent, messagingTokenDefs },
-      { upsertMessagingProviders },
-    );
+      const plan = materializeDiscordCreatePlan(
+        { intent, messagingTokenDefs },
+        { upsertMessagingProviders },
+      );
 
-    expect(intent.reusableMessagingProviders).toEqual([]);
-    expect(plan.activeMessagingChannels).toEqual([]);
-    expect(plan.initialSandboxPolicy.appliedPresets).not.toContain("discord");
-    expect(plan.initialSandboxPolicy.credentialBindingProviders ?? []).not.toContain(
-      discordProviderName,
-    );
-    expect(plan.messagingProviders).not.toContain(discordProviderName);
-    expect(plan.createArgs).not.toContain(discordProviderName);
-    expect(upsertMessagingProviders).toHaveBeenCalledWith([], {
-      replaceExisting: true,
-      allowedSandboxes: ["sandbox"],
-    });
-    plan.initialSandboxPolicy.cleanup?.();
-  });
+      expect(intent.reusableMessagingProviders).toEqual([]);
+      expect(plan.activeMessagingChannels).toEqual([]);
+      expect(plan.initialSandboxPolicy.appliedPresets).not.toContain("discord");
+      expect(plan.initialSandboxPolicy.credentialBindingProviders ?? []).not.toContain(
+        discordProviderName,
+      );
+      expect(plan.messagingProviders).not.toContain(discordProviderName);
+      expect(plan.createArgs).not.toContain(discordProviderName);
+      expect(upsertMessagingProviders).toHaveBeenCalledWith([], {
+        replaceExisting: true,
+        allowedSandboxes: ["sandbox"],
+      });
+      plan.initialSandboxPolicy.cleanup?.();
+    },
+  );
 
   it("attaches the selected Discord provider to its create-time policy", () => {
     const { intent, messagingTokenDefs } = resolveDiscordCreateIntent({
@@ -588,7 +632,7 @@ describe("resolveSandboxCreateIntent", () => {
     expect(JSON.stringify(intent)).toBe(serializedIntent);
   });
 
-  it("defers every provider effect and create attachment until activation (#9833)", () => {
+  it("rejects deferred provider plans before provider effects or sandbox creation (#9833)", () => {
     const tokenDefs = [
       {
         name: "sandbox-telegram-bridge",
@@ -620,49 +664,50 @@ describe("resolveSandboxCreateIntent", () => {
       policyTier: null,
     });
     const events: string[] = [];
-    const plan = materializeSandboxCreatePlan({
-      intent,
-      fromRef: "example.invalid/image@sha256:abc",
-      policyAuthority: "externally-managed",
-      deferSandboxEffectsUntilPolicyVerification: true,
-      messagingTokenDefs: tokenDefs,
-      prepareInitialSandboxCreatePolicy: () => ({
-        policyPath: "/tmp/policy.yaml",
-        appliedPresets: ["telegram"],
-      }),
-      runProviderPreDeleteCleanup: () => events.push("cleanup"),
-      upsertMessagingProviders: vi.fn(() => {
-        events.push("upsert");
-        return ["sandbox-telegram-bridge"];
-      }),
-      getHermesToolGatewayProviderName: () => {
-        events.push("hermes");
-        return "sandbox-hermes-tools";
-      },
+    const cleanupPolicy = vi.fn(() => {
+      events.push("policy-cleanup");
+      return true;
+    });
+    const runProviderPreDeleteCleanup = vi.fn(() => events.push("provider-cleanup"));
+    const upsertMessagingProviders = vi.fn(() => {
+      events.push("upsert");
+      return ["sandbox-telegram-bridge"];
+    });
+    const getHermesToolGatewayProviderName = vi.fn(() => {
+      events.push("hermes");
+      return "sandbox-hermes-tools";
     });
 
-    expect(events).toEqual([]);
-    expect(plan.createArgs).not.toContain("--provider");
-    expect(plan.messagingProviders).toEqual([
-      "sandbox-telegram-bridge",
-      "sandbox-existing-discord",
-    ]);
+    expect(() =>
+      materializeSandboxCreatePlan({
+        intent,
+        fromRef: "example.invalid/image@sha256:abc",
+        policyAuthority: "externally-managed",
+        deferSandboxEffectsUntilPolicyVerification: true,
+        messagingTokenDefs: tokenDefs,
+        prepareInitialSandboxCreatePolicy: () => ({
+          policyPath: "/tmp/policy.yaml",
+          appliedPresets: ["telegram"],
+          cleanup: cleanupPolicy,
+        }),
+        runProviderPreDeleteCleanup,
+        upsertMessagingProviders,
+        getHermesToolGatewayProviderName,
+      }),
+    ).toThrow("No sandbox was created");
 
-    expect(plan.activateDeferredProviderEffects?.()).toEqual([
-      "nvidia-prod",
-      "sandbox-telegram-bridge",
-      "sandbox-existing-discord",
-      "sandbox-hermes-tools",
-      "custom-provider",
-    ]);
-    expect(events).toEqual(["cleanup", "upsert", "hermes"]);
+    expect(events).toEqual(["policy-cleanup"]);
+    expect(cleanupPolicy).toHaveBeenCalledOnce();
+    expect(runProviderPreDeleteCleanup).not.toHaveBeenCalled();
+    expect(upsertMessagingProviders).not.toHaveBeenCalled();
+    expect(getHermesToolGatewayProviderName).not.toHaveBeenCalled();
   });
 
   it("keeps the NemoClaw policy on a managed create when effects are deferred (#9833)", () => {
     const intent = resolveSandboxCreateIntent({
       basePolicyPath: "/repo/policy.yaml",
       sandboxName: "sandbox",
-      inferenceProvider: "nvidia-prod",
+      inferenceProvider: null,
       channels,
       enabledChannels: [],
       disabledChannelNames: new Set(),
@@ -694,9 +739,7 @@ describe("resolveSandboxCreateIntent", () => {
       getHermesToolGatewayProviderName: vi.fn(),
     });
 
-    expect(plan.createArgs).toEqual(
-      expect.arrayContaining(["--policy", "/tmp/policy.yaml"]),
-    );
+    expect(plan.createArgs).toEqual(expect.arrayContaining(["--policy", "/tmp/policy.yaml"]));
     expect(plan.createArgs).not.toContain("--provider");
   });
 

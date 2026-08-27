@@ -156,6 +156,58 @@ describe("createPolicySelectionPromptHelpers", () => {
     expect(errorSpy).toHaveBeenCalledWith("  Unknown preset name ignored: missing");
   });
 
+  it.each([
+    [
+      "policy tier",
+      (helpers: ReturnType<typeof createPolicySelectionPromptHelpers>) =>
+        helpers.selectPolicyTier(),
+    ],
+    [
+      "tier presets",
+      (helpers: ReturnType<typeof createPolicySelectionPromptHelpers>) =>
+        helpers.selectTierPresetsAndAccess("balanced", [{ name: "npm" }]),
+    ],
+    [
+      "preset checkbox",
+      (helpers: ReturnType<typeof createPolicySelectionPromptHelpers>) =>
+        helpers.presetsCheckboxSelector([{ name: "npm", description: "npm registry" }], []),
+    ],
+  ])(
+    "marks cancellation when SIGTERM interrupts the non-TTY %s selector",
+    async (_label, select) => {
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const { helpers, markCancelled, processEvents, prompt } = createHarness({
+        stdinTTY: false,
+        stdoutTTY: false,
+      });
+      prompt.mockImplementation(() => new Promise<string>(() => undefined));
+
+      const selection = select(helpers);
+      expect(prompt).toHaveBeenCalledOnce();
+      processEvents.emit("SIGTERM");
+
+      await expect(selection).rejects.toMatchObject({ code: 1 });
+      expect(markCancelled).toHaveBeenCalledOnce();
+      expect(processEvents.listenerCount("SIGINT")).toBe(0);
+      expect(processEvents.listenerCount("SIGTERM")).toBe(0);
+    },
+  );
+
+  it("marks cancellation when a non-TTY prompt reports Ctrl-C", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { helpers, markCancelled, processEvents, prompt } = createHarness({
+      stdinTTY: false,
+      stdoutTTY: false,
+    });
+    prompt.mockRejectedValue(Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" }));
+
+    await expect(helpers.selectPolicyTier()).rejects.toMatchObject({ code: 1 });
+
+    expect(markCancelled).toHaveBeenCalledOnce();
+    expect(processEvents.listenerCount("SIGINT")).toBe(0);
+    expect(processEvents.listenerCount("SIGTERM")).toBe(0);
+  });
+
   it("selectTierPresetsAndAccess returns raw-mode access toggles on Enter", async () => {
     const { helpers, markCancelled, stdin } = createHarness();
     const result = helpers.selectTierPresetsAndAccess("balanced", [

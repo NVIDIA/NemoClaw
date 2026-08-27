@@ -68,6 +68,13 @@ export interface HermesRuntimeStateMutationInput {
   readonly providers?: RuntimeProviderBundleRegistry;
 }
 
+export function hermesRuntimeProviderPhaseBlocksMutation(
+  phase: string | null,
+  retainedClaim: boolean,
+): boolean {
+  return phase !== null && phase !== "Ready" && phase !== "Running" && !retainedClaim;
+}
+
 function currentRuntimeProviderBundles(): RuntimeProviderBundleRegistry {
   return (
     require("../onboard/runtime-provider/current") as typeof import("../onboard/runtime-provider/current")
@@ -116,34 +123,35 @@ function completionDigest(
     .digest("hex");
 }
 
+const IMMUTABLE_FENCE_FIELDS: ReadonlyArray<keyof RuntimeProviderStateMutationFence> = [
+  "schemaVersion",
+  "intent",
+  "providerId",
+  "sandboxName",
+  "transactionId",
+  "lifecycleGeneration",
+  "runtimeId",
+  "runtimeStateSha256",
+  "engineBindingSha256",
+  "stateRoot",
+  "mountNamespaceId",
+  "stateRootDevice",
+  "stateRootInode",
+  "planSha256",
+  "projectionSha256",
+  "target",
+  "rollback",
+  "nonce",
+  "providerHandle",
+];
+
 function exactFence(
   expected: RuntimeProviderStateMutationFence,
   actual: RuntimeProviderStateMutationFence,
 ): RuntimeProviderStateMutationFence {
-  const immutableFields: ReadonlyArray<keyof RuntimeProviderStateMutationFence> = [
-    "schemaVersion",
-    "intent",
-    "providerId",
-    "sandboxName",
-    "transactionId",
-    "lifecycleGeneration",
-    "runtimeId",
-    "runtimeStateSha256",
-    "engineBindingSha256",
-    "stateRoot",
-    "mountNamespaceId",
-    "stateRootDevice",
-    "stateRootInode",
-    "planSha256",
-    "projectionSha256",
-    "target",
-    "rollback",
-    "nonce",
-    "providerHandle",
-  ];
   if (
     actual.phase !== "activation-proven" ||
-    immutableFields.some((field) => actual[field] !== expected[field])
+    IMMUTABLE_FENCE_FIELDS.some((field) => actual[field] !== expected[field])
   ) {
     throw new Error("Runtime provider recovery returned a different state-mutation fence.");
   }
@@ -155,12 +163,13 @@ function rollbackAndRelease(
   context: RuntimeProviderStateMutationContext,
   fence: RuntimeProviderStateMutationFence,
   outcome: "rollback-published" | "recovery-rollback-published",
-): void {
+): HermesRuntimeStateMutationResult {
   surface.assertFenced(context, fence);
   surface.rollback(context, fence);
   surface.assertFenced(context, fence);
   const proof = surface.activate(context, fence);
   surface.release(context, fence, proof, completionDigest(outcome, fence, proof));
+  return Object.freeze({ fence, proof });
 }
 
 function recoverPriorMutation(
@@ -176,10 +185,9 @@ function recoverRetainedMutation(
   surface: SupportedStateMutationSurface,
   context: RuntimeProviderStateMutationContext,
   fence: RuntimeProviderStateMutationFence,
-): void {
+): HermesRuntimeStateMutationResult {
   if (fence.intent !== "protection-transition" || fence.target !== "locked") {
-    rollbackAndRelease(surface, context, fence, "recovery-rollback-published");
-    return;
+    return rollbackAndRelease(surface, context, fence, "recovery-rollback-published");
   }
   if (fence.phase === "rolled-back") {
     throw new Error(
@@ -193,6 +201,44 @@ function recoverRetainedMutation(
   }
   const proof = surface.activate(context, fence);
   releaseTarget(surface, context, fence, proof);
+  return Object.freeze({ fence, proof });
+}
+
+function exactRetainedFence(
+  expected: RuntimeProviderStateMutationFence,
+  actual: RuntimeProviderStateMutationFence,
+): RuntimeProviderStateMutationFence {
+  if (
+    actual.phase !== "fenced" &&
+    actual.phase !== "published" &&
+    actual.phase !== "activation-proven"
+  ) {
+    throw new Error("Runtime provider recovery returned an invalid retained fence phase.");
+  }
+  if (IMMUTABLE_FENCE_FIELDS.some((field) => actual[field] !== expected[field])) {
+    throw new Error("Runtime provider recovery returned a different state-mutation fence.");
+  }
+  return actual;
+}
+
+function recoverLockedActivationFailure(
+  surface: SupportedStateMutationSurface,
+  context: RuntimeProviderStateMutationContext,
+  expectedFence: RuntimeProviderStateMutationFence,
+  primary: unknown,
+): HermesRuntimeStateMutationResult {
+  let recovered: RuntimeProviderStateMutationFence | null;
+  try {
+    recovered = surface.recover(context);
+  } catch (recoveryError) {
+    throw combinedFailure(primary, recoveryError);
+  }
+  if (recovered === null) throw primary;
+  try {
+    return recoverRetainedMutation(surface, context, exactRetainedFence(expectedFence, recovered));
+  } catch (recoveryError) {
+    throw combinedFailure(primary, recoveryError);
+  }
 }
 
 function recoverAcquireFailure(
@@ -379,7 +425,9 @@ export function runHermesRuntimeProviderStateMutation(
   try {
     proof = surface.activate(context, fence);
   } catch (error) {
-    if (input.target === "locked") throw error;
+    if (input.target === "locked") {
+      return recoverLockedActivationFailure(surface, context, fence, error);
+    }
     try {
       rollbackAndRelease(surface, context, fence, "rollback-published");
     } catch (rollbackError) {

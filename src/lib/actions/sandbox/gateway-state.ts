@@ -71,6 +71,7 @@ import {
   buildHermesPortableCommandAuthority,
   inspectPortableAgentReceiptDisposition,
   qualifyPortableAgentLifecycleAuthority,
+  requalifyPortableAgentSandboxAuthority,
   recoverPortableAgentSandboxLifecycle,
   requireHermesPortableActiveLifecycleAuthority,
 } from "../../onboard/experimental/portable-agent-lifecycle";
@@ -116,6 +117,7 @@ export {
   buildHermesPortableCommandEnvironment,
   inspectPortableAgentReceiptDisposition,
   qualifyPortableAgentLifecycleAuthority,
+  requalifyPortableAgentSandboxAuthority,
   requireHermesPortableActiveLifecycleAuthority,
 };
 export const withSandboxLifecycleLock = withMcpLifecycleLock;
@@ -442,6 +444,9 @@ export async function reconcileMissingAgainstNamedGateway(
     return tryRecoverDockerDriverSandbox(sandboxName, missingLookup, pinnedGatewayName);
   }
   const lifecycle = getNamedGatewayLifecycleState(targetGatewayName);
+  if (lifecycle.recoveryBlocked) {
+    return missingLookup;
+  }
   if (lifecycle.state === "connected_other") {
     runOpenshell(["gateway", "select", targetGatewayName], {
       ignoreError: true,
@@ -776,14 +781,14 @@ const RECOVER_CONTAINER_START_TIMEOUT_MS = 30_000;
  * `docker start` can restore the same container with its workspace state and
  * managed configuration preserved (#8967). A nonzero or missing `docker start`
  * status continues to the readiness wait, which surfaces the existing
- * stopped-container guidance. The function leaves an unresolved, running, or
- * paused container unchanged. A paused container keeps its `docker unpause`
- * guidance. A caller that reaches this function after container startup makes
- * no change.
+ * stopped-container guidance. The function returns true only when Docker
+ * starts the stopped container. It leaves an unresolved, running, or paused
+ * container unchanged. A paused container keeps its `docker unpause` guidance.
+ * A caller that reaches this function after container startup makes no change.
  */
-export function startStoppedSandboxContainerForProbeRecovery(sandboxName: string): void {
+export function startStoppedSandboxContainerForProbeRecovery(sandboxName: string): boolean {
   const runtime = getSandboxDockerRuntime(sandboxName);
-  if (!runtime.containerName || runtime.running || runtime.paused) return;
+  if (!runtime.containerName || runtime.running || runtime.paused) return false;
   console.error(`  Sandbox '${sandboxName}' container is stopped — starting it...`);
   const result = dockerStart(runtime.containerName, {
     ignoreError: true,
@@ -791,10 +796,12 @@ export function startStoppedSandboxContainerForProbeRecovery(sandboxName: string
   });
   if (result.status === 0) {
     console.error(`  ${G}✓${R} Started container '${runtime.containerName}'.`);
+    return true;
   } else {
     console.error(
       `  Docker could not start container '${runtime.containerName}' (exit ${result.status ?? "unknown"}); continuing with readiness checks.`,
     );
+    return false;
   }
 }
 
