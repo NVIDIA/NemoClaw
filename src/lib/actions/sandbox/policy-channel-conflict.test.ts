@@ -593,6 +593,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
           providerType: "discord-hermes-static-v1",
         },
       ],
+      "nemoclaw",
       { bestEffort: true, requireExactBindings: true },
     );
   });

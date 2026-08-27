@@ -91,8 +91,13 @@ function printedText(): string {
     .join("\n");
 }
 
+function withoutGateway(args: readonly string[]): string[] {
+  const index = args[2] === "-g" ? 2 : args[3] === "-g" ? 3 : -1;
+  return index < 0 ? [...args] : [...args.slice(0, index), ...args.slice(index + 2)];
+}
+
 function openshellCalls(): string[][] {
-  return runOpenshellSpy.mock.calls.map((call) => call[0] as string[]);
+  return runOpenshellSpy.mock.calls.map((call) => withoutGateway(call[0] as string[]));
 }
 
 beforeEach(() => {
@@ -175,15 +180,18 @@ beforeEach(() => {
   // Status-table columns: PROVIDER, CREDENTIAL_KEY, STRATEGY, STATUS.
   const refreshStatusTable = (args: readonly string[]): string =>
     `${args[3] ?? ""}  ${args[5] ?? ""}  google-service-account-jwt  refreshed\n`;
-  const isRefreshStatus = (args: readonly string[]): boolean =>
-    args[0] === "provider" && args[1] === "refresh" && args[2] === "status";
+  const isRefreshStatus = (args: readonly string[]): boolean => {
+    const command = withoutGateway(args);
+    return command[0] === "provider" && command[1] === "refresh" && command[2] === "status";
+  };
 
   runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockImplementation((args) => {
-    const providerMissing = args[0] === "provider" && args[1] === "get";
+    const command = withoutGateway(args);
+    const providerMissing = command[0] === "provider" && command[1] === "get";
     return {
       pid: 0,
       output: [null, "", ""],
-      stdout: isRefreshStatus(args) ? refreshStatusTable(args) : "",
+      stdout: isRefreshStatus(args) ? refreshStatusTable(command) : "",
       stderr: providerMissing ? `provider '${args[args.length - 1]}' not found` : "",
       status: providerMissing ? 1 : 0,
       signal: null,
@@ -234,13 +242,14 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
           providerType: "google-chat-bridge",
         },
       ],
+      "nemoclaw",
       { bestEffort: true, requireExactBindings: true },
     );
     const refreshCall = runOpenshellSpy.mock.calls.find(
       (call) =>
-        (call[0] as string[])[0] === "provider" &&
-        (call[0] as string[])[1] === "refresh" &&
-        (call[0] as string[])[2] === "configure",
+        withoutGateway(call[0] as string[])
+          .slice(0, 3)
+          .join(" ") === "provider refresh configure",
     );
     expect(refreshCall).toBeDefined();
     const refreshArgs = refreshCall?.[0] as string[];

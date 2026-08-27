@@ -902,10 +902,14 @@ async function applyChannelAddToGatewayAndRegistry(
   try {
     // bestEffort: failures throw (instead of process.exit inside the helper)
     // so a partial add can be torn down below before exiting.
-    const providerNames = policyChannelDependencies.upsertMessagingProviders(tokenDefs, {
-      bestEffort: true,
-      requireExactBindings: true,
-    });
+    const providerNames = policyChannelDependencies.upsertMessagingProviders(
+      tokenDefs,
+      gatewayName,
+      {
+        bestEffort: true,
+        requireExactBindings: true,
+      },
+    );
     for (const providerName of providerNames) {
       revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName);
       const attached = runOpenshell(
@@ -1005,9 +1009,9 @@ async function applyChannelRemoveToGatewayAndRegistry(
       ...bridgeProviderNamesForChannel(sandboxName, channelName),
     ]),
   ];
+  const gatewayName = getSandboxTargetGatewayName(sandboxName);
 
   if (providerNames.length > 0) {
-    const gatewayName = getSandboxTargetGatewayName(sandboxName);
     const recovery = await recoverNamedGatewayRuntime({ gatewayName });
     if (!recovery.recovered) {
       console.error(
@@ -1031,10 +1035,14 @@ async function applyChannelRemoveToGatewayAndRegistry(
   const detachFailures: Array<{ name: string; output: string }> = [];
   if (gatewayReachable) {
     for (const name of providerNames) {
-      const result = runOpenshell(["sandbox", "provider", "detach", sandboxName, name], {
-        ignoreError: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      const result = policyChannelDependencies.runGatewayOpenshell(
+        gatewayName,
+        ["sandbox", "provider", "detach", sandboxName, name],
+        {
+          ignoreError: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
       if (result.status !== 0) {
         const output = `${result.stdout || ""}${result.stderr || ""}`;
         if (!/\bNotFound\b|not found|not attached/i.test(output)) {
@@ -1068,10 +1076,14 @@ async function applyChannelRemoveToGatewayAndRegistry(
     const detachFailedSet = new Set(detachFailures.map((f) => f.name));
     for (const name of providerNames) {
       if (detachFailedSet.has(name)) continue;
-      const result = runOpenshell(["provider", "delete", name], {
-        ignoreError: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      const result = policyChannelDependencies.runGatewayOpenshell(
+        gatewayName,
+        ["provider", "delete", name],
+        {
+          ignoreError: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
       if (result.status !== 0) {
         const output = `${result.stdout || ""}${result.stderr || ""}`;
         if (!/\bNotFound\b|not found/i.test(output)) {
@@ -1575,9 +1587,13 @@ async function rollbackChannelAdd(
           token,
           providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
         }));
-        policyChannelDependencies.upsertMessagingProviders(priorTokenDefs, {
-          bestEffort: true,
-        });
+        policyChannelDependencies.upsertMessagingProviders(
+          priorTokenDefs,
+          getSandboxTargetGatewayName(sandboxName),
+          {
+            bestEffort: true,
+          },
+        );
       } catch (err) {
         console.error(
           `  ${YW}⚠${R} Failed to restore gateway providers for '${canonical}': ${

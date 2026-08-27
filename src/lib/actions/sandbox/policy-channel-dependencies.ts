@@ -29,6 +29,7 @@ type LegacyOnboardProvidersModule = {
 };
 
 type RebuildModule = typeof import("./rebuild");
+type SetupInferenceModule = typeof import("../../onboard/setup-inference");
 type GooglechatWebhookLifecycleModule =
   typeof import("../../messaging/channels/googlechat/tunnel/lifecycle");
 type GooglechatTunnelRuntimeDeps =
@@ -42,6 +43,12 @@ type GooglechatWebhookProxy = Pick<
   "readGooglechatWebhookProxyState" | "startGooglechatWebhookProxy" | "stopGooglechatWebhookProxy"
 >;
 
+function gatewayRunner(gatewayName: string): typeof runOpenshell {
+  const { createGatewayScopedOpenshellRunner } =
+    require("../../onboard/setup-inference") as SetupInferenceModule;
+  return createGatewayScopedOpenshellRunner(runOpenshell, gatewayName);
+}
+
 /**
  * Injectable, late-bound boundary around provider registration and rebuild
  * orchestration. Focused tests replace these methods with `vi.spyOn` without
@@ -50,6 +57,13 @@ type GooglechatWebhookProxy = Pick<
  * onboarding and rebuild modules at policy-channel import time.
  */
 export const policyChannelDependencies = {
+  runGatewayOpenshell(
+    gatewayName: string,
+    args: Parameters<typeof runOpenshell>[0],
+    options?: Parameters<typeof runOpenshell>[1],
+  ): ReturnType<typeof runOpenshell> {
+    return gatewayRunner(gatewayName)(args, options);
+  },
   inspectMessagingProviderAttachmentTarget(sandboxName: string, gatewayName: string): string {
     return inspectOpenShellSandboxIdentityFingerprint({
       sandboxName,
@@ -64,10 +78,11 @@ export const policyChannelDependencies = {
   },
   upsertMessagingProviders(
     tokenDefs: MessagingProviderTokenDefinition[],
+    gatewayName: string,
     options?: MessagingProviderUpsertOptions,
   ): string[] {
     const providers = require("../../onboard/providers") as LegacyOnboardProvidersModule;
-    return providers.upsertMessagingProviders(tokenDefs, runOpenshell, options);
+    return providers.upsertMessagingProviders(tokenDefs, gatewayRunner(gatewayName), options);
   },
   rebuildSandbox(
     sandboxName: Parameters<RebuildModule["rebuildSandbox"]>[0],

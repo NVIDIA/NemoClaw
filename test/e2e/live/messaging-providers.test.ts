@@ -1062,7 +1062,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       port: fakeGateway.port,
       identifyToken: {
         kind: "explicit",
-        value: "openshell:resolve:env:DISCORD_BOT_TOKEN",
+        value: credentialPlaceholders.get("DISCORD_BOT_TOKEN") ?? "",
       },
       redactionValues,
     });
