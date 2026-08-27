@@ -1923,13 +1923,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           sandboxName,
           gatewayName: GATEWAY_NAME,
           sessionId: inferenceRouteReservationAuthority.sessionId,
-          selection: sandboxRegistration.selection(
-            sandboxName,
-            provider,
-            model,
-            preferredInferenceApi,
-            createIntent?.endpointSource ?? null,
-          ),
+          selection: inferenceRouteReservationAuthority.selection,
         },
         registry.getSandbox(sandboxName),
       );
@@ -2303,13 +2297,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       }
       const inferenceRouteReservation = {
         sessionId: inferenceRouteReservationAuthority.sessionId,
-        selection: sandboxRegistration.selection(
-          sandboxName,
-          provider,
-          model,
-          preferredInferenceApi,
-          createIntent?.endpointSource ?? null,
-        ),
+        selection: inferenceRouteReservationAuthority.selection,
       };
       await sandboxGpuCreateFlow.runHermesPortableOnboardingFromOnboard<
         import("../sandbox-gpu-create-flow").SandboxGpuCreateFlowResult
