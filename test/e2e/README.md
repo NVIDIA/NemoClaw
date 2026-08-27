@@ -95,6 +95,8 @@ first-parent history. It downloads the complete cohort contract and Deep Agents 
 by immutable artifact ID. It binds each artifact to the selected workflow run, attempt, revision,
 artifact ID, and artifact digest. The cohort validator requires OpenClaw, Hermes, and LangChain Deep
 Agents Code on `linux/amd64` and `linux/arm64` before it emits `managed_image_revision`.
+Each cohort platform entry records its workflow run and producer attempt.
+The validator binds each SLSA builder ID to that attempt and rejects an attempt newer than the selected publication.
 `generate-matrix` and every stock-onboarding job depend on this job, so a missing, failed,
 incomplete, or mixed publication starts no onboarding consumer.
 

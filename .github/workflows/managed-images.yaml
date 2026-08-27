@@ -2968,6 +2968,7 @@ jobs:
                     digest,
                     reference,
                     baseReference,
+                    run,
                     publicationEvidence
                   }
                 }) | from_entries)
@@ -2976,7 +2977,11 @@ jobs:
 
           cohort_manifests="$RUNNER_TEMP/managed-image-cohort-manifests.json"
           jq -s 'sort_by(.agent)' "$manifests" > "$cohort_manifests"
-          if ! jq -e '
+          if ! jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson runId "$GITHUB_RUN_ID" \
+            '
             length == 3
             and ([.[].agent] | sort) == [
               "hermes",
@@ -2997,6 +3002,12 @@ jobs:
               and all(.platforms[];
                 (.digest | test("^sha256:[0-9a-f]{64}$"))
                 and (.baseReference | test("@sha256:[0-9a-f]{64}$"))
+                and (.run | keys | sort) == ["attempt", "id"]
+                and .run.id == $runId
+                and (.run.attempt | type) == "number"
+                and .run.attempt >= 1
+                and (.run.attempt | floor) == .run.attempt
+                and .run.attempt <= $runAttempt
                 and .publicationEvidence.candidateDescriptor.digest == .digest
                 and .publicationEvidence.attestations.manifestDescriptor.annotations[
                   "vnd.docker.reference.digest"
@@ -3005,6 +3016,9 @@ jobs:
                   .publicationEvidence.workloadDescriptor.digest
                 and .publicationEvidence.attestations.spdx.statement.subject.digest ==
                   .publicationEvidence.workloadDescriptor.digest
+                and .publicationEvidence.attestations.slsa.statement.builderId ==
+                  ("https://github.com/" + $repository + "/actions/runs/" +
+                   ($runId | tostring) + "/attempts/" + (.run.attempt | tostring))
               )
             )
           ' "$cohort_manifests" >/dev/null; then
@@ -3150,6 +3164,7 @@ jobs:
             }' > "$cohort_contract"
           jq -e \
             --arg cohort "$cohort" \
+            --arg repository "$GITHUB_REPOSITORY" \
             --arg revision "$GITHUB_SHA" \
             --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
             --argjson runId "$GITHUB_RUN_ID" \
@@ -3184,10 +3199,19 @@ jobs:
                and .alias == (.image + ":cohort-" + $cohort)
                and (.platforms | keys | sort) == ["linux/amd64", "linux/arm64"]
                and all(.platforms[];
-                 .publicationEvidence.candidateDescriptor.digest == .digest
+                 (.run | keys | sort) == ["attempt", "id"]
+                 and .run.id == $runId
+                 and (.run.attempt | type) == "number"
+                 and .run.attempt >= 1
+                 and (.run.attempt | floor) == .run.attempt
+                 and .run.attempt <= $runAttempt
+                 and .publicationEvidence.candidateDescriptor.digest == .digest
                  and .publicationEvidence.attestations.manifestDescriptor.annotations[
                    "vnd.docker.reference.digest"
                  ] == .publicationEvidence.workloadDescriptor.digest
+                 and .publicationEvidence.attestations.slsa.statement.builderId ==
+                   ("https://github.com/" + $repository + "/actions/runs/" +
+                    ($runId | tostring) + "/attempts/" + (.run.attempt | tostring))
                )
              )' "$cohort_contract" >/dev/null
 
