@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { expect, it } from "vitest";
+import { dockerRunCommandBetween, runLoggedDockerShell } from "../../helpers/dockerfile-run-shell";
 import { writeReviewedNpmFixture } from "../../helpers/reviewed-npm-fixture";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
@@ -16,19 +17,11 @@ const BRAVE_TARBALL =
 
 it("pins Brave web-search and preserves its placeholder during build-time doctor", () => {
   const dockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile"), "utf-8");
-  const start = dockerfile.indexOf("# Install non-messaging OpenClaw plugins");
-  const command = dockerfile
-    .slice(start)
-    .split("\nRUN ", 3)[1]
-    .split("\n")
-    .filter((line) => !line.trimStart().startsWith("#"))
-    .join("\n")
-    .replace(/\\\s*\n/g, " ")
-    .replace(
-      "--network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/nemoclaw-reviewed-npm-archives,ro ",
-      "",
-    )
-    .trim();
+  const command = dockerRunCommandBetween(
+    dockerfile,
+    "# Install non-messaging OpenClaw plugins",
+    "# Add messaging source after the non-messaging install",
+  );
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-brave-plugin-install-"));
   const log = path.join(tmp, "calls.log");
   try {
@@ -78,6 +71,90 @@ it("pins Brave web-search and preserves its placeholder during build-time doctor
     expect(calls).toContain(
       "doctor --fix --non-interactive|BRAVE_API_KEY=openshell:resolve:env:BRAVE_API_KEY",
     );
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+it.runIf(process.platform === "linux")(
+  "reports an unsafe messaging cache path before invoking the build applier",
+  () => {
+    const dockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile"), "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-messaging-cache-safety-"));
+    const unsafeCacheEntry = path.join(tmp, "unsafe-cache-entry");
+    const installCacheTemplate = path.join(tmp, "install-cache.XXXXXX");
+
+    try {
+      fs.writeFileSync(unsafeCacheEntry, "fixture\n", { mode: 0o600 });
+      fs.chmodSync(unsafeCacheEntry, 0o666);
+      const command = dockerRunCommandBetween(
+        dockerfile,
+        "RUN --mount=from=openclaw-managed-messaging-npm-cache",
+        "# Copy the full candidate runtime payload after the stable offline plugin",
+      )
+        .replaceAll("/opt/nemoclaw-managed-messaging-npm-cache", unsafeCacheEntry)
+        .replaceAll("/usr/local/share/nemoclaw/wechat-npm-cache", unsafeCacheEntry)
+        .replaceAll("/tmp/nemoclaw-wechat-npm-cache.XXXXXX", installCacheTemplate);
+      const { calls, result } = runLoggedDockerShell(
+        command,
+        tmp,
+        ['node() { printf "node %s\\n" "$*" >> "$call_log"; }'],
+        {
+          env: {
+            NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
+          },
+        },
+      );
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(
+        "ERROR: trusted messaging cache is unsafe phase=before-install",
+      );
+      expect(result.stderr).toContain(`path=${unsafeCacheEntry}`);
+      expect(result.stderr).toContain("reason=not-root-owned-or-group-world-writable");
+      expect(calls).toBe("");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  },
+);
+
+it.each([
+  { expectedPhase: "agent-install", union: "0" },
+  { expectedPhase: "managed-image-capability-union", union: "1" },
+])("selects only the $expectedPhase messaging install phase", ({ expectedPhase, union }) => {
+  const dockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile"), "utf-8");
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-messaging-phase-selection-"));
+  const trustedCache = path.join(tmp, "trusted-cache");
+  const installCacheTemplate = path.join(tmp, "install-cache.XXXXXX");
+
+  try {
+    fs.mkdirSync(trustedCache);
+    fs.writeFileSync(path.join(trustedCache, "fixture"), "fixture\n");
+    const command = dockerRunCommandBetween(
+      dockerfile,
+      "RUN --mount=from=openclaw-managed-messaging-npm-cache",
+      "# Copy the full candidate runtime payload after the stable offline plugin",
+    )
+      .replaceAll("/opt/nemoclaw-managed-messaging-npm-cache", trustedCache)
+      .replaceAll("/usr/local/share/nemoclaw/wechat-npm-cache", trustedCache)
+      .replaceAll("/tmp/nemoclaw-wechat-npm-cache.XXXXXX", installCacheTemplate);
+    const { calls, result } = runLoggedDockerShell(
+      command,
+      tmp,
+      ["find() { :; }", 'node() { printf "node %s\\n" "$*" >> "$call_log"; }'],
+      {
+        env: {
+          NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: union,
+          OPENCLAW_VERSION: "2026.7.1",
+        },
+      },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(calls.trim().split("\n")).toEqual([
+      `node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase ${expectedPhase}`,
+    ]);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

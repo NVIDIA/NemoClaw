@@ -44,6 +44,7 @@ on:
       - "src/lib/messaging/**"
       - "src/lib/onboard/managed-bootstrap/envelope.ts"
       - "src/lib/onboard/managed-startup/**"
+      - "src/lib/onboard/managed-workload/onboard-orchestration.ts"
       - "src/lib/security/credential-hash.ts"
       - "src/lib/state/paths.ts"
       - "src/lib/state/state-root.ts"
