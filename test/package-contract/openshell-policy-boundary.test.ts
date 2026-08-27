@@ -70,6 +70,9 @@ describe("OpenShell policy boundary package contract", () => {
         yamlBody: string;
         policy: Record<string, unknown>;
       };
+      parseActiveGlobalPolicyAuthorityMetadata: (
+        raw: string,
+      ) => { state: string; inspection?: { authority: string } };
       parseSandboxPolicyAuthorityMetadata: (
         raw: string,
         sandboxName: string,
@@ -94,6 +97,7 @@ describe("OpenShell policy boundary package contract", () => {
         yamlBody: string;
         policy: Record<string, unknown>;
       };
+      parseActiveGlobalPolicyAuthorityMetadata: typeof cliPolicy.parseActiveGlobalPolicyAuthorityMetadata;
       parseSandboxPolicyAuthorityMetadata: typeof cliPolicy.parseSandboxPolicyAuthorityMetadata;
       withoutProviderComposedPolicies: (
         policies: Record<string, unknown>,
@@ -104,6 +108,7 @@ describe("OpenShell policy boundary package contract", () => {
       require("../../nemoclaw/dist/shared/openshell-policy-boundary.cjs") as {
         assertExternalPolicyRequirementContainment: typeof cliPolicy.assertExternalPolicyRequirementContainment;
         assertMatchingPolicyAuthority: typeof cliPolicy.assertMatchingPolicyAuthority;
+        parseActiveGlobalPolicyAuthorityMetadata: typeof cliPolicy.parseActiveGlobalPolicyAuthorityMetadata;
         parseOpenShellPolicy: typeof cliPolicy.parseOpenShellPolicy;
         parseSandboxPolicyAuthorityMetadata: typeof cliPolicy.parseSandboxPolicyAuthorityMetadata;
         stripProviderComposedPolicies: typeof cliPolicy.stripProviderComposedPolicies;
@@ -131,6 +136,9 @@ describe("OpenShell policy boundary package contract", () => {
     expect(cliPolicy.stripProviderComposedPolicies).toBe(
       canonicalBoundary.stripProviderComposedPolicies,
     );
+    expect(cliPolicy.parseActiveGlobalPolicyAuthorityMetadata).toBe(
+      canonicalBoundary.parseActiveGlobalPolicyAuthorityMetadata,
+    );
     expect(cliPolicy.parseSandboxPolicyAuthorityMetadata).toBe(
       canonicalBoundary.parseSandboxPolicyAuthorityMetadata,
     );
@@ -145,10 +153,23 @@ describe("OpenShell policy boundary package contract", () => {
       sandbox: "alpha",
       status: "effective",
       policy_source: "global",
+      hash: "sha256:sandbox",
+      active_version: 1,
       policy: { version: 1, network_policies: {} },
     });
     expect(pluginBoundary.parseSandboxPolicyAuthorityMetadata(sandboxMetadata, "alpha")).toEqual(
       canonicalBoundary.parseSandboxPolicyAuthorityMetadata(sandboxMetadata, "alpha"),
+    );
+    const globalMetadata = JSON.stringify({
+      scope: "global",
+      status: "loaded",
+      policy_source: "global",
+      hash: "sha256:global",
+      active_version: 1,
+      policy: { version: 1, network_policies: {} },
+    });
+    expect(pluginBoundary.parseActiveGlobalPolicyAuthorityMetadata(globalMetadata)).toEqual(
+      canonicalBoundary.parseActiveGlobalPolicyAuthorityMetadata(globalMetadata),
     );
 
     const pluginRunner = await import(
@@ -416,7 +437,7 @@ process.stdout.write("validated");
       "openshell-policy-boundary.cjs",
     );
     expect(auditOpenShellPolicyBoundaryDependencies(fs.readFileSync(boundaryPath, "utf8"))).toEqual(
-      ["yaml"],
+      ["node:util", "yaml"],
     );
 
     expect(() =>

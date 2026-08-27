@@ -82,6 +82,11 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
+      "test": "binds trusted base publication to the generic NVIDIA GPU job",
+      "category": "security"
+    },
+    {
       "file": "test/agents/hermes/hermes-final-image-layout.test.ts",
       "test": "pins $source to its current bytes at $target",
       "category": "security"
@@ -154,26 +159,6 @@
     {
       "file": "test/agents/openclaw/openclaw-locked-install.test.ts",
       "test": "rejects symlinked package manifests",
-      "category": "security"
-    },
-    {
-      "file": "test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts",
-      "test": "requires valid sandbox names",
-      "category": "security"
-    },
-    {
-      "file": "test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts",
-      "test": "requires distinct specialist and synthesis sandboxes",
-      "category": "security"
-    },
-    {
-      "file": "test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts",
-      "test": "requires a synthesis matrix",
-      "category": "security"
-    },
-    {
-      "file": "test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts",
-      "test": "requires native specialist sessions",
       "category": "security"
     },
     {

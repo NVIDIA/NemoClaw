@@ -11,6 +11,8 @@ const http = require("http");
 const host = process.env.FAKE_SLACK_API_HOST || "0.0.0.0";
 const rawPort = process.env.FAKE_SLACK_API_PORT || "0";
 const port = Number(rawPort);
+const rawWebsocketPort = process.env.FAKE_SLACK_API_WEBSOCKET_PORT || "0";
+const websocketPort = Number(rawWebsocketPort);
 const portFile = process.env.FAKE_SLACK_API_PORT_FILE || "";
 const captureFile = process.env.FAKE_SLACK_API_CAPTURE_FILE || "";
 const expectedBotToken = process.env.FAKE_SLACK_API_EXPECTED_BOT_TOKEN || "";
@@ -23,6 +25,18 @@ const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 if (!Number.isInteger(port) || port < 0 || port > 65535) {
   console.error(`FAKE_SLACK_API_PORT must be an integer between 0 and 65535 (received: ${rawPort})`);
+  process.exit(2);
+}
+
+if (!Number.isInteger(websocketPort) || websocketPort < 0 || websocketPort > 65535) {
+  console.error(
+    `FAKE_SLACK_API_WEBSOCKET_PORT must be an integer between 0 and 65535 (received: ${rawWebsocketPort})`,
+  );
+  process.exit(2);
+}
+
+if (port !== 0 && websocketPort === port) {
+  console.error("FAKE_SLACK_API_PORT and FAKE_SLACK_API_WEBSOCKET_PORT must be distinct");
   process.exit(2);
 }
 
@@ -156,7 +170,7 @@ function sendSocketModeEvent(socket) {
   record({ event: "websocket-event-sent", path: "/socket-mode", envelopeId: envelope.envelope_id });
 }
 
-const server = http.createServer((req, res) => {
+function handleRequest(req, res) {
   const chunks = [];
   let bodyBytes = 0;
   let bodyTooLarge = false;
@@ -223,9 +237,9 @@ const server = http.createServer((req, res) => {
     });
     res.end(JSON.stringify(response.body));
   });
-});
+}
 
-server.on("upgrade", (req, socket) => {
+function handleUpgrade(req, socket) {
   const pathname = new URL(req.url || "/", "http://fake-slack.local").pathname;
   if (pathname !== "/socket-mode") {
     socket.destroy();
@@ -292,19 +306,39 @@ server.on("upgrade", (req, socket) => {
       }
     }
   });
-});
+}
 
-server.listen(port, host, () => {
+function createSlackServer() {
+  const slackServer = http.createServer(handleRequest);
+  slackServer.on("upgrade", handleUpgrade);
+  return slackServer;
+}
+
+const restServer = createSlackServer();
+const websocketServer = createSlackServer();
+const listeningPorts = {};
+
+function recordListening(kind, server) {
   const address = server.address();
-  if (portFile) {
-    fs.writeFileSync(portFile, `${address.port}\n`, { mode: 0o600 });
+  listeningPorts[kind] = address.port;
+  record({ event: "listening", host, kind, port: address.port });
+  if (portFile && listeningPorts.rest && listeningPorts.websocket) {
+    fs.writeFileSync(portFile, `${listeningPorts.rest}\n`, { mode: 0o600 });
   }
-  record({ event: "listening", host, port: address.port });
-});
+}
+
+restServer.listen(port, host, () => recordListening("rest", restServer));
+websocketServer.listen(websocketPort, host, () => recordListening("websocket", websocketServer));
 
 for (const signal of ["SIGTERM", "SIGINT"]) {
   process.on(signal, () => {
-    server.close(() => process.exit(0));
+    let openServers = 2;
+    const finish = () => {
+      openServers -= 1;
+      if (openServers === 0) process.exit(0);
+    };
+    restServer.close(finish);
+    websocketServer.close(finish);
     setTimeout(() => process.exit(0), 1000).unref();
   });
 }
