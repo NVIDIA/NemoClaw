@@ -347,7 +347,7 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
     readonly policyAuthority: MaterializeSandboxCreatePlanInput["policyAuthority"];
     readonly deferSandboxEffectsUntilPolicyVerification?: boolean;
     readonly rebindMessagingTokenDefs: () => Promise<readonly MessagingTokenDef[]>;
-    readonly runProviderPreDeleteCleanup: () => void;
+    readonly runProviderPreDeleteCleanup: MaterializeSandboxCreatePlanInput["runProviderPreDeleteCleanup"];
     readonly upsertMessagingProviders: MaterializeSandboxCreatePlanInput["upsertMessagingProviders"];
     readonly getHermesToolGatewayProviderName: (sandboxName: string) => string;
     readonly discloseInitialSandboxPolicy: (policy: InitialSandboxPolicy) => void;
@@ -379,7 +379,7 @@ export interface PreparedOnboardSandboxWorkloadLaunch {
   readonly messagingProviders: string[];
   readonly gpuRoutePlan: SandboxCreateIntent["gpuRoutePlan"];
   readonly compatibilityPolicyPath: string | null;
-  readonly activateDeferredProviderEffects: (() => readonly string[]) | null;
+  readonly activateDeferredProviderEffects: SandboxCreatePlan["activateDeferredProviderEffects"];
   readonly initialGpuRoute: SelectedDockerGpuRoute;
   readonly sandboxReadyTimeoutSecs: number;
   readonly buildId: string;

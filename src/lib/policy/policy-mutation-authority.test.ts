@@ -203,6 +203,10 @@ describe("PolicyMutationAuthority", () => {
   });
 
   it("rotates the receipt after a matching policy mutation (#9833)", () => {
+    mocks.captureSandboxBasePolicy.mockImplementation(
+      () => `Version: 2\nHash: updated\nStatus: Effective\n---\n${liveBasePolicy}`,
+    );
+
     expect(
       applyPresetContent(SANDBOX, "weather", WEATHER_PRESET, {
         custom: { sourcePath: "/tmp/weather.yaml" },
