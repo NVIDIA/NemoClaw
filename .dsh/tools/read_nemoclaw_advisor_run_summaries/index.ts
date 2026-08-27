@@ -32,31 +32,18 @@ export default async function read_nemoclaw_advisor_run_summaries(input: {
     throw new Error("maxArtifacts must be an integer from 1 through 20");
   if (!Number.isSafeInteger(maxCharacters) || maxCharacters < 1000 || maxCharacters > 15000)
     throw new Error("maxSummaryCharacters must be an integer from 1000 through 15000");
-  const all = [];
-  let listingTruncated = false;
-  for (let page = 1; page <= 5; page += 1) {
-    const listed = await tools.run_github_cli({
-      workdir: input.workdir,
-      args: [
-        "api",
-        `repos/${repo}/actions/runs/${input.runId}/artifacts?per_page=100&page=${page}`,
-        "--jq",
-        '{total_count,artifacts:[.artifacts[]|select(.name|startswith("pr-review-specialist-"))|{id,name,expired,size:.size_in_bytes}]}',
-      ],
-      timeoutMs: 60000,
-    });
-    let payload;
-    try {
-      payload = JSON.parse(listed.stdout);
-    } catch {
-      throw new Error("Could not parse advisor artifact listing");
-    }
-    if (!Array.isArray(payload.artifacts) || !Number.isSafeInteger(payload.total_count))
-      throw new Error("Advisor artifact listing has invalid fields");
-    all.push(...payload.artifacts);
-    if (page * 100 >= payload.total_count) break;
-    if (page === 5) listingTruncated = true;
-  }
+  const listing = await tools.read_github_pages({
+    workdir: input.workdir,
+    repository: repo,
+    path: "actions/runs/" + input.runId + "/artifacts",
+    pageSize: 100,
+    pageLimit: 5,
+    arrayField: "artifacts",
+  });
+  const all = listing.items.filter(
+    (item) => typeof item.name === "string" && item.name.startsWith("pr-review-specialist-"),
+  );
+  const listingTruncated = listing.truncated;
   const selected = all.slice(0, maxArtifacts);
   const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
   const summaries = [];
@@ -73,10 +60,10 @@ export default async function read_nemoclaw_advisor_run_summaries(input: {
       continue;
     }
     if (
-      typeof raw.size !== "number" ||
-      !Number.isSafeInteger(raw.size) ||
-      raw.size < 0 ||
-      raw.size > 5000000
+      typeof raw.size_in_bytes !== "number" ||
+      !Number.isSafeInteger(raw.size_in_bytes) ||
+      raw.size_in_bytes < 0 ||
+      raw.size_in_bytes > 5000000
     ) {
       failures.push({
         artifactId,

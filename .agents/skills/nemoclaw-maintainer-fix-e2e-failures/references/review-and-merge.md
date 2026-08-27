@@ -7,38 +7,13 @@ For workflow approval, review approval, merge, retry, or rollback PR writes, per
 
 ## Run the write policy evaluator
 
-Before a workflow approval, review, merge, retry, or rollback PR write:
-
-1. Capture the GitHub object identifiers.
-2. Refresh `origin/main`.
-3. Run the evaluator from a temporary worktree at `origin/main`.
-4. Compare every file in `policy_surface` with the PR worktree copy before execution.
-5. Remove the temporary worktree after the decision.
+Before a workflow approval, review, merge, retry, or rollback PR write, capture the GitHub object identifiers and run the trusted wrapper:
 
 ```bash
-set -euo pipefail
-git fetch origin main
-trusted_policy_tmp=$(mktemp -d)
-trusted_policy_root="$trusted_policy_tmp/main"
-cleanup() {
-  git worktree remove --force "$trusted_policy_root" >/dev/null 2>&1 || true
-  rmdir "$trusted_policy_tmp" >/dev/null 2>&1 || true
-}
-trap cleanup EXIT INT TERM
-git worktree add --detach "$trusted_policy_root" origin/main
-policy_path=.agents/skills/nemoclaw-maintainer-fix-e2e-failures/scripts/evaluate-policy.mts
-policy_surface=("$policy_path")
-for policy_file in "${policy_surface[@]}"; do
-  test -f "$trusted_policy_root/$policy_file"
-  test -f "$policy_file"
-  cmp -s "$trusted_policy_root/$policy_file" "$policy_file"
-done
-test -z "$(git status --porcelain -- "${policy_surface[@]}")"
-node --experimental-strip-types \
-  "$trusted_policy_root/$policy_path" < <policy-state.json>
-cleanup
-trap - EXIT INT TERM
+.agents/skills/nemoclaw-maintainer-fix-e2e-failures/scripts/run-trusted-policy.sh policy-state.json
 ```
+
+The wrapper refreshes `origin/main`, compares the evaluator with the current checkout, executes the trusted copy, and removes its temporary worktree.
 
 Stop when a listed file is absent, differs, has local changes, or has an unlisted local import. Add an import to `policy_surface` only after review.
 

@@ -17,38 +17,15 @@ See [PR Review Priorities](PR-REVIEW-PRIORITIES.md). Require all conditions:
 - No unresolved correctness or security finding remains.
 - Risky code has applicable tests from [Risky Areas](RISKY-AREAS.md).
 
-Dependabot does not need the PR-body declaration. Its case-normalized login must be `dependabot[bot]` or `app/dependabot`. Its commits must still be verified.
+Dependabot does not need the PR-body declaration. Its login must be `dependabot[bot]` or `app/dependabot`. Its commits must still be verified.
 
 ## Run the trusted checker
 
-Run the checker from a temporary worktree at refreshed `origin/main`. Do not run PR code with maintainer credentials.
+Run the trusted wrapper. It refreshes `origin/main`, compares the gate source with the current checkout, executes the trusted copy, and removes its temporary worktree:
 
 ```bash
-set -euo pipefail
-git fetch origin main
-trusted_gate_tmp=$(mktemp -d)
-trusted_gate_root="$trusted_gate_tmp/main"
-cleanup() {
-  git worktree remove --force "$trusted_gate_root" >/dev/null 2>&1 || true
-  rmdir "$trusted_gate_tmp" >/dev/null 2>&1 || true
-}
-trap cleanup EXIT INT TERM
-git worktree add --detach "$trusted_gate_root" origin/main
-gate_path=.agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts
-gate_surface=("$gate_path" .agents/skills/nemoclaw-maintainer-day/scripts/shared.ts)
-for gate_file in "${gate_surface[@]}"; do
-  test -f "$trusted_gate_root/$gate_file"
-  test -f "$gate_file"
-  cmp -s "$trusted_gate_root/$gate_file" "$gate_file"
-done
-test -z "$(git status --porcelain -- "${gate_surface[@]}")"
-node --experimental-strip-types --no-warnings \
-  "$trusted_gate_root/$gate_path" <pr-number>
-cleanup
-trap - EXIT INT TERM
+.agents/skills/nemoclaw-maintainer-day/scripts/run-trusted-check-gates.sh <pr-number>
 ```
-
-Stop if a gate file is absent, differs, has local changes, or has an unlisted local import.
 
 Read the effective rules for `main` before approval:
 
@@ -76,7 +53,7 @@ A first-time fork contributor can require an **Approve and run** decision before
 
 ### Live E2E
 
-Live E2E is not a default PR merge gate. When a maintainer requires it, use `nemoclaw-maintainer-e2e`. Evaluate its result for the recorded PR commit, base commit, source repository, and trusted workflow commit.
+Live E2E is not a default PR merge gate. When a maintainer requires it, use `nemoclaw-maintainer-e2e`. Evaluate its result for this PR.
 
 ### Contributor and approver overlap
 
@@ -96,7 +73,7 @@ The contributor set includes the PR opener, commit authors, and co-authors. Use 
 | A required test is missing | Follow [Test Gaps](TEST-GAPS.md). |
 | All checker gates and maintainer judgments pass | Approve the commit under review. |
 
-Do not approve a stale or conflicted PR. A branch refresh invalidates the prior approval evidence.
+Do not approve a conflicted PR. A branch refresh invalidates the prior approval evidence.
 
 ## Recheck and report
 

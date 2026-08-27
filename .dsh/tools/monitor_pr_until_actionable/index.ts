@@ -22,6 +22,13 @@ export default async function monitor_pr_until_actionable(input: {
   currentHeadSha: string;
   pendingChecks: { name: string; state: string; link: string }[];
   failedChecks: { name: string; state: string; link: string }[];
+  reviewContext: {
+    id: Integer;
+    state?: string;
+    user?: string;
+    commitId?: string;
+    body?: string;
+  }[];
   discussionComments: {
     id: Integer;
     user?: string;
@@ -93,6 +100,7 @@ export default async function monitor_pr_until_actionable(input: {
     lastPendingChecks = [],
     lastFailedChecks = [],
     lastFindings = [],
+    lastReviewContext = [],
     lastDiscussionComments = [];
   while (Date.now() <= deadline) {
     const cycle = await tools.collect_nemoclaw_pr_review_cycle({
@@ -115,6 +123,7 @@ export default async function monitor_pr_until_actionable(input: {
         currentHeadSha: head,
         pendingChecks: [],
         failedChecks: [],
+        reviewContext: [],
         discussionComments: [],
         findings: [],
         snapshots,
@@ -163,6 +172,7 @@ export default async function monitor_pr_until_actionable(input: {
         (x) =>
           (x.type === "review" &&
             x.state === "CHANGES_REQUESTED" &&
+            x.commitId === head &&
             !ignoredReviews.has(Number(x.id))) ||
           (x.type === "inline-comment" &&
             unresolvedRootIds.has(Number(x.id)) &&
@@ -178,6 +188,23 @@ export default async function monitor_pr_until_actionable(input: {
         ...(typeof x.body === "string" ? { body: x.body.slice(0, findingBodyCharacters) } : {}),
         ...(typeof x.url === "string" ? { url: x.url } : {}),
       }));
+    const reviewContext = cycle.items
+      .filter(
+        (item) =>
+          item.type === "review" &&
+          item.state === "CHANGES_REQUESTED" &&
+          item.commitId !== head &&
+          !ignoredReviews.has(Number(item.id)),
+      )
+      .map((item) => ({
+        id: Number(item.id),
+        ...(typeof item.state === "string" ? { state: item.state } : {}),
+        ...(typeof item.user === "string" ? { user: item.user } : {}),
+        ...(typeof item.commitId === "string" ? { commitId: item.commitId } : {}),
+        ...(typeof item.body === "string"
+          ? { body: item.body.slice(0, findingBodyCharacters) }
+          : {}),
+      }));
     const discussionComments = cycle.items
       .filter((item) => item.type === "discussion-comment")
       .map((item) => ({
@@ -191,6 +218,7 @@ export default async function monitor_pr_until_actionable(input: {
     lastPendingChecks = pendingChecks;
     lastFailedChecks = failedChecks;
     lastFindings = findings;
+    lastReviewContext = reviewContext;
     lastDiscussionComments = discussionComments;
     const snapshot = {
       headSha: head,
@@ -231,6 +259,7 @@ export default async function monitor_pr_until_actionable(input: {
         currentHeadSha: head,
         pendingChecks,
         failedChecks,
+        reviewContext,
         discussionComments,
         findings,
         snapshots,
@@ -246,6 +275,7 @@ export default async function monitor_pr_until_actionable(input: {
     currentHeadSha: input.expectedHeadSha,
     pendingChecks: lastPendingChecks,
     failedChecks: lastFailedChecks,
+    reviewContext: lastReviewContext,
     discussionComments: lastDiscussionComments,
     findings: lastFindings,
     snapshots,
