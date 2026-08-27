@@ -10,46 +10,20 @@ description: Create a GitHub pull request with the NemoClaw template. Then, moni
 
 Create NemoClaw pull requests with the `gh` CLI and the project's PR template.
 
-## Prerequisites
-
-- Authenticate the `gh` CLI (`gh auth status`).
-- Work in the NemoClaw Git repository.
-- Put the commits on a feature branch.
-- Add the contributor's DCO `Signed-off-by:` declaration to the PR description.
-- Make sure that GitHub shows each PR commit as `Verified`.
-
-## Hard Stop: Git, SSH, and Authentication Problems
-
-Follow [Stop for Git and GitHub Access Errors](../_shared/git-github-hard-stop.md) when an access error occurs.
-Resolve merge conflicts and dirty-worktree problems in this workflow.
+For Git or GitHub access errors, follow [Stop for Git and GitHub Access Errors](../_shared/git-github-hard-stop.md).
 
 ## Step 1: Verify Branch State
 
-Before creating a PR, verify the branch.
+Refresh `origin/main`, then confirm a feature branch created from it, commits to publish, and no uncommitted changes:
 
-1. **Refresh the trusted base ref.**
+```bash
+git fetch --prune origin main
+git branch --show-current
+git log origin/main..HEAD --oneline
+git status --short
+```
 
-   ```bash
-   git fetch --prune origin main
-   ```
-
-2. **Use a feature branch.** Do not create a PR from `main`.
-
-   ```bash
-   git branch --show-current
-   ```
-
-3. **Branch has commits ahead of `origin/main`.**
-
-   ```bash
-   git log origin/main..HEAD --oneline
-   ```
-
-4. **Clean the working tree.** Stage or stash uncommitted changes.
-
-   ```bash
-   git status
-   ```
+Do not publish from `main` or with uncommitted changes.
 
 ## Step 2: Select Pre-PR Checks
 
@@ -62,22 +36,7 @@ Before updating an open PR, follow [Follow Up on PR CI and Reviews](../_shared/p
 
 ### Hook Evidence
 
-If the commits and push used the installed hooks, use the hook results as verification:
-
-- `pre-commit` runs cheap structural and file-local checks, including fixers, formatters, linters, and skill frontmatter validation.
-- `commit-msg` runs commitlint.
-- `pre-push` runs path-scoped incremental type checks for affected CLI and plugin surfaces plus checked-JavaScript checks.
-
-Run the fallback command if the hooks were skipped, missing, failed, or uncertain.
-The command runs the `pre-commit`, `commit-msg`, and `pre-push` checks for the diff:
-
-```bash
-npm run validate:pr
-```
-
-The fallback compares the branch with the refreshed `origin/main` ref from Step 1.
-Use `npm run check` for changes to repository-wide validation.
-Examples include hook configuration, formatter configuration, generated-check scripts, and coverage baselines.
+Use successful `pre-commit`, `commit-msg`, and `pre-push` hooks as verification. If any were skipped, missing, failed, or uncertain, run `npm run validate:pr` against the refreshed `origin/main`. Use `npm run check` only for repository-wide validation changes.
 
 ### Validation Evidence
 
@@ -89,42 +48,26 @@ If the change set arrives without that evidence, stop and route the change set t
 `nemoclaw-contributor-implement-issue` for test selection and validation.
 Do not open the PR with an unselected tests line.
 
-For doc-only changes, run the docs build before opening the PR:
-
-```bash
-npm run docs
-```
-
-Fix each required check before you create the PR.
-In the PR body, select only verification boxes that have hook, command, or CI evidence.
+For doc-only changes, run `npm run docs`. Resolve each failed required check before publication, and select only verification boxes with hook, command, or CI evidence.
 
 ## Step 3: Push the Branch
 
-Push the branch after the candidate change set and required review evidence are complete.
+Push once after the candidate and required review evidence are complete:
 
 ```bash
 git push -u origin HEAD
 ```
 
-If the push has an access error, follow [Stop for Git and GitHub Access Errors](../_shared/git-github-hard-stop.md).
-Resolve other Git errors in this workflow.
-
 ## Step 4: Prepare DCO Declaration and Verify GitHub Commits
 
-Before you create the PR, prepare the DCO declaration and verify each commit in `origin/main..HEAD`.
-The contributor must pass this gate.
-Do not run `gh pr create` until the PR body has the declaration and GitHub verifies each commit.
+Before `gh pr create`, add the contributor's `Signed-off-by:` declaration to the PR body and confirm that GitHub marks every commit in `origin/main..HEAD` as `Verified`. Use the configured Git name and email unless the contributor provides another identity:
 
-1. **DCO declaration.** The PR body must include a `Signed-off-by:` declaration for the contributor.
-   Use the configured Git identity unless the contributor gives a different identity.
+```bash
+git config user.name
+git config user.email
+```
 
-   ```bash
-   git config user.name
-   git config user.email
-   ```
-
-2. **GitHub verification.** Each pushed commit must appear as verified in GitHub.
-   Check the commit SHAs from `origin/main..HEAD` with the GitHub API before opening the PR.
+Check each commit through the GitHub API:
 
    ```bash
    for sha in $(git rev-list origin/main..HEAD); do
@@ -132,9 +75,7 @@ Do not run `gh pr create` until the PR body has the declaration and GitHub verif
    done
    ```
 
-Stop if the PR body does not have the DCO declaration or GitHub does not verify a commit.
-Tell the contributor to correct the problem before they open a PR.
-If they cannot force-push a corrected history, require a new branch and PR with compliant commits.
+Stop if the declaration is missing or any commit is unverified. If compliant history cannot be pushed to this branch, require a new branch and PR.
 
 ## Step 5: Determine PR Metadata
 

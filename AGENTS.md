@@ -128,26 +128,9 @@ Security-sensitive code paths require extra test coverage.
 
 ## Code Style and Conventions
 
-### Commit Messages
+### Repository metadata
 
-Conventional Commits required. Enforced by commitlint via prek `commit-msg` hook.
-
-```text
-<type>(<scope>): <description>
-```
-
-Types: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `ci`, `perf`, `merge`
-
-### SPDX Headers
-
-Every source file must include an SPDX license header. The pre-commit hook auto-inserts them:
-
-```javascript
-// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-// SPDX-License-Identifier: Apache-2.0
-```
-
-For shell scripts use `#` comments. For Markdown use HTML comments.
+Use Conventional Commit messages. Every source file needs the repository SPDX header; the pre-commit hook inserts it with the correct comment syntax.
 
 ### JavaScript
 
@@ -192,7 +175,7 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 
 1. Read `CONTRIBUTING.md` and the active guidance for changed paths. For a first checkout, use `nemoclaw-contributor-onboard`.
 2. State observable success, apply the product scope gate, and ask only when a choice changes behavior, security, data safety, or a supported contract.
-3. Read the smallest sufficient source set. Run independent discovery in parallel, keep dependent writes sequential, and stop when the smallest safe change is clear.
+3. Read the smallest sufficient source set. Run independent discovery in parallel, keep dependent writes sequential, and stop when the smallest change that preserves applicable behavior, security, data safety, and supported contracts is clear.
 4. Validate the final behavior change once with targeted evidence. Rerun only after a later edit or hook fix can affect that evidence. For a QA-escaped defect, add the test or diagnostic that should have caught it.
 5. Use `./scripts/dev-setup.sh --expose-cli` only with explicit approval.
 
@@ -242,24 +225,15 @@ evidence.
 
 ### Plain Language and Direct Design
 
-- Use existing repository vocabulary and name what a thing does.
-- Remove modifiers that do not distinguish a real current case.
-- Use one name for one concept across issues, code, workflows, checks, logs, tests, and docs.
-- Follow the [NemoClaw Writing Guide](WRITING.md) for every agent response, progress update, tool-call label or description, text published on GitHub, and changed explanatory text.
-  An agent must correct its text before it sends a message, publishes GitHub text, or starts a tool call with a visible label or description. The guide's review policy defines which findings can block changes to existing text.
-- Use the [NemoClaw Controlled Word List](.agents/skills/_shared/controlled-words.md) for approved project terms and exact product names.
-- Do not turn one case into a system of categories or a new abstraction.
-- Do not add configuration, fallback, migration, compatibility, or extension layers without a current requirement. Name the current consumer and the test that protects the contract.
-- Report conclusions and evidence, not an analysis transcript.
-- Stop exploring once the smallest safe solution is clear.
+Follow [WRITING.md](WRITING.md), which owns plain language, terminology, review scope, and agent-written text. Add no abstraction, configuration, fallback, migration, compatibility, or extension layer without a current requirement, consumer, and protecting test. Report conclusions and evidence, then stop when the smallest solution that preserves applicable behavior, security, data safety, and supported contracts is clear.
 
 ### Git and GitHub Access Failures
 
-Follow `.agents/skills/_shared/git-github-hard-stop.md`: if SSH, `gh`, authentication, authorization, remote access, or push permission fails, stop and ask the user instead of working around access. Do not stop for ordinary merge conflicts or dirty-worktree state; resolve mechanical conflicts in the relevant workflow and ask the user only when resolution would change behavior or contributor intent.
+Follow `.agents/skills/_shared/git-github-hard-stop.md`, which owns access failures and mechanical Git recovery.
 
 ### Pull Request Follow-Up
 
-Follow `.agents/skills/_shared/pr-follow-up.md`, which owns reviewer routing, complete review collection, and repair sequencing. After each push, let required automated reviews settle, collect once, and repair valid findings as one change set. Ask the user only when feedback changes behavior, security, data safety, or a supported contract.
+Follow `.agents/skills/_shared/pr-follow-up.md`, which owns reviewer routing, review collection, and repair sequencing.
 
 ### Common Patterns
 
@@ -294,7 +268,6 @@ Follow `.agents/skills/_shared/pr-follow-up.md`, which owns reviewer routing, co
 - `npm install` at root triggers `prek install` which sets up git hooks. If hooks fail, check that `core.hooksPath` is unset: `git config --unset core.hooksPath`
 - The `nemoclaw/` subdirectory has its own `package.json` and `node_modules`.
   It is a separate npm project that shares the root Oxlint and Oxfmt configuration files.
-- SPDX headers are auto-inserted by pre-commit hooks; don't worry about adding them manually
 - Coverage thresholds are ratcheted in `ci/coverage-threshold-*.json` — new code should not decrease CLI or plugin coverage
 - The `.claude/skills` symlink points to `.agents/skills` — both paths resolve to the same content
 
@@ -307,15 +280,8 @@ Follow `.agents/skills/_shared/pr-follow-up.md`, which owns reviewer routing, co
 
 ## PR Requirements
 
-- Create feature branch from `main`
-- Let normal `pre-commit`, `commit-msg`, and `pre-push` hooks provide hook verification before submitting
-- Contributor-owned PRs must self-serve the DCO declaration and GitHub commit verification before opening a PR
-- Every contributor-owned PR description must include a valid `Signed-off-by:` declaration for the contributor, and every commit in the PR must appear as `Verified` in GitHub
-- Contributor agents must stop before `gh pr create` if the PR body will not include the DCO declaration or any commit is missing GitHub verification; tell the contributor to fix the issue before opening a PR
-- If force-push is not allowed and an already-published branch contains an unverified commit, require a fresh branch and fresh PR with a clean compliant history
-- Run targeted tests once per relevant change set, rerunning after later behavior-affecting edits or hook autofixes, and run `npm run docs` for doc changes
-- Count successful normal hooks as verification; if hooks were skipped or unavailable, refresh `origin/main` and use `npm run validate:pr`
-- Direct PRs follow `.github/PULL_REQUEST_TEMPLATE.md`; the managed documentation workflow uses its generated body
+Follow `nemoclaw-contributor-create-pr` for publication. It owns the feature-branch, template, DCO declaration, GitHub commit verification, hook-evidence, and validation-evidence gates.
+
 - PRs that change `scripts/prepare-dgx-station-host.sh` must include reviewable DGX Station test evidence identifying the tested commit, Station profile or scenario, result, and a supporting link. Any maintainer may review the evidence; without acceptable evidence, the PR is not ready to approve or merge. Treat the evidence as human-reviewed, not authenticated hardware provenance. Exceptional bypasses use existing repository governance and must document the reason on the PR.
 - No secrets, API keys, or credentials committed
 - Check `.github/pr-limits.json` for the contributor's open PR limit.
