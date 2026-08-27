@@ -77,7 +77,7 @@ runner.run = (command) => {
     return { status: 0, stdout: "No sandboxes found.\n" };
   }
   return cmd.includes("sandbox get") && cmd.includes("my-assistant")
-    ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: fixture-created-sandbox\n"), stderr: Buffer.alloc(0) }
+    ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
 };
 runner.runCapture = (command) => {

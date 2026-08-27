@@ -212,7 +212,7 @@ function createStatefulMessagingProviderRunner({
     ) {
       return {
         status: 0,
-        stdout: Buffer.from(`Name: ${readySandboxName}\nId: fixture-created-sandbox\n`),
+        stdout: Buffer.from(`Name: ${readySandboxName}\nId: sbx-4f2a91c0d7\n`),
         stderr: Buffer.alloc(0),
       };
     }
