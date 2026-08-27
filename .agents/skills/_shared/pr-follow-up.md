@@ -15,10 +15,10 @@ Use bounded monitoring while useful work remains. Do not repeatedly print unchan
 
 Before editing, collect one complete snapshot for `NVIDIA/NemoClaw` and the PR number:
 
-1. Record the initial `headRefOid` and local candidate `HEAD`.
+1. Record the latest PR commit SHA and the local candidate commit SHA.
 2. Wait for required automated reviews to settle unless an urgent correctness, security, or data-safety finding requires action.
 3. Read every required check and paginated comment, review, and thread source. Preserve every thread and its resolution state; filter to actionable unresolved threads only after collection. Record page counts, terminal pagination state, check commits, and retained artifact identifiers.
-4. Record the final `headRefOid`. Restart if it changed. Treat incomplete pagination, missing required-check identity, or retained evidence that cannot be removed as blocked.
+4. Read the latest PR commit SHA again. Restart if it changed. Treat incomplete pagination, missing required-check identity, or retained evidence that cannot be removed as blocked.
 5. Re-evaluate earlier findings against the latest commit. Classify every current finding, then group valid findings by root cause and acceptance evidence.
 
 Apply reviewer or bot filters only after collection is complete. If the host retains no collection artifact, record `retained evidence: none`.
@@ -35,7 +35,7 @@ Do not add a helper, switch, fallback, migration, or compatibility path only to 
 
 ## Repair and push once
 
-1. Set the repair scope from the complete unchanged-head collection. Route only code-changing groups in that scope to the implementation owner.
+1. Set the repair scope from the complete collection for the same latest PR commit. Route only code-changing groups in that scope to the implementation owner.
 2. Repair all scoped groups as one coherent change set, run targeted validation once, and commit after it passes.
 3. Repeat the complete collection before pushing. If the head changes or a finding still requires a change, restart without pushing.
 4. Remove retained collection evidence and verify its absence. Then push once and resume bounded monitoring.
