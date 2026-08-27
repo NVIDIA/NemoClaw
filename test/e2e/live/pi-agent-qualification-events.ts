@@ -46,7 +46,6 @@ export function piQualificationOnboardArgs(catalogPath: string, sandboxName: str
     "--temp-managed-runtime-catalog",
     catalogPath,
     "--fresh",
-    "--recreate-sandbox",
     "--non-interactive",
     "--yes",
     "--yes-i-accept-third-party-software",
