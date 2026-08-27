@@ -223,7 +223,10 @@ export class ShellProbe {
       spawn: {
         cwd: options.cwd,
         detached: true,
-        env: resolveLiveE2eWorkloadSourceEnv({ ...(options.env ?? {}) }),
+        env: resolveLiveE2eWorkloadSourceEnv({
+          PATH: process.env.PATH,
+          ...(options.env ?? {}),
+        }),
         stdio: ["ignore", "pipe", "pipe"],
       },
     });
