@@ -159,7 +159,6 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
 });
 `;
       fs.writeFileSync(scriptPath, script);
-
       const result = spawnSync(process.execPath, [scriptPath], {
         cwd: repoRoot,
         encoding: "utf-8",
@@ -790,7 +789,8 @@ const { createSandbox } = require(${onboardPath});
 
       const result = spawnSync(process.execPath, [scriptPath], {
         cwd: repoRoot,
-        encoding: "utf-8", timeout: 30_000,
+        encoding: "utf-8",
+        timeout: 30_000,
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -1283,7 +1283,7 @@ runner.run = require(${onboardScriptMocksPath}).createStatefulMessagingProviderR
 runner.runCapture = (command) => {
   // Existing sandbox that is ready
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) {
-    return "Name: my-assistant\nId: fixture-created-sandbox\n";
+    return "Name: my-assistant\nId: sbx-4f2a91c0d7\n";
   }
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   // All messaging providers already exist in gateway

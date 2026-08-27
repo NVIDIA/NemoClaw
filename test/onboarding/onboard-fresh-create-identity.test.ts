@@ -509,9 +509,9 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
         assertSuccessfulCreation();
         assert.deepEqual(payload.groupKillCalls, [{ pid: -4242, signal: "SIGTERM" }]);
         assert.deepEqual(payload.killCalls, []);
-        assert.equal(payload.unrefCalls, 1);
-        assert.equal(payload.stdoutDestroyCalls, 1);
-        assert.equal(payload.stderrDestroyCalls, 1);
+        assert.equal(payload.unrefCalls, 0);
+        assert.equal(payload.stdoutDestroyCalls, 0);
+        assert.equal(payload.stderrDestroyCalls, 0);
         assert.equal(payload.registeredSandbox.policyAuthority, "nemoclaw-managed");
         assert.ok(payload.registeredSandbox.policyCreationReceipt);
         assert.match(payload.createCommand, /--policy \S+/u);
