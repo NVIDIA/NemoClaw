@@ -37,7 +37,7 @@ start = control.ProcessReference(
     12,
     13,
 )
-fence = control.FenceProof(start, start, (os.geteuid(),))
+fence = control.FenceProof(start, start, (), (os.geteuid(),))
 marker = {"transactionId": "c" * 64, "nonce": "b" * 64}
 release_payload = b'{"release":"exact"}\n'
 
