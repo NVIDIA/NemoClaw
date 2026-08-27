@@ -108,7 +108,7 @@ runner.run = (command, opts = {}) => {
   if (text.includes("sandbox get") && text.includes("my-assistant")) {
     return {
       status: 0,
-      stdout: Buffer.from("Name: my-assistant\nId: fixture-created-sandbox\n"),
+      stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"),
       stderr: Buffer.alloc(0),
     };
   }

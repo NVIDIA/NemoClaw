@@ -99,7 +99,7 @@ runner.run = (command, opts = {}) => {
   const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
   return normalized.includes("sandbox get") && normalized.includes(sandboxName)
-    ? { status: 0, stdout: Buffer.from("Name: " + sandboxName + "\nId: fixture-created-sandbox\n"), stderr: Buffer.alloc(0) }
+    ? { status: 0, stdout: Buffer.from("Name: " + sandboxName + "\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
 };
 runner.runFile = (file, args = [], opts = {}) => {
@@ -129,7 +129,7 @@ runner.runCapture = (command) => {
   }
   if (normalized.includes("sandbox get") && normalized.includes(sandboxName)) {
     return scenario === "reuse"
-      ? [sandboxName, "Id: fixture-created-sandbox"].join(String.fromCharCode(10))
+      ? [sandboxName, "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10))
       : "";
   }
   if (normalized.includes("sandbox list")) return sandboxName + " Ready";

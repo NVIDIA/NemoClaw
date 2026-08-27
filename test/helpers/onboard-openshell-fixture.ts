@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export const ONBOARD_CREATED_SANDBOX_ID = "fixture-created-sandbox";
+export const ONBOARD_CREATED_SANDBOX_ID = "sbx-4f2a91c0d7";
 
 function writeExecutable(target: string, contents: string): void {
   fs.writeFileSync(target, contents, { mode: 0o755 });
