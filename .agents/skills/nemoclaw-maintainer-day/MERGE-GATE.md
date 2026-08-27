@@ -21,10 +21,11 @@ Dependabot does not need the PR-body declaration. Its login must be `dependabot[
 
 ## Run the trusted checker
 
-From a clean checkout of canonical `NVIDIA/NemoClaw` `main`, run the trusted wrapper against the separate candidate checkout. The trusted checkout—not candidate guidance—selects the wrapper. It refreshes `origin/main`, compares the gate source with the current checkout, executes the trusted copy, and removes its temporary worktree:
+From the clean candidate checkout, refresh canonical `origin/main`, then execute the wrapper source from that ref. The trusted ref—not the candidate checkout—selects the wrapper. It compares the gate source with the candidate checkout, executes the trusted copy, and removes its temporary worktree:
 
 ```bash
-.agents/skills/nemoclaw-maintainer-day/scripts/run-trusted-check-gates.sh <pr-number>
+git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+bash <(git show origin/main:.agents/skills/nemoclaw-maintainer-day/scripts/run-trusted-check-gates.sh) <pr-number>
 ```
 
 Read the effective rules for `main` before approval:
