@@ -9,6 +9,7 @@ import {
 } from "../../../adapters/openshell/policy-authority";
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
 import type { PendingSandboxPolicyVerification } from "../../../state/registry";
+import { normalizeAgentNameForResumeState } from "../../agent-resume-state";
 import {
   getActiveChannelsFromPlan,
   getDisabledChannelsFromPlan,
@@ -19,14 +20,6 @@ import {
 } from "../../messaging-policy-presets";
 import type { HostLocalInferenceSandboxProofAuthority } from "../../runtime-provider/host-local-inference-routing";
 import { advanceTo, type OnboardStateTransitionResult } from "../result";
-
-// Inlined to avoid pulling sandbox-agent's transitive runner.ts deps into
-// the generic state handler. Matches normalizeSandboxAgentName: trim,
-// default null/blank/"openclaw" to "openclaw".
-function normalizeAgentName(name: string | null | undefined): string {
-  const trimmed = typeof name === "string" ? name.trim() : "";
-  return trimmed && trimmed !== "openclaw" ? trimmed : "openclaw";
-}
 
 export interface PolicyPresetEntry {
   name: string;
@@ -149,7 +142,7 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
     // write-back the registry keeps a stale `policies` list and recreate /
     // re-onboard reintroduces removed tier defaults (e.g. a removed Balanced
     // `npm`). See #4621.
-    persistAppliedPolicyPresets(sandboxName: string, appliedPolicyPresets: string[]): void;
+    persistAppliedPolicyPresets(sandboxName: string, appliedPolicyPresets: string[]): boolean;
     synchronizeMessagingProvidersAfterPolicy?(input: {
       sandboxName: string;
       enabledChannels: string[];
@@ -300,7 +293,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     disabledChannels,
     enabledChannels: policyMessagingChannels,
     hermesToolGateways,
-    agent: normalizeAgentName((agent as { name?: string } | null)?.name),
+    agent: normalizeAgentNameForResumeState((agent as { name?: string } | null)?.name),
     observabilityEnabled,
     webSearchConfig,
     webSearchConfigChanged,
@@ -402,7 +395,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       // --agent flag, no recorded agent). Normalise null/blank/whitespace
       // to "openclaw" so the auto-suggest gate still fires; explicit
       // Hermes runs keep their own name.
-      agent: normalizeAgentName((agent as { name?: string } | null)?.name),
+      agent: normalizeAgentNameForResumeState((agent as { name?: string } | null)?.name),
       observabilityEnabled,
       tierName: effectivePolicyTier,
       webSearchSupported,
@@ -434,7 +427,9 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     // #4621.
     if (reflectsLiveAppliedSet) {
       revalidatePolicyRequirements?.(`persist policy presets for sandbox '${sandboxName}'`);
-      deps.persistAppliedPolicyPresets(sandboxName, appliedPolicyPresets);
+      if (!deps.persistAppliedPolicyPresets(sandboxName, appliedPolicyPresets)) {
+        throw new Error(`Failed to persist finalized policy presets for sandbox '${sandboxName}'.`);
+      }
     }
     if (hostLocalInferenceRouteOnly) verifySandboxInferenceRoute();
     await synchronizeMessagingProvidersAfterPolicy(appliedPolicyPresets);

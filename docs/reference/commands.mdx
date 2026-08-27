@@ -732,6 +732,7 @@ Onboarding applies tier defaults and preserves any presets you previously added 
 Use `custom` with `NEMOCLAW_POLICY_PRESETS` when you want the explicit list to be authoritative for optional presets.
 Onboarding removes any optional preset that is not in the list.
 `skip` does not add optional tier defaults and retains eligible optional presets already applied.
+It still applies the required preset for each messaging channel enabled during the same onboarding run so the configured channel can reach its service.
 For Personal, all modes still apply or retain the mandatory `personal-open-internet` preset.
 NemoClaw filters tier suggestions and resume selections by active agent support and the selected web search provider.
 During automatic suggestion and resume reconciliation, it removes stale web-search selections when they conflict with the active agent or selected provider.

@@ -118,7 +118,9 @@ The rebuild attaches the existing bridge provider before applying its matching b
 While a channel remains stopped, the rebuild omits its runtime configuration, token upsert, and channel startup effects.
 Generic providers and refresh bridges remain detached.
 <AgentOnly variant="hermes">
-For stopped Hermes Discord, a preserved credential-bound policy requires the exact validated static provider, so the rebuild retains and attaches only that provider without starting Discord or recreating its credentials.
+The rebuild also omits the stopped channel's inactive built-in messaging preset.
+Exact custom policies remain preserved for separate replay, including a custom policy whose name matches a built-in messaging preset.
+For stopped Hermes Discord, a preserved custom credential-bound policy requires the exact validated static provider, so the rebuild retains and attaches only that provider without starting Discord or recreating its credentials.
 A missing or incompatible required provider stops the rebuild before the replacement can use the policy.
 </AgentOnly>
 If the command queues the change without rebuilding, the running sandbox keeps its existing bridge and network policy until you rebuild it.
