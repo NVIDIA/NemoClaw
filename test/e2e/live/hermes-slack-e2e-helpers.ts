@@ -537,7 +537,7 @@ for lineno, raw_line in enumerate(env_path.read_text(encoding="utf-8").splitline
     if not secret_key_re.search(key):
         continue
     value = unquote(value)
-    if value in allowed_literals or value.startswith("openshell:resolve:env:"):
+    if value in allowed_literals or value.startswith("openshell:resolve:env:") or slack_alias_re.fullmatch(value):
         continue
     violations.append(f"{key} line {lineno}")
 
