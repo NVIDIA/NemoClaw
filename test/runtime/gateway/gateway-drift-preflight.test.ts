@@ -440,12 +440,12 @@ describe("gateway drift preflight", () => {
         expectContains(
           noMarker,
           /schema preflight failed|gateway schema preflight failed|Running gateway binary/i,
-          "host-process gateway drift is detected via fallback resolver without runtime marker",
+          "configured host-process gateway binary drift is detected without a runtime marker",
         );
         expectContains(
           noMarker,
           /Running gateway binary.*0\.0\.43/,
-          "fallback-resolved gateway binary/version is reported",
+          "configured gateway binary version is reported without a runtime marker",
         );
         expectSandboxListCalled(noMarker, false);
 
