@@ -112,6 +112,7 @@ jobs:
           E2E_ARTIFACT_DIR: ${{ steps.prepare.outputs.work_dir }}
           HOME: ${{ runner.temp }}/issue-9880-home
           NEMOCLAW_RUN_LIVE_E2E: "1"
+          PATH: /usr/local/bin:/usr/bin:/bin
         run: ./node_modules/.bin/vitest run --project e2e-live test/e2e/live/brev-workspace-cleanup.test.ts --silent=false --reporter=default
 
       - name: Remove Brev credentials

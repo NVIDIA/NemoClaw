@@ -369,6 +369,7 @@ function validateWorkspaceCleanup(
         scenario?.env?.BREV_WORKSPACE_OWNERSHIP_FILE &&
       cleanup.env?.HOME === prepare?.env?.HOME &&
       cleanup.env?.NEMOCLAW_RUN_LIVE_E2E === "1" &&
+      cleanup.env?.PATH === "/usr/local/bin:/usr/bin:/bin" &&
       cleanupCommand ===
         "./node_modules/.bin/vitest run --project e2e-live test/e2e/live/brev-workspace-cleanup.test.ts --silent=false --reporter=default" &&
       Number(cleanup["timeout-minutes"]) * MINUTE_MS >= timeouts.cleanupTimeoutMs,

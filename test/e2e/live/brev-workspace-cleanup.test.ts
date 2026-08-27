@@ -11,8 +11,7 @@ test(
       e2ePhases: ["load the workflow ownership receipt", "remove the owned Brev workspace"],
     },
   },
-  async ({ progress }) => {
-    progress.phase("remove the owned Brev workspace");
-    await removePersistedWorkspace();
+  async ({ artifacts, host, progress, secrets }) => {
+    await removePersistedWorkspace({ artifacts, host, progress, secrets });
   },
 );
