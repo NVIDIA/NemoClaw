@@ -186,26 +186,50 @@ describe("OpenShell sandbox identity reading", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
-  it("refuses selector command failures without retrying (#10423)", () => {
-    const runCaptureOpenshell = vi.fn((): string => {
-      throw new Error("selector transport failed");
-    });
-    const sleep = vi.fn();
+  it.each([
+    [
+      "timeout",
+      Object.assign(new Error("timeout canary"), { code: "ETIMEDOUT" }),
+      "selector-execution-timeout",
+    ],
+    [
+      "missing executable",
+      Object.assign(new Error("missing canary"), { code: "ENOENT" }),
+      "selector-execution-not-found",
+    ],
+    [
+      "permission error",
+      Object.assign(new Error("permission canary"), { code: "EACCES" }),
+      "selector-execution-permission",
+    ],
+    ["nonzero exit", new Error("Command failed with status 1"), "selector-execution-nonzero"],
+    ["unknown throw", new Error("unknown canary"), "selector-execution-failed"],
+  ])(
+    "refuses selector %s without retrying or disclosing its error (#10423)",
+    (_case, error, diagnostic) => {
+      const runCaptureOpenshell = vi.fn((): string => {
+        throw error;
+      });
+      const sleep = vi.fn();
 
-    expect(() =>
-      settleCreatedOpenShellSandboxId({
-        sandboxName: "alpha",
-        gatewayName: "nemoclaw",
-        createAttemptNonce: CREATE_ATTEMPT_NONCE,
-        runCaptureOpenshell,
-        sleep,
-      }),
-    ).toThrow(
-      "OpenShell did not return the exact created identity for sandbox 'alpha'. Diagnostic class: selector-unavailable.",
-    );
-    expect(runCaptureOpenshell).toHaveBeenCalledOnce();
-    expect(sleep).not.toHaveBeenCalled();
-  });
+      let caught: unknown;
+      try {
+        settleCreatedOpenShellSandboxId({
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          createAttemptNonce: CREATE_ATTEMPT_NONCE,
+          runCaptureOpenshell,
+          sleep,
+        });
+      } catch (settlementError) {
+        caught = settlementError;
+      }
+      expect(String(caught)).toContain(`Diagnostic class: ${diagnostic}.`);
+      expect(String(caught)).not.toContain(String((error as Error).message));
+      expect(runCaptureOpenshell).toHaveBeenCalledOnce();
+      expect(sleep).not.toHaveBeenCalled();
+    },
+  );
 
   it("settles an exact nonce identity published after Ready (#9211)", () => {
     let nowMs = 0;

@@ -126,7 +126,11 @@ type CreatedOpenShellSandboxIdentityObservation =
   | {
       readonly state: "invalid";
       readonly diagnostic:
-        | "selector-unavailable"
+        | "selector-execution-timeout"
+        | "selector-execution-not-found"
+        | "selector-execution-permission"
+        | "selector-execution-nonzero"
+        | "selector-execution-failed"
         | "selector-output-malformed"
         | "selector-output-ambiguous"
         | "selector-row-malformed"
@@ -166,6 +170,27 @@ function hasIncompleteCreatedIdentityMetadata(row: Record<string, unknown>): boo
   );
 }
 
+function classifySelectorExecutionError(
+  error: unknown,
+):
+  | "selector-execution-timeout"
+  | "selector-execution-not-found"
+  | "selector-execution-permission"
+  | "selector-execution-nonzero"
+  | "selector-execution-failed" {
+  if (!error || typeof error !== "object") return "selector-execution-failed";
+  const candidate = error as { readonly code?: unknown; readonly message?: unknown };
+  if (candidate.code === "ETIMEDOUT") return "selector-execution-timeout";
+  if (candidate.code === "ENOENT") return "selector-execution-not-found";
+  if (candidate.code === "EACCES" || candidate.code === "EPERM") {
+    return "selector-execution-permission";
+  }
+  return typeof candidate.message === "string" &&
+    /^Command failed with status \d+$/u.test(candidate.message)
+    ? "selector-execution-nonzero"
+    : "selector-execution-failed";
+}
+
 function observeCreatedOpenShellSandboxId(
   input: CreatedOpenShellSandboxIdentityInput,
   timeout: number,
@@ -193,8 +218,8 @@ function observeCreatedOpenShellSandboxId(
         killProcessTreeOnTimeout: true,
       },
     );
-  } catch {
-    return { state: "invalid", diagnostic: "selector-unavailable" };
+  } catch (error) {
+    return { state: "invalid", diagnostic: classifySelectorExecutionError(error) };
   }
   const rows = parseOpenShellSandboxListJson(output);
   if (!rows) return { state: "invalid", diagnostic: "selector-output-malformed" };
