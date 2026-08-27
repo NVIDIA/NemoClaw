@@ -82,11 +82,21 @@ describe("CLI layer import boundaries (#6245)", () => {
     expect(violations).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          detail:
-            "OpenShell adapters must not import policy module src/lib/policy/commands.ts",
+          detail: "OpenShell adapters must not import policy module src/lib/policy/commands.ts",
           rule: "openshell-adapters-no-policy",
         }),
       ]),
+    );
+  });
+
+  it("allows OpenShell adapters to import neighboring adapter modules (#9833)", () => {
+    const violations = scanFixture(
+      fixturePath("src/lib/adapters/openshell", "runtime"),
+      'import { captureResolvedOpenshell } from "./runtime";\nexport { captureResolvedOpenshell };\n',
+    );
+
+    expect(violations).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ rule: "openshell-adapters-no-policy" })]),
     );
   });
 
