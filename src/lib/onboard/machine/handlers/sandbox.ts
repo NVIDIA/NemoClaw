@@ -1890,7 +1890,12 @@ class SandboxStateFlow<
     sourceEntry: SandboxEntry | null,
   ): CheckpointSandboxRecreateTransaction | null {
     const existing = state.session?.checkpoint?.sandboxRecreate ?? null;
-    if (!this.options.resume && !existing && sourceEntry) return null;
+    const ownsPendingCreateReservation =
+      sourceEntry?.pendingRouteReservation === true &&
+      sourceEntry.reservationSessionId === state.session?.sessionId;
+    if (!this.options.resume && !existing && sourceEntry && !ownsPendingCreateReservation) {
+      return null;
+    }
     const gateway = selectedGatewayForSandboxRecreate(
       state.session?.checkpoint,
       this.options.gatewayName,
