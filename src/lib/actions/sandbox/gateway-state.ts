@@ -237,7 +237,7 @@ function formatGatewaySchemaMismatchOutput(
 export function mergeLivePolicyIntoSandboxOutput(
   output: string,
   policyDocument: string,
-  appliedRevision: number | null,
+  appliedRevision: number | null = null,
 ): string {
   const rawLines = String(output).split("\n");
   const cleanLines = stripOpenShellCliAnsi(String(output)).split("\n");
