@@ -160,15 +160,6 @@ describe("canonicalPlaceholderKeys", () => {
 });
 
 describe("registerExtraPlaceholderProviders", () => {
-  const ORIGINAL_ENV = { ...process.env };
-
-  function restoreEnv(): void {
-    for (const key of Object.keys(process.env)) {
-      if (!(key in ORIGINAL_ENV)) delete process.env[key];
-    }
-    Object.assign(process.env, ORIGINAL_ENV);
-  }
-
   function withEnv(env: Record<string, string | undefined>, fn: () => void): void {
     const previous: Record<string, string | undefined> = {};
     for (const [key, value] of Object.entries(env)) {
@@ -179,8 +170,10 @@ describe("registerExtraPlaceholderProviders", () => {
     try {
       fn();
     } finally {
-      restoreEnv();
-      Object.assign(process.env, previous);
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
     }
   }
 

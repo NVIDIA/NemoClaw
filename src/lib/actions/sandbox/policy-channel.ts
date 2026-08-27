@@ -1560,9 +1560,10 @@ async function addSandboxChannelUnlocked(
 
   if (!MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan)) {
     console.error(`  ${YW}⚠${R} Could not persist messaging plan for '${sandboxName}'.`);
-    console.error(
-      "  Earlier gateway or policy side effects may already have run, but durable channel state was not saved.",
-    );
+    await rollbackChannelAdd(sandboxName, channelDef, canonical, {
+      wasAlreadyEnabled,
+      priorCreds,
+    });
     process.exit(1);
   }
 
