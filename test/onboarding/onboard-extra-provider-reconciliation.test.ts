@@ -59,6 +59,9 @@ const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry,
 });
 const runner = require(${runnerPath});
 const preflight = require(${preflightPath});
+const policyAuthorityPreflight = require(${JSON.stringify(
+          path.join(repoRoot, "src", "lib", "onboard", "policy-authority", "preflight.ts"),
+        )});
 const credentials = require(${credentialsPath});
 const sandboxBaseImage = require(${sandboxBaseImagePath});
 const childProcess = require("node:child_process");
@@ -66,12 +69,16 @@ const { EventEmitter } = require("node:events");
 const _n = (command) => (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
 
 const commands = [];
+let sandboxCreated = false;
 
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
   const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
+  if (normalized.includes("sandbox delete") && normalized.includes("my-assistant")) {
+    sandboxCreated = false;
+  }
   if (normalized.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   if (normalized.includes("provider get -g nemoclaw tavily-search")) {
     const stderr = Buffer.from("Error: provider 'tavily-search' not found");
@@ -86,15 +93,17 @@ runner.run = (command, opts = {}) => {
     return { status: 0, stdout: "" };
   }
   return normalized.includes("sandbox get") && normalized.includes("my-assistant")
-    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: fixture-created-sandbox\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
 };
 runner.runCapture = (command) => {
   const normalized = _n(command);
   const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
   if (createdIdentity !== null) return createdIdentity;
-  if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) return "";
-  if (normalized.includes("sandbox list")) return "my-assistant Ready";
+  if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) {
+    return sandboxCreated ? "my-assistant\nId: fixture-created-sandbox" : "";
+  }
+  if (normalized.includes("sandbox list")) return sandboxCreated ? "my-assistant Ready" : "";
   const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
   if (mockedCapture !== null) return mockedCapture;
   if (normalized.includes("forward list")) {
@@ -104,6 +113,9 @@ runner.runCapture = (command) => {
 };
 require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 preflight.checkPortAvailable = async () => ({ ok: true });
+policyAuthorityPreflight.qualifySandboxPolicyAuthority = () => ({
+  authority: "nemoclaw-managed",
+});
 credentials.prompt = async () => "";
 sandboxBaseImage.resolveSandboxBaseImage = () => ({
   ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -113,6 +125,7 @@ sandboxBaseImage.resolveSandboxBaseImage = () => ({
 });
 
 childProcess.spawn = (...args) => {
+  sandboxCreated = true;
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -132,27 +145,19 @@ childProcess.spawn = (...args) => {
 const { createSandbox } = require(${onboardPath});
 
 const createReservedSandbox = () => createSandbox(
-  null,
-  "gpt-5.4",
-  "nvidia-prod",
-  null,
-  null,
-  null,
-  null,
-  null,
-  null,
-  null,
-  null,
-  null,
-  [],
-  null,
-  { sessionId: createFixture.sessionId, selection: createFixture.selection },
+  ...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+    [null, "gpt-5.4", "nvidia-prod", null, null, null, null, null, null, null, null, null, []],
+    createFixture,
+  ),
 );
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  const firstSandboxName = await createReservedSandbox();
+  registry.removeSandbox("my-assistant");
+  sandboxCreated = false;
   const sandboxNames = [
-    await createReservedSandbox(),
+    firstSandboxName,
     await createReservedSandbox(),
   ];
   console.log(JSON.stringify({

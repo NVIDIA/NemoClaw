@@ -6,7 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as openshellRuntimeModule from "../../adapters/openshell/runtime";
 import {
   type CreatedSandboxPolicyReceiptDeps,
+  pendingSandboxPolicyVerificationForBoundary,
   revalidateCreatedSandboxPolicyRegistration,
+  verifiedSandboxPolicyBoundaryFromPendingCheckpoint,
   verifyCreatedApfInterceptorPolicyRegistration,
   verifyCreatedSandboxPolicyRegistration,
   verifyCreatedSandboxPolicyCreationReceipt,
@@ -124,6 +126,77 @@ describe("created sandbox policy receipt", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("restores the exact managed verified boundary from its pending checkpoint (#9833)", () => {
+    const boundary = {
+      sandboxName: INPUT.sandboxName,
+      gatewayName: INPUT.gatewayName,
+      gatewayPort: INPUT.gatewayPort,
+      lifecycleGeneration: INPUT.lifecycleGeneration,
+      lifecycleLiveIdentityFingerprint: INPUT.lifecycleLiveIdentityFingerprint,
+      route: INPUT.route,
+      registration: {
+        policyAuthority: "nemoclaw-managed" as const,
+        observedPolicyAuthority: "owner-unknown" as const,
+        policyCreationReceipt: {
+          schemaVersion: 1 as const,
+          origin: "sandbox-create" as const,
+          gatewayName: INPUT.gatewayName,
+          gatewayPort: INPUT.gatewayPort,
+          sandboxName: INPUT.sandboxName,
+          lifecycleGeneration: INPUT.lifecycleGeneration,
+          sandboxIdentityFingerprint: INPUT.lifecycleLiveIdentityFingerprint,
+          policyHash: "sha256:effective",
+          policyVersion: 4,
+        },
+      },
+    };
+    const checkpoint = pendingSandboxPolicyVerificationForBoundary(boundary);
+
+    const restored = verifiedSandboxPolicyBoundaryFromPendingCheckpoint(checkpoint);
+
+    expect(restored).toEqual(boundary);
+    expect(pendingSandboxPolicyVerificationForBoundary(restored)).toEqual(checkpoint);
+  });
+
+  it.each(["externally-managed", "owner-unknown"] as const)(
+    "restores the exact %s read-only boundary from its pending checkpoint (#9833)",
+    (observedPolicyAuthority) => {
+      const boundary = {
+        sandboxName: INPUT.sandboxName,
+        gatewayName: INPUT.gatewayName,
+        gatewayPort: INPUT.gatewayPort,
+        lifecycleGeneration: INPUT.lifecycleGeneration,
+        lifecycleLiveIdentityFingerprint: INPUT.lifecycleLiveIdentityFingerprint,
+        route: "native" as const,
+        registration: {
+          policyAuthority: "externally-managed" as const,
+          policyCreationReceipt: null,
+          observedPolicyAuthority,
+          policyIdentity: { hash: "sha256:effective", activeVersion: 4 },
+        },
+      };
+      const checkpoint = pendingSandboxPolicyVerificationForBoundary(boundary);
+
+      const restored = verifiedSandboxPolicyBoundaryFromPendingCheckpoint(checkpoint);
+
+      expect(restored).toEqual(boundary);
+      expect(pendingSandboxPolicyVerificationForBoundary(restored)).toEqual(checkpoint);
+    },
+  );
+
+  it("rejects a missing or malformed pending checkpoint before restoring authority (#9833)", () => {
+    expect(() => verifiedSandboxPolicyBoundaryFromPendingCheckpoint(undefined)).toThrow(
+      /without a complete verified policy checkpoint/u,
+    );
+    expect(() =>
+      verifiedSandboxPolicyBoundaryFromPendingCheckpoint({
+        schemaVersion: 1,
+        state: "verified-create",
+        policyAuthority: "externally-managed",
+      }),
+    ).toThrow(/invalid pending policy verification/u);
   });
 
   it("binds the exact supplied policy to the verified create identity (#9833)", () => {

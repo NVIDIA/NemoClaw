@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
+
 import YAML from "yaml";
 
 export type OpenShellPolicyMapping = Record<string, unknown>;
@@ -265,33 +267,6 @@ function policyMapping(value: unknown, invalidMessage: string): OpenShellPolicyM
   return value;
 }
 
-function policyValuesEqual(left: unknown, right: unknown): boolean {
-  if (Object.is(left, right)) return true;
-  if (Array.isArray(left) && Array.isArray(right)) {
-    return (
-      left.length === right.length &&
-      left.every((value, index) => policyValuesEqual(value, right[index]))
-    );
-  }
-  if (!isMapping(left) || !isMapping(right)) return false;
-  const leftKeys = Object.keys(left).sort();
-  const rightKeys = Object.keys(right).sort();
-  return (
-    leftKeys.length === rightKeys.length &&
-    leftKeys.every(
-      (key, index) =>
-        key === rightKeys[index] &&
-        Object.hasOwn(right, key) &&
-        policyValuesEqual(left[key], right[key]),
-    )
-  );
-}
-
-/** Compare two parsed policy values without serializing their contents. */
-export function openShellPolicyValuesEqual(left: unknown, right: unknown): boolean {
-  return policyValuesEqual(left, right);
-}
-
 function formatPolicyKeys(keys: readonly string[]): string {
   return keys.map((key) => JSON.stringify(key)).join(", ");
 }
@@ -321,7 +296,7 @@ function assertPolicyRequirementContainmentForOwner(
   for (const key of Object.keys(requiredNetwork).sort()) {
     if (!observedNetwork || !Object.hasOwn(observedNetwork, key)) {
       missing.push(key);
-    } else if (!policyValuesEqual(observedNetwork[key], requiredNetwork[key])) {
+    } else if (!isDeepStrictEqual(observedNetwork[key], requiredNetwork[key])) {
       drifted.push(key);
     }
   }
@@ -333,7 +308,7 @@ function assertPolicyRequirementContainmentForOwner(
   for (const key of requiredSections) {
     if (!Object.hasOwn(effectivePolicy, key)) {
       missingSections.push(key);
-    } else if (!policyValuesEqual(effectivePolicy[key], required[key])) {
+    } else if (!isDeepStrictEqual(effectivePolicy[key], required[key])) {
       driftedSections.push(key);
     }
   }

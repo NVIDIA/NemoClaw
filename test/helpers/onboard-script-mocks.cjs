@@ -363,6 +363,7 @@ function mockCreatedSandboxIdentityList(command, options = {}) {
 }
 
 function installVerifiedSandboxCreateFixture(registry, options) {
+  mockStructuredOpenShellCaptureFromRunner();
   const sandboxName = options.sandboxName;
   const gatewayName = options.gatewayName || "nemoclaw";
   const sessionId = options.sessionId || "integration-fixture-session";
@@ -469,15 +470,17 @@ function installVerifiedSandboxCreateFixture(registry, options) {
       return true;
     },
   };
-  for (const [name, value] of Object.entries(registryFixture)) {
-    Object.defineProperty(registry, name, {
-      value,
-      configurable: true,
-      enumerable: true,
-      writable: true,
-    });
+  if (options.durableRegistry !== true) {
+    for (const [name, value] of Object.entries(registryFixture)) {
+      Object.defineProperty(registry, name, {
+        value,
+        configurable: true,
+        enumerable: true,
+        writable: true,
+      });
+    }
+    require.cache[registryPath].exports = registry;
   }
-  require.cache[registryPath].exports = registry;
 
   const receiptPath = require.resolve(
     path.resolve(__dirname, "../../src/lib/onboard/sandbox-create/policy-creation-receipt.ts"),
@@ -538,13 +541,103 @@ function installVerifiedSandboxCreateFixture(registry, options) {
     },
   });
   require.cache[receiptPath].exports = receipt;
-  return { sessionId, selection };
+  const prepareCreateIntent = () => {
+    const onboardSession = require(
+      path.resolve(__dirname, "../../src/lib/state/onboard-session.ts"),
+    );
+    const recreate = require(
+      path.resolve(__dirname, "../../src/lib/onboard/sandbox-recreate-transaction.ts"),
+    );
+    const current = onboardSession.loadSession();
+    const currentTransaction = current?.checkpoint?.sandboxRecreate || null;
+    const currentEntry =
+      options.durableRegistry === true
+        ? registry.getSandbox(sandboxName)
+        : registryFixture.getSandbox(sandboxName);
+    const recoverPendingCreate =
+      currentEntry?.pendingRouteReservation === true &&
+      currentEntry.pendingPolicyVerification !== undefined;
+    let transaction =
+      currentTransaction && (currentTransaction.phase !== "created" || recoverPendingCreate)
+        ? currentTransaction
+        : null;
+    if (!transaction) {
+      const session = onboardSession.createSession({
+        sessionId,
+        sandboxName,
+        agent: options.agentName || "openclaw",
+      });
+      const sourceIdentity =
+        currentEntry?.lifecycleLiveIdentityFingerprint ||
+        (options.sourceSandboxId
+          ? recreate.fingerprintSandboxRecreateValue(options.sourceSandboxId)
+          : null);
+      transaction = recreate.beginSandboxRecreateTransaction(session, {
+        sandboxName,
+        gatewayName,
+        gatewayPort: options.gatewayPort || 8080,
+        sourceEntry: currentEntry,
+        observation: sourceIdentity
+          ? { state: "ready", liveIdentityFingerprint: sourceIdentity }
+          : { state: "missing", liveIdentityFingerprint: null },
+        targetIntentFingerprint: recreate.fingerprintSandboxRecreateValue({
+          fixture: "verified-sandbox-create",
+          gatewayName,
+          sandboxName,
+          selection,
+        }),
+      });
+      session.checkpoint = {
+        ...session.checkpoint,
+        sandboxIdentity: {
+          kind: "selected",
+          value: { name: sandboxName, agent: options.agentName || "openclaw" },
+        },
+        gatewayAuthority: {
+          kind: "selected",
+          value: {
+            gatewayName,
+            gatewayPort: options.gatewayPort || 8080,
+            mode: "nemoclaw-managed",
+            source: "standalone",
+            endpoint: null,
+            stateDir: null,
+            supervisor: null,
+            requiredCapabilities: [],
+          },
+        },
+      };
+      onboardSession.saveSession(session);
+    }
+    return {
+      recreate: false,
+      toolDisclosure: "progressive",
+      observabilityEnabled: false,
+      recreateTransaction: {
+        id: transaction.id,
+        targetGeneration: transaction.targetGeneration,
+        targetIntentFingerprint: transaction.targetIntentFingerprint,
+      },
+    };
+  };
+  return { sessionId, selection, prepareCreateIntent };
 }
 
 function sandboxCreateArgsWithVerifiedReservation(args, fixture) {
   const createArgs = [...args];
-  while (createArgs.length < 15) createArgs.push(null);
+  while (createArgs.length < 16) createArgs.push(null);
   createArgs[14] = { sessionId: fixture.sessionId, selection: fixture.selection };
+  const fixtureIntent = fixture.prepareCreateIntent();
+  const requestedIntent = createArgs[15];
+  createArgs[15] =
+    requestedIntent && typeof requestedIntent === "object"
+      ? {
+          ...fixtureIntent,
+          ...requestedIntent,
+          recreateTransaction:
+            requestedIntent.recreateTransaction || fixtureIntent.recreateTransaction,
+        }
+      : fixtureIntent;
   return createArgs;
 }
 
@@ -791,7 +884,7 @@ function mockManagedImageBootstrap() {
     path.resolve(__dirname, "../../src/lib/adapters/openshell/sandbox-identity.ts"),
   );
 
-  sandboxIdentity.resolveOpenShellSandboxId = () => "sbx-managed-fixture";
+  sandboxIdentity.resolveOpenShellSandboxId = () => "fixture-created-sandbox";
   authorityStore.createDockerManagedBootstrapAuthorityStore = () => ({
     async recordPreparedAuthority(authority) {
       return {

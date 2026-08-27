@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { isDeepStrictEqual } from "node:util";
 
 import {
   assertExternalPolicyRequirements,
@@ -14,10 +15,10 @@ import {
   type SandboxPolicyAuthority,
 } from "../../adapters/openshell/policy-authority";
 import type { NemoClawPolicyCreationReceipt } from "../../policy/merge";
+import { normalizePendingSandboxPolicyVerification } from "../../state/registry-normalization";
 import type { PendingSandboxPolicyVerification } from "../../state/registry/types";
 import {
   assertNemoClawPolicyCreationReceiptMatches,
-  openShellPolicyValuesEqual,
   parseNemoClawPolicyCreationReceipt,
   parseOpenShellPolicy,
 } from "../../policy/merge";
@@ -80,6 +81,48 @@ export function pendingSandboxPolicyVerificationForBoundary(
     observedPolicyAuthority: registration.observedPolicyAuthority,
     policyHash: registration.policyIdentity.hash,
     policyVersion: registration.policyIdentity.activeVersion,
+  };
+}
+
+/** Restore only the non-authorizing policy boundary captured by a durable create checkpoint. */
+export function verifiedSandboxPolicyBoundaryFromPendingCheckpoint(
+  value: unknown,
+): VerifiedSandboxPolicyBoundary {
+  const checkpoint = normalizePendingSandboxPolicyVerification(value);
+  if (!checkpoint) {
+    throw new PolicyAuthorityRefusalError(
+      "Cannot resume sandbox creation without a complete verified policy checkpoint.",
+    );
+  }
+  const common = {
+    sandboxName: checkpoint.sandboxName,
+    gatewayName: checkpoint.gatewayName,
+    gatewayPort: checkpoint.gatewayPort,
+    lifecycleGeneration: checkpoint.lifecycleGeneration,
+    lifecycleLiveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
+    route: checkpoint.route,
+  };
+  if (checkpoint.policyAuthority === "nemoclaw-managed") {
+    return {
+      ...common,
+      registration: {
+        policyAuthority: "nemoclaw-managed",
+        policyCreationReceipt: checkpoint.policyCreationReceipt,
+        observedPolicyAuthority: "owner-unknown",
+      },
+    };
+  }
+  return {
+    ...common,
+    registration: {
+      policyAuthority: "externally-managed",
+      policyCreationReceipt: null,
+      observedPolicyAuthority: checkpoint.observedPolicyAuthority,
+      policyIdentity: {
+        hash: checkpoint.policyHash,
+        activeVersion: checkpoint.policyVersion,
+      },
+    },
   };
 }
 
@@ -163,7 +206,7 @@ export function verifyCreatedSandboxPolicyCreationReceipt(
     refusal("the effective policy identity changed during receipt verification");
   }
   if (
-    !openShellPolicyValuesEqual(intendedPolicy, liveBasePolicy) &&
+    !isDeepStrictEqual(intendedPolicy, liveBasePolicy) &&
     !(
       input.route === "native" &&
       isOpenShellNativeGpuBaselineEnrichment(intendedPolicy, liveBasePolicy)

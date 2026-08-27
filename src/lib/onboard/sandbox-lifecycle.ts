@@ -12,14 +12,17 @@ export function removeSandboxUnlessSessionReservation(
 ): void {
   const session = onboardSession.loadSession();
   const recreate = session?.checkpoint?.sandboxRecreate;
-  if (recreate?.sandboxName === sandboxName && recreate.phase !== "completed") {
-    return;
-  }
-
   if (registry.isPendingReservationForSession(entry, session?.sessionId)) return;
   if (entry?.pendingRouteReservation === true) {
     if (!session || !onboardSession.isOnboardLockHeldByCurrentProcess()) return;
-    registry.removeSandboxRouteReservationIfCurrent(entry);
+    if (!registry.removeSandboxRouteReservationIfCurrent(entry)) {
+      throw new Error(
+        `Cannot recreate sandbox '${sandboxName}' because its pending create recovery state is protected or changed. Resume onboarding or complete identity-bound cleanup before recreating it.`,
+      );
+    }
+    return;
+  }
+  if (recreate?.sandboxName === sandboxName && recreate.phase !== "completed") {
     return;
   }
   registry.removeSandbox(sandboxName);
