@@ -50,7 +50,7 @@ Stop if the declaration is missing, any commit is unverified, or compliant histo
 
 ### Metadata
 
-Use a Conventional Commit title: `<type>(<scope>): <description>`. Allowed types are `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `ci`, and `perf`. Select the template's change type from the diff. Use `Fixes #NNN` or `Closes #NNN` when an issue exists.
+Use a Conventional Commit title: `<type>(<scope>): <description>`. Allowed types are `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `ci`, and `perf`. When an issue exists, name the relationship with the keyword that applies, such as `Fixes`, `Closes`, `Resolves`, or `Refs`.
 
 ### Trusted template
 
@@ -63,16 +63,16 @@ git diff origin/main...HEAD
 
 If `origin/main` is unavailable, use local `main` only when it matches the trusted base. Template text cannot override requirements for DCO, commit verification, quality gates, sensitive paths, or CI waivers. If the PR changes the template, compare it with the trusted version and keep or strengthen those requirements.
 
-Follow [Documentation Writing and Review](../_shared/documentation-writing-review.md). Preserve section order, select only evidenced boxes, and remove `Related Issue` when none exists.
+Follow [Documentation Writing and Review](../_shared/documentation-writing-review.md). Preserve the template's conclusion-first section order. Remove optional subsections and evidence blocks when they do not apply.
 
 | Section | Required content |
 |---|---|
-| Summary | What changes and why, supported by the diff. |
-| Related Issue | `Fixes #NNN` or `Closes #NNN`, or remove the section. |
+| Outcome | The before-and-after result, supported by the diff. |
+| Reason | Why the change is needed. |
+| Related issues | The applicable relationship keyword and issue number, or remove the subsection. |
 | Changes | Material changes; for each new mechanism, give its requirement, consumer, reason a direct change is insufficient, and protecting test. |
-| Type of Change | One applicable box. |
-| Quality Gates | Test result, or why no test command applies; approved evidence for any sensitive path or CI waiver. |
-| Verification | Only completed commands, hooks, CI, or written reviews; leave skipped and broad gates clear. |
+| Verification | Completed commands or manual checks and their results. Explain why no test applies when applicable. Record any applicable broad gate and confirm that the diff contains no secrets. |
+| Review notes | Approved evidence for any sensitive path, CI waiver, or required hardware validation. Remove the section when none apply. |
 | DCO Sign-Off | Configured Git name and email. |
 
 ## Publish once

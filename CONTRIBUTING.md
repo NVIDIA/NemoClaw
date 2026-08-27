@@ -476,7 +476,7 @@ Commit and push normally so the hooks run, then run the docs build:
 npm run docs
 ```
 
-Leave the broad-gate verification item unchecked unless you actually ran the applicable command.
+Record a broad gate in the PR verification section only when you ran the applicable command.
 If hooks were skipped or unavailable, refresh `origin/main`, then run `npm run validate:pr` before opening the PR.
 For code changes, map each success criterion to the narrowest stable test or other evidence that proves it, then run those targeted checks once per relevant change set and record the commands as evidence.
 Reproduce defects before fixing them when feasible; when reproduction is not feasible, record why and preserve the strongest available pre-fix evidence.
