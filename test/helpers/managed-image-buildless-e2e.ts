@@ -498,6 +498,26 @@ runner.runCapture = (command) => {
     .mockOnboardRunCapture(command);
   return mocked === null ? "" : mocked;
 };
+runner.runCaptureEx = (command) => {
+  const normalized = normalize(command);
+  const globalPolicyHistory =
+    normalized.includes("policy list") && normalized.includes("--global");
+  const sandboxPolicy = {
+    scope: "sandbox",
+    sandbox: sandboxName,
+    status: "effective",
+    policy_source: "sandbox",
+    policy: {},
+  };
+  const stdout = globalPolicyHistory
+    ? ""
+    : normalized.includes("policy get")
+      ? JSON.stringify(sandboxPolicy)
+      : runner.runCapture(command);
+  const stderr = globalPolicyHistory ? "No global policy history found\n" : "";
+  return { status: 0, stdout, stderr, exitCode: 0, timedOut: false };
+};
+
 const registry = require(${source("src/lib/state/registry.ts")});
 const sourceEntry = recreate ? fixtureMocks.managedSandboxPolicyReceiptFixture({
   name: sandboxName,
@@ -621,6 +641,9 @@ function writeRuntimeStubs(fakeBin: string, dockerLog: string): void {
       "#!/usr/bin/env bash",
       'if [ "${1:-}" = "--version" ] || [ "${1:-}" = "-V" ]; then',
       '  printf "%s\\n" "openshell 0.0.96"',
+      "fi",
+      'if [ "${1:-}" = "policy" ] && [ "${2:-}" = "list" ] && [[ " $* " = *" --global "* ]]; then',
+      '  printf "%s\\n" "No global policy history found" >&2',
       "fi",
       'if [ "${1:-}" = "sandbox" ] && [ "${2:-}" = "get" ]; then',
       '  printf "Sandbox:\\n\\n  Id: fixture-managed-sandbox\\n  Name: %s\\n  Phase: Ready\\n" "${!#}"',

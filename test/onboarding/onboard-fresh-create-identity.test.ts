@@ -37,6 +37,12 @@ describe("fresh create identity", () => {
       const registryPath = JSON.stringify(
         path.join(repoRoot, "src", "lib", "state", "registry.ts"),
       );
+      const onboardSessionPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
+      );
+      const recreateJournalPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "onboard", "onboard-recreate-journal.ts"),
+      );
       const preflightPath = JSON.stringify(
         path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
       );
@@ -60,6 +66,8 @@ describe("fresh create identity", () => {
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 let _deleted = false;
 const registry = require(${registryPath});
+const onboardSession = require(${onboardSessionPath});
+const recreateJournal = require(${recreateJournalPath});
 const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});
 const childProcess = require("node:child_process");
@@ -94,7 +102,7 @@ runner.run = (command, opts = {}) => {
     ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-fresh-create\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
 };
-runner.runCapture = (command) => {
+	runner.runCapture = (command) => {
 	  const cmd = _n(command);
 	  if (cmd.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:8080";
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: effectivePolicy });
@@ -124,27 +132,57 @@ runner.runCapture = (command) => {
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
-	const originalRunCaptureEx = runner.runCaptureEx.bind(runner);
-	runner.runCaptureEx = (command, options = {}) => {
-	  const commandArgs = Array.isArray(command) ? command.map(String) : [];
-	  const policyIndex = commandArgs.indexOf("policy");
-	  const policyArgs = policyIndex >= 0 ? commandArgs.slice(policyIndex) : [];
-	  const readsCreatedSandboxPolicy = JSON.stringify(policyArgs) === JSON.stringify([
-	    "policy", "get", "-g", "nemoclaw", "--full", "--output", "json", "my-assistant",
-	  ]);
-	  return readsCreatedSandboxPolicy
-	    ? {
-	        stdout: JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: effectivePolicy }),
-	        stderr: "",
-	        exitCode: 0,
-	        timedOut: false,
-	      }
-	    : originalRunCaptureEx(command, options);
-	};
+	const session = onboardSession.createSession({
+	  sessionId: "session-owner",
+	  sandboxName: "my-assistant",
+	  agent: "openclaw",
+	});
+	onboardSession.saveSession(session);
+	registry.save({
+	  defaultSandbox: null,
+	  sandboxes: {
+	    "my-assistant": {
+	      name: "my-assistant",
+	      gatewayName: "nemoclaw",
+	      provider: "nvidia-prod",
+	      model: "gpt-5.4",
+	      endpointUrl: null,
+	      endpointSource: null,
+	      credentialEnv: null,
+	      preferredInferenceApi: null,
+	      pendingRouteReservation: true,
+	      reservationSessionId: "session-owner",
+	    },
+	  },
+	});
+	recreateJournal.openOnboardRecreateJournal({
+	  target: { sandboxName: "my-assistant", gatewayName: "nemoclaw", gatewayPort: 8080 },
+	  agentName: "openclaw",
+	  note: () => {},
+	  observe: () => ({ state: "missing", liveIdentityFingerprint: null }),
+	  intent: {
+	    agent: "openclaw",
+	    fromDockerfile: null,
+	    provider: "nvidia-prod",
+	    model: "gpt-5.4",
+	    preferredInferenceApi: null,
+	    sandboxGpuConfig: null,
+	    gatewayName: "nemoclaw",
+	    gatewayPort: 8080,
+	    toolDisclosure: "progressive",
+	    dcodeAutoApprovalMode: null,
+	    observabilityEnabled: false,
+	    policyTier: null,
+	  },
+	});
+	const transaction = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
+	if (!transaction) throw new Error("failed to seed the fresh-create lifecycle journal");
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
 	  sandboxName: "my-assistant",
 	  provider: "nvidia-prod",
 	  model: "gpt-5.4",
+	  sessionId: "session-owner",
+	  getSandbox: registry.getSandbox,
 	  apfInterceptorRequested,
 	  onVerifyCreatedPolicy: (input) => {
 	    effectivePolicy = require(${policyMergePath}).parseOpenShellPolicy(
@@ -210,15 +248,22 @@ const { createSandbox } = require(${onboardPath});
 	    [null, "gpt-5.4", "nvidia-prod", null, null, null, null, null, null, null, null, null, []],
 	    createFixture,
 	  );
-	  if (apfInterceptorRequested) {
-	    createArgs[15] = {
-	      apfInterceptorRequested: true,
-	      deferSandboxEffectsUntilPolicyVerification: true,
-	      recreate: false,
-	      toolDisclosure: "progressive",
-	      observabilityEnabled: false,
-	    };
-	  }
+	  createArgs[15] = {
+	    ...(apfInterceptorRequested
+	      ? {
+	          apfInterceptorRequested: true,
+	          deferSandboxEffectsUntilPolicyVerification: true,
+	        }
+	      : {}),
+	    recreate: false,
+	    toolDisclosure: "progressive",
+	    observabilityEnabled: false,
+	    recreateTransaction: {
+	      id: transaction.id,
+	      targetGeneration: transaction.targetGeneration,
+	      targetIntentFingerprint: transaction.targetIntentFingerprint,
+	    },
+	  };
 	  const sandboxName = await createSandbox(...createArgs);
   const createCommand = commands.find((entry) => entry.command.includes("sandbox create"));
   fs.writeFileSync(${JSON.stringify(payloadPath)}, JSON.stringify({
