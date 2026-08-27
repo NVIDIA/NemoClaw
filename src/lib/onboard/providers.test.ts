@@ -924,6 +924,7 @@ describe("onboard provider helpers", () => {
     // still attached to a live sandbox, so reuse paths must use `update`.
     expect(providers).toEqual(["alpha-brave-search"]);
     expect(commands).toEqual([
+      expect.stringContaining("nemoclaw-blueprint/provider-profiles/brave.yaml"),
       "provider get alpha-brave-search",
       "provider update alpha-brave-search --credential BRAVE_API_KEY",
     ]);
@@ -1243,6 +1244,7 @@ describe("onboard provider helpers", () => {
 
     expect(providers).toEqual(["alpha-brave-search"]);
     expect(commands).toEqual([
+      expect.stringContaining("nemoclaw-blueprint/provider-profiles/brave.yaml"),
       "provider get alpha-brave-search",
       "provider delete alpha-brave-search",
       "provider create --name alpha-brave-search --type brave --credential BRAVE_API_KEY",

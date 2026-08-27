@@ -848,7 +848,7 @@ async function applyChannelAddToGatewayAndRegistry(
   sandboxName: string,
   channelName: string,
   acquired: Record<string, string>,
-  applyPolicyBeforeAttachment?: () => boolean,
+  applyPolicyAfterAttachment?: () => boolean,
 ): Promise<boolean | null> {
   const sandboxAgent = registry.getSandbox(sandboxName)?.agent;
   const staticProviderType = staticMessagingProviderTypeForChannel(channelName, sandboxAgent);
@@ -912,9 +912,6 @@ async function applyChannelAddToGatewayAndRegistry(
         requireExactBindings: true,
       },
     );
-    if (applyPolicyBeforeAttachment && !applyPolicyBeforeAttachment()) {
-      return null;
-    }
     for (const providerName of providerNames) {
       revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName);
       const attached = runOpenshell(
@@ -928,13 +925,19 @@ async function applyChannelAddToGatewayAndRegistry(
       }
       revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName);
     }
+    if (applyPolicyAfterAttachment && !applyPolicyAfterAttachment()) {
+      return null;
+    }
   } catch (err) {
     console.error(
       `  ✗ Failed to register '${channelName}' providers with the gateway: ${
         err instanceof Error ? err.message : String(err)
       }`,
     );
-    if (policyChannelDependencies.isMessagingProviderBindingConflict(err)) {
+    if (
+      policyChannelDependencies.isMessagingProviderBindingConflict(err) ||
+      policyChannelDependencies.isMessagingProviderMutationFailure(err)
+    ) {
       const createdProviderNames = [...(err.createdProviderNames ?? [])];
       const createdProviders = new Set(createdProviderNames);
       const cleanupFailures = createdProviderNames.filter((providerName) => {
@@ -1532,8 +1535,8 @@ async function addSandboxChannelUnlocked(
     if (existing != null) priorCreds[key] = existing;
   }
   // Register providers before credentials or durable channel state are saved.
-  // Apply and verify the channel policy before attaching those providers to the
-  // live sandbox, so policy failure cannot expose a credential to the workload.
+  // OpenShell requires credential providers to be attached before their policy
+  // bindings can be applied, so rollback both effects when policy application fails.
   const registeredBridge = await applyChannelAddToGatewayAndRegistry(
     sandboxName,
     canonical,

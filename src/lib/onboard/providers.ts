@@ -31,8 +31,20 @@ const {
   ensureMessagingCredentialProviderProfile,
   MESSAGING_CREDENTIAL_PROVIDER_TYPE,
 } = require("../messaging/provider-profile");
+const { ensureWebSearchProviderProfiles } = require("./brave-provider-profile");
 
 const MESSAGING_PROVIDER_BINDING_CONFLICT = "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT";
+const MESSAGING_PROVIDER_MUTATION_FAILURE = "NEMOCLAW_MESSAGING_PROVIDER_MUTATION_FAILURE";
+
+class MessagingProviderMutationError extends Error {
+  constructor(error, mutatedProviderNames, createdProviderNames) {
+    super(error.message, { cause: error });
+    this.name = "MessagingProviderMutationError";
+    this.code = MESSAGING_PROVIDER_MUTATION_FAILURE;
+    this.mutatedProviderNames = mutatedProviderNames;
+    this.createdProviderNames = createdProviderNames;
+  }
+}
 
 class MessagingProviderBindingConflictError extends Error {
   constructor(message, mutatedProviderNames = [], createdProviderNames = []) {
@@ -48,9 +60,22 @@ function isMessagingProviderBindingConflict(error) {
   return error instanceof Error && error.code === MESSAGING_PROVIDER_BINDING_CONFLICT;
 }
 
+function isMessagingProviderMutationFailure(error) {
+  return (
+    error instanceof Error &&
+    error.code === MESSAGING_PROVIDER_MUTATION_FAILURE &&
+    Array.isArray(error.mutatedProviderNames) &&
+    Array.isArray(error.createdProviderNames)
+  );
+}
+
 function attachMutatedProviderNames(error, names, createdNames = []) {
   if (names.length === 0) return error;
-  const failure = error instanceof Error ? error : new Error(String(error));
+  const original = error instanceof Error ? error : new Error(String(error));
+  const failure =
+    isMessagingProviderBindingConflict(original) || isMessagingProviderMutationFailure(original)
+      ? original
+      : new MessagingProviderMutationError(original, [], []);
   const existing = Array.isArray(failure.mutatedProviderNames) ? failure.mutatedProviderNames : [];
   failure.mutatedProviderNames = [...new Set([...existing, ...names])];
   const existingCreated = Array.isArray(failure.createdProviderNames)
@@ -713,6 +738,11 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
     "inspect or change a messaging bridge provider",
   );
   assertCredentialFamilyProviderBindings(tokenDefs, runMessagingBridgeOpenshell, options);
+  ensureWebSearchProviderProfiles(tokenDefs, {
+    root: ROOT,
+    runOpenshell: runMessagingBridgeOpenshell,
+    redact,
+  });
 
   // Provider creation order. Bridges (e.g. Google Chat) need two steps bracketing
   // the uniform create loop, ordered around `provider create`:
@@ -890,7 +920,11 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
         createdProviderNames,
       );
     }
-    throw new Error(message);
+    throw attachMutatedProviderNames(
+      new Error(message),
+      mutatedProviderNames,
+      createdProviderNames,
+    );
   }
   // Gateway-side token minting is configured AFTER the providers exist (best-effort,
   // self-gates without a bridge token def). Secret material stays gateway-side —
@@ -929,6 +963,7 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
 
 module.exports = {
   isMessagingProviderBindingConflict,
+  isMessagingProviderMutationFailure,
   BUILD_ENDPOINT_URL,
   OPENAI_ENDPOINT_URL,
   ANTHROPIC_ENDPOINT_URL,
@@ -955,8 +990,6 @@ module.exports = {
   getRequestedModelHint,
   isProviderKeyCredentialCandidate,
   buildProviderArgs,
-  policyAuthorityCheckedRunner,
-  assertCredentialFamilyProviderBindings,
   upsertProvider,
   providerExistsInGateway,
   readGatewayProviderMetadata,

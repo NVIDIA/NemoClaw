@@ -22,6 +22,10 @@ type LegacyOnboardProvidersModule = {
     readonly mutatedProviderNames: readonly string[];
     readonly createdProviderNames?: readonly string[];
   };
+  isMessagingProviderMutationFailure(error: unknown): error is Error & {
+    readonly mutatedProviderNames: readonly string[];
+    readonly createdProviderNames: readonly string[];
+  };
   upsertMessagingProviders(
     tokenDefs: MessagingProviderTokenDefinition[],
     run: typeof runOpenshell,
@@ -98,6 +102,13 @@ export const policyChannelDependencies = {
   } {
     const providers = require("../../onboard/providers") as LegacyOnboardProvidersModule;
     return providers.isMessagingProviderBindingConflict(error);
+  },
+  isMessagingProviderMutationFailure(error: unknown): error is Error & {
+    readonly mutatedProviderNames: readonly string[];
+    readonly createdProviderNames: readonly string[];
+  } {
+    const providers = require("../../onboard/providers") as LegacyOnboardProvidersModule;
+    return providers.isMessagingProviderMutationFailure(error);
   },
   upsertMessagingProviders(
     tokenDefs: MessagingProviderTokenDefinition[],

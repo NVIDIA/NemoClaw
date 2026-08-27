@@ -24,6 +24,15 @@ export interface MessagingTokenDef {
   additionalCredentials?: Array<{ envKey: string; token: string | null }>;
 }
 
+export function hasConfiguredMessagingCredential(tokenDef: MessagingTokenDef): boolean {
+  return [
+    tokenDef.token,
+    ...(tokenDef.additionalCredentials?.map((credential) => credential.token) ?? []),
+  ].some(
+    (token) => typeof token === "string" && token.trim().length > 0,
+  );
+}
+
 type MessagingCredentialDef = MessagingTokenDef & {
   /** The stopped-channel policy still references this static provider. */
   retainWhileDisabled: boolean;
@@ -141,10 +150,7 @@ export function prepareCreateSandboxMessaging(
       disabledChannelNames,
       messagingTokenDefs,
       extraPlaceholderKeys: [],
-      hasMessagingTokens: messagingTokenDefs.some(
-        ({ token, additionalCredentials }) =>
-          Boolean(token) || additionalCredentials?.some((credential) => Boolean(credential.token)),
-      ),
+      hasMessagingTokens: messagingTokenDefs.some(hasConfiguredMessagingCredential),
       reusableMessagingProviders: [],
       reusableMessagingChannels: [],
       missingBridgeChannels: [],
@@ -184,10 +190,7 @@ export function prepareCreateSandboxMessaging(
   );
 
   const extraPlaceholderKeys = input.registerExtraPlaceholderProviders(messagingTokenDefs);
-  const hasMessagingTokens = messagingTokenDefs.some(
-    ({ token, additionalCredentials }) =>
-      Boolean(token) || additionalCredentials?.some((credential) => Boolean(credential.token)),
-  );
+  const hasMessagingTokens = messagingTokenDefs.some(hasConfiguredMessagingCredential);
   const reusableMessagingProviders: string[] = reusableWebSearchProvider
     ? [webSearchProviderName]
     : [];

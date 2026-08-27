@@ -11,7 +11,7 @@ import {
 
 export type InstalledSlackRuntimeProof = {
   ok: true;
-  proof: "openclaw-pipeline-runtime" | "openclaw-private-helper";
+  proof: "openclaw-pipeline-runtime";
   allowedReplyTarget: string;
   deniedPrepared: true;
   deniedFeedbackMethod: "chat.postEphemeral";
@@ -54,8 +54,6 @@ import http from "node:http";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-
-const allowLegacyTestApi = process.env.NEMOCLAW_E2E_ALLOW_LEGACY_SLACK_TEST_API === "1";
 
 ${SLACK_MANAGED_NPM_PROJECT_DISCOVERY_SOURCE}
 
@@ -162,13 +160,9 @@ function resolveOpenClawSlackApiLocation() {
     if (fs.existsSync(runtimeApiPath) && pipelineRuntimePath) {
       return {
         kind: "external",
-        apiKind: "pipeline-runtime",
         root: candidate,
         openclawRoot,
       };
-    }
-    if (allowLegacyTestApi && fs.existsSync(path.join(distDir, "test-api.js"))) {
-      return { kind: "external", apiKind: "test-api", root: candidate, openclawRoot };
     }
   }
   for (const candidate of coreCandidates) {
@@ -176,10 +170,7 @@ function resolveOpenClawSlackApiLocation() {
     const runtimeApiPath = path.join(distDir, "runtime-api.js");
     const pipelineRuntimePath = findPipelineRuntimePath(distDir);
     if (fs.existsSync(runtimeApiPath) && pipelineRuntimePath) {
-      return { kind: "core", apiKind: "pipeline-runtime", root: candidate };
-    }
-    if (allowLegacyTestApi && fs.existsSync(path.join(distDir, "test-api.js"))) {
-      return { kind: "core", apiKind: "test-api", root: candidate };
+      return { kind: "core", root: candidate };
     }
   }
   return null;
@@ -237,21 +228,6 @@ function createExternalProofRoot(location) {
   return slackProofRoot;
 }
 
-function resolveTestApiImport(testApiSource, exportName) {
-  const escaped = exportName.replace(/[.*+?^$\{\}()|[\]\\]/g, "\\$&");
-  const patterns = [
-    new RegExp(
-      "import\\s+\\{[^}]*\\bas\\s+" + escaped + "\\b[^}]*\\}\\s+from\\s+[\"']([^\"']+)[\"']",
-    ),
-    new RegExp(
-      "import\\s+\\{[^}]*\\b" + escaped + "\\b[^}]*\\}\\s+from\\s+[\"']([^\"']+)[\"']",
-    ),
-  ];
-  const match = patterns.map((pattern) => testApiSource.match(pattern)).find(Boolean);
-  if (!match) throw new Error("OpenClaw Slack test API does not expose " + exportName);
-  return match[1];
-}
-
 function findPipelineRuntimePath(slackDir) {
   return fs
     .readdirSync(slackDir)
@@ -260,35 +236,16 @@ function findPipelineRuntimePath(slackDir) {
     .sort()[0];
 }
 
-async function importProofModules(slackDir, apiKind) {
-  if (apiKind === "pipeline-runtime") {
-    const pipelinePath = findPipelineRuntimePath(slackDir);
-    invariant(pipelinePath, "OpenClaw Slack pipeline runtime not found");
-    const [pipelineModule, runtimeModule] = await Promise.all([
-      import(pathToFileURL(pipelinePath).href),
-      import(pathToFileURL(path.join(slackDir, "runtime-api.js")).href),
-    ]);
-    return {
-      proofApiKind: "pipeline-runtime",
-      prepareSlackMessage: pipelineModule.prepareSlackMessage,
-      sendMessageSlack: runtimeModule.sendMessageSlack,
-    };
-  }
-  const testApiSource = fs.readFileSync(path.join(slackDir, "test-api.js"), "utf8");
-  const helperPath = resolveTestApiImport(testApiSource, "createInboundSlackTestContext");
-  const preparePath = resolveTestApiImport(testApiSource, "prepareSlackMessage");
-  const sendPath = resolveTestApiImport(testApiSource, "sendMessageSlack");
-  const [helperModule, prepareModule, sendModule] = await Promise.all([
-    import(pathToFileURL(path.join(slackDir, helperPath)).href),
-    import(pathToFileURL(path.join(slackDir, preparePath)).href),
-    import(pathToFileURL(path.join(slackDir, sendPath)).href),
+async function importProofModules(slackDir) {
+  const pipelinePath = findPipelineRuntimePath(slackDir);
+  invariant(pipelinePath, "OpenClaw Slack pipeline runtime not found");
+  const [pipelineModule, runtimeModule] = await Promise.all([
+    import(pathToFileURL(pipelinePath).href),
+    import(pathToFileURL(path.join(slackDir, "runtime-api.js")).href),
   ]);
   return {
-    proofApiKind: "test-api",
-    createInboundSlackTestContext:
-      helperModule.createInboundSlackTestContext || helperModule.t,
-    prepareSlackMessage: prepareModule.prepareSlackMessage || prepareModule.t,
-    sendMessageSlack: sendModule.sendMessageSlack || sendModule.t,
+    prepareSlackMessage: pipelineModule.prepareSlackMessage,
+    sendMessageSlack: runtimeModule.sendMessageSlack,
   };
 }
 
@@ -299,7 +256,7 @@ async function importOpenClawSlackProofApi(location) {
     proofRoot,
     location.kind === "external" ? "dist" : "dist/extensions/slack",
   );
-  return importProofModules(slackDir, location.apiKind);
+  return importProofModules(slackDir);
 }
 
 function postForm(pathname, fields, authorization) {
@@ -483,21 +440,12 @@ const appClient = {
 const location = resolveOpenClawSlackApiLocation();
 invariant(location, "could not find installed OpenClaw Slack proof API");
 const slackApi = await importOpenClawSlackProofApi(location);
-const { createInboundSlackTestContext, prepareSlackMessage, sendMessageSlack, proofApiKind } =
-  slackApi;
+const { prepareSlackMessage, sendMessageSlack } = slackApi;
 invariant(
   typeof prepareSlackMessage === "function" && typeof sendMessageSlack === "function",
   "installed OpenClaw Slack API does not expose prepareSlackMessage and sendMessageSlack",
 );
-const ctx =
-  typeof createInboundSlackTestContext === "function"
-    ? createInboundSlackTestContext({
-        cfg,
-        appClient,
-        channelsConfig: slackAccount.channels,
-        defaultRequireMention: slackAccount.requireMention ?? true,
-      })
-    : createPipelineSlackProofContext(appClient);
+const ctx = createPipelineSlackProofContext(appClient);
 Object.assign(ctx, { botToken: token, botUserId: "B1", botId: "B1", teamId: "T1", apiAppId: "A1" });
 const account = {
   accountId: "default",
@@ -575,10 +523,7 @@ invariant(sendResult.channelId === channelId, "sendMessageSlack returned the wro
 console.log(
   JSON.stringify({
     ok: true,
-    proof:
-      proofApiKind === "pipeline-runtime"
-        ? "openclaw-pipeline-runtime"
-        : "openclaw-private-helper",
+    proof: "openclaw-pipeline-runtime",
     allowedReplyTarget: allowedPrepared.replyTarget,
     deniedPrepared: deniedPrepared === null,
     deniedFeedbackMethod: deniedFeedback.method,
@@ -595,8 +540,7 @@ export function parseInstalledSlackProof(stdout: string, stderr = ""): Installed
       const value = JSON.parse(line) as Partial<InstalledSlackRuntimeProof>;
       if (
         value.ok === true &&
-        (value.proof === "openclaw-pipeline-runtime" ||
-          value.proof === "openclaw-private-helper") &&
+        value.proof === "openclaw-pipeline-runtime" &&
         value.deniedPrepared === true &&
         value.deniedFeedbackMethod === "chat.postEphemeral" &&
         value.deniedFeedbackCount === 1 &&

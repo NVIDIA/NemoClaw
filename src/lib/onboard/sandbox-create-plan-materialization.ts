@@ -3,7 +3,7 @@
 
 import type { InitialSandboxPolicy } from "./initial-policy";
 import type { SandboxPolicyAuthority } from "../adapters/openshell/policy-authority";
-import type { MessagingTokenDef } from "./messaging-prep";
+import { hasConfiguredMessagingCredential, type MessagingTokenDef } from "./messaging-prep";
 import { filterMessagingProvidersForSandboxCreate } from "./sandbox-create-intent";
 import type {
   MaterializeSandboxCreatePlanInput,
@@ -325,7 +325,7 @@ export function materializeSandboxCreatePlan({
   };
   const plannedMessagingProviders = filterMessagingProvidersForSandboxCreate(
     [
-      ...enabledMessagingTokenDefs.filter(({ token }) => Boolean(token)).map(({ name }) => name),
+      ...enabledMessagingTokenDefs.filter(hasConfiguredMessagingCredential).map(({ name }) => name),
       ...intent.reusableMessagingProviders,
     ],
     intent.messagingProviderRequests,
