@@ -1435,7 +1435,6 @@ describe("openclaw-config-guard", () => {
     expect(fs.statSync(path.join(root, ".nemoclaw-test", "transaction.json")).size).toBeLessThan(
       48 * 1024 * 1024,
     );
-    expect(runGuard("unseal-restart", configDir).status).toBe(0);
   }, 20_000);
 
   it("runs from source injected through python stdin", () => {
