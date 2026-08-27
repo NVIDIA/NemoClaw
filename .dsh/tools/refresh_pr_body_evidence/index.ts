@@ -279,9 +279,13 @@ export default async function refresh_pr_body_evidence(input: {
       waitedMs,
       updatedAt: finalPr.updatedAt,
     };
-  const temporary = await run("umask 077; mktemp", "Create pull request body file");
-  if (!temporary.startsWith("/") || /[\r\n\0]/.test(temporary))
-    throw new Error("Could not create a safe pull request body file");
+  const temporaryDirectory = await run(
+    "umask 077; mktemp -d",
+    "Create private pull request body directory",
+  );
+  if (!temporaryDirectory.startsWith("/") || /[\r\n\0]/.test(temporaryDirectory))
+    throw new Error("Could not create a safe pull request body directory");
+  const temporary = temporaryDirectory + "/body.md";
   let updated;
   try {
     await tools.write({ file_path: temporary, content: body });
@@ -300,7 +304,7 @@ export default async function refresh_pr_body_evidence(input: {
     });
     updated = JSON.parse(updateResult.stdout);
   } finally {
-    await run("rm -f -- " + quote(temporary), "Remove pull request body file");
+    await run("rm -rf -- " + quote(temporaryDirectory), "Remove pull request body directory");
   }
   return {
     ok: true,
