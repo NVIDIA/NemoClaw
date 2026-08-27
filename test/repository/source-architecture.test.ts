@@ -137,6 +137,32 @@ describe("source architecture budget (#7692)", () => {
     expect(report.fanIn).toMatchObject({ "bin/b.js": 1, "src/b.ts": 1 });
   });
 
+  test("resolves checked dynamic import specifiers", ({ resources }) => {
+    const root = resources.temporaryDirectory("nemoclaw-architecture-dynamic-import-");
+    writeModule(root, "src/a.ts", 'export const value = import("./b");\n');
+    writeModule(root, "src/b.ts", "export const value = true;\n");
+
+    const report = analyzeSourceArchitecture(root, { scanRoots: ["src"] });
+
+    expect(report.fanOut).toMatchObject({ "src/a.ts": 1 });
+    expect(report.fanIn).toMatchObject({ "src/b.ts": 1 });
+  });
+
+  test("resolves checked nested import-equals specifiers", ({ resources }) => {
+    const root = resources.temporaryDirectory("nemoclaw-architecture-import-equals-");
+    writeModule(
+      root,
+      "src/a.ts",
+      'namespace scope { export import dependency = require("./b"); }\n',
+    );
+    writeModule(root, "src/b.ts", "export const value = true;\n");
+
+    const report = analyzeSourceArchitecture(root, { scanRoots: ["src"] });
+
+    expect(report.fanOut).toMatchObject({ "src/a.ts": 1 });
+    expect(report.fanIn).toMatchObject({ "src/b.ts": 1 });
+  });
+
   test("reports repository-relative paths through an aliased repository root (#7692)", ({
     resources,
   }) => {

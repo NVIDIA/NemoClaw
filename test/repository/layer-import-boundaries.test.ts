@@ -88,6 +88,42 @@ describe("CLI layer import boundaries (#6245)", () => {
     );
   });
 
+  it("blocks packaged bin shims outside protected layer directories (#6245)", () => {
+    const violations = scanFixture(
+      fixturePath("src/lib", "bin-lib-shim"),
+      'import "../../bin/lib/ports.js";\n',
+    );
+
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          detail:
+            "src must import implementation modules directly instead of packaged shim bin/lib/ports.js",
+        }),
+      ]),
+    );
+  });
+
+  it("classifies a bin shim imported through a source-tree symlink (#6245)", () => {
+    const importer = fixturePath("src/lib", "bin-lib-alias-importer");
+    const alias = fixturePath("src/lib", "bin-lib-alias", ".js");
+    const relativeAlias = `./${path.basename(alias)}`;
+    try {
+      fs.symlinkSync(path.join(REPO_ROOT, "bin/lib/ports.js"), alias, "file");
+      fs.writeFileSync(importer, `import "${relativeAlias}";\n`);
+
+      expect(findLayerImportBoundaryViolations(importer)).toEqual([
+        expect.objectContaining({
+          detail:
+            "src must import implementation modules directly instead of packaged shim bin/lib/ports.js",
+        }),
+      ]);
+    } finally {
+      fs.rmSync(importer, { force: true });
+      fs.rmSync(alias, { force: true });
+    }
+  });
+
   it("counts only classes that extend Command as oclif command classes (#6245)", () => {
     const violations = scanFixture(
       fixturePath("src/commands", "implements"),
