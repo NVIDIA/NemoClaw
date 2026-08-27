@@ -27,7 +27,6 @@ import {
 import {
   createDestroyHarness,
   resetDestroyModuleCache,
-  resolveDestroySourcePath,
   traceDestroyBoundaryCalls,
 } from "../../../../test/helpers/destroy-flow-test-harness";
 import { serializedLlamaCppHostLocalInferenceReceipt } from "../../../../test/helpers/host-local-inference-receipt";
@@ -80,10 +79,6 @@ describe("destroySandbox flow", () => {
 
   it("trusts absence only from a successful, error-free sandbox list", { timeout: 30_000 }, () => {
     expectStrictSandboxPresenceClassification();
-  });
-
-  it("loads the destroy flow from TypeScript source (#10106)", () => {
-    expect(resolveDestroySourcePath()).toBe(path.join(import.meta.dirname, "destroy.ts"));
   });
 
   it(

@@ -231,7 +231,9 @@ jobs:
           artifact_name="$(jq -er '.artifactName | select(type == "string" and test("^[a-z0-9][a-z0-9._-]*\\.tgz$"))' <<<"$decision")"
           printf 'artifact_name=%s\n' "$artifact_name" >> "$GITHUB_OUTPUT"
           echo "required=true" >> "$GITHUB_OUTPUT"
-          for attempt in $(seq 1 96); do
+          newest_matching_run_url=""
+          newest_matching_run_status=""
+          for attempt in $(seq 1 84); do
             if ! runs="$(gh api \
               "repos/$GITHUB_REPOSITORY/actions/workflows/openshell-sdk-package-pr.yaml/runs?event=pull_request_target&per_page=100" \
               2>/dev/null)"; then
@@ -249,6 +251,8 @@ jobs:
                 sort_by(.created_at) | reverse
               ' <<<"$runs" 2>/dev/null || true)"
             if jq -e 'length > 0' <<<"$matches" >/dev/null 2>&1; then
+              newest_matching_run_url="$(jq -er '.[0].html_url | select(type == "string" and startswith("https://github.com/"))' <<<"$matches")"
+              newest_matching_run_status="$(jq -er '.[0].status | select(type == "string" and test("^[a-z_]+$"))' <<<"$matches")"
               pending_run=false
               newest_completed_url=""
               while IFS= read -r match; do
@@ -286,7 +290,11 @@ jobs:
             fi
             sleep 5
           done
-          echo "::error title=SDK package workflow timed out::No successful exact-head package run was available."
+          latest_run_detail="No matching run was found."
+          if [ -n "$newest_matching_run_url" ]; then
+            latest_run_detail="Last matching run: $newest_matching_run_url ($newest_matching_run_status)."
+          fi
+          echo "::error title=SDK package workflow timed out::No successful reviewed SDK package run for this latest PR commit was available within seven minutes. $latest_run_detail Rerun Security / Package OpenShell SDK for PR for this latest PR commit. Then rerun the failed openshell-sdk-package job in CI / Pull Request."
           exit 1
 
       - name: Download exact base-controlled SDK archive

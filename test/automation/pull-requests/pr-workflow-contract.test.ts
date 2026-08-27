@@ -183,6 +183,8 @@ function runSdkPackageLocator(fixture: SdkPackageLocatorFixture): Readonly<{
       'process.stdout.write(JSON.stringify({ required: true, artifactName: "reviewed-sdk.tgz" }));\n',
     );
     writeFileSync(join(workflowDirectory, "openshell-sdk-package-pr.yaml"), "name: test\n");
+    writeFileSync(join(fakeBin, "seq"), "#!/bin/sh\nprintf '1\\n'\n", { mode: 0o755 });
+    writeFileSync(join(fakeBin, "sleep"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
     writeFileSync(
       join(fakeBin, "gh"),
       [
@@ -548,7 +550,7 @@ describe("pull request and main workflow contracts", () => {
     );
     expect(locate.run).toContain("requires two valid public-registry npm lockfiles");
     expect(locate.run).toContain("actions/workflows/openshell-sdk-package-pr.yaml/runs");
-    expect(locate.run).toContain("for attempt in $(seq 1 96)");
+    expect(locate.run).toContain("for attempt in $(seq 1 84)");
     expect(locate.run).toContain("sleep 5");
     expect(locate.run).toContain(".head.sha == $head and .base.sha == $base");
     expect(locate.run).toContain("required=false");
@@ -750,6 +752,29 @@ describe("pull request and main workflow contracts", () => {
       "rerun the failed openshell-sdk-package job in CI / Pull Request",
     );
     expect(result.stderr).not.toContain("untrusted API failure detail");
+    expect(githubOutput).not.toContain("run_id=");
+  });
+
+  it("explains how to recover when the SDK package wait expires", () => {
+    const { githubOutput, result } = runSdkPackageLocator({
+      runs: [sdkPackageWorkflowRun(321, "in_progress", null, "2026-08-27T00:00:00Z")],
+      step: requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      ),
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("this latest PR commit");
+    expect(result.stdout).toContain("within seven minutes");
+    expect(result.stdout).toContain(
+      "Last matching run: https://github.com/NVIDIA/NemoClaw/actions/runs/321 (in_progress)",
+    );
+    expect(result.stdout).toContain("Rerun Security / Package OpenShell SDK for PR");
+    expect(result.stdout).toContain(
+      "Then rerun the failed openshell-sdk-package job in CI / Pull Request",
+    );
+    expect(result.stdout).not.toContain("exact-head");
     expect(githubOutput).not.toContain("run_id=");
   });
 

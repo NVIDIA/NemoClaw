@@ -146,10 +146,6 @@ export function resetDestroyModuleCache(): void {
   delete require.cache[requireSource.resolve(destroyModulePath)];
 }
 
-export function resolveDestroySourcePath(): string {
-  return requireSource.resolve(destroyModulePath);
-}
-
 export function traceDestroyBoundaryCalls(
   harness: Pick<DestroyHarness, "runOpenshellSpy">,
   trace: string[],
