@@ -37,10 +37,12 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     ...buildAvailabilityProbeEnv(),
     PATH: `${os.homedir()}/.local/bin:${os.homedir()}/.npm-global/bin:${process.env.PATH ?? ""}`,
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-    // Keep the auto-pair watcher alive through onboarding. Its approval policy
-    // excludes operator.admin, which remains pending for explicit approval.
+    // Before settlement, the watcher caps both cadence values at one second.
+    // After settlement, these values prevent it from polling during the
+    // explicit operator.admin proof.
     NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: AUTO_PAIR_DEADLINE_SECS,
-    NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "600",
+    NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: AUTO_PAIR_DEADLINE_SECS,
+    NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: AUTO_PAIR_DEADLINE_SECS,
     NEMOCLAW_FRESH: "1",
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_RECREATE_SANDBOX: "1",

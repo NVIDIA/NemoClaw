@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type SpawnSyncReturns, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -13,8 +14,17 @@ import {
 } from "../e2e/live/issue-4462-admin-approval-helper.ts";
 
 const EXPECTED_REQUEST_ID = "12345678-1234-4123-8123-123456789abc";
-const LOCAL_DEVICE_ID = "device-1";
-const LOCAL_PUBLIC_KEY = "public-key-1";
+const EXPECTED_PUBLIC_KEY_BYTES = Buffer.from(Array.from({ length: 32 }, (_value, index) => index));
+const EXPECTED_PUBLIC_KEY = EXPECTED_PUBLIC_KEY_BYTES.toString("base64url");
+const EXPECTED_DEVICE_ID = createHash("sha256").update(EXPECTED_PUBLIC_KEY_BYTES).digest("hex");
+const OTHER_PUBLIC_KEY_BYTES = Buffer.from(
+  Array.from({ length: 32 }, (_value, index) => index + 32),
+);
+const OTHER_PUBLIC_KEY = OTHER_PUBLIC_KEY_BYTES.toString("base64url");
+const OTHER_DEVICE_ID = createHash("sha256").update(OTHER_PUBLIC_KEY_BYTES).digest("hex");
+const EXPECTED_IDENTITY = { deviceId: EXPECTED_DEVICE_ID, publicKey: EXPECTED_PUBLIC_KEY };
+
+type FakeFailureCommand = "devices:list" | "devices:approve" | "cron:add" | "cron:run";
 
 function adminState(tokenShape: "array" | "object" = "array"): Record<string, unknown> {
   const operatorToken = {
@@ -25,8 +35,8 @@ function adminState(tokenShape: "array" | "object" = "array"): Record<string, un
     pending: [
       {
         requestId: EXPECTED_REQUEST_ID,
-        deviceId: LOCAL_DEVICE_ID,
-        publicKey: LOCAL_PUBLIC_KEY,
+        deviceId: EXPECTED_DEVICE_ID,
+        publicKey: EXPECTED_PUBLIC_KEY,
         clientId: "cli",
         clientMode: "cli",
         role: "operator",
@@ -36,8 +46,8 @@ function adminState(tokenShape: "array" | "object" = "array"): Record<string, un
     ],
     paired: [
       {
-        deviceId: LOCAL_DEVICE_ID,
-        publicKey: LOCAL_PUBLIC_KEY,
+        deviceId: EXPECTED_DEVICE_ID,
+        publicKey: EXPECTED_PUBLIC_KEY,
         clientId: "cli",
         clientMode: "cli",
         role: "operator",
@@ -51,22 +61,29 @@ function adminState(tokenShape: "array" | "object" = "array"): Record<string, un
 }
 
 function writeLocalIdentity(
-  stateRoot: string,
-  identity: Record<string, unknown> = {
-    deviceId: LOCAL_DEVICE_ID,
-    publicKey: LOCAL_PUBLIC_KEY,
-  },
-): void {
-  fs.mkdirSync(path.join(stateRoot, "identity"), { recursive: true });
-  fs.writeFileSync(path.join(stateRoot, "identity", "device.json"), JSON.stringify(identity));
+  root: string,
+  identity: Record<string, unknown> = EXPECTED_IDENTITY,
+): string {
+  const stateRoot = path.join(root, "state");
+  const identityRoot = path.join(stateRoot, "identity");
+  fs.mkdirSync(identityRoot, { recursive: true });
+  fs.writeFileSync(path.join(identityRoot, "device.json"), JSON.stringify(identity));
+  return stateRoot;
 }
 
-function runSelector(state: Record<string, unknown>, identity?: Record<string, unknown>) {
+function omitLocalIdentity(root: string, _identity: Record<string, unknown>): string {
+  return path.join(root, "state");
+}
+
+function runSelector(
+  state: Record<string, unknown>,
+  identity: Record<string, unknown> = EXPECTED_IDENTITY,
+  prepareIdentity: (root: string, identity: Record<string, unknown>) => string = writeLocalIdentity,
+) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-admin-selector-"));
-  const stateRoot = path.join(root, "openclaw-state");
   const statePath = path.join(root, "devices.json");
   const requestIdPath = path.join(root, "selected-request-id");
-  writeLocalIdentity(stateRoot, identity);
+  const stateRoot = prepareIdentity(root, identity);
   fs.writeFileSync(statePath, JSON.stringify(state));
   try {
     const result = spawnSync("python3", ["-", statePath, requestIdPath], {
@@ -86,15 +103,14 @@ function runSelector(state: Record<string, unknown>, identity?: Record<string, u
 function runAdminApprovalScript(
   gatewayUrl: string,
   insecurePrivateWs?: string,
-  failAt?: string,
+  failureCommand?: FakeFailureCommand,
 ): { commands: string[]; result: SpawnSyncReturns<string> } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-admin-script-"));
   const cliPath = path.join(root, "nemoclaw");
   const openclawPath = path.join(root, "openclaw");
   const devicesPath = path.join(root, "devices.json");
   const commandLogPath = path.join(root, "openclaw.log");
-  const stateRoot = path.join(root, "openclaw-state");
-  writeLocalIdentity(stateRoot);
+  const stateRoot = writeLocalIdentity(root);
   fs.writeFileSync(
     cliPath,
     `#!/bin/sh
@@ -109,9 +125,14 @@ exec /bin/bash
     `#!/bin/sh
 set -eu
 printf '%s\\n' "$*" >> "$FAKE_OPENCLAW_LOG"
-if [ "\${FAKE_OPENCLAW_FAIL_AT:-}" = "$1:$2" ]; then
-  printf '%s\\n' 'requestId=12345678-1234-4123-8123-123456789abc deviceId=device-secret-id publicKey=abcdefghijklmnopqrstuvwxyz012345 token=sensitive-token-value cronId=cron-secret-id' >&2
-  exit 41
+if [ "\${FAKE_OPENCLAW_FAIL:-}" = "$1:$2" ]; then
+  case "$1:$2" in
+    devices:list) printf '%s\\n' 'gateway connection unavailable token=test-gateway-token device=${EXPECTED_DEVICE_ID}' >&2 ;;
+    devices:approve) printf '%s\\n' 'approval denied by policy request=${EXPECTED_REQUEST_ID} publicKey=${EXPECTED_PUBLIC_KEY}' >&2 ;;
+    cron:add) printf '%s\\n' 'scope upgrade pending approval cron=cron-1' >&2 ;;
+    cron:run) printf '%s\\n' 'request timed out cron=cron-1' >&2 ;;
+  esac
+  exit 91
 fi
 case "$1:$2" in
   devices:list) cat "$FAKE_DEVICES_STATE" ;;
@@ -128,7 +149,7 @@ esac
     ...process.env,
     PATH: `${root}:${process.env.PATH ?? ""}`,
     FAKE_DEVICES_STATE: devicesPath,
-    FAKE_OPENCLAW_FAIL_AT: failAt ?? "",
+    FAKE_OPENCLAW_FAIL: failureCommand ?? "",
     FAKE_OPENCLAW_LOG: commandLogPath,
     NEMOCLAW_OPENCLAW_GATEWAY_URL: gatewayUrl,
     NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: insecurePrivateWs ?? "",
@@ -163,9 +184,12 @@ describe("prepared connect-shell administrative approval", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
-    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(
-      /12345678-1234-4123-8123-123456789abc|device-1|public-key-1|cron-1|test-gateway-token/u,
-    );
+    const output = `${result.stdout}\n${result.stderr}`;
+    expect(output).not.toContain(EXPECTED_REQUEST_ID);
+    expect(output).not.toContain(EXPECTED_DEVICE_ID);
+    expect(output).not.toContain(EXPECTED_PUBLIC_KEY);
+    expect(output).not.toContain("cron-1");
+    expect(output).not.toContain("test-gateway-token");
     expect(commands).toEqual([
       "devices list --json",
       `devices approve ${EXPECTED_REQUEST_ID}`,
@@ -175,21 +199,29 @@ describe("prepared connect-shell administrative approval", () => {
   });
 
   it.each([
-    ["devices:list", 25, "ADMIN_DEVICES_LIST_FAILED"],
-    ["devices:approve", 27, "ADMIN_APPROVE_FAILED"],
-    ["cron:add", 28, "ADMIN_CRON_RETRY_FAILED"],
-    ["cron:run", 29, "ADMIN_CRON_RUN_FAILED"],
-  ])(
-    "reports bounded diagnostics without request, device, public key, token, or cron identifiers when %s fails (#5324)",
-    (failAt, expectedStatus, expectedClassification) => {
-      const { result } = runAdminApprovalScript("ws://127.0.0.1:18789", undefined, failAt);
+    ["devices:list", 25, "ADMIN_DEVICES_LIST_FAILED", "gateway-unavailable", 1],
+    ["devices:approve", 27, "ADMIN_APPROVE_FAILED", "authorization-rejected", 2],
+    ["cron:add", 28, "ADMIN_CRON_RETRY_FAILED", "scope-upgrade-pending", 3],
+    ["cron:run", 29, "ADMIN_CRON_RUN_FAILED", "timeout", 4],
+  ] as const)(
+    "retains a safe diagnostic when %s fails (#5324)",
+    (failureCommand, expectedStatus, marker, diagnostic, expectedCommandCount) => {
+      const { commands, result } = runAdminApprovalScript(
+        "ws://127.0.0.1:18789",
+        undefined,
+        failureCommand,
+      );
+      const output = `${result.stdout}\n${result.stderr}`;
 
       expect(result.status).toBe(expectedStatus);
-      expect(result.stderr).toContain(`${expectedClassification} detail=`);
-      expect(Buffer.byteLength(result.stderr, "utf8")).toBeLessThan(1_024);
-      expect(result.stderr).not.toMatch(
-        /12345678-1234-4123-8123-123456789abc|device-secret-id|abcdefghijklmnopqrstuvwxyz012345|sensitive-token-value|cron-secret-id/u,
-      );
+      expect(result.stderr).toContain(marker);
+      expect(result.stderr).toContain(`ADMIN_DIAGNOSTIC=${diagnostic}`);
+      expect(commands).toHaveLength(expectedCommandCount);
+      expect(output).not.toContain(EXPECTED_REQUEST_ID);
+      expect(output).not.toContain(EXPECTED_DEVICE_ID);
+      expect(output).not.toContain(EXPECTED_PUBLIC_KEY);
+      expect(output).not.toContain("cron-1");
+      expect(output).not.toContain("test-gateway-token");
     },
   );
 
@@ -215,17 +247,6 @@ describe("prepared connect-shell administrative approval", () => {
     },
   );
 
-  it("rejects a pending operator.admin request for a different paired CLI identity (#5324)", () => {
-    const result = runSelector(adminState(), {
-      deviceId: "other-device",
-      publicKey: "other-public-key",
-    });
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("does not match the local CLI identity");
-    expect(result.selectedRequestId).toBe("");
-  });
-
   it("does not infer the distinct pairing scope while comparing approved views (#5324)", () => {
     const state = adminState("object");
     const device = (
@@ -241,6 +262,46 @@ describe("prepared connect-shell administrative approval", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("approved scope arrays disagree");
+  });
+
+  it("rejects an admin request from a different paired CLI identity (#5324)", () => {
+    const state = adminState();
+    const localDevice = (state.paired as Array<Record<string, unknown>>)[0];
+    const otherDevice = {
+      ...localDevice,
+      deviceId: OTHER_DEVICE_ID,
+      publicKey: OTHER_PUBLIC_KEY,
+    };
+    state.paired = [localDevice, otherDevice];
+    state.pending = [
+      {
+        ...(state.pending as Array<Record<string, unknown>>)[0],
+        deviceId: OTHER_DEVICE_ID,
+        publicKey: OTHER_PUBLIC_KEY,
+      },
+    ];
+
+    const result = runSelector(state);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("does not match the local CLI identity");
+    expect(result.selectedRequestId).toBe("");
+  });
+
+  it("rejects a missing local CLI identity (#5324)", () => {
+    const result = runSelector(adminState(), EXPECTED_IDENTITY, omitLocalIdentity);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("missing or invalid");
+    expect(result.selectedRequestId).toBe("");
+  });
+
+  it("rejects an invalid local CLI identity binding (#5324)", () => {
+    const result = runSelector(adminState(), { deviceId: "invalid", publicKey: "invalid" });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("binding is invalid");
+    expect(result.selectedRequestId).toBe("");
   });
 
   it("rejects ambiguous requests, contradictory roles, unrequested operator.admin, broad scopes, or pre-approved operator.admin (#5324)", () => {
