@@ -175,7 +175,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
   });
   if (
     beforePush.head !== input.expectedHeadSha ||
-    !beforePush.clean ||
+    (input.requireClean !== false && !beforePush.clean) ||
     beforePush.branch !== branch
   )
     throw new Error("Publication candidate changed after validation");

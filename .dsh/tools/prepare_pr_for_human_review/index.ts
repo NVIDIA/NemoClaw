@@ -173,6 +173,9 @@ export default async function prepare_pr_for_human_review(input: {
           headSha: push.headSha,
           remoteState: push.remoteState,
           blocker: push.blocker,
+          remoteState: "expected-commit",
+          recovery:
+            "Re-read verification for the published commit, reconcile the PR branch, and continue evidence refresh only after every commit is verified. Do not create or push another commit.",
           recovery: "Reconcile the recorded PR branch before any retry.",
         }),
       };
