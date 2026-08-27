@@ -123,6 +123,7 @@ const {
       envKey: string;
       token: string | null;
       providerType?: string;
+      additionalCredentials?: Array<{ envKey: string; token: string | null }>;
     }>,
     runOpenshell: RunOpenshell,
     options?: {
@@ -766,11 +767,14 @@ describe("onboard provider helpers", () => {
       ],
       (command) => {
         commands.push(command.join(" "));
-        if (command[1] === "profile") {
-          return { status: 0, stdout: MESSAGING_ENDPOINTLESS_PROFILE_EXPORT, stderr: "" };
+        switch (command[1]) {
+          case "profile":
+            return { status: 0, stdout: MESSAGING_ENDPOINTLESS_PROFILE_EXPORT, stderr: "" };
+          case "get":
+            return providerMetadata;
+          default:
+            return { status: 0, stdout: "", stderr: "" };
         }
-        if (command[1] === "get") return providerMetadata;
-        return { status: 0, stdout: "", stderr: "" };
       },
     );
 
@@ -783,7 +787,7 @@ describe("onboard provider helpers", () => {
     ]);
   });
 
-  it("rejects an update that omits a submitted namespaced credential", () => {
+  it("rejects an update that omits a submitted namespaced credential (#10153)", () => {
     expect(() =>
       upsertMessagingProviders(
         [
