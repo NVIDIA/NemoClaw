@@ -233,13 +233,12 @@ contract under review. Terminal traces are evidence; they are not stable
 behavior unless the issue explicitly makes them the behavior.
 
 Retries require a checked-in bounded policy with a narrow transient signature,
-owner, idempotence or reconciliation basis, attempt evidence, and an entry in
-[`test/e2e/RETRY_INVENTORY.md`](test/e2e/RETRY_INVENTORY.md). Do not add
+owner, idempotence or reconciliation basis, and attempt evidence. Do not add
 unproven retries, ambiguous mutation retries, or broad failed-job reruns. A
 mutation retry is allowed only after the test reconciles the external state and
 proves repeating the same desired operation is safe. Keep bounded operation
 retries separate from complete workflow reruns: `E2E / Main Retry Evidence` records
-attempts and does not request a broad rerun, while `Automation / Platform CI Runner` owns
+attempts and does not request a broad rerun, while `Automation / Recover Platform CI Runner` owns
 at most one full rerun only for authenticated GitHub-hosted runner-loss
 evidence.
 
