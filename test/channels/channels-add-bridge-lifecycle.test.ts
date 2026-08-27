@@ -44,6 +44,7 @@ const GOOGLECHAT_ENV = {
   GOOGLECHAT_AUDIENCE: "https://bot.example.com/googlechat",
   GOOGLECHAT_APP_PRINCIPAL: "123456789012345678901",
 };
+const LIVE_IDENTITY_FINGERPRINT = "a".repeat(64);
 
 // Why this mock exists: the real googlechat tunnel/audience gate needs a human
 // operator (Google Cloud Console steps), so on a non-interactive test run it
@@ -108,7 +109,14 @@ beforeEach(() => {
     throw new ExitError(code);
   }) as never);
 
-  registryEntry = { name: "test-sb", agent: "openclaw", policies: [] } as SandboxEntry;
+  registryEntry = {
+    name: "test-sb",
+    agent: "openclaw",
+    gatewayName: "nemoclaw",
+    lifecycleGeneration: "generation-1",
+    lifecycleLiveIdentityFingerprint: LIVE_IDENTITY_FINGERPRINT,
+    policies: [],
+  } as SandboxEntry;
   vi.spyOn(registry, "getSandbox").mockImplementation(() => registryEntry);
   vi.spyOn(registry, "listSandboxes").mockImplementation(() => ({
     sandboxes: [registryEntry],
@@ -154,6 +162,10 @@ beforeEach(() => {
   // crosses the direct channel action, generic provider upsert, and OpenShell
   // refresh boundary. Individual failure tests override the spy below.
   providerSpy = vi.spyOn(policyChannelDependencies, "upsertMessagingProviders");
+  vi.spyOn(
+    policyChannelDependencies,
+    "inspectMessagingProviderAttachmentTarget",
+  ).mockReturnValue(LIVE_IDENTITY_FINGERPRINT);
   vi.spyOn(policyChannelDependencies, "rebuildSandbox").mockImplementation(async () => undefined);
   stopGooglechatWebhookTunnelSpy = vi
     .spyOn(policyChannelDependencies, "stopGooglechatWebhookTunnel")
