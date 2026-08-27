@@ -9,6 +9,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { ConflictRegistryEntry } from "../../messaging/applier";
+import { createBuiltInMessagingHookRegistry } from "../../messaging/hooks";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
 import type { MessagingConflictGuardDeps } from "../../onboard/messaging-conflict-guard";
 import { preflightRebuildMessagingConflicts } from "./rebuild-messaging-conflict-preflight";
@@ -19,6 +20,7 @@ function teamsPlan(
   sandboxName: string,
   credentialHash?: string,
   credentialAvailable = true,
+  webhookPort?: number,
 ): SandboxMessagingPlan {
   return {
     schemaVersion: 1,
@@ -34,8 +36,32 @@ function teamsPlan(
         selected: true,
         configured: true,
         disabled: false,
-        inputs: [],
-        hooks: [],
+        inputs:
+          webhookPort === undefined
+            ? []
+            : [
+                {
+                  channelId: "teams",
+                  inputId: "webhookPort",
+                  kind: "config",
+                  required: false,
+                  sourceEnv: "MSTEAMS_PORT",
+                  statePath: "teamsConfig.webhookPort",
+                  value: String(webhookPort),
+                },
+              ],
+        hooks:
+          webhookPort === undefined
+            ? []
+            : [
+                {
+                  id: "teams-host-forward-port-conflict",
+                  phase: "pre-enable",
+                  handler: "teams.hostForwardPortConflict",
+                  inputs: ["webhookPort"],
+                  onFailure: "abort",
+                },
+              ],
       },
     ],
     disabledChannels: [],
@@ -131,6 +157,31 @@ describe("preflightRebuildMessagingConflicts (#5954)", () => {
     );
     expect(bail).toHaveBeenCalledTimes(1);
     expect(error.mock.calls.flat().join("\n")).toContain("uses the same teams credential");
+  });
+
+  it("aborts via bail when an unrelated process owns the Teams webhook port", async () => {
+    const plan = teamsPlan("my-assistant", "unique-hash", true, 3978);
+    const registry = registryWith([{ name: "my-assistant", messaging: { plan } }]);
+    const preEnableHookRegistry = createBuiltInMessagingHookRegistry({
+      teams: {
+        hostForwardPortConflict: {
+          checkPortAvailable: async () => ({ ok: false, process: "nc", pid: 4321 }),
+          isCurrentSandboxForward: () => false,
+        },
+      },
+    });
+    const { deps, bail, error } = makeDeps({
+      registry: registry as never,
+      preEnableHookRegistry,
+    });
+
+    await expect(preflightRebuildMessagingConflicts(plan, deps)).rejects.toThrow(
+      /messaging channel conflict/i,
+    );
+    expect(error.mock.calls.flat().join("\n")).toContain(
+      "Microsoft Teams webhook port 3978 is already in use by nc (PID 4321)",
+    );
+    expect(bail).toHaveBeenCalledTimes(1);
   });
 
   it("aborts via bail before rebuild when an active credential hash is unavailable (#7808)", async () => {

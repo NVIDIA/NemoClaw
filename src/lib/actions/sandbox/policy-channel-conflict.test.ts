@@ -12,6 +12,7 @@ import * as runtime from "../../adapters/openshell/runtime";
 import * as defs from "../../agent/defs";
 import * as store from "../../credentials/store";
 import * as gatewayRuntime from "../../gateway-runtime-action";
+import { createBuiltInMessagingHookRegistry } from "../../messaging";
 import * as policy from "../../policy";
 import { hashCredential } from "../../security/credential-hash";
 import * as onboardSession from "../../state/onboard-session";
@@ -1220,11 +1221,53 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
     return plan?.channels?.find((channel) => channel.channelId === "teams")?.hostForward;
   }
 
+  it("rejects an occupied host port before persisting any channel state", async () => {
+    setTeamsEnv();
+    arrangeRegistry({ current: makeEmptyEntry("alpha") });
+    const preEnableHookRegistry = createBuiltInMessagingHookRegistry({
+      teams: {
+        hostForwardPortConflict: {
+          checkPortAvailable: async () => ({ ok: false, process: "nc", pid: 4321 }),
+          isCurrentSandboxForward: () => false,
+        },
+      },
+    });
+
+    await expect(
+      addSandboxChannel(
+        "alpha",
+        { channel: "teams" },
+        { preEnableHookRegistry },
+      ),
+    ).rejects.toThrow("process.exit(1)");
+
+    expect(loggedText()).toContain(
+      "Microsoft Teams webhook port 3978 is already in use by nc (PID 4321)",
+    );
+    expect(loggedText()).toContain("MSTEAMS_PORT");
+    expect(upsertMock).not.toHaveBeenCalled();
+    expect(saveCredentialMock).not.toHaveBeenCalled();
+    expect(applyPresetMock).not.toHaveBeenCalled();
+    expect(updateSandboxMock).not.toHaveBeenCalled();
+    expect(rebuildSandboxMock).not.toHaveBeenCalled();
+  });
+
   it("channels add teams starts the MSTEAMS_PORT host forward after rebuild-now completes", async () => {
     setTeamsEnv();
     arrangeRegistry({ current: makeEmptyEntry("alpha") });
+    const preEnableHookRegistry = createBuiltInMessagingHookRegistry({
+      teams: {
+        hostForwardPortConflict: {
+          checkPortAvailable: async () => ({ ok: true }),
+        },
+      },
+    });
 
-    await addSandboxChannel("alpha", { channel: "teams" });
+    await addSandboxChannel(
+      "alpha",
+      { channel: "teams" },
+      { preEnableHookRegistry },
+    );
 
     expect(rebuildSandboxMock).toHaveBeenCalledWith("alpha", ["--yes"]);
     expect(ensureMessagingHostForwardAfterRebuildMock).toHaveBeenCalledWith(

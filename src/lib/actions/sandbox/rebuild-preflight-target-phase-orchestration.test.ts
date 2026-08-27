@@ -41,6 +41,7 @@ vi.mock("./rebuild-target-preflight", async (importOriginal) => ({
 }));
 
 vi.mock("./rebuild-messaging-phase", () => ({
+  createRebuildMessagingPreEnableHookRegistry: vi.fn(() => undefined),
   stageRebuildMessagingPlanOrBail: vi.fn(async () => null),
 }));
 

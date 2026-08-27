@@ -32,7 +32,7 @@ afterEach(() => {
 // credential binding carrying a hash — staging preserves credentialBindings
 // verbatim, so a shared hash across two sandboxes is a "matching-token"
 // conflict.
-function teamsPlan(sandboxName: string, credentialHash: string) {
+function teamsPlan(sandboxName: string, credentialHash: string, webhookPort?: number) {
   return {
     schemaVersion: 1,
     sandboxName,
@@ -47,8 +47,41 @@ function teamsPlan(sandboxName: string, credentialHash: string) {
         selected: true,
         configured: true,
         disabled: false,
-        inputs: [],
-        hooks: [],
+        inputs:
+          webhookPort === undefined
+            ? []
+            : [
+                {
+                  channelId: "teams",
+                  inputId: "webhookPort",
+                  kind: "config",
+                  required: false,
+                  sourceEnv: "MSTEAMS_PORT",
+                  statePath: "teamsConfig.webhookPort",
+                  value: String(webhookPort),
+                },
+              ],
+        hooks:
+          webhookPort === undefined
+            ? []
+            : [
+                {
+                  id: "teams-host-forward-port-conflict",
+                  phase: "pre-enable",
+                  handler: "teams.hostForwardPortConflict",
+                  inputs: ["webhookPort"],
+                  onFailure: "abort",
+                },
+              ],
+        ...(webhookPort === undefined
+          ? {}
+          : {
+              hostForward: {
+                channelId: "teams",
+                port: webhookPort,
+                label: "Microsoft Teams webhook",
+              },
+            }),
       },
     ],
     disabledChannels: [],
@@ -206,6 +239,30 @@ process.exit(17);
   return { tmpDir, nemoclawDir };
 }
 
+function createHostPortConflictFixture() {
+  const fixture = createConflictFixture();
+  const registryPath = path.join(fixture.nemoclawDir, "sandboxes.json");
+  const registry = JSON.parse(fs.readFileSync(registryPath, "utf-8"));
+  delete registry.sandboxes.hermes;
+  registry.sandboxes["my-assistant"].messaging.plan = teamsPlan(
+    "my-assistant",
+    "unique-teams-hash",
+    3978,
+  );
+  fs.writeFileSync(registryPath, JSON.stringify(registry), { mode: 0o600 });
+  fs.writeFileSync(
+    path.join(fixture.tmpDir, "lsof"),
+    `#!/usr/bin/env node
+if (process.argv.includes(":3978")) {
+  process.stdout.write("COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\\nnc 4321 user 3u IPv4 1 0t0 TCP 127.0.0.1:3978 (LISTEN)\\n");
+}
+process.exit(0);
+`,
+    { mode: 0o755 },
+  );
+  return fixture;
+}
+
 function runRebuild(tmpDir: string) {
   const argv = [path.join(REPO_ROOT, "bin", "nemoclaw.js"), "my-assistant", "rebuild", "--yes"];
   return spawnSync(process.execPath, argv, {
@@ -247,6 +304,22 @@ describe("rebuild messaging credential conflict preflight (#5954)", () => {
     expect(output).toContain("Aborting");
 
     // Nothing destructive ran: the sandbox is untouched and still registered.
+    expect(output).not.toContain("Backing up sandbox state");
+    expect(output).not.toContain("Old sandbox deleted");
+    expect(output).not.toContain("must not run before the conflict preflight");
+    expect(registryHasSandbox(f.nemoclawDir, "my-assistant")).toBe(true);
+  });
+
+  it("aborts BEFORE backup/delete when an unrelated process owns the Teams webhook port", {
+    timeout: 90_000,
+  }, () => {
+    const f = createHostPortConflictFixture();
+    const result = runRebuild(f.tmpDir);
+    const output = `${result.stderr || ""}${result.stdout || ""}`;
+
+    expect(result.status).not.toBe(0);
+    expect(output).toContain("Microsoft Teams webhook port 3978 is already in use by nc (PID 4321)");
+    expect(output).toContain("MSTEAMS_PORT");
     expect(output).not.toContain("Backing up sandbox state");
     expect(output).not.toContain("Old sandbox deleted");
     expect(output).not.toContain("must not run before the conflict preflight");

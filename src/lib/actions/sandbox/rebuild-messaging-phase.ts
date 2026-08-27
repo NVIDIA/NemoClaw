@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { runOpenshell } from "../../adapters/openshell/runtime";
+import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
 import { RD as _RD, D, G, R } from "../../cli/terminal-style";
 import { MessagingSetupApplier } from "../../messaging/applier/setup-applier";
 import type {
@@ -10,11 +10,23 @@ import type {
 } from "../../messaging/applier/types";
 import type { MessagingHookOutputMap } from "../../messaging/hooks";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
+import { createMessagingHostForwardPreEnableHookRegistry } from "../../onboard/messaging-host-forward";
 import type { SandboxEntry } from "../../state/registry";
 import type { RebuildBail } from "./rebuild-credential-preflight";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-stage";
 
 export { stageMessagingManifestPlanForRebuild };
+
+export function createRebuildMessagingPreEnableHookRegistry() {
+  return createMessagingHostForwardPreEnableHookRegistry({
+    captureForwardList: (gatewayName) => {
+      const args = ["forward", "list"];
+      if (gatewayName) args.push("--gateway", gatewayName);
+      const result = captureOpenshell(args, { ignoreError: true });
+      return result.status === 0 ? result.output : null;
+    },
+  });
+}
 
 /** Stage the manifest plan while preserving rebuild's fail-before-delete boundary. */
 export async function stageRebuildMessagingPlanOrBail(

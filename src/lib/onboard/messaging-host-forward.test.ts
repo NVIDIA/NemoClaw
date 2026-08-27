@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import {
+  createMessagingHostForwardPortConflictHookOptions,
   ensureMessagingHostForwardIfConfigured,
   resolveMessagingHostForward,
 } from "./messaging-host-forward";
@@ -85,6 +86,25 @@ function makeCompactTeamsPlan(): SandboxMessagingPlan {
 }
 
 describe("ensureMessagingHostForwardIfConfigured", () => {
+  it("composes host port checks with current-sandbox forward ownership", async () => {
+    const checkPortAvailable = vi.fn(async () => ({
+      ok: false,
+      process: "ssh",
+      pid: 1234,
+    }));
+    const captureForwardList = vi.fn(
+      () => "SANDBOX BIND PORT PID STATUS\ndemo 127.0.0.1 3978 1234 active\n",
+    );
+    const options = createMessagingHostForwardPortConflictHookOptions({
+      captureForwardList,
+      checkPortAvailable,
+    });
+
+    await expect(options.checkPortAvailable?.(3978)).resolves.toMatchObject({ ok: false });
+    expect(options.isCurrentSandboxForward?.("demo", "nemoclaw-8090", 3978)).toBe(true);
+    expect(captureForwardList).toHaveBeenCalledWith("nemoclaw-8090");
+  });
+
   it("resolves compact persisted messaging host forwards", () => {
     expect(resolveMessagingHostForward(makeCompactTeamsPlan())).toEqual({
       channelId: "teams",

@@ -25,6 +25,7 @@ import {
   createBuiltInMessagingHookRegistry,
   isMessagingHookConflictError,
   runMessagingHook,
+  type MessagingHookRegistry,
 } from "../messaging/hooks";
 import type { MessagingChannelId, SandboxMessagingPlan } from "../messaging/manifest";
 
@@ -51,6 +52,7 @@ export interface MessagingConflictGuardDeps {
   readonly cliName: () => string;
   readonly log: (message: string) => void;
   readonly error: (message: string) => void;
+  readonly preEnableHookRegistry?: MessagingHookRegistry;
   /** Abort the onboard. Defaults to `process.exit`; injectable for tests. */
   readonly exit?: (code: number) => never;
 }
@@ -165,7 +167,7 @@ async function enforceMessagingPreEnableHooks(
   const requests = MessagingSetupApplier.listPreEnableChecks(currentPlan);
   if (requests.length === 0) return;
 
-  const hookRegistry = createBuiltInMessagingHookRegistry();
+  const hookRegistry = deps.preEnableHookRegistry ?? createBuiltInMessagingHookRegistry();
   let registryEntries: ConflictRegistryEntry[];
   try {
     registryEntries = deps.registry.listSandboxes().sandboxes;

@@ -2,14 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  createBuiltInMessagingHookRegistry,
   getActiveMessagingHostForward,
   MessagingHostStateApplier,
+  type MessagingHookRegistry,
   type SandboxMessagingPlan,
 } from "../messaging";
+import type { TeamsHostForwardPortConflictHookOptions } from "../messaging/channels/teams/hooks";
 import { hydrateDerivedSandboxMessagingPlanFields } from "../messaging/hydration";
 import type { SandboxMessagingHostForwardPlan } from "../messaging/manifest";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
 import * as registry from "../state/registry";
+import { parseForwardList } from "../state/sandbox-session";
+import { checkPortAvailable, type PortProbeResult } from "./preflight";
 
 type RunOpenshell = (
   args: string[],
@@ -27,6 +32,43 @@ export interface MessagingHostForwardRollbackOptions {
   readonly beforeMutation?: (operation: string) => void;
   readonly error?: (message?: string) => void;
   readonly exit?: (code: number) => never;
+}
+
+export interface MessagingHostForwardPortConflictOptionsDeps {
+  readonly captureForwardList: (gatewayName: string | null) => string | null;
+  readonly checkPortAvailable?: (port: number) => Promise<PortProbeResult>;
+}
+
+export function createMessagingHostForwardPortConflictHookOptions(
+  deps: MessagingHostForwardPortConflictOptionsDeps,
+): TeamsHostForwardPortConflictHookOptions {
+  return {
+    checkPortAvailable: deps.checkPortAvailable ?? checkPortAvailable,
+    isCurrentSandboxForward: (sandboxName, gatewayName, port) => {
+      let output: string | null;
+      try {
+        output = deps.captureForwardList(gatewayName);
+      } catch {
+        return false;
+      }
+      return parseForwardList(output).some(
+        (entry) =>
+          entry.sandboxName === sandboxName &&
+          entry.port === String(port) &&
+          (entry.status === "running" || entry.status === "active"),
+      );
+    },
+  };
+}
+
+export function createMessagingHostForwardPreEnableHookRegistry(
+  deps: MessagingHostForwardPortConflictOptionsDeps,
+): MessagingHookRegistry {
+  return createBuiltInMessagingHookRegistry({
+    teams: {
+      hostForwardPortConflict: createMessagingHostForwardPortConflictHookOptions(deps),
+    },
+  });
 }
 
 export function resolveMessagingHostForward(

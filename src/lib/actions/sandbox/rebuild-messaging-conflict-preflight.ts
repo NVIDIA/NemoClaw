@@ -24,6 +24,7 @@
  */
 
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
+import type { MessagingHookRegistry } from "../../messaging/hooks";
 import {
   enforceMessagingChannelConflicts as defaultEnforceMessagingChannelConflicts,
   type MessagingConflictGuardDeps,
@@ -37,6 +38,7 @@ export interface RebuildMessagingConflictPreflightDeps {
   readonly cliName: () => string;
   readonly log: (message: string) => void;
   readonly error: (message: string) => void;
+  readonly preEnableHookRegistry?: MessagingHookRegistry;
   /**
    * Abort the rebuild while leaving the sandbox intact (rebuild's `bail`).
    * Must not return — it either throws or exits the process.
@@ -66,6 +68,7 @@ export async function preflightRebuildMessagingConflicts(
     cliName: deps.cliName,
     log: deps.log,
     error: deps.error,
+    preEnableHookRegistry: deps.preEnableHookRegistry,
     exit: (code: number) => deps.bail("Rebuild aborted: messaging channel conflict.", code),
   });
 }

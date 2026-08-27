@@ -130,6 +130,57 @@ describe("teams.hostForwardPortConflict hook", () => {
     });
   });
 
+  it("aborts when an unrelated host process owns the webhook port", async () => {
+    const registry = new MessagingHookRegistry([
+      createTeamsHostForwardPortConflictHookRegistration({
+        currentSandbox: "bob",
+        registryEntries: [],
+        checkPortAvailable: async () => ({
+          ok: false,
+          process: "nc",
+          pid: 4321,
+          reason: "lsof reports nc (PID 4321) listening on port 3978",
+        }),
+        isCurrentSandboxForward: () => false,
+      }),
+    ]);
+
+    await expect(
+      runMessagingHook(HOOK, registry, {
+        channelId: "teams",
+        inputs: {
+          currentGatewayName: "nemoclaw",
+          webhookPort: "3978",
+        },
+      }),
+    ).rejects.toThrow(
+      "Microsoft Teams webhook port 3978 is already in use by nc (PID 4321). " +
+        "Free the port or set MSTEAMS_PORT to a different free port before enabling Teams.",
+    );
+  });
+
+  it("allows the current sandbox's live host forward during rebuild", async () => {
+    const registry = new MessagingHookRegistry([
+      createTeamsHostForwardPortConflictHookRegistration({
+        currentSandbox: "bob",
+        registryEntries: [],
+        checkPortAvailable: async () => ({ ok: false, process: "ssh", pid: 1234 }),
+        isCurrentSandboxForward: (sandboxName, gatewayName, port) =>
+          sandboxName === "bob" && gatewayName === "nemoclaw" && port === 3978,
+      }),
+    ]);
+
+    await expect(
+      runMessagingHook(HOOK, registry, {
+        channelId: "teams",
+        inputs: {
+          currentGatewayName: "nemoclaw",
+          webhookPort: "3978",
+        },
+      }),
+    ).resolves.toMatchObject({ outputs: {} });
+  });
+
   it("accepts serialized applier inputs for registry-scoped checks", async () => {
     const registry = new MessagingHookRegistry([
       createTeamsHostForwardPortConflictHookRegistration(),

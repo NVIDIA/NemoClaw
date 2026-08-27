@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { runOpenshell } from "../../adapters/openshell/runtime";
+import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
 
 type MessagingProviderTokenDefinition = {
   name: string;
@@ -40,6 +40,7 @@ type GooglechatWebhookProxy = Pick<
   typeof import("../../messaging/channels/googlechat/tunnel/proxy"),
   "readGooglechatWebhookProxyState" | "startGooglechatWebhookProxy" | "stopGooglechatWebhookProxy"
 >;
+type MessagingHostForwardModule = typeof import("../../onboard/messaging-host-forward");
 
 /**
  * Injectable, late-bound boundary around provider registration and rebuild
@@ -49,6 +50,18 @@ type GooglechatWebhookProxy = Pick<
  * onboarding and rebuild modules at policy-channel import time.
  */
 export const policyChannelDependencies = {
+  createMessagingHostForwardPreEnableHookRegistry() {
+    const messagingHostForward =
+      require("../../onboard/messaging-host-forward") as MessagingHostForwardModule;
+    return messagingHostForward.createMessagingHostForwardPreEnableHookRegistry({
+      captureForwardList: (gatewayName) => {
+        const args = ["forward", "list"];
+        if (gatewayName) args.push("--gateway", gatewayName);
+        const result = captureOpenshell(args, { ignoreError: true });
+        return result.status === 0 ? result.output : null;
+      },
+    });
+  },
   isMessagingProviderBindingConflict(
     error: unknown,
   ): error is Error & { readonly mutatedProviderNames: readonly string[] } {

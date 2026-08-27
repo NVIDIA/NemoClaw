@@ -128,8 +128,9 @@ If the command queues the change without rebuilding, the running sandbox keeps i
 ## Avoid Cross-Sandbox Conflicts
 
 <Warning title="Conflict Detection Scope">
-NemoClaw checks only the sandboxes recorded in the selected OpenShell gateway's sandbox registry.
+NemoClaw checks credential and cross-sandbox conflicts only against the selected OpenShell gateway's sandbox registry.
 It cannot detect or prevent Slack credential reuse across independent OpenShell gateways.
+For Microsoft Teams, NemoClaw also checks TCP listeners on the selected local webhook port.
 </Warning>
 
 Use distinct credentials and resources for each active messaging sandbox.
@@ -138,7 +139,7 @@ Follow these channel-specific rules:
 - Use a distinct iLink `accountId` for each WeChat sandbox.
 - Run only one active Slack sandbox on each OpenShell gateway.
 - Use distinct bot and Socket Mode app tokens across OpenShell gateways.
-- Use a different local webhook port for each Microsoft Teams sandbox.
+- Use a local webhook port that no unrelated process or active Microsoft Teams sandbox uses.
 
 When you onboard, rebuild, or add a channel, the command aborts on a conflict or an incomplete required check within the selected OpenShell gateway's sandbox registry.
 Legacy entries without credential hashes count as incomplete.
@@ -149,8 +150,12 @@ For `channels add` only, `--force` overrides conflict and incomplete-check abort
 Use it only when you accept the duplicate-consumer or shared-resource risk.
 Rerun `channels add <channel>` with the intended token to refresh stored non-secret identity metadata.
 
+For Microsoft Teams, an unrelated host listener causes `channels add` to abort before it changes the channel unless you use `--force`.
+An active OpenShell forward owned by the current sandbox can keep the selected port.
+Free an unrelated listener, or set `MSTEAMS_PORT` or `TEAMS_PORT` to a free port.
+
 Before a rebuild, NemoClaw checks the messaging plan before backup or deletion.
-A conflict leaves the original sandbox intact.
+A registry or Microsoft Teams host-port conflict leaves the original sandbox intact.
 Resolve any conflict, then rerun the operation.
 `$$nemoclaw status` reports cross-sandbox overlaps within the selected OpenShell gateway's sandbox registry.
 
