@@ -49,6 +49,14 @@ import {
 export const createOnboardPolicyAuthorityBindings =
   policyAuthorityPreflight.createOnboardPolicyAuthorityBindings;
 
+/** Persist one create-attempt recovery message through the onboard session owner. */
+export function persistRetainedSandboxRecoveryMessage(
+  message: string,
+  finalizeIncompleteOnboardStep: (stepName: string, message: string) => unknown | null,
+): boolean {
+  return finalizeIncompleteOnboardStep("sandbox", message) !== null;
+}
+
 /** Select the policyless APF create plan only when no active global policy exists. */
 export function resolveSandboxCreatePolicyAuthority(
   observedAuthority: "nemoclaw-managed" | "externally-managed",
@@ -284,8 +292,8 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
     const compensationErrors = cleanupTemporarySources();
     const validationDetail =
       validationError instanceof Error && isPolicyAuthorityRefusalError(validationError)
-      ? validationError.message
-      : null;
+        ? validationError.message
+        : null;
     const identityGuidance = exactIdentity
       ? ` Durable sandbox identity fingerprint: ${exactIdentity}. Use it only to compare the surviving sandbox with the failed create. Do not delete the sandbox by name, even after this comparison. Contact the OpenShell administrator for an identity-bound recovery or removal procedure.`
       : " OpenShell did not return a durable identity for comparison. Do not delete the sandbox by name. Contact the OpenShell administrator for an identity-bound recovery or removal procedure.";
@@ -1575,10 +1583,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                 ).messagingTokenDefs;
               },
               runProviderPreDeleteCleanup: (verifiedPolicyRevalidation) => {
-                (verifiedPolicyRevalidation ??
-                  ((operation) => revalidatePolicyAuthority(false, operation)))(
-                  `cleaning up providers for sandbox '${sandboxName}'`,
-                );
+                (
+                  verifiedPolicyRevalidation ??
+                  ((operation) => revalidatePolicyAuthority(false, operation))
+                )(`cleaning up providers for sandbox '${sandboxName}'`);
                 runSandboxProviderPreDeleteCleanup(sandboxName, {
                   runOpenshell,
                   redact,
@@ -1589,10 +1597,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                 upsertMessagingProviders(tokenDefs, {
                   ...options,
                   revalidatePolicyRequirements: (operation) =>
-                    (options.revalidatePolicyRequirements ??
-                      ((targetOperation) => revalidatePolicyAuthority(false, targetOperation)))(
-                      operation,
-                    ),
+                    (
+                      options.revalidatePolicyRequirements ??
+                      ((targetOperation) => revalidatePolicyAuthority(false, targetOperation))
+                    )(operation),
                 }),
               getHermesToolGatewayProviderName: (targetSandbox) =>
                 getHermesToolGatewayBroker().getHermesToolGatewayProviderName(targetSandbox),
@@ -1871,13 +1879,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               ...(apfInterceptorRequested
                 ? {
                     requirePolicylessCreate: true as const,
-                    persistRetainedApfSandboxRecovery: (
-                      recovery: import("../sandbox-gpu-create-flow").RetainedApfSandboxRecovery,
-                    ) =>
-                      onboardSession.finalizeIncompleteOnboardStep("sandbox", recovery.message) !==
-                      null,
                   }
                 : {}),
+              persistRetainedSandboxRecovery: (message) =>
+                persistRetainedSandboxRecoveryMessage(
+                  message,
+                  onboardSession.finalizeIncompleteOnboardStep,
+                ),
               provider,
               sandboxGpuConfig: effectiveSandboxGpuConfig,
               gpuRoutePlan,

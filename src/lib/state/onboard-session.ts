@@ -1743,8 +1743,8 @@ export function checkpointVllmInstallModel(modelId: string): Session {
  * interrupted step, replacing the legacy step-mutation escape hatch on the
  * process-exit path. It is idempotent by construction: if the durable machine
  * is already terminal (an in-band failure or a prior backstop already recorded
- * the terminal event pair) it no-ops rather than recording a second failure, so the
- * failed transition is validated and never doubled. Performs no
+ * the terminal event pair) it returns null rather than recording a second failure,
+ * so the failed transition is validated and never doubled. Performs no
  * sandbox/provider/policy effects.
  */
 export function finalizeIncompleteOnboardStep(
@@ -1754,7 +1754,7 @@ export function finalizeIncompleteOnboardStep(
 ): Session | null {
   const existing = loadSession();
   if (!existing) return null;
-  if (isTerminalOnboardMachineState(existing.machine.state)) return existing;
+  if (isTerminalOnboardMachineState(existing.machine.state)) return null;
 
   let emitted = false;
   const updatedSession = updateSession((session) => {
@@ -1798,7 +1798,7 @@ export function finalizeIncompleteOnboardStep(
       }),
     );
   }
-  return updatedSession;
+  return emitted ? updatedSession : null;
 }
 
 export interface CompleteSessionOptions {

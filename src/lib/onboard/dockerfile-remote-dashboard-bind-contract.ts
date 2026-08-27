@@ -28,11 +28,12 @@ const EXACT_CUSTOM_POST_GENERATOR_RUN_RE = [
   MESSAGING_BUILD_APPLIER_RE,
 ] as const;
 
-// Complex RUN instructions in the shipped Dockerfile are accepted only as
-// exact normalized instructions. Prefix matching here would let a custom
-// Dockerfile append `&& <rewrite openclaw.json>` to an otherwise safe command.
-// A lifecycle test verifies these digests against the checked-in Dockerfile.
-const CANONICAL_POST_GENERATOR_RUN_SHA256 = new Set([
+// Complex RUN instructions and reviewed payload copies in the shipped
+// Dockerfile are accepted only as exact normalized instructions. Prefix
+// matching here would let a custom Dockerfile append `&& <rewrite
+// openclaw.json>` to an otherwise safe command. A lifecycle test verifies
+// these digests against the checked-in Dockerfile.
+const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "9300de0b56a7d8a1498fd36cb9c05313b6691d6756b455f91628ed989221afc2",
   "6f457f365f5c0d128e5e3b549a630b5bd9ebd223919f2c2c8e6a31235d763781",
   "dca7d3dbc030e4efa77c850b9d21a826358c69c7d2062f3eee2f5a57eeb07aa2",
@@ -65,9 +66,19 @@ const CANONICAL_POST_GENERATOR_RUN_SHA256 = new Set([
   "7e6a6879382f833f17be02ca7d287685b6afa1c423b1e087b3b05dd677d6e325",
   "4a54da2c1c33c681ae0dad181a5a7456c926051d91420aa60cf7edef6330ba65",
   "e958e532c3e770fa426a6662652dbde2ddaeb41a214ccffe2def5a43a8b5b023",
-  "fdcd85bae7b2ac4ee20e6d176411d2d926c270cc94d59ec626113909235beca5",
+  "c6894538ce0c377566a22b11af9682a9952bfd936fd4d011f6f50da30c8e875e",
   "e1b6dca3e6b30624f364b36ff52e654978bc120cc7800df2ff209c14949acd64",
   "c682148fc7efec9f947c326c6029181cd879b7cba3e8361246aba7d0e6fe70a3",
+  // Reviewed late messaging inputs, metadata setup, and runtime assertions.
+  "7e5f7e1dfb90e5e4b863afdfb9ba58e57e3693bdc6f47ac8c13e80bdc9eff56b",
+  "8f5966da093ef75cefd35c2b7f1361fbf5b32e63a4a8a34cb3ac7f76a1330e5e",
+  "c6b042ac2cc3d5570ae43f1e387a951cbe89fbb22e8cd9df486f99719bb32939",
+  "ba29b499af923b4331cf7abf14648f187dc0e0b8f3dc2c33dac61f079981c187",
+  "f91353eff1014dbe84120fc954cf2db18be7c3b01b3af95f6bbc0dbb2771003d",
+  // COPY --from=openclaw-runtime-payload / /
+  // The reviewed scratch payload has no /sandbox/.openclaw content, so this
+  // exact late copy preserves the generated remote-dashboard configuration.
+  "0416afe770a7a4281aca9db4cf13d58f90bbf2b46e8225cbd4d6c2571eb7a9c0",
 ]);
 
 function instructionSha256(text: string): string {
@@ -79,7 +90,7 @@ const postGeneratorInstructionAllowed = (instruction: DockerfileInstruction): bo
   if (PASSIVE_FINAL_STAGE_INSTRUCTION_RE.test(text)) return true;
   if (SAFE_VALIDATION_GENERATOR_RE.test(text)) return true;
   if (EXACT_CUSTOM_POST_GENERATOR_RUN_RE.some((pattern) => pattern.test(text))) return true;
-  return CANONICAL_POST_GENERATOR_RUN_SHA256.has(instructionSha256(text));
+  return CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256.has(instructionSha256(text));
 };
 
 const isPrimaryOpenClawConfigGenerator = (instruction: DockerfileInstruction): boolean =>
