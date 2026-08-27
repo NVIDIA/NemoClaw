@@ -1208,6 +1208,8 @@ describe("journal-bound source proof", () => {
 });
 
 describe("created sandbox lifecycle registration", () => {
+  const LIFECYCLE_TARGET = { sandboxName: "alpha", gatewayName: "nemoclaw-31818" } as const;
+
   it("keeps the active recreate target ahead of an older recovered generation (#10056)", () => {
     const fixture = creatingLifecycleFixture("33333333-3333-4333-8333-333333333333");
 
@@ -1248,6 +1250,87 @@ describe("created sandbox lifecycle registration", () => {
       phase: "created",
       targetLiveIdentityFingerprint: TARGET_ID,
     });
+  });
+
+  it.each([
+    ["missing" as const, /observed missing/u],
+    ["not_ready" as const, /observed not_ready/u],
+  ])("names %s as the state its owning gateway reported", (state, expected) => {
+    const fixture = creatingLifecycleFixture();
+    fixture.setObservation({ state, liveIdentityFingerprint: null });
+
+    // Both states share one message today, so a failing run cannot tell "the gateway cannot see
+    // this sandbox" from "it sees it and withholds Ready". The message must separate them.
+    expect(() => fixture.lifecycle.capture({ lifecycleGeneration: TARGET_GENERATION })).toThrow(
+      expected,
+    );
+  });
+
+  it("rides out the transient Error phase that follows the bootstrap container destroy", () => {
+    const fixture = creatingLifecycleFixture();
+    fixture.setObservation({ state: "ready", liveIdentityFingerprint: TARGET_ID });
+    const registration = fixture.lifecycle.capture({ lifecycleGeneration: TARGET_GENERATION });
+
+    // The gateway reports not_ready for a beat while it re-registers the swapped
+    // container, then recovers on its own. Reading once turned that into a
+    // terminal onboard failure on jetson-nvmap-gpu.
+    let polls = 0;
+    const slept: number[] = [];
+    const observe = () => {
+      polls += 1;
+      return polls < 3
+        ? { state: "not_ready" as const, liveIdentityFingerprint: null }
+        : { state: "ready" as const, liveIdentityFingerprint: TARGET_ID };
+    };
+
+    expect(
+      revalidateCreatedSandboxLifecycleRegistration(LIFECYCLE_TARGET, registration, observe, {
+        sleep: (seconds) => slept.push(seconds),
+      }),
+    ).toEqual(registration);
+    expect(polls).toBe(3);
+    expect(slept).toEqual([1, 1]);
+  });
+
+  it("still fails when the gateway never returns to Ready", () => {
+    const fixture = creatingLifecycleFixture();
+    fixture.setObservation({ state: "ready", liveIdentityFingerprint: TARGET_ID });
+    const registration = fixture.lifecycle.capture({ lifecycleGeneration: TARGET_GENERATION });
+
+    let polls = 0;
+    const observe = () => {
+      polls += 1;
+      return { state: "not_ready" as const, liveIdentityFingerprint: null };
+    };
+
+    expect(() =>
+      revalidateCreatedSandboxLifecycleRegistration(LIFECYCLE_TARGET, registration, observe, {
+        errorPhaseDebouncePolls: 4,
+        sleep: () => {},
+      }),
+    ).toThrow(/observed not_ready/u);
+    expect(polls).toBe(4);
+  });
+
+  it("does not wait out a sandbox its gateway reports missing", () => {
+    const fixture = creatingLifecycleFixture();
+    fixture.setObservation({ state: "ready", liveIdentityFingerprint: TARGET_ID });
+    const registration = fixture.lifecycle.capture({ lifecycleGeneration: TARGET_GENERATION });
+
+    let polls = 0;
+    const observe = () => {
+      polls += 1;
+      return { state: "missing" as const, liveIdentityFingerprint: null };
+    };
+
+    expect(() =>
+      revalidateCreatedSandboxLifecycleRegistration(LIFECYCLE_TARGET, registration, observe, {
+        sleep: () => {
+          throw new Error("missing must not be waited out");
+        },
+      }),
+    ).toThrow(/observed missing/u);
+    expect(polls).toBe(1);
   });
 
   it("retains the captured identity when registry revalidation observes drift (#9833)", () => {

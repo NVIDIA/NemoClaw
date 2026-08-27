@@ -2233,6 +2233,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           lifecycleLiveIdentityFingerprint: expectedIdentity,
         },
         getSandboxRecreateObservation,
+        { sleep: sleepSeconds },
       );
     };
     const requireVerifiedPolicyGate = (): NonNullable<typeof verifiedPolicyGate> => {

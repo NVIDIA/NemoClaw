@@ -19,6 +19,7 @@ import {
   type RuntimeProviderWorkloadCleanupResult,
   requireRuntimeProviderDestructiveCleanupAuthority,
 } from "./runtime-provider/access";
+import { getSandboxReadyErrorDebouncePolls } from "./sandbox-readiness-tracing";
 import type { SandboxCreateIntent } from "./types";
 
 const ORDERED_PHASES: readonly CheckpointSandboxRecreatePhase[] = [
@@ -254,13 +255,35 @@ function requireLifecycleGeneration(sandboxName: string, lifecycleGeneration: st
   }
 }
 
+const REVALIDATE_READY_RETRY_SECONDS = 1;
+
+/**
+ * Supplying these opts in makes the re-check ride out the transient Error
+ * phase. This module owns no clock, so a caller that wants a bounded wait
+ * passes one; callers that omit the options observe exactly once, which is the
+ * behaviour every caller had before the debounce existed.
+ */
+export interface RevalidateCreatedSandboxOptions {
+  /**
+   * Consecutive `not_ready` observations tolerated before the re-check treats
+   * the phase as terminal. Defaults to the shared
+   * {@link getSandboxReadyErrorDebouncePolls} value, so one operator control
+   * (`NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE`) governs the same transient
+   * everywhere. Pass 1 to restore the original read-once behaviour.
+   */
+  readonly errorPhaseDebouncePolls?: number;
+  readonly sleep: (seconds: number) => void;
+}
+
 function requireReadyIdentity(
   target: CreatedSandboxLifecycleTarget,
   observation: SandboxRecreateObservation,
 ): string {
   if (observation.state !== "ready") {
+    // `missing` and `not_ready` need different answers: one says the gateway cannot see the
+    // sandbox at all, the other says it sees it and withholds Ready. Name which one was observed.
     throw new Error(
-      `Cannot register sandbox '${target.sandboxName}': its owning gateway did not report it Ready.`,
+      `Cannot register sandbox '${target.sandboxName}': its owning gateway did not report it Ready (observed ${observation.state}).`,
     );
   }
   const fingerprint = observation.liveIdentityFingerprint;
@@ -321,17 +344,55 @@ export function selectCreatedSandboxLifecycleRegistration(
   };
 }
 
+/*
+ * This re-observation runs immediately after managed bootstrap destroys the
+ * renamed original `<sandbox>-nemoclaw-bootstrap-<hash>` container. While the
+ * OpenShell gateway re-registers the swapped container, `openshell sandbox
+ * list` reports the sandbox in the transient "Error" phase for one to three
+ * seconds and then recovers on its own. That transient is the known upstream
+ * defect tracked on NemoClaw #6043 and already tolerated by the create and
+ * readiness path (sandbox-readiness-tracing.ts) and the Docker GPU
+ * supervisor-reconnect path (docker-gpu-supervisor-reconnect.ts).
+ *
+ * Reading it once and failing turned every such transient into a terminal
+ * onboard failure: measured on `jetson-nvmap-gpu`, the throw landed in the same
+ * second as the destroy on three consecutive runs while the container itself
+ * stayed healthy, and the gateway returned to Ready one to two seconds later.
+ *
+ * Only `not_ready` is retried, matching the sibling debounces. An explicit
+ * `missing` observation still fails immediately, so a sandbox that is genuinely
+ * gone is never waited out.
+ */
+function observeReadyIdentityWithDebounce(
+  target: CreatedSandboxLifecycleTarget,
+  observe: ObserveCreatedSandbox,
+  options: RevalidateCreatedSandboxOptions | undefined,
+): string {
+  const sleep = options?.sleep;
+  if (!sleep) {
+    return requireReadyIdentity(target, observe(target.sandboxName, target.gatewayName));
+  }
+  const attempts = Math.max(
+    1,
+    options?.errorPhaseDebouncePolls ?? getSandboxReadyErrorDebouncePolls(),
+  );
+  let lastObservation = observe(target.sandboxName, target.gatewayName);
+  for (let attempt = 1; attempt < attempts && lastObservation.state === "not_ready"; attempt += 1) {
+    sleep(REVALIDATE_READY_RETRY_SECONDS);
+    lastObservation = observe(target.sandboxName, target.gatewayName);
+  }
+  return requireReadyIdentity(target, lastObservation);
+}
+
 /** Re-observe the owner-scoped identity immediately before registry publication. */
 export function revalidateCreatedSandboxLifecycleRegistration(
   target: CreatedSandboxLifecycleTarget,
   registration: CreatedSandboxLifecycleRegistration,
   observe: ObserveCreatedSandbox,
+  options?: RevalidateCreatedSandboxOptions,
 ): CreatedSandboxLifecycleRegistration {
   requireLifecycleGeneration(target.sandboxName, registration.lifecycleGeneration);
-  const liveIdentityFingerprint = requireReadyIdentity(
-    target,
-    observe(target.sandboxName, target.gatewayName),
-  );
+  const liveIdentityFingerprint = observeReadyIdentityWithDebounce(target, observe, options);
   if (liveIdentityFingerprint !== registration.lifecycleLiveIdentityFingerprint) {
     throw new Error(
       `Cannot register sandbox '${target.sandboxName}': its live identity changed before registry publication.`,
