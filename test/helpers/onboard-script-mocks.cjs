@@ -756,13 +756,38 @@ function mockStructuredOpenShellCaptureFromRunner() {
         ...(options.includeStreams === true ? { stdout: "", stderr } : {}),
       };
     }
+    const isStructuredPolicyRead =
+      args[0] === "policy" && (args[1] === "get" || args[1] === "list");
+    const structuredPolicyRead = isStructuredPolicyRead
+      ? runner.runCaptureEx([binary, ...args], {
+          ...options,
+          ignoreError: true,
+          includeStderr: false,
+        })
+      : null;
     const stdout = String(
-      runner.runCapture([binary, ...args], {
-        ...options,
-        ignoreError: true,
-        includeStderr: false,
-      }) || "",
+      structuredPolicyRead?.stdout ??
+        runner.runCapture([binary, ...args], {
+          ...options,
+          ignoreError: true,
+          includeStderr: false,
+        }) ??
+        "",
     );
+    const stderr = String(structuredPolicyRead?.stderr ?? "");
+    if (structuredPolicyRead) {
+      const error = structuredPolicyRead.timedOut
+        ? Object.assign(new Error("OpenShell fixture capture timed out"), { code: "ETIMEDOUT" })
+        : undefined;
+      if (error || structuredPolicyRead.exitCode !== 0 || stdout.trim().length > 0) {
+        return {
+          status: structuredPolicyRead.exitCode,
+          output: options.includeStderr === true ? `${stdout}${stderr}`.trim() : stdout.trim(),
+          ...(options.includeStreams === true ? { stdout, stderr } : {}),
+          ...(error ? { error } : {}),
+        };
+      }
+    }
     if (isCreatedSandboxPolicyRead && stdout.trim().length === 0) {
       const fallback = JSON.stringify({
         scope: "sandbox",

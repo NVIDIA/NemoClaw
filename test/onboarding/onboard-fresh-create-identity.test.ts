@@ -132,6 +132,18 @@ runner.run = (command, opts = {}) => {
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
+runner.runCaptureEx = (command) => {
+  const cmd = _n(command);
+  if (cmd.endsWith("policy get -g nemoclaw --full --output json my-assistant")) {
+    return {
+      stdout: JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: effectivePolicy }),
+      stderr: "",
+      exitCode: 0,
+      timedOut: false,
+    };
+  }
+  return { stdout: "", stderr: "", exitCode: 0, timedOut: false };
+};
 	const session = onboardSession.createSession({
 	  sessionId: "session-owner",
 	  sandboxName: "my-assistant",
