@@ -78,6 +78,79 @@ describe("onboarding policy application", () => {
     ]);
   });
 
+  // Downstream guard, not end-to-end resume coverage: a normal resume drops the preset
+  // in preparation. End-to-end lives in policy-resume-selection.test.ts. (#10153)
+  describe("OpenClaw selection reaching application with an unconfigured channel preset (#10153)", () => {
+    // `getAppliedPresets` concatenates custom names onto built-in ones, so applied
+    // state differs by whether a custom preset owns the name. (#10153)
+    function createApplication(appliedPresets: string[]) {
+      vi.mocked(policies.listSetupPolicyPresets).mockReturnValue([
+        { name: "slack" },
+        { name: "discord" },
+      ] as ReturnType<typeof policies.listSetupPolicyPresets>);
+      vi.mocked(policies.getAppliedPresets).mockReturnValue(appliedPresets);
+      syncPresetSelection.mockImplementation(() => undefined);
+      seedInitialPolicyContext.mockImplementation(() => undefined);
+      return createOnboardPolicyApplication({
+        localInferenceProviders: [],
+        step: vi.fn(),
+        note: vi.fn(),
+        isNonInteractive: vi.fn(() => true),
+        prompt: vi.fn(async () => ""),
+        selectFromNumberedMenuOrExit,
+        makeOnboardCancelExit: (rollback, cleanup) => () => {
+          cleanup();
+          rollback.markCancelled();
+        },
+        sandboxCancelRollback: { markCancelled: vi.fn() },
+        useColor: false,
+        withSandboxMutationLock: async (_sandboxName, action) => await action(),
+        waitForSandboxReady: vi.fn(() => true),
+        waitForSandboxControlPlaneReady: vi.fn(() => true),
+        setPolicyTier: vi.fn(),
+        getRecordedPolicyTier: vi.fn(() => "open"),
+        parsePolicyPresetEnv: vi.fn(() => []),
+        env: {},
+      });
+    }
+
+    // No custom owner: prevents a reapply rather than removing an applied preset.
+    it("drops the preset instead of reapplying a policy that names an unattached provider", async () => {
+      vi.mocked(policies.listCustomPresets).mockReturnValue([]);
+      const application = createApplication(["slack"]);
+
+      await expect(
+        application.setupPoliciesWithSelection("alpha", {
+          selectedPresets: ["slack", "discord"],
+          enabledChannels: ["slack"],
+          agent: "openclaw",
+        }),
+      ).resolves.toEqual(["slack"]);
+      expect(syncPresetSelection).toHaveBeenCalledWith("alpha", ["slack"], ["slack"]);
+    });
+
+    // A registered custom `discord` appears in applied state.
+    it("keeps a same-named custom preset the operator owns", async () => {
+      vi.mocked(policies.listCustomPresets).mockReturnValue([{ name: "discord" }] as ReturnType<
+        typeof policies.listCustomPresets
+      >);
+      const application = createApplication(["slack", "discord"]);
+
+      await expect(
+        application.setupPoliciesWithSelection("alpha", {
+          selectedPresets: ["slack", "discord"],
+          enabledChannels: ["slack"],
+          agent: "openclaw",
+        }),
+      ).resolves.toEqual(["slack", "discord"]);
+      expect(syncPresetSelection).toHaveBeenCalledWith(
+        "alpha",
+        ["slack", "discord"],
+        ["slack", "discord"],
+      );
+    });
+  });
+
   describe("non-interactive selection with a previously-applied channel preset", () => {
     function createApplication(env: Record<string, string>) {
       vi.mocked(policies.listSetupPolicyPresets).mockReturnValue([

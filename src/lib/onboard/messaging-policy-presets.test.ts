@@ -11,7 +11,7 @@ import {
   mergePolicyMessagingChannels,
   mergeRebuildMessagingPolicyPresets,
   messagingChannelsForPolicyPresets,
-  pruneInactiveHermesMessagingPolicyPresets,
+  pruneInactiveMessagingPolicyPresets,
   pruneDisabledMessagingPolicyPresets,
   requiredMessagingChannelPolicyPresets,
 } from "./messaging-policy-presets";
@@ -83,47 +83,63 @@ describe("messaging policy presets", () => {
     ]);
   });
 
-  it("removes inactive repository messaging presets only for Hermes", () => {
+  it("removes inactive repository messaging presets for Hermes", () => {
     expect(
-      pruneInactiveHermesMessagingPolicyPresets(
+      pruneInactiveMessagingPolicyPresets(
         ["npm", "slack", "discord", "googlechat", "custom-egress"],
         ["slack"],
         "hermes",
       ),
     ).toEqual(["npm", "slack", "custom-egress"]);
     expect(
-      pruneInactiveHermesMessagingPolicyPresets(
+      pruneInactiveMessagingPolicyPresets(
         ["npm", "slack", "googlechat"],
         ["googlechat"],
         "hermes",
       ),
     ).toEqual(["npm", "googlechat"]);
-    expect(
-      pruneInactiveHermesMessagingPolicyPresets(
-        ["npm", "slack", "discord"],
-        ["slack"],
-        "openclaw",
-      ),
-    ).toEqual(["npm", "slack", "discord"]);
-    expect(
-      pruneInactiveHermesMessagingPolicyPresets(
-        ["npm", "slack", "discord"],
-        null,
-        "hermes",
-      ),
-    ).toEqual(["npm", "slack", "discord"]);
   });
 
-  it("preserves a custom preset that shadows an inactive repository messaging preset", () => {
+  // One rule per concept, not per agent. (#10153)
+  it("removes inactive repository messaging presets for OpenClaw (#10153)", () => {
     expect(
-      pruneInactiveHermesMessagingPolicyPresets(
-        ["npm", "discord"],
-        ["slack"],
-        "hermes",
-        new Set(["discord"]),
-      ),
-    ).toEqual(["npm", "discord"]);
+      pruneInactiveMessagingPolicyPresets(["npm", "slack", "discord"], ["slack"], "openclaw"),
+    ).toEqual(["npm", "slack"]);
+    expect(
+      pruneInactiveMessagingPolicyPresets([" NPM ", " Discord "], ["slack"], " OpenClaw "),
+    ).toEqual([" NPM "]);
   });
+
+  it("leaves the selection untouched for an agent without channel policies (#10153)", () => {
+    expect(
+      pruneInactiveMessagingPolicyPresets(["npm", "slack", "discord"], ["slack"], "dcode"),
+    ).toEqual(["npm", "slack", "discord"]);
+    expect(pruneInactiveMessagingPolicyPresets(["npm", "discord"], ["slack"], null)).toEqual([
+      "npm",
+      "discord",
+    ]);
+  });
+
+  it.each(["hermes", "openclaw"])(
+    "treats a missing messaging plan as no authority to call a channel inactive for %s (#10153)",
+    (agent) => {
+      expect(
+        pruneInactiveMessagingPolicyPresets(["npm", "slack", "discord"], null, agent),
+      ).toEqual(["npm", "slack", "discord"]);
+      expect(
+        pruneInactiveMessagingPolicyPresets(["npm", "slack", "discord"], undefined, agent),
+      ).toEqual(["npm", "slack", "discord"]);
+    },
+  );
+
+  it.each(["hermes", "openclaw"])(
+    "preserves a custom preset that shadows an inactive repository messaging preset for %s",
+    (agent) => {
+      expect(
+        pruneInactiveMessagingPolicyPresets(["npm", "discord"], ["slack"], agent, new Set(["discord"])),
+      ).toEqual(["npm", "discord"]);
+    },
+  );
 
   it("maps every channel that has a policy preset to its preset for cleanup", () => {
     expect(allMessagingChannelPolicyPresets(["teams"])).toEqual(["teams"]);

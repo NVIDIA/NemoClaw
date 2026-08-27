@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  listBuiltInMessagingChannelManifests,
   listMessagingPolicyPresetsByChannel,
   listRequiredCreateTimeMessagingPolicyPresetsByChannel,
 } from "../messaging/channels";
+import { listSupportedMessagingAgentIds } from "../messaging/utils";
 
 const REQUIRED_POLICY_PRESETS_BY_MESSAGING_CHANNEL =
   listRequiredCreateTimeMessagingPolicyPresetsByChannel();
@@ -97,15 +99,21 @@ export function allMessagingChannelPolicyPresets(channels: string[] | null | und
   return all;
 }
 
-export function pruneInactiveHermesMessagingPolicyPresets(
+// An unconfigured channel's preset names a credential provider nothing attached.
+// Agent set comes from manifest `supportedAgents`. #10281 did this for Hermes. (#10153)
+const MESSAGING_AGENT_IDS = new Set<string>(
+  listSupportedMessagingAgentIds(listBuiltInMessagingChannelManifests()),
+);
+
+export function pruneInactiveMessagingPolicyPresets(
   selectedPresets: string[],
   enabledChannels: string[] | null | undefined,
   agent: string | null | undefined,
   customPresetNames?: ReadonlySet<string> | null,
 ): string[] {
-  if (agent?.trim().toLowerCase() !== "hermes" || !Array.isArray(enabledChannels)) {
-    return selectedPresets;
-  }
+  const agentName = agent?.trim().toLowerCase();
+  if (!agentName || !MESSAGING_AGENT_IDS.has(agentName)) return selectedPresets;
+  if (!Array.isArray(enabledChannels)) return selectedPresets;
 
   const activePresets = new Set(allMessagingChannelPolicyPresets(enabledChannels));
   const customPresets = new Set(normalizedNames(customPresetNames ? [...customPresetNames] : []));

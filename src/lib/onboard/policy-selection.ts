@@ -17,7 +17,7 @@ import {
 import {
   allMessagingChannelPolicyPresets,
   mergePolicyMessagingChannels,
-  pruneInactiveHermesMessagingPolicyPresets,
+  pruneInactiveMessagingPolicyPresets,
 } from "./messaging-policy-presets";
 import {
   isInactiveObservabilityPolicyPreset,
@@ -256,7 +256,7 @@ export function computeSetupPresetSuggestions(
     ? new Set(allMessagingChannelPolicyPresets(enabledChannels))
     : null;
   const supportOptions = { webSearchSupported: options.webSearchSupported };
-  const suggestions = pruneInactiveHermesMessagingPolicyPresets(
+  const suggestions = pruneInactiveMessagingPolicyPresets(
     deps.tiers
       .resolveTierPresets(tierName)
       .map((preset) => preset.name)
