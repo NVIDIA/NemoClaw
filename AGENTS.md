@@ -179,9 +179,11 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 For changes authored by a NemoClaw maintainer:
 
 Use `origin` as the local remote name for the canonical `NVIDIA/NemoClaw`
-repository. Before continuing, run `git remote get-url origin` and verify that
-the URL resolves to that repository; the authentication method is
-environment-specific.
+repository. Before continuing, run `git remote get-url --all origin` and
+`git remote get-url --all --push origin`, then verify that every reported URL
+identifies that repository. The authentication method and URL syntax are
+environment-specific. If any URL identifies another repository, stop and ask
+the user to correct the remote configuration before fetching or pushing.
 
 - Fetch the latest `main` commit with `git fetch origin main`.
 - Create the feature branch with `git switch -c <feature-branch> FETCH_HEAD`.
