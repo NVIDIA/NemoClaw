@@ -65,6 +65,8 @@ gh pr view "$PR_NUMBER" --repo "$REPOSITORY" \
 
 ## Review Feedback
 
+Collect once, then repair once. After a push, read the repository workflow names at the PR base commit and pass the required automated-review check prefixes to `monitor_pr_until_actionable.settleCheckPrefixes`. Wait for those checks to appear and settle unless an urgent correctness, security, or data-safety signal requires immediate action. Do not edit from the first bot comment while sibling reviews are still running. Monitor in a background job when useful work remains, and keep each snapshot to states, identifiers, and clipped actionable evidence.
+
 Collect review evidence through host capabilities that expose pagination, source commits, thread resolution, and check results. Bind every read to `NVIDIA/NemoClaw` and one PR number.
 
 Capture the PR `headRefOid` before collecting evidence. Read comments, reviews, and threads until the host reports that no next page remains. Record each page count and terminal pagination signal. Collect the status, conclusion, and evaluated commit of every required check, including pending, cancelled, and skipped results. Capture `headRefOid` again after collection. Restart collection if the two SHAs differ.
@@ -87,7 +89,7 @@ Record whether the host retains collection evidence. If the host returns an arti
 
 Before editing, collect and classify all review signals for the latest PR commit as follows. The initial and final `headRefOid` values must match:
 
-1. Re-read `headRefOid`. Collect current required-check failures, issue comments, submitted reviews, inline threads with resolution state, advisor findings, and required independent-review findings. Record each source commit when GitHub provides it. Otherwise, record the latest PR commit SHA.
+1. Re-read `headRefOid`. Wait for configured automated-review checks to settle. Then collect current required-check failures, issue comments, submitted reviews, unresolved inline threads, advisor findings, and required independent-review findings. Record each source commit when GitHub provides it. Otherwise, record the latest PR commit SHA. Exclude resolved threads from the actionable projection.
 2. Re-evaluate findings created for an earlier PR commit against the latest PR commit. Exclude a finding only when the changed code is gone or evidence shows that the defect is resolved. Record the disposition before editing.
 3. Group findings by root cause. Name the behavior contract and acceptance evidence for each group.
 4. Decide which groups are valid, false positives, design-changing, or blocked.
@@ -130,8 +132,7 @@ Run this ordered remediation sequence:
 9. After no unresolved finding requires a change, remove retained collection evidence by its exact
    artifact path or identifier and verify its absence.
 10. Push once.
-11. Monitor the latest PR commit for new findings that require a change. When a new finding requires
-    a change, return to step 1.
+11. Start one bounded background monitor for the latest PR commit when possible. If checks remain pending without a failure or unresolved finding, report them as pending instead of extending the foreground turn. When a new finding requires a change, return to step 1.
 
 Stop if the user tells you to stop.
 

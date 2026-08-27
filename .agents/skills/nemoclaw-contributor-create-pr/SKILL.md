@@ -8,7 +8,16 @@ description: Create a GitHub pull request with the NemoClaw template. Then, moni
 
 # Create GitHub Pull Request
 
-Create NemoClaw pull requests with the `gh` CLI and the project's PR template.
+Create one complete NemoClaw pull request candidate, publish it once, and batch review repairs. Use the `gh` CLI and the project's PR template.
+
+## Work efficiently
+
+The shortest safe path is one pre-publication review, one validation pass, one initial push, and one repair push when review requires changes.
+
+- Run independent reads, preflight checks, and reviews in parallel. Keep dependent mutations sequential.
+- Read narrow sections and return projections. Do not print complete logs, worktree inventories, review bodies, or files when identifiers, counts, states, and clipped excerpts answer the question.
+- For changes only under `.dsh/tools`, follow the DSH exception under [Validation Evidence](#validation-evidence).
+- After publication, follow the shared review workflow for bounded background monitoring and one batched repair.
 
 ## Prerequisites
 
@@ -107,13 +116,11 @@ Examples include hook configuration, formatter configuration, generated-check sc
 
 ### Validation Evidence
 
-`nemoclaw-contributor-implement-issue` selects and runs the tests for the changed behavior.
-Record the command and result that it reported in the PR body.
-Do not select a test in this workflow. Do not rerun a reported test because hooks passed.
+`nemoclaw-contributor-implement-issue` selects and runs the tests for the changed behavior in product source changes. Record the command and result that it reported in the PR body. Do not select a test in this workflow, and do not rerun a reported test because hooks passed.
 
-If the change set arrives without that evidence, stop and route the change set to
-`nemoclaw-contributor-implement-issue` for test selection and validation.
-Do not open the PR with an unselected tests line.
+For a change only under `.dsh/tools`, use the DSH change workflow instead: define the changed source in session scope, exercise the changed positive and boundary behavior in the harness, run focused format and lint, and select `Tests not applicable` with that evidence. Do not add repository tests by default.
+
+For any other change set without validation evidence, stop and route it to `nemoclaw-contributor-implement-issue`. Do not open the PR with an unselected tests line.
 
 For doc-only changes, run the docs build before opening the PR:
 

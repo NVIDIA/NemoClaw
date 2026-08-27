@@ -11,6 +11,8 @@ export default async function monitor_pr_until_actionable(input: {
   ignoreChecks?: string[];
   ignoreReviewIds?: Integer[];
   ignoreCommentIds?: Integer[];
+  settleCheckPrefixes?: string[];
+  findingBodyCharacters?: Integer;
 }): Promise<{
   done: boolean;
   actionable: boolean;
@@ -45,10 +47,27 @@ export default async function monitor_pr_until_actionable(input: {
   )
     throw new Error("pullNumber and expectedHeadSha are required");
   const repo = input.repository ?? "NVIDIA/NemoClaw",
-    timeout = input.timeoutMs ?? 600000,
-    interval = input.intervalMs ?? 60000;
-  if (timeout < 30000 || timeout > 1800000 || interval < 10000 || interval > 120000)
+    timeout = input.timeoutMs ?? 300000,
+    interval = input.intervalMs ?? 30000,
+    findingBodyCharacters = input.findingBodyCharacters ?? 1000;
+  if (
+    timeout < 30000 ||
+    timeout > 900000 ||
+    interval < 10000 ||
+    interval > 120000 ||
+    !Number.isSafeInteger(findingBodyCharacters) ||
+    findingBodyCharacters < 100 ||
+    findingBodyCharacters > 4000
+  )
     throw new Error("Invalid monitor bounds");
+  const settleCheckPrefixes = input.settleCheckPrefixes ?? [];
+  if (
+    settleCheckPrefixes.length > 20 ||
+    settleCheckPrefixes.some(
+      (prefix) => typeof prefix !== "string" || !prefix.trim() || prefix.length > 200,
+    )
+  )
+    throw new Error("settleCheckPrefixes must contain at most 20 bounded strings");
   const validateIds = (values, name) => {
     for (const value of values ?? [])
       if (!Number.isSafeInteger(value) || value < 1)
@@ -59,7 +78,8 @@ export default async function monitor_pr_until_actionable(input: {
     ignoredReviews = validateIds(input.ignoreReviewIds, "ignoreReviewIds"),
     ignoredComments = validateIds(input.ignoreCommentIds, "ignoreCommentIds"),
     deadline = Date.now() + timeout,
-    snapshots = [];
+    snapshots = [],
+    observedSettlePrefixes = new Set();
   let observedChecks = false,
     lastPendingChecks = [],
     lastFailedChecks = [],
@@ -106,13 +126,36 @@ export default async function monitor_pr_until_actionable(input: {
           ) && !ignoredChecks.has(c.name),
       )
       .map((c) => ({ name: c.name, state: c.state, link: c.link }));
+    const inlineCommentIds = cycle.items
+      .filter((item) => item.type === "inline-comment")
+      .map((item) => Number(item.id));
+    let unresolvedRootIds = new Set();
+    if (inlineCommentIds.length) {
+      const threads = await tools.read_nemoclaw_review_threads({
+        workdir: input.workdir,
+        number: input.pullNumber,
+        repository: repo,
+        expectedHeadSha: head,
+        pageLimit: 20,
+      });
+      if (!threads.complete)
+        throw new Error("Review-thread collection was truncated; completeness is not established");
+      unresolvedRootIds = new Set(
+        threads.threads
+          .filter((thread) => !thread.isResolved)
+          .map((thread) => Number(thread.comments[0]?.databaseId))
+          .filter((id) => Number.isSafeInteger(id) && id > 0),
+      );
+    }
     const findings = cycle.items
       .filter(
         (x) =>
           (x.type === "review" &&
             x.state === "CHANGES_REQUESTED" &&
             !ignoredReviews.has(Number(x.id))) ||
-          (x.type === "inline-comment" && !ignoredComments.has(Number(x.id))),
+          (x.type === "inline-comment" &&
+            unresolvedRootIds.has(Number(x.id)) &&
+            !ignoredComments.has(Number(x.id))),
       )
       .map((x) => ({
         type: String(x.type),
@@ -121,20 +164,36 @@ export default async function monitor_pr_until_actionable(input: {
         ...(typeof x.user === "string" ? { user: x.user } : {}),
         ...(typeof x.path === "string" ? { path: x.path } : {}),
         ...(typeof x.line === "number" || x.line === null ? { line: x.line } : {}),
-        ...(typeof x.body === "string" ? { body: x.body } : {}),
+        ...(typeof x.body === "string" ? { body: x.body.slice(0, findingBodyCharacters) } : {}),
         ...(typeof x.url === "string" ? { url: x.url } : {}),
       }));
     lastPendingChecks = pendingChecks;
     lastFailedChecks = failedChecks;
     lastFindings = findings;
-    snapshots.push({
+    const snapshot = {
       headSha: head,
       checkCount: checks.length,
       pendingCount: pendingChecks.length,
       failedCount: failedChecks.length,
       findingCount: findings.length,
-    });
-    if (failedChecks.length || findings.length || (observedChecks && !pendingChecks.length))
+    };
+    const previous = snapshots.at(-1);
+    if (!previous || Object.keys(snapshot).some((key) => snapshot[key] !== previous[key])) {
+      snapshots.push(snapshot);
+      if (snapshots.length > 30) snapshots.shift();
+    }
+    for (const prefix of settleCheckPrefixes)
+      if (checks.some((check) => check.name.startsWith(prefix))) observedSettlePrefixes.add(prefix);
+    const waitingForReviewChecks = settleCheckPrefixes.some(
+      (prefix) =>
+        !observedSettlePrefixes.has(prefix) ||
+        pendingChecks.some((check) => check.name.startsWith(prefix)),
+    );
+    if (
+      failedChecks.length ||
+      (findings.length && !waitingForReviewChecks) ||
+      (observedChecks && !pendingChecks.length)
+    )
       return {
         done: observedChecks && !pendingChecks.length,
         actionable: Boolean(failedChecks.length || findings.length),

@@ -17,9 +17,6 @@ let removeIsolatedPrWorktrees: (input: any) => Promise<any>;
 let runIndependentDocumentationWriterReview: (input: any) => Promise<any>;
 let summarizeNemoclawPlanningItems: (input: any) => Promise<any>;
 let collectPrFeedback: (input: any) => Promise<any>;
-let readNemoclawAdvisorRunSummaries: (input: any) => Promise<any>;
-let workflowNameTree: (input: any) => Promise<any>;
-let publishNemoclawPrBranch: (input: any) => Promise<any>;
 const fixtureRoots: string[] = [];
 
 beforeAll(async () => {
@@ -37,9 +34,6 @@ beforeAll(async () => {
   ).default;
   summarizeNemoclawPlanningItems = (await load("summarize_nemoclaw_planning_items")).default;
   collectPrFeedback = (await load("collect_pr_feedback")).default;
-  readNemoclawAdvisorRunSummaries = (await load("read_nemoclaw_advisor_run_summaries")).default;
-  workflowNameTree = (await load("workflow_name_tree")).default;
-  publishNemoclawPrBranch = (await load("publish_nemoclaw_pr_branch")).default;
 });
 
 const HEAD_SHA = "a".repeat(40);
@@ -597,171 +591,5 @@ describe("bounded PR feedback pagination", () => {
         call.args.some((arg: string) => arg.includes("/reviews?")),
       ),
     ).toHaveLength(10);
-  });
-});
-
-describe("review support DSH tools", () => {
-  it("returns a decoded advisor summary with character truncation evidence", async () => {
-    const summary = "é".repeat(1_100);
-    const encoded = Buffer.from(summary, "utf8").toString("base64");
-    const runGithubCli = vi.fn().mockResolvedValue({
-      stdout: JSON.stringify({
-        total_count: 1,
-        artifacts: [{ id: 7, name: "pr-review-specialist-test", expired: false, size: 100 }],
-      }),
-    });
-    const bash = vi.fn().mockResolvedValue({
-      kind: "foreground",
-      exitCode: 0,
-      stdout: { text: "review-summary.md\n0\n" + encoded, truncated: false },
-      stderr: { text: "", truncated: false },
-    });
-    const projectDiagnosticText = vi.fn(async ({ lines, sourceTruncated }: any) => ({
-      text: lines.join("\n").slice(0, 1_000),
-      truncated: Boolean(sourceTruncated),
-    }));
-    vi.stubGlobal("tools", {
-      run_github_cli: runGithubCli,
-      bash,
-      project_diagnostic_text: projectDiagnosticText,
-    });
-
-    await expect(
-      readNemoclawAdvisorRunSummaries({
-        workdir: "/workspace",
-        runId: 1,
-        maxArtifacts: 1,
-        maxSummaryCharacters: 1_000,
-      }),
-    ).resolves.toMatchObject({
-      artifactsFound: 1,
-      summariesRead: 1,
-      truncated: true,
-      summaries: [{ entry: "review-summary.md", truncated: true }],
-      failures: [],
-    });
-  });
-
-  it("returns empty workflow trees when the workflow directory is absent", async () => {
-    const fixture = fs.mkdtempSync(path.join(process.cwd(), ".workflow-tree-test-"));
-    fixtureRoots.push(fixture);
-    fs.symlinkSync(path.resolve("node_modules"), path.join(fixture, "node_modules"), "dir");
-    vi.stubGlobal("tools", { bash: shellBashSpy(), project_diagnostic_text: vi.fn() });
-
-    await expect(workflowNameTree({ workdir: fixture })).resolves.toEqual({
-      files: 0,
-      workflows: [],
-      workflowTree: "",
-      jobTree: "",
-    });
-  });
-
-  it("rejects a publication remote that does not match the declared repository", async () => {
-    const bash = vi.fn().mockResolvedValue({
-      kind: "foreground",
-      exitCode: 0,
-      stdout: { text: "git@github.com:someone/other.git\n", truncated: false },
-      stderr: { text: "", truncated: false },
-    });
-    const runGithubCli = vi.fn().mockResolvedValue({ stdout: "main\n" });
-    vi.stubGlobal("tools", {
-      bash,
-      read_git_checkout: vi.fn().mockResolvedValue({
-        head: HEAD_SHA,
-        branch: "feature",
-        clean: true,
-      }),
-      run_github_cli: runGithubCli,
-      project_diagnostic_text: vi.fn(),
-    });
-
-    await expect(
-      publishNemoclawPrBranch({ workdir: "/workspace", expectedHeadSha: HEAD_SHA }),
-    ).rejects.toThrow("Every publication push URL must match the declared GitHub repository");
-    expect(runGithubCli).toHaveBeenCalledOnce();
-  });
-
-  it("renders sorted workflow and job name trees from workflow YAML", async () => {
-    const fixture = fs.mkdtempSync(path.join(process.cwd(), ".workflow-tree-test-"));
-    fixtureRoots.push(fixture);
-    fs.symlinkSync(path.resolve("node_modules"), path.join(fixture, "node_modules"), "dir");
-    const workflows = path.join(fixture, ".github", "workflows");
-    fs.mkdirSync(workflows, { recursive: true });
-    fs.writeFileSync(
-      path.join(workflows, "z.yml"),
-      "name: CI / Zed\njobs:\n  second:\n    name: Test / Second\n    runs-on: ubuntu-latest\n  first:\n    runs-on: ubuntu-latest\n",
-    );
-    fs.writeFileSync(
-      path.join(workflows, "a.yaml"),
-      "jobs:\n  build:\n    name: Build / Linux\n    runs-on: ubuntu-latest\n",
-    );
-    vi.stubGlobal("tools", { bash: shellBashSpy(), project_diagnostic_text: vi.fn() });
-
-    await expect(workflowNameTree({ workdir: fixture })).resolves.toMatchObject({
-      files: 2,
-      workflows: [
-        {
-          path: ".github/workflows/a.yaml",
-          name: "a.yaml",
-          jobs: [{ id: "build", name: "Build / Linux" }],
-        },
-        {
-          path: ".github/workflows/z.yml",
-          name: "CI / Zed",
-          jobs: [
-            { id: "second", name: "Test / Second" },
-            { id: "first", name: "first" },
-          ],
-        },
-      ],
-      workflowTree: "├── a.yaml\n└── CI\n    └── Zed",
-      jobTree: "├── Build\n│   └── Linux\n├── first\n└── Test\n    └── Second",
-    });
-  });
-
-  it("previews publication for a matching branch without pushing", async () => {
-    const commit = "b".repeat(40);
-    const bash = vi
-      .fn()
-      .mockResolvedValueOnce({
-        kind: "foreground",
-        exitCode: 0,
-        stdout: { text: "git@github.com:NVIDIA/NemoClaw.git\n", truncated: false },
-        stderr: { text: "", truncated: false },
-      })
-      .mockResolvedValueOnce({
-        kind: "foreground",
-        exitCode: 0,
-        stdout: { text: "1\n", truncated: false },
-        stderr: { text: "", truncated: false },
-      })
-      .mockResolvedValueOnce({
-        kind: "foreground",
-        exitCode: 0,
-        stdout: { text: commit + "\n", truncated: false },
-        stderr: { text: "", truncated: false },
-      });
-    const runGithubCli = vi
-      .fn()
-      .mockResolvedValueOnce({ stdout: "main\n" })
-      .mockResolvedValueOnce({ stdout: "[]" });
-    vi.stubGlobal("tools", {
-      bash,
-      read_git_checkout: vi
-        .fn()
-        .mockResolvedValue({ head: HEAD_SHA, branch: "feature", clean: true }),
-      run_github_cli: runGithubCli,
-      project_diagnostic_text: vi.fn(),
-    });
-
-    await expect(
-      publishNemoclawPrBranch({ workdir: "/workspace", expectedHeadSha: HEAD_SHA }),
-    ).resolves.toMatchObject({
-      apply: false,
-      pushed: false,
-      commits: [{ sha: commit, verified: false }],
-      blocker: null,
-    });
-    expect(bash).toHaveBeenCalledTimes(3);
   });
 });

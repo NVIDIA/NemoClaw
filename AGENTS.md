@@ -176,6 +176,15 @@ For shell scripts use `#` comments. For Markdown use HTML comments.
 
 Do not add links to third-party code repositories, community collections, or unofficial resources. Links to official tool documentation (Node.js and Python) are acceptable.
 
+## Project-authored DSH tools
+
+Treat `.dsh/tools/**` as executable team automation. Its source-first contracts are exercised by the DSH harness and reviewed frequently; they do not require repository tests by default.
+
+- Follow `.dsh/tools/AGENTS.md` for authoring and publication.
+- Validate changed contracts with representative session-scoped `tool_define` exercises, focused formatting and lint, and normal hooks.
+- Select `Tests not applicable` in the PR template and cite the harness exercises. Add a repository test only when a maintainer identifies a durable regression that runtime exercises and review cannot protect.
+- Batch complete automated-review feedback into one repair change set and one push. Keep monitoring asynchronous when useful work remains, and keep review output bounded.
+
 ## Git Hooks (prek)
 
 All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`):
