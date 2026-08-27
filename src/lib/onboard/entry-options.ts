@@ -4,6 +4,11 @@
 import { isNonInteractiveEnv } from "../core/non-interactive";
 import { getNameValidationGuidance } from "../name-validation";
 import { cliDisplayName } from "./branding";
+import {
+  canonicalPlaceholderKeys,
+  EXTRA_PLACEHOLDER_KEYS_ENV,
+  parseExtraPlaceholderKeys,
+} from "./extra-placeholder-keys";
 import { RESERVED_SANDBOX_NAMES } from "./sandbox-agent";
 import {
   requireStationExpressResumeIntent,
@@ -54,7 +59,42 @@ export interface ResolvedOnboardEntryOptions {
 }
 
 type NonInteractiveEntryOptions = { nonInteractive?: boolean };
-type ResumableEntryOptions = NonInteractiveEntryOptions & { resume?: boolean; fresh?: boolean };
+type ResumableEntryOptions = NonInteractiveEntryOptions & {
+  resume?: boolean;
+  fresh?: boolean;
+  apfInterceptorRequested?: boolean | null;
+};
+
+const PROVIDER_INTENT_ENV_KEYS = [
+  "NEMOCLAW_PROVIDER",
+  "NEMOCLAW_MODEL",
+  "NEMOCLAW_PROVIDER_MODEL",
+  "NEMOCLAW_SERVING_PRESET",
+  "NEMOCLAW_MESSAGING_PLAN_B64",
+] as const;
+
+const PROVIDERLESS_WEB_SEARCH_ENV_VALUES = new Set(["", "none", "off", "disabled", "no", "0"]);
+
+/** Reject ambient provider intent before onboarding records or external effects. */
+export function assertProviderlessInterceptorEnvironment(
+  interceptorRequested: boolean,
+  env: NodeJS.ProcessEnv,
+): void {
+  if (!interceptorRequested) return;
+  const hasProviderIntent =
+    PROVIDER_INTENT_ENV_KEYS.some((key) => String(env[key] ?? "").trim().length > 0) ||
+    parseExtraPlaceholderKeys(env[EXTRA_PLACEHOLDER_KEYS_ENV], canonicalPlaceholderKeys()).keys
+      .length > 0 ||
+    !PROVIDERLESS_WEB_SEARCH_ENV_VALUES.has(
+      String(env.NEMOCLAW_WEB_SEARCH_PROVIDER ?? "")
+        .trim()
+        .toLowerCase(),
+    );
+  if (!hasProviderIntent) return;
+  throw new Error(
+    "Interceptor onboarding supports providerless sandbox creation only. No sandbox or provider was created.",
+  );
+}
 
 export function resolveOnboardRunOptions(
   options: OnboardEntryOptionsInput["opts"] & { autoYes?: boolean; nonInteractive?: boolean },
@@ -153,8 +193,15 @@ export function wrapOnboard<Options extends ResumableEntryOptions>(
   run: (options?: Options) => Promise<void>,
   session: StationExpressSessionLifecycle,
 ): (options?: Options) => Promise<void> {
+  const guardProviderlessInput = async (options?: Options): Promise<void> => {
+    assertProviderlessInterceptorEnvironment(
+      options?.apfInterceptorRequested === true,
+      process.env,
+    );
+    await run(options);
+  };
   return wrapStationExpressOnboard(
-    withNonInteractiveEnvironment(run),
+    withNonInteractiveEnvironment(guardProviderlessInput),
     session.loadSession,
     session.reconcileStationExpressReceiptRetirement,
   );

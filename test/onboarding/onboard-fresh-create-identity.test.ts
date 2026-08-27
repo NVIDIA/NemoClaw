@@ -11,6 +11,7 @@ import path from "node:path";
 import { beforeEach, describe, it, vi } from "vitest";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 import { type CommandEntry, onboardScriptMocksPath } from "../helpers/onboard-split-context";
+import { encodeMessagingPlan, makeMessagingPlan } from "../helpers/messaging-plan-fixtures";
 
 beforeEach(() => {
   vi.stubEnv("NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG", "1");
@@ -43,6 +44,14 @@ describe("fresh create identity", () => {
       model: null,
       agent: null,
       expectedOutcome: "providerless-apf" as const,
+    },
+    {
+      title: "rejects staged messaging intent before any onboarding side effect (#9833)",
+      apfInterceptorRequested: true,
+      provider: null,
+      model: null,
+      agent: null,
+      expectedOutcome: "staged-messaging-refusal" as const,
     },
     {
       title: "preserves a newly created sandbox when non-TTY policy selection is cancelled (#9833)",
@@ -110,13 +119,31 @@ let dockerPsCalls = 0;
 let sandboxCreated = false;
 let registeredSandbox = null;
 let effectivePolicy = {};
+let credentialReadCalls = 0;
+let routeReservationCalls = 0;
 const keepAlive = setInterval(() => {}, 1000);
 const apfInterceptorRequested = ${JSON.stringify(apfInterceptorRequested)};
 const agent = ${JSON.stringify(agent)};
 const model = ${JSON.stringify(model)};
 const provider = ${JSON.stringify(provider)};
 const cancelAfterCreate = ${JSON.stringify(expectedOutcome === "cancel-after-create")};
+const stagedMessagingRefusal = ${JSON.stringify(expectedOutcome === "staged-messaging-refusal")};
 let cancelPrompt = false;
+const originalGetCredential = credentials.getCredential;
+if (stagedMessagingRefusal) {
+  credentials.getCredential = (...args) => {
+    credentialReadCalls += 1;
+    if (typeof args[0] !== "string") return null;
+    return originalGetCredential(...args);
+  };
+}
+const originalReserveSandboxInferenceRoute = registry.reserveSandboxInferenceRoute;
+if (stagedMessagingRefusal) {
+  registry.reserveSandboxInferenceRoute = (...args) => {
+    routeReservationCalls += 1;
+    return originalReserveSandboxInferenceRoute(...args);
+  };
+}
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
   _deleted = _deleted || cmd.includes("sandbox delete");
@@ -253,6 +280,8 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
     stderrDestroyCalls: createCommand?.child?.stderr.destroyCalls ?? 0,
     lifecycleObservationCommands,
     registeredSandbox,
+    credentialReadCalls,
+    routeReservationCalls,
     currentRegistryEntry: cancelAfterCreate ? registry.getSandbox("my-assistant") : null,
     savedSession: cancelAfterCreate ? onboardModule.onboardSession.loadSession() : null,
     createCommand: createCommand?.command ?? null,
@@ -287,7 +316,7 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
 	  } catch (error) {
 	    if (cancelAfterCreate) throw error;
 	    if (!apfInterceptorRequested) throw error;
-	    writePayload(null, error instanceof Error ? error.message : String(error));
+    writePayload(null, error instanceof Error ? error.message : String(error));
 	  }
   clearInterval(keepAlive);
 })().catch((error) => {
@@ -304,6 +333,12 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_NON_INTERACTIVE: expectedOutcome === "cancel-after-create" ? "" : "1",
         OPENSHELL_DRIVERS: "docker",
+        NEMOCLAW_MESSAGING_PLAN_B64:
+          expectedOutcome === "staged-messaging-refusal"
+            ? encodeMessagingPlan(
+                makeMessagingPlan({ sandboxName: "my-assistant", channels: ["telegram"] }),
+              )
+            : "",
       };
       const result = spawnSync(process.execPath, [scriptPath], {
         cwd: repoRoot,
@@ -340,10 +375,30 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
           false,
         );
       };
+      const assertStagedMessagingRefusal = () => {
+        assert.match(
+          payload.creationError,
+          /supports providerless sandbox creation only.*No sandbox or provider was created/u,
+        );
+        assert.equal(payload.sandboxName, null);
+        assert.equal(payload.sandboxCreated, false);
+        assert.equal(payload.createCommand, null);
+        assert.equal(payload.registeredSandbox, null);
+        assert.equal(payload.credentialReadCalls, 0);
+        assert.equal(payload.routeReservationCalls, 0);
+        assert.deepEqual(providerEffectCommands, []);
+        assert.equal(
+          payload.commandNames.some((command: string) =>
+            /(?:^|\s)(?:docker build|policy (?:set|apply)|sandbox create)(?:\s|$)/u.test(command),
+          ),
+          false,
+        );
+      };
       const assertSuccessfulCreation = () => {
-        assert.equal(payload.creationError, null);
+        assert.equal(payload.creationError, null, result.stderr);
         assert.equal(payload.sandboxName, "my-assistant");
         assert.ok(payload.sandboxListCalls >= 2);
+        assert.equal(payload.registeredSandbox.workload.kind, "managed-image");
         assert.match(payload.registeredSandbox.lifecycleGeneration, /^[0-9a-f-]{36}$/u);
         assert.equal(
           payload.registeredSandbox.lifecycleLiveIdentityFingerprint,
@@ -414,6 +469,7 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
         "managed-provider": assertManagedProviderCreation,
         "provider-refusal": assertProviderBackedApfRefusal,
         "providerless-apf": assertProviderlessApfCreation,
+        "staged-messaging-refusal": assertStagedMessagingRefusal,
         "cancel-after-create": assertCancellationRecovery,
       };
       assertions[expectedOutcome]();

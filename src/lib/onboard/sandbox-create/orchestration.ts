@@ -19,6 +19,7 @@ import type { HermesAuthMethod } from "../hermes-auth";
 import * as policyAuthorityPreflight from "../policy-authority/preflight";
 import type { PreparedSandboxBuildContext } from "../build-context-stage";
 import type { DcodeSelectionDriftReader } from "../dcode-selection-drift";
+import { assertProviderlessInterceptorEnvironment } from "../entry-options";
 import type {
   ManagedHermesStateVolumeCleanupResult,
   ManagedHermesStateVolumeContext,
@@ -739,6 +740,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       "sandbox name",
     );
     assertApfCreateIntent(createIntent);
+    assertProviderlessInterceptorEnvironment(
+      createIntent?.apfInterceptorRequested === true,
+      process.env,
+    );
     preparedDcodeRebuild.assertPreparedDcodeTarget(preparedBuildContext, agent, fromDockerfile);
     const effectiveAgent = sandboxAgent.getEffectiveSandboxAgent(agent);
     const requestedAgentName = getRequestedSandboxAgentName(effectiveAgent);

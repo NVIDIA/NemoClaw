@@ -23,6 +23,7 @@ type ProbeMode =
   | "authoritative-core-gateway-policy-tier"
   | "dashboard-port-composition"
   | "ordinary-policy-tier"
+  | "providerless-staged-messaging"
   | "ahead-core";
 
 interface ProbeOptions {
@@ -456,6 +457,7 @@ const { onboard } = require(${onboardPath});
       acceptThirdPartySoftware: true,
       noGpu: true,
       sandboxName: "fsm-sandbox",
+      apfInterceptorRequested: scenario.mode === "providerless-staged-messaging",
       resume: scenario.mode === "resume-initial" || scenario.mode.includes("core-gateway"),
       ...(scenario.mode.startsWith("authoritative-")
         ? {
@@ -473,7 +475,9 @@ const { onboard } = require(${onboardPath});
       error === sentinel ||
       error?.message === sentinel.message ||
       (scenario.mode === "endpoint-override" &&
-        error?.name === "OpenShellGatewayEndpointOverrideError")
+        error?.name === "OpenShellGatewayEndpointOverrideError") ||
+      (scenario.mode === "providerless-staged-messaging" &&
+        /supports providerless sandbox creation only/.test(String(error?.message)))
     ) {
       const payload = JSON.stringify({ called });
       if (scenario.mode === "dashboard-port-composition") {
@@ -502,6 +506,19 @@ const { onboard } = require(${onboardPath});
           ? { OPENSHELL_GATEWAY_ENDPOINT: "http://127.0.0.1:65535" }
           : {}),
         ...(options.policyTier ? { NEMOCLAW_POLICY_TIER: options.policyTier } : {}),
+        ...(scenario.mode === "providerless-staged-messaging"
+          ? {
+              NEMOCLAW_MESSAGING_PLAN_B64: Buffer.from(
+                JSON.stringify({
+                  schemaVersion: 1,
+                  sandboxName: "fsm-sandbox",
+                  agent: "openclaw",
+                  workflow: "onboard",
+                  channels: [{ channelId: "telegram", active: true }],
+                }),
+              ).toString("base64"),
+            }
+          : {}),
       },
       timeout: scenario.mode === "dashboard-port-composition" ? 60_000 : probeTimeoutMs,
     },
@@ -539,6 +556,13 @@ describe("live onboard FSM slice boundaries", () => {
 
   it("rejects an ambient gateway endpoint before entering the initial slice", () => {
     assert.deepEqual(runSliceProbe({ slice: "initial", mode: "endpoint-override" }), []);
+  });
+
+  it("rejects staged messaging before entering the onboarding state machine (#9833)", () => {
+    assert.deepEqual(
+      runSliceProbe({ slice: "initial", mode: "providerless-staged-messaging" }),
+      [],
+    );
   });
 
   it("enters the core slice after the initial slice reaches provider selection", () => {

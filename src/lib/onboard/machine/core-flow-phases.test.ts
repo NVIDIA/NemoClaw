@@ -616,6 +616,7 @@ describe("core onboard flow phases", () => {
     "NEMOCLAW_MODEL",
     "NEMOCLAW_PROVIDER_MODEL",
     "NEMOCLAW_SERVING_PRESET",
+    "NEMOCLAW_MESSAGING_PLAN_B64",
   ])("rejects APF when %s requests a provider plan", async (key) => {
     const reserveSandboxInferenceRoute = vi.fn(() => true);
     const checkpointSandboxIdentity = vi.fn(async () => undefined);

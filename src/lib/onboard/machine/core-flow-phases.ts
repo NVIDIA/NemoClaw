@@ -7,11 +7,7 @@ import {
 } from "../../inference/selection";
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../dcode-auto-approval";
-import {
-  canonicalPlaceholderKeys,
-  EXTRA_PLACEHOLDER_KEYS_ENV,
-  parseExtraPlaceholderKeys,
-} from "../extra-placeholder-keys";
+import { assertProviderlessInterceptorEnvironment } from "../entry-options";
 import type {
   createProviderRecoveryReceiptLedger,
   ProviderRecoveryReceipt,
@@ -124,16 +120,7 @@ export function isCoreFlowCompleteBeforeFinalization(result: {
   );
 }
 
-const APF_PROVIDER_INTENT_ENV_KEYS = [
-  "NEMOCLAW_PROVIDER",
-  "NEMOCLAW_MODEL",
-  "NEMOCLAW_PROVIDER_MODEL",
-  "NEMOCLAW_SERVING_PRESET",
-] as const;
-
-const APF_PROVIDERLESS_WEB_SEARCH_ENV_VALUES = new Set(["", "none", "off", "disabled", "no", "0"]);
-
-function hasProviderBackedApfIntent(context: OnboardFlowContext, env: NodeJS.ProcessEnv): boolean {
+function hasProviderBackedApfIntent(context: OnboardFlowContext): boolean {
   const routeValues = [
     context.provider,
     context.model,
@@ -154,15 +141,7 @@ function hasProviderBackedApfIntent(context: OnboardFlowContext, env: NodeJS.Pro
     Boolean(context.session?.messagingPlan) ||
     context.hostLocalInferenceRouteOnly === true ||
     context.hostLocalInferenceSandboxProofAuthority != null ||
-    context.session?.servingProfileProvenance != null ||
-    APF_PROVIDER_INTENT_ENV_KEYS.some((key) => String(env[key] ?? "").trim().length > 0) ||
-    parseExtraPlaceholderKeys(env[EXTRA_PLACEHOLDER_KEYS_ENV], canonicalPlaceholderKeys()).keys
-      .length > 0 ||
-    !APF_PROVIDERLESS_WEB_SEARCH_ENV_VALUES.has(
-      String(env.NEMOCLAW_WEB_SEARCH_PROVIDER ?? "")
-        .trim()
-        .toLowerCase(),
-    )
+    context.session?.servingProfileProvenance != null
   );
 }
 
@@ -208,7 +187,8 @@ export function createProviderInferenceOnboardFlowPhase<
       options.apfInterceptorRequested === true ||
       context.session?.apfInterceptorRequested === true
     ) {
-      if (hasProviderBackedApfIntent(context, options.env)) {
+      assertProviderlessInterceptorEnvironment(true, options.env);
+      if (hasProviderBackedApfIntent(context)) {
         throw new Error(
           "Interceptor onboarding supports providerless sandbox creation only. No sandbox or provider was created.",
         );
