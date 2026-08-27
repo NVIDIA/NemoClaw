@@ -213,7 +213,10 @@ export interface SandboxGpuCreateFlowInput {
   /** Reject every initial or fallback create attempt that carries a caller policy. */
   requirePolicylessCreate?: true;
   /** Durably retain exact create-attempt recovery evidence before identity-bound recovery stops. */
-  persistRetainedSandboxRecovery?: (message: string) => boolean;
+  persistRetainedSandboxRecovery?: (
+    message: string,
+    sandboxIdentityFingerprint?: string,
+  ) => boolean;
   provider: string;
   sandboxGpuConfig: SandboxGpuConfig;
   gpuRoutePlan: import("./docker-gpu-route").DockerGpuRoutePlan;

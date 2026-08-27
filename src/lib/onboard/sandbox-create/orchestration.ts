@@ -129,6 +129,22 @@ export function installPostCreateRecoveryRetryOwner(
   return owner;
 }
 
+function persistRetainedSandboxRecoveryWithRetry(
+  retryOwner: PostCreateRecoveryRetryOwner | undefined,
+  persist: () => boolean,
+): boolean {
+  let persisted = false;
+  const attempt = (): void => {
+    persisted = persist();
+    if (!persisted) {
+      throw new Error("NemoClaw could not save the retained sandbox recovery record.");
+    }
+  };
+  if (retryOwner) retryOwner.record(attempt);
+  else attempt();
+  return persisted;
+}
+
 export function persistPostCreateRecovery(input: {
   readonly stage: "registry publication" | "onboarding finalization";
   readonly sandboxName: string;
@@ -456,11 +472,13 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
     message: string,
     exactIdentity: string | null,
   ) => boolean;
+  readonly retainedSandboxRecoveryRetryOwner?: PostCreateRecoveryRetryOwner;
   readonly cleanupTemporarySources: () => void;
 }): Promise<Result> {
   input.revalidate(false, `creating sandbox '${input.sandboxName}'`);
   let exactIdentity: string | null = null;
   let cleanupAttempted = false;
+  let recoveryAttempted = false;
   const cleanupTemporarySources = (): unknown[] => {
     if (cleanupAttempted) return [];
     cleanupAttempted = true;
@@ -472,6 +490,7 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
     }
   };
   const refuseAfterCreate = (validationError: unknown): never => {
+    recoveryAttempted = true;
     const validationDetail =
       validationError instanceof Error && isPolicyAuthorityRefusalError(validationError)
         ? validationError.message
@@ -486,11 +505,9 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
     const compensationErrors: unknown[] = [];
     if (input.persistRetainedSandboxRecovery) {
       try {
-        if (!input.persistRetainedSandboxRecovery(recoveryGuidance, exactIdentity)) {
-          compensationErrors.push(
-            new Error("NemoClaw could not save the retained sandbox recovery record."),
-          );
-        }
+        persistRetainedSandboxRecoveryWithRetry(input.retainedSandboxRecoveryRetryOwner, () =>
+          input.persistRetainedSandboxRecovery!(recoveryGuidance, exactIdentity),
+        );
       } catch (error) {
         compensationErrors.push(error);
       }
@@ -541,6 +558,7 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
   try {
     result = await input.create(verifyCreatedSandbox);
   } catch (error) {
+    if (exactIdentity !== null && !recoveryAttempted) return refuseAfterCreate(error);
     const cleanupErrors = cleanupTemporarySources();
     if (cleanupErrors.length > 0) {
       throw new AggregateError(
@@ -2009,6 +2027,20 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           markRetainedSandboxRecovery: onboardSession.markRetainedSandboxRecovery,
         }),
       );
+    const persistCreateFlowRecovery = (
+      message: string,
+      exactIdentity: string | null = null,
+    ): boolean =>
+      persistRetainedSandboxRecoveryWithRetry(postCreateRecoveryRetryOwner, () =>
+        persistRetainedSandboxRecoveryMessage(
+          {
+            sandboxName,
+            message,
+            ...(exactIdentity ? { sandboxIdentityFingerprint: exactIdentity } : {}),
+          },
+          onboardSession.markRetainedSandboxRecovery,
+        ),
+      );
     const runCreateFlow = async (
       attemptCreateArgv: string[],
       hermesPortableReadyCapture?: import("../sandbox-gpu-create-flow").HermesPortableReadyCapture,
@@ -2083,6 +2115,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             },
             onboardSession.markRetainedSandboxRecovery,
           ),
+        retainedSandboxRecoveryRetryOwner: postCreateRecoveryRetryOwner,
         cleanupTemporarySources: cleanupSandboxCreateSources,
         runVerifiedCreateEffects: runDeferredProviderEffects
           ? async (_identity, _exactIdentity, boundary) => {
@@ -2103,11 +2136,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                     requirePolicylessCreate: true as const,
                   }
                 : {}),
-              persistRetainedSandboxRecovery: (message) =>
-                persistRetainedSandboxRecoveryMessage(
-                  { sandboxName, message },
-                  onboardSession.markRetainedSandboxRecovery,
-                ),
+              persistRetainedSandboxRecovery: (message, sandboxIdentityFingerprint) =>
+                persistCreateFlowRecovery(message, sandboxIdentityFingerprint ?? null),
               provider,
               sandboxGpuConfig: effectiveSandboxGpuConfig,
               gpuRoutePlan,

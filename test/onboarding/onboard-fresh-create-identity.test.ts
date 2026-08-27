@@ -54,6 +54,14 @@ describe("fresh create identity", () => {
       expectedOutcome: "post-create-authority-refusal" as const,
     },
     {
+      title: "retains recovery state when the create runner fails after verification (#9833)",
+      apfInterceptorRequested: true,
+      provider: null,
+      model: null,
+      agent: null,
+      expectedOutcome: "post-create-runner-refusal" as const,
+    },
+    {
       title: "retains recovery state when registry publication fails after create (#9833)",
       apfInterceptorRequested: true,
       provider: null,
@@ -202,6 +210,7 @@ const stagedMessagingRefusal = ${JSON.stringify(expectedOutcome === "staged-mess
 const postCreateAuthorityRefusal = ${JSON.stringify(
         expectedOutcome === "post-create-authority-refusal",
       )};
+const postCreateRunnerRefusal = ${JSON.stringify(expectedOutcome === "post-create-runner-refusal")};
 const postCreateRegistrationRefusal = ${JSON.stringify(
         expectedOutcome === "post-create-registration-refusal" ||
           expectedOutcome === "post-create-registration-recovery-readback-failure" ||
@@ -210,7 +219,8 @@ const postCreateRegistrationRefusal = ${JSON.stringify(
 let recoveryJournalReadbackFailuresRemaining = ${JSON.stringify(
         expectedOutcome === "post-create-registration-recovery-readback-failure"
           ? 100
-          : expectedOutcome === "post-create-registration-recovery-retry"
+          : expectedOutcome === "post-create-registration-recovery-retry" ||
+              expectedOutcome === "post-create-runner-refusal"
             ? 1
             : 0,
       )};
@@ -281,6 +291,7 @@ runner.run = (command, opts = {}) => {
 	  ? JSON.parse(fs.readFileSync(${JSON.stringify(payloadPath)}, "utf8")).currentRegistryEntry
 	  : null;
 	const registryMutationCalls = [];
+  let checkpointReadCalls = 0;
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
 	  sandboxName: "my-assistant",
 	  provider,
@@ -306,6 +317,16 @@ runner.run = (command, opts = {}) => {
 	  setDefault: (name) => { registryMutationCalls.push({ operation: "set-default", name }); },
 	  removeSandbox: (name) => { registryMutationCalls.push({ operation: "remove", name }); },
 	});
+if (postCreateRunnerRefusal) {
+  const requireCurrentCheckpoint = registry.requireCurrentPendingSandboxPolicyVerification;
+  registry.requireCurrentPendingSandboxPolicyVerification = (...args) => {
+    checkpointReadCalls += 1;
+    if (checkpointReadCalls === 6) {
+      throw new Error("post-verification create runner checkpoint failed");
+    }
+    return requireCurrentCheckpoint(...args);
+  };
+}
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => {
   if (cancelPrompt) {
@@ -409,11 +430,13 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
     registeredSandbox,
     credentialReadCalls,
     routeReservationCalls,
+    checkpointReadCalls,
     registryMutationCalls,
     currentRegistryEntry: cancelAfterCreate ? registry.getSandbox("my-assistant") : null,
     savedSession:
       cancelAfterCreate ||
       postCreateAuthorityRefusal ||
+      postCreateRunnerRefusal ||
       postCreateRegistrationRefusal ||
       postCreateFinalizationRefusal
         ? onboardModule.onboardSession.loadSession()
@@ -424,7 +447,10 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
   }));
 };
 let finalCreationError = null;
-if (${JSON.stringify(expectedOutcome === "post-create-registration-recovery-retry")}) {
+if (${JSON.stringify(
+        expectedOutcome === "post-create-registration-recovery-retry" ||
+          expectedOutcome === "post-create-runner-refusal",
+      )}) {
   process.on("exit", (code) => writePayload(null, finalCreationError, code));
 }
 
@@ -700,6 +726,28 @@ if (${JSON.stringify(expectedOutcome === "post-create-registration-recovery-retr
           reason: "retained_after_sandbox_creation_failure",
         });
       };
+      const assertPostCreateRunnerRefusal = () => {
+        const identityFingerprint = createHash("sha256").update("sbx-fresh-create").digest("hex");
+        assert.equal(payload.sandboxName, null);
+        assert.equal(payload.sandboxCreated, true);
+        assert.equal(payload.deleted, false);
+        assert.equal(payload.registeredSandbox, null);
+        assert.match(payload.creationError, /automatic sandbox cleanup was not safe/u);
+        assert.equal(payload.savedSession.status, "recovery_required");
+        assert.equal(payload.savedSession.resumable, false);
+        assert.equal(
+          payload.savedSession.cancellationRecovery.sandboxIdentityFingerprint,
+          identityFingerprint,
+        );
+        assert.equal(payload.retainedRecoveryRecords.length, 1);
+        assert.equal(payload.retainedRecoveryRecords[0].sandboxName, "my-assistant");
+        assert.ok(payload.checkpointReadCalls >= 6);
+        assert.equal(
+          payload.commandNames.filter((command: string) => command.includes("sandbox create"))
+            .length,
+          1,
+        );
+      };
       const assertPostCreateRegistrationRefusal = () => {
         const identityFingerprint = createHash("sha256").update("sbx-fresh-create").digest("hex");
         assert.equal(payload.sandboxName, null);
@@ -925,6 +973,7 @@ if (${JSON.stringify(expectedOutcome === "post-create-registration-recovery-retr
         "provider-refusal": assertProviderBackedApfRefusal,
         "providerless-apf": assertProviderlessApfCreation,
         "post-create-authority-refusal": assertPostCreateAuthorityRefusal,
+        "post-create-runner-refusal": assertPostCreateRunnerRefusal,
         "post-create-registration-refusal": assertPostCreateRegistrationRefusal,
         "post-create-registration-recovery-readback-failure":
           assertPostCreateRegistrationRecoveryReadbackFailure,

@@ -722,6 +722,80 @@ describe("sandbox create policy authority checks", () => {
     );
   });
 
+  it("records recovery when the create runner fails after verification (#9833)", async () => {
+    const createFailure = new Error("runtime patch failed after verification");
+    const persistRetainedSandboxRecovery = vi.fn(() => true);
+
+    const error = await runSandboxCreateWithPolicyAuthorityChecks({
+      sandboxName: "alpha",
+      revalidate: vi.fn(),
+      create: async (verifyCreatedSandbox) => {
+        await verifyCreatedSandbox("created");
+        throw createFailure;
+      },
+      ...exactIdentityBoundary(),
+      persistRetainedSandboxRecovery,
+      cleanupTemporarySources: vi.fn(),
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AggregateError);
+    expect((error as AggregateError).errors).toContain(createFailure);
+    expect(persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
+      expect.stringContaining("left sandbox 'alpha' in place"),
+      exactIdentity,
+    );
+  });
+
+  it.each(["false", "throw", "journal readback mismatch"] as const)(
+    "retries create-runner recovery when its durable writer returns %s (#9833)",
+    async (failureMode) => {
+      const exitHandlers: Array<() => void> = [];
+      const retryOwner = installPostCreateRecoveryRetryOwner({
+        log: vi.fn(),
+        registerExitHandler: (handler) => exitHandlers.push(handler),
+      });
+      const createFailure = new Error("runtime patch failed after verification");
+      const writerFailures = {
+        false: () => false,
+        throw: () => {
+          throw new Error("retained recovery writer threw");
+        },
+        "journal readback mismatch": () => {
+          throw new Error("Retained sandbox recovery record did not survive durable readback.");
+        },
+      } satisfies Record<typeof failureMode, () => boolean>;
+      const writer = vi
+        .fn()
+        .mockImplementationOnce(writerFailures[failureMode])
+        .mockReturnValue(true);
+      const create = vi.fn(async (verifyCreatedSandbox: (created: string) => Promise<string>) => {
+        await verifyCreatedSandbox("created");
+        throw createFailure;
+      });
+
+      const error = await runSandboxCreateWithPolicyAuthorityChecks({
+        sandboxName: "alpha",
+        revalidate: vi.fn(),
+        create,
+        ...exactIdentityBoundary(),
+        persistRetainedSandboxRecovery: writer,
+        retainedSandboxRecoveryRetryOwner: retryOwner,
+        cleanupTemporarySources: vi.fn(),
+      }).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(AggregateError);
+      expect(writer).toHaveBeenCalledOnce();
+      expect(create).toHaveBeenCalledOnce();
+
+      exitHandlers[0]();
+      expect(writer).toHaveBeenCalledTimes(2);
+      expect(create).toHaveBeenCalledOnce();
+
+      exitHandlers[0]();
+      expect(writer).toHaveBeenCalledTimes(2);
+    },
+  );
+
   it("does not delete a same-name replacement after final authority failure (#9833)", async () => {
     let sandboxIdentity = "created";
     const revalidate = vi.fn();
