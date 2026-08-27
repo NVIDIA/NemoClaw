@@ -15,6 +15,7 @@ import {
   reserveSandboxInferenceRoute,
 } from "../../state/registry";
 import { classifySandboxInferenceRouteReservation } from "../../state/registry/route-reservation";
+import type { InferenceRouteReservationAuthority } from "../types";
 import {
   type CoreOnboardFlowPhases,
   createProviderInferenceOnboardFlowPhase,
@@ -327,6 +328,93 @@ function createPhases(
 }
 
 describe("core onboard flow phases", () => {
+  it("keeps a fresh Bedrock route reservation identical through sandbox admission (#9833)", async () => {
+    const durableSession = createSession();
+    const sandboxName = `hosted-route-${durableSession.sessionId}`;
+    const recordStepComplete = vi.fn(async (_stepName: string, updates: SessionUpdates = {}) => {
+      Object.assign(durableSession, updates);
+      return durableSession;
+    });
+    const createSandbox = vi.fn(async (...args: unknown[]) => {
+      const authority = args.at(-3) as InferenceRouteReservationAuthority | null;
+      const createIntent = args.at(-2) as {
+        endpointSource?: InferenceEndpointSource | null;
+      };
+      const reservation = getSandbox(sandboxName);
+      expect(authority).toMatchObject({ sessionId: durableSession.sessionId });
+      expect(createIntent.endpointSource).toBe("onboard");
+      expect(
+        classifySandboxInferenceRouteReservation(
+          {
+            sandboxName,
+            gatewayName: "nemoclaw",
+            sessionId: authority?.sessionId as string,
+            selection: authority?.selection ?? normalizeInferenceSelection(null),
+          },
+          reservation,
+        ).kind,
+      ).toBe("owned");
+      return "created-sandbox";
+    });
+    const { providerInference: providerPhase, sandbox: sandboxPhase } = createPhases({
+      providerDeps: {
+        setupNim: vi.fn(async () => ({
+          model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
+          provider: "compatible-anthropic-endpoint",
+          endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+          endpointSource: "onboard" as const,
+          credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+          hermesAuthMethod: null,
+          hermesToolGateways: [],
+          preferredInferenceApi: "openai-completions",
+          compatibleEndpointReasoning: null,
+          compatibleEndpointReasoningEffort: null,
+          nimContainer: null,
+        })),
+        recordStepComplete,
+        promptValidatedSandboxName: vi.fn(async () => sandboxName),
+        setupInference: vi.fn(
+          async (name, model, provider, endpointUrl, credentialEnv, _auth, _gateways, options) => {
+            expect(
+              reserveSandboxInferenceRoute(name, {
+                provider,
+                model,
+                endpointUrl,
+                endpointSource: options?.endpointSource ?? null,
+                credentialEnv,
+                preferredInferenceApi: options?.preferredInferenceApi ?? null,
+                gatewayName: options?.gatewayName ?? "nemoclaw",
+                reservationSessionId: options?.reservationSessionId,
+              }),
+            ).toBe(true);
+            return { ok: true as const };
+          },
+        ),
+      },
+      sandboxDeps: {
+        createSandbox,
+        getSandboxRegistryEntry: getSandbox,
+        promptValidatedSandboxName: vi.fn(async () => sandboxName),
+      },
+    });
+
+    try {
+      const providerResult = await providerPhase.run(
+        context({
+          fresh: true,
+          session: durableSession,
+          sandboxName,
+        }),
+      );
+      expect(providerResult.context.endpointSource).toBe("onboard");
+      await sandboxPhase.run(providerResult.context);
+
+      expect(createSandbox).toHaveBeenCalledOnce();
+    } finally {
+      removeSandbox(sandboxName);
+    }
+  });
+
   it("preserves the fresh install-ollama reservation endpoint source for Hermes portable creation (#9203)", async () => {
     const durableSession = createSession();
     const sandboxName = `hermes-route-${durableSession.sessionId}`;
@@ -335,12 +423,12 @@ describe("core onboard flow phases", () => {
       return durableSession;
     });
     const createSandbox = vi.fn(async (...args: unknown[]) => {
-      const authority = args.at(-3) as { sessionId?: unknown } | null;
+      const authority = args.at(-3) as InferenceRouteReservationAuthority | null;
       const createIntent = args.at(-2) as {
         endpointSource?: InferenceEndpointSource | null;
       };
       const reservation = getSandbox(sandboxName);
-      expect(authority).toEqual({ sessionId: durableSession.sessionId });
+      expect(authority).toMatchObject({ sessionId: durableSession.sessionId });
       expect(createIntent.endpointSource).toBeNull();
       expect(isPendingReservationForSession(reservation, authority?.sessionId as string)).toBe(
         true,
@@ -365,10 +453,7 @@ describe("core onboard flow phases", () => {
             sandboxName,
             gatewayName: "nemoclaw",
             sessionId: authority?.sessionId as string,
-            selection: normalizeInferenceSelection({
-              ...reservation,
-              endpointSource: createIntent.endpointSource,
-            }),
+            selection: authority?.selection ?? normalizeInferenceSelection(null),
           },
           reservation,
         ).kind,
