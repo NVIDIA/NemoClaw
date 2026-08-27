@@ -42,8 +42,27 @@ export function bind(
   runtime: ProviderSyncRuntime,
   runGatewayOpenshell: OpenshellCliHelpers["runOpenshell"],
 ) {
-  return (input: ProviderSyncInput) =>
-    providers.synchronizeMessagingProvidersAfterPolicy(input, {
+  return (input: ProviderSyncInput) => {
+    const revalidateSandboxIdentity = (operation: string, retryNotReady: boolean): boolean => {
+      if (!input.lifecycleGeneration || !input.sandboxIdentityFingerprint) {
+        throw new Error(`Cannot ${operation}: sandbox lifecycle identity is not recorded.`);
+      }
+      const observation = runtime.getSandboxRecreateObservation(
+        input.sandboxName,
+        runtime.GATEWAY_NAME,
+      );
+      if (retryNotReady && observation.state === "not_ready") return false;
+      runtime.sandboxRecreateTransaction.revalidateCreatedSandboxLifecycleRegistration(
+        { sandboxName: input.sandboxName, gatewayName: runtime.GATEWAY_NAME },
+        {
+          lifecycleGeneration: input.lifecycleGeneration,
+          lifecycleLiveIdentityFingerprint: input.sandboxIdentityFingerprint,
+        },
+        () => observation,
+      );
+      return true;
+    };
+    return providers.synchronizeMessagingProvidersAfterPolicy(input, {
       rebindMessagingCapabilities: runtime.sandboxCreateIntentResolver.rebind,
       upsertMessagingProviders: runtime.upsertMessagingProviders,
       runGatewayOpenshell,
@@ -53,17 +72,10 @@ export function bind(
       gatewayName: runtime.GATEWAY_NAME,
       advancePendingSandboxProviderRefresh: runtime.registry.advancePendingSandboxProviderRefresh,
       revalidateSandboxIdentity: (operation: string) => {
-        if (!input.lifecycleGeneration || !input.sandboxIdentityFingerprint) {
-          throw new Error(`Cannot ${operation}: sandbox lifecycle identity is not recorded.`);
-        }
-        runtime.sandboxRecreateTransaction.revalidateCreatedSandboxLifecycleRegistration(
-          { sandboxName: input.sandboxName, gatewayName: runtime.GATEWAY_NAME },
-          {
-            lifecycleGeneration: input.lifecycleGeneration,
-            lifecycleLiveIdentityFingerprint: input.sandboxIdentityFingerprint,
-          },
-          runtime.getSandboxRecreateObservation,
-        );
+        revalidateSandboxIdentity(operation, false);
       },
+      tryRevalidateReadySandboxIdentity: (operation: string) =>
+        revalidateSandboxIdentity(operation, true),
     });
+  };
 }

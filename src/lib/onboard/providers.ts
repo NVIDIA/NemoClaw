@@ -898,9 +898,19 @@ function waitForStableProviderPlaceholders(sandboxName, gatewayName, envKeys, de
     deps.revalidatePolicyRequirements?.(
       `observing post-policy messaging credentials for sandbox '${sandboxName}'`,
     );
-    deps.revalidateSandboxIdentity?.(
-      `observing post-policy messaging credentials for sandbox '${sandboxName}'`,
-    );
+    const identityOperation =
+      `observing post-policy messaging credentials for sandbox '${sandboxName}'`;
+    if (deps.tryRevalidateReadySandboxIdentity) {
+      if (!deps.tryRevalidateReadySandboxIdentity(identityOperation)) {
+        prior = null;
+        if (attempt + 1 < PLACEHOLDER_SYNC_ATTEMPTS) {
+          deps.sleepSeconds(PLACEHOLDER_SYNC_DELAY_SECONDS);
+        }
+        continue;
+      }
+    } else {
+      deps.revalidateSandboxIdentity?.(identityOperation);
+    }
     const result = deps.runOpenshell(
       [
         "sandbox",

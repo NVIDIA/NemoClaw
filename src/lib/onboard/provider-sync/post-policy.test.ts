@@ -24,6 +24,7 @@ const {
       sleepSeconds(seconds: number): void;
       waitForSandboxReady(name: string, attempts?: number, delaySeconds?: number): boolean;
       revalidateSandboxIdentity?(operation: string): void;
+      tryRevalidateReadySandboxIdentity?(operation: string): boolean;
     },
   ): void;
   synchronizeMessagingProvidersAfterPolicy(
@@ -264,6 +265,31 @@ describe("post-policy messaging provider synchronization", () => {
     ).toThrow(/ready after messaging provider synchronization/u);
     expect(revalidateSandboxIdentity).not.toHaveBeenCalled();
     expect(runOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("retries a transient not-Ready identity without probing the sandbox", () => {
+    const placeholder = "WECHAT_BOT_TOKEN\topenshell:resolve:env:v12_WECHAT_BOT_TOKEN";
+    const runOpenshell = vi.fn((args: string[]) => ({
+      status: 0,
+      stdout: args[1] === "exec" ? placeholder : "",
+    }));
+    const tryRevalidateReadySandboxIdentity = vi
+      .fn<() => boolean>()
+      .mockReturnValueOnce(false)
+      .mockReturnValue(true);
+
+    finalizePostPolicyMessagingProviderSync(
+      { sandboxName: "alpha", gatewayName: "nemoclaw", envKeys: ["WECHAT_BOT_TOKEN"] },
+      {
+        runOpenshell,
+        sleepSeconds: vi.fn(),
+        waitForSandboxReady: vi.fn(() => true),
+        tryRevalidateReadySandboxIdentity,
+      },
+    );
+
+    expect(tryRevalidateReadySandboxIdentity.mock.results[0]?.value).toBe(false);
+    expect(runOpenshell.mock.calls.filter(([args]) => args[1] === "exec")).toHaveLength(4);
   });
 
   it("completes the refresh journal when no credential projection is required (#10153)", () => {
