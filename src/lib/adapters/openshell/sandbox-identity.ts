@@ -64,13 +64,18 @@ function isStrictSandboxListJsonRow(value: unknown): value is OpenShellSandboxLi
 export function parseStrictOpenShellSandboxListJson(
   output: string,
 ): readonly OpenShellSandboxListJsonRow[] | null {
+  const rows = parseOpenShellSandboxListJson(output);
+  return rows && rows.every(isStrictSandboxListJsonRow) ? rows : null;
+}
+
+function parseOpenShellSandboxListJson(output: string): readonly unknown[] | null {
   let rows: unknown;
   try {
     rows = JSON.parse(output);
   } catch {
     return null;
   }
-  return Array.isArray(rows) && rows.every(isStrictSandboxListJsonRow) ? rows : null;
+  return Array.isArray(rows) ? rows : null;
 }
 
 export function parseOpenShellSandboxId(output: string): string | null {
@@ -117,7 +122,7 @@ type CreatedOpenShellSandboxIdentityInput = {
 
 type CreatedOpenShellSandboxIdentityObservation =
   | { readonly state: "matched"; readonly sandboxId: string }
-  | { readonly state: "pending" }
+  | { readonly state: "pending"; readonly sandboxId: string | null }
   | { readonly state: "invalid" };
 
 function assertCreateAttemptNonce(createAttemptNonce: string): void {
@@ -129,6 +134,26 @@ function assertCreateAttemptNonce(createAttemptNonce: string): void {
 function createdIdentityError(sandboxName: string): Error {
   return new Error(
     `OpenShell did not return the exact created identity for sandbox '${sandboxName}'.`,
+  );
+}
+
+function hasIncompleteCreatedIdentityMetadata(row: Record<string, unknown>): boolean {
+  const incomplete = (value: unknown): boolean => value === undefined || value === null;
+  const resourceVersionValid =
+    incomplete(row.resource_version) ||
+    (typeof row.resource_version === "number" && Number.isFinite(row.resource_version));
+  const createdAtValid = incomplete(row.created_at) || typeof row.created_at === "string";
+  const phaseValid =
+    incomplete(row.phase) || (typeof row.phase === "string" && row.phase.length > 0);
+  const policyVersionValid =
+    incomplete(row.current_policy_version) ||
+    (typeof row.current_policy_version === "number" && Number.isFinite(row.current_policy_version));
+  return (
+    resourceVersionValid &&
+    createdAtValid &&
+    phaseValid &&
+    policyVersionValid &&
+    [row.resource_version, row.created_at, row.phase, row.current_policy_version].some(incomplete)
   );
 }
 
@@ -162,19 +187,33 @@ function observeCreatedOpenShellSandboxId(
   } catch {
     return { state: "invalid" };
   }
-  const rows = parseStrictOpenShellSandboxListJson(output);
+  const rows = parseOpenShellSandboxListJson(output);
   if (!rows) return { state: "invalid" };
-  if (rows.length === 0) return { state: "pending" };
+  if (rows.length === 0) return { state: "pending", sandboxId: null };
   if (rows.length !== 1) return { state: "invalid" };
   const row = rows[0];
+  if (!row || typeof row !== "object" || Array.isArray(row)) {
+    return { state: "invalid" };
+  }
+  const candidate = row as Record<string, unknown>;
+  const labels = candidate.labels;
   if (
-    !row ||
-    row.name !== input.sandboxName ||
-    row.labels[NEMOCLAW_CREATE_ATTEMPT_LABEL] !== input.createAttemptNonce
+    !isOpenShellSandboxId(candidate.id) ||
+    candidate.name !== input.sandboxName ||
+    !labels ||
+    typeof labels !== "object" ||
+    Array.isArray(labels) ||
+    !Object.values(labels as Record<string, unknown>).every((label) => typeof label === "string") ||
+    (labels as Record<string, string>)[NEMOCLAW_CREATE_ATTEMPT_LABEL] !== input.createAttemptNonce
   ) {
     return { state: "invalid" };
   }
-  return { state: "matched", sandboxId: row.id };
+  if (!isStrictSandboxListJsonRow(candidate)) {
+    return hasIncompleteCreatedIdentityMetadata(candidate)
+      ? { state: "pending", sandboxId: candidate.id }
+      : { state: "invalid" };
+  }
+  return { state: "matched", sandboxId: candidate.id };
 }
 
 export function resolveCreatedOpenShellSandboxId(
@@ -191,8 +230,9 @@ export function resolveCreatedOpenShellSandboxId(
 
 /**
  * Settle the nonce-owned identity after OpenShell reports the create Ready.
- * Only an empty selector result is retryable; malformed, ambiguous, or
- * mismatched results remain terminal before any post-create effect.
+ * An empty selector result or the one exact nonce-owned row with incomplete
+ * publication metadata is retryable. Malformed, ambiguous, or mismatched
+ * identity results remain terminal before any post-create effect.
  */
 export function settleCreatedOpenShellSandboxId(input: {
   readonly sandboxName: string;
@@ -212,6 +252,7 @@ export function settleCreatedOpenShellSandboxId(input: {
   }
 
   let previousNowMs = startedAt;
+  let pendingSandboxId: string | null = null;
   const readNow = (): number => {
     const currentNowMs = now();
     if (!Number.isFinite(currentNowMs) || currentNowMs < previousNowMs) {
@@ -226,8 +267,18 @@ export function settleCreatedOpenShellSandboxId(input: {
     if (remainingMs <= 0) break;
 
     const observation = observeCreatedOpenShellSandboxId(input, remainingMs);
-    if (observation.state === "matched") return observation.sandboxId;
+    if (observation.state === "matched") {
+      if (pendingSandboxId && observation.sandboxId !== pendingSandboxId) break;
+      return observation.sandboxId;
+    }
     if (observation.state === "invalid") break;
+    if (observation.sandboxId === null) {
+      if (pendingSandboxId) break;
+    } else if (pendingSandboxId && observation.sandboxId !== pendingSandboxId) {
+      break;
+    } else {
+      pendingSandboxId = observation.sandboxId;
+    }
 
     const remainingAfterReadMs = Math.floor(deadlineMs - readNow());
     if (remainingAfterReadMs <= 0) break;

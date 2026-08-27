@@ -66,7 +66,11 @@ import {
 import { runSandboxGpuCreateFlow } from "./sandbox-gpu-create-flow";
 import { fingerprintSandboxRecreateValue } from "./sandbox-recreate-transaction";
 
-function sandboxListJson(sandboxId: string, labels: Readonly<Record<string, string>>): string {
+function sandboxListJson(
+  sandboxId: string,
+  labels: Readonly<Record<string, string>>,
+  overrides: Readonly<Record<string, unknown>> = {},
+): string {
   return JSON.stringify([
     {
       id: sandboxId,
@@ -76,6 +80,7 @@ function sandboxListJson(sandboxId: string, labels: Readonly<Record<string, stri
       created_at: "2026-08-25T00:00:00Z",
       phase: "Ready",
       current_policy_version: 1,
+      ...overrides,
     },
   ]);
 }
@@ -183,10 +188,19 @@ describe("created sandbox identity gate", () => {
       })
       .mockImplementationOnce((args) => {
         expect(args).toContain("--selector");
-        events.push("identity-pending");
+        events.push("identity-metadata-pending");
         expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
         expect(patch.exitOnPatchError).not.toHaveBeenCalled();
-        return "[]";
+        return sandboxListJson(
+          "alpha-sandbox-id",
+          { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce },
+          {
+            resource_version: null,
+            created_at: null,
+            phase: null,
+            current_policy_version: null,
+          },
+        );
       })
       .mockImplementationOnce((args) => {
         expect(args).toContain("--selector");
@@ -203,7 +217,7 @@ describe("created sandbox identity gate", () => {
     expect(events).toEqual([
       "create",
       "ready-visible",
-      "identity-pending",
+      "identity-metadata-pending",
       "identity-settle",
       "identity-matched",
       "verify-created",
@@ -250,6 +264,82 @@ describe("created sandbox identity gate", () => {
       expect.anything(),
     );
   });
+
+  it.each([
+    [
+      "changes durable ID",
+      (nonce: string) => [
+        sandboxListJson(
+          "alpha-sandbox-id",
+          { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce },
+          { resource_version: null },
+        ),
+        sandboxListJson("replacement-sandbox-id", {
+          [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce,
+        }),
+      ],
+      2,
+    ],
+    [
+      "disappears",
+      (nonce: string) => [
+        sandboxListJson(
+          "alpha-sandbox-id",
+          { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce },
+          { resource_version: null },
+        ),
+        "[]",
+      ],
+      2,
+    ],
+    [
+      "publishes malformed metadata",
+      (nonce: string) => [
+        sandboxListJson(
+          "alpha-sandbox-id",
+          { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce },
+          { resource_version: "1" },
+        ),
+      ],
+      1,
+    ],
+  ])(
+    "withholds post-create effects when the nonce-owned row %s (#10423)",
+    async (_case, observationsForNonce, expectedSelectorCalls) => {
+      let nonce = "";
+      let captureIndex = 0;
+      const input = noGpuInput();
+      input.verifyCreatedSandboxBeforeEffects = vi.fn();
+      input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+      const patch = createGpuPatchFixture();
+      mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+      mocks.streamSandboxCreate.mockImplementation(async (_command, args, _env, options) => {
+        nonce = createAttemptNonce(args);
+        expect(options.readyCheck?.()).toBe(true);
+        return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+      });
+      const deps = createGpuFlowDeps();
+      vi.mocked(deps.runCaptureOpenshell).mockImplementation(
+        () => ["alpha Ready", ...observationsForNonce(nonce)][captureIndex++] ?? "[]",
+      );
+
+      await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+        "OpenShell did not return one exact durable sandbox identity before post-create effects",
+      );
+
+      expect(
+        vi
+          .mocked(deps.runCaptureOpenshell)
+          .mock.calls.filter(([args]) => args.includes("--selector")),
+      ).toHaveLength(expectedSelectorCalls);
+      expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledOnce();
+      expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
+      expect(input.revalidateVerifiedSandboxBeforeEffect).not.toHaveBeenCalled();
+      expect(patch.exitOnPatchError).not.toHaveBeenCalled();
+      expect(patch.ensureApplied).not.toHaveBeenCalled();
+      expect(mocks.waitForCreatedSandboxReadyWithTrace).not.toHaveBeenCalled();
+    },
+  );
 
   it("waits for the exact created sandbox to appear through its owning gateway (#9833)", async () => {
     let nonce = "";

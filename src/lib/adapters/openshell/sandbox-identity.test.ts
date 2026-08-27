@@ -125,6 +125,12 @@ describe("OpenShell sandbox identity reading", () => {
     ["same-name replacement", sandboxListJson({ labels: {} })],
     ["different name", sandboxListJson({ name: "bravo" })],
     ["ambiguous rows", `${sandboxListJson().slice(0, -1)},${sandboxListJson().slice(1)}`],
+    [
+      "malformed labels",
+      sandboxListJson({
+        labels: { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: CREATE_ATTEMPT_NONCE, other: 1 },
+      }),
+    ],
     ["malformed row", sandboxListJson({ id: "invalid/id" })],
     ["oversized row", sandboxListJson({ id: "a".repeat(513) })],
   ])(
@@ -178,6 +184,25 @@ describe("OpenShell sandbox identity reading", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
+  it("refuses selector command failures without retrying (#10423)", () => {
+    const runCaptureOpenshell = vi.fn((): string => {
+      throw new Error("selector transport failed");
+    });
+    const sleep = vi.fn();
+
+    expect(() =>
+      settleCreatedOpenShellSandboxId({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        createAttemptNonce: CREATE_ATTEMPT_NONCE,
+        runCaptureOpenshell,
+        sleep,
+      }),
+    ).toThrow("OpenShell did not return the exact created identity for sandbox 'alpha'.");
+    expect(runCaptureOpenshell).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
   it("settles an exact nonce identity published after Ready (#9211)", () => {
     let nowMs = 0;
     const sleep = vi.fn((milliseconds: number) => {
@@ -204,6 +229,91 @@ describe("OpenShell sandbox identity reading", () => {
       30_000, 29_750,
     ]);
     expect(sleep).toHaveBeenCalledExactlyOnceWith(250);
+  });
+
+  it("settles one exact nonce identity while its publication metadata becomes complete (#10423)", () => {
+    let nowMs = 0;
+    const sleep = vi.fn((milliseconds: number) => {
+      nowMs += milliseconds;
+    });
+    const runCaptureOpenshell = vi
+      .fn<(args: string[], options?: Record<string, unknown>) => string>()
+      .mockReturnValueOnce(
+        sandboxListJson({
+          resource_version: null,
+          created_at: null,
+          phase: null,
+          current_policy_version: null,
+        }),
+      )
+      .mockReturnValueOnce(sandboxListJson());
+
+    expect(
+      settleCreatedOpenShellSandboxId({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        createAttemptNonce: CREATE_ATTEMPT_NONCE,
+        runCaptureOpenshell,
+        now: () => nowMs,
+        sleep,
+      }),
+    ).toBe("sandbox-alpha");
+
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledExactlyOnceWith(250);
+  });
+
+  it.each([
+    ["changes durable ID", sandboxListJson({ id: "sandbox-bravo" })],
+    ["disappears", "[]"],
+  ])(
+    "refuses a nonce-owned identity that %s after incomplete metadata (#10423)",
+    (_case, secondObservation) => {
+      let nowMs = 0;
+      const sleep = vi.fn((milliseconds: number) => {
+        nowMs += milliseconds;
+      });
+      const runCaptureOpenshell = vi
+        .fn<(args: string[], options?: Record<string, unknown>) => string>()
+        .mockReturnValueOnce(sandboxListJson({ resource_version: null }))
+        .mockReturnValueOnce(secondObservation);
+
+      expect(() =>
+        settleCreatedOpenShellSandboxId({
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          createAttemptNonce: CREATE_ATTEMPT_NONCE,
+          runCaptureOpenshell,
+          now: () => nowMs,
+          sleep,
+        }),
+      ).toThrow("OpenShell did not return the exact created identity for sandbox 'alpha'.");
+
+      expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
+      expect(sleep).toHaveBeenCalledExactlyOnceWith(250);
+    },
+  );
+
+  it.each([
+    ["resource version", { resource_version: "1" }],
+    ["creation time", { created_at: 1 }],
+    ["phase", { phase: [] }],
+    ["policy version", { current_policy_version: "1" }],
+  ])("refuses malformed %s metadata without retrying (#10423)", (_case, overrides) => {
+    const runCaptureOpenshell = vi.fn(() => sandboxListJson(overrides));
+    const sleep = vi.fn();
+
+    expect(() =>
+      settleCreatedOpenShellSandboxId({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        createAttemptNonce: CREATE_ATTEMPT_NONCE,
+        runCaptureOpenshell,
+        sleep,
+      }),
+    ).toThrow("OpenShell did not return the exact created identity for sandbox 'alpha'.");
+    expect(runCaptureOpenshell).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
   });
 
   it("stops exact nonce settlement at the existing deadline (#9211)", () => {
