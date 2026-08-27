@@ -117,9 +117,9 @@ When `channels start` re-enables a channel, NemoClaw records the channel as enab
 The rebuild attaches the existing bridge provider before applying its matching built-in policy preset to the replacement sandbox.
 While a channel remains stopped, the rebuild omits its runtime configuration, token upsert, and channel startup effects.
 Generic providers and refresh bridges remain detached.
+The rebuild omits the stopped channel's inactive built-in messaging preset.
+The rebuild preserves exact custom policies for separate replay, including a custom policy whose name matches a built-in messaging preset.
 <AgentOnly variant="hermes">
-The rebuild also omits the stopped channel's inactive built-in messaging preset.
-Exact custom policies remain preserved for separate replay, including a custom policy whose name matches a built-in messaging preset.
 For stopped Hermes Discord, a preserved custom credential-bound policy requires the exact validated static provider, so the rebuild retains and attaches only that provider without starting Discord or recreating its credentials.
 A missing or incompatible required provider stops the rebuild before the replacement can use the policy.
 </AgentOnly>
