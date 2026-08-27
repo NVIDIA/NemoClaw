@@ -463,6 +463,16 @@ Use `$$nemoclaw <sandbox-name> rebuild` when you want NemoClaw to recreate the s
 #### `--apf-interceptor`
 
 Use this option to request a policyless sandbox creation for an APF-interceptor flow.
+This option currently supports providerless sandbox creation only.
+APF onboarding with an inference provider and model is not yet supported.
+APF onboarding with an OpenShell provider for a Model Context Protocol (MCP) server is also not yet supported.
+OpenShell cannot bind provider attachment to the new sandbox's verified immutable ID.
+If the prepared plan contains any provider, NemoClaw exits before it:
+
+- Creates the sandbox.
+- Registers or changes credentials.
+- Creates, updates, or deletes providers.
+
 The option requires these conditions:
 
 - Start a new onboarding session.
@@ -488,8 +498,8 @@ Do not destroy that sandbox by name.
 Retain the reported sandbox name, create-attempt label, and durable identity fingerprint for comparison only.
 If OpenShell did not return the fingerprint, recovery remains blocked until an administrator resolves the create-attempt label to one exact sandbox.
 Ask an OpenShell administrator to obtain the exact live durable ID, verify it against the fingerprint, and use an identity-bound removal procedure.
-After the administrator confirms removal, start a fresh onboarding attempt.
-`--resume` and `--recreate-sandbox` cannot recover the incomplete attempt.
+This onboarding mode does not support `--resume` or `--recreate-sandbox`, regardless of whether sandbox creation began.
+After the administrator confirms identity-bound removal, repeat the original command with `--fresh` and a new name.
 </Warning>
 
 #### `--tool-disclosure <progressive|direct>`
@@ -886,8 +896,21 @@ Pairing and `TELEGRAM_ALLOWED_IDS` still govern direct messages.
 
 </AgentOnly>
 
-If you cancel a brand-new onboarding run at the policy preset step, NemoClaw rolls back the sandbox, registry entry, and onboarding session instead of leaving a default sandbox with unfinished policy state.
-Existing live sandboxes are not deleted by this cancel rollback path.
+If you cancel a brand-new onboarding run at the policy-tier selector or either policy-preset selector after sandbox creation, NemoClaw preserves the incomplete sandbox, registry entry, and onboarding session for identity-bound recovery.
+NemoClaw reports the durable sandbox identity fingerprint when it is available.
+It does not run OpenShell's mutable-name deletion command because the name may now identify a replacement sandbox.
+Do not delete the sandbox by mutable name.
+Shared inference providers are gateway configuration, not sandbox cleanup targets.
+Sandbox-scoped provider registrations or gateway-bound credentials may remain when the durable recovery record lists them.
+Ask an OpenShell administrator to inspect the exact sandbox identity and remove only sandbox-scoped resources whose ownership is confirmed for the retained sandbox.
+A credential environment name in the recovery record does not prove that its value was exposed.
+Rotate a credential only when identity-bound inspection proves that it was exposed or attached to a retained sandbox-scoped resource.
+NemoClaw stores the recovery record independently from the active onboarding session.
+A fresh run with a different name can proceed without clearing that record, but automatic resume, explicit `--resume`, reuse, recreation, and fresh onboarding with the retained name remain blocked.
+NemoClaw has no supported operation in this release to clear the recovery record, so the retained name remains unavailable even after external recovery or removal.
+Preserve the record as evidence.
+Start fresh onboarding with `--fresh` and another available sandbox name.
+Select the required provider, model, agent, policy, and environment inputs again because `--fresh` does not retain them.
 
 If you run onboarding again with the same sandbox name and choose a different inference provider or model, NemoClaw detects the drift and recreates the sandbox so the running agent config matches your selection.
 In interactive mode, the wizard asks for confirmation before delete and recreate.

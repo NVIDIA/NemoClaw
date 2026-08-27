@@ -1,77 +1,103 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { RetainedSandboxRecoveryContext } from "../state/onboard-session";
+
 // Re-exported so the onboard entrypoint imports its sandbox default/cancel
 // lifecycle helpers from a single module.
 export { restoreDefaultAfterRecreate, wasSandboxDefault } from "./default-preservation";
 
 /**
- * Recovery guard for a sandbox that was created during onboarding but whose
- * onboarding was cancelled before the policy-preset step was confirmed.
+ * Preservation guard for a sandbox whose onboarding is cancelled before the
+ * policy tier and preset selection window is confirmed.
  *
- * OpenShell can destroy a sandbox only by mutable name. Cancellation therefore
- * preserves the sandbox, registry entry, and onboarding session for
- * identity-bound recovery (#9833).
+ * Cancellation preserves the incomplete sandbox, registry entry, and onboarding
+ * session. The guard emits identity-bound recovery guidance and never deletes a
+ * sandbox by mutable name (#4614).
  *
- * The guard is deliberately a two-key gate — it only fires when BOTH:
- *   - a freshly-created sandbox is `arm()`ed (set after createSandbox succeeds), AND
- *   - the operator actually cancelled via `markCancelled()` (the policy-step
- *     prompts call this on Ctrl+C / SIGTERM before exiting).
+ * The guard activates only when both conditions are true:
+ *   - `arm()` records a newly created sandbox after `createSandbox` succeeds.
+ *   - `markCancelled()` records Ctrl+C or SIGTERM at the policy-tier or either
+ *     policy-preset selector.
  *
- * This keeps every other `process.exit(1)` failure path untouched. A genuine
- * build or verification failure exits without `markCancelled()`.
+ * Other `process.exit(1)` failure paths do not call `markCancelled()`. Their
+ * existing preservation behavior remains unchanged.
  */
 export interface SandboxCancelRollbackDeps {
   /** Emit an operator-facing line (stderr). */
   log(message: string): void;
-  /** Agent-specific CLI name used for the recovery command. */
-  cliName: string;
+  /** Persist the recovery-only session before process exit completes. */
+  recordRecovery?(
+    sandboxName: string,
+    sandboxIdentityFingerprint?: string,
+    context?: RetainedSandboxRecoveryContext,
+  ): void;
 }
 
 export interface SandboxCancelRollback {
-  /** Arm rollback for a just-created sandbox. */
-  arm(sandboxName: string): void;
-  /** Disarm once the sandbox is past the cancellable window (policies confirmed). */
+  /** Arm cancellation recovery guidance for a just-created sandbox. */
+  arm(
+    sandboxName: string,
+    sandboxIdentityFingerprint?: string,
+    context?: RetainedSandboxRecoveryContext,
+  ): void;
+  /** Disarm once the sandbox is past the cancellable policy-selection window. */
   disarm(): void;
   /** Record that the operator cancelled at a cancellable step. */
   markCancelled(): void;
-  /** Run the rollback iff armed AND cancelled. Idempotent. */
+  /** Report preservation guidance iff armed AND cancelled. Idempotent. */
   runIfArmed(): void;
   /** Test/introspection helper. */
   isArmed(): boolean;
 }
 
-export function buildCancelRollbackMessage(sandboxName: string, cliName: string): string[] {
+export function buildCancelRollbackMessage(
+  sandboxName: string,
+  sandboxIdentityFingerprint?: string,
+): string[] {
   return [
     "",
-    `  Onboarding cancelled — preserved incomplete sandbox '${sandboxName}' because OpenShell cannot bind sandbox destruction to its durable identity.`,
-    "  Preserve its sandbox registry entry and onboarding session for identity-bound recovery.",
-    `  Run \`${cliName} onboard --resume\` to continue the saved onboarding session.`,
-    "  Do not destroy this sandbox by mutable sandbox name.",
+    `  Onboarding cancelled — preserved incomplete sandbox '${sandboxName}'.`,
+    ...(sandboxIdentityFingerprint
+      ? [
+          `  Durable sandbox identity fingerprint: ${sandboxIdentityFingerprint}`,
+          "  Preserve this fingerprint for identity-bound inspection, recovery, or removal.",
+        ]
+      : [
+          "  Its durable identity fingerprint is unavailable; preserve the registry and onboarding recovery state.",
+          "  Ask an OpenShell administrator to establish the exact sandbox identity before recovery or removal.",
+        ]),
+    "  NemoClaw did not run OpenShell's mutable-name deletion command because the name may now identify a replacement sandbox.",
+    "  Do not delete the sandbox by mutable sandbox name.",
+    "  Shared inference providers are gateway configuration and are not sandbox cleanup targets.",
+    "  Sandbox-scoped provider registrations or gateway-bound credentials may remain when the durable recovery record lists them.",
+    "  Ask an OpenShell administrator to inspect the exact sandbox identity and remove only sandbox-scoped resources whose ownership is confirmed for this retained sandbox.",
+    "  A recorded credential environment name alone does not prove exposure; rotate a credential only when identity-bound inspection proves that it was exposed or attached to a retained sandbox-scoped resource.",
+    "  NemoClaw has no supported operation to clear this recovery record; use a different sandbox name for later onboarding.",
   ];
 }
 
 export interface InstallSandboxCancelRollbackOptions {
-  cliName?: string;
   log?: (message: string) => void;
+  recordRecovery?: SandboxCancelRollbackDeps["recordRecovery"];
   /** Override for tests; defaults to `process.on("exit", ...)`. */
   registerExitHandler?: (handler: () => void) => void;
 }
 
 /**
- * Register the process-exit hook for sandbox cancellation recovery. Kept here
- * so the orchestration lives in a focused module rather than the onboard
- * entrypoint.
+ * Register the process-exit hook that emits cancellation recovery guidance.
+ * Keep this orchestration outside the onboard entrypoint.
  *
- * `process.exit()` synchronously emits `exit`. The handler records recovery
- * guidance only when the guard is armed and the operator cancelled.
+ * Policy-step prompts use `process.exit()` for Ctrl+C. It synchronously emits
+ * `exit`, so the handler reports the recovery guidance before exit completes.
+ * The handler does nothing unless it is armed and the operator cancels.
  */
 export function installSandboxCancelRollback(
   opts: InstallSandboxCancelRollbackOptions = {},
 ): SandboxCancelRollback {
   const rollback = createSandboxCancelRollback({
-    cliName: opts.cliName ?? "nemoclaw",
     log: opts.log ?? ((message) => console.error(message)),
+    recordRecovery: opts.recordRecovery,
   });
   const register =
     opts.registerExitHandler ??
@@ -83,7 +109,7 @@ export function installSandboxCancelRollback(
 }
 
 /**
- * Build the cancel handler the policy-step prompts run on Ctrl+C / SIGTERM:
+ * Build the cancel handler the policy-selection prompts run on Ctrl+C / SIGTERM:
  * restore the terminal (`cleanup`), record the cancel, then exit non-zero.
  * Shared so both the tier and preset selectors stay in sync.
  */
@@ -102,32 +128,85 @@ export function makeOnboardCancelExit(
 export function createSandboxCancelRollback(
   deps: SandboxCancelRollbackDeps,
 ): SandboxCancelRollback {
-  let armedSandboxName: string | null = null;
+  let armedSandbox: {
+    readonly name: string;
+    readonly identityFingerprint: string | null;
+    readonly context: RetainedSandboxRecoveryContext | undefined;
+  } | null = null;
   let cancelRequested = false;
+  let recoveryRecorded = false;
+  let recoveryPersistenceFailed = false;
+  let guidanceReported = false;
   let done = false;
 
+  const recordArmedRecovery = (): boolean => {
+    if (recoveryRecorded) return true;
+    if (armedSandbox === null) return false;
+    try {
+      deps.recordRecovery?.(
+        armedSandbox.name,
+        armedSandbox.identityFingerprint ?? undefined,
+        armedSandbox.context,
+      );
+      recoveryRecorded = true;
+      recoveryPersistenceFailed = false;
+      return true;
+    } catch {
+      recoveryPersistenceFailed = true;
+      return false;
+    }
+  };
+
   return {
-    arm(sandboxName: string): void {
-      armedSandboxName = sandboxName;
+    arm(
+      sandboxName: string,
+      sandboxIdentityFingerprint?: string,
+      context?: RetainedSandboxRecoveryContext,
+    ): void {
+      armedSandbox = {
+        name: sandboxName,
+        identityFingerprint:
+          typeof sandboxIdentityFingerprint === "string" &&
+          /^[0-9a-f]{64}$/u.test(sandboxIdentityFingerprint)
+            ? sandboxIdentityFingerprint
+            : null,
+        context,
+      };
     },
     disarm(): void {
-      armedSandboxName = null;
+      armedSandbox = null;
     },
     markCancelled(): void {
       cancelRequested = true;
+      // Persist before requesting process exit. This also covers callers that
+      // defer the real exit and prevents later exit handlers from replacing
+      // the recovery-only marker with an ordinary resumable failure.
+      recordArmedRecovery();
     },
     isArmed(): boolean {
-      return armedSandboxName !== null;
+      return armedSandbox !== null;
     },
     runIfArmed(): void {
-      if (done || !cancelRequested || armedSandboxName === null) return;
-      done = true;
-      const sandboxName = armedSandboxName;
-      armedSandboxName = null;
-
-      for (const line of buildCancelRollbackMessage(sandboxName, deps.cliName)) {
-        deps.log(line);
+      if (done || !cancelRequested || armedSandbox === null) return;
+      const { name: sandboxName, identityFingerprint } = armedSandbox;
+      const persisted = recordArmedRecovery();
+      if (!guidanceReported) {
+        guidanceReported = true;
+        if (recoveryPersistenceFailed) {
+          deps.log(
+            "  NemoClaw could not save the onboarding recovery record; preserve the registry entry and exact sandbox identity for administrator recovery.",
+          );
+        }
+        for (const line of buildCancelRollbackMessage(
+          sandboxName,
+          identityFingerprint ?? undefined,
+        )) {
+          deps.log(line);
+        }
       }
+      if (!persisted) return;
+      done = true;
+      armedSandbox = null;
     },
   };
 }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -17,10 +18,6 @@ import {
   parseMessagingFixturePayload,
   writeCustomMessagingDockerfile,
 } from "../helpers/messaging-plan-fixtures";
-import {
-  type RunOnboardProcessOptions,
-  runOnboardProcess,
-} from "../helpers/onboard-child-process-harness";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 
 type CommandEntry = {
@@ -42,10 +39,6 @@ const yamlModulePath = requireForTest.resolve("yaml");
 const onboardScriptMocksPath = JSON.stringify(
   path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
 );
-const runMessagingProcess = (
-  scriptPath: string,
-  options: Omit<RunOnboardProcessOptions, "killSignal" | "timeoutMs">,
-) => runOnboardProcess([scriptPath], { ...options, timeoutMs: 45_000, killSignal: "SIGKILL" });
 beforeEach(() => {
   vi.stubEnv("NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG", "1");
   vi.stubEnv("NEMOCLAW_SANDBOX_PREBUILD", "1");
@@ -166,7 +159,6 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
 });
 `;
       fs.writeFileSync(scriptPath, script);
-
       const result = runMessagingProcess(scriptPath, {
         cwd: repoRoot,
         env: {
@@ -460,8 +452,9 @@ const { createSandbox } = require(${onboardPath});
 `;
         fs.writeFileSync(scriptPath, script);
 
-        const result = runMessagingProcess(scriptPath, {
+        const result = spawnSync(process.execPath, [scriptPath], {
           cwd: repoRoot,
+          encoding: "utf-8",
           env: {
             ...process.env,
             HOME: tmpDir,
@@ -545,7 +538,8 @@ runner.run = (command, opts = {}) => {
   const refresh = normalized.match(/provider update -g nemoclaw ([^ ]+)$/)?.[1];
   if (refresh && gatewaySecrets.has(refresh)) { if (refresh === process.env.NEMOCLAW_TEST_FAIL_PROVIDER) return { status: 1 }; revisions.set(refresh, revisions.get(refresh) + 1); return { status: 0 }; }
   if (normalized.includes("provider get")) return { status: 1 };
-  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\nPhase: Ready\n"), stderr: Buffer.alloc(0) } : { status: 0 };};
+  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\nPhase: Ready\n"), stderr: Buffer.alloc(0) } : { status: 0 };
+};
 runner.runCapture = (command) => {
   const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
   if (createdIdentity !== null) return createdIdentity;
@@ -583,8 +577,9 @@ const { createSandbox } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
       const runScenario = (failedProvider?: string) =>
-        runMessagingProcess(scriptPath, {
+        spawnSync(process.execPath, [scriptPath], {
           cwd: repoRoot,
+          encoding: "utf-8",
           env: {
             ...process.env,
             HOME: tmpDir,
@@ -720,7 +715,8 @@ runner.run = (command, opts = {}) => {
   commands.push({ command: normalized, env: opts.env || null });
   if (normalized.includes("provider get -g nemoclaw my-assistant-telegram-bridge")) return { status: 0, stdout: "Name: my-assistant-telegram-bridge\nType: nemoclaw-mcp-v1\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n" };
   if (normalized.includes("provider get")) return { status: 1 };
-  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\nPhase: Ready\n"), stderr: Buffer.alloc(0) } : { status: 0 };};
+  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\nPhase: Ready\n"), stderr: Buffer.alloc(0) } : { status: 0 };
+};
 runner.runCapture = (command) => {
   const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
   if (createdIdentity !== null) return createdIdentity;
@@ -880,7 +876,8 @@ runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null }); if (normalized.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   if (normalized.includes("provider get")) return { status: 1 };
-  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\nPhase: Ready\n"), stderr: Buffer.alloc(0) } : { status: 0 };};
+  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\nPhase: Ready\n"), stderr: Buffer.alloc(0) } : { status: 0 };
+};
 runner.runCapture = (command) => {
   const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
   if (createdIdentity !== null) return createdIdentity;
@@ -953,8 +950,9 @@ const { createSandbox } = require(${onboardPath});
 `;
         fs.writeFileSync(scriptPath, script);
 
-        const result = runMessagingProcess(scriptPath, {
+        const result = spawnSync(process.execPath, [scriptPath], {
           cwd: repoRoot,
+          encoding: "utf-8",
           env: {
             ...process.env,
             HOME: tmpDir,
@@ -1048,7 +1046,8 @@ runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null }); if (normalized.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   if (normalized.includes("provider get")) return { status: 1 };
-  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\nPhase: Ready\n"), stderr: Buffer.alloc(0) } : { status: 0 };};
+  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\nPhase: Ready\n"), stderr: Buffer.alloc(0) } : { status: 0 };
+};
 runner.runCapture = (command) => {
   const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
   if (createdIdentity !== null) return createdIdentity;
@@ -1122,8 +1121,9 @@ const { createSandbox } = require(${onboardPath});
 `;
         fs.writeFileSync(scriptPath, script);
 
-        const result = runMessagingProcess(scriptPath, {
+        const result = spawnSync(process.execPath, [scriptPath], {
           cwd: repoRoot,
+          encoding: "utf-8",
           env: {
             ...process.env,
             HOME: tmpDir,
@@ -1226,8 +1226,9 @@ const { createSandbox } = require(${onboardPath});
 `;
     fs.writeFileSync(scriptPath, script);
 
-    const result = runMessagingProcess(scriptPath, {
+    const result = spawnSync(process.execPath, [scriptPath], {
       cwd: repoRoot,
+      encoding: "utf-8",
       env: {
         ...process.env,
         HOME: tmpDir,
@@ -1279,7 +1280,7 @@ runner.run = require(${onboardScriptMocksPath}).createStatefulMessagingProviderR
 runner.runCapture = (command) => {
   // Existing sandbox that is ready
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) {
-    return "Name: my-assistant\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\n";
+    return "Name: my-assistant\nId: sbx-4f2a91c0d7\n";
   }
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   // All messaging providers already exist in gateway
@@ -1306,8 +1307,9 @@ const { createSandbox } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = runMessagingProcess(scriptPath, {
+      const result = spawnSync(process.execPath, [scriptPath], {
         cwd: repoRoot,
+        encoding: "utf-8",
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -1437,8 +1439,9 @@ const { createSandbox } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = runMessagingProcess(scriptPath, {
+      const result = spawnSync(process.execPath, [scriptPath], {
         cwd: repoRoot,
+        encoding: "utf-8",
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -1520,7 +1523,8 @@ const { EventEmitter } = require("node:events");
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null }); if (_n(command).includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
-  return _n(command).includes("sandbox get") && _n(command).includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\nPhase: Ready\n"), stderr: Buffer.alloc(0) } : { status: 0 };};
+  return _n(command).includes("sandbox get") && _n(command).includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\nPhase: Ready\n"), stderr: Buffer.alloc(0) } : { status: 0 };
+};
 runner.runCapture = (command) => {
   const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
   if (createdIdentity !== null) return createdIdentity;
@@ -1595,8 +1599,9 @@ const { createSandbox } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = runMessagingProcess(scriptPath, {
+      const result = spawnSync(process.execPath, [scriptPath], {
         cwd: repoRoot,
+        encoding: "utf-8",
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -1680,8 +1685,9 @@ const { setupMessagingChannels } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = runMessagingProcess(scriptPath, {
+      const result = spawnSync(process.execPath, [scriptPath], {
         cwd: repoRoot,
+        encoding: "utf-8",
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -1768,8 +1774,9 @@ const { setupMessagingChannels } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = runMessagingProcess(scriptPath, {
+      const result = spawnSync(process.execPath, [scriptPath], {
         cwd: repoRoot,
+        encoding: "utf-8",
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -1830,8 +1837,9 @@ const { setupMessagingChannels } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = runMessagingProcess(scriptPath, {
+      const result = spawnSync(process.execPath, [scriptPath], {
         cwd: repoRoot,
+        encoding: "utf-8",
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -1919,8 +1927,9 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
       // Dry run with just Enter — no toggles, empty result — used to read back
       // Slack's 1-based index from the same subscript so the real run can
       // press the right digit.
-      const introspect = runMessagingProcess(scriptPath, {
+      const introspect = spawnSync(process.execPath, [scriptPath], {
         cwd: repoRoot,
+        encoding: "utf-8",
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -1936,8 +1945,9 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
       // Real run: press Slack's digit, Enter. Slack gets toggled on, prompt
       // fires, mocked prompt returns "abcd", tokenFormat regex rejects it,
       // channel is dropped, saveCredential never runs for SLACK_BOT_TOKEN.
-      const result = runMessagingProcess(scriptPath, {
+      const result = spawnSync(process.execPath, [scriptPath], {
         cwd: repoRoot,
+        encoding: "utf-8",
         env: {
           ...process.env,
           HOME: tmpDir,

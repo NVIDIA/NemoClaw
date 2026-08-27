@@ -33,10 +33,6 @@ type DeferredProviderAttachmentInput = {
   readonly providerNames: readonly string[];
 };
 
-type DeferredProviderAttachmentDeps = Pick<SandboxCreateOrchestrationRuntime, "runOpenshell"> & {
-  readonly revalidateSandboxIdentity: (operation: string) => void;
-};
-
 function expectedMessagingBindings(input: ProviderPreparationInput) {
   return new Map(
     input.messagingProviderRequests
@@ -149,25 +145,10 @@ export function publishAttachedProvidersBeforeDockerSandboxCreation(
 }
 
 /** Attach the planned providers only after the created sandbox passed its exact policy gate. */
-export function attachProvidersAfterSandboxCreation(
-  input: DeferredProviderAttachmentInput,
-  deps: DeferredProviderAttachmentDeps,
-): void {
-  for (const providerName of input.providerNames) {
-    deps.revalidateSandboxIdentity(
-      `attaching provider '${providerName}' to sandbox '${input.sandboxName}'`,
-    );
-    const attached = deps.runOpenshell(
-      ["sandbox", "provider", "attach", "-g", input.gatewayName, input.sandboxName, providerName],
-      { ignoreError: true, suppressOutput: true },
-    );
-    if (attached.status !== 0) {
-      throw new Error(
-        `OpenShell did not attach provider '${providerName}' to the verified sandbox.`,
-      );
-    }
-    deps.revalidateSandboxIdentity(
-      `confirming provider '${providerName}' on sandbox '${input.sandboxName}'`,
-    );
-  }
+export function attachProvidersAfterSandboxCreation(input: DeferredProviderAttachmentInput): void {
+  if (input.providerNames.length === 0) return;
+  throw new Error(
+    `OpenShell cannot attach providers to the immutable identity of sandbox '${input.sandboxName}'. ` +
+      `The sandbox remains incomplete on gateway '${input.gatewayName}'; preserve its verified create checkpoint for administrator recovery.`,
+  );
 }
