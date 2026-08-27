@@ -353,6 +353,15 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     const deps = createDeps();
     const adapterOverride = {} as never;
     deps.createManagedBootstrapAdapter = vi.fn(() => adapterOverride);
+    vi.mocked(deps.runOpenshell).mockImplementation((args) =>
+      args[0] === "sandbox" && args[1] === "get"
+        ? {
+            status: 0,
+            stdout: "Name: alpha\nId: mxc-alpha\nState: Ready\n",
+            stderr: "",
+          }
+        : { status: 0, stdout: "", stderr: "" },
+    );
     vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
       args[1] === "get" ? "ID: mxc-alpha\n" : "alpha Ready",
     );
