@@ -7,7 +7,11 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { resolveDockerDriverNetworkName } from "../onboard/experimental/docker-network-authority";
+import {
+  DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
+  parseDockerNetworkIpamEntries,
+  resolveDockerDriverNetworkName,
+} from "../onboard/experimental/docker-network-authority";
 import { requireCuaServiceEndpoints } from "./service-endpoints";
 
 const RELAY_MARKER = "--nemoclaw-cua-service-relay";
@@ -20,6 +24,7 @@ type RelayState = {
   version: 1;
   sandboxName: string;
   bindHost: string;
+  clientHost: string;
   pid: number;
   endpoints: RelayEndpoint[];
 };
@@ -41,15 +46,58 @@ export function resolveCuaServiceRelayBridgeAddress(
       "network",
       "inspect",
       "--format",
-      "{{(index .IPAM.Config 0).Gateway}}",
+      DOCKER_NETWORK_IPAM_INSPECT_FORMAT,
       resolveDockerDriverNetworkName(env),
     ],
     { ignoreError: true, timeout: READY_TIMEOUT_MS },
-  ).trim();
-  if (!/^(?:10|172\.(?:1[6-9]|2[0-9]|3[01])|192\.168)(?:\.[0-9]{1,3}){2}$/u.test(raw)) {
+  );
+  const gateway = parseDockerNetworkIpamEntries(raw)?.find(
+    ({ gatewayIp }) => gatewayIp && !gatewayIp.includes(":"),
+  )?.gatewayIp;
+  if (!gateway) {
     throw new Error("NemoCUA could not resolve the OpenShell bridge address for its service relay");
   }
-  return raw;
+  return gateway;
+}
+
+function exactIpv4(value: string): boolean {
+  return /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/u.test(value);
+}
+
+function resolveSandboxAddress(
+  sandboxName: string,
+  env: NodeJS.ProcessEnv,
+  capture: typeof dockerCapture = dockerCapture,
+): string {
+  const networkName = resolveDockerDriverNetworkName(env);
+  const address = capture(
+    [
+      "ps",
+      "-a",
+      "-q",
+      "--filter",
+      `label=openshell.ai/sandbox-name=${sandboxName}`,
+      "--filter",
+      "label=openshell.ai/managed-by=openshell",
+    ],
+    { ignoreError: true, timeout: READY_TIMEOUT_MS },
+  )
+    .split(/\s+/u)
+    .filter(Boolean)
+    .map((id) =>
+      capture(
+        [
+          "inspect",
+          "--format",
+          `{{with index .NetworkSettings.Networks ${JSON.stringify(networkName)}}}{{.IPAddress}}{{end}}`,
+          id,
+        ],
+        { ignoreError: true, timeout: READY_TIMEOUT_MS },
+      ).trim(),
+    )
+    .find(exactIpv4);
+  if (!address) throw new Error("NemoCUA could not verify its sandbox bridge address");
+  return address;
 }
 
 function validEndpoints(value: unknown): value is RelayEndpoint[] {
@@ -76,6 +124,7 @@ function readState(file: string): RelayState | null {
     return parsed.version === STATE_VERSION &&
       typeof parsed.sandboxName === "string" &&
       typeof parsed.bindHost === "string" &&
+      typeof parsed.clientHost === "string" &&
       Number.isInteger(parsed.pid) &&
       parsed.pid > 0 &&
       validEndpoints(parsed.endpoints)
@@ -175,7 +224,14 @@ export function ensureCuaServiceRelay(
     );
   }
   const bindHost = resolveCuaServiceRelayBridgeAddress(env);
-  if (previous && processOwnsRelay(previous) && previous.bindHost === bindHost) return;
+  const clientHost = resolveSandboxAddress(sandboxName, env);
+  if (
+    previous &&
+    processOwnsRelay(previous) &&
+    previous.bindHost === bindHost &&
+    previous.clientHost === clientHost
+  )
+    return;
   if (previous) stopCuaServiceRelay(sandboxName);
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const child = spawn(
@@ -187,6 +243,7 @@ export function ensureCuaServiceRelay(
       bindHost,
       Buffer.from(JSON.stringify(endpoints)).toString("base64url"),
       file,
+      clientHost,
     ],
     { detached: true, stdio: "ignore" },
   );
@@ -219,6 +276,10 @@ export async function runCuaServiceRelay(
   if (!validEndpoints(endpoints)) throw new Error("Invalid NemoCUA relay endpoint descriptor");
   const servers = endpoints.map((endpoint) => {
     const server = net.createServer((client) => {
+      if (state && client.remoteAddress !== state.clientHost) {
+        client.destroy();
+        return;
+      }
       const upstream = net.connect(endpoint.port, endpoint.targetHost);
       client.pipe(upstream).pipe(client);
       upstream.on("error", () => client.destroy());
@@ -267,6 +328,7 @@ if (process.argv[2] === RELAY_MARKER) {
     version: STATE_VERSION,
     sandboxName: process.argv[3] as string,
     bindHost: process.argv[4] as string,
+    clientHost: process.argv[7] as string,
     endpoints,
   }).catch(() => process.exit(1));
 }

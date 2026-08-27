@@ -299,6 +299,32 @@ describe("discoverActiveOllamaSandboxNames", () => {
 });
 
 describe("stopSandbox", () => {
+  it("stops a NemoCUA relay only after the sandbox stops successfully (#10289)", () => {
+    const stopCuaServiceRelay = vi.fn();
+    const h = harness({
+      getSandbox: vi.fn(() => sandbox({ agent: "nemocua" })),
+      stopCuaServiceRelay,
+    });
+
+    expect(stopSandbox("my-sandbox", h.deps)).toEqual({ exitCode: 0 });
+    expect(stopCuaServiceRelay).toHaveBeenCalledWith("my-sandbox");
+    expect(h.dockerStop.mock.invocationCallOrder[0]).toBeLessThan(
+      stopCuaServiceRelay.mock.invocationCallOrder[0] as number,
+    );
+  });
+
+  it("preserves a NemoCUA relay when sandbox stop fails (#10289)", () => {
+    const stopCuaServiceRelay = vi.fn();
+    const h = harness({
+      getSandbox: vi.fn(() => sandbox({ agent: "nemocua" })),
+      dockerStop: () => ({ status: 1 }),
+      stopCuaServiceRelay,
+    });
+
+    expect(stopSandbox("my-sandbox", h.deps)).toMatchObject({ exitCode: 1 });
+    expect(stopCuaServiceRelay).not.toHaveBeenCalled();
+  });
+
   it("gracefully stops in-sandbox channels before stopping the container (#6026)", () => {
     const h = harness();
 

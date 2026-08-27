@@ -54,8 +54,13 @@ afterEach(async () => {
 });
 
 describe("NemoCUA service relay", () => {
-  it("inspects the selected Docker network with a bounded timeout (#10289)", () => {
-    const capture = vi.fn(() => "172.19.0.1\n");
+  it("selects an IPv4 gateway after an IPv6 IPAM entry (#10289)", () => {
+    const capture = vi.fn(() =>
+      JSON.stringify([
+        { Subnet: "fd00::/64", Gateway: "fd00::1" },
+        { Subnet: "172.19.0.0/16", Gateway: "172.19.0.1" },
+      ]),
+    );
 
     expect(
       resolveCuaServiceRelayBridgeAddress(
@@ -64,13 +69,13 @@ describe("NemoCUA service relay", () => {
       ),
     ).toBe("172.19.0.1");
     expect(capture).toHaveBeenCalledWith(
-      ["network", "inspect", "--format", "{{(index .IPAM.Config 0).Gateway}}", "selected-network"],
+      ["network", "inspect", "--format", "{{json .IPAM.Config}}", "selected-network"],
       { ignoreError: true, timeout: 5_000 },
     );
   });
 
   it("rejects an invalid Docker bridge address (#10289)", () => {
-    expect(() => resolveCuaServiceRelayBridgeAddress({}, (() => "203.0.113.1") as never)).toThrow(
+    expect(() => resolveCuaServiceRelayBridgeAddress({}, (() => "not-json") as never)).toThrow(
       "could not resolve the OpenShell bridge address",
     );
   });
@@ -87,6 +92,7 @@ describe("NemoCUA service relay", () => {
         version: 1,
         sandboxName,
         bindHost: "172.19.0.1",
+        clientHost: "172.19.0.2",
         pid: 999_999_999,
         endpoints: [
           { role: "browser", targetHost: "127.0.0.1", port: 18001 },
@@ -123,6 +129,7 @@ describe("NemoCUA service relay", () => {
       version: 1,
       sandboxName: "test-sandbox",
       bindHost: "127.0.0.1",
+      clientHost: "127.0.0.1",
       endpoints,
     });
     servers.push(...listeners);

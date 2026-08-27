@@ -238,6 +238,7 @@ export interface SandboxStopDeps {
   ) => OllamaActiveOwnershipDiscovery;
   unloadOllamaModels?: (onlyModels: readonly string[]) => OllamaUnloadResult;
   decideOllamaModelOwnership?: typeof decideOllamaModelOwnership;
+  stopCuaServiceRelay?: (sandboxName: string) => void;
   withOllamaModelOwnershipLock?: typeof import("../../inference/ollama/proxy").withOllamaModelOwnershipLock;
   withLifecycleLockSync?: typeof withSandboxLifecycleLockSync;
   log?: (message: string) => void;
@@ -301,7 +302,7 @@ function stopSandboxWithinLifecycleFence(
   if (outcome.exitCode !== 0) return outcome;
   if (resolved.sandbox.agent === "nemocua") {
     const { stopCuaServiceRelay } = require("../../cua/service-relay") as typeof import("../../cua/service-relay");
-    stopCuaServiceRelay(sandboxName);
+    (deps.stopCuaServiceRelay ?? stopCuaServiceRelay)(sandboxName);
   }
   const hermesPortableVerified =
     "hermesPortableVerified" in outcome && outcome.hermesPortableVerified === true;

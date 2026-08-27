@@ -116,6 +116,30 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
 }
 
 describe("startSandbox", () => {
+  it("starts a NemoCUA relay before sandbox start and removes it after failure (#10289)", async () => {
+    const ensureCuaServiceRelay = vi.fn();
+    const stopCuaServiceRelay = vi.fn();
+    const h = harness({
+      getSandbox: vi.fn(() => sandbox({ agent: "nemocua" })),
+      ensureCuaServiceRelay,
+      stopCuaServiceRelay,
+    });
+    h.recoverDockerDriverSandbox.mockReturnValue({
+      recovered: false,
+      via: null,
+      detail: "sandbox start failed",
+    });
+
+    const result = await startSandbox("my-sandbox", h.deps);
+
+    expect(result).toMatchObject({ exitCode: 1 });
+    expect(ensureCuaServiceRelay).toHaveBeenCalledWith("my-sandbox", process.env);
+    expect(stopCuaServiceRelay).toHaveBeenCalledWith("my-sandbox");
+    expect(ensureCuaServiceRelay.mock.invocationCallOrder[0]).toBeLessThan(
+      h.recoverDockerDriverSandbox.mock.invocationCallOrder[0] as number,
+    );
+  });
+
   it("restores sealed access before recovering sandbox processes (#8112)", async () => {
     const restoreAccess = vi.fn();
     const recovery = SUCCESSFUL_RECOVERY;
