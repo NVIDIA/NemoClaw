@@ -59,8 +59,13 @@ The decision record is tracked in [NVIDIA/NemoClaw#566](https://github.com/NVIDI
 ## Authenticated MCP Security Boundary
 
 Authenticated MCP is the intended configuration.
-The agent stores only the `openshell:resolve:env:KEY` placeholder.
+The agent stores only an OpenShell resolver placeholder for the recorded credential key.
 OpenShell keeps the raw credential in its provider store and combines credential replacement with generated MCP policy at egress.
+
+<AgentOnly variant="hermes">
+Hermes includes the credential revision from the readiness check in this placeholder.
+Registration, inspection, rollback, and lifecycle reconciliation preserve that revision while OpenShell still reports it.
+</AgentOnly>
 
 For the normal MCP client path, OpenShell evaluates the effective policy for the destination host and port, adapter binary, literal endpoint path, and MCP method before replacing placeholders in allowed HTTP request headers.
 The generated policy grants only the configured destination, path, adapter binaries, pinned addresses, explicit MCP method profile, and a 131,072-byte maximum request body.
@@ -134,8 +139,11 @@ mcp_servers:
       resources: true
       prompts: true
     headers:
-      Authorization: Bearer openshell:resolve:env:GITHUB_MCP_TOKEN
+      Authorization: Bearer openshell:resolve:env:v12_GITHUB_MCP_TOKEN
 ```
+
+The `v12_` prefix is an illustrative OpenShell credential revision.
+Hermes records the revision that the readiness check proves for the live provider.
 
 ### Prepare Hermes for Mutation
 

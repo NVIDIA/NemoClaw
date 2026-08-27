@@ -8,6 +8,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentMcpAdapter } from "../../src/lib/agent/defs";
 import type { McpBridgeEntry } from "../../src/lib/state/registry";
+import { findObservedCredentialRevision } from "../helpers/mcp-provider-revision";
 import { mockManagedEndpointlessProviderProfileRun } from "../helpers/onboard-script-mocks.cjs";
 
 const testState = vi.hoisted(() => {
@@ -38,7 +39,10 @@ const testState = vi.hoisted(() => {
     originalEnv,
     policyApplyCalls: 0,
     removedPolicyKeys: new Set<string>(),
-    providers: new Map<string, { credential: string; id: string; resourceVersion?: number }>(),
+    providers: new Map<
+      string,
+      { credential: string; credentialRevision?: string; id: string; resourceVersion?: number }
+    >(),
     resolveHostAddresses: vi.fn(),
     attachedProviders: new Set<string>(),
     recoverNamedGatewayRuntime: vi.fn(),
@@ -347,16 +351,11 @@ beforeEach(() => {
     const encoded = command.match(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d/)?.[1] ?? "";
     const proof = encoded ? Buffer.from(encoded, "base64").toString("utf8") : command;
     const isRevisionObservation = proof.includes("printf '%s\\n' absent");
-    const observedCredential = proof.includes("openshell:resolve:env:GITHUB_TOKEN")
-      ? "GITHUB_TOKEN"
-      : proof.includes("openshell:resolve:env:SLACK_TOKEN")
-        ? "SLACK_TOKEN"
-        : null;
-    const credentialAttached =
-      observedCredential !== null &&
-      [...testState.attachedProviders].some(
-        (providerName) => testState.providers.get(providerName)?.credential === observedCredential,
-      );
+    const credentialRevision = findObservedCredentialRevision(
+      proof,
+      testState.attachedProviders,
+      testState.providers,
+    );
     return {
       status:
         isNoopProbe ||
@@ -366,7 +365,7 @@ beforeEach(() => {
         proof.includes("openshell:resolve:env:SLACK_TOKEN")
           ? 0
           : 1,
-      stdout: isRevisionObservation ? (credentialAttached ? "canonical" : "absent") : "",
+      stdout: isRevisionObservation ? (credentialRevision ?? "absent") : "",
       stderr: "",
     };
   });
@@ -1330,7 +1329,7 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     ["destroy", "prepareMcpBridgesForDestroy"],
     ["rebuild", "prepareMcpBridgesForRebuild"],
   ] as const)(
-    "reattaches an already-absent first provider when a later %s detach fails",
+    "fails closed before a later %s detach when an already-detached provider has no provable credential revision",
     async (_label, prepareFunction) => {
       registry.registerSandbox({
         name: "alpha",
@@ -1340,26 +1339,27 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
       });
       registry.addCustomPolicy("alpha", ownedPolicy("github"));
       registry.addCustomPolicy("alpha", ownedPolicy("slack"));
-      // Simulate a prior process dying after the first detach but before a durable
-      // prepared marker. The retry must own rollback of this already-absent binding.
+      // The prior process died after the first detach, so retry cannot prove
+      // the opaque credential revision needed to scrub and later restore it.
       testState.attachedProviders.delete("alpha-mcp-github");
       testState.failProviderDetach = "alpha-mcp-slack";
 
       const message = await captureMessage(() => bridge[prepareFunction]("alpha"));
-
-      expect(message).toContain("provider detach failed");
-      expect([...testState.attachedProviders].sort()).toEqual([
-        "alpha-mcp-github",
-        "alpha-mcp-slack",
-      ]);
+      expect(message).toContain(
+        "Could not prove a revision-scoped credential before removing the managed adapter entry for MCP server 'github'.",
+      );
+      expect([...testState.attachedProviders]).toEqual(["alpha-mcp-slack"]);
       expect(
         testState.calls.some((call) => call === "sandbox provider attach alpha alpha-mcp-github"),
-      ).toBe(true);
+      ).toBe(false);
+      expect(
+        testState.calls.some((call) => call === "sandbox provider detach alpha alpha-mcp-slack"),
+      ).toBe(false);
       expect(testState.adapterRegistered).toBe(true);
     },
   );
 
-  it("reattaches every desired provider when rebuild deletion aborts after a retry", async () => {
+  it("reattaches every desired provider when rebuild deletion aborts", async () => {
     registry.registerSandbox({
       name: "alpha",
       agent: "openclaw",
@@ -1368,9 +1368,8 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     });
     registry.addCustomPolicy("alpha", ownedPolicy("github"));
     registry.addCustomPolicy("alpha", ownedPolicy("slack"));
-    // The first rebuild process died after detaching github. A retry completes
-    // preparation, then sandbox deletion is modeled as failed by invoking abort.
-    testState.attachedProviders.delete("alpha-mcp-github");
+    // Preparation proves both credential revisions before detaching either
+    // provider, then sandbox deletion is modeled as failed by invoking abort.
 
     const preparation = await bridge.prepareMcpBridgesForRebuild("alpha");
     const detachedBeforeAbort = [...testState.attachedProviders].sort();

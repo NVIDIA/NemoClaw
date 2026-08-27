@@ -360,13 +360,14 @@ function validateWorkspaceCleanup(
   const cleanup = namedStep(job, "Verify workflow-owned workspace cleanup") as
     | (WorkflowStep & { "timeout-minutes"?: number })
     | undefined;
+  const cleanupCommand = String(cleanup?.run).trim();
   recordValidation(
     errors,
     cleanup?.if === "${{ always() && steps.prepare.outputs.work_dir != '' }}" &&
       cleanup.env?.BREV_WORKSPACE_OWNERSHIP_FILE ===
         scenario?.env?.BREV_WORKSPACE_OWNERSHIP_FILE &&
       cleanup.env?.HOME === prepare?.env?.HOME &&
-      String(cleanup.run).includes("tools/e2e/cleanup-brev-workspace.mts") &&
+      cleanupCommand === "./node_modules/.bin/tsx tools/e2e/cleanup-brev-workspace.mts" &&
       Number(cleanup["timeout-minutes"]) * MINUTE_MS >= timeouts.cleanupTimeoutMs,
     "workflow must always reconcile its owned Brev workspace before removing credentials",
   );

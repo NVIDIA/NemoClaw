@@ -15,6 +15,7 @@ import type { HermesPortableOpenShellExecutableAuthority } from "../../adapters/
 import type { HermesPortablePodmanExecutableAuthority } from "./hermes-portable-podman-authority";
 import {
   HERMES_PORTABLE_RECEIPT_SCHEMA_VERSION,
+  HERMES_PORTABLE_SUCCESSOR_SCHEMA_VERSION,
   captureHermesPortablePolicySource,
   hermesPortablePolicySourcePath,
   hermesPortableReceiptDirectory,
@@ -22,8 +23,10 @@ import {
   hermesPortableReceiptRoot,
   inspectPortableAgentReceiptAuthority,
   inspectPortableAgentReceiptAuthorityForPublicationRecovery,
+  readHermesPortableLifecycleReceiptForClassification,
   publishHermesPortableDurablePolicySource,
   publishHermesPortableLifecycleReceipt,
+  publishHermesPortableSuccessorReceipt,
   readHermesPortableLifecycleReceipt,
   type HermesPortableConfiguredReceipt,
   type HermesPortablePendingReceipt,
@@ -308,6 +311,20 @@ function publish(
   });
 }
 
+function publishActiveReceipt() {
+  const reserved = publish(pending());
+  const configured = publish(configuring(reserved));
+  return publish(active(configured));
+}
+
+function publishSuccessor() {
+  return withMcpLifecycleLockSync(
+    SANDBOX,
+    () => publishHermesPortableSuccessorReceipt(SANDBOX, stateDir),
+    { stateDir: path.join(stateDir, "state") },
+  );
+}
+
 function leaveInterruptedReceiptPrefix(receipt: HermesPortablePendingReceipt): string {
   const originalWrite = fs.writeSync;
   const writeSpy = vi.spyOn(fs, "writeSync") as unknown as {
@@ -483,6 +500,127 @@ describe("Hermes portable receipt authority", () => {
       phase: "active",
       container: { containerId: CONTAINER_ID, restartPolicy: "unless-stopped", running: true },
     });
+  });
+
+  it("publishes deterministic schema-6 authority without changing schema-5 history (#10423)", () => {
+    const historical = publishActiveReceipt();
+
+    const published = publishSuccessor();
+    const repeated = publishSuccessor();
+
+    expect(published.successor.receipt).toMatchObject({
+      schemaVersion: HERMES_PORTABLE_SUCCESSOR_SCHEMA_VERSION,
+      predecessorActiveSha256: historical.sha256,
+      phase: "active",
+    });
+    expect(repeated.successor.bytes).toEqual(published.successor.bytes);
+    expect(published.bytes).toEqual(historical.bytes);
+    expect(published.identity).toEqual(historical.identity);
+    expect(repeated.bytes).toEqual(historical.bytes);
+    expect(repeated.identity).toEqual(historical.identity);
+  });
+
+  it("requalifies an identical same-path policy copy only through schema 6 (#10423)", () => {
+    const historical = publishActiveReceipt();
+    const policyTarget = historical.receipt.policy.sourcePath;
+    const replacement = `${policyTarget}.replacement`;
+    fs.writeFileSync(replacement, fs.readFileSync(policyTarget), { mode: 0o600 });
+    fs.renameSync(replacement, policyTarget);
+
+    expect(() => readHermesPortableLifecycleReceipt(SANDBOX, stateDir)).toThrow(
+      "durable policy source disagrees with its receipt authority",
+    );
+    expect(
+      readHermesPortableLifecycleReceiptForClassification(SANDBOX, stateDir)?.receipt.phase,
+    ).toBe("active");
+
+    const migrated = publishSuccessor();
+    expect(migrated.successor.receipt.predecessorActiveSha256).toBe(historical.sha256);
+    expect(readHermesPortableLifecycleReceipt(SANDBOX, stateDir)?.successor?.sha256).toBe(
+      migrated.successor.sha256,
+    );
+  });
+
+  it("rejects changed policy bytes before schema-6 publication (#10423)", () => {
+    publishActiveReceipt();
+    const policyTarget = readHermesPortableLifecycleReceipt(SANDBOX, stateDir)!.receipt.policy
+      .sourcePath;
+    fs.writeFileSync(policyTarget, "version: 1\nnetwork_policies:\n  changed: {}\n", {
+      mode: 0o600,
+    });
+
+    expect(() => readHermesPortableLifecycleReceiptForClassification(SANDBOX, stateDir)).toThrow(
+      "durable policy source disagrees with its semantic authority",
+    );
+    expect(() => publishSuccessor()).toThrow(
+      "durable policy source disagrees with its semantic authority",
+    );
+  });
+
+  it.each([
+    [
+      "symlink substitution",
+      (target: string) => {
+        const backing = path.join(stateDir, "policy-symlink-backing.yaml");
+        fs.renameSync(target, backing);
+        fs.symlinkSync(backing, target);
+      },
+      () => "ELOOP",
+    ],
+    [
+      "hard-link substitution",
+      (target: string) => fs.linkSync(target, path.join(stateDir, "policy-hardlink.yaml")),
+      (target: string) => `file is unsafe: ${target}`,
+    ],
+    [
+      "unsafe mode",
+      (target: string) => fs.chmodSync(target, 0o644),
+      (target: string) => `file is unsafe: ${target}`,
+    ],
+  ])("rejects %s during schema-6 requalification (#10423)", (_label, mutate, expected) => {
+    publishActiveReceipt();
+    const target = readHermesPortableLifecycleReceipt(SANDBOX, stateDir)!.receipt.policy.sourcePath;
+    mutate(target);
+
+    expect(() => readHermesPortableLifecycleReceiptForClassification(SANDBOX, stateDir)).toThrow(
+      expected(target),
+    );
+    expect(() => publishSuccessor()).toThrow(expected(target));
+  });
+
+  it("reconciles an exact interrupted schema-6 publication (#10423)", () => {
+    publishActiveReceipt();
+    expect(() =>
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () =>
+          publishHermesPortableSuccessorReceipt(SANDBOX, stateDir, {
+            afterCanonicalLink: () => {
+              throw new Error("simulated schema-6 process exit");
+            },
+          }),
+        { stateDir: path.join(stateDir, "state") },
+      ),
+    ).toThrow("simulated schema-6 process exit");
+    expect(() => readHermesPortableLifecycleReceipt(SANDBOX, stateDir)).toThrow(
+      "incomplete or unknown publication evidence",
+    );
+    expect(
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () => inspectPortableAgentReceiptAuthorityForPublicationRecovery(SANDBOX, stateDir),
+        { stateDir: path.join(stateDir, "state") },
+      ),
+    ).toMatchObject({
+      kind: "hermes",
+      snapshot: { receipt: { phase: "active" }, successor: { receipt: { schemaVersion: 6 } } },
+    });
+
+    const recovered = publishSuccessor();
+    expect(recovered.successor.receipt.schemaVersion).toBe(
+      HERMES_PORTABLE_SUCCESSOR_SCHEMA_VERSION,
+    );
+    expect(fs.statSync(recovered.successor.path).nlink).toBe(1);
   });
 
   it("rejects a phase whose previous digest does not match the durable prior bytes (#9203)", () => {

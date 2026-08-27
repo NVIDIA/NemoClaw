@@ -258,7 +258,7 @@ export function validateTrustedHermesSwapWorkflow(workflowValue: unknown): strin
       continue;
     }
 
-    if (job.needs !== "generate-matrix") {
+    if (!isDeepStrictEqual(job.needs, ["base-image-publication", "generate-matrix"])) {
       errors.push(`${jobName} trusted Hermes swap job must depend on controller validation`);
     }
     if (provisionSteps.length !== 1) {
