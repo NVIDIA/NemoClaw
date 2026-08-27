@@ -104,6 +104,19 @@ describe("CLI layer import boundaries (#6245)", () => {
     );
   });
 
+  it.each([
+    ["CommonJS require", 'export const ports = require("../../bin/lib/ports.js");\n'],
+    ["dynamic import", 'export const ports = import("../../bin/lib/ports.js");\n'],
+  ])("blocks packaged bin shims loaded through %s (#6245)", (_case, source) => {
+    const violations = scanFixture(fixturePath("src/lib", "bin-lib-call"), source);
+
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ rule: "src-no-bin-lib-shims" }),
+      ]),
+    );
+  });
+
   it("classifies a bin shim imported through a source-tree symlink (#6245)", () => {
     const importer = fixturePath("src/lib", "bin-lib-alias-importer");
     const alias = fixturePath("src/lib", "bin-lib-alias", ".js");
