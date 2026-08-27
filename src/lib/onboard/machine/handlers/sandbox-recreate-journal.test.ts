@@ -688,6 +688,70 @@ it("creates a missing sandbox from a preserved registry row without removing the
   expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
 });
 
+it("opens the lifecycle journal for a fresh route reservation before creation (#9833)", async () => {
+  const session = createSession({ sandboxName: "fresh", agent: "openclaw" });
+  session.checkpoint = {
+    ...deriveCheckpointFromSession(session),
+    sandboxIdentity: decisionSelected({ name: "fresh", agent: "openclaw" }),
+    gatewayAuthority: decisionSelected({
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
+  };
+  const reservation: SandboxEntry = {
+    name: "fresh",
+    provider: "provider",
+    model: "model",
+    endpointUrl: null,
+    preferredInferenceApi: "openai-completions",
+    gatewayName: "nemoclaw",
+    gatewayPort: 8080,
+    pendingRouteReservation: true,
+    reservationSessionId: session.sessionId,
+  };
+  let observation: SandboxRecreateObservation = {
+    state: "missing",
+    liveIdentityFingerprint: null,
+  };
+  const createSandbox = vi.fn(async (...args: unknown[]) => {
+    const transaction = session.checkpoint?.sandboxRecreate;
+    expect(transaction).toBeDefined();
+    expect(args.at(-1)).toMatchObject({
+      recreate: true,
+      recreateTransaction: {
+        id: transaction?.id,
+        targetGeneration: transaction?.targetGeneration,
+      },
+    });
+    advanceSandboxRecreateTransaction(session, transaction!.id, "creating");
+    observation = {
+      state: "ready",
+      liveIdentityFingerprint: fingerprintSandboxRecreateValue("fresh-id"),
+    };
+    recordSandboxRecreateTargetCreated(session, transaction!.id, observation);
+    return "fresh";
+  });
+  const { deps } = createDeps(
+    {
+      getSandboxRegistryEntry: () => reservation,
+      getSandboxRecreateObservation: () => observation,
+      createSandbox,
+    },
+    session,
+  );
+
+  await handleSandboxState({ ...baseOptions(deps, session), sandboxName: "fresh" });
+
+  expect(createSandbox).toHaveBeenCalledOnce();
+  expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
+});
+
 it("preserves registry state until journaled messaging recreation commits (#7736)", async () => {
   const session = createSession();
   const journal = bindJournaledRecreate(session);
