@@ -11,6 +11,7 @@ export default async function monitor_pr_until_actionable(input: {
   ignoreChecks?: string[];
   ignoreReviewIds?: Integer[];
   ignoreCommentIds?: Integer[];
+  ignoreDiscussionCommentIds?: Integer[];
   settleCheckPrefixes?: string[];
   findingBodyCharacters?: Integer;
 }): Promise<{
@@ -69,6 +70,7 @@ export default async function monitor_pr_until_actionable(input: {
   )
     throw new Error("settleCheckPrefixes must contain at most 20 bounded strings");
   const validateIds = (values, name) => {
+    if ((values?.length ?? 0) > 100) throw new Error(name + " must contain at most 100 IDs");
     for (const value of values ?? [])
       if (!Number.isSafeInteger(value) || value < 1)
         throw new Error(name + " must contain positive integer IDs");
@@ -77,6 +79,10 @@ export default async function monitor_pr_until_actionable(input: {
   const ignoredChecks = new Set(input.ignoreChecks ?? []),
     ignoredReviews = validateIds(input.ignoreReviewIds, "ignoreReviewIds"),
     ignoredComments = validateIds(input.ignoreCommentIds, "ignoreCommentIds"),
+    ignoredDiscussionComments = validateIds(
+      input.ignoreDiscussionCommentIds,
+      "ignoreDiscussionCommentIds",
+    ),
     deadline = Date.now() + timeout,
     snapshots = [],
     observedSettlePrefixes = new Set();
@@ -155,7 +161,8 @@ export default async function monitor_pr_until_actionable(input: {
             !ignoredReviews.has(Number(x.id))) ||
           (x.type === "inline-comment" &&
             unresolvedRootIds.has(Number(x.id)) &&
-            !ignoredComments.has(Number(x.id))),
+            !ignoredComments.has(Number(x.id))) ||
+          (x.type === "discussion-comment" && !ignoredDiscussionComments.has(Number(x.id))),
       )
       .map((x) => ({
         type: String(x.type),
@@ -187,12 +194,18 @@ export default async function monitor_pr_until_actionable(input: {
     const waitingForReviewChecks = settleCheckPrefixes.some(
       (prefix) =>
         !observedSettlePrefixes.has(prefix) ||
-        pendingChecks.some((check) => check.name.startsWith(prefix)),
+        checks.some(
+          (check) =>
+            check.name.startsWith(prefix) &&
+            ["PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "EXPECTED"].includes(
+              String(check.state).toUpperCase(),
+            ),
+        ),
     );
     if (
-      failedChecks.length ||
+      (failedChecks.length && !waitingForReviewChecks) ||
       (findings.length && !waitingForReviewChecks) ||
-      (observedChecks && !pendingChecks.length)
+      (observedChecks && !pendingChecks.length && !waitingForReviewChecks)
     )
       return {
         done: observedChecks && !pendingChecks.length,

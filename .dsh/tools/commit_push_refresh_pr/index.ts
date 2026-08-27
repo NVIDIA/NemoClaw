@@ -102,7 +102,7 @@ export default async function commit_push_refresh_pr(input: {
       "--repo",
       repo,
       "--json",
-      "headRefName,headRefOid,url,title,state",
+      "headRefName,headRefOid,baseRefName,url,title,state",
     ],
   });
   const pr = JSON.parse(prRead.stdout);
@@ -235,11 +235,16 @@ export default async function commit_push_refresh_pr(input: {
       beforePush.headRefName !== branch
     )
       throw new Error("PR identity changed after commit; do not push or update evidence");
-    pushResult = await run(
-      "git push " + quote(remote) + " " + quote("HEAD:refs/heads/" + branch),
-      "Push pull request commit",
-      120000,
-    );
+    pushResult = await tools.publish_nemoclaw_pr_branch({
+      workdir: input.workdir,
+      repository: repo,
+      remote,
+      baseBranch: pr.baseRefName,
+      expectedHeadSha: localHead,
+      pullNumber: input.pullNumber,
+      requireClean: false,
+      apply: true,
+    });
     let remoteHead = "";
     for (let attempt = 0; attempt < 5; attempt += 1) {
       let viewed;
@@ -295,6 +300,7 @@ export default async function commit_push_refresh_pr(input: {
       expectedHeadSha: localHead,
       timeoutMs: 300000,
       intervalMs: 20000,
+      settleCheckPrefixes: ["Specialist /", "CodeRabbit"],
     });
   const finalCheckout = await tools.read_git_checkout({
     workdir: input.workdir,

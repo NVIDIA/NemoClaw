@@ -137,7 +137,7 @@ export default async function prepare_pr_for_human_review(input: {
       "--repo",
       repo,
       "--json",
-      "headRefName,headRefOid,url,title,state",
+      "headRefName,headRefOid,baseRefName,url,title,state",
     ],
     timeoutMs: 30000,
   });
@@ -149,51 +149,15 @@ export default async function prepare_pr_for_human_review(input: {
   if (!/^[0-9a-f]{40,64}$/.test(localHead)) throw new Error("Local HEAD is invalid");
   let push = null;
   if (input.push !== false) {
-    const pushed = await tools.bash({
-      command: "git push " + quote("origin") + " " + quote("HEAD:refs/heads/" + pr.headRefName),
+    push = await tools.publish_nemoclaw_pr_branch({
       workdir: input.workdir,
-      description: "Push human review branch",
-      timeoutMs: 120000,
+      repository: repo,
+      remote: "origin",
+      baseBranch: pr.baseRefName,
+      expectedHeadSha: localHead,
+      pullNumber: input.pullNumber,
+      apply: true,
     });
-    if (pushed.kind !== "foreground") throw new Error("Git push did not finish");
-    const [pushStdout, pushStderr] = await Promise.all([
-      tools.project_diagnostic_text({
-        lines: [pushed.stdout.text],
-        clipMode: "tail",
-        maxCharacters: 2000,
-        maxLineCharacters: 500,
-        sourceTruncated: pushed.stdout.truncated,
-      }),
-      tools.project_diagnostic_text({
-        lines: [pushed.stderr.text],
-        clipMode: "tail",
-        maxCharacters: 4000,
-        maxLineCharacters: 500,
-        sourceTruncated: pushed.stderr.truncated,
-      }),
-    ]);
-    push = {
-      code: pushed.exitCode,
-      stdout: pushStdout.text,
-      stderr: pushStderr.text,
-      truncated:
-        pushed.stdout.truncated ||
-        pushed.stderr.truncated ||
-        pushStdout.truncated ||
-        pushStderr.truncated,
-    };
-    if (pushed.exitCode !== 0) {
-      const pushError = await tools.project_diagnostic_text({
-        lines: [pushed.stderr.text],
-        clipMode: "tail",
-        maxCharacters: 4000,
-        maxLineCharacters: 500,
-        sourceTruncated: pushed.stderr.truncated,
-      });
-      throw new Error(
-        "Git push failed; stop and resolve GitHub access before continuing.\n" + pushError.text,
-      );
-    }
   } else if (localHead !== pr.headRefOid)
     throw new Error("push:false requires the local commit to match the PR commit");
   const receipt = await tools.refresh_pr_body_evidence({

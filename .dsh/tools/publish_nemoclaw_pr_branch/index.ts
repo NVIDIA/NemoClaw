@@ -8,6 +8,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
   baseBranch?: string;
   expectedHeadSha: string;
   pullNumber?: Integer;
+  requireClean?: boolean;
   apply?: true;
 }): Promise<{
   apply: boolean;
@@ -65,7 +66,8 @@ export default async function publish_nemoclaw_pr_branch(input: {
   const head = checkout.head;
   if (head !== input.expectedHeadSha)
     throw new Error("Local commit does not match expectedHeadSha");
-  if (!checkout.clean) throw new Error("Publication candidate has uncommitted changes");
+  if (input.requireClean !== false && !checkout.clean)
+    throw new Error("Publication candidate has uncommitted changes");
   const branch = checkout.branch ?? "";
   if (!branch || branch === baseBranch) throw new Error("Publication requires a feature branch");
   const repositoryDetails = await tools.run_github_cli({
@@ -128,7 +130,8 @@ export default async function publish_nemoclaw_pr_branch(input: {
   const commitCount = Number(
     (
       await run(
-        "git rev-list --count --max-count=101 " + q(remote + "/" + baseBranch + "..HEAD"),
+        "git rev-list --count --max-count=101 " +
+          q(remote + "/" + baseBranch + ".." + input.expectedHeadSha),
         "Count publication commits",
       )
     ).stdout.text.trim(),
@@ -138,7 +141,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
   if (commitCount > 100) throw new Error("Publication exceeds the 100-commit verification bound");
   const commits = (
     await run(
-      "git rev-list --reverse " + q(remote + "/" + baseBranch + "..HEAD"),
+      "git rev-list --reverse " + q(remote + "/" + baseBranch + ".." + input.expectedHeadSha),
       "List publication commits",
     )
   ).stdout.text
@@ -164,8 +167,21 @@ export default async function publish_nemoclaw_pr_branch(input: {
       allVerified: false,
       blocker: null,
     };
+  const beforePush = await tools.read_git_checkout({
+    workdir: input.workdir,
+    includeRoot: false,
+  });
+  if (
+    beforePush.head !== input.expectedHeadSha ||
+    !beforePush.clean ||
+    beforePush.branch !== branch
+  )
+    throw new Error("Publication candidate changed after validation");
   await run(
-    "git push --set-upstream " + q(remote) + " " + q("HEAD:refs/heads/" + branch),
+    "git push --set-upstream " +
+      q(remote) +
+      " " +
+      q(input.expectedHeadSha + ":refs/heads/" + branch),
     "Push pull request candidate branch",
   );
   const verified = [];
