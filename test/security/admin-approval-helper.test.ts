@@ -184,35 +184,13 @@ describe("prepared connect-shell administrative approval", () => {
   });
 
   it.each(["array", "object"] as const)(
-    "selects only the cron requestId on its exact paired CLI device and bounded scopes [case %#] (#5324)",
+    "accepts exact paired CLI grants, including compact device scopes [case %#] (#5324)",
     (tokenShape) => {
       const result = runSelector(adminState(tokenShape));
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout.trim()).toBe(EXPECTED_REQUEST_ID);
     },
   );
-
-  it("accepts compact device grants when the active token includes implied read scope (#5324)", () => {
-    const state = adminState("object");
-    const device = (
-      state.paired as Array<{
-        approvedScopes: string[];
-        scopes: string[];
-        tokens: { operator: { scopes: string[] } };
-      }>
-    )[0];
-
-    expect(device.scopes).toEqual(["operator.pairing", "operator.write"]);
-    expect(device.tokens.operator.scopes).toEqual([
-      "operator.pairing",
-      "operator.read",
-      "operator.write",
-    ]);
-    const result = runSelector(state);
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim()).toBe(EXPECTED_REQUEST_ID);
-  });
 
   it("does not infer the distinct pairing scope while comparing approved views (#5324)", () => {
     const state = adminState("object");

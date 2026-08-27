@@ -8,6 +8,9 @@ import time
 from pathlib import Path
 
 minimum_gateway_runs = int(sys.argv[1])
+output_mode = sys.argv[2] if len(sys.argv) > 2 else "snapshot"
+if output_mode not in {"snapshot", "gateway-runs"}:
+    raise SystemExit(f"unsupported output mode: {output_mode}")
 root = Path("/sandbox/.openclaw")
 
 
@@ -31,6 +34,20 @@ def gateway_completed_runs():
     except FileNotFoundError:
         return 0
     return len(re.findall(r"\[agent\] run \S+ ended with stopReason=", value))
+
+
+def wait_for_gateway_runs():
+    deadline = time.monotonic() + 5
+    runs = gateway_completed_runs()
+    while runs < minimum_gateway_runs and time.monotonic() < deadline:
+        time.sleep(0.1)
+        runs = gateway_completed_runs()
+    return runs
+
+
+if output_mode == "gateway-runs":
+    print(json.dumps({"gatewayCompletedRuns": wait_for_gateway_runs()}, sort_keys=True))
+    raise SystemExit(0)
 
 
 identity = load_map(root / "identity" / "device.json")
@@ -86,11 +103,7 @@ active = [
     and norm(token.get("role")) == "operator"
     and not token.get("revokedAtMs")
 ]
-deadline = time.monotonic() + 5
-runs = gateway_completed_runs()
-while runs < minimum_gateway_runs and time.monotonic() < deadline:
-    time.sleep(0.1)
-    runs = gateway_completed_runs()
+runs = wait_for_gateway_runs()
 print(
     json.dumps(
         {

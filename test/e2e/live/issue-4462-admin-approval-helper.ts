@@ -10,19 +10,6 @@ export const ISSUE_4462_SCOPE_UPGRADE_PHASES = [
   "clear the sandbox and record the approval contract",
 ] as const;
 
-export const ISSUE_4462_GATEWAY_COMPLETED_RUNS_SH = String.raw`minimum="$1"
-attempt=0
-while [ "$attempt" -le 50 ]; do
-  runs=0
-  if [ -r /tmp/gateway.log ]; then
-    runs="$(grep -Ec '\[agent\] run [^ ]+ ended with stopReason=' /tmp/gateway.log || true)"
-  fi
-  [ "$runs" -ge "$minimum" ] && break
-  attempt=$((attempt + 1))
-  sleep 0.1
-done
-printf '%s\n' "$runs"`;
-
 export const ADMIN_REQUEST_SELECTOR_PY = String.raw`import json, sys
 from pathlib import Path
 

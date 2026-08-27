@@ -15,14 +15,15 @@ import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import {
   adminApprovalConnectScript,
   extractPendingRequestId,
-  ISSUE_4462_GATEWAY_COMPLETED_RUNS_SH,
   ISSUE_4462_SCOPE_UPGRADE_PHASES,
 } from "./issue-4462-admin-approval-helper.ts";
+import {
+  ISSUE_4462_AUTO_PAIR_DEADLINE_SECS,
+  ISSUE_4462_INSTALL_TIMEOUT_MS,
+  ISSUE_4462_LIVE_TIMEOUT_MS,
+} from "./issue-4462-time-budget.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-issue-4462";
-const LIVE_TIMEOUT_MS = 70 * 60_000;
-const INSTALL_TIMEOUT_MS = 30 * 60_000;
-const AUTO_PAIR_DEADLINE_SECS = String(INSTALL_TIMEOUT_MS / 1_000);
 
 validateSandboxName(SANDBOX_NAME);
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
@@ -34,7 +35,7 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     // Keep the auto-pair watcher available through installation and the later
     // live operator.write proof.
-    NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: AUTO_PAIR_DEADLINE_SECS,
+    NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: ISSUE_4462_AUTO_PAIR_DEADLINE_SECS,
     NEMOCLAW_FRESH: "1",
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_RECREATE_SANDBOX: "1",
@@ -56,6 +57,10 @@ interface FreshAgentGatewaySnapshot {
   pendingCount: number;
   publicKey: string;
   sameDevicePendingCount: number;
+}
+
+interface GatewayCompletedRunCount {
+  gatewayCompletedRuns: number;
 }
 
 const FRESH_AGENT_GATEWAY_SNAPSHOT_PY = fs.readFileSync(
@@ -1207,7 +1212,7 @@ echo "ISSUE_4462_SCOPE_UPGRADE_OK device=$final_device request=\${request_id:-co
 }
 
 test("auto-pair watcher approves operator.write but leaves operator.admin for explicit approval (#4462)", {
-  timeout: LIVE_TIMEOUT_MS,
+  timeout: ISSUE_4462_LIVE_TIMEOUT_MS,
   meta: { e2ePhases: ISSUE_4462_SCOPE_UPGRADE_PHASES },
 }, async ({ artifacts, cleanup: cleanupRegistry, host, progress, sandbox, secrets, skip }) => {
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
@@ -1265,23 +1270,26 @@ test("auto-pair watcher approves operator.write but leaves operator.admin for ex
       cwd: REPO_ROOT,
       env: env({ NVIDIA_INFERENCE_API_KEY: apiKey }),
       redactionValues: [apiKey],
-      timeoutMs: INSTALL_TIMEOUT_MS,
+      timeoutMs: ISSUE_4462_INSTALL_TIMEOUT_MS,
     },
   );
   expect(install.exitCode, resultText(install)).toBe(0);
 
-  const captureFreshAgentGatewaySnapshot = async (
+  const captureGatewayObservation = async <T>(
     phase: string,
-  ): Promise<FreshAgentGatewaySnapshot> => {
+    minimumGatewayRuns: number,
+    outputMode: "snapshot" | "gateway-runs",
+  ): Promise<T> => {
     const result = await sandbox.exec(
       SANDBOX_NAME,
       [
         "sh",
         "-lc",
-        'printf \'%s\' "$1" | base64 -d | python3 - "$2"',
-        "fresh-agent-gateway-snapshot",
+        'printf \'%s\' "$1" | base64 -d | python3 - "$2" "$3"',
+        "gateway-observation",
         FRESH_AGENT_GATEWAY_SNAPSHOT_B64,
-        "0",
+        String(minimumGatewayRuns),
+        outputMode,
       ],
       {
         artifactName: phase,
@@ -1291,38 +1299,16 @@ test("auto-pair watcher approves operator.write but leaves operator.admin for ex
       },
     );
     expect(result.exitCode, resultText(result)).toBe(0);
-    const snapshot = JSON.parse(result.stdout.trim()) as FreshAgentGatewaySnapshot;
-    await artifacts.writeJson(`${phase}.json`, snapshot);
-    return snapshot;
-  };
-  const observeGatewayCompletedRuns = async (
-    phase: string,
-    minimumGatewayRuns: number,
-  ): Promise<number> => {
-    const result = await sandbox.exec(
-      SANDBOX_NAME,
-      [
-        "sh",
-        "-lc",
-        ISSUE_4462_GATEWAY_COMPLETED_RUNS_SH,
-        "gateway-completed-runs",
-        String(minimumGatewayRuns),
-      ],
-      {
-        artifactName: phase,
-        env: env(),
-        redactionValues: [apiKey],
-        timeoutMs: 10_000,
-      },
-    );
-    expect(result.exitCode, resultText(result)).toBe(0);
-    const completedRuns = Number(result.stdout.trim());
-    expect(Number.isSafeInteger(completedRuns), resultText(result)).toBe(true);
-    await artifacts.writeJson(`${phase}.json`, { gatewayCompletedRuns: completedRuns });
-    return completedRuns;
+    const observation = JSON.parse(result.stdout.trim()) as T;
+    await artifacts.writeJson(`${phase}.json`, observation);
+    return observation;
   };
   progress.phase("prove the first fresh agent turn stays on the gateway path");
-  const freshSnapshot = await captureFreshAgentGatewaySnapshot("phase-2-fresh-state-0");
+  const freshSnapshot = await captureGatewayObservation<FreshAgentGatewaySnapshot>(
+    "phase-2-fresh-state-0",
+    0,
+    "snapshot",
+  );
   expect(freshSnapshot.deviceId).not.toBe("");
   expect(freshSnapshot.publicKey).not.toBe("");
   expect(freshSnapshot.pairedCliCount).toBe(1);
@@ -1372,11 +1358,12 @@ test("auto-pair watcher approves operator.write but leaves operator.admin for ex
   );
   expect(freshAgent.stdout.trim(), freshAgentOutput).not.toBe("");
 
-  const gatewayCompletedRuns = await observeGatewayCompletedRuns(
+  const gatewayRunCount = await captureGatewayObservation<GatewayCompletedRunCount>(
     "phase-2-gateway-run-count",
     freshSnapshot.gatewayCompletedRuns + 1,
+    "gateway-runs",
   );
-  expect(gatewayCompletedRuns).toBe(freshSnapshot.gatewayCompletedRuns + 1);
+  expect(gatewayRunCount.gatewayCompletedRuns).toBe(freshSnapshot.gatewayCompletedRuns + 1);
   progress.phase("observe the auto-pair watcher approve operator.write without operator.admin");
   const encodedScopeUpgradeScript = Buffer.from(
     scopeUpgradeScript().replaceAll("\\${", "${"),
