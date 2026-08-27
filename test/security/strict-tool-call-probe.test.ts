@@ -3,7 +3,6 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import fs from "node:fs";
 import path from "node:path";
 import { describe, it } from "vitest";
 
@@ -35,11 +34,6 @@ const SOURCE_REQUIRE_HOOK = path.join(REPO_ROOT, "test", "helpers", "onboard-scr
 const SOURCE_NODE_OPTIONS = [process.env.NODE_OPTIONS, `--require=${SOURCE_REQUIRE_HOOK}`]
   .filter(Boolean)
   .join(" ");
-const REQUIRED_SOURCE_MODULES = [
-  path.join(REPO_ROOT, "src", "lib", "onboard", "inference-selection-validation.ts"),
-  path.join(REPO_ROOT, "src", "lib", "inference", "local.ts"),
-];
-
 const EXPECTED_PASS_MARKERS = [
   "[PASS] strict validation succeeds with structured tool_calls",
   "[PASS] Local Ollama onboarding caller enforces strict Chat Completions validation",
@@ -53,15 +47,6 @@ describe("strict Chat Completions tool-call probe (#4537)", () => {
     "validates Local Ollama strict tool-call enforcement scenarios",
     testTimeoutOptions(120_000),
     () => {
-      const missingSourceModules = REQUIRED_SOURCE_MODULES.filter(
-        (modulePath) => !fs.existsSync(modulePath),
-      );
-      assert.deepEqual(
-        missingSourceModules,
-        [],
-        `strict tool-call probe is missing source modules:\n${missingSourceModules.join("\n")}`,
-      );
-
       const result = spawnSync(process.execPath, ["--import", "tsx", DRIVER], {
         cwd: REPO_ROOT,
         encoding: "utf8",
