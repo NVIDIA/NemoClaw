@@ -354,20 +354,14 @@ export function createSandboxGpuCreateAttemptRunner(
         throw new Error("Verified sandbox creation has no durable recovery evidence owner.");
       }
       const message =
+        `Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${createAttemptNonce}. ` +
         `Sandbox '${input.sandboxName}' reached Ready before OpenShell returned one exact durable create identity. ` +
-        `Gateway '${input.gatewayName}'. Create-attempt label: ` +
-        `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${createAttemptNonce}. ` +
+        `Gateway '${input.gatewayName}'. ` +
         "OpenShell did not return one exact durable sandbox identity for this create attempt. " +
         "Do not delete a sandbox by mutable name; preserve it until an OpenShell administrator resolves the create-attempt label to one sandbox.";
       let persisted = false;
       try {
-        persisted = persist({
-          sandboxName: input.sandboxName,
-          gatewayName: input.gatewayName,
-          createAttemptNonce,
-          liveIdentityFingerprint: null,
-          message,
-        });
+        persisted = persist(message);
       } catch {
         persisted = false;
       }

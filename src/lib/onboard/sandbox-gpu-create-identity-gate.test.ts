@@ -313,18 +313,14 @@ describe("created sandbox identity gate", () => {
     expect(String(error)).toContain(
       "did not return one exact durable sandbox identity before post-create effects",
     );
-    expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith({
-      sandboxName: "alpha",
-      gatewayName: "nemoclaw",
-      createAttemptNonce: nonce,
-      liveIdentityFingerprint: null,
-      message: expect.stringMatching(
+    expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
+      expect.stringMatching(
         new RegExp(
-          `Gateway 'nemoclaw'. Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`,
+          `^Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}\\. Sandbox 'alpha'.*Gateway 'nemoclaw'`,
           "u",
         ),
       ),
-    });
+    );
     expect(events).toEqual(["persist-recovery", "rejected"]);
     expect(deps.runCaptureOpenshell).toHaveBeenCalledOnce();
     expect(deps.sleep).not.toHaveBeenCalled();
@@ -433,13 +429,14 @@ describe("created sandbox identity gate", () => {
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
 
     const fingerprint = fingerprintSandboxRecreateValue("alpha-sandbox-id");
-    expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith({
-      sandboxName: "alpha",
-      gatewayName: "nemoclaw",
-      createAttemptNonce: nonce,
-      liveIdentityFingerprint: fingerprint,
-      message: expect.stringContaining(`Durable sandbox identity fingerprint: ${fingerprint}`),
-    });
+    expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
+      expect.stringMatching(
+        new RegExp(
+          `^Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}\\. Durable sandbox identity fingerprint: ${fingerprint}\\.`,
+          "u",
+        ),
+      ),
+    );
     expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledBefore(exit);
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(output).toContain(`${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`);
@@ -488,13 +485,12 @@ describe("created sandbox identity gate", () => {
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
 
     expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({
-        createAttemptNonce: nonce,
-        liveIdentityFingerprint: null,
-        message: expect.stringContaining(
-          "Recovery is blocked until an OpenShell administrator resolves the create-attempt label",
+      expect.stringMatching(
+        new RegExp(
+          `^Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}\\..*Recovery is blocked until an OpenShell administrator resolves the create-attempt label`,
+          "u",
         ),
-      }),
+      ),
     );
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(output).toContain(`${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`);

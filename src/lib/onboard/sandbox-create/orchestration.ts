@@ -49,6 +49,14 @@ import {
 export const createOnboardPolicyAuthorityBindings =
   policyAuthorityPreflight.createOnboardPolicyAuthorityBindings;
 
+/** Persist one create-attempt recovery message through the onboard session owner. */
+export function persistRetainedSandboxRecoveryMessage(
+  message: string,
+  finalizeIncompleteOnboardStep: (stepName: string, message: string) => unknown | null,
+): boolean {
+  return finalizeIncompleteOnboardStep("sandbox", message) !== null;
+}
+
 /** Select the policyless APF create plan only when no active global policy exists. */
 export function resolveSandboxCreatePolicyAuthority(
   observedAuthority: "nemoclaw-managed" | "externally-managed",
@@ -1873,10 +1881,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                     requirePolicylessCreate: true as const,
                   }
                 : {}),
-              persistRetainedSandboxRecovery: (
-                recovery: import("../sandbox-gpu-create-flow").RetainedSandboxRecovery,
-              ) =>
-                onboardSession.finalizeIncompleteOnboardStep("sandbox", recovery.message) !== null,
+              persistRetainedSandboxRecovery: (message) =>
+                persistRetainedSandboxRecoveryMessage(
+                  message,
+                  onboardSession.finalizeIncompleteOnboardStep,
+                ),
               provider,
               sandboxGpuConfig: effectiveSandboxGpuConfig,
               gpuRoutePlan,
