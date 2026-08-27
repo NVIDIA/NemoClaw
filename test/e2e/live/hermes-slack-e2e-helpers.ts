@@ -6,6 +6,7 @@ import { cleanupWhenOpenShellAvailable } from "../fixtures/cleanup-resources.ts"
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { type E2ETargetFixtures, expect } from "../fixtures/e2e-test.ts";
+import { MANAGED_SLACK_CREDENTIAL_REFERENCE_SOURCE } from "../fixtures/redaction.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   runSecondaryCleanup as bestEffortLifecycleCleanup,
@@ -26,6 +27,7 @@ const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes-slack";
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN ?? "xoxb-test-hermes-slack-token";
 const SLACK_APP_TOKEN = process.env.SLACK_APP_TOKEN ?? "xapp-test-hermes-slack-app-token";
 export const LIVE_TIMEOUT_MS = 70 * 60_000;
+const HERMES_SLACK_ALIAS_PATTERN_SOURCE = String.raw`^${MANAGED_SLACK_CREDENTIAL_REFERENCE_SOURCE}$`;
 const INSTALL_TIMEOUT_MS = 60 * 60_000;
 const HERMES_HEALTH_URL = "http://localhost:8642/health";
 
@@ -491,7 +493,7 @@ import re
 from pathlib import Path
 
 secret_key_re = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
-slack_alias_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
+slack_alias_re = re.compile(r"${HERMES_SLACK_ALIAS_PATTERN_SOURCE}")
 allowed_nonsecret_keys = {"API_SERVER_HOST", "API_SERVER_PORT"}
 allowed_raw_secret_keys = {"API_SERVER_KEY"}
 allowed_literals = {"", "[STRIPPED_BY_MIGRATION]"}

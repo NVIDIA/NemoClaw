@@ -6,6 +6,7 @@ import { Buffer } from "node:buffer";
 import { shellQuote } from "../fixtures/clients/command.ts";
 import { type DockerCommandResult, DockerProbe, resultText } from "../fixtures/docker-probe.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { MANAGED_SLACK_CREDENTIAL_REFERENCE_SOURCE } from "../fixtures/redaction.ts";
 
 // a real Docker/image-boundary smoke: it builds the Hermes sandbox images when
 // prebuilt image env vars are absent, inspects /sandbox/.hermes inside the
@@ -17,6 +18,7 @@ const RUN_TIMEOUT_MS = 60_000;
 const CONTROL_NONCE = "0".repeat(64);
 const RAW_SECRET_SENTINEL = "SENTINEL_RAW_SECRET_VALUE";
 const RAW_REFRESH_TOKEN = "raw-refresh-token";
+const HERMES_SLACK_ALIAS_PATTERN_SOURCE = String.raw`^${MANAGED_SLACK_CREDENTIAL_REFERENCE_SOURCE}$`;
 
 const IMAGE_INSPECTION_SCRIPT = String.raw`
 import os
@@ -27,7 +29,7 @@ import sys
 from pathlib import Path
 
 secret_key_re = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
-slack_alias_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
+slack_alias_re = re.compile(r"${HERMES_SLACK_ALIAS_PATTERN_SOURCE}")
 allowed_nonsecret_keys = {"API_SERVER_HOST", "API_SERVER_PORT"}
 allowed_raw_secret_keys = set()
 allowed_literals = {"", "[STRIPPED_BY_MIGRATION]"}
@@ -183,7 +185,7 @@ import sys
 from pathlib import Path
 
 secret_key_re = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
-slack_alias_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
+slack_alias_re = re.compile(r"${HERMES_SLACK_ALIAS_PATTERN_SOURCE}")
 allowed_nonsecret_keys = {"API_SERVER_HOST", "API_SERVER_PORT"}
 allowed_raw_secret_keys = {"API_SERVER_KEY"}
 allowed_literals = {"", "[STRIPPED_BY_MIGRATION]"}
