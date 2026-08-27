@@ -21,6 +21,7 @@ const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>([
   "openshellDriver",
   "pendingRouteReservation",
   "pendingPolicyVerification",
+  "pendingRegistrationPublication",
   "preferredInferenceApi",
   "policies",
   "policyPresetsFinalized",
@@ -273,8 +274,7 @@ export function isCurrentSandboxInferenceRouteReservation(
   const { pendingPolicyVerification: reservedCheckpoint, ...reservedRoute } = reservation.entry;
   return (
     isDeepStrictEqual(currentRoute, reservedRoute) &&
-    (reservedCheckpoint === undefined ||
-      isDeepStrictEqual(currentCheckpoint, reservedCheckpoint))
+    (reservedCheckpoint === undefined || isDeepStrictEqual(currentCheckpoint, reservedCheckpoint))
   );
 }
 

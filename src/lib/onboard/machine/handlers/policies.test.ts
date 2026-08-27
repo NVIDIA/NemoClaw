@@ -46,6 +46,54 @@ describe("handlePoliciesState", () => {
     );
   });
 
+  it("publishes a pending create before persisting its final policy selection (#10153)", async () => {
+    const synchronizeMessagingProvidersAfterPolicy = vi.fn(async () => undefined);
+    const persistAppliedPolicyPresets = vi.fn(() => true);
+    const pendingPolicyVerification = {
+      schemaVersion: 1 as const,
+      state: "verified-create" as const,
+      policyAuthority: "nemoclaw-managed" as const,
+      observedPolicyAuthority: "owner-unknown" as const,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      sandboxName: "my-assistant",
+      lifecycleGeneration: "generation-1",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      route: "native" as const,
+      policyHash: "sha256:policy",
+      policyVersion: 1,
+      policyCreationReceipt: {} as never,
+      providerRefresh: {
+        schemaVersion: 1 as const,
+        phase: "attaching" as const,
+        attachedProviders: ["my-assistant-telegram-bridge"],
+      },
+    };
+    const { deps } = createDeps({
+      loadSession: vi.fn(() => createSession({ policyAuthority: null })),
+      getActiveSandbox: vi.fn(() => ({
+        messaging: { plan: makeMessagingPlan({ channels: ["telegram"] }) },
+        pendingPolicyVerification,
+        reservationSessionId: "session-1",
+      })),
+      setupPoliciesWithSelection: vi.fn(async (_sandboxName, options) => {
+        options.onSelection(["telegram"]);
+        return ["telegram"];
+      }),
+      synchronizeMessagingProvidersAfterPolicy,
+      persistAppliedPolicyPresets,
+    });
+
+    await handlePoliciesState(baseOptions(deps));
+
+    expect(synchronizeMessagingProvidersAfterPolicy).toHaveBeenCalledWith(
+      expect.objectContaining({ pendingPolicyVerification, reservationSessionId: "session-1" }),
+    );
+    expect(synchronizeMessagingProvidersAfterPolicy.mock.invocationCallOrder[0]).toBeLessThan(
+      persistAppliedPolicyPresets.mock.invocationCallOrder[0],
+    );
+  });
+
   it("does not synchronize messaging providers without a live channel policy", async () => {
     const synchronizeMessagingProvidersAfterPolicy = vi.fn(async () => undefined);
     const { deps } = createDeps({

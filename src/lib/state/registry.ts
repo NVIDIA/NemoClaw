@@ -394,6 +394,10 @@ export function registerSandbox(
     };
   } = {},
 ): SandboxEntry {
+  const pendingVerifiedPublicationRequested =
+    options.pending === true &&
+    options.verifiedCreate?.checkpoint.providerRefresh !== undefined &&
+    options.verifiedCreate.checkpoint.providerRefresh.phase !== "ready";
   return withLock(() => {
     const data = load();
     const recordedEntry = data.sandboxes[entry.name];
@@ -468,6 +472,7 @@ export function registerSandbox(
     }
     if (
       options.pending === true &&
+      !pendingVerifiedPublicationRequested &&
       (entry.policyAuthority === "nemoclaw-managed" || entry.policyCreationReceipt !== undefined)
     ) {
       throw new PolicyAuthorityRefusalError(
@@ -538,6 +543,7 @@ export function registerSandbox(
       );
     }
     const policyAuthority = requestedPolicyAuthority ?? recordedPolicyAuthority;
+    const pendingVerifiedPublication = pendingVerifiedPublicationRequested;
     if (retainedDefaultSandbox(data.defaultSandbox, data.sandboxes) === null) {
       data.defaultSandbox = null;
     }
@@ -598,8 +604,10 @@ export function registerSandbox(
           : undefined,
       openshellDriver: entry.openshellDriver || null,
       openshellVersion: entry.openshellVersion || null,
-      ...(policyAuthority !== undefined ? { policyAuthority } : {}),
-      ...(policyAuthority === "nemoclaw-managed" && requestedPolicyCreationReceipt
+      ...(!pendingVerifiedPublication && policyAuthority !== undefined ? { policyAuthority } : {}),
+      ...(!pendingVerifiedPublication &&
+      policyAuthority === "nemoclaw-managed" &&
+      requestedPolicyCreationReceipt
         ? { policyCreationReceipt: requestedPolicyCreationReceipt }
         : {}),
       ...(policyAuthority === "externally-managed"
@@ -668,7 +676,17 @@ export function registerSandbox(
       gatewayName: entry.gatewayName ?? undefined,
       gatewayPort: entry.gatewayPort ?? undefined,
       pendingRouteReservation: options.pending === true ? true : undefined,
-      reservationSessionId: options.pending === true ? options.reservationSessionId : undefined,
+      reservationSessionId:
+        options.pending === true
+          ? (options.reservationSessionId ??
+            options.verifiedCreate?.reservation.authority.sessionId)
+          : undefined,
+      ...(pendingVerifiedPublication
+        ? {
+            pendingPolicyVerification: options.verifiedCreate!.checkpoint,
+            pendingRegistrationPublication: true as const,
+          }
+        : {}),
     };
     data.sandboxes[entry.name] = registered;
     save(
@@ -677,6 +695,63 @@ export function registerSandbox(
         : reversibleRemoval.claimInitialDefaultInRegistry(data, entry.name),
     );
     return structuredClone(registered);
+  });
+}
+
+/** Publish one staged registration only after its exact provider refresh reaches ready. */
+export function publishPendingSandboxProviderRefresh(
+  name: string,
+  reservationSessionId: string,
+  expected: PendingSandboxPolicyVerification,
+): SandboxEntry {
+  const checkpoint = normalizePendingSandboxPolicyVerification(expected);
+  if (
+    !checkpoint ||
+    checkpoint.sandboxName !== name ||
+    checkpoint.providerRefresh?.phase !== "ready" ||
+    !reservationSessionId
+  ) {
+    throw new PolicyAuthorityRefusalError(
+      `Cannot publish sandbox '${name}' without an exact completed provider refresh`,
+    );
+  }
+  return withLock(() => {
+    const data = load();
+    const current = data.sandboxes[name];
+    if (
+      !current ||
+      current.pendingRouteReservation !== true ||
+      current.pendingRegistrationPublication !== true ||
+      current.reservationSessionId !== reservationSessionId ||
+      current.gatewayName !== checkpoint.gatewayName ||
+      current.gatewayPort !== checkpoint.gatewayPort ||
+      current.lifecycleGeneration !== checkpoint.lifecycleGeneration ||
+      current.lifecycleLiveIdentityFingerprint !== checkpoint.sandboxIdentityFingerprint ||
+      current.policyAuthority !== undefined ||
+      current.policyCreationReceipt !== undefined ||
+      !isDeepStrictEqual(current.pendingPolicyVerification, checkpoint)
+    ) {
+      throw new PolicyAuthorityRefusalError(
+        `Cannot publish sandbox '${name}' after its completed provider refresh changed`,
+      );
+    }
+    const published = normalizeSandboxPolicyAttribution({
+      ...current,
+      pendingRouteReservation: undefined,
+      reservationSessionId: undefined,
+      pendingPolicyVerification: undefined,
+      pendingRegistrationPublication: undefined,
+      policyAuthority: checkpoint.policyAuthority,
+      ...(checkpoint.policyAuthority === "nemoclaw-managed"
+        ? { policyCreationReceipt: checkpoint.policyCreationReceipt }
+        : {}),
+    });
+    if (published.policyAuthority === "nemoclaw-managed") {
+      assertPolicyCreationReceiptMatchesSandboxEntry(published, published.policyCreationReceipt);
+    }
+    data.sandboxes[name] = published;
+    save(reversibleRemoval.claimInitialDefaultInRegistry(data, name));
+    return structuredClone(published);
   });
 }
 
@@ -904,7 +979,11 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
         `Refusing to change sandbox '${name}' verified create checkpoint outside its transaction.`,
       );
     }
-    if (current.pendingPolicyVerification) {
+    const pendingDashboardPortOnly =
+      current.pendingRegistrationPublication === true &&
+      Object.keys(updates).length === 1 &&
+      Object.prototype.hasOwnProperty.call(updates, "dashboardPort");
+    if (current.pendingPolicyVerification && !pendingDashboardPortOnly) {
       throw new PolicyAuthorityRefusalError(
         `Refusing to update sandbox '${name}' while its verified create checkpoint is incomplete.`,
       );

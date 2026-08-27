@@ -986,13 +986,7 @@ function finalizePostPolicyMessagingProviderSync(input, deps) {
       `OpenShell did not stop sandbox '${input.sandboxName}' after messaging credential synchronization.`,
     );
   }
-  deps.revalidateSandboxIdentity?.(
-    `confirming stopped sandbox '${input.sandboxName}' before restart`,
-  );
-  input.advanceProviderRefresh?.("stopped");
-  deps.revalidateSandboxIdentity?.(
-    `starting sandbox '${input.sandboxName}' with synchronized messaging credentials`,
-  );
+  input.advanceProviderRefresh?.("stopped", { revalidateIdentity: false });
   const started = deps.runOpenshell(
     ["sandbox", "start", "-g", input.gatewayName, input.sandboxName],
     { ignoreError: true, suppressOutput: true },
@@ -1002,7 +996,7 @@ function finalizePostPolicyMessagingProviderSync(input, deps) {
       `OpenShell did not restart sandbox '${input.sandboxName}' after messaging credential synchronization.`,
     );
   }
-  input.advanceProviderRefresh?.("started");
+  input.advanceProviderRefresh?.("started", { revalidateIdentity: false });
   if (
     !deps.waitForSandboxReady(
       input.sandboxName,
@@ -1031,11 +1025,13 @@ async function synchronizeMessagingProvidersAfterPolicy(input, deps) {
   });
   let pendingPolicyVerification = input.pendingPolicyVerification;
   const providerNames = [...new Set(messaging.messagingTokenDefs.map(({ name }) => name))];
-  const advanceProviderRefresh = (phase) => {
+  const advanceProviderRefresh = (phase, { revalidateIdentity = true } = {}) => {
     if (!pendingPolicyVerification) return;
-    deps.revalidateSandboxIdentity?.(
-      `recording provider refresh phase '${phase}' for sandbox '${input.sandboxName}'`,
-    );
+    if (revalidateIdentity) {
+      deps.revalidateSandboxIdentity?.(
+        `recording provider refresh phase '${phase}' for sandbox '${input.sandboxName}'`,
+      );
+    }
     pendingPolicyVerification = deps.advancePendingSandboxProviderRefresh(
       input.sandboxName,
       input.reservationSessionId,
@@ -1085,6 +1081,7 @@ async function synchronizeMessagingProvidersAfterPolicy(input, deps) {
     },
     deps,
   );
+  return pendingPolicyVerification;
 }
 
 module.exports = {

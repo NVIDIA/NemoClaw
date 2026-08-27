@@ -195,7 +195,10 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   const recordedMessagingChannels = getActiveChannelsFromPlan(latestSession?.messagingPlan);
   const activeSandbox = deps.getActiveSandbox(sandboxName);
   const sessionPolicyAuthority = latestSession?.policyAuthority ?? null;
-  const registryPolicyAuthority = activeSandbox?.policyAuthority ?? null;
+  const registryPolicyAuthority =
+    activeSandbox?.policyAuthority ??
+    activeSandbox?.pendingPolicyVerification?.policyAuthority ??
+    null;
   const authorityOperation = `continue policy setup for sandbox '${sandboxName}'`;
   if (sessionPolicyAuthority && registryPolicyAuthority) {
     assertRecordedPolicyAuthority(
@@ -425,14 +428,14 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     // without exclusions or a missing tier requirement), which leaves the live
     // applied set untouched and would otherwise be clobbered with []. See
     // #4621.
+    if (hostLocalInferenceRouteOnly) verifySandboxInferenceRoute();
+    await synchronizeMessagingProvidersAfterPolicy(appliedPolicyPresets);
     if (reflectsLiveAppliedSet) {
       revalidatePolicyRequirements?.(`persist policy presets for sandbox '${sandboxName}'`);
       if (!deps.persistAppliedPolicyPresets(sandboxName, appliedPolicyPresets)) {
         throw new Error(`Failed to persist finalized policy presets for sandbox '${sandboxName}'.`);
       }
     }
-    if (hostLocalInferenceRouteOnly) verifySandboxInferenceRoute();
-    await synchronizeMessagingProvidersAfterPolicy(appliedPolicyPresets);
     revalidatePolicyRequirements?.(`complete policy setup for sandbox '${sandboxName}'`);
     session = await deps.recordStepComplete(
       "policies",

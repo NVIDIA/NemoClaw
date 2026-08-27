@@ -41,6 +41,7 @@ import {
   verifyCreatedSandboxPolicyRegistration,
 } from "./policy-creation-receipt";
 import {
+  asDeferredProviderRefreshError,
   attachProvidersAfterSandboxCreation,
   isDeferredProviderRefreshError,
   publishAttachedProvidersBeforeDockerSandboxCreation,
@@ -520,6 +521,10 @@ export function createProviderEffectBoundary(input: {
   readonly revalidatePolicyAuthorityBeforeCreate: () => void;
   readonly runOpenshell: SandboxCreateOrchestrationRuntime["runOpenshell"];
   readonly revalidateSandboxIdentity: (exactIdentity: string, operation: string) => void;
+  readonly beginDeferredProviderRefresh?: (
+    context: VerifiedSandboxCreateEffectsContext,
+    providerNames: readonly string[],
+  ) => void;
 }): ProviderEffectBoundary {
   const validate = () =>
     validateAttachedMessagingProvidersBeforeSandboxCreation(
@@ -545,37 +550,49 @@ export function createProviderEffectBoundary(input: {
     validateBeforeCreate: () => undefined,
     publishBeforeCreate: () => undefined,
     runAfterVerifiedCreate: async (context) => {
-      context.revalidatePolicyRequirements(
-        `starting deferred provider effects for sandbox '${input.sandboxName}'`,
-      );
-      await input.runVerifiedSandboxCreateEffects?.(context);
-      context.revalidatePolicyRequirements(
-        `activating deferred providers for sandbox '${input.sandboxName}'`,
-      );
-      const providerNames =
-        input.activateDeferredProviderEffects?.(context.revalidatePolicyRequirements) ?? [];
-      validate();
-      context.revalidatePolicyRequirements(
-        `publishing deferred providers for sandbox '${input.sandboxName}'`,
-      );
-      publish();
-      context.revalidatePolicyRequirements(
-        `attaching deferred providers to sandbox '${input.sandboxName}'`,
-      );
-      attachProvidersAfterSandboxCreation(
-        {
-          sandboxName: input.sandboxName,
-          gatewayName: input.gatewayName,
-          providerNames,
-        },
-        {
-          runOpenshell: input.runOpenshell,
-          revalidateSandboxIdentity: (operation) => {
-            input.revalidateSandboxIdentity(context.lifecycleLiveIdentityFingerprint, operation);
-            context.revalidatePolicyRequirements(operation);
+      try {
+        context.revalidatePolicyRequirements(
+          `starting deferred provider effects for sandbox '${input.sandboxName}'`,
+        );
+        await input.runVerifiedSandboxCreateEffects?.(context);
+        context.revalidatePolicyRequirements(
+          `activating deferred providers for sandbox '${input.sandboxName}'`,
+        );
+        const providerNames =
+          input.activateDeferredProviderEffects?.(context.revalidatePolicyRequirements) ?? [];
+        const messagingProviderNames = providerNames.filter((providerName) =>
+          input.preparationInput.messagingProviderRequests.some(
+            (request) => request.name === providerName,
+          ),
+        );
+        if (messagingProviderNames.length > 0) {
+          input.beginDeferredProviderRefresh?.(context, messagingProviderNames);
+        }
+        validate();
+        context.revalidatePolicyRequirements(
+          `publishing deferred providers for sandbox '${input.sandboxName}'`,
+        );
+        publish();
+        context.revalidatePolicyRequirements(
+          `attaching deferred providers to sandbox '${input.sandboxName}'`,
+        );
+        attachProvidersAfterSandboxCreation(
+          {
+            sandboxName: input.sandboxName,
+            gatewayName: input.gatewayName,
+            providerNames,
           },
-        },
-      );
+          {
+            runOpenshell: input.runOpenshell,
+            revalidateSandboxIdentity: (operation) => {
+              input.revalidateSandboxIdentity(context.lifecycleLiveIdentityFingerprint, operation);
+              context.revalidatePolicyRequirements(operation);
+            },
+          },
+        );
+      } catch (error) {
+        throw asDeferredProviderRefreshError(input.sandboxName, error);
+      }
     },
   };
 }
@@ -2068,6 +2085,22 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           },
           getSandboxRecreateObservation,
         ),
+      beginDeferredProviderRefresh: (context, providerNames) => {
+        context.revalidatePolicyRequirements(
+          `recording deferred provider refresh for sandbox '${sandboxName}'`,
+        );
+        const checkpoint = requirePendingPolicyVerification();
+        pendingPolicyVerification = registry.advancePendingSandboxProviderRefresh(
+          sandboxName,
+          requireCreateReservation().authority.sessionId,
+          checkpoint,
+          {
+            schemaVersion: 1,
+            phase: "attaching",
+            attachedProviders: [...providerNames],
+          },
+        );
+      },
     });
     providerEffectBoundary.validateBeforeCreate();
 
