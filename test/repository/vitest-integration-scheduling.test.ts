@@ -48,11 +48,27 @@ describe("integration project scheduling", () => {
     });
   });
 
+  it.each([1, 2])("limits the local full suite to %i available worker(s) (#6245)", (workers) => {
+    expect(
+      resolveIntegrationProjectScheduling({
+        isCi: false,
+        npmLifecycleEvent: "test",
+        argv: [],
+        availableParallelism: workers,
+      }),
+    ).toEqual({
+      fileParallelism: true,
+      maxWorkers: workers,
+      sequence: { groupOrder: 1 },
+    });
+  });
+
   it.each([
     [["--maxWorkers=1"], 1, 8],
     [["--maxWorkers", "2"], 2, 8],
     [["--maxWorkers=10%"], 2, 20],
     [["--maxWorkers=8"], 4, 8],
+    [["--maxWorkers=4"], 2, 2],
   ])("honors the explicit local worker cap in %j (#6245)", (argv, maxWorkers, workers) => {
     expect(
       resolveIntegrationProjectScheduling({
