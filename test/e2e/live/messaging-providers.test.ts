@@ -12,7 +12,8 @@
 import fs from "node:fs";
 
 import { testTimeoutOptions } from "../../helpers/timeouts";
-import { test } from "../fixtures/e2e-test.ts";
+import { expect, test } from "../fixtures/e2e-test.ts";
+import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import {
   accountBool,
   accountString,
@@ -166,6 +167,11 @@ test(
       return;
     }
     expectExitZero(install, "M0: install.sh completed");
+    assertStockManagedImageReceipt({
+      environment: state.env,
+      expectedAgent: "openclaw",
+      sandboxName: SANDBOX_NAME,
+    });
 
     const openshellVersion = await runHost(host, "openshell", ["--version"], {
       artifactName: "openshell-version-messaging-providers",
@@ -831,7 +837,28 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       env: state.env,
       redactionValues,
     });
-    await applyRestRewritePolicy(host, fakeSlack, state.env, redactionValues);
+    await applyRestRewritePolicy(
+      host,
+      fakeSlack,
+      state.env,
+      redactionValues,
+      `${SANDBOX_NAME}-slack-bridge`,
+    );
+    expect(
+      fakeSlack.alternatePort,
+      "fake Slack API must publish an independent app-token port",
+    ).toMatch(/^[1-9][0-9]*$/u);
+    const fakeSlackApp = {
+      ...fakeSlack,
+      port: fakeSlack.alternatePort!,
+    };
+    await applyRestRewritePolicy(
+      host,
+      fakeSlackApp,
+      state.env,
+      redactionValues,
+      `${SANDBOX_NAME}-slack-app`,
+    );
 
     const slackAuth = await runSlackApiRequest(
       sandbox,
@@ -883,7 +910,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
 
     const slackApp = await runSlackApiRequest(
       sandbox,
-      fakeSlack.port,
+      fakeSlackApp.port,
       "/api/apps.connections.open",
       "Bearer xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
       redactionValues,
@@ -957,7 +984,13 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       env: state.env,
       redactionValues,
     });
-    await applyRestRewritePolicy(host, fakeTelegram, state.env, redactionValues);
+    await applyRestRewritePolicy(
+      host,
+      fakeTelegram,
+      state.env,
+      redactionValues,
+      `${SANDBOX_NAME}-telegram-bridge`,
+    );
     const telegramMockTarget = "42424242";
     const telegramMockText = "NemoClaw OpenClaw Telegram plugin mock E2E";
     const installedTelegramProof = await runInstalledTelegramRuntimeProof(

@@ -90,6 +90,14 @@ After the checks pass, the action restores root `dist/` and `nemoclaw/dist/share
 If the version command fails, the action stops before the live test runs.
 This boundary keeps candidate source separate from the trusted workflow implementation.
 
+The `base-image-publication` job selects the nearest fully successful publication on the PR base
+first-parent history. It downloads the complete cohort contract and Deep Agents Code base contract
+by immutable artifact ID. It binds each artifact to the selected workflow run, attempt, revision,
+artifact ID, and artifact digest. The cohort validator requires OpenClaw, Hermes, and LangChain Deep
+Agents Code on `linux/amd64` and `linux/arm64` before it emits `managed_image_revision`.
+`generate-matrix` and every stock-onboarding job depend on this job, so a missing, failed,
+incomplete, or mixed publication starts no onboarding consumer.
+
 For a same-repository PR that changes a managed-image workflow path, the trusted planner also
 requires one successful `Images / Build, Test, and Publish Managed Images` run for the candidate
 commit. Before candidate checkout, the planner downloads the three nonexpired contract artifacts by
@@ -99,8 +107,11 @@ missing, incomplete, or mixed all-agent publication before E2E jobs start.
 
 The planner adds the exact all-agent catalog to `dist/` after the candidate CLI build completes.
 Each live E2E consumer verifies that the catalog source revision matches `checkout_sha`. A PR that
-does not change a managed-image workflow path keeps the released catalog behavior. The GitHub token
-is available only to the trusted planner job and is not included in the candidate CLI artifact.
+does not change a managed-image workflow path receives the selected base publication through
+`E2E_MANAGED_IMAGE_REVISION` and the complete cohort receipt. Every stock-onboarding test asserts
+its durable `managed-image` receipt against either the exact candidate catalog or the selected base
+cohort before later probes. The GitHub token is available only to the trusted planner job and is not
+included in the candidate CLI artifact.
 
 The same-repository `Images / Build, Test, and Publish Managed Images` PR workflow also runs the
 OpenClaw managed-image MCP discovery and lifecycle scope in two independent matrix jobs. Each job
@@ -127,7 +138,7 @@ This baseline measures only the replaced build step.
 Artifact upload, download, validation, and the dependency on `generate-matrix` add runtime and can affect the workflow critical path.
 Do not use the build-step median to claim savings in runner time or workflow elapsed time.
 
-A manual PR E2E run tests candidate code but executes `.github/workflows/e2e.yaml` from `main`.
+A manual PR E2E run tests candidate code but executes `.github/workflows/e2e.yaml` from trusted `main`.
 The PR run cannot measure this workflow change before merge.
 After merge, use a passing `main` run and complete these steps:
 
@@ -634,8 +645,7 @@ to use `ubuntu-latest`. The trusted `generate-matrix` job builds one runner map
 before checking out test code, and it consumes the variable only when the
 workflow repository is `NVIDIA/NemoClaw`, the ref is `refs/heads/main`, and
 no alternate checkout SHA is requested. Manual PR E2E dispatches therefore remain on
-standard runners even though they use the trusted workflow definition from
-`main`.
+standard runners even though they use the trusted workflow definition from `main`.
 
 Manual PR E2E dispatches and direct push or manual `main` runs use a
 bounded swap fallback for eligible hosted Hermes image-building lanes. The
@@ -1335,6 +1345,12 @@ It does not run GitHub's synthetic merge commit.
 Before candidate execution, the workflow uploads a `nemoclaw-e2e-dispatch-v2` receipt for the trusted manual run.
 The full-main `Release qualification` aggregate does not use this receipt.
 
+The `base-image-publication` job selects the nearest fully successful base and managed-image publication on the PR base first-parent history.
+It binds the selected run ID, attempt, revision, cohort contract artifact ID, and artifact digest before it emits `managed_image_revision`.
+The job validates the complete three-agent, two-architecture cohort artifact and the immutable Deep Agents Code base artifact from that workflow attempt.
+`generate-matrix` and every stock-onboarding job depend on this publication job, so incomplete publication creates no onboarding fanout.
+Direct `main` runs use the same publication workflow and artifact contract.
+
 PR Review Advisor maps changes to either of these shared journaled-recreation handlers to recommended E2E coverage:
 
 - `src/lib/onboard/machine/handlers/sandbox-resume.ts`.
@@ -1475,12 +1491,11 @@ No PR E2E controller dispatches the risk plan.
 The `full-e2e` target enforces a separate hard acceptance contract for the
 first fresh onboarding path in that job. It measures from the onboard root span
 (a conservative anchor before wizard step `[1/8]`) through the first non-empty
-agent response and reads the registered workload receipt. A `legacy-dockerfile`
-receipt requires the local BuildKit prebuild without a gateway-builder fallback.
-A `managed-image` receipt instead requires an exact digest that matches the
-registered sandbox image tag, a non-empty publication cohort, and an exact
-40-character source revision, and it forbids a local BuildKit prebuild. Both
-paths enforce the calibrated root and phase limits in the budget file and limit
+agent response and reads the registered workload receipt. The receipt must be
+`managed-image`, use an exact digest that matches the registered sandbox image
+tag, identify the selected publication cohort and exact source revision, and
+forbid a local BuildKit prebuild. The path enforces the calibrated root and phase
+limits in the budget file and limits
 the longest onboard output gap to 60 seconds. A violation fails
 `full-e2e`, and the target writes its evidence to `onboard-progress-budget.json`.
 The artifact records the first-turn command wall clock and OpenClaw's internal
@@ -1494,10 +1509,10 @@ PR regression.
 The same overage remains blocking when accompanied by a root-start or phase-budget failure.
 
 The checked-in `nemoclaw.onboard.phase.sandbox` budget remains 208,000 ms.
-A sandbox-phase overage qualifies for anomaly classification only when it is the sole performance overage and the run uses the published-base build mode without the authoritative local base-build allowance.
+A sandbox-phase overage qualifies for anomaly classification only when it is the sole performance overage and the run uses a managed image.
 For a qualifying overage of at most 5,000 ms, `full-e2e` records a `sandbox-phase-tail` anomaly instead of a blocking performance violation.
 An overage greater than 5,000 ms remains blocking.
-A run that applies the authoritative local base-build allowance or has another performance violation also remains blocking.
+A local BuildKit prebuild fails the workload-evidence contract and cannot qualify for anomaly classification.
 Every other performance contract remains blocking, as do the existing first-turn command exit, BuildKit, gateway-builder no-fallback, output-silence, sentinel, E2E job outcome, and cleanup contracts.
 
 For `sandbox-phase-tail`, the trusted push scorecard uses the latest five eligible samples from the same agent, setup mode, platform, base-build mode, and workload kind.
@@ -1526,13 +1541,6 @@ The canonical E2E uploader retains each push summary for 14 days.
 
 The sandbox-phase recurrence rule does not recalibrate the checked-in budget.
 Recalibration remains deferred until five successful samples from the same commit are available.
-
-When changed base-image inputs require the authoritative local OpenClaw base
-build, the target applies the separately calibrated 90-second allowance only to
-the root-start and sandbox-phase limits. The installer must emit the exact local
-base-build reason before the allowance applies. Published-image runs retain the
-normal limits, and output silence, first-turn, and all other phase requirements
-remain unchanged.
 
 The two Hermes rebuild jobs and both reusable-workflow Hermes image exporters
 add a bounded 32 GiB swap file on their ephemeral hosted runners before the

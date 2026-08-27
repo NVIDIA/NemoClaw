@@ -10,6 +10,8 @@ const AVAILABILITY_PROBE_EXTRA_ENV_KEYS = [
   "DOCKER_TLS_VERIFY",
   "DOCKER_CERT_PATH",
   "DOCKER_API_VERSION",
+  "E2E_MANAGED_IMAGE_REVISION",
+  "E2E_MANAGED_IMAGE_COHORT_RECEIPT",
   "GITHUB_WORKSPACE",
   "XDG_CONFIG_HOME",
   "XDG_RUNTIME_DIR",
@@ -24,10 +26,10 @@ const AVAILABILITY_PROBE_EXTRA_ENV_KEYS = [
 export function buildAvailabilityProbeEnv(
   base: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
-  // Availability probes run outside live target phases, but they need
-  // the same child-env and PATH policy. Add Docker discovery knobs and the
-  // workflow-owned local-model pull budget and exact PR catalog authority on
-  // top of the shared boundary.
+  // Availability probes run outside live target phases but need the shared
+  // child environment and PATH policy. Add Docker discovery settings, the
+  // workflow-owned local-model pull budget, and the selected managed-image
+  // cohort revision and receipt to that boundary.
   return buildChildEnv(base, {
     additionalAllowedEnv: AVAILABILITY_PROBE_EXTRA_ENV_KEYS,
     fixtureOverlay: {},
