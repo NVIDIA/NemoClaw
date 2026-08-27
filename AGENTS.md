@@ -190,13 +190,11 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 
 ### Before Making Changes
 
-1. Read `CONTRIBUTING.md` for the full contributor guide
-2. Before coding, state what success looks like. Ask only when a choice changes behavior, security, data safety, or a supported contract. Then make the smallest change that works. For a QA-escaped defect, also add the test or diagnostic that should have caught it.
-3. Apply the product scope gate above before implementing or approving a new supported surface
-4. For a first-time checkout, use `.agents/skills/nemoclaw-contributor-onboard/SKILL.md` or run `npm run dev:setup`
-5. Run `npm run dev:doctor` to verify the contributor environment without changing it
-6. Use `./scripts/dev-setup.sh --expose-cli` only with explicit approval for host-visible CLI exposure
-7. Run the tests targeted to the behavior you change once per relevant change set; rerun them after later edits or hook autofixes that can affect that behavior
+1. Read `CONTRIBUTING.md` and the active guidance for changed paths. For a first checkout, use `nemoclaw-contributor-onboard`.
+2. State observable success, apply the product scope gate, and ask only when a choice changes behavior, security, data safety, or a supported contract.
+3. Read the smallest sufficient source set. Run independent discovery in parallel, keep dependent writes sequential, and stop when the smallest safe change is clear.
+4. Validate the final behavior change once with targeted evidence. Rerun only after a later edit or hook fix can affect that evidence. For a QA-escaped defect, add the test or diagnostic that should have caught it.
+5. Use `./scripts/dev-setup.sh --expose-cli` only with explicit approval.
 
 ### E2E Selection and Authoring
 
@@ -261,30 +259,7 @@ Follow `.agents/skills/_shared/git-github-hard-stop.md`: if SSH, `gh`, authentic
 
 ### Pull Request Follow-Up
 
-Follow `.agents/skills/_shared/pr-follow-up.md`: after opening or pushing to a PR, monitor required CI and automated review comments, address valid CodeRabbit and PR Review Advisor findings, and consult the user when feedback is ambiguous or design-changing.
-
-Reviewer routing is repository-owned.
-Reviewer selection can come from these sources:
-
-- `CODEOWNERS` loaded from the PR base SHA in `NVIDIA/NemoClaw`.
-- Rulesets configured for `NVIDIA/NemoClaw`.
-- NemoClaw workflow definitions loaded from the PR base SHA in `NVIDIA/NemoClaw`.
-- NemoClaw skills loaded from the PR base SHA in `NVIDIA/NemoClaw`.
-
-Before you use a reviewer-request write, confirm that one of these conditions is true:
-
-- The current user names the exact reviewer.
-- You loaded a NemoClaw workflow definition from the PR base SHA in `NVIDIA/NemoClaw`, and it requires the exact reviewer-request write.
-
-Otherwise, do not use any of these reviewer-request writes:
-
-- Add a reviewer.
-- Remove a reviewer.
-- Re-request a review.
-
-GitHub can create an automatic review-request event when a contributor or agent pushes.
-GitHub can attribute the event to the pushing account.
-If the command trace contains no reviewer-request write, report the event as an automatic review-request event.
+Follow `.agents/skills/_shared/pr-follow-up.md`, which owns reviewer routing, complete review collection, and repair sequencing. After each push, let required automated reviews settle, collect once, and repair valid findings as one change set. Ask the user only when feedback changes behavior, security, data safety, or a supported contract.
 
 ### Common Patterns
 

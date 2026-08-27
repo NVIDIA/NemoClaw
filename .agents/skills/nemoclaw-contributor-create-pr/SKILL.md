@@ -58,33 +58,7 @@ Select checks that apply to the diff.
 
 ### Review-Driven Repair Closure
 
-When this workflow pushes an update to an open PR, first follow [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md) through its complete review-cycle collection step, then classify every finding in that collection.
-
-This workflow owns the push gate. Before routing a repair, enter the ordered remediation sequence
-in the [Handle results](../_shared/pr-follow-up.md#handle-results) section and set the repair scope.
-
-Group valid code-changing findings in the repair scope by root cause. Route only finding groups in
-the repair scope to `nemoclaw-contributor-implement-issue`. Do not route a finding group that the
-shared workflow excludes from the repair scope. Preserve its unresolved or deferred disposition.
-That workflow owns the repair, its validation, and its evidence. Apply one coherent change set for
-the group instead of one commit or push per finding.
-
-After the routed repair returns and its validation passes, resume the shared sequence at the commit
-step. If validation fails or is inconclusive, return to the repair and validation steps. Do not commit
-or push until validation passes. Complete the final collection and evidence-removal steps before
-pushing. Push after no unresolved finding requires a change.
-
-Immediately before pushing, repeat the complete collection. Confirm that its initial and final `headRefOid` values match.
-
-Apply these push conditions:
-
-- Do not push while any finding is unclassified.
-- Do not push while any unresolved finding requires a change.
-- After classification, remove retained collection evidence by its exact artifact path or identifier.
-- Verify that the artifact is absent.
-- If the host retained no artifact, record `retained evidence: none`.
-- If the user tells you to stop, stop without pushing.
-- The user may defer only a non-blocking suggestion. Record that disposition before pushing.
+Before updating an open PR, follow [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md). It owns complete collection, classification, retained evidence, and the push gate. Route only finding groups in the repair scope to `nemoclaw-contributor-implement-issue`; that workflow owns the repair and validation. Resume publication only when its evidence passes and the shared workflow permits one push.
 
 ### Hook Evidence
 
@@ -296,13 +270,7 @@ Leave label selection and application to the repository triage workflow.
 
 ### Reviewers
 
-Before you use a reviewer-request write, confirm that one of these conditions is true:
-
-- The current user names the exact reviewer.
-- You loaded a NemoClaw workflow definition from the PR base SHA in `NVIDIA/NemoClaw`, and it requires the exact reviewer-request write.
-
-Otherwise, do not add `--reviewer` or make a separate reviewer-request write.
-Reviewer routing belongs to repository-owned sources and the shared PR follow-up workflow.
+Do not make reviewer-request writes unless the current user names the reviewer or a repository-owned workflow loaded from the PR base requires that write. The shared follow-up workflow owns reviewer routing.
 
 ## Step 8: Monitor CI and Review Feedback
 
@@ -317,14 +285,3 @@ Created PR [#NNN](https://github.com/NVIDIA/NemoClaw/pull/NNN)
 CI: passing/pending/failing
 Automated review: no actionable findings / addressed findings / waiting on user
 ```
-
-## Final rules
-
-- Use the base-branch PR template.
-- Keep all template sections except an unused `Related Issue` section.
-- Select only boxes that have evidence.
-- Do not create a PR from `main`.
-- Assign the PR to its creator with `--assignee @me` when the creator has triage permission.
-- Route only review finding groups in the repair scope to `nemoclaw-contributor-implement-issue`.
-- Report decisions, changes, and verification evidence. Do not report the analysis process.
-- Follow CI and automated reviews after you create the PR.
