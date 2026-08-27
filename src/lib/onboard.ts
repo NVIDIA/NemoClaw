@@ -2752,25 +2752,15 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   AUTO_YES = opts.autoYes === true || process.env.NEMOCLAW_YES === "1";
   const resolveEntryOptions = () =>
     onboardEntryOptions.resolveDefaultRunEntryOptionsFromState(opts, validateName, onboardSession);
-  const entryOptions = resolveEntryOptions();
-  const { fresh, nonInteractive, cannotPrompt, resume } = entryOptions;
-  const { requestedFromDockerfile, requestedSandboxName } = entryOptions;
-  NON_INTERACTIVE = nonInteractive;
-  const validatePolicyTierBeforeRuntime =
-    isNonInteractive() && !resume && opts.experimentalProfile !== "portable";
-  if (validatePolicyTierBeforeRuntime) validatePolicyTierEnvEarly();
+  const initialEntryOptions = resolveEntryOptions();
+  NON_INTERACTIVE = initialEntryOptions.nonInteractive;
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   _preflightDashboardPort =
     opts.controlUiPort ?? (process.env.NEMOCLAW_DASHBOARD_PORT != null ? DASHBOARD_PORT : null);
   onboardRuntimeBoundary.reset();
-  const baseImageResolutionContext = baseImageResolutionFlow.createBaseImageResolutionContext({
-    fresh,
-    initialHint: opts.baseImageResolutionHint,
-    initialPreResolvedMetadata: opts.preResolvedBaseImageMetadata,
-  });
   const portableRetirementEntry = portableRetirementAuthority.beginPortableOnboardRetirementEntry({
     alreadyHeld: opts.onboardLockAlreadyHeld === true,
-    command: `nemoclaw onboard${resume ? " --resume" : ""}${fresh ? " --fresh" : ""}${isNonInteractive() ? " --non-interactive" : ""}${requestedFromDockerfile ? ` --from ${requestedFromDockerfile}` : ""}`,
+    command: `nemoclaw onboard${initialEntryOptions.resume ? " --resume" : ""}${initialEntryOptions.fresh ? " --fresh" : ""}${initialEntryOptions.nonInteractive ? " --non-interactive" : ""}${initialEntryOptions.requestedFromDockerfile ? ` --from ${initialEntryOptions.requestedFromDockerfile}` : ""}`,
     displayName: cliDisplayName(),
     homeDir: process.env.HOME || os.homedir(),
     loadRegistry: registry.load,
@@ -2792,8 +2782,19 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     preserveDeferredExitSession = false,
     preserveIncompleteSession = false;
   try {
-    resolveEntryOptions();
     await portableRetirementEntry.run(async () => {
+      const entryOptions = resolveEntryOptions();
+      const { fresh, nonInteractive, cannotPrompt, resume } = entryOptions;
+      const { requestedFromDockerfile, requestedSandboxName } = entryOptions;
+      NON_INTERACTIVE = nonInteractive;
+      const validatePolicyTierBeforeRuntime =
+        isNonInteractive() && !resume && opts.experimentalProfile !== "portable";
+      if (validatePolicyTierBeforeRuntime) validatePolicyTierEnvEarly();
+      const baseImageResolutionContext = baseImageResolutionFlow.createBaseImageResolutionContext({
+        fresh,
+        initialHint: opts.baseImageResolutionHint,
+        initialPreResolvedMetadata: opts.preResolvedBaseImageMetadata,
+      });
       const lockedRuntime = await resumeRuntime.prepare(
         opts,
         resume,

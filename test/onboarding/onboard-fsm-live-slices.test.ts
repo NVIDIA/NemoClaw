@@ -25,6 +25,7 @@ type ProbeMode =
   | "ordinary-policy-tier"
   | "providerless-staged-messaging"
   | "stale-recovery-admission"
+  | "stale-session-decision"
   | "ahead-core";
 
 interface ProbeOptions {
@@ -181,6 +182,12 @@ function runSliceProbe(options: ProbeOptions) {
   const sessionPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
   );
+  const entryOptionsPath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "onboard", "entry-options.ts"),
+  );
+  const lockedRuntimePath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "onboard", "resume", "locked-runtime.ts"),
+  );
   const preflightHandlerPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "onboard", "machine", "handlers", "preflight.ts"),
   );
@@ -215,6 +222,8 @@ const scenario = ${JSON.stringify(scenario)};
 const flowSlices = require(${flowSlicesPath});
 const { advanceTo, branchTo } = require(${resultPath});
 const onboardSession = require(${sessionPath});
+const onboardEntryOptions = require(${entryOptionsPath});
+const lockedRuntime = require(${lockedRuntimePath});
 const preflightHandlers = require(${preflightHandlerPath});
 const providerHandlers = require(${providerHandlerPath});
 const gatewayHandlers = require(${gatewayHandlerPath});
@@ -479,6 +488,23 @@ if (scenario.mode === "stale-recovery-admission") {
   };
 }
 
+if (scenario.mode === "stale-session-decision") {
+  const resolveEntryOptions = onboardEntryOptions.resolveDefaultRunEntryOptionsFromState;
+  let optionReads = 0;
+  onboardEntryOptions.resolveDefaultRunEntryOptionsFromState = (...args) => {
+    optionReads += 1;
+    const resolved = resolveEntryOptions(...args);
+    if (optionReads === 1) {
+      seedResumeSession("preflight", false);
+    }
+    return resolved;
+  };
+  lockedRuntime.prepare = async (_opts, resume) => {
+    called.push("locked-resume:" + String(resume));
+    throw sentinel;
+  };
+}
+
 const ownsAuthoritativeOnboardLock = scenario.mode.startsWith("authoritative-");
 if (ownsAuthoritativeOnboardLock) {
   const lock = onboardSession.acquireOnboardLock("authoritative rebuild fixture");
@@ -607,6 +633,12 @@ describe("live onboard FSM slice boundaries", () => {
 
   it("rechecks retained sandbox admission after acquiring the onboarding lock (#9833)", () => {
     assert.deepEqual(runSliceProbe({ slice: "initial", mode: "stale-recovery-admission" }), []);
+  });
+
+  it("uses the session decision read after acquiring the onboarding lock (#9833)", () => {
+    assert.deepEqual(runSliceProbe({ slice: "initial", mode: "stale-session-decision" }), [
+      "locked-resume:true",
+    ]);
   });
 
   it("enters the core slice after the initial slice reaches provider selection", () => {
