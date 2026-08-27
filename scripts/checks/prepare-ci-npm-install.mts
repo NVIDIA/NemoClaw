@@ -2,13 +2,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { parseAuditConfig } from "../audit-reviewed-npm-graph.mts";
-import { verifyReviewedNpmLockPackages } from "../lib/reviewed-npm-archive.mts";
-import { type CachePut, seedReviewedNpmCache } from "../lib/seed-reviewed-npm-cache.mts";
+import {
+  readReviewedNpmArchiveFile,
+  verifyReviewedNpmLockPackages,
+} from "../lib/reviewed-npm-archive.mts";
 
 const TRUSTED_REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const MAXIMUM_ARCHIVE_BYTES = 32 * 1024 * 1024;
@@ -21,6 +26,14 @@ type PreparationRequest = Readonly<{
 }>;
 
 type AuditConfig = ReturnType<typeof parseAuditConfig>;
+
+type NpmCacheStageRequest = Readonly<{
+  archive: Buffer;
+  artifactName: string;
+  cacheDirectory: string;
+}>;
+
+type NpmCacheStager = (request: NpmCacheStageRequest) => void;
 
 export type ReviewedSourceRegistryPackage = Readonly<{
   artifactName: string;
@@ -44,9 +57,41 @@ export type ReviewedSourceRegistryArtifactRequest = Readonly<{
   registryOrigin: string;
 }>;
 
+function stageReviewedArchiveWithNpm(request: NpmCacheStageRequest): void {
+  const stagingRoot = mkdtempSync(join(tmpdir(), "nemoclaw-reviewed-npm-cache-add-"));
+  try {
+    const archivePath = join(stagingRoot, request.artifactName);
+    writeFileSync(archivePath, request.archive, { mode: 0o600 });
+    const result = spawnSync(
+      "npm",
+      [
+        "cache",
+        "add",
+        archivePath,
+        "--cache",
+        request.cacheDirectory,
+        "--offline",
+        "--ignore-scripts",
+      ],
+      {
+        encoding: "utf8",
+        env: { ...process.env, NPM_CONFIG_UPDATE_NOTIFIER: "false" },
+        maxBuffer: 16 * 1024 * 1024,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    if (result.error) throw result.error;
+    if (result.status !== 0) {
+      throw new Error("npm could not stage the reviewed OpenShell SDK archive");
+    }
+  } finally {
+    rmSync(stagingRoot, { force: true, recursive: true });
+  }
+}
+
 export async function seedReviewedSourceRegistryArtifact(
   request: ReviewedSourceRegistryArtifactRequest,
-  put?: CachePut,
+  stage: NpmCacheStager = stageReviewedArchiveWithNpm,
 ): Promise<void> {
   if (!isAbsolute(request.artifactDirectory)) {
     throw new Error("reviewed OpenShell SDK artifact directory must be absolute");
@@ -64,29 +109,38 @@ export async function seedReviewedSourceRegistryArtifact(
     throw new Error("reviewed OpenShell SDK artifact directory has unexpected contents");
   }
   const archivePath = resolve(join(artifactDirectory, request.reviewed.artifactName));
-  await seedReviewedNpmCache(
-    {
-      allowedNestedShrinkwrapPackages: request.allowedNestedShrinkwrapPackages,
-      allowNestedShrinkwrap: false,
-      archives: new Map([[request.reviewed.packageSpec, archivePath]]),
-      cacheDirectory: request.cacheDirectory,
-      lockfilePath: request.lockfilePath,
-      maximumArchiveBytes: MAXIMUM_ARCHIVE_BYTES,
-      registryOrigin: request.registryOrigin,
-      reviewedPackagesWithoutIntegrity: request.reviewedPackagesWithoutIntegrity,
-      reviewedRegistryPackages: [
-        {
-          expectedIntegrity: request.reviewed.integrity,
-          label: request.reviewed.label,
-          packageSpec: request.reviewed.packageSpec,
-          tarballUrl: request.reviewed.tarballUrl,
-        },
-      ],
-      selectedPackageSpecs: new Set([request.reviewed.packageSpec]),
-      tarballsOnly: true,
-    },
-    put,
-  );
+  const reviewedRegistryPackage = {
+    expectedIntegrity: request.reviewed.integrity,
+    label: request.reviewed.label,
+    packageSpec: request.reviewed.packageSpec,
+    tarballUrl: request.reviewed.tarballUrl,
+  };
+  const lockedPackages = verifyReviewedNpmLockPackages({
+    allowedNestedShrinkwrapPackages: request.allowedNestedShrinkwrapPackages,
+    allowNestedShrinkwrap: false,
+    lockfilePath: request.lockfilePath,
+    registryOrigin: request.registryOrigin,
+    reviewedPackagesWithoutIntegrity: request.reviewedPackagesWithoutIntegrity,
+    reviewedRegistryPackages: [reviewedRegistryPackage],
+  });
+  if (!lockedPackages.includes(request.reviewed.packageSpec)) {
+    throw new Error("reviewed OpenShell SDK artifact is not used by the selected lockfile");
+  }
+  const cacheDirectory = resolve(request.cacheDirectory);
+  if (
+    !isAbsolute(request.cacheDirectory) ||
+    !existsSync(cacheDirectory) ||
+    !lstatSync(cacheDirectory).isDirectory()
+  ) {
+    throw new Error("reviewed OpenShell SDK cache must be an existing absolute directory");
+  }
+  const archive = readReviewedNpmArchiveFile({
+    archivePath,
+    expectedIntegrity: request.reviewed.integrity,
+    label: request.reviewed.label,
+    maximumBytes: MAXIMUM_ARCHIVE_BYTES,
+  });
+  stage({ archive, artifactName: request.reviewed.artifactName, cacheDirectory });
 }
 
 function readTrustedAuditConfig(): AuditConfig {
@@ -135,7 +189,7 @@ export function inspectCiNpmInstall(targetRoot: string) {
 async function prepareCiNpmInstallWithConfig(
   request: PreparationRequest,
   config: AuditConfig,
-  put?: CachePut,
+  stage?: NpmCacheStager,
 ): Promise<void> {
   const targetRoot = resolve(request.targetRoot);
   const cacheDirectory = resolve(request.cacheDirectory);
@@ -168,23 +222,23 @@ async function prepareCiNpmInstallWithConfig(
       reviewed,
       reviewedPackagesWithoutIntegrity: config.sourceRegistryPackagesWithoutIntegrity,
     },
-    put,
+    stage,
   );
 }
 
 export async function prepareCiNpmInstallWithReviewedConfig(
   request: PreparationRequest,
   reviewedConfigSource: string,
-  put?: CachePut,
+  stage?: NpmCacheStager,
 ): Promise<void> {
-  return prepareCiNpmInstallWithConfig(request, parseAuditConfig(reviewedConfigSource), put);
+  return prepareCiNpmInstallWithConfig(request, parseAuditConfig(reviewedConfigSource), stage);
 }
 
 export async function prepareCiNpmInstall(
   request: PreparationRequest,
-  put?: CachePut,
+  stage?: NpmCacheStager,
 ): Promise<void> {
-  return prepareCiNpmInstallWithConfig(request, readTrustedAuditConfig(), put);
+  return prepareCiNpmInstallWithConfig(request, readTrustedAuditConfig(), stage);
 }
 
 function requestFromEnvironment(): PreparationRequest {

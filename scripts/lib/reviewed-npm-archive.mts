@@ -72,6 +72,13 @@ export type ReviewedNpmArchive = Readonly<{
   rootDirectory: string;
 }>;
 
+export type ReviewedNpmArchiveFileRequest = Readonly<{
+  archivePath: string;
+  expectedIntegrity: string;
+  label: string;
+  maximumBytes: number;
+}>;
+
 type NpmRunner = (args: readonly string[], request: ReviewedNpmArchiveRequest) => string;
 
 function runNpm(args: readonly string[], request: ReviewedNpmArchiveRequest): string {
@@ -100,6 +107,43 @@ function requireReviewedRequest(request: ReviewedNpmArchiveRequest): void {
   }
   if (!request.tarballUrl) {
     throw new Error(`${request.label} must use a committed npm tarball URL`);
+  }
+}
+
+export function readReviewedNpmArchiveFile(request: ReviewedNpmArchiveFileRequest): Buffer {
+  if (!isAbsolute(request.archivePath)) {
+    throw new Error(`${request.label} archive path must be absolute`);
+  }
+  let descriptor: number | undefined;
+  try {
+    const archivePath = resolve(request.archivePath);
+    descriptor = openSync(archivePath, "r");
+    const opened = fstatSync(descriptor);
+    const pathEntry = lstatSync(archivePath);
+    if (
+      !opened.isFile() ||
+      !pathEntry.isFile() ||
+      pathEntry.isSymbolicLink() ||
+      opened.dev !== pathEntry.dev ||
+      opened.ino !== pathEntry.ino
+    ) {
+      throw new Error("archive must be a non-symlink regular file");
+    }
+    if (opened.size > request.maximumBytes) {
+      throw new Error("archive must be a bounded regular file");
+    }
+    const archive = readFileSync(descriptor);
+    const actualIntegrity = `sha512-${createHash("sha512").update(archive).digest("base64")}`;
+    if (actualIntegrity !== request.expectedIntegrity) {
+      throw new Error(
+        `${request.label} archive integrity mismatch\nExpected: ${request.expectedIntegrity}\nActual:   ${actualIntegrity}`,
+      );
+    }
+    return archive;
+  } catch (error) {
+    throw new Error(`${request.label} archive is unreadable: ${String(error)}`);
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
   }
 }
 

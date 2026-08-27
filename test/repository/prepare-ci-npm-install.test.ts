@@ -1,8 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  truncateSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -25,15 +34,25 @@ const reviewed: ReviewedSourceRegistryPackage = {
   tarballUrl: "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.0.106/reviewed-fixture",
 };
 
-function reviewedLock() {
+type CacheStageRequest = Readonly<{
+  archive: Buffer;
+  artifactName: string;
+  cacheDirectory: string;
+}>;
+
+function cacheStageMock() {
+  return vi.fn((_request: CacheStageRequest) => undefined);
+}
+
+function reviewedLock(packageIdentity: ReviewedSourceRegistryPackage = reviewed) {
   return {
     lockfileVersion: 3,
     name: "reviewed-sdk-artifact-fixture",
     packages: {
       "": { dependencies: { "@nvidia/openshell-sdk": "0.0.106" } },
       "node_modules/@nvidia/openshell-sdk": {
-        integrity: reviewed.integrity,
-        resolved: reviewed.tarballUrl,
+        integrity: packageIdentity.integrity,
+        resolved: packageIdentity.tarballUrl,
         version: "0.0.106",
       },
     },
@@ -50,7 +69,7 @@ function publicLock() {
   };
 }
 
-function reviewedConfigSource() {
+function reviewedConfigSource(packageIdentity: ReviewedSourceRegistryPackage = reviewed) {
   return JSON.stringify({
     archiveGraphId: "reviewed-archive-graph",
     archivePackages: [],
@@ -63,7 +82,7 @@ function reviewedConfigSource() {
     schemaVersion: 2,
     severityThreshold: "high",
     sourceNestedShrinkwrapPackages: [],
-    sourceRegistryPackage: reviewed,
+    sourceRegistryPackage: packageIdentity,
     sourceRegistryPackagesWithoutIntegrity: [],
   });
 }
@@ -81,19 +100,57 @@ function fixture() {
   return { artifactDirectory, cacheDirectory, lockfilePath, root };
 }
 
-function installFixture(reviewedLocation: "root" | "nemoclaw") {
+function installFixture(
+  reviewedLocation: "root" | "nemoclaw",
+  packageIdentity: ReviewedSourceRegistryPackage = reviewed,
+) {
   const source = fixture();
   const nestedRoot = join(source.root, "nemoclaw");
   mkdirSync(nestedRoot);
   writeFileSync(
     source.lockfilePath,
-    JSON.stringify(reviewedLocation === "root" ? reviewedLock() : publicLock()),
+    JSON.stringify(reviewedLocation === "root" ? reviewedLock(packageIdentity) : publicLock()),
   );
   writeFileSync(
     join(nestedRoot, "package-lock.json"),
-    JSON.stringify(reviewedLocation === "nemoclaw" ? reviewedLock() : publicLock()),
+    JSON.stringify(reviewedLocation === "nemoclaw" ? reviewedLock(packageIdentity) : publicLock()),
   );
   return source;
+}
+
+function packedInstallFixture() {
+  const source = installFixture("root");
+  const packageRoot = join(source.root, "sdk-package");
+  mkdirSync(packageRoot);
+  writeFileSync(
+    join(packageRoot, "package.json"),
+    JSON.stringify({ name: "@nvidia/openshell-sdk", version: "0.0.106" }),
+  );
+  writeFileSync(join(packageRoot, "index.js"), "export {};\n");
+  rmSync(join(source.artifactDirectory, artifactName));
+  const packed = JSON.parse(
+    execFileSync(
+      "npm",
+      ["pack", packageRoot, "--pack-destination", source.artifactDirectory, "--json"],
+      { encoding: "utf8" },
+    ),
+  ) as Array<{ filename?: string; integrity?: string }>;
+  expect(packed).toHaveLength(1);
+  const entry = packed[0]!;
+  expect(entry.filename).toBe(artifactName);
+  expect(entry.integrity).toMatch(/^sha512-/);
+  const packageIdentity = { ...reviewed, integrity: entry.integrity! };
+  writeFileSync(source.lockfilePath, JSON.stringify(reviewedLock(packageIdentity)));
+  writeFileSync(
+    join(source.root, "package.json"),
+    JSON.stringify({
+      dependencies: { "@nvidia/openshell-sdk": "0.0.106" },
+      name: "reviewed-sdk-install-fixture",
+      private: true,
+      version: "1.0.0",
+    }),
+  );
+  return { packageIdentity, source };
 }
 
 function installRequest(source: ReturnType<typeof installFixture>, mode: "artifact" | "registry") {
@@ -125,131 +182,156 @@ afterEach(() => {
 describe("trusted OpenShell SDK archive preparation", () => {
   it("requires the reviewed archive when the root lock uses the SDK", async () => {
     const source = installFixture("root");
-    const put = vi.fn(async () => undefined);
+    const stage = cacheStageMock();
     rmSync(source.artifactDirectory, { force: true, recursive: true });
 
     await expect(
       prepareCiNpmInstallWithReviewedConfig(
         installRequest(source, "artifact"),
         reviewedConfigSource(),
-        put,
+        stage,
       ),
     ).rejects.toThrow("reviewed OpenShell SDK artifact is required");
-    expect(put).not.toHaveBeenCalled();
+    expect(stage).not.toHaveBeenCalled();
   });
 
   it("requires the reviewed archive when the plugin lock uses the SDK", async () => {
     const source = installFixture("nemoclaw");
-    const put = vi.fn(async () => undefined);
+    const stage = cacheStageMock();
     rmSync(source.artifactDirectory, { force: true, recursive: true });
 
     await expect(
       prepareCiNpmInstallWithReviewedConfig(
         installRequest(source, "artifact"),
         reviewedConfigSource(),
-        put,
+        stage,
       ),
     ).rejects.toThrow("reviewed OpenShell SDK artifact is required");
-    expect(put).not.toHaveBeenCalled();
+    expect(stage).not.toHaveBeenCalled();
   });
 
   it("passes the verified archive from the root lock to npm cache preparation", async () => {
     const source = installFixture("root");
-    const put = vi.fn(async () => undefined);
+    const stage = cacheStageMock();
 
     await prepareCiNpmInstallWithReviewedConfig(
       installRequest(source, "artifact"),
       reviewedConfigSource(),
-      put,
+      stage,
     );
 
-    expect(put).toHaveBeenCalledTimes(2);
+    expect(stage).toHaveBeenCalledOnce();
+    expect(stage.mock.calls[0]?.[0].archive.equals(archiveBytes)).toBe(true);
   });
 
   it("passes the verified archive from the plugin lock to npm cache preparation", async () => {
     const source = installFixture("nemoclaw");
-    const put = vi.fn(async () => undefined);
+    const stage = cacheStageMock();
 
     await prepareCiNpmInstallWithReviewedConfig(
       installRequest(source, "artifact"),
       reviewedConfigSource(),
-      put,
+      stage,
     );
 
-    expect(put).toHaveBeenCalledTimes(2);
+    expect(stage).toHaveBeenCalledOnce();
   });
 
   it("uses registry mode without requiring or caching an archive", async () => {
     const source = installFixture("root");
-    const put = vi.fn(async () => undefined);
+    const stage = cacheStageMock();
     rmSync(source.artifactDirectory, { force: true, recursive: true });
 
     await prepareCiNpmInstallWithReviewedConfig(
       installRequest(source, "registry"),
       reviewedConfigSource(),
-      put,
+      stage,
     );
 
-    expect(put).not.toHaveBeenCalled();
+    expect(stage).not.toHaveBeenCalled();
   });
 
-  it("seeds only the exact reviewed tarball request and package identity", async () => {
+  it("stages only the exact reviewed tarball request and package identity", async () => {
     const source = fixture();
-    const calls: Array<readonly [string, string, Buffer, unknown?]> = [];
-    const put = vi.fn(async (cache: string, key: string, data: Buffer, options?: unknown) => {
-      calls.push([cache, key, data, options]);
+    const stage = cacheStageMock();
+
+    await seedReviewedSourceRegistryArtifact(request(source), stage);
+
+    expect(stage).toHaveBeenCalledOnce();
+    expect(stage.mock.calls[0]?.[0]).toMatchObject({
+      artifactName,
+      cacheDirectory: source.cacheDirectory,
     });
+    expect(stage.mock.calls[0]?.[0].archive.equals(archiveBytes)).toBe(true);
+  });
 
-    await seedReviewedSourceRegistryArtifact(request(source), put);
+  it("installs the reviewed archive offline after npm stages it", async () => {
+    const { packageIdentity, source } = packedInstallFixture();
 
-    expect(put).toHaveBeenCalledTimes(2);
-    expect(calls.map((call) => call[1])).toEqual([
-      `make-fetch-happen:request-cache:${reviewed.tarballUrl}`,
-      `pacote:tarball:${reviewed.packageSpec}`,
-    ]);
-    expect(calls.every((call) => call[2].equals(archiveBytes))).toBe(true);
+    await prepareCiNpmInstallWithReviewedConfig(
+      installRequest(source, "artifact"),
+      reviewedConfigSource(packageIdentity),
+    );
+    execFileSync(
+      "npm",
+      [
+        "ci",
+        "--offline",
+        "--ignore-scripts",
+        "--no-audit",
+        "--no-fund",
+        "--cache",
+        source.cacheDirectory,
+      ],
+      { cwd: source.root, encoding: "utf8" },
+    );
+
+    const installed = JSON.parse(
+      readFileSync(join(source.root, "node_modules/@nvidia/openshell-sdk/package.json"), "utf8"),
+    ) as { version?: string };
+    expect(installed.version).toBe("0.0.106");
   });
 
   it("rejects changed bytes before writing the npm cache", async () => {
     const source = fixture();
-    const put = vi.fn(async () => undefined);
+    const stage = cacheStageMock();
     writeFileSync(join(source.artifactDirectory, artifactName), "changed archive");
 
-    await expect(seedReviewedSourceRegistryArtifact(request(source), put)).rejects.toThrow(
+    await expect(seedReviewedSourceRegistryArtifact(request(source), stage)).rejects.toThrow(
       "integrity mismatch",
     );
-    expect(put).not.toHaveBeenCalled();
+    expect(stage).not.toHaveBeenCalled();
   });
 
   it("rejects symlinked or additional artifact content before writing the npm cache", async () => {
     const source = fixture();
-    const put = vi.fn(async () => undefined);
+    const stage = cacheStageMock();
     writeFileSync(join(source.root, "outside.tgz"), archiveBytes);
     rmSync(join(source.artifactDirectory, artifactName));
     symlinkSync(join(source.root, "outside.tgz"), join(source.artifactDirectory, artifactName));
 
-    await expect(seedReviewedSourceRegistryArtifact(request(source), put)).rejects.toThrow(
+    await expect(seedReviewedSourceRegistryArtifact(request(source), stage)).rejects.toThrow(
       "non-symlink regular file",
     );
-    expect(put).not.toHaveBeenCalled();
+    expect(stage).not.toHaveBeenCalled();
 
     rmSync(join(source.artifactDirectory, artifactName));
     writeFileSync(join(source.artifactDirectory, artifactName), archiveBytes);
     writeFileSync(join(source.artifactDirectory, "unexpected.tgz"), archiveBytes);
-    await expect(seedReviewedSourceRegistryArtifact(request(source), put)).rejects.toThrow(
+    await expect(seedReviewedSourceRegistryArtifact(request(source), stage)).rejects.toThrow(
       "unexpected contents",
     );
-    expect(put).not.toHaveBeenCalled();
+    expect(stage).not.toHaveBeenCalled();
   });
 
   it("rejects an oversized artifact before writing the npm cache", async () => {
     const source = fixture();
-    const put = vi.fn(async () => undefined);
+    const stage = cacheStageMock();
     truncateSync(join(source.artifactDirectory, artifactName), 32 * 1024 * 1024 + 1);
 
-    await expect(seedReviewedSourceRegistryArtifact(request(source), put)).rejects.toThrow(
+    await expect(seedReviewedSourceRegistryArtifact(request(source), stage)).rejects.toThrow(
       "bounded regular file",
     );
-    expect(put).not.toHaveBeenCalled();
+    expect(stage).not.toHaveBeenCalled();
   });
 });
