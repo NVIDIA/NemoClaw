@@ -744,6 +744,10 @@ describe("pull request and main workflow contracts", () => {
     expect(sdkPackageWorkflow.on).toEqual({
       pull_request_target: { types: ["opened", "synchronize", "reopened", "edited"] },
     });
+    expect(sdkPackageWorkflow.concurrency).toEqual({
+      group: "openshell-sdk-package-${{ github.event.pull_request.number }}",
+      "cancel-in-progress": true,
+    });
     expect(sdkPackageWorkflow.permissions).toEqual({ contents: "read" });
     expect(sdkPackageJob.permissions).toEqual({ contents: "read", packages: "read" });
     expect(sdkPackageJob.if).toBe(

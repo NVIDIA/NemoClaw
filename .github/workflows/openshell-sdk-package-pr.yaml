@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: openshell-sdk-package-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+  group: openshell-sdk-package-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
