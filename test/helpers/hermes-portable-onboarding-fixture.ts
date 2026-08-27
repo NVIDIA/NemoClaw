@@ -302,6 +302,9 @@ export interface HermesPortableTransactionFixtureOptions {
   beforeCompareAndSetRegistryGatewayPort?: (entry: SandboxEntry | null) => SandboxEntry | null;
   podmanAuthority?: HermesPortablePodmanExecutableAuthority;
   readRegistry?: () => SandboxEntry | null;
+  revalidatePendingCreateRegistry?: HermesPortableOnboardingDeps<{
+    ready: true;
+  }>["revalidatePendingCreateRegistry"];
   compareAndSetRegistryGatewayPort?: HermesPortableOnboardingDeps<{
     ready: true;
   }>["compareAndSetRegistryGatewayPort"];
@@ -349,6 +352,7 @@ export function createHermesPortableTransactionFixture(
       [
         "container update",
         () => {
+          events.push("restart-policy");
           restartPolicy = options.updateFails ? restartPolicy : "unless-stopped";
           return options.updateFails
             ? { status: null, stdout: "", stderr: "timed out" }
@@ -436,6 +440,9 @@ export function createHermesPortableTransactionFixture(
       return { ready: true };
     },
     readRegistry: options.readRegistry ?? (() => registryEntry),
+    ...(options.revalidatePendingCreateRegistry
+      ? { revalidatePendingCreateRegistry: options.revalidatePendingCreateRegistry }
+      : {}),
     compareAndSetRegistryGatewayPort:
       options.compareAndSetRegistryGatewayPort ??
       ((name, expected, gatewayPort) => {

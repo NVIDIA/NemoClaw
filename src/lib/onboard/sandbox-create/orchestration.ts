@@ -1836,7 +1836,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const revalidateVerifiedPolicyRegistration = (
       boundary: EffectiveVerifiedSandboxPolicyBoundary,
       operation: string,
-    ): void => {
+    ): SandboxEntry => {
       revalidateCreatedSandboxIdentity(boundary.lifecycleLiveIdentityFingerprint, operation);
       revalidateCreatedSandboxPolicyRegistration({
         sandboxName,
@@ -1850,9 +1850,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         registration: boundary.registration,
       });
       revalidateCreatedSandboxIdentity(boundary.lifecycleLiveIdentityFingerprint, operation);
-      registry.requireCurrentPendingSandboxPolicyVerification(
+      return registry.requireCurrentPendingSandboxPolicyVerification(
         requireCreateReservation(),
-        pendingSandboxPolicyVerificationForBoundary(boundary),
+        requirePendingPolicyVerification(),
       );
     };
     const runCreateFlow = async (
@@ -2168,6 +2168,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             effectivePolicySourcePath,
           ),
         readRegistry: () => registry.getSandbox(sandboxName),
+        revalidatePendingCreateRegistry: () =>
+          revalidateVerifiedPolicyRegistration(
+            requireVerifiedPolicyGate(),
+            `requalify verified create checkpoint for sandbox '${sandboxName}'`,
+          ),
         compareAndSetRegistryGatewayPort: registry.compareAndSetSandboxGatewayPort,
         registerSandbox: async (
           created,

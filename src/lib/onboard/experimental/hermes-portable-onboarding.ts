@@ -151,6 +151,7 @@ export interface HermesPortableOnboardingDeps<T> {
     effectivePolicySourcePath: string,
   ) => Promise<T>;
   readonly readRegistry: () => SandboxEntry | null;
+  readonly revalidatePendingCreateRegistry?: () => SandboxEntry;
   readonly compareAndSetRegistryGatewayPort: (
     name: string,
     expected: SandboxEntry,
@@ -1206,13 +1207,38 @@ export async function runHermesPortableOnboardingTransaction<T>(
       );
       if (reservation.kind === "conflict") return reservation;
       if (reservation.kind === "owned") {
-        return admittedRouteReservation &&
-          isCurrentSandboxInferenceRouteReservation(admittedRouteReservation, entry)
-          ? { kind: "missing" }
-          : {
+        if (
+          !admittedRouteReservation ||
+          !isCurrentSandboxInferenceRouteReservation(admittedRouteReservation, entry)
+        ) {
+          return {
+            kind: "conflict",
+            detail: "the inference route reservation changed after admission",
+          };
+        }
+        if (entry?.pendingPolicyVerification !== undefined) {
+          if (committedRegistryEntry || !deps.revalidatePendingCreateRegistry) {
+            return {
               kind: "conflict",
-              detail: "the inference route reservation changed after admission",
+              detail: "the verified create checkpoint lacks current transaction authority",
             };
+          }
+          try {
+            const revalidated = deps.revalidatePendingCreateRegistry();
+            if (!isDeepStrictEqual(revalidated, entry)) {
+              return {
+                kind: "conflict",
+                detail: "the verified create checkpoint changed during revalidation",
+              };
+            }
+          } catch {
+            return {
+              kind: "conflict",
+              detail: "the verified create checkpoint lacks current transaction authority",
+            };
+          }
+        }
+        return { kind: "missing" };
       }
       if (reservation.kind === "missing") {
         return admittedRouteReservation
@@ -1625,6 +1651,7 @@ export interface HermesPortableOnboardingFromOnboardInput<T> {
     effectivePolicySourcePath: string,
   ) => Promise<T>;
   readonly readRegistry: () => SandboxEntry | null;
+  readonly revalidatePendingCreateRegistry?: HermesPortableOnboardingDeps<T>["revalidatePendingCreateRegistry"];
   readonly compareAndSetRegistryGatewayPort: HermesPortableOnboardingDeps<T>["compareAndSetRegistryGatewayPort"];
   readonly registerSandbox: HermesPortableOnboardingDeps<T>["registerSandbox"];
   readonly sourceRoot: string;
@@ -1680,6 +1707,7 @@ export async function runHermesPortableOnboardingFromOnboard<T>(
     openshellArgv,
     createSandbox,
     readRegistry,
+    revalidatePendingCreateRegistry,
     compareAndSetRegistryGatewayPort,
     registerSandbox,
     sourceRoot,
@@ -1771,6 +1799,7 @@ export async function runHermesPortableOnboardingFromOnboard<T>(
           createSandbox,
         }),
       readRegistry,
+      ...(revalidatePendingCreateRegistry ? { revalidatePendingCreateRegistry } : {}),
       compareAndSetRegistryGatewayPort,
       registerSandbox,
       ...(cleanupTemporaryPolicy ? { cleanupTemporaryPolicy } : {}),

@@ -13,8 +13,11 @@ import {
   createHermesPortableTransactionFixture,
   HERMES_PORTABLE_TEST_LIVE_IDENTITY,
   HERMES_PORTABLE_TEST_POLICY,
+  hermesPortableReservationForOnboarding,
 } from "../../../../test/helpers/hermes-portable-onboarding-fixture";
+import type { SandboxEntry } from "../../state/registry";
 import {
+  pendingSandboxPolicyVerificationForBoundary,
   revalidateCreatedSandboxPolicyRegistration,
   type CreatedSandboxPolicyRegistrationInput,
 } from "../sandbox-create/policy-creation-receipt";
@@ -55,6 +58,49 @@ function metadata(): { status: number; output: string; stdout: string; stderr: s
 
 function captureResult(status = 0) {
   return { status, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+}
+
+function checkpointFor(
+  input: ReturnType<typeof createHermesPortableTestInput>,
+  liveIdentityFingerprint = HERMES_PORTABLE_TEST_LIVE_IDENTITY,
+) {
+  const policyCreationReceipt = {
+    schemaVersion: 1 as const,
+    origin: "sandbox-create" as const,
+    gatewayName: input.gatewayName,
+    gatewayPort: GATEWAY_PORT,
+    sandboxName: input.sandboxName,
+    lifecycleGeneration: input.lifecycleGeneration,
+    sandboxIdentityFingerprint: liveIdentityFingerprint,
+    policyHash: "sha256:effective",
+    policyVersion: 4,
+  };
+  return pendingSandboxPolicyVerificationForBoundary({
+    registration: {
+      policyAuthority: "nemoclaw-managed" as const,
+      policyCreationReceipt,
+      observedPolicyAuthority: "owner-unknown" as const,
+    },
+    sandboxName: input.sandboxName,
+    gatewayName: input.gatewayName,
+    gatewayPort: GATEWAY_PORT,
+    lifecycleGeneration: input.lifecycleGeneration,
+    lifecycleLiveIdentityFingerprint: liveIdentityFingerprint,
+    route: "none" as const,
+  });
+}
+
+function checkpointEntry(
+  input: ReturnType<typeof createHermesPortableTestInput>,
+  checkpoint: ReturnType<typeof checkpointFor>,
+): SandboxEntry {
+  return {
+    ...hermesPortableReservationForOnboarding(input),
+    gatewayPort: checkpoint.gatewayPort,
+    lifecycleGeneration: checkpoint.lifecycleGeneration,
+    lifecycleLiveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
+    pendingPolicyVerification: checkpoint,
+  };
 }
 
 function policyRegistrationInput(boundary: EffectiveVerifiedSandboxPolicyBoundary): Omit<
@@ -122,6 +168,8 @@ network_policies:
     let routeFallbackCalls = 0;
     let verifiedCreateEffectCalls = 0;
     let createSandboxCalls = 0;
+    let recordedCheckpointEntry: SandboxEntry | null = null;
+    let updateRegistry: (name: string, updates: Partial<SandboxEntry>) => boolean;
     const persistedPolicySources: string[] = [];
     const routeFallback = () => {
       routeFallbackCalls += 1;
@@ -129,6 +177,10 @@ network_policies:
     };
     const persistVerifiedPolicy = (boundary: EffectiveVerifiedSandboxPolicyBoundary) => {
       persistedPolicySources.push(boundary.policySourcePath);
+      const checkpoint = pendingSandboxPolicyVerificationForBoundary(boundary);
+      recordedCheckpointEntry = checkpointEntry(current, checkpoint);
+      const { name, ...updates } = recordedCheckpointEntry;
+      expect(updateRegistry(name, updates)).toBe(true);
     };
     const runVerifiedCreateEffects = async () => {
       verifiedCreateEffectCalls += 1;
@@ -205,7 +257,12 @@ network_policies:
           readyRunner: vi.fn(() => captureResult()),
           createSandbox,
         }),
+      revalidatePendingCreateRegistry: () => {
+        expect(recordedCheckpointEntry).not.toBeNull();
+        return structuredClone(recordedCheckpointEntry!);
+      },
     });
+    updateRegistry = fixture.updateRegistry;
 
     const completed = await runHermesPortableOnboardingTransaction(current, fixture.value);
 
@@ -214,6 +271,56 @@ network_policies:
     expect(routeFallbackCalls).toBe(0);
     expect(verifiedCreateEffectCalls).toBe(1);
     expect(createSandboxCalls).toBe(1);
+  });
+
+  it("rejects a separately valid checkpoint replacement before configuration effects (#10423)", async () => {
+    fs.writeFileSync(policyPath, HERMES_PORTABLE_TEST_POLICY, { mode: 0o600 });
+    const current = {
+      ...createHermesPortableTestInput(stateDir, policyPath),
+      lifecycleGeneration: LIFECYCLE_GENERATION,
+    };
+    const expectedEntry = checkpointEntry(current, checkpointFor(current));
+    const replacementEntry = checkpointEntry(current, checkpointFor(current, "b".repeat(64)));
+    let updateRegistry: (name: string, updates: Partial<SandboxEntry>) => boolean;
+    const fixture = createHermesPortableTransactionFixture(current, {
+      createSandbox: async () => {
+        const { name, ...updates } = replacementEntry;
+        expect(updateRegistry(name, updates)).toBe(true);
+        return { ready: true };
+      },
+      revalidatePendingCreateRegistry: () => structuredClone(expectedEntry),
+    });
+    updateRegistry = fixture.updateRegistry;
+
+    await expect(runHermesPortableOnboardingTransaction(current, fixture.value)).rejects.toThrow(
+      "verified create checkpoint changed during revalidation",
+    );
+    expect(fixture.events).not.toContain("restart-policy");
+    expect(fixture.events).not.toContain("registry");
+  });
+
+  it("rejects a checkpoint without the current in-process revalidator before effects (#10423)", async () => {
+    fs.writeFileSync(policyPath, HERMES_PORTABLE_TEST_POLICY, { mode: 0o600 });
+    const current = {
+      ...createHermesPortableTestInput(stateDir, policyPath),
+      lifecycleGeneration: LIFECYCLE_GENERATION,
+    };
+    const recordedEntry = checkpointEntry(current, checkpointFor(current));
+    let updateRegistry: (name: string, updates: Partial<SandboxEntry>) => boolean;
+    const fixture = createHermesPortableTransactionFixture(current, {
+      createSandbox: async () => {
+        const { name, ...updates } = recordedEntry;
+        expect(updateRegistry(name, updates)).toBe(true);
+        return { ready: true };
+      },
+    });
+    updateRegistry = fixture.updateRegistry;
+
+    await expect(runHermesPortableOnboardingTransaction(current, fixture.value)).rejects.toThrow(
+      "verified create checkpoint lacks current transaction authority",
+    );
+    expect(fixture.events).not.toContain("restart-policy");
+    expect(fixture.events).not.toContain("registry");
   });
 
   it("rejects a source and argv mismatch before the generic create gate (#10423)", async () => {
