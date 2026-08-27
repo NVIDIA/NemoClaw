@@ -216,9 +216,11 @@ function qualifyRecordedSandboxPolicyAuthority(
 ): QualifiedSandboxPolicyAuthority {
   const recorded = input.recordedSandbox;
   const gatewayPort = recorded?.gatewayPort;
+  const recordedReservationId = recorded?.reservationSessionId;
   if (
     !recorded?.policyAuthority ||
-    recorded.pendingRouteReservation === true ||
+    (recorded.pendingRouteReservation === true &&
+      (typeof recordedReservationId !== "string" || recordedReservationId.length === 0)) ||
     recorded.gatewayName !== input.gatewayName ||
     typeof gatewayPort !== "number" ||
     !Number.isSafeInteger(gatewayPort) ||
@@ -288,7 +290,8 @@ function qualifyRecordedSandboxPolicyAuthority(
     : recorded;
   if (
     !confirmedRecorded ||
-    confirmedRecorded.pendingRouteReservation === true ||
+    confirmedRecorded.pendingRouteReservation !== recorded.pendingRouteReservation ||
+    confirmedRecorded.reservationSessionId !== recordedReservationId ||
     confirmedRecorded.policyAuthority !== recorded.policyAuthority ||
     !isDeepStrictEqual(confirmedRecorded.policyCreationReceipt, recorded.policyCreationReceipt) ||
     confirmedRecorded.lifecycleGeneration !== recorded.lifecycleGeneration ||

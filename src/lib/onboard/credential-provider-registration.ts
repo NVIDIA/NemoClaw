@@ -19,6 +19,7 @@ export interface StageSandboxCredentialProvidersInput<Agent> {
   webSearchConfig: WebSearchConfig | null;
   agent: Agent;
   requiredBindings: readonly CheckpointProviderBinding[];
+  replaceExisting?: boolean;
   revalidatePolicyRequirements?(operation: string): void;
 }
 
@@ -253,6 +254,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     requiredBindings: readonly CheckpointProviderBinding[],
     plannedTokenDefs: ReadonlyMap<string, MessagingTokenDef>,
     runOpenshell: OpenshellCliHelpers["runOpenshell"],
+    replaceExisting: boolean,
   ): void {
     for (const binding of requiredBindings) {
       if (!providers.providerExistsInGateway(binding.name, runOpenshell)) {
@@ -263,7 +265,11 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
         continue;
       }
       const matches = credentialBindingMatchesGateway(binding, runOpenshell);
-      if (!matches) throw new Error(EXISTING_BINDING_ERROR);
+      if (matches) continue;
+      const tokenDef = plannedTokenDefs.get(binding.name);
+      if (!replaceExisting || !tokenDef || !deps.normalizeCredentialValue(tokenDef.token)) {
+        throw new Error(EXISTING_BINDING_ERROR);
+      }
     }
   }
 
@@ -293,6 +299,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       input.requiredBindings,
       plannedTokenDefs,
       runOpenshell,
+      input.replaceExisting === true,
     );
     input.revalidatePolicyRequirements?.("clear staged credential provider receipts");
     setStagedCredentialProviderReceipts(
@@ -302,7 +309,11 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     );
     const registered = upsertMessagingProviders(
       tokenDefs,
-      { revalidatePolicyRequirements: input.revalidatePolicyRequirements },
+      {
+        replaceExisting: input.replaceExisting === true,
+        allowedSandboxes: input.replaceExisting === true ? [input.sandboxName] : undefined,
+        revalidatePolicyRequirements: input.revalidatePolicyRequirements,
+      },
       runOpenshell,
     );
     input.revalidatePolicyRequirements?.("record staged credential provider receipts");

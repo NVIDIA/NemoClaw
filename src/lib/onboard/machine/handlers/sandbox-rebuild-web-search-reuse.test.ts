@@ -3,6 +3,8 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { SandboxMessagingPlan } from "../../../messaging/manifest";
+import { hashCredential } from "../../../security/credential-hash";
 import { decisionSelected, decisionUnset } from "../../../state/onboard-checkpoint-decision";
 import {
   CHECKPOINT_SCHEMA_VERSION,
@@ -13,7 +15,7 @@ import {
 import { createSession, type Session } from "../../../state/onboard-session";
 import { detectMessagingChannelsFromEnv } from "../../messaging-channel-setup";
 import { handleSandboxState } from "./sandbox";
-import { baseOptions, createDeps } from "./sandbox-test-fixtures";
+import { baseOptions, createDeps, makeMinimalPlan, withEnv } from "./sandbox-test-fixtures";
 
 vi.mock("../../messaging-channel-setup", () => ({
   detectMessagingChannelsFromEnv: vi.fn(() => []),
@@ -140,6 +142,59 @@ function recreateWebSearch(
 }
 
 describe("rebuild web-search credential reuse", () => {
+  it("replaces a stale messaging provider only when rebuild owns the deleted sandbox (#10153)", async () => {
+    const telegramToken = "telegram-current-token";
+    const binding = {
+      name: `${SANDBOX_NAME}-telegram-bridge`,
+      type: "nemoclaw-mcp-v1",
+      credentialEnv: "TELEGRAM_BOT_TOKEN",
+    };
+    const messagingPlan: SandboxMessagingPlan = {
+      ...makeMinimalPlan(SANDBOX_NAME, "openclaw", ["telegram"]),
+      credentialBindings: [
+        {
+          channelId: "telegram",
+          credentialId: "bot-token",
+          sourceInput: "botToken",
+          providerName: binding.name,
+          providerEnvKey: binding.credentialEnv,
+          placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+          credentialAvailable: true,
+          credentialHash: hashCredential(telegramToken) ?? undefined,
+        },
+      ],
+    };
+    const session = rebuiltSession(recreateTransaction());
+    const stageSandboxCredentialProviders = vi.fn(async () => [binding]);
+    const { deps } = createDeps(
+      {
+        getSandboxReuseState: () => "missing",
+        readMessagingPlanFromEnv: () => messagingPlan,
+        stageSandboxCredentialProviders,
+        providerMatchesGatewayCredential: (name, type, credentialEnv) =>
+          name === binding.name && type === binding.type && credentialEnv === binding.credentialEnv,
+      },
+      session,
+    );
+
+    await withEnv("TELEGRAM_BOT_TOKEN", telegramToken, () =>
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: SANDBOX_NAME,
+        recreateJournalTargetIntentFingerprint: TARGET_INTENT_FINGERPRINT,
+      }),
+    );
+
+    expect(stageSandboxCredentialProviders).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: SANDBOX_NAME,
+        replaceExisting: true,
+        requiredBindings: [binding],
+      }),
+    );
+  });
+
   it("reuses the registered gateway credential when the recreate journal owns the deleted sandbox (#8717)", async () => {
     const { run, calls } = recreateWebSearch(rebuiltSession(recreateTransaction()));
 
