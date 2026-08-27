@@ -178,6 +178,8 @@ Hermes can select `tavily` only.
 Deep Agents can use the maintained `tavily` opt-in path, but messaging channel presets are omitted because the terminal harness does not run a NemoClaw messaging bridge today.
 </AgentOnly>
 NemoClaw automatically suggests the preset that matches the selected provider and removes stale web search presets during resume reconciliation when you switch providers or disable web search.
+This removal preserves an already-applied preset that is a default of the sandbox's recorded tier — on Balanced or Open, disabling web search during reuse keeps the tier's `brave` default and its egress rather than treating it as a stale leftover.
+`tavily` is never a tier default, so it is always removed when you disable web search; a recorded Restricted tier has no web search default and removes `brave` the same way.
 <AgentOnly variant="openclaw,hermes">
 When a later onboarding run does not select a messaging channel and the environment no longer supplies that channel's required values, NemoClaw treats the channel as disabled.
 NemoClaw then removes that channel's matching policy preset instead of carrying it forward.

@@ -612,7 +612,7 @@ describe("policy tier setup", () => {
     assert.ok(!result.appliedCalls.includes("brave"));
   });
 
-  it("removes a previously-applied built-in Brave preset when Brave search is declined", async () => {
+  it("removes a previously-applied built-in Brave preset when Brave search is declined with no recorded tier", async () => {
     const result = await runPolicySetup(
       { tierName: "balanced", currentApplied: ["brave", "npm"] },
       { webSearchConfig: null, webSearchSupported: true },
@@ -717,6 +717,100 @@ describe("policy tier setup", () => {
       },
     ]);
     assert.deepEqual(result.removedCalls, []);
+  });
+
+  it.each([
+    ["interactive", false],
+    ["non-interactive", true],
+  ] as const)(
+    "preserves a recorded Balanced tier default in the %s fresh-selection branch without web search (#10404)",
+    async (_label, nonInteractive) => {
+      const result = await runPolicySetup(
+        {
+          tierName: "balanced",
+          currentApplied: ["npm", "brave"],
+          recordedPolicyTier: "balanced",
+          nonInteractive,
+        },
+        { webSearchConfig: null, webSearchSupported: true },
+      );
+
+      assert.ok(result.applied.includes("brave"));
+      assert.deepEqual(result.removedCalls, []);
+    },
+  );
+
+  it("preserves a recorded Balanced tier default when NEMOCLAW_POLICY_MODE=skip bypasses reuse seeding (#10404)", async () => {
+    const result = await runPolicySetup(
+      {
+        tierName: "balanced",
+        policyMode: "skip",
+        currentApplied: ["npm", "brave"],
+        recordedPolicyTier: "balanced",
+      },
+      { webSearchConfig: null, webSearchSupported: true },
+    );
+
+    assert.deepEqual(result.removedCalls, []);
+    assert.deepEqual(result.syncCalls, []);
+  });
+
+  it("keeps a recorded Balanced tier default listed by NEMOCLAW_POLICY_PRESETS in suggested mode (#10404)", async () => {
+    const result = await runPolicySetup(
+      {
+        tierName: "balanced",
+        policyPresets: "npm,brave",
+        currentApplied: ["npm"],
+        recordedPolicyTier: "balanced",
+      },
+      { webSearchConfig: null, webSearchSupported: true },
+    );
+
+    assert.deepEqual(result.applied, ["npm", "brave"]);
+    assert.deepEqual(result.appliedCalls, ["brave"]);
+    assert.deepEqual(result.removedCalls, []);
+  });
+
+  it("still removes a previously-applied Brave preset on a recorded Restricted tier (#10404)", async () => {
+    const result = await runPolicySetup(
+      {
+        tierName: "restricted",
+        currentApplied: ["npm", "brave"],
+        recordedPolicyTier: "restricted",
+      },
+      { webSearchConfig: null, webSearchSupported: true },
+    );
+
+    assert.ok(!result.applied.includes("brave"));
+    assert.ok(result.removedCalls.includes("brave"));
+  });
+
+  it("still removes a previously-applied Tavily preset on a recorded Balanced tier (#10404)", async () => {
+    const result = await runPolicySetup(
+      {
+        tierName: "balanced",
+        currentApplied: ["npm", "tavily"],
+        recordedPolicyTier: "balanced",
+      },
+      { webSearchConfig: null, webSearchSupported: true },
+    );
+
+    assert.ok(!result.applied.includes("tavily"));
+    assert.ok(result.removedCalls.includes("tavily"));
+  });
+
+  it("still removes a recorded Balanced Brave default when web search is unsupported (#10404)", async () => {
+    const result = await runPolicySetup(
+      {
+        tierName: "balanced",
+        currentApplied: ["npm", "brave"],
+        recordedPolicyTier: "balanced",
+      },
+      { webSearchSupported: false },
+    );
+
+    assert.ok(!result.applied.includes("brave"));
+    assert.ok(result.removedCalls.includes("brave"));
   });
 
   it("clamps resumed policy presets to web-search-supported presets", async () => {

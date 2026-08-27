@@ -446,6 +446,12 @@ async function setupPoliciesWithSelectionInner(
     supportOptions,
     customPresetNames,
   );
+  // Resume keeps the recorded tier so stale suppressed presets from that tier
+  // still get filtered. An interrupted create can reach this fresh-selection
+  // branch before presets are recorded, so its persisted tier must also win
+  // over a new prompt or non-interactive default.
+  const persistedTierName = deps.getRecordedPolicyTier?.(sandboxName) ?? null;
+  const recordedTierName = options.tierName ?? persistedTierName;
   const pruneUnavailablePresets = createUnavailablePolicyPresetPruner({
     disabledChannels,
     enabledChannels,
@@ -455,7 +461,17 @@ async function setupPoliciesWithSelectionInner(
     customPresetNames,
     customOwnsObservability,
   });
-  const appliedForPreservation = pruneUnavailablePresets(applied);
+  // Reuse reaches this fresh-selection branch whenever seeding is bypassed (a
+  // non-interactive env override, or a sandbox whose prior policy step never
+  // finalized), so the recorded tier has to reach the pruner here too — an
+  // already-applied tier egress default (e.g. `brave` on Balanced) is not a
+  // stale web-search leftover and must survive into the preservation pass.
+  // The recorded tier (not the freshly resolved one) keeps a genuinely fresh
+  // onboard on its conservative suggestion behaviour: no recorded tier means
+  // null, and null still prunes. (#10404, regression of #6844)
+  const appliedForPreservation = pruneUnavailablePresets(applied, {
+    tierName: recordedTierName,
+  });
   const filterSupportedPresetNames = (presetNames: string[]) =>
     filterSetupPolicyPresetNamesForAgent(excludePresets(presetNames), agent).filter(
       (name) =>
@@ -471,12 +487,6 @@ async function setupPoliciesWithSelectionInner(
           customPresetNames,
         )
       : null;
-  // Resume keeps the recorded tier so stale suppressed presets from that tier
-  // still get filtered. An interrupted create can reach this fresh-selection
-  // branch before presets are recorded, so its persisted tier must also win
-  // over a new prompt or non-interactive default.
-  const persistedTierName = deps.getRecordedPolicyTier?.(sandboxName) ?? null;
-  const recordedTierName = options.tierName ?? persistedTierName;
   const personalAlreadyActive =
     currentAppliedPresets.includes(PERSONAL_OPEN_INTERNET_PRESET_NAME) ||
     persistedTierName === PERSONAL_POLICY_TIER_NAME ||
@@ -553,7 +563,9 @@ async function setupPoliciesWithSelectionInner(
         ensureRequiredTierPolicyPresets(
           tierName,
           filterSuppressedAgentRequiredPresets(
-            excludePresets(pruneUnavailablePresets(currentAppliedPresets)),
+            excludePresets(
+              pruneUnavailablePresets(currentAppliedPresets, { tierName: recordedTierName }),
+            ),
             tierName,
             agent,
           ),
@@ -635,6 +647,7 @@ async function setupPoliciesWithSelectionInner(
     chosen = excludePresets(
       pruneUnavailablePresets(chosen, {
         preserveExplicitWebSearch: isAuthoritative || personalTier,
+        tierName: recordedTierName,
       }),
     );
     chosen = ensureRequiredTierPolicyPresets(tierName, chosen);
