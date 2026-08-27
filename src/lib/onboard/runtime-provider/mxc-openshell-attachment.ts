@@ -10,7 +10,8 @@ export const MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION = 1 as const;
 const PROVIDER_ID = "mxc";
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const REVISION_PATTERN = /^[a-f0-9]{7,64}$/u;
-const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u;
+const VERSION_PATTERN =
+  /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+(?:[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/u;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
 const MAX_TEXT_BYTES = 4096;
 
@@ -46,12 +47,11 @@ export interface MxcOpenShellAttachmentObservation extends MxcOpenShellAttachmen
   readonly gatewayConfigPath: string;
 }
 
-export interface MxcOpenShellAttachmentInput {
+export interface MxcOpenShellAttachmentAuthority {
   readonly contractVersion: typeof MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION;
   readonly providerId: "mxc";
   readonly mode: "attach-existing";
-  readonly expected: MxcOpenShellAttachmentExpectation;
-  readonly observed: MxcOpenShellAttachmentObservation;
+  readonly acceptedIdentitySha256: string;
 }
 
 export interface MxcOpenShellAttachmentReceipt {
@@ -74,6 +74,11 @@ export class MxcOpenShellAttachmentError extends Error {
     this.name = "MxcOpenShellAttachmentError";
   }
 }
+
+const ACCEPTED_IDENTITIES = new WeakMap<
+  MxcOpenShellAttachmentAuthority,
+  MxcOpenShellAttachmentExpectation
+>();
 
 function record(value: unknown, label: string): Record<string, unknown> {
   if (
@@ -249,38 +254,66 @@ function frozen<T>(value: T): T {
 }
 
 /**
- * Bind an accepted OpenShell distribution to one observed Windows installation.
+ * Bind a provider-owned accepted identity to an opaque attachment authority.
+ *
+ * The caller must obtain the expectation from a trusted provider source, not
+ * from the host observation that will be qualified against it.
+ */
+export function createMxcOpenShellAttachmentAuthority(
+  expectation: unknown,
+): MxcOpenShellAttachmentAuthority {
+  const accepted = frozen(parseExpectation(expectation, "accepted attachment"));
+  const acceptedIdentitySha256 = createHash("sha256")
+    .update(
+      JSON.stringify({
+        contractVersion: MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
+        providerId: PROVIDER_ID,
+        mode: "attach-existing",
+        accepted,
+      }),
+      "utf8",
+    )
+    .digest("hex");
+  const authority = Object.freeze({
+    contractVersion: MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
+    providerId: PROVIDER_ID,
+    mode: "attach-existing" as const,
+    acceptedIdentitySha256,
+  });
+  ACCEPTED_IDENTITIES.set(authority, accepted);
+  return authority;
+}
+
+function acceptedIdentity(authority: unknown): MxcOpenShellAttachmentExpectation {
+  if (typeof authority !== "object" || authority === null) {
+    throw new MxcOpenShellAttachmentError("accepted identity authority is not provider-owned");
+  }
+  const accepted = ACCEPTED_IDENTITIES.get(authority as MxcOpenShellAttachmentAuthority);
+  if (!accepted) {
+    throw new MxcOpenShellAttachmentError("accepted identity authority is not provider-owned");
+  }
+  return accepted;
+}
+
+/**
+ * Bind a provider-owned accepted OpenShell identity to one observed Windows installation.
  *
  * The trusted host adapter must collect the observation without executing the
  * untrusted agent artifact. This function does not install, start, or replace a
  * gateway and does not authorize MXC activation.
  */
-export function qualifyMxcOpenShellAttachment(input: unknown): MxcOpenShellAttachmentReceipt {
-  const candidate = record(input, "attachment");
-  exactKeys(
-    candidate,
-    ["contractVersion", "expected", "mode", "observed", "providerId"],
-    "attachment",
-  );
-  if (candidate.contractVersion !== MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION) {
-    throw new MxcOpenShellAttachmentError("contract version is unsupported");
-  }
-  if (candidate.providerId !== PROVIDER_ID) {
-    throw new MxcOpenShellAttachmentError("provider identity does not match 'mxc'");
-  }
-  if (candidate.mode !== "attach-existing") {
-    throw new MxcOpenShellAttachmentError(
-      "only an existing OpenShell installation can be attached",
-    );
-  }
-  const expected = parseExpectation(candidate.expected, "expected attachment");
-  const observed = parseObservation(candidate.observed);
+export function qualifyMxcOpenShellAttachment(
+  authority: MxcOpenShellAttachmentAuthority,
+  observation: unknown,
+): MxcOpenShellAttachmentReceipt {
+  const expected = acceptedIdentity(authority);
+  const observed = parseObservation(observation);
   if (!sameIdentity(expected, observed)) {
     throw new MxcOpenShellAttachmentError(
       "observed distribution identity does not match the accepted identity",
     );
   }
-  const authority = {
+  const receiptIdentity = {
     contractVersion: MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
     providerId: PROVIDER_ID,
     mode: "attach-existing" as const,
@@ -296,7 +329,7 @@ export function qualifyMxcOpenShellAttachment(input: unknown): MxcOpenShellAttac
     },
   } as const;
   const authoritySha256 = createHash("sha256")
-    .update(JSON.stringify(authority), "utf8")
+    .update(JSON.stringify(receiptIdentity), "utf8")
     .digest("hex");
-  return frozen({ ...authority, authoritySha256 });
+  return frozen({ ...receiptIdentity, authoritySha256 });
 }

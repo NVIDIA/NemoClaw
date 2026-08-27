@@ -15,7 +15,7 @@ import type {
   RuntimeProviderNativeArtifactBootstrapSurface,
 } from "./contract";
 import { createMxcRuntimeProviderBundle } from "./mxc";
-import type { MxcOpenShellAttachmentInput } from "./mxc-openshell-attachment";
+import { mxcOpenShellAttachmentFixture } from "./mxc-openshell-attachment-test-fixture";
 
 const NATIVE_RECEIPT = nativeArtifactWorkloadReceiptFixture(
   encodeManagedStartupProfile(managedStartupE2eProfile("openclaw")),
@@ -25,40 +25,6 @@ const SHARE_DIRECTORY = `C:\\nemoclaw-alpha-${createHash("sha256")
   .update(LIFECYCLE_GENERATION, "utf8")
   .digest("hex")
   .slice(0, 12)}`;
-
-function openshellAttachment(): MxcOpenShellAttachmentInput {
-  const identity = {
-    distribution: {
-      version: "0.0.21",
-      revision: "a".repeat(40),
-      sha256: "1".repeat(64),
-    },
-    components: {
-      cliSha256: "2".repeat(64),
-      gatewaySha256: "3".repeat(64),
-      wxcExecSha256: "4".repeat(64),
-    },
-    gateway: {
-      configSha256: "5".repeat(64),
-      driver: "mxc" as const,
-      backend: "process_container" as const,
-    },
-  };
-  return {
-    contractVersion: 1,
-    providerId: "mxc",
-    mode: "attach-existing",
-    expected: identity,
-    observed: {
-      ...structuredClone(identity),
-      distributionRoot: "C:\\OpenShell",
-      cliPath: "C:\\OpenShell\\bin\\openshell.exe",
-      gatewayPath: "C:\\OpenShell\\bin\\openshell-gateway.exe",
-      wxcExecPath: "C:\\OpenShell\\mxc\\wxc-exec.exe",
-      gatewayConfigPath: "C:\\ProgramData\\NVIDIA\\OpenShell\\gateway.toml",
-    },
-  };
-}
 
 function bootstrapInput(): RuntimeProviderNativeArtifactBootstrapInput {
   return {
@@ -90,13 +56,15 @@ function nativeBootstrap(
   operations: Omit<RuntimeProviderNativeArtifactBootstrapOperations, "recoverCreate"> &
     Partial<Pick<RuntimeProviderNativeArtifactBootstrapOperations, "recoverCreate">>,
 ) {
+  const attachment = mxcOpenShellAttachmentFixture();
   const surface = createMxcRuntimeProviderBundle({
     hostFacts: {
       platform: "win32",
       nativeArchitecture: "x64",
       release: "10.0.28120",
     },
-    openshellAttachment: openshellAttachment(),
+    openshellAttachmentAuthority: attachment.authority,
+    openshellObservation: attachment.observation,
     bootstrapControlPlane: {
       contractVersion: 1,
       providerId: "mxc",
