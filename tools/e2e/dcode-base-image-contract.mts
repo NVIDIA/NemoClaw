@@ -112,7 +112,7 @@ export function parseDcodeBaseImageContract(value: unknown): DcodeBaseImageContr
 
 export function validateDcodeBaseImageContract(
   value: unknown,
-  expected: { runId: number; runAttempt: number; headSha: string },
+  expected: { runId: number; runAttempt: number; headSha: string; baseReference?: string },
 ): DcodeBaseImageContract {
   if (!SHA_PATTERN.test(expected.headSha)) {
     throw new Error("base contract source revision does not match the selected publication");
@@ -123,6 +123,12 @@ export function validateDcodeBaseImageContract(
   }
   if (contract.run.id !== expected.runId || contract.run.attempt !== expected.runAttempt) {
     throw new Error("base contract run does not match the selected publication");
+  }
+  if (
+    expected.baseReference !== undefined &&
+    contract.platformReferences[DCODE_BASE_IMAGE_TARGET_PLATFORM] !== expected.baseReference
+  ) {
+    throw new Error("base contract reference does not match the exact PR managed image");
   }
   return contract;
 }
@@ -186,6 +192,7 @@ export function main(
       runId: requiredInteger(env.PUBLICATION_RUN_ID, "PUBLICATION_RUN_ID"),
       runAttempt: requiredInteger(env.PUBLICATION_RUN_ATTEMPT, "PUBLICATION_RUN_ATTEMPT"),
       headSha: env.PUBLICATION_HEAD_SHA ?? "",
+      baseReference: env.EXPECTED_BASE_REF?.trim() || undefined,
     },
   );
   const baseReference = contract.platformReferences[DCODE_BASE_IMAGE_TARGET_PLATFORM];

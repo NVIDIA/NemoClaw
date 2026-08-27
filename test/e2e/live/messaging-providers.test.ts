@@ -12,7 +12,8 @@
 import fs from "node:fs";
 
 import { testTimeoutOptions } from "../../helpers/timeouts";
-import { test } from "../fixtures/e2e-test.ts";
+import { expect, test } from "../fixtures/e2e-test.ts";
+import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import {
   accountBool,
   accountString,
@@ -166,6 +167,11 @@ test(
       return;
     }
     expectExitZero(install, "M0: install.sh completed");
+    assertStockManagedImageReceipt({
+      environment: state.env,
+      expectedAgent: "openclaw",
+      sandboxName: SANDBOX_NAME,
+    });
 
     const openshellVersion = await runHost(host, "openshell", ["--version"], {
       artifactName: "openshell-version-messaging-providers",
@@ -467,14 +473,15 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     const wechatAccount = channelAccount(config, "openclaw-weixin", state.wechatAccount);
 
     const telegramBotToken = accountString(telegramAccount, "botToken");
-    const discordToken = accountString(discordAccount, "token");
     check(telegramBotToken.length > 0, "M6: Telegram botToken present in openclaw.json");
     check(
       telegramBotToken !== state.tokens.telegram,
       "M7: Telegram botToken is not the host token",
     );
-    check(discordToken.length > 0, "M8: Discord token present in openclaw.json");
-    check(discordToken !== state.tokens.discord, "M9: Discord token is not the host token");
+    check(
+      !Object.prototype.hasOwnProperty.call(discordAccount, "token"),
+      "M8: Discord token is omitted from openclaw.json",
+    );
     const expectedManagedProxyHost = nonEmpty(state.env.NEMOCLAW_PROXY_HOST) ?? "10.200.0.1";
     const expectedManagedProxyPort = nonEmpty(state.env.NEMOCLAW_PROXY_PORT) ?? "3128";
     const expectedManagedProxy = `http://${expectedManagedProxyHost}:${expectedManagedProxyPort}`;
@@ -830,7 +837,28 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       env: state.env,
       redactionValues,
     });
-    await applyRestRewritePolicy(host, fakeSlack, state.env, redactionValues);
+    await applyRestRewritePolicy(
+      host,
+      fakeSlack,
+      state.env,
+      redactionValues,
+      `${SANDBOX_NAME}-slack-bridge`,
+    );
+    expect(
+      fakeSlack.alternatePort,
+      "fake Slack API must publish an independent app-token port",
+    ).toMatch(/^[1-9][0-9]*$/u);
+    const fakeSlackApp = {
+      ...fakeSlack,
+      port: fakeSlack.alternatePort!,
+    };
+    await applyRestRewritePolicy(
+      host,
+      fakeSlackApp,
+      state.env,
+      redactionValues,
+      `${SANDBOX_NAME}-slack-app`,
+    );
 
     const slackAuth = await runSlackApiRequest(
       sandbox,
@@ -882,7 +910,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
 
     const slackApp = await runSlackApiRequest(
       sandbox,
-      fakeSlack.port,
+      fakeSlackApp.port,
       "/api/apps.connections.open",
       "Bearer xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
       redactionValues,
@@ -956,7 +984,13 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       env: state.env,
       redactionValues,
     });
-    await applyRestRewritePolicy(host, fakeTelegram, state.env, redactionValues);
+    await applyRestRewritePolicy(
+      host,
+      fakeTelegram,
+      state.env,
+      redactionValues,
+      `${SANDBOX_NAME}-telegram-bridge`,
+    );
     const telegramMockTarget = "42424242";
     const telegramMockText = "NemoClaw OpenClaw Telegram plugin mock E2E";
     const installedTelegramProof = await runInstalledTelegramRuntimeProof(
@@ -1008,12 +1042,14 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       redactionValues,
     });
     await applyWebSocketRewritePolicy(host, fakeGateway, state.env, redactionValues);
-    const gatewayProof = await runDiscordGatewayClient(
-      sandbox,
-      fakeGateway.port,
-      "openshell:resolve:env:DISCORD_BOT_TOKEN",
+    const gatewayProof = await runDiscordGatewayClient(sandbox, {
+      port: fakeGateway.port,
+      identifyToken: {
+        kind: "explicit",
+        value: "openshell:resolve:env:DISCORD_BOT_TOKEN",
+      },
       redactionValues,
-    );
+    });
     check(
       gatewayProof.includes("UPGRADE"),
       "M13d: native WebSocket upgrade reached fake Discord Gateway",

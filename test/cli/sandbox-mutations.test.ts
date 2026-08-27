@@ -5,6 +5,11 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { describe, expect, test as it } from "../helpers/owned-test-resources";
+import {
+  managedPolicyMetadata,
+  managedSandboxEntry,
+  SANDBOX_ID,
+} from "../helpers/managed-policy-receipt-fixture";
 
 import { runWithEnv, runWithInput, testTimeoutOptions, writeSandboxRegistry } from "./helpers";
 
@@ -23,12 +28,22 @@ function writePolicyMutationOpenshellStub(home: string): string {
   const localBin = path.join(home, "bin");
   fs.mkdirSync(localBin, { recursive: true });
   const openshell = path.join(localBin, "openshell");
+  const appliedPolicy = path.join(home, "applied-policy.yaml");
   fs.writeFileSync(
     openshell,
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
+      'if [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then',
+      `  printf 'Name: alpha\\nId: ${SANDBOX_ID}\\nPhase: Ready\\n'`,
+      "  exit 0",
+      "fi",
       'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then',
+      '  if [[ " $* " == *" --output json "* ]]; then',
+      `    printf '%s\\n' ${JSON.stringify(managedPolicyMetadata("alpha"))}`,
+      "    exit 0",
+      "  fi",
+      `  if [ -f ${JSON.stringify(appliedPolicy)} ]; then cat ${JSON.stringify(appliedPolicy)}; exit 0; fi`,
       "  cat <<'YAML'",
       "version: 1",
       "network_policies:",
@@ -39,6 +54,13 @@ function writePolicyMutationOpenshellStub(home: string): string {
       "  exit 0",
       "fi",
       'if [ "$1" = "policy" ] && [ "$2" = "set" ]; then',
+      '  while [ "$#" -gt 0 ]; do',
+      '    if [ "$1" = "--policy" ]; then',
+      `      cp "$2" ${JSON.stringify(appliedPolicy)}`,
+      "      break",
+      "    fi",
+      "    shift",
+      "  done",
       "  exit 0",
       "fi",
       'printf "unexpected openshell args: %s\\n" "$*" >&2',
@@ -70,24 +92,29 @@ describe("CLI dispatch", () => {
 
       const logs = runWithEnv("alpha logs --help", testHome.environment());
       expect(logs.code).toBe(0);
-      expect(logs.out).toContain("$ nemoclaw sandbox logs <name>");
+      expect(logs.out).toContain("$ nemoclaw alpha logs");
+      expect(logs.out).not.toContain("$ nemoclaw sandbox logs");
       expect(logs.out).toContain("--tail");
 
       const policy = runWithEnv("alpha policy-add --help", testHome.environment());
       expect(policy.code).toBe(0);
-      expect(policy.out).toContain("$ nemoclaw sandbox policy add <name>");
+      expect(policy.out).toContain("$ nemoclaw alpha policy add");
+      expect(policy.out).not.toContain("$ nemoclaw sandbox policy add");
 
       const hosts = runWithEnv("alpha hosts-add --help", testHome.environment());
       expect(hosts.code).toBe(0);
-      expect(hosts.out).toContain("$ nemoclaw sandbox hosts add <name>");
+      expect(hosts.out).toContain("$ nemoclaw alpha hosts-add");
+      expect(hosts.out).not.toContain("$ nemoclaw sandbox hosts add");
 
       const channels = runWithEnv("alpha channels add --help", testHome.environment());
       expect(channels.code).toBe(0);
-      expect(channels.out).toContain("$ nemoclaw sandbox channels add <name>");
+      expect(channels.out).toContain("$ nemoclaw alpha channels add");
+      expect(channels.out).not.toContain("$ nemoclaw sandbox channels add");
 
       const config = runWithEnv("alpha config get --help", testHome.environment());
       expect(config.code).toBe(0);
-      expect(config.out).toContain("$ nemoclaw sandbox config get <name>");
+      expect(config.out).toContain("$ nemoclaw alpha config get");
+      expect(config.out).not.toContain("$ nemoclaw sandbox config get");
       expect(config.out).toContain("--format json|yaml");
     },
   );
@@ -111,7 +138,7 @@ describe("CLI dispatch", () => {
 
   it("keeps public policy-add/remove built-in mutation routes", ({ testHome }) => {
     const { home } = testHome;
-    writeSandboxRegistry(home);
+    writeSandboxRegistry(home, managedSandboxEntry("alpha"));
     const openshell = writePolicyMutationOpenshellStub(home);
 
     const add = runWithEnv(

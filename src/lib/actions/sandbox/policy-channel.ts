@@ -1020,7 +1020,7 @@ async function applyChannelRemoveToGatewayAndRegistry(
   if (gatewayReachable) {
     const detachFailedSet = new Set(detachFailures.map((f) => f.name));
     for (const name of providerNames) {
-      if (!bestEffort && detachFailedSet.has(name)) continue;
+      if (detachFailedSet.has(name)) continue;
       const result = runOpenshell(["provider", "delete", name], {
         ignoreError: true,
         stdio: ["ignore", "pipe", "pipe"],
@@ -1570,8 +1570,11 @@ export function applyChannelPresetIfAvailable(
     const applied = Object.prototype.hasOwnProperty.call(options, "disclosedPresetState")
       ? policies.applyPreset(sandboxName, channelName, {
           disclosedPresetState: options.disclosedPresetState,
+          includeMessagingCredentialBindings: true,
         })
-      : policies.applyPreset(sandboxName, channelName);
+      : policies.applyPreset(sandboxName, channelName, {
+          includeMessagingCredentialBindings: true,
+        });
     if (!applied) {
       console.error(
         `  ${YW}⚠${R} Cannot enable channel '${channelName}': policy preset failed to apply.`,

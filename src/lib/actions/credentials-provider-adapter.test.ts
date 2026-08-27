@@ -107,7 +107,7 @@ describe("credential actions use typed OpenShell provider results", () => {
       listProviders: vi.fn(listProviders),
     });
 
-    const result = await runCredentialsListAction({ providerAdapter: adapter });
+    const result = await runCredentialsListAction("nemoclaw", { providerAdapter: adapter });
 
     expect(result.exitCode).toBe(0);
     expect(result.outputLines).toContain("    alpha");

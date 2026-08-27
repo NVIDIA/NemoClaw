@@ -77,7 +77,3 @@ jobs:
           registry-username: ${{ github.actor }}
           registry-password: ${{ secrets.registry_password }}
           openclaw-version: ${{ inputs.openclaw-version }}
-          metadata-tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=ref,event=tag
-            type=sha,prefix=,format=short

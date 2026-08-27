@@ -281,7 +281,7 @@ describe("list shows live gateway inference", () => {
         PATH: `${localBin}:${process.env.PATH || ""}`,
       });
 
-      expect(r.code).toBe(0);
+      expect(r.code).toBe(1); // #10211: --check now exits nonzero when it finds a stale sandbox.
       // Should report the stale sandbox with version info
       expect(r.out).toContain("my-agent");
       expect(r.out).toContain("2026.3.11");
@@ -432,7 +432,7 @@ describe("list shows live gateway inference", () => {
         PATH: `${localBin}:${process.env.PATH || ""}`,
       });
 
-      expect(r.code).toBe(0);
+      expect(r.code).toBe(1); // #10211: --check now exits nonzero when it finds a stale sandbox.
       expect(r.out).not.toContain("All sandboxes are up to date.");
       expect(r.out).toContain("my-agent");
       // Surfaces the NemoClaw image drift with the stale recorded fingerprint.
@@ -502,7 +502,7 @@ describe("list shows live gateway inference", () => {
         PATH: `${localBin}:${process.env.PATH || ""}`,
       });
 
-      expect(r.code).toBe(0);
+      expect(r.code).toBe(1); // #10211: --check now exits nonzero when it finds a stale sandbox.
       expect(r.out).toContain("my-agent");
       expect(r.out).toContain("2026.3.11");
       expect(r.out).toMatch(/stale|need upgrading/i);
@@ -516,7 +516,7 @@ describe("list shows live gateway inference", () => {
     const r = runWithEnv("alpha share", env);
 
     expect(r.code).toBe(0);
-    expect(r.out).toContain("$ nemoclaw sandbox share <mount|unmount|status> <name>");
+    expect(r.out).toContain("$ nemoclaw alpha share <mount|unmount|status>");
     expect(r.out).toContain("mount");
     expect(r.out).toContain("unmount");
     expect(r.out).toContain("status");
@@ -525,25 +525,25 @@ describe("list shows live gateway inference", () => {
   it.each(
     Array.from(
       [
-        ["mount", "share mount <name> [sandbox-path] [local-mount-point]"],
-        ["unmount", "share unmount <name> [local-mount-point]"],
-        ["status", "share status <name> [local-mount-point]"],
+        ["mount", "alpha share mount [sandbox-path] [local-mount-point]"],
+        ["unmount", "alpha share unmount [local-mount-point]"],
+        ["status", "alpha share status [local-mount-point]"],
       ],
       ([subcommand, usage]) => ({ subcommand, usage }),
     ),
   )(
-    "$subcommand share help uses native oclif usage",
+    "$subcommand share help shows sandbox-first usage",
     testTimeoutOptions(15_000),
     ({ subcommand, usage }) => {
       const env = createShareTestEnv("nemoclaw-cli-share-help-");
 
       const parent = runWithEnv("alpha share --help", env);
       expect(parent.code).toBe(0);
-      expect(parent.out).toContain("$ nemoclaw sandbox share <mount|unmount|status> <name>");
+      expect(parent.out).toContain("$ nemoclaw alpha share <mount|unmount|status>");
 
       const result = runWithEnv(`alpha share ${subcommand} --help`, env);
       expect(result.code).toBe(0);
-      expect(result.out).toContain(`$ nemoclaw sandbox ${usage}`);
+      expect(result.out).toContain(`$ nemoclaw ${usage}`);
     },
   );
 

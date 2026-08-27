@@ -11,6 +11,7 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import type { SandboxPolicyAuthority } from "../adapters/openshell/policy-authority";
 import { isErrnoException } from "../core/errno";
 import { isObjectRecord, type JsonObject, type JsonValue } from "../core/json-types";
 import { GATEWAY_PORT } from "../core/ports";
@@ -69,6 +70,9 @@ export const SESSION_DIR = nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
 export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
 const SAFE_VLLM_INSTALL_MODEL = /^[A-Za-z0-9._:/-]+$/;
+
+export class InvalidPersistedPolicyAuthorityError extends Error {}
+export class InvalidPersistedApfInterceptorIntentError extends Error {}
 
 // Session-specific aliases for the shared JSON types.
 type SessionJsonValue = JsonValue;
@@ -235,8 +239,12 @@ export interface Session {
   observabilityEnabled: boolean;
   /** True when observability was explicitly enabled or disabled for this resumable run. */
   observabilityRequestedExplicitly: boolean;
+  /** Operator-selected APF create mode; this is not observed policy provenance. */
+  apfInterceptorRequested: boolean;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
+  /** Policy authority selected from OpenShell metadata before policy-dependent effects. */
+  policyAuthority: SandboxPolicyAuthority | null;
   messagingPlan: SandboxMessagingPlan | null;
   /** Non-secret names of credential providers registered before sandbox setup completed. */
   stagedCredentialProviders: string[];
@@ -314,6 +322,7 @@ export interface SessionUpdates {
   observabilityEnabled?: boolean;
   hermesToolGateways?: string[] | null;
   policyPresets?: string[] | null;
+  policyAuthority?: SandboxPolicyAuthority | null;
   messagingPlan?: SandboxMessagingPlan | null;
   migratedLegacyValueHashes?: Record<string, string>;
   gpuPassthrough?: boolean;
@@ -348,8 +357,10 @@ export interface DebugSessionSummary {
   toolDisclosure: ToolDisclosure;
   observabilityEnabled: boolean;
   observabilityRequestedExplicitly: boolean;
+  apfInterceptorRequested: boolean;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
+  policyAuthority: SandboxPolicyAuthority | null;
   gpuPassthrough: boolean;
   lastStepStarted: string | null;
   lastCompletedStep: string | null;
@@ -412,6 +423,10 @@ function parseVllmGpuDevice(value: unknown): string | null {
 
 function readHermesAuthMethod(value: SessionJsonValue | undefined): HermesAuthMethod | null {
   return value === "oauth" || value === "api_key" ? value : null;
+}
+
+function readPolicyAuthority(value: unknown): SandboxPolicyAuthority | null {
+  return value === "nemoclaw-managed" || value === "externally-managed" ? value : null;
 }
 
 function readPositiveInteger(value: SessionJsonValue | undefined): number | null {
@@ -748,6 +763,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     ...defaultSteps(),
     ...(overrides.steps ?? {}),
   };
+  const policyAuthority = readPolicyAuthority(overrides.policyAuthority);
   const session: Session = {
     version: SESSION_VERSION,
     sessionId,
@@ -792,8 +808,11 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     toolDisclosure: normalizeSessionToolDisclosure(overrides.toolDisclosure),
     observabilityEnabled: overrides.observabilityEnabled === true,
     observabilityRequestedExplicitly: overrides.observabilityRequestedExplicitly === true,
+    apfInterceptorRequested: overrides.apfInterceptorRequested === true,
     hermesToolGateways: readStringArray(overrides.hermesToolGateways),
-    policyPresets: readStringArray(overrides.policyPresets),
+    policyPresets:
+      policyAuthority === "externally-managed" ? null : readStringArray(overrides.policyPresets),
+    policyAuthority,
     messagingPlan: parseSandboxMessagingPlan(overrides.messagingPlan),
     stagedCredentialProviders: readStringArray(overrides.stagedCredentialProviders) ?? [],
     migratedLegacyValueHashes: overrides.migratedLegacyValueHashes
@@ -822,6 +841,20 @@ export function createSession(overrides: Partial<Session> = {}): Session {
 
 export function normalizeSession(data: Session | SessionJsonValue | undefined): Session | null {
   if (!isObject(data) || data.version !== SESSION_VERSION) return null;
+  if (
+    hasOwn(data, "apfInterceptorRequested") &&
+    typeof data.apfInterceptorRequested !== "boolean"
+  ) {
+    throw new InvalidPersistedApfInterceptorIntentError(
+      "Refusing to load the onboarding session: the saved APF selection is invalid.",
+    );
+  }
+  const policyAuthority = readPolicyAuthority(data.policyAuthority);
+  if (hasOwn(data, "policyAuthority") && data.policyAuthority !== null && !policyAuthority) {
+    throw new InvalidPersistedPolicyAuthorityError(
+      "Refusing to load the onboarding session: the saved policy authority is invalid.",
+    );
+  }
   const servingProfileProvenance = parseServingProfileProvenance(data.servingProfileProvenance);
   if (
     hasOwn(data, "servingProfileProvenance") &&
@@ -897,8 +930,10 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     toolDisclosure: normalizeSessionToolDisclosure(data.toolDisclosure),
     observabilityEnabled: data.observabilityEnabled === true,
     observabilityRequestedExplicitly: data.observabilityRequestedExplicitly === true,
+    apfInterceptorRequested: data.apfInterceptorRequested === true,
     hermesToolGateways: readStringArray(data.hermesToolGateways),
     policyPresets: readStringArray(data.policyPresets),
+    policyAuthority,
     messagingPlan: parseSandboxMessagingPlan(data.messagingPlan),
     stagedCredentialProviders: readStringArray(data.stagedCredentialProviders) ?? [],
     migratedLegacyValueHashes: readStringRecord(data.migratedLegacyValueHashes),
@@ -985,7 +1020,13 @@ export function loadSession(): Session | null {
     }
     const parsed = JSON.parse(fs.readFileSync(SESSION_FILE, "utf-8"));
     return normalizeSession(parsed);
-  } catch {
+  } catch (error) {
+    if (
+      error instanceof InvalidPersistedPolicyAuthorityError ||
+      error instanceof InvalidPersistedApfInterceptorIntentError
+    ) {
+      throw error;
+    }
     return null;
   }
 }
@@ -1119,6 +1160,19 @@ function lockHolderStillMatches(lock: LockInfo): boolean {
 // window in the inode-only check by tying ownership to a live
 // descriptor rather than a value re-read from disk. See #1281.
 let heldLockFd: number | null = null;
+
+/** Report whether this process holds the exclusive onboarding writer lock. */
+export function isOnboardLockHeldByCurrentProcess(): boolean {
+  if (heldLockFd === null) return false;
+  try {
+    return (
+      fs.fstatSync(heldLockFd, { bigint: true }).ino ===
+      fs.statSync(LOCK_FILE, { bigint: true }).ino
+    );
+  } catch {
+    return false;
+  }
+}
 
 export function acquireOnboardLock(command: string | null = null): LockResult {
   ensureSessionDir();
@@ -1479,6 +1533,15 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   } else if (Array.isArray(updates.policyPresets)) {
     safe.policyPresets = updates.policyPresets.filter((value) => typeof value === "string");
   }
+  if (updates.policyAuthority === null) {
+    safe.policyAuthority = null;
+  } else {
+    const policyAuthority = readPolicyAuthority(updates.policyAuthority);
+    if (policyAuthority) {
+      safe.policyAuthority = policyAuthority;
+      if (policyAuthority === "externally-managed") safe.policyPresets = null;
+    }
+  }
   if (updates.messagingPlan === null) {
     safe.messagingPlan = null;
   } else {
@@ -1678,7 +1741,9 @@ export function checkpointVllmInstallModel(modelId: string): Session {
   return updateSession((session) => {
     const providerStep = session.steps.provider_selection;
     if (providerStep?.status !== "in_progress") {
-      throw new Error("Managed vLLM install intent can only be checkpointed during provider selection.");
+      throw new Error(
+        "Managed vLLM install intent can only be checkpointed during provider selection.",
+      );
     }
     session.vllmInstallModel = model;
   });
@@ -1691,8 +1756,8 @@ export function checkpointVllmInstallModel(modelId: string): Session {
  * interrupted step, replacing the legacy step-mutation escape hatch on the
  * process-exit path. It is idempotent by construction: if the durable machine
  * is already terminal (an in-band failure or a prior backstop already recorded
- * the terminal event pair) it no-ops rather than recording a second failure, so the
- * failed transition is validated and never doubled. Performs no
+ * the terminal event pair) it returns null rather than recording a second failure,
+ * so the failed transition is validated and never doubled. Performs no
  * sandbox/provider/policy effects.
  */
 export function finalizeIncompleteOnboardStep(
@@ -1702,7 +1767,7 @@ export function finalizeIncompleteOnboardStep(
 ): Session | null {
   const existing = loadSession();
   if (!existing) return null;
-  if (isTerminalOnboardMachineState(existing.machine.state)) return existing;
+  if (isTerminalOnboardMachineState(existing.machine.state)) return null;
 
   let emitted = false;
   const updatedSession = updateSession((session) => {
@@ -1746,7 +1811,7 @@ export function finalizeIncompleteOnboardStep(
       }),
     );
   }
-  return updatedSession;
+  return emitted ? updatedSession : null;
 }
 
 export interface CompleteSessionOptions {
@@ -1880,8 +1945,10 @@ export function summarizeForDebug(
     toolDisclosure: session.toolDisclosure,
     observabilityEnabled: session.observabilityEnabled,
     observabilityRequestedExplicitly: session.observabilityRequestedExplicitly,
+    apfInterceptorRequested: session.apfInterceptorRequested,
     hermesToolGateways: session.hermesToolGateways,
     policyPresets: session.policyPresets,
+    policyAuthority: session.policyAuthority,
     gpuPassthrough: session.gpuPassthrough,
     lastStepStarted: session.lastStepStarted,
     lastCompletedStep: session.lastCompletedStep,

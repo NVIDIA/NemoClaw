@@ -135,6 +135,7 @@ repos:
     rev: v6.0.0
     hooks:
       - id: check-merge-conflict
+        args: ["--assume-in-merge"]
         priority: 10
       - id: check-added-large-files
         args: ["--maxkb=2000"]
@@ -294,7 +295,7 @@ repos:
         entry: npm run test:e2e-phases:check
         language: system
         pass_filenames: false
-        files: ^(\.github/workflows/e2e\.yaml|test/vllm-docker-storage\.test\.ts|test/e2e/live/.*\.ts|test/e2e/fixtures/.*\.ts|test/e2e/risk-signal-reporter\.ts|test/e2e/support/(e2e-semantic-phase-check|workflow-e2e-progress)\.test\.ts|tools/e2e/(check-semantic-phases|credential-free-tests|workflow-boundary|workflow-plan)\.mts|vitest\.config\.ts|package\.json)$
+        files: ^(\.github/workflows/e2e\.yaml|test/platform/images/vllm-docker-storage\.test\.ts|test/e2e/live/.*\.ts|test/e2e/fixtures/.*\.ts|test/e2e/risk-signal-reporter\.ts|test/e2e/support/(e2e-semantic-phase-check|workflow-e2e-progress)\.test\.ts|tools/e2e/(check-semantic-phases|credential-free-tests|workflow-boundary|workflow-plan)\.mts|vitest\.config\.ts|package\.json)$
         priority: 20
 
       - id: test-cli
@@ -326,19 +327,12 @@ repos:
 
       - id: codebase-growth-guardrails
         name: Codebase growth guardrails
-        entry: npx vitest run --project integration test/growth-guardrails.test.ts
+        entry: npx vitest run --project integration test/automation/pull-requests/growth-guardrails.test.ts
         language: system
         always_run: true
         pass_filenames: false
         priority: 20
 
-      - id: test-skills-yaml
-        name: Test (skills YAML)
-        entry: npx vitest run test/skills-frontmatter.test.ts
-        language: system
-        pass_filenames: false
-        files: ^(\.agents/skills/|skills/|test/skills-frontmatter\.test\.ts$)
-        priority: 20
 
 default_language_version:
   python: python3

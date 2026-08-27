@@ -90,14 +90,14 @@ function parseJsonPrefix<T>(output: string): T {
 }
 
 describe("CLI dispatch", () => {
-  it("gateway-token help uses native oclif usage", testTimeoutOptions(15_000), ({ resources }) => {
+  it("shows sandbox-first gateway-token usage", testTimeoutOptions(15_000), ({ resources }) => {
     const { home } = resources.home("nemoclaw-cli-token-help-");
     writeSandboxRegistry(home);
 
     const r = runWithEnv("alpha gateway-token --help", { HOME: home });
 
     expect(r.code).toBe(0);
-    expect(r.out).toContain("$ nemoclaw sandbox gateway token <name> [--quiet|-q]");
+    expect(r.out).toContain("$ nemoclaw alpha gateway-token [--quiet|-q]");
     expect(r.out).toContain("Print the sandbox agent's auth token to stdout");
     expect(r.out).toContain("OpenClaw gateway");
     expect(r.out).toContain("token, or a bearer_token agent");

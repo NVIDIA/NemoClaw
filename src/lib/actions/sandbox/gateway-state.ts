@@ -22,6 +22,7 @@ import { selectSandboxOwningGateway } from "./gateway-select";
 import {
   gatewayNamePattern,
   getKnownSandboxTargetGatewayName,
+  getPersistedSandboxTargetGatewayName,
   getSandboxTargetGatewayName,
 } from "./gateway-target";
 
@@ -70,6 +71,7 @@ import {
   buildHermesPortableCommandAuthority,
   inspectPortableAgentReceiptDisposition,
   qualifyPortableAgentLifecycleAuthority,
+  requalifyPortableAgentSandboxAuthority,
   recoverPortableAgentSandboxLifecycle,
   requireHermesPortableActiveLifecycleAuthority,
 } from "../../onboard/experimental/portable-agent-lifecycle";
@@ -115,6 +117,7 @@ export {
   buildHermesPortableCommandEnvironment,
   inspectPortableAgentReceiptDisposition,
   qualifyPortableAgentLifecycleAuthority,
+  requalifyPortableAgentSandboxAuthority,
   requireHermesPortableActiveLifecycleAuthority,
 };
 export const withSandboxLifecycleLock = withMcpLifecycleLock;
@@ -129,6 +132,26 @@ type SandboxGatewayStateLookup = (
 function gatewayScopedArgs(args: string[], gatewayName?: string): string[] {
   if (!gatewayName) return args;
   return [...args.slice(0, 2), "-g", gatewayName, ...args.slice(2)];
+}
+
+/** Resolve the authoritative gateway for a persisted sibling ownership row. */
+export function resolvePersistedSandboxOwnershipGateway(sandbox: SandboxEntry): string {
+  return getPersistedSandboxTargetGatewayName(sandbox);
+}
+
+/** Capture one gateway's live sandbox phases for host-global model ownership. */
+export function captureSandboxOwnershipPhases(
+  gatewayName: string,
+  environment: NodeJS.ProcessEnv,
+): { readonly output: string; readonly status: number | null } {
+  const result = captureOpenshell(gatewayScopedArgs(["sandbox", "list"], gatewayName), {
+    env: environment,
+    ignoreError: true,
+    includeStderr: true,
+    maxBuffer: 1024 * 1024,
+    timeout: 10_000,
+  });
+  return { output: result.output, status: result.status };
 }
 
 /** Recover a receipt-bound portable sandbox before the live lookup rejects a stopped container. */
@@ -218,6 +241,17 @@ export function mergeLivePolicyIntoSandboxOutput(output: string, livePolicyOutpu
   if (policyLineIdx === -1) return output;
 
   const before = rawLines.slice(0, policyLineIdx + 1).join("\n");
+  const suffixLineIdx = cleanLines.findIndex(
+    (line, index) =>
+      index > policyLineIdx &&
+      /^\s*(?:Id|Name|Phase|Resource version|Labels|Annotations|Policy source|Revision):(?:\s|$)/u.test(
+        line,
+      ),
+  );
+  const suffix =
+    suffixLineIdx === -1
+      ? ""
+      : `\n${rawLines.slice(suffixLineIdx).join("\n").replace(/\n+$/u, "")}`;
   const cleanLivePolicy = stripOpenShellCliAnsi(String(livePolicyOutput));
   const delimIdx = cleanLivePolicy.search(/^---\s*$/m);
   const metadataPart = delimIdx !== -1 ? cleanLivePolicy.slice(0, delimIdx) : "";
@@ -241,7 +275,7 @@ export function mergeLivePolicyIntoSandboxOutput(output: string, livePolicyOutpu
     .split("\n")
     .map((line: string) => (line ? `  ${line}` : line))
     .join("\n");
-  return `${before}\n\n${indented}\n`;
+  return `${before}\n\n${indented}${suffix}\n`;
 }
 
 /** Query sandbox presence and return its output with the live enforced policy. */
@@ -410,6 +444,9 @@ export async function reconcileMissingAgainstNamedGateway(
     return tryRecoverDockerDriverSandbox(sandboxName, missingLookup, pinnedGatewayName);
   }
   const lifecycle = getNamedGatewayLifecycleState(targetGatewayName);
+  if (lifecycle.recoveryBlocked) {
+    return missingLookup;
+  }
   if (lifecycle.state === "connected_other") {
     runOpenshell(["gateway", "select", targetGatewayName], {
       ignoreError: true,
@@ -744,14 +781,14 @@ const RECOVER_CONTAINER_START_TIMEOUT_MS = 30_000;
  * `docker start` can restore the same container with its workspace state and
  * managed configuration preserved (#8967). A nonzero or missing `docker start`
  * status continues to the readiness wait, which surfaces the existing
- * stopped-container guidance. The function leaves an unresolved, running, or
- * paused container unchanged. A paused container keeps its `docker unpause`
- * guidance. A caller that reaches this function after container startup makes
- * no change.
+ * stopped-container guidance. The function returns true only when Docker
+ * starts the stopped container. It leaves an unresolved, running, or paused
+ * container unchanged. A paused container keeps its `docker unpause` guidance.
+ * A caller that reaches this function after container startup makes no change.
  */
-export function startStoppedSandboxContainerForProbeRecovery(sandboxName: string): void {
+export function startStoppedSandboxContainerForProbeRecovery(sandboxName: string): boolean {
   const runtime = getSandboxDockerRuntime(sandboxName);
-  if (!runtime.containerName || runtime.running || runtime.paused) return;
+  if (!runtime.containerName || runtime.running || runtime.paused) return false;
   console.error(`  Sandbox '${sandboxName}' container is stopped — starting it...`);
   const result = dockerStart(runtime.containerName, {
     ignoreError: true,
@@ -759,10 +796,12 @@ export function startStoppedSandboxContainerForProbeRecovery(sandboxName: string
   });
   if (result.status === 0) {
     console.error(`  ${G}✓${R} Started container '${runtime.containerName}'.`);
+    return true;
   } else {
     console.error(
       `  Docker could not start container '${runtime.containerName}' (exit ${result.status ?? "unknown"}); continuing with readiness checks.`,
     );
+    return false;
   }
 }
 

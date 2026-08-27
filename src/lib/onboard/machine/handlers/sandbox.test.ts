@@ -79,16 +79,17 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { sessionId: expect.any(String) },
+      expect.objectContaining({ sessionId: expect.any(String), selection: expect.any(Object) }),
       {
         resolved: expect.any(Object),
         recreate: false,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
-        endpointSource: "onboard",
+        endpointSource: null,
         extraProviders: [],
       },
     );
+    expect(calls.finalizeRouteReservation).not.toHaveBeenCalled();
     expect(calls.updateSandbox).toHaveBeenCalledWith(
       "my-assistant",
       expect.objectContaining({ model: "model", provider: "provider" }),
@@ -134,6 +135,9 @@ describe("handleSandboxState", () => {
     });
 
     expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({ endpointSource: null });
+    expect(calls.preflightPolicyRequirements).toHaveBeenCalledWith(
+      expect.objectContaining({ hostLocalInferenceRouteOnly: true }),
+    );
   });
 
   it("records credential-provider bindings and the resource-profile decision in the checkpoint (#7022)", async () => {
@@ -554,7 +558,7 @@ describe("handleSandboxState", () => {
       null,
       ["nous-audio"],
       null,
-      { sessionId: expect.any(String) },
+      expect.objectContaining({ sessionId: expect.any(String), selection: expect.any(Object) }),
       {
         resolved: expect.any(Object),
         recreate: false,
@@ -613,11 +617,11 @@ describe("handleSandboxState", () => {
 
     expect(readMessagingPlanFromEnv).not.toHaveBeenCalled();
     expect(calls.createSandbox).not.toHaveBeenCalled();
-    expect(calls.updateSandbox).toHaveBeenCalledWith("saved", {
-      pendingRouteReservation: undefined,
-      reservationSessionId: undefined,
-    });
-    expect(calls.skipped).toHaveBeenCalledWith("sandbox", "saved");
+    expect(calls.finalizeRouteReservation).toHaveBeenCalledExactlyOnceWith(
+      "saved",
+      session.sessionId,
+    );
+    expect(calls.skipped).toHaveBeenCalledWith("sandbox", "saved", "reuse");
     expect(recordStateSkipped).toHaveBeenCalledWith("sandbox", {
       reason: "resume",
       sandboxName: "saved",
@@ -842,7 +846,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { sessionId: session.sessionId },
+      expect.objectContaining({ sessionId: session.sessionId, selection: expect.any(Object) }),
       {
         resolved: expect.any(Object),
         recreate: true,
@@ -1010,7 +1014,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { sessionId: session.sessionId },
+      expect.objectContaining({ sessionId: session.sessionId, selection: expect.any(Object) }),
       expect.objectContaining({
         resolved: expect.any(Object),
         recreate: true,
@@ -1143,7 +1147,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { sessionId: session.sessionId },
+      expect.objectContaining({ sessionId: session.sessionId, selection: expect.any(Object) }),
       expect.objectContaining({
         resolved: expect.any(Object),
         recreate: true,

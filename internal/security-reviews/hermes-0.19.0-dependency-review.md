@@ -369,7 +369,7 @@ The following blobs match between source commit `340c47857596e7cc347541a0b32fe9e
 | --- | --- |
 | `agents/hermes/Dockerfile.base` | `b9962e7` |
 | `agents/hermes/whatsapp-proxy.patch` | `c154223` |
-| `test/hermes-share-mount-deps.test.ts` | `09e4c48` |
+| `test/agents/hermes/hermes-share-mount-deps.test.ts` | `09e4c48` |
 
 Each reviewed commit in the following table is an ancestor of `bd668121e918e7b1dda13062bed728f18150360e` and appears as `Verified` in GitHub:
 
