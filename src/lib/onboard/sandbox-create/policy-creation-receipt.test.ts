@@ -247,36 +247,39 @@ describe("created sandbox policy receipt", () => {
     expect(captureOpenshell).toHaveBeenCalledTimes(4);
   });
 
-  it("binds the documented native-GPU policy enrichment to the create receipt (#9833)", () => {
-    vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
-      .mockReturnValueOnce(gatewayInfo())
-      .mockReturnValueOnce(metadata())
-      .mockReturnValueOnce({
-        status: 0,
-        output: ENRICHED_NATIVE_GPU_POLICY,
-        stdout: ENRICHED_NATIVE_GPU_POLICY,
-        stderr: "",
-      })
-      .mockReturnValueOnce(metadata());
+  it.each(["native", "compatibility"] as const)(
+    "binds documented %s-GPU policy enrichment to the create receipt (#9833)",
+    (route) => {
+      vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+        .mockReturnValueOnce(gatewayInfo())
+        .mockReturnValueOnce(metadata())
+        .mockReturnValueOnce({
+          status: 0,
+          output: ENRICHED_NATIVE_GPU_POLICY,
+          stdout: ENRICHED_NATIVE_GPU_POLICY,
+          stderr: "",
+        })
+        .mockReturnValueOnce(metadata());
 
-    expect(
-      verifyCreatedSandboxPolicyCreationReceipt(
-        { ...INPUT, route: "native" },
-        {
-          readFile: vi.fn(() => NATIVE_GPU_POLICY) as never,
-          inspectPolicyReadiness: readyPolicy,
-          sleep: vi.fn(),
-        },
-      ),
-    ).toMatchObject({
-      policyHash: "sha256:effective",
-      policyVersion: 4,
-    });
-  });
+      expect(
+        verifyCreatedSandboxPolicyCreationReceipt(
+          { ...INPUT, route },
+          {
+            readFile: vi.fn(() => NATIVE_GPU_POLICY) as never,
+            inspectPolicyReadiness: readyPolicy,
+            sleep: vi.fn(),
+          },
+        ),
+      ).toMatchObject({
+        policyHash: "sha256:effective",
+        policyVersion: 4,
+      });
+    },
+  );
 
   it.each([
     {
-      label: "the create route does not use native GPU injection",
+      label: "the create route does not use GPU injection",
       input: INPUT,
       livePolicy: ENRICHED_NATIVE_GPU_POLICY,
     },
