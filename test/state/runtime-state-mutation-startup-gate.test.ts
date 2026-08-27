@@ -151,15 +151,9 @@ with tempfile.TemporaryDirectory() as root:
     results["release_ack_write_failure"] = code(lambda: gate._run("acknowledge"))
     gate.os.replace = original_replace
     results["release_ack_nonce"] = gate._run("acknowledge")
-    release_ack_pending = os.path.join(
-        candidate_directory, gate.RELEASE_ACK_PENDING_NAME
-    )
-    with open(release_ack_pending, "rb") as stream:
+    release_ack_path = os.path.join(candidate_directory, gate.RELEASE_ACK_NAME)
+    with open(release_ack_path, "rb") as stream:
         results["release_ack"] = json.load(stream)
-    os.replace(
-        release_ack_pending,
-        os.path.join(candidate_directory, gate.RELEASE_ACK_NAME),
-    )
     results["release_ack_committed"] = gate._run("acknowledge")
     gate._capture_parent = lambda: {**start, "pid": 42}
     results["foreign_parent_ack"] = code(lambda: gate._run("acknowledge"))

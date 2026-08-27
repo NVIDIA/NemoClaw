@@ -36,7 +36,6 @@ HANDOFF_ROOT = "/run/nemoclaw/runtime-state-mutation-startup"
 CANDIDATE_NAME = "startup-complete.json"
 RETRY_ACK_NAME = "retry-ack.json"
 RELEASE_ACK_NAME = "release-ack.json"
-RELEASE_ACK_PENDING_NAME = ".release-ack.json.pending"
 PERMIT_PROTOCOL = "nemoclaw-runtime-state-mutation-activation-permit-v1"
 RELEASE_PROTOCOL = "nemoclaw-runtime-state-mutation-activation-release-v1"
 RETRY_PROTOCOL = "nemoclaw-runtime-state-mutation-activation-retry-v1"
@@ -641,19 +640,18 @@ def _prepare_release_ack(binding: dict[str, object]) -> str:
             "start": binding["start"],
         }
         payload = _canonical(ack) + b"\n"
-        for name in (RELEASE_ACK_NAME, RELEASE_ACK_PENDING_NAME):
-            existing = _read_at(
-                directory_fd,
-                name,
-                uid=os.geteuid(),
-                gid=os.getegid(),
-                mode=0o600,
-                missing=True,
-            )
-            if existing is not None:
-                if existing != payload:
-                    _fail("release-ack-conflict")
-                return str(binding["nonce"])
+        existing = _read_at(
+            directory_fd,
+            RELEASE_ACK_NAME,
+            uid=os.geteuid(),
+            gid=os.getegid(),
+            mode=0o600,
+            missing=True,
+        )
+        if existing is not None:
+            if existing != payload:
+                _fail("release-ack-conflict")
+            return str(binding["nonce"])
         temporary = f".{RELEASE_ACK_NAME}.{os.getpid()}.{secrets.token_hex(8)}"
         fd = os.open(
             temporary,
@@ -674,7 +672,7 @@ def _prepare_release_ack(binding: dict[str, object]) -> str:
             os.close(fd)
         os.replace(
             temporary,
-            RELEASE_ACK_PENDING_NAME,
+            RELEASE_ACK_NAME,
             src_dir_fd=directory_fd,
             dst_dir_fd=directory_fd,
         )

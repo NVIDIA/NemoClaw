@@ -128,6 +128,32 @@ with tempfile.TemporaryDirectory() as root:
                 release_payload,
             )
         )
+        publisher = control.ProcessIdentity(
+            22,
+            "S",
+            start.pid,
+            "202",
+            start.uids,
+            (
+                control.STARTUP_GATE_PYTHON,
+                b"-I",
+                control.STARTUP_GATE_HELPER,
+                b"acknowledge",
+            ),
+            14,
+            15,
+        )
+        publisher_scans = {"count": 0}
+        def capture_publishers(_uids):
+            publisher_scans["count"] += 1
+            return (publisher,) if publisher_scans["count"] == 1 else ()
+        control._capture_writer_processes = capture_publishers
+        control._recapture_reference = lambda *_args: None
+        control.POLL_SECONDS = 0
+        results["publisherWait"] = code(
+            lambda: control._wait_for_release_ack_publisher(fence)
+        )
+        results["publisherScans"] = publisher_scans["count"]
         os.unlink(control.STARTUP_RELEASE_ACK_NAME, dir_fd=directory_fd)
         record_rejection(
             directory_fd,
@@ -167,7 +193,7 @@ print(json.dumps(results, sort_keys=True))
 `;
 
 describe("runtime state mutation release acknowledgement", () => {
-  it("accepts only a committed acknowledgement for the exact activation release (#10155)", () => {
+  it("accepts the exact acknowledgement after its startup child exits (#10155)", () => {
     const result = spawnSync("python3", ["-I", "-c", HARNESS, CONTROLLER], {
       encoding: "utf8",
     });
@@ -176,6 +202,8 @@ describe("runtime state mutation release acknowledgement", () => {
       cleaned: true,
       committed: "ok",
       pendingIgnored: true,
+      publisherScans: 2,
+      publisherWait: "ok",
       wrongNonce: "activation-release-ack-invalid",
       wrongRelease: "activation-release-ack-invalid",
       wrongStart: "activation-release-ack-invalid",

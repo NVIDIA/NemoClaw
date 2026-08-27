@@ -333,7 +333,9 @@ function shellFunction(source: string, name: string, nextName: string): string {
   const start = source.indexOf(`${name}() {`);
   const end = source.indexOf(`\n${nextName}() {`, start);
   expect(start, `Expected ${name} in agents/hermes/start.sh`).toBeGreaterThanOrEqual(0);
-  expect(end, `Expected ${nextName} after ${name} in agents/hermes/start.sh`).toBeGreaterThan(start);
+  expect(end, `Expected ${nextName} after ${name} in agents/hermes/start.sh`).toBeGreaterThan(
+    start,
+  );
   return source.slice(start, end);
 }
 
@@ -411,7 +413,7 @@ describe("Hermes runtime state mutation publisher", () => {
       const waited = path.join(temporary, "controller-wait-finished");
       fs.writeFileSync(
         gate,
-        `import json\nimport os\nimport sys\n\nexpected = int(os.environ["NEMOCLAW_TEST_EXPECTED_START_PID"])\nif os.getppid() != expected:\n    raise SystemExit("gate-start-mismatch")\nnonce = os.environ["NEMOCLAW_TEST_NONCE"]\nroot = os.environ["NEMOCLAW_RUNTIME_STATE_MUTATION_HANDOFF_ROOT"]\ndirectory = os.path.join(root, nonce)\nos.mkdir(directory, 0o700)\npending = os.path.join(directory, ".release-ack.json.pending")\nwith open(pending, "x", encoding="utf-8") as stream:\n    json.dump({"nonce": nonce}, stream, separators=(",", ":"))\nos.chmod(pending, 0o600)\nprint(nonce)\n`,
+        `import json\nimport os\nimport sys\n\nexpected = int(os.environ["NEMOCLAW_TEST_EXPECTED_START_PID"])\nif os.getppid() != expected:\n    raise SystemExit("gate-start-mismatch")\nnonce = os.environ["NEMOCLAW_TEST_NONCE"]\nroot = os.environ["NEMOCLAW_RUNTIME_STATE_MUTATION_HANDOFF_ROOT"]\ndirectory = os.path.join(root, nonce)\nos.mkdir(directory, 0o700)\nfinal = os.path.join(directory, "release-ack.json")\nwith open(final, "x", encoding="utf-8") as stream:\n    json.dump({"nonce": nonce}, stream, separators=(",", ":"))\nos.chmod(final, 0o600)\nprint(nonce)\n`,
         { mode: 0o700 },
       );
       const start = fs.readFileSync(START, "utf8");
@@ -439,9 +441,6 @@ wait "$controller_pid"
           NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_PYTHON: "python3",
           NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER: gate,
           NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_SETPRIV: "setpriv",
-          NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_MV: "mv",
-          NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_MKTEMP: "mktemp",
-          NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_RM: "rm",
           NEMOCLAW_RUNTIME_STATE_MUTATION_HANDOFF_ROOT: temporary,
           NEMOCLAW_TEST_CONTROLLER_WAIT: controllerWait,
           NEMOCLAW_TEST_NONCE: nonce,
@@ -449,10 +448,12 @@ wait "$controller_pid"
         },
       });
       expect(result.status, result.stderr).toBe(0);
-      expect(
-        fs.readFileSync(path.join(temporary, nonce, "release-ack.json"), "utf8"),
-      ).toBe(`{"nonce":"${nonce}"}`);
+      expect(fs.readFileSync(path.join(temporary, nonce, "release-ack.json"), "utf8")).toBe(
+        `{"nonce":"${nonce}"}`,
+      );
       expect(fs.existsSync(waited)).toBe(true);
+      expect(acknowledge).not.toContain("mktemp");
+      expect(acknowledge).not.toContain("mv");
     } finally {
       fs.rmSync(temporary, { force: true, recursive: true });
     }

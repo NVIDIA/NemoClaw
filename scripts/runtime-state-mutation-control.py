@@ -116,6 +116,8 @@ HERMES_HEALTH_PATH = "/health"
 HERMES_CONFIG_GENERATION_PATH = "/sandbox/.hermes/.config-hash"
 START_LOG_PATH = b"/tmp/nemoclaw-start.log"
 START_LOG_DRAIN_PATHS = (b"tee", b"/usr/bin/tee", b"/bin/tee")
+STARTUP_GATE_PYTHON = b"/opt/hermes/.venv/bin/python3"
+STARTUP_GATE_HELPER = b"/usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py"
 TRANSPORT_BROKER_BOOTSTRAP = (
     b"import base64,sys,zlib;source=zlib.decompress(base64.b64decode(sys.argv.pop(1)),-15);"
     b"exec(compile(source,'<nemoclaw-state-mutation-transport>','exec'))"
@@ -2143,7 +2145,47 @@ def _wait_for_startup_release_ack(
     while True:
         if _read_startup_release_ack(marker, fence, release_payload) is not None:
             _recapture_reference(fence.start, "activation-release-identity-drift")
+            # The gate publishes the acknowledgement before its direct child
+            # returns to the startup shell. Keep this transaction active until
+            # that child exits so a following fence cannot stop the parent and
+            # terminate the publisher before the parent receives success.
+            _wait_for_release_ack_publisher(fence)
             return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            _fail("activation-release-ack-timeout")
+        time.sleep(min(POLL_SECONDS, remaining))
+
+
+def _is_release_ack_publisher(
+    process: ProcessIdentity, start: ProcessReference
+) -> bool:
+    return bool(
+        process.parent_pid == start.pid
+        and process.uids == start.uids
+        and process.command
+        == (
+            STARTUP_GATE_PYTHON,
+            b"-I",
+            STARTUP_GATE_HELPER,
+            b"acknowledge",
+        )
+    )
+
+
+def _wait_for_release_ack_publisher(fence: FenceProof) -> None:
+    deadline = time.monotonic() + PROCESS_STATE_SECONDS
+    while True:
+        _recapture_reference(fence.start, "activation-release-identity-drift")
+        publishers = tuple(
+            process
+            for process in _capture_writer_processes(fence.writer_uids)
+            if _is_release_ack_publisher(process, fence.start)
+        )
+        if not publishers:
+            return
+        if len(publishers) != 1:
+            _fail("activation-release-ack-invalid")
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             _fail("activation-release-ack-timeout")
