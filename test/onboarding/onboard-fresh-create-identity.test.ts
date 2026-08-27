@@ -149,6 +149,9 @@ describe("fresh create identity", () => {
       const registryPath = JSON.stringify(
         path.join(repoRoot, "src", "lib", "state", "registry.ts"),
       );
+      const recreateJournalPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "onboard", "onboard-recreate-journal.ts"),
+      );
       const preflightPath = JSON.stringify(
         path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
       );
@@ -178,6 +181,7 @@ describe("fresh create identity", () => {
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 let _deleted = false;
 const registry = require(${registryPath});
+const recreateJournal = require(${recreateJournalPath});
 const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});
 const entryOptions = require(${entryOptionsPath});
@@ -300,13 +304,66 @@ runner.run = (command, opts = {}) => {
 	  : null;
 	const registryMutationCalls = [];
   let checkpointReadCalls = 0;
+	if (!recoveryReentry) {
+	  const session = retainedRecovery.createSession({
+	    sessionId: "session-owner",
+	    sandboxName: "my-assistant",
+	    agent: agent?.name ?? "openclaw",
+	  });
+	  retainedRecovery.saveSession(session);
+	  registry.save({
+	    defaultSandbox: null,
+	    sandboxes: {
+	      "my-assistant": {
+	        name: "my-assistant",
+	        gatewayName: "nemoclaw-18080",
+	        gatewayPort: 18080,
+	        provider,
+	        model,
+	        endpointUrl: null,
+	        endpointSource: null,
+	        credentialEnv: null,
+	        preferredInferenceApi: null,
+	        pendingRouteReservation: true,
+	        reservationSessionId: "session-owner",
+	      },
+	    },
+	  });
+	  recreateJournal.openOnboardRecreateJournal({
+	    target: {
+	      sandboxName: "my-assistant",
+	      gatewayName: "nemoclaw-18080",
+	      gatewayPort: 18080,
+	    },
+	    agentName: agent?.name ?? "openclaw",
+	    note: () => {},
+	    observe: () => ({ state: "missing", liveIdentityFingerprint: null }),
+	    intent: {
+	      agent: agent?.name ?? "openclaw",
+	      fromDockerfile: null,
+	      provider,
+	      model,
+	      preferredInferenceApi: null,
+	      sandboxGpuConfig: null,
+	      gatewayName: "nemoclaw-18080",
+	      gatewayPort: 18080,
+	      toolDisclosure: "progressive",
+	      dcodeAutoApprovalMode: null,
+	      observabilityEnabled: false,
+	      policyTier: null,
+	    },
+	  });
+	}
+	const durableGetSandbox = registry.getSandbox.bind(registry);
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
 	  sandboxName: "my-assistant",
 	  gatewayName: "nemoclaw-18080",
+	  gatewayPort: 18080,
 	  provider,
 	  model,
+	  sessionId: "session-owner",
 	  apfInterceptorRequested,
-	  getSandbox: () => retainedRegistryEntry,
+	  getSandbox: (name) => retainedRegistryEntry ?? durableGetSandbox(name),
 	  onVerifyCreatedPolicy: (input) => {
 	    if (postCreateAuthorityRefusal) {
 	      throw new Error("external policy authority changed");
@@ -409,11 +466,11 @@ if (recoveryJournalReadbackFailuresRemaining > 0) {
   };
 }
 if (cancelAfterCreate && !recoveryReentry) {
-  const session = onboardModule.onboardSession.createSession({
-    mode: "interactive",
-    sandboxName: "my-assistant",
-    metadata: { gatewayName: "nemoclaw-18080", fromDockerfile: null },
-  });
+  const session = onboardModule.onboardSession.loadSession();
+  if (!session) throw new Error("missing seeded onboarding session");
+  session.mode = "interactive";
+  session.sandboxName = "my-assistant";
+  session.metadata = { gatewayName: "nemoclaw-18080", fromDockerfile: null };
   onboardModule.onboardSession.saveSession(session);
   onboardModule.registerIncompleteOnboardExitHandlerForSession(
     onboardModule.onboardSession,
@@ -531,15 +588,18 @@ if (${JSON.stringify(
 	    [null, model, provider, null, null, null, selectedChannels, null, agent, null, null, null, []],
 	    createFixture,
 	  );
-	  if (apfInterceptorRequested) {
-	    createArgs[15] = {
-	      apfInterceptorRequested: true,
-	      deferSandboxEffectsUntilPolicyVerification: true,
-	      recreate: false,
-	      toolDisclosure: "progressive",
-	      observabilityEnabled: false,
-	    };
-	  }
+	  createArgs[15] = {
+	    ...createArgs[15],
+	    ...(apfInterceptorRequested
+	      ? {
+	          apfInterceptorRequested: true,
+	          deferSandboxEffectsUntilPolicyVerification: true,
+	        }
+	      : {}),
+	    recreate: false,
+	    toolDisclosure: "progressive",
+	    observabilityEnabled: false,
+	  };
 	  try {
 	    const sandboxName = await createSandbox(...createArgs);
 	    if (cancelAfterCreate) {

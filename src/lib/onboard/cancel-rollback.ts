@@ -93,7 +93,7 @@ export interface InstallSandboxCancelRollbackOptions {
  * The handler does nothing unless it is armed and the operator cancels.
  */
 export function installSandboxCancelRollback(
-  opts: InstallSandboxCancelRollbackOptions,
+  opts: InstallSandboxCancelRollbackOptions = {},
 ): SandboxCancelRollback {
   const rollback = createSandboxCancelRollback({
     log: opts.log ?? ((message) => console.error(message)),

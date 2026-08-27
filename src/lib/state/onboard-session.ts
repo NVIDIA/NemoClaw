@@ -1392,6 +1392,19 @@ function withOwnedOnboardLock<T>(command: string, operation: () => T): T {
   }
 }
 
+/** Report whether this process holds the exclusive onboarding writer lock. */
+export function isOnboardLockHeldByCurrentProcess(): boolean {
+  if (heldLockFd === null) return false;
+  try {
+    return (
+      fs.fstatSync(heldLockFd, { bigint: true }).ino ===
+      fs.statSync(LOCK_FILE, { bigint: true }).ino
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function acquireOnboardLock(command: string | null = null): LockResult {
   ensureSessionDir();
   const payload = JSON.stringify(

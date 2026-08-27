@@ -125,7 +125,6 @@ describe("installSandboxCancelRollback", () => {
       recordRecovery,
       registerExitHandler: (handler) => exitHandlers.push(handler),
     });
-
     expect(exitHandlers).toHaveLength(1);
     rollback.arm("new-sb", SANDBOX_FINGERPRINT);
     rollback.markCancelled();
@@ -284,16 +283,12 @@ describe("installSandboxCancelRollback", () => {
 });
 
 describe("makeOnboardCancelExit", () => {
-  it("cleans up, marks cancelled, then exits non-zero", () => {
+  it("cleans up, marks cancellation, then exits nonzero", () => {
     const order: string[] = [];
     const cleanup = vi.fn(() => order.push("cleanup"));
-    const rollback = { markCancelled: vi.fn(() => order.push("markCancelled")) };
-    const exit = vi.fn((_code: number) => {
-      order.push("exit");
-    });
-
-    makeOnboardCancelExit(rollback, cleanup, exit)();
-
+    const guard = { markCancelled: vi.fn(() => order.push("markCancelled")) };
+    const exit = vi.fn((_code: number) => order.push("exit"));
+    makeOnboardCancelExit(guard, cleanup, exit)();
     expect(order).toEqual(["cleanup", "markCancelled", "exit"]);
     expect(exit).toHaveBeenCalledWith(1);
   });

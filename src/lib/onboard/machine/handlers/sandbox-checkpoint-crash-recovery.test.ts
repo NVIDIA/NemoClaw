@@ -1334,6 +1334,18 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
       getSandboxReuseState: () => "ready",
       recordStateSkipped,
       updateSession: resumeUpdateSession,
+      getSandboxRegistryEntry: () => ({
+        name: "my-assistant",
+        agent: null,
+        provider: "provider",
+        model: "model",
+        endpointUrl: null,
+        preferredInferenceApi: "openai-completions",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        pendingRouteReservation: true,
+        reservationSessionId: persistedSession.sessionId,
+      }),
     });
 
     await handleSandboxState({
