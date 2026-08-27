@@ -11,11 +11,7 @@ import {
   type NemoClawPolicyCreationReceipt,
 } from "../../policy/merge";
 
-export function parseRetainedSandboxPolicyCreationReceipt(
-  value: unknown,
-): NemoClawPolicyCreationReceipt {
-  return parseNemoClawPolicyCreationReceipt(value);
-}
+export { parseNemoClawPolicyCreationReceipt } from "../../policy/merge";
 
 const SCHEMA_VERSION = 1;
 const FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/u;
@@ -59,22 +55,9 @@ export interface RetainedSandboxRecoveryRecord {
   readonly recordedAt: string;
 }
 
-interface RetainedSandboxAdministratorResolutionReceipt {
-  readonly schemaVersion: typeof SCHEMA_VERSION;
-  readonly receiptId: string;
-  readonly recordId: string;
-  readonly sandboxName: string;
-  readonly sandboxIdentityFingerprint: string | null;
-  readonly gatewayName: string;
-  readonly gatewayPort: number;
-  readonly outcome: "removed_verified_identity" | "confirmed_absent_without_identity";
-  readonly resolvedAt: string;
-}
-
 interface RetainedSandboxRecoveryState {
   readonly schemaVersion: typeof SCHEMA_VERSION;
   readonly unresolved: readonly RetainedSandboxRecoveryRecord[];
-  readonly resolutions: readonly RetainedSandboxAdministratorResolutionReceipt[];
 }
 
 interface RetainedSandboxStateDirectory {
@@ -101,7 +84,6 @@ export interface RecordRetainedSandboxRecoveryInput {
 const emptyState = (): RetainedSandboxRecoveryState => ({
   schemaVersion: SCHEMA_VERSION,
   unresolved: [],
-  resolutions: [],
 });
 
 function sameFileIdentity(left: fs.Stats, right: fs.Stats): boolean {
@@ -446,53 +428,18 @@ function parseRecord(value: unknown): RetainedSandboxRecoveryRecord | null {
   };
 }
 
-function parseReceipt(value: unknown): RetainedSandboxAdministratorResolutionReceipt | null {
-  if (!isObjectRecord(value)) return null;
-  const fingerprint = value.sandboxIdentityFingerprint;
-  const outcome = value.outcome;
-  if (
-    value.schemaVersion !== SCHEMA_VERSION ||
-    typeof value.receiptId !== "string" ||
-    !FINGERPRINT_PATTERN.test(value.receiptId) ||
-    typeof value.recordId !== "string" ||
-    !FINGERPRINT_PATTERN.test(value.recordId) ||
-    !validSandboxName(value.sandboxName) ||
-    (fingerprint !== null &&
-      (typeof fingerprint !== "string" || !FINGERPRINT_PATTERN.test(fingerprint))) ||
-    !validSafeEvidence(value.gatewayName) ||
-    !validGatewayPort(value.gatewayPort) ||
-    !["removed_verified_identity", "confirmed_absent_without_identity"].includes(String(outcome)) ||
-    !validTimestamp(value.resolvedAt)
-  ) {
-    return null;
-  }
-  return {
-    schemaVersion: SCHEMA_VERSION,
-    receiptId: value.receiptId,
-    recordId: value.recordId,
-    sandboxName: value.sandboxName,
-    sandboxIdentityFingerprint: fingerprint,
-    gatewayName: value.gatewayName,
-    gatewayPort: value.gatewayPort,
-    outcome: outcome as RetainedSandboxAdministratorResolutionReceipt["outcome"],
-    resolvedAt: value.resolvedAt,
-  };
-}
-
 function loadState(filePath: string): RetainedSandboxRecoveryState {
   const value = readStateFile(filePath);
   if (!isObjectRecord(value) || value.schemaVersion !== SCHEMA_VERSION) {
     throw new Error("Retained sandbox recovery state has an unsupported schema.");
   }
   const unresolved = Array.isArray(value.unresolved) ? value.unresolved.map(parseRecord) : null;
-  const resolutions = Array.isArray(value.resolutions) ? value.resolutions.map(parseReceipt) : null;
-  if (!unresolved || unresolved.includes(null) || !resolutions || resolutions.includes(null)) {
+  if (!unresolved || unresolved.includes(null)) {
     throw new Error("Retained sandbox recovery state is invalid; onboarding remains blocked.");
   }
   return {
     schemaVersion: SCHEMA_VERSION,
     unresolved: unresolved as RetainedSandboxRecoveryRecord[],
-    resolutions: resolutions as RetainedSandboxAdministratorResolutionReceipt[],
   };
 }
 

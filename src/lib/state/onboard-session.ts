@@ -63,7 +63,7 @@ import {
 import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
 import {
   listRetainedSandboxRecoveryRecords as readRetainedSandboxRecoveryRecords,
-  parseRetainedSandboxPolicyCreationReceipt,
+  parseNemoClawPolicyCreationReceipt,
   recordRetainedSandboxRecovery as writeRetainedSandboxRecovery,
   retainedSandboxRecoveryFile,
   type RecordRetainedSandboxRecoveryInput,
@@ -855,7 +855,7 @@ function parseSessionCancellationRecovery(
   let policyCreationReceipt: RetainedSandboxRecoveryRecord["policyCreationReceipt"] = null;
   if (value.policyCreationReceipt !== null) {
     try {
-      policyCreationReceipt = parseRetainedSandboxPolicyCreationReceipt(value.policyCreationReceipt);
+      policyCreationReceipt = parseNemoClawPolicyCreationReceipt(value.policyCreationReceipt);
     } catch {
       return null;
     }
