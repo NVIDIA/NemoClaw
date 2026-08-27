@@ -1121,7 +1121,6 @@ const { createSandboxWithTemporaryManagedRuntime } = require(${onboardPath});
       NEMOCLAW_RECREATE_SANDBOX: "1",
     };
     delete env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
-    delete env.NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK;
     const result = spawnSync(process.execPath, [scriptPath], {
       cwd: repoRoot,
       encoding: "utf-8",
