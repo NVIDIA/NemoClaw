@@ -42,9 +42,10 @@ export function mxcOpenShellAttachmentFixture(version = "0.0.21"): {
     observation: {
       ...structuredClone(accepted),
       distributionRoot: "C:\\OpenShell",
+      mxcRoot: "C:\\mxc-kit",
       cliPath: "C:\\OpenShell\\bin\\openshell.exe",
       gatewayPath: "C:\\OpenShell\\bin\\openshell-gateway.exe",
-      wxcExecPath: "C:\\OpenShell\\mxc\\wxc-exec.exe",
+      wxcExecPath: "C:\\mxc-kit\\bin\\wxc-exec.exe",
       gatewayConfigPath: "C:\\ProgramData\\NVIDIA\\OpenShell\\gateway.toml",
     },
   };

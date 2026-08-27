@@ -60,7 +60,7 @@ function candidateBundle() {
 function attachmentObservation(): MxcOpenShellAttachmentObservationRequest {
   const source = mxcOpenShellAttachmentFixture().observation;
   return {
-    contractVersion: 1,
+    contractVersion: 2,
     providerId: "mxc",
     mode: "attach-existing",
     observedDistribution: {
@@ -74,6 +74,7 @@ function attachmentObservation(): MxcOpenShellAttachmentObservationRequest {
     installation: {
       distributionArtifactPath: "C:\\OpenShell\\packages\\openshell-0.0.21.zip",
       distributionRoot: source.distributionRoot,
+      mxcRoot: source.mxcRoot,
       cliPath: source.cliPath,
       gatewayPath: source.gatewayPath,
       wxcExecPath: source.wxcExecPath,
@@ -120,7 +121,7 @@ describe("inactive OpenShell MXC runtime provider", () => {
       ["C:\\OpenShell\\packages\\openshell-0.0.21.zip", accepted.distribution.sha256],
       ["C:\\OpenShell\\bin\\openshell.exe", accepted.components.cliSha256],
       ["C:\\OpenShell\\bin\\openshell-gateway.exe", accepted.components.gatewaySha256],
-      ["C:\\OpenShell\\mxc\\wxc-exec.exe", accepted.components.wxcExecSha256],
+      ["C:\\mxc-kit\\bin\\wxc-exec.exe", accepted.components.wxcExecSha256],
       ["C:\\ProgramData\\NVIDIA\\OpenShell\\gateway.toml", accepted.gateway.configSha256],
     ]);
     const observeFileDigest = vi.fn(async (filePath: string) => digests.get(filePath)!);
@@ -196,10 +197,15 @@ describe("inactive OpenShell MXC runtime provider", () => {
     expect(recoverCreate).not.toHaveBeenCalled();
   });
 
-  it("uses exact recovery without re-reading installed files (#8178)", async () => {
+  it("re-observes installed files before exact recovery (#8178)", async () => {
     const attachment = mxcOpenShellAttachmentFixture();
     const accepted = attachment.observation;
     const acceptedDigests = [
+      accepted.distribution.sha256,
+      accepted.components.cliSha256,
+      accepted.components.gatewaySha256,
+      accepted.components.wxcExecSha256,
+      accepted.gateway.configSha256,
       accepted.distribution.sha256,
       accepted.components.cliSha256,
       accepted.components.gatewaySha256,
@@ -235,7 +241,7 @@ describe("inactive OpenShell MXC runtime provider", () => {
       resourceState: "absent",
       recoveryRequired: false,
     });
-    expect(observeFileDigest).toHaveBeenCalledTimes(5);
+    expect(observeFileDigest).toHaveBeenCalledTimes(10);
     expect(verifyAndCreate).not.toHaveBeenCalled();
     expect(verifyReadiness).not.toHaveBeenCalled();
     expect(recoverCreate).toHaveBeenCalledOnce();

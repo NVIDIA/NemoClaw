@@ -28,7 +28,7 @@ describe("inactive OpenShell MXC installation attachment", () => {
     });
     expect(Object.isFrozen(authority)).toBe(true);
     expect(receipt).toEqual({
-      contractVersion: 1,
+      contractVersion: MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
       providerId: "mxc",
       mode: "attach-existing",
       authoritySha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
@@ -48,7 +48,8 @@ describe("inactive OpenShell MXC installation attachment", () => {
           sha256: DIGESTS.gateway,
         },
         wxcExec: {
-          path: "C:\\OpenShell\\mxc\\wxc-exec.exe",
+          root: "C:\\mxc-kit",
+          path: "C:\\mxc-kit\\bin\\wxc-exec.exe",
           sha256: DIGESTS.wxcExec,
         },
       },
@@ -118,6 +119,35 @@ describe("inactive OpenShell MXC installation attachment", () => {
     expect(() => qualifyMxcOpenShellAttachment(authority, observation)).toThrow(
       /gateway path must remain inside the observed distribution root/u,
     );
+  });
+
+  it("rejects wxc-exec from outside the observed MXC root (#8178)", () => {
+    const { authority, observation: fixtureObservation } = mxcOpenShellAttachmentFixture();
+    const observation = structuredClone(fixtureObservation);
+    const observed = observation as unknown as { wxcExecPath: string };
+    observed.wxcExecPath = "C:\\OtherMxc\\wxc-exec.exe";
+
+    expect(() => qualifyMxcOpenShellAttachment(authority, observation)).toThrow(
+      /wxc-exec path must remain inside the observed MXC root/u,
+    );
+  });
+
+  it.each([
+    ["distribution root", "distributionRoot"],
+    ["MXC root", "mxcRoot"],
+    ["OpenShell CLI", "cliPath"],
+    ["OpenShell gateway", "gatewayPath"],
+    ["wxc-exec", "wxcExecPath"],
+    ["gateway configuration", "gatewayConfigPath"],
+  ] as const)("rejects a network %s before attachment qualification (#8178)", (_label, field) => {
+    const source = mxcOpenShellAttachmentFixture();
+
+    expect(() =>
+      qualifyMxcOpenShellAttachment(source.authority, {
+        ...source.observation,
+        [field]: "\\\\host\\share\\component.bin",
+      }),
+    ).toThrow(/local-drive Windows path/u);
   });
 
   it("rejects an unsupported backend before attachment (#8178)", () => {

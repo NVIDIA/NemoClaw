@@ -48,6 +48,7 @@ export interface MxcOpenShellStableFileOperations {
 export interface MxcOpenShellInstallationLayout {
   readonly distributionArtifactPath: string;
   readonly distributionRoot: string;
+  readonly mxcRoot: string;
   readonly cliPath: string;
   readonly gatewayPath: string;
   readonly wxcExecPath: string;
@@ -220,6 +221,7 @@ function parseInstallation(value: unknown): MxcOpenShellInstallationLayout {
       "distributionRoot",
       "gatewayConfigPath",
       "gatewayPath",
+      "mxcRoot",
       "wxcExecPath",
     ],
     "installation layout",
@@ -233,6 +235,7 @@ function parseInstallation(value: unknown): MxcOpenShellInstallationLayout {
       installation.distributionRoot,
       "OpenShell distribution root",
     ),
+    mxcRoot: canonicalWindowsPath(installation.mxcRoot, "MXC root"),
     cliPath: canonicalWindowsPath(installation.cliPath, "OpenShell CLI path"),
     gatewayPath: canonicalWindowsPath(installation.gatewayPath, "OpenShell gateway path"),
     wxcExecPath: canonicalWindowsPath(installation.wxcExecPath, "wxc-exec path"),
@@ -244,7 +247,6 @@ function parseInstallation(value: unknown): MxcOpenShellInstallationLayout {
   for (const [label, candidate] of [
     ["OpenShell CLI", parsed.cliPath],
     ["OpenShell gateway", parsed.gatewayPath],
-    ["wxc-exec", parsed.wxcExecPath],
   ] as const) {
     const relative = path.win32.relative(parsed.distributionRoot, candidate);
     if (
@@ -257,6 +259,15 @@ function parseInstallation(value: unknown): MxcOpenShellInstallationLayout {
         `${label} path must remain inside the observed distribution root`,
       );
     }
+  }
+  const relativeWxcExecPath = path.win32.relative(parsed.mxcRoot, parsed.wxcExecPath);
+  if (
+    relativeWxcExecPath.length === 0 ||
+    path.win32.isAbsolute(relativeWxcExecPath) ||
+    relativeWxcExecPath === ".." ||
+    relativeWxcExecPath.startsWith(`..${path.win32.sep}`)
+  ) {
+    throw new MxcOpenShellAttachmentError("wxc-exec path must remain inside the observed MXC root");
   }
   return parsed;
 }
@@ -346,6 +357,7 @@ export async function observeMxcOpenShellAttachment(
     },
     gateway: { ...observedGateway, configSha256: observedDigests[4]! },
     distributionRoot: installation.distributionRoot,
+    mxcRoot: installation.mxcRoot,
     cliPath: installation.cliPath,
     gatewayPath: installation.gatewayPath,
     wxcExecPath: installation.wxcExecPath,
