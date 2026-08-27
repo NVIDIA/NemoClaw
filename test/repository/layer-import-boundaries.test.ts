@@ -248,28 +248,46 @@ describe("CLI layer import boundaries (#6245)", () => {
     }
   });
 
-  it("resolves JavaScript output specifiers to TypeScript source modules (#6245)", () => {
-    const target = fixturePath("src/lib/adapters", "javascript-specifier-target");
-    const importer = fixturePath("src/lib/domain", "javascript-specifier-importer");
+  it.each([
+    { emittedExtension: ".js", sourceExtension: ".ts" },
+    { emittedExtension: ".mjs", sourceExtension: ".mts" },
+    { emittedExtension: ".cjs", sourceExtension: ".cts" },
+  ])(
+    "resolves $emittedExtension output specifiers to $sourceExtension source modules (#6245)",
+    ({ emittedExtension, sourceExtension }) => {
+      const target = fixturePath(
+        "src/lib/adapters",
+        `emitted-specifier-target-${sourceExtension.slice(1)}`,
+        sourceExtension,
+      );
+      const importer = fixturePath(
+        "src/lib/domain",
+        `emitted-specifier-importer-${sourceExtension.slice(1)}`,
+      );
     const specifier = path
       .relative(path.dirname(importer), target)
       .split(path.sep)
-      .join("/")
-      .replace(/\.ts$/, ".js");
-    try {
-      fs.writeFileSync(target, "export const value = true;\n");
-      fs.writeFileSync(importer, `import { value } from "${specifier}";\nexport { value };\n`);
+        .join("/");
+      const emittedSpecifier =
+        specifier.slice(0, -sourceExtension.length) + emittedExtension;
+      try {
+        fs.writeFileSync(target, "export const value = true;\n");
+        fs.writeFileSync(
+          importer,
+          `import { value } from "${emittedSpecifier}";\nexport { value };\n`,
+        );
 
-      expect(findLayerImportBoundaryViolations(importer)).toEqual([
-        expect.objectContaining({
-          detail: `domain must not import ${path.relative(REPO_ROOT, target)}`,
-        }),
-      ]);
-    } finally {
-      fs.rmSync(importer, { force: true });
-      fs.rmSync(target, { force: true });
-    }
-  });
+        expect(findLayerImportBoundaryViolations(importer)).toEqual([
+          expect.objectContaining({
+            detail: `domain must not import ${path.relative(REPO_ROOT, target)}`,
+          }),
+        ]);
+      } finally {
+        fs.rmSync(importer, { force: true });
+        fs.rmSync(target, { force: true });
+      }
+    },
+  );
 
   it("resolves an extensionless directory import to its index module (#6245)", () => {
     const targetDir = fs.mkdtempSync(
