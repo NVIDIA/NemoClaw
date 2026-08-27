@@ -182,7 +182,7 @@ NemoClaw automatically suggests the preset that matches the selected provider an
 When a later onboarding run does not select a messaging channel and the environment no longer supplies that channel's required values, NemoClaw treats the channel as disabled.
 NemoClaw then removes that channel's matching policy preset instead of carrying it forward.
 This removal also runs with `NEMOCLAW_POLICY_MODE=skip` and its `none` or `no` aliases.
-These modes skip policy preset additions, but they do not preserve a disabled channel's preset.
+These modes skip optional policy preset additions, but they still apply the required preset for an enabled channel and do not preserve a disabled channel's preset.
 `$$nemoclaw onboard --resume` reconciles the policy selection instead of skipping it when the effective messaging selection omits a channel whose preset remains applied.
 NemoClaw keeps the preset for an in-sandbox QR-paired channel such as WhatsApp because you pair that channel inside the sandbox rather than through host environment values.
 </AgentOnly>

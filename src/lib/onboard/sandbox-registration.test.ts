@@ -94,6 +94,14 @@ function createdRegistryEntryInput(
 }
 
 describe("buildCreatedSandboxRegistryEntry", () => {
+  it("copies policy authority into completed sandbox registration (#9833)", () => {
+    const entry = buildCreatedSandboxRegistryEntry(
+      createdRegistryEntryInput({ policyAuthority: "externally-managed" }),
+    );
+
+    expect(entry.policyAuthority).toBe("externally-managed");
+  });
+
   it("records explicit OpenClaw identity for a managed workload receipt (#9356)", () => {
     const workload = managedWorkloadReceipt("openclaw");
     const entry = buildCreatedSandboxRegistryEntry(
@@ -689,6 +697,16 @@ describe("registerCreatedSandbox", () => {
 
     expect(entry.agent).toBeNull();
     expect(classifyPortableLifecycleReceipt).not.toHaveBeenCalled();
+  });
+
+  it("publishes ordinary registrations without verified-create transaction options", () => {
+    const registerSandbox = vi.fn();
+    const entry = registerCreatedSandbox({
+      ...createdRegistryEntryInput({ lifecycleGeneration: "generation-1" }),
+      registerSandbox,
+    });
+
+    expect(registerSandbox).toHaveBeenCalledExactlyOnceWith(entry);
   });
 
   it("persists lifecycle identity for a non-OpenClaw agent", () => {

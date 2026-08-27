@@ -37,6 +37,8 @@ export type GatewayCredentialOnlyProviderBinding = {
   credentialKey: string;
 };
 
+export type GatewayCredentialFamilyProviderBinding = GatewayCredentialOnlyProviderBinding;
+
 /** Match the complete non-secret provider identity used for route decisions. */
 export function matchesGatewayProviderBinding(
   metadata: GatewayProviderMetadata | null,
@@ -65,6 +67,23 @@ export function matchesGatewayCredentialOnlyProviderBinding(
       metadata.credentialKeys.length === 1 &&
       metadata.credentialKeys[0] === expected.credentialKey &&
       metadata.configKeys.length === 0,
+  );
+}
+
+/** Match a canonical credential plus credentials in its namespaced family. */
+export function matchesGatewayCredentialFamilyProviderBinding(
+  metadata: GatewayProviderMetadata | null,
+  expected: GatewayCredentialFamilyProviderBinding,
+): boolean {
+  return Boolean(
+    metadata &&
+      metadata.name === expected.name &&
+      metadata.type === expected.type &&
+      metadata.configKeys.length === 0 &&
+      metadata.credentialKeys.includes(expected.credentialKey) &&
+      metadata.credentialKeys.every(
+        (key) => key === expected.credentialKey || key.startsWith(`${expected.credentialKey}_`),
+      ),
   );
 }
 
@@ -195,10 +214,13 @@ export function parseGatewayProviderMetadata(output: string): GatewayProviderMet
   return { name, type, credentialKeys, configKeys };
 }
 
-/** Distinguish an exact credential-only binding from absence and lookup failure. */
-export function inspectGatewayCredentialOnlyProviderBinding(
+function inspectGatewayCredentialBinding(
   expected: GatewayCredentialOnlyProviderBinding,
   runOpenshell: GatewayProviderRunner,
+  matches: (
+    metadata: GatewayProviderMetadata | null,
+    expected: GatewayCredentialOnlyProviderBinding,
+  ) => boolean,
 ): GatewayCredentialOnlyProviderInspection {
   let result: GatewayProviderCommandResult;
   try {
@@ -224,9 +246,19 @@ export function inspectGatewayCredentialOnlyProviderBinding(
   }
 
   const metadata = parseGatewayProviderMetadata(output);
-  return matchesGatewayCredentialOnlyProviderBinding(metadata, expected)
-    ? { kind: "exact" }
-    : { kind: "collision" };
+  return matches(metadata, expected) ? { kind: "exact" } : { kind: "collision" };
+}
+
+/** Distinguish a credential family from absence and lookup failure. */
+export function inspectGatewayCredentialFamilyProviderBinding(
+  expected: GatewayCredentialFamilyProviderBinding,
+  runOpenshell: GatewayProviderRunner,
+): GatewayCredentialOnlyProviderInspection {
+  return inspectGatewayCredentialBinding(
+    expected,
+    runOpenshell,
+    matchesGatewayCredentialFamilyProviderBinding,
+  );
 }
 
 /** Read one exact provider identity without reading or exporting credential values. */

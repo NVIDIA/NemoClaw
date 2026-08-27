@@ -49,7 +49,8 @@ export type ManagedHermesStateVolumeCleanupResult =
       readonly volumeName: string;
     };
 
-type DockerRun = (args: readonly string[], options?: DockerRunOptions) => DockerRunResult;
+type DockerRunResultLike = Pick<DockerRunResult, "status" | "stderr" | "stdout">;
+type DockerRun = (args: readonly string[], options?: DockerRunOptions) => DockerRunResultLike;
 
 export type ManagedHermesStateVolumeDeps = {
   readonly runDocker?: DockerRun;
@@ -80,11 +81,11 @@ function defaultRegisterExitCleanup(cleanup: () => void): () => void {
   return () => process.removeListener("exit", cleanup);
 }
 
-function commandOutput(result: DockerRunResult): string {
+function commandOutput(result: DockerRunResultLike): string {
   return `${String(result.stdout ?? "")}\n${String(result.stderr ?? "")}`.trim();
 }
 
-function boundedDetail(result: DockerRunResult): string {
+function boundedDetail(result: DockerRunResultLike): string {
   return commandOutput(result).replace(/\s+/gu, " ").slice(0, 500) || "Docker command failed";
 }
 

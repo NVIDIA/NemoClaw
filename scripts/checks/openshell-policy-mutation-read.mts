@@ -12,7 +12,7 @@
  * whyNotSourceFix: TypeScript cannot distinguish a command array after it
  * crosses the process runner, so this defense-in-depth check intentionally uses
  * deterministic AST classifications plus repository-wide read-site discovery.
- * regressionTest: test/policy-mutation-read-discovery.test.ts injects
+ * regressionTest: test/runtime/policy/policy-mutation-read-discovery.test.ts injects
  * unaccounted reads and requires this audit to fail.
  * removalCondition: replace the AST classification table when mutation and
  * diagnostic commands carry enforced tagged types through the runner boundary.
@@ -56,6 +56,10 @@ function unclassifiedBase(site: string): DiscoveredPolicyRead {
   return { site, view: "base", failureHandling: "unclassified" };
 }
 
+function unclassifiedFull(site: string): DiscoveredPolicyRead {
+  return { site, view: "full", failureHandling: "unclassified" };
+}
+
 function ignoredFull(site: string): DiscoveredPolicyRead {
   return { site, view: "full", failureHandling: "ignore-error" };
 }
@@ -86,7 +90,11 @@ export const MUTATION_READS: readonly AuditedPolicyReadFile[] = [
   },
   {
     relativePath: "nemoclaw/src/blueprint/runner.ts",
-    expectedReads: [unclassifiedBase("actionApply")],
+    expectedReads: [
+      unclassifiedBase("actionApply"),
+      unclassifiedFull("inspectBlueprintPolicyAuthority"),
+      unclassifiedFull("inspectBlueprintPolicyAuthority"),
+    ],
   },
   {
     relativePath: "src/lib/shields/index.ts",
@@ -99,6 +107,13 @@ export const MUTATION_READS: readonly AuditedPolicyReadFile[] = [
 ];
 
 const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [
+  {
+    relativePath: "src/lib/adapters/openshell/policy-authority.ts",
+    expectedReads: [
+      unclassifiedBase("captureSandboxBasePolicy"),
+      unclassifiedFull("inspectSandboxPolicyAuthority"),
+    ],
+  },
   {
     relativePath: "src/lib/actions/sandbox/launch-readiness/health.ts",
     expectedReads: [preservingFull("readLaunchReadinessLivePolicy")],
@@ -113,8 +128,9 @@ const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [
   {
     relativePath: "src/lib/policy/commands.ts",
     expectedReads: [
+      unclassifiedFull("buildGlobalPolicyGetFullJsonArgs"),
       {
-        site: "buildPolicyGetCommand",
+        site: "buildPolicyGetArgs",
         view: "base",
         failureHandling: "unclassified",
       },
@@ -123,6 +139,7 @@ const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [
         view: "full",
         failureHandling: "unclassified",
       },
+      unclassifiedFull("buildPolicyGetFullJsonArgs"),
     ],
   },
 ] as const;
@@ -135,7 +152,9 @@ export interface DiscoveredPolicyReadSite {
 
 const POLICY_GET_BUILDERS = new Map<string, PolicyReadView>([
   ["buildPolicyGetCommand", "base"],
+  ["buildPolicyGetArgs", "base"],
   ["buildPolicyGetFullCommand", "full"],
+  ["buildPolicyGetFullJsonArgs", "full"],
 ]);
 
 interface PolicyBuilderBindings {
@@ -514,9 +533,9 @@ function directPolicyReadView(
     ts.isExpression(element) ? literalText(element) : null,
   );
   if (values[offset] !== "policy" || values[offset + 1] !== "get") return null;
-  const policyArgs = values.slice(offset + 2);
-  const hasBase = policyArgs.includes("--base");
-  const hasFull = policyArgs.includes("--full");
+  const readArguments = values.slice(offset + 2);
+  const hasBase = readArguments.includes("--base");
+  const hasFull = readArguments.includes("--full");
   if (hasBase === hasFull) return null;
   if (hasBase) return "base";
   if (hasFull) return "full";

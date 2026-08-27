@@ -19,7 +19,7 @@ SOURCE_OF_TRUTH_REVIEW (Phase 7 / #5343 differing-providers):
   reads. Anything else that needs provider/model intent must come through
   this single reader so a schema drift in the host registry surfaces in
   one place.
-- Regression test: ``test/ollama-pinned-install.test.ts`` covers the
+- Regression test: ``test/inference/ollama/ollama-pinned-install.test.ts`` covers the
   shell-side caller; the in-sandbox effective route uses a separate reader
   (``read-openclaw-route.py``) that runs inside the sandbox itself.
 - Removal condition: when NemoClaw exposes a stable read-only API for

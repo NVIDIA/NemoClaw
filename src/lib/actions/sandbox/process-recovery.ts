@@ -369,7 +369,10 @@ function hasGatewayRecoveryMarker(result: SandboxCommandResult | null): boolean 
 // definitive. Retry only the exact lease-contention marker within the
 // existing bounded window. Removal condition: delete this classifier and its
 // retry cases once the installed controller waits through contention itself.
-function isExactlyRetryableManagedRecoveryFailure(result: SandboxCommandResult | null): boolean {
+function isExactlyManagedControlMarker(
+  result: SandboxCommandResult | null,
+  marker: string,
+): boolean {
   if (result === null) return false;
   if (result.status !== 1) return false;
   if (result.stdout.trim() !== "") return false;
@@ -377,47 +380,26 @@ function isExactlyRetryableManagedRecoveryFailure(result: SandboxCommandResult |
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
-  return lines.length === 1 && lines[0] === "SUPERVISOR_BUSY";
+  return lines.length === 1 && lines[0] === marker;
 }
 
-function isExactlyMissingManagedSupervisor(result: SandboxCommandResult | null): boolean {
-  if (result === null || result.status !== 1 || result.stdout.trim() !== "") return false;
-  const lines = result.stderr
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  return lines.length === 1 && lines[0] === "SUPERVISOR_NOT_RUNNING";
-}
-
-function isExactlyPendingManagedSupervisorControl(result: SandboxCommandResult | null): boolean {
-  if (result === null || result.status !== 1 || result.stdout.trim() !== "") return false;
-  const lines = result.stderr
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  return lines.length === 1 && lines[0] === "PRIVILEGED_CONTROL_UNAVAILABLE";
-}
-
-function isExactlyPendingManagedGatewayHealth(result: SandboxCommandResult | null): boolean {
-  if (result === null || result.status !== 1 || result.stdout.trim() !== "") return false;
-  const lines = result.stderr
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  // This waiter only performs read-only probes before snapshot state is
-  // applied. A bare health timeout means the proven managed gateway is still
-  // starting; any diagnostic or refusal beside it remains terminal.
-  return lines.length === 1 && lines[0] === "GATEWAY_HEALTH_TIMEOUT";
+function isExactlyRetryableManagedRecoveryFailure(result: SandboxCommandResult | null): boolean {
+  return isExactlyManagedControlMarker(result, "SUPERVISOR_BUSY");
 }
 
 function isExactlyManagedGatewayStartupTransition(
   result: ManagedGatewaySupervisorActionResult | null,
 ): boolean {
-  return (
-    isExactlyMissingManagedSupervisor(result) ||
-    isExactlyPendingManagedSupervisorControl(result) ||
-    isExactlyPendingManagedGatewayHealth(result)
-  );
+  // Discovery pending is emitted only before the controller selects a
+  // supervisor, so it can delay recovery but cannot authorize relaunch or
+  // accept an identity. The health timeout is likewise a read-only startup
+  // observation. Any diagnostic beside an exact marker remains terminal.
+  return [
+    "SUPERVISOR_NOT_RUNNING",
+    "PRIVILEGED_CONTROL_UNAVAILABLE",
+    "SUPERVISOR_DISCOVERY_PENDING",
+    "GATEWAY_HEALTH_TIMEOUT",
+  ].some((marker) => isExactlyManagedControlMarker(result, marker));
 }
 
 function isExactlyRetryableManagedControlTransition(
@@ -502,14 +484,19 @@ function waitForFinalRelaunchManagedSupervisor(
 function finalRelaunchContainerFailureDetail(
   completion: ReturnType<ManagedSupervisorRelaunch["finalize"]>,
 ): string | null {
+  if (completion.lifecycleStopAcknowledged === false) {
+    return "OpenShell did not acknowledge the authoritative stop before the final replacement handoff. NemoClaw did not start the primary dashboard/API host forward";
+  }
   if (completion.replacementStoppedForCommit === false) {
     return "Docker could not stop the replacement container for the final recovery handoff. NemoClaw did not start the primary dashboard/API host forward";
   }
-  if (completion.lifecycleReleaseObserved === false) {
-    return "OpenShell did not release the sandbox name before the final recovery handoff. NemoClaw did not restart the replacement container or start the primary dashboard/API host forward";
-  }
   if (completion.replacementRestarted === false) {
-    return "Docker could not start the replacement container to complete the final recovery handoff. NemoClaw did not start the primary dashboard/API host forward";
+    return "OpenShell could not start the replacement container through the authoritative lifecycle path. NemoClaw did not start the primary dashboard/API host forward";
+  }
+  if (completion.finalHandoffAcknowledged === false) {
+    return `OpenShell did not acknowledge the final replacement container handoff${
+      completion.lastSandboxPhase ? `; last sandbox phase was ${completion.lastSandboxPhase}` : ""
+    }. NemoClaw did not start the primary dashboard/API host forward`;
   }
   return null;
 }
@@ -653,7 +640,13 @@ export function confirmRecoveredSandboxGatewayManaged(
     options.requestGatewaySupervisorActionImpl ?? executeGatewaySupervisorAction;
   const result = requestGatewaySupervisorAction(sandboxName, "probe");
   if (hasGatewayRecoveryMarker(result)) return true;
-  if (result === null || isExactlyRetryableManagedRecoveryFailure(result)) return null;
+  if (
+    result === null ||
+    isExactlyRetryableManagedRecoveryFailure(result) ||
+    isExactlyManagedControlMarker(result, "SUPERVISOR_DISCOVERY_PENDING")
+  ) {
+    return null;
+  }
   return false;
 }
 
@@ -753,15 +746,25 @@ function recoverSandboxProcesses(
     onFailureLayer?.(failure.layer, failure.detail);
     if (
       failure.layer === "supervisor not running" &&
-      isExactlyMissingManagedSupervisor(execResult)
+      isExactlyManagedControlMarker(execResult, "SUPERVISOR_NOT_RUNNING")
     ) {
       const relaunch = relaunchManagedSupervisorSessionImpl(sandboxName, {
         quiet,
         deps: {
           runOpenshell,
+          runCaptureOpenshell: (args, options) =>
+            captureOpenshell(args, {
+              ignoreError: true,
+              includeStderr: true,
+              killProcessTreeOnTimeout: options?.killProcessTreeOnTimeout === true,
+              killSignal: options?.killSignal === "SIGKILL" ? "SIGKILL" : undefined,
+              timeout:
+                typeof options?.timeout === "number" ? options.timeout : OPENSHELL_PROBE_TIMEOUT_MS,
+            }).output,
           confirmMissingSupervisor: (containerId) =>
-            isExactlyMissingManagedSupervisor(
+            isExactlyManagedControlMarker(
               requestPinnedGatewaySupervisorAction(sandboxName, "probe", 210000, containerId),
+              "SUPERVISOR_NOT_RUNNING",
             ),
           restartRestoredManagedGateway: (containerId) => {
             const restarted = parseManagedGatewayControlCompletion(
@@ -847,7 +850,7 @@ export function restartSandboxGateway(
                 requestGatewaySupervisorActionImpl:
                   deps.requestGatewaySupervisorAction ?? executeGatewaySupervisorAction,
               }),
-          }),
+            }),
         ensureSandboxPortForward,
         ensureHermesDashboardPortForwardIfEnabled,
         recoverMessagingHostForward,
@@ -1628,7 +1631,18 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
           quiet,
           initialManagedHealthPassed: recovery.kind === "managed",
           requireManagedProbe: recovery.kind === "relaunched",
-          timeoutSeconds: gatewayRecoveryTimeoutSeconds(recoveryAgent),
+          // A legacy keepalive relaunch starts a new OpenClaw container. The
+          // #10153 failure exhausted the ordinary 30-second health budget
+          // during that full recreation. Give only this OpenClaw transition
+          // the existing 120-second recreated-sandbox readiness budget;
+          // other agents retain their declared gateway health timeout.
+          timeoutSeconds:
+            relaunch && (recoveryAgent === null || recoveryAgent.name === "openclaw")
+              ? Math.max(
+                  gatewayRecoveryTimeoutSeconds(recoveryAgent),
+                  GATEWAY_RECOVERY_WAIT_DEFAULT_SECONDS,
+                )
+              : gatewayRecoveryTimeoutSeconds(recoveryAgent),
           managedProbeImpl: relaunch
             ? () => confirmRelaunchedManagedHealth?.(210000) ?? null
             : (name) =>

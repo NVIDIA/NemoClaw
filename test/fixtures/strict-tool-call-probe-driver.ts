@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Process-level driver for the Local Ollama strict Chat Completions
-// tool-call probe. Loaded by test/strict-tool-call-probe.test.ts via
+// tool-call probe. Loaded by test/security/strict-tool-call-probe.test.ts via
 // `node --import tsx <driver>`; not picked up by Vitest's discovery (lives under
 // test/fixtures/, which is excluded from the test glob).
 //
@@ -28,7 +28,6 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
 process.env.NO_PROXY = [process.env.NO_PROXY, "127.0.0.1", "localhost"].filter(Boolean).join(",");
 process.env.no_proxy = [process.env.no_proxy, "127.0.0.1", "localhost"].filter(Boolean).join(",");
 
@@ -268,7 +267,6 @@ const assert = require("node:assert/strict");
 process.env.NEMOCLAW_NON_INTERACTIVE = "1";
 process.env.NEMOCLAW_PROVIDER = "ollama";
 process.env.NEMOCLAW_MODEL = "mock-tool-model";
-process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
 
 const runner = require("./src/lib/runner.ts");
 runner.run = () => ({ status: 0 });

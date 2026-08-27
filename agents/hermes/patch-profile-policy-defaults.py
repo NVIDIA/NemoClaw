@@ -34,7 +34,7 @@ Delete this compatibility patch only when the pinned Hermes release applies
 the managed-policy values to a config-less named profile across
 ``DEFAULT_CONFIG`` and every independent fallback listed above. The unmodified
 upstream files must then pass the ``profile-policy`` image probe and
-``test/hermes-profile-policy-defaults.test.ts``.
+``test/agents/hermes/hermes-profile-policy-defaults.test.ts``.
 """
 
 from __future__ import annotations

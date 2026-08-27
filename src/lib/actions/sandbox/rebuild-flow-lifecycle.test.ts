@@ -451,17 +451,22 @@ network_policies:
     );
   });
 
-  it("relocks as present when shields postwork throws after successful onboard", async () => {
+  it("relocks the recreated sandbox when recovery artifact cleanup fails (#9833)", async () => {
+    const recoveryArtifactPath = "/tmp/shields-external-policy-alpha.yaml";
     const harness = createRebuildFlowHarness({
       staleRecovery: true,
       clearShieldsState: () => {
-        throw new Error("post-onboard shields cleanup failed");
+        throw new Error(
+          `Could not remove external Shields policy recovery artifact '${recoveryArtifactPath}': permission denied`,
+        );
       },
     });
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("post-onboard shields cleanup failed");
+    ).rejects.toThrow(
+      `Could not remove external Shields policy recovery artifact '${recoveryArtifactPath}': permission denied`,
+    );
 
     expect(harness.onboardSpy).toHaveBeenCalledOnce();
     expect(harness.relockSpy).toHaveBeenLastCalledWith(
