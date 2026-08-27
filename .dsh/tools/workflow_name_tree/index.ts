@@ -12,7 +12,10 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { parse } from "yaml";
 const directory = path.join(process.cwd(), ".github", "workflows");
-const entries = (await readdir(directory, { withFileTypes: true }))
+const entries = (await readdir(directory, { withFileTypes: true }).catch((error) => {
+  if (error?.code === "ENOENT") return [];
+  throw error;
+}))
   .filter((entry) => entry.isFile() && /[.]ya?ml$/u.test(entry.name))
   .sort((left, right) => left.name.localeCompare(right.name));
 if (entries.length > 500) throw new Error("workflow file count exceeds 500");

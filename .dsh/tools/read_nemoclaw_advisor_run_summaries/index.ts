@@ -1,5 +1,5 @@
 /**
- * Read bounded Markdown summaries from retained PR Review Advisor artifacts for one GitHub Actions run. Requires Bash, base64, mktemp, stat, Info-ZIP zipinfo and unzip on Linux.
+ * Read bounded Markdown summaries from retained PR Review Advisor artifacts for one GitHub Actions run. Requires Bash, authenticated GitHub CLI access to repository Actions artifacts, base64, mktemp, stat, Info-ZIP zipinfo and unzip on Linux.
  */
 export default async function read_nemoclaw_advisor_run_summaries(input: {
   workdir: string;
@@ -30,8 +30,8 @@ export default async function read_nemoclaw_advisor_run_summaries(input: {
   const maxCharacters = input.maxSummaryCharacters ?? 30000;
   if (!Number.isSafeInteger(maxArtifacts) || maxArtifacts < 1 || maxArtifacts > 20)
     throw new Error("maxArtifacts must be an integer from 1 through 20");
-  if (!Number.isSafeInteger(maxCharacters) || maxCharacters < 1000 || maxCharacters > 50000)
-    throw new Error("maxSummaryCharacters must be an integer from 1000 through 50000");
+  if (!Number.isSafeInteger(maxCharacters) || maxCharacters < 1000 || maxCharacters > 15000)
+    throw new Error("maxSummaryCharacters must be an integer from 1000 through 15000");
   const all = [];
   let listingTruncated = false;
   for (let page = 1; page <= 5; page += 1) {
@@ -107,14 +107,14 @@ for entry in "\${entries[@]}"; do
 done
 [ -n "\$summary" ] || { echo 'artifact has no summary Markdown file' >&2; exit 24; }
 set +e
-unzip -p "\$zip" "\$summary" | head -c ${maxCharacters + 1} > "\$tmp/summary"
+unzip -p "\$zip" "\$summary" | head -c ${maxCharacters * 4 + 1} > "\$tmp/summary"
 statuses=("\${PIPESTATUS[@]}")
 producer=\${statuses[0]}
 consumer=\${statuses[1]}
 set -e
 [ "\$consumer" -eq 0 ] && { [ "\$producer" -eq 0 ] || [ "\$producer" -eq 141 ]; } || exit 25
 printf '%s\n' "\$summary"
-[ "\$(stat -c %s \"\$tmp/summary\")" -gt ${maxCharacters} ] && printf '1\n' || printf '0\n'
+[ "\$(stat -c %s \"\$tmp/summary\")" -gt ${maxCharacters * 4} ] && printf '1\n' || printf '0\n'
 base64 -w 0 "\$tmp/summary"`;
     const result = await tools.bash({
       command,
