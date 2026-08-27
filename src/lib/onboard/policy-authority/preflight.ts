@@ -246,9 +246,9 @@ function qualifyRecordedSandboxPolicyAuthority(
       "owner-unknown",
     );
   }
-  const confirmedInspection = (
-    deps.inspectSandboxPolicyAuthority ?? inspectSandboxPolicyAuthority
-  )({ sandboxName: input.sandboxName, gatewayName: input.gatewayName });
+  const confirmedInspection = (deps.inspectSandboxPolicyAuthority ?? inspectSandboxPolicyAuthority)(
+    { sandboxName: input.sandboxName, gatewayName: input.gatewayName },
+  );
   const afterIdentity = inspectIdentity({
     sandboxName: input.sandboxName,
     gatewayName: input.gatewayName,
@@ -257,7 +257,8 @@ function qualifyRecordedSandboxPolicyAuthority(
     beforeIdentity !== afterIdentity ||
     confirmedInspection.authority !== "owner-unknown" ||
     confirmedInspection.policyIdentity.hash !== input.inspection.policyIdentity.hash ||
-    confirmedInspection.policyIdentity.activeVersion !== input.inspection.policyIdentity.activeVersion
+    confirmedInspection.policyIdentity.activeVersion !==
+      input.inspection.policyIdentity.activeVersion
   ) {
     throw new PolicyAuthorityRefusalError(
       `Refusing to ${input.operation}: the sandbox or policy identity changed during verification.`,

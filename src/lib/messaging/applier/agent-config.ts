@@ -164,7 +164,11 @@ export function reconcileCredentialEnvAtOpenShell(
   const existing = readSandboxFile(plan.sandboxName, target, options.runOpenshell);
   if (existing === undefined) return { changed: false };
 
-  const contents = applyEnvLines(plan, existing, render);
+  const placeholderRules = credentialPlaceholderRules(
+    plan,
+    readRuntimeCredentialPlaceholders(plan, options.runOpenshell),
+  );
+  const contents = applyEnvLines(plan, existing, render, placeholderRules);
   if (contents === existing) return { changed: false };
   writeSandboxFile(plan.sandboxName, target, contents, options.runOpenshell);
   return { changed: true, target };
@@ -514,7 +518,7 @@ function applyEnvLines(
   plan: SandboxMessagingPlan,
   existing: string | undefined,
   render: readonly SandboxMessagingEnvLinesRenderPlan[],
-  rules: readonly CredentialPlaceholderRule[] = [],
+  rules: readonly CredentialPlaceholderRule[],
 ): string {
   const existingValues = new Map<string, string>();
   for (const line of (existing ?? "").split(/\n/u)) {

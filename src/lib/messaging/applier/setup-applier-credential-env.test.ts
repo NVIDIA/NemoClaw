@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createBuiltInChannelManifestRegistry,
@@ -56,6 +56,17 @@ function buildHermesTelegramPlan(
   });
 }
 
+function buildHermesWeChatEnvPlan(): Promise<SandboxMessagingPlan> {
+  return planner().buildPlan({
+    sandboxName: "demo",
+    agent: "hermes",
+    workflow: "rebuild",
+    isInteractive: false,
+    configuredChannels: ["wechat"],
+    credentialAvailability: { WECHAT_BOT_TOKEN: true },
+  });
+}
+
 /** An in-memory sandbox filesystem behind the `cat`/write calls the applier makes. */
 function sandboxFiles(seed: Readonly<Record<string, string>>): {
   readonly files: Record<string, string>;
@@ -86,6 +97,36 @@ function sandboxFiles(seed: Readonly<Record<string, string>>): {
 }
 
 describe("MessagingSetupApplier credential env cleanup", () => {
+  it("refreshes a rendered provider placeholder from the live credential revision", async () => {
+    vi.stubEnv("WECHAT_ACCOUNT_ID", "wechat-account");
+    vi.stubEnv("WECHAT_BASE_URL", "https://ilinkai.weixin.qq.com");
+    const plan = await buildHermesWeChatEnvPlan();
+    const sandbox = sandboxFiles({
+      [HERMES_ENV_PATH]: [
+        "WEIXIN_TOKEN=openshell:resolve:env:WECHAT_BOT_TOKEN",
+        "OPERATOR_OWNED=keep-me",
+        "",
+      ].join("\n"),
+    });
+    const runOpenshell: MessagingOpenShellRunner = (args, options) =>
+      args.some((arg) => arg.includes('printenv "$key"'))
+        ? {
+            status: 0,
+            stdout: [
+              "WECHAT_BOT_TOKEN\topenshell:resolve:env:v42_WECHAT_BOT_TOKEN",
+              "WECHAT_BOT_TOKEN\tsecret-must-not-be-read",
+            ].join("\n"),
+          }
+        : sandbox.runOpenshell(args, options);
+
+    await MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, { runOpenshell });
+
+    const renderedEnv = sandbox.files[HERMES_ENV_PATH] ?? "";
+    expect(renderedEnv).toContain("WEIXIN_TOKEN=openshell:resolve:env:v42_WECHAT_BOT_TOKEN");
+    expect(renderedEnv).toContain("OPERATOR_OWNED=keep-me");
+    expect(renderedEnv).not.toContain("secret-must-not-be-read");
+  });
+
   it("drops a stale credential env line written in the export form", async () => {
     const plan = await buildHermesTelegramPlan();
     const { files, runOpenshell } = sandboxFiles({

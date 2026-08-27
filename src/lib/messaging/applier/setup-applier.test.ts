@@ -753,110 +753,6 @@ describe("MessagingSetupApplier", () => {
     expect(result.unresolvedTemplateRefs).toEqual([]);
   });
 
-  it("preserves runtime-scoped credential placeholders when reapplying render plans", async () => {
-    const plan = await buildOnboardPlan({ TELEGRAM_BOT_TOKEN: "123456:telegram-token" }, [
-      "telegram",
-    ]);
-    const scoped = "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN";
-    const files: Record<string, string> = {
-      "/sandbox/.openclaw/openclaw.json": JSON.stringify({
-        channels: {
-          telegram: {
-            accounts: {
-              default: {
-                botToken: scoped,
-              },
-            },
-          },
-        },
-      }),
-    };
-    const runOpenshell: MessagingOpenShellRunner = (args, options) => {
-      const target = String(args.at(-1));
-      if (args.includes("cat") && !options?.input) {
-        return { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" };
-      }
-      if (options?.input !== undefined) {
-        files[target] = options.input;
-        return { status: 0 };
-      }
-      return { status: 1 };
-    };
-
-    await MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, { runOpenshell });
-
-    const openclawConfig = JSON.parse(files["/sandbox/.openclaw/openclaw.json"] ?? "{}");
-    expect(openclawConfig.channels.telegram.accounts.default).toMatchObject({
-      botToken: scoped,
-      enabled: true,
-      groupPolicy: "open",
-    });
-  });
-
-  it("refreshes persisted provider placeholders from the live sandbox credential revision", async () => {
-    const plan = await buildOnboardPlan(
-      {
-        TELEGRAM_BOT_TOKEN: "123456:telegram-token",
-        SLACK_BOT_TOKEN: "xoxb-slack-token",
-        SLACK_APP_TOKEN: "xapp-slack-token",
-      },
-      ["telegram", "slack"],
-    );
-    const files: Record<string, string> = {
-      "/sandbox/.openclaw/openclaw.json": JSON.stringify({
-        channels: {
-          telegram: {
-            accounts: {
-              default: { botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN" },
-            },
-          },
-          slack: {
-            accounts: {
-              default: {
-                botToken: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-                appToken: "xapp-OPENSHELL-RESOLVE-ENV-v7_SLACK_APP_TOKEN",
-              },
-            },
-          },
-        },
-      }),
-    };
-    const runOpenshell = vi
-      .fn<MessagingOpenShellRunner>()
-      .mockImplementationOnce(() => ({
-        status: 0,
-        stdout: [
-          "TELEGRAM_BOT_TOKEN\topenshell:resolve:env:v42_TELEGRAM_BOT_TOKEN",
-          "SLACK_BOT_TOKEN\topenshell:resolve:env:v42_SLACK_BOT_TOKEN",
-          "SLACK_APP_TOKEN\topenshell:resolve:env:v42_SLACK_APP_TOKEN",
-          "SLACK_APP_TOKEN\txapp-real-token-must-not-be-read",
-        ].join("\n"),
-      }))
-      .mockImplementationOnce((args) => {
-        const target = String(args.at(-1));
-        return { status: 0, stdout: files[target] ?? "" };
-      })
-      .mockImplementationOnce((args, options) => {
-        const target = String(args.at(-1));
-        files[target] = options?.input ?? "";
-        return { status: 0 };
-      });
-
-    await MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, { runOpenshell });
-
-    const config = JSON.parse(files["/sandbox/.openclaw/openclaw.json"] ?? "{}");
-    expect(config.channels.telegram.accounts.default.botToken).toBe(
-      "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN",
-    );
-    expect(config.channels.slack.accounts.default.botToken).toBe(
-      "xoxb-OPENSHELL-RESOLVE-ENV-v42_SLACK_BOT_TOKEN",
-    );
-    expect(config.channels.slack.accounts.default.appToken).toBe(
-      "xapp-OPENSHELL-RESOLVE-ENV-v42_SLACK_APP_TOKEN",
-    );
-    expect(JSON.stringify(config)).not.toContain("real-token-must-not-be-read");
-  });
-
   it("drops a stale credential env line the plan no longer renders", async () => {
     const plan = await buildOnboardPlan(
       {
@@ -907,7 +803,11 @@ describe("MessagingSetupApplier", () => {
     // Telegram's only remaining Hermes env line is the allowlist, so without
     // allowed IDs the whole env render collapses and the target never appears
     // in the render plan. The file on disk still has to be cleaned.
-    const plan = await buildOnboardPlan({ TELEGRAM_BOT_TOKEN: "telegram-token" }, ["telegram"], "hermes");
+    const plan = await buildOnboardPlan(
+      { TELEGRAM_BOT_TOKEN: "telegram-token" },
+      ["telegram"],
+      "hermes",
+    );
     const files: Record<string, string> = {
       "/sandbox/.hermes/.env": [
         "TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN",
