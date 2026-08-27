@@ -354,6 +354,9 @@ beforeEach(() => {
 
   // Lazy legacy-provider seam: no onboarding graph is loaded for this suite.
   upsertMock = vi.spyOn(policyChannelDependencies, "upsertMessagingProviders").mockReturnValue([]);
+  vi.spyOn(policyChannelDependencies, "revalidateChannelProviderPolicyAuthority").mockImplementation(
+    () => undefined,
+  );
 
   // openshell runtime + gateway recovery.
   runOpenshellMock = vi.spyOn(runtime, "runOpenshell").mockReturnValue(successfulOpenshellResult());
@@ -594,6 +597,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
           providerType: "discord-hermes-static-v1",
         },
       ],
+      "nemoclaw",
       { bestEffort: true, requireExactBindings: true },
     );
   });

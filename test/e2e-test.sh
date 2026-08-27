@@ -172,6 +172,7 @@ if [ "${1:-} ${2:-}" = "sandbox get" ]; then
   exit 0
 fi
 if [ "${1:-} ${2:-}" = "policy list" ]; then
+  printf '%s\n' 'No global policy history found' >&2
   exit 0
 fi
 if [ "${1:-} ${2:-}" = "policy set" ]; then

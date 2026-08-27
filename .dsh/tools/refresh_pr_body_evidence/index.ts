@@ -29,6 +29,7 @@ export default async function refresh_pr_body_evidence(input: {
   polls: Integer;
   waitedMs: Integer;
   updatedAt: string | null;
+  cleanupFailure?: { path: string; detail: string; remediation: string };
 }> {
   const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
   const repo = input.repo ?? "NVIDIA/NemoClaw";
@@ -134,7 +135,12 @@ export default async function refresh_pr_body_evidence(input: {
         }),
         github({
           workdir: input.workdir,
-          args: ["api", "repos/" + repo + "/pulls/" + input.number],
+          args: [
+            "api",
+            "repos/" + repo + "/pulls/" + input.number,
+            "--jq",
+            '{body: (.body // ""), updated_at}',
+          ],
           timeoutMs: 30000,
         }),
       ]);
@@ -186,52 +192,50 @@ export default async function refresh_pr_body_evidence(input: {
   }
   const renderBody = (initialBody) => {
     let body = initialBody;
-    if (input.docsReceipt) {
-      const replacement =
-        "- [x] Documentation writer subagent reviewed the completed changes\n- Result: \x60" +
-        input.docsReceipt.result +
-        "\x60\n- Evidence: " +
-        input.docsReceipt.evidence.trim() +
-        "\n- Agent: " +
-        input.docsReceipt.agent.trim() +
-        "\n<!-- docs-review-head-sha: " +
-        localHead +
-        " -->\n<!-- docs-review-agents-blob-sha: " +
-        agentsBlob +
-        " -->";
-      const pattern =
-        /- \[[ xX]\] Documentation writer subagent reviewed the completed changes\n- Result: `[^`]+`\n- Evidence: [^\n]*\n- Agent: [^\n]*\n<!-- docs-review-head-sha: [^>]+ -->\n<!-- docs-review-agents-blob-sha: [^>]+ -->/;
-      if (pattern.test(body)) body = body.replace(pattern, replacement);
-      else {
-        const anchor = /\n## Verification\n/u;
-        if (!anchor.test(body)) throw new Error("Could not find Verification section");
-        body = body.replace(
-          anchor,
-          "\n## Documentation Writer Review\n\n" + replacement + "\n\n## Verification\n",
-        );
+    const verificationMatch = /(^|\n)## Verification\n/u.exec(body);
+    if (!verificationMatch) throw new Error("Could not find Verification section");
+    const verificationStart = verificationMatch.index + verificationMatch[1].length;
+    const upsertVerification = (key, lines) => {
+      const startMarker = "<!-- nemoclaw-" + key + ":start -->";
+      const endMarker = "<!-- nemoclaw-" + key + ":end -->";
+      const block = startMarker + "\n" + lines.join("\n") + "\n" + endMarker;
+      const pattern = new RegExp(
+        "<!-- nemoclaw-" + key + ":start -->[\\s\\S]*?<!-- nemoclaw-" + key + ":end -->",
+        "gu",
+      );
+      const complete = [...body.matchAll(pattern)];
+      const starts = body.split(startMarker).length - 1;
+      const ends = body.split(endMarker).length - 1;
+      if (starts !== ends || starts > 1 || complete.length !== starts)
+        throw new Error("PR body contains invalid or duplicate " + key + " evidence markers");
+      if (complete.length === 1) {
+        body = body.replace(pattern, block);
+        return;
       }
-    }
-    if (input.targetedValidationLine) {
-      const pattern =
-        /- \[[ xX]\] Targeted behavior tests pass for the current change set, or tests are marked not applicable above — [^\n]*/;
-      if (!pattern.test(body)) throw new Error("Could not find targeted validation line");
-      body = body.replace(
-        pattern,
-        "- [x] Targeted behavior tests pass for the current change set, or tests are marked not applicable above — " +
-          input.targetedValidationLine.trim(),
-      );
-    }
-    if (input.broadGate) {
-      const pattern = /- \[[ xX]\] Applicable broad gate passed[^\n]*/;
-      if (!pattern.test(body)) throw new Error("Could not find broad gate line");
-      body = body.replace(
-        pattern,
-        "- [" +
-          (input.broadGate.passed ? "x" : " ") +
-          "] Applicable broad gate passed — " +
+      const reviewNotes = body.indexOf("\n## Review notes", verificationStart);
+      const divider = body.indexOf("\n---", verificationStart);
+      const insertion = reviewNotes >= 0 ? reviewNotes : divider;
+      if (insertion < 0) throw new Error("Could not find the end of Verification section");
+      body = body.slice(0, insertion).trimEnd() + "\n" + block + "\n" + body.slice(insertion);
+    };
+    if (input.docsReceipt)
+      upsertVerification("docs-review", [
+        "- Documentation review: `" + input.docsReceipt.result + "`",
+        "- Documentation evidence: " + input.docsReceipt.evidence.trim(),
+        "- Documentation agent: " + input.docsReceipt.agent.trim(),
+        "<!-- docs-review-head-sha: " + localHead + " -->",
+        "<!-- docs-review-agents-blob-sha: " + agentsBlob + " -->",
+      ]);
+    if (input.targetedValidationLine)
+      upsertVerification("targeted-validation", [
+        "- Targeted validation: " + input.targetedValidationLine.trim(),
+      ]);
+    if (input.broadGate)
+      upsertVerification("broad-gate", [
+        "- Broad gate: " +
+          (input.broadGate.passed ? "passed — " : "not run — ") +
           input.broadGate.evidence.trim(),
-      );
-    }
+      ]);
     return body;
   };
   const previewBody = renderBody(String(pr.body ?? ""));
@@ -266,10 +270,31 @@ export default async function refresh_pr_body_evidence(input: {
       "PR " + input.number + " commit changed to " + finalPr.headSha + "; expected " + localHead,
     );
   const body = renderBody(String(finalPr.body ?? ""));
-  const temporary = await run("umask 077; mktemp", "Create pull request body file");
-  if (!temporary.startsWith("/") || /[\r\n\0]/.test(temporary))
-    throw new Error("Could not create a safe pull request body file");
-  let updated;
+  if (body === finalPr.body)
+    return {
+      ok: true,
+      apply: true,
+      mutated: false,
+      wouldUpdate: false,
+      number: input.number,
+      repo,
+      prState: finalPr.state,
+      headSha: localHead,
+      agentsBlob,
+      bodyChanged: false,
+      polls,
+      waitedMs,
+      updatedAt: finalPr.updatedAt,
+    };
+  const temporaryDirectory = await run(
+    "umask 077; mktemp -d",
+    "Create private pull request body directory",
+  );
+  if (!temporaryDirectory.startsWith("/") || /[\r\n\0]/.test(temporaryDirectory))
+    throw new Error("Could not create a safe pull request body directory");
+  const temporary = temporaryDirectory + "/body.md";
+  let updated,
+    primaryError = null;
   try {
     await tools.write({ file_path: temporary, content: body });
     const updateResult = await github({
@@ -281,14 +306,40 @@ export default async function refresh_pr_body_evidence(input: {
         "PATCH",
         "-F",
         "body=@" + temporary,
+        "--jq",
+        "{updated_at}",
       ],
       timeoutMs: 30000,
       apply: true,
     });
     updated = JSON.parse(updateResult.stdout);
-  } finally {
-    await run("rm -f -- " + quote(temporary), "Remove pull request body file");
+  } catch (error) {
+    primaryError = error;
   }
+  let cleanupError = null;
+  try {
+    await run("rm -rf -- " + quote(temporaryDirectory), "Remove pull request body directory");
+  } catch (error) {
+    cleanupError = error;
+  }
+  if (primaryError)
+    throw new Error(
+      String(primaryError?.message ?? primaryError) +
+        (cleanupError
+          ? "; cleanup also failed for " +
+            temporaryDirectory +
+            ": " +
+            String(cleanupError?.message ?? cleanupError)
+          : ""),
+    );
+  const cleanupFailure = cleanupError
+    ? {
+        path: temporaryDirectory,
+        detail: String(cleanupError?.message ?? cleanupError),
+        remediation:
+          "Remove the private temporary directory. Do not repeat the completed PR update.",
+      }
+    : undefined;
   return {
     ok: true,
     apply: true,
@@ -303,5 +354,6 @@ export default async function refresh_pr_body_evidence(input: {
     polls,
     waitedMs,
     updatedAt: updated.updated_at ?? null,
+    ...(cleanupFailure ? { cleanupFailure } : {}),
   };
 }
