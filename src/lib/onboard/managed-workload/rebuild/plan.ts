@@ -29,6 +29,8 @@ const PROTECTED_REBUILD_METADATA_FIELDS = new Set<keyof SandboxEntry>([
   "workload",
   "lifecycleGeneration",
   "lifecycleLiveIdentityFingerprint",
+  "policyAuthority",
+  "policyCreationReceipt",
 ]);
 
 function safeReplacementMetadata(

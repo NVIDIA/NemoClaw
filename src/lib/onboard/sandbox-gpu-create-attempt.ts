@@ -36,6 +36,10 @@ export type SandboxGpuCreateAttemptFailure = {
   stage: SandboxGpuCreateFailureStage;
   error: unknown;
   fallbackEligible: boolean;
+  retainedSandboxRecovery?: {
+    readonly createAttemptNonce: string;
+    readonly liveIdentityFingerprint: string | null;
+  };
   nativeCleanupHandoff?: ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff;
   nativeCleanupReceipt?: ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt;
 };

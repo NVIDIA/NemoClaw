@@ -40,6 +40,39 @@ describe("launch-readiness gateway health scope", () => {
       "--",
     ]);
   });
+
+  it("pins Hermes readiness checks to its recorded OpenShell gateway (#10302)", async () => {
+    const gatewayHealth = vi.fn(async () => true);
+    const forwardsHealthy = vi.fn(() => true);
+    const inferenceProbe = vi.fn(() => ({
+      healthy: true,
+      broken: false,
+      httpStatus: 200,
+      detail: "OK 200",
+    }));
+    const agent = loadAgent("hermes");
+    const entry = {
+      name: "alpha",
+      agent: "hermes",
+      provider: "ollama-local",
+      model: "nemotron-3-nano:30b",
+    } as SandboxEntry;
+
+    await expect(
+      requireLaunchSemanticHealth("alpha", "nemoclaw-19080", "hermes", entry, agent, true, {
+        gatewayHealth,
+        forwardsHealthy,
+        inferenceProbe,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(gatewayHealth).toHaveBeenCalledWith("alpha", "nemoclaw-19080");
+    expect(gatewayHealth).toHaveBeenCalledOnce();
+    expect(forwardsHealthy).toHaveBeenCalledWith("alpha", "nemoclaw-19080");
+    expect(forwardsHealthy).toHaveBeenCalledOnce();
+    expect(inferenceProbe).toHaveBeenCalledWith("alpha", agent, "nemoclaw-19080");
+    expect(inferenceProbe).toHaveBeenCalledOnce();
+  });
 });
 
 const SANDBOX = "alpha";

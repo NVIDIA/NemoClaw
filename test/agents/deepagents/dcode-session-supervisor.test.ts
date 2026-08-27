@@ -169,7 +169,7 @@ describe.runIf(canRun)("managed DCode session supervisor", () => {
         "import time",
         "signal.signal(signal.SIGHUP, signal.SIG_IGN)",
         "signal.signal(signal.SIGTERM, signal.SIG_IGN)",
-        "descendant = subprocess.Popen([sys.executable, '-c', 'import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)'])",
+        "descendant = subprocess.Popen([sys.executable, '-c', 'import signal, time; signal.signal(signal.SIGTERM, signal.SIG_DFL); time.sleep(30)'])",
         `pathlib.Path(${JSON.stringify(pidFile)}).write_text(f'{os.getpid()}\\n{descendant.pid}\\n', encoding='utf-8')`,
         "time.sleep(30)",
       ].join("\n"),

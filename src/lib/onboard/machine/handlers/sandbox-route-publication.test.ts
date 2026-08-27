@@ -14,6 +14,34 @@ vi.mock("../../messaging-channel-setup", () => ({
 }));
 
 describe("sandbox route publication", () => {
+  it("reuses an already-published route without finalizing a stale session reservation", async () => {
+    const session = createSession({ sandboxName: "saved" });
+    session.steps.sandbox.status = "complete";
+    const registryEntry: SandboxEntry = {
+      name: "saved",
+      provider: "provider",
+      model: "model",
+      gatewayName: "nemoclaw",
+    };
+    const finalizeSandboxRouteReservation = vi.fn(() => false);
+    const { deps } = createDeps(
+      {
+        finalizeSandboxRouteReservation,
+        getSandboxReuseState: () => "ready",
+        getSandboxRegistryEntry: () => registryEntry,
+      },
+      session,
+    );
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+    });
+
+    expect(finalizeSandboxRouteReservation).not.toHaveBeenCalled();
+  });
+
   it("publishes the current inference reservation after completing Ready sandbox reuse", async () => {
     const session = createSession({ sandboxName: "saved" });
     session.steps.sandbox.status = "complete";
@@ -100,7 +128,7 @@ describe("sandbox route publication", () => {
     });
   });
 
-  it("rejects Ready sandbox reuse after route reservation ownership changes", async () => {
+  it("passes route ownership to the verified create boundary after reservation ownership changes", async () => {
     const session = createSession({ sandboxName: "saved" });
     session.steps.sandbox.status = "complete";
     const registryEntry: SandboxEntry = {
@@ -113,9 +141,26 @@ describe("sandbox route publication", () => {
     const finalizeSandboxRouteReservation = vi.fn(
       (_name: string, sessionId: string) => sessionId === registryEntry.reservationSessionId,
     );
+    const createSandbox = vi.fn(async (...args: unknown[]) => {
+      expect(args[14]).toEqual({
+        sessionId: session.sessionId,
+        selection: {
+          provider: "provider",
+          model: "model",
+          endpointUrl: null,
+          endpointSource: null,
+          credentialEnv: null,
+          preferredInferenceApi: "openai-completions",
+          compatibleEndpointReasoning: null,
+          compatibleEndpointReasoningEffort: null,
+          nimContainer: null,
+        },
+      });
+      throw new Error("route reservation changed at the verified create boundary");
+    });
     const { deps, calls } = createDeps(
       {
-        createSandbox: vi.fn(async () => "saved"),
+        createSandbox,
         finalizeSandboxRouteReservation,
         getSandboxReuseState: () => "ready",
         getSandboxRegistryEntry: () => registryEntry,
@@ -129,15 +174,11 @@ describe("sandbox route publication", () => {
         resume: true,
         sandboxName: "saved",
       }),
-    ).rejects.toThrow("exit 1");
+    ).rejects.toThrow("route reservation changed at the verified create boundary");
 
-    expect(calls.error).toHaveBeenCalledWith(
-      "  Error: sandbox 'saved' inference route reservation changed while onboarding was in progress. Retry onboarding.",
-    );
-    expect(finalizeSandboxRouteReservation).toHaveBeenCalledExactlyOnceWith(
-      "saved",
-      session.sessionId,
-    );
+    expect(createSandbox).toHaveBeenCalledOnce();
+    expect(finalizeSandboxRouteReservation).not.toHaveBeenCalled();
+    expect(calls.updateSandbox).not.toHaveBeenCalled();
     expect(registryEntry).toMatchObject({
       pendingRouteReservation: true,
       reservationSessionId: "session-new",
