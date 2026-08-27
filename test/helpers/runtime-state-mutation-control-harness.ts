@@ -566,6 +566,27 @@ try:
 finally:
     os.readlink = real_readlink
 
+def fence_drift(missing_pid):
+    control._capture_process = lambda pid: {
+        1: pid1,
+        10: start,
+        75: stdout_drain,
+        76: stderr_drain,
+    }.get(pid) if pid != missing_pid else None
+    control.os.readlink = lambda selected: (
+        "mnt:[401]"
+        if selected == control.MOUNT_NAMESPACE_PATH
+        else real_readlink(selected)
+    )
+    try:
+        return code(lambda: real_prove_fence_shape(fence, "mnt:[401]"))
+    finally:
+        control.os.readlink = real_readlink
+
+results["supervisor_identity_drift"] = fence_drift(1)
+results["start_identity_drift"] = fence_drift(10)
+results["startup_support_identity_drift"] = fence_drift(75)
+
 hold_events = []
 control._prove_fence_shape = lambda _fence, _mount: (pid1, start)
 control._stop_reference = lambda reference: hold_events.append(["stop", reference.pid])

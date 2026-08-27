@@ -2175,6 +2175,7 @@ def _is_release_ack_publisher(
 
 def _wait_for_release_ack_publisher(fence: FenceProof) -> None:
     deadline = time.monotonic() + PROCESS_STATE_SECONDS
+    stable_absence = 0
     while True:
         _recapture_reference(fence.start, "activation-release-identity-drift")
         publishers = tuple(
@@ -2183,7 +2184,12 @@ def _wait_for_release_ack_publisher(fence: FenceProof) -> None:
             if _is_release_ack_publisher(process, fence.start)
         )
         if not publishers:
-            return
+            stable_absence += 1
+            if stable_absence >= STABLE_SCANS:
+                return
+            time.sleep(POLL_SECONDS)
+            continue
+        stable_absence = 0
         if len(publishers) != 1:
             _fail("activation-release-ack-invalid")
         remaining = deadline - time.monotonic()
@@ -2698,17 +2704,17 @@ def _discover_fence(expected_mount_namespace: str) -> FenceProof:
         if len(second_starts) == 1
         else ()
     )
-    if (
-        len(second_starts) != 1
-        or not _process_matches_reference(second_starts[0], start_reference)
-        or len(second_support) != len(support_references)
-        or any(
-            not _process_matches_reference(process, reference)
-            for process, reference in zip(second_support, support_references)
-        )
-        or not _is_openshell_supervisor(second_supervisor)
-    ):
+    if not _is_openshell_supervisor(second_supervisor):
         _fail("supervisor-identity-drift")
+    if len(second_starts) != 1 or not _process_matches_reference(
+        second_starts[0], start_reference
+    ):
+        _fail("start-process-identity-drift")
+    if len(second_support) != len(support_references) or any(
+        not _process_matches_reference(process, reference)
+        for process, reference in zip(second_support, support_references)
+    ):
+        _fail("startup-support-identity-drift")
     return FenceProof(
         supervisor_reference,
         start_reference,
@@ -2879,19 +2885,21 @@ def _prove_fence_shape(
     ):
         _fail("supervisor-identity-drift")
     supervisor = _recapture_reference(fence.supervisor, "supervisor-identity-drift")
-    start = _recapture_reference(fence.start, "supervisor-identity-drift")
+    start = _recapture_reference(fence.start, "start-process-identity-drift")
     support = tuple(
-        _recapture_reference(reference, "supervisor-identity-drift")
+        _recapture_reference(reference, "startup-support-identity-drift")
         for reference in fence.start_support
     )
     sandbox_uid = _sandbox_uid()
-    if not _is_openshell_supervisor(supervisor) or not _is_nemoclaw_start(
-        start, sandbox_uid
-    ) or any(
+    if not _is_openshell_supervisor(supervisor):
+        _fail("supervisor-identity-drift")
+    if not _is_nemoclaw_start(start, sandbox_uid):
+        _fail("start-process-identity-drift")
+    if any(
         not _is_start_log_drain(process, start, sandbox_uid)
         for process in support
     ):
-        _fail("supervisor-identity-drift")
+        _fail("startup-support-identity-drift")
     return supervisor, start
 
 
@@ -3813,7 +3821,7 @@ def _activation_tree(
     by_pid = {process.pid: process for process in writers}
     start = by_pid.get(fence.start.pid)
     if start is None or not _process_matches_reference(start, fence.start):
-        _fail("supervisor-identity-drift")
+        _fail("start-process-identity-drift")
     tree: list[ProcessIdentity] = []
     for process in writers:
         if process.pid == fence.start.pid:
@@ -3901,7 +3909,7 @@ def _wait_for_startup_checkpoint(marker: dict[str, object], fence: FenceProof) -
     deadline = time.monotonic() + ACTIVATION_SECONDS
     while True:
         supervisor = _recapture_reference(fence.supervisor, "supervisor-identity-drift")
-        start = _recapture_reference(fence.start, "supervisor-identity-drift")
+        start = _recapture_reference(fence.start, "start-process-identity-drift")
         selected = _read_startup_candidate(marker, fence, required=False)
         if selected is not None and start.state in ("T", "t"):
             if supervisor.state not in ("T", "t"):
@@ -4227,7 +4235,7 @@ def _prove_released_activation(
         process = _recapture_reference(reference, "activation-process-drift")
         if process.state in ("T", "t"):
             _fail("activation-process-stopped")
-    start = _recapture_reference(fence.start, "supervisor-identity-drift")
+    start = _recapture_reference(fence.start, "start-process-identity-drift")
     if start.state in ("T", "t"):
         _fail("start-process-stopped")
     supervisor = _recapture_reference(fence.supervisor, "supervisor-identity-drift")

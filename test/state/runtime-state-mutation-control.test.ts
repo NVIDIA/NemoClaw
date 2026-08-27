@@ -65,6 +65,9 @@ describe("runtime state mutation controller", () => {
       discovered_pid1: 1,
       discovered_start: 10,
       wrong_pid1: "supervisor-unavailable",
+      supervisor_identity_drift: "supervisor-identity-drift",
+      start_identity_drift: "start-process-identity-drift",
+      startup_support_identity_drift: "startup-support-identity-drift",
       running_supervisor_hold: "supervisor-not-host-stopped",
     });
     expect(harnessResult.hold_events).toEqual([

@@ -146,7 +146,11 @@ with tempfile.TemporaryDirectory() as root:
         publisher_scans = {"count": 0}
         def capture_publishers(_uids):
             publisher_scans["count"] += 1
-            return (publisher,) if publisher_scans["count"] == 1 else ()
+            return (
+                (publisher,)
+                if publisher_scans["count"] in (1, 3)
+                else ()
+            )
         control._capture_writer_processes = capture_publishers
         control._recapture_reference = lambda *_args: None
         control.POLL_SECONDS = 0
@@ -202,7 +206,7 @@ describe("runtime state mutation release acknowledgement", () => {
       cleaned: true,
       committed: "ok",
       pendingIgnored: true,
-      publisherScans: 2,
+      publisherScans: 6,
       publisherWait: "ok",
       wrongNonce: "activation-release-ack-invalid",
       wrongRelease: "activation-release-ack-invalid",
