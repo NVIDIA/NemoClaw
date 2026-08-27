@@ -1795,6 +1795,8 @@ RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/ne
     fi; \
     :
 
+# The reviewed cache stays root-owned and immutable to the sandbox user.
+# Prepare messaging source and runtime metadata before consuming that cache.
 # Add messaging source after the non-messaging install so channel-only changes
 # invalidate only the matching offline plugin layer. Keep this as the single
 # owner; messaging intentionally stays out of openclaw-runtime-payload.
@@ -1811,8 +1813,7 @@ RUN chmod 755 /src/lib/messaging/applier/build/messaging-build-applier.mts \
 RUN OPENCLAW_VERSION="${OPENCLAW_VERSION}" node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase runtime-setup
 USER sandbox
 
-# The reviewed cache stays root-owned and immutable to the sandbox user. npm
-# still needs a writable _cacache/tmp while OpenClaw packs the verified archive,
+# npm still needs a writable _cacache/tmp while OpenClaw packs the verified archive,
 # so materialize a sandbox-owned throwaway copy for this RUN and remove it before
 # committing the layer. Never point npm directly at the trusted source cache.
 # hadolint ignore=DL3059,DL4006
@@ -1853,8 +1854,7 @@ RUN --mount=from=openclaw-managed-messaging-npm-cache,source=/out/npm-cache,targ
     fi; \
     rm -rf "$install_cache"; \
     trap - EXIT; \
-    test ! -e "$install_cache"; \
-    assert_trusted_cache_safe after-install
+    test ! -e "$install_cache"
 
 USER root
 

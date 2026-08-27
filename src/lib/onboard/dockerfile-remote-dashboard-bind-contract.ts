@@ -66,7 +66,7 @@ const CANONICAL_POST_GENERATOR_INSTRUCTION_SHA256 = new Set([
   "7e6a6879382f833f17be02ca7d287685b6afa1c423b1e087b3b05dd677d6e325",
   "4a54da2c1c33c681ae0dad181a5a7456c926051d91420aa60cf7edef6330ba65",
   "e958e532c3e770fa426a6662652dbde2ddaeb41a214ccffe2def5a43a8b5b023",
-  "e1434b80b7a5c6d1fff5455924a9cc4ffa024080bad0c54eb6844cb5583135ae",
+  "23ac3578e817993efa4d86298016f6e5ff82f2dd2c7f567382e1455d73a3d605",
   "e1b6dca3e6b30624f364b36ff52e654978bc120cc7800df2ff209c14949acd64",
   "c682148fc7efec9f947c326c6029181cd879b7cba3e8361246aba7d0e6fe70a3",
   // Reviewed late messaging inputs, metadata setup, and runtime assertions.

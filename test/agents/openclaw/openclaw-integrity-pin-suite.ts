@@ -542,7 +542,7 @@ function runOptionalOpenClawPluginBlock(
   const command = extractRunBlock(
     DOCKERFILE,
     "# Install non-messaging OpenClaw plugins that need to match the runtime.",
-    "# Add messaging source after the non-messaging install so channel-only changes",
+    "# The reviewed cache stays root-owned and immutable to the sandbox user.",
   );
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-plugin-integrity-"));
   const log = path.join(tmp, "calls.log");
@@ -694,9 +694,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(reviewNote).toContain(
           "The long-term source of truth for these behaviors remains upstream OpenClaw",
         );
-        expect(reviewNote).toContain(
-          "test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts",
-        );
+        expect(reviewNote).toContain("test/agents/openclaw/openclaw-real-patched-dist-harness.test.ts");
         expect(reviewNote).toContain("NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS=1");
         expect(reviewNote).toContain("not a substitute for focused nightly E2E proof");
         expect(reviewNote).toContain("OpenClaw Diagnostics OTEL Host Gateway Boundary");
