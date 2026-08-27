@@ -190,7 +190,7 @@ describe("trusted OpenShell SDK archive preparation", () => {
     mkdirSync(executableDirectory);
     writeFileSync(
       npmPath,
-      `#!/bin/sh\nprintf '%s\\n' 'NPM_TOKEN=private-diagnostic-value ${longDetail}' >&2\nexit 23\n`,
+      `#!/bin/sh\nprintf '%s\\n' 'NPM_TOKEN=private-diagnostic-value https://user:private-password@example.test/path?token=private-query Authorization: Bearer private-bearer-value ${longDetail}' >&2\nexit 23\n`,
     );
     chmodSync(npmPath, 0o700);
     vi.stubEnv("PATH", `${executableDirectory}:${process.env.PATH ?? ""}`);
@@ -203,7 +203,11 @@ describe("trusted OpenShell SDK archive preparation", () => {
     const message = (failure as Error).message;
     expect(message).toContain("npm could not stage the reviewed OpenShell SDK archive (exit 23)");
     expect(message).toContain("NPM_TOKEN=<REDACTED>");
+    expect(message).toContain("<REDACTED_URL>");
     expect(message).not.toContain("private-diagnostic-value");
+    expect(message).not.toContain("private-bearer-value");
+    expect(message).not.toContain("private-password");
+    expect(message).not.toContain("private-query");
     expect(message).not.toContain(longDetail);
     expect(message.length).toBeLessThan(650);
   });

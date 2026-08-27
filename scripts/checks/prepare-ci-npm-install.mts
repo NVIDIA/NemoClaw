@@ -9,7 +9,6 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { redactFullWithUrls } from "../../src/lib/security/redact.ts";
 import { parseAuditConfig } from "../audit-reviewed-npm-graph.mts";
 import {
   readReviewedNpmArchiveFile,
@@ -18,7 +17,20 @@ import {
 
 const TRUSTED_REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const MAXIMUM_ARCHIVE_BYTES = 32 * 1024 * 1024;
+const MAXIMUM_NPM_DIAGNOSTIC_INPUT_CHARACTERS = 4096;
 const MAXIMUM_NPM_DIAGNOSTIC_CHARACTERS = 512;
+const NPM_DIAGNOSTIC_URL_PATTERN = /[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/giu;
+const NPM_DIAGNOSTIC_AUTH_HEADER_PATTERN =
+  /(\b(?:authorization|proxy-authorization|cookie|set-cookie)[ \t]*[:=])[^\r\n]*/giu;
+const NPM_DIAGNOSTIC_CREDENTIAL_ASSIGNMENT_PATTERN =
+  /((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9._-]*(?:auth|credential|key|pass|passwd|password|secret|token)[A-Za-z0-9._-]*)[ \t]*(?:=|:)[ \t]*)(?:"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|[^\s]+)/giu;
+const NPM_DIAGNOSTIC_PRIVATE_KEY_PATTERN =
+  /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----/gu;
+const NPM_DIAGNOSTIC_TOKEN_PATTERN =
+  /\b(?:github_pat_|ghp_|glpat-|gsk_|hf_|nvcf-|nvapi-|pypi-|sk-(?:ant-|proj-)?|tvly-|xapp-|xox[bpas]-)[A-Za-z0-9_-]{8,}/giu;
+const NPM_DIAGNOSTIC_JWT_PATTERN =
+  /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}\b/gu;
+const NPM_DIAGNOSTIC_OPAQUE_VALUE_PATTERN = /\b[A-Za-z0-9_+/=-]{32,}\b/gu;
 
 type PreparationRequest = Readonly<{
   artifactDirectory?: string;
@@ -42,7 +54,16 @@ function npmCacheFailureDiagnostic(
   request: NpmCacheStageRequest,
   stagingRoot: string,
 ): string {
-  return redactFullWithUrls(stderr)
+  return stderr
+    .slice(0, MAXIMUM_NPM_DIAGNOSTIC_INPUT_CHARACTERS)
+    .replace(NPM_DIAGNOSTIC_PRIVATE_KEY_PATTERN, "<REDACTED>")
+    .replace(NPM_DIAGNOSTIC_URL_PATTERN, "<REDACTED_URL>")
+    .replace(NPM_DIAGNOSTIC_AUTH_HEADER_PATTERN, "$1 <REDACTED>")
+    .replace(NPM_DIAGNOSTIC_CREDENTIAL_ASSIGNMENT_PATTERN, "$1<REDACTED>")
+    .replace(/\bBearer[ \t]+\S+/giu, "Bearer <REDACTED>")
+    .replace(NPM_DIAGNOSTIC_TOKEN_PATTERN, "<REDACTED>")
+    .replace(NPM_DIAGNOSTIC_JWT_PATTERN, "<REDACTED>")
+    .replace(NPM_DIAGNOSTIC_OPAQUE_VALUE_PATTERN, "<REDACTED>")
     .replaceAll(stagingRoot, "<staging-root>")
     .replaceAll(request.cacheDirectory, "<npm-cache>")
     .replace(/[\u0000-\u001f\u007f]+/gu, " ")
