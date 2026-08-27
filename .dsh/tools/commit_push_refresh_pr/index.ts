@@ -245,6 +245,21 @@ export default async function commit_push_refresh_pr(input: {
       requireClean: false,
       apply: true,
     });
+    if (!pushResult.allVerified)
+      return {
+        applied: true,
+        mode: "blocked",
+        plan,
+        notes: ["Stopped after publication because GitHub did not verify every commit."],
+        resultJson: JSON.stringify({
+          ok: false,
+          step: "commit-verification",
+          pullNumber: input.pullNumber,
+          headSha: pushResult.headSha,
+          commits: pushResult.commits,
+          blocker: pushResult.blocker,
+        }),
+      };
     let remoteHead = "";
     for (let attempt = 0; attempt < 5; attempt += 1) {
       let viewed;
@@ -322,7 +337,18 @@ export default async function commit_push_refresh_pr(input: {
       pushed: willPush && pushResult !== null,
       evidenceRefreshed: receipt !== null,
       readinessChecked: readiness !== null,
-      monitored: monitored !== null,
+      monitored:
+        monitored === null
+          ? null
+          : {
+              done: monitored.done,
+              actionable: monitored.actionable,
+              timedOut: monitored.timedOut,
+              stale: monitored.stale,
+              pendingChecks: monitored.pendingChecks,
+              failedChecks: monitored.failedChecks,
+              findings: monitored.findings,
+            },
     }),
   };
 }

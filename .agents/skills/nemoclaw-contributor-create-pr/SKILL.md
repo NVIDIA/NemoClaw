@@ -32,11 +32,11 @@ Select checks that apply to the diff.
 
 ### Review-Driven Repair Closure
 
-Before updating an open PR, follow [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md). It owns complete collection, classification, retained evidence, and the push gate. Route only finding groups in the repair scope to `nemoclaw-contributor-implement-issue`; that workflow owns the repair and validation. Resume publication only when its evidence passes and the shared workflow permits one push.
+Before updating an open PR, follow [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md). Route only finding groups in the repair scope to `nemoclaw-contributor-implement-issue`.
 
 ### Hook Evidence
 
-Use successful `pre-commit`, `commit-msg`, and `pre-push` hooks as verification. If any were skipped, missing, failed, or uncertain, run `npm run validate:pr` against the refreshed `origin/main`. Use `npm run check` only for repository-wide validation changes.
+Use successful `pre-commit`, `commit-msg`, and `pre-push` hooks as verification.
 
 ### Validation Evidence
 
@@ -52,7 +52,7 @@ For doc-only changes, run `npm run docs`. Resolve each failed required check bef
 
 ## Step 3: Push the Branch
 
-Push once after the candidate and required review evidence are complete:
+Push after the candidate and required review evidence are complete:
 
 ```bash
 git push -u origin HEAD
@@ -60,7 +60,7 @@ git push -u origin HEAD
 
 ## Step 4: Prepare DCO Declaration and Verify GitHub Commits
 
-Before `gh pr create`, add the contributor's `Signed-off-by:` declaration to the PR body and confirm that GitHub marks every commit in `origin/main..HEAD` as `Verified`. Use the configured Git name and email unless the contributor provides another identity:
+Before `gh pr create`, add the contributor's `Signed-off-by:` declaration to the PR body and confirm that GitHub marks every commit in `origin/main..HEAD` as `Verified`. Use the configured Git name and email:
 
 ```bash
 git config user.name
@@ -75,7 +75,7 @@ Check each commit through the GitHub API:
    done
    ```
 
-Stop if the declaration is missing or any commit is unverified. If compliant history cannot be pushed to this branch, require a new branch and PR.
+Stop if the declaration is missing, any commit is unverified, or compliant history cannot be pushed to this branch.
 
 ## Step 5: Determine PR Metadata
 
@@ -211,7 +211,7 @@ Leave label selection and application to the repository triage workflow.
 
 ### Reviewers
 
-Do not make reviewer-request writes unless the current user names the reviewer or a repository-owned workflow loaded from the PR base requires that write. The shared follow-up workflow owns reviewer routing.
+Do not request reviews from maintainers.
 
 ## Step 8: Monitor CI and Review Feedback
 

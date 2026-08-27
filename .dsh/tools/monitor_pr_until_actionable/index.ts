@@ -52,8 +52,10 @@ export default async function monitor_pr_until_actionable(input: {
     interval = input.intervalMs ?? 30000,
     findingBodyCharacters = input.findingBodyCharacters ?? 1000;
   if (
+    !Number.isSafeInteger(timeout) ||
     timeout < 30000 ||
     timeout > 900000 ||
+    !Number.isSafeInteger(interval) ||
     interval < 10000 ||
     interval > 120000 ||
     !Number.isSafeInteger(findingBodyCharacters) ||
@@ -223,7 +225,7 @@ export default async function monitor_pr_until_actionable(input: {
   }
   return {
     done: false,
-    actionable: false,
+    actionable: Boolean(lastFailedChecks.length || lastFindings.length),
     timedOut: true,
     stale: false,
     expectedHeadSha: input.expectedHeadSha,

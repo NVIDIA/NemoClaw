@@ -7,13 +7,13 @@ These tools are internal team automation stored with NemoClaw so contributors sh
 
 ## Change workflow
 
-Treat project-authored DSH tools as executable team automation, not product code. Validate each changed contract in the harness, rely on ordinary review and repository hooks, and do not add repository tests or a catalog-specific test framework unless a maintainer names a durable regression that requires one.
+Treat project-authored DSH tools as executable team automation, not product code. Validate each changed contract in the harness, rely on ordinary review and repository hooks, and do not add repository tests or a catalog-specific test framework.
 
 1. Read only the changed tool, this guide, and the narrow callers or sibling tools needed to establish the contract. Do not load a contributor implementation skill for a DSH-only change.
 2. Review the complete changed tool contract before publication. Check input validation, trust boundaries, effective Git destinations, pagination, aggregate bounds, output projection, mutation guards, and cleanup. Group all findings into one local change set.
-3. Define each changed source with `tool_define` in session scope. Exercise one positive case and each changed denial or boundary case through the harness. Record the calls and results as validation evidence; do not convert these exercises into repository tests by default.
+3. Define each changed source with `tool_define` in session scope. Exercise one positive case and each changed denial or boundary case through the harness. Record the calls and results as validation evidence; do not convert these exercises into repository tests.
 4. Run focused formatting and lint once after the final edit. Then commit once and let normal hooks provide repository validation. Do not rerun a hook-covered gate unless a later edit can affect it or a hook was skipped.
-5. Publish the first complete candidate. Monitor review checks in a background job when useful work remains. Wait for the configured automated-review checks to settle before repairing non-urgent findings, then collect all current findings once, group them by root cause, repair them together, validate once, and push once.
+5. Publish the first complete candidate, then follow `../../.agents/skills/_shared/pr-follow-up.md`.
 6. Keep tool output quiet. Return counts, identifiers, states, and clipped evidence. Read full bodies, logs, or inventories only for selected actionable items.
 
 ## Authoring rules

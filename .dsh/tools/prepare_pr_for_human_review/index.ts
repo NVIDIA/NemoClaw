@@ -158,6 +158,21 @@ export default async function prepare_pr_for_human_review(input: {
       pullNumber: input.pullNumber,
       apply: true,
     });
+    if (!push.allVerified)
+      return {
+        applied: true,
+        mode: "blocked",
+        plan,
+        notes: ["Stopped after publication because GitHub did not verify every commit."],
+        resultJson: JSON.stringify({
+          ok: false,
+          step: "commit-verification",
+          pullNumber: input.pullNumber,
+          headSha: push.headSha,
+          commits: push.commits,
+          blocker: push.blocker,
+        }),
+      };
   } else if (localHead !== pr.headRefOid)
     throw new Error("push:false requires the local commit to match the PR commit");
   const receipt = await tools.refresh_pr_body_evidence({

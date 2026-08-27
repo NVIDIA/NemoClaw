@@ -7,7 +7,7 @@ After each PR push, let required reviews settle, collect one complete snapshot, 
 
 ## Preserve repository-owned review routing
 
-Treat reviewer selection as repository configuration from `CODEOWNERS`, rulesets, workflows, or skills loaded from the PR base SHA in `NVIDIA/NemoClaw`. Those sources permit passive routing only. A reviewer-request write requires either the current user's exact reviewer request or a repository workflow loaded from the PR base that requires the exact write. Otherwise, do not add, remove, request, or re-request any reviewer through GitHub CLI, REST, GraphQL, or an equivalent write. This includes Copilot and CodeRabbit. Missing, stale, failed, or quota-limited reviews do not create authority. A push may create an automatic review-request event attributed to the pushing account; if the command trace contains no reviewer-request write, report it as automatic.
+Do not request reviews from maintainers.
 
 ## Monitor and collect once
 
@@ -16,12 +16,12 @@ Use bounded monitoring while useful work remains. Do not repeatedly print unchan
 Before editing, collect one complete snapshot for `NVIDIA/NemoClaw` and the PR number:
 
 1. Record the latest PR commit SHA and the local candidate commit SHA.
-2. Wait for required automated reviews to settle unless an urgent correctness, security, or data-safety finding requires action.
-3. Read every required check and paginated comment, review, and thread source. Preserve every thread and its resolution state; filter to actionable unresolved threads only after collection. Record page counts, terminal pagination state, check commits, and retained artifact identifiers.
-4. Read the latest PR commit SHA again. Restart if it changed. Treat incomplete pagination, missing required-check identity, or retained evidence that cannot be removed as blocked.
-5. Re-evaluate earlier findings against the latest commit. Classify every current finding, then group valid findings by root cause and acceptance evidence.
+2. Wait for required automated reviews to settle.
+3. Read every required check and paginated comment, review, and thread source. Filter to actionable unresolved threads only after collection.
+4. Read the latest PR commit SHA again. Restart if it changed.
+5. Re-evaluate earlier findings against the latest commit. Classify and group valid findings by cause and acceptance evidence.
 
-Apply reviewer or bot filters only after collection is complete. If the host retains no collection artifact, record `retained evidence: none`.
+Apply reviewer or bot filters only after collection is complete.
 
 ## Handle results
 
@@ -31,15 +31,11 @@ Follow [Documentation Writing and Review](documentation-writing-review.md) for e
 - **Style comment or false positive:** Avoid unnecessary changes; explain only when a reviewer needs the decision.
 - **Ambiguous, risky, broad, or design-changing feedback:** Ask the user before changing behavior.
 
-Do not add a helper, switch, fallback, migration, or compatibility path only to satisfy reviewer wording. A suggestion blocks work only when it identifies a defect, security or data-safety risk, supported contract, unnecessary changed-code complexity, or ambiguity that can change behavior or release meaning.
-
 ## Repair and push once
 
-1. Set the repair scope from the complete collection for the same latest PR commit. Route only code-changing groups in that scope to the implementation owner.
+1. Set the repair scope from the complete collection for the same latest PR commit.
 2. Repair all scoped groups as one coherent change set, run targeted validation once, and commit after it passes.
-3. Repeat the complete collection before pushing. If the head changes or a finding still requires a change, restart without pushing.
-4. Remove retained collection evidence and verify its absence. Then push once and resume bounded monitoring.
-
-The user may defer only an optional non-blocking suggestion or review. Never defer a required review, check, or unresolved correctness, security, data-safety, or supported-contract finding. If the user stops the work, remove retained evidence and stop without further writes.
+3. Reflect on your work before pushing. If the latest PR commit changes or a finding still requires a change, restart without pushing.
+4. Push and resume monitoring.
 
 For Git or GitHub access errors, follow [Git and GitHub Access Hard Stop](git-github-hard-stop.md). Resolve mechanical conflicts in this workflow; ask only when resolution can change behavior or contributor intent.
