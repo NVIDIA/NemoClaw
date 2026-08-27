@@ -93,18 +93,6 @@ function resolveOpenClawSlackApiLocation() {
       current = parent;
     }
   };
-  const findPipelineRuntimePath = (distDir) => {
-    try {
-      return fs
-        .readdirSync(distDir)
-        .filter((entry) => /^pipeline\.runtime-.*\.js$/.test(entry))
-        .map((entry) => path.join(distDir, entry))
-        .sort()[0];
-    } catch {
-      return undefined;
-    }
-  };
-
   const openclawStateDir = process.env.OPENCLAW_STATE_DIR || "/sandbox/.openclaw";
   addExternalCandidate(path.join(openclawStateDir, "extensions", "slack"));
   addManagedNpmProjectSlackCandidates(
@@ -229,11 +217,15 @@ function createExternalProofRoot(location) {
 }
 
 function findPipelineRuntimePath(slackDir) {
-  return fs
-    .readdirSync(slackDir)
-    .filter((entry) => /^pipeline\.runtime-.*\.js$/.test(entry))
-    .map((entry) => path.join(slackDir, entry))
-    .sort()[0];
+  try {
+    return fs
+      .readdirSync(slackDir)
+      .filter((entry) => /^pipeline\.runtime-.*\.js$/.test(entry))
+      .map((entry) => path.join(slackDir, entry))
+      .sort()[0];
+  } catch {
+    return undefined;
+  }
 }
 
 async function importProofModules(slackDir) {

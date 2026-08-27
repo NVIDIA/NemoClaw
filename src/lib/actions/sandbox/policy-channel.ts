@@ -1801,15 +1801,15 @@ function syncSessionPolicyPresetsWithRegistry(
 // no longer reports it active and the L7 proxy stops allow-listing the
 // channel's upstream API. Removal marks the channel disabled before this
 // policy release, so a later provider failure remains retryable.
-export function removeChannelPresetIfPresent(sandboxName: string, channelName: string): void {
+export function removeChannelPresetIfPresent(sandboxName: string, channelName: string): boolean {
   const builtinPresets = new Set(policies.listPresets().map((p) => p.name));
   if (!builtinPresets.has(channelName)) {
     syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "remove");
-    return;
+    return true;
   }
   if (!policies.getAppliedPresets(sandboxName).includes(channelName)) {
     syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "remove");
-    return;
+    return true;
   }
   try {
     const removed = policies.removePreset(sandboxName, channelName);
@@ -1818,16 +1818,18 @@ export function removeChannelPresetIfPresent(sandboxName: string, channelName: s
       console.error(
         `    Run manually after rebuild with: ${CLI_NAME} ${sandboxName} policy remove ${channelName}`,
       );
-    } else {
-      syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "remove");
-      refreshSandboxPolicyContextFile(sandboxName);
+      return false;
     }
+    syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "remove");
+    refreshSandboxPolicyContextFile(sandboxName);
+    return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  ${YW}⚠${R} Failed to remove '${channelName}' policy preset: ${msg}`);
     console.error(
       `    Run manually after rebuild with: ${CLI_NAME} ${sandboxName} policy remove ${channelName}`,
     );
+    return false;
   }
 }
 
@@ -1938,7 +1940,15 @@ async function removeSandboxChannelUnlocked(
     }
   }
 
-  removeChannelPresetIfPresent(sandboxName, canonical);
+  if (!removeChannelPresetIfPresent(sandboxName, canonical)) {
+    console.error(
+      `  ${YW}⚠${R} Channel '${canonical}' remains disabled while policy cleanup is incomplete.`,
+    );
+    console.error(
+      `  Resolve the policy error, then re-run: ${CLI_NAME} ${sandboxName} channels remove ${canonical}`,
+    );
+    process.exit(1);
+  }
   const teardown = await applyChannelRemoveToGatewayAndRegistry(sandboxName, canonical, tokenKeys, {
     bestEffort: true,
   });
