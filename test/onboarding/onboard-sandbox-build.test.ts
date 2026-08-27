@@ -298,7 +298,13 @@ runner.run = (command, opts = {}) => {
     return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
   }
   return sandboxCreated && normalized.includes("sandbox get") && normalized.includes("hermes-sandbox")
-    ? { status: 0, stdout: Buffer.from("Name: hermes-sandbox\nId: fixture-created-sandbox\nPhase: Ready\n"), stderr: Buffer.alloc(0) }
+    ? {
+        status: 0,
+        stdout: Buffer.from(
+          "Name: hermes-sandbox\nId: fixture-created-sandbox\nPhase: Ready\n",
+        ),
+        stderr: Buffer.alloc(0),
+      }
     : { status: 0 };
 };
 runner.runFile = (file, args = [], opts = {}) => {

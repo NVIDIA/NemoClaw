@@ -182,7 +182,7 @@ runner.runCapture = (command) => {
     ].join("\n");
   }
   if (normalized.includes("sandbox get")) {
-    return sandboxCreated ? sandboxName + "\nId: fixture-created-sandbox\n" : "";
+    return sandboxCreated ? sandboxName + "\nId: sbx-4f2a91c0d7\n" : "";
   }
   if (normalized.includes("sandbox list")) return sandboxCreated ? sandboxName + " Ready" : "";
   return "";
