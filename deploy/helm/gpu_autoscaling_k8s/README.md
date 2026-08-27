@@ -33,10 +33,6 @@ Keep the versions in `versions.env` align with NemoClaw blueprint: NemoClaw `v0.
 
 ## Architecture
 
-```text
-OpenShell CLI → port-forward → OpenShell gateway → CPU-only NemoClaw sandbox
-```
-
 Runtime inference path (HPA scales to **N** inference pods, 1 GPU each). Envoy is optional: LeastRequest when enabled; metrics-proxy ClusterIP Service when `ENABLE_ENVOY_LB=0`. Set both `MAX_REPLICAS` and `TARGET_PODS` to your allocatable GPU count (**N**) — not fixed to 4 (or 8 on an 8-GPU node like `dgx02`; see [Validated hardware](#validated-hardware)).
 
 Each GPU pod is **2/2 Ready** when healthy: an inference container (`ollama`, `vllm`, or `nim`, whichever `inference.runtime` selects) + container `metrics-proxy` (auth, `/v1` proxy, health, Prometheus `/metrics`). The metrics-proxy is **not** the sandboxed AI agent — that runs only in the CPU OpenShell sandbox (see [`AGENT-SELECTION.md`](AGENT-SELECTION.md) for OpenClaw / Hermes / Deep Agents Code).
@@ -88,9 +84,9 @@ Live-tested on [**Brev: AWS Instance**](https://brev.nvidia.com) with a single-n
 
 <img width="647" height="463" alt="Reference 4× L40S MicroK8s node used for validation" src="https://github.com/user-attachments/assets/80cb397b-d2e3-4b0d-933e-3b8dd1dfdb80" />
 
-**4× L40S is an example platform**, not a hard limit. Set both `MAX_REPLICAS` and `TARGET_PODS` to your allocatable GPU count (**N** — any number you have); install and load-test default to that same N. Covered on the example hardware: chart deploy, optional Envoy LeastRequest, authenticated inference, Kubernetes HPA scale-up when average per-pod **GPU util > 40%** or average per-pod **latency > 3000 ms** (and scale-down after load stops), Envoy distribution across Ready GPU pods, and OpenShell sandbox → `https://inference.local/v1`.
+**4× L40S on AWS is an example**, not a hard limit. Set both `MAX_REPLICAS` and `TARGET_PODS` to your allocatable GPU count (**N** — any number you have); install and load-test default to that same N. Covered on the example hardware: chart deploy, optional Envoy LeastRequest, authenticated inference, Kubernetes HPA scale-up when average per-pod **GPU util > 40%** or average per-pod **latency > 3000 ms** (and scale-down after load stops), Envoy distribution across Ready GPU pods, and OpenShell sandbox → `https://inference.local/v1`.
 
-#### 8× H100 example (e.g. `dgx02`) — not yet independently validated
+#### DGX 8× H100 
 
 The same pattern is designed to scale to a single 8-GPU DGX-class node with no chart changes — just raise the ceiling. This configuration has not yet been run through the full validation pass above; re-run [Install details](#install-details)'s static checks and the [Test autoscaling](#test-autoscaling-and-load-balancing) steps against your own 8-GPU cluster before relying on it.
 
