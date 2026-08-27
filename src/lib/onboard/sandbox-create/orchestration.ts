@@ -750,7 +750,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       validateName,
       verifyDirectSandboxGpu,
       waitForSandboxRecreateDeleteAbsence,
-      waitForSandboxReady,
       wasSandboxDefault,
       updateReusedSandboxMetadata,
       getSandboxInferenceConfig,
