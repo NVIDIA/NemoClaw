@@ -212,9 +212,7 @@ function createStatefulMessagingProviderRunner({
     ) {
       return {
         status: 0,
-        stdout: Buffer.from(
-          `Name: ${readySandboxName}\nId: sbx-4f2a91c0d7\nPhase: Ready\n`,
-        ),
+        stdout: Buffer.from(`Name: ${readySandboxName}\nId: sbx-4f2a91c0d7\nPhase: Ready\n`),
         stderr: Buffer.alloc(0),
       };
     }
@@ -336,28 +334,44 @@ function mockOnboardRunCapture(command, options = {}) {
 }
 
 let publishedCreatedSandboxIdentity = null;
+let publishedCreatedGatewayName = "nemoclaw";
 let publishedCreatedGatewayPort = 8080;
 
 function clearMockCreatedSandboxIdentity() {
   publishedCreatedSandboxIdentity = null;
 }
 
-function mockCreatedSandboxIdentityList(command, options = {}) {
+function exactOpenShellArgs(command) {
   const args = Array.isArray(command) ? command.map(String) : [];
-  const sandboxIndex = args.indexOf("sandbox");
+  const verbs = new Set(["gateway", "policy", "sandbox"]);
+  if (verbs.has(args[0])) return args;
+  if (args.length > 1 && verbs.has(args[1])) return args.slice(1);
+  return null;
+}
+
+function mockCreatedSandboxIdentityList(command, options = {}) {
+  const args = exactOpenShellArgs(command);
+  if (!args) return null;
+  const prefix = "ai.nvidia.nemoclaw.create-attempt=";
+  const selector = args[5] || "";
+  const gatewayName = options.gatewayName || publishedCreatedGatewayName;
   if (
-    sandboxIndex < 0 ||
-    args[sandboxIndex + 1] !== "list" ||
-    !args.includes("--output") ||
-    args[args.indexOf("--output") + 1] !== "json"
+    args.length !== 10 ||
+    args[0] !== "sandbox" ||
+    args[1] !== "list" ||
+    args[2] !== "-g" ||
+    args[3] !== gatewayName ||
+    args[4] !== "--selector" ||
+    !new RegExp(`^${prefix}[0-9a-f]{62}$`, "u").test(selector) ||
+    args[6] !== "--output" ||
+    args[7] !== "json" ||
+    args[8] !== "--limit" ||
+    args[9] !== "2"
   ) {
     return null;
   }
-  const selectorIndex = args.indexOf("--selector");
-  const selector = selectorIndex >= 0 ? args[selectorIndex + 1] || "" : "";
-  const prefix = "ai.nvidia.nemoclaw.create-attempt=";
-  if (!selector.startsWith(prefix)) return null;
   const nonce = selector.slice(prefix.length);
+  publishedCreatedGatewayName = gatewayName;
   publishedCreatedSandboxIdentity = {
     id: options.sandboxId || "sbx-4f2a91c0d7",
     name: options.sandboxName || "my-assistant",
@@ -374,6 +388,7 @@ function installVerifiedSandboxCreateFixture(registry, options) {
   mockStructuredOpenShellCaptureFromRunner();
   const sandboxName = options.sandboxName;
   const gatewayName = options.gatewayName || "nemoclaw";
+  publishedCreatedGatewayName = gatewayName;
   publishedCreatedGatewayPort = options.gatewayPort || 8080;
   const sessionId = options.sessionId || "integration-fixture-session";
   const selection = {
@@ -686,8 +701,16 @@ function managedSandboxPolicyReceiptFixture(entry, options = {}) {
 function mockStructuredOpenShellCaptureFromRunner() {
   const runner = require(path.resolve(__dirname, "../../src/lib/runner.ts"));
   const client = require(path.resolve(__dirname, "../../src/lib/adapters/openshell/client.ts"));
+  const originalCaptureOpenshellCommand = client.captureOpenshellCommand;
+  publishedCreatedSandboxIdentity = null;
   client.captureOpenshellCommand = (binary, args, options = {}) => {
-    if (args[0] === "gateway" && args[1] === "info") {
+    const exactGatewayInfo =
+      args.length === 4 &&
+      args[0] === "gateway" &&
+      args[1] === "info" &&
+      args[2] === "-g" &&
+      args[3] === publishedCreatedGatewayName;
+    if (exactGatewayInfo) {
       const stdout = `Gateway endpoint: http://127.0.0.1:${publishedCreatedGatewayPort}\n`;
       return {
         status: 0,
@@ -696,16 +719,24 @@ function mockStructuredOpenShellCaptureFromRunner() {
       };
     }
     const isCreatedSandboxPolicyRead =
+      args.length === 8 &&
       args[0] === "policy" &&
       args[1] === "get" &&
-      args.includes("--full") &&
-      args.includes("--output") &&
-      publishedCreatedSandboxIdentity?.name === String(args.at(-1) || "");
+      args[2] === "-g" &&
+      args[3] === publishedCreatedGatewayName &&
+      args[4] === "--full" &&
+      args[5] === "--output" &&
+      args[6] === "json" &&
+      publishedCreatedSandboxIdentity?.name === args[7];
     const isFreshGlobalPolicyHistoryRead =
+      args.length === 7 &&
       args[0] === "policy" &&
       args[1] === "list" &&
-      args.includes("--global") &&
-      !args.includes("--sandbox");
+      args[2] === "-g" &&
+      args[3] === publishedCreatedGatewayName &&
+      args[4] === "--global" &&
+      args[5] === "--limit" &&
+      args[6] === "1";
     if (isFreshGlobalPolicyHistoryRead) {
       const stderr = "No global policy history found\n";
       return {
@@ -737,7 +768,12 @@ function mockStructuredOpenShellCaptureFromRunner() {
         ...(options.includeStreams === true ? { stdout: fallback, stderr: "" } : {}),
       };
     }
-    const isSandboxGet = args[0] === "sandbox" && args[1] === "get";
+    const isSandboxGet =
+      args.length === 5 &&
+      args[0] === "sandbox" &&
+      args[1] === "get" &&
+      args[2] === "-g" &&
+      args[3] === publishedCreatedGatewayName;
     if (isSandboxGet && stdout.trim().length === 0) {
       const sandboxName = String(args.at(-1) || "unknown");
       if (publishedCreatedSandboxIdentity?.name === sandboxName) {
@@ -765,6 +801,10 @@ function mockStructuredOpenShellCaptureFromRunner() {
       output: stdout.trim(),
       ...(options.includeStreams === true ? { stdout, stderr: "" } : {}),
     };
+  };
+  return () => {
+    client.captureOpenshellCommand = originalCaptureOpenshellCommand;
+    publishedCreatedSandboxIdentity = null;
   };
 }
 
@@ -1093,6 +1133,7 @@ module.exports = {
   mockFreshOpenClawPluginDiscovery,
   clearMockCreatedSandboxIdentity,
   mockCreatedSandboxIdentityList,
+  mockStructuredOpenShellCaptureFromRunner,
   installVerifiedSandboxCreateFixture,
   managedSandboxPolicyReceiptFixture,
   mockOnboardRunCapture,
