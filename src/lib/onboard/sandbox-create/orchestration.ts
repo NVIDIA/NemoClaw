@@ -675,11 +675,11 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
         `verifying effective policy for sandbox '${input.sandboxName}'`,
       );
       const evidence = input.verifyCreatedPolicy(created, capturedIdentity);
-      observedPolicyEvidence = evidence;
       input.revalidateCreatedSandboxIdentity(
         capturedIdentity,
         `recording verified policy for sandbox '${input.sandboxName}'`,
       );
+      observedPolicyEvidence = evidence;
       input.persistVerifiedPolicy(created, capturedIdentity, evidence);
       input.revalidateVerifiedPolicy(
         created,

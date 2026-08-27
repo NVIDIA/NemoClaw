@@ -1250,6 +1250,7 @@ describe("sandbox create policy authority checks", () => {
 
   it("refuses continuation when identity changes during effective-policy verification (#9833)", async () => {
     const continuationEffect = vi.fn();
+    const persistRetainedSandboxRecovery = vi.fn(() => true);
     const revalidate = vi
       .fn()
       .mockImplementationOnce(() => undefined)
@@ -1273,11 +1274,17 @@ describe("sandbox create policy authority checks", () => {
         captureCreatedSandboxIdentity: () => exactIdentity,
         revalidateCreatedSandboxIdentity,
         ...verifiedPolicyBoundary(),
+        persistRetainedSandboxRecovery,
         cleanupTemporarySources: vi.fn(),
       }),
     ).rejects.toThrow("automatic sandbox cleanup was not safe");
 
     expect(continuationEffect).not.toHaveBeenCalled();
+    expect(persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
+      expect.stringContaining("left sandbox 'alpha' in place"),
+      exactIdentity,
+      null,
+    );
   });
 
   it("fails closed when a create implementation skips the post-create gate (#9833)", async () => {

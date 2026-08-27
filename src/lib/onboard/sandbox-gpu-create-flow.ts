@@ -550,7 +550,9 @@ export async function runSandboxGpuCreateFlow(
           "Do not delete a sandbox by mutable name; use an identity-bound administrator recovery procedure.";
         let persisted = false;
         try {
-          persisted = persistRetainedSandboxRecovery(message);
+          persisted = evidence.liveIdentityFingerprint
+            ? persistRetainedSandboxRecovery(message, evidence.liveIdentityFingerprint)
+            : persistRetainedSandboxRecovery(message);
         } catch {
           persisted = false;
         }

@@ -761,6 +761,7 @@ describe("created sandbox identity gate", () => {
           "u",
         ),
       ),
+      fingerprint,
     );
     expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledBefore(exit);
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
