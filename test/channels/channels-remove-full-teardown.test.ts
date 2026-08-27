@@ -550,16 +550,27 @@ const ctx = module.exports;
       "other presets must remain after removing a token-based channel",
     );
 
-    const messagingPlanUpdate = payload.registryUpdates.find(
+    const messagingPlanUpdates = payload.registryUpdates.filter(
       (u: { updates: { messaging?: { plan?: { channels?: Array<{ channelId: string }> } } } }) =>
         u.updates.messaging?.plan,
     );
-    assert.ok(
-      messagingPlanUpdate,
-      `expected an updateSandbox call that writes messaging.plan; got ${JSON.stringify(payload.registryUpdates)}`,
+    assert.equal(
+      messagingPlanUpdates.length,
+      2,
+      `expected disabled and removed messaging.plan writes; got ${JSON.stringify(payload.registryUpdates)}`,
     );
     assert.deepEqual(
-      messagingPlanUpdate.updates.messaging.plan.channels.map(
+      messagingPlanUpdates[0].updates.messaging.plan.channels.map(
+        (channel: { channelId: string; disabled?: boolean }) => ({
+          channelId: channel.channelId,
+          disabled: channel.disabled,
+        }),
+      ),
+      [{ channelId: "telegram", disabled: true }],
+      "the retryable teardown phase must disable telegram before removing its providers",
+    );
+    assert.deepEqual(
+      messagingPlanUpdates.at(-1).updates.messaging.plan.channels.map(
         (channel: { channelId: string }) => channel.channelId,
       ),
       [],
