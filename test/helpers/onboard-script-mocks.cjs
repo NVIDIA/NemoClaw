@@ -46,7 +46,9 @@ function registerSourceRequire() {
 // Vitest setup files and NODE_OPTIONS preloads both depend on this hook.
 registerSourceRequire();
 
-const { ONBOARD_READY_SANDBOX_ID } = require("./onboard-openshell-fixture.ts");
+function onboardReadySandboxId() {
+  return require("./onboard-openshell-fixture.ts").ONBOARD_READY_SANDBOX_ID;
+}
 
 function normalizeCommand(command) {
   return (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
@@ -350,7 +352,7 @@ function createCreatedSandboxFixture(options = {}) {
   );
   const initialSandboxId = hasOwn(options, "sandboxId")
     ? options.sandboxId
-    : ONBOARD_READY_SANDBOX_ID;
+    : onboardReadySandboxId();
   const initialLifecycleState = hasOwn(options, "lifecycleState")
     ? options.lifecycleState
     : "absent";
@@ -855,7 +857,7 @@ function managedSandboxPolicyReceiptFixture(entry, options = {}) {
   const gatewayName = options.gatewayName || "nemoclaw";
   const gatewayPort = options.gatewayPort || 8080;
   const lifecycleGeneration = options.lifecycleGeneration || "123e4567-e89b-42d3-a456-426614174983";
-  const sandboxId = options.sandboxId || ONBOARD_READY_SANDBOX_ID;
+  const sandboxId = options.sandboxId || onboardReadySandboxId();
   const sandboxIdentityFingerprint = require("node:crypto")
     .createHash("sha256")
     .update(sandboxId)
@@ -1149,7 +1151,7 @@ function mockManagedImageBootstrap() {
     path.resolve(__dirname, "../../src/lib/adapters/openshell/sandbox-identity.ts"),
   );
 
-  sandboxIdentity.resolveOpenShellSandboxId = () => ONBOARD_READY_SANDBOX_ID;
+  sandboxIdentity.resolveOpenShellSandboxId = () => onboardReadySandboxId();
   authorityStore.createDockerManagedBootstrapAuthorityStore = () => ({
     async recordPreparedAuthority(authority) {
       return {
