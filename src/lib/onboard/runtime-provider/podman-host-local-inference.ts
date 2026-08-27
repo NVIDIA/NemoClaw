@@ -2801,6 +2801,11 @@ function createPreparedStartup(options: {
       }
     },
     commit() {
+      if (options.publishedResume) {
+        throw new Error(
+          "Podman inference startup must finalize a published resume without rewriting its receipt.",
+        );
+      }
       if (state !== "validated") {
         throw new Error(
           `Podman inference startup cannot commit without fresh validation from state '${state}'.`,

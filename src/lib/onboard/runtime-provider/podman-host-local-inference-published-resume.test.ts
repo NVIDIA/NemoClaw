@@ -38,6 +38,11 @@ describe("Podman published inference resume", () => {
     expect(resumed?.finalizePublishedResume).toBeTypeOf("function");
     resumed?.validateBeforeCommit();
 
+    expect(() => resumed?.commit()).toThrow(
+      "must finalize a published resume without rewriting its receipt",
+    );
+    expect(resumed?.publicationState()).toBe("unpublished");
+    expect(harness.written).toHaveLength(writtenCount);
     expect(resumed?.finalizePublishedResume?.(() => undefined)).toEqual(receipt);
     expect(resumed?.publicationState()).toBe("published");
     expect(harness.written).toHaveLength(writtenCount);
