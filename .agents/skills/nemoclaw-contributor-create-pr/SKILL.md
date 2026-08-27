@@ -42,14 +42,7 @@ git config user.name
 git config user.email
 ```
 
-Push the candidate, then confirm that GitHub marks every commit as `Verified`:
-
-```bash
-git push -u origin HEAD
-for sha in $(git rev-list origin/main..HEAD); do
-  gh api "/repos/NVIDIA/NemoClaw/commits/$sha" --jq '.sha + " verified=" + (.commit.verification.verified | tostring) + " reason=" + .commit.verification.reason'
-done
-```
+Publish and verify the candidate with `create_nemoclaw_pr`. For an open PR, use `commit_push_refresh_pr` or `prepare_pr_for_human_review`. These DSH tools bind publication to the declared repository and commit, reconcile the remote branch, and confirm that GitHub marks every published commit as `Verified`.
 
 Stop if the declaration is missing, any commit is unverified, or compliant history cannot be pushed.
 
@@ -84,13 +77,7 @@ Follow [Documentation Writing and Review](../_shared/documentation-writing-revie
 
 ## Publish once
 
-Before creating the PR, decide its draft state and whether assignment is allowed. Assemble the whole command before you run it. Start from this command and add only allowed optional flags:
-
-```bash
-gh pr create \
-  --title "<type>(<scope>): <description>" \
-  --body-file /tmp/nemoclaw-pr-body.md
-```
+Before creating the PR, decide its draft state and whether assignment is allowed. Assemble the whole command before you run it. Pass the complete title, trusted-template body, expected commit, draft decision, and allowed assignment to `create_nemoclaw_pr` once.
 
 ### Assignment
 
@@ -106,7 +93,7 @@ Add `--draft` when the work is not ready for review. A draft requires the same D
 
 Do not select or add labels during PR publication. Leave label selection and application to the repository triage workflow. Do not request reviews from maintainers.
 
-If a triage write is rejected, do not repeat that write through another endpoint. Confirm whether the PR exists before you run `gh pr create` again.
+If a triage write is rejected, do not repeat that write through another endpoint. Confirm whether the PR exists before you call `create_nemoclaw_pr` again.
 
 ## Follow up and report
 

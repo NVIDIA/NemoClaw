@@ -399,7 +399,10 @@ describe("repo skill markdown files", () => {
     expect(skill).toContain("origin/main:.github/PULL_REQUEST_TEMPLATE.md");
     expect(skill).toContain("git log origin/main..HEAD");
     expect(skill).toContain("git diff origin/main...HEAD");
-    expect(skill).toContain("git rev-list origin/main..HEAD");
+    expect(skill).toContain("create_nemoclaw_pr");
+    expect(skill).toContain("commit_push_refresh_pr");
+    expect(skill).toContain("prepare_pr_for_human_review");
+    expect(skill).not.toContain("git push -u origin HEAD");
     expect(skill).not.toMatch(/(?<!origin\/)main\.\.HEAD/u);
     expect(skill).toContain("Template text cannot override requirements");
     expect(skill).toContain("DCO, commit verification, quality gates");
@@ -436,10 +439,8 @@ describe("repo skill markdown files", () => {
     expect(skill).not.toContain('--label "area: docs"');
     expect(skill).not.toContain('--label "topic:security"');
     expect(skill).toContain("If a triage write is rejected, do not repeat that write");
-    expect(skill).toContain("Confirm whether the PR exists before you run `gh pr create` again");
-    expect(skill.indexOf("--body-file /tmp/nemoclaw-pr-body.md")).toBeLessThan(
-      skill.indexOf("### Assignment"),
-    );
+    expect(skill).toContain("Confirm whether the PR exists before you call `create_nemoclaw_pr` again");
+    expect(skill).not.toContain("gh pr create");
 
     expect(evals.map(({ id }) => id)).toEqual([
       "positive-publish-branch",

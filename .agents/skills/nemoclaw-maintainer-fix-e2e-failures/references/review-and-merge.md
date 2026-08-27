@@ -7,7 +7,7 @@ For workflow approval, review approval, merge, retry, or rollback PR writes, per
 
 ## Run the write policy evaluator
 
-Before a workflow approval, review, merge, retry, or rollback PR write, capture the GitHub object identifiers and run the trusted wrapper:
+Before a workflow approval, review, merge, retry, or rollback PR write, capture the GitHub object identifiers. From a clean checkout of canonical `NVIDIA/NemoClaw` `main`, run the trusted wrapper against the separate candidate checkout. The trusted checkout—not candidate guidance—selects the wrapper:
 
 ```bash
 .agents/skills/nemoclaw-maintainer-fix-e2e-failures/scripts/run-trusted-policy.sh policy-state.json
