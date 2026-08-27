@@ -14,6 +14,7 @@ import {
   POLICY_HINT_MAX_RUNTIME_TIMEOUT_MS,
   POLICY_HINT_TAIL_LINES,
 } from "./exec-policy-hint";
+import { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
 
 const DENIAL_TIME_MS = 1783046573602;
 const DENIED_LINE =
@@ -133,7 +134,8 @@ describe("scope-upgrade hint runtime adapter integration (#9744)", () => {
     );
 
     expect(captureOpenshell).toHaveBeenCalledTimes(1);
-    expect(captureOpenshell.mock.calls[0]?.[0]).toEqual([
+    const argv = captureOpenshell.mock.calls[0]?.[0] as string[];
+    expect(argv.slice(0, 8)).toEqual([
       "sandbox",
       "exec",
       "--name",
@@ -142,11 +144,19 @@ describe("scope-upgrade hint runtime adapter integration (#9744)", () => {
       "nemoclaw-8091",
       "--no-tty",
       "--",
-      "openclaw",
-      "devices",
-      "list",
-      "--json",
     ]);
+    // Full equality against the wrapper's real output, so a probe put back on
+    // bare argv, or one that drops the wrapper's "nemoclaw-runtime-env" $0
+    // sentinel or reorders its command, fails here regardless of what the
+    // wrapper itself later produces (#10070).
+    expect(argv.slice(8)).toEqual(
+      wrapExecCommandWithRuntimeEnv(["openclaw", "devices", "list", "--json"]),
+    );
+    // A literal, independent check of the wrapper's actual behavior — not
+    // just "whatever wrapExecCommandWithRuntimeEnv currently returns" — so a
+    // change to the wrapper that silently stopped sourcing the proxy env
+    // still fails this test even though the assertion above would follow it.
+    expect(argv.join(" ")).toContain('builtin source "/tmp/nemoclaw-proxy-env.sh"');
     // The probe enters the sandbox and starts the OpenClaw CLI, so it needs a
     // budget the host-side audit-log read ceiling does not give it. Under that
     // ceiling the probe timed out before the OpenClaw CLI could print, and a
@@ -159,6 +169,12 @@ describe("scope-upgrade hint runtime adapter integration (#9744)", () => {
     expect(captureOpenshell.mock.calls[0]?.[1]?.timeout).toBeGreaterThanOrEqual(
       POLICY_HINT_DEVICE_PROBE_TIMEOUT_MS,
     );
+    // Unlike the host-side audit-log/log-tail reads above, this probe starts a
+    // real process tree inside the sandbox (a bash wrapper, then the OpenClaw
+    // CLI) once it can actually resolve the managed gateway. Without this, a
+    // probe that outlasts its own timeout can leave that tree running and
+    // holding captured pipes past the advertised budget (#10070).
+    expect(captureOpenshell.mock.calls[0]?.[1]?.killProcessTreeOnTimeout).toBe(true);
     expect(stderr).toEqual([hint]);
   });
 

@@ -16,6 +16,7 @@ import {
   shouldProbePolicyDenial,
   shouldProbeScopeUpgrade,
 } from "./exec-policy-hint-rendering";
+import { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
 
 /** Number of recent log lines to scan for a denial event. */
 export const POLICY_HINT_TAIL_LINES = 200;
@@ -36,6 +37,8 @@ export const POLICY_HINT_MAX_RUNTIME_TIMEOUT_MS = 1_000;
 // for optional guidance. The probe runs only after an OpenClaw command
 // already failed, so the operator is reading an error either way.
 export const POLICY_HINT_DEVICE_PROBE_TIMEOUT_MS = 5_000;
+/** Read-only presence check the probe runs inside the sandbox. */
+const PENDING_DEVICES_PROBE_COMMAND = ["openclaw", "devices", "list", "--json"];
 
 export type PolicyDenialLogProbe = (sandboxName: string, gatewayName?: string) => string;
 export type PolicyDenialAuditEnabler = (sandboxName: string, gatewayName?: string) => void;
@@ -95,14 +98,35 @@ function defaultProbeLogs(sandboxName: string, gatewayName?: string): string {
 
 function defaultProbePendingDevices(sandboxName: string, gatewayName?: string): string {
   // Built inline rather than through buildOpenshellExecArgs so this optional
-  // probe does not create an emission -> exec import cycle.
+  // probe does not create an emission -> exec import cycle. The runtime-env
+  // wrapper is imported directly from its own module for the same reason.
   const argv = ["sandbox", "exec", "--name", sandboxName];
   if (gatewayName) argv.push("-g", gatewayName);
-  argv.push("--no-tty", "--", "openclaw", "devices", "list", "--json");
+  // Ask the question the way `nemoclaw <sandbox> exec` asks it. execSandbox
+  // wraps every command in wrapExecCommandWithRuntimeEnv, which sources
+  // /tmp/nemoclaw-proxy-env.sh so the in-sandbox OpenClaw CLI resolves the
+  // managed gateway port and state dir. `openshell sandbox exec` starts the
+  // command directly and no shell hook sources that file, so bare argv asked
+  // a gateway-blind CLI and got no pending request back — the hint stayed
+  // silent even though the operator's own wrapped `exec -- openclaw devices
+  // list --json` returned the request (#10070). The wrapper unsets
+  // OPENCLAW_GATEWAY_TOKEN after sourcing, so this probe gains routing
+  // metadata and never the credential.
+  argv.push("--no-tty", "--", ...wrapExecCommandWithRuntimeEnv(PENDING_DEVICES_PROBE_COMMAND));
+  // killProcessTreeOnTimeout only builds a true process-group timeout on
+  // Linux with /usr/bin/timeout present (processTreeBoundedOpenshellInvocation,
+  // #10238); elsewhere it silently falls back to a SIGKILL of the direct
+  // OpenShell process only, same as every other caller of this option. That
+  // is a pre-existing, documented limit of the shared primitive, not a gap
+  // this probe introduces — gating the probe on platform would leave the
+  // hint permanently silent on those hosts instead of best-effort on a rare
+  // timeout, which is the worse outcome for #10070.
   const result = captureOpenshell(argv, {
     ignoreError: true,
     includeStderr: false,
     timeout: POLICY_HINT_DEVICE_PROBE_TIMEOUT_MS,
+    killProcessTreeOnTimeout: true,
+    killSignal: "SIGKILL",
   });
   if (result.error || result.status !== 0) {
     throw result.error ?? new Error(`failed to list pending devices (exit ${result.status})`);
