@@ -22,6 +22,7 @@ import {
   type HermesPortableOpenShellExecutableAuthority,
 } from "../../adapters/openshell/resolve-shared";
 import { isMcpLifecycleLockHeld } from "../../state/mcp-lifecycle-lock-acquisition";
+import { assertCurrentPortableHostFenceHeld } from "../../state/portable-uninstall-retirement";
 import type { SandboxEntry } from "../../state/registry/types";
 import {
   PODMAN_MANAGED_LABEL,
@@ -51,10 +52,16 @@ import {
 import {
   assertHermesPortableDurablePolicyAuthority,
   readHermesPortableLifecycleReceipt,
+  readHermesPortableLifecycleReceiptForRequalification,
+  publishHermesPortableSuccessorReceipt,
   type HermesPortableConfiguredReceipt,
   type HermesPortableLifecycleReceipt,
   type HermesPortableReceiptSnapshot,
 } from "./hermes-portable-receipt";
+import {
+  qualifyHermesPortableOperatingAuthority,
+  type HermesPortableOperatingAuthorityDeps,
+} from "./hermes-portable-operating-authority";
 import type {
   PortableDemoLifecycleContext,
   PortableDemoLifecycleRecoveryResult,
@@ -94,6 +101,7 @@ export interface HermesPortableLifecycleDeps {
     | HermesPortableContainerDeps
     | ((receipt: HermesPortableConfiguredReceipt) => HermesPortableContainerDeps);
   readonly podmanAuthorityDeps?: HermesPortablePodmanAuthorityDeps;
+  readonly operatingAuthority?: HermesPortableOperatingAuthorityDeps;
   readonly now?: () => number;
   readonly sleep?: (milliseconds: number) => void;
   readonly log?: (message: string) => void;
@@ -179,7 +187,7 @@ export interface HermesPortableOpenShellCommandAuthority {
   readonly executablePath: string;
 }
 
-/** Requalify the exact schema-5 executable and child environment for one command. */
+/** Requalify the receipt-owned executable and child environment for one command. */
 export function buildHermesPortableOpenShellCommandAuthority(
   receipt: HermesPortableLifecycleReceipt,
   commandEnv: NodeJS.ProcessEnv,
@@ -239,7 +247,14 @@ function sameSnapshot(
     left.identity.dev === right.identity.dev &&
     left.identity.ino === right.identity.ino &&
     left.sha256 === right.sha256 &&
-    left.bytes.equals(right.bytes)
+    left.bytes.equals(right.bytes) &&
+    left.successor?.path === right.successor?.path &&
+    left.successor?.identity.dev === right.successor?.identity.dev &&
+    left.successor?.identity.ino === right.successor?.identity.ino &&
+    left.successor?.sha256 === right.successor?.sha256 &&
+    (left.successor === undefined ||
+      right.successor === undefined ||
+      left.successor.bytes.equals(right.successor.bytes))
   );
 }
 
@@ -337,6 +352,7 @@ function qualify(
   deps: HermesPortableLifecycleDeps,
   expected?: HermesPortableReceiptSnapshot,
   acceptedPhases: readonly string[] = ["Ready"],
+  options: { readonly permitSchema5Requalification?: boolean } = {},
 ): QualifiedHermesPortableLifecycle {
   const commandEnv = deps.env ?? process.env;
   assertNoOpenShellGatewayEndpointOverride(commandEnv);
@@ -345,13 +361,22 @@ function qualify(
   if (!isMcpLifecycleLockHeld(sandboxName, lockStateDir)) {
     fail("mutation requires the sandbox lifecycle lock");
   }
-  const snapshot = readHermesPortableLifecycleReceipt(sandboxName, stateDir);
+  const snapshot = options.permitSchema5Requalification
+    ? readHermesPortableLifecycleReceiptForRequalification(sandboxName, stateDir)
+    : readHermesPortableLifecycleReceipt(sandboxName, stateDir);
   if (!snapshot) fail("active receipt authority disappeared");
   if (expected && !sameSnapshot(snapshot, expected)) fail("receipt authority changed");
   if (snapshot.receipt.phase !== "active") {
     fail(`receipt phase '${snapshot.receipt.phase}' is incomplete and cannot run commands`);
   }
-  const receipt = snapshot.receipt;
+  const operatingAuthority = qualifyHermesPortableOperatingAuthority(
+    snapshot as HermesPortableReceiptSnapshot & {
+      readonly receipt: HermesPortableConfiguredReceipt;
+    },
+    deps.operatingAuthority,
+    options,
+  );
+  const receipt = operatingAuthority.receipt;
   if (!contextMatches(receipt, context)) fail("registry context disagrees with the active receipt");
   assertCurrentHermesPortableStoredStartupContract(receipt.startup, sandboxName);
   const durablePolicy = assertHermesPortableDurablePolicyAuthority(receipt.policy);
@@ -404,6 +429,7 @@ function qualify(
   if (container.paused || container.authority.restartPolicy !== "unless-stopped") {
     fail("container state or restart policy disagrees with active authority");
   }
+  operatingAuthority.assertCurrent();
   return {
     snapshot: snapshot as QualifiedHermesPortableLifecycle["snapshot"],
     receipt,
@@ -412,6 +438,32 @@ function qualify(
     capture,
     openShellPhase: liveIdentity.phase,
   };
+}
+
+export type HermesPortableAuthorityRequalificationResult =
+  | { readonly kind: "not-installed" }
+  | { readonly kind: "already-current"; readonly snapshot: HermesPortableReceiptSnapshot }
+  | { readonly kind: "migrated"; readonly snapshot: HermesPortableReceiptSnapshot };
+
+/** Publish schema 6 only after the exact schema-5 authority passes the probe fence. */
+export function requalifyHermesPortableSandboxAuthority(
+  sandboxName: string,
+  context: PortableDemoLifecycleContext,
+  deps: HermesPortableLifecycleDeps = {},
+): HermesPortableAuthorityRequalificationResult {
+  const stateDir = deps.stateDir ?? defaultPortableDemoStateDir(deps.env ?? process.env);
+  const snapshot = readHermesPortableLifecycleReceiptForRequalification(sandboxName, stateDir);
+  if (!snapshot) return { kind: "not-installed" };
+  if (snapshot.receipt.phase !== "active") {
+    fail(`receipt phase '${snapshot.receipt.phase}' is incomplete and cannot be requalified`);
+  }
+  assertCurrentPortableHostFenceHeld(snapshot.receipt.runtimeAuthority.homeDir);
+  qualify(sandboxName, context, deps, snapshot, ["Ready", "Error", "Stopped"], {
+    permitSchema5Requalification: true,
+  });
+  const published = publishHermesPortableSuccessorReceipt(sandboxName, stateDir);
+  qualify(sandboxName, context, deps, published, ["Ready", "Error", "Stopped"]);
+  return { kind: snapshot.successor ? "already-current" : "migrated", snapshot: published };
 }
 
 function openshellExecArgs(receipt: HermesPortableConfiguredReceipt, command: readonly string[]) {
@@ -461,7 +513,7 @@ function rollbackStartedHermesPortableRecovery(
   }
 }
 
-/** Recover the exact schema-5 container and manifest-owned Hermes startup. */
+/** Recover the exact receipt-owned container and manifest-owned Hermes startup. */
 export function recoverHermesPortableSandboxLifecycle(
   sandboxName: string,
   context: PortableDemoLifecycleContext,
@@ -577,7 +629,7 @@ export function recoverHermesPortableSandboxLifecycle(
   }
 }
 
-/** Requalify active schema-5 authority without starting or changing the sandbox. */
+/** Requalify active Hermes authority without starting or changing the sandbox. */
 export function assertHermesPortableSandboxLifecycleAuthority(
   sandboxName: string,
   context: PortableDemoLifecycleContext,
@@ -721,7 +773,13 @@ export function prepareHermesPortableSandboxRemoval(
   ) {
     fail("receipt authority changed");
   }
-  const receipt = expectedSnapshot.receipt;
+  const operatingAuthority = qualifyHermesPortableOperatingAuthority(
+    expectedSnapshot as HermesPortableReceiptSnapshot & {
+      readonly receipt: HermesPortableConfiguredReceipt;
+    },
+    deps.operatingAuthority,
+  );
+  const receipt = operatingAuthority.receipt;
   if (!contextMatches(receipt, context)) fail("registry context disagrees with the active receipt");
 
   const inspect = (
@@ -734,6 +792,7 @@ export function prepareHermesPortableSandboxRemoval(
   } => {
     const snapshot = readHermesPortableLifecycleReceipt(sandboxName, stateDir);
     if (!snapshot || !sameSnapshot(snapshot, expectedSnapshot)) fail("receipt authority changed");
+    operatingAuthority.assertCurrent();
     assertCurrentHermesPortableStoredStartupContract(receipt.startup, sandboxName);
     assertHermesPortableDurablePolicyAuthority(receipt.policy);
     requireStaticRegistry(receipt, deps);
@@ -773,6 +832,7 @@ export function prepareHermesPortableSandboxRemoval(
       if (presence !== "absent") fail("cannot prove the current OpenShell sandbox");
       if (!admitAbsence) fail("sandbox disappeared before uninstall journal publication");
       assertHermesPortableContainerAbsent(receipt, containerDeps);
+      operatingAuthority.assertCurrent();
       return { present: false, capture, containerDeps };
     }
     const qualified = qualify(sandboxName, context, deps, expectedSnapshot, [
@@ -780,6 +840,7 @@ export function prepareHermesPortableSandboxRemoval(
       "Stopped",
       "Error",
     ]);
+    operatingAuthority.assertCurrent();
     return { present: true, qualified, capture, containerDeps: qualified.containerDeps };
   };
 
@@ -809,7 +870,7 @@ export function prepareHermesPortableSandboxRemoval(
   });
 }
 
-/** Stop only the exact schema-5 full ID after revalidating after the callback. */
+/** Stop only the exact receipt-owned full ID after revalidating after the callback. */
 export function stopHermesPortableSandboxLifecycle(
   sandboxName: string,
   context: PortableDemoLifecycleContext,
