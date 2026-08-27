@@ -742,7 +742,7 @@ describe("onboard provider helpers", () => {
     expect(calls.flatMap(({ command }) => command)).not.toContain(credential);
   });
 
-  it("waits for an updated messaging provider revision to become observable", () => {
+  it("waits for an updated messaging provider revision to become observable (#10153)", () => {
     const commands: string[] = [];
     const sleep = vi.fn();
     let providerLookups = 0;
@@ -765,16 +765,17 @@ describe("onboard provider helpers", () => {
       ],
       (command) => {
         commands.push(command.join(" "));
-        if (command[1] === "profile") {
-          return { status: 0, stdout: MESSAGING_ENDPOINTLESS_PROFILE_EXPORT, stderr: "" };
+        switch (command[1]) {
+          case "profile":
+            return { status: 0, stdout: MESSAGING_ENDPOINTLESS_PROFILE_EXPORT, stderr: "" };
+          case "get":
+            providerLookups += 1;
+            return providerLookups === 2
+              ? providerMetadata("generic")
+              : providerMetadata("nemoclaw-mcp-v1");
+          default:
+            return { status: 0, stdout: "", stderr: "" };
         }
-        if (command[1] === "get") {
-          providerLookups += 1;
-          return providerLookups === 2
-            ? providerMetadata("generic")
-            : providerMetadata("nemoclaw-mcp-v1");
-        }
-        return { status: 0, stdout: "", stderr: "" };
       },
       { sleepSeconds: sleep },
     );

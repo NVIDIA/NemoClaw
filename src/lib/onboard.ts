@@ -900,7 +900,6 @@ function persistMigratedLegacyKeys(): void {
 }
 
 type MessagingTokenDef = import("./onboard/messaging-prep").MessagingTokenDef;
-
 type EndpointValidationResult =
   | { ok: true; api: string | null; retry?: undefined }
   | { ok: false; retry: "credential" | "selection" | "retry" | "model"; api?: undefined };

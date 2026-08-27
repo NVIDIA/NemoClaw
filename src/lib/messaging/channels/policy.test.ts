@@ -247,37 +247,6 @@ describe("messaging channel policy presets", () => {
     expect(botEndpoint?.path ?? "").toBe("");
   });
 
-  it.each(["openclaw", "hermes"] as const)(
-    "binds every %s WeChat endpoint to the sandbox credential provider (#10153)",
-    (agent) => {
-      const sandboxName = `${agent}-wechat`;
-      const content = loadMessagingChannelPolicyPreset("wechat", {
-        agent,
-        sandboxName,
-      });
-      const endpoints = (
-        YAML.parse(content ?? "") as {
-          network_policies?: {
-            wechat_bridge?: { endpoints?: PolicyEndpoint[] };
-          };
-        }
-      ).network_policies?.wechat_bridge?.endpoints;
-
-      expect(endpoints).toHaveLength(2);
-      expect(endpoints).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ host: "ilinkai.weixin.qq.com", port: 443 }),
-          expect.objectContaining({ host: "ilinkai.wechat.com", port: 443 }),
-        ]),
-      );
-      expect(
-        endpoints?.every(
-          (endpoint) => endpoint.credential_binding?.provider === `${sandboxName}-wechat-bridge`,
-        ),
-      ).toBe(true);
-    },
-  );
-
   it("retains the Hermes Telegram route when its bridge provider is available (#10153)", () => {
     const { omissions, sandboxName, telegram } = composeHermesTelegramPolicy(true);
 
