@@ -31,6 +31,8 @@ const FREE_STANDING_LIVE_FILE_PATTERN = /^test\/e2e\/live\/[^/]+\.ts$/;
 const ALLOWED_WORKFLOWS = new Set<string>([E2E_WORKFLOW]);
 const TARGET_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const CONFIDENCES = ["low", "medium", "high"] as const;
+let trustedE2eWorkflowText: string | undefined;
+let trustedCredentialFreeTests: readonly E2eChangedCredentialFreeTest[] | undefined;
 const MODEL_COVERAGE_IDENTITY_FIELDS = ["workflow", "job", "script", "cost", "runner"] as const;
 const CLOUD_ONBOARD_E2E_PATTERNS: readonly RegExp[] = [
   /^src\/lib\/onboard(?:\.ts|\/)/,
@@ -371,7 +373,11 @@ function readE2eWorkflowText(): string | undefined {
 }
 
 function readTrustedE2eWorkflowText(): string {
-  return fs.readFileSync(path.join(TRUSTED_REPO_ROOT, E2E_WORKFLOW_PATH), "utf8");
+  trustedE2eWorkflowText ??= fs.readFileSync(
+    path.join(TRUSTED_REPO_ROOT, E2E_WORKFLOW_PATH),
+    "utf8",
+  );
+  return trustedE2eWorkflowText;
 }
 
 function buildE2eTargetNormalizationContext(
@@ -381,12 +387,10 @@ function buildE2eTargetNormalizationContext(
 ): E2eTargetNormalizationContext {
   const trustedWorkflowText = readTrustedE2eWorkflowText();
   const trustedCredentialFreeTests = discoverTrustedCredentialFreeTests();
-  const allowedJobIds = new Set(
-    [
-      ...extractAllowedE2eJobIds(trustedWorkflowText, trustedCredentialFreeTests),
-      ...catalogueRecommendationSelectorIds(),
-    ],
-  );
+  const allowedJobIds = new Set([
+    ...extractAllowedE2eJobIds(trustedWorkflowText, trustedCredentialFreeTests),
+    ...catalogueRecommendationSelectorIds(),
+  ]);
   // The analyzed workflow is untrusted input. It may explain why a changed test has
   // no trusted selector, but it must never introduce one absent from the trusted
   // workflow or catalogue.
@@ -466,6 +470,7 @@ function credentialFreeTestRow(
 }
 
 function discoverTrustedCredentialFreeTests(): E2eChangedCredentialFreeTest[] {
+  if (trustedCredentialFreeTests) return [...trustedCredentialFreeTests];
   const rows: E2eChangedCredentialFreeTest[] = [];
   const testRoot = path.join(TRUSTED_REPO_ROOT, "test");
   const pending = [testRoot];
@@ -484,7 +489,8 @@ function discoverTrustedCredentialFreeTests(): E2eChangedCredentialFreeTest[] {
       if (row) rows.push(row);
     }
   }
-  return rows.sort((left, right) => left.id.localeCompare(right.id));
+  trustedCredentialFreeTests = rows.sort((left, right) => left.id.localeCompare(right.id));
+  return [...trustedCredentialFreeTests];
 }
 
 function extractAllowedE2eJobIds(
