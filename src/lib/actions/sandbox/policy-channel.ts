@@ -1497,6 +1497,7 @@ async function addSandboxChannelUnlocked(
     await applyChannelAddToGatewayAndRegistry(sandboxName, canonical, {});
     if (!MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan)) {
       console.error(`  ${YW}⚠${R} Could not persist messaging plan for '${sandboxName}'.`);
+      removeChannelPresetIfPresent(sandboxName, canonical);
       process.exit(1);
     }
     console.log("");
@@ -1813,9 +1814,7 @@ export function removeChannelPresetIfPresent(sandboxName: string, channelName: s
   try {
     const removed = policies.removePreset(sandboxName, channelName);
     if (!removed) {
-      console.error(
-        `  ${YW}⚠${R} Channel '${channelName}' bridge removed but its policy preset failed to un-apply.`,
-      );
+      console.error(`  ${YW}⚠${R} Channel '${channelName}' policy preset failed to un-apply.`);
       console.error(
         `    Run manually after rebuild with: ${CLI_NAME} ${sandboxName} policy remove ${channelName}`,
       );
@@ -1940,12 +1939,9 @@ async function removeSandboxChannelUnlocked(
   }
 
   removeChannelPresetIfPresent(sandboxName, canonical);
-  const teardown = await applyChannelRemoveToGatewayAndRegistry(
-    sandboxName,
-    canonical,
-    tokenKeys,
-    { bestEffort: true },
-  );
+  const teardown = await applyChannelRemoveToGatewayAndRegistry(sandboxName, canonical, tokenKeys, {
+    bestEffort: true,
+  });
   if (!teardown.ok) {
     console.error(
       `  ${YW}⚠${R} Channel '${canonical}' remains disabled while ${teardown.residual.join(", ")} cleanup is incomplete.`,

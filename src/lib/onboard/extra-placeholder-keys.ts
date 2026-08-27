@@ -13,6 +13,12 @@ interface MessagingTokenDefShape {
   additionalCredentials?: Array<{ envKey: string; token: string | null }>;
 }
 
+export interface ExtraPlaceholderCredentialSources {
+  readonly env: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  readonly getCredential: (envKey: string) => string | null;
+  readonly normalizeCredentialValue: (value: string | undefined) => string;
+}
+
 export const EXTRA_PLACEHOLDER_KEYS_ENV = "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS";
 
 export const EXTRA_PLACEHOLDER_KEY_PATTERN = /^[A-Z][A-Z0-9_]{0,127}$/;
@@ -65,13 +71,13 @@ export function parseExtraPlaceholderKeys(
     }
     if (canonicalKeys.has(candidate)) {
       warnings.push(
-        `${EXTRA_PLACEHOLDER_KEYS_ENV}: ignoring "${candidate}" — collides with a canonical channel envKey`,
+        `${EXTRA_PLACEHOLDER_KEYS_ENV}: ignoring "${candidate}" — collides with a canonical credential environment-variable name`,
       );
       continue;
     }
     if (!findExtendedCanonicalPrefix(candidate, canonicalKeys)) {
       warnings.push(
-        `${EXTRA_PLACEHOLDER_KEYS_ENV}: ignoring "${candidate}" — must extend a canonical channel envKey (e.g. TELEGRAM_BOT_TOKEN_AGENT_A); arbitrary host secrets such as GITHUB_TOKEN are refused so they cannot leak into the sandbox provider gateway`,
+        `${EXTRA_PLACEHOLDER_KEYS_ENV}: ignoring "${candidate}" — must extend a canonical credential environment-variable name; arbitrary host secrets such as GITHUB_TOKEN are refused so they cannot leak into the sandbox provider gateway`,
       );
       continue;
     }
@@ -91,21 +97,22 @@ export function parseExtraPlaceholderKeys(
 export function registerExtraPlaceholderProviders(
   messagingTokenDefs: MessagingTokenDefShape[],
   log: (message: string) => void = (m) => console.warn(`  ${m}`),
+  sources: ExtraPlaceholderCredentialSources = {
+    env: process.env,
+    getCredential,
+    normalizeCredentialValue,
+  },
 ): string[] {
   const canonicalKeys = canonicalPlaceholderKeys();
-  const parsed = parseExtraPlaceholderKeys(
-    process.env[EXTRA_PLACEHOLDER_KEYS_ENV],
-    canonicalKeys,
-  );
+  const parsed = parseExtraPlaceholderKeys(sources.env[EXTRA_PLACEHOLDER_KEYS_ENV], canonicalKeys);
   const acceptedKeys: string[] = [];
   for (const warning of parsed.warnings) log(warning);
   for (const envKey of parsed.keys) {
-    // Match web-search precedence: the credential
-    // store wins so a same-named host env var cannot override an out-of-process
-    // credential that the operator has staged through `nemoclaw credentials
-    // set`. Collapse the empty-string result from normalizeCredentialValue to
-    // null so callers see one unambiguous "missing" sentinel.
-    const token = getCredential(envKey) || normalizeCredentialValue(process.env[envKey]) || null;
+    // Match web-search precedence: the credential store wins over host env.
+    const token =
+      sources.getCredential(envKey) ||
+      sources.normalizeCredentialValue(sources.env[envKey]) ||
+      null;
     const canonicalEnvKey = findExtendedCanonicalPrefix(envKey, canonicalKeys);
     const canonicalProvider = messagingTokenDefs.find(
       (definition) => definition.envKey === canonicalEnvKey,

@@ -7,6 +7,7 @@ import { listMessagingCredentialMetadata } from "../messaging/channels";
 import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../messaging/provider-profile";
 import { type ChannelDef, getChannelTokenKeys } from "../sandbox/channels";
 import * as braveProviderProfile from "./brave-provider-profile";
+import type { ExtraPlaceholderCredentialSources } from "./extra-placeholder-keys";
 import {
   bridgeProviderNamesForChannel,
   collectMessagingBridgeTokenDefs,
@@ -28,9 +29,7 @@ export function hasConfiguredMessagingCredential(tokenDef: MessagingTokenDef): b
   return [
     tokenDef.token,
     ...(tokenDef.additionalCredentials?.map((credential) => credential.token) ?? []),
-  ].some(
-    (token) => typeof token === "string" && token.trim().length > 0,
-  );
+  ].some((token) => typeof token === "string" && token.trim().length > 0);
 }
 
 type MessagingCredentialDef = MessagingTokenDef & {
@@ -53,7 +52,11 @@ export interface CreateSandboxMessagingPrepInput {
   ): string | null;
   getCredential(envKey: string): string | null;
   normalizeCredentialValue(value: unknown): string;
-  registerExtraPlaceholderProviders(messagingTokenDefs: MessagingTokenDef[]): string[];
+  registerExtraPlaceholderProviders(
+    messagingTokenDefs: MessagingTokenDef[],
+    log?: (message: string) => void,
+    sources?: ExtraPlaceholderCredentialSources,
+  ): string[];
   getMessagingChannelForEnvKey(envKey: string): string | null;
   providerExistsInGateway(name: string): boolean;
   providerMatchesGatewayCredential(name: string, type: string, credentialEnv: string): boolean;
@@ -189,7 +192,15 @@ export function prepareCreateSandboxMessaging(
     }),
   );
 
-  const extraPlaceholderKeys = input.registerExtraPlaceholderProviders(messagingTokenDefs);
+  const extraPlaceholderKeys = input.registerExtraPlaceholderProviders(
+    messagingTokenDefs,
+    undefined,
+    {
+      env: input.env,
+      getCredential: input.getCredential,
+      normalizeCredentialValue: input.normalizeCredentialValue,
+    },
+  );
   const hasMessagingTokens = messagingTokenDefs.some(hasConfiguredMessagingCredential);
   const reusableMessagingProviders: string[] = reusableWebSearchProvider
     ? [webSearchProviderName]

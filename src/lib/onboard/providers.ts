@@ -648,10 +648,15 @@ function requiresCredentialFamilyBinding(tokenDef) {
   );
 }
 
-function preflightCredentialFamilyProviderBindings(tokenDefs, runOpenshell) {
+function preflightCredentialFamilyProviderBindings(tokenDefs, runOpenshell, options = {}) {
   const failures = [];
   for (const tokenDef of tokenDefs) {
-    if (!requiresCredentialFamilyBinding(tokenDef)) continue;
+    if (
+      !requiresCredentialFamilyBinding(tokenDef) &&
+      !(options.requireExactBindings && tokenDef.providerType)
+    ) {
+      continue;
+    }
     const { name, envKey, providerType } = tokenDef;
     const requiredProviderType = providerType || "generic";
     const inspection = inspectGatewayCredentialFamilyProviderBinding(
@@ -662,11 +667,24 @@ function preflightCredentialFamilyProviderBindings(tokenDefs, runOpenshell) {
       },
       runOpenshell,
     );
-    if (inspection.kind === "missing" || inspection.kind === "exact") continue;
+    if (inspection.kind === "missing") continue;
+    let exactMetadata = null;
+    if (inspection.kind === "exact") {
+      if (!options.requireExactBindings || options.replaceExisting) continue;
+      exactMetadata = readGatewayProviderMetadata(name, runOpenshell);
+      if (
+        containsPlannedMessagingCredentialKeys(
+          exactMetadata,
+          plannedMessagingCredentialKeys(tokenDef),
+        )
+      ) {
+        continue;
+      }
+    }
     failures.push({
       name,
       message:
-        inspection.kind === "indeterminate"
+        inspection.kind === "indeterminate" || (inspection.kind === "exact" && !exactMetadata)
           ? `Could not inspect messaging provider '${name}'; no provider mutation was attempted.`
           : requiredProviderType === MESSAGING_CREDENTIAL_PROVIDER_TYPE
             ? `Messaging provider '${name}' does not match the required endpointless credential binding.`
@@ -677,42 +695,12 @@ function preflightCredentialFamilyProviderBindings(tokenDefs, runOpenshell) {
 }
 
 function assertCredentialFamilyProviderBindings(tokenDefs, runOpenshell, options = {}) {
-  const failures = preflightCredentialFamilyProviderBindings(tokenDefs, runOpenshell);
+  const failures = preflightCredentialFamilyProviderBindings(tokenDefs, runOpenshell, options);
   if (failures.length === 0 || options.replaceExisting) return;
   const message = failures.map(({ name, message: failure }) => `${name}: ${failure}`).join("; ");
   if (options.bestEffort) throw new MessagingProviderBindingConflictError(message);
   console.error(`\n  ✗ Failed to create messaging provider: ${message}`);
   process.exit(1);
-}
-
-function preflightMessagingProviderBindings(tokenDefs, _runOpenshell) {
-  const failures = [];
-  for (const tokenDef of tokenDefs) {
-    const { name, envKey, providerType } = tokenDef;
-    if (!providerType) continue;
-    const inspection = inspectGatewayCredentialFamilyProviderBinding(
-      {
-        name,
-        type: providerType,
-        credentialKey: envKey,
-      },
-      _runOpenshell,
-    );
-    if (inspection.kind === "missing") continue;
-    const metadata =
-      inspection.kind === "exact" ? readGatewayProviderMetadata(name, _runOpenshell) : null;
-    const plannedKeys = plannedMessagingCredentialKeys(tokenDef);
-    const matches = containsPlannedMessagingCredentialKeys(metadata, plannedKeys);
-    if (matches) continue;
-    failures.push({
-      name,
-      message:
-        inspection.kind === "indeterminate" || (inspection.kind === "exact" && !metadata)
-          ? `Could not inspect messaging provider '${name}'; no provider mutation was attempted.`
-          : `Existing provider '${name}' does not match the required '${providerType}' credential binding.`,
-    });
-  }
-  return failures;
 }
 
 /**
@@ -763,23 +751,6 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   // A channel is a bridge by the PRESENCE of a co-located
   // channels/<channel>/provider-profile/<agent>.yaml (not a flag inside it); both
   // bracket steps self-gate when no bridge token def is present.
-  if (options.requireExactBindings && !options.replaceExisting) {
-    const bindingFailures = preflightMessagingProviderBindings(
-      tokenDefs,
-      runMessagingBridgeOpenshell,
-    );
-    if (bindingFailures.length > 0) {
-      const message = bindingFailures
-        .map(({ name, message: failure }) => `${name}: ${failure}`)
-        .join("; ");
-      if (options.bestEffort) {
-        throw new MessagingProviderBindingConflictError(message);
-      }
-      console.error(`\n  ✗ Failed to create messaging provider: ${message}`);
-      process.exit(1);
-    }
-  }
-
   const messagingBridgeProvider = require("./messaging-bridge-provider");
   if (tokenDefs.some(({ providerType }) => providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE)) {
     try {

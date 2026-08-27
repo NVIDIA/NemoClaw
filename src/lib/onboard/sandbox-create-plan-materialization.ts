@@ -221,7 +221,7 @@ export function validateSandboxCreateIntentBindings(
         `Cannot materialize sandbox create intent; missing credential binding '${request.envKey}' for provider '${request.name}'.`,
       );
     }
-    if (Boolean(tokenDef.token) !== request.credentialConfigured) {
+    if (hasConfiguredMessagingCredential(tokenDef) !== request.credentialConfigured) {
       throw new Error(
         `Cannot materialize sandbox create intent; credential availability changed for provider '${request.name}'.`,
       );
