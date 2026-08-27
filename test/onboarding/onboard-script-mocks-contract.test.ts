@@ -58,15 +58,21 @@ describe("shared onboarding process fixture contracts", () => {
     mkdirSync(fakeBin);
     writeOkOpenshell(fakeBin, { readySandboxGet: true });
 
-    const createAttemptList = fixtureMocks.mockCreatedSandboxIdentityList([
+    const createAttemptNonce = "a".repeat(62);
+    const createAttemptCommand = [
       "openshell",
       "sandbox",
       "list",
+      "-g",
+      "nemoclaw",
       "--selector",
-      "ai.nvidia.nemoclaw.create-attempt=fixture-nonce",
+      `ai.nvidia.nemoclaw.create-attempt=${createAttemptNonce}`,
       "--output",
       "json",
-    ]);
+      "--limit",
+      "2",
+    ];
+    const createAttemptList = fixtureMocks.mockCreatedSandboxIdentityList(createAttemptCommand);
     const sandboxGet = spawnSync(
       join(fakeBin, "openshell"),
       ["sandbox", "get", "-g", "nemoclaw", "my-assistant"],
@@ -92,8 +98,23 @@ describe("shared onboarding process fixture contracts", () => {
 
     expect(fixtureMocks.ONBOARD_CREATED_SANDBOX_ID).toBe(ONBOARD_CREATED_SANDBOX_ID);
     expect(JSON.parse(createAttemptList ?? "[]")).toEqual([
-      expect.objectContaining({ id: ONBOARD_CREATED_SANDBOX_ID, name: "my-assistant" }),
+      expect.objectContaining({
+        id: ONBOARD_CREATED_SANDBOX_ID,
+        labels: { "ai.nvidia.nemoclaw.create-attempt": createAttemptNonce },
+        name: "my-assistant",
+      }),
     ]);
+    expect(
+      fixtureMocks.mockCreatedSandboxIdentityList(
+        createAttemptCommand.map((argument) =>
+          argument.replace(
+            "ai.nvidia.nemoclaw.create-attempt=",
+            "aiXnvidiaXnemoclawXcreate-attempt=",
+          ),
+        ),
+      ),
+      "the selector label prefix must match literally",
+    ).toBeNull();
     expect(sandboxGet.status, sandboxGet.stderr).toBe(0);
     expect(sandboxGet.stdout).toContain(`Id: ${ONBOARD_CREATED_SANDBOX_ID}`);
     expect(String(messagingGet.stdout)).toContain(`Id: ${ONBOARD_CREATED_SANDBOX_ID}`);
