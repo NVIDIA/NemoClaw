@@ -629,59 +629,85 @@ function mockStandaloneGatewayTeardownAuthority() {
 
 function mockDockerSandboxLifecycleReleaseFromRunner() {
   const runner = require(path.resolve(__dirname, "../../src/lib/runner.ts"));
-  if (runner.run.__nemoclawDockerLifecycleFixture === true) return;
-  const run = runner.run;
-  let finalCommitReleased = false;
-  let lifecycleReleased = false;
-  const wrappedRun = (command, options) => {
-    const normalized = normalizeCommand(command);
+  const state = runner.run.__nemoclawDockerLifecycleState ?? {
+    finalCommitReleased: false,
+    lifecycleStopped: false,
+    replacementRestarted: false,
+  };
+  const captureOutput = (normalized) => {
     if (
-      finalCommitReleased &&
-      ((normalized.startsWith("docker ps -a --no-trunc ") &&
-        normalized.includes("label=openshell.ai/sandbox-name=my-assistant") &&
-        normalized.endsWith("--format {{.ID}}")) ||
-        normalized ===
-          `docker inspect --type container --format {{ index .Config.Labels "openshell.ai/sandbox-namespace" }} ${ONBOARD_SANDBOX_NEW_CONTAINER_ID}`)
+      state.finalCommitReleased &&
+      normalized.startsWith("docker ps -a --no-trunc ") &&
+      normalized.includes("label=openshell.ai/sandbox-name=my-assistant") &&
+      normalized.endsWith("--format {{.ID}}")
     ) {
-      return {
-        status: 0,
-        stdout: Buffer.from(
-          normalized.startsWith("docker inspect ")
-            ? "test-gateway\n"
-            : `${ONBOARD_SANDBOX_NEW_CONTAINER_ID}\n`,
-        ),
-        stderr: Buffer.alloc(0),
-      };
+      return `${ONBOARD_SANDBOX_NEW_CONTAINER_ID}\n`;
     }
     if (
-      finalCommitReleased &&
+      state.finalCommitReleased &&
+      normalized ===
+        `docker inspect --type container --format {{ index .Config.Labels "openshell.ai/sandbox-namespace" }} ${ONBOARD_SANDBOX_NEW_CONTAINER_ID}`
+    ) {
+      return "test-gateway\n";
+    }
+    if (
+      state.finalCommitReleased &&
       normalized ===
         `docker inspect --type container --format {{json .State.Running}} ${ONBOARD_SANDBOX_NEW_CONTAINER_ID}`
     ) {
-      return {
-        status: 0,
-        stdout: Buffer.from("true\n"),
-        stderr: Buffer.alloc(0),
-      };
+      return "true\n";
     }
-    if (lifecycleReleased && normalized.includes("sandbox list")) {
-      return {
-        status: 0,
-        stdout: Buffer.from("No sandboxes found\n"),
-        stderr: Buffer.alloc(0),
-      };
+    if (state.replacementRestarted && normalized.includes("sandbox list")) {
+      return "my-assistant  2026-08-27  Ready\n";
     }
-    const result = run(command, options);
-    if (normalized.startsWith("docker rm ") && result?.status === 0) {
-      lifecycleReleased = true;
-      if (normalized === `docker rm ${ONBOARD_SANDBOX_OLD_CONTAINER_ID}`) {
-        finalCommitReleased = true;
-      }
+    if (state.lifecycleStopped && normalized.includes("sandbox list")) {
+      return "my-assistant  2026-08-27  Stopped\n";
     }
-    return result;
+    return null;
   };
-  wrappedRun.__nemoclawDockerLifecycleFixture = true;
-  runner.run = wrappedRun;
+  if (runner.run.__nemoclawDockerLifecycleFixture !== true) {
+    const run = runner.run;
+    const wrappedRun = (command, options) => {
+      const normalized = normalizeCommand(command);
+      const captured = captureOutput(normalized);
+      if (captured !== null) {
+        return {
+          status: 0,
+          stdout: Buffer.from(captured),
+          stderr: Buffer.alloc(0),
+        };
+      }
+      const result = run(command, options);
+      if (normalized.startsWith("docker rm ") && result?.status === 0) {
+        if (normalized === `docker rm ${ONBOARD_SANDBOX_OLD_CONTAINER_ID}`) {
+          state.finalCommitReleased = true;
+        }
+      }
+      if (normalized.includes("sandbox stop my-assistant") && result?.status === 0) {
+        state.lifecycleStopped = true;
+        state.replacementRestarted = false;
+      }
+      if (
+        state.finalCommitReleased &&
+        normalized.includes("sandbox start my-assistant") &&
+        result?.status === 0
+      ) {
+        state.replacementRestarted = true;
+      }
+      return result;
+    };
+    wrappedRun.__nemoclawDockerLifecycleFixture = true;
+    wrappedRun.__nemoclawDockerLifecycleState = state;
+    runner.run = wrappedRun;
+  }
+  if (runner.runCapture.__nemoclawDockerLifecycleFixture !== true) {
+    const runCapture = runner.runCapture;
+    const wrappedRunCapture = (command, options) => {
+      return captureOutput(normalizeCommand(command)) ?? runCapture(command, options);
+    };
+    wrappedRunCapture.__nemoclawDockerLifecycleFixture = true;
+    runner.runCapture = wrappedRunCapture;
+  }
 }
 
 function mockFreshOpenClawPluginDiscovery() {
