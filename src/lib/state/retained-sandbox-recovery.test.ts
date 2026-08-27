@@ -25,6 +25,10 @@ const evidence = {
   sandboxScopedProviders: ["sandbox-telegram"],
   credentialEnvironmentVariables: ["NVIDIA_API_KEY", "TELEGRAM_BOT_TOKEN"],
 } as const;
+const recoveryAuthority = {
+  createAttemptNonce: "c".repeat(62),
+  policyCreationReceipt: null,
+} as const;
 
 describe("retained sandbox recovery state", () => {
   it("persists verified identity and secret-free resource evidence independently", async () => {
@@ -37,6 +41,7 @@ describe("retained sandbox recovery state", () => {
       gatewayPort: 8080,
       lifecycleGeneration: "00000000-0000-4000-8000-000000000001",
       verifiedEffectivePolicyIdentity: { hash: "sha256:policy-1", activeVersion: 1 },
+      ...recoveryAuthority,
       resources: evidence,
       reason: "cancelled_after_sandbox_creation",
       recordedAt: "2026-08-27T00:00:00.000Z",
@@ -67,6 +72,7 @@ describe("retained sandbox recovery state", () => {
       gatewayPort: 8080,
       lifecycleGeneration: null,
       verifiedEffectivePolicyIdentity: null,
+      ...recoveryAuthority,
       resources: {
         sharedInferenceProviders: [],
         sandboxScopedProviders: [],
@@ -91,6 +97,7 @@ describe("retained sandbox recovery state", () => {
       gatewayPort: 18080,
       lifecycleGeneration: "00000000-0000-4000-8000-000000000001",
       verifiedEffectivePolicyIdentity: { hash: "sha256:policy-1", activeVersion: 1 },
+      ...recoveryAuthority,
       resources: evidence,
       reason: "cancelled_after_sandbox_creation",
     });
@@ -101,6 +108,7 @@ describe("retained sandbox recovery state", () => {
       gatewayPort: 18080,
       lifecycleGeneration: "00000000-0000-4000-8000-000000000002",
       verifiedEffectivePolicyIdentity: { hash: "sha256:policy-2", activeVersion: 2 },
+      ...recoveryAuthority,
       resources: evidence,
       reason: "retained_after_sandbox_creation_failure",
     });
@@ -147,6 +155,7 @@ describe("retained sandbox recovery state", () => {
         gatewayPort: 8080,
         lifecycleGeneration: "generation-1",
         verifiedEffectivePolicyIdentity: null,
+        ...recoveryAuthority,
         resources: evidence,
         reason: "retained_after_sandbox_creation_failure",
       }),
@@ -182,6 +191,7 @@ describe("retained sandbox recovery state", () => {
         gatewayPort: 8080,
         lifecycleGeneration: "generation-1",
         verifiedEffectivePolicyIdentity: null,
+        ...recoveryAuthority,
         resources: evidence,
         reason: "retained_after_sandbox_creation_failure",
       }),
@@ -222,6 +232,7 @@ describe("retained sandbox recovery state", () => {
           gatewayPort: 8080,
           lifecycleGeneration: "generation-1",
           verifiedEffectivePolicyIdentity: null,
+          ...recoveryAuthority,
         },
       ),
     ).toThrow(/state directory changed|lock ownership changed/u);
@@ -245,6 +256,7 @@ describe("retained sandbox recovery state", () => {
       gatewayPort: 8080,
       lifecycleGeneration: "generation-1",
       verifiedEffectivePolicyIdentity: null,
+      ...recoveryAuthority,
       resources: evidence,
       reason: "cancelled_after_sandbox_creation",
     });
@@ -277,6 +289,7 @@ describe("retained sandbox recovery state", () => {
       gatewayPort: 8080,
       lifecycleGeneration: "legacy-generation",
       verifiedEffectivePolicyIdentity: null,
+      ...recoveryAuthority,
       resources: evidence,
       reason: "cancelled_after_sandbox_creation",
     });
@@ -305,6 +318,7 @@ describe("retained sandbox recovery state", () => {
       gatewayPort: 8080,
       lifecycleGeneration: null,
       verifiedEffectivePolicyIdentity: null,
+      ...recoveryAuthority,
       resources: evidence,
       reason: "retained_after_sandbox_creation_failure",
     });

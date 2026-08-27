@@ -115,6 +115,7 @@ export interface VerifiedSandboxPolicyBoundary {
   readonly gatewayPort: number;
   readonly lifecycleGeneration: string;
   readonly lifecycleLiveIdentityFingerprint: string;
+  readonly createAttemptNonce?: string;
   readonly route: import("./docker-gpu-route").SelectedDockerGpuRoute;
 }
 

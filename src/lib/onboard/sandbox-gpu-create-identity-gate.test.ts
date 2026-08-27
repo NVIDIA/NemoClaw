@@ -128,12 +128,14 @@ describe("created sandbox identity gate", () => {
     input.resumeVerifiedCreate = {
       route: "none",
       liveIdentityFingerprint: fingerprintSandboxRecreateValue(sandboxId),
+      createAttemptNonce: "a".repeat(62),
     };
     input.verifyCreatedSandboxBeforeEffects = vi.fn(async (identity) => {
       events.push("verify-created");
       expect(identity).toEqual({
         sandboxId,
         liveIdentityFingerprint: fingerprintSandboxRecreateValue(sandboxId),
+        createAttemptNonce: "a".repeat(62),
         route: "none",
       });
     });
@@ -189,6 +191,7 @@ describe("created sandbox identity gate", () => {
     input.resumeVerifiedCreate = {
       route: "none",
       liveIdentityFingerprint: fingerprintSandboxRecreateValue("expected-id"),
+      createAttemptNonce: "a".repeat(62),
     };
     input.verifyCreatedSandboxBeforeEffects = vi.fn();
     input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
@@ -208,6 +211,22 @@ describe("created sandbox identity gate", () => {
     expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
     expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
     expect(patch.ensureApplied).not.toHaveBeenCalled();
+  });
+
+  it("refuses a resume checkpoint without durable create-attempt authority (#9833)", async () => {
+    const input = noGpuInput();
+    input.resumeVerifiedCreate = {
+      route: "none",
+      liveIdentityFingerprint: fingerprintSandboxRecreateValue("expected-id"),
+    };
+    const deps = createGpuFlowDeps();
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "durable create-attempt authority",
+    );
+
+    expect(deps.runOpenshell).not.toHaveBeenCalled();
+    expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
   });
 
   it("requires a durable recovery owner for verified create attempts (#9211)", async () => {
@@ -232,6 +251,7 @@ describe("created sandbox identity gate", () => {
       expect(identity).toEqual({
         sandboxId: "alpha-sandbox-id",
         liveIdentityFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        createAttemptNonce: expect.stringMatching(/^[0-9a-f]{62}$/u),
         route: "none",
       });
       expect(patch.ensureApplied).not.toHaveBeenCalled();
@@ -587,6 +607,7 @@ describe("created sandbox identity gate", () => {
         `Durable sandbox identity fingerprint: ${fingerprintSandboxRecreateValue("alpha-sandbox-id")}`,
       ),
       fingerprintSandboxRecreateValue("alpha-sandbox-id"),
+      nonce,
     );
     expect(patch.exitOnPatchError).not.toHaveBeenCalled();
     expect(patch.ensureApplied).not.toHaveBeenCalled();
@@ -626,6 +647,7 @@ describe("created sandbox identity gate", () => {
         `Durable sandbox identity fingerprint: ${fingerprintSandboxRecreateValue("alpha-sandbox-id")}`,
       ),
       fingerprintSandboxRecreateValue("alpha-sandbox-id"),
+      nonce,
     );
     expect(patch.exitOnPatchError).not.toHaveBeenCalled();
     expect(patch.ensureApplied).not.toHaveBeenCalled();
@@ -702,6 +724,8 @@ describe("created sandbox identity gate", () => {
           "u",
         ),
       ),
+      undefined,
+      nonce,
     );
     expect(events).toEqual(["persist-recovery", "rejected"]);
     expect(deps.runCaptureOpenshell).toHaveBeenCalledOnce();
@@ -851,6 +875,7 @@ describe("created sandbox identity gate", () => {
         ),
       ),
       fingerprint,
+      nonce,
     );
     expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledBefore(exit);
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
@@ -906,6 +931,8 @@ describe("created sandbox identity gate", () => {
           "u",
         ),
       ),
+      undefined,
+      nonce,
     );
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(output).toContain(`${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`);

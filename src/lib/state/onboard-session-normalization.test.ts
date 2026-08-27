@@ -26,6 +26,12 @@ describe("onboard session normalization", () => {
       reason: "cancelled_after_sandbox_creation" as const,
       sandboxName: "retained-sb",
       sandboxIdentityFingerprint: "a".repeat(64),
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleGeneration: "generation-1",
+      verifiedEffectivePolicyIdentity: null,
+      createAttemptNonce: "c".repeat(62),
+      policyCreationReceipt: null,
       recordedAt: "2026-08-27T00:00:00.000Z",
     };
     const normalized = normalizeSession({
@@ -42,6 +48,24 @@ describe("onboard session normalization", () => {
       cancellationRecovery,
     });
     expect(summarizeForDebug(normalized)?.cancellationRecovery).toEqual(cancellationRecovery);
+  });
+
+  it("fails closed when saved recovery authority is incomplete (#9833)", () => {
+    const incompleteRecovery = {
+      reason: "retained_after_sandbox_creation_failure" as const,
+      sandboxName: "retained-sb",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      recordedAt: "2026-08-27T00:00:00.000Z",
+    };
+
+    expect(() =>
+      normalizeSession({
+        ...createSession({ sandboxName: "retained-sb" }),
+        resumable: false,
+        status: "recovery_required",
+        cancellationRecovery: incompleteRecovery,
+      } as unknown as Parameters<typeof normalizeSession>[0]),
+    ).toThrow(/saved recovery authority is incomplete/u);
   });
 
   it("keeps APF create intent and defaults legacy sessions to false (#9833)", () => {

@@ -69,6 +69,28 @@ describe("detachSandboxProviders", () => {
     expect(result.failures).toEqual([]);
   });
 
+  it("stops before detaching from a same-name replacement (#9833)", () => {
+    const calls: string[][] = [];
+    const expectedIdentity = "identity-a";
+    let liveIdentity = expectedIdentity;
+    const runOpenshell = vi.fn((args: string[]) => {
+      calls.push(args);
+      liveIdentity = "identity-b";
+      return { status: 0 };
+    });
+    const revalidateSandboxIdentity = vi.fn(() => {
+      liveIdentity === expectedIdentity || (() => { throw new Error("sandbox identity changed"); })();
+    });
+
+    expect(() =>
+      detachSandboxProviders("alpha", {
+        runOpenshell,
+        revalidateSandboxIdentity,
+      } as never),
+    ).toThrow(/sandbox identity changed/u);
+    expect(calls).toHaveLength(1);
+  });
+
   it("treats provider-scoped NotFound / not attached outputs as success-equivalent", () => {
     const responses = new Map<string, RunResult>([
       [

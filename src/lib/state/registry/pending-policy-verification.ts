@@ -15,6 +15,7 @@ const PENDING_POLICY_VERIFICATION_KEYS = new Set([
   "sandboxName",
   "lifecycleGeneration",
   "sandboxIdentityFingerprint",
+  "createAttemptNonce",
   "route",
   "policyHash",
   "policyVersion",
@@ -50,6 +51,9 @@ export function normalizePendingSandboxPolicyVerification(
     value.lifecycleGeneration.length === 0 ||
     typeof value.sandboxIdentityFingerprint !== "string" ||
     !SHA256_DIGEST_PATTERN.test(value.sandboxIdentityFingerprint) ||
+    (value.createAttemptNonce !== undefined &&
+      (typeof value.createAttemptNonce !== "string" ||
+        !/^[0-9a-f]{62}$/u.test(value.createAttemptNonce))) ||
     (value.route !== "none" && value.route !== "native" && value.route !== "compatibility") ||
     typeof value.policyHash !== "string" ||
     !Number.isSafeInteger(value.policyVersion) ||
@@ -114,6 +118,7 @@ export function normalizePendingSandboxPolicyVerification(
       sandboxName: boundary.sandboxName,
       lifecycleGeneration: boundary.lifecycleGeneration,
       sandboxIdentityFingerprint: boundary.sandboxIdentityFingerprint,
+      ...(value.createAttemptNonce ? { createAttemptNonce: value.createAttemptNonce } : {}),
       route: value.route,
       policyHash: boundary.policyHash,
       policyVersion: boundary.policyVersion,
@@ -135,6 +140,7 @@ export function normalizePendingSandboxPolicyVerification(
     sandboxName: boundary.sandboxName,
     lifecycleGeneration: boundary.lifecycleGeneration,
     sandboxIdentityFingerprint: boundary.sandboxIdentityFingerprint,
+    ...(value.createAttemptNonce ? { createAttemptNonce: value.createAttemptNonce } : {}),
     route: value.route,
     policyHash: boundary.policyHash,
     policyVersion: boundary.policyVersion,

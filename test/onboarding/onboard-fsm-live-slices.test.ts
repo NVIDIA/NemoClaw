@@ -476,6 +476,8 @@ if (scenario.mode === "stale-recovery-admission") {
         gatewayPort: 8080,
         lifecycleGeneration: "stale-admission-generation",
         verifiedEffectivePolicyIdentity: null,
+        createAttemptNonce: "c".repeat(62),
+        policyCreationReceipt: null,
         resources: {
           sharedInferenceProviders: [],
           sandboxScopedProviders: [],

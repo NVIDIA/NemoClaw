@@ -34,6 +34,8 @@ const UNVERIFIED_RECOVERY_CONTEXT = {
   gatewayPort: 8080,
   lifecycleGeneration: "generation-1",
   verifiedEffectivePolicyIdentity: null,
+  createAttemptNonce: "c".repeat(62),
+  policyCreationReceipt: null,
 } as const;
 
 describe("created Hermes credential environment reconciliation", () => {
@@ -116,6 +118,35 @@ describe("created Hermes credential environment reconciliation", () => {
 
     expect(restartGateway).not.toHaveBeenCalled();
     expect(waitForGateway).not.toHaveBeenCalled();
+  });
+
+  it("refuses a same-name replacement at the credential mutation edge (#9833)", () => {
+    const expectedIdentity = "identity-a";
+    let liveIdentity = expectedIdentity;
+    const mutations: string[] = [];
+    const revalidatePolicyAuthority = vi.fn(() => {
+      liveIdentity === expectedIdentity || (() => { throw new Error("sandbox identity changed"); })();
+      liveIdentity = "identity-b";
+    });
+
+    expect(() =>
+      reconcileCreatedHermesCredentialEnvironment(
+        { sandboxName: "alpha", plan },
+        {
+          revalidatePolicyAuthority,
+          reconcileCredentialEnv: ((_plan: never, revalidate?: (operation: string) => void) => {
+            revalidate?.("mutating credential environment");
+            mutations.push(liveIdentity);
+            return { changed: true };
+          }) as never,
+          restartGateway: vi.fn(),
+          parseRestartCompletion: vi.fn(),
+          waitForGateway: vi.fn(),
+        },
+        vi.fn(),
+      ),
+    ).toThrow(/sandbox identity changed/u);
+    expect(mutations).toEqual([]);
   });
 
   it("fails onboarding when the changed gateway cannot prove restart completion", () => {
@@ -201,6 +232,18 @@ describe("retained create recovery persistence", () => {
       gatewayPort: 18080,
       lifecycleGeneration: "00000000-0000-4000-8000-000000000004",
       verifiedEffectivePolicyIdentity: { hash: "sha256:policy-4", activeVersion: 4 },
+      createAttemptNonce: "d".repeat(62),
+      policyCreationReceipt: {
+        schemaVersion: 1,
+        origin: "sandbox-create",
+        gatewayName: "nemoclaw-18080",
+        gatewayPort: 18080,
+        sandboxName: "alpha",
+        lifecycleGeneration: "00000000-0000-4000-8000-000000000004",
+        sandboxIdentityFingerprint: "f".repeat(64),
+        policyHash: "sha256:policy-4",
+        policyVersion: 4,
+      },
     } as const;
     const markRetainedSandboxRecovery = vi.fn(() => true);
     const input = {
@@ -916,6 +959,12 @@ describe("sandbox create policy authority checks", () => {
 
     expect(error).toBeInstanceOf(AggregateError);
     expect((error as AggregateError).errors).toContain(createFailure);
+    expect((error as AggregateError).message).toContain(
+      "post-create verification or finalization failed",
+    );
+    expect((error as AggregateError).message).not.toContain(
+      "after policy authority validation failed",
+    );
     expect(persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
       expect.stringContaining("left sandbox 'alpha' in place"),
       exactIdentity,

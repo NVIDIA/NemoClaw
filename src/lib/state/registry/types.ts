@@ -24,6 +24,7 @@ interface PendingSandboxPolicyVerificationBoundary {
   readonly sandboxName: string;
   readonly lifecycleGeneration: string;
   readonly sandboxIdentityFingerprint: string;
+  readonly createAttemptNonce?: string;
   readonly route: "none" | "native" | "compatibility";
   readonly policyHash: string;
   readonly policyVersion: number;
