@@ -131,7 +131,6 @@ const {
       replaceExisting?: boolean;
       revalidatePolicyRequirements?(operation: string): void;
       requireExactBindings?: boolean;
-      sleepSeconds?(seconds: number): void;
     },
   ) => string[];
 };
@@ -742,17 +741,19 @@ describe("onboard provider helpers", () => {
     expect(calls.flatMap(({ command }) => command)).not.toContain(credential);
   });
 
-  it("waits for an updated messaging provider revision to become observable", () => {
+  it("accepts namespaced credentials retained by an existing messaging provider", () => {
     const commands: string[] = [];
-    const sleep = vi.fn();
-    let providerLookups = 0;
-    const providerMetadata = (type: string) => ({
+    const providerMetadata = {
       status: 0,
-      stdout:
-        `Name: alpha-telegram-bridge\nType: ${type}\n` +
-        "Credential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n",
+      stdout: [
+        "Name: alpha-telegram-bridge",
+        "Type: nemoclaw-mcp-v1",
+        "Credential keys: TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_TOKEN_AGENT_A",
+        "Config keys: <none>",
+        "",
+      ].join("\n"),
       stderr: "",
-    });
+    };
 
     const providers = upsertMessagingProviders(
       [
@@ -768,26 +769,56 @@ describe("onboard provider helpers", () => {
         if (command[1] === "profile") {
           return { status: 0, stdout: MESSAGING_ENDPOINTLESS_PROFILE_EXPORT, stderr: "" };
         }
-        if (command[1] === "get") {
-          providerLookups += 1;
-          return providerLookups === 2
-            ? providerMetadata("generic")
-            : providerMetadata("nemoclaw-mcp-v1");
-        }
+        if (command[1] === "get") return providerMetadata;
         return { status: 0, stdout: "", stderr: "" };
       },
-      { sleepSeconds: sleep },
     );
 
     expect(providers).toEqual(["alpha-telegram-bridge"]);
-    expect(sleep).toHaveBeenCalledOnce();
     expect(commands).toEqual([
       "provider profile export nemoclaw-mcp-v1 --output json",
       "provider get alpha-telegram-bridge",
       "provider update alpha-telegram-bridge --credential TELEGRAM_BOT_TOKEN",
       "provider get alpha-telegram-bridge",
-      "provider get alpha-telegram-bridge",
     ]);
+  });
+
+  it("rejects an update that omits a submitted namespaced credential", () => {
+    expect(() =>
+      upsertMessagingProviders(
+        [
+          {
+            name: "alpha-telegram-bridge",
+            envKey: "TELEGRAM_BOT_TOKEN",
+            token: "telegram-test-token",
+            providerType: "nemoclaw-mcp-v1",
+            additionalCredentials: [
+              {
+                envKey: "TELEGRAM_BOT_TOKEN_AGENT_A",
+                token: "telegram-agent-a-test-token",
+              },
+            ],
+          },
+        ],
+        (command) =>
+          command[1] === "profile"
+            ? { status: 0, stdout: MESSAGING_ENDPOINTLESS_PROFILE_EXPORT, stderr: "" }
+            : command[1] === "get"
+              ? {
+                  status: 0,
+                  stdout: [
+                    "Name: alpha-telegram-bridge",
+                    "Type: nemoclaw-mcp-v1",
+                    "Credential keys: TELEGRAM_BOT_TOKEN",
+                    "Config keys: <none>",
+                    "",
+                  ].join("\n"),
+                  stderr: "",
+                }
+              : { status: 0, stdout: "", stderr: "" },
+        { bestEffort: true },
+      ),
+    ).toThrow(/did not confirm messaging provider/u);
   });
 
   it("rejects credential-free reuse when the messaging profile is incompatible (#9875)", () => {

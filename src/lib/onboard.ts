@@ -923,7 +923,6 @@ const registeredCredentialProviders =
     stagedLegacyValues,
     migratedLegacyKeys,
     persistMigratedLegacyKeys,
-    sleepSeconds,
   });
 const { upsertProvider, upsertMessagingProviders, providerMatchesGatewayCredential } =
   registeredCredentialProviders;

@@ -27,7 +27,6 @@ export interface MessagingProviderRegistrationOptions {
   allowedSandboxes?: readonly string[];
   requireExactBindings?: boolean;
   revalidatePolicyRequirements?(operation: string): void;
-  sleepSeconds?(seconds: number): void;
 }
 
 type PreparedCredentialProviders = {
@@ -49,7 +48,6 @@ export interface CredentialProviderRegistrationDeps {
   stagedLegacyValues: ReadonlyMap<string, string>;
   migratedLegacyKeys: Set<string>;
   persistMigratedLegacyKeys(): void;
-  sleepSeconds?(seconds: number): void;
 }
 
 function recordMigratedLegacyMessagingCredentials(
@@ -203,10 +201,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     const upserted = providers.upsertMessagingProviders(
       tokenDefs,
       runOpenshell,
-      {
-        ...options,
-        sleepSeconds: options.sleepSeconds ?? deps.sleepSeconds,
-      },
+      options,
     ) as string[];
     recordMigratedLegacyMessagingCredentials(
       tokenDefs,
