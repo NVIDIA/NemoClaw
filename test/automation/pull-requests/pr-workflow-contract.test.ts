@@ -22,6 +22,13 @@ type CiWorkflow = {
   jobs: Record<string, WorkflowJob & { if?: string; needs?: string | string[] }>;
 };
 
+type SdkPackageWorkflow = Readonly<{
+  concurrency?: Readonly<Record<string, unknown>>;
+  jobs: Readonly<Record<string, WorkflowJob>>;
+  on?: Readonly<Record<string, unknown>>;
+  permissions?: Readonly<Record<string, string>>;
+}>;
+
 type InstallerHashAction = CompositeAction & {
   inputs?: Record<string, { required?: boolean }>;
 };
@@ -333,6 +340,10 @@ describe("pull request and main workflow contracts", () => {
   const mainWorkflow = readYaml<CiWorkflow>(".github/workflows/main.yaml");
   const dcoWorkflow = readYaml<CiWorkflow>(".github/workflows/dco-check.yaml");
   const installerHashWorkflow = readYaml<CiWorkflow>(".github/workflows/installer-hash-check.yaml");
+  const sdkPackageWorkflow = readYaml<SdkPackageWorkflow>(
+    ".github/workflows/openshell-sdk-package-pr.yaml",
+  );
+  const sdkPackageJob = sdkPackageWorkflow.jobs["package-openshell-sdk"];
 
   const installerHashAction = readYaml<InstallerHashAction>(
     ".github/actions/ci-installer-hash-check/action.yaml",
@@ -587,6 +598,68 @@ describe("pull request and main workflow contracts", () => {
       name: "openshell-sdk-package",
       path: "${{ runner.temp }}/openshell-sdk",
     });
+  });
+
+  // source-shape-contract: security -- The package credential must remain in a base-loaded workflow that uploads only the verified SDK archive
+  it("keeps package access out of pull request controlled execution", () => {
+    expect(sdkPackageWorkflow.on).toEqual({
+      pull_request_target: { types: ["opened", "synchronize", "reopened", "edited"] },
+    });
+    expect(sdkPackageWorkflow.permissions).toEqual({ contents: "read" });
+    expect(sdkPackageJob.permissions).toEqual({ contents: "read", packages: "read" });
+    expect(sdkPackageJob.if).toBe(
+      "${{ github.event.pull_request.head.repo.full_name == github.repository && (github.event.action != 'edited' || github.event.changes.base != null) }}",
+    );
+    expect(sdkPackageJob["timeout-minutes"]).toBe(5);
+
+    const checkout = requiredWorkflowStep(
+      sdkPackageJob,
+      "Checkout base-controlled package verifier",
+    );
+    expect(checkout.uses).toBe(trustedCheckoutAction);
+    expect(checkout.with).toMatchObject({
+      ref: "${{ github.event.pull_request.base.sha }}",
+      "persist-credentials": false,
+    });
+    expect(String(checkout.with?.["sparse-checkout"])).not.toContain("pull_request.head");
+
+    const fetch = requiredWorkflowStep(
+      sdkPackageJob,
+      "Download and verify exact OpenShell SDK package",
+    );
+    expect(fetch.env).toEqual({
+      NEMOCLAW_OPEN_SHELL_SDK_OUTPUT_DIRECTORY: "${{ runner.temp }}/openshell-sdk",
+      NODE_AUTH_TOKEN: "${{ github.token }}",
+    });
+    expect(fetch.run).toContain(
+      "node --experimental-strip-types scripts/checks/package-openshell-sdk-for-pr.mts",
+    );
+    expect(fetch.run).toContain("artifact_path=");
+    expect(
+      (sdkPackageJob.steps ?? [])
+        .filter((candidate) => candidate.name !== fetch.name)
+        .map((candidate) => candidate.env?.NODE_AUTH_TOKEN),
+    ).toEqual(
+      (sdkPackageJob.steps ?? [])
+        .filter((candidate) => candidate.name !== fetch.name)
+        .map(() => undefined),
+    );
+
+    const upload = requiredWorkflowStep(sdkPackageJob, "Upload verified OpenShell SDK archive");
+    expect(upload.uses).toBe("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
+    expect(upload.with).toMatchObject({
+      name: "openshell-sdk-${{ github.event.pull_request.head.sha }}",
+      path: "${{ steps.package.outputs.artifact_path }}",
+      "if-no-files-found": "error",
+      "retention-days": 1,
+    });
+  });
+
+  // source-shape-contract: security -- The credential-bearing workflow must derive one package identity from reviewed base data instead of duplicating package coordinates
+  it("derives the package and archive identity from the base-controlled decision", () => {
+    const serialized = JSON.stringify(sdkPackageWorkflow);
+    expect(serialized).not.toContain("@nvidia/openshell-sdk@0.0.106");
+    expect(serialized).not.toContain("nvidia-openshell-sdk-0.0.106.tgz");
   });
 
   // source-shape-contract: security -- PR base SHA action execution prevents pull-request code from authorizing installer hashes

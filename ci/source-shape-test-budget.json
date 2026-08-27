@@ -162,12 +162,12 @@
       "category": "security"
     },
     {
-      "file": "test/automation/pull-requests/openshell-sdk-package-workflow.test.ts",
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
       "test": "keeps package access out of pull request controlled execution",
       "category": "security"
     },
     {
-      "file": "test/automation/pull-requests/openshell-sdk-package-workflow.test.ts",
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
       "test": "derives the package and archive identity from the base-controlled decision",
       "category": "security"
     },
