@@ -557,6 +557,46 @@ describe("credential provider registration", () => {
     );
   });
 
+  it("rejects a credential-family mismatch before any provider mutation (#10153)", () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const mutationCommands: string[] = [];
+    const runOpenshell = vi.fn((args: string[]) => {
+      const command = args.join(" ");
+      mutationCommands.push(
+        ...(/provider (?:profile import|create|update)/u.test(command) ? [command] : []),
+      );
+      return command === "provider get alpha-brave-search"
+        ? providerMetadata("alpha-brave-search", "generic", "BRAVE_API_KEY")
+        : { status: 1, stdout: "", stderr: "not found" };
+    });
+    const registration = createCredentialProviderRegistration(
+      registrationDeps(runOpenshell, session),
+    );
+
+    expect(() =>
+      registration.upsertMessagingProviders(
+        [
+          {
+            name: "alpha-telegram-bridge",
+            envKey: "TELEGRAM_BOT_TOKEN",
+            token: "telegram-test-token",
+          },
+          {
+            name: "alpha-brave-search",
+            envKey: "BRAVE_API_KEY",
+            token: BRAVE_SECRET,
+            providerType: "brave",
+            additionalCredentials: [
+              { envKey: "BRAVE_API_KEY_AGENT_A", token: "brave-agent-a-test-token" },
+            ],
+          },
+        ],
+        { bestEffort: true },
+      ),
+    ).toThrow(/does not match the required 'brave' credential binding/u);
+    expect(mutationCommands).toEqual([]);
+  });
+
   it("rejects a conflicting Slack binding before writing any provider in the batch (#7701)", async () => {
     const session = {
       stagedCredentialProviders: ["alpha-slack-bridge", "alpha-slack-app"],

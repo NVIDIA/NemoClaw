@@ -191,6 +191,16 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     options: MessagingProviderRegistrationOptions = {},
     runOpenshell: OpenshellCliHelpers["runOpenshell"] = deps.runOpenshell,
   ): string[] {
+    const runCredentialFamilyOpenshell = providers.policyAuthorityCheckedRunner(
+      runOpenshell,
+      options.revalidatePolicyRequirements,
+      "inspect credential provider bindings",
+    );
+    providers.assertCredentialFamilyProviderBindings(
+      tokenDefs,
+      runCredentialFamilyOpenshell,
+      options,
+    );
     const runWebSearchOpenshell = providers.policyAuthorityCheckedRunner(
       runOpenshell,
       options.revalidatePolicyRequirements,

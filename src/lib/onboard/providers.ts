@@ -646,6 +646,15 @@ function preflightCredentialFamilyProviderBindings(tokenDefs, runOpenshell) {
   return failures;
 }
 
+function assertCredentialFamilyProviderBindings(tokenDefs, runOpenshell, options = {}) {
+  const failures = preflightCredentialFamilyProviderBindings(tokenDefs, runOpenshell);
+  if (failures.length === 0 || options.replaceExisting) return;
+  const message = failures.map(({ name, message: failure }) => `${name}: ${failure}`).join("; ");
+  if (options.bestEffort) throw new MessagingProviderBindingConflictError(message);
+  console.error(`\n  ✗ Failed to create messaging provider: ${message}`);
+  process.exit(1);
+}
+
 function preflightMessagingProviderBindings(tokenDefs, _runOpenshell) {
   const failures = [];
   for (const tokenDef of tokenDefs) {
@@ -698,18 +707,7 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
     options.revalidatePolicyRequirements,
     "inspect or change a messaging bridge provider",
   );
-  const familyBindingFailures = preflightCredentialFamilyProviderBindings(
-    tokenDefs,
-    runMessagingBridgeOpenshell,
-  );
-  if (familyBindingFailures.length > 0 && !options.replaceExisting) {
-    const message = familyBindingFailures
-      .map(({ name, message: failure }) => `${name}: ${failure}`)
-      .join("; ");
-    if (options.bestEffort) throw new MessagingProviderBindingConflictError(message);
-    console.error(`\n  ✗ Failed to create messaging provider: ${message}`);
-    process.exit(1);
-  }
+  assertCredentialFamilyProviderBindings(tokenDefs, runMessagingBridgeOpenshell, options);
 
   // Provider creation order. Bridges (e.g. Google Chat) need two steps bracketing
   // the uniform create loop, ordered around `provider create`:
@@ -937,6 +935,7 @@ module.exports = {
   isProviderKeyCredentialCandidate,
   buildProviderArgs,
   policyAuthorityCheckedRunner,
+  assertCredentialFamilyProviderBindings,
   upsertProvider,
   providerExistsInGateway,
   readGatewayProviderMetadata,
