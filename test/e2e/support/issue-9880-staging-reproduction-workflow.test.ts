@@ -101,6 +101,28 @@ const mutations: ReadonlyArray<
     "checkout must use trusted workflow code without persisted credentials",
   ],
   [
+    "a checkout without source dependencies",
+    (workflow, contract) => {
+      const checkout = step(workflow, contract, contract.checkout);
+      checkout.with!["sparse-checkout"] = String(checkout.with!["sparse-checkout"]).replace(
+        /^src[/]\s*$/mu,
+        "",
+      );
+    },
+    "checkout must include Vitest source dependency closure",
+  ],
+  [
+    "a checkout without the source TypeScript project",
+    (workflow, contract) => {
+      const checkout = step(workflow, contract, contract.checkout);
+      checkout.with!["sparse-checkout"] = String(checkout.with!["sparse-checkout"]).replace(
+        /^tsconfig[.]src[.]json\s*$/mu,
+        "",
+      );
+    },
+    "checkout must include Vitest source dependency closure",
+  ],
+  [
     "missing maintainer authorization",
     (workflow, contract) => {
       step(workflow, contract, "Authorize maintainer dispatch").run = "true";
@@ -262,6 +284,15 @@ function validateCheckout(errors: string[], job: WorkflowJob, contract: Workflow
       checkout.with?.["persist-credentials"] === false,
     "checkout must use trusted workflow code without persisted credentials",
   );
+  const sparseCheckout = String(checkout?.with?.["sparse-checkout"] ?? "")
+    .split(/\r?\n/u)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  recordValidation(
+    errors,
+    sparseCheckout.includes("src/") && sparseCheckout.includes("tsconfig.src.json"),
+    "checkout must include Vitest source dependency closure",
+  );
 }
 
 function validateAuthorization(errors: string[], job: WorkflowJob): void {
@@ -364,8 +395,7 @@ function validateWorkspaceCleanup(
   recordValidation(
     errors,
     cleanup?.if === "${{ always() && steps.prepare.outputs.work_dir != '' }}" &&
-      cleanup.env?.BREV_WORKSPACE_OWNERSHIP_FILE ===
-        scenario?.env?.BREV_WORKSPACE_OWNERSHIP_FILE &&
+      cleanup.env?.BREV_WORKSPACE_OWNERSHIP_FILE === scenario?.env?.BREV_WORKSPACE_OWNERSHIP_FILE &&
       cleanup.env?.HOME === prepare?.env?.HOME &&
       cleanupCommand === "./node_modules/.bin/tsx tools/e2e/cleanup-brev-workspace.mts" &&
       Number(cleanup["timeout-minutes"]) * MINUTE_MS >= timeouts.cleanupTimeoutMs,

@@ -7,6 +7,7 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { type E2ETargetFixtures, expect } from "../fixtures/e2e-test.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { classifyHermesSlackApiProof } from "./hermes-slack-proof.ts";
 import {
   runSecondaryCleanup as bestEffortLifecycleCleanup,
   CLI,
@@ -750,14 +751,15 @@ PY`,
   );
   const slackProbeText = resultText(slackProbe);
   await artifacts.writeText("phase-6-slack-python-probe.txt", slackProbeText);
-  if (/^TIMEOUT/m.test(slackProbeText)) {
-    skip("Slack API timed out");
+  const slackProof = classifyHermesSlackApiProof(slackProbeText);
+  if (slackProof.kind === "timeout") {
+    skip(`Slack API timed out: ${slackProof.reason}`);
     return;
   }
   expectExitZero(slackProbe, "Slack Python API probe");
-  expect(slackProbeText).toMatch(/^OK auth\.test:/m);
-  expect(slackProbeText).toMatch(/^OK apps\.connections\.open:/m);
-  expect(slackProbeText).not.toMatch(/^(FAIL|ERROR)/m);
+  if (slackProof.kind === "failed") {
+    throw new Error(`Slack API proof failed: ${slackProof.reason}`);
+  }
 
   if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1") {
     progress.phase("remove Hermes Slack sandbox");

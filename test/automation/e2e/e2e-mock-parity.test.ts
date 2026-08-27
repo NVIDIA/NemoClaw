@@ -24,19 +24,19 @@ function manifest(entries: MockParityManifest["entries"]): MockParityManifest {
 }
 
 describe("changed live E2E mock parity", () => {
-  it("treats module-tag-only diffs as metadata", () => {
+  it("retains recognized module-tag changes while ignoring ordinary comments", () => {
     expect(
       isMockParityRelevantSourceChange(
         "// SPDX-License-Identifier: Apache-2.0\n\nexport {};\n",
         "// SPDX-License-Identifier: Apache-2.0\n// @module-tag e2e/credential-free\n\nexport {};\n",
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       isMockParityRelevantSourceChange(
-        `${"// @module"}-tag retired/value\n\nexport {};\n`,
         "// @module-tag e2e/credential-free\n\nexport {};\n",
+        "export {};\n",
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       isMockParityRelevantSourceChange(
         "// old terminology\nexport {};\n",
@@ -60,9 +60,50 @@ describe("changed live E2E mock parity", () => {
         "// SPDX-License-Identifier: Apache-2.0\n\nexport {};\n",
         "// SPDX-License-Identifier: Apache-2.0\n/* @module-tag e2e/credential-free */\n\nexport {};\n",
       ),
+    ).toBe(true);
+    expect(
+      isMockParityRelevantSourceChange(
+        "/* @module-tag e2e/credential-free */\n\nexport {};\n",
+        "export {};\n",
+      ),
+    ).toBe(true);
+    expect(
+      isMockParityRelevantSourceChange(
+        `${"// @module"}-tag retired.value\n\nexport {};\n`,
+        "// another ordinary comment\n\nexport {};\n",
+      ),
     ).toBe(false);
     expect(isMockParityRelevantSourceChange(null, null)).toBe(true);
     expect(isMockParityRelevantSourceChange(null, TAGGED_NEW_SOURCE)).toBe(true);
+  });
+
+  it.each([
+    {
+      baseLive: "export const liveBehavior = 1;\n",
+      headLive: "// @module-tag e2e/credential-free\nexport const liveBehavior = 1;\n",
+      title: "adding a recognized module tag",
+    },
+    {
+      baseLive: "// @module-tag e2e/credential-free\nexport const liveBehavior = 1;\n",
+      headLive: "export const liveBehavior = 1;\n",
+      title: "removing a recognized module tag",
+    },
+  ])("requires mapped fast coverage after $title", ({ baseLive, headLive }) => {
+    const relevantFiles = filterMockParityRelevantChangedFiles(
+      [live, fast],
+      (file) => (file === live ? baseLive : "export const fastBehavior = 1;\n"),
+      (file) =>
+        file === live ? headLive : "// ordinary comment\nexport const fastBehavior = 1;\n",
+    );
+
+    expect(relevantFiles).toEqual([live]);
+    expect(
+      validateMockParity({
+        manifest: manifest([{ live, fast: [fast] }]),
+        changedFiles: relevantFiles,
+        fileExists: exists,
+      }),
+    ).toEqual([`${live}: change at least one mapped fast PR test with the live E2E`]);
   });
 
   it("accepts a changed live E2E mapped to a fast PR test", () => {

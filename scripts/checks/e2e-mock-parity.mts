@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 
 import ts from "typescript";
 
+import { moduleTagDeclarations } from "../../tools/e2e/module-tags.mts";
+
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 export const DEFAULT_PARITY_MANIFEST = "test/e2e/mock-parity.json";
 
@@ -50,7 +52,10 @@ function sourceTokens(source: string): string {
     for (const child of children) visit(child);
   };
   visit(sourceFile);
-  return JSON.stringify(tokens);
+  return JSON.stringify({
+    moduleTags: moduleTagDeclarations(source).map(({ tag }) => tag),
+    tokens,
+  });
 }
 
 export function isMockParityRelevantSourceChange(

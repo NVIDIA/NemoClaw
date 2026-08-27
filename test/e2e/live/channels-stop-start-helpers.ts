@@ -12,6 +12,10 @@ import {
   openClawChannelIsInert,
   openClawChannelStateProbeScript,
 } from "./channels-stop-start-config-state.ts";
+import {
+  channelPlanStateErrors,
+  type ChannelPlanExpectedState,
+} from "./channels-stop-start-plan-state.ts";
 import { startChannelsStopStartProgress } from "./channels-stop-start-progress.ts";
 import { assertChannelsStopStartSandboxName } from "./channels-stop-start-safety.ts";
 import { GOOGLECHAT_E2E_ACCESS_TOKEN } from "./channels-stop-start-googlechat-entry.ts";
@@ -72,7 +76,6 @@ const CHANNELS_WITHOUT_CREDENTIAL_BINDING: Record<string, string> = {
 };
 export const LIVE_TIMEOUT_MS = 80 * 60_000;
 
-type ChannelState = "active" | "disabled";
 type AgentConfigState = "active" | "inert";
 type JsonRecord = Record<string, unknown>;
 type Phase6Tokens = {
@@ -187,12 +190,6 @@ function arrayRecords(value: unknown): JsonRecord[] {
     : [];
 }
 
-function stringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
-    : [];
-}
-
 function readRegistryEntry(sandboxName: string): JsonRecord {
   expect(fs.existsSync(REGISTRY_FILE), `${REGISTRY_FILE} missing`).toBe(true);
   const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
@@ -229,75 +226,21 @@ function planChannel(channelId: string) {
   );
 }
 
-function expectPlanChannelState(channelId: string, expected: ChannelState): void {
-  const plan = messagingPlan(SANDBOX_NAME);
-  const channels = arrayRecords(plan.channels);
-  const channel = channels.find((entry) => entry.channelId === channelId);
-  expect(channel, `${channelId} missing from messaging.plan.channels`).toBeTruthy();
-  expect(channel?.configured, `${channelId} configured`).toBe(true);
-  expect(plan.sandboxName, "messaging.plan.sandboxName").toBe(SANDBOX_NAME);
-  expect(plan.agent, "messaging.plan.agent").toBe(AGENT);
-
-  const disabledChannels = stringArray(plan.disabledChannels);
-  if (expected === "active") {
-    expect(channel?.active, `${channelId} active`).toBe(true);
-    expect(channel?.disabled, `${channelId} disabled unexpectedly`).not.toBe(true);
-    expect(disabledChannels, `${channelId} unexpectedly disabled`).not.toContain(channelId);
-  } else {
-    expect(channel?.disabled, `${channelId} disabled`).toBe(true);
-    expect(channel?.active, `${channelId} active unexpectedly`).not.toBe(true);
-    expect(disabledChannels, `${channelId} missing from disabledChannels`).toContain(channelId);
-  }
-
-  const networkPolicy =
-    plan.networkPolicy && typeof plan.networkPolicy === "object"
-      ? (plan.networkPolicy as Record<string, unknown>)
-      : {};
-  expect(stringArray(networkPolicy.presets), `${channelId} policy preset`).toContain(channelId);
+function expectPlanChannelState(channelId: string, expected: ChannelPlanExpectedState): void {
   expect(
-    arrayRecords(networkPolicy.entries).some((entry) => entry.channelId === channelId),
-    `${channelId} policy entry`,
-  ).toBe(true);
-  const credentialBindings = arrayRecords(plan.credentialBindings);
-  if (!Object.hasOwn(CHANNELS_WITHOUT_CREDENTIAL_BINDING, channelId)) {
-    expect(
-      credentialBindings.some((entry) => entry.channelId === channelId),
-      `${channelId} credential binding`,
-    ).toBe(true);
-  }
-  expect(Object.hasOwn(plan, "agentRender"), "messaging.plan.agentRender should not persist").toBe(
-    false,
-  );
-  expect(
-    channels.some((entry) => Object.hasOwn(entry, "hooks")),
-    "messaging.plan.channels hooks should not persist",
-  ).toBe(false);
+    channelPlanStateErrors(messagingPlan(SANDBOX_NAME), {
+      agent: AGENT,
+      channelId,
+      credentialBindingRequired: !Object.hasOwn(CHANNELS_WITHOUT_CREDENTIAL_BINDING, channelId),
+      expected,
+      sandboxName: SANDBOX_NAME,
+    }),
+    `${channelId} ${expected} persisted messaging plan contract`,
+  ).toEqual([]);
 }
 
 function expectPlanChannelRemoved(channelId: string): void {
-  const plan = messagingPlan(SANDBOX_NAME);
-  expect(
-    arrayRecords(plan.channels).some((channel) => channel.channelId === channelId),
-    `${channelId} remained in messaging.plan.channels`,
-  ).toBe(false);
-  expect(stringArray(plan.disabledChannels), `${channelId} remained disabled`).not.toContain(
-    channelId,
-  );
-  const networkPolicy =
-    plan.networkPolicy && typeof plan.networkPolicy === "object"
-      ? (plan.networkPolicy as Record<string, unknown>)
-      : {};
-  expect(stringArray(networkPolicy.presets), `${channelId} policy preset remained`).not.toContain(
-    channelId,
-  );
-  expect(
-    arrayRecords(networkPolicy.entries).some((entry) => entry.channelId === channelId),
-    `${channelId} policy entry remained`,
-  ).toBe(false);
-  expect(
-    arrayRecords(plan.credentialBindings).some((entry) => entry.channelId === channelId),
-    `${channelId} credential binding remained`,
-  ).toBe(false);
+  expectPlanChannelState(channelId, "removed");
 }
 
 function requireEnvValue(env: NodeJS.ProcessEnv, key: string): string {

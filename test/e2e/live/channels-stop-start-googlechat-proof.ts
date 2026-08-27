@@ -88,15 +88,30 @@ print(json.dumps({
 }))
 `;
 
-interface GooglechatBoundaryProof {
+export interface GooglechatBoundaryProof {
   readonly installedOverride?: boolean;
   readonly placeholder: string;
   readonly statuses: number[];
 }
 
-function parseBoundaryProof(stdout: string): GooglechatBoundaryProof {
+export function parseGooglechatBoundaryProof(stdout: string): GooglechatBoundaryProof {
   const lastLine = stdout.trim().split(/\r?\n/u).at(-1) ?? "";
   return JSON.parse(lastLine) as GooglechatBoundaryProof;
+}
+
+export function assertGooglechatBoundaryProof(
+  proof: GooglechatBoundaryProof,
+  agent: AgentKind,
+): void {
+  expect(proof.placeholder, "sandbox process received a revision-scoped placeholder").toBe(
+    "revision-scoped",
+  );
+  expect(proof.statuses, "Google APIs rejected the rewritten fixed fixture credential").toEqual(
+    agent === "openclaw" ? [401] : [401, 401],
+  );
+  if (agent === "hermes") {
+    expect(proof.installedOverride, "installed Hermes Google Chat override loaded").toBe(true);
+  }
 }
 
 export async function expectGooglechatCredentialBoundary(
@@ -118,14 +133,5 @@ export async function expectGooglechatCredentialBoundary(
   });
   expectExitZero(result, `${agent} Google Chat credential boundary ${context}`);
 
-  const proof = parseBoundaryProof(result.stdout);
-  expect(proof.placeholder, "sandbox process received a revision-scoped placeholder").toBe(
-    "revision-scoped",
-  );
-  expect(proof.statuses, "Google APIs rejected the rewritten fixed fixture credential").toEqual(
-    agent === "openclaw" ? [401] : [401, 401],
-  );
-  if (agent === "hermes") {
-    expect(proof.installedOverride, "installed Hermes Google Chat override loaded").toBe(true);
-  }
+  assertGooglechatBoundaryProof(parseGooglechatBoundaryProof(result.stdout), agent);
 }
