@@ -6,7 +6,6 @@ import path from "node:path";
 
 import type { HermesForwardWatcherState } from "../domain/uninstall/hermes-forward-watcher";
 
-const HERMES_FORWARD_WATCHER_STATE_SUBDIR = "state";
 const HERMES_FORWARD_WATCHER_FILE_PATTERN = /^hermes-(.+)-(\d+)\.forward\.pid$/;
 
 export interface HermesForwardWatcherStateResult {
@@ -34,10 +33,8 @@ function readPid(pidFile: string): number | null {
   }
 }
 
-export function readHermesForwardWatcherState(
-  nemoclawStateDir: string,
-): HermesForwardWatcherStateResult {
-  const stateDir = path.join(nemoclawStateDir, HERMES_FORWARD_WATCHER_STATE_SUBDIR);
+/** `stateDir` is the final directory holding the `.forward.pid` files (e.g. `resolveNemoclawStateDir()`'s output), not the NemoClaw home root. */
+export function readHermesForwardWatcherState(stateDir: string): HermesForwardWatcherStateResult {
   if (!fs.existsSync(stateDir)) return { readable: true, watchers: [] };
 
   let entries: string[];

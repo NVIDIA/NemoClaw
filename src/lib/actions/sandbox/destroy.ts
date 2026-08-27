@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import type { HermesForwardWatcherHost } from "../../adapters/openshell/hermes-forward-watcher";
 import { CLI_NAME } from "../../cli/branding";
 import { G, R, YW } from "../../cli/terminal-style";
 import { isNonInteractiveEnv } from "../../core/non-interactive";
@@ -59,6 +60,7 @@ import {
 } from "./destroy-presence";
 import {
   prepareSandboxDestroy,
+  stopHermesForwardWatchersForDestroyedSandbox,
   stopModelRouterForDestroyedSandbox,
   stopSandboxInferenceResources,
 } from "./destroy-preflight";
@@ -109,6 +111,10 @@ export function requireSandboxDestructiveCleanupAuthority(
 type RunOpenshell = (args: string[], opts?: Record<string, unknown>) => { status: number | null };
 
 export type CleanupSandboxServicesDeps = {
+  /** Process host for the Hermes forward-watcher reap; tests inject a fake process table. */
+  hermesForwardWatcherHost?: HermesForwardWatcherHost;
+  /** State directory the watcher reap reads; defaults to `resolveNemoclawStateDir()`. */
+  hermesForwardWatcherStateDir?: string;
   getSandbox?: typeof registry.getSandbox;
   stopAll?: (opts: { sandboxName: string }) => void;
   unloadOllamaModels?: () => void;
@@ -156,7 +162,10 @@ async function resolveCleanupGatewayDecision(options: DestroySandboxOptions): Pr
 
 export function cleanupSandboxServices(
   sandboxName: string,
-  { stopHostServices = false }: { stopHostServices?: boolean } = {},
+  {
+    stopHostServices = false,
+    sandboxConfirmedDestroyed = false,
+  }: { stopHostServices?: boolean; sandboxConfirmedDestroyed?: boolean } = {},
   deps: CleanupSandboxServicesDeps = {},
 ): void {
   // Source boundary: this exported helper can be called independently of CLI
@@ -168,6 +177,23 @@ export function cleanupSandboxServices(
   const validatedSandboxName = validateName(sandboxName, "sandbox name");
   const servicesPidDir = path.resolve("/tmp", `nemoclaw-services-${validatedSandboxName}`);
   const getSandbox = deps.getSandbox ?? registry.getSandbox;
+  // Reap only when the caller has confirmed the delete succeeded or the
+  // sandbox was already gone, not merely because this cleanup pass started: a
+  // failed delete leaves the sandbox registered and still running, and the
+  // watcher this call stops is that live sandbox's own forward self-healing
+  // (#10385). The registry entry itself is not removed until after this
+  // function returns, so it cannot be used here to infer that; the caller
+  // passes its own already-computed `deleteSucceededOrAlreadyGone`. The
+  // watcher restarts this sandbox's forwards every 10 seconds, so once the
+  // sandbox truly is gone it must not outlive that fact or the tunnel-stop
+  // failure below.
+  if (sandboxConfirmedDestroyed) {
+    stopHermesForwardWatchersForDestroyedSandbox(
+      validatedSandboxName,
+      deps.hermesForwardWatcherHost,
+      deps.hermesForwardWatcherStateDir,
+    );
+  }
   const stopAll =
     deps.stopAll ??
     ((opts: { sandboxName: string }) => {
@@ -799,6 +825,7 @@ async function destroySandboxUnlocked(
     });
     cleanupSandboxServices(sandboxName, {
       stopHostServices: shouldStopHostServices,
+      sandboxConfirmedDestroyed: deleteSucceededOrAlreadyGone,
     });
   });
   if (deleteSucceededOrAlreadyGone && commonLlamaCppAuthorityRetired === true) {

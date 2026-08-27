@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
+
 import {
   type HermesForwardWatcherHost,
   stopHermesForwardWatcherProcess,
@@ -12,9 +14,10 @@ export function stopHermesForwardWatchers(
   nemoclawStateDir: string,
   host: HermesForwardWatcherHost,
 ): boolean {
-  const state = readHermesForwardWatcherState(nemoclawStateDir);
+  const stateDir = path.join(nemoclawStateDir, "state");
+  const state = readHermesForwardWatcherState(stateDir);
   if (!state.readable) {
-    host.warn(`Failed to inspect Hermes forward watcher state under ${nemoclawStateDir}.`);
+    host.warn(`Failed to inspect Hermes forward watcher state under ${stateDir}.`);
     return false;
   }
   if (state.watchers.length === 0) {
