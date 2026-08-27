@@ -156,6 +156,14 @@ NemoClaw checks host shields posture before provider, policy, attachment, or ada
 If shields rise between those checks, the command fails instead of writing locked config; lower shields and retry the durable MCP transaction to converge any earlier provider or policy stage.
 `mcp list` and `mcp status` are read-only and do not require lowering shields.
 
+### Prepare OpenClaw for Mutation
+
+OpenClaw stores its managed MCP servers in the Mcporter config under the `workspace` state root, which lockdown re-owns to `root` and makes unwritable from inside the sandbox.
+When OpenClaw shields are up, run `nemoclaw <sandbox> shields down --timeout 15m --reason "MCP maintenance"` before `mcp add`, `mcp restart`, `mcp remove`, or destroy, then restore shields if the sandbox still exists.
+
+`mcp remove --force` and `destroy --force` report the refusal and continue with the host-side provider and policy cleanup instead of stopping.
+A forced destroy leaves the retained volume's adapter entry in place, so onboarding a sandbox with the same name may need to replace that stale config; the exact OpenShell providers are still deleted, so the retained credential placeholder cannot authenticate.
+
 ### Verify the Hermes Reload
 
 The validated transaction helper runs as a one-shot ordinary `openshell sandbox exec --no-tty` command with a fixed executable and argument shape.

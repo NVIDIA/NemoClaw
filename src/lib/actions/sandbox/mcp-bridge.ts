@@ -92,6 +92,11 @@ export interface McpDestroyPreparation {
   destroyAlreadyPrepared: boolean;
   /** True when a previous destroy already confirmed the sandbox was absent. */
   destroyAlreadyPending: boolean;
+  /**
+   * Refusal detail when `--force` continued without scrubbing the retained
+   * volume's adapter entry because the live config could not be mutated.
+   */
+  adapterScrubSkipped?: string;
 }
 
 export async function addMcpBridge(
@@ -122,8 +127,9 @@ export async function prepareMcpBridgesForAbsentSandboxDestroy(
 
 export async function prepareMcpBridgesForDestroy(
   sandboxName: string,
+  options: { force?: boolean } = {},
 ): Promise<McpDestroyPreparation> {
-  return prepareMcpBridgesForDestroyLifecycle(sandboxName);
+  return prepareMcpBridgesForDestroyLifecycle(sandboxName, options);
 }
 
 export async function restoreMcpBridgesAfterDestroyAbort(

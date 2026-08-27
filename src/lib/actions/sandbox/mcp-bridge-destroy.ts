@@ -45,15 +45,54 @@ export {
 } from "./mcp-bridge-destroy-preflight";
 
 /**
+ * Classify whether an in-sandbox adapter mutation preflight blocks destroy.
+ *
+ * Returns the refusal detail when `--force` may continue without the
+ * in-sandbox adapter scrub, and rethrows otherwise. Without `--force` a destroy
+ * that could still complete cleanly is never silently degraded. The warning is
+ * emitted here, at the decision, so it is still reported when a later teardown
+ * step fails and this preparation never returns.
+ */
+function classifyForcedAdapterScrubRefusal(
+  sandboxName: string,
+  assertAllowed: () => void,
+  force: boolean,
+): string {
+  try {
+    assertAllowed();
+    return "";
+  } catch (error) {
+    if (!force) throw error;
+    const detail = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `  Sandbox '${sandboxName}' keeps its retained-volume MCP adapter entry (--force): ${detail}`,
+    );
+    console.warn(
+      "  Exact OpenShell providers are still deleted so any stale credential placeholder cannot authenticate; same-name onboarding may need to replace stale MCP adapter config.",
+    );
+    return detail;
+  }
+}
+
+/**
  * Phase one of sandbox destroy. Remove the adapter entry from the retained
  * sandbox volume and detach exact MCP providers while preserving the global
  * provider objects (and therefore their host-only credentials) and registry
  * cleanup manifest. OpenShell requires the bound policy to be removed before
  * detach. Any failure restores the managed runtime before returning.
+ *
+ * `--force` may continue when the live adapter config cannot be mutated at all
+ * — for example an OpenClaw sandbox whose Mcporter config is locked under the
+ * shields state root (#10469). The retained-volume adapter entry is then left
+ * in place, exactly as it is for an already-absent sandbox, and the caller
+ * reports that. The exact global providers are still deleted in phase two, so
+ * the retained credential placeholder cannot authenticate afterwards.
  */
 export async function prepareMcpBridgesForDestroy(
   sandboxName: string,
+  options: { force?: boolean } = {},
 ): Promise<McpDestroyPreparation> {
+  const force = options.force === true;
   validateSandboxName(sandboxName);
   const currentSandbox = getSandboxOrThrow(sandboxName);
   const entriesRequiringExternalCleanup = Object.values(bridgeState(currentSandbox)).filter(
@@ -63,10 +102,15 @@ export async function prepareMcpBridgesForDestroy(
   // discardSafeIncompleteMcpAdds, which may remove an owned policy for a
   // providerless preflighted add. That cleanup has no adapter/provider to
   // probe; complete entries get the teardown runtime probe after retry markers.
-  assertMcpAdapterConfigMutationsAllowed(
+  let adapterScrubRefusal = classifyForcedAdapterScrubRefusal(
     sandboxName,
-    currentSandbox,
-    entriesRequiringExternalCleanup,
+    () =>
+      assertMcpAdapterConfigMutationsAllowed(
+        sandboxName,
+        currentSandbox,
+        entriesRequiringExternalCleanup,
+      ),
+    force,
   );
   const sandbox = await discardSafeIncompleteMcpAdds(sandboxName, currentSandbox);
   const entries = Object.values(bridgeState(sandbox)).map(cloneMcpBridgeEntry);
@@ -119,13 +163,19 @@ export async function prepareMcpBridgesForDestroy(
   }
 
   await ensureSandboxGatewaySelected(sandboxName);
-  assertMcpAdapterTeardownRuntimeCapabilities(sandboxName, sandbox, entries);
+  adapterScrubRefusal ||= classifyForcedAdapterScrubRefusal(
+    sandboxName,
+    () => assertMcpAdapterTeardownRuntimeCapabilities(sandboxName, sandbox, entries),
+    force,
+  );
   const detached: McpBridgeEntry[] = [];
   const scrubbedAdapters: McpScrubbedAdapterEntry[] = [];
   const removedPolicies: McpBridgeEntry[] = [];
   try {
-    for (const entry of entries) {
-      scrubbedAdapters.push(scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry));
+    if (!adapterScrubRefusal) {
+      for (const entry of entries) {
+        scrubbedAdapters.push(scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry));
+      }
     }
     for (const entry of entries) {
       removeGeneratedPolicy(sandboxName, entry);
@@ -214,6 +264,7 @@ export async function prepareMcpBridgesForDestroy(
     scrubbedAdapterEntries: scrubbedAdapters,
     destroyAlreadyPrepared: false,
     destroyAlreadyPending: false,
+    ...(adapterScrubRefusal ? { adapterScrubSkipped: adapterScrubRefusal } : {}),
   };
 }
 

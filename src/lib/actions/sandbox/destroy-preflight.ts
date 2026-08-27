@@ -260,7 +260,10 @@ export async function stopModelRouterForDestroyedSandbox(
   return true;
 }
 
-export function prepareSandboxDestroy(sandboxName: string): SandboxDestroyPreflight {
+export function prepareSandboxDestroy(
+  sandboxName: string,
+  options: { force?: boolean } = {},
+): SandboxDestroyPreflight {
   const sandbox = registry.getSandbox(sandboxName);
   console.log(`  Deleting sandbox '${sandboxName}'...`);
   const { runOpenshell } = require("../../adapters/openshell/runtime") as {
@@ -290,7 +293,11 @@ export function prepareSandboxDestroy(sandboxName: string): SandboxDestroyPrefli
     sandbox &&
     !sandbox.mcp?.destroyPreparedAt &&
     !sandbox.mcp?.destroyPendingAt &&
-    mcpEntriesRequiringConfigMutation.length > 0
+    mcpEntriesRequiringConfigMutation.length > 0 &&
+    // `--force` accepts leaving the retained-volume adapter entry in place, so
+    // this early refusal must not block it before any teardown starts. The
+    // preparation phase reclassifies the same refusal and reports what it kept.
+    options.force !== true
   ) {
     // Fail before stopping local services or mutating any MCP resource when
     // the live adapter config cannot be changed safely.

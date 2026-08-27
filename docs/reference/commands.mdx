@@ -2634,6 +2634,15 @@ Use `$$nemoclaw <name> shields down --timeout 15m --reason "MCP maintenance"`, a
 If sandbox deletion is refused after destroy has restored lockdown, NemoClaw opens an owner-bound timed rollback window, restores the preserved MCP state, and re-locks shields; the timer retains auto-restore authority if the host process exits.
 
 </AgentOnly>
+<AgentOnly variant="openclaw">
+
+If the OpenClaw sandbox has managed MCP entries, shields must be down before destroy can scrub their adapter configuration.
+The managed Mcporter config is locked with the rest of the `workspace` state root, so lockdown makes it unwritable from inside the sandbox and destroy refuses before it stops any local service.
+Use `$$nemoclaw <name> shields down --timeout 15m --reason "MCP maintenance"`, then rerun destroy.
+`$$nemoclaw <name> destroy --force` instead completes the destruction without scrubbing the retained volume's adapter entry.
+It reports what it kept and still deletes the exact OpenShell providers, so the retained credential placeholder cannot authenticate; onboarding a sandbox with the same name may need to replace the stale MCP adapter config.
+
+</AgentOnly>
 
 If a shields auto-restore timer is active, `destroy` holds the same per-sandbox transition through state wipe and deletion.
 It restores and verifies lockdown and revokes the active timer before deletion.
@@ -3261,6 +3270,13 @@ Allow at least 15 minutes per configured server for an all-server restart or des
 Keep shields down until the command returns; a concurrent relock refuses the config commit and can leave an earlier policy/provider stage for the next retry to converge.
 
 </AgentOnly>
+<AgentOnly variant="openclaw">
+
+OpenClaw MCP add, restart, and remove mutate the managed Mcporter config and are refused while shields are up.
+That config lives under the `workspace` state root, which lockdown re-owns to `root` and makes unwritable from inside the sandbox.
+Run `$$nemoclaw <name> shields down --timeout 15m --reason "MCP maintenance"` before the mutation, then run `$$nemoclaw <name> shields up` after it; list and status remain read-only.
+
+</AgentOnly>
 <AgentOnly variant="deepagents">
 
 Deep Agents MCP add and restart require the managed MCP v2 capability in the sandbox image.
@@ -3353,6 +3369,11 @@ Hermes shields must be down for this config mutation.
 Keep them down until the command returns; a concurrent relock refuses the config commit and can leave an earlier policy/provider stage for the next retry to converge.
 
 </AgentOnly>
+<AgentOnly variant="openclaw">
+
+OpenClaw shields must be down for this config mutation; the managed Mcporter config is locked with the rest of the `workspace` state root.
+
+</AgentOnly>
 <AgentOnly variant="deepagents">
 
 Deep Agents restart refreshes the NemoClaw-managed `/sandbox/.deepagents/.nemoclaw-mcp.json` projection and validates the HTTPS-only server definitions before `dcode` sees them.
@@ -3372,6 +3393,12 @@ Remove an MCP server from a sandbox.
 
 Hermes shields must be down for this config mutation.
 Keep them down until the command returns; a concurrent relock refuses the config commit and can leave an earlier policy/provider stage for the next retry to converge.
+
+</AgentOnly>
+<AgentOnly variant="openclaw">
+
+OpenClaw shields must be down for this config mutation; the managed Mcporter config is locked with the rest of the `workspace` state root.
+`$$nemoclaw <name> mcp remove <server> --force` reports the refusal and continues with the host-side provider and policy cleanup instead.
 
 </AgentOnly>
 
