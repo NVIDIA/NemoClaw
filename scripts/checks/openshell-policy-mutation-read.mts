@@ -118,8 +118,10 @@ const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [
   {
     relativePath: "src/lib/policy/commands.ts",
     expectedReads: [
-      unclassifiedBase("buildPolicyGetCommand"),
+      unclassifiedFull("buildGlobalPolicyGetFullJsonArgs"),
+      unclassifiedBase("buildPolicyGetArgs"),
       unclassifiedFull("buildPolicyGetFullCommand"),
+      unclassifiedFull("buildPolicyGetFullJsonArgs"),
     ],
   },
 ] as const;
@@ -131,6 +133,7 @@ export interface DiscoveredPolicyReadSite {
 }
 
 const POLICY_GET_BUILDERS = new Map<string, PolicyReadView>([
+  ["buildGlobalPolicyGetFullJsonArgs", "full"],
   ["buildPolicyGetCommand", "base"],
   ["buildPolicyGetArgs", "base"],
   ["buildPolicyGetFullCommand", "full"],

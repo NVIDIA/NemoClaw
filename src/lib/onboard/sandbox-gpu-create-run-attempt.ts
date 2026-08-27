@@ -9,6 +9,7 @@ import {
   parseOpenShellSandboxId,
   resolveCreatedOpenShellSandboxId,
   resolveOpenShellSandboxId,
+  settleCreatedOpenShellSandboxId,
 } from "../adapters/openshell/sandbox-identity";
 import { printSandboxCreateRecoveryHints } from "../build-context";
 import { streamSandboxCreate } from "../sandbox/create-stream";
@@ -1007,7 +1008,7 @@ export function createSandboxGpuCreateAttemptRunner(
         );
         console.error("  Verify the sandbox identity before manual cleanup.");
       }
-      process.exit(createResult.status === 0 ? 1 : createResult.status);
+      process.exit(createResult?.status === 0 ? 1 : (createResult?.status ?? 1));
     }
     if (input.sandboxGpuConfig.sandboxGpuEnabled) {
       revalidatePostCreateEffect(`verify GPU access for sandbox '${input.sandboxName}'`);

@@ -63,11 +63,13 @@ import {
   resetGpuFlowMocks,
   setupGpuFlowMocks,
 } from "./__test-helpers__/sandbox-gpu-create-flow";
+import { formatRetainedApfSandboxRecoveryReceipt } from "./created-sandbox-failure";
 import {
   createHermesPortableReadyCapture,
   createHermesPortableReadyRunner,
 } from "./experimental/hermes-portable-onboarding";
 import { runSandboxGpuCreateFlow } from "./sandbox-gpu-create-flow";
+import { resetOnboardResumeHintForTests } from "./resume-hint";
 import { fingerprintSandboxRecreateValue } from "./sandbox-recreate-transaction";
 
 function sandboxListJson(
@@ -118,7 +120,10 @@ function refuseEffectStartingWith(prefix: string): (operation: string) => void {
 }
 
 beforeEach(() => setupGpuFlowMocks(mocks));
-afterEach(resetGpuFlowMocks);
+afterEach(() => {
+  resetGpuFlowMocks();
+  resetOnboardResumeHintForTests();
+});
 
 describe("created sandbox identity gate", () => {
   it("resumes the exact verified sandbox without issuing another create (#9833)", async () => {
@@ -768,6 +773,8 @@ describe("created sandbox identity gate", () => {
     input.verifyCreatedSandboxBeforeEffects = vi.fn();
     input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
     input.persistRetainedSandboxRecovery = vi.fn(() => true);
+    const persistRetainedApfSandboxRecovery = vi.fn(() => true);
+    input.persistRetainedApfSandboxRecovery = persistRetainedApfSandboxRecovery;
     mocks.streamSandboxCreate.mockImplementationOnce(async (_command, args) => {
       nonce = createAttemptNonce(args);
       return {
@@ -799,15 +806,17 @@ describe("created sandbox identity gate", () => {
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
 
     const fingerprint = fingerprintSandboxRecreateValue("alpha-sandbox-id");
-    expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
-      expect.stringMatching(
-        new RegExp(
-          `^Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}\\. Durable sandbox identity fingerprint: ${fingerprint}\\.`,
-          "u",
-        ),
-      ),
-    );
-    expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledBefore(exit);
+    expect(persistRetainedApfSandboxRecovery).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      createAttemptNonce: nonce,
+      liveIdentityFingerprint: fingerprint,
+      message: formatRetainedApfSandboxRecoveryReceipt({
+        createAttemptNonce: nonce,
+        liveIdentityFingerprint: fingerprint,
+      }),
+    });
+    expect(persistRetainedApfSandboxRecovery).toHaveBeenCalledBefore(exit);
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(output).toContain(`${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`);
     expect(output).toContain(`Durable sandbox identity fingerprint: ${fingerprint}`);
@@ -826,6 +835,8 @@ describe("created sandbox identity gate", () => {
     input.verifyCreatedSandboxBeforeEffects = vi.fn();
     input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
     input.persistRetainedSandboxRecovery = vi.fn(() => true);
+    const persistRetainedApfSandboxRecovery = vi.fn(() => true);
+    input.persistRetainedApfSandboxRecovery = persistRetainedApfSandboxRecovery;
     mocks.streamSandboxCreate.mockImplementationOnce(async (_command, args) => {
       nonce = createAttemptNonce(args);
       return {
@@ -854,14 +865,16 @@ describe("created sandbox identity gate", () => {
 
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
 
-    expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
-      expect.stringMatching(
-        new RegExp(
-          `^Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}\\..*Recovery is blocked until an OpenShell administrator resolves the create-attempt label`,
-          "u",
-        ),
-      ),
-    );
+    expect(persistRetainedApfSandboxRecovery).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      createAttemptNonce: nonce,
+      liveIdentityFingerprint: null,
+      message: formatRetainedApfSandboxRecoveryReceipt({
+        createAttemptNonce: nonce,
+        liveIdentityFingerprint: null,
+      }),
+    });
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(output).toContain(`${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`);
     expect(output).toContain("Recovery is blocked");

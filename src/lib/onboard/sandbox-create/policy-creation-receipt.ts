@@ -5,8 +5,6 @@ import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 
 import {
-  assertExternalPolicyRequirements,
-  assertObservedPolicyRequirements,
   assertOpenShellGatewayPortBinding,
   captureSandboxBasePolicy,
   inspectOpenShellSandboxPolicyReadiness,
@@ -14,6 +12,10 @@ import {
   PolicyAuthorityRefusalError,
   type SandboxPolicyAuthority,
 } from "../../adapters/openshell/policy-authority";
+import {
+  assertExternalPolicyRequirements,
+  assertObservedPolicyRequirements,
+} from "../../policy/policy-authority";
 import { waitUntil } from "../../core/wait";
 import type { NemoClawPolicyCreationReceipt } from "../../policy/merge";
 import { normalizePendingSandboxPolicyVerification } from "../../state/registry-normalization";

@@ -8,22 +8,13 @@ import {
   NAME_MAX_LENGTH,
 } from "../../sandbox-name-contract";
 import {
-  buildGlobalPolicyGetFullJsonArgs,
-  buildGlobalPolicyListArgs,
-  buildPolicyGetArgs,
-  buildPolicyGetFullJsonArgs,
-} from "../../policy/commands";
-import {
-  assertExternalPolicyRequirementContainment,
-  assertMatchingPolicyAuthority,
-  assertPolicyRequirementContainment,
   classifyOpenShellGlobalPolicyHistory,
   parseActiveGlobalPolicyAuthorityMetadata,
   type ActiveGlobalPolicyInspection,
   type OpenShellPolicyAuthority,
   parseSandboxPolicyAuthorityMetadata,
   type SandboxPolicyAuthorityInspection as CanonicalSandboxPolicyAuthorityInspection,
-} from "../../policy/merge";
+} from "../../../../nemoclaw/dist/shared/openshell-policy-boundary.cjs";
 import * as openshellRuntime from "./runtime";
 import {
   fingerprintOpenShellSandboxId,
@@ -37,7 +28,7 @@ type JsonObject = Record<string, unknown>;
 
 export type SandboxPolicyAuthority = OpenShellPolicyAuthority;
 export type SandboxPolicyAuthorityInspection = CanonicalSandboxPolicyAuthorityInspection;
-export type { ActiveGlobalPolicyInspection } from "../../policy/merge";
+export type { ActiveGlobalPolicyInspection };
 
 export type OpenShellSandboxPolicyReadiness =
   | { readonly state: "ready" }
@@ -148,14 +139,6 @@ function captureAuthorityRead(
   runtimeSelection?: { readonly gatewayName?: string },
 ): { readonly output: string; readonly stdout: string; readonly stderr: string } {
   const result = captureBoundedOpenShell(args, subject, runtimeSelection);
-  if (
-    !isObject(result) ||
-    typeof result.output !== "string" ||
-    typeof result.stdout !== "string" ||
-    typeof result.stderr !== "string"
-  ) {
-    failInspection(subject, "the policy query returned an invalid result");
-  }
   const errorCode = (result.error as NodeJS.ErrnoException | undefined)?.code;
   if (errorCode === "ETIMEDOUT") {
     failInspection(subject, "the policy query timed out");
@@ -169,7 +152,7 @@ function captureAuthorityRead(
   if (result.status !== 0) {
     failInspection(subject, "the policy query did not complete successfully");
   }
-  return { output: result.output, stdout: result.stdout, stderr: result.stderr };
+  return { output: result.output, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
 }
 
 function capturePolicyRead(
@@ -191,7 +174,15 @@ export function inspectSandboxPolicyAuthority({
       ? undefined
       : validatePolicyAuthorityName(gatewayName, "gateway name");
   const raw = capturePolicyRead(
-    buildPolicyGetFullJsonArgs(validatedSandboxName, validatedGatewayName),
+    [
+      "policy",
+      "get",
+      ...(validatedGatewayName ? ["-g", validatedGatewayName] : []),
+      "--full",
+      "--output",
+      "json",
+      validatedSandboxName,
+    ],
     "sandbox",
     { gatewayName: validatedGatewayName },
   );
@@ -256,16 +247,33 @@ export function inspectActiveGlobalPolicy({
     gatewayName === undefined
       ? undefined
       : validatePolicyAuthorityName(gatewayName, "gateway name");
-  const history = captureAuthorityRead(buildGlobalPolicyListArgs(validatedGatewayName), "global", {
-    gatewayName: validatedGatewayName,
-  });
+  const history = captureAuthorityRead(
+    [
+      "policy",
+      "list",
+      ...(validatedGatewayName ? ["-g", validatedGatewayName] : []),
+      "--global",
+      "--limit",
+      "1",
+    ],
+    "global",
+    { gatewayName: validatedGatewayName },
+  );
   const historyState = classifyOpenShellGlobalPolicyHistory(history.stdout, history.stderr);
   if (historyState === "absent") return { state: "absent" };
   if (historyState === "invalid") {
     failInspection("global", "OpenShell returned invalid global policy history");
   }
   const raw = captureAuthorityRead(
-    buildGlobalPolicyGetFullJsonArgs(validatedGatewayName),
+    [
+      "policy",
+      "get",
+      ...(validatedGatewayName ? ["-g", validatedGatewayName] : []),
+      "--global",
+      "--full",
+      "--output",
+      "json",
+    ],
     "global",
     { gatewayName: validatedGatewayName },
   ).stdout;
@@ -281,12 +289,10 @@ export function inspectActiveGlobalPolicy({
 
 /** Read one sandbox base policy through the same bounded OpenShell adapter. */
 export function captureSandboxBasePolicy(sandboxName: string, gatewayName: string): string {
+  const validatedSandboxName = validatePolicyAuthorityName(sandboxName, "sandbox name");
   const validatedGatewayName = validatePolicyAuthorityName(gatewayName, "gateway name");
   return capturePolicyRead(
-    buildPolicyGetArgs(
-      validatePolicyAuthorityName(sandboxName, "sandbox name"),
-      validatedGatewayName,
-    ),
+    ["policy", "get", "-g", validatedGatewayName, "--base", validatedSandboxName],
     "sandbox",
     { gatewayName: validatedGatewayName },
   );
@@ -345,80 +351,6 @@ export function assertOpenShellGatewayPortBinding(options: {
     "match"
   ) {
     failInspection("gateway", "the live endpoint does not match the recorded gateway port");
-  }
-}
-
-function operationLabel(operation: string): string {
-  return typeof operation === "string" && operation.trim().length > 0
-    ? operation.trim()
-    : "continue the policy-dependent operation";
-}
-
-/** Refuse a lifecycle operation when its durable and observed authority disagree. */
-export function assertRecordedPolicyAuthority(
-  recorded: unknown,
-  observed: unknown,
-  operation: string,
-): void {
-  const label = operationLabel(operation);
-  try {
-    assertMatchingPolicyAuthority(recorded, observed);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : "policy authority is invalid";
-    const observedAuthority =
-      observed === "nemoclaw-managed" || observed === "externally-managed" ? observed : undefined;
-    throw new PolicyAuthorityRefusalError(`Refusing to ${label}: ${detail}.`, observedAuthority);
-  }
-}
-
-/**
- * Verify that an externally supplied policy contains each required entry and
- * section without claiming ownership. Unrelated external entries are allowed.
- */
-export function assertExternalPolicyRequirements({
-  inspection,
-  requiredPolicy,
-  operation,
-  sandboxName,
-}: {
-  readonly inspection: SandboxPolicyAuthorityInspection;
-  readonly requiredPolicy: JsonObject;
-  readonly operation: string;
-  readonly sandboxName?: string;
-}): void {
-  const label = operationLabel(operation);
-  const target = sandboxName ? ` for sandbox ${JSON.stringify(sandboxName)}` : "";
-  try {
-    assertExternalPolicyRequirementContainment(inspection, requiredPolicy);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : "the policy requirement is invalid";
-    throw new PolicyAuthorityRefusalError(
-      `Refusing to ${label}${target}: ${detail}. Ask the external policy authority to supply the exact required entries.`,
-    );
-  }
-}
-
-/** Verify required entries without assigning ownership to a sandbox-scoped policy. */
-export function assertObservedPolicyRequirements({
-  inspection,
-  requiredPolicy,
-  operation,
-  sandboxName,
-}: {
-  readonly inspection: SandboxPolicyAuthorityInspection;
-  readonly requiredPolicy: JsonObject;
-  readonly operation: string;
-  readonly sandboxName?: string;
-}): void {
-  const label = operationLabel(operation);
-  const target = sandboxName ? ` for sandbox ${JSON.stringify(sandboxName)}` : "";
-  try {
-    assertPolicyRequirementContainment(inspection, requiredPolicy);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : "the policy requirement is invalid";
-    throw new PolicyAuthorityRefusalError(
-      `Refusing to ${label}${target}: ${detail}. The verified policy must supply the exact required entries.`,
-    );
   }
 }
 
