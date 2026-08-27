@@ -13,6 +13,7 @@ import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import {
   adminApprovalConnectScript,
   ISSUE_4462_SCOPE_UPGRADE_PHASES,
+  preApprovalAdminProbeEvidence,
 } from "./issue-4462-admin-approval-helper.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-issue-4462";
@@ -317,22 +318,12 @@ test(
         timeoutMs: 90_000,
       },
     );
-    const cronTriggerOutput = resultText(cronTrigger);
-    const requestedAdmin =
-      /operator\.admin|scope upgrade pending approval|device pairing required|pairing required|requestId/i.test(
-        cronTriggerOutput,
-      );
-    await artifacts.writeJson("phase-3-trigger-admin-cron.json", {
-      failedBeforeApproval: cronTrigger.exitCode !== 0,
-      requestedAdmin,
-    });
+    const cronTriggerEvidence = preApprovalAdminProbeEvidence(cronTrigger);
+    await artifacts.writeJson("phase-3-trigger-admin-cron.json", cronTriggerEvidence);
     expect(
-      cronTrigger.exitCode,
-      "The admin operation unexpectedly succeeded before explicit approval",
-    ).not.toBe(0);
-    expect(requestedAdmin, "The denied admin operation did not report an approval boundary").toBe(
-      true,
-    );
+      cronTriggerEvidence.outcome,
+      "The operator.admin probe did not stop at the explicit approval boundary",
+    ).toBe("approval-required");
 
     const adminConnect = await host.command(
       "bash",

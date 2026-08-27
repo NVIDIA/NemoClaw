@@ -9,6 +9,44 @@ export const ISSUE_4462_SCOPE_UPGRADE_PHASES = [
   "record the approval contract",
 ] as const;
 
+export type PreApprovalAdminProbeOutcome =
+  | "approval-required"
+  | "command-failed"
+  | "gateway-unavailable"
+  | "timeout"
+  | "unexpected-success";
+
+interface PreApprovalAdminProbeResult {
+  exitCode: number | null;
+  stderr: string;
+  stdout: string;
+  timedOut: boolean;
+}
+
+export function preApprovalAdminProbeEvidence(result: PreApprovalAdminProbeResult): {
+  outcome: PreApprovalAdminProbeOutcome;
+} {
+  if (result.timedOut) return { outcome: "timeout" };
+  if (result.exitCode === 0) return { outcome: "unexpected-success" };
+
+  const output = `${result.stdout}\n${result.stderr}`;
+  if (
+    /operator\.admin|scope upgrade pending approval|device pairing required|pairing required/i.test(
+      output,
+    )
+  ) {
+    return { outcome: "approval-required" };
+  }
+  if (
+    /gateway (?:connection )?(?:unavailable|unreachable)|econn(?:refused|reset)|connection refused|network unreachable|socket (?:closed|unavailable)/i.test(
+      output,
+    )
+  ) {
+    return { outcome: "gateway-unavailable" };
+  }
+  return { outcome: "command-failed" };
+}
+
 export const ADMIN_REQUEST_SELECTOR_PY = String.raw`import base64, hashlib, json, os, re, sys
 from pathlib import Path
 

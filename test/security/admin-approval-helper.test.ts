@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import {
   ADMIN_REQUEST_SELECTOR_PY,
   adminApprovalConnectScript,
+  preApprovalAdminProbeEvidence,
 } from "../e2e/live/issue-4462-admin-approval-helper.ts";
 
 const EXPECTED_REQUEST_ID = "12345678-1234-4123-8123-123456789abc";
@@ -175,6 +176,67 @@ esac
 }
 
 describe("prepared connect-shell administrative approval", () => {
+  it.each([
+    [
+      "approval boundary",
+      {
+        exitCode: 1,
+        stderr: `scope upgrade pending approval requestId=${EXPECTED_REQUEST_ID} device=${EXPECTED_DEVICE_ID}`,
+        stdout: "",
+        timedOut: false,
+      },
+      "approval-required",
+    ],
+    [
+      "timeout",
+      {
+        exitCode: null,
+        stderr: `request timed out token=test-gateway-token requestId=${EXPECTED_REQUEST_ID}`,
+        stdout: "",
+        timedOut: true,
+      },
+      "timeout",
+    ],
+    [
+      "gateway failure",
+      {
+        exitCode: 1,
+        stderr: `gateway connection unavailable token=test-gateway-token device=${EXPECTED_DEVICE_ID}`,
+        stdout: "",
+        timedOut: false,
+      },
+      "gateway-unavailable",
+    ],
+    [
+      "unexpected success",
+      { exitCode: 0, stderr: "", stdout: `cron=cron-1`, timedOut: false },
+      "unexpected-success",
+    ],
+    [
+      "unclassified command failure",
+      {
+        exitCode: 1,
+        stderr: `command failed requestId=${EXPECTED_REQUEST_ID}`,
+        stdout: "",
+        timedOut: false,
+      },
+      "command-failed",
+    ],
+  ] as const)(
+    "records a fixed, redacted pre-approval outcome for %s (#5324)",
+    (_case, result, outcome) => {
+      const evidence = preApprovalAdminProbeEvidence(result);
+      const artifact = JSON.stringify(evidence);
+
+      expect(evidence).toEqual({ outcome });
+      expect(artifact).not.toContain(EXPECTED_REQUEST_ID);
+      expect(artifact).not.toContain(EXPECTED_DEVICE_ID);
+      expect(artifact).not.toContain(EXPECTED_PUBLIC_KEY);
+      expect(artifact).not.toContain("cron-1");
+      expect(artifact).not.toContain("test-gateway-token");
+    },
+  );
+
   it.each([
     ["loopback ws", "ws://127.0.0.1:18789", undefined],
     ["marked private ws", "ws://10.200.0.2:18789", "1"],
