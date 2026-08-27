@@ -657,17 +657,13 @@ describe("review support DSH tools", () => {
   });
 
   it("rejects a publication remote that does not match the declared repository", async () => {
-    const bash = vi.fn(async ({ description }: { description: string }) => ({
+    const bash = vi.fn().mockResolvedValue({
       kind: "foreground",
       exitCode: 0,
-      stdout: {
-        text:
-          description === "Read publication push URLs" ? "git@github.com:someone/other.git\n" : "",
-        truncated: false,
-      },
+      stdout: { text: "git@github.com:someone/other.git\n", truncated: false },
       stderr: { text: "", truncated: false },
-    }));
-    const runGithubCli = vi.fn();
+    });
+    const runGithubCli = vi.fn().mockResolvedValue({ stdout: "main\n" });
     vi.stubGlobal("tools", {
       bash,
       read_git_checkout: vi.fn().mockResolvedValue({
@@ -682,6 +678,90 @@ describe("review support DSH tools", () => {
     await expect(
       publishNemoclawPrBranch({ workdir: "/workspace", expectedHeadSha: HEAD_SHA }),
     ).rejects.toThrow("Every publication push URL must match the declared GitHub repository");
-    expect(runGithubCli).not.toHaveBeenCalled();
+    expect(runGithubCli).toHaveBeenCalledOnce();
+  });
+
+  it("renders sorted workflow and job name trees from workflow YAML", async () => {
+    const fixture = fs.mkdtempSync(path.join(process.cwd(), ".workflow-tree-test-"));
+    fixtureRoots.push(fixture);
+    fs.symlinkSync(path.resolve("node_modules"), path.join(fixture, "node_modules"), "dir");
+    const workflows = path.join(fixture, ".github", "workflows");
+    fs.mkdirSync(workflows, { recursive: true });
+    fs.writeFileSync(
+      path.join(workflows, "z.yml"),
+      "name: CI / Zed\njobs:\n  second:\n    name: Test / Second\n    runs-on: ubuntu-latest\n  first:\n    runs-on: ubuntu-latest\n",
+    );
+    fs.writeFileSync(
+      path.join(workflows, "a.yaml"),
+      "jobs:\n  build:\n    name: Build / Linux\n    runs-on: ubuntu-latest\n",
+    );
+    vi.stubGlobal("tools", { bash: shellBashSpy(), project_diagnostic_text: vi.fn() });
+
+    await expect(workflowNameTree({ workdir: fixture })).resolves.toMatchObject({
+      files: 2,
+      workflows: [
+        {
+          path: ".github/workflows/a.yaml",
+          name: "a.yaml",
+          jobs: [{ id: "build", name: "Build / Linux" }],
+        },
+        {
+          path: ".github/workflows/z.yml",
+          name: "CI / Zed",
+          jobs: [
+            { id: "second", name: "Test / Second" },
+            { id: "first", name: "first" },
+          ],
+        },
+      ],
+      workflowTree: "├── a.yaml\n└── CI\n    └── Zed",
+      jobTree: "├── Build\n│   └── Linux\n├── first\n└── Test\n    └── Second",
+    });
+  });
+
+  it("previews publication for a matching branch without pushing", async () => {
+    const commit = "b".repeat(40);
+    const bash = vi
+      .fn()
+      .mockResolvedValueOnce({
+        kind: "foreground",
+        exitCode: 0,
+        stdout: { text: "git@github.com:NVIDIA/NemoClaw.git\n", truncated: false },
+        stderr: { text: "", truncated: false },
+      })
+      .mockResolvedValueOnce({
+        kind: "foreground",
+        exitCode: 0,
+        stdout: { text: "1\n", truncated: false },
+        stderr: { text: "", truncated: false },
+      })
+      .mockResolvedValueOnce({
+        kind: "foreground",
+        exitCode: 0,
+        stdout: { text: commit + "\n", truncated: false },
+        stderr: { text: "", truncated: false },
+      });
+    const runGithubCli = vi
+      .fn()
+      .mockResolvedValueOnce({ stdout: "main\n" })
+      .mockResolvedValueOnce({ stdout: "[]" });
+    vi.stubGlobal("tools", {
+      bash,
+      read_git_checkout: vi
+        .fn()
+        .mockResolvedValue({ head: HEAD_SHA, branch: "feature", clean: true }),
+      run_github_cli: runGithubCli,
+      project_diagnostic_text: vi.fn(),
+    });
+
+    await expect(
+      publishNemoclawPrBranch({ workdir: "/workspace", expectedHeadSha: HEAD_SHA }),
+    ).resolves.toMatchObject({
+      apply: false,
+      pushed: false,
+      commits: [{ sha: commit, verified: false }],
+      blocker: null,
+    });
+    expect(bash).toHaveBeenCalledTimes(3);
   });
 });

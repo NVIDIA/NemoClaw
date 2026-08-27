@@ -68,6 +68,14 @@ export default async function publish_nemoclaw_pr_branch(input: {
   if (!checkout.clean) throw new Error("Publication candidate has uncommitted changes");
   const branch = checkout.branch ?? "";
   if (!branch || branch === baseBranch) throw new Error("Publication requires a feature branch");
+  const repositoryDetails = await tools.run_github_cli({
+    workdir: input.workdir,
+    args: ["repo", "view", repo, "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"],
+    timeoutMs: 120000,
+  });
+  const defaultBranch = repositoryDetails.stdout.trim();
+  if (!defaultBranch || branch === defaultBranch)
+    throw new Error("Publication requires a branch other than the repository default branch");
   const pushUrls = (
     await run("git remote get-url --push --all " + q(remote), "Read publication push URLs")
   ).stdout.text
@@ -95,7 +103,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
       "--state",
       "open",
       "--json",
-      "number,url",
+      "number,url,headRefName,headRepository,headRepositoryOwner",
       "--limit",
       "2",
     ],
@@ -103,12 +111,31 @@ export default async function publish_nemoclaw_pr_branch(input: {
   });
   const prs = JSON.parse(existing.stdout || "[]");
   if (prs.length > 1) throw new Error("Multiple open pull requests exist for this branch");
-  if (prs.length === 1 && prs[0]?.number !== input.pullNumber)
-    throw new Error(
-      "An open pull request already exists for this branch; pass its pullNumber to update it",
-    );
+  if (prs.length === 1) {
+    const pull = prs[0];
+    const pullRepo =
+      pull?.headRepository?.nameWithOwner ??
+      (pull?.headRepository?.name && pull?.headRepositoryOwner?.login
+        ? `${pull.headRepositoryOwner.login}/${pull.headRepository.name}`
+        : "");
+    if (pull?.headRefName !== branch || pullRepo.toLowerCase() !== repo.toLowerCase())
+      throw new Error("The open pull request source does not match this branch and repository");
+    if (input.pullNumber !== undefined && pull?.number !== input.pullNumber)
+      throw new Error("The requested open pull request does not match this branch");
+  }
   if (prs.length === 0 && input.pullNumber !== undefined)
     throw new Error("The requested open pull request does not match this branch");
+  const commitCount = Number(
+    (
+      await run(
+        "git rev-list --count --max-count=101 " + q(remote + "/" + baseBranch + "..HEAD"),
+        "Count publication commits",
+      )
+    ).stdout.text.trim(),
+  );
+  if (!Number.isSafeInteger(commitCount) || commitCount < 1)
+    throw new Error("No commits are ahead of the trusted base");
+  if (commitCount > 100) throw new Error("Publication exceeds the 100-commit verification bound");
   const commits = (
     await run(
       "git rev-list --reverse " + q(remote + "/" + baseBranch + "..HEAD"),
@@ -117,9 +144,8 @@ export default async function publish_nemoclaw_pr_branch(input: {
   ).stdout.text
     .split(/\r?\n/)
     .filter(Boolean);
-  if (!commits.length) throw new Error("No commits are ahead of the trusted base");
-  if (commits.length > 100)
-    throw new Error("Publication exceeds the 100-commit verification bound");
+  if (commits.length !== commitCount)
+    throw new Error("Publication commit count changed during validation");
   if (input.apply !== true)
     return {
       apply: false,

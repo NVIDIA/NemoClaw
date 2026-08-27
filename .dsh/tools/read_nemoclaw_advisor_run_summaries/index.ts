@@ -90,7 +90,13 @@ umask 077
 tmp=\$(mktemp -d "\${TMPDIR:-/tmp}/advisor-summary.XXXXXX")
 trap 'rm -rf "\$tmp"' EXIT
 zip="\$tmp/artifact.zip"
-gh api ${quote(`repos/${repo}/actions/artifacts/${artifactId}/zip`)} > "\$zip"
+set +e
+gh api ${quote(`repos/${repo}/actions/artifacts/${artifactId}/zip`)} | head -c 5000001 > "\$zip"
+statuses=("\${PIPESTATUS[@]}")
+producer=\${statuses[0]}
+consumer=\${statuses[1]}
+set -e
+[ "\$consumer" -eq 0 ] && { [ "\$producer" -eq 0 ] || [ "\$producer" -eq 141 ]; } || exit 19
 bytes=\$(stat -c %s "\$zip")
 [ "\$bytes" -le 5000000 ] || { echo 'compressed artifact exceeds bound' >&2; exit 20; }
 mapfile -t entries < <(zipinfo -1 "\$zip")
