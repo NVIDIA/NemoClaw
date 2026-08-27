@@ -59,7 +59,6 @@ export default async function monitor_nemoclaw_e2e_run_group(input: {
   const timeoutMs = Math.max(0, Math.min(1800000, input.timeoutMs ?? 600000));
   const intervalMs = Math.max(5000, Math.min(120000, input.intervalMs ?? 30000));
   const runLimit = Math.max(runIds.length, Math.min(100, input.runLimit ?? 100));
-  const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
   const cut = (value, size) => (typeof value === "string" ? value.slice(0, size) : null);
   const runGh = async (args) => {
     const result = await tools.run_github_cli({

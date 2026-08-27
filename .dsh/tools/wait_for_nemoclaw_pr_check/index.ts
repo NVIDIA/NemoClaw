@@ -40,7 +40,6 @@ export default async function wait_for_nemoclaw_pr_check(input: {
     throw new Error("expectedHeadSha must be a lowercase 40-character commit SHA");
   const timeoutMs = Math.max(1000, Math.min(1800000, input.timeoutMs ?? 600000));
   const intervalMs = Math.max(1000, Math.min(120000, input.intervalMs ?? 15000));
-  const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
   const cut = (value, size) => (typeof value === "string" ? value.slice(0, size) : null);
   const runGh = async (args) => {
     const result = await tools.run_github_cli({

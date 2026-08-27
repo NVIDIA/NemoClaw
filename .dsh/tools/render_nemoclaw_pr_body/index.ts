@@ -164,45 +164,44 @@ export default async function render_nemoclaw_pr_body(input: {
         "- DGX Station exception: " + line(input.dgxStation.exceptionReason, "DGX exception"),
       );
   }
-  const out = [
-    "<!-- markdownlint-disable MD041 -->",
-    "## Outcome",
-    "",
-    outcome,
-    "",
-    "## Reason",
-    "",
-    reason,
-    "",
-  ];
-  if (relatedIssues.length)
-    out.push(
-      "### Related issues",
-      "",
-      ...relatedIssues.map((issue) => issue.keyword + " #" + issue.number),
-      "",
+  const replaceSection = (body, heading, content, nextHeadingPattern) => {
+    const pattern = new RegExp(
+      "(^|\\n)(" + heading + ")\\n[\\s\\S]*?(?=\\n" + nextHeadingPattern + "|$)",
+      "u",
     );
-  out.push(
+    if (!pattern.test(body)) throw new Error("Trusted template is missing " + heading);
+    return body.replace(
+      pattern,
+      (_, prefix, title) => prefix + title + "\n\n" + content.trim() + "\n",
+    );
+  };
+  let body = trustedTemplate.replace(/<!--(?! markdownlint-disable MD041)[\s\S]*?-->/gu, "").trim();
+  body = replaceSection(body, "## Outcome", outcome, "## Reason");
+  let reasonContent = reason;
+  if (relatedIssues.length)
+    reasonContent +=
+      "\n\n### Related issues\n\n" +
+      relatedIssues.map((issue) => issue.keyword + " #" + issue.number).join("\n");
+  body = replaceSection(body, "## Reason", reasonContent, "## Changes");
+  body = replaceSection(
+    body,
     "## Changes",
-    "",
-    ...changes.map((value) => "- " + value),
-    "",
+    changes.map((value) => "- " + value).join("\n"),
     "## Verification",
-    "",
-    ...verification,
-    "",
   );
-  if (reviewNotes.length) out.push("## Review notes", "", ...reviewNotes, "");
-  out.push(
-    "---",
+  body = replaceSection(body, "## Verification", verification.join("\n"), "## Review notes|---");
+  if (reviewNotes.length)
+    body = replaceSection(body, "## Review notes", reviewNotes.join("\n"), "---");
+  else body = body.replace(/\n## Review notes\n[\s\S]*?(?=\n---)/u, "");
+  body = body.replace(
+    /Signed-off-by: [^\n]*/u,
     "Signed-off-by: " +
       line(input.dco.name, "DCO name") +
       " <" +
       line(input.dco.email, "DCO email") +
       ">",
-    "",
   );
-  const body = out.join("\n");
+  body = body.trim() + "\n";
   if (body.length > 60000) throw new Error("Rendered PR body exceeds 60000 characters");
   return {
     body,

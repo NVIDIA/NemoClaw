@@ -286,7 +286,8 @@ export default async function refresh_pr_body_evidence(input: {
   if (!temporaryDirectory.startsWith("/") || /[\r\n\0]/.test(temporaryDirectory))
     throw new Error("Could not create a safe pull request body directory");
   const temporary = temporaryDirectory + "/body.md";
-  let updated;
+  let updated,
+    primaryError = null;
   try {
     await tools.write({ file_path: temporary, content: body });
     const updateResult = await github({
@@ -303,9 +304,32 @@ export default async function refresh_pr_body_evidence(input: {
       apply: true,
     });
     updated = JSON.parse(updateResult.stdout);
-  } finally {
-    await run("rm -rf -- " + quote(temporaryDirectory), "Remove pull request body directory");
+  } catch (error) {
+    primaryError = error;
   }
+  let cleanupError = null;
+  try {
+    await run("rm -rf -- " + quote(temporaryDirectory), "Remove pull request body directory");
+  } catch (error) {
+    cleanupError = error;
+  }
+  if (primaryError)
+    throw new Error(
+      String(primaryError?.message ?? primaryError) +
+        (cleanupError
+          ? "; cleanup also failed for " +
+            temporaryDirectory +
+            ": " +
+            String(cleanupError?.message ?? cleanupError)
+          : ""),
+    );
+  if (cleanupError)
+    throw new Error(
+      "PR body update completed, but cleanup failed for " +
+        temporaryDirectory +
+        ": " +
+        String(cleanupError?.message ?? cleanupError),
+    );
   return {
     ok: true,
     apply: true,
