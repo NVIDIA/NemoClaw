@@ -122,6 +122,90 @@ describe("prepareOnboardSession", () => {
     expect(deps.clearSession).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["requested", createSession(), true],
+    ["recorded", createSession({ apfInterceptorRequested: true }), false],
+  ])(
+    "rejects %s APF selection before resumed-session effects (#9833)",
+    async (_source, initial, requested) => {
+      const { deps } = createDeps(initial);
+
+      await expect(
+        prepareOnboardSession(
+          {
+            resume: true,
+            fresh: false,
+            requestedFromDockerfile: null,
+            requestedSandboxName: null,
+            cannotPrompt: true,
+            nonInteractive: true,
+            apfInterceptorRequested: requested,
+          },
+          deps,
+        ),
+      ).rejects.toMatchObject({ code: 1 });
+
+      expect(deps.requireHostMountRuntimeSupport).not.toHaveBeenCalled();
+      expect(deps.setOnboardBrandingAgent).not.toHaveBeenCalled();
+      expect(deps.updateSession).not.toHaveBeenCalled();
+      expect(deps.saveSession).not.toHaveBeenCalled();
+      expect(deps.clearSession).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects APF sandbox recreation before fresh-session mutation (#9833)", async () => {
+    const { deps } = createDeps(createSession({ sessionId: "existing" }));
+
+    await expect(
+      prepareOnboardSession(
+        {
+          resume: false,
+          fresh: true,
+          recreateSandboxRequested: true,
+          apfInterceptorRequested: true,
+          requestedFromDockerfile: null,
+          requestedSandboxName: "alpha",
+          cannotPrompt: true,
+          nonInteractive: true,
+        },
+        deps,
+      ),
+    ).rejects.toMatchObject({ code: 1 });
+
+    expect(deps.requireHostMountRuntimeSupport).not.toHaveBeenCalled();
+    expect(deps.clearSession).not.toHaveBeenCalled();
+    expect(deps.createSession).not.toHaveBeenCalled();
+    expect(deps.saveSession).not.toHaveBeenCalled();
+  });
+
+  it("rejects APF with the Portable profile before fresh-session mutation (#9833)", async () => {
+    const { deps } = createDeps(createSession({ sessionId: "existing" }));
+
+    await expect(
+      prepareOnboardSession(
+        {
+          resume: false,
+          fresh: true,
+          apfInterceptorRequested: true,
+          checkpointProfile: "portable",
+          requestedFromDockerfile: null,
+          requestedSandboxName: "alpha",
+          cannotPrompt: true,
+          nonInteractive: true,
+        },
+        deps,
+      ),
+    ).rejects.toMatchObject({ code: 1 });
+
+    expect(deps.error).toHaveBeenCalledWith(
+      "  APF interceptor selection cannot use the Portable experimental profile.",
+    );
+    expect(deps.requireHostMountRuntimeSupport).not.toHaveBeenCalled();
+    expect(deps.clearSession).not.toHaveBeenCalled();
+    expect(deps.createSession).not.toHaveBeenCalled();
+    expect(deps.saveSession).not.toHaveBeenCalled();
+  });
+
   it("creates a fresh session and records the resolved Dockerfile", async () => {
     const existing = createSession({ sessionId: "old-session" });
     const { deps, getSession } = createDeps(existing);
@@ -136,6 +220,7 @@ describe("prepareOnboardSession", () => {
         nonInteractive: true,
         requestedToolDisclosure: "direct",
         requestedObservabilityEnabled: true,
+        apfInterceptorRequested: true,
         requestedHostMounts: [
           { source: "/srv/project", target: "/sandbox/project", readOnly: true },
         ],
@@ -153,6 +238,7 @@ describe("prepareOnboardSession", () => {
     expect(result.session?.toolDisclosure).toBe("direct");
     expect(result.session?.observabilityEnabled).toBe(true);
     expect(result.session?.observabilityRequestedExplicitly).toBe(true);
+    expect(result.session?.apfInterceptorRequested).toBe(true);
     expect(getSession()?.sessionId).not.toBe("old-session");
   });
 
