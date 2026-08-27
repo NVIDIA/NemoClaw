@@ -1816,6 +1816,8 @@ USER sandbox
 # npm still needs a writable _cacache/tmp while OpenClaw packs the verified archive,
 # so materialize a sandbox-owned throwaway copy for this RUN and remove it before
 # committing the layer. Never point npm directly at the trusted source cache.
+# Normal images use --phase agent-install; capability-union images select the
+# managed phase instead so each build invokes the messaging applier exactly once.
 # hadolint ignore=DL3059,DL4006
 RUN --mount=from=openclaw-managed-messaging-npm-cache,source=/out/npm-cache,target=/opt/nemoclaw-managed-messaging-npm-cache,ro set -eu; \
     if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
