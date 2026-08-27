@@ -238,7 +238,6 @@ runner.run = (command, opts = {}) => {
     ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
 };
-fixtureMocks.mockDockerSandboxLifecycleReleaseFromRunner();
 runner.runCapture = (command) => {
   const normalized = _n(command);
   if (normalized.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:8080";
@@ -256,6 +255,7 @@ runner.runCapture = (command) => {
   if (normalized.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
+fixtureMocks.mockDockerSandboxLifecycleReleaseFromRunner();
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
   sandboxName: "my-assistant",
   provider: "openai-api",
