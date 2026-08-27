@@ -462,14 +462,24 @@ PY`,
 from pathlib import Path
 text = Path("/sandbox/.hermes/.env").read_text(encoding="utf-8")
 lines = set(text.splitlines())
-required = {
-    "SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-    "SLACK_APP_TOKEN=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
-    "API_SERVER_PORT=18642",
-}
+required = {"API_SERVER_PORT=18642"}
 missing = sorted(required - lines)
+# Slack tokens must not be rendered here. OpenShell binds SLACK_* to the policy
+# endpoint and injects revision-scoped placeholders into the process
+# environment; a rendered line would shadow them, because Hermes loads this file
+# with override=True.
+def assignment_key(line):
+    stripped = line.strip()
+    if stripped.startswith("export "):
+        stripped = stripped[len("export ") :].lstrip()
+    return stripped.split("=", 1)[0].strip() if "=" in stripped else ""
+
+assigned = {assignment_key(line) for line in lines}
+leaked = sorted(key for key in ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN") if key in assigned)
 if missing:
     print("FAIL missing " + ", ".join(missing))
+elif leaked:
+    print("FAIL rendered " + ", ".join(leaked))
 else:
     print("OK")
 PY`,
@@ -491,7 +501,6 @@ import re
 from pathlib import Path
 
 secret_key_re = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
-slack_alias_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
 allowed_nonsecret_keys = {"API_SERVER_HOST", "API_SERVER_PORT"}
 allowed_raw_secret_keys = {"API_SERVER_KEY"}
 allowed_literals = {"", "[STRIPPED_BY_MIGRATION]"}
@@ -528,7 +537,7 @@ for lineno, raw_line in enumerate(env_path.read_text(encoding="utf-8").splitline
     if not secret_key_re.search(key):
         continue
     value = unquote(value)
-    if value in allowed_literals or value.startswith("openshell:resolve:env:") or slack_alias_re.fullmatch(value):
+    if value in allowed_literals or value.startswith("openshell:resolve:env:"):
         continue
     violations.append(f"{key} line {lineno}")
 
@@ -636,22 +645,48 @@ done`,
     sandbox,
     SANDBOX_NAME,
     String.raw`sh -lc '. /tmp/nemoclaw-proxy-env.sh 2>/dev/null || true; if [ -x /opt/hermes/.venv/bin/python ]; then exec /opt/hermes/.venv/bin/python -; fi; exec python3 -' <<'PY'
+import glob
 import json
 import http.client
+import os
+import re
 import socket
 import ssl
 import sys
 import urllib.error
 import urllib.request
 
-TLS_CONTEXT = ssl._create_unverified_context()
+# Verified: this probe crosses the credential-rewrite boundary, so the proxy
+# chain has to be trusted, not just reachable.
+TLS_CONTEXT = ssl.create_default_context()
+INJECTED_RE = re.compile(r"^openshell:resolve:env:(v[0-9]+_)?(SLACK_BOT_TOKEN|SLACK_APP_TOKEN)$")
+
+def injected_token(env_key):
+    """Read the value OpenShell injected, never a fabricated alias.
+
+    The Bolt-shaped xoxb-/xapp- alias no longer exists: OpenShell 0.0.106
+    rejects the canonical form once the credential is identity-bound. An exec
+    session may not inherit the sandbox entrypoint's environment, so fall back
+    to a process that does.
+    """
+    value = os.environ.get(env_key, "")
+    if value:
+        return value
+    for entry in glob.glob("/proc/[0-9]*/environ"):
+        try:
+            data = open(entry, "rb").read().decode("utf-8", errors="replace")
+        except Exception:
+            continue
+        for item in data.split("\0"):
+            if item.startswith(env_key + "=") and item.split("=", 1)[1]:
+                return item.split("=", 1)[1]
+    return ""
 
 def call(label, path, env_key, allowed_errors):
-    prefix = {
-        "SLACK_BOT_TOKEN": "xoxb",
-        "SLACK_APP_TOKEN": "xapp",
-    }[env_key]
-    token = f"{prefix}-OPENSHELL-RESOLVE-ENV-{env_key}"
+    token = injected_token(env_key)
+    if not INJECTED_RE.fullmatch(token):
+        print(f"FAIL {label}: {env_key} is not a revision-scoped injected placeholder")
+        return False
     req = urllib.request.Request(
         f"https://slack.com/api/{path}",
         data=b"",

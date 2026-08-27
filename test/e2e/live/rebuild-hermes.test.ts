@@ -8,7 +8,9 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { loadAgent } from "../../../src/lib/agent/defs";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
+import { readManagedWorkloadAuthority } from "../../../src/lib/onboard/workload/authority.ts";
 import { readSandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image";
+import type { SandboxEntry } from "../../../src/lib/state/registry/types.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts";
@@ -16,6 +18,7 @@ import { type HostCliClient, resultText } from "../fixtures/clients/index.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { expectSandboxProviderAttachment } from "../fixtures/gateway-providers.ts";
+import { assertManagedImageReceiptMatchesSelectedCohort } from "../fixtures/managed-image-receipt.ts";
 import {
   readJsonFileOr,
   restoreFile,
@@ -55,8 +58,9 @@ import {
   cleanupTrackedRebuildHermesImage,
   type RebuildHermesRegistryImageState,
   rebuildHermesRegistryImageState,
-  requireRebuildHermesInitialImageTag,
+  requireRebuildHermesFinalImageRef,
   requireRebuildHermesReplacementLifecycleReceipt,
+  verifyRebuildHermesManagedImageIdentity,
 } from "./rebuild-hermes-image-state.ts";
 import {
   REBUILD_HERMES_OLD_BASE_FIXTURE,
@@ -1303,7 +1307,7 @@ test(STALE_BASE_REBUILD
     },
   );
   expectExitZero(restoredEnv, "read Hermes .env after rebuild");
-  expect(restoredEnv.stdout).toContain(`DISCORD_BOT_TOKEN=${DISCORD_PLACEHOLDER}`);
+  expect(restoredEnv.stdout).not.toContain("DISCORD_BOT_TOKEN=");
 
   const postRebuildApiTokenDigest = await hermesApiTokenDigest(
     host,
@@ -1340,17 +1344,17 @@ test(STALE_BASE_REBUILD
   const updatedRegistryVersion = rebuiltRegistry.agentVersion;
   expect(updatedRegistryVersion).toEqual(expect.any(String));
   expect(updatedRegistryVersion).not.toBe(OLD_HERMES_REGISTRY_VERSION);
-  const rebuiltImageTag = requireRebuildHermesInitialImageTag(
+  const rebuiltImageRef = requireRebuildHermesFinalImageRef(
     rebuiltRegistry.imageTag,
     SANDBOX_NAME,
   );
   expect(
-    rebuiltImageTag,
+    rebuiltImageRef,
     "Hermes rebuild must replace the seeded derived image with a new managed image",
   ).not.toBe(seededOldSandboxImageState.imageTag);
   const finalImageInspect = await host.command(
     "docker",
-    ["image", "inspect", "--format", "{{json .}}", rebuiltImageTag],
+    ["image", "inspect", "--format", "{{json .}}", rebuiltImageRef],
     {
       artifactName: "phase-7-inspect-final-hermes-base-identity",
       env: buildAvailabilityProbeEnv(),
@@ -1359,19 +1363,36 @@ test(STALE_BASE_REBUILD
     },
   );
   expectExitZero(finalImageInspect, "inspect final Hermes base identity");
-  const finalBaseEvidence = verifyRebuildHermesFinalBaseIdentity(
-    STALE_BASE_REBUILD,
-    phase1BaseResolution,
-    oldBaseResolutionMetadata,
-    currentBaseSourceInspect?.stdout.trim() ??
-      fail("phase 1 current Hermes base inspection disappeared"),
-    oldBaseIdentity.stdout.trim(),
-    finalImageInspect.stdout.trim(),
+  const managedAuthority = readManagedWorkloadAuthority(
+    rebuiltRegistry as unknown as SandboxEntry,
   );
+  const finalBaseEvidence = managedAuthority
+    ? (() => {
+        expect(managedAuthority.agent).toBe("hermes");
+        assertManagedImageReceiptMatchesSelectedCohort({
+          environment: process.env,
+          expectedAgent: "hermes",
+          workload: managedAuthority.receipt as unknown as Record<string, unknown>,
+        });
+        expect(rebuiltImageRef).toBe(managedAuthority.receipt.reference);
+        return verifyRebuildHermesManagedImageIdentity(
+          managedAuthority.receipt.reference,
+          finalImageInspect.stdout.trim(),
+        );
+      })()
+    : verifyRebuildHermesFinalBaseIdentity(
+        STALE_BASE_REBUILD,
+        phase1BaseResolution,
+        oldBaseResolutionMetadata,
+        currentBaseSourceInspect?.stdout.trim() ??
+          fail("phase 1 current Hermes base inspection disappeared"),
+        oldBaseIdentity.stdout.trim(),
+        finalImageInspect.stdout.trim(),
+      );
   await artifacts.writeJson("phase-7-final-base-identity.json", {
-    rebuiltImageTag,
+    rebuiltImageRef,
     rebuiltDashboardPort,
-    resolutionMetadata: readSandboxBaseImageResolutionMetadata(rebuiltImageTag),
+    resolutionMetadata: readSandboxBaseImageResolutionMetadata(rebuiltImageRef),
     ...finalBaseEvidence,
   });
 

@@ -25,6 +25,7 @@ type Endpoint = {
   allowed_ips?: string[];
   request_body_credential_rewrite?: boolean;
   websocket_credential_rewrite?: boolean;
+  credential_binding?: { provider?: string };
   rules?: AllowRule[];
 };
 
@@ -154,7 +155,11 @@ describe("effective built-in policy contracts", () => {
 
     [pypi, weather, publicReference].forEach((policy) => {
       for (const endpoint of policy.endpoints ?? []) {
-        expect(endpoint).toMatchObject({ port: 443, protocol: "rest", enforcement: "enforce" });
+        expect(endpoint).toMatchObject({
+          port: 443,
+          protocol: "rest",
+          enforcement: "enforce",
+        });
         expect(endpoint).not.toHaveProperty("access");
         expect(new Set(methods(endpoint))).toEqual(new Set(["GET", "HEAD"]));
       }
@@ -201,7 +206,11 @@ describe("effective built-in policy contracts", () => {
     const whatsapp = requireNetworkPolicy(effective, "whatsapp");
 
     (npm.endpoints ?? []).forEach((endpoint) => {
-      expect(endpoint).toMatchObject({ port: 443, access: "full", tls: "skip" });
+      expect(endpoint).toMatchObject({
+        port: 443,
+        access: "full",
+        tls: "skip",
+      });
       expect(endpoint).not.toHaveProperty("protocol");
       expect(endpoint).not.toHaveProperty("rules");
     });
@@ -217,13 +226,21 @@ describe("effective built-in policy contracts", () => {
 
     ["web.whatsapp.com", "*.web.whatsapp.com"].forEach((host) => {
       const endpoint = requireEndpoint(whatsapp, host);
-      expect(endpoint).toMatchObject({ port: 443, access: "full", tls: "skip" });
+      expect(endpoint).toMatchObject({
+        port: 443,
+        access: "full",
+        tls: "skip",
+      });
       expect(endpoint).not.toHaveProperty("protocol");
       expect(endpoint).not.toHaveProperty("rules");
     });
     ["whatsapp.net", "*.whatsapp.net"].forEach((host) => {
       const endpoint = requireEndpoint(whatsapp, host);
-      expect(endpoint).toMatchObject({ port: 443, protocol: "rest", enforcement: "enforce" });
+      expect(endpoint).toMatchObject({
+        port: 443,
+        protocol: "rest",
+        enforcement: "enforce",
+      });
       expect(methods(endpoint)).toEqual(["GET", "POST"]);
     });
     expect(rules(requireEndpoint(whatsapp, "raw.githubusercontent.com"))).toEqual([
@@ -287,11 +304,13 @@ describe("effective built-in policy contracts", () => {
         requireEndpoint(teams, host).request_body_credential_rewrite,
       );
     });
-    [
-      "login.microsoftonline.com",
-      "outlook.office365.com",
-      "outlook.office.com",
-    ].forEach((host) => {
+    const outlookLogin = requireEndpoint(outlook, "login.microsoftonline.com");
+    const teamsLogin = requireEndpoint(teams, "login.microsoftonline.com");
+    expect(outlookLogin.credential_binding).toEqual({
+      provider: "effective-policy-teams-bridge",
+    });
+    expect(outlookLogin.credential_binding).toEqual(teamsLogin.credential_binding);
+    ["login.microsoftonline.com", "outlook.office365.com", "outlook.office.com"].forEach((host) => {
       expect(methods(requireEndpoint(outlook, host))).toEqual(["GET", "POST"]);
     });
 
@@ -462,13 +481,20 @@ describe("effective built-in policy contracts", () => {
       requireNetworkPolicy(effective, "telegram_bot"),
       "api.telegram.org",
     );
-    expect(telegram).toMatchObject({ protocol: "rest", enforcement: "enforce" });
+    expect(telegram).toMatchObject({
+      protocol: "rest",
+      enforcement: "enforce",
+    });
     expect(telegram).not.toHaveProperty("tls");
 
     const wechat = requireNetworkPolicy(effective, "wechat_bridge");
     for (const host of ["ilinkai.weixin.qq.com", "ilinkai.wechat.com"]) {
       const endpoint = requireEndpoint(wechat, host);
-      expect(endpoint).toMatchObject({ port: 443, protocol: "rest", enforcement: "enforce" });
+      expect(endpoint).toMatchObject({
+        port: 443,
+        protocol: "rest",
+        enforcement: "enforce",
+      });
       expect(methods(endpoint)).toEqual(["GET", "POST"]);
     }
   });
@@ -512,14 +538,20 @@ describe("effective built-in policy contracts", () => {
     ).toEqual(
       [
         { method: "PUT", path: "/api/v*/applications/*/commands" },
-        { method: "PUT", path: "/api/v*/channels/*/messages/*/reactions/*/@me" },
+        {
+          method: "PUT",
+          path: "/api/v*/channels/*/messages/*/reactions/*/@me",
+        },
         { method: "PATCH", path: "/api/v*/applications/*" },
         { method: "PATCH", path: "/api/v*/applications/*/commands/*" },
         { method: "PATCH", path: "/api/v*/channels/*/messages/*" },
         { method: "PATCH", path: "/api/v*/webhooks/*/*/messages/*" },
         { method: "DELETE", path: "/api/v*/applications/*/commands/*" },
         { method: "DELETE", path: "/api/v*/channels/*/messages/*" },
-        { method: "DELETE", path: "/api/v*/channels/*/messages/*/reactions/*/*" },
+        {
+          method: "DELETE",
+          path: "/api/v*/channels/*/messages/*/reactions/*/*",
+        },
         { method: "DELETE", path: "/api/v*/webhooks/*/*/messages/*" },
       ].sort((a, b) => `${a.method} ${a.path}`.localeCompare(`${b.method} ${b.path}`)),
     );
@@ -546,11 +578,13 @@ describe("effective built-in policy contracts", () => {
       expect(endpoint).not.toHaveProperty("protocol");
       expect(endpoint).not.toHaveProperty("tls");
     });
-    (brew.endpoints ?? []).filter(
-      (candidate) => !["github.com", "raw.githubusercontent.com"].includes(candidate.host ?? ""),
-    ).forEach((endpoint) => {
-      expect(endpoint).toMatchObject({ access: "full", tls: "skip" });
-    });
+    (brew.endpoints ?? [])
+      .filter(
+        (candidate) => !["github.com", "raw.githubusercontent.com"].includes(candidate.host ?? ""),
+      )
+      .forEach((endpoint) => {
+        expect(endpoint).toMatchObject({ access: "full", tls: "skip" });
+      });
     expect((claude.endpoints ?? []).map((endpoint) => endpoint.host).sort()).toEqual([
       "api.anthropic.com",
       "platform.claude.com",
@@ -558,7 +592,11 @@ describe("effective built-in policy contracts", () => {
       "statsig.anthropic.com",
     ]);
     (claude.endpoints ?? []).forEach((endpoint) => {
-      expect(endpoint).toMatchObject({ port: 443, protocol: "rest", enforcement: "enforce" });
+      expect(endpoint).toMatchObject({
+        port: 443,
+        protocol: "rest",
+        enforcement: "enforce",
+      });
       expect(endpoint).not.toHaveProperty("access");
       expect(methods(endpoint)).toEqual(["GET", "POST"]);
     });
@@ -576,7 +614,11 @@ describe("effective built-in policy contracts", () => {
     const claude = requireNetworkPolicy(effective, "claude_code");
     const login = requireEndpoint(claude, "platform.claude.com");
 
-    expect(login).toMatchObject({ port: 443, protocol: "rest", enforcement: "enforce" });
+    expect(login).toMatchObject({
+      port: 443,
+      protocol: "rest",
+      enforcement: "enforce",
+    });
     expect(rules(login)).toEqual([
       { method: "GET", path: "/v1/oauth/**" },
       { method: "POST", path: "/v1/oauth/**" },
