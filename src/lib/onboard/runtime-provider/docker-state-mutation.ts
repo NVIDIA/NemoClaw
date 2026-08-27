@@ -4,6 +4,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { deflateRawSync } from "node:zlib";
 
 import type {
   ContainerEngine,
@@ -59,20 +60,23 @@ const HELPER_ACTIVATION_CHECKPOINT_TIMEOUT_MS = 150_000;
 const HELPER_ACTIVATION_HEALTH_TIMEOUT_MS = 150_000;
 const HELPER_ACTIVATION_REPLAY_TIMEOUT_MS = 150_000;
 const HELPER_ACTIVATION_COMPLETION_ALLOWANCE_MS = 30_000;
-const HELPER_ACTIVATION_TIMEOUT_MS =
+/** Covers retry acknowledgement, both readiness passes, replay, and completion. */
+export const DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS =
   HELPER_ACTIVATION_RETRY_ACK_TIMEOUT_MS +
   HELPER_ACTIVATION_CHECKPOINT_TIMEOUT_MS +
   HELPER_ACTIVATION_HEALTH_TIMEOUT_MS +
   HELPER_ACTIVATION_REPLAY_TIMEOUT_MS +
   HELPER_ACTIVATION_COMPLETION_ALLOWANCE_MS;
-const HELPER_RELEASE_TIMEOUT_MS = 5 * 60_000;
 export const DOCKER_STATE_MUTATION_GUARD_TIMEOUT_MS = 15 * 60_000;
+const HELPER_RELEASE_TIMEOUT_MS = 5 * 60_000;
 const INSPECT_TIMEOUT_MS = 15_000;
 const SUPERVISOR_SIGNAL_TIMEOUT_MS = 15_000;
 const HELPER_TRANSPORT_COMMAND_TIMEOUT_MS = 15_000;
 const HELPER_TRANSPORT_RESPONSE_ALLOWANCE_MS = 30_000;
 const HELPER_TRANSPORT_POLL_MS = 250;
 const HELPER_TRANSPORT_ROOT = "/run/nemoclaw/runtime-state-mutation";
+export const DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_BOOTSTRAP =
+  "import base64,sys,zlib;source=zlib.decompress(base64.b64decode(sys.argv.pop(1)),-15);exec(compile(source,'<nemoclaw-state-mutation-transport>','exec'))";
 const MAX_HELPER_TRANSPORT_BYTES = 128 * 1024;
 const MAX_INSPECTION_BYTES = 1024 * 1024;
 const MAX_MOUNTS = 256;
@@ -95,6 +99,7 @@ import hashlib
 import json
 import os
 import re
+import signal
 import stat
 import subprocess
 import sys
@@ -102,7 +107,7 @@ import time
 
 ROOT = "/run/nemoclaw/runtime-state-mutation"
 MAXIMUM = 128 * 1024
-TIMEOUTS = {"acquire": 30, "assert": 30, "publish": 900, "recover": 900, "rollback": 900, "activate": ${HELPER_ACTIVATION_TIMEOUT_MS / 1000}, "release": 300}
+TIMEOUTS = {"acquire": 30, "assert": 30, "publish": 900, "recover": 900, "rollback": 900, "activate": ${DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS / 1000}, "release": ${HELPER_RELEASE_TIMEOUT_MS / 1000}}
 IDENTITY = re.compile(r"[a-f0-9]{64}\Z")
 INCOMING = re.compile(r"([a-f0-9]{64})\.(acquire|assert|publish|recover|rollback|activate|release)\.incoming\Z")
 PUBLICATION_SETTLE_SECONDS = 5
@@ -240,11 +245,28 @@ def run_helper(action, request):
         stat.S_IMODE(metadata.st_mode) & 0o022):
         fail("helper-file-invalid")
     deadline = time.monotonic() + TIMEOUTS[action]
+    completed = None
     for _ in range(2):
-        completed = subprocess.run([sys.executable, "-I", helper, action], input=request,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            timeout=max(0.001, deadline - time.monotonic()), check=False,
-            start_new_session=True)
+        process = subprocess.Popen([sys.executable, "-I", helper, action], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        try:
+            stdout, stderr = process.communicate(
+                request, timeout=max(0.001, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except OSError:
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+            try:
+                process.communicate(timeout=5)
+            except (subprocess.TimeoutExpired, OSError):
+                pass
+            raise
+        completed = subprocess.CompletedProcess(
+            process.args, process.returncode, stdout=stdout, stderr=stderr)
         if completed.returncode >= 0:
             return completed
         # Replay one signal exit inside this action's deadline.
@@ -378,7 +400,7 @@ function helperTimeoutMs(action: HelperAction): number {
     case "rollback":
       return DOCKER_STATE_MUTATION_GUARD_TIMEOUT_MS;
     case "activate":
-      return HELPER_ACTIVATION_TIMEOUT_MS;
+      return DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS;
     case "release":
       return HELPER_RELEASE_TIMEOUT_MS;
     case "acquire":
@@ -1333,8 +1355,10 @@ function helperTransportBrokerCommand(
       HELPER_PYTHON_PATH,
       "-I",
       "-c",
-      "import base64,sys;source=base64.b64decode(sys.argv.pop(1));exec(compile(source,'<nemoclaw-state-mutation-transport>','exec'))",
-      Buffer.from(DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE, "utf8").toString("base64"),
+      DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_BOOTSTRAP,
+      deflateRawSync(Buffer.from(DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE, "utf8"), {
+        level: 9,
+      }).toString("base64"),
       HELPER_PATH,
       transactionId,
     ]),
