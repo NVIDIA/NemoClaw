@@ -33,7 +33,7 @@ describe("handlePoliciesState observability", () => {
       updateSession: () => session,
       recordStepComplete: vi.fn(async () => session),
       toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
-      persistAppliedPolicyPresets: vi.fn(),
+      persistAppliedPolicyPresets: vi.fn(() => true),
     } satisfies PoliciesStateOptions<Agent, never>["deps"];
 
     await handlePoliciesState({
@@ -89,7 +89,7 @@ describe("handlePoliciesState observability", () => {
       updateSession: () => session,
       recordStepComplete: vi.fn(async () => session),
       toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
-      persistAppliedPolicyPresets: vi.fn(),
+      persistAppliedPolicyPresets: vi.fn(() => true),
     } satisfies PoliciesStateOptions<Agent, never>["deps"];
 
     await handlePoliciesState({

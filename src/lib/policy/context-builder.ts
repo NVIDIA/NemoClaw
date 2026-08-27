@@ -6,6 +6,7 @@ import {
   getBaselineExclusionRuntimeStatus,
   getGatewayPresets,
   getPresetEndpoints,
+  inspectPolicyMutationAuthority,
   isAgentBasePreset,
   listCustomPresets,
   listPresets,
@@ -59,7 +60,7 @@ export interface PolicyContextTier {
 
 export interface PolicyContextSupportBoundary {
   capability: string;
-  owner: "nemoclaw" | "openshell" | "agent" | "external";
+  owner: "nemoclaw" | "openshell" | "agent" | "external" | "unknown";
   note?: string;
 }
 
@@ -119,6 +120,10 @@ const EXTERNAL_POLICY_RESTORE_PATH =
   "Ask the external policy authority to restore baseline policy entry `<key>`.";
 const EXTERNAL_POLICY_EXCLUDE_PATH =
   "Run `nemoclaw <sandbox> policy exclude <key> --dry-run`, then ask the external policy authority to remove baseline policy entry `<key>`.";
+const UNKNOWN_POLICY_MUTATION_PATH =
+  "NemoClaw cannot change this policy because policy ownership is not verified. Recreate the sandbox before requesting a NemoClaw policy change.";
+
+type PolicyContextAuthority = "nemoclaw-managed" | "externally-managed" | "owner-unknown";
 
 function hostStemsFromContent(content: string | null | undefined): {
   public: string[];
@@ -269,65 +274,87 @@ function buildBaselineExclusions(
 
 function buildApprovalPath(
   sandboxName: string,
-  externallyManaged: boolean,
+  authority: PolicyContextAuthority,
 ): PolicyContextApprovalPath {
+  const externallyManaged = authority === "externally-managed";
+  const ownerUnknown = authority === "owner-unknown";
   return {
     inspect: `nemoclaw ${sandboxName} policy list`,
-    add: externallyManaged
-      ? EXTERNAL_POLICY_ADD_PATH
-      : `nemoclaw ${sandboxName} policy add <preset>`,
-    remove: externallyManaged
-      ? EXTERNAL_POLICY_REMOVE_PATH
-      : `nemoclaw ${sandboxName} policy remove <preset>`,
-    excludeBaseline: externallyManaged
-      ? EXTERNAL_POLICY_EXCLUDE_PATH.replace("<sandbox>", sandboxName)
-      : `nemoclaw ${sandboxName} policy exclude <key> --dry-run`,
-    restoreBaseline: externallyManaged
-      ? EXTERNAL_POLICY_RESTORE_PATH
-      : `nemoclaw ${sandboxName} policy restore <key>`,
+    add: ownerUnknown
+      ? UNKNOWN_POLICY_MUTATION_PATH
+      : externallyManaged
+        ? EXTERNAL_POLICY_ADD_PATH
+        : `nemoclaw ${sandboxName} policy add <preset>`,
+    remove: ownerUnknown
+      ? UNKNOWN_POLICY_MUTATION_PATH
+      : externallyManaged
+        ? EXTERNAL_POLICY_REMOVE_PATH
+        : `nemoclaw ${sandboxName} policy remove <preset>`,
+    excludeBaseline: ownerUnknown
+      ? UNKNOWN_POLICY_MUTATION_PATH
+      : externallyManaged
+        ? EXTERNAL_POLICY_EXCLUDE_PATH.replace("<sandbox>", sandboxName)
+        : `nemoclaw ${sandboxName} policy exclude <key> --dry-run`,
+    restoreBaseline: ownerUnknown
+      ? UNKNOWN_POLICY_MUTATION_PATH
+      : externallyManaged
+        ? EXTERNAL_POLICY_RESTORE_PATH
+        : `nemoclaw ${sandboxName} policy restore <key>`,
     documentation: POLICY_DOC_URL,
   };
 }
 
 function buildSupportBoundaries(
   tier: PolicyContextTier | null,
-  externallyManaged: boolean,
+  authority: PolicyContextAuthority,
 ): PolicyContextSupportBoundary[] {
+  const externallyManaged = authority === "externally-managed";
+  const ownerUnknown = authority === "owner-unknown";
   return [
     {
       capability: "policy requirement selection and verification",
       owner: "nemoclaw",
-      note: externallyManaged
-        ? "NemoClaw selects preset and baseline requirements and verifies the live policy"
-        : tier
-          ? `tier: ${tier.label}`
-          : "no tier recorded",
+      note: ownerUnknown
+        ? "NemoClaw cannot verify the component that owns the live policy"
+        : externallyManaged
+          ? "NemoClaw selects preset and baseline requirements and verifies the live policy"
+          : tier
+            ? `tier: ${tier.label}`
+            : "no tier recorded",
     },
     {
       capability: "host allowlist enforcement",
       owner: "openshell",
       note: "policy is enforced by the OpenShell gateway",
     },
-    ...(externallyManaged
+    ...(ownerUnknown
       ? [
           {
-            capability: "policy mutation",
-            owner: "external" as const,
-            note: "the external policy authority applies each required add, remove, restore, or baseline exclusion to the live policy",
-          },
-          {
-            capability: "Shields state and configuration lock",
-            owner: "nemoclaw" as const,
-            note: "NemoClaw retains Shields state and locks configuration after it verifies restrictive policy",
+            capability: "policy and Shields mutation",
+            owner: "unknown" as const,
+            note: "NemoClaw refuses policy and Shields changes until it verifies policy ownership",
           },
         ]
-      : [
-          {
-            capability: "Shields transition",
-            owner: "nemoclaw" as const,
-            note: "Shields up locks down mutable configuration",
-          },
-        ]),
+      : externallyManaged
+        ? [
+            {
+              capability: "policy mutation",
+              owner: "external" as const,
+              note: "the external policy authority applies each required add, remove, restore, or baseline exclusion to the live policy",
+            },
+            {
+              capability: "Shields state and configuration lock",
+              owner: "nemoclaw" as const,
+              note: "NemoClaw retains Shields state and locks configuration after it verifies restrictive policy",
+            },
+          ]
+        : [
+            {
+              capability: "Shields transition",
+              owner: "nemoclaw" as const,
+              note: "Shields up locks down mutable configuration",
+            },
+          ]),
     {
       capability: "credential storage",
       owner: "nemoclaw",
@@ -339,6 +366,19 @@ function buildSupportBoundaries(
       note: "requests outside the applied presets require a new preset or tier change",
     },
   ];
+}
+
+function inspectContextPolicyAuthority(
+  sandboxName: string,
+  options: BuildPolicyContextOptions,
+): PolicyContextAuthority {
+  if (options.skipGatewayProbe) return "owner-unknown";
+  try {
+    return inspectPolicyMutationAuthority(sandboxName, "build the sandbox policy context")
+      .authority;
+  } catch {
+    return "owner-unknown";
+  }
 }
 
 export interface BuildPolicyContextOptions {
@@ -408,8 +448,8 @@ export function buildPolicyContext(
   options: BuildPolicyContextOptions = {},
 ): PolicyContext {
   const sandbox = registry.getSandbox(sandboxName);
-  const externallyManaged = sandbox?.policyAuthority === "externally-managed";
-  const tierName = externallyManaged ? null : (sandbox?.policyTier ?? null);
+  const authority = inspectContextPolicyAuthority(sandboxName, options);
+  const tierName = authority === "nemoclaw-managed" ? (sandbox?.policyTier ?? null) : null;
   const tierDef = tierName ? getTier(tierName) : null;
   const tier: PolicyContextTier | null = tierDef
     ? { name: tierDef.name, label: tierDef.label, description: tierDef.description }
@@ -432,8 +472,8 @@ export function buildPolicyContext(
       sandboxName,
       sandbox?.baselineExclusionTransition ?? null,
     ),
-    approvalPath: buildApprovalPath(sandboxName, externallyManaged),
-    supportBoundaries: buildSupportBoundaries(tier, externallyManaged),
+    approvalPath: buildApprovalPath(sandboxName, authority),
+    supportBoundaries: buildSupportBoundaries(tier, authority),
     generatedAt: new Date().toISOString(),
   };
 }

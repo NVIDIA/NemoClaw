@@ -20,10 +20,10 @@ const { computeSetupPresetSuggestions, filterSetupPolicyPresets, getSuggestedPol
         provider?: string | null;
         agent?: string | null;
         observabilityEnabled?: boolean | null;
-        customPresetNames?: ReadonlySet<string> | null;
         webSearchConfig?: { fetchEnabled?: boolean; provider?: string | null } | null;
         webSearchSupported?: boolean | null;
         hermesToolGateways?: string[] | null;
+        customPresetNames?: ReadonlySet<string> | null;
         env?: NodeJS.ProcessEnv;
       },
     ) => string[];
@@ -103,6 +103,7 @@ describe("onboard policy preset suggestions", () => {
     "slack",
     "discord",
     "telegram",
+    "googlechat",
     "jira",
     "outlook",
     "local-inference",
@@ -165,7 +166,15 @@ describe("onboard policy preset suggestions", () => {
   // one never suggested). Assert both paths yield exactly
   // `allMessagingChannelPolicyPresets` for every channel individually and combined.
   it("suggestion and finalization paths contribute identical channel presets for all channels (#5967)", () => {
-    const channels = ["slack", "discord", "telegram", "teams", "whatsapp", "wechat"];
+    const channels = [
+      "slack",
+      "discord",
+      "telegram",
+      "teams",
+      "whatsapp",
+      "wechat",
+      "googlechat",
+    ];
     const knownNames = [...known, "teams", "whatsapp", "wechat"];
     const channelPresetSet = new Set(allMessagingChannelPolicyPresets(channels));
     const channelPresetsFromSuggestions = (enabled: string[]) =>
@@ -591,31 +600,7 @@ describe("onboard policy preset suggestions", () => {
     expect(suggestions.filter((name: string) => name === "slack")).toHaveLength(1);
   });
 
-  it("keeps OpenClaw open-tier messaging presets aligned with active channels", () => {
-    const messagingPresets = ["slack", "discord", "telegram", "wechat", "whatsapp", "teams"];
-    const suggestions = computeSetupPresetSuggestions("open", {
-      agent: "openclaw",
-      enabledChannels: ["slack"],
-      knownPresetNames: [...known, "wechat", "whatsapp", "teams"],
-    });
-
-    expect(suggestions.filter((name: string) => messagingPresets.includes(name))).toEqual([
-      "slack",
-    ]);
-  });
-
-  it("preserves an explicitly-owned custom messaging preset", () => {
-    const suggestions = computeSetupPresetSuggestions("open", {
-      agent: "openclaw",
-      enabledChannels: ["slack"],
-      knownPresetNames: known,
-      customPresetNames: new Set(["Discord"]),
-    });
-
-    expect(suggestions).toContain("discord");
-  });
-
-  it("omits credential-bound Hermes Discord egress until the channel is active", () => {
+  it("omits repository-owned Hermes messaging presets until their channels are active", () => {
     const inactive = computeSetupPresetSuggestions("open", {
       agent: "hermes",
       enabledChannels: [],
@@ -626,10 +611,54 @@ describe("onboard policy preset suggestions", () => {
       enabledChannels: ["discord"],
       knownPresetNames: known,
     });
+    const googleChatActive = computeSetupPresetSuggestions("open", {
+      agent: "hermes",
+      enabledChannels: ["googlechat"],
+      knownPresetNames: known,
+    });
 
     expect(inactive).not.toContain("discord");
+    expect(inactive).not.toContain("slack");
+    expect(inactive).not.toContain("googlechat");
     expect(active).toContain("discord");
+    expect(active).not.toContain("slack");
+    expect(googleChatActive).toContain("googlechat");
+    expect(googleChatActive).not.toContain("discord");
+    expect(googleChatActive).not.toContain("slack");
   });
+
+  it("preserves a custom Hermes preset whose name matches an inactive messaging preset", () => {
+    const suggestions = computeSetupPresetSuggestions("open", {
+      agent: "hermes",
+      enabledChannels: [],
+      knownPresetNames: known,
+      customPresetNames: new Set(["slack"]),
+    });
+
+    expect(suggestions).toContain("slack");
+    expect(suggestions).not.toContain("discord");
+  });
+
+  it.each(["openclaw", "hermes"])(
+    "omits credential-bound Discord egress for %s until the channel is selected",
+    (agent) => {
+      const inactive = computeSetupPresetSuggestions("open", {
+        agent,
+        enabledChannels: [],
+        knownPresetNames: known,
+        env: { DISCORD_BOT_TOKEN: "ambient-discord-token" },
+      });
+      const active = computeSetupPresetSuggestions("open", {
+        agent,
+        enabledChannels: ["discord"],
+        knownPresetNames: known,
+        env: { DISCORD_BOT_TOKEN: "selected-discord-token" },
+      });
+
+      expect(inactive).not.toContain("discord");
+      expect(active).toContain("discord");
+    },
+  );
 
   it("drops channel names that are not known presets", () => {
     const suggestions = computeSetupPresetSuggestions("balanced", {

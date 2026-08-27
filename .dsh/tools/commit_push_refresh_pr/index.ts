@@ -54,6 +54,11 @@ export default async function commit_push_refresh_pr(input: {
     input.files?.some((file) => typeof file !== "string" || !file || file.includes("\0"))
   )
     throw new Error("files must contain 1 to 200 valid paths");
+  if (
+    input.docsResult !== undefined &&
+    !["blocked", "docs-updated", "no-docs-needed"].includes(input.docsResult)
+  )
+    throw new Error("docsResult is invalid");
   const willPush = input.push !== false;
   const willRefresh = input.refreshBody !== false;
   if (willRefresh && !willPush)
@@ -102,7 +107,7 @@ export default async function commit_push_refresh_pr(input: {
       "--repo",
       repo,
       "--json",
-      "headRefName,headRefOid,url,title,state",
+      "headRefName,headRefOid,baseRefName,url,title,state",
     ],
   });
   const pr = JSON.parse(prRead.stdout);
@@ -216,70 +221,184 @@ export default async function commit_push_refresh_pr(input: {
   let readiness = null;
   let monitored = null;
   if (willPush) {
-    const beforePushRead = await github({
-      workdir: input.workdir,
-      args: [
-        "pr",
-        "view",
-        String(input.pullNumber),
-        "--repo",
-        repo,
-        "--json",
-        "headRefOid,headRefName,state",
-      ],
-    });
-    const beforePush = JSON.parse(beforePushRead.stdout);
-    if (
-      beforePush.state !== "OPEN" ||
-      beforePush.headRefOid !== localHeadBefore ||
-      beforePush.headRefName !== branch
-    )
-      throw new Error("PR identity changed after commit; do not push or update evidence");
-    pushResult = await run(
-      "git push " + quote(remote) + " " + quote("HEAD:refs/heads/" + branch),
-      "Push pull request commit",
-      120000,
-    );
-    let remoteHead = "";
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      let viewed;
+    try {
+      const beforePushRead = await github({
+        workdir: input.workdir,
+        args: [
+          "pr",
+          "view",
+          String(input.pullNumber),
+          "--repo",
+          repo,
+          "--json",
+          "headRefOid,headRefName,state",
+        ],
+      });
+      const beforePush = JSON.parse(beforePushRead.stdout);
+      if (
+        beforePush.state !== "OPEN" ||
+        beforePush.headRefOid !== localHeadBefore ||
+        beforePush.headRefName !== branch
+      )
+        throw new Error("PR identity changed after commit; do not push or update evidence");
+      pushResult = await tools.publish_nemoclaw_pr_branch({
+        workdir: input.workdir,
+        repository: repo,
+        remote,
+        baseBranch: pr.baseRefName,
+        expectedHeadSha: localHead,
+        pullNumber: input.pullNumber,
+        expectedPullHeadSha: localHeadBefore,
+        requireClean: false,
+        apply: true,
+      });
+      if (pushResult.remoteState !== "expected-commit")
+        return {
+          applied: true,
+          mode: "blocked",
+          plan,
+          notes: ["Publication did not establish the expected remote commit."],
+          resultJson: JSON.stringify({
+            ok: false,
+            step: "publication",
+            pullNumber: input.pullNumber,
+            headSha: pushResult.headSha,
+            remoteState: pushResult.remoteState,
+            blocker: pushResult.blocker,
+            recovery:
+              "Reconcile the recorded PR branch and local commit without writing. Retry publication only if the expected commit is absent. Refresh evidence only after the PR commit and verification match the local commit.",
+          }),
+        };
+      if (!pushResult.allVerified)
+        return {
+          applied: true,
+          mode: "blocked",
+          plan,
+          notes: ["Stopped after publication because GitHub did not verify every commit."],
+          resultJson: JSON.stringify({
+            ok: false,
+            step: "commit-verification",
+            pullNumber: input.pullNumber,
+            headSha: pushResult.headSha,
+            commits: pushResult.commits,
+            blocker: pushResult.blocker,
+            recovery: pushResult.commits.some(
+              (commit) => !commit.verified && commit.reason !== null,
+            )
+              ? "GitHub reports an unverified published commit. Replace that commit before continuing."
+              : "Re-read verification for the published commit without creating or pushing another commit. Continue only after every commit is verified.",
+          }),
+        };
+      let remoteHead = "";
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        let viewed;
+        try {
+          viewed = await tools.read_nemoclaw_pr({
+            workdir: input.workdir,
+            number: input.pullNumber,
+            repository: repo,
+          });
+        } catch (error) {
+          const detail = await diagnostic([String(error?.message ?? error)]);
+          throw new Error(detail || "Could not read pull request");
+        }
+        remoteHead = viewed.state === "OPEN" ? (viewed.headRefOid ?? "") : "";
+        if (remoteHead === localHead) break;
+        if (attempt < 4) await run("sleep 1", "Wait for pull request commit");
+      }
+      if (remoteHead !== localHead)
+        throw new Error(
+          "PR commit did not update to pushed commit " + localHead + "; do not update evidence",
+        );
+    } catch (error) {
+      const detail = await diagnostic([String(error?.message ?? error)]);
+      let currentPr = null;
       try {
-        viewed = await tools.read_nemoclaw_pr({
+        currentPr = await tools.read_nemoclaw_pr({
           workdir: input.workdir,
           number: input.pullNumber,
           repository: repo,
         });
-      } catch (error) {
-        const detail = await diagnostic([String(error?.message ?? error)]);
-        throw new Error(detail || "Could not read pull request");
+      } catch {
+        // Recovery remains read-only until the PR can be read again.
       }
-      remoteHead = viewed.state === "OPEN" ? (viewed.headRefOid ?? "") : "";
-      if (remoteHead === localHead) break;
-      if (attempt < 4) await run("sleep 1", "Wait for pull request commit");
+      const identityChanged =
+        currentPr !== null && (currentPr.state !== "OPEN" || currentPr.headRefOid !== localHead);
+      return {
+        applied: true,
+        mode: "blocked",
+        plan,
+        notes: ["The commit exists locally, but publication did not complete."],
+        resultJson: JSON.stringify({
+          ok: false,
+          step: "publication",
+          pullNumber: input.pullNumber,
+          localHead,
+          published: Boolean(pushResult?.pushed),
+          currentPrCommit: currentPr?.headRefOid ?? null,
+          blocker: detail || "Publication failed",
+          recovery: identityChanged
+            ? "Stop writing and reconcile the changed PR state. Create a new repair only if that state still requires it."
+            : currentPr
+              ? "Publish localHead to the recorded PR branch without creating another commit."
+              : "Re-read and reconcile the PR state before any publication retry.",
+        }),
+      };
     }
-    if (remoteHead !== localHead)
-      throw new Error(
-        "PR commit did not update to pushed commit " + localHead + "; do not update evidence",
-      );
   }
   if (willRefresh)
-    receipt = await tools.refresh_pr_body_evidence({
-      number: input.pullNumber,
-      repo,
-      workdir: input.workdir,
-      expectedHeadSha: localHead,
-      docsReceipt: {
-        result: input.docsResult,
-        evidence: input.docsEvidence,
-        agent: input.docsAgent,
-      },
-      targetedValidationLine: input.targetedValidationLine,
-      broadGate:
-        input.broadGatePassed === undefined
-          ? undefined
-          : { passed: input.broadGatePassed, evidence: input.broadGateEvidence },
-      apply: true,
-    });
+    try {
+      receipt = await tools.refresh_pr_body_evidence({
+        number: input.pullNumber,
+        repo,
+        workdir: input.workdir,
+        expectedHeadSha: localHead,
+        docsReceipt: {
+          result: input.docsResult,
+          evidence: input.docsEvidence,
+          agent: input.docsAgent,
+        },
+        targetedValidationLine: input.targetedValidationLine,
+        broadGate:
+          input.broadGatePassed === undefined
+            ? undefined
+            : { passed: input.broadGatePassed, evidence: input.broadGateEvidence },
+        apply: true,
+      });
+    } catch (error) {
+      const detail = await diagnostic([String(error?.message ?? error)]);
+      let current = null;
+      try {
+        current = await tools.read_nemoclaw_pr({
+          workdir: input.workdir,
+          number: input.pullNumber,
+          repository: repo,
+        });
+      } catch {
+        // Recovery remains read-only until the PR can be read again.
+      }
+      const unchanged = current?.state === "OPEN" && current.headRefOid === localHead;
+      return {
+        applied: true,
+        mode: "blocked",
+        plan,
+        notes: ["Publication completed, but PR evidence refresh failed."],
+        resultJson: JSON.stringify({
+          ok: false,
+          step: "evidence-refresh",
+          pullNumber: input.pullNumber,
+          publishedCommit: localHead,
+          currentPrCommit: current?.headRefOid ?? null,
+          published: true,
+          blocker: detail || "Evidence refresh failed",
+          recovery: unchanged
+            ? "Refresh PR evidence for publishedCommit without creating or pushing another commit."
+            : current
+              ? "Stop because the PR commit changed."
+              : "Re-read and reconcile the PR commit before refreshing evidence.",
+        }),
+      };
+    }
   if (willPush)
     readiness = await tools.summarize_pr_readiness({
       number: input.pullNumber,
@@ -295,6 +414,7 @@ export default async function commit_push_refresh_pr(input: {
       expectedHeadSha: localHead,
       timeoutMs: 300000,
       intervalMs: 20000,
+      settleCheckPrefixes: ["Specialist /", "CodeRabbit"],
     });
   const finalCheckout = await tools.read_git_checkout({
     workdir: input.workdir,
@@ -316,7 +436,20 @@ export default async function commit_push_refresh_pr(input: {
       pushed: willPush && pushResult !== null,
       evidenceRefreshed: receipt !== null,
       readinessChecked: readiness !== null,
-      monitored: monitored !== null,
+      monitored:
+        monitored === null
+          ? null
+          : {
+              done: monitored.done,
+              actionable: monitored.actionable,
+              timedOut: monitored.timedOut,
+              stale: monitored.stale,
+              pendingChecks: monitored.pendingChecks,
+              failedChecks: monitored.failedChecks,
+              reviewContext: monitored.reviewContext,
+              discussionComments: monitored.discussionComments,
+              findings: monitored.findings,
+            },
     }),
   };
 }

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
-import { listMessagingPolicyPresetsByChannel } from "../messaging/channels/metadata";
 import * as policies from "../policy";
 import * as tiers from "../policy/tiers";
 import { PERSONAL_OPEN_INTERNET_PRESET_NAME, PERSONAL_POLICY_TIER_NAME } from "../policy/tiers";
@@ -18,6 +17,7 @@ import {
 import {
   allMessagingChannelPolicyPresets,
   mergePolicyMessagingChannels,
+  pruneInactiveHermesMessagingPolicyPresets,
 } from "./messaging-policy-presets";
 import {
   isInactiveObservabilityPolicyPreset,
@@ -92,41 +92,6 @@ type TiersApi = {
   resolveTierPresets(tierName: string): Preset[];
   getTier(tierName: string): unknown;
 };
-
-const REPOSITORY_MESSAGING_POLICY_PRESETS = new Set(
-  Object.values(listMessagingPolicyPresetsByChannel()).flatMap((presets) => presets),
-);
-
-function pruneInactiveOpenclawMessagingPolicyPresets(
-  presetNames: string[],
-  enabledChannels: string[] | null,
-  agent: string | null,
-  customPresetNames: ReadonlySet<string>,
-  tierName: string | null | undefined,
-): string[] {
-  const normalizedAgent = agent?.trim().toLowerCase() || "openclaw";
-  const normalizedTier = tierName?.trim().toLowerCase() || null;
-  if (
-    normalizedAgent !== "openclaw" ||
-    (normalizedTier !== "open" && normalizedTier !== PERSONAL_POLICY_TIER_NAME) ||
-    !Array.isArray(enabledChannels)
-  ) {
-    return presetNames;
-  }
-
-  const activePresets = new Set(allMessagingChannelPolicyPresets(enabledChannels));
-  const normalizedCustomPresets = new Set(
-    [...customPresetNames].map((name) => name.trim().toLowerCase()),
-  );
-  return presetNames.filter((preset) => {
-    const name = preset.trim().toLowerCase();
-    return (
-      normalizedCustomPresets.has(name) ||
-      !REPOSITORY_MESSAGING_POLICY_PRESETS.has(name) ||
-      activePresets.has(name)
-    );
-  });
-}
 
 export type SetupPresetSuggestionOptions = {
   enabledChannels?: string[] | null;
@@ -290,46 +255,42 @@ export function computeSetupPresetSuggestions(
   const activeMessagingPresets = Array.isArray(enabledChannels)
     ? new Set(allMessagingChannelPolicyPresets(enabledChannels))
     : null;
-  const hermesAgent = typeof agent === "string" && agent.trim().toLowerCase() === "hermes";
   const supportOptions = { webSearchSupported: options.webSearchSupported };
-  const tierSuggestions = deps.tiers
-    .resolveTierPresets(tierName)
-    .map((preset) => preset.name)
-    .filter((name) => setupPolicyPresetAppliesToAgent(name, agent))
-    // Hermes Discord egress names a sandbox-scoped credential provider. An
-    // open tier may contain the preset, but OpenShell rejects it unless the
-    // channel is active and its provider is attached to the sandbox.
-    .filter(
-      (name) =>
-        !hermesAgent ||
-        name !== "discord" ||
-        activeMessagingPresets === null ||
-        activeMessagingPresets.has(name),
-    )
-    .filter(
-      (name) =>
-        !isStaleBuiltinWebSearchPolicyPreset(name, {
-          webSearchConfig,
-          customPresetNames: options.customPresetNames,
-        }),
-    )
-    .filter(
-      (name) =>
-        !isInactiveObservabilityPolicyPreset(name, {
-          agent,
-          observabilityEnabled,
-          customPresetNames: options.customPresetNames,
-          customOwnsObservability: options.customOwnsObservability,
-        }),
-    )
-    .filter((name) => deps.policies.setupPolicyPresetSupported(name, supportOptions))
-    .filter((name) => !known || known.has(name));
-  const suggestions = pruneInactiveOpenclawMessagingPolicyPresets(
-    tierSuggestions,
+  const suggestions = pruneInactiveHermesMessagingPolicyPresets(
+    deps.tiers
+      .resolveTierPresets(tierName)
+      .map((preset) => preset.name)
+      .filter((name) => setupPolicyPresetAppliesToAgent(name, agent))
+      // Discord egress names a sandbox-scoped credential provider. An open tier
+      // may contain the preset, but OpenShell rejects it unless the channel is
+      // active and its provider is attached to the sandbox.
+      .filter(
+        (name) =>
+          name !== "discord" ||
+          activeMessagingPresets === null ||
+          activeMessagingPresets.has(name),
+      )
+      .filter(
+        (name) =>
+          !isStaleBuiltinWebSearchPolicyPreset(name, {
+            webSearchConfig,
+            customPresetNames: options.customPresetNames,
+          }),
+      )
+      .filter(
+        (name) =>
+          !isInactiveObservabilityPolicyPreset(name, {
+            agent,
+            observabilityEnabled,
+            customPresetNames: options.customPresetNames,
+            customOwnsObservability: options.customOwnsObservability,
+          }),
+      )
+      .filter((name) => deps.policies.setupPolicyPresetSupported(name, supportOptions))
+      .filter((name) => !known || known.has(name)),
     enabledChannels,
     agent,
-    options.customPresetNames ?? new Set(),
-    tierName,
+    options.customPresetNames,
   );
   const add = (name: string) => {
     if (!setupPolicyPresetAppliesToAgent(name, agent)) return;
@@ -498,29 +459,16 @@ async function setupPoliciesWithSelectionInner(
     supportOptions,
     customPresetNames,
   );
-  const persistedTierName = deps.getRecordedPolicyTier?.(sandboxName) ?? null;
-  const recordedTierName = options.tierName ?? persistedTierName;
   const pruneUnavailablePresets = createUnavailablePolicyPresetPruner({
     disabledChannels,
+    enabledChannels,
     agent,
     observabilityEnabled,
     webSearchConfig,
     customPresetNames,
     customOwnsObservability,
   });
-  const pruneUnavailableAndInactivePresets = (
-    presetNames: string[],
-    pruning: Parameters<typeof pruneUnavailablePresets>[1] = {},
-    tierOverride: string | null | undefined = recordedTierName,
-  ) =>
-    pruneInactiveOpenclawMessagingPolicyPresets(
-      pruneUnavailablePresets(presetNames, pruning),
-      enabledChannels,
-      agent,
-      customPresetNames,
-      tierOverride,
-    );
-  const appliedForPreservation = pruneUnavailableAndInactivePresets(applied);
+  const appliedForPreservation = pruneUnavailablePresets(applied);
   const filterSupportedPresetNames = (presetNames: string[]) =>
     filterSetupPolicyPresetNamesForAgent(excludePresets(presetNames), agent).filter(
       (name) =>
@@ -540,6 +488,8 @@ async function setupPoliciesWithSelectionInner(
   // still get filtered. An interrupted create can reach this fresh-selection
   // branch before presets are recorded, so its persisted tier must also win
   // over a new prompt or non-interactive default.
+  const persistedTierName = deps.getRecordedPolicyTier?.(sandboxName) ?? null;
+  const recordedTierName = options.tierName ?? persistedTierName;
   const personalAlreadyActive =
     currentAppliedPresets.includes(PERSONAL_OPEN_INTERNET_PRESET_NAME) ||
     persistedTierName === PERSONAL_POLICY_TIER_NAME ||
@@ -561,9 +511,7 @@ async function setupPoliciesWithSelectionInner(
     // Pass the recorded tier so the pruner exempts that tier's egress defaults
     // (e.g. `brave` on Balanced) via provenance — a reconcile-triggered reuse
     // reapply must not narrow an applied tier default. (#6844)
-    chosen = excludePresets(
-      pruneUnavailableAndInactivePresets(chosen, { tierName: recordedTierName }),
-    );
+    chosen = excludePresets(pruneUnavailablePresets(chosen, { tierName: recordedTierName }));
     chosen = ensureRequiredTierPolicyPresets(recordedTierName, chosen);
   }
 
@@ -589,7 +537,7 @@ async function setupPoliciesWithSelectionInner(
   deps.setPolicyTier?.(sandboxName, tierName);
   const personalTier = tierName === PERSONAL_POLICY_TIER_NAME;
   const suggestions = excludePresets(
-    pruneUnavailableAndInactivePresets(
+    pruneUnavailablePresets(
       computeSetupPresetSuggestions(deps, tierName, {
         enabledChannels,
         webSearchConfig,
@@ -604,7 +552,6 @@ async function setupPoliciesWithSelectionInner(
         env: deps.env,
       }),
       { preserveExplicitWebSearch: personalTier },
-      tierName,
     ),
   );
   const suppressedNames = emitSuppressedAgentRequiredPresetsNote(tierName, agent, deps.note);
@@ -615,13 +562,27 @@ async function setupPoliciesWithSelectionInner(
     let isAuthoritative = false;
 
     if (policyMode === "skip" || policyMode === "none" || policyMode === "no") {
-      const retainedPresets = ensureRequiredTierPolicyPresets(
-        tierName,
-        filterSuppressedAgentRequiredPresets(
-          excludePresets(pruneUnavailableAndInactivePresets(currentAppliedPresets, {}, tierName)),
+      const retainedPresets = mergeRequiredSetupPolicyPresets(
+        ensureRequiredTierPolicyPresets(
           tierName,
-          agent,
+          filterSuppressedAgentRequiredPresets(
+            excludePresets(pruneUnavailablePresets(currentAppliedPresets)),
+            tierName,
+            agent,
+          ),
         ),
+        {
+          enabledChannels,
+          hermesToolGateways,
+          agent,
+          observabilityEnabled,
+          knownPresetNames: knownPresets,
+          env: deps.env,
+          tierName,
+          webSearchConfig,
+          customPresetNames,
+          customOwnsObservability,
+        },
       );
       const selectionChanged =
         retainedPresets.length !== currentAppliedPresets.length ||
@@ -685,11 +646,9 @@ async function setupPoliciesWithSelectionInner(
       customOwnsObservability,
     });
     chosen = excludePresets(
-      pruneUnavailableAndInactivePresets(
-        chosen,
-        { preserveExplicitWebSearch: isAuthoritative || personalTier },
-        tierName,
-      ),
+      pruneUnavailablePresets(chosen, {
+        preserveExplicitWebSearch: isAuthoritative || personalTier,
+      }),
     );
     chosen = ensureRequiredTierPolicyPresets(tierName, chosen);
 
@@ -719,8 +678,6 @@ async function setupPoliciesWithSelectionInner(
       }
     }
 
-    chosen = pruneUnavailableAndInactivePresets(chosen, {}, tierName);
-
     refuseInPlacePersonalRemoval(personalAlreadyActive, chosen);
     requireSandboxReady(deps, sandboxName, "before");
     deps.note(`  [non-interactive] Applying policy presets: ${chosen.join(", ")}`);
@@ -746,7 +703,7 @@ async function setupPoliciesWithSelectionInner(
   const interactiveChoice = ensureRequiredTierPolicyPresets(
     tierName,
     excludePresets(
-      pruneUnavailableAndInactivePresets(
+      pruneUnavailablePresets(
         mergeRequiredSetupPolicyPresets(
           resolvedPresets.map((preset) => preset.name),
           {
@@ -763,7 +720,6 @@ async function setupPoliciesWithSelectionInner(
           },
         ),
         { preserveExplicitWebSearch: true },
-        tierName,
       ),
     ),
   );
