@@ -58,7 +58,7 @@ function hermesVolumeCleanupDeps(
   };
 }
 
-describe("recreated managed Hermes state volume", () => {
+describe("managed Hermes state volume recreation", () => {
   it("preserves the volume when managed Docker Hermes replaces managed Docker Hermes", () => {
     const docker = createHermesStateVolumeDockerHarness({
       name: "nemoclaw-hermes-state-v1-alpha",
@@ -195,6 +195,98 @@ describe("recreated managed Hermes state volume", () => {
     expect(() => finalizeRecreatedSourceHermesStateVolume(input, finalizationDeps)).not.toThrow();
     expect(removeManagedHermesStateVolume).toHaveBeenCalledTimes(2);
     expect(removeSourceRegistryEntry).toHaveBeenCalledExactlyOnceWith(input.sourceEntry, "alpha");
+  });
+});
+
+describe("managed Hermes state volume failed-create cleanup", () => {
+  const exactIdentityBoundary = {
+    captureCreatedSandboxIdentity: vi.fn(() => "a".repeat(64)),
+    revalidateCreatedSandboxIdentity: vi.fn(),
+    verifyCreatedPolicy: vi.fn(() => "verified"),
+    persistVerifiedPolicy: vi.fn(),
+    revalidateVerifiedPolicy: vi.fn(),
+  };
+
+  async function rejectSandboxCreate(
+    lifecycle: NonNullable<ReturnType<typeof createManagedHermesStateVolumeOnboardLifecycle>>,
+  ): Promise<void> {
+    await expect(
+      runSandboxCreateWithPolicyAuthorityChecks({
+        sandboxName: "alpha",
+        revalidate: vi.fn(),
+        create: async () => {
+          throw new Error("sandbox creation failed");
+        },
+        ...exactIdentityBoundary,
+        cleanupTemporarySources: vi.fn(),
+        cleanupIncompleteCreate: () => lifecycle.cleanupIncompleteCreate(),
+      }),
+    ).rejects.toThrow("sandbox creation failed");
+  }
+
+  it("removes a newly created owned volume after a handled create failure", async () => {
+    const docker = createHermesStateVolumeDockerHarness();
+    const lifecycle = createManagedHermesStateVolumeOnboardLifecycle(
+      {
+        agentName: "hermes",
+        runtimeProvider: { identity: { id: "docker" } } as never,
+        sandboxName: "alpha",
+        workloadKind: "managed-image",
+      },
+      { runDocker: docker.runDocker as never, registerExitCleanup: () => vi.fn() },
+    );
+
+    await rejectSandboxCreate(lifecycle!);
+
+    expect(docker.volume).toBeNull();
+    expect(docker.calls.some((args) => args[0] === "rm")).toBe(true);
+  });
+
+  it("preserves a reused owned volume after a handled create failure", async () => {
+    const docker = createHermesStateVolumeDockerHarness({
+      name: "nemoclaw-hermes-state-v1-alpha",
+      labels: {
+        "io.nvidia.nemoclaw.hermes-state.managed": "true",
+        "io.nvidia.nemoclaw.hermes-state.schema": "1",
+        "io.nvidia.nemoclaw.hermes-state.sandbox": "alpha",
+        "io.nvidia.nemoclaw.hermes-state.target": "/sandbox/.hermes",
+      },
+    });
+    const lifecycle = createManagedHermesStateVolumeOnboardLifecycle(
+      {
+        agentName: "hermes",
+        runtimeProvider: { identity: { id: "docker" } } as never,
+        sandboxName: "alpha",
+        workloadKind: "managed-image",
+      },
+      { runDocker: docker.runDocker as never },
+    );
+
+    await rejectSandboxCreate(lifecycle!);
+
+    expect(docker.volume).not.toBeNull();
+    expect(docker.calls.some((args) => args[0] === "rm")).toBe(false);
+  });
+
+  it("refuses and preserves a foreign same-name volume before sandbox creation", () => {
+    const docker = createHermesStateVolumeDockerHarness({
+      name: "nemoclaw-hermes-state-v1-alpha",
+      labels: { "com.example.owner": "foreign" },
+    });
+
+    expect(() =>
+      createManagedHermesStateVolumeOnboardLifecycle(
+        {
+          agentName: "hermes",
+          runtimeProvider: { identity: { id: "docker" } } as never,
+          sandboxName: "alpha",
+          workloadKind: "managed-image",
+        },
+        { runDocker: docker.runDocker as never },
+      ),
+    ).toThrow("exact NemoClaw ownership labels do not match");
+    expect(docker.volume).not.toBeNull();
+    expect(docker.calls.some((args) => args[0] === "rm")).toBe(false);
   });
 });
 

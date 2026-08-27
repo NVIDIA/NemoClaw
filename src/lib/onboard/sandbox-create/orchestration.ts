@@ -266,8 +266,8 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
     evidence: Evidence,
   ) => Promise<void>;
   readonly cleanupTemporarySources: () => void;
+  readonly cleanupIncompleteCreate?: () => void;
 }): Promise<Result> {
-  input.revalidate(false, `creating sandbox '${input.sandboxName}'`);
   let exactIdentity: string | null = null;
   let cleanupAttempted = false;
   const cleanupTemporarySources = (): unknown[] => {
@@ -275,6 +275,17 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
     cleanupAttempted = true;
     try {
       input.cleanupTemporarySources();
+      return [];
+    } catch (error) {
+      return [error];
+    }
+  };
+  let incompleteCreateCleanupAttempted = false;
+  const cleanupIncompleteCreate = (): unknown[] => {
+    if (incompleteCreateCleanupAttempted) return [];
+    incompleteCreateCleanupAttempted = true;
+    try {
+      input.cleanupIncompleteCreate?.();
       return [];
     } catch (error) {
       return [error];
@@ -336,9 +347,13 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
   };
   let result: Result;
   try {
+    input.revalidate(false, `creating sandbox '${input.sandboxName}'`);
     result = await input.create(verifyCreatedSandbox);
   } catch (error) {
-    const cleanupErrors = cleanupTemporarySources();
+    const cleanupErrors = [
+      ...(exactIdentity === null ? cleanupIncompleteCreate() : []),
+      ...cleanupTemporarySources(),
+    ];
     if (cleanupErrors.length > 0) {
       throw new AggregateError(
         [error, ...cleanupErrors],
@@ -1854,6 +1869,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           revalidateVerifiedPolicyRegistration(boundary, operation);
         },
         cleanupTemporarySources: cleanupSandboxCreateSources,
+        cleanupIncompleteCreate: () => hermesStateVolumeLifecycle?.cleanupIncompleteCreate(),
         runVerifiedCreateEffects: runDeferredProviderEffects
           ? async (_identity, _exactIdentity, boundary) => {
               const context: VerifiedSandboxCreateEffectsContext = {

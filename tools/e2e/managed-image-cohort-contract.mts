@@ -76,19 +76,6 @@ function boundedRunAttempt(
   return producerAttempt;
 }
 
-function boundedBuilderId(
-  value: unknown,
-  expected: { readonly runAttempt: number; readonly runId: number },
-  label: string,
-): void {
-  boundedRunAttempt(
-    value,
-    `https://github.com/${REPOSITORY}/actions/runs/${expected.runId}/attempts/`,
-    expected.runAttempt,
-    label,
-  );
-}
-
 function boundedCohortIdentity(
   value: unknown,
   expected: { readonly runAttempt: number; readonly runId: number },
@@ -129,6 +116,22 @@ function validatePlatformEvidence(
   },
 ): void {
   const platform = record(value, `${expected.agent} ${expected.platform} publication`);
+  const producerRun = record(platform.run, `${expected.agent} ${expected.platform} producer run`);
+  exactKeys(producerRun, ["attempt", "id"], `${expected.agent} ${expected.platform} producer run`);
+  if (producerRun.id !== expected.runId) {
+    throw new Error(
+      `${expected.agent} ${expected.platform} producer run id must be ${expected.runId}`,
+    );
+  }
+  const producerAttempt = positiveInteger(
+    producerRun.attempt,
+    `${expected.agent} ${expected.platform} producer attempt`,
+  );
+  if (producerAttempt > expected.runAttempt) {
+    throw new Error(
+      `${expected.agent} ${expected.platform} producer attempt must not be newer than the selected publication attempt`,
+    );
+  }
   const platformDigest = digest(platform.digest, `${expected.agent} ${expected.platform} digest`);
   const image =
     MANAGED_IMAGE_REPOSITORIES[expected.agent as keyof typeof MANAGED_IMAGE_REPOSITORIES];
@@ -203,7 +206,11 @@ function validatePlatformEvidence(
     workloadDigest,
     `${expected.agent} ${expected.platform} SLSA subject workload digest`,
   );
-  boundedBuilderId(statement.builderId, expected, `${expected.agent} ${expected.platform} builder`);
+  exactString(
+    statement.builderId,
+    `https://github.com/${REPOSITORY}/actions/runs/${expected.runId}/attempts/${producerAttempt}`,
+    `${expected.agent} ${expected.platform} builder`,
+  );
   const bindings = record(
     statement.bindings,
     `${expected.agent} ${expected.platform} SLSA bindings`,

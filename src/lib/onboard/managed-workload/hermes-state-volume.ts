@@ -13,7 +13,8 @@ import type { DockerRunOptions, DockerRunResult } from "../../adapters/docker/ru
  * whyNotSourceFix: the provider-neutral image cannot name a sandbox-scoped Docker volume, while
  *   weakening provider validation would accept absent, ambiguous, or read-only state mounts.
  * regressionTest: hermes-state-volume.test.ts covers create, reuse, ownership refusal, and
- *   removal; sandbox-create-plan.test.ts and destroy-flow.test.ts cover lifecycle integration.
+ *   removal; sandbox-create-plan.test.ts, sandbox-create/orchestration.test.ts, and
+ *   destroy-flow.test.ts cover lifecycle integration.
  * removalCondition: remove when the managed-image or runtime-provider contract creates,
  *   reconciles, and ownership-gates an equivalent durable Hermes state volume end to end.
  */

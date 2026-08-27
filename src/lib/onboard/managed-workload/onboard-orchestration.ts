@@ -90,6 +90,7 @@ export type ManagedHermesStateVolumeOnboardLifecycle = {
     input: MaterializeSandboxCreatePlanInput,
     materialize: (input: MaterializeSandboxCreatePlanInput) => SandboxCreatePlan,
   ): SandboxCreatePlan;
+  cleanupIncompleteCreate(): void;
   commit(): void;
 };
 
@@ -112,6 +113,14 @@ export function createManagedHermesStateVolumeOnboardLifecycle(
   return {
     materializeSandboxCreatePlan(input, materialize) {
       return materialize({ ...input, managedStateMount: scope.mount });
+    },
+    cleanupIncompleteCreate() {
+      const result = scope.cleanupIncompleteCreate();
+      if (result.status === "failed" || result.status === "not-owned") {
+        throw new Error(
+          `Cannot clean up incomplete managed Hermes state volume '${result.volumeName}' (${result.status}).`,
+        );
+      }
     },
     commit() {
       scope.commit();
