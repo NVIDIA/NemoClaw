@@ -63,7 +63,7 @@ export function buildCancelRollbackMessage(
     "  Sandbox-scoped provider registrations or gateway-bound credentials may remain when the durable recovery record lists them.",
     "  Ask an OpenShell administrator to inspect the exact sandbox identity and remove only sandbox-scoped resources whose ownership is confirmed for this retained sandbox.",
     "  A recorded credential environment name alone does not prove exposure; rotate a credential only when identity-bound inspection proves that it was exposed or attached to a retained sandbox-scoped resource.",
-    "  Before reusing the sandbox name, confirm that the exact sandbox is absent and record the identity-bound administrator resolution.",
+    "  NemoClaw has no supported operation to clear this recovery record; use a different sandbox name for later onboarding.",
   ];
 }
 

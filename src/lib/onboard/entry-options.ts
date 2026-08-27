@@ -328,7 +328,7 @@ export function resolveOnboardEntryOptions(
         "  Onboarding cannot continue while a retained sandbox recovery record is unresolved without an explicit different sandbox name.",
       );
       deps.error(
-        "  Use --fresh --name <new-name>, or complete identity-bound administrator recovery for the retained sandbox first.",
+        "  Use --fresh --name <new-name>; the retained sandbox recovery record stays unresolved.",
       );
       deps.exitProcess(1);
     }
@@ -337,7 +337,7 @@ export function resolveOnboardEntryOptions(
         `  Onboarding cannot use retained sandbox '${recoveryEntryName}' while its identity-bound recovery record is unresolved.`,
       );
       deps.error(
-        "  Automatic and explicit resume, reuse, recreation, and same-name fresh onboarding remain disabled until administrator resolution is recorded.",
+        "  Automatic and explicit resume, reuse, recreation, and same-name fresh onboarding remain disabled; NemoClaw has no supported operation to clear this recovery record.",
       );
       deps.exitProcess(1);
     }
@@ -352,7 +352,7 @@ export function resolveOnboardEntryOptions(
         "  Automatic and explicit resume, reuse, and recreation are disabled to protect the retained sandbox.",
       );
       deps.error(
-        "  After an OpenShell administrator completes identity-bound recovery or removal, start fresh with --fresh --name <new-name>.",
+        "  Use --fresh --name <new-name>; the retained sandbox recovery record stays unresolved.",
       );
       deps.exitProcess(1);
     }
@@ -365,7 +365,7 @@ export function resolveOnboardEntryOptions(
         "  Recovery-only onboarding state requires --fresh with an explicit sandbox name different from the retained sandbox.",
       );
       deps.error(
-        "  Verify identity-bound removal with an OpenShell administrator before starting the new onboarding session.",
+        "  The retained sandbox recovery record stays unresolved when onboarding starts with another name.",
       );
       deps.exitProcess(1);
     }

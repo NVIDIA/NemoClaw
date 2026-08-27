@@ -41,7 +41,7 @@ export interface RetainedSandboxRecoveryRecord {
   readonly recordedAt: string;
 }
 
-export interface RetainedSandboxAdministratorResolutionReceipt {
+interface RetainedSandboxAdministratorResolutionReceipt {
   readonly schemaVersion: typeof SCHEMA_VERSION;
   readonly receiptId: string;
   readonly recordId: string;
@@ -68,17 +68,6 @@ export interface RecordRetainedSandboxRecoveryInput {
   readonly resources: RetainedSandboxResourceEvidence;
   readonly reason: RetainedSandboxRecoveryReason;
   readonly recordedAt?: string;
-}
-
-export interface ResolveRetainedSandboxRecoveryInput {
-  readonly recordId: string;
-  readonly receiptId: string;
-  readonly sandboxName: string;
-  readonly sandboxIdentityFingerprint: string | null;
-  readonly gatewayName: string;
-  readonly gatewayPort: number;
-  readonly outcome: RetainedSandboxAdministratorResolutionReceipt["outcome"];
-  readonly resolvedAt?: string;
 }
 
 const emptyState = (): RetainedSandboxRecoveryState => ({
@@ -357,58 +346,4 @@ export function recordRetainedSandboxRecovery(
     throw new Error("Retained sandbox recovery record did not survive durable readback.");
   }
   return reread;
-}
-
-export function resolveRetainedSandboxRecovery(
-  filePath: string,
-  input: ResolveRetainedSandboxRecoveryInput,
-): RetainedSandboxAdministratorResolutionReceipt {
-  const current = loadState(filePath);
-  const record = current.unresolved.find((candidate) => candidate.recordId === input.recordId);
-  if (
-    !record ||
-    !FINGERPRINT_PATTERN.test(input.receiptId) ||
-    record.sandboxName !== input.sandboxName ||
-    record.gatewayName !== input.gatewayName ||
-    record.gatewayPort !== input.gatewayPort ||
-    record.sandboxIdentityFingerprint !== input.sandboxIdentityFingerprint ||
-    (record.sandboxIdentityFingerprint === null) !==
-      (input.outcome === "confirmed_absent_without_identity")
-  ) {
-    throw new Error("Administrator resolution receipt does not match retained sandbox identity.");
-  }
-  const receipt: RetainedSandboxAdministratorResolutionReceipt = {
-    schemaVersion: SCHEMA_VERSION,
-    receiptId: input.receiptId,
-    recordId: record.recordId,
-    sandboxName: record.sandboxName,
-    sandboxIdentityFingerprint: record.sandboxIdentityFingerprint,
-    gatewayName: record.gatewayName,
-    gatewayPort: record.gatewayPort,
-    outcome: input.outcome,
-    resolvedAt: input.resolvedAt ?? new Date().toISOString(),
-  };
-  if (!validTimestamp(receipt.resolvedAt)) {
-    throw new Error("Administrator resolution receipt has an invalid timestamp.");
-  }
-  writeStateFile(filePath, {
-    ...current,
-    unresolved: current.unresolved.filter((candidate) => candidate.recordId !== record.recordId),
-    resolutions: [
-      ...current.resolutions.filter((candidate) => candidate.recordId !== record.recordId),
-      receipt,
-    ],
-  });
-  const reread = loadState(filePath);
-  const durableReceipt = reread.resolutions.find(
-    (candidate) => candidate.receiptId === receipt.receiptId,
-  );
-  if (
-    reread.unresolved.some((candidate) => candidate.recordId === record.recordId) ||
-    !durableReceipt ||
-    JSON.stringify(durableReceipt) !== JSON.stringify(receipt)
-  ) {
-    throw new Error("Administrator resolution receipt did not survive durable readback.");
-  }
-  return durableReceipt;
 }

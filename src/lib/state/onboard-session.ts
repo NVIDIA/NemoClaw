@@ -64,11 +64,8 @@ import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
 import {
   listRetainedSandboxRecoveryRecords as readRetainedSandboxRecoveryRecords,
   recordRetainedSandboxRecovery as writeRetainedSandboxRecovery,
-  resolveRetainedSandboxRecovery as writeRetainedSandboxResolution,
   retainedSandboxRecoveryFile,
   type RecordRetainedSandboxRecoveryInput,
-  type ResolveRetainedSandboxRecoveryInput,
-  type RetainedSandboxAdministratorResolutionReceipt,
   type RetainedSandboxRecoveryRecord,
   type RetainedSandboxRecoveryReason,
 } from "./onboard-session/retained-sandbox-recovery";
@@ -1698,12 +1695,6 @@ export function recordRetainedSandboxRecovery(
   input: RecordRetainedSandboxRecoveryInput,
 ): RetainedSandboxRecoveryRecord {
   return writeRetainedSandboxRecovery(RETAINED_SANDBOX_RECOVERY_FILE, input);
-}
-
-export function resolveRetainedSandboxRecovery(
-  input: ResolveRetainedSandboxRecoveryInput,
-): RetainedSandboxAdministratorResolutionReceipt {
-  return writeRetainedSandboxResolution(RETAINED_SANDBOX_RECOVERY_FILE, input);
 }
 
 export function markCancellationRecovery(

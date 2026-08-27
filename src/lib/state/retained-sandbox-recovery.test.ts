@@ -90,8 +90,9 @@ describe("retained sandbox recovery state", () => {
     expect(fs.readFileSync(externalState, "utf8")).toBe(externalContents);
   });
 
-  it("clears only after a durable exact-identity administrator receipt", async () => {
+  it("does not expose a caller-supplied recovery resolution path (#9833)", async () => {
     const recovery = await import("./onboard-session");
+    const recoveryStore = await import("./onboard-session/retained-sandbox-recovery");
     const fingerprint = "b".repeat(64);
     const recorded = recovery.recordRetainedSandboxRecovery({
       sandboxName: "retained-sb",
@@ -102,21 +103,10 @@ describe("retained sandbox recovery state", () => {
       resources: evidence,
       reason: "cancelled_after_sandbox_creation",
     });
-
-    expect(() =>
-      recovery.resolveRetainedSandboxRecovery({
-        recordId: recorded.recordId,
-        receiptId: "c".repeat(64),
-        sandboxName: recorded.sandboxName,
-        sandboxIdentityFingerprint: "d".repeat(64),
-        gatewayName: recorded.gatewayName,
-        gatewayPort: recorded.gatewayPort,
-        outcome: "removed_verified_identity",
-      }),
-    ).toThrow(/does not match retained sandbox identity/u);
-    expect(recovery.listRetainedSandboxRecoveryRecords()).toHaveLength(1);
-
-    const receipt = recovery.resolveRetainedSandboxRecovery({
+    const unsupportedClear = (recovery as unknown as Record<string, unknown>)[
+      "resolveRetainedSandboxRecovery"
+    ];
+    (unsupportedClear as undefined | ((input: Record<string, unknown>) => unknown))?.({
       recordId: recorded.recordId,
       receiptId: "c".repeat(64),
       sandboxName: recorded.sandboxName,
@@ -126,7 +116,55 @@ describe("retained sandbox recovery state", () => {
       outcome: "removed_verified_identity",
     });
 
-    expect(receipt.recordId).toBe(recorded.recordId);
-    expect(recovery.listRetainedSandboxRecoveryRecords()).toEqual([]);
+    expect(unsupportedClear).toBeUndefined();
+    expect(
+      (recoveryStore as unknown as Record<string, unknown>)["resolveRetainedSandboxRecovery"],
+    ).toBeUndefined();
+    expect(recovery.listRetainedSandboxRecoveryRecords()).toEqual([recorded]);
+  });
+
+  it("preserves legacy resolution evidence while recording new recovery state (#9833)", async () => {
+    const recovery = await import("./onboard-session");
+    const recorded = recovery.recordRetainedSandboxRecovery({
+      sandboxName: "legacy-sb",
+      sandboxIdentityFingerprint: "d".repeat(64),
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleGeneration: "legacy-generation",
+      resources: evidence,
+      reason: "cancelled_after_sandbox_creation",
+    });
+    const legacyResolution = {
+      schemaVersion: 1,
+      receiptId: "e".repeat(64),
+      recordId: recorded.recordId,
+      sandboxName: recorded.sandboxName,
+      sandboxIdentityFingerprint: recorded.sandboxIdentityFingerprint,
+      gatewayName: recorded.gatewayName,
+      gatewayPort: recorded.gatewayPort,
+      outcome: "removed_verified_identity",
+      resolvedAt: "2026-08-27T00:00:00.000Z",
+    };
+    const legacyState = JSON.parse(
+      fs.readFileSync(recovery.RETAINED_SANDBOX_RECOVERY_FILE, "utf8"),
+    );
+    legacyState.unresolved = [];
+    legacyState.resolutions = [legacyResolution];
+    fs.writeFileSync(recovery.RETAINED_SANDBOX_RECOVERY_FILE, JSON.stringify(legacyState));
+
+    recovery.recordRetainedSandboxRecovery({
+      sandboxName: "new-sb",
+      sandboxIdentityFingerprint: null,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleGeneration: null,
+      resources: evidence,
+      reason: "retained_after_sandbox_creation_failure",
+    });
+
+    const durableState = JSON.parse(
+      fs.readFileSync(recovery.RETAINED_SANDBOX_RECOVERY_FILE, "utf8"),
+    );
+    expect(durableState.resolutions).toEqual([legacyResolution]);
   });
 });
