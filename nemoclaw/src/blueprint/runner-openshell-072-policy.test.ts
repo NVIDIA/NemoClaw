@@ -286,7 +286,6 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
         ? { exitCode: 1, stdout: "", stderr: diagnostic }
         : defaultCommandResult(args),
     );
-
     const error = await actionApply("default", blueprint()).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toMatch(
@@ -1331,10 +1330,8 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
         },
       }),
     });
-
     stdoutCapture.reset();
     actionStatus(runId);
-
     expect(stdoutCapture.jsonOutput()).toMatchObject({
       run_id: runId,
       policy_creation_transition: { status: "pending" },
@@ -1372,10 +1369,8 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
       type: "file",
       content: JSON.stringify({ ...validReconciliationPlan(), run_id: runId }),
     });
-
     stdoutCapture.reset();
     actionStatus(runId);
-
     expect(stdoutCapture.jsonOutput()).toMatchObject({
       run_id: runId,
       policy_transition: {
