@@ -176,7 +176,7 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 ### Before Making Changes
 
 1. Read `CONTRIBUTING.md` and the active guidance for changed paths. For a first checkout, use `nemoclaw-contributor-onboard`.
-2. State observable success, apply the product scope gate, and ask only when a choice changes behavior, security, data safety, or a supported contract.
+2. State observable success, apply the product scope gate, and ask only when a choice changes the required outcome or constraints.
 3. Read the smallest sufficient source set. Run independent discovery in parallel.
 4. Use `./scripts/dev-setup.sh --expose-cli` only with explicit approval.
 
@@ -230,7 +230,7 @@ Follow [WRITING.md](WRITING.md) for all agent-written text.
 
 ### Direct Design
 
-Add no abstraction, configuration, fallback, migration, compatibility, or extension layer without a current requirement, consumer, and protecting test. Report conclusions and evidence, then stop when the smallest solution that preserves applicable behavior, security, data safety, and supported contracts is clear.
+Add no mechanism without a current requirement, consumer, and protecting test. Report conclusions and evidence, then stop when the smallest compliant solution is clear.
 
 ### Git and GitHub Access Failures
 
