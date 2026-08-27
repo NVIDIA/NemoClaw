@@ -22,6 +22,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
   commits: { sha: string; verified: boolean; reason: string | null }[];
   allVerified: boolean;
   blocker: string | null;
+  remoteState: "not-checked" | "expected-commit" | "unchanged" | "unknown";
 }> {
   const q = (v) => "'" + String(v).replaceAll("'", "'\"'\"'") + "'";
   const repo = input.repository ?? "NVIDIA/NemoClaw",
@@ -166,6 +167,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
       })),
       allVerified: false,
       blocker: null,
+      remoteState: "not-checked",
     };
   const beforePush = await tools.read_git_checkout({
     workdir: input.workdir,
@@ -177,13 +179,62 @@ export default async function publish_nemoclaw_pr_branch(input: {
     beforePush.branch !== branch
   )
     throw new Error("Publication candidate changed after validation");
-  await run(
-    "git push --set-upstream " +
-      q(remote) +
-      " " +
-      q(input.expectedHeadSha + ":refs/heads/" + branch),
-    "Push pull request candidate branch",
+  const remoteBeforeRead = await run(
+    "git ls-remote --heads " + q(remote) + " " + q("refs/heads/" + branch),
+    "Read publication branch before push",
+    true,
   );
+  const remoteBeforeReadOk = remoteBeforeRead.exitCode === 0;
+  const remoteBefore = remoteBeforeReadOk
+    ? remoteBeforeRead.stdout.text.trim().split(/\s+/u)[0]
+    : "";
+  let pushError = null;
+  try {
+    await run(
+      "git push --set-upstream " +
+        q(remote) +
+        " " +
+        q(input.expectedHeadSha + ":refs/heads/" + branch),
+      "Push pull request candidate branch",
+    );
+  } catch (error) {
+    pushError = error;
+  }
+  const remoteRead = await run(
+    "git ls-remote --heads " + q(remote) + " " + q("refs/heads/" + branch),
+    "Reconcile publication branch",
+    true,
+  );
+  const remoteReadOk = remoteRead.exitCode === 0;
+  const remoteSha = remoteReadOk ? remoteRead.stdout.text.trim().split(/\s+/u)[0] : "";
+  const remoteState =
+    remoteSha === input.expectedHeadSha
+      ? "expected-commit"
+      : remoteBeforeReadOk && remoteReadOk && remoteSha === remoteBefore
+        ? "unchanged"
+        : "unknown";
+  if (remoteState !== "expected-commit") {
+    const detail = await tools.project_diagnostic_text({
+      lines: [String(pushError?.message ?? "Push did not publish the expected commit")],
+      maxLines: 5,
+      maxCharacters: 1000,
+    });
+    return {
+      apply: true,
+      mutated: false,
+      pushed: false,
+      repository: repo,
+      remote,
+      baseBranch,
+      branch,
+      headSha: head,
+      commits: [],
+      allVerified: false,
+      blocker: detail.text || "Publication result is uncertain",
+      remoteState,
+    };
+  }
+  const changedRemote = remoteBeforeReadOk && remoteBefore !== input.expectedHeadSha;
   const verified = [];
   let verificationError = null;
   for (const sha of commits) {
@@ -215,8 +266,8 @@ export default async function publish_nemoclaw_pr_branch(input: {
     !verificationError && verified.length === commits.length && verified.every((c) => c.verified);
   return {
     apply: true,
-    mutated: true,
-    pushed: true,
+    mutated: changedRemote,
+    pushed: changedRemote,
     repository: repo,
     remote,
     baseBranch,
@@ -224,6 +275,7 @@ export default async function publish_nemoclaw_pr_branch(input: {
     headSha: head,
     commits: verified,
     allVerified,
+    remoteState,
     blocker: allVerified
       ? null
       : verificationError

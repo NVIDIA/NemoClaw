@@ -160,6 +160,22 @@ export default async function prepare_pr_for_human_review(input: {
       pullNumber: input.pullNumber,
       apply: true,
     });
+    if (push.remoteState !== "expected-commit")
+      return {
+        applied: true,
+        mode: "blocked",
+        plan,
+        notes: ["Publication did not establish the expected remote commit."],
+        resultJson: JSON.stringify({
+          ok: false,
+          step: "publication",
+          pullNumber: input.pullNumber,
+          headSha: push.headSha,
+          remoteState: push.remoteState,
+          blocker: push.blocker,
+          recovery: "Reconcile the recorded PR branch before any retry.",
+        }),
+      };
     if (!push.allVerified)
       return {
         applied: true,
@@ -177,18 +193,62 @@ export default async function prepare_pr_for_human_review(input: {
       };
   } else if (localHead !== pr.headRefOid)
     throw new Error("push:false requires the local commit to match the PR commit");
-  const receipt = await tools.refresh_pr_body_evidence({
-    number: input.pullNumber,
-    repo,
-    workdir: input.workdir,
-    expectedHeadSha: localHead,
-    docsReceipt: { result: input.docsResult, evidence: input.docsEvidence, agent: input.docsAgent },
-    ...(input.validationLine ? { targetedValidationLine: input.validationLine } : {}),
-    ...(input.broadGatePassed !== undefined
-      ? { broadGate: { passed: input.broadGatePassed, evidence: input.broadGateEvidence } }
-      : {}),
-    apply: true,
-  });
+  let receipt;
+  try {
+    receipt = await tools.refresh_pr_body_evidence({
+      number: input.pullNumber,
+      repo,
+      workdir: input.workdir,
+      expectedHeadSha: localHead,
+      docsReceipt: {
+        result: input.docsResult,
+        evidence: input.docsEvidence,
+        agent: input.docsAgent,
+      },
+      ...(input.validationLine ? { targetedValidationLine: input.validationLine } : {}),
+      ...(input.broadGatePassed !== undefined
+        ? { broadGate: { passed: input.broadGatePassed, evidence: input.broadGateEvidence } }
+        : {}),
+      apply: true,
+    });
+  } catch (error) {
+    const detail = await tools.project_diagnostic_text({
+      lines: [String(error?.message ?? error)],
+      maxLines: 5,
+      maxCharacters: 1000,
+    });
+    let current = null;
+    try {
+      current = await tools.read_nemoclaw_pr({
+        workdir: input.workdir,
+        number: input.pullNumber,
+        repository: repo,
+      });
+    } catch {
+      // Recovery remains read-only until the PR can be read again.
+    }
+    const unchanged = current?.state === "OPEN" && current.headRefOid === localHead;
+    return {
+      applied: true,
+      mode: "blocked",
+      plan,
+      notes: ["Publication completed, but PR evidence refresh failed."],
+      resultJson: JSON.stringify({
+        ok: false,
+        step: "evidence-refresh",
+        pullNumber: input.pullNumber,
+        publishedCommit: localHead,
+        currentPrCommit: current?.headRefOid ?? null,
+        published: input.push !== false,
+        blocker: detail.text || "Evidence refresh failed",
+        recovery: unchanged
+          ? "Refresh PR evidence for publishedCommit without creating or pushing another commit."
+          : current
+            ? "Stop because the PR commit changed."
+            : "Re-read and reconcile the PR commit before refreshing evidence.",
+      }),
+    };
+  }
   let ready = null;
   if (input.markReady) {
     if (input.docsResult === "blocked") {

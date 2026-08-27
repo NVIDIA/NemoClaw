@@ -251,6 +251,22 @@ export default async function commit_push_refresh_pr(input: {
         requireClean: false,
         apply: true,
       });
+      if (pushResult.remoteState !== "expected-commit")
+        return {
+          applied: true,
+          mode: "blocked",
+          plan,
+          notes: ["Publication did not establish the expected remote commit."],
+          resultJson: JSON.stringify({
+            ok: false,
+            step: "publication",
+            pullNumber: input.pullNumber,
+            headSha: pushResult.headSha,
+            remoteState: pushResult.remoteState,
+            blocker: pushResult.blocker,
+            recovery: "Reconcile the recorded PR branch before any retry.",
+          }),
+        };
       if (!pushResult.allVerified)
         return {
           applied: true,
@@ -307,23 +323,58 @@ export default async function commit_push_refresh_pr(input: {
     }
   }
   if (willRefresh)
-    receipt = await tools.refresh_pr_body_evidence({
-      number: input.pullNumber,
-      repo,
-      workdir: input.workdir,
-      expectedHeadSha: localHead,
-      docsReceipt: {
-        result: input.docsResult,
-        evidence: input.docsEvidence,
-        agent: input.docsAgent,
-      },
-      targetedValidationLine: input.targetedValidationLine,
-      broadGate:
-        input.broadGatePassed === undefined
-          ? undefined
-          : { passed: input.broadGatePassed, evidence: input.broadGateEvidence },
-      apply: true,
-    });
+    try {
+      receipt = await tools.refresh_pr_body_evidence({
+        number: input.pullNumber,
+        repo,
+        workdir: input.workdir,
+        expectedHeadSha: localHead,
+        docsReceipt: {
+          result: input.docsResult,
+          evidence: input.docsEvidence,
+          agent: input.docsAgent,
+        },
+        targetedValidationLine: input.targetedValidationLine,
+        broadGate:
+          input.broadGatePassed === undefined
+            ? undefined
+            : { passed: input.broadGatePassed, evidence: input.broadGateEvidence },
+        apply: true,
+      });
+    } catch (error) {
+      const detail = await diagnostic([String(error?.message ?? error)]);
+      let current = null;
+      try {
+        current = await tools.read_nemoclaw_pr({
+          workdir: input.workdir,
+          number: input.pullNumber,
+          repository: repo,
+        });
+      } catch {
+        // Recovery remains read-only until the PR can be read again.
+      }
+      const unchanged = current?.state === "OPEN" && current.headRefOid === localHead;
+      return {
+        applied: true,
+        mode: "blocked",
+        plan,
+        notes: ["Publication completed, but PR evidence refresh failed."],
+        resultJson: JSON.stringify({
+          ok: false,
+          step: "evidence-refresh",
+          pullNumber: input.pullNumber,
+          publishedCommit: localHead,
+          currentPrCommit: current?.headRefOid ?? null,
+          published: true,
+          blocker: detail || "Evidence refresh failed",
+          recovery: unchanged
+            ? "Refresh PR evidence for publishedCommit without creating or pushing another commit."
+            : current
+              ? "Stop because the PR commit changed."
+              : "Re-read and reconcile the PR commit before refreshing evidence.",
+        }),
+      };
+    }
   if (willPush)
     readiness = await tools.summarize_pr_readiness({
       number: input.pullNumber,

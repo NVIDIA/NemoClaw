@@ -8,7 +8,15 @@ if [[ $# -ne 1 || ! -f $1 ]]; then
   exit 2
 fi
 
-git fetch origin main
+mapfile -t origin_urls < <(git remote get-url --all origin)
+[[ ${#origin_urls[@]} -gt 0 ]]
+for url in "${origin_urls[@]}"; do
+  [[ $url =~ ^https://github[.]com/NVIDIA/NemoClaw([.]git)?$ || $url =~ ^git@github[.]com:NVIDIA/NemoClaw([.]git)?$ || $url =~ ^ssh://git@github[.]com/NVIDIA/NemoClaw([.]git)?$ ]] || {
+    echo "origin must identify NVIDIA/NemoClaw" >&2
+    exit 3
+  }
+done
+git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
 trusted_tmp=$(mktemp -d)
 trusted_root="$trusted_tmp/main"
 cleanup() {
@@ -16,7 +24,7 @@ cleanup() {
   rmdir "$trusted_tmp" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
-git worktree add --detach "$trusted_root" origin/main
+git worktree add --detach "$trusted_root" refs/remotes/origin/main
 path=.agents/skills/nemoclaw-maintainer-fix-e2e-failures/scripts/evaluate-policy.mts
 surface=("$path")
 for file in "${surface[@]}"; do
