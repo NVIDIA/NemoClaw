@@ -8,25 +8,6 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-
-type WorkflowStep = {
-  readonly name?: string;
-  readonly run?: string;
-  readonly if?: string;
-  readonly uses?: string;
-  readonly with?: Record<string, unknown>;
-  readonly env?: Record<string, string>;
-};
-
-type WorkflowJob = {
-  readonly needs?: string | readonly string[];
-  readonly steps?: readonly WorkflowStep[];
-};
-
-type Workflow = {
-  readonly jobs: Record<string, WorkflowJob>;
-};
-
 const repoRoot = path.join(import.meta.dirname, "../../..");
 const auditScript = path.join(
   repoRoot,
@@ -160,12 +141,6 @@ function installFakeAuditNpm(
   );
 }
 
-function requiredStep(job: WorkflowJob, name: string): WorkflowStep {
-  const step = job.steps?.find((candidate) => candidate.name === name);
-  expect(step, `Missing workflow step: ${name}`).toBeDefined();
-  return step as WorkflowStep;
-}
-
 describe("WeChat runtime audit and install-cache gates (#5896)", () => {
   it("rejects a target-controlled npm registry override", () => {
     const result = runAuditValidation(({ runtimeDir }) => {
@@ -289,5 +264,4 @@ describe("WeChat runtime audit and install-cache gates (#5896)", () => {
     expect(result.signatureDebugFiles).toEqual(["signature-attempt-1.log"]);
     expect(result.signatureReport).not.toContain("retrying transient signature download");
   });
-
 });
