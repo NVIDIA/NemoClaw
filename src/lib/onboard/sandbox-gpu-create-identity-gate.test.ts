@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { performance } from "node:perf_hooks";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -96,6 +98,7 @@ function noGpuInput() {
   input.gpuRoutePlan = "none";
   input.initialGpuRoute = "none";
   input.createArgv = ["openshell", "sandbox", "create", "--name", "alpha", "--", "agent"];
+  input.persistRetainedSandboxRecovery = vi.fn(() => true);
   return input;
 }
 
@@ -109,6 +112,18 @@ beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
 
 describe("created sandbox identity gate", () => {
+  it("requires a durable recovery owner for verified create attempts (#9211)", async () => {
+    const input = noGpuInput();
+    input.verifyCreatedSandboxBeforeEffects = vi.fn();
+    delete input.persistRetainedSandboxRecovery;
+
+    await expect(runSandboxGpuCreateFlow(input, createGpuFlowDeps())).rejects.toThrow(
+      "Verified sandbox creation requires durable create-attempt recovery evidence.",
+    );
+
+    expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
+  });
+
   it("settles the exact created sandbox before post-create effects (#9211)", async () => {
     const events: string[] = [];
     let nonce = "";
@@ -267,6 +282,58 @@ describe("created sandbox identity gate", () => {
     expect(mocks.waitForCreatedSandboxReadyWithTrace).not.toHaveBeenCalled();
   });
 
+  it("persists create-attempt recovery when Ready identity settlement reaches its deadline (#9211)", async () => {
+    const events: string[] = [];
+    let nonce = "";
+    const input = noGpuInput();
+    input.verifyCreatedSandboxBeforeEffects = vi.fn();
+    input.persistRetainedSandboxRecovery = vi.fn(() => {
+      events.push("persist-recovery");
+      return true;
+    });
+    const patch = createGpuPatchFixture();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mocks.streamSandboxCreate.mockImplementation(async (_command, args) => {
+      nonce = createAttemptNonce(args);
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+    const deps = createGpuFlowDeps();
+    vi.mocked(deps.runCaptureOpenshell).mockReturnValue("[]");
+    vi.spyOn(performance, "now")
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(30_000);
+
+    const error = await runSandboxGpuCreateFlow(input, deps).catch((caught: unknown) => {
+      events.push("rejected");
+      return caught;
+    });
+
+    expect(error).toBeInstanceOf(Error);
+    expect(String(error)).toContain(
+      "did not return one exact durable sandbox identity before post-create effects",
+    );
+    expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith({
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      createAttemptNonce: nonce,
+      liveIdentityFingerprint: null,
+      message: expect.stringMatching(
+        new RegExp(
+          `Gateway 'nemoclaw'. Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`,
+          "u",
+        ),
+      ),
+    });
+    expect(events).toEqual(["persist-recovery", "rejected"]);
+    expect(deps.runCaptureOpenshell).toHaveBeenCalledOnce();
+    expect(deps.sleep).not.toHaveBeenCalled();
+    expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
+    expect(patch.exitOnPatchError).not.toHaveBeenCalled();
+    expect(patch.ensureApplied).not.toHaveBeenCalled();
+    expect(mocks.waitForCreatedSandboxReadyWithTrace).not.toHaveBeenCalled();
+  });
+
   it("requires checkpoint revalidation before the first post-create effect (#9833)", async () => {
     let nonce = "";
     const input = noGpuInput();
@@ -295,6 +362,7 @@ describe("created sandbox identity gate", () => {
     const input = createGpuFlowInput();
     input.verifyCreatedSandboxBeforeEffects = vi.fn();
     input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    input.persistRetainedSandboxRecovery = vi.fn(() => true);
     const nonces: string[] = [];
     mocks.streamSandboxCreate
       .mockImplementationOnce(async (_command, args) => {
@@ -333,7 +401,7 @@ describe("created sandbox identity gate", () => {
     input.requirePolicylessCreate = true;
     input.verifyCreatedSandboxBeforeEffects = vi.fn();
     input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
-    input.persistRetainedApfSandboxRecovery = vi.fn(() => true);
+    input.persistRetainedSandboxRecovery = vi.fn(() => true);
     mocks.streamSandboxCreate.mockImplementationOnce(async (_command, args) => {
       nonce = createAttemptNonce(args);
       return {
@@ -365,14 +433,14 @@ describe("created sandbox identity gate", () => {
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
 
     const fingerprint = fingerprintSandboxRecreateValue("alpha-sandbox-id");
-    expect(input.persistRetainedApfSandboxRecovery).toHaveBeenCalledExactlyOnceWith({
+    expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith({
       sandboxName: "alpha",
       gatewayName: "nemoclaw",
       createAttemptNonce: nonce,
       liveIdentityFingerprint: fingerprint,
       message: expect.stringContaining(`Durable sandbox identity fingerprint: ${fingerprint}`),
     });
-    expect(input.persistRetainedApfSandboxRecovery).toHaveBeenCalledBefore(exit);
+    expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledBefore(exit);
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(output).toContain(`${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`);
     expect(output).toContain(`Durable sandbox identity fingerprint: ${fingerprint}`);
@@ -390,7 +458,7 @@ describe("created sandbox identity gate", () => {
     input.requirePolicylessCreate = true;
     input.verifyCreatedSandboxBeforeEffects = vi.fn();
     input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
-    input.persistRetainedApfSandboxRecovery = vi.fn(() => true);
+    input.persistRetainedSandboxRecovery = vi.fn(() => true);
     mocks.streamSandboxCreate.mockImplementationOnce(async (_command, args) => {
       nonce = createAttemptNonce(args);
       return {
@@ -419,7 +487,7 @@ describe("created sandbox identity gate", () => {
 
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
 
-    expect(input.persistRetainedApfSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
+    expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
         createAttemptNonce: nonce,
         liveIdentityFingerprint: null,
@@ -494,6 +562,7 @@ describe("created sandbox identity gate", () => {
     const input = createGpuFlowInput();
     input.gpuRoutePlan = "native-only";
     input.verifyCreatedSandboxBeforeEffects = vi.fn();
+    input.persistRetainedSandboxRecovery = vi.fn(() => true);
     input.revalidateVerifiedSandboxBeforeEffect = vi.fn(
       refuseEffectStartingWith("verify GPU access"),
     );

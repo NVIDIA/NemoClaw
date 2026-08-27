@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import { performance } from "node:perf_hooks";
 
 const ANSI_RE = /\x1b\[[0-9;]*m/gu;
 const SANDBOX_ID_RE = /^[A-Za-z0-9._-]+$/u;
@@ -202,11 +203,11 @@ export function settleCreatedOpenShellSandboxId(input: {
   readonly sleep: (milliseconds: number) => void;
 }): string {
   assertCreateAttemptNonce(input.createAttemptNonce);
-  const now = input.now ?? Date.now;
+  const now = input.now ?? (() => performance.now());
   const startedAt = now();
   const deadlineMs = startedAt + CREATED_IDENTITY_SETTLEMENT_TIMEOUT_MS;
 
-  if (!Number.isFinite(startedAt) || !Number.isFinite(deadlineMs)) {
+  if (!Number.isFinite(startedAt) || !Number.isFinite(deadlineMs) || deadlineMs <= startedAt) {
     throw createdIdentityError(input.sandboxName);
   }
 

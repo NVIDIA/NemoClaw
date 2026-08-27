@@ -262,6 +262,35 @@ describe("OpenShell sandbox identity reading", () => {
     },
   );
 
+  it.each([
+    ["NaN", Number.NaN],
+    ["positive infinity", Number.POSITIVE_INFINITY],
+    ["negative infinity", Number.NEGATIVE_INFINITY],
+    ["an overflowed deadline", Number.MAX_VALUE],
+  ])(
+    "refuses an initial %s settlement clock sample before selector lookup (#9211)",
+    (_case, invalidNow) => {
+      const now = vi.fn(() => invalidNow);
+      const runCaptureOpenshell = vi.fn(() => "[]");
+      const sleep = vi.fn();
+
+      expect(() =>
+        settleCreatedOpenShellSandboxId({
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          createAttemptNonce: CREATE_ATTEMPT_NONCE,
+          runCaptureOpenshell,
+          now,
+          sleep,
+        }),
+      ).toThrow("OpenShell did not return the exact created identity for sandbox 'alpha'.");
+
+      expect(now).toHaveBeenCalledOnce();
+      expect(runCaptureOpenshell).not.toHaveBeenCalled();
+      expect(sleep).not.toHaveBeenCalled();
+    },
+  );
+
   it("refuses a backward settlement clock sample before sleeping (#9211)", () => {
     const now = vi
       .fn<() => number>()
