@@ -585,7 +585,6 @@ COPY scripts/generate-openclaw-config.mts /scripts/generate-openclaw-config.mts
 COPY scripts/validate-openclaw-tool-search.mts /scripts/validate-openclaw-tool-search.mts
 COPY --from=managed-startup-runtime-builder /out/managed-startup-image-runtime.cjs /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
 COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
-COPY src/lib/messaging/ /src/lib/messaging/
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/
 
@@ -1494,105 +1493,17 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-share
 RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
     && cp -r /opt/nemoclaw-blueprint/* /sandbox/.nemoclaw/blueprints/0.1.0/
 
-# Copy the startup scripts and shared sandbox runtime files after setting up the
-# blueprint so repository changes retain the intended cache boundary.
-# NODE_OPTIONS preload modules use a Landlock-accessible path. OpenShell ≥0.0.36
-# blocks /opt/nemoclaw-blueprint/ from non-root users, but the entrypoint
-# needs to read these files to install Node runtime preloads under /tmp.
-# Channel runtime preloads are authored as TypeScript and compiled in the
-# runtime-preload-builder stage before being flattened by filename for --require.
-COPY --from=openclaw-runtime-payload / /
+# Copy only the configuration inputs needed by the expensive non-messaging
+# offline plugin install. The full candidate runtime payload is copied after
+# all offline installs so unrelated runtime changes retain these cached layers.
+COPY scripts/generate-openclaw-config.mts /scripts/generate-openclaw-config.mts
+COPY scripts/validate-openclaw-tool-search.mts /scripts/validate-openclaw-tool-search.mts
+COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
+COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 
-# Keep the root-owned managed-startup handoff in this image-only layer. The
-# following permissions block is replayed on the host by regression tests.
-RUN managed_runtime_assertion_failed() { \
-      nemoclaw_assertion="$1"; \
-      nemoclaw_artifact_path="$2"; \
-      if [ -e "$nemoclaw_artifact_path" ] || [ -L "$nemoclaw_artifact_path" ]; then \
-        if [ "${3:-}" = dereference ] && [ -e "$nemoclaw_artifact_path" ]; then \
-          nemoclaw_metadata="$(stat -L -c 'uid=%u gid=%g type=%F mode=%a' -- "$nemoclaw_artifact_path" 2>/dev/null)" \
-            || nemoclaw_metadata='uid=unavailable gid=unavailable type=unavailable mode=unavailable'; \
-        else \
-          nemoclaw_metadata="$(stat -c 'uid=%u gid=%g type=%F mode=%a' -- "$nemoclaw_artifact_path" 2>/dev/null)" \
-            || nemoclaw_metadata='uid=unavailable gid=unavailable type=unavailable mode=unavailable'; \
-        fi; \
-        if [ -L "$nemoclaw_artifact_path" ]; then nemoclaw_symlink_state='yes'; else nemoclaw_symlink_state='no'; fi; \
-      else \
-        nemoclaw_metadata='uid=unavailable gid=unavailable type=missing mode=unavailable'; \
-        nemoclaw_symlink_state='no'; \
-      fi; \
-      printf 'ERROR: managed image assertion failed: %s path=%s %s symlink=%s\n' \
-        "$nemoclaw_assertion" "$nemoclaw_artifact_path" "$nemoclaw_metadata" "$nemoclaw_symlink_state" >&2; \
-      exit 1; \
-    }; \
-    managed_image_command_failed() { \
-      nemoclaw_command_assertion="$1"; \
-      nemoclaw_command_status="$2"; \
-      printf 'ERROR: managed image assertion failed: %s exit-status=%s\n' \
-        "$nemoclaw_command_assertion" "$nemoclaw_command_status" >&2; \
-      exit 1; \
-    }; \
-    if find -P /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime -exec chown -h root:root '{}' + \
-      && find -P /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime -type d -exec chmod 0555 '{}' + \
-      && find -P /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime -type f -exec chmod 0444 '{}' +; then \
-      :; \
-    else \
-      managed_image_command_failed mcp-tool-discovery-tree-permission-replay "$?"; \
-    fi; \
-    discovery_contract="$(node /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/mcp-tool-discovery.mjs)" \
-      || managed_image_command_failed mcp-tool-discovery-bundle-execution "$?"; \
-    node -e 'const expected = { protocol: 1, ok: false, detail: "tool discovery received invalid runtime arguments" }; const standaloneSecretPatterns = [/(?:nvapi-|nvcf-|gh[pousr]_|sk-proj-|sk-ant-|hf_|glpat-|gsk_|pypi-|tvly-)[A-Za-z0-9_-]{10,}/gu, /github_pat_[A-Za-z0-9_]{30,}/gu, /sk-[A-Za-z0-9_-]{20,}/gu, /(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}/gu, /A(?:K|S)IA[A-Z0-9]{16}/gu, /\bbot\d{8,10}:[A-Za-z0-9_-]{35}\b/gu, /\b\d{8,10}:[A-Za-z0-9_-]{35}\b/gu, /\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b/gu, /lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*/gu, /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}\b/gu, /\b[A-Za-z0-9_=-]{32,}\b/gu]; const redactContextSecrets = (value) => value.replace(/\b(?:Bearer|Basic)\s+\S+/giu, "<REDACTED>").replace(/((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(?:X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)["\x27]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["\x27]?)[^\s"\x27]+/giu, (_match, prefix) => prefix + "<REDACTED>").replace(/((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(?:Password|Passwd|Pass))["\x27]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["\x27]?)[^\s"\x27]+/gu, (_match, prefix) => prefix + "<REDACTED>").replace(/((?:^|[^A-Za-z0-9])KEY["\x27]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["\x27]?)[^\s"\x27]+/gu, (_match, prefix) => prefix + "<REDACTED>"); const sanitize = (value) => { if (value === undefined) return "<missing>"; if (value === null || typeof value === "boolean" || typeof value === "number") return value; if (typeof value !== "string") return "<" + (Array.isArray(value) ? "array" : typeof value) + ">"; let printable = value.replace(/-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*/gu, "<REDACTED>").replace(/[^\x20-\x7e]/gu, "?"); for (const pattern of standaloneSecretPatterns) printable = printable.replace(pattern, "<REDACTED>"); printable = redactContextSecrets(printable); return printable.length <= 240 ? printable : printable.slice(0, 237) + "..."; }; let result; let parsed = true; try { result = JSON.parse(process.argv[1]); } catch { parsed = false; } const record = parsed && result !== null && typeof result === "object" && !Array.isArray(result) ? result : undefined; if (record && record.protocol === expected.protocol && record.ok === expected.ok && record.detail === expected.detail) process.exit(0); const actual = record ? { protocol: sanitize(record.protocol), ok: sanitize(record.ok), detail: sanitize(record.detail) } : parsed ? { type: result === null ? "null" : Array.isArray(result) ? "array" : typeof result, value: sanitize(result) } : { type: "invalid-json", preview: sanitize(process.argv[1]) }; console.error("ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual=%s expected=%s", JSON.stringify(actual), JSON.stringify(expected)); process.exit(1);' "$discovery_contract" \
-      || exit 1; \
-    discovery_unsafe="$(find -L /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime \( ! -user root -o -perm /022 \) -print -quit)" \
-      || managed_image_command_failed mcp-tool-discovery-tree-find-execution "$?"; \
-    { test -z "$discovery_unsafe" || managed_runtime_assertion_failed mcp-tool-discovery-tree-safety "$discovery_unsafe" dereference; } \
-    && { test -f /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs || managed_runtime_assertion_failed regular-file /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs; } \
-    && { test ! -L /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs || managed_runtime_assertion_failed non-symlink /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs; } \
-    && { chown root:root /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs 2>/dev/null || managed_runtime_assertion_failed owner-root-root /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs; } \
-    && { chmod 0444 /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs 2>/dev/null || managed_runtime_assertion_failed mode-0444 /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs; } \
-    && { test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs 2>/dev/null)" = '0:0:444' || managed_runtime_assertion_failed metadata-0:0:444 /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs; } \
-    && test -f /usr/local/bin/nemoclaw-managed-bootstrap \
-    && test ! -L /usr/local/bin/nemoclaw-managed-bootstrap \
-    && test "$(stat -c '%u:%g:%a' /usr/local/bin/nemoclaw-managed-bootstrap)" = '0:0:755' \
-    && test -f /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
-    && test ! -L /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
-    && test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh)" = '0:0:444' \
-    && install -d -o root -g root -m 0755 /run/nemoclaw
-
-# Copy startup script and shared sandbox initialisation library.
-RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
-        /usr/local/bin/nemoclaw-managed-bootstrap \
-        /usr/local/bin/nemoclaw-managed-startup-hold \
-        /usr/local/lib/nemoclaw/sandbox-init.sh \
-        /scripts/generate-openclaw-config.mts \
+RUN chmod 755 /scripts/generate-openclaw-config.mts \
         /scripts/validate-openclaw-tool-search.mts \
-        /src/lib/messaging/applier/build/messaging-build-applier.mts \
     && chmod 444 /src/lib/tool-disclosure.ts \
-        /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
-    && chmod -R a+rX /src/lib/messaging \
-    && chown root:root /usr/local/bin/nemoclaw-gateway-control \
-        /usr/local/lib/nemoclaw/gateway-supervisor.sh \
-        /usr/local/lib/nemoclaw/state-dir-guard.py \
-        /usr/local/share/nemoclaw/state-lock-plan.json \
-        /usr/local/lib/nemoclaw/openclaw-config-guard.py \
-        /usr/local/lib/nemoclaw/managed-gateway-control.py \
-    && chmod 700 /usr/local/bin/nemoclaw-gateway-control \
-    && chmod 500 /usr/local/lib/nemoclaw/state-dir-guard.py \
-        /usr/local/lib/nemoclaw/openclaw-config-guard.py \
-        /usr/local/lib/nemoclaw/managed-gateway-control.py \
-    && chmod 444 /usr/local/share/nemoclaw/state-lock-plan.json \
-    && chmod 444 /usr/local/lib/nemoclaw/gateway-supervisor.sh \
-        /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
-        /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
-    && chmod 644 /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py \
-        /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py \
-    && chmod 555 /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py \
-    && if [ -d /usr/local/lib/nemoclaw/preloads-compiled-channels ]; then \
-        find /usr/local/lib/nemoclaw/preloads-compiled-channels -path '*/runtime/*.js' -type f \
-            -exec sh -c 'for file do cp "$file" "/usr/local/lib/nemoclaw/preloads/$(basename "$file")"; done' sh {} +; \
-    fi \
-    && rm -rf /usr/local/lib/nemoclaw/preloads-compiled-channels \
-    && if [ -d /usr/local/lib/nemoclaw/preloads ]; then find /usr/local/lib/nemoclaw/preloads -type f -name '*.js' -exec chmod 644 {} +; fi \
     && chmod 755 /usr/local/share/nemoclaw \
         /usr/local/share/nemoclaw/openclaw-plugins \
     && find /usr/local/share/nemoclaw/openclaw-plugins -type d -exec chmod 755 {} + \
@@ -1749,13 +1660,6 @@ RUN case "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" in \
     esac \
     && command -v setpriv >/dev/null 2>&1
 
-# Bake reduced messaging runtime metadata for the entrypoint. The full
-# NEMOCLAW_MESSAGING_PLAN_B64 is a build input; OpenShell sandbox create only
-# forwards explicit runtime env, so nemoclaw-start reads this generic artifact
-# when the env plan is absent.
-# hadolint ignore=DL3059
-RUN OPENCLAW_VERSION="${OPENCLAW_VERSION}" node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase runtime-setup
-
 WORKDIR /sandbox
 RUN test "$(id -u sandbox):$(id -g sandbox):$(pwd)" = "998:998:/sandbox"
 USER sandbox
@@ -1891,10 +1795,29 @@ RUN --network=none --mount=from=openclaw-optional-plugin-archives,target=/opt/ne
     fi; \
     :
 
-# The reviewed cache stays root-owned and immutable to the sandbox user. npm
-# still needs a writable _cacache/tmp while OpenClaw packs the verified archive,
+# The reviewed cache stays root-owned and immutable to the sandbox user.
+# Prepare messaging source and runtime metadata before consuming that cache.
+# Add messaging source after the non-messaging install so channel-only changes
+# invalidate only the matching offline plugin layer. Keep this as the single
+# owner; messaging intentionally stays out of openclaw-runtime-payload.
+USER root
+COPY src/lib/messaging/ /src/lib/messaging/
+RUN chmod 755 /src/lib/messaging/applier/build/messaging-build-applier.mts \
+    && chmod -R a+rX /src/lib/messaging
+
+# Bake reduced messaging runtime metadata for the entrypoint. The full
+# NEMOCLAW_MESSAGING_PLAN_B64 is a build input; OpenShell sandbox create only
+# forwards explicit runtime env, so nemoclaw-start reads this generic artifact
+# when the env plan is absent.
+# hadolint ignore=DL3059
+RUN OPENCLAW_VERSION="${OPENCLAW_VERSION}" node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase runtime-setup
+USER sandbox
+
+# npm still needs a writable _cacache/tmp while OpenClaw packs the verified archive,
 # so materialize a sandbox-owned throwaway copy for this RUN and remove it before
 # committing the layer. Never point npm directly at the trusted source cache.
+# Normal images use --phase agent-install; capability-union images select the
+# managed phase instead so each build invokes the messaging applier exactly once.
 # hadolint ignore=DL3059,DL4006
 RUN --mount=from=openclaw-managed-messaging-npm-cache,source=/out/npm-cache,target=/opt/nemoclaw-managed-messaging-npm-cache,ro set -eu; \
     if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
@@ -1903,32 +1826,136 @@ RUN --mount=from=openclaw-managed-messaging-npm-cache,source=/out/npm-cache,targ
         trusted_cache=/usr/local/share/nemoclaw/wechat-npm-cache; \
     fi; \
     unsafe_cache_entry="$(find -L "$trusted_cache" \( ! -user root -o -perm /022 \) -print -quit)"; \
-    test -z "$unsafe_cache_entry"; \
+    if [ -n "$unsafe_cache_entry" ]; then \
+        printf 'ERROR: trusted messaging cache is unsafe phase=before-install path=%s reason=not-root-owned-or-group-world-writable\n' \
+            "$unsafe_cache_entry" >&2; \
+        exit 1; \
+    fi; \
     install_cache="$(mktemp -d /tmp/nemoclaw-wechat-npm-cache.XXXXXX)"; \
     trap 'rm -rf "$install_cache"' EXIT; \
     cp -R "$trusted_cache"/. "$install_cache"/; \
     chmod -R u+rwX,go-w "$install_cache"; \
+    messaging_phase=agent-install; \
     if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
         export NPM_CONFIG_CACHE="$install_cache"; \
         export NPM_CONFIG_OFFLINE=true; \
         export NPM_CONFIG_AUDIT=false; \
         export NPM_CONFIG_FUND=false; \
+        messaging_phase=managed-image-capability-union; \
     fi; \
     NEMOCLAW_WECHAT_NPM_INSTALL_CACHE="$install_cache" \
         OPENCLAW_VERSION="${OPENCLAW_VERSION}" \
-        node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase agent-install; \
-    if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
-        NEMOCLAW_WECHAT_NPM_INSTALL_CACHE="$install_cache" \
-            OPENCLAW_VERSION="${OPENCLAW_VERSION}" \
-            node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts \
-                --agent openclaw --phase managed-image-capability-union; \
-    fi; \
+        node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts \
+            --agent openclaw --phase "$messaging_phase"; \
     rm -rf "$install_cache"; \
     trap - EXIT; \
-    test ! -e "$install_cache"; \
-    unsafe_cache_entry="$(find -L "$trusted_cache" \( ! -user root -o -perm /022 \) -print -quit)"; \
-    test -z "$unsafe_cache_entry"
+    test ! -e "$install_cache"
 
+USER root
+
+# Copy the full candidate runtime payload after the stable offline plugin
+# installs so runtime-only changes do not invalidate those expensive layers.
+# NODE_OPTIONS preload modules use a Landlock-accessible path. OpenShell ≥0.0.36
+# blocks /opt/nemoclaw-blueprint/ from non-root users, but the entrypoint
+# needs to read these files to install Node runtime preloads under /tmp.
+# Channel runtime preloads are authored as TypeScript and compiled in the
+# runtime-preload-builder stage before being flattened by filename for --require.
+COPY --from=openclaw-runtime-payload / /
+
+# Keep the root-owned managed-startup handoff in this image-only layer. The
+# following permissions block is replayed on the host by regression tests.
+RUN managed_runtime_assertion_failed() { \
+      nemoclaw_assertion="$1"; \
+      nemoclaw_artifact_path="$2"; \
+      if [ -e "$nemoclaw_artifact_path" ] || [ -L "$nemoclaw_artifact_path" ]; then \
+        if [ "${3:-}" = dereference ] && [ -e "$nemoclaw_artifact_path" ]; then \
+          nemoclaw_metadata="$(stat -L -c 'uid=%u gid=%g type=%F mode=%a' -- "$nemoclaw_artifact_path" 2>/dev/null)" \
+            || nemoclaw_metadata='uid=unavailable gid=unavailable type=unavailable mode=unavailable'; \
+        else \
+          nemoclaw_metadata="$(stat -c 'uid=%u gid=%g type=%F mode=%a' -- "$nemoclaw_artifact_path" 2>/dev/null)" \
+            || nemoclaw_metadata='uid=unavailable gid=unavailable type=unavailable mode=unavailable'; \
+        fi; \
+        if [ -L "$nemoclaw_artifact_path" ]; then nemoclaw_symlink_state='yes'; else nemoclaw_symlink_state='no'; fi; \
+      else \
+        nemoclaw_metadata='uid=unavailable gid=unavailable type=missing mode=unavailable'; \
+        nemoclaw_symlink_state='no'; \
+      fi; \
+      printf 'ERROR: managed image assertion failed: %s path=%s %s symlink=%s\n' \
+        "$nemoclaw_assertion" "$nemoclaw_artifact_path" "$nemoclaw_metadata" "$nemoclaw_symlink_state" >&2; \
+      exit 1; \
+    }; \
+    managed_image_command_failed() { \
+      nemoclaw_command_assertion="$1"; \
+      nemoclaw_command_status="$2"; \
+      printf 'ERROR: managed image assertion failed: %s exit-status=%s\n' \
+        "$nemoclaw_command_assertion" "$nemoclaw_command_status" >&2; \
+      exit 1; \
+    }; \
+    if find -P /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime -exec chown -h root:root '{}' + \
+      && find -P /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime -type d -exec chmod 0555 '{}' + \
+      && find -P /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime -type f -exec chmod 0444 '{}' +; then \
+      :; \
+    else \
+      managed_image_command_failed mcp-tool-discovery-tree-permission-replay "$?"; \
+    fi; \
+    discovery_contract="$(node /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/mcp-tool-discovery.mjs)" \
+      || managed_image_command_failed mcp-tool-discovery-bundle-execution "$?"; \
+    node -e 'const expected = { protocol: 1, ok: false, detail: "tool discovery received invalid runtime arguments" }; const standaloneSecretPatterns = [/(?:nvapi-|nvcf-|gh[pousr]_|sk-proj-|sk-ant-|hf_|glpat-|gsk_|pypi-|tvly-)[A-Za-z0-9_-]{10,}/gu, /github_pat_[A-Za-z0-9_]{30,}/gu, /sk-[A-Za-z0-9_-]{20,}/gu, /(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}/gu, /A(?:K|S)IA[A-Z0-9]{16}/gu, /\bbot\d{8,10}:[A-Za-z0-9_-]{35}\b/gu, /\b\d{8,10}:[A-Za-z0-9_-]{35}\b/gu, /\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b/gu, /lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*/gu, /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}\b/gu, /\b[A-Za-z0-9_=-]{32,}\b/gu]; const redactContextSecrets = (value) => value.replace(/\b(?:Bearer|Basic)\s+\S+/giu, "<REDACTED>").replace(/((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(?:X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)["\x27]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["\x27]?)[^\s"\x27]+/giu, (_match, prefix) => prefix + "<REDACTED>").replace(/((?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(?:Password|Passwd|Pass))["\x27]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["\x27]?)[^\s"\x27]+/gu, (_match, prefix) => prefix + "<REDACTED>").replace(/((?:^|[^A-Za-z0-9])KEY["\x27]?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["\x27]?)[^\s"\x27]+/gu, (_match, prefix) => prefix + "<REDACTED>"); const sanitize = (value) => { if (value === undefined) return "<missing>"; if (value === null || typeof value === "boolean" || typeof value === "number") return value; if (typeof value !== "string") return "<" + (Array.isArray(value) ? "array" : typeof value) + ">"; let printable = value.replace(/-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*/gu, "<REDACTED>").replace(/[^\x20-\x7e]/gu, "?"); for (const pattern of standaloneSecretPatterns) printable = printable.replace(pattern, "<REDACTED>"); printable = redactContextSecrets(printable); return printable.length <= 240 ? printable : printable.slice(0, 237) + "..."; }; let result; let parsed = true; try { result = JSON.parse(process.argv[1]); } catch { parsed = false; } const record = parsed && result !== null && typeof result === "object" && !Array.isArray(result) ? result : undefined; if (record && record.protocol === expected.protocol && record.ok === expected.ok && record.detail === expected.detail) process.exit(0); const actual = record ? { protocol: sanitize(record.protocol), ok: sanitize(record.ok), detail: sanitize(record.detail) } : parsed ? { type: result === null ? "null" : Array.isArray(result) ? "array" : typeof result, value: sanitize(result) } : { type: "invalid-json", preview: sanitize(process.argv[1]) }; console.error("ERROR: managed image assertion failed: mcp-tool-discovery-json-contract actual=%s expected=%s", JSON.stringify(actual), JSON.stringify(expected)); process.exit(1);' "$discovery_contract" \
+      || exit 1; \
+    discovery_unsafe="$(find -L /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime \( ! -user root -o -perm /022 \) -print -quit)" \
+      || managed_image_command_failed mcp-tool-discovery-tree-find-execution "$?"; \
+    { test -z "$discovery_unsafe" || managed_runtime_assertion_failed mcp-tool-discovery-tree-safety "$discovery_unsafe" dereference; } \
+    && { test -f /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs || managed_runtime_assertion_failed regular-file /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs; } \
+    && { test ! -L /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs || managed_runtime_assertion_failed non-symlink /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs; } \
+    && { chown root:root /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs 2>/dev/null || managed_runtime_assertion_failed owner-root-root /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs; } \
+    && { chmod 0444 /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs 2>/dev/null || managed_runtime_assertion_failed mode-0444 /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs; } \
+    && { test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs 2>/dev/null)" = '0:0:444' || managed_runtime_assertion_failed metadata-0:0:444 /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs; } \
+    && test -f /usr/local/bin/nemoclaw-managed-bootstrap \
+    && test ! -L /usr/local/bin/nemoclaw-managed-bootstrap \
+    && test "$(stat -c '%u:%g:%a' /usr/local/bin/nemoclaw-managed-bootstrap)" = '0:0:755' \
+    && test -f /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
+    && test ! -L /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
+    && test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh)" = '0:0:444' \
+    && install -d -o root -g root -m 0755 /run/nemoclaw
+
+# Copy startup script and shared sandbox initialisation library.
+RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
+        /usr/local/bin/nemoclaw-managed-bootstrap \
+        /usr/local/bin/nemoclaw-managed-startup-hold \
+        /usr/local/lib/nemoclaw/sandbox-init.sh \
+        /scripts/generate-openclaw-config.mts \
+        /scripts/validate-openclaw-tool-search.mts \
+    && chmod 444 /src/lib/tool-disclosure.ts \
+        /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
+    && chown root:root /usr/local/bin/nemoclaw-gateway-control \
+        /usr/local/lib/nemoclaw/gateway-supervisor.sh \
+        /usr/local/lib/nemoclaw/state-dir-guard.py \
+        /usr/local/share/nemoclaw/state-lock-plan.json \
+        /usr/local/lib/nemoclaw/openclaw-config-guard.py \
+        /usr/local/lib/nemoclaw/managed-gateway-control.py \
+    && chmod 700 /usr/local/bin/nemoclaw-gateway-control \
+    && chmod 500 /usr/local/lib/nemoclaw/state-dir-guard.py \
+        /usr/local/lib/nemoclaw/openclaw-config-guard.py \
+        /usr/local/lib/nemoclaw/managed-gateway-control.py \
+    && chmod 444 /usr/local/share/nemoclaw/state-lock-plan.json \
+    && chmod 444 /usr/local/lib/nemoclaw/gateway-supervisor.sh \
+        /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
+        /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
+    && chmod 644 /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py \
+        /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py \
+    && chmod 555 /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py \
+    && if [ -d /usr/local/lib/nemoclaw/preloads-compiled-channels ]; then \
+        find /usr/local/lib/nemoclaw/preloads-compiled-channels -path '*/runtime/*.js' -type f \
+            -exec sh -c 'for file do cp "$file" "/usr/local/lib/nemoclaw/preloads/$(basename "$file")"; done' sh {} +; \
+    fi \
+    && rm -rf /usr/local/lib/nemoclaw/preloads-compiled-channels \
+    && if [ -d /usr/local/lib/nemoclaw/preloads ]; then find /usr/local/lib/nemoclaw/preloads -type f -name '*.js' -exec chmod 644 {} +; fi \
+    && chmod 755 /usr/local/share/nemoclaw \
+        /usr/local/share/nemoclaw/openclaw-plugins \
+    && find /usr/local/share/nemoclaw/openclaw-plugins -type d -exec chmod 755 {} + \
+    && find /usr/local/share/nemoclaw/openclaw-plugins -type f -exec chmod 644 {} +
+
+USER sandbox
 # Lock down npm for the next RUN: the local OpenClaw plugin install must
 # resolve from /opt/nemoclaw and the staged plugin-runtime-deps tree without
 # touching the registry. Reset to false after that RUN so the runtime image

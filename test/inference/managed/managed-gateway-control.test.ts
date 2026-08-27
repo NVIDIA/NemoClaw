@@ -1178,7 +1178,8 @@ with tempfile.TemporaryDirectory() as root:
         control._read_start_log_diagnostic_excerpt = real_start_log_reader
     health_diagnostic = [health_status, health_stderr.getvalue().splitlines()]
     exact_failure_diagnostics = []
-    for failure_code in ("SUPERVISOR_BUSY", "SUPERVISOR_NOT_RUNNING"):
+    for failure_code in ("SUPERVISOR_BUSY", "SUPERVISOR_NOT_RUNNING",
+                         "SUPERVISOR_DISCOVERY_PENDING"):
         def fail_with_exact_marker(*_args, code=failure_code):
             with control._control_stage("discover-supervisor"):
                 raise control.ControlError(code)
@@ -1316,11 +1317,11 @@ describe("managed gateway root control", () => {
         gateway: [41, "333", 40],
         healthy: true,
       },
-      zombie_leader_with_live_sibling: "SUPERVISOR_UNAVAILABLE",
+      zombie_leader_with_live_sibling: "SUPERVISOR_DISCOVERY_PENDING",
       state_key_behavior: [true, false],
       mixed_namespace_rejected: true,
       transient_supervisor_retry: [40, 6],
-      persistent_supervisor_churn: ["SUPERVISOR_UNAVAILABLE", expect.any(Number), 1],
+      persistent_supervisor_churn: ["SUPERVISOR_DISCOVERY_PENDING", expect.any(Number), 1],
       transient_gateway_candidates: [41, 5],
       namespace_denied: true,
       preflight: [
@@ -1347,8 +1348,8 @@ describe("managed gateway root control", () => {
       runtime_validation: "in-process",
       missing_supervisor: "SUPERVISOR_NOT_RUNNING",
       appearing_supervisor: "SUPERVISOR_UNAVAILABLE",
-      unreadable_process: "SUPERVISOR_UNAVAILABLE",
-      empty_live_process: "SUPERVISOR_UNAVAILABLE",
+      unreadable_process: "SUPERVISOR_DISCOVERY_PENDING",
+      empty_live_process: "SUPERVISOR_DISCOVERY_PENDING",
       duplicate_supervisor: "SUPERVISOR_UNAVAILABLE",
       duplicate: "SUPERVISOR_UNAVAILABLE",
       signals: [15, 9],
@@ -1469,6 +1470,7 @@ describe("managed gateway root control", () => {
       exact_failure_diagnostics: [
         [1, ["SUPERVISOR_BUSY"]],
         [1, ["SUPERVISOR_NOT_RUNNING"]],
+        [1, ["SUPERVISOR_DISCOVERY_PENDING"]],
       ],
     });
     expect(output.timeout_refresh[2][2][1]).toBeGreaterThan(0);

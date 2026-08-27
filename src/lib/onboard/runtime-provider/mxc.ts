@@ -20,9 +20,21 @@ import {
   type RuntimeProviderWorkloadProfile,
 } from "./contract";
 import { createMxcNativeArtifactBootstrapSurface } from "./mxc-bootstrap";
+import {
+  createMxcNativeArtifactBootstrapOperations,
+  type MxcNativeArtifactControlPlane,
+} from "./mxc-bootstrap-operations";
+import {
+  qualifyMxcOpenShellAttachment,
+  type MxcOpenShellAttachmentAuthority,
+  type MxcOpenShellAttachmentObservation,
+} from "./mxc-openshell-attachment";
 
 export interface MxcRuntimeProviderOptions {
   readonly hostFacts: WindowsMxcHostFacts;
+  readonly openshellAttachmentAuthority: MxcOpenShellAttachmentAuthority;
+  readonly openshellObservation: MxcOpenShellAttachmentObservation;
+  readonly bootstrapControlPlane: MxcNativeArtifactControlPlane;
 }
 
 const MXC_PROVIDER_ID = "mxc";
@@ -45,23 +57,40 @@ function unsupported(reason: string) {
   return { providerId: MXC_PROVIDER_ID, supported: false as const, reason };
 }
 
-function inspectMxcHost(hostFacts: WindowsMxcHostFacts): RuntimeProviderDoctorCheck {
+function inspectMxcHost(
+  hostFacts: WindowsMxcHostFacts,
+  qualifyAttachment: () => ReturnType<typeof qualifyMxcOpenShellAttachment>,
+): RuntimeProviderDoctorCheck {
   const assessment = assessWindowsMxcProcessContainerCandidate(hostFacts);
-  if (assessment.candidate) {
+  if (!assessment.candidate) {
+    return {
+      group: "Host",
+      label: "OpenShell MXC process_container candidate",
+      status: "fail",
+      detail: assessment.detail,
+    };
+  }
+  try {
+    const attachment = qualifyAttachment();
     return {
       group: "Host",
       label: "OpenShell MXC process_container candidate",
       status: "info",
-      detail: `Windows x64 build ${assessment.windowsBuild} meets the inactive host floor.`,
-      hint: "MXC remains unavailable until the OpenShell package and live E2E gates pass.",
+      detail:
+        `Windows x64 build ${assessment.windowsBuild} and OpenShell ${attachment.distribution.version} ` +
+        "match the inactive attachment contract.",
+      hint:
+        "This check does not enable MXC. Maintainers must qualify the accepted OpenShell " +
+        "distribution and required live E2E coverage before adding production selection.",
+    };
+  } catch (error) {
+    return {
+      group: "Host",
+      label: "OpenShell MXC process_container candidate",
+      status: "fail",
+      detail: error instanceof Error ? error.message : "OpenShell attachment validation failed.",
     };
   }
-  return {
-    group: "Host",
-    label: "OpenShell MXC process_container candidate",
-    status: "fail",
-    detail: assessment.detail,
-  };
 }
 
 function acceptsNativeArtifactReceipt(receipt: SandboxWorkloadReceipt | undefined): boolean {
@@ -82,11 +111,19 @@ function acceptsNativeArtifactReceipt(receipt: SandboxWorkloadReceipt | undefine
  */
 export function createMxcRuntimeProviderBundle({
   hostFacts,
+  openshellAttachmentAuthority,
+  openshellObservation,
+  bootstrapControlPlane,
 }: MxcRuntimeProviderOptions): RuntimeProviderBundle {
   const lifecycleReason =
     "OpenShell MXC direct start and stop of an existing sandbox are not qualified.";
   const cleanupReason =
     "OpenShell MXC does not expose an immutable resource handle for exact destructive cleanup.";
+  const qualifyAttachment = () =>
+    qualifyMxcOpenShellAttachment(openshellAttachmentAuthority, openshellObservation);
+  const bootstrap = createMxcNativeArtifactBootstrapSurface(
+    createMxcNativeArtifactBootstrapOperations(bootstrapControlPlane),
+  );
   return {
     identity: {
       contractVersion: RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
@@ -113,7 +150,7 @@ export function createMxcRuntimeProviderBundle({
     preflightDoctor: {
       providerId: MXC_PROVIDER_ID,
       supported: true,
-      inspectHost: () => inspectMxcHost(hostFacts),
+      inspectHost: () => inspectMxcHost(hostFacts, qualifyAttachment),
       preflightLifecycle: () => ({ exitCode: 1, message: lifecycleReason }),
     },
     gateway: {
@@ -138,7 +175,17 @@ export function createMxcRuntimeProviderBundle({
     stateMutation: unsupported(
       "The MXC runtime provider state mutation surface remains disabled until lifecycle and cleanup pass live E2E.",
     ),
-    bootstrap: createMxcNativeArtifactBootstrapSurface(),
+    bootstrap: {
+      ...bootstrap,
+      run: async (input) => {
+        qualifyAttachment();
+        return bootstrap.run(input);
+      },
+      recover: async (input) => {
+        qualifyAttachment();
+        return bootstrap.recover(input);
+      },
+    },
     snapshot: unsupported("OpenShell MXC snapshot and restore are unavailable."),
     recovery: unsupported(
       "OpenShell MXC gateway-restart reconciliation and orphan recovery are unavailable.",

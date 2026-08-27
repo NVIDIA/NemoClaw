@@ -14,7 +14,7 @@ export function writeOkOpenshell(
 ): void {
   const gatewayPort = options.gatewayPort ?? 8080;
   const sandboxGet = options.readySandboxGet
-    ? 'if [ "${1:-}" = sandbox ] && [ "${2:-}" = get ]; then printf "Sandbox:\\n\\n  Id: fixture-created-sandbox\\n  Name: %s\\n  Phase: Ready\\n" "${!#}"; fi\n'
+    ? 'if [ "${1:-}" = sandbox ] && [ "${2:-}" = get ]; then printf "Sandbox:\\n\\n  Id: sbx-4f2a91c0d7\\n  Name: %s\\n  Phase: Ready\\n" "${!#}"; fi\n'
     : "";
   writeExecutable(
     path.join(fakeBin, "openshell"),
