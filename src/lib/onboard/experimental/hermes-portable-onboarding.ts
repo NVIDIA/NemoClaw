@@ -145,7 +145,11 @@ export interface HermesPortableOnboardingDeps<T> {
   readonly observeSandbox: (timeoutBudgetMs?: number) => HermesPortableSandboxObservation;
   readonly delaySandboxReadyPublicationPoll?: (milliseconds: number) => Promise<void>;
   readonly readSandboxReadyPublicationClockMs?: () => number;
-  readonly createSandbox: (createArgv: readonly string[], buildContextPath: string) => Promise<T>;
+  readonly createSandbox: (
+    createArgv: readonly string[],
+    buildContextPath: string,
+    effectivePolicySourcePath: string,
+  ) => Promise<T>;
   readonly readRegistry: () => SandboxEntry | null;
   readonly compareAndSetRegistryGatewayPort: (
     name: string,
@@ -1434,6 +1438,7 @@ export async function runHermesPortableOnboardingTransaction<T>(
             buildContext,
           ),
           buildContext.buildContextPath,
+          snapshot.receipt.policy.sourcePath,
         );
         buildContext.assertCurrent();
         input.buildContext.assertCurrentSource();
@@ -1617,6 +1622,7 @@ export interface HermesPortableOnboardingFromOnboardInput<T> {
     readyCapture: ReturnType<typeof createHermesPortableReadyCapture>,
     readyRunner: ReturnType<typeof createHermesPortableReadyRunner>,
     buildContextPath: string,
+    effectivePolicySourcePath: string,
   ) => Promise<T>;
   readonly readRegistry: () => SandboxEntry | null;
   readonly compareAndSetRegistryGatewayPort: HermesPortableOnboardingDeps<T>["compareAndSetRegistryGatewayPort"];
@@ -1625,6 +1631,35 @@ export interface HermesPortableOnboardingFromOnboardInput<T> {
   readonly buildContextSettings: HermesPortableBuildContextSettings;
   readonly cleanupTemporaryPolicy?: () => boolean;
   readonly createPolicySourceBytes?: Buffer;
+}
+
+interface RunHermesPortableOnboardCreateInput<T> {
+  readonly argv: readonly string[];
+  readonly buildContextPath: string;
+  readonly effectivePolicySourcePath: string;
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly captureOpenShell: ReturnType<typeof createHermesPortableOpenShellCapture>;
+  readonly readyRunner: ReturnType<typeof createHermesPortableReadyRunner>;
+  readonly createSandbox: HermesPortableOnboardingFromOnboardInput<T>["createSandbox"];
+}
+
+/** Carry one receipt-owned create source through the outer generic create gate. */
+export function runHermesPortableOnboardCreate<T>(
+  input: RunHermesPortableOnboardCreateInput<T>,
+): Promise<T> {
+  const verifiedArgv = rewriteHermesPortableCreatePolicyArgv(
+    input.argv,
+    input.effectivePolicySourcePath,
+    input.effectivePolicySourcePath,
+  );
+  return input.createSandbox(
+    verifiedArgv,
+    createHermesPortableReadyCapture(input.sandboxName, input.gatewayName, input.captureOpenShell),
+    input.readyRunner,
+    input.buildContextPath,
+    input.effectivePolicySourcePath,
+  );
 }
 
 /** Assemble the existing onboarding transaction without changing its lifecycle fence. */
@@ -1724,13 +1759,17 @@ export async function runHermesPortableOnboardingFromOnboard<T>(
       capturePolicy: captureOpenShell,
       observeSandbox: (timeoutBudgetMs) =>
         observeHermesPortableSandbox(sandboxName, gatewayName, captureOpenShell, timeoutBudgetMs),
-      createSandbox: (argv, buildContextPath) =>
-        createSandbox(
+      createSandbox: (argv, buildContextPath, effectivePolicySourcePath) =>
+        runHermesPortableOnboardCreate({
           argv,
-          createHermesPortableReadyCapture(sandboxName, gatewayName, captureOpenShell),
-          readyRunner,
           buildContextPath,
-        ),
+          effectivePolicySourcePath,
+          sandboxName,
+          gatewayName,
+          captureOpenShell,
+          readyRunner,
+          createSandbox,
+        }),
       readRegistry,
       compareAndSetRegistryGatewayPort,
       registerSandbox,

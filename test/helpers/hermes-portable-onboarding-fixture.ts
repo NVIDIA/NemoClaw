@@ -414,15 +414,20 @@ export function createHermesPortableTransactionFixture(
     ...(options.readSandboxReadyPublicationClockMs
       ? { readSandboxReadyPublicationClockMs: options.readSandboxReadyPublicationClockMs }
       : {}),
-    createSandbox: async (argv, buildContextPath) => {
+    createSandbox: async (argv, buildContextPath, effectivePolicySourcePath) => {
       events.push("create");
       if (options.createSandbox) {
-        const created = await options.createSandbox(argv, buildContextPath);
+        const created = await options.createSandbox(
+          argv,
+          buildContextPath,
+          effectivePolicySourcePath,
+        );
         present = true;
         return created;
       }
       const policyIndex = argv.indexOf("--policy");
       expect(argv[policyIndex + 1]).toContain("policy.");
+      expect(argv[policyIndex + 1]).toBe(effectivePolicySourcePath);
       expect(argv[argv.indexOf("--from") + 1]).toBe(
         options.expectedDockerfilePath ?? "/private/staged-hermes/Dockerfile",
       );
