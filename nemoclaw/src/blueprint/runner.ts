@@ -203,7 +203,7 @@ type StatusPolicyTransition = BlueprintPolicyTransitionReceipt & {
 };
 
 const POLICY_TRANSITION_RECONCILIATION_ACTION =
-  "Run `reconcile --run-id <run_id from this status record>` before retrying apply or rollback.";
+  "Call the direct blueprint runner API with action arguments `reconcile --run-id <run_id from this status record>` before you retry `apply` or `rollback`.";
 
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 const REST_PROTOCOLS = new Set(["rest"]);
@@ -1847,10 +1847,7 @@ export async function actionApply(
       liveGlobalPolicy.policyIdentity.hash !== initialPolicyAuthority.policyIdentity.hash ||
       liveGlobalPolicy.policyIdentity.activeVersion !==
         initialPolicyAuthority.policyIdentity.activeVersion ||
-      !isDeepStrictEqual(
-        liveGlobalPolicy.effectivePolicy,
-        initialPolicyAuthority.effectivePolicy,
-      )
+      !isDeepStrictEqual(liveGlobalPolicy.effectivePolicy, initialPolicyAuthority.effectivePolicy)
     ) {
       throw new Error("The OpenShell global policy boundary changed before sandbox creation.");
     }

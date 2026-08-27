@@ -17,7 +17,7 @@ export function removeSandboxUnlessSessionReservation(
     if (!session || !onboardSession.isOnboardLockHeldByCurrentProcess()) return;
     if (!registry.removeSandboxRouteReservationIfCurrent(entry)) {
       throw new Error(
-        `Cannot recreate sandbox '${sandboxName}' because its pending create recovery state is protected or changed. Resume onboarding or complete identity-bound cleanup before recreating it.`,
+        `Cannot recreate sandbox '${sandboxName}' because its pending create recovery state is protected or changed. Run the same onboarding command with \`--resume\` to continue the saved onboarding session. NemoClaw removes the reservation only when that session retains authority.`,
       );
     }
     return;

@@ -126,7 +126,7 @@ describe("sandbox recreate reservation ownership", () => {
       };
 
       expect(() => removeSandboxUnlessSessionReservation(entry, "alpha")).toThrow(
-        /pending create recovery state.*identity-bound cleanup/u,
+        /pending create recovery state.*--resume.*only when that session retains authority/u,
       );
       expect(registryState.removeSandbox).not.toHaveBeenCalled();
       expect(registryState.removeSandboxRouteReservationIfCurrent).toHaveBeenCalledExactlyOnceWith(

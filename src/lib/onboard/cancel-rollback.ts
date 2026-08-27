@@ -24,6 +24,8 @@ export { restoreDefaultAfterRecreate, wasSandboxDefault } from "./default-preser
 export interface SandboxCancelRollbackDeps {
   /** Emit an operator-facing line (stderr). */
   log(message: string): void;
+  /** Agent-specific CLI name used for the recovery command. */
+  cliName: string;
 }
 
 export interface SandboxCancelRollback {
@@ -39,16 +41,18 @@ export interface SandboxCancelRollback {
   isArmed(): boolean;
 }
 
-export function buildCancelRollbackMessage(sandboxName: string): string[] {
+export function buildCancelRollbackMessage(sandboxName: string, cliName: string): string[] {
   return [
     "",
     `  Onboarding cancelled — preserved incomplete sandbox '${sandboxName}' because OpenShell cannot bind sandbox destruction to its durable identity.`,
-    "  Preserve its registry and onboarding recovery state for identity-bound recovery.",
+    "  Preserve its sandbox registry entry and onboarding session for identity-bound recovery.",
+    `  Run \`${cliName} onboard --resume\` to continue the saved onboarding session.`,
     "  Do not destroy this sandbox by mutable sandbox name.",
   ];
 }
 
 export interface InstallSandboxCancelRollbackOptions {
+  cliName?: string;
   log?: (message: string) => void;
   /** Override for tests; defaults to `process.on("exit", ...)`. */
   registerExitHandler?: (handler: () => void) => void;
@@ -66,6 +70,7 @@ export function installSandboxCancelRollback(
   opts: InstallSandboxCancelRollbackOptions = {},
 ): SandboxCancelRollback {
   const rollback = createSandboxCancelRollback({
+    cliName: opts.cliName ?? "nemoclaw",
     log: opts.log ?? ((message) => console.error(message)),
   });
   const register =
@@ -120,7 +125,7 @@ export function createSandboxCancelRollback(
       const sandboxName = armedSandboxName;
       armedSandboxName = null;
 
-      for (const line of buildCancelRollbackMessage(sandboxName)) {
+      for (const line of buildCancelRollbackMessage(sandboxName, deps.cliName)) {
         deps.log(line);
       }
     },

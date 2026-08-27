@@ -14,6 +14,7 @@ import {
   PolicyAuthorityRefusalError,
   type SandboxPolicyAuthority,
 } from "../../adapters/openshell/policy-authority";
+import { waitUntil } from "../../core/wait";
 import type { NemoClawPolicyCreationReceipt } from "../../policy/merge";
 import { normalizePendingSandboxPolicyVerification } from "../../state/registry-normalization";
 import type { PendingSandboxPolicyVerification } from "../../state/registry/types";
@@ -139,23 +140,39 @@ function waitForCreatedSandboxPolicyReadiness(
   reject: (reason: string) => never = refusal,
 ): void {
   const inspectReadiness = deps.inspectPolicyReadiness ?? inspectOpenShellSandboxPolicyReadiness;
-  for (let observation = 0; observation < POLICY_READINESS_MAX_OBSERVATIONS; observation += 1) {
-    const readiness = inspectReadiness({
-      sandboxName: input.sandboxName,
-      gatewayName: input.gatewayName,
-      sandboxIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
-      policyVersion,
-    });
-    if (readiness.state === "ready") return;
-    if (observation === POLICY_READINESS_MAX_OBSERVATIONS - 1) {
-      reject(
-        readiness.reason === "sandbox-not-ready"
-          ? "the exact sandbox did not reach Ready during policy verification"
-          : "the exact sandbox did not activate the verified policy version",
-      );
-    }
-    if (!deps.sleep) reject("the bounded policy readiness check could not continue");
-    deps.sleep(POLICY_READINESS_POLL_INTERVAL_SECONDS);
+  const sleep = deps.sleep;
+  const lastObservation = {
+    reason: "policy-version-pending" as "sandbox-not-ready" | "policy-version-pending",
+  };
+  const ready = waitUntil(
+    () => {
+      const readiness = inspectReadiness({
+        sandboxName: input.sandboxName,
+        gatewayName: input.gatewayName,
+        sandboxIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
+        policyVersion,
+      });
+      if (readiness.state === "ready") return true;
+      lastObservation.reason = readiness.reason;
+      return false;
+    },
+    {
+      maxAttempts: POLICY_READINESS_MAX_OBSERVATIONS,
+      initialIntervalMs: POLICY_READINESS_POLL_INTERVAL_SECONDS * 1_000,
+      maxIntervalMs: POLICY_READINESS_POLL_INTERVAL_SECONDS * 1_000,
+      backoffFactor: 1,
+      sleep: (milliseconds) => {
+        if (!sleep) reject("the bounded policy readiness check could not continue");
+        sleep(milliseconds / 1_000);
+      },
+    },
+  );
+  if (!ready) {
+    reject(
+      lastObservation.reason === "sandbox-not-ready"
+        ? "the exact sandbox did not reach Ready during policy verification"
+        : "the exact sandbox did not activate the verified policy version",
+    );
   }
 }
 

@@ -9,10 +9,11 @@ import {
   installSandboxCancelRollback,
   makeOnboardCancelExit,
 } from "./cancel-rollback";
+import { completeOrdinaryOnboardSandboxCreation } from "./created-sandbox-finalization";
 
 function createGuard() {
   const log = vi.fn();
-  return { guard: createSandboxCancelRollback({ log }), log };
+  return { guard: createSandboxCancelRollback({ cliName: "nemohermes", log }), log };
 }
 
 describe("createSandboxCancelRollback", () => {
@@ -23,7 +24,8 @@ describe("createSandboxCancelRollback", () => {
     guard.runIfArmed();
     const guidance = log.mock.calls.flat().join("\n");
     expect(guidance).toContain("preserved incomplete sandbox 'new-sb'");
-    expect(guidance).toContain("registry and onboarding recovery state");
+    expect(guidance).toContain("sandbox registry entry and onboarding session");
+    expect(guidance).toContain("nemohermes onboard --resume");
     expect(guidance).toContain("Do not destroy this sandbox by mutable sandbox name");
   });
 
@@ -57,7 +59,7 @@ describe("createSandboxCancelRollback", () => {
     guard.runIfArmed();
     guard.runIfArmed();
     guard.runIfArmed();
-    expect(log).toHaveBeenCalledTimes(buildCancelRollbackMessage("new-sb").length);
+    expect(log).toHaveBeenCalledTimes(buildCancelRollbackMessage("new-sb", "nemohermes").length);
   });
 
   it("reports whether a sandbox is armed", () => {
@@ -86,6 +88,7 @@ describe("installSandboxCancelRollback", () => {
     const log = vi.fn();
     const exitHandlers: Array<() => void> = [];
     const guard = installSandboxCancelRollback({
+      cliName: "nemohermes",
       log,
       registerExitHandler: (handler) => exitHandlers.push(handler),
     });
@@ -100,6 +103,7 @@ describe("installSandboxCancelRollback", () => {
     const log = vi.fn();
     const exitHandlers: Array<() => void> = [];
     const guard = installSandboxCancelRollback({
+      cliName: "nemohermes",
       log,
       registerExitHandler: (handler) => exitHandlers.push(handler),
     });
@@ -122,12 +126,47 @@ describe("makeOnboardCancelExit", () => {
 });
 
 describe("buildCancelRollbackMessage", () => {
-  it("reports identity-bound preservation without name-only destruction (#9833)", () => {
-    const guidance = buildCancelRollbackMessage("sb").join("\n");
+  it("reports the agent-specific resume command without name-only destruction (#9833)", () => {
+    const guidance = buildCancelRollbackMessage("sb", "nemohermes").join("\n");
     expect(guidance).toContain("preserved incomplete sandbox 'sb'");
     expect(guidance).toContain("identity-bound recovery");
+    expect(guidance).toContain("nemohermes onboard --resume");
     expect(guidance).toContain("Do not destroy this sandbox by mutable sandbox name");
     expect(guidance).not.toContain("removed incomplete sandbox");
     expect(guidance).not.toContain("openshell sandbox delete");
+  });
+});
+
+describe("ordinary sandbox creation cancellation recovery", () => {
+  it("arms recovery after a fresh create and reports it on policy-selection cancellation (#9833)", () => {
+    const { guard, log } = createGuard();
+    const exit = vi.fn();
+
+    completeOrdinaryOnboardSandboxCreation(
+      {
+        sandboxName: "new-sb",
+        sandboxWasLiveDefault: false,
+        runtimeFields: {} as never,
+        messagingProviders: [],
+        liveExists: false,
+      },
+      {
+        setDefault: vi.fn(),
+        runFile: vi.fn(),
+        scriptsDir: "/tmp",
+        gatewayName: "nemoclaw",
+        providerExistsInGateway: () => true,
+        armCancelRollback: guard.arm,
+        dockerInfoFormat: () => "",
+        runCapture: () => "",
+        revalidatePolicyAuthority: vi.fn(),
+        applyVmDnsMonkeypatch: vi.fn(),
+      },
+    );
+    makeOnboardCancelExit(guard, vi.fn(), exit)();
+    guard.runIfArmed();
+
+    expect(exit).toHaveBeenCalledExactlyOnceWith(1);
+    expect(log.mock.calls.flat().join("\n")).toContain("nemohermes onboard --resume");
   });
 });

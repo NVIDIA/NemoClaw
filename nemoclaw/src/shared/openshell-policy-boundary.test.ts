@@ -285,6 +285,19 @@ describe("sandbox policy authority boundary", () => {
     ).toThrow(/required network policy input is invalid/u);
   });
 
+  it("rejects a non-plain policy value that resembles an empty mapping (#9833)", () => {
+    expect(() =>
+      assertExternalPolicyRequirementContainment(
+        {
+          authority: "externally-managed",
+          effectivePolicy: { network_policies: { required: new Date(0) } },
+          policyIdentity: { activeVersion: 7, hash: "sha256:effective" },
+        },
+        { network_policies: { required: {} } },
+      ),
+    ).toThrow(/drifted entries "required"/u);
+  });
+
   it("requires recorded entries in a NemoClaw-managed policy", () => {
     const inspection = {
       authority: "nemoclaw-managed" as const,

@@ -39,7 +39,7 @@ describe("blueprint runner status recovery", () => {
     vi.restoreAllMocks();
   });
 
-  it("prints the exact reconcile command for an incomplete policy transition (#9833)", () => {
+  it("prints the direct blueprint runner API action for an incomplete transition (#9833)", () => {
     const rid = "nc-run-incomplete";
     const runDir = `${FAKE_HOME}/.nemoclaw/state/runs/${rid}`;
     addDir(runDir);
@@ -68,7 +68,7 @@ describe("blueprint runner status recovery", () => {
         status: "incomplete",
         reconciliation_required: true,
         reconciliation_action:
-          "Run `reconcile --run-id <run_id from this status record>` before retrying apply or rollback.",
+          "Call the direct blueprint runner API with action arguments `reconcile --run-id <run_id from this status record>` before you retry `apply` or `rollback`.",
       },
     });
   });

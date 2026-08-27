@@ -1204,7 +1204,18 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
           )
         : defaultCommandResult(args),
     );
-
+    stdoutCapture.reset();
+    actionStatus(runId);
+    expect(stdoutCapture.jsonOutput()).toMatchObject({
+      run_id: runId,
+      policy_transition: {
+        status: "incomplete",
+        reconciliation_action: expect.stringContaining(
+          "action arguments `reconcile --run-id <run_id from this status record>`",
+        ),
+      },
+    });
+    stdoutCapture.reset();
     await main(["reconcile", "--run-id", runId]);
     expect(JSON.parse(store.get(`${stateDir}/plan.json`)?.content ?? "{}")).toMatchObject({
       policy_authority: {
