@@ -190,6 +190,7 @@ const apfInterceptorRequested = ${JSON.stringify(apfInterceptorRequested)};
 const agent = ${JSON.stringify(agent)};
 const model = ${JSON.stringify(model)};
 const provider = ${JSON.stringify(provider)};
+const selectedChannels = ${JSON.stringify(expectedOutcome === "provider-refusal" ? ["telegram"] : null)};
 const cancellationSelector = ${JSON.stringify(
         expectedOutcome.startsWith("cancel-after-create-")
           ? expectedOutcome.slice("cancel-after-create-".length)
@@ -491,7 +492,7 @@ if (${JSON.stringify(expectedOutcome === "post-create-registration-recovery-retr
 	    return;
 	  }
 	  const createArgs = fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
-	    [null, model, provider, null, null, null, null, null, agent, null, null, null, []],
+	    [null, model, provider, null, null, null, selectedChannels, null, agent, null, null, null, []],
 	    createFixture,
 	  );
 	  if (apfInterceptorRequested) {
@@ -577,12 +578,15 @@ if (${JSON.stringify(expectedOutcome === "post-create-registration-recovery-retr
       const assertProviderBackedApfRefusal = () => {
         assert.match(
           payload.creationError,
-          /Cannot create sandbox 'my-assistant' with deferred providers .* No sandbox was created/u,
+          /supports providerless sandbox creation only.*No sandbox or provider was created/u,
         );
         assert.equal(payload.sandboxName, null);
         assert.equal(payload.sandboxCreated, false);
         assert.equal(payload.createCommand, null);
         assert.equal(payload.registeredSandbox, null);
+        assert.equal(payload.credentialReadCalls, 0);
+        assert.equal(payload.routeReservationCalls, 0);
+        assert.deepEqual(payload.registryMutationCalls, []);
         assert.deepEqual(providerEffectCommands, []);
         assert.equal(
           payload.commandNames.some((command: string) => command.includes("sandbox create")),

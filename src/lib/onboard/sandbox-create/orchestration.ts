@@ -226,6 +226,45 @@ export function assertApfCreateIntent(
   }
 }
 
+function assertProviderlessApfCreateInput(input: {
+  readonly createIntent: SandboxCreateIntent | null;
+  readonly model: string;
+  readonly provider: string;
+  readonly preferredInferenceApi: string | null;
+  readonly webSearchConfig: WebSearchConfig | null;
+  readonly enabledChannels: readonly string[] | null;
+  readonly hermesToolGateways: readonly string[];
+}): void {
+  if (input.createIntent?.apfInterceptorRequested !== true) return;
+  const resolved = input.createIntent.resolved;
+  const hasProviderIntent =
+    input.webSearchConfig !== null ||
+    input.createIntent.reuseRegisteredCredentials === true ||
+    [
+      input.provider,
+      input.model,
+      input.preferredInferenceApi,
+      input.createIntent.endpointUrl,
+      resolved?.inferenceProvider,
+    ].some((value) => Boolean(value?.trim())) ||
+    [
+      input.enabledChannels,
+      input.hermesToolGateways,
+      input.createIntent.extraProviders,
+      resolved?.activeMessagingChannels,
+      resolved?.messagingProviderRequests,
+      resolved?.reusableMessagingProviders,
+      resolved?.extraProviders,
+      resolved?.staleExtraProviders,
+      resolved?.hermesToolGateways,
+      resolved?.extraPlaceholderKeys,
+    ].some((values) => (values?.length ?? 0) > 0);
+  if (!hasProviderIntent) return;
+  throw new Error(
+    "Interceptor onboarding supports providerless sandbox creation only. No sandbox or provider was created.",
+  );
+}
+
 type SandboxRecreateReasonInput = {
   sandboxName: string;
   recreateForAgentDrift: boolean;
@@ -888,15 +927,24 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       runCapture,
     } = runtime;
 
+    assertApfCreateIntent(createIntent);
+    assertProviderlessApfCreateInput({
+      createIntent,
+      model,
+      provider,
+      preferredInferenceApi,
+      webSearchConfig,
+      enabledChannels,
+      hermesToolGateways,
+    });
+    assertProviderlessInterceptorEnvironment(
+      createIntent?.apfInterceptorRequested === true,
+      process.env,
+    );
     step(6, 8, "Creating sandbox");
     const sandboxName = validateName(
       sandboxNameOverride ?? (await promptValidatedSandboxName(agent)),
       "sandbox name",
-    );
-    assertApfCreateIntent(createIntent);
-    assertProviderlessInterceptorEnvironment(
-      createIntent?.apfInterceptorRequested === true,
-      process.env,
     );
     preparedDcodeRebuild.assertPreparedDcodeTarget(preparedBuildContext, agent, fromDockerfile);
     const effectiveAgent = sandboxAgent.getEffectiveSandboxAgent(agent);
