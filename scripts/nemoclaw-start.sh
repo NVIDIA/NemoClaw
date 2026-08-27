@@ -2108,48 +2108,6 @@ print(json.dumps({"nodePreloads": node_preloads, "envAliases": env_aliases, "sec
 PYMESSAGINGRUNTIME
 }
 
-apply_messaging_runtime_env_aliases() {
-  [ -f "$_MESSAGING_RUNTIME_SETUP_PLAN" ] || return 0
-  local _rows
-  _rows="$(
-    python3 - "$_MESSAGING_RUNTIME_SETUP_PLAN" <<'PYMESSAGINGALIASES'
-import json
-import os
-import re
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as handle:
-    plan = json.load(handle)
-for alias in plan.get("envAliases", []):
-    env_key = alias["envKey"]
-    runtime_value = os.environ.get(env_key, "")
-    if not re.search(alias["match"], runtime_value):
-        continue
-    value = alias["value"]
-    marker = "-OPENSHELL-RESOLVE-ENV-"
-    placeholder_prefix = "openshell:resolve:env:"
-    if marker in value and runtime_value.startswith(placeholder_prefix):
-        runtime_suffix = runtime_value[len(placeholder_prefix) :]
-        if re.fullmatch(rf"v[0-9]+_{re.escape(env_key)}", runtime_suffix):
-            alias_prefix, alias_suffix = value.split(marker, 1)
-            if alias_suffix == env_key:
-                value = alias_prefix + marker + runtime_suffix
-    print("\t".join([
-        env_key,
-        value,
-        alias.get("message", ""),
-    ]))
-PYMESSAGINGALIASES
-  )" || return $?
-  [ -n "$_rows" ] || return 0
-
-  local _env_key _value _message
-  while IFS=$'\t' read -r _env_key _value _message; do
-    export "$_env_key=$_value"
-    [ -n "$_message" ] && printf '%s\n' "$_message" >&2
-  done <<<"$_rows"
-}
-
 node_options_has_require() {
   local wanted="$1"
   local previous=""

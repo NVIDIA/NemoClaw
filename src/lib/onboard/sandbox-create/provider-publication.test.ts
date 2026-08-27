@@ -263,6 +263,36 @@ describe("sandbox provider preparation", () => {
     expect(harness.cleanupCreateSources).not.toHaveBeenCalled();
   });
 
+  it("rejects an unavailable generic messaging provider before any publication (#10153)", () => {
+    const harness = createHarness(null);
+    const genericProvider = "my-assistant-extra-telegram-bot-token-agent-a";
+
+    expect(() =>
+      prepareProviders(
+        publicationInput({
+          messagingProviders: [],
+          messagingProviderRequests: [
+            {
+              name: genericProvider,
+              envKey: "TELEGRAM_BOT_TOKEN_AGENT_A",
+              providerType: "generic",
+              credentialConfigured: false,
+              channel: "telegram",
+            },
+          ],
+          extraProviders: [genericProvider],
+        }),
+        harness.deps,
+      ),
+    ).toThrowError(
+      `OpenShell did not confirm messaging provider '${genericProvider}' before sandbox creation.`,
+    );
+    expect(harness.runOpenshell.mock.calls.map(([args]) => args)).toEqual([
+      ["provider", "get", "-g", "nemoclaw", genericProvider],
+    ]);
+    expect(harness.cleanupCreateSources).toHaveBeenCalledOnce();
+  });
+
   it("rejects an incompatible messaging binding before a portable Hermes create (#9875)", () => {
     const harness = createHarness({ ...exactState, type: "generic" });
 

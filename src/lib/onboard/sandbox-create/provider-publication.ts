@@ -37,15 +37,17 @@ type DeferredProviderAttachmentDeps = Pick<SandboxCreateOrchestrationRuntime, "r
   readonly revalidateSandboxIdentity: (operation: string) => void;
 };
 
-function expectedMessagingBindings(input: ProviderPreparationInput) {
+function expectedCredentialBindings(input: ProviderPreparationInput) {
   return new Map(
     input.messagingProviderRequests
-      .filter(({ providerType }) => providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE)
-      .map(({ envKey, name }) => [
+      .filter((request): request is typeof request & { readonly providerType: string } =>
+        Boolean(request.providerType),
+      )
+      .map(({ envKey, name, providerType }) => [
         name,
         {
           name,
-          type: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+          type: providerType,
           credentialKey: envKey,
         },
       ]),
@@ -56,7 +58,7 @@ function inspectExpectedMessagingBinding(
   input: ProviderPreparationInput,
   deps: ProviderPreparationDeps,
   providerName: string,
-  expectedBindings: ReturnType<typeof expectedMessagingBindings>,
+  expectedBindings: ReturnType<typeof expectedCredentialBindings>,
 ): boolean {
   const expected = expectedBindings.get(providerName);
   if (!expected) return true;
@@ -70,7 +72,7 @@ export function validateAttachedMessagingProvidersBeforeSandboxCreation(
   input: ProviderPreparationInput,
   deps: ProviderPreparationDeps,
 ): void {
-  const expectedBindings = expectedMessagingBindings(input);
+  const expectedBindings = expectedCredentialBindings(input);
   const attachedMessagingProviders = [
     ...new Set(
       [input.inferenceProvider, ...input.messagingProviders, ...input.extraProviders].filter(
@@ -80,18 +82,25 @@ export function validateAttachedMessagingProvidersBeforeSandboxCreation(
   ].filter((name) => expectedBindings.has(name));
   if (attachedMessagingProviders.length === 0) return;
 
-  try {
-    ensureMessagingCredentialProviderProfile({
-      root: REPOSITORY_ROOT,
-      runOpenshell: (args, options) =>
-        deps.runOpenshell(
-          [...args.slice(0, 2), "-g", input.gatewayName, ...args.slice(2)],
-          options,
-        ),
-    });
-  } catch (error) {
-    deps.cleanupCreateSources();
-    throw error;
+  if (
+    attachedMessagingProviders.some(
+      (providerName) =>
+        expectedBindings.get(providerName)?.type === MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+    )
+  ) {
+    try {
+      ensureMessagingCredentialProviderProfile({
+        root: REPOSITORY_ROOT,
+        runOpenshell: (args, options) =>
+          deps.runOpenshell(
+            [...args.slice(0, 2), "-g", input.gatewayName, ...args.slice(2)],
+            options,
+          ),
+      });
+    } catch (error) {
+      deps.cleanupCreateSources();
+      throw error;
+    }
   }
 
   for (const providerName of attachedMessagingProviders) {
@@ -109,7 +118,7 @@ export function publishAttachedProvidersBeforeDockerSandboxCreation(
 ): void {
   if (input.openshellDriver !== "docker") return;
 
-  const expectedBindings = expectedMessagingBindings(input);
+  const expectedBindings = expectedCredentialBindings(input);
   const providersRequiringExistenceProbe = new Set(
     [
       input.inferenceProvider,

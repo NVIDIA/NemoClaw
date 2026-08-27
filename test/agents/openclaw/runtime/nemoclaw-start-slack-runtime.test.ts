@@ -8,70 +8,16 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const START_SCRIPT = path.join(
+const MESSAGING_RUNTIME_ENV_ALIASES = path.join(
   import.meta.dirname,
   "..",
   "../../..",
   "scripts",
-  "nemoclaw-start.sh",
+  "lib",
+  "sandbox-init.sh",
 );
 
-function messagingRuntimeSetupSection(src: string, planPath: string): string {
-  const start = src.indexOf("# ── Messaging runtime setup from manifest metadata");
-  const end = src.indexOf("_read_gateway_token()", start);
-  expect(start).toBeGreaterThan(-1);
-  expect(end).toBeGreaterThan(start);
-  return src
-    .slice(start, end)
-    .replace(
-      '_MESSAGING_RUNTIME_SETUP_PLAN="/tmp/nemoclaw-messaging-runtime-setup.json"',
-      `_MESSAGING_RUNTIME_SETUP_PLAN=${JSON.stringify(planPath)}`,
-    );
-}
-
-function encodeRuntimeSetupPlan(channelId: string, value: Record<string, unknown>): string {
-  const withChannelId = (entries: unknown) =>
-    Array.isArray(entries)
-      ? entries.map((entry) => ({ channelId, ...(entry as Record<string, unknown>) }))
-      : [];
-  return Buffer.from(
-    JSON.stringify({
-      schemaVersion: 1,
-      sandboxName: "test-sandbox",
-      agent: "openclaw",
-      workflow: "rebuild",
-      channels: [
-        {
-          channelId,
-          displayName: channelId,
-          authMode: "token-paste",
-          active: true,
-          selected: true,
-          configured: true,
-          disabled: false,
-          inputs: [],
-          hooks: [],
-        },
-      ],
-      disabledChannels: [],
-      credentialBindings: [],
-      networkPolicy: { presets: [], entries: [] },
-      agentRender: [],
-      buildSteps: [],
-      runtimeSetup: {
-        nodePreloads: withChannelId(value.nodePreloads),
-        envAliases: withChannelId(value.envAliases),
-        secretScans: withChannelId(value.secretScans),
-      },
-      stateUpdates: [],
-      healthChecks: [],
-    }),
-  ).toString("base64");
-}
-
 describe("Slack runtime env normalization (#4274)", () => {
-  const src = fs.readFileSync(START_SCRIPT, "utf-8");
-
   function runNormalize(
     env: Record<string, string | undefined> = {},
     botMatch = "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
@@ -101,16 +47,15 @@ describe("Slack runtime env normalization (#4274)", () => {
         },
       ],
     };
+    fs.writeFileSync(planPath, JSON.stringify(runtimeValue));
     fs.writeFileSync(
       scriptPath,
       [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
-        'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; else command id "$@"; fi; }',
-        'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
-        `export NEMOCLAW_MESSAGING_PLAN_B64=${JSON.stringify(encodeRuntimeSetupPlan("slack", runtimeValue))}`,
-        messagingRuntimeSetupSection(src, planPath),
-        "write_messaging_runtime_setup_plan",
+        `_SANDBOX_INIT_DIR=${JSON.stringify(path.join(import.meta.dirname, "..", "../../..", "scripts", "lib"))}`,
+        `_MESSAGING_RUNTIME_SETUP_PLAN=${JSON.stringify(planPath)}`,
+        `source ${JSON.stringify(MESSAGING_RUNTIME_ENV_ALIASES)}`,
         "apply_messaging_runtime_env_aliases",
         'printf "BOT=%s\\n" "${SLACK_BOT_TOKEN-__UNSET__}"',
         'printf "APP=%s\\n" "${SLACK_APP_TOKEN-__UNSET__}"',
