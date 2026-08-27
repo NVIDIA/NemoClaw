@@ -448,7 +448,7 @@ describe("docker-gpu-patch CDI-first mode selection (#4948)", () => {
     const detectSandboxFallbackDns = vi.fn(() => null);
 
     const result = recreateOpenShellDockerSandboxWithGpu(
-      { sandboxName: "alpha", timeoutSecs: 1 },
+      { sandboxName: "alpha", timeoutSecs: 1, waitForSupervisor: false },
       {
         dockerCapture,
         readDir: host.readDir,

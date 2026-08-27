@@ -96,6 +96,7 @@ env:
 
 jobs:
   base-image-publication:
+    needs: generate-matrix
     runs-on: ubuntu-latest
     timeout-minutes: 55
     outputs:
@@ -147,6 +148,16 @@ jobs:
         with:
           node-version: 22
 
+      - id: pr_dcode_base
+        name: Resolve Deep Agents Code base publication for the exact PR managed image
+        if: ${{ steps.publication_mode.outputs.reuse == '1' && needs.generate-matrix.outputs.managed_image_catalog != '' }}
+        env:
+          CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
+          CANDIDATE_SHA: ${{ inputs.checkout_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          MANAGED_IMAGE_CATALOG: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
+        run: node --experimental-strip-types --no-warnings tools/e2e/pr-dcode-base-publication.mts
+
       - id: publication
         name: Verify applicable base-image publication
         if: ${{ steps.publication_mode.outputs.required == '1' }}
@@ -174,9 +185,9 @@ jobs:
         if: ${{ steps.publication_mode.outputs.reuse == '1' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          PUBLICATION_HEAD_SHA: e38db201413b457614904187377ed9fd002d281d
-          PUBLICATION_RUN_ATTEMPT: "1"
-          PUBLICATION_RUN_ID: "32544159037"
+          PUBLICATION_HEAD_SHA: ${{ steps.pr_dcode_base.outputs.head_sha || 'e38db201413b457614904187377ed9fd002d281d' }}
+          PUBLICATION_RUN_ATTEMPT: ${{ steps.pr_dcode_base.outputs.run_attempt || '1' }}
+          PUBLICATION_RUN_ID: ${{ steps.pr_dcode_base.outputs.run_id || '32544159037' }}
         run: node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/dcode-base-contract-reused"
 
       - id: validate_dcode_base
@@ -192,9 +203,10 @@ jobs:
         name: Validate reused Deep Agents Code base
         if: ${{ steps.publication_mode.outputs.reuse == '1' }}
         env:
-          PUBLICATION_HEAD_SHA: e38db201413b457614904187377ed9fd002d281d
-          PUBLICATION_RUN_ATTEMPT: "1"
-          PUBLICATION_RUN_ID: "32544159037"
+          EXPECTED_BASE_REF: ${{ steps.pr_dcode_base.outputs.base_ref }}
+          PUBLICATION_HEAD_SHA: ${{ steps.pr_dcode_base.outputs.head_sha || 'e38db201413b457614904187377ed9fd002d281d' }}
+          PUBLICATION_RUN_ATTEMPT: ${{ steps.pr_dcode_base.outputs.run_attempt || '1' }}
+          PUBLICATION_RUN_ID: ${{ steps.pr_dcode_base.outputs.run_id || '32544159037' }}
         run: node --experimental-strip-types --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract-reused/contract.json"
 
   generate-matrix:
@@ -250,7 +262,6 @@ jobs:
           BASE_SHA: ${{ inputs.base_sha }}
           CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
-          GITHUB_TOKEN: ${{ github.token }}
           EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
 
           INCLUDE_LAUNCHABLE: ${{ inputs.include_staging_brev_launchable && 'true' || 'false' }}
@@ -275,7 +286,6 @@ jobs:
           [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA" ]] || { echo "::error::workflow_sha must match the trusted main workflow SHA" >&2; exit 1; }
 
           pull_json="$(curl --fail --silent --show-error --proto '=https' \
-            --header "Authorization: Bearer ${GITHUB_TOKEN}" \
             --header "Accept: application/vnd.github+json" \
             --header "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
@@ -599,7 +609,6 @@ jobs:
           BASE_SHA: ${{ inputs.base_sha }}
           CHECKOUT_REPOSITORY: ${{ inputs.checkout_repository }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
-          GITHUB_TOKEN: ${{ github.token }}
           NVIDIA_OWNED: ${{ steps.candidate_authorization.outputs.nvidia_owned }}
           PR_NUMBER: ${{ inputs.pr_number }}
         shell: bash
@@ -607,7 +616,6 @@ jobs:
           set -euo pipefail
           [[ "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]] || { echo "::error::checked-out commit does not match checkout_sha" >&2; exit 1; }
           pull_json="$(curl --fail --silent --show-error --proto '=https' \
-            --header "Authorization: Bearer ${GITHUB_TOKEN}" \
             --header "Accept: application/vnd.github+json" \
             --header "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
@@ -2985,7 +2993,7 @@ jobs:
 
   catalogue-standard:
     name: ${{ matrix.display_name }}
-    needs: generate-matrix
+    needs: [base-image-publication, generate-matrix]
     if: ${{ needs.generate-matrix.outputs.catalogue_standard_matrix != '[]' }}
     strategy:
       fail-fast: false
@@ -2999,6 +3007,7 @@ jobs:
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
       managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
+      managed_image_revision: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
       credential_boundary: no provider credential
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}
@@ -3025,7 +3034,7 @@ jobs:
 
   catalogue-nvidia-api:
     name: ${{ matrix.display_name }}
-    needs: generate-matrix
+    needs: [base-image-publication, generate-matrix]
     if: ${{ needs.generate-matrix.outputs.catalogue_nvidia_api_matrix != '[]' }}
     strategy:
       fail-fast: false
@@ -3039,6 +3048,7 @@ jobs:
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
       managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
+      managed_image_revision: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
       credential_boundary: NVIDIA API key
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}
@@ -3066,7 +3076,7 @@ jobs:
 
   catalogue-nvidia-inference:
     name: ${{ matrix.display_name }}
-    needs: generate-matrix
+    needs: [base-image-publication, generate-matrix]
     if: ${{ needs.generate-matrix.outputs.catalogue_nvidia_inference_matrix != '[]' }}
     strategy:
       fail-fast: false
@@ -3080,6 +3090,7 @@ jobs:
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
       managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
+      managed_image_revision: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
       credential_boundary: NVIDIA inference API key
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}
@@ -3107,7 +3118,7 @@ jobs:
 
   catalogue-github-read:
     name: ${{ matrix.display_name }}
-    needs: generate-matrix
+    needs: [base-image-publication, generate-matrix]
     if: ${{ needs.generate-matrix.outputs.catalogue_github_read_matrix != '[]' }}
     strategy:
       fail-fast: false
@@ -3121,6 +3132,7 @@ jobs:
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
       managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
+      managed_image_revision: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
       credential_boundary: GitHub read token
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}
@@ -3147,7 +3159,7 @@ jobs:
 
   catalogue-brave-nvidia-inference:
     name: ${{ matrix.display_name }}
-    needs: generate-matrix
+    needs: [base-image-publication, generate-matrix]
     if: ${{ needs.generate-matrix.outputs.catalogue_brave_nvidia_inference_matrix != '[]' }}
     strategy:
       fail-fast: false
@@ -3162,6 +3174,7 @@ jobs:
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
       managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
+      managed_image_revision: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
       credential_boundary: Brave and NVIDIA inference API keys
       target_id: ${{ matrix.target_id }}
       catalogue_id: ${{ matrix.id }}

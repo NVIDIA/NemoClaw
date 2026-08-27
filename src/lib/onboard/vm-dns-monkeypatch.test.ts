@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { applyOpenShellVmDnsMonkeypatch } from "../actions/sandbox/vm-dns-monkeypatch";
 import { applyOnboardVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
@@ -43,6 +43,30 @@ describe("applyOnboardVmDnsMonkeypatch", () => {
     expect(changedLogs).toEqual(["  ✓ Applied OpenShell VM DNS monkeypatch"]);
     expect(unchangedLogs).toEqual(["  OpenShell VM DNS monkeypatch already present"]);
     expect(unchangedLogs.join("\n")).not.toContain("Applied");
+  });
+
+  it("withholds VM DNS success when authority changes after the helper returns (#9833)", () => {
+    const log = vi.fn();
+    const apply = vi.fn(() => ({
+      attempted: true,
+      changed: true,
+      ok: true,
+      status: "applied" as const,
+    }));
+    const revalidatePolicyAuthority = vi.fn(() => {
+      throw new Error("policy authority changed");
+    });
+
+    expect(() =>
+      applyOnboardVmDnsMonkeypatch(
+        "demo",
+        { openshellDriver: "vm" },
+        { apply, log, revalidatePolicyAuthority },
+      ),
+    ).toThrow("policy authority changed");
+
+    expect(apply).toHaveBeenCalledOnce();
+    expect(log).not.toHaveBeenCalled();
   });
 
   it("logs skipped VM DNS monkeypatch state for VM sandboxes", () => {

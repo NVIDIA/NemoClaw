@@ -10,7 +10,7 @@ import type { ShieldsAutoRestoreReadResult } from "../../../shields/audit";
 
 const execMock = vi.hoisted(() => vi.fn(async () => {}));
 const ensureLiveMock = vi.hoisted(() =>
-  vi.fn(async () => ({ state: "present", output: "Phase: Ready" }) as { output?: string }),
+  vi.fn(async () => ({ state: "present", phase: "Ready", output: "Phase: Ready" })),
 );
 const getSandboxMock = vi.hoisted(() => vi.fn(() => ({ agent: "openclaw" })));
 const listAgentsMock = vi.hoisted(() => vi.fn(() => ["langchain-deepagents-code", "openclaw"]));
@@ -210,12 +210,10 @@ describe("runAgentPassthrough shields-relock warning", () => {
 
   it("does not consult OpenClaw relock history for terminal-runtime passthroughs (#5922)", async () => {
     getSandboxMock.mockReturnValueOnce({ agent: "langchain-deepagents-code" });
-    const getRecentShieldsAutoRestore = vi.fn(
-      (): ShieldsAutoRestoreReadResult => ({
-        kind: "event",
-        event: { timestamp: new Date().toISOString(), timeoutSeconds: 20 },
-      }),
-    );
+    const getRecentShieldsAutoRestore = vi.fn((): ShieldsAutoRestoreReadResult => ({
+      kind: "event",
+      event: { timestamp: new Date().toISOString(), timeoutSeconds: 20 },
+    }));
     const { writes, proc } = makeProcMock();
 
     await runAgentPassthrough(

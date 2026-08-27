@@ -506,10 +506,15 @@ function finalRelaunchContainerFailureDetail(
     return "Docker could not stop the replacement container for the final recovery handoff. NemoClaw did not start the primary dashboard/API host forward";
   }
   if (completion.lifecycleReleaseObserved === false) {
-    return "OpenShell did not release the sandbox name before the final recovery handoff. NemoClaw did not restart the replacement container or start the primary dashboard/API host forward";
+    return "OpenShell did not retire the previous lifecycle record before the final replacement start. NemoClaw did not start the primary dashboard/API host forward";
   }
   if (completion.replacementRestarted === false) {
     return "Docker could not start the replacement container to complete the final recovery handoff. NemoClaw did not start the primary dashboard/API host forward";
+  }
+  if (completion.finalHandoffAcknowledged === false) {
+    return `OpenShell did not acknowledge the final replacement container handoff${
+      completion.lastSandboxPhase ? `; last sandbox phase was ${completion.lastSandboxPhase}` : ""
+    }. NemoClaw did not start the primary dashboard/API host forward`;
   }
   return null;
 }
@@ -759,6 +764,15 @@ function recoverSandboxProcesses(
         quiet,
         deps: {
           runOpenshell,
+          runCaptureOpenshell: (args, options) =>
+            captureOpenshell(args, {
+              ignoreError: true,
+              includeStderr: true,
+              killProcessTreeOnTimeout: options?.killProcessTreeOnTimeout === true,
+              killSignal: options?.killSignal === "SIGKILL" ? "SIGKILL" : undefined,
+              timeout:
+                typeof options?.timeout === "number" ? options.timeout : OPENSHELL_PROBE_TIMEOUT_MS,
+            }).output,
           confirmMissingSupervisor: (containerId) =>
             isExactlyMissingManagedSupervisor(
               requestPinnedGatewaySupervisorAction(sandboxName, "probe", 210000, containerId),
@@ -830,32 +844,32 @@ export function restartSandboxGateway(
   return withUnsupportedHermesPortableGatewayRestartFence(sandboxName, () => {
     return withTimerBoundShieldsMutationLock(sandboxName, "gateway restart", () =>
       restartSandboxGatewayWithDeps(sandboxName, {
-        quiet,
-        deps: {
-          getSessionAgent: agentRuntime.getSessionAgent,
-          getSandbox: registry.getSandbox,
-          resolveSandboxDashboardPort,
-          requestGatewaySupervisorAction: executeGatewaySupervisorAction,
-          executeSandboxExecCommand,
-          waitForRecoveredSandboxGateway: (name, options) =>
-            waitForRecoveredSandboxGateway(name, {
-              ...options,
-              initialManagedHealthPassed: true,
-              timeoutSeconds: gatewayRecoveryTimeoutSeconds(agentRuntime.getSessionAgent(name)),
-              managedProbeImpl: (sandboxName) =>
-                confirmRecoveredSandboxGatewayManaged(sandboxName, {
-                  requestGatewaySupervisorActionImpl:
-                    deps.requestGatewaySupervisorAction ?? executeGatewaySupervisorAction,
-                }),
+      quiet,
+      deps: {
+        getSessionAgent: agentRuntime.getSessionAgent,
+        getSandbox: registry.getSandbox,
+        resolveSandboxDashboardPort,
+        requestGatewaySupervisorAction: executeGatewaySupervisorAction,
+        executeSandboxExecCommand,
+        waitForRecoveredSandboxGateway: (name, options) =>
+          waitForRecoveredSandboxGateway(name, {
+            ...options,
+            initialManagedHealthPassed: true,
+            timeoutSeconds: gatewayRecoveryTimeoutSeconds(agentRuntime.getSessionAgent(name)),
+            managedProbeImpl: (sandboxName) =>
+              confirmRecoveredSandboxGatewayManaged(sandboxName, {
+                requestGatewaySupervisorActionImpl:
+                  deps.requestGatewaySupervisorAction ?? executeGatewaySupervisorAction,
+              }),
             }),
-          ensureSandboxPortForward,
-          ensureHermesDashboardPortForwardIfEnabled,
-          recoverMessagingHostForward,
-          recoverDeclaredAgentForwardPorts,
-          printGatewayWedgeDiagnostics,
-          inspectHermesMcpReconciliationRefusal,
-          ...deps,
-        },
+        ensureSandboxPortForward,
+        ensureHermesDashboardPortForwardIfEnabled,
+        recoverMessagingHostForward,
+        recoverDeclaredAgentForwardPorts,
+        printGatewayWedgeDiagnostics,
+        inspectHermesMcpReconciliationRefusal,
+        ...deps,
+      },
       }),
     );
   });
@@ -879,10 +893,7 @@ const OPENSHELL_RELAY_TARGET_NOT_FOUND = 'message: "No such file or directory (o
 const OPENSHELL_RELAY_TARGET_REFUSED = 'message: "Connection refused (os error 111)"';
 
 function normalizeOpenshellStructuredError(value: string): string {
-  return stripAnsi(value)
-    .replace(/[×│]/gu, " ")
-    .replace(/\s+/gu, " ")
-    .trim();
+  return stripAnsi(value).replace(/[×│]/gu, " ").replace(/\s+/gu, " ").trim();
 }
 
 function hasRetryableOpenshellFailureShape(result: ReturnType<typeof captureOpenshell>): boolean {

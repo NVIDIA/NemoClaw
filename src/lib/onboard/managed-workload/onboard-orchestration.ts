@@ -20,10 +20,7 @@ import {
 } from "../docker-gpu-route";
 import type { HermesDashboardOnboardState } from "../hermes-dashboard";
 import type { InitialSandboxPolicy } from "../initial-policy";
-import {
-  isShippedManagedImageAgent,
-  managedImageRuntimeIdentity,
-} from "../managed-image/contract";
+import { isShippedManagedImageAgent, managedImageRuntimeIdentity } from "../managed-image/contract";
 import {
   type BuiltManagedStartupOnboardProfile,
   buildManagedStartupOnboardProfile,
@@ -38,7 +35,7 @@ import {
   type RuntimeProviderBundle,
   resolveRuntimeProviderBundle,
 } from "../runtime-provider/access";
-import type { RuntimeProviderBootstrapSurface } from "../runtime-provider/contract";
+import type { RuntimeProviderManagedImageBootstrapSurface } from "../runtime-provider/contract";
 import type {
   MaterializeSandboxCreatePlanInput,
   SandboxCreateIntent,
@@ -79,8 +76,9 @@ type ManagedProfileInput = Omit<
 >;
 type ResolveBuildPatchInput = Parameters<typeof resolveSandboxBuildPatch>[0];
 type SandboxInferenceConfig = import("../../inference/config").SandboxInferenceConfig;
-type SupportedBootstrap = Extract<RuntimeProviderBootstrapSurface, { readonly supported: true }>;
-type BootstrapProvider = RuntimeProviderBundle & { readonly bootstrap: SupportedBootstrap };
+type BootstrapProvider = RuntimeProviderBundle & {
+  readonly bootstrap: RuntimeProviderManagedImageBootstrapSurface;
+};
 
 export type ManagedHermesStateVolumeOnboardLifecycle = {
   materializeSandboxCreatePlan(
@@ -206,7 +204,11 @@ export async function prepareHermesPortableSandboxWorkloadForLifecycle(
 }
 
 function requireBootstrapProvider(provider: RuntimeProviderBundle | null): BootstrapProvider {
-  if (!provider || !provider.bootstrap.supported) {
+  if (
+    !provider ||
+    !provider.bootstrap.supported ||
+    provider.bootstrap.bootstrapKind !== "managed-image"
+  ) {
     throw new Error("Selected runtime provider does not support managed bootstrap onboarding.");
   }
   return provider as BootstrapProvider;
@@ -342,8 +344,10 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
   };
   readonly plan: {
     readonly intent: SandboxCreateIntent;
+    readonly policyAuthority: MaterializeSandboxCreatePlanInput["policyAuthority"];
+    readonly deferSandboxEffectsUntilPolicyVerification?: boolean;
     readonly rebindMessagingTokenDefs: () => Promise<readonly MessagingTokenDef[]>;
-    readonly runProviderPreDeleteCleanup: () => void;
+    readonly runProviderPreDeleteCleanup: MaterializeSandboxCreatePlanInput["runProviderPreDeleteCleanup"];
     readonly upsertMessagingProviders: MaterializeSandboxCreatePlanInput["upsertMessagingProviders"];
     readonly getHermesToolGatewayProviderName: (sandboxName: string) => string;
     readonly discloseInitialSandboxPolicy: (policy: InitialSandboxPolicy) => void;
@@ -371,9 +375,11 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
 export interface PreparedOnboardSandboxWorkloadLaunch {
   readonly initialSandboxPolicy: InitialSandboxPolicy;
   readonly policyTier: string | null;
+  readonly policyAuthority: MaterializeSandboxCreatePlanInput["policyAuthority"];
   readonly messagingProviders: string[];
   readonly gpuRoutePlan: SandboxCreateIntent["gpuRoutePlan"];
   readonly compatibilityPolicyPath: string | null;
+  readonly activateDeferredProviderEffects: SandboxCreatePlan["activateDeferredProviderEffects"];
   readonly initialGpuRoute: SelectedDockerGpuRoute;
   readonly sandboxReadyTimeoutSecs: number;
   readonly buildId: string;
@@ -414,6 +420,9 @@ export async function prepareOnboardSandboxWorkloadLaunch(
   const createPlan = input.dependencies.materializeSandboxCreatePlan({
     intent: input.plan.intent,
     fromRef,
+    policyAuthority: input.plan.policyAuthority,
+    deferSandboxEffectsUntilPolicyVerification:
+      input.plan.deferSandboxEffectsUntilPolicyVerification,
     messagingTokenDefs: [...messagingTokenDefs],
     runProviderPreDeleteCleanup: input.plan.runProviderPreDeleteCleanup,
     upsertMessagingProviders: input.plan.upsertMessagingProviders,
@@ -495,9 +504,11 @@ export async function prepareOnboardSandboxWorkloadLaunch(
   return {
     initialSandboxPolicy: createPlan.initialSandboxPolicy,
     policyTier: createPlan.policyTier,
+    policyAuthority: createPlan.policyAuthority,
     messagingProviders: createPlan.messagingProviders,
     gpuRoutePlan: createPlan.gpuRoutePlan,
     compatibilityPolicyPath: createPlan.compatibilityPolicyPath,
+    activateDeferredProviderEffects: createPlan.activateDeferredProviderEffects,
     initialGpuRoute,
     sandboxReadyTimeoutSecs,
     buildId,
@@ -511,12 +522,14 @@ export async function prepareOnboardSandboxWorkloadLaunch(
 export function prepareHermesPortableOnboardSandboxLaunch(input: {
   readonly intent: SandboxCreateIntent;
   readonly fromRef: string;
+  readonly policyAuthority: MaterializeSandboxCreatePlanInput["policyAuthority"];
   readonly launchInput: Omit<SandboxCreateLaunchInput, "createArgs">;
   readonly gpuConfig: SandboxGpuConfig;
 }): PreparedOnboardSandboxWorkloadLaunch {
   const createPlan = materializeHermesPortableCreatePlan({
     intent: input.intent,
     fromRef: input.fromRef,
+    policyAuthority: input.policyAuthority,
   });
   const launch = prepareSandboxCreateLaunch({
     ...input.launchInput,

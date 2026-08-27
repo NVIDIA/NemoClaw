@@ -736,6 +736,69 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(entries.get("beta")?.pendingRouteReservation).toBeUndefined();
   });
 
+  it("refuses snapshot recovery of a session-owned pending registration", async () => {
+    const pendingFingerprint = createHash("sha256").update("beta-live-id").digest("hex");
+    const entries = new Map<string, f.SandboxRecord>([
+      [
+        "alpha",
+        {
+          name: "alpha",
+          agent: "openclaw",
+          imageTag: "nemoclaw-alpha:test",
+          openshellDriver: "docker",
+          provider: "nvidia-nim",
+          model: "nvidia/model-a",
+        },
+      ],
+      [
+        "beta",
+        {
+          name: "beta",
+          createdAt: "2026-08-20T00:00:00.000Z",
+          pendingRouteReservation: true,
+          reservationSessionId: "onboard-session",
+          agent: "openclaw",
+          imageTag: "nemoclaw-alpha:test",
+          openshellDriver: "docker",
+          provider: "nvidia-nim",
+          model: "nvidia/model-a",
+          gatewayName: "nemoclaw",
+          lifecycleGeneration: "clone-generation",
+          lifecycleLiveIdentityFingerprint: pendingFingerprint,
+        },
+      ],
+    ]);
+    f.getSandboxMock.mockImplementation((name) => entries.get(name ?? "") ?? null);
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+    f.finalizePendingSandboxRegistrationMock.mockImplementation((name) => {
+      const current = entries.get(name);
+      expect(current).toMatchObject({
+        pendingRouteReservation: true,
+        reservationSessionId: "onboard-session",
+      });
+      return false;
+    });
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+
+    expect(f.finalizePendingSandboxRegistrationMock).toHaveBeenCalledWith("beta");
+    expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+    expect(entries.get("beta")).toMatchObject({
+      pendingRouteReservation: true,
+      reservationSessionId: "onboard-session",
+    });
+  });
+
   it.each(["absent", "identity-drifted"] as const)(
     "cleans an %s pending clone before recreating it after a process restart",
     async (state) => {

@@ -93,6 +93,7 @@ const registryRoute = {
   preferredInferenceApi: "openai-completions",
   source: "registry",
 };
+registry.removeSandbox("recovered-custom");
 registry.registerSandbox({
   name: "recovered-custom",
   ...registryRoute,
@@ -125,6 +126,7 @@ const { setupNim, setupInference } = require(${onboardPath});
     selected.hermesToolGateways,
     {
       preferredInferenceApi: selected.preferredInferenceApi,
+      revalidatePolicyRequirements: () => {},
       skipHostInferenceSmoke: selected.skipHostInferenceSmoke,
       reuseGatewayCredentialWithoutLocalKey:
         process.env.NEMOCLAW_TEST_OMIT_REUSE_AUTHORIZATION === "1"

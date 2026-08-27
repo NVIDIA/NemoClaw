@@ -65,6 +65,7 @@ type SlackEndpoint = {
   access?: string;
   credential_binding?: { provider?: string };
   host?: string;
+  path?: string;
   rules?: Array<{ allow?: { method?: string; path?: string } }>;
 };
 
@@ -73,6 +74,7 @@ function expectExactHermesSlackCredentialRoutes(endpoints: SlackEndpoint[]): voi
     endpoints.map((endpoint) => ({
       access: endpoint.access,
       host: endpoint.host,
+      path: endpoint.path,
       provider: endpoint.credential_binding?.provider,
       routes:
         endpoint.rules?.map((rule) => `${String(rule.allow?.method)} ${String(rule.allow?.path)}`) ??
@@ -82,36 +84,42 @@ function expectExactHermesSlackCredentialRoutes(endpoints: SlackEndpoint[]): voi
     {
       access: undefined,
       host: "slack.com",
+      path: "/api/apps.connections.open",
       provider: "hermes-box-slack-app",
       routes: ["POST /api/apps.connections.open"],
     },
     {
       access: "full",
       host: "slack.com",
+      path: undefined,
       provider: "hermes-box-slack-bridge",
       routes: [],
     },
     {
       access: "full",
       host: "api.slack.com",
+      path: undefined,
       provider: "hermes-box-slack-bridge",
       routes: [],
     },
     {
       access: "full",
       host: "hooks.slack.com",
+      path: undefined,
       provider: "hermes-box-slack-bridge",
       routes: [],
     },
     {
       access: undefined,
       host: "wss-primary.slack.com",
+      path: undefined,
       provider: "hermes-box-slack-app",
       routes: ["GET /**", "WEBSOCKET_TEXT /**"],
     },
     {
       access: undefined,
       host: "wss-backup.slack.com",
+      path: undefined,
       provider: "hermes-box-slack-app",
       routes: ["GET /**", "WEBSOCKET_TEXT /**"],
     },

@@ -5,12 +5,34 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import {
+  managedSandboxEntry,
+  POLICY_HASH,
+  POLICY_VERSION,
+  SANDBOX_IDENTITY,
+} from "./managed-policy-receipt-fixture";
 
 const requireForTest = createRequire(import.meta.url);
 const policies = requireForTest(
   path.join(import.meta.dirname, "..", "../..", "src", "lib", "policy", "index.ts"),
 ) as typeof import("../../../src/lib/policy");
+const policyAuthority = requireForTest(
+  path.join(
+    import.meta.dirname,
+    "..",
+    "../..",
+    "src",
+    "lib",
+    "adapters",
+    "openshell",
+    "policy-authority.ts",
+  ),
+) as typeof import("../../../src/lib/adapters/openshell/policy-authority");
+const registry = requireForTest(
+  path.join(import.meta.dirname, "..", "../..", "src", "lib", "state", "registry.ts"),
+) as typeof import("../../../src/lib/state/registry");
 const CUSTOM_PRESET = "network_policies:\n  example:\n    host: example.com\n";
 const MALFORMED_BASE_POLICIES = [
   ["network_policies string", "version: 1\nnetwork_policies: invalid\n"],
@@ -27,6 +49,18 @@ const UNMARKED_NON_POLICY_MAPPINGS = [
 
 describe("OpenShell policy mutation read failures", () => {
   const tempDirs: string[] = [];
+
+  beforeEach(() => {
+    vi.spyOn(policyAuthority, "inspectSandboxPolicyAuthority").mockReturnValue({
+      authority: "owner-unknown",
+      effectivePolicy: {},
+      policyIdentity: { hash: POLICY_HASH, activeVersion: POLICY_VERSION },
+    });
+    vi.spyOn(policyAuthority, "inspectOpenShellSandboxIdentityFingerprint").mockReturnValue(
+      SANDBOX_IDENTITY,
+    );
+    vi.spyOn(registry, "getSandbox").mockReturnValue(managedSandboxEntry("alpha"));
+  });
 
   afterEach(() => {
     vi.unstubAllEnvs();
