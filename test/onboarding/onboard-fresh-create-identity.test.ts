@@ -123,6 +123,12 @@ describe("fresh create identity", () => {
       const credentialsPath = JSON.stringify(
         path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
       );
+      const entryOptionsPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "onboard", "entry-options.ts"),
+      );
+      const retainedRecoveryPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
+      );
       const dockerExecPath = JSON.stringify(
         path.join(repoRoot, "src", "lib", "adapters", "docker", "exec.ts"),
       );
@@ -142,6 +148,8 @@ let _deleted = false;
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});
+const entryOptions = require(${entryOptionsPath});
+const retainedRecovery = require(${retainedRecoveryPath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const dockerExec = require(${dockerExecPath});
@@ -368,6 +376,7 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
       postCreateFinalizationRefusal
         ? onboardModule.onboardSession.loadSession()
         : null,
+    retainedRecoveryRecords: retainedRecovery.listRetainedSandboxRecoveryRecords(),
     createCommand: createCommand?.command ?? null,
     commandNames: commands.map((entry) => entry.command),
   }));
@@ -376,11 +385,35 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
 	  if (recoveryReentry) {
+	    if (recoveryReentry === "fresh-different") {
+	      const retainedNames = retainedRecovery
+	        .listRetainedSandboxRecoveryRecords()
+	        .map((record) => record.sandboxName);
+	      const resolved = entryOptions.resolveDefaultRunEntryOptions(
+	        { fresh: true, sandboxName: "replacement-sb" },
+	        onboardModule.onboardSession.loadSession(),
+	        runner.validateName,
+	        process.env,
+	        retainedNames,
+	      );
+	      onboardModule.onboardSession.clearSession();
+	      onboardModule.onboardSession.saveSession(
+	        onboardModule.onboardSession.createSession({
+	          mode: resolved.nonInteractive ? "non-interactive" : "interactive",
+	          sandboxName: resolved.requestedSandboxName,
+	          metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
+	        }),
+	      );
+	      writePayload("replacement-sb", null, 0);
+	      clearInterval(keepAlive);
+	      return;
+	    }
 	    try {
 	      await onboardModule.onboard({
 	        resume: recoveryReentry === "explicit",
 	        fresh: recoveryReentry === "fresh-same",
-	        sandboxName: recoveryReentry === "fresh-same" ? "my-assistant" : undefined,
+	        recreateSandbox: recoveryReentry === "recreate",
+	        sandboxName: "my-assistant",
 	        deferProcessExit: true,
 	      });
 	      writePayload(null, "recovery-only onboarding unexpectedly continued", 0);
@@ -588,6 +621,16 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
           payload.savedSession.cancellationRecovery.sandboxIdentityFingerprint,
           identityFingerprint,
         );
+        assert.equal(payload.retainedRecoveryRecords.length, 1);
+        assert.deepEqual(payload.retainedRecoveryRecords[0], {
+          ...payload.retainedRecoveryRecords[0],
+          sandboxName: "my-assistant",
+          sandboxIdentityFingerprint: identityFingerprint,
+          identityWasUnavailable: false,
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          reason: "retained_after_sandbox_creation_failure",
+        });
       };
       const assertPostCreateRegistrationRefusal = () => {
         const identityFingerprint = createHash("sha256").update("sbx-fresh-create").digest("hex");
@@ -602,6 +645,16 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
           payload.savedSession.cancellationRecovery.sandboxIdentityFingerprint,
           identityFingerprint,
         );
+        assert.equal(payload.retainedRecoveryRecords.length, 1);
+        assert.deepEqual(payload.retainedRecoveryRecords[0], {
+          ...payload.retainedRecoveryRecords[0],
+          sandboxName: "my-assistant",
+          sandboxIdentityFingerprint: identityFingerprint,
+          identityWasUnavailable: false,
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          reason: "cancelled_after_sandbox_creation",
+        });
       };
       const assertPostCreateFinalizationRefusal = () => {
         const identityFingerprint = createHash("sha256").update("sbx-fresh-create").digest("hex");
@@ -655,25 +708,55 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
         assert.match(result.stderr, /confirm that the exact sandbox is absent/u);
         assert.match(result.stderr, /rotate any credential/u);
 
+        const differentName = spawnSync(process.execPath, [scriptPath], {
+          cwd: repoRoot,
+          encoding: "utf-8",
+          env: {
+            ...childEnv,
+            NEMOCLAW_RECOVERY_REENTRY: "fresh-different",
+          },
+          timeout: 30000,
+        });
+        assert.equal(differentName.status, 0, differentName.stderr);
+        const differentNamePayload = JSON.parse(fs.readFileSync(payloadPath, "utf8"));
+        assert.equal(differentNamePayload.exitCode, 0);
+        assert.equal(differentNamePayload.savedSession.sandboxName, "replacement-sb");
+        assert.deepEqual(
+          differentNamePayload.retainedRecoveryRecords,
+          payload.retainedRecoveryRecords,
+        );
+        assert.deepEqual(differentNamePayload.commandNames, []);
+        assert.equal(differentNamePayload.credentialReadCalls, 0);
+        assert.equal(differentNamePayload.routeReservationCalls, 0);
+        assert.deepEqual(differentNamePayload.registryMutationCalls, []);
+
         const reentryCases = [
           {
             mode: "automatic",
             messages: [
-              /preserved sandbox 'my-assistant' in recovery-only state/u,
-              /resume, reuse, and recreation are disabled/u,
+              /cannot use retained sandbox 'my-assistant'/u,
+              /same-name fresh onboarding remain disabled/u,
             ],
           },
           {
             mode: "explicit",
             messages: [
-              /preserved sandbox 'my-assistant' in recovery-only state/u,
-              /resume, reuse, and recreation are disabled/u,
+              /cannot use retained sandbox 'my-assistant'/u,
+              /same-name fresh onboarding remain disabled/u,
+            ],
+          },
+          {
+            mode: "recreate",
+            messages: [
+              /cannot use retained sandbox 'my-assistant'/u,
+              /same-name fresh onboarding remain disabled/u,
             ],
           },
           {
             mode: "fresh-same",
             messages: [
-              /requires --fresh with an explicit sandbox name different from the retained sandbox/u,
+              /cannot use retained sandbox 'my-assistant'/u,
+              /same-name fresh onboarding remain disabled/u,
             ],
           },
         ] as const;
@@ -696,7 +779,8 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
           assert.equal(reentryPayload.routeReservationCalls, 0);
           assert.deepEqual(reentryPayload.registryMutationCalls, []);
           assert.deepEqual(reentryPayload.currentRegistryEntry, payload.currentRegistryEntry);
-          assert.deepEqual(reentryPayload.savedSession, payload.savedSession);
+          assert.deepEqual(reentryPayload.savedSession, differentNamePayload.savedSession);
+          assert.deepEqual(reentryPayload.retainedRecoveryRecords, payload.retainedRecoveryRecords);
         }
       };
       const assertions = {

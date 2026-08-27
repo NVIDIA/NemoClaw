@@ -19,7 +19,12 @@ import {
   parseServingProfileProvenance,
   type ServingProfileProvenance,
 } from "../inference/serving/profile-provenance";
-import { normalizeWebSearchConfig, type WebSearchConfig } from "../inference/web-search";
+import {
+  normalizeWebSearchConfig,
+  webSearchEnvFor,
+  webSearchProviderForConfig,
+  type WebSearchConfig,
+} from "../inference/web-search";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { compactSandboxMessagingPlanForPersistence } from "../messaging/persistence";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
@@ -48,7 +53,6 @@ import {
 } from "../onboard/station-express-resume";
 import { redactSensitiveText, redactUrl } from "../security/redact";
 import { inspectCheckpoint, serializeCheckpoint } from "./onboard-checkpoint";
-import { decisionUnset } from "./onboard-checkpoint-decision";
 import type { OnboardCheckpoint } from "./onboard-checkpoint-types";
 import {
   assignSafeToolDisclosureUpdate,
@@ -57,6 +61,17 @@ import {
   type ToolDisclosure,
 } from "./onboard-session-tool-disclosure";
 import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
+import {
+  listRetainedSandboxRecoveryRecords as readRetainedSandboxRecoveryRecords,
+  recordRetainedSandboxRecovery as writeRetainedSandboxRecovery,
+  resolveRetainedSandboxRecovery as writeRetainedSandboxResolution,
+  retainedSandboxRecoveryFile,
+  type RecordRetainedSandboxRecoveryInput,
+  type ResolveRetainedSandboxRecoveryInput,
+  type RetainedSandboxAdministratorResolutionReceipt,
+  type RetainedSandboxRecoveryRecord,
+  type RetainedSandboxRecoveryReason,
+} from "./onboard-session/retained-sandbox-recovery";
 import type { SandboxHostMount } from "./registry/types";
 import { hasUnsafeHostMountTerminalText } from "./registry/host-mount";
 import { nemoclawStateRoot } from "./state-root";
@@ -70,6 +85,7 @@ const INVALID_HOST_MOUNT_SESSIONS = new WeakSet<object>();
 export const SESSION_DIR = nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT);
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
 export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
+export const RETAINED_SANDBOX_RECOVERY_FILE = retainedSandboxRecoveryFile(SESSION_DIR);
 const SAFE_VLLM_INSTALL_MODEL = /^[A-Za-z0-9._:/-]+$/;
 
 export class InvalidPersistedPolicyAuthorityError extends Error {}
@@ -1638,9 +1654,62 @@ export function updateSession(mutator: (session: Session) => Session | void): Se
   return saveSession(next);
 }
 
+export interface RetainedSandboxRecoveryContext {
+  readonly gatewayName?: string;
+  readonly gatewayPort?: number;
+  readonly lifecycleGeneration?: string | null;
+}
+
+function persistIndependentRetainedSandboxRecovery(
+  session: Session,
+  reason: RetainedSandboxRecoveryReason,
+  sandboxIdentityFingerprint: string | null,
+  context: RetainedSandboxRecoveryContext,
+): void {
+  const messagingCredentialEnvironmentVariables =
+    session.messagingPlan?.credentialBindings.map((binding) => binding.providerEnvKey) ?? [];
+  const credentialEnvironmentVariables = [
+    ...(session.credentialEnv ? [session.credentialEnv] : []),
+    ...(session.webSearchConfig
+      ? [webSearchEnvFor(webSearchProviderForConfig(session.webSearchConfig))]
+      : []),
+    ...messagingCredentialEnvironmentVariables,
+  ];
+  writeRetainedSandboxRecovery(RETAINED_SANDBOX_RECOVERY_FILE, {
+    sandboxName: session.sandboxName!,
+    sandboxIdentityFingerprint,
+    gatewayName: context.gatewayName ?? session.metadata.gatewayName,
+    gatewayPort: context.gatewayPort ?? GATEWAY_PORT,
+    lifecycleGeneration: context.lifecycleGeneration ?? null,
+    resources: {
+      sharedInferenceProviders: session.provider ? [session.provider] : [],
+      sandboxScopedProviders: session.stagedCredentialProviders,
+      credentialEnvironmentVariables,
+    },
+    reason,
+  });
+}
+
+export function listRetainedSandboxRecoveryRecords(): readonly RetainedSandboxRecoveryRecord[] {
+  return readRetainedSandboxRecoveryRecords(RETAINED_SANDBOX_RECOVERY_FILE);
+}
+
+export function recordRetainedSandboxRecovery(
+  input: RecordRetainedSandboxRecoveryInput,
+): RetainedSandboxRecoveryRecord {
+  return writeRetainedSandboxRecovery(RETAINED_SANDBOX_RECOVERY_FILE, input);
+}
+
+export function resolveRetainedSandboxRecovery(
+  input: ResolveRetainedSandboxRecoveryInput,
+): RetainedSandboxAdministratorResolutionReceipt {
+  return writeRetainedSandboxResolution(RETAINED_SANDBOX_RECOVERY_FILE, input);
+}
+
 export function markCancellationRecovery(
   sandboxName: string,
   sandboxIdentityFingerprint?: string,
+  context: RetainedSandboxRecoveryContext = {},
 ): Session {
   if (
     sandboxName.length > NAME_MAX_LENGTH ||
@@ -1650,7 +1719,7 @@ export function markCancellationRecovery(
   ) {
     throw new Error("Cannot record cancellation recovery with invalid sandbox identity data.");
   }
-  return updateSession((session) => {
+  const saved = updateSession((session) => {
     if (session.sandboxName !== null && session.sandboxName !== sandboxName) {
       throw new Error("Cannot record cancellation recovery for a different onboarding sandbox.");
     }
@@ -1673,12 +1742,20 @@ export function markCancellationRecovery(
     };
     return session;
   });
+  persistIndependentRetainedSandboxRecovery(
+    saved,
+    "cancelled_after_sandbox_creation",
+    sandboxIdentityFingerprint ?? null,
+    context,
+  );
+  return saved;
 }
 
 export function markRetainedSandboxRecovery(
   sandboxName: string,
   message: string,
   sandboxIdentityFingerprint?: string,
+  context: RetainedSandboxRecoveryContext = {},
 ): Session {
   if (
     sandboxName.length > NAME_MAX_LENGTH ||
@@ -1726,6 +1803,12 @@ export function markRetainedSandboxRecovery(
   ) {
     throw new Error("Retained sandbox recovery did not survive durable readback.");
   }
+  persistIndependentRetainedSandboxRecovery(
+    reread,
+    "retained_after_sandbox_creation_failure",
+    sandboxIdentityFingerprint ?? null,
+    context,
+  );
   return reread;
 }
 
@@ -1853,7 +1936,7 @@ export function markStepRejected(stepName: string): Session {
       if (session.checkpoint) {
         session.checkpoint = {
           ...session.checkpoint,
-          sandboxIdentity: decisionUnset(),
+          sandboxIdentity: { kind: "unset" },
           updatedAt: new Date().toISOString(),
         };
       }

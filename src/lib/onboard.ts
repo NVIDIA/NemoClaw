@@ -2754,6 +2754,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     opts,
     onboardSession.loadSession(),
     validateName,
+    process.env,
+    onboardSession.listRetainedSandboxRecoveryRecords().map((record) => record.sandboxName),
   );
   const { fresh, nonInteractive, cannotPrompt, resume } = entryOptions;
   const { requestedFromDockerfile, requestedSandboxName } = entryOptions;
@@ -2780,14 +2782,12 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     sessionFile: onboardSession.SESSION_FILE,
     withLifecycleLock: sandboxMutationLock.withMcpLifecycleLock,
   });
-
   let portableEnvScope:
     | import("./onboard/session-bootstrap").PortableOnboardEnvironmentScope
     | null = null;
   const restorePortableEnvScope = () => portableEnvScope?.restore();
   // Secure removal remains gated on successful migration of every staged legacy credential.
   let stagedLegacyKeys: string[] = [];
-
   let onboardTrace: ReturnType<typeof onboardTracing.startOnboardTrace> = {
     collector: null,
     span: null,

@@ -35,6 +35,8 @@ export interface OnboardEntryOptionsInput {
    */
   persistedSessionStatus?: string | null;
   persistedRecoverySandboxName?: string | null;
+  persistedSessionSandboxName?: string | null;
+  retainedRecoverySandboxNames?: readonly string[];
 }
 
 export interface OnboardEntryOptionsDeps {
@@ -61,6 +63,7 @@ export interface ResolvedOnboardEntryOptions {
 
 type PersistedOnboardEntrySession = {
   readonly status: string;
+  readonly sandboxName?: string | null;
   readonly cancellationRecovery?: { readonly sandboxName: string } | null;
 };
 
@@ -112,6 +115,8 @@ export function resolveOnboardRunOptions(
     stdoutIsTty: Boolean(process.stdout?.isTTY),
   },
   persistedRecoverySandboxName: string | null = null,
+  persistedSessionSandboxName: string | null = null,
+  retainedRecoverySandboxNames: readonly string[] = [],
 ) {
   const resume =
     options.resume === true || (options.fresh !== true && persistedSessionStatus === "in_progress");
@@ -128,6 +133,8 @@ export function resolveOnboardRunOptions(
       ...terminal,
       persistedSessionStatus,
       persistedRecoverySandboxName,
+      persistedSessionSandboxName,
+      retainedRecoverySandboxNames,
     },
   };
 }
@@ -139,6 +146,8 @@ export function resolveOnboardRunEntryOptions(
   isNonInteractiveEnv: () => boolean,
   deps: Omit<OnboardEntryOptionsDeps, "isNonInteractive">,
   persistedRecoverySandboxName: string | null = null,
+  persistedSessionSandboxName: string | null = null,
+  retainedRecoverySandboxNames: readonly string[] = [],
 ) {
   const context = resolveOnboardRunOptions(
     options,
@@ -147,6 +156,8 @@ export function resolveOnboardRunEntryOptions(
     isNonInteractiveEnv,
     undefined,
     persistedRecoverySandboxName,
+    persistedSessionSandboxName,
+    retainedRecoverySandboxNames,
   );
   return {
     ...context,
@@ -162,6 +173,7 @@ export function resolveDefaultRunEntryOptions(
   persistedSession: PersistedOnboardEntrySession | null,
   validateSandboxName: OnboardEntryOptionsDeps["validateName"],
   env: NodeJS.ProcessEnv = process.env,
+  retainedRecoverySandboxNames: readonly string[] = [],
 ) {
   return resolveOnboardRunEntryOptions(
     options,
@@ -177,6 +189,8 @@ export function resolveDefaultRunEntryOptions(
       exitProcess: (code) => process.exit(code),
     },
     persistedSession?.cancellationRecovery?.sandboxName ?? null,
+    persistedSession?.sandboxName ?? null,
+    retainedRecoverySandboxNames,
   );
 }
 
@@ -302,6 +316,31 @@ export function resolveOnboardEntryOptions(
       deps.exitProcess(1);
     }
     requestedSandboxName = validated;
+  }
+  const retainedRecoverySandboxNames = new Set(
+    (input.retainedRecoverySandboxNames ?? []).map((name) => name.trim()).filter(Boolean),
+  );
+  const recoveryEntryName =
+    requestedSandboxName ?? input.persistedSessionSandboxName?.trim() ?? null;
+  if (retainedRecoverySandboxNames.size > 0) {
+    if (!recoveryEntryName) {
+      deps.error(
+        "  Onboarding cannot continue while a retained sandbox recovery record is unresolved without an explicit different sandbox name.",
+      );
+      deps.error(
+        "  Use --fresh --name <new-name>, or complete identity-bound administrator recovery for the retained sandbox first.",
+      );
+      deps.exitProcess(1);
+    }
+    if (retainedRecoverySandboxNames.has(recoveryEntryName)) {
+      deps.error(
+        `  Onboarding cannot use retained sandbox '${recoveryEntryName}' while its identity-bound recovery record is unresolved.`,
+      );
+      deps.error(
+        "  Automatic and explicit resume, reuse, recreation, and same-name fresh onboarding remain disabled until administrator resolution is recorded.",
+      );
+      deps.exitProcess(1);
+    }
   }
   if (input.persistedSessionStatus === "recovery_required") {
     const recoverySandboxName = input.persistedRecoverySandboxName?.trim() || null;

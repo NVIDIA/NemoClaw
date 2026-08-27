@@ -287,6 +287,48 @@ describe("resolveOnboardEntryOptions", () => {
     expect(deps.error).not.toHaveBeenCalled();
   });
 
+  it("blocks a retained name after a different fresh session replaced the active session", () => {
+    const deps = createDeps();
+
+    expect(() =>
+      resolveOnboardEntryOptions(
+        {
+          opts: { fresh: true, sandboxName: "retained-sb" },
+          env: {},
+          stdinIsTty: true,
+          stdoutIsTty: true,
+          persistedSessionStatus: "in_progress",
+          persistedRecoverySandboxName: null,
+          retainedRecoverySandboxNames: ["retained-sb"],
+        },
+        deps,
+      ),
+    ).toThrow(ExitError);
+    expect(deps.error).toHaveBeenCalledWith(
+      expect.stringContaining("retained sandbox 'retained-sb'"),
+    );
+  });
+
+  it("allows a different fresh name without clearing an independent recovery record", () => {
+    const deps = createDeps();
+
+    const result = resolveOnboardEntryOptions(
+      {
+        opts: { fresh: true, sandboxName: "replacement-sb" },
+        env: {},
+        stdinIsTty: true,
+        stdoutIsTty: true,
+        persistedSessionStatus: "recovery_required",
+        persistedRecoverySandboxName: "retained-sb",
+        retainedRecoverySandboxNames: ["retained-sb"],
+      },
+      deps,
+    );
+
+    expect(result.requestedSandboxName).toBe("replacement-sb");
+    expect(deps.error).not.toHaveBeenCalled();
+  });
+
   it("does not auto-resume when --fresh is set even with an in_progress session (#5470)", () => {
     const deps = createDeps();
 
