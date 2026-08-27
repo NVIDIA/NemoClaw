@@ -208,7 +208,7 @@ describe("sandbox policy authority boundary", () => {
         hash: "",
         policy,
       }),
-      /invalid sandbox policy identity metadata/u,
+      /invalid global policy authority metadata/u,
     ],
     [
       "malformed policy identity",
@@ -220,7 +220,7 @@ describe("sandbox policy authority boundary", () => {
         hash: "sha256:global",
         policy,
       }),
-      /invalid sandbox policy identity metadata/u,
+      /invalid global policy authority metadata/u,
     ],
   ])("rejects %s for global policy authority inspection (#9833)", (_name, raw, expected) => {
     expect(() => parseActiveGlobalPolicyAuthorityMetadata(raw)).toThrow(expected);

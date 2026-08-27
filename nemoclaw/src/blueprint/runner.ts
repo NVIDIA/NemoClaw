@@ -72,6 +72,7 @@ const {
   assertPolicyRequirementContainment,
   classifyOpenShellGlobalPolicyHistory,
   openShellPolicyValuesEqual,
+  parseActiveGlobalPolicyAuthorityMetadata,
   parseNemoClawPolicyCreationReceipt,
   parseOpenShellPolicy,
   parseSandboxPolicyAuthorityMetadata,
@@ -825,23 +826,6 @@ async function runBlueprintReceiptInspectionCommand(
   return result;
 }
 
-function parseGlobalPolicyIdentity(
-  metadata: UnknownRecord,
-): BlueprintPolicyAuthorityInspection["policyIdentity"] {
-  if (
-    typeof metadata.hash !== "string" ||
-    metadata.hash.length === 0 ||
-    typeof metadata.active_version !== "number" ||
-    !Number.isSafeInteger(metadata.active_version) ||
-    metadata.active_version <= 0
-  ) {
-    throw new Error(
-      "OpenShell returned invalid global policy authority metadata. Policy-dependent operations must stop.",
-    );
-  }
-  return { hash: metadata.hash, activeVersion: metadata.active_version };
-}
-
 async function inspectBlueprintPolicyAuthority(
   gateway: string,
 ): Promise<BlueprintPolicyAuthorityInspection | null>;
@@ -875,43 +859,13 @@ async function inspectBlueprintPolicyAuthority(
       : ["openshell", "policy", "get", "-g", gateway, "--full", "--output", "json", sandboxName];
   const result = await runBlueprintPolicyAuthorityCommand(command, subject);
   if (sandboxName === undefined) {
-    if (result.stdout.trim().length === 0) {
-      throw new Error(
-        "OpenShell returned empty global policy authority metadata. Policy-dependent operations must stop.",
-      );
-    }
-    let metadata: unknown;
     try {
-      metadata = JSON.parse(result.stdout);
-    } catch {
-      throw new Error(
-        "OpenShell returned malformed global policy authority metadata. Policy-dependent operations must stop.",
-      );
+      const activeGlobalPolicy = parseActiveGlobalPolicyAuthorityMetadata(result.stdout);
+      return activeGlobalPolicy.state === "active" ? activeGlobalPolicy.inspection : null;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "OpenShell returned invalid metadata";
+      throw new Error(`${detail}. Policy-dependent operations must stop.`);
     }
-    if (
-      !isPlainObject(metadata) ||
-      metadata.scope !== "global" ||
-      (metadata.status !== "loaded" && metadata.status !== "superseded") ||
-      metadata.policy_source !== "global" ||
-      Object.hasOwn(metadata, "sandbox")
-    ) {
-      throw new Error(
-        "OpenShell returned invalid global policy authority metadata. Policy-dependent operations must stop.",
-      );
-    }
-    if (metadata.status === "superseded") {
-      return null;
-    }
-    if (!isPlainObject(metadata.policy)) {
-      throw new Error(
-        "OpenShell returned invalid global policy authority metadata. Policy-dependent operations must stop.",
-      );
-    }
-    return {
-      authority: "externally-managed",
-      effectivePolicy: metadata.policy,
-      policyIdentity: parseGlobalPolicyIdentity(metadata),
-    };
   }
   try {
     return parseSandboxPolicyAuthorityMetadata(result.stdout, sandboxName);

@@ -97,13 +97,16 @@ function positiveInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
-function parsePolicyIdentity(metadata: OpenShellPolicyMapping): OpenShellPolicyIdentity {
+function parsePolicyIdentity(
+  metadata: OpenShellPolicyMapping,
+  invalidMessage: string,
+): OpenShellPolicyIdentity {
   if (
     typeof metadata.hash !== "string" ||
     !RECEIPT_POLICY_HASH_PATTERN.test(metadata.hash) ||
     !positiveInteger(metadata.active_version)
   ) {
-    throw new Error("OpenShell returned invalid sandbox policy identity metadata");
+    throw new Error(invalidMessage);
   }
   return { hash: metadata.hash, activeVersion: metadata.active_version };
 }
@@ -201,7 +204,10 @@ export function parseSandboxPolicyAuthorityMetadata(
   return {
     authority: metadata.policy_source === "sandbox" ? "owner-unknown" : "externally-managed",
     effectivePolicy: metadata.policy,
-    policyIdentity: parsePolicyIdentity(metadata),
+    policyIdentity: parsePolicyIdentity(
+      metadata,
+      "OpenShell returned invalid sandbox policy identity metadata",
+    ),
   };
 }
 
@@ -233,7 +239,10 @@ export function parseActiveGlobalPolicyAuthorityMetadata(
     inspection: {
       authority: "externally-managed",
       effectivePolicy: metadata.policy,
-      policyIdentity: parsePolicyIdentity(metadata),
+      policyIdentity: parsePolicyIdentity(
+        metadata,
+        "OpenShell returned invalid global policy authority metadata",
+      ),
     },
   };
 }
