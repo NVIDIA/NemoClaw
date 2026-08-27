@@ -5,18 +5,49 @@ import { describe, expect, it, vi } from "vitest";
 
 import { PolicyAuthorityRefusalError } from "../../adapters/openshell/policy-authority";
 import type { SandboxEntry } from "../../state/registry";
+import { createHermesStateVolumeDockerHarness } from "../__test-helpers__/hermes-state-volume";
+import { createManagedHermesStateVolumeOnboardLifecycle } from "../managed-workload/onboard-orchestration";
 import {
   applyManagedSandboxRebuildPolicyCarryForward,
   assertApfCreateIntent,
   backfillVerifiedExternalSandboxPolicyAuthority,
   completeHermesPortableSandboxRegistration,
   createProviderEffectBoundary,
+  finalizeRecreatedSourceHermesStateVolume,
   hasManagedMcpRebuildHandoff,
   readManagedDcodeCreateSelectionDrift,
   readSandboxRecreateRegistryEntry,
   resolveSandboxCreatePolicyAuthority,
   runSandboxCreateWithPolicyAuthorityChecks,
 } from "./orchestration";
+
+const managedHermesSourceEntry = {
+  name: "alpha",
+  agent: "hermes",
+  openshellDriver: "docker",
+  workload: { kind: "managed-image" },
+} as SandboxEntry;
+const managedHermesCleanupCalls = [
+  [
+    {
+      agentName: "hermes",
+      runtimeProviderId: "docker",
+      sandboxName: "alpha",
+      workloadKind: "managed-image",
+    },
+  ],
+] as const;
+
+function recreatedHermesVolumeFinalizationDeps() {
+  return {
+    normalizeRuntimeProviderIdentity: vi.fn(() => "docker"),
+    removeManagedHermesStateVolume: vi.fn(() => ({ status: "removed" as const })),
+    removeSourceRegistryEntry: vi.fn(),
+    note: vi.fn(),
+    warn: vi.fn(),
+    redact: vi.fn((message: string) => message),
+  };
+}
 
 describe("APF create policy selection", () => {
   it("selects a policyless external plan only from an absent global policy (#9833)", () => {
@@ -297,6 +328,70 @@ describe("sandbox recreate registry authority", () => {
     ).toBe(inspected);
     expect(readRegistry).not.toHaveBeenCalled();
   });
+});
+
+describe("managed Hermes state volume recreation", () => {
+  it.each([
+    [
+      "OpenClaw and removes the source volume",
+      "openclaw",
+      "docker",
+      "managed-image",
+      managedHermesCleanupCalls,
+    ],
+    [
+      "a custom Dockerfile and removes the source volume",
+      "hermes",
+      "docker",
+      "legacy-dockerfile",
+      managedHermesCleanupCalls,
+    ],
+    [
+      "a non-Docker provider and removes the source volume",
+      "hermes",
+      "kubernetes",
+      "managed-image",
+      managedHermesCleanupCalls,
+    ],
+    [
+      "managed Docker Hermes and preserves the source volume",
+      "hermes",
+      "docker",
+      "managed-image",
+      [],
+    ],
+  ] as const)(
+    "recreates with %s",
+    (_label, agentName, runtimeProviderId, workloadKind, expectedCleanupCalls) => {
+      const docker = createHermesStateVolumeDockerHarness();
+      const targetLifecycle = createManagedHermesStateVolumeOnboardLifecycle(
+        {
+          agentName,
+          runtimeProvider: { identity: { id: runtimeProviderId } } as never,
+          sandboxName: "alpha",
+          workloadKind,
+        },
+        { runDocker: docker.runDocker as never, registerExitCleanup: () => vi.fn() },
+      );
+      const deps = recreatedHermesVolumeFinalizationDeps();
+
+      finalizeRecreatedSourceHermesStateVolume(
+        {
+          sandboxName: "alpha",
+          sourceConfirmedAbsent: true,
+          sourceEntry: managedHermesSourceEntry,
+          targetKeepsManagedHermesStateVolume: targetLifecycle !== null,
+        },
+        deps,
+      );
+
+      expect(deps.removeManagedHermesStateVolume.mock.calls).toEqual(expectedCleanupCalls);
+      expect(deps.removeSourceRegistryEntry).toHaveBeenCalledExactlyOnceWith(
+        managedHermesSourceEntry,
+        "alpha",
+      );
+    },
+  );
 });
 
 describe("managed DCode sandbox create selection", () => {

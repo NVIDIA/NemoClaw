@@ -98,7 +98,7 @@ export function createManagedHermesStateVolumeOnboardLifecycle(
     readonly runtimeProvider: RuntimeProviderBundle | null;
   },
   deps: ManagedHermesStateVolumeDeps = {},
-): ManagedHermesStateVolumeOnboardLifecycle {
+): ManagedHermesStateVolumeOnboardLifecycle | null {
   const scope = prepareManagedHermesStateVolume(
     {
       agentName: input.agentName,
@@ -108,12 +108,13 @@ export function createManagedHermesStateVolumeOnboardLifecycle(
     },
     deps,
   );
+  if (!scope) return null;
   return {
     materializeSandboxCreatePlan(input, materialize) {
-      return materialize({ ...input, managedStateMount: scope?.mount });
+      return materialize({ ...input, managedStateMount: scope.mount });
     },
     commit() {
-      scope?.commit();
+      scope.commit();
     },
   };
 }
