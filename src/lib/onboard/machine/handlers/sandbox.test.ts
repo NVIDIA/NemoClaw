@@ -85,7 +85,7 @@ describe("handleSandboxState", () => {
         recreate: false,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
-        endpointSource: "onboard",
+        endpointSource: null,
         extraProviders: [],
       },
     );

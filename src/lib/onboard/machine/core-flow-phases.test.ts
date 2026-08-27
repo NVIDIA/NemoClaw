@@ -327,6 +327,96 @@ function createPhases(
 }
 
 describe("core onboard flow phases", () => {
+  it("keeps a fresh hosted-route reservation identical through sandbox admission (#9833)", async () => {
+    const durableSession = createSession();
+    const sandboxName = `hosted-route-${durableSession.sessionId}`;
+    const recordStepComplete = vi.fn(async (_stepName: string, updates: SessionUpdates = {}) => {
+      Object.assign(durableSession, updates);
+      return durableSession;
+    });
+    const createSandbox = vi.fn(async (...args: unknown[]) => {
+      const authority = args.at(-3) as { sessionId?: unknown } | null;
+      const createIntent = args.at(-2) as {
+        endpointSource?: InferenceEndpointSource | null;
+      };
+      const reservation = getSandbox(sandboxName);
+      expect(authority).toEqual({ sessionId: durableSession.sessionId });
+      expect(createIntent.endpointSource).toBeNull();
+      expect(
+        classifySandboxInferenceRouteReservation(
+          {
+            sandboxName,
+            gatewayName: "nemoclaw",
+            sessionId: authority?.sessionId as string,
+            selection: normalizeInferenceSelection({
+              ...reservation,
+              endpointSource: createIntent.endpointSource,
+            }),
+          },
+          reservation,
+        ).kind,
+      ).toBe("owned");
+      return "created-sandbox";
+    });
+    const { providerInference: providerPhase, sandbox: sandboxPhase } = createPhases({
+      providerDeps: {
+        setupNim: vi.fn(async () => ({
+          model: "nvidia/test",
+          provider: "nvidia-prod",
+          endpointUrl: "https://integrate.api.nvidia.com/v1",
+          endpointSource: null,
+          credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+          hermesAuthMethod: null,
+          hermesToolGateways: [],
+          preferredInferenceApi: "openai-completions",
+          compatibleEndpointReasoning: null,
+          compatibleEndpointReasoningEffort: null,
+          nimContainer: null,
+        })),
+        recordStepComplete,
+        promptValidatedSandboxName: vi.fn(async () => sandboxName),
+        setupInference: vi.fn(
+          async (name, model, provider, endpointUrl, credentialEnv, _auth, _gateways, options) => {
+            expect(
+              reserveSandboxInferenceRoute(name, {
+                provider,
+                model,
+                endpointUrl,
+                endpointSource: options?.endpointSource ?? null,
+                credentialEnv,
+                preferredInferenceApi: options?.preferredInferenceApi ?? null,
+                gatewayName: options?.gatewayName ?? "nemoclaw",
+                reservationSessionId: options?.reservationSessionId,
+              }),
+            ).toBe(true);
+            return { ok: true as const };
+          },
+        ),
+      },
+      sandboxDeps: {
+        createSandbox,
+        getSandboxRegistryEntry: getSandbox,
+        promptValidatedSandboxName: vi.fn(async () => sandboxName),
+      },
+    });
+
+    try {
+      const providerResult = await providerPhase.run(
+        context({
+          fresh: true,
+          session: durableSession,
+          sandboxName,
+        }),
+      );
+      expect(providerResult.context.endpointSource).toBeNull();
+      await sandboxPhase.run(providerResult.context);
+
+      expect(createSandbox).toHaveBeenCalledOnce();
+    } finally {
+      removeSandbox(sandboxName);
+    }
+  });
+
   it("preserves the fresh install-ollama reservation endpoint source for Hermes portable creation (#9203)", async () => {
     const durableSession = createSession();
     const sandboxName = `hermes-route-${durableSession.sessionId}`;

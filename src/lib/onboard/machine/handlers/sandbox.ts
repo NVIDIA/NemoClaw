@@ -490,14 +490,6 @@ function hasResourceProfileEnvOverride(env: NodeJS.ProcessEnv): boolean {
   return Boolean(env.NEMOCLAW_RESOURCE_PROFILE || env.NEMOCLAW_CPU || env.NEMOCLAW_RAM);
 }
 
-function endpointSourceForCreateIntent(
-  fresh: boolean,
-  endpointSource: InferenceEndpointSource | null | undefined,
-  preserveSelectedEndpointSource: boolean,
-): InferenceEndpointSource | null {
-  return fresh && !preserveSelectedEndpointSource ? "onboard" : (endpointSource ?? null);
-}
-
 function compatibleEndpointReasoningForCreateIntent(
   value: string | null,
 ): Pick<SandboxCreateIntent, "compatibleEndpointReasoning"> {
@@ -1837,12 +1829,7 @@ class SandboxStateFlow<
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true as const } : {}),
       ...(this.options.endpointUrl ? { endpointUrl: this.options.endpointUrl } : {}),
       ...compatibleEndpointReasoningForCreateIntent(this.options.compatibleEndpointReasoning),
-      endpointSource: endpointSourceForCreateIntent(
-        this.options.fresh,
-        this.options.endpointSource,
-        this.options.hostLocalInferenceRouteOnly === true ||
-          this.options.hermesPortableLifecycle === true,
-      ),
+      endpointSource: this.options.endpointSource ?? null,
       ...(state.session?.observabilityRequestedExplicitly === true
         ? { observabilityRequestedExplicitly: true as const }
         : {}),
