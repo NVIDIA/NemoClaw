@@ -247,7 +247,7 @@ describe("managed workload onboard orchestration", () => {
       },
     );
 
-    lifecycle.materializeSandboxCreatePlan({} as never, (input) => {
+    lifecycle!.materializeSandboxCreatePlan({} as never, (input) => {
       expect(input.managedStateMount).toMatchObject({ target: "/sandbox/.hermes" });
       return {} as never;
     });
@@ -259,15 +259,29 @@ describe("managed workload onboard orchestration", () => {
 
   it("retains the live qualification catalog revision during fresh onboarding (#9385)", async () => {
     const catalogRevision = "a".repeat(40);
-    const { prepared, runtime } = createFreshOnboardingRuntime({
-      GITHUB_ACTIONS: "true",
-      E2E_MANAGED_IMAGE_REVISION: catalogRevision,
-    });
+    const { prepared, runtime } = createFreshOnboardingRuntime(
+      {
+        GITHUB_ACTIONS: "true",
+        E2E_MANAGED_IMAGE_REVISION: catalogRevision,
+      },
+      { stockManagedRuntime: true },
+    );
 
     await expect(runtime.ensurePreparedWorkload()).resolves.toBe(prepared);
     expect(prepareSandboxWorkloadSource).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ catalogRevision }),
     );
+  });
+
+  it("does not apply the stock cohort revision outside stock onboarding", async () => {
+    const { prepared, runtime } = createFreshOnboardingRuntime({
+      GITHUB_ACTIONS: "true",
+      E2E_MANAGED_IMAGE_REVISION: "a".repeat(40),
+    });
+
+    await expect(runtime.ensurePreparedWorkload()).resolves.toBe(prepared);
+    expect(prepareSandboxWorkloadSource).toHaveBeenCalledOnce();
+    expect(prepareSandboxWorkloadSource.mock.calls[0]?.[0]).not.toHaveProperty("catalogRevision");
   });
 
   it("binds fresh onboarding to the exact PR catalog (#9464)", async () => {
@@ -318,12 +332,22 @@ describe("managed workload onboard orchestration", () => {
 
   it("resolves final-image patch metadata after managed build-context staging", async () => {
     const resolutionMetadata = { key: "published-dcode-base" };
+    const trustedDockerfile = path.join(
+      process.cwd(),
+      "agents",
+      "langchain-deepagents-code",
+      "Dockerfile",
+    );
     let staged = false;
     const resolvePatchInput = vi.fn(() => {
       expect(staged).toBe(true);
-      return { preResolvedBaseImageMetadata: resolutionMetadata } as never;
+      return {
+        fromDockerfile: trustedDockerfile,
+        preResolvedBaseImageMetadata: resolutionMetadata,
+      } as never;
     });
     const resolveSandboxBuildPatch = vi.fn(async (input: Record<string, unknown>) => {
+      expect(input.fromDockerfile).toBeNull();
       expect(input.preResolvedBaseImageMetadata).toBe(resolutionMetadata);
       expect(input.stagedDockerfile).toBe("/tmp/nemoclaw-staged-context/Dockerfile");
       return { buildId: "dcode-build", dashboardRemoteBindPrepared: false };
@@ -369,8 +393,9 @@ describe("managed workload onboard orchestration", () => {
         agent: {
           name: "langchain-deepagents-code",
           displayName: "LangChain Deep Agents Code",
+          dockerfilePath: trustedDockerfile,
         },
-        fromDockerfile: null,
+        fromDockerfile: trustedDockerfile,
         createAgentSandbox: () => {
           staged = true;
           return {

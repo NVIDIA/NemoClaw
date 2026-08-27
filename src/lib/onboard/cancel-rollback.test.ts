@@ -10,6 +10,40 @@ import {
   makeOnboardCancelExit,
   type SandboxCancelRollbackDeps,
 } from "./cancel-rollback";
+import type { SandboxEntry } from "../state/registry";
+
+const SANDBOX_FINGERPRINT = "a".repeat(64);
+type ExternalPendingPolicyVerification = Extract<
+  NonNullable<SandboxEntry["pendingPolicyVerification"]>,
+  { policyAuthority: "externally-managed" }
+>;
+
+function pendingSandboxEntry(
+  overrides: Partial<ExternalPendingPolicyVerification> = {},
+): SandboxEntry {
+  return {
+    name: "new-sb",
+    gatewayName: "nemoclaw",
+    gatewayPort: 8080,
+    lifecycleGeneration: "generation-1",
+    lifecycleLiveIdentityFingerprint: SANDBOX_FINGERPRINT,
+    pendingPolicyVerification: {
+      schemaVersion: 1,
+      state: "verified-create",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      sandboxName: "new-sb",
+      lifecycleGeneration: "generation-1",
+      sandboxIdentityFingerprint: SANDBOX_FINGERPRINT,
+      route: "none",
+      policyHash: "policy-hash",
+      policyVersion: 1,
+      policyAuthority: "externally-managed",
+      observedPolicyAuthority: "externally-managed",
+      ...overrides,
+    },
+  };
+}
 
 function createDeps(overrides: Partial<SandboxCancelRollbackDeps> = {}) {
   const calls = {
@@ -50,7 +84,7 @@ describe("createSandboxCancelRollback", () => {
     );
   });
 
-  it("still unregisters and prints manual cleanup when container delete fails", () => {
+  it("preserves recovery state when container deletion is not confirmed", () => {
     const { deps, calls } = createDeps({ deleteSandboxContainer: vi.fn(() => false) });
     const rollback = createSandboxCancelRollback(deps);
 
@@ -58,13 +92,12 @@ describe("createSandboxCancelRollback", () => {
     rollback.markCancelled();
     rollback.runIfArmed();
 
-    expect(calls.removeFromRegistry).toHaveBeenCalledWith("new-sb");
+    expect(calls.removeFromRegistry).not.toHaveBeenCalled();
+    expect(calls.clearSession).not.toHaveBeenCalled();
     expect(calls.log).toHaveBeenCalledWith(
-      expect.stringContaining("unregistered incomplete sandbox 'new-sb'"),
+      expect.stringContaining("preserved incomplete sandbox 'new-sb'"),
     );
-    expect(calls.log).toHaveBeenCalledWith(
-      expect.stringContaining('openshell sandbox delete "new-sb"'),
-    );
+    expect(calls.log.mock.calls.flat().join("\n")).not.toContain("openshell sandbox delete");
   });
 
   it("does NOT roll back on a non-cancel exit (armed but not cancelled)", () => {
@@ -152,7 +185,7 @@ describe("installSandboxCancelRollback", () => {
 
     const rollback = installSandboxCancelRollback({
       runOpenshell,
-      registry: { removeSandbox },
+      registry: { getSandbox: () => null, removeSandbox },
       clearOnboardSession: () => {},
       registerExitHandler: (h) => exitHandlers.push(h),
     });
@@ -176,7 +209,7 @@ describe("installSandboxCancelRollback", () => {
 
     const rollback = installSandboxCancelRollback({
       runOpenshell,
-      registry: { removeSandbox },
+      registry: { getSandbox: () => null, removeSandbox },
       clearOnboardSession: () => {},
       registerExitHandler: (h) => exitHandlers.push(h),
     });
@@ -185,6 +218,129 @@ describe("installSandboxCancelRollback", () => {
 
     expect(runOpenshell).not.toHaveBeenCalled();
     expect(removeSandbox).not.toHaveBeenCalled();
+  });
+
+  it("deletes a pending create only after its exact identity and checkpoint are re-read", () => {
+    const entry = pendingSandboxEntry();
+    const getSandbox = vi.fn(() => entry);
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const removeSandbox = vi.fn();
+    const clearOnboardSession = vi.fn();
+    const inspectIdentity = vi.fn(() => SANDBOX_FINGERPRINT);
+    const exitHandlers: Array<() => void> = [];
+
+    const rollback = installSandboxCancelRollback({
+      runOpenshell,
+      registry: { getSandbox, removeSandbox },
+      clearOnboardSession,
+      inspectOpenShellSandboxIdentityFingerprint: inspectIdentity,
+      registerExitHandler: (handler) => exitHandlers.push(handler),
+    });
+    rollback.arm("new-sb");
+    rollback.markCancelled();
+    exitHandlers[0]();
+
+    expect(getSandbox).toHaveBeenCalledTimes(2);
+    expect(inspectIdentity).toHaveBeenCalledWith({
+      sandboxName: "new-sb",
+      gatewayName: "nemoclaw",
+    });
+    expect(runOpenshell).toHaveBeenCalledWith(["sandbox", "delete", "-g", "nemoclaw", "new-sb"], {
+      ignoreError: true,
+    });
+    expect(removeSandbox).toHaveBeenCalledWith("new-sb");
+    expect(clearOnboardSession).toHaveBeenCalledOnce();
+  });
+
+  it("preserves a pending create and its fingerprint when deletion is not confirmed", () => {
+    const entry = pendingSandboxEntry();
+    const runOpenshell = vi.fn(() => ({ status: 1 }));
+    const removeSandbox = vi.fn();
+    const clearOnboardSession = vi.fn();
+    const log = vi.fn();
+    const exitHandlers: Array<() => void> = [];
+
+    const rollback = installSandboxCancelRollback({
+      runOpenshell,
+      registry: { getSandbox: () => entry, removeSandbox },
+      clearOnboardSession,
+      inspectOpenShellSandboxIdentityFingerprint: () => SANDBOX_FINGERPRINT,
+      log,
+      registerExitHandler: (handler) => exitHandlers.push(handler),
+    });
+    rollback.arm("new-sb");
+    rollback.markCancelled();
+    exitHandlers[0]();
+
+    expect(runOpenshell).toHaveBeenCalledWith(["sandbox", "delete", "-g", "nemoclaw", "new-sb"], {
+      ignoreError: true,
+    });
+    expect(removeSandbox).not.toHaveBeenCalled();
+    expect(clearOnboardSession).not.toHaveBeenCalled();
+    const guidance = log.mock.calls.flat().join("\n");
+    expect(guidance).toContain(SANDBOX_FINGERPRINT);
+    expect(guidance).toContain("identity-bound recovery");
+    expect(guidance).not.toContain("openshell sandbox delete");
+  });
+
+  it.each([
+    ["does not match", () => "b".repeat(64)],
+    [
+      "cannot be inspected",
+      () => {
+        throw new Error("identity unavailable");
+      },
+    ],
+  ])("preserves a pending create when its exact identity %s", (_case, inspect) => {
+    const entry = pendingSandboxEntry();
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const removeSandbox = vi.fn();
+    const clearOnboardSession = vi.fn();
+    const log = vi.fn();
+    const exitHandlers: Array<() => void> = [];
+
+    const rollback = installSandboxCancelRollback({
+      runOpenshell,
+      registry: { getSandbox: () => entry, removeSandbox },
+      clearOnboardSession,
+      inspectOpenShellSandboxIdentityFingerprint: vi.fn(inspect),
+      log,
+      registerExitHandler: (handler) => exitHandlers.push(handler),
+    });
+    rollback.arm("new-sb");
+    rollback.markCancelled();
+    exitHandlers[0]();
+
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(removeSandbox).not.toHaveBeenCalled();
+    expect(clearOnboardSession).not.toHaveBeenCalled();
+    expect(log.mock.calls.flat().join("\n")).toContain("preserved incomplete sandbox 'new-sb'");
+  });
+
+  it("preserves a pending create when its durable checkpoint changes during inspection", () => {
+    const entry = pendingSandboxEntry();
+    const changed = pendingSandboxEntry({ policyVersion: 2 });
+    const getSandbox = vi.fn().mockReturnValueOnce(entry).mockReturnValueOnce(changed);
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const removeSandbox = vi.fn();
+    const clearOnboardSession = vi.fn();
+    const exitHandlers: Array<() => void> = [];
+
+    const rollback = installSandboxCancelRollback({
+      runOpenshell,
+      registry: { getSandbox, removeSandbox },
+      clearOnboardSession,
+      inspectOpenShellSandboxIdentityFingerprint: () => SANDBOX_FINGERPRINT,
+      registerExitHandler: (handler) => exitHandlers.push(handler),
+    });
+    rollback.arm("new-sb");
+    rollback.markCancelled();
+    exitHandlers[0]();
+
+    expect(getSandbox).toHaveBeenCalledTimes(2);
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(removeSandbox).not.toHaveBeenCalled();
+    expect(clearOnboardSession).not.toHaveBeenCalled();
   });
 });
 
@@ -211,9 +367,11 @@ describe("buildCancelRollbackMessage", () => {
     expect(lines.join("\n")).not.toContain("openshell sandbox delete");
   });
 
-  it("falls back to manual cleanup guidance when the delete failed", () => {
-    const lines = buildCancelRollbackMessage("sb", false);
-    expect(lines.join("\n")).toContain("unregistered incomplete sandbox 'sb'");
-    expect(lines.join("\n")).toContain('openshell sandbox delete "sb"');
+  it("preserves identity-bound recovery guidance when the delete failed", () => {
+    const lines = buildCancelRollbackMessage("sb", false, SANDBOX_FINGERPRINT);
+    expect(lines.join("\n")).toContain("preserved incomplete sandbox 'sb'");
+    expect(lines.join("\n")).toContain(SANDBOX_FINGERPRINT);
+    expect(lines.join("\n")).toContain("identity-bound recovery");
+    expect(lines.join("\n")).not.toContain("openshell sandbox delete");
   });
 });

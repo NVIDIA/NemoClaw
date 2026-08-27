@@ -13,6 +13,7 @@ vi.mock(".", () => ({
   getBaselineExclusionRuntimeStatus: vi.fn(() => "excluded"),
   getPresetEndpoints: vi.fn(),
   getGatewayPresets: vi.fn(() => null),
+  inspectPolicyMutationAuthority: vi.fn(() => ({ authority: "nemoclaw-managed" })),
   isAgentBasePreset: vi.fn(() => false),
   listCustomPresets: vi.fn(),
   listPresets: vi.fn(),
@@ -111,6 +112,10 @@ function resetMocks() {
   vi.mocked(policies.getPresetEndpoints).mockReset();
   vi.mocked(policies.getGatewayPresets).mockReset();
   vi.mocked(policies.getGatewayPresets).mockReturnValue(null);
+  vi.mocked(policies.inspectPolicyMutationAuthority).mockReset();
+  vi.mocked(policies.inspectPolicyMutationAuthority).mockReturnValue({
+    authority: "nemoclaw-managed",
+  } as ReturnType<typeof policies.inspectPolicyMutationAuthority>);
   vi.mocked(policies.isAgentBasePreset).mockReset();
   vi.mocked(policies.isAgentBasePreset).mockReturnValue(false);
   vi.mocked(registry.getBaselineExclusions).mockReset();
@@ -167,6 +172,9 @@ describe("buildPolicyContext", () => {
       policyTier: "balanced",
       policyAuthority: "externally-managed",
     });
+    vi.mocked(policies.inspectPolicyMutationAuthority).mockReturnValue({
+      authority: "externally-managed",
+    } as ReturnType<typeof policies.inspectPolicyMutationAuthority>);
     vi.mocked(registry.getBaselineExclusions).mockReturnValue([
       {
         version: 1,
@@ -228,6 +236,48 @@ describe("buildPolicyContext", () => {
       "- preview a baseline exclusion: `Run `nemoclaw alpha policy exclude <key> --dry-run`",
     );
     expect(markdown).not.toMatch(/nemoclaw alpha policy (?:add|remove|restore)(?:\s|`)/u);
+  });
+
+  it("does not advertise mutation commands when policy ownership is unknown (#9833)", () => {
+    resetMocks();
+    mockBuiltinPresets();
+    stubTier();
+    stubRegistry({ policies: ["slack"], policyTier: "balanced" });
+    vi.mocked(policies.inspectPolicyMutationAuthority).mockImplementation(() => {
+      throw new Error("receipt unavailable");
+    });
+
+    const context = buildPolicyContext(SANDBOX);
+
+    expect(context.tier).toBeNull();
+    expect(context.approvalPath.add).not.toContain("policy add");
+    expect(context.approvalPath.remove).not.toContain("policy remove");
+    expect(context.approvalPath.excludeBaseline).not.toContain("policy exclude");
+    expect(context.approvalPath.restoreBaseline).not.toContain("policy restore");
+    expect(context.supportBoundaries).toContainEqual({
+      capability: "policy and Shields mutation",
+      owner: "unknown",
+      note: "NemoClaw refuses policy and Shields changes until it verifies policy ownership",
+    });
+  });
+
+  it("does not inspect live policy authority when gateway probes are disabled (#9833)", () => {
+    resetMocks();
+    mockBuiltinPresets();
+    stubTier();
+    stubRegistry({ policies: ["slack"], policyTier: "balanced" });
+
+    const context = buildPolicyContext(SANDBOX, { skipGatewayProbe: true });
+
+    expect(policies.inspectPolicyMutationAuthority).not.toHaveBeenCalled();
+    expect(policies.getGatewayPresets).not.toHaveBeenCalled();
+    expect(context.tier).toBeNull();
+    expect(context.approvalPath.add).not.toContain("policy add");
+    expect(context.supportBoundaries).toContainEqual({
+      capability: "policy and Shields mutation",
+      owner: "unknown",
+      note: "NemoClaw refuses policy and Shields changes until it verifies policy ownership",
+    });
   });
 
   it("marks active presets as `verified` when the gateway agrees and `registry-only` when it disagrees", () => {
