@@ -32,6 +32,9 @@ const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
 const DIAGNOSTIC_CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]+/gu;
 const IMAGE_PULL_TIMEOUT_MS = 30 * 60_000;
 const IMAGE_PULL_DIAGNOSTIC_LIMIT = 240;
+const REGISTRY_MUTATION_TIMEOUT_MS = 30_000;
+const REGISTRY_STOP_GRACE_SECONDS = 10;
+const REGISTRY_AT_REST_STATES = new Set(["configured", "created", "dead", "exited", "stopped"]);
 type PortablePodmanResult = ReturnType<
   ReturnType<typeof createHermesPortablePodmanOperationEngines>["hostLocalInference"]["capture"]
 >;
@@ -143,14 +146,26 @@ function parseExactInspection(output: string, label: string): Record<string, unk
   return requireRecord(parsed[0], label);
 }
 
-function inspectPortableNetworkSnapshot(
-  engine: ReturnType<typeof createHermesPortablePodmanOperationEngines>["hostLocalInference"],
-): {
-  readonly networkId: string;
+type PortableInferenceEngine = ReturnType<
+  typeof createHermesPortablePodmanOperationEngines
+>["hostLocalInference"];
+
+interface PortableNetworkShape {
+  readonly id: string;
   readonly gatewayIp: string;
-  readonly authoritySha256: string;
   readonly canonical: object;
-} {
+}
+
+interface PortableRegistryShape {
+  readonly runtimeId: string;
+  readonly running: boolean;
+  readonly status: string;
+  readonly labels: Readonly<Record<string, string>>;
+  readonly networkId: string;
+  readonly ipAddress: string;
+}
+
+function inspectPortableNetworkShape(engine: PortableInferenceEngine): PortableNetworkShape {
   const result = engine.capture(["network", "inspect", PORTABLE_DOCKER_NETWORK_NAME], 30_000);
   if (result.error || result.status !== 0) {
     throw new Error("Hermes Portable inference could not inspect its Podman network authority.");
@@ -179,7 +194,34 @@ function inspectPortableNetworkSnapshot(
   ) {
     throw new Error("Hermes Portable inference network authority changed after host preparation.");
   }
-  const registryResult = engine.capture(["container", "inspect", REGISTRY_CONTAINER], 30_000);
+  return Object.freeze({
+    id,
+    gatewayIp: subnet.gateway,
+    canonical: Object.freeze({
+      id,
+      name,
+      driver: "bridge",
+      internal: false,
+      ipv6Enabled: false,
+      dnsEnabled: network.dns_enabled,
+      networkInterface: network.network_interface,
+      subnet: Object.freeze({ subnet: PORTABLE_DOCKER_NETWORK_SUBNET, gateway: subnet.gateway }),
+      labels: sortedStringRecord(network.labels, "Hermes Portable inference network labels"),
+      ipamOptions: sortedStringRecord(
+        network.ipam_options,
+        "Hermes Portable inference network IPAM options",
+      ),
+      options: sortedStringRecord(network.options, "Hermes Portable inference network options"),
+      listenerIp: PORTABLE_HOST_GATEWAY_IP,
+    }),
+  });
+}
+
+function inspectPortableRegistryShape(
+  engine: PortableInferenceEngine,
+  reference: string,
+): PortableRegistryShape {
+  const registryResult = engine.capture(["container", "inspect", reference], 30_000);
   if (registryResult.error || registryResult.status !== 0) {
     throw new Error("Hermes Portable inference could not inspect its registry authority.");
   }
@@ -203,58 +245,241 @@ function inspectPortableNetworkSnapshot(
       ? requireRecord(attachments[0][1], "Hermes Portable inference registry attachment")
       : null;
   const labels = sortedStringRecord(config.Labels, "Hermes Portable inference registry labels");
+  const running = state.Running;
+  const status = state.Status;
+  const normalizedStatus = running === true ? "running" : typeof status === "string" ? status : "";
   if (
     typeof registry.Id !== "string" ||
     !NETWORK_ID.test(registry.Id) ||
     registry.Name !== REGISTRY_CONTAINER ||
-    state.Running !== true ||
+    typeof running !== "boolean" ||
+    (running === false && !REGISTRY_AT_REST_STATES.has(normalizedStatus)) ||
     labels[PORTABLE_MANAGED_LABEL] !== "1" ||
     !attachment ||
-    attachment.NetworkID !== id ||
-    attachment.IPAddress !== PORTABLE_REGISTRY_IP
+    typeof attachment.NetworkID !== "string" ||
+    typeof attachment.IPAddress !== "string"
   ) {
     throw new Error("Hermes Portable inference registry authority changed after host preparation.");
   }
-  const canonical = Object.freeze({
-    network: Object.freeze({
-      id,
-      name,
-      driver: "bridge",
-      internal: false,
-      ipv6Enabled: false,
-      dnsEnabled: network.dns_enabled,
-      networkInterface: network.network_interface,
-      subnet: Object.freeze({ subnet: PORTABLE_DOCKER_NETWORK_SUBNET, gateway: subnet.gateway }),
-      labels: sortedStringRecord(network.labels, "Hermes Portable inference network labels"),
-      ipamOptions: sortedStringRecord(
-        network.ipam_options,
-        "Hermes Portable inference network IPAM options",
-      ),
-      options: sortedStringRecord(network.options, "Hermes Portable inference network options"),
-      listenerIp: PORTABLE_HOST_GATEWAY_IP,
-    }),
+  return Object.freeze({
+    runtimeId: registry.Id,
+    running,
+    status: normalizedStatus,
+    labels,
+    networkId: attachment.NetworkID,
+    ipAddress: attachment.IPAddress,
+  });
+}
+
+function canonicalPortableNetworkAuthority(
+  network: PortableNetworkShape,
+  registry: PortableRegistryShape,
+): object {
+  return Object.freeze({
+    network: network.canonical,
     registry: Object.freeze({
-      runtimeId: registry.Id,
+      runtimeId: registry.runtimeId,
       name: REGISTRY_CONTAINER,
       running: true,
-      labels,
-      networkId: id,
+      labels: registry.labels,
+      networkId: network.id,
       networkName: PORTABLE_DOCKER_NETWORK_NAME,
       ipAddress: PORTABLE_REGISTRY_IP,
     }),
   });
+}
+
+function requirePortableRegistryNetwork(
+  network: PortableNetworkShape,
+  registry: PortableRegistryShape,
+): void {
+  if (
+    registry.networkId !== network.id ||
+    (registry.ipAddress !== PORTABLE_REGISTRY_IP && registry.ipAddress !== "")
+  ) {
+    throw new Error("Hermes Portable inference registry authority changed after host preparation.");
+  }
+}
+
+function inspectPortableNetworkSnapshot(
+  engine: ReturnType<typeof createHermesPortablePodmanOperationEngines>["hostLocalInference"],
+  registryReference = REGISTRY_CONTAINER,
+): {
+  readonly networkId: string;
+  readonly gatewayIp: string;
+  readonly authoritySha256: string;
+  readonly canonical: object;
+} {
+  const network = inspectPortableNetworkShape(engine);
+  const registry = inspectPortableRegistryShape(engine, registryReference);
+  requirePortableRegistryNetwork(network, registry);
+  if (!registry.running || registry.ipAddress !== PORTABLE_REGISTRY_IP) {
+    throw new Error("Hermes Portable inference registry authority changed after host preparation.");
+  }
+  const canonical = canonicalPortableNetworkAuthority(network, registry);
   return Object.freeze({
-    networkId: id,
-    gatewayIp: subnet.gateway,
+    networkId: network.id,
+    gatewayIp: network.gatewayIp,
     authoritySha256: digest(canonical),
     canonical,
   });
 }
 
-export function capturePortableNetworkAuthority(
-  engine: ReturnType<typeof createHermesPortablePodmanOperationEngines>["hostLocalInference"],
+export interface PreparedPortableRegistryRecovery {
+  readonly started: boolean;
+  readonly assertCurrent: () => void;
+  readonly rollback: () => void;
+  readonly release: () => void;
+}
+
+function inspectExactStoppedRegistry(
+  engine: PortableInferenceEngine,
+  expectedNetwork: PortableNetworkShape,
+  runtimeId: string,
+  expectedAuthoritySha256: string,
+): PortableRegistryShape {
+  const network = inspectPortableNetworkShape(engine);
+  if (!isDeepStrictEqual(network, expectedNetwork)) {
+    throw new Error("Hermes Portable inference registry recovery network authority changed.");
+  }
+  const current = inspectPortableRegistryShape(engine, runtimeId);
+  requirePortableRegistryNetwork(network, current);
+  if (
+    current.runtimeId !== runtimeId ||
+    current.running ||
+    digest(canonicalPortableNetworkAuthority(network, current)) !== expectedAuthoritySha256
+  ) {
+    throw new Error("Hermes Portable inference registry recovery authority changed.");
+  }
+  return current;
+}
+
+function inspectPinnedRegistryRunning(engine: PortableInferenceEngine, runtimeId: string): boolean {
+  const result = engine.capture(["container", "inspect", runtimeId], 30_000);
+  if (result.error || result.status !== 0) {
+    throw new Error("Hermes Portable inference could not reinspect its pinned registry runtime.");
+  }
+  const registry = parseExactInspection(result.stdout, "Hermes Portable inference registry");
+  const state = requireRecord(registry.State, "Hermes Portable inference registry state");
+  if (registry.Id !== runtimeId || typeof state.Running !== "boolean") {
+    throw new Error("Hermes Portable inference pinned registry identity changed.");
+  }
+  return state.Running;
+}
+
+/** Start only the exact stopped registry whose prospective authority matches the published receipt. */
+export function preparePortableRegistryRecovery(
+  engine: PortableInferenceEngine,
+  expectedAuthoritySha256: string,
+  assertEngineCurrent: () => void,
+  assertCallerCurrent: () => void,
+): PreparedPortableRegistryRecovery {
+  if (!NETWORK_ID.test(expectedAuthoritySha256)) {
+    throw new Error("Hermes Portable inference registry recovery digest is malformed.");
+  }
+  const assertRecoveryCurrent = () => {
+    assertCallerCurrent();
+    assertEngineCurrent();
+  };
+  assertRecoveryCurrent();
+  const network = inspectPortableNetworkShape(engine);
+  const candidate = inspectPortableRegistryShape(engine, REGISTRY_CONTAINER);
+  requirePortableRegistryNetwork(network, candidate);
+  const prospectiveSha256 = digest(canonicalPortableNetworkAuthority(network, candidate));
+  if (prospectiveSha256 !== expectedAuthoritySha256) {
+    throw new Error("Hermes Portable inference registry recovery authority differs from receipt.");
+  }
+  if (candidate.running) {
+    const authority = capturePortableNetworkAuthority(engine);
+    if (authority.authoritySha256 !== expectedAuthoritySha256) {
+      throw new Error("Hermes Portable inference running registry authority differs from receipt.");
+    }
+    let released = false;
+    const assertCurrent = () => {
+      if (released) throw new Error("Hermes Portable inference registry recovery was released.");
+      assertRecoveryCurrent();
+      authority.assertCurrent();
+    };
+    return Object.freeze({
+      started: false,
+      assertCurrent,
+      rollback: assertCurrent,
+      release: () => {
+        released = true;
+      },
+    });
+  }
+  const runtimeId = candidate.runtimeId;
+  inspectExactStoppedRegistry(engine, network, runtimeId, expectedAuthoritySha256);
+  assertRecoveryCurrent();
+  const started = engine.capture(["start", runtimeId], REGISTRY_MUTATION_TIMEOUT_MS);
+  let authority: ReturnType<typeof capturePortableNetworkAuthorityForReference>;
+  try {
+    authority = capturePortableNetworkAuthorityForReference(engine, runtimeId);
+    if (
+      started.error ||
+      started.status !== 0 ||
+      authority.authoritySha256 !== expectedAuthoritySha256
+    ) {
+      throw new Error("registry start was not acknowledged");
+    }
+  } catch {
+    try {
+      if (inspectPinnedRegistryRunning(engine, runtimeId)) {
+        const stopped = engine.capture(
+          ["stop", "--time", String(REGISTRY_STOP_GRACE_SECONDS), runtimeId],
+          REGISTRY_MUTATION_TIMEOUT_MS,
+        );
+        if (stopped.error || stopped.status !== 0) {
+          throw new Error("registry stop was not acknowledged");
+        }
+      }
+      inspectExactStoppedRegistry(engine, network, runtimeId, expectedAuthoritySha256);
+      assertEngineCurrent();
+    } catch {
+      throw new Error(
+        "Hermes Portable inference registry start failed and exact stopped-state restoration was not proved.",
+      );
+    }
+    throw new Error("Hermes Portable inference could not start its exact registry authority.");
+  }
+  let released = false;
+  const assertCurrent = () => {
+    if (released) throw new Error("Hermes Portable inference registry recovery was released.");
+    assertRecoveryCurrent();
+    authority.assertCurrent();
+  };
+  const rollback = () => {
+    if (released) throw new Error("Hermes Portable inference registry recovery was released.");
+    assertEngineCurrent();
+    if (inspectPinnedRegistryRunning(engine, runtimeId)) {
+      const stopped = engine.capture(
+        ["stop", "--time", String(REGISTRY_STOP_GRACE_SECONDS), runtimeId],
+        REGISTRY_MUTATION_TIMEOUT_MS,
+      );
+      if (stopped.error || stopped.status !== 0) {
+        throw new Error("Hermes Portable inference could not restore its exact stopped registry.");
+      }
+    }
+    inspectExactStoppedRegistry(engine, network, runtimeId, expectedAuthoritySha256);
+    assertEngineCurrent();
+    released = true;
+  };
+  return Object.freeze({
+    started: true,
+    assertCurrent,
+    rollback,
+    release: () => {
+      released = true;
+    },
+  });
+}
+
+function capturePortableNetworkAuthorityForReference(
+  engine: PortableInferenceEngine,
+  registryReference: string,
 ) {
-  const captured = inspectPortableNetworkSnapshot(engine);
+  const captured = inspectPortableNetworkSnapshot(engine, registryReference);
   return Object.freeze({
     networkId: captured.networkId,
     name: PORTABLE_DOCKER_NETWORK_NAME,
@@ -263,7 +488,7 @@ export function capturePortableNetworkAuthority(
     listenerIp: PORTABLE_HOST_GATEWAY_IP,
     authoritySha256: captured.authoritySha256,
     assertCurrent() {
-      const refreshed = inspectPortableNetworkSnapshot(engine);
+      const refreshed = inspectPortableNetworkSnapshot(engine, registryReference);
       if (
         refreshed.authoritySha256 !== captured.authoritySha256 ||
         !isDeepStrictEqual(refreshed.canonical, captured.canonical)
@@ -272,6 +497,12 @@ export function capturePortableNetworkAuthority(
       }
     },
   });
+}
+
+export function capturePortableNetworkAuthority(
+  engine: ReturnType<typeof createHermesPortablePodmanOperationEngines>["hostLocalInference"],
+) {
+  return capturePortableNetworkAuthorityForReference(engine, REGISTRY_CONTAINER);
 }
 
 function throwImagePullFailure(

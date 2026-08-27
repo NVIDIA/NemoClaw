@@ -61,7 +61,7 @@ function publishedReceipt(): HostLocalInferenceReceipt {
   });
 }
 
-function createHarness(initiallyRunning = false) {
+function createHarness(initiallyRunning = false, registryInitiallyRunning = false) {
   const receipt = publishedReceipt();
   const serializedReceipt = serializeHostLocalInferenceReceipt(receipt);
   const entry = {
@@ -78,6 +78,7 @@ function createHarness(initiallyRunning = false) {
   } as SandboxEntry;
   const events: string[] = [];
   let running = initiallyRunning;
+  let registryRunning = registryInitiallyRunning;
   let publicationState: "unpublished" | "published" = "unpublished";
   const writeExact = vi.fn((value: string) => value);
   const runtime = {
@@ -170,6 +171,23 @@ function createHarness(initiallyRunning = false) {
       },
       assertCurrent: assertPublished,
     })),
+    prepareRegistryRecovery: vi.fn(() => {
+      const started = !registryRunning;
+      started ? events.push("registry-start") : undefined;
+      registryRunning = started ? true : registryRunning;
+      return {
+        started,
+        assertCurrent: vi.fn(() => {
+          events.push("registry-current");
+          expect(registryRunning).toBe(true);
+        }),
+        rollback: vi.fn(() => {
+          events.push("registry-rollback");
+          registryRunning = started ? false : registryRunning;
+        }),
+        release: vi.fn(() => events.push("registry-release")),
+      };
+    }),
     prepareStartup,
   };
   const input = {
@@ -192,6 +210,7 @@ function createHarness(initiallyRunning = false) {
     prepared,
     prepareStartup,
     receipt,
+    registryRunning: () => registryRunning,
     runtime,
     running: () => running,
     writeExact,
@@ -208,6 +227,9 @@ describe("Hermes Portable Ollama inference recovery", () => {
 
     expect(harness.prepareStartup).toHaveBeenCalledOnce();
     expect(harness.running()).toBe(true);
+    expect(harness.registryRunning()).toBe(true);
+    expect(harness.events[0]).toBe("operating");
+    expect(harness.events.indexOf("registry-start")).toBeLessThan(harness.events.indexOf("resume"));
     expect(harness.events.indexOf("route")).toBeGreaterThan(
       harness.events.indexOf("prepared-validate"),
     );
@@ -215,10 +237,11 @@ describe("Hermes Portable Ollama inference recovery", () => {
     expect(harness.prepared.commit).not.toHaveBeenCalled();
     expect(harness.prepared.rollback).not.toHaveBeenCalled();
     expect(harness.writeExact).not.toHaveBeenCalled();
+    expect(harness.events.at(-1)).toBe("registry-release");
   });
 
   it("validates an already running runtime without invoking resume", () => {
-    const harness = createHarness(true);
+    const harness = createHarness(true, true);
 
     expect(recoverHermesPortableOllamaInference(harness.input, harness.overrides as never)).toBe(
       "reused",
@@ -227,6 +250,22 @@ describe("Hermes Portable Ollama inference recovery", () => {
     expect(harness.runtime.preserveForRebuild).toHaveBeenCalledOnce();
     expect(harness.prepareStartup).not.toHaveBeenCalled();
     expect(harness.events).toContain("route");
+    expect(harness.events).not.toContain("registry-start");
+    expect(harness.events.at(-1)).toBe("registry-release");
+  });
+
+  it("reconciles a stopped registry before validating an already running runtime", () => {
+    const harness = createHarness(true);
+
+    expect(recoverHermesPortableOllamaInference(harness.input, harness.overrides as never)).toBe(
+      "reused",
+    );
+
+    expect(harness.events).toContain("registry-start");
+    expect(harness.runtime.preserveForRebuild).toHaveBeenCalledOnce();
+    expect(harness.prepareStartup).not.toHaveBeenCalled();
+    expect(harness.registryRunning()).toBe(true);
+    expect(harness.events.at(-1)).toBe("registry-release");
   });
 
   it("restores the exact stopped state when final route verification fails", () => {
@@ -242,6 +281,10 @@ describe("Hermes Portable Ollama inference recovery", () => {
     expect(harness.prepared.rollback).toHaveBeenCalledOnce();
     expect(harness.prepared.commit).not.toHaveBeenCalled();
     expect(harness.running()).toBe(false);
+    expect(harness.registryRunning()).toBe(false);
+    expect(harness.events.indexOf("rollback")).toBeLessThan(
+      harness.events.indexOf("registry-rollback"),
+    );
   });
 
   it("restores the exact stopped state when provider revalidation fails", () => {
@@ -257,6 +300,10 @@ describe("Hermes Portable Ollama inference recovery", () => {
     expect(harness.prepared.rollback).toHaveBeenCalledOnce();
     expect(harness.input.verifyRoute).not.toHaveBeenCalled();
     expect(harness.running()).toBe(false);
+    expect(harness.registryRunning()).toBe(false);
+    expect(harness.events.indexOf("rollback")).toBeLessThan(
+      harness.events.indexOf("registry-rollback"),
+    );
   });
 
   it("restores the exact stopped state when final published authority changes", () => {
@@ -288,6 +335,7 @@ describe("Hermes Portable Ollama inference recovery", () => {
     expect(harness.prepared.rollback).toHaveBeenCalledOnce();
     expect(harness.writeExact).not.toHaveBeenCalled();
     expect(harness.running()).toBe(false);
+    expect(harness.registryRunning()).toBe(false);
   });
 
   it("rejects Ollama registry provenance before runtime mutation", () => {
@@ -308,6 +356,8 @@ describe("Hermes Portable Ollama inference recovery", () => {
 
     expect(harness.prepareStartup).not.toHaveBeenCalled();
     expect(harness.running()).toBe(false);
+    expect(harness.registryRunning()).toBe(false);
+    expect(harness.events).not.toContain("registry-start");
   });
 
   it("is idempotent across a recovered probe and a second probe", () => {
@@ -322,6 +372,8 @@ describe("Hermes Portable Ollama inference recovery", () => {
 
     expect(harness.prepareStartup).toHaveBeenCalledOnce();
     expect(harness.runtime.preserveForRebuild).toHaveBeenCalledOnce();
+    expect(harness.events.filter((event) => event === "registry-start")).toHaveLength(1);
+    expect(harness.events.filter((event) => event === "registry-release")).toHaveLength(2);
   });
 
   it("rejects registry drift before a runtime resume", () => {
@@ -334,5 +386,35 @@ describe("Hermes Portable Ollama inference recovery", () => {
 
     expect(harness.prepareStartup).not.toHaveBeenCalled();
     expect(harness.running()).toBe(false);
+  });
+
+  it("restores a started registry when runtime reconstruction fails before Ollama mutation", () => {
+    const harness = createHarness();
+    harness.overrides.createRuntimeAuthority.mockImplementation(() => {
+      throw new Error("runtime authority unavailable");
+    });
+
+    expect(() =>
+      recoverHermesPortableOllamaInference(harness.input, harness.overrides as never),
+    ).toThrow("runtime authority unavailable");
+
+    expect(harness.prepareStartup).not.toHaveBeenCalled();
+    expect(harness.registryRunning()).toBe(false);
+    expect(harness.events).toContain("registry-rollback");
+  });
+
+  it("rejects direct launch intent before registry or runtime mutation", () => {
+    const harness = createHarness();
+
+    expect(() =>
+      recoverHermesPortableOllamaInference(
+        { ...harness.input, intent: "launch" } as never,
+        harness.overrides as never,
+      ),
+    ).toThrow("restricted to connect --probe-only");
+
+    expect(harness.overrides.prepareRegistryRecovery).not.toHaveBeenCalled();
+    expect(harness.prepareStartup).not.toHaveBeenCalled();
+    expect(harness.registryRunning()).toBe(false);
   });
 });

@@ -15,6 +15,7 @@ import {
   parseHostLocalInferenceReceipt,
   serializeHostLocalInferenceReceipt,
   type HostLocalInferencePreparedStartup,
+  type HostLocalInferenceProofEndpointAuthority,
   type HostLocalInferenceReceipt,
   type HostLocalInferenceReceiptWriter,
   type HostLocalInferenceRouteAuthorityStore,
@@ -58,8 +59,10 @@ import {
   captureCurrentGpuDevices,
   capturePortableNetworkAuthority,
   captureQualifiedGpuDevices,
+  preparePortableRegistryRecovery,
   PORTABLE_OLLAMA_IMAGE,
   PORTABLE_PROBE_IMAGE,
+  type PreparedPortableRegistryRecovery,
   withRetainedImageAcquisition,
 } from "./hermes-portable-ollama-authority";
 import {
@@ -135,6 +138,45 @@ export interface HermesPortableOllamaRuntimeAuthority {
   readonly inferenceStateDir: string;
   readonly network: ReturnType<typeof capturePortableNetworkAuthority>;
   readonly assertCurrent: () => void;
+}
+
+function prepareHermesPortableOllamaRegistryRecovery(options: {
+  readonly receipt: HermesPortableConfiguredReceipt;
+  readonly inferenceReceipt: HostLocalInferenceReceipt;
+  readonly env: NodeJS.ProcessEnv;
+  readonly assertCallerCurrent: () => void;
+}): PreparedPortableRegistryRecovery {
+  if (!("networkId" in options.inferenceReceipt.endpoint)) {
+    failRecovery("published Ollama network authority is missing");
+  }
+  const sourceEnv = {
+    ...options.env,
+    ...buildHermesPortablePodmanEnvironment(options.receipt.runtimeAuthority, options.env),
+  };
+  const engines = createHermesPortablePodmanOperationEngines(
+    options.receipt.podmanExecutableAuthority,
+    options.receipt.socketAuthority,
+    options.receipt.runtimeAuthority,
+    sourceEnv,
+  );
+  const captureGpuDevices = () =>
+    captureQualifiedGpuDevices(captureCurrentGpuDevices, captureCurrentCdiDevices);
+  const qualification = Object.freeze({
+    expectedVersion: HERMES_PORTABLE_PODMAN_VERSION,
+    captureCurrentCdiDevices: () => captureGpuDevices(),
+    assertCurrentAuthority: engines.assertCurrent,
+  });
+  const authority = qualifyPodmanInferenceAuthority(engines.hostLocalInference, qualification);
+  const assertEngineCurrent = (): void => {
+    engines.assertCurrent();
+    revalidatePodmanInferenceAuthority(engines.hostLocalInference, authority, qualification);
+  };
+  return preparePortableRegistryRecovery(
+    engines.hostLocalInference,
+    options.inferenceReceipt.endpoint.networkAuthoritySha256,
+    assertEngineCurrent,
+    options.assertCallerCurrent,
+  );
 }
 
 /** Reconstruct the exact schema-5 Podman inference owner without acquiring images. */
@@ -226,6 +268,7 @@ interface HermesPortableOllamaRecoveryDeps {
   readonly prepareInferenceAuthority: typeof prepareSandboxHostLocalInferenceDestroyAuthority;
   readonly requireOperation: typeof requireRuntimeProviderHostLocalInferenceOperation;
   readonly preparePublishedAuthority: typeof prepareHermesPortableOllamaPublishedInferenceAuthority;
+  readonly prepareRegistryRecovery: typeof prepareHermesPortableOllamaRegistryRecovery;
   readonly prepareStartup: typeof prepareHostLocalInferenceStartup;
 }
 
@@ -236,6 +279,7 @@ const DEFAULT_RECOVERY_DEPS: HermesPortableOllamaRecoveryDeps = Object.freeze({
   prepareInferenceAuthority: prepareSandboxHostLocalInferenceDestroyAuthority,
   requireOperation: requireRuntimeProviderHostLocalInferenceOperation,
   preparePublishedAuthority: prepareHermesPortableOllamaPublishedInferenceAuthority,
+  prepareRegistryRecovery: prepareHermesPortableOllamaRegistryRecovery,
   prepareStartup: prepareHostLocalInferenceStartup,
 });
 
@@ -251,21 +295,29 @@ function requireExactRecoveryReceipt(
   if (serializeHostLocalInferenceReceipt(value) !== expected) failRecovery(message);
 }
 
+type PublishedOllamaRecoveryReceipt = HostLocalInferenceReceipt & {
+  readonly service: "ollama";
+  readonly endpoint: HostLocalInferenceProofEndpointAuthority & {
+    readonly networkListenerIp: string;
+  };
+  readonly inference: NonNullable<HostLocalInferenceReceipt["inference"]>;
+  readonly publication: NonNullable<HostLocalInferenceReceipt["publication"]>;
+  readonly runtime: Extract<
+    HostLocalInferenceReceipt["runtime"],
+    { readonly kind: "container" }
+  > & {
+    readonly gpu: Extract<
+      Extract<HostLocalInferenceReceipt["runtime"], { readonly kind: "container" }>["gpu"],
+      { readonly devices: readonly string[] }
+    >;
+  };
+};
+
 function createPublishedResumeRequest(
   receipt: HostLocalInferenceReceipt,
   receiptWriter: HostLocalInferenceReceiptWriter,
 ): HostLocalInferenceStartupRequest {
-  if (
-    receipt.service !== "ollama" ||
-    receipt.runtime.kind !== "container" ||
-    !("devices" in receipt.runtime.gpu) ||
-    receipt.inference === undefined ||
-    receipt.publication === undefined ||
-    !("networkId" in receipt.endpoint) ||
-    typeof receipt.endpoint.networkListenerIp !== "string"
-  ) {
-    failRecovery("published Ollama receipt authority is missing or incomplete");
-  }
+  requirePublishedOllamaRecoveryReceipt(receipt);
   return Object.freeze({
     application: "hermes" as const,
     service: "ollama" as const,
@@ -277,8 +329,8 @@ function createPublishedResumeRequest(
       gpuDevices: Object.freeze([...receipt.runtime.gpu.devices]),
       environment: Object.freeze([]),
       ollamaContextLength: 64_000,
-      model: receipt.inference.model,
-      requireToolCalling: receipt.inference.toolCallingRequired,
+      model: receipt.inference!.model,
+      requireToolCalling: receipt.inference!.toolCallingRequired,
       networkName: receipt.endpoint.networkName,
       networkId: receipt.endpoint.networkId,
       networkGatewayIp: receipt.endpoint.networkGatewayIp,
@@ -289,6 +341,22 @@ function createPublishedResumeRequest(
     resumeReceipt: receipt,
     receiptWriter,
   });
+}
+
+function requirePublishedOllamaRecoveryReceipt(
+  receipt: HostLocalInferenceReceipt,
+): asserts receipt is PublishedOllamaRecoveryReceipt {
+  if (
+    receipt.service !== "ollama" ||
+    receipt.runtime.kind !== "container" ||
+    !("devices" in receipt.runtime.gpu) ||
+    receipt.inference === undefined ||
+    receipt.publication === undefined ||
+    !("networkId" in receipt.endpoint) ||
+    typeof receipt.endpoint.networkListenerIp !== "string"
+  ) {
+    failRecovery("published Ollama receipt authority is missing or incomplete");
+  }
 }
 
 function inferenceLifecycleRow(
@@ -356,129 +424,172 @@ export function recoverHermesPortableOllamaInference(
   if (typeof serializedRegistryReceipt !== "string") {
     failRecovery("sandbox registry host-local inference receipt is missing");
   }
-  const runtimeAuthority = deps.createRuntimeAuthority({
-    receipt: operating.receipt,
-    stateDir,
-    env,
-  });
-  runtimeAuthority.assertCurrent();
-  const providerEntry = inferenceLifecycleRow(input.entry, runtimeAuthority.bundle.identity.id);
-  const preparedAuthority = deps.prepareInferenceAuthority(runtimeAuthority.bundle, providerEntry, {
-    environment: env,
-  });
-  if (!preparedAuthority || preparedAuthority.serializedReceipt !== serializedRegistryReceipt) {
-    failRecovery("published host-local inference authority is missing");
-  }
   const receipt = parseHostLocalInferenceReceipt(serializedRegistryReceipt);
-  const operation = deps.requireOperation(runtimeAuthority.bundle, "ollama", {
-    env,
-    acceleration: "nvidia-gpu",
-  });
-  const runtime = operation.managedRuntime;
-  if (!runtime || !runtime.resumeManaged) {
-    failRecovery("runtime provider does not support published managed inference resume");
-  }
-  const published = deps.preparePublishedAuthority({
-    directory: runtimeAuthority.inferenceStateDir,
-    sandboxName: input.sandboxName,
-    credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
-    runGatewayOpenshell: input.runGatewayOpenshell,
-  });
-  if (published.serializedReceipt !== serializedRegistryReceipt) {
-    failRecovery("private and registry inference receipts disagree");
-  }
-
-  const requireCurrent = (): void => {
+  requirePublishedOllamaRecoveryReceipt(receipt);
+  const providerEntry = inferenceLifecycleRow(input.entry, receipt.providerId);
+  const assertCallerCurrent = (): void => {
     operating.assertCurrent();
-    runtimeAuthority.assertCurrent();
-    published.assertCurrent();
-    const currentEntry = input.readRegistry(input.sandboxName);
-    if (!currentEntry || !isDeepStrictEqual(currentEntry, input.entry)) {
+    if (!isDeepStrictEqual(input.readRegistry(input.sandboxName), input.entry)) {
       failRecovery("sandbox registry authority changed during recovery");
     }
-    const currentPrepared = deps.prepareInferenceAuthority(
+  };
+  const registryRecovery = deps.prepareRegistryRecovery({
+    receipt: operating.receipt,
+    inferenceReceipt: receipt,
+    env,
+    assertCallerCurrent,
+  });
+  let ollamaStateRestored = true;
+  try {
+    const runtimeAuthority = deps.createRuntimeAuthority({
+      receipt: operating.receipt,
+      stateDir,
+      env,
+    });
+    runtimeAuthority.assertCurrent();
+    if (runtimeAuthority.bundle.identity.id !== receipt.providerId) {
+      failRecovery("published runtime provider authority changed");
+    }
+    const preparedAuthority = deps.prepareInferenceAuthority(
       runtimeAuthority.bundle,
-      inferenceLifecycleRow(currentEntry, runtimeAuthority.bundle.identity.id),
+      providerEntry,
       { environment: env },
     );
-    if (
-      !currentPrepared ||
-      currentPrepared.serializedReceipt !== preparedAuthority.serializedReceipt ||
-      currentPrepared.sandboxAuthoritySha256 !== preparedAuthority.sandboxAuthoritySha256
-    ) {
-      failRecovery("host-local inference authority changed during recovery");
+    if (!preparedAuthority || preparedAuthority.serializedReceipt !== serializedRegistryReceipt) {
+      failRecovery("published host-local inference authority is missing");
     }
-  };
-  const verifyFinalRoute = (): void => {
-    const verified = input.verifyRoute();
-    if (!isDeepStrictEqual(verified, input.entry)) {
-      failRecovery("final route verification returned different registry authority");
+    const operation = deps.requireOperation(runtimeAuthority.bundle, "ollama", {
+      env,
+      acceleration: "nvidia-gpu",
+    });
+    const runtime = operation.managedRuntime;
+    if (!runtime || !runtime.resumeManaged) {
+      failRecovery("runtime provider does not support published managed inference resume");
     }
-  };
+    const published = deps.preparePublishedAuthority({
+      directory: runtimeAuthority.inferenceStateDir,
+      sandboxName: input.sandboxName,
+      credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
+      runGatewayOpenshell: input.runGatewayOpenshell,
+    });
+    if (published.serializedReceipt !== serializedRegistryReceipt) {
+      failRecovery("private and registry inference receipts disagree");
+    }
 
-  const inspected = runtime.inspectManaged(receipt);
-  requireExactRecoveryReceipt(
-    serializedRegistryReceipt,
-    inspected.receipt,
-    "runtime inspection changed receipt",
-  );
-  if (inspected.running) {
-    requireExactRecoveryReceipt(
-      serializedRegistryReceipt,
-      runtime.preserveForRebuild(receipt),
-      "running runtime validation changed receipt",
-    );
-    requireCurrent();
-    verifyFinalRoute();
-    requireCurrent();
-    return "reused";
-  }
+    const requireCurrent = (): void => {
+      registryRecovery.assertCurrent();
+      operating.assertCurrent();
+      runtimeAuthority.assertCurrent();
+      published.assertCurrent();
+      const currentEntry = input.readRegistry(input.sandboxName);
+      if (!currentEntry || !isDeepStrictEqual(currentEntry, input.entry)) {
+        failRecovery("sandbox registry authority changed during recovery");
+      }
+      const currentPrepared = deps.prepareInferenceAuthority(
+        runtimeAuthority.bundle,
+        inferenceLifecycleRow(currentEntry, runtimeAuthority.bundle.identity.id),
+        { environment: env },
+      );
+      if (
+        !currentPrepared ||
+        currentPrepared.serializedReceipt !== preparedAuthority.serializedReceipt ||
+        currentPrepared.sandboxAuthoritySha256 !== preparedAuthority.sandboxAuthoritySha256
+      ) {
+        failRecovery("host-local inference authority changed during recovery");
+      }
+    };
+    const verifyFinalRoute = (): void => {
+      const verified = input.verifyRoute();
+      if (!isDeepStrictEqual(verified, input.entry)) {
+        failRecovery("final route verification returned different registry authority");
+      }
+    };
 
-  let prepared: HostLocalInferencePreparedStartup;
-  try {
-    prepared = deps.prepareStartup(
-      operation,
-      createPublishedResumeRequest(receipt, published.receiptWriter),
-    ).prepared;
-  } catch (error) {
-    const restored = runtime.inspectManaged(receipt);
-    if (restored.running) {
-      failRecovery("failed resume did not restore the exact stopped runtime");
-    }
-    throw error;
-  }
-  try {
-    if (prepared.rollbackPriorState !== "stopped") {
-      failRecovery("runtime state changed before the exact resume boundary");
-    }
+    const inspected = runtime.inspectManaged(receipt);
     requireExactRecoveryReceipt(
       serializedRegistryReceipt,
-      prepared.receipt,
-      "prepared recovery changed receipt",
+      inspected.receipt,
+      "runtime inspection changed receipt",
     );
-    requireExactRecoveryReceipt(
-      serializedRegistryReceipt,
-      prepared.validateBeforeCommit(),
-      "pre-commit recovery validation changed receipt",
-    );
-    requireCurrent();
-    verifyFinalRoute();
-    const finalizePublishedResume = prepared.finalizePublishedResume;
-    if (!finalizePublishedResume) {
-      failRecovery("runtime provider lacks rollback-safe published resume finalization");
-    }
-    requireExactRecoveryReceipt(
-      serializedRegistryReceipt,
-      finalizePublishedResume(requireCurrent),
-      "recovery finalization changed receipt",
-    );
-    return "recovered";
-  } catch (error) {
-    try {
-      restoreStoppedRuntime(prepared, runtime, receipt, serializedRegistryReceipt);
+    if (inspected.running) {
+      requireExactRecoveryReceipt(
+        serializedRegistryReceipt,
+        runtime.preserveForRebuild(receipt),
+        "running runtime validation changed receipt",
+      );
       requireCurrent();
+      verifyFinalRoute();
+      requireCurrent();
+      registryRecovery.release();
+      return "reused";
+    }
+
+    let prepared: HostLocalInferencePreparedStartup;
+    ollamaStateRestored = false;
+    try {
+      prepared = deps.prepareStartup(
+        operation,
+        createPublishedResumeRequest(receipt, published.receiptWriter),
+      ).prepared;
+    } catch (error) {
+      const restored = runtime.inspectManaged(receipt);
+      requireExactRecoveryReceipt(
+        serializedRegistryReceipt,
+        restored.receipt,
+        "failed resume inspection changed receipt",
+      );
+      if (restored.running) {
+        failRecovery("failed resume did not restore the exact stopped runtime");
+      }
+      ollamaStateRestored = true;
+      throw error;
+    }
+    try {
+      if (prepared.rollbackPriorState !== "stopped") {
+        failRecovery("runtime state changed before the exact resume boundary");
+      }
+      requireExactRecoveryReceipt(
+        serializedRegistryReceipt,
+        prepared.receipt,
+        "prepared recovery changed receipt",
+      );
+      requireExactRecoveryReceipt(
+        serializedRegistryReceipt,
+        prepared.validateBeforeCommit(),
+        "pre-commit recovery validation changed receipt",
+      );
+      requireCurrent();
+      verifyFinalRoute();
+      const finalizePublishedResume = prepared.finalizePublishedResume;
+      if (!finalizePublishedResume) {
+        failRecovery("runtime provider lacks rollback-safe published resume finalization");
+      }
+      requireExactRecoveryReceipt(
+        serializedRegistryReceipt,
+        finalizePublishedResume(requireCurrent),
+        "recovery finalization changed receipt",
+      );
+      ollamaStateRestored = true;
+      registryRecovery.release();
+      return "recovered";
+    } catch (error) {
+      try {
+        restoreStoppedRuntime(prepared, runtime, receipt, serializedRegistryReceipt);
+        ollamaStateRestored = true;
+        requireCurrent();
+      } catch {
+        failRecovery("recovery failed and exact stopped-state restoration was not proved");
+      }
+      throw error;
+    }
+  } catch (error) {
+    if (!ollamaStateRestored) {
+      failRecovery("recovery failed before dependent runtime restoration was proved");
+    }
+    try {
+      registryRecovery.rollback();
     } catch {
-      failRecovery("recovery failed and exact stopped-state restoration was not proved");
+      failRecovery("recovery failed and exact stopped-registry restoration was not proved");
     }
     throw error;
   }
