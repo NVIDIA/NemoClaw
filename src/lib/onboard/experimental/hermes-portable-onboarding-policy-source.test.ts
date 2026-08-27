@@ -56,6 +56,21 @@ function metadata(): { status: number; output: string; stdout: string; stderr: s
   return { status: 0, output: stdout, stdout, stderr: "" };
 }
 
+function readiness(): { status: number; output: string; stdout: string; stderr: string } {
+  const stdout = JSON.stringify([
+    {
+      id: "sandbox-id-1",
+      name: "alpha",
+      labels: {},
+      resource_version: 1,
+      created_at: "2026-08-27T00:00:00Z",
+      phase: "Ready",
+      current_policy_version: 4,
+    },
+  ]);
+  return { status: 0, output: stdout, stdout, stderr: "" };
+}
+
 function captureResult(status = 0) {
   return { status, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
 }
@@ -154,6 +169,7 @@ network_policies:
     vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
       .mockReturnValueOnce(gatewayInfo())
       .mockReturnValueOnce(metadata())
+      .mockReturnValueOnce(readiness())
       .mockReturnValueOnce({
         status: 0,
         output: HERMES_PORTABLE_TEST_POLICY,
@@ -208,6 +224,7 @@ network_policies:
           return { ready: true as const };
         },
         captureCreatedSandboxIdentity: () => HERMES_PORTABLE_TEST_LIVE_IDENTITY,
+        persistCreatedSandboxIdentity: vi.fn(),
         revalidateCreatedSandboxIdentity: vi.fn(),
         verifyCreatedPolicy: (identity) =>
           verifyCreatedSandboxEffectivePolicy({
@@ -367,6 +384,7 @@ network_policies:
           return "created";
         },
         captureCreatedSandboxIdentity: () => HERMES_PORTABLE_TEST_LIVE_IDENTITY,
+        persistCreatedSandboxIdentity: vi.fn(),
         revalidateCreatedSandboxIdentity: vi.fn(),
         verifyCreatedPolicy: (identity) =>
           verifyCreatedSandboxEffectivePolicy({

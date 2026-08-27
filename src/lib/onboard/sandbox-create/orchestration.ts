@@ -74,9 +74,7 @@ export function persistRetainedSandboxRecoveryMessage(
   const storedFailure = stored?.failure?.message;
   const storedStep = stored?.steps?.sandbox?.error;
   const authorityFields = [
-    message.match(
-      /Create-attempt label: ai\.nvidia\.nemoclaw\.create-attempt=[0-9a-f]{62}/u,
-    )?.[0],
+    message.match(/Create-attempt label: ai\.nvidia\.nemoclaw\.create-attempt=[0-9a-f]{62}/u)?.[0],
     message.match(/Durable sandbox identity fingerprint: [0-9a-f]{64}/u)?.[0],
   ].filter((field): field is string => Boolean(field));
   return (
@@ -816,10 +814,7 @@ function assertCreateLifecycleJournal(input: {
   readonly createdGeneration: string;
   readonly sandboxName: string;
 }): void {
-  if (
-    !input.portableLifecycle &&
-    input.runtimeGeneration !== input.createdGeneration
-  ) {
+  if (!input.portableLifecycle && input.runtimeGeneration !== input.createdGeneration) {
     throw new Error(
       `Cannot create sandbox '${input.sandboxName}' without an active lifecycle journal.`,
     );
@@ -1952,9 +1947,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const restoreBackupPath =
       pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;
     onboardSessionBootstrap.verifyReadOnlyHostMountSources(resolvedCreateIntent.hostMounts);
-    runForNewSandboxCreate(
-      agentCreateInput.hermesPortableLifecycle || resumingVerifiedCreate,
-      () => recreateRuntime.advance("creating"),
+    runForNewSandboxCreate(agentCreateInput.hermesPortableLifecycle || resumingVerifiedCreate, () =>
+      recreateRuntime.advance("creating"),
     );
     const managedBootstrap = managedWorkloadOnboard.resolveOnboardManagedBootstrapLaunch({
       runtime: managedWorkloadRuntime,
@@ -2094,7 +2088,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       if (agentCreateInput.hermesPortableLifecycle) {
         throw new Error("Hermes portable onboarding cannot resume an ordinary verified create.");
       }
-      const boundary = verifiedSandboxPolicyBoundaryFromPendingCheckpoint(checkpoint);
+      const boundary = {
+        ...verifiedSandboxPolicyBoundaryFromPendingCheckpoint(checkpoint),
+        policySourcePath: policySourcePathForRoute(checkpoint.route),
+      };
       admittedCreateReservation = admitCreateReservation();
       registry.requireCurrentPendingSandboxPolicyVerification(
         admittedCreateReservation,
@@ -2113,7 +2110,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         gatewayPort: GATEWAY_PORT,
         lifecycleGeneration: createdSandboxLifecycle.generation,
         lifecycleLiveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
-        policySourcePath: policySourcePathForRoute(checkpoint.route),
+        policySourcePath: boundary.policySourcePath,
         route: checkpoint.route,
         operation: `resume sandbox creation for '${sandboxName}'`,
         registration: boundary.registration,
