@@ -158,6 +158,14 @@ describe.runIf(canRun)("managed DCode session supervisor", () => {
     const pidFile = path.join(dir, "processes.pid");
     const session = path.join(dir, "session.py");
     const harness = path.join(dir, "harness.py");
+    const boundedSupervisor = path.join(dir, "dcode-session-supervisor.py");
+    fs.writeFileSync(
+      boundedSupervisor,
+      fs
+        .readFileSync(supervisor, "utf8")
+        .replace("_TERM_GRACE_SECONDS = 3.0", "_TERM_GRACE_SECONDS = 0.1")
+        .replace("_KILL_GRACE_SECONDS = 1.0", "_KILL_GRACE_SECONDS = 0.1"),
+    );
     fs.writeFileSync(
       session,
       [
@@ -184,7 +192,7 @@ describe.runIf(canRun)("managed DCode session supervisor", () => {
         "import sys",
         "import time",
         `pid_file = pathlib.Path(${JSON.stringify(pidFile)})`,
-        `supervisor = subprocess.Popen([sys.executable, ${JSON.stringify(supervisor)}, sys.executable, ${JSON.stringify(session)}])`,
+        `supervisor = subprocess.Popen([sys.executable, ${JSON.stringify(boundedSupervisor)}, sys.executable, ${JSON.stringify(session)}])`,
         "deadline = time.monotonic() + 5",
         "while not pid_file.exists() and time.monotonic() < deadline:",
         "    time.sleep(0.05)",
