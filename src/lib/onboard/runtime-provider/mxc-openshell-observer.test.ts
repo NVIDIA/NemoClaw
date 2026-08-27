@@ -29,15 +29,16 @@ const DIGESTS = {
 const PATHS = {
   distributionArtifactPath: "C:\\OpenShell\\packages\\openshell-0.0.21.zip",
   distributionRoot: "C:\\OpenShell",
+  mxcRoot: "C:\\mxc-kit",
   cliPath: "C:\\OpenShell\\bin\\openshell.exe",
   gatewayPath: "C:\\OpenShell\\bin\\openshell-gateway.exe",
-  wxcExecPath: "C:\\OpenShell\\mxc\\wxc-exec.exe",
+  wxcExecPath: "C:\\mxc-kit\\bin\\wxc-exec.exe",
   gatewayConfigPath: "C:\\ProgramData\\NVIDIA\\OpenShell\\gateway.toml",
 } as const;
 
 function request(): MxcOpenShellAttachmentObservationRequest {
   return {
-    contractVersion: 1,
+    contractVersion: 2,
     providerId: "mxc",
     mode: "attach-existing",
     observedDistribution: {
@@ -199,6 +200,7 @@ describe("inactive OpenShell MXC installation observer", () => {
   it.each([
     ["distributionArtifactPath", "\\\\host\\share\\openshell.zip"],
     ["distributionRoot", "\\\\host\\share\\OpenShell"],
+    ["mxcRoot", "\\\\host\\share\\mxc-kit"],
     ["cliPath", "\\\\host\\share\\openshell.exe"],
     ["gatewayPath", "\\\\host\\share\\openshell-gateway.exe"],
     ["wxcExecPath", "\\\\host\\share\\wxc-exec.exe"],

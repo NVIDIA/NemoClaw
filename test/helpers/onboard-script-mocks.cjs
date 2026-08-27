@@ -212,7 +212,7 @@ function createStatefulMessagingProviderRunner({
     ) {
       return {
         status: 0,
-        stdout: Buffer.from(`Name: ${readySandboxName}\nId: sbx-4f2a91c0d7\n`),
+        stdout: Buffer.from(`Name: ${readySandboxName}\nId: sbx-4f2a91c0d7\nPhase: Ready\n`),
         stderr: Buffer.alloc(0),
       };
     }
@@ -333,38 +333,74 @@ function mockOnboardRunCapture(command, options = {}) {
   return mockSandboxExecCurl(command, options);
 }
 
-function mockCreatedSandboxIdentityList(command, options = {}) {
+let publishedCreatedSandboxIdentity = null;
+let publishedCreatedGatewayName = "nemoclaw";
+let publishedCreatedGatewayPort = 8080;
+
+function clearMockCreatedSandboxIdentity() {
+  publishedCreatedSandboxIdentity = null;
+}
+
+function exactOpenShellArgs(command) {
   const args = Array.isArray(command) ? command.map(String) : [];
-  const sandboxIndex = args.indexOf("sandbox");
+  const verbs = new Set(["gateway", "policy", "sandbox"]);
+  if (verbs.has(args[0])) return args;
+  if (args.length > 1 && verbs.has(args[1])) return args.slice(1);
   if (
-    sandboxIndex < 0 ||
-    args[sandboxIndex + 1] !== "list" ||
-    !args.includes("--output") ||
-    args[args.indexOf("--output") + 1] !== "json"
+    args.length > 4 &&
+    args[0] === "/usr/bin/timeout" &&
+    args[1] === "--signal=KILL" &&
+    /^(?:0\.[0-9]+|[1-9][0-9]*(?:\.[0-9]+)?)s$/u.test(args[2]) &&
+    args[3].length > 0 &&
+    !args[3].startsWith("-") &&
+    verbs.has(args[4])
+  ) {
+    return args.slice(4);
+  }
+  return null;
+}
+
+function mockCreatedSandboxIdentityList(command, options = {}) {
+  const args = exactOpenShellArgs(command);
+  if (!args) return null;
+  const prefix = "ai.nvidia.nemoclaw.create-attempt=";
+  const selector = args[5] || "";
+  const gatewayName = options.gatewayName || publishedCreatedGatewayName;
+  if (
+    args.length !== 10 ||
+    args[0] !== "sandbox" ||
+    args[1] !== "list" ||
+    args[2] !== "-g" ||
+    args[3] !== gatewayName ||
+    args[4] !== "--selector" ||
+    !new RegExp(`^${prefix}[0-9a-f]{62}$`, "u").test(selector) ||
+    args[6] !== "--output" ||
+    args[7] !== "json" ||
+    args[8] !== "--limit" ||
+    args[9] !== "2"
   ) {
     return null;
   }
-  const selectorIndex = args.indexOf("--selector");
-  const selector = selectorIndex >= 0 ? args[selectorIndex + 1] || "" : "";
-  const prefix = "ai.nvidia.nemoclaw.create-attempt=";
-  if (!selector.startsWith(prefix)) return null;
   const nonce = selector.slice(prefix.length);
-  return JSON.stringify([
-    {
-      id: options.sandboxId || "sbx-4f2a91c0d7",
-      name: options.sandboxName || "my-assistant",
-      labels: { "ai.nvidia.nemoclaw.create-attempt": nonce },
-      resource_version: 1,
-      created_at: "2026-08-25T00:00:00Z",
-      phase: "Ready",
-      current_policy_version: 1,
-    },
-  ]);
+  publishedCreatedGatewayName = gatewayName;
+  publishedCreatedSandboxIdentity = {
+    id: options.sandboxId || "sbx-4f2a91c0d7",
+    name: options.sandboxName || "my-assistant",
+    labels: { "ai.nvidia.nemoclaw.create-attempt": nonce },
+    resource_version: 1,
+    created_at: "2026-08-25T00:00:00Z",
+    phase: "Ready",
+    current_policy_version: 1,
+  };
+  return JSON.stringify([publishedCreatedSandboxIdentity]);
 }
 
 function installVerifiedSandboxCreateFixture(registry, options) {
+  mockStructuredOpenShellCaptureFromRunner();
   const sandboxName = options.sandboxName;
   const gatewayName = options.gatewayName || "nemoclaw";
+  publishedCreatedGatewayName = gatewayName;
+  publishedCreatedGatewayPort = options.gatewayPort || 8080;
   const sessionId = options.sessionId || "integration-fixture-session";
   const selection = {
     provider: options.provider,
@@ -373,6 +409,9 @@ function installVerifiedSandboxCreateFixture(registry, options) {
     endpointSource: options.endpointSource || null,
     credentialEnv: options.credentialEnv || null,
     preferredInferenceApi: options.preferredInferenceApi || null,
+    compatibleEndpointReasoning: options.compatibleEndpointReasoning || null,
+    compatibleEndpointReasoningEffort: options.compatibleEndpointReasoningEffort || null,
+    nimContainer: options.nimContainer || null,
   };
   const reservationEntry = {
     name: sandboxName,
@@ -466,15 +505,17 @@ function installVerifiedSandboxCreateFixture(registry, options) {
       return true;
     },
   };
-  for (const [name, value] of Object.entries(registryFixture)) {
-    Object.defineProperty(registry, name, {
-      value,
-      configurable: true,
-      enumerable: true,
-      writable: true,
-    });
+  if (options.durableRegistry !== true) {
+    for (const [name, value] of Object.entries(registryFixture)) {
+      Object.defineProperty(registry, name, {
+        value,
+        configurable: true,
+        enumerable: true,
+        writable: true,
+      });
+    }
+    require.cache[registryPath].exports = registry;
   }
-  require.cache[registryPath].exports = registry;
 
   const receiptPath = require.resolve(
     path.resolve(__dirname, "../../src/lib/onboard/sandbox-create/policy-creation-receipt.ts"),
@@ -535,13 +576,103 @@ function installVerifiedSandboxCreateFixture(registry, options) {
     },
   });
   require.cache[receiptPath].exports = receipt;
-  return { sessionId };
+  const prepareCreateIntent = () => {
+    const onboardSession = require(
+      path.resolve(__dirname, "../../src/lib/state/onboard-session.ts"),
+    );
+    const recreate = require(
+      path.resolve(__dirname, "../../src/lib/onboard/sandbox-recreate-transaction.ts"),
+    );
+    const current = onboardSession.loadSession();
+    const currentTransaction = current?.checkpoint?.sandboxRecreate || null;
+    const currentEntry =
+      options.durableRegistry === true
+        ? registry.getSandbox(sandboxName)
+        : registryFixture.getSandbox(sandboxName);
+    const recoverPendingCreate =
+      currentEntry?.pendingRouteReservation === true &&
+      currentEntry.pendingPolicyVerification !== undefined;
+    let transaction =
+      currentTransaction && (currentTransaction.phase !== "created" || recoverPendingCreate)
+        ? currentTransaction
+        : null;
+    if (!transaction) {
+      const session = onboardSession.createSession({
+        sessionId,
+        sandboxName,
+        agent: options.agentName || "openclaw",
+      });
+      const sourceIdentity =
+        currentEntry?.lifecycleLiveIdentityFingerprint ||
+        (options.sourceSandboxId
+          ? recreate.fingerprintSandboxRecreateValue(options.sourceSandboxId)
+          : null);
+      transaction = recreate.beginSandboxRecreateTransaction(session, {
+        sandboxName,
+        gatewayName,
+        gatewayPort: options.gatewayPort || 8080,
+        sourceEntry: currentEntry,
+        observation: sourceIdentity
+          ? { state: "ready", liveIdentityFingerprint: sourceIdentity }
+          : { state: "missing", liveIdentityFingerprint: null },
+        targetIntentFingerprint: recreate.fingerprintSandboxRecreateValue({
+          fixture: "verified-sandbox-create",
+          gatewayName,
+          sandboxName,
+          selection,
+        }),
+      });
+      session.checkpoint = {
+        ...session.checkpoint,
+        sandboxIdentity: {
+          kind: "selected",
+          value: { name: sandboxName, agent: options.agentName || "openclaw" },
+        },
+        gatewayAuthority: {
+          kind: "selected",
+          value: {
+            gatewayName,
+            gatewayPort: options.gatewayPort || 8080,
+            mode: "nemoclaw-managed",
+            source: "standalone",
+            endpoint: null,
+            stateDir: null,
+            supervisor: null,
+            requiredCapabilities: [],
+          },
+        },
+      };
+      onboardSession.saveSession(session);
+    }
+    return {
+      recreate: false,
+      toolDisclosure: "progressive",
+      observabilityEnabled: false,
+      recreateTransaction: {
+        id: transaction.id,
+        targetGeneration: transaction.targetGeneration,
+        targetIntentFingerprint: transaction.targetIntentFingerprint,
+      },
+    };
+  };
+  return { sessionId, selection, prepareCreateIntent };
 }
 
 function sandboxCreateArgsWithVerifiedReservation(args, fixture) {
   const createArgs = [...args];
-  while (createArgs.length < 15) createArgs.push(null);
-  createArgs[14] = { sessionId: fixture.sessionId };
+  while (createArgs.length < 16) createArgs.push(null);
+  createArgs[14] = { sessionId: fixture.sessionId, selection: fixture.selection };
+  const fixtureIntent = fixture.prepareCreateIntent();
+  const requestedIntent = createArgs[15];
+  createArgs[15] =
+    requestedIntent && typeof requestedIntent === "object"
+      ? {
+          ...fixtureIntent,
+          ...requestedIntent,
+          recreateTransaction:
+            requestedIntent.recreateTransaction || fixtureIntent.recreateTransaction,
+        }
+      : fixtureIntent;
   return createArgs;
 }
 
@@ -581,7 +712,50 @@ function managedSandboxPolicyReceiptFixture(entry, options = {}) {
 function mockStructuredOpenShellCaptureFromRunner() {
   const runner = require(path.resolve(__dirname, "../../src/lib/runner.ts"));
   const client = require(path.resolve(__dirname, "../../src/lib/adapters/openshell/client.ts"));
+  const originalCaptureOpenshellCommand = client.captureOpenshellCommand;
+  publishedCreatedSandboxIdentity = null;
   client.captureOpenshellCommand = (binary, args, options = {}) => {
+    const exactGatewayInfo =
+      args.length === 4 &&
+      args[0] === "gateway" &&
+      args[1] === "info" &&
+      args[2] === "-g" &&
+      args[3] === publishedCreatedGatewayName;
+    if (exactGatewayInfo) {
+      const stdout = `Gateway endpoint: http://127.0.0.1:${publishedCreatedGatewayPort}\n`;
+      return {
+        status: 0,
+        output: stdout.trim(),
+        ...(options.includeStreams === true ? { stdout, stderr: "" } : {}),
+      };
+    }
+    const isCreatedSandboxPolicyRead =
+      args.length === 8 &&
+      args[0] === "policy" &&
+      args[1] === "get" &&
+      args[2] === "-g" &&
+      args[3] === publishedCreatedGatewayName &&
+      args[4] === "--full" &&
+      args[5] === "--output" &&
+      args[6] === "json" &&
+      publishedCreatedSandboxIdentity?.name === args[7];
+    const isFreshGlobalPolicyHistoryRead =
+      args.length === 7 &&
+      args[0] === "policy" &&
+      args[1] === "list" &&
+      args[2] === "-g" &&
+      args[3] === publishedCreatedGatewayName &&
+      args[4] === "--global" &&
+      args[5] === "--limit" &&
+      args[6] === "1";
+    if (isFreshGlobalPolicyHistoryRead) {
+      const stderr = "No global policy history found\n";
+      return {
+        status: 0,
+        output: options.includeStderr === true ? stderr.trim() : "",
+        ...(options.includeStreams === true ? { stdout: "", stderr } : {}),
+      };
+    }
     const stdout = String(
       runner.runCapture([binary, ...args], {
         ...options,
@@ -589,9 +763,43 @@ function mockStructuredOpenShellCaptureFromRunner() {
         includeStderr: false,
       }) || "",
     );
-    const isSandboxGet = args[0] === "sandbox" && args[1] === "get";
+    if (isCreatedSandboxPolicyRead && stdout.trim().length === 0) {
+      const fallback = JSON.stringify({
+        scope: "sandbox",
+        sandbox: publishedCreatedSandboxIdentity.name,
+        status: "effective",
+        policy_source: "sandbox",
+        hash: "fixture-policy",
+        active_version: 1,
+        policy: { version: 1, network_policies: {} },
+      });
+      return {
+        status: 0,
+        output: fallback,
+        ...(options.includeStreams === true ? { stdout: fallback, stderr: "" } : {}),
+      };
+    }
+    const isSandboxGet =
+      args.length === 5 &&
+      args[0] === "sandbox" &&
+      args[1] === "get" &&
+      args[2] === "-g" &&
+      args[3] === publishedCreatedGatewayName;
     if (isSandboxGet && stdout.trim().length === 0) {
       const sandboxName = String(args.at(-1) || "unknown");
+      if (publishedCreatedSandboxIdentity?.name === sandboxName) {
+        const readyOutput = [
+          `Name: ${sandboxName}`,
+          `Id: ${publishedCreatedSandboxIdentity.id}`,
+          "Phase: Ready",
+          "",
+        ].join("\n");
+        return {
+          status: 0,
+          output: readyOutput.trim(),
+          ...(options.includeStreams === true ? { stdout: readyOutput, stderr: "" } : {}),
+        };
+      }
       const stderr = `Error: sandbox ${sandboxName} not found\n`;
       return {
         status: 1,
@@ -604,6 +812,10 @@ function mockStructuredOpenShellCaptureFromRunner() {
       output: stdout.trim(),
       ...(options.includeStreams === true ? { stdout, stderr: "" } : {}),
     };
+  };
+  return () => {
+    client.captureOpenshellCommand = originalCaptureOpenshellCommand;
+    publishedCreatedSandboxIdentity = null;
   };
 }
 
@@ -775,7 +987,7 @@ function mockManagedImageBootstrap() {
     path.resolve(__dirname, "../../src/lib/adapters/openshell/sandbox-identity.ts"),
   );
 
-  sandboxIdentity.resolveOpenShellSandboxId = () => "sbx-managed-fixture";
+  sandboxIdentity.resolveOpenShellSandboxId = () => "sbx-4f2a91c0d7";
   authorityStore.createDockerManagedBootstrapAuthorityStore = () => ({
     async recordPreparedAuthority(authority) {
       return {
@@ -930,7 +1142,9 @@ module.exports = {
   isOpenClawSecurityInventoryProbe,
   mockDockerSandboxLifecycleReleaseFromRunner,
   mockFreshOpenClawPluginDiscovery,
+  clearMockCreatedSandboxIdentity,
   mockCreatedSandboxIdentityList,
+  mockStructuredOpenShellCaptureFromRunner,
   installVerifiedSandboxCreateFixture,
   managedSandboxPolicyReceiptFixture,
   mockOnboardRunCapture,
