@@ -131,6 +131,7 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/onboarding/onboard-sandbox-recreation.test.ts",
       "test/onboarding/onboard-terminal-dashboard.test.ts",
       "test/security/shellquote-sandbox.test.ts",
+      "test/repository/source-require-loader.test.ts",
     ]);
   });
 
