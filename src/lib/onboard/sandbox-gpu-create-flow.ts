@@ -220,8 +220,11 @@ export interface SandboxGpuCreateFlowInput {
   };
   /** Reject every initial or fallback create attempt that carries a caller policy. */
   requirePolicylessCreate?: true;
-  /** Durably retain create-attempt recovery evidence before identity-bound recovery stops. */
-  persistRetainedSandboxRecovery?: (message: string) => boolean;
+/** Durably retain create-attempt recovery evidence before identity-bound recovery stops. */
+  persistRetainedSandboxRecovery?: (
+    message: string,
+    sandboxIdentityFingerprint?: string,
+  ) => boolean;
   /** Durably retain exact APF create-attempt recovery evidence before a fallback refusal exits. */
   persistRetainedApfSandboxRecovery?: (recovery: RetainedApfSandboxRecovery) => boolean;
   provider: string;
@@ -562,6 +565,7 @@ export async function runSandboxGpuCreateFlow(
         throw new Error(
           "APF interceptor sandbox creation returned no create-attempt recovery evidence.",
         );
+
       }
       persistAndReportRetainedApfSandboxRecovery({
         sandboxName: input.sandboxName,
