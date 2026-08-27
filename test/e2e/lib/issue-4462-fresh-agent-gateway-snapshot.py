@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import base64
+import binascii
+import hashlib
 import json
 import re
 import sys
@@ -80,6 +82,19 @@ if not device_id:
 identity_key = identity_public_key(identity)
 if not identity_key:
     raise SystemExit("CLI identity has no public key")
+try:
+    identity_key_raw = base64.b64decode(
+        identity_key + "=" * (-len(identity_key) % 4),
+        altchars=b"-_",
+        validate=True,
+    )
+except (binascii.Error, ValueError):
+    raise SystemExit("CLI identity public key is invalid") from None
+if (
+    len(identity_key_raw) != 32
+    or hashlib.sha256(identity_key_raw).hexdigest() != device_id
+):
+    raise SystemExit("CLI identity binding is invalid")
 while True:
     pending = [
         value
