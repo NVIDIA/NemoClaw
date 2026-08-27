@@ -18,17 +18,23 @@ interface CleanupResources {
 }
 
 export async function removePersistedWorkspace(resources: CleanupResources): Promise<void> {
-  const ownershipFile = requiredAbsolutePath("BREV_WORKSPACE_OWNERSHIP_FILE");
-  if (!fs.existsSync(ownershipFile)) return;
   resources.progress.phase("load the workflow ownership receipt");
-  const ownership = JSON.parse(fs.readFileSync(ownershipFile, "utf8")) as BrevWorkspaceOwnership;
+  const ownershipFile = requiredAbsolutePath("BREV_WORKSPACE_OWNERSHIP_FILE");
+  const ownership = readOwnershipReceipt(ownershipFile);
   resources.progress.phase("remove the owned Brev workspace");
+  if (!ownership) return;
   await new BrevLaunchableFixture({
     artifacts: resources.artifacts,
     host: resources.host,
     ownershipFile,
     secrets: resources.secrets,
   }).delete(ownership);
+}
+
+function readOwnershipReceipt(file: string): BrevWorkspaceOwnership | null {
+  return fs.existsSync(file)
+    ? (JSON.parse(fs.readFileSync(file, "utf8")) as BrevWorkspaceOwnership)
+    : null;
 }
 
 function requiredAbsolutePath(name: string): string {
