@@ -24,6 +24,7 @@ filesystem_policy:
     - /app
     - /run/nemoclaw/managed-startup-ca-bundle.pem
     - /run/nemoclaw/managed-startup-runtime.env
+    - /var/lib/nemoclaw/runtime-state-mutation
     - /etc
     - /var/log
     - /var/lib/dpkg                  # Allow package-version inspection without package mutation.
@@ -36,6 +37,7 @@ filesystem_policy:
                                     # landlock denies /dev/ptmx with EACCES
                                     # ("out of pty devices"). Mirrors the default
                                     # Hermes policy and the OpenClaw grant (#4513).
+    - /run/nemoclaw/runtime-state-mutation-startup
     - /sandbox/.hermes
     - /sandbox/.nemoclaw
 

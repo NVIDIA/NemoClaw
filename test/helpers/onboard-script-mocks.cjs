@@ -684,17 +684,6 @@ function mockDockerSandboxLifecycleReleaseFromRunner() {
   runner.run = wrappedRun;
 }
 
-function mockManagedImageFallback() {
-  const catalog = require(
-    path.resolve(__dirname, "../../src/lib/onboard/managed-image/catalog.ts"),
-  );
-  catalog.resolveManagedImageCatalogFromGhcr = async () => {
-    throw new catalog.ManagedImageCatalogUnavailableError(
-      "integration fixture intentionally exercises the trusted Dockerfile fallback",
-    );
-  };
-}
-
 function mockFreshOpenClawPluginDiscovery() {
   const pluginRestore = require(
     path.resolve(__dirname, "../../src/lib/state/openclaw-plugin-restore.ts"),
@@ -903,7 +892,6 @@ function mockManagedImageBootstrap() {
   };
 }
 
-process.env.NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK === "1" && mockManagedImageFallback();
 if (process.env.NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG === "1") {
   mockManagedImageCatalog();
   mockManagedImageBootstrap();
