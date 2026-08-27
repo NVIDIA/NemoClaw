@@ -543,7 +543,8 @@ function createCreatedSandboxFixture(options = {}) {
     }
     const createAttemptNonce = nonceFromCreateCommand(command);
     state.generation += 1;
-    state.sandboxId = `${initialSandboxId}-recreated-${state.generation - 1}`;
+    const replacementFingerprint = sandboxIdentity.fingerprintOpenShellSandboxId(initialSandboxId);
+    state.sandboxId = `sbx-recreated-${state.generation}-${replacementFingerprint}`;
     state.createAttemptNonce = createAttemptNonce;
     state.ownerScopedIdentityObserved = false;
     assertState();

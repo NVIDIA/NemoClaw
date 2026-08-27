@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import {
   NEMOCLAW_CREATE_ATTEMPT_LABEL,
   NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH,
+  isOpenShellSandboxId,
   parseOpenShellSandboxId,
   parseStrictOpenShellSandboxListJson,
 } from "../../src/lib/adapters/openshell/sandbox-identity";
@@ -127,6 +128,17 @@ describe("created sandbox fixture", () => {
         fixture.capture(["openshell", "sandbox", "get", "-g", "gateway-alpha", "alpha"]) ?? "",
       ),
     ).toBe(replacementSandboxId);
+  });
+
+  it("keeps a replacement ID valid for a maximum-length input (#10463)", () => {
+    const maximumSandboxId = "a".repeat(512);
+    const fixture = createCreatedSandboxFixture({ sandboxId: maximumSandboxId });
+    fixture.create(createCommand());
+    fixture.delete();
+    fixture.recreate(createCommand("b".repeat(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH)));
+
+    expect(fixture.state.sandboxId).not.toBe(maximumSandboxId);
+    expect(isOpenShellSandboxId(fixture.state.sandboxId)).toBe(true);
   });
 
   it.each([
