@@ -218,6 +218,6 @@ describe("Podman socket authority", () => {
         lstat: secureLstat({}, { "/run/user/1000/podman": { uid: 2000n } }),
         uid: 1000,
       }),
-    ).toThrow("directory is owned by uid 2000");
+    ).toThrow("expected current uid 1000");
   });
 });

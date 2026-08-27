@@ -198,7 +198,9 @@ function captureDirectoryChain(
         (index > 0 && ownerUid !== "0" && ownerUid !== String(uid))
       ) {
         throw new Error(
-          `Podman socket directory is owned by uid ${ownerUid}; expected root or current uid ${String(uid)}.`,
+          index === 0
+            ? `Podman socket directory is owned by uid ${ownerUid}; expected current uid ${String(uid)}.`
+            : `Podman socket directory is owned by uid ${ownerUid}; expected root or current uid ${String(uid)}.`,
         );
       }
       const mode = integerValue(stat.mode, "directory mode");
