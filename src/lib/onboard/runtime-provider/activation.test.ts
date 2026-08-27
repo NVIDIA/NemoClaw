@@ -294,6 +294,7 @@ describe("runtime provider activation catalog", () => {
         bootstrapKind: "native-artifact",
         contractVersion: RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION,
         run: unreachable,
+        recover: unreachable,
       },
     } as RuntimeProviderBundle;
 

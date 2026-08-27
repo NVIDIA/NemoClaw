@@ -494,6 +494,7 @@ function validateBootstrapSurface(surface: Record<string, unknown>): void {
       );
     }
     requireFunction(surface, "run", "bootstrap");
+    requireFunction(surface, "recover", "bootstrap");
     return;
   }
   throw new RuntimeProviderRegistrationError("bootstrap has an unsupported kind");

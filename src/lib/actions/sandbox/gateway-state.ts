@@ -453,6 +453,9 @@ export async function reconcileMissingAgainstNamedGateway(
     return tryRecoverDockerDriverSandbox(sandboxName, missingLookup, pinnedGatewayName);
   }
   const lifecycle = getNamedGatewayLifecycleState(targetGatewayName);
+  if (lifecycle.recoveryBlocked) {
+    return missingLookup;
+  }
   if (lifecycle.state === "connected_other") {
     runOpenshell(["gateway", "select", targetGatewayName], {
       ignoreError: true,
