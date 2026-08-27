@@ -636,6 +636,7 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
     message: string,
     exactIdentity: string | null,
     evidence: Evidence | null,
+    created: Created | null,
   ) => boolean;
   readonly retainedSandboxRecoveryRetryOwner?: PostCreateRecoveryRetryOwner;
   readonly cleanupTemporarySources: () => void;
@@ -643,6 +644,7 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
   input.revalidate(false, `creating sandbox '${input.sandboxName}'`);
   let exactIdentity: string | null = null;
   let observedPolicyEvidence: Evidence | null = null;
+  let observedCreatedSandbox: Created | null = null;
   let cleanupAttempted = false;
   let recoveryAttempted = false;
   const cleanupTemporarySources = (): unknown[] => {
@@ -676,6 +678,7 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
             recoveryGuidance,
             exactIdentity,
             observedPolicyEvidence,
+            observedCreatedSandbox,
           ),
         );
       } catch (error) {
@@ -690,6 +693,7 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
     );
   };
   const verifyCreatedSandbox = async (created: Created): Promise<string> => {
+    observedCreatedSandbox = created;
     try {
       const capturedIdentity = input.captureCreatedSandboxIdentity(created);
       if (!/^[0-9a-f]{64}$/u.test(capturedIdentity)) {
@@ -2545,13 +2549,16 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         revalidateVerifiedPolicy: (_identity, _exactIdentity, boundary, operation) => {
           revalidateVerifiedPolicyRegistration(boundary, operation);
         },
-        persistRetainedSandboxRecovery: (message, exactIdentity, boundary) =>
+        persistRetainedSandboxRecovery: (message, exactIdentity, boundary, created) =>
           persistRetainedSandboxRecoveryMessage(
             {
               sandboxName,
               message,
               ...(exactIdentity ? { sandboxIdentityFingerprint: exactIdentity } : {}),
-              recoveryContext: retainedSandboxRecoveryContext(boundary),
+              recoveryContext: retainedSandboxRecoveryContext(
+                boundary,
+                created?.createAttemptNonce ?? null,
+              ),
             },
             onboardSession.markRetainedSandboxRecovery,
           ),

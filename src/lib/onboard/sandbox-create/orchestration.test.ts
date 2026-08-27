@@ -909,6 +909,7 @@ describe("sandbox create policy authority checks", () => {
       expect.stringContaining("left sandbox 'alpha' in place"),
       exactIdentity,
       "verified",
+      "created",
     );
   });
 
@@ -938,6 +939,7 @@ describe("sandbox create policy authority checks", () => {
       expect.stringContaining("left sandbox 'alpha' in place"),
       exactIdentity,
       verifiedEvidence,
+      "created",
     );
   });
 
@@ -969,6 +971,7 @@ describe("sandbox create policy authority checks", () => {
       expect.stringContaining("left sandbox 'alpha' in place"),
       exactIdentity,
       "verified",
+      "created",
     );
   });
 
@@ -1365,6 +1368,7 @@ describe("sandbox create policy authority checks", () => {
       expect.stringContaining("left sandbox 'alpha' in place"),
       exactIdentity,
       null,
+      "created",
     );
   });
 

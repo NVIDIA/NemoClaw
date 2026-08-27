@@ -2046,20 +2046,26 @@ export function listRetainedSandboxRecoveryRecords(): readonly RetainedSandboxRe
           record.createAttemptNonce === recovery.createAttemptNonce,
       )
     ) {
-      writeRetainedSandboxRecovery(RETAINED_SANDBOX_RECOVERY_FILE, {
-        sandboxName: recovery.sandboxName,
-        sandboxIdentityFingerprint: recovery.sandboxIdentityFingerprint,
-        gatewayName: recovery.gatewayName,
-        gatewayPort: recovery.gatewayPort,
-        lifecycleGeneration: recovery.lifecycleGeneration,
-        verifiedEffectivePolicyIdentity: recovery.verifiedEffectivePolicyIdentity,
-        createAttemptNonce: recovery.createAttemptNonce,
-        policyCreationReceipt: recovery.policyCreationReceipt,
-        resources: retainedSandboxResourceEvidence(current),
-        reason: recovery.reason,
-        recordedAt: recovery.recordedAt,
-      });
-      records = readRetainedSandboxRecoveryRecords(RETAINED_SANDBOX_RECOVERY_FILE);
+      try {
+        writeRetainedSandboxRecovery(RETAINED_SANDBOX_RECOVERY_FILE, {
+          sandboxName: recovery.sandboxName,
+          sandboxIdentityFingerprint: recovery.sandboxIdentityFingerprint,
+          gatewayName: recovery.gatewayName,
+          gatewayPort: recovery.gatewayPort,
+          lifecycleGeneration: recovery.lifecycleGeneration,
+          verifiedEffectivePolicyIdentity: recovery.verifiedEffectivePolicyIdentity,
+          createAttemptNonce: recovery.createAttemptNonce,
+          policyCreationReceipt: recovery.policyCreationReceipt,
+          resources: retainedSandboxResourceEvidence(current),
+          reason: recovery.reason,
+          recordedAt: recovery.recordedAt,
+        });
+        records = readRetainedSandboxRecoveryRecords(RETAINED_SANDBOX_RECOVERY_FILE);
+      } catch {
+        // Keep the recovery-only session authoritative. A different-name run
+        // remains blocked until a later read can durably reconstruct the
+        // independent record.
+      }
     }
     return records;
   });
