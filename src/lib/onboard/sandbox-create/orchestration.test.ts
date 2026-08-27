@@ -580,6 +580,32 @@ describe("sandbox create policy authority checks", () => {
     expect(events).toEqual(["create-check", "create", "ready-check", "cleanup-sources"]);
   });
 
+  it("records recovery before returning a post-create authority failure (#9833)", async () => {
+    const persistRetainedSandboxRecovery = vi.fn(() => true);
+
+    await expect(
+      runSandboxCreateWithPolicyAuthorityChecks({
+        sandboxName: "alpha",
+        revalidate: vi.fn(),
+        create: async (verifyCreatedSandbox) => {
+          await verifyCreatedSandbox("created");
+          return "created";
+        },
+        ...exactIdentityBoundary(),
+        revalidateVerifiedPolicy: () => {
+          throw new Error("external policy authority changed");
+        },
+        persistRetainedSandboxRecovery,
+        cleanupTemporarySources: vi.fn(),
+      }),
+    ).rejects.toThrow("automatic sandbox cleanup was not safe");
+
+    expect(persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
+      expect.stringContaining("left sandbox 'alpha' in place"),
+      exactIdentity,
+    );
+  });
+
   it("does not delete a same-name replacement after final authority failure (#9833)", async () => {
     let sandboxIdentity = "created";
     const revalidate = vi.fn();

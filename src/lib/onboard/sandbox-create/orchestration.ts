@@ -302,6 +302,10 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
     exactIdentity: string,
     evidence: Evidence,
   ) => Promise<void>;
+  readonly persistRetainedSandboxRecovery?: (
+    message: string,
+    exactIdentity: string | null,
+  ) => boolean;
   readonly cleanupTemporarySources: () => void;
 }): Promise<Result> {
   input.revalidate(false, `creating sandbox '${input.sandboxName}'`);
@@ -318,7 +322,6 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
     }
   };
   const refuseAfterCreate = (validationError: unknown): never => {
-    const compensationErrors = cleanupTemporarySources();
     const validationDetail =
       validationError instanceof Error && isPolicyAuthorityRefusalError(validationError)
         ? validationError.message
@@ -330,6 +333,19 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
       `NemoClaw left sandbox '${input.sandboxName}' in place after policy authority validation failed. ` +
       `${identityGuidance} NemoClaw did not run OpenShell's mutable-name deletion command because the name may now identify a replacement sandbox. ` +
       "Do not delete the sandbox by mutable sandbox name. Ask the OpenShell administrator to inspect the surviving sandbox and use an identity-bound recovery or removal procedure.";
+    const compensationErrors: unknown[] = [];
+    if (input.persistRetainedSandboxRecovery) {
+      try {
+        if (!input.persistRetainedSandboxRecovery(recoveryGuidance, exactIdentity)) {
+          compensationErrors.push(
+            new Error("NemoClaw could not save the retained sandbox recovery record."),
+          );
+        }
+      } catch (error) {
+        compensationErrors.push(error);
+      }
+    }
+    compensationErrors.push(...cleanupTemporarySources());
     compensationErrors.push(new Error(recoveryGuidance));
     throw new AggregateError(
       [validationError, ...compensationErrors],
@@ -1883,6 +1899,15 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         revalidateVerifiedPolicy: (_identity, _exactIdentity, boundary, operation) => {
           revalidateVerifiedPolicyRegistration(boundary, operation);
         },
+        persistRetainedSandboxRecovery: (message, exactIdentity) =>
+          persistRetainedSandboxRecoveryMessage(
+            {
+              sandboxName,
+              message,
+              ...(exactIdentity ? { sandboxIdentityFingerprint: exactIdentity } : {}),
+            },
+            onboardSession.markRetainedSandboxRecovery,
+          ),
         cleanupTemporarySources: cleanupSandboxCreateSources,
         runVerifiedCreateEffects: runDeferredProviderEffects
           ? async (_identity, _exactIdentity, boundary) => {

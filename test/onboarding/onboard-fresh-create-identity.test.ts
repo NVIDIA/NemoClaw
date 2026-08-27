@@ -331,7 +331,10 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
     routeReservationCalls,
     registryMutationCalls,
     currentRegistryEntry: cancelAfterCreate ? registry.getSandbox("my-assistant") : null,
-    savedSession: cancelAfterCreate ? onboardModule.onboardSession.loadSession() : null,
+    savedSession:
+      cancelAfterCreate || postCreateAuthorityRefusal
+        ? onboardModule.onboardSession.loadSession()
+        : null,
     createCommand: createCommand?.command ?? null,
     commandNames: commands.map((entry) => entry.command),
   }));
@@ -541,6 +544,16 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
         assert.match(
           payload.creationError,
           /Ask the OpenShell administrator.*identity-bound recovery or removal procedure/u,
+        );
+        assert.equal(payload.savedSession.status, "recovery_required");
+        assert.equal(payload.savedSession.resumable, false);
+        assert.equal(
+          payload.savedSession.cancellationRecovery.reason,
+          "retained_after_sandbox_creation_failure",
+        );
+        assert.equal(
+          payload.savedSession.cancellationRecovery.sandboxIdentityFingerprint,
+          identityFingerprint,
         );
       };
       const assertCancellationRecovery = () => {
