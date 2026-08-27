@@ -800,7 +800,8 @@ describe("pull request and main workflow contracts", () => {
       pull_request_target: { types: ["opened", "synchronize", "reopened", "edited"] },
     });
     expect(sdkPackageWorkflow.concurrency).toEqual({
-      group: "openshell-sdk-package-${{ github.event.pull_request.number }}",
+      group:
+        "openshell-sdk-package-${{ github.event.pull_request.number }}-${{ github.event.action != 'edited' || github.event.changes.base != null }}",
       "cancel-in-progress": true,
     });
     expect(sdkPackageWorkflow.permissions).toEqual({ contents: "read" });
