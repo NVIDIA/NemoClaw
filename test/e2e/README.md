@@ -562,7 +562,7 @@ It does not inspect OpenShell terminal wording or repeat the forward mutation.
 The complete create, forward, chat, and cleanup flow runs twice to detect stale
 state. After preflight and local setup succeed, it
 writes a secret-free receipt for either verdict and records whether sensitive
-runtime artifacts were removed. Receipt schema version 3 also classifies startup
+runtime artifacts were removed. Receipt schema version 4 also classifies startup
 as not observed, spawn failed, exited before readiness, health timeout, or ready.
 The ready outcome means that the in-sandbox health probe succeeded.
 It does not mean that the qualification passed.
