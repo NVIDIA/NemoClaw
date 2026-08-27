@@ -100,6 +100,7 @@ import {
 import {
   assertBaselineExclusionsMatchCreateIntent,
   baselineExclusionsForCreate,
+  sandboxCreateInferenceSelection,
 } from "../../sandbox-registration";
 
 import { withSandboxPhaseTrace } from "../../tracing";
@@ -2196,7 +2197,22 @@ class SandboxStateFlow<
               resourceProfile,
               effectiveHermesToolGateways,
               this.options.hermesAuthMethod,
-              this.options.session ? { sessionId: this.options.session.sessionId } : null,
+              this.options.session
+                ? {
+                    sessionId: this.options.session.sessionId,
+                    selection: sandboxCreateInferenceSelection({
+                      provider: this.options.provider,
+                      model: this.options.model,
+                      endpointUrl: this.options.endpointUrl,
+                      endpointSource: this.options.endpointSource,
+                      credentialEnv: this.options.credentialEnv,
+                      preferredInferenceApi: this.options.preferredInferenceApi,
+                      compatibleEndpointReasoning: this.options.compatibleEndpointReasoning,
+                      compatibleEndpointReasoningEffort: null,
+                      nimContainer: this.options.nimContainer,
+                    }),
+                  }
+                : null,
               effectiveCreateIntent,
               ...(activateVerifiedCredentialProviders
                 ? [
