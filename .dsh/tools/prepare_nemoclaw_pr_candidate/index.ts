@@ -98,8 +98,21 @@ export default async function prepare_nemoclaw_pr_candidate(input: {
     warnings = [...preflight.warnings];
   let rendered = null;
   if (input.body) {
+    const sensitiveChanged = preflight.inferred.sensitivePaths.length > 0;
+    if (
+      input.body.sensitivePath?.changed !== undefined &&
+      input.body.sensitivePath.changed !== sensitiveChanged
+    )
+      blockers.push({
+        code: "sensitive-path-mismatch",
+        message: "Caller-sensitive path state does not match candidate inspection.",
+      });
     rendered = await tools.render_nemoclaw_pr_body({
       ...input.body,
+      sensitivePath: {
+        changed: sensitiveChanged,
+        reviewEvidence: input.body.sensitivePath?.reviewEvidence,
+      },
       workdir: input.workdir,
       baseRef: (input.remote ?? "origin") + "/" + (input.baseBranch ?? "main"),
     });

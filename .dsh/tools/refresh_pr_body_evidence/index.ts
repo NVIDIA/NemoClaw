@@ -29,6 +29,7 @@ export default async function refresh_pr_body_evidence(input: {
   polls: Integer;
   waitedMs: Integer;
   updatedAt: string | null;
+  cleanupFailure?: { path: string; detail: string; remediation: string };
 }> {
   const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
   const repo = input.repo ?? "NVIDIA/NemoClaw";
@@ -186,8 +187,9 @@ export default async function refresh_pr_body_evidence(input: {
   }
   const renderBody = (initialBody) => {
     let body = initialBody;
-    if (!/(^|\n)## Verification\n/u.test(body))
-      throw new Error("Could not find Verification section");
+    const verificationMatch = /(^|\n)## Verification\n/u.exec(body);
+    if (!verificationMatch) throw new Error("Could not find Verification section");
+    const verificationStart = verificationMatch.index + verificationMatch[1].length;
     const upsertVerification = (key, lines) => {
       const startMarker = "<!-- nemoclaw-" + key + ":start -->";
       const endMarker = "<!-- nemoclaw-" + key + ":end -->";
@@ -205,8 +207,8 @@ export default async function refresh_pr_body_evidence(input: {
         body = body.replace(pattern, block);
         return;
       }
-      const reviewNotes = body.indexOf("\n## Review notes");
-      const divider = body.indexOf("\n---");
+      const reviewNotes = body.indexOf("\n## Review notes", verificationStart);
+      const divider = body.indexOf("\n---", verificationStart);
       const insertion = reviewNotes >= 0 ? reviewNotes : divider;
       if (insertion < 0) throw new Error("Could not find the end of Verification section");
       body = body.slice(0, insertion).trimEnd() + "\n" + block + "\n" + body.slice(insertion);
@@ -323,13 +325,14 @@ export default async function refresh_pr_body_evidence(input: {
             String(cleanupError?.message ?? cleanupError)
           : ""),
     );
-  if (cleanupError)
-    throw new Error(
-      "PR body update completed, but cleanup failed for " +
-        temporaryDirectory +
-        ": " +
-        String(cleanupError?.message ?? cleanupError),
-    );
+  const cleanupFailure = cleanupError
+    ? {
+        path: temporaryDirectory,
+        detail: String(cleanupError?.message ?? cleanupError),
+        remediation:
+          "Remove the private temporary directory. Do not repeat the completed PR update.",
+      }
+    : undefined;
   return {
     ok: true,
     apply: true,
@@ -344,5 +347,6 @@ export default async function refresh_pr_body_evidence(input: {
     polls,
     waitedMs,
     updatedAt: updated.updated_at ?? null,
+    ...(cleanupFailure ? { cleanupFailure } : {}),
   };
 }

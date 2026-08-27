@@ -103,9 +103,11 @@ export default async function render_nemoclaw_pr_body(input: {
     blockers.push("Test evidence is required.");
   if (tests.result !== "added-or-updated" && !tests.justification)
     blockers.push("Test justification is required.");
-  if (input.hooks.passed !== true) blockers.push("Hook or validate:pr evidence is required.");
+  if (!input.hooks || input.hooks.passed !== true)
+    blockers.push("Hook or validate:pr evidence is required.");
   if (input.noSecrets !== true) blockers.push("No-secrets confirmation is required.");
-  if (input.dco.commitsVerified !== true) blockers.push("Every commit must appear as Verified.");
+  if (!input.dco || input.dco.commitsVerified !== true)
+    blockers.push("Every commit must appear as Verified.");
   const sensitive = input.sensitivePath ?? { changed: false };
   if (sensitive.changed && !sensitive.reviewEvidence)
     blockers.push("Sensitive-path review evidence or a waiver is required.");
@@ -125,10 +127,16 @@ export default async function render_nemoclaw_pr_body(input: {
     selected.push(label);
     verification.push("- " + label + ": " + line(detail, label));
   };
-  addEvidence("Contributor validation", input.hooks.evidence ?? "Normal hooks passed");
+  addEvidence(
+    "Contributor validation",
+    input.hooks?.evidence ?? (input.hooks?.passed ? "Normal hooks passed" : "Missing"),
+  );
   if (tests.result === "not-applicable")
-    addEvidence("Tests", "Not applicable — " + line(tests.justification, "Test justification"));
-  else addEvidence("Tests", line(tests.evidence, "Test evidence"));
+    addEvidence(
+      "Tests",
+      "Not applicable — " + (tests.justification?.trim() || "Missing justification"),
+    );
+  else addEvidence("Tests", tests.evidence?.trim() || "Missing evidence");
   if (input.broadGate?.passed === true) addEvidence("Broad gate", input.broadGate.evidence);
   if (input.docs?.buildPassed === true) addEvidence("Documentation build", "npm run docs passed");
   if (input.docs?.styleReviewed === true) addEvidence("Documentation style", "Review completed");
