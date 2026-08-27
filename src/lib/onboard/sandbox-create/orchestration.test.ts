@@ -19,9 +19,86 @@ import {
   persistRetainedSandboxRecoveryMessage,
   readManagedDcodeCreateSelectionDrift,
   readSandboxRecreateRegistryEntry,
+  reconcileCreatedHermesCredentialEnvironment,
   resolveSandboxCreatePolicyAuthority,
   runSandboxCreateWithPolicyAuthorityChecks,
 } from "./orchestration";
+
+describe("created Hermes credential environment reconciliation", () => {
+  const plan = { agent: "hermes" } as never;
+
+  it("restarts and rechecks the managed gateway after changing the env file", () => {
+    const events: string[] = [];
+    const restart = { status: 0, stdout: "managed completion", stderr: "" };
+
+    reconcileCreatedHermesCredentialEnvironment(
+      { sandboxName: "alpha", plan },
+      {
+        revalidatePolicyAuthority: (operation) => events.push(`policy:${operation}`),
+        reconcileCredentialEnv: () => {
+          events.push("reconcile");
+          return { changed: true };
+        },
+        restartGateway: () => {
+          events.push("restart");
+          return restart;
+        },
+        parseRestartCompletion: (result) => {
+          events.push("parse");
+          return result === restart ? {} : null;
+        },
+        waitForGateway: () => {
+          events.push("wait");
+          return true;
+        },
+      },
+    );
+
+    expect(events).toEqual([
+      expect.stringMatching(/^policy:reconciling/u),
+      "reconcile",
+      expect.stringMatching(/^policy:confirming/u),
+      "restart",
+      "parse",
+      "wait",
+      expect.stringMatching(/^policy:completing/u),
+    ]);
+  });
+
+  it("does not restart when the env file was already reconciled", () => {
+    const restartGateway = vi.fn();
+    const waitForGateway = vi.fn();
+
+    reconcileCreatedHermesCredentialEnvironment(
+      { sandboxName: "alpha", plan },
+      {
+        revalidatePolicyAuthority: vi.fn(),
+        reconcileCredentialEnv: () => ({ changed: false }),
+        restartGateway,
+        parseRestartCompletion: vi.fn(),
+        waitForGateway,
+      },
+    );
+
+    expect(restartGateway).not.toHaveBeenCalled();
+    expect(waitForGateway).not.toHaveBeenCalled();
+  });
+
+  it("fails onboarding when the changed gateway cannot prove restart completion", () => {
+    expect(() =>
+      reconcileCreatedHermesCredentialEnvironment(
+        { sandboxName: "alpha", plan },
+        {
+          revalidatePolicyAuthority: vi.fn(),
+          reconcileCredentialEnv: () => ({ changed: true }),
+          restartGateway: () => ({ status: 1, stdout: "", stderr: "failed" }),
+          parseRestartCompletion: () => null,
+          waitForGateway: vi.fn(),
+        },
+      ),
+    ).toThrow("managed gateway restart did not complete");
+  });
+});
 
 describe("retained create recovery persistence", () => {
   it.each([
