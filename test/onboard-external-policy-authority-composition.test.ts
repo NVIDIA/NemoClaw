@@ -54,6 +54,8 @@ describe("external policy authority onboarding composition", () => {
         directGpu: false,
         additionalPresets,
         agentName: agent.name,
+        // Mirrors preflightPolicyRequirements.
+        sandboxName,
         policyTier,
       });
     const effectivePolicySource = prepareRequiredPolicy();
@@ -200,6 +202,7 @@ describe("external policy authority onboarding composition", () => {
           return launch;
         },
         captureCreatedSandboxIdentity: () => "a".repeat(64),
+        persistCreatedSandboxIdentity: vi.fn(),
         revalidateCreatedSandboxIdentity: vi.fn(),
         verifyCreatedPolicy: () => "verified",
         persistVerifiedPolicy: vi.fn(),

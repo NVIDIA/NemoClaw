@@ -147,19 +147,6 @@ export function resetDestroyModuleCache(): void {
   delete require.cache[requireSource.resolve(destroyModulePath)];
 }
 
-type DestroySandboxPresenceClassifier = (
-  sandboxName: string,
-  result: { status: number | null; stdout?: string; stderr?: string },
-) => string;
-
-export function loadDestroySandboxPresenceClassifier(): DestroySandboxPresenceClassifier {
-  resetDestroyModuleCache();
-  const destroyModule = requireSource(destroyModulePath) as {
-    classifyDestroySandboxPresence: DestroySandboxPresenceClassifier;
-  };
-  return destroyModule.classifyDestroySandboxPresence;
-}
-
 export function traceDestroyBoundaryCalls(
   harness: Pick<DestroyHarness, "runOpenshellSpy">,
   trace: string[],

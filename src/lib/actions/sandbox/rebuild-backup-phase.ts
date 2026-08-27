@@ -5,7 +5,7 @@ import { type WebSearchConfig, webSearchProviderForConfig } from "../../inferenc
 import type { SandboxMessagingPlan } from "../../messaging";
 import {
   mergeRebuildMessagingPolicyPresets,
-  pruneInactiveHermesMessagingPolicyPresets,
+  pruneInactiveMessagingPolicyPresets,
 } from "../../onboard/messaging-policy-presets";
 import {
   isDcodeAgent,
@@ -240,10 +240,9 @@ export function runRebuildBackupPhase(
     : [];
   const activeMessagingPolicyPresets =
     carriesManagedPolicyPresets && input.messagingPlan
-      ? pruneInactiveHermesMessagingPolicyPresets(
+      ? pruneInactiveMessagingPolicyPresets(
           mergedPolicyPresets,
           enabledChannelIds,
-          input.sandboxEntry.agent,
           new Set(
             (input.sandboxEntry.customPolicies ?? []).map((policy) =>
               policy.name.trim().toLowerCase(),

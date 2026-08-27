@@ -91,7 +91,8 @@ For `unclear`, leave `winner` null and request maintainer judgment.
 ```bash
 scripts/collect-gates.sh <pr-number>
 scripts/check-coderabbit-threads.sh <pr-number>
-node --experimental-strip-types --no-warnings ../nemoclaw-maintainer-day/scripts/check-gates.ts <pr-number>
+git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+bash <(git show origin/main:.agents/skills/nemoclaw-maintainer-day/scripts/run-trusted-check-gates.sh) <pr-number>
 ```
 
 All six gates are required.
