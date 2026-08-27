@@ -72,6 +72,32 @@ const registerCalls = [];
 const updateCalls = [];
 const keepAlive = setInterval(() => {}, 1000);
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+const managedCredentialByProviderSuffix = new Map([
+  ["-telegram-bridge", "TELEGRAM_BOT_TOKEN"],
+  ["-discord-bridge", "DISCORD_BOT_TOKEN"],
+  ["-wechat-bridge", "WECHAT_BOT_TOKEN"],
+  ["-slack-bridge", "SLACK_BOT_TOKEN"],
+  ["-slack-app", "SLACK_APP_TOKEN"],
+  ["-teams-bridge", "MSTEAMS_APP_PASSWORD"],
+]);
+const managedProviderResult = (normalized) => {
+  const providerName = normalized.split(/\s+/).at(-1);
+  const credential = [...managedCredentialByProviderSuffix].find(([suffix]) =>
+    providerName?.endsWith(suffix),
+  )?.[1];
+  return normalized.includes("provider get") && providerName && credential
+    ? {
+        status: 0,
+        stdout: [
+          "Name: " + providerName,
+          "Type: nemoclaw-mcp-v1",
+          "Credential keys: " + credential,
+          "Config keys: <none>",
+        ].join("\n"),
+        stderr: "",
+      }
+    : null;
+};
 
 dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch = () => ({
   maybeApplyDuringCreate: () => {},
@@ -100,8 +126,10 @@ agentOnboard.createAgentSandbox = () => {
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
+  const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
+  const providerResult = managedProviderResult(normalized);
+  if (providerResult !== null) return providerResult;
   const sandboxResult = createdSandbox.run(command);
   return sandboxResult ?? { status: 0 };
 };
