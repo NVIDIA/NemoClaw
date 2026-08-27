@@ -20,7 +20,11 @@ import { OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
 
 import { retryUntil } from "../core/retry";
 import { sleepSeconds } from "../core/wait";
-import type { PreparedDockerBuildEnvironment } from "../onboard/sandbox-prebuild";
+import {
+  mergeIsolatedDockerClientEnv,
+  prepareDockerBuildEnvironment,
+  type PreparedDockerBuildEnvironment,
+} from "../onboard/docker-client-isolation";
 import { containerCanReachHostLoopback, isWsl, type WslDetectionOptions } from "../platform";
 import { type CaptureResult, runCapture, runCaptureEx, shellQuote } from "../runner";
 import { buildSubprocessEnv } from "../subprocess-env";
@@ -1203,20 +1207,14 @@ export function validateSandboxFacingOllamaModel(
   }
 }
 
-function dockerClientIsolation(): typeof import("../onboard/sandbox-prebuild") {
-  // Lazy require avoids a static cycle: local.ts <-> onboard bootstrap.
-  return require("../onboard/sandbox-prebuild") as typeof import("../onboard/sandbox-prebuild");
-}
-
 function prepareIsolatedDockerEnvironment(): PreparedDockerBuildEnvironment {
-  return dockerClientIsolation().prepareDockerBuildEnvironment({ allowCredentialIsolation: true });
+  return prepareDockerBuildEnvironment({ allowCredentialIsolation: true });
 }
 
 function isolateDockerClientCapture(
   capture: RunCaptureFn,
   prepared: PreparedDockerBuildEnvironment,
 ): RunCaptureFn {
-  const { mergeIsolatedDockerClientEnv } = dockerClientIsolation();
   return (cmd, opts) => {
     if (cmd[0] !== "docker") return capture(cmd, opts);
     return capture(cmd, {

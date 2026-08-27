@@ -8,7 +8,7 @@ import {
   mergeIsolatedDockerClientEnv,
   prepareDockerBuildEnvironment,
   type PreparedDockerBuildEnvironment,
-} from "../sandbox-prebuild";
+} from "../docker-client-isolation";
 import { hasZeroDockerExitStatus } from "../docker-command-result";
 import { createDockerGpuDiagnosticRedactor } from "../docker-gpu-diagnostic-redaction";
 import { detectTegraDeviceGroupGids } from "../docker-gpu-jetson-groups";

@@ -42,7 +42,10 @@ import type {
 } from "./sandbox-gpu-create-flow";
 import { fingerprintSandboxRecreateValue } from "./sandbox-recreate-transaction";
 import * as sandboxGpuPreflight from "./sandbox-gpu-preflight";
-import { mergeIsolatedDockerClientEnv, prepareDockerBuildEnvironment } from "./sandbox-prebuild";
+import {
+  mergeIsolatedDockerClientEnv,
+  prepareDockerBuildEnvironment,
+} from "./docker-client-isolation";
 import { SANDBOX_RECREATE_PROBE_TIMEOUT_MS } from "./sandbox-recreate-probe";
 import type { CreatedSandboxReadyIdentityCheck } from "./sandbox-readiness-tracing";
 import * as sandboxReadinessTracing from "./sandbox-readiness-tracing";
@@ -565,13 +568,13 @@ export function createSandboxGpuCreateAttemptRunner(
               });
               return isSandboxReady(list, input.sandboxName);
             },
-             ...(deferPostCreateEffects
-               ? {}
-               : {
-                   onPoll: () => {
-                     if (!deferRestartSafeCutover) void runtimePatch.maybeApplyDuringCreate();
-                   },
-                 }),
+            ...(deferPostCreateEffects
+              ? {}
+              : {
+                  onPoll: () => {
+                    if (!deferRestartSafeCutover) void runtimePatch.maybeApplyDuringCreate();
+                  },
+                }),
             readyCheckOutputPatterns: getReadyCheckOutputPatternsForAgent({
               isTerminalAgent: input.terminalAgent,
               startupRunsDuringCreate: managedLifecycle === null,
@@ -579,7 +582,7 @@ export function createSandboxGpuCreateAttemptRunner(
             }),
             failureCheck: runtimePatch.createFailureMessage,
             traceEvent: addTraceEvent,
-             waitForReadyTermination: deferRestartSafeCutover || deferPostCreateEffects,
+            waitForReadyTermination: deferRestartSafeCutover || deferPostCreateEffects,
             initialPhase:
               compatibility && (input.prebuild.imageRef || state.compatibilityArgv)
                 ? "create"
