@@ -199,12 +199,6 @@ describe("managed gateway port readiness (#7411)", () => {
       "linux",
     ],
     ["no executable evidence", "openshell-gateway[nemoclaw=nemoclaw;port=8080]", null, "linux"],
-    [
-      "a macOS direct listener",
-      "openshell-gateway[nemoclaw=nemoclaw;port=8080]",
-      "/opt/openshell/bin/openshell-gateway",
-      "darwin",
-    ],
   ] as const)(
     "rejects the owned gateway tag with %s (#8755)",
     (_case, identity, executable, platform) => {
@@ -223,17 +217,27 @@ describe("managed gateway port readiness (#7411)", () => {
     },
   );
 
-  it("rejects trusted-looking argv on macOS without package-service identity", () => {
+  it("accepts target-bound macOS argv only with matching executable vnode identity (#10369)", () => {
     const trusted = "/opt/homebrew/opt/openshell/bin/openshell-gateway";
-    const spoofedArgv = `${trusted} --name nemoclaw-readiness-test --port 8080`;
+    const targetBound = "openshell-gateway[nemoclaw=nemoclaw-18080;port=18080]";
 
     expect(
       gatewayProcessIdentityMatchesTrustedBinary(
-        spoofedArgv,
+        targetBound,
         trusted,
-        "nemoclaw-readiness-test",
-        8080,
+        "nemoclaw-18080",
+        18080,
         trusted,
+        "darwin",
+      ),
+    ).toBe(true);
+    expect(
+      gatewayProcessIdentityMatchesTrustedBinary(
+        targetBound,
+        trusted,
+        "nemoclaw-18080",
+        18080,
+        "/tmp/foreign-gateway",
         "darwin",
       ),
     ).toBe(false);

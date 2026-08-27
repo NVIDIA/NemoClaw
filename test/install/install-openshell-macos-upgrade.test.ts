@@ -1,0 +1,297 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { describe, expect, it } from "vitest";
+
+const INSTALLER_PAYLOAD = path.join(import.meta.dirname, "../..", "scripts", "install.sh");
+
+function writeExecutable(target: string, contents: string): void {
+  fs.writeFileSync(target, contents, { mode: 0o755 });
+}
+
+function runDarwinGatewayProcessStop(
+  options: { trustedExecutable?: boolean; trustedIdentity?: boolean } = {},
+) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-darwin-gateway-stop-"));
+  const home = path.join(tmp, "home");
+  const bin = path.join(tmp, "bin");
+  const runtimeDir = path.join(tmp, "runtime");
+  const gatewayBin = path.join(home, ".local", "bin", "openshell-gateway");
+  fs.mkdirSync(path.dirname(gatewayBin), { recursive: true });
+  fs.mkdirSync(bin, { recursive: true });
+  fs.mkdirSync(runtimeDir, { recursive: true });
+  writeExecutable(gatewayBin, "#!/usr/bin/env bash\nexec sleep 60\n");
+  writeExecutable(path.join(bin, "uname"), "#!/usr/bin/env bash\nprintf 'Darwin\\n'\n");
+  writeExecutable(
+    path.join(bin, "ps"),
+    `#!/usr/bin/env bash
+printf '%s\n' '${
+      options.trustedIdentity === false
+        ? "python"
+        : "openshell-gateway[nemoclaw=nemoclaw-20369;port=20369]"
+    }'
+`,
+  );
+  writeExecutable(
+    path.join(bin, "lsof"),
+    `#!/usr/bin/env bash
+printf 'p%s\nn%s\n' "$4" '${
+      options.trustedExecutable === false ? path.join(tmp, "foreign-gateway") : gatewayBin
+    }'
+`,
+  );
+
+  const script =
+    options.trustedIdentity === false || options.trustedExecutable === false
+      ? `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
+HOME="${home}"
+NEMOCLAW_GATEWAY_PORT=20369
+if trusted_macos_openshell_gateway_process "$$" 20369; then exit 9; fi`
+      : `trap 'kill "$gateway_pid" 2>/dev/null || true' EXIT
+source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
+HOME="${home}"
+NEMOCLAW_GATEWAY_PORT=20369
+NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="${runtimeDir}"
+"${gatewayBin}" 60 &
+gateway_pid=$!
+sleep 0.1
+kill -0 "$gateway_pid"
+printf '%s\n' "$gateway_pid" >"${runtimeDir}/openshell-gateway.pid"
+stop_legacy_openshell_gateway_process
+wait "$gateway_pid" 2>/dev/null || true
+if kill -0 "$gateway_pid" 2>/dev/null; then exit 9; fi
+test ! -e "${runtimeDir}/openshell-gateway.pid"`;
+
+  return spawnSync("bash", ["-c", script], {
+    encoding: "utf-8",
+    env: {
+      ...process.env,
+      HOME: home,
+      PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`,
+    },
+  });
+}
+
+function runDarwinGatewayPidFile(contents: string, symlink = false) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-darwin-gateway-pid-file-"));
+  const home = path.join(tmp, "home");
+  const bin = path.join(tmp, "bin");
+  const runtimeDir = path.join(tmp, "runtime");
+  const pidFile = path.join(runtimeDir, "openshell-gateway.pid");
+  fs.mkdirSync(bin, { recursive: true });
+  fs.mkdirSync(runtimeDir, { recursive: true });
+  writeExecutable(path.join(bin, "uname"), "#!/usr/bin/env bash\nprintf 'Darwin\\n'\n");
+  const writePidFile = symlink
+    ? () => {
+        const target = path.join(tmp, "pid-target");
+        fs.writeFileSync(target, contents);
+        fs.symlinkSync(target, pidFile);
+      }
+    : () => fs.writeFileSync(pidFile, contents);
+  writePidFile();
+
+  const result = spawnSync(
+    "bash",
+    [
+      "-c",
+      `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
+HOME="${home}"
+NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="${runtimeDir}"
+stop_legacy_openshell_gateway_process`,
+    ],
+    {
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: home,
+        PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    },
+  );
+  return { result, pidFile };
+}
+
+function runDarwinGatewayServiceStop(
+  options: { trustedLabel?: boolean; trustedProgram?: boolean } = {},
+) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-darwin-gateway-service-stop-"));
+  const home = path.join(tmp, "home");
+  const bin = path.join(tmp, "bin");
+  const brewPrefix = path.join(tmp, "homebrew");
+  const serviceLabel = "homebrew.mxcl.openshell";
+  const servicePath = path.join(home, "Library", "LaunchAgents", `${serviceLabel}.plist`);
+  const serviceProgram = path.join(
+    brewPrefix,
+    "opt",
+    "openshell",
+    "libexec",
+    "openshell-gateway-homebrew-service",
+  );
+  const active = path.join(tmp, "active");
+  const launchctlLog = path.join(tmp, "launchctl.log");
+  fs.mkdirSync(path.dirname(servicePath), { recursive: true });
+  fs.mkdirSync(path.dirname(serviceProgram), { recursive: true });
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(servicePath, "test plist\n");
+  fs.writeFileSync(active, "active\n");
+  writeExecutable(serviceProgram, "#!/usr/bin/env bash\nexit 0\n");
+  writeExecutable(path.join(bin, "uname"), "#!/usr/bin/env bash\nprintf 'Darwin\\n'\n");
+  writeExecutable(
+    path.join(bin, "brew"),
+    `#!/usr/bin/env bash
+[ "\${1:-}" = "--prefix" ] && printf '%s\n' '${brewPrefix}'
+`,
+  );
+  writeExecutable(
+    path.join(bin, "plutil"),
+    `#!/usr/bin/env bash
+case "\${2:-}" in
+  Label) printf '%s\n' '${options.trustedLabel === false ? "other.service" : serviceLabel}' ;;
+  ProgramArguments.0) printf '%s\n' '${
+    options.trustedProgram === false ? path.join(tmp, "foreign-gateway") : serviceProgram
+  }' ;;
+esac
+`,
+  );
+  writeExecutable(
+    path.join(bin, "launchctl"),
+    `#!/usr/bin/env bash
+printf '%s\n' "$*" >>'${launchctlLog}'
+case "\${1:-}" in
+  print) [ -f '${active}' ] ;;
+  bootout) rm -f '${active}' ;;
+esac
+`,
+  );
+
+  const result = spawnSync(
+    "bash",
+    [
+      "-c",
+      `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
+HOME="${home}"
+NEMOCLAW_GATEWAY_PORT=8080
+stop_macos_openshell_gateway_user_service`,
+    ],
+    {
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: home,
+        PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    },
+  );
+  return {
+    result,
+    launchctlLog: fs.existsSync(launchctlLog) ? fs.readFileSync(launchctlLog, "utf-8") : "",
+  };
+}
+
+describe("install.sh macOS OpenShell upgrade recovery", () => {
+  it("stops only the gateway process with matching owned state and process identity (#10369)", () => {
+    const result = runDarwinGatewayProcessStop();
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+  });
+
+  it("rejects a PID when the process identity does not match (#10369)", () => {
+    const result = runDarwinGatewayProcessStop({ trustedIdentity: false });
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+  });
+
+  it("rejects a PID when lsof reports a foreign executable (#10369)", () => {
+    const result = runDarwinGatewayProcessStop({ trustedExecutable: false });
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+  });
+
+  it("clears a stale owned macOS gateway PID file without signaling (#10369)", () => {
+    const { result, pidFile } = runDarwinGatewayPidFile("999999999\n");
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(fs.existsSync(pidFile)).toBe(false);
+  });
+
+  it("rejects malformed or symlinked macOS gateway PID files (#10369)", () => {
+    const malformed = runDarwinGatewayPidFile("not-a-pid\n");
+    const symlinked = runDarwinGatewayPidFile("999999999\n", true);
+
+    expect(malformed.result.status).toBe(1);
+    expect(malformed.result.stderr).toContain("invalid PID file");
+    expect(symlinked.result.status).toBe(1);
+    expect(symlinked.result.stderr).toContain("untrusted PID file");
+  });
+
+  it("stops only the active trusted OpenShell Homebrew user service (#10369)", () => {
+    const { result, launchctlLog } = runDarwinGatewayServiceStop();
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(
+      launchctlLog
+        .trim()
+        .split(/\r?\n/)
+        .map((line) => line.split(" ")[0]),
+    ).toEqual(["print", "bootout", "print"]);
+  });
+
+  it("refuses to stop a Homebrew user service with an unexpected label (#10369)", () => {
+    const { result, launchctlLog } = runDarwinGatewayServiceStop({ trustedLabel: false });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("macOS user service with an unexpected label");
+    expect(launchctlLog).toBe("");
+  });
+
+  it("refuses to stop a Homebrew user service with an unexpected executable (#10369)", () => {
+    const { result, launchctlLog } = runDarwinGatewayServiceStop({ trustedProgram: false });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("macOS user service with an untrusted executable");
+    expect(launchctlLog).toBe("");
+  });
+
+  it("selects Homebrew binaries after a verified formula install (#10386)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-homebrew-openshell-path-"));
+    const bin = path.join(tmp, "bin");
+    const brewPrefix = path.join(tmp, "homebrew");
+    const openshellBin = path.join(brewPrefix, "bin", "openshell");
+    const gatewayBin = path.join(brewPrefix, "bin", "openshell-gateway");
+    fs.mkdirSync(bin, { recursive: true });
+    fs.mkdirSync(path.dirname(openshellBin), { recursive: true });
+    writeExecutable(openshellBin, "#!/usr/bin/env bash\nexit 0\n");
+    writeExecutable(gatewayBin, "#!/usr/bin/env bash\nexit 0\n");
+    writeExecutable(path.join(bin, "uname"), "#!/usr/bin/env bash\nprintf 'Darwin\\n'\n");
+    writeExecutable(
+      path.join(bin, "brew"),
+      `#!/usr/bin/env bash
+[ "\${1:-}" = "--prefix" ] && printf '%s\n' '${brewPrefix}'
+`,
+    );
+
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
+prefer_homebrew_openshell verified-install
+printf 'openshell=%s\ngateway=%s\npath=%s\n' "$NEMOCLAW_OPENSHELL_BIN" "$NEMOCLAW_OPENSHELL_GATEWAY_BIN" "$(command -v openshell)"`,
+      ],
+      {
+        encoding: "utf-8",
+        env: { ...process.env, PATH: `${bin}:/usr/bin:/bin` },
+      },
+    );
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.stdout).toContain(`openshell=${openshellBin}`);
+    expect(result.stdout).toContain(`gateway=${gatewayBin}`);
+    expect(result.stdout).toContain(`path=${openshellBin}`);
+  });
+});

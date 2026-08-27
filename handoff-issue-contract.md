@@ -1,97 +1,80 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Issue #8614 closure contract
+# Issue closure contract for #10369 and #10386
 
-## Reporter workflow
+## Scope authority
 
-Source: [issue body](https://github.com/NVIDIA/NemoClaw/issues/8614) and [reporter follow-up](https://github.com/NVIDIA/NemoClaw/issues/8614#issuecomment-5224815419).
+- The current maintainer handoff groups #10369 and #10386 and requires one complete macOS upgrade and install fix. It requires safe legacy OpenShell gateway retirement and a version-specific trusted Homebrew formula checksum. This direction establishes the accepted scope for this implementation.
+- #10369 is open, assigned to `yimoj`, and has the `NV QA` and `UAT` labels. #10386 is open and has the `NV QA` label. Neither issue has a linked implementation PR or existing PR review feedback as of 2026-08-27.
 
-Environment reported by `zxman0126`: NemoClaw v0.0.102, Hermes Agent 0.19.0 sandbox, and DGX Spark GB10.
+## Reporter workflow and environment
 
-1. Run `config set memory.provider`; observe an immediate gateway SIGTERM and restart.
-2. Run `config set model.supports_vision`; observe no immediate restart and a restart note.
-3. Write `platforms.teams.home_channel.chat_id` before its required `platform` field.
-4. Trigger a restart with another config write; observe `HomeChannel.from_dict` fail and the gateway enter relaunch quarantine after five exits.
-5. Rebuild the sandbox and run `config set` before `recover`; observe a compat-hash failure that a later `recover` does not repair.
-6. Rebuild again, run `recover`, and then run `config set`; observe the write succeed.
-7. Inspect `/tmp/gateway.log`, `~/.hermes/logs/agent.log`, and the integrity-frozen `.env`; observe that the useful traceback and managed `.env` writes are not disclosed by the host command.
-8. Set `security.allow_private_urls` to `true`, then set `browser.cdp_url` to `http://10.200.0.1:9223`; observe CLI rejection before Hermes receives the value.
+### #10369: split-version upgrade
 
-The required local reproduction uses the built worktree `./bin/nemoclaw.js`, Hermes sandbox `triage-8614`, and ports unique to this issue.
+Source: #10369 body and reporter comments.
 
-## Expected behavior
+- Platform: two Apple Silicon macOS machines, arm64, Node.js 23.10.0, npm 11.3.0, Docker through Colima 27.x.
+- Baseline: NemoClaw v0.0.90 with OpenShell 0.0.85 and at least one onboarded sandbox.
+- Reporter workflow:
+  1. Run `curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=v0.0.90 bash` on a fresh macOS host and onboard a sandbox.
+  2. Confirm `openshell --version` reports 0.0.85.
+  3. Run `curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=v0.0.114 bash`.
+  4. Inspect the OpenShell gateway retirement result and command status, then repeat the same upgrade command.
+- Observed behavior: sandbox backup succeeds, OpenShell gateway retirement fails, NemoClaw reaches v0.0.114 while OpenShell remains 0.0.85, and the repeated upgrade fails at the same step. A valid gateway PID file can exist while the macOS fallback rejects or ignores it.
+- Reporter follow-up: deleting only the local gateway registration lets the installer pass the first failure but leaves the OpenShell gateway process running and exposes the #10386 Homebrew checksum failure. The suggested repeated installer command is circular.
 
-- NemoClaw validates a complete Hermes candidate configuration before persistence.
-- NemoClaw rejects an incomplete structural write with the missing field or path.
-- Rejection leaves the configuration file, managed `.env`, integrity hashes, gateway state, and quarantine state unchanged.
-- A valid complete structural write succeeds.
-- A successful rebuild leaves Hermes configuration writable. If the security model requires recovery, NemoClaw rejects the write before mutation and prints the exact recovery command; recovery then succeeds without another rebuild.
-- Hermes config output truthfully states possible or observed gateway restart effects and readiness or recovery state.
-- A failed Hermes restart reports a bounded, sanitized tail from `/tmp/gateway.log`.
-- Config output discloses managed `.env` effects without exposing values or secrets.
-- Private URLs remain rejected by default.
-- An explicit `security.allow_private_urls: true` opt-in permits the private `browser.cdp_url` through CLI validation and the Hermes plugin runtime override.
-- The accepted private URL works through the complete supported sandbox path.
-- A user can recover from config-driven relaunch failure without an additional rebuild when the preserved valid configuration permits recovery.
+### #10386: older pinned release install
 
-## Observed behavior
+Source: #10386 body.
 
-- Hermes candidate writes receive integrity and MCP checks but not complete Hermes structural validation.
-- An incomplete `home_channel` object persists and fails during Hermes boot.
-- Repeated gateway exits quarantine relaunch until sandbox recreation.
-- Rebuild can leave frozen-input compatibility hashes stale until gateway recovery refreshes them.
-- The first post-rebuild config write can fail after partial reconciliation, and later recovery can remain insufficient.
-- Restart effects differ by key and command output does not explain the effect accurately.
-- The actionable boot traceback remains only in the in-container `/tmp/gateway.log`.
-- Managed `TEAMS_HOME_CHANNEL*` `.env` updates are not disclosed.
-- CLI URL validation rejects private hosts without reading the explicit Hermes opt-in.
-- The Hermes plugin forces `_allow_private_urls_resolved` to false, which defeats the runtime opt-in even if CLI validation permits the URL.
+- Platform: Apple Silicon macOS, arm64. The failure occurs before Node.js, npm, Docker, OpenShell, NemoClaw, or OpenClaw version reporting completes.
+- Reporter workflow: with the live `nvidia/openshell` tap newer than the formula expected by a previously released pinned NemoClaw version, run `curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG={older-pinned-version} bash`.
+- Observed behavior: install or onboarding rejects the installed Homebrew formula because its live tap checksum differs from the frozen checksum used by the pinned release.
 
-## Acceptance paths and sources
+## Expected behavior and acceptance paths
 
-Sources:
+### Safe macOS OpenShell gateway retirement
 
-- [Issue body](https://github.com/NVIDIA/NemoClaw/issues/8614): restart behavior, structural-write quarantine, rebuild and recovery ordering, diagnostics, managed `.env` effects, and expected recovery behavior.
-- [Reporter follow-up](https://github.com/NVIDIA/NemoClaw/issues/8614#issuecomment-5224815419): private URL default rejection and explicit opt-in.
-- `issue-8614.md`: current-code analysis and the coordinated closing scope.
-- GitHub timeline and `closedByPullRequestsReferences`, fetched before implementation: no linked pull request or review exists; the only cross-reference is another issue.
+Sources: #10369 expected result, reporter comments, and the current maintainer handoff.
 
-Acceptance paths:
+1. Upgrading the v0.0.90 baseline with the first newer NemoClaw release tag that contains this fix backs up existing sandboxes, retires the running OpenShell 0.0.85 gateway on macOS, installs the required OpenShell release, recreates or recovers the gateway, and completes without a split-version state. The v0.0.114 command remains the before-fix reproduction; published tags are immutable.
+2. Retirement handles the NemoClaw-managed macOS service and PID-file process paths when the OpenShell 0.0.85 lifecycle command cannot retire the gateway.
+3. Process retirement proves ownership and identity before sending a signal. It does not terminate an unrelated process when a PID file is stale, malformed, or points to a different executable.
+4. Service retirement targets only the expected NemoClaw/OpenShell user service and confirms that the service stopped.
+5. A failed upgrade returns a nonzero Bash status and preserves sandbox backups with actionable output.
+6. Repeating the complete upgrade after an interruption finishes or gives an actionable recovery path; it does not repeat the same unrecoverable retirement failure.
 
-1. Incomplete `platforms.teams.home_channel` write: reject before persistence; preserve files and hashes; do not restart or quarantine Hermes.
-2. Complete `platforms.teams.home_channel` write: persist the valid candidate and report managed `.env` effects.
-3. Rebuild integrity lifecycle: a direct subsequent config write succeeds, or a pre-mutation gate prints the exact `recover` command and the write succeeds after one recovery without another rebuild.
-4. Restart disclosure: output does not promise that Hermes remains running when the write can restart it; output reports readiness or the required recovery action.
-5. Restart failure: output includes useful, bounded, sanitized gateway diagnostics and excludes representative secrets.
-6. Private URL default: reject `browser.cdp_url` on a private host when the opt-in is absent or false.
-7. Private URL opt-in: accept the same URL only after explicit opt-in, preserve validation for unrelated URL risks, and pass the setting through the Hermes plugin runtime.
-8. Quarantine recovery: preserve or restore a valid configuration and provide a non-rebuild recovery path when the sandbox can recover safely.
+### Version-specific Homebrew formula trust
 
-## Explicit non-goals
+Sources: #10386 expected result and actual result, #10369 reporter follow-up, and the current maintainer handoff.
 
-- Do not weaken private-host rejection by default.
-- Do not add an unrestricted global SSRF bypass.
-- Do not duplicate the Hermes schema in NemoClaw when the bundled Hermes parser or schema can validate a candidate without side effects.
-- Do not expose configuration values, credentials, tokens, or an unbounded gateway log.
-- Do not claim an exact upstream restart-key matrix unless the implementation owns and verifies that matrix.
-- Do not change OpenClaw configuration behavior unless a shared owner requires the same correction.
-- Do not add Hermes behavior unrelated to this config lifecycle.
-- Do not use a rebuild as the normal repair for a rejected candidate configuration.
-- Do not open a partial PR or use `Relates to #8614` if any closure item remains unimplemented or unvalidated.
+1. A version-pinned macOS install uses the OpenShell formula that matches the requested trusted release, not the mutable live tap formula.
+2. NemoClaw validates that formula against the SHA-256 value recorded for the same trusted release before Homebrew reads or installs it.
+3. The installer and the Docker-driver OpenShell gateway service use the matching release-specific trust data. They do not compare an older pinned formula with a checksum for a different release.
+4. Starting with the release that contains this fix, an upgrade from a previously released baseline installs the formula pinned by the fixed release even after the live tap advances. Immutable historical installers are not changed retroactively.
+5. Missing, malformed, mismatched, or untrusted release checksum data fails closed. The change does not introduce an unverified production path or accept the live tap without verification.
+6. The complete #10369 upgrade passes both the retirement step and the formula trust step without the circular `pinned checksum and temporary trust contract` recovery error.
 
-## Required validation evidence
+### Required local and live evidence
 
-Before the fix, capture the reporter failure with the built worktree `./bin/nemoclaw.js` on `yimoj-colossus-dev` after dependency installation, CLI and plugin builds, and worktree OpenShell installation. Supporting helpers, direct imports, fixtures, unit tests, and raw `openshell` commands do not replace this evidence.
+Sources: current maintainer handoff and both issue workflows.
 
-After the fix, capture real worktree CLI transcripts for Hermes sandbox `triage-8614` with unique ports:
+- Before changes, run `.handoff-tools/handoff-local-gate.py run --phase before-fix` and capture both failures through the actual installer and worktree CLI path on `h7yr45lq41.dyn.nvidia.com`.
+- After changes, exercise the same v0.0.90 baseline upgrade through the patched worktree installer as the implementation of the next release tag. Do not require the immutable v0.0.114 tag to contain the fix.
+- Build this worktree, use `./bin/nemoclaw.js` or `node ./bin/nemoclaw.js`, and create required sandbox and gateway state through the worktree CLI. Helper calls and raw OpenShell commands are supporting evidence only.
+- Before-fix evidence must include the v0.0.90/OpenShell 0.0.85 split-version upgrade and the non-latest pinned formula checksum failure.
+- After changes, rebuild and repeat the same complete workflows on the same macOS host. Evidence must show the final installed versions, live gateway status, preserved or recovered sandbox state, successful user-visible CLI result, and command status.
+- Write ignored `handoff-e2e-before.md` and `handoff-e2e-after.md` receipts with hostname, exact revision, exact commands, relevant bounded output, and result.
+- Run targeted installer, gateway service, checksum extraction, dependency pin, and Docker-driver tests. Then run `npm test` because the change crosses installer, runtime service, and security verification boundaries.
+- Run the required pre-commit, post-commit, and pre-push handoff gates and obtain clean fresh-context reviewer results for contract closure, correctness, regressions, tests, validation, simplicity, and maintainability.
 
-- incomplete `home_channel` write rejected with no persistence, hash change, restart, or quarantine;
-- valid complete `home_channel` write accepted;
-- rebuild followed by config set succeeds, or exact pre-gate recovery ordering succeeds without another rebuild;
-- forced restart failure reports a bounded sanitized diagnostic tail;
-- private `browser.cdp_url` rejected by default;
-- the same private URL accepted end to end only after explicit opt-in;
-- managed `.env` and restart effects disclosed without secret values.
+## Source-backed non-goals
 
-Automated evidence must include focused tests for candidate structural validation, atomic unchanged files and hashes, rebuild postconditions, recovery ordering, bounded log length, log redaction, managed `.env` disclosure, private URL default rejection, explicit CLI opt-in, and Hermes plugin runtime opt-in. Run targeted builds and tests, the repository pre-commit gate, independent Codex review, the signed commit and post-commit gate, and the pre-push gate including `npm test`.
+- Do not change the Linux direct-download installation path to solve these macOS-only reports. Sources: both issue platform statements.
+- Do not infer macOS behavior from Linux evidence or use Linux E2E as closure evidence. Sources: both issue environments and the current maintainer handoff.
+- Do not weaken, skip, or replace formula SHA-256 verification with trust in the mutable live Homebrew tap. Sources: #10386 trust failure and the current maintainer handoff.
+- Do not terminate an arbitrary process, delete another session's runtime state, use the shared alpha sandbox, or reuse another live session's ports or sandbox names. Source: current maintainer handoff.
+- Do not treat removal of only the local OpenShell gateway registration as gateway retirement. Source: #10369 reporter follow-up.
+- Do not expand this fix into unrelated OpenShell lifecycle, installer, or documentation changes. Sources: the two issue bodies and the current maintainer handoff.
+- Do not absorb the separately tracked CPU-only upgrade recovery failure into this group. Issue #10389 owns preservation of CPU-only intent through GPU/CDI recovery. The macOS+Colima receipt bind-mount defect in #10348 is also separate unless its exact missing bind-source diagnostic reproduces. Source: current maintainer direction after comparison with #10348 and #10389.

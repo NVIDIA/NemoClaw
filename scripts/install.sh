@@ -1447,6 +1447,24 @@ refresh_path() {
   fi
 }
 
+prefer_homebrew_openshell() {
+  [[ "$(uname -s)" == "Darwin" ]] || return 1
+  command -v brew >/dev/null 2>&1 || return 1
+  if [[ "${1:-}" != "verified-install" ]]; then
+    macos_openshell_homebrew_gateway_service_installed || return 1
+  fi
+
+  local brew_prefix openshell_bin gateway_bin
+  brew_prefix="$(brew --prefix 2>/dev/null || true)"
+  [ -n "$brew_prefix" ] || return 1
+  openshell_bin="${brew_prefix%/}/bin/openshell"
+  gateway_bin="${brew_prefix%/}/bin/openshell-gateway"
+  [ -x "$openshell_bin" ] && [ -x "$gateway_bin" ] || return 1
+  export NEMOCLAW_OPENSHELL_BIN="$openshell_bin"
+  export NEMOCLAW_OPENSHELL_GATEWAY_BIN="$gateway_bin"
+  export PATH="${brew_prefix%/}/bin:$PATH"
+}
+
 prefer_user_local_openshell() {
   local local_bin="${XDG_BIN_HOME:-${HOME}/.local/bin}"
   local openshell_bin="${local_bin}/openshell"
@@ -1966,9 +1984,9 @@ maybe_install_openshell_during_install() {
       if [[ "$(uname -s)" == "Darwin" ]] && ! command -v brew >/dev/null 2>&1; then
         warn "Homebrew is not installed; using the standalone OpenShell gateway without reboot persistence."
       fi
-      prefer_user_local_openshell
-      # Service discovery still uses the user-local PATH, but a source-checkout
-      # caller's executable selection remains authoritative for onboarding.
+      prefer_homebrew_openshell || prefer_user_local_openshell
+      # Service discovery uses the selected OpenShell PATH, but a source-checkout
+      # caller's explicit executable selection remains authoritative for onboarding.
       if [[ "$explicit_openshell_bin" == /* && -f "$explicit_openshell_bin" && -x "$explicit_openshell_bin" ]]; then
         export NEMOCLAW_OPENSHELL_BIN="$explicit_openshell_bin"
       fi
@@ -1979,7 +1997,10 @@ maybe_install_openshell_during_install() {
   if ! spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"; then
     return 1
   fi
-  prefer_user_local_openshell
+  # install-openshell.sh returned success only after verifying and installing the
+  # pinned formula, so selecting its Homebrew binaries does not need to re-read
+  # the now-untrusted tap formula.
+  prefer_homebrew_openshell verified-install || prefer_user_local_openshell
   install_nemoclaw_openshell_gateway_user_service
 }
 
@@ -3166,8 +3187,48 @@ EOF
   esac
 }
 
+trusted_macos_openshell_gateway_process() {
+  [ "$(uname -s)" = "Darwin" ] || return 1
+
+  local pid="$1" gateway_port="$2" gateway_name gateway_command gateway_exe
+  local user_bin_home brew_prefix trusted_brew_gateway
+  command_exists ps || return 1
+  command_exists lsof || return 1
+
+  gateway_name="$(nemoclaw_gateway_name)" || return 1
+  gateway_command="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+  [ "$gateway_command" = "openshell-gateway[nemoclaw=${gateway_name};port=${gateway_port}]" ] \
+    || return 1
+
+  gateway_exe="$(lsof -a -p "$pid" -d txt -Fn 2>/dev/null | sed -n '/^n\// { s/^n//; p; }' | head -1)"
+  [ -n "$gateway_exe" ] || return 1
+  user_bin_home="${XDG_BIN_HOME:-${HOME}/.local/bin}"
+  if [ "${user_bin_home#/}" = "$user_bin_home" ]; then
+    user_bin_home="${HOME}/.local/bin"
+  fi
+  case "$gateway_exe" in
+    "${user_bin_home%/}/openshell-gateway" | /usr/local/bin/openshell-gateway | /usr/bin/openshell-gateway)
+      return 0
+      ;;
+  esac
+
+  command_exists brew || return 1
+  brew_prefix="$(brew --prefix 2>/dev/null || true)"
+  [ -n "$brew_prefix" ] || return 1
+  trusted_brew_gateway="${brew_prefix%/}/opt/openshell/bin/openshell-gateway"
+  [ -e "$trusted_brew_gateway" ] || return 1
+  trusted_brew_gateway="$(cd -P "$(dirname "$trusted_brew_gateway")" 2>/dev/null && printf '%s/%s\n' "$PWD" "$(basename "$trusted_brew_gateway")")" \
+    || return 1
+  [ "$gateway_exe" = "$trusted_brew_gateway" ]
+}
+
 stop_legacy_openshell_gateway_process() {
-  [ "$(uname -s)" = "Linux" ] || return 1
+  local platform
+  platform="$(uname -s)"
+  case "$platform" in
+    Darwin | Linux) ;;
+    *) return 1 ;;
+  esac
 
   local gateway_port runtime_dir pid_file pid gateway_exe attempt
   gateway_port="$(resolve_nemoclaw_gateway_port)" || return 2
@@ -3192,9 +3253,14 @@ stop_legacy_openshell_gateway_process() {
     return 0
   fi
 
-  gateway_exe="$(readlink "/proc/${pid}/exe" 2>/dev/null || true)"
-  [ "${gateway_exe##*/}" = "openshell-gateway" ] \
-    || error "Refusing to stop PID ${pid}: the recorded process is not openshell-gateway."
+  if [ "$platform" = "Darwin" ]; then
+    trusted_macos_openshell_gateway_process "$pid" "$gateway_port" \
+      || error "Refusing to stop PID ${pid}: the recorded macOS process is not the expected NemoClaw OpenShell gateway."
+  else
+    gateway_exe="$(readlink "/proc/${pid}/exe" 2>/dev/null || true)"
+    [ "${gateway_exe##*/}" = "openshell-gateway" ] \
+      || error "Refusing to stop PID ${pid}: the recorded process is not openshell-gateway."
+  fi
 
   kill "$pid" 2>/dev/null \
     || error "Could not stop the recorded legacy OpenShell gateway process ${pid}."
@@ -3213,6 +3279,42 @@ stop_legacy_openshell_gateway_process() {
   kill -0 "$pid" 2>/dev/null \
     && error "The recorded legacy OpenShell gateway process ${pid} did not stop."
   rm -f "$pid_file"
+}
+
+stop_macos_openshell_gateway_user_service() {
+  [ "$(uname -s)" = "Darwin" ] || return 1
+
+  local gateway_port service_label service_path service_domain service_program
+  local brew_prefix expected_program
+  gateway_port="$(resolve_nemoclaw_gateway_port)" || return 1
+  [ "$gateway_port" -eq 8080 ] || return 1
+  command_exists brew || return 1
+  command_exists launchctl || return 1
+  command_exists plutil || return 1
+
+  service_label="homebrew.mxcl.openshell"
+  service_path="${HOME}/Library/LaunchAgents/${service_label}.plist"
+  [ -f "$service_path" ] || return 1
+  if [ -L "$service_path" ] || ! [ -O "$service_path" ]; then
+    error "Refusing to retire the OpenShell gateway from an untrusted macOS user service: ${service_path}"
+  fi
+
+  service_program="$(plutil -extract ProgramArguments.0 raw -o - "$service_path" 2>/dev/null || true)"
+  [ "$(plutil -extract Label raw -o - "$service_path" 2>/dev/null || true)" = "$service_label" ] \
+    || error "Refusing to retire an OpenShell gateway from a macOS user service with an unexpected label: ${service_path}"
+  brew_prefix="$(brew --prefix 2>/dev/null || true)"
+  [ -n "$brew_prefix" ] || return 1
+  expected_program="${brew_prefix%/}/opt/openshell/libexec/openshell-gateway-homebrew-service"
+  [ "$service_program" = "$expected_program" ] && [ -x "$service_program" ] \
+    || error "Refusing to retire an OpenShell gateway from a macOS user service with an untrusted executable: ${service_program:-<empty>}"
+
+  service_domain="gui/$(id -u)/${service_label}"
+  launchctl print "$service_domain" >/dev/null 2>&1 || return 1
+  launchctl bootout "$service_domain" >/dev/null 2>&1 \
+    || error "Could not stop the trusted OpenShell Homebrew gateway user service. Run 'launchctl print ${service_domain}' for details."
+  launchctl print "$service_domain" >/dev/null 2>&1 \
+    && error "The trusted OpenShell Homebrew gateway user service remained active after the stop command."
+  return 0
 }
 
 stop_nemoclaw_openshell_gateway_user_service() {
@@ -3326,6 +3428,7 @@ preinstall_backup_and_retire_legacy_gateway() {
       openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \
         || openshell gateway destroy >/dev/null 2>&1 \
         || { { stop_nemoclaw_openshell_gateway_user_service \
+          || stop_macos_openshell_gateway_user_service \
           || stop_legacy_openshell_gateway_process; } \
           && { openshell gateway remove "$gateway_name" >/dev/null 2>&1 \
             || warn "The legacy gateway process stopped, but its OpenShell registration could not be removed; onboarding will replace the stale registration."; }; } \
@@ -3333,6 +3436,7 @@ preinstall_backup_and_retire_legacy_gateway() {
     else
       openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \
         || { { stop_nemoclaw_openshell_gateway_user_service \
+          || stop_macos_openshell_gateway_user_service \
           || stop_legacy_openshell_gateway_process; } \
           && { openshell gateway remove "$gateway_name" >/dev/null 2>&1 \
             || warn "Legacy gateway ${gateway_name} stopped, but its OpenShell registration could not be removed; onboarding will replace only that stale registration."; }; } \
