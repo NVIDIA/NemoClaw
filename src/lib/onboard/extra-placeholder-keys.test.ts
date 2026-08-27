@@ -207,7 +207,7 @@ describe("registerExtraPlaceholderProviders", () => {
           },
         ];
         const warnings: string[] = [];
-        const extraKeys = registerExtraPlaceholderProviders("my-sandbox", messagingTokenDefs, (m) =>
+        const extraKeys = registerExtraPlaceholderProviders(messagingTokenDefs, (m) =>
           warnings.push(m),
         );
         expect(extraKeys).toEqual(["TELEGRAM_BOT_TOKEN_AGENT_A", "SLACK_BOT_TOKEN_AGENT_B"]);
@@ -251,7 +251,7 @@ describe("registerExtraPlaceholderProviders", () => {
             providerType: "nemoclaw-mcp-v1",
           },
         ];
-        const extraKeys = registerExtraPlaceholderProviders("my-sandbox", messagingTokenDefs);
+        const extraKeys = registerExtraPlaceholderProviders(messagingTokenDefs);
         expect(extraKeys).toEqual(["TELEGRAM_BOT_TOKEN_AGENT_MISSING"]);
         expect(messagingTokenDefs).toEqual([
           {
@@ -285,7 +285,7 @@ describe("registerExtraPlaceholderProviders", () => {
           },
         ];
         const warnings: string[] = [];
-        const extraKeys = registerExtraPlaceholderProviders("my-sandbox", messagingTokenDefs, (m) =>
+        const extraKeys = registerExtraPlaceholderProviders(messagingTokenDefs, (m) =>
           warnings.push(m),
         );
         expect(extraKeys).toEqual(["TELEGRAM_BOT_TOKEN_AGENT_A"]);
@@ -325,7 +325,7 @@ describe("registerExtraPlaceholderProviders", () => {
         }> = [];
 
         expect(
-          registerExtraPlaceholderProviders("my-sandbox", messagingTokenDefs, (message) =>
+          registerExtraPlaceholderProviders(messagingTokenDefs, (message) =>
             warnings.push(message),
           ),
         ).toEqual([]);

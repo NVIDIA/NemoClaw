@@ -5140,7 +5140,8 @@ $$nemoclaw onboard --agent hermes
 For each entry, NemoClaw adds the credential to the selected canonical channel or web search provider.
 This keeps the extension under the canonical provider's explicit policy binding instead of creating an unbound generic provider.
 OpenShell resolves the named credential placeholder to the operator-supplied value at the bound egress boundary.
-The Hermes profile `.env` files are operator-owned: write `${TELEGRAM_BOT_TOKEN_AGENT_A}` (or the matching placeholder for each entry) into the per-profile `.env` so the in-sandbox Hermes process inherits the OpenShell placeholder instead of a raw token.
+The Hermes profile `.env` files are operator-owned: write `TELEGRAM_BOT_TOKEN_AGENT_A=openshell:resolve:env:TELEGRAM_BOT_TOKEN_AGENT_A` in the applicable profile `.env` and use the matching assignment for each configured credential.
+Do not write a raw token.
 NemoClaw never reads, writes, or rewrites these `.env` files; verify after onboarding that each profile's `.env` references the placeholder and that no raw bot token value sits on disk.
 
 Entries are split on whitespace and commas and must match `^[A-Z][A-Z0-9_]{0,127}$`.

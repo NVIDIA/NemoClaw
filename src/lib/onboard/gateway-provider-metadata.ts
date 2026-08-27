@@ -249,18 +249,6 @@ function inspectGatewayCredentialBinding(
   return matches(metadata, expected) ? { kind: "exact" } : { kind: "collision" };
 }
 
-/** Distinguish an exact credential-only binding from absence and lookup failure. */
-export function inspectGatewayCredentialOnlyProviderBinding(
-  expected: GatewayCredentialOnlyProviderBinding,
-  runOpenshell: GatewayProviderRunner,
-): GatewayCredentialOnlyProviderInspection {
-  return inspectGatewayCredentialBinding(
-    expected,
-    runOpenshell,
-    matchesGatewayCredentialOnlyProviderBinding,
-  );
-}
-
 /** Distinguish a credential family from absence and lookup failure. */
 export function inspectGatewayCredentialFamilyProviderBinding(
   expected: GatewayCredentialFamilyProviderBinding,

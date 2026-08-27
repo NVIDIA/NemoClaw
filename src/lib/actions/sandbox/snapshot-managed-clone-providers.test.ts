@@ -141,13 +141,15 @@ function handoff(
 type LiveBinding = Pick<
   ManagedCloneProviderBinding,
   "providerName" | "providerType" | "providerEnvKey"
->;
+> & {
+  readonly providerCredentialEnvKeys?: readonly string[];
+};
 
 function providerMetadata(binding: LiveBinding): string {
   return [
     `Name: ${binding.providerName}`,
     `Type: ${binding.providerType}`,
-    `Credential keys: ${binding.providerEnvKey}`,
+    `Credential keys: ${(binding.providerCredentialEnvKeys ?? [binding.providerEnvKey]).join(", ")}`,
     "Config keys: <none>",
     "",
   ].join("\n");
@@ -550,6 +552,36 @@ describe("managed clone provider transaction", () => {
     const runner = providerRunner([{ ...TOKEN_BINDING, providerType: "other" }]);
 
     expect(() => prepareWithBinding({ runner })).toThrow(/incompatible live binding/u);
+    expect(
+      runner.commands.some((command) => /provider (create|delete|update)/u.test(command)),
+    ).toBe(false);
+  });
+
+  it("rejects a messaging credential family that clone cannot preserve (#10153)", () => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const source = entry("source", profile);
+    const plan = messagingPlan("destination");
+    const runner = providerRunner([
+      {
+        providerName: "destination-telegram-bridge",
+        providerType: "nemoclaw-mcp-v1",
+        providerEnvKey: "TELEGRAM_BOT_TOKEN",
+        providerCredentialEnvKeys: ["TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN_AGENT_A"],
+      },
+    ]);
+
+    expect(() =>
+      prepareManagedCloneProviderTransaction({
+        handoff: handoff(profile, source, plan),
+        destination: null,
+        environment: {
+          TELEGRAM_BOT_TOKEN: "test-only-telegram-token",
+          TELEGRAM_BOT_TOKEN_AGENT_A: "test-only-agent-a-token",
+        },
+        runOpenshell: runner.run,
+        transactionId: "a".repeat(32),
+      }),
+    ).toThrow(/incompatible live binding/u);
     expect(
       runner.commands.some((command) => /provider (create|delete|update)/u.test(command)),
     ).toBe(false);

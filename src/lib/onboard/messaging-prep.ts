@@ -44,10 +44,7 @@ export interface CreateSandboxMessagingPrepInput {
   ): string | null;
   getCredential(envKey: string): string | null;
   normalizeCredentialValue(value: unknown): string;
-  registerExtraPlaceholderProviders(
-    sandboxName: string,
-    messagingTokenDefs: MessagingTokenDef[],
-  ): string[];
+  registerExtraPlaceholderProviders(messagingTokenDefs: MessagingTokenDef[]): string[];
   getMessagingChannelForEnvKey(envKey: string): string | null;
   providerExistsInGateway(name: string): boolean;
   providerMatchesGatewayCredential(name: string, type: string, credentialEnv: string): boolean;
@@ -186,10 +183,7 @@ export function prepareCreateSandboxMessaging(
     }),
   );
 
-  const extraPlaceholderKeys = input.registerExtraPlaceholderProviders(
-    input.sandboxName,
-    messagingTokenDefs,
-  );
+  const extraPlaceholderKeys = input.registerExtraPlaceholderProviders(messagingTokenDefs);
   const hasMessagingTokens = messagingTokenDefs.some(
     ({ token, additionalCredentials }) =>
       Boolean(token) || additionalCredentials?.some((credential) => Boolean(credential.token)),

@@ -860,7 +860,8 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
         failures.push({ name, message: result.message, reason: result.reason });
         continue;
       }
-      console.error(`\n  ✗ Failed to create messaging provider '${name}': ${result.message}`);
+      const failure = attachMutatedProviderNames(new Error(result.message), mutatedProviderNames);
+      console.error(`\n  ✗ Failed to create messaging provider '${name}': ${failure.message}`);
       process.exit(1);
     }
     upserted.push(name);

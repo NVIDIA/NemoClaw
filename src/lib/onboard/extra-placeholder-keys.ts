@@ -89,7 +89,6 @@ export function parseExtraPlaceholderKeys(
 }
 
 export function registerExtraPlaceholderProviders(
-  _sandboxName: string,
   messagingTokenDefs: MessagingTokenDefShape[],
   log: (message: string) => void = (m) => console.warn(`  ${m}`),
 ): string[] {

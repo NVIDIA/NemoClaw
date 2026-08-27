@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 type RunResult = { status: number; stdout?: string; stderr?: string };
 type RunOptions = { env?: Record<string, string> };
@@ -171,6 +171,48 @@ it("rejects a later mismatched provider before submitting any family credentials
       Object.values(env).some((value) => [canonicalSecret, extensionSecret].includes(value)),
     ),
   ).toBe(false);
+});
+
+it("reports a changed provider when post-mutation verification fails (#10153)", () => {
+  let created = false;
+  const runOpenshell: RunOpenshell = (command) => {
+    switch (command[1]) {
+      case "profile":
+        return profileResult();
+      case "get":
+        return created ? providerMetadata(CANONICAL_KEY) : missingProvider();
+      case "create":
+        created = true;
+        return { status: 0 };
+      default:
+        return { status: 0 };
+    }
+  };
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+    throw new Error(`exit(${String(code)})`);
+  });
+
+  try {
+    expect(() =>
+      upsertMessagingProviders(
+        [
+          tokenDef("telegram-test-token", [
+            { envKey: AGENT_A_KEY, token: "telegram-agent-a-test-token" },
+          ]),
+        ],
+        runOpenshell,
+      ),
+    ).toThrow(/exit\(1\)/u);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /did not confirm messaging provider.*changed gateway state.*alpha-telegram-bridge.*inspect those providers before retrying/isu,
+      ),
+    );
+  } finally {
+    exit.mockRestore();
+    error.mockRestore();
+  }
 });
 
 it("does not create a credential family without its canonical credential (#10153)", () => {
