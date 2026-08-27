@@ -9,7 +9,6 @@ import {
   classifyOpenShellGlobalPolicyHistory as classifyCanonicalOpenShellGlobalPolicyHistory,
   parseActiveGlobalPolicyAuthorityMetadata as parseCanonicalActiveGlobalPolicyAuthorityMetadata,
   parseNemoClawPolicyCreationReceipt as parseCanonicalNemoClawPolicyCreationReceipt,
-  openShellPolicyValuesEqual as canonicalOpenShellPolicyValuesEqual,
   parseOpenShellPolicy as parseCanonicalOpenShellPolicy,
   parseSandboxPolicyAuthorityMetadata as parseCanonicalSandboxPolicyAuthorityMetadata,
   stripProviderComposedPolicies as stripCanonicalProviderComposedPolicies,
@@ -28,7 +27,6 @@ import type { JsonObject } from "../core/json-types";
 // generatedBoundary: build:cli emits the canonical .cjs/.d.cts before this
 // CommonJS wrapper is compiled. Keep this file implementation-free.
 export const parseOpenShellPolicy = parseCanonicalOpenShellPolicy;
-export const openShellPolicyValuesEqual = canonicalOpenShellPolicyValuesEqual;
 export const classifyOpenShellGlobalPolicyHistory = classifyCanonicalOpenShellGlobalPolicyHistory;
 export const parseNemoClawPolicyCreationReceipt = parseCanonicalNemoClawPolicyCreationReceipt;
 export const parseActiveGlobalPolicyAuthorityMetadata =

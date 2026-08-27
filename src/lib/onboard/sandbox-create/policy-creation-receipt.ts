@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { isDeepStrictEqual } from "node:util";
 
 import {
   assertExternalPolicyRequirements,
@@ -18,7 +19,6 @@ import { normalizePendingSandboxPolicyVerification } from "../../state/registry-
 import type { PendingSandboxPolicyVerification } from "../../state/registry/types";
 import {
   assertNemoClawPolicyCreationReceiptMatches,
-  openShellPolicyValuesEqual,
   parseNemoClawPolicyCreationReceipt,
   parseOpenShellPolicy,
 } from "../../policy/merge";
@@ -206,7 +206,7 @@ export function verifyCreatedSandboxPolicyCreationReceipt(
     refusal("the effective policy identity changed during receipt verification");
   }
   if (
-    !openShellPolicyValuesEqual(intendedPolicy, liveBasePolicy) &&
+    !isDeepStrictEqual(intendedPolicy, liveBasePolicy) &&
     !(
       input.route === "native" &&
       isOpenShellNativeGpuBaselineEnrichment(intendedPolicy, liveBasePolicy)

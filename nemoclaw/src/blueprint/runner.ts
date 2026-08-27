@@ -26,6 +26,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, sep } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { execa } from "execa";
 import YAML from "yaml";
@@ -71,7 +72,6 @@ const {
   assertNemoClawPolicyCreationReceiptMatches,
   assertPolicyRequirementContainment,
   classifyOpenShellGlobalPolicyHistory,
-  openShellPolicyValuesEqual,
   parseActiveGlobalPolicyAuthorityMetadata,
   parseNemoClawPolicyCreationReceipt,
   parseOpenShellPolicy,
@@ -1847,7 +1847,7 @@ export async function actionApply(
       liveGlobalPolicy.policyIdentity.hash !== initialPolicyAuthority.policyIdentity.hash ||
       liveGlobalPolicy.policyIdentity.activeVersion !==
         initialPolicyAuthority.policyIdentity.activeVersion ||
-      !openShellPolicyValuesEqual(
+      !isDeepStrictEqual(
         liveGlobalPolicy.effectivePolicy,
         initialPolicyAuthority.effectivePolicy,
       )
@@ -1949,7 +1949,7 @@ export async function actionApply(
     if (configuredSandboxPolicy) {
       if (
         observedPolicyAuthority.authority !== "owner-unknown" ||
-        !openShellPolicyValuesEqual(
+        !isDeepStrictEqual(
           policyForOwnershipProof(configuredSandboxPolicy.policy),
           policyForOwnershipProof(observedPolicyAuthority.effectivePolicy),
         )
@@ -2267,7 +2267,7 @@ export async function actionApply(
           afterMutationGateway.port !== policyGateway.port ||
           afterMutationIdentity !== policyCreationReceipt.sandboxIdentityFingerprint ||
           afterMutation.authority !== "owner-unknown" ||
-          !openShellPolicyValuesEqual(
+          !isDeepStrictEqual(
             policyForOwnershipProof(afterMutation.effectivePolicy),
             policyForOwnershipProof(mergedPolicy),
           )
@@ -2581,7 +2581,7 @@ export async function actionReconcile(rid: string): Promise<void> {
       port: authorityReceipt.gateway_port,
     });
     if (
-      !openShellPolicyValuesEqual(
+      !isDeepStrictEqual(
         policyForOwnershipProof(validated.inspection.effectivePolicy),
         policyForOwnershipProof(targetPolicy),
       )
@@ -2597,7 +2597,7 @@ export async function actionReconcile(rid: string): Promise<void> {
     port: authorityReceipt.gateway_port,
   });
   if (
-    !openShellPolicyValuesEqual(
+    !isDeepStrictEqual(
       policyForOwnershipProof(observed.inspection.effectivePolicy),
       policyForOwnershipProof(targetPolicy),
     )
