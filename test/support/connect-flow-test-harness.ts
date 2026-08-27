@@ -53,6 +53,7 @@ export type ConnectHarness = {
   probeOllamaAuthProxyHealthSpy: MockInstance;
   readSandboxConfigSpy: MockInstance;
   recoverPortableDemoLifecycleSpy: MockInstance;
+  requalifyPortableAgentAuthoritySpy: MockInstance;
   inspectPortableReceiptDispositionSpy: MockInstance;
   registryEntries: SandboxEntry[];
   resolveAgentConfigSpy: MockInstance;
@@ -261,6 +262,9 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
       expected,
       portableAuthorityDeps(),
     )) as never);
+  const requalifyPortableAgentAuthoritySpy = vi
+    .spyOn(gatewayState, "requalifyPortableAgentSandboxAuthority")
+    .mockReturnValue({ kind: "not-hermes" });
   const sandboxExec = requireDist("../../src/lib/actions/sandbox/exec.js");
   const runSandboxExecChildSpy = vi.spyOn(sandboxExec, "runSandboxExecChild").mockResolvedValue({
     status: spawnStatusFromOptions(options),
@@ -462,9 +466,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   // - `getSessionAgent` returns null for OpenClaw, which `??` alone turned into `{ name: "openclaw" }`.
   // - Distinguish "not supplied" from an explicit null so a test can model that production shape.
   vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(
-    (Object.hasOwn(options, "sessionAgent")
-      ? options.sessionAgent
-      : { name: "openclaw" }) as never,
+    (Object.hasOwn(options, "sessionAgent") ? options.sessionAgent : { name: "openclaw" }) as never,
   );
   vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw");
   const runAutoPairSpy = vi
@@ -499,6 +501,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     probeOllamaAuthProxyHealthSpy,
     readSandboxConfigSpy,
     recoverPortableDemoLifecycleSpy,
+    requalifyPortableAgentAuthoritySpy,
     inspectPortableReceiptDispositionSpy,
     registryEntries,
     resolveAgentConfigSpy,
