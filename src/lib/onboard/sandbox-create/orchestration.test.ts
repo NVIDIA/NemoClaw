@@ -11,7 +11,6 @@ import {
   applyManagedSandboxRebuildPolicyCarryForward,
   assertApfCreateIntent,
   backfillVerifiedExternalSandboxPolicyAuthority,
-  cleanupRecreatedSourceHermesStateVolume,
   completeHermesPortableSandboxRegistration,
   createProviderEffectBoundary,
   finalizeRecreatedSourceHermesStateVolume,
@@ -44,14 +43,15 @@ function managedHermesSource(): SandboxEntry {
   };
 }
 
-type HermesVolumeCleanupDeps = Parameters<typeof cleanupRecreatedSourceHermesStateVolume>[1];
+type HermesVolumeFinalizationDeps = Parameters<typeof finalizeRecreatedSourceHermesStateVolume>[1];
 
 function hermesVolumeCleanupDeps(
-  removeManagedHermesStateVolume: HermesVolumeCleanupDeps["removeManagedHermesStateVolume"],
-): HermesVolumeCleanupDeps {
+  removeManagedHermesStateVolume: HermesVolumeFinalizationDeps["removeManagedHermesStateVolume"],
+): HermesVolumeFinalizationDeps {
   return {
     normalizeRuntimeProviderIdentity: vi.fn(() => "docker"),
     removeManagedHermesStateVolume,
+    removeSourceRegistryEntry: vi.fn(),
     note: vi.fn(),
     warn: vi.fn(),
     redact: vi.fn((message: string) => message.replace("secret", "[REDACTED]")),
@@ -82,12 +82,13 @@ describe("managed Hermes state volume recreation", () => {
       },
     );
     const removeManagedHermesStateVolume =
-      vi.fn<HermesVolumeCleanupDeps["removeManagedHermesStateVolume"]>();
+      vi.fn<HermesVolumeFinalizationDeps["removeManagedHermesStateVolume"]>();
     const deps = hermesVolumeCleanupDeps(removeManagedHermesStateVolume);
 
-    cleanupRecreatedSourceHermesStateVolume(
+    finalizeRecreatedSourceHermesStateVolume(
       {
         sandboxName: "alpha",
+        sourceConfirmedAbsent: true,
         sourceEntry: managedHermesSource(),
         targetKeepsManagedHermesStateVolume: targetLifecycle !== null,
       },
@@ -120,13 +121,14 @@ describe("managed Hermes state volume recreation", () => {
         { runDocker: runDocker as never },
       );
       const removeManagedHermesStateVolume = vi.fn<
-        HermesVolumeCleanupDeps["removeManagedHermesStateVolume"]
+        HermesVolumeFinalizationDeps["removeManagedHermesStateVolume"]
       >(() => ({ status: "removed" as const }));
       const deps = hermesVolumeCleanupDeps(removeManagedHermesStateVolume);
 
-      cleanupRecreatedSourceHermesStateVolume(
+      finalizeRecreatedSourceHermesStateVolume(
         {
           sandboxName: "alpha",
+          sourceConfirmedAbsent: true,
           sourceEntry: managedHermesSource(),
           targetKeepsManagedHermesStateVolume: targetLifecycle !== null,
         },
@@ -147,7 +149,7 @@ describe("managed Hermes state volume recreation", () => {
 
   it("leaves a foreign same-name volume untouched", () => {
     const removeManagedHermesStateVolume = vi.fn<
-      HermesVolumeCleanupDeps["removeManagedHermesStateVolume"]
+      HermesVolumeFinalizationDeps["removeManagedHermesStateVolume"]
     >(() => ({
       status: "not-owned" as const,
       detail: "the exact NemoClaw ownership labels are absent or changed",
@@ -155,9 +157,10 @@ describe("managed Hermes state volume recreation", () => {
     }));
     const deps = hermesVolumeCleanupDeps(removeManagedHermesStateVolume);
 
-    cleanupRecreatedSourceHermesStateVolume(
+    finalizeRecreatedSourceHermesStateVolume(
       {
         sandboxName: "alpha",
+        sourceConfirmedAbsent: true,
         sourceEntry: managedHermesSource(),
         targetKeepsManagedHermesStateVolume: false,
       },
@@ -171,7 +174,7 @@ describe("managed Hermes state volume recreation", () => {
 
   it("fails with redacted recovery evidence and allows an exact retry", () => {
     const removeManagedHermesStateVolume = vi
-      .fn<HermesVolumeCleanupDeps["removeManagedHermesStateVolume"]>()
+      .fn<HermesVolumeFinalizationDeps["removeManagedHermesStateVolume"]>()
       .mockReturnValueOnce({
         status: "failed" as const,
         detail: "secret Docker failure",
@@ -179,8 +182,6 @@ describe("managed Hermes state volume recreation", () => {
       })
       .mockReturnValueOnce({ status: "removed" as const });
     const deps = hermesVolumeCleanupDeps(removeManagedHermesStateVolume);
-    const removeSourceRegistryEntry = vi.fn();
-    const finalizationDeps = { ...deps, removeSourceRegistryEntry };
     const input = {
       sandboxName: "alpha",
       sourceEntry: managedHermesSource(),
@@ -188,13 +189,16 @@ describe("managed Hermes state volume recreation", () => {
       targetKeepsManagedHermesStateVolume: false,
     };
 
-    expect(() => finalizeRecreatedSourceHermesStateVolume(input, finalizationDeps)).toThrow(
+    expect(() => finalizeRecreatedSourceHermesStateVolume(input, deps)).toThrow(
       "[REDACTED] Docker failure",
     );
-    expect(removeSourceRegistryEntry).not.toHaveBeenCalled();
-    expect(() => finalizeRecreatedSourceHermesStateVolume(input, finalizationDeps)).not.toThrow();
+    expect(deps.removeSourceRegistryEntry).not.toHaveBeenCalled();
+    expect(() => finalizeRecreatedSourceHermesStateVolume(input, deps)).not.toThrow();
     expect(removeManagedHermesStateVolume).toHaveBeenCalledTimes(2);
-    expect(removeSourceRegistryEntry).toHaveBeenCalledExactlyOnceWith(input.sourceEntry, "alpha");
+    expect(deps.removeSourceRegistryEntry).toHaveBeenCalledExactlyOnceWith(
+      input.sourceEntry,
+      "alpha",
+    );
   });
 });
 
@@ -266,6 +270,65 @@ describe("managed Hermes state volume failed-create cleanup", () => {
 
     expect(docker.volume).not.toBeNull();
     expect(docker.calls.some((args) => args[0] === "rm")).toBe(false);
+  });
+
+  it("retains a newly created volume with identity-bound recovery after policy failure", async () => {
+    const docker = createHermesStateVolumeDockerHarness();
+    let exitCleanup: (() => void) | null = null;
+    const unregister = vi.fn();
+    const lifecycle = createManagedHermesStateVolumeOnboardLifecycle(
+      {
+        agentName: "hermes",
+        runtimeProvider: { identity: { id: "docker" } } as never,
+        sandboxName: "alpha",
+        workloadKind: "managed-image",
+      },
+      {
+        runDocker: docker.runDocker as never,
+        registerExitCleanup: (cleanup) => {
+          exitCleanup = cleanup;
+          return unregister;
+        },
+      },
+    );
+
+    const error = await runSandboxCreateWithPolicyAuthorityChecks({
+      sandboxName: "alpha",
+      revalidate: vi.fn(),
+      create: async (verifyCreatedSandbox) => {
+        await verifyCreatedSandbox("created");
+        return "created";
+      },
+      ...exactIdentityBoundary,
+      verifyCreatedPolicy: () => {
+        throw new Error("policy verification failed");
+      },
+      cleanupTemporarySources: vi.fn(),
+      cleanupIncompleteCreate: () => lifecycle!.cleanupIncompleteCreate(),
+      preserveIncompleteCreate: () => lifecycle!.preserveForRecovery(),
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(unregister).toHaveBeenCalledOnce();
+    exitCleanup!();
+    expect(docker.volume).not.toBeNull();
+    expect(docker.calls.some((args) => args[0] === "rm")).toBe(false);
+
+    const createCalls = docker.calls.filter((args) => args[0] === "create").length;
+    const retryLifecycle = createManagedHermesStateVolumeOnboardLifecycle(
+      {
+        agentName: "hermes",
+        runtimeProvider: { identity: { id: "docker" } } as never,
+        sandboxName: "alpha",
+        workloadKind: "managed-image",
+      },
+      { runDocker: docker.runDocker as never },
+    );
+    retryLifecycle!.cleanupIncompleteCreate();
+
+    expect(docker.calls.filter((args) => args[0] === "create")).toHaveLength(createCalls);
+    expect(docker.volume).not.toBeNull();
+    retryLifecycle!.commit();
   });
 
   it("refuses and preserves a foreign same-name volume before sandbox creation", () => {
@@ -1019,6 +1082,7 @@ describe("sandbox create policy authority checks", () => {
 
   it("fails closed when a create implementation skips the post-create gate (#9833)", async () => {
     const cleanupTemporarySources = vi.fn();
+    const cleanupIncompleteCreate = vi.fn();
 
     const error = await runSandboxCreateWithPolicyAuthorityChecks({
       sandboxName: "alpha",
@@ -1026,6 +1090,7 @@ describe("sandbox create policy authority checks", () => {
       create: async () => "created",
       ...exactIdentityBoundary(),
       cleanupTemporarySources,
+      cleanupIncompleteCreate,
     }).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(AggregateError);
@@ -1035,5 +1100,6 @@ describe("sandbox create policy authority checks", () => {
       ]),
     );
     expect(cleanupTemporarySources).toHaveBeenCalledOnce();
+    expect(cleanupIncompleteCreate).toHaveBeenCalledOnce();
   });
 });

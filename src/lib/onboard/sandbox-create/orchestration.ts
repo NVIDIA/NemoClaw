@@ -95,13 +95,14 @@ type SandboxRecreateReasonInput = {
   existingSandboxState: string;
 };
 
-type RecreatedSourceHermesStateVolumeCleanupInput = {
+type RecreatedSourceHermesStateVolumeFinalizationInput = {
   readonly sandboxName: string;
+  readonly sourceConfirmedAbsent: boolean;
   readonly sourceEntry: SandboxEntry | null;
   readonly targetKeepsManagedHermesStateVolume: boolean;
 };
 
-type RecreatedSourceHermesStateVolumeCleanupDeps = {
+type RecreatedSourceHermesStateVolumeFinalizationDeps = {
   readonly normalizeRuntimeProviderIdentity: (driverName: string | null | undefined) => string;
   readonly removeManagedHermesStateVolume: (
     context: ManagedHermesStateVolumeContext,
@@ -109,41 +110,8 @@ type RecreatedSourceHermesStateVolumeCleanupDeps = {
   readonly note: (message: string) => void;
   readonly warn: (message: string) => void;
   readonly redact: (message: string) => string;
+  readonly removeSourceRegistryEntry: (entry: SandboxEntry, sandboxName: string) => void;
 };
-
-type RecreatedSourceHermesStateVolumeFinalizationInput =
-  RecreatedSourceHermesStateVolumeCleanupInput & {
-    readonly sourceConfirmedAbsent: boolean;
-  };
-
-type RecreatedSourceHermesStateVolumeFinalizationDeps =
-  RecreatedSourceHermesStateVolumeCleanupDeps & {
-    readonly removeSourceRegistryEntry: (entry: SandboxEntry, sandboxName: string) => void;
-  };
-
-export function cleanupRecreatedSourceHermesStateVolume(
-  input: RecreatedSourceHermesStateVolumeCleanupInput,
-  deps: RecreatedSourceHermesStateVolumeCleanupDeps,
-): void {
-  if (!input.sourceEntry || input.targetKeepsManagedHermesStateVolume) return;
-
-  const cleanup = deps.removeManagedHermesStateVolume({
-    agentName: input.sourceEntry.agent,
-    runtimeProviderId: deps.normalizeRuntimeProviderIdentity(input.sourceEntry.openshellDriver),
-    sandboxName: input.sandboxName,
-    workloadKind: input.sourceEntry.workload?.kind ?? "",
-  });
-  if (cleanup.status === "failed") {
-    throw new Error(
-      `OpenShell confirmed that sandbox '${input.sandboxName}' is absent, but Docker could not remove its managed Hermes state volume '${cleanup.volumeName}': ${deps.redact(cleanup.detail)}. NemoClaw preserved the sandbox registry entry so a subsequent recreation can retry the volume removal.`,
-    );
-  }
-  if (cleanup.status === "not-owned") {
-    deps.warn(`  Left Docker volume '${cleanup.volumeName}' untouched because ${cleanup.detail}.`);
-  } else if (cleanup.status === "removed") {
-    deps.note(`  Removed managed Hermes state volume for '${input.sandboxName}'.`);
-  }
-}
 
 export function finalizeRecreatedSourceHermesStateVolume(
   input: RecreatedSourceHermesStateVolumeFinalizationInput,
@@ -151,7 +119,26 @@ export function finalizeRecreatedSourceHermesStateVolume(
 ): void {
   if (!input.sourceConfirmedAbsent || !input.sourceEntry) return;
 
-  cleanupRecreatedSourceHermesStateVolume(input, deps);
+  if (!input.targetKeepsManagedHermesStateVolume) {
+    const cleanup = deps.removeManagedHermesStateVolume({
+      agentName: input.sourceEntry.agent,
+      runtimeProviderId: deps.normalizeRuntimeProviderIdentity(input.sourceEntry.openshellDriver),
+      sandboxName: input.sandboxName,
+      workloadKind: input.sourceEntry.workload?.kind ?? "",
+    });
+    if (cleanup.status === "failed") {
+      throw new Error(
+        `OpenShell confirmed that sandbox '${input.sandboxName}' is absent, but Docker could not remove its managed Hermes state volume '${cleanup.volumeName}': ${deps.redact(cleanup.detail)}. NemoClaw preserved the sandbox registry entry so a subsequent recreation can retry the volume removal.`,
+      );
+    }
+    if (cleanup.status === "not-owned") {
+      deps.warn(
+        `  Left Docker volume '${cleanup.volumeName}' untouched because ${cleanup.detail}.`,
+      );
+    } else if (cleanup.status === "removed") {
+      deps.note(`  Removed managed Hermes state volume for '${input.sandboxName}'.`);
+    }
+  }
   deps.removeSourceRegistryEntry(input.sourceEntry, input.sandboxName);
 }
 
@@ -267,6 +254,7 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
   ) => Promise<void>;
   readonly cleanupTemporarySources: () => void;
   readonly cleanupIncompleteCreate?: () => void;
+  readonly preserveIncompleteCreate?: () => void;
 }): Promise<Result> {
   let exactIdentity: string | null = null;
   let cleanupAttempted = false;
@@ -291,8 +279,22 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
       return [error];
     }
   };
+  let incompleteCreatePreservationAttempted = false;
+  const preserveIncompleteCreate = (): unknown[] => {
+    if (incompleteCreatePreservationAttempted) return [];
+    incompleteCreatePreservationAttempted = true;
+    try {
+      input.preserveIncompleteCreate?.();
+      return [];
+    } catch (error) {
+      return [error];
+    }
+  };
   const refuseAfterCreate = (validationError: unknown): never => {
-    const compensationErrors = cleanupTemporarySources();
+    const compensationErrors = [
+      ...(exactIdentity === null ? cleanupIncompleteCreate() : preserveIncompleteCreate()),
+      ...cleanupTemporarySources(),
+    ];
     const validationDetail =
       validationError instanceof Error && isPolicyAuthorityRefusalError(validationError)
       ? validationError.message
@@ -351,13 +353,13 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
     result = await input.create(verifyCreatedSandbox);
   } catch (error) {
     const cleanupErrors = [
-      ...(exactIdentity === null ? cleanupIncompleteCreate() : []),
+      ...(exactIdentity === null ? cleanupIncompleteCreate() : preserveIncompleteCreate()),
       ...cleanupTemporarySources(),
     ];
     if (cleanupErrors.length > 0) {
       throw new AggregateError(
         [error, ...cleanupErrors],
-        "Sandbox creation failed, and temporary source cleanup did not complete.",
+        "Sandbox creation failed, and compensation did not complete.",
       );
     }
     throw error;
@@ -1870,6 +1872,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         },
         cleanupTemporarySources: cleanupSandboxCreateSources,
         cleanupIncompleteCreate: () => hermesStateVolumeLifecycle?.cleanupIncompleteCreate(),
+        preserveIncompleteCreate: () => hermesStateVolumeLifecycle?.preserveForRecovery(),
         runVerifiedCreateEffects: runDeferredProviderEffects
           ? async (_identity, _exactIdentity, boundary) => {
               const context: VerifiedSandboxCreateEffectsContext = {
