@@ -74,16 +74,14 @@ function setsOverlap(left: ReadonlySet<string>, right: ReadonlySet<string>): boo
   return [...left].some((entry) => right.has(entry));
 }
 
-/** Accept only the documented filesystem additions made by OpenShell native-GPU injection. */
-export function isOpenShellNativeGpuBaselineEnrichment(
+/** Accept only the documented filesystem additions made by an OpenShell GPU create. */
+export function isOpenShellGpuBaselineEnrichment(
   intended: Record<string, unknown>,
   live: Record<string, unknown>,
+  route: "native" | "compatibility" = "native",
 ): boolean {
   if (
-    !isDeepStrictEqual(
-      policyWithoutFilesystemPolicy(intended),
-      policyWithoutFilesystemPolicy(live),
-    )
+    !isDeepStrictEqual(policyWithoutFilesystemPolicy(intended), policyWithoutFilesystemPolicy(live))
   ) {
     return false;
   }
@@ -121,9 +119,12 @@ export function isOpenShellNativeGpuBaselineEnrichment(
     return false;
   }
 
-  // The native direct-GPU create policy deliberately omits /proc so OpenShell can add it
-  // read-write only after it observes GPU devices. Ordinary policies retain /proc read-only.
-  if (intendedReadOnly.has(PROC_PATH) || intendedReadWrite.has(PROC_PATH)) return false;
+  // Native create omits /proc so OpenShell can add it after GPU discovery.
+  // Compatibility create requests /proc read-write before Docker adds the GPU.
+  if (intendedReadOnly.has(PROC_PATH)) return false;
+  if (route === "native" ? intendedReadWrite.has(PROC_PATH) : !intendedReadWrite.has(PROC_PATH)) {
+    return false;
+  }
   if (
     !isSubset(OPENSHELL_PROXY_REQUIRED_READ_ONLY_PATHS, intendedReadOnly) ||
     !isSubset(OPENSHELL_PROXY_REQUIRED_READ_WRITE_PATHS, intendedReadWrite)

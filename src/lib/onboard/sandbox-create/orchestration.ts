@@ -8,6 +8,7 @@ import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
 import {
   assertRecordedPolicyAuthority,
   isPolicyAuthorityRefusalError,
+  PolicyAuthorityRefusalError,
 } from "../../adapters/openshell/policy-authority";
 import type { SandboxPolicyAuthority } from "../../adapters/openshell/policy-authority";
 import { HERMES_PORTABLE_OPENSHELL_VERSION } from "../../adapters/openshell/resolve-shared";
@@ -43,6 +44,7 @@ import type {
 import * as sandboxCreatePlanMaterialization from "../sandbox-create-plan-materialization";
 import {
   pendingSandboxPolicyVerificationForBoundary,
+  refreshVerifiedCreatePolicyRegistration,
   revalidateCreatedSandboxPolicyRegistration,
   verifiedSandboxPolicyBoundaryFromPendingCheckpoint,
   verifyCreatedApfInterceptorPolicyRegistration,
@@ -2353,19 +2355,46 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       boundary: EffectiveVerifiedSandboxPolicyBoundary,
       operation: string,
     ): SandboxEntry => {
-      revalidateCreatedSandboxIdentity(boundary.lifecycleLiveIdentityFingerprint, operation);
-      revalidateCreatedSandboxPolicyRegistration({
+      const activeBoundary = requireVerifiedPolicyGate();
+      if (
+        boundary.sandboxName !== activeBoundary.sandboxName ||
+        boundary.gatewayName !== activeBoundary.gatewayName ||
+        boundary.gatewayPort !== activeBoundary.gatewayPort ||
+        boundary.lifecycleGeneration !== activeBoundary.lifecycleGeneration ||
+        boundary.lifecycleLiveIdentityFingerprint !==
+          activeBoundary.lifecycleLiveIdentityFingerprint ||
+        boundary.route !== activeBoundary.route
+      ) {
+        throw new PolicyAuthorityRefusalError(
+          `Refusing to ${operation}: the verified create policy boundary changed during onboarding.`,
+          "owner-unknown",
+        );
+      }
+      revalidateCreatedSandboxIdentity(activeBoundary.lifecycleLiveIdentityFingerprint, operation);
+      const registration = refreshVerifiedCreatePolicyRegistration({
         sandboxName,
         gatewayName: GATEWAY_NAME,
         gatewayPort: GATEWAY_PORT,
         lifecycleGeneration: createdSandboxLifecycle.generation,
-        lifecycleLiveIdentityFingerprint: boundary.lifecycleLiveIdentityFingerprint,
-        policySourcePath: boundary.policySourcePath,
-        route: boundary.route,
+        lifecycleLiveIdentityFingerprint: activeBoundary.lifecycleLiveIdentityFingerprint,
+        policySourcePath: activeBoundary.policySourcePath,
+        route: activeBoundary.route,
         operation,
-        registration: boundary.registration,
+        registration: activeBoundary.registration,
       });
-      revalidateCreatedSandboxIdentity(boundary.lifecycleLiveIdentityFingerprint, operation);
+      if (!isDeepStrictEqual(registration, activeBoundary.registration)) {
+        const previousCheckpoint = requirePendingPolicyVerification();
+        const refreshedBoundary = { ...activeBoundary, registration };
+        const refreshedCheckpoint = pendingSandboxPolicyVerificationForBoundary(refreshedBoundary);
+        registry.recordPendingSandboxPolicyVerification(
+          requireCreateReservation(),
+          refreshedCheckpoint,
+          { expected: previousCheckpoint },
+        );
+        pendingPolicyVerification = refreshedCheckpoint;
+        verifiedPolicyGate = refreshedBoundary;
+      }
+      revalidateCreatedSandboxIdentity(activeBoundary.lifecycleLiveIdentityFingerprint, operation);
       return registry.requireCurrentPendingSandboxPolicyVerification(
         requireCreateReservation(),
         requirePendingPolicyVerification(),
