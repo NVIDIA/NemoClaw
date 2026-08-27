@@ -196,21 +196,26 @@ export function qualifyPiReadTask(
   const completions = events.flatMap((event, index) =>
     event.type === "tool_execution_end" ? [{ event, index }] : [],
   );
+  const completion = completions[0];
   if (
     completions.length !== 1 ||
-    completions[0]!.index <= startIndex ||
-    completions[0]!.event.toolCallId !== start.toolCallId ||
-    completions[0]!.event.toolName !== "read" ||
-    completions[0]!.event.isError !== false
+    completion!.index <= startIndex ||
+    completion!.event.toolCallId !== start.toolCallId ||
+    completion!.event.toolName !== "read" ||
+    completion!.event.isError !== false
   ) {
     throw new Error("Pi read tool call did not complete successfully");
   }
-  const replies = events.flatMap((event) => {
+  const replies = events.flatMap((event, index) => {
     if (event.type !== "message_end") return [];
     const text = assistantText(event.message);
-    return text === null ? [] : [text];
+    return text === null ? [] : [{ index, text }];
   });
-  const finalText = replies.at(-1);
+  const finalReply = replies.at(-1);
+  if (!finalReply || finalReply.index <= completion!.index) {
+    throw new Error("Pi task did not return an assistant response after the read completed");
+  }
+  const finalText = finalReply.text;
   if (finalText !== expectedText) {
     throw new Error(`Pi task returned ${JSON.stringify(finalText)} instead of exact file contents`);
   }
