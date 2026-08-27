@@ -32,6 +32,7 @@ import type { MessagingTokenDef } from "../messaging-prep";
 import { resolveSandboxBuildContext, resolveSandboxBuildPatch } from "../prepared-dcode-rebuild";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  normalizeRuntimeProviderIdentity,
   type RuntimeProviderBundle,
   resolveRuntimeProviderBundle,
 } from "../runtime-provider/access";
@@ -54,6 +55,7 @@ import {
 import { getSandboxReadyTimeoutSecs } from "../sandbox-gpu-create";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import {
+  installedManagedImageCatalogRevision,
   liveE2eManagedImageCatalog,
   liveE2eManagedImageRevision,
   type PreparedSandboxWorkloadSource,
@@ -66,6 +68,7 @@ import {
 import { resolveSandboxWorkloadRuntimeCapabilities } from "../workload/runtime";
 import {
   prepareManagedHermesStateVolume,
+  removeManagedHermesStateVolume,
   type ManagedHermesStateVolumeContext,
   type ManagedHermesStateVolumeDeps,
 } from "./hermes-state-volume";
@@ -79,6 +82,8 @@ type SandboxInferenceConfig = import("../../inference/config").SandboxInferenceC
 type BootstrapProvider = RuntimeProviderBundle & {
   readonly bootstrap: RuntimeProviderManagedImageBootstrapSurface;
 };
+
+export { normalizeRuntimeProviderIdentity, removeManagedHermesStateVolume };
 
 export type ManagedHermesStateVolumeOnboardLifecycle = {
   materializeSandboxCreatePlan(
@@ -240,11 +245,18 @@ export function createManagedWorkloadOnboardRuntime(
   let preparedProfile: BuiltManagedStartupOnboardProfile | null = null;
 
   const ensurePreparedWorkload = async (): Promise<PreparedSandboxWorkloadSource> => {
-    const catalogRevision = liveE2eManagedImageRevision(input.startupProfile.environment);
+    const liveCatalogRevision = input.stockManagedRuntime
+      ? liveE2eManagedImageRevision(input.startupProfile.environment)
+      : null;
     const liveCatalog = liveE2eManagedImageCatalog(input.startupProfile.environment);
-    if (catalogRevision && liveCatalog) {
+    if (liveCatalogRevision && liveCatalog) {
       throw new Error("live E2E managed-image revision and catalog authority conflict");
     }
+    const catalogRevision =
+      liveCatalogRevision ??
+      (liveCatalog || input.tempManagedRuntimeCatalog || input.managedWorkloadRebuild
+        ? null
+        : installedManagedImageCatalogRevision(input.startupProfile.environment, input.rootDir));
     preparedWorkloadPromise ??= input.managedWorkloadRebuild
       ? Promise.resolve(
           prepareSandboxWorkloadSourceFromRebuildHandoff(
@@ -480,11 +492,15 @@ export async function prepareOnboardSandboxWorkloadLaunch(
   } else {
     const buildContext = requireLegacyBuildContext(legacyBuildContext);
     input.dependencies.prepareSandboxBuildPatchConfig({ configuredMessagingChannels });
+    const patchInput = input.legacy.resolvePatchInput();
     const patch = await (input.dependencies.resolveSandboxBuildPatch ?? resolveSandboxBuildPatch)({
       // Build-context staging resolves managed-agent base-image provenance.
       // Read the patch input only after that boundary so the final image gets
       // the exact metadata produced by the same staging operation.
-      ...input.legacy.resolvePatchInput(),
+      ...patchInput,
+      // An explicit path to the checked-in agent Dockerfile is staged through
+      // the trusted agent builder. Preserve that classification at patch time.
+      fromDockerfile: buildContext.origin === "generated" ? null : patchInput.fromDockerfile,
       selectedGpuRoute: initialGpuRoute,
       stagedDockerfile: buildContext.stagedDockerfile,
     });

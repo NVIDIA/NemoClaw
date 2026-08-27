@@ -72,6 +72,7 @@ import {
   inspectPortableAgentReceiptAuthorityForPublicationRecovery,
   publishHermesPortableDurablePolicySource,
   publishHermesPortableLifecycleReceipt,
+  publishHermesPortableSuccessorReceipt,
   readHermesPortableLifecycleReceipt,
   reconcileHermesPortableCurrentPhasePublication,
   recoverableHermesPortablePolicyTransactionId,
@@ -775,11 +776,7 @@ function classifyHermesPortableRegistryForCurrentRoute(
   entry: SandboxEntry | null,
   pendingReservationSessionId?: string,
 ): HermesPortableRegistryDisposition {
-  const disposition = classifyHermesPortableRegistry(
-    receipt,
-    entry,
-    pendingReservationSessionId,
-  );
+  const disposition = classifyHermesPortableRegistry(receipt, entry, pendingReservationSessionId);
   if (
     (disposition.kind === "matching" || disposition.kind === "matching-without-gateway-port") &&
     !isDeepStrictEqual(
@@ -1137,8 +1134,7 @@ export async function runHermesPortableOnboardingTransaction<T>(
       );
       if (
         entry?.pendingRouteReservation === true &&
-        (registered.kind === "matching" ||
-          registered.kind === "matching-without-gateway-port")
+        (registered.kind === "matching" || registered.kind === "matching-without-gateway-port")
       ) {
         return !committedRegistryEntry || !isDeepStrictEqual(entry, committedRegistryEntry)
           ? {
@@ -1207,11 +1203,7 @@ export async function runHermesPortableOnboardingTransaction<T>(
       }
       if (
         gatewayPort === null ||
-        !deps.compareAndSetRegistryGatewayPort(
-          receipt.sandboxName,
-          disposition.entry,
-          gatewayPort,
-        )
+        !deps.compareAndSetRegistryGatewayPort(receipt.sandboxName, disposition.entry, gatewayPort)
       ) {
         fail("registry gateway port repair did not complete");
       }
@@ -1290,6 +1282,7 @@ export async function runHermesPortableOnboardingTransaction<T>(
     let created = false;
     if (snapshot.receipt.phase === "active") {
       let activeSnapshot = requireConfiguredReceiptSnapshot(snapshot);
+      const recoverSuccessorPublication = activeSnapshot.successorPublicationPending === true;
       const liveIdentity = requireCurrentOpenShellIdentity(
         activeSnapshot.receipt,
         observeSandbox(),
@@ -1308,7 +1301,11 @@ export async function runHermesPortableOnboardingTransaction<T>(
         liveIdentity.liveIdentityFingerprint,
       );
       probeHermesPortableAuthenticatedHealth(activeSnapshot.receipt, containerDeps);
-      activeSnapshot = requireCurrentReceiptSnapshot(activeSnapshot, input.stateDir);
+      activeSnapshot = requireCurrentReceiptSnapshot(
+        activeSnapshot,
+        input.stateDir,
+        recoverSuccessorPublication,
+      );
       const finalIdentity = requireCurrentOpenShellIdentity(
         activeSnapshot.receipt,
         observeSandbox(),
@@ -1326,6 +1323,9 @@ export async function runHermesPortableOnboardingTransaction<T>(
         repairRegistryGatewayPort(activeSnapshot.receipt, finalIdentity.liveIdentityFingerprint),
         finalIdentity.liveIdentityFingerprint,
       );
+      if (activeSnapshot.successor || activeSnapshot.successorPublicationPending) {
+        activeSnapshot = publishHermesPortableSuccessorReceipt(input.sandboxName, input.stateDir);
+      }
       return { active: activeSnapshot, createResult, created };
     }
 
@@ -1538,10 +1538,11 @@ export async function runHermesPortableOnboardingTransaction<T>(
       repairRegistryGatewayPort(configuringSnapshot.receipt, liveIdentity.liveIdentityFingerprint),
       liveIdentity.liveIdentityFingerprint,
     );
-    const active = publishHermesPortableLifecycleReceipt(
+    publishHermesPortableLifecycleReceipt(
       activeReceipt(configuringSnapshot, currentContainer),
       input.stateDir,
     );
+    const active = publishHermesPortableSuccessorReceipt(input.sandboxName, input.stateDir);
     return { active, createResult, created };
   });
 }
@@ -1565,9 +1566,7 @@ export interface HermesPortableOnboardingFromOnboardInput<T> {
     buildContextPath: string,
   ) => Promise<T>;
   readonly readRegistry: () => SandboxEntry | null;
-  readonly compareAndSetRegistryGatewayPort: HermesPortableOnboardingDeps<T>[
-    "compareAndSetRegistryGatewayPort"
-  ];
+  readonly compareAndSetRegistryGatewayPort: HermesPortableOnboardingDeps<T>["compareAndSetRegistryGatewayPort"];
   readonly registerSandbox: HermesPortableOnboardingDeps<T>["registerSandbox"];
   readonly sourceRoot: string;
   readonly buildContextSettings: HermesPortableBuildContextSettings;

@@ -7,6 +7,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { HERMES_E2E_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -336,6 +337,11 @@ test(
           ),
         ));
     expect(install.exitCode, resultText(install)).toBe(0);
+    assertStockManagedImageReceipt({
+      environment: env,
+      expectedAgent: "hermes",
+      sandboxName: SANDBOX_NAME,
+    });
 
     const cliProbe = await host.command(
       "bash",

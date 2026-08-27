@@ -72,6 +72,7 @@ import {
   buildHermesPortableCommandAuthority,
   inspectPortableAgentReceiptDisposition,
   qualifyPortableAgentLifecycleAuthority,
+  requalifyPortableAgentSandboxAuthority,
   recoverPortableAgentSandboxLifecycle,
   requireHermesPortableActiveLifecycleAuthority,
 } from "../../onboard/experimental/portable-agent-lifecycle";
@@ -117,6 +118,7 @@ export {
   buildHermesPortableCommandEnvironment,
   inspectPortableAgentReceiptDisposition,
   qualifyPortableAgentLifecycleAuthority,
+  requalifyPortableAgentSandboxAuthority,
   requireHermesPortableActiveLifecycleAuthority,
 };
 export const withSandboxLifecycleLock = withMcpLifecycleLock;
