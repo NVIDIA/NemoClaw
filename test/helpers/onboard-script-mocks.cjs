@@ -338,6 +338,10 @@ function mockOnboardRunCapture(command, options = {}) {
 let publishedCreatedSandboxIdentity = null;
 let publishedCreatedGatewayPort = 8080;
 
+function clearMockCreatedSandboxIdentity() {
+  publishedCreatedSandboxIdentity = null;
+}
+
 function mockCreatedSandboxIdentityList(command, options = {}) {
   const args = Array.isArray(command) ? command.map(String) : [];
   const sandboxIndex = args.indexOf("sandbox");
@@ -1087,6 +1091,7 @@ module.exports = {
   isOpenClawSecurityInventoryProbe,
   mockDockerSandboxLifecycleReleaseFromRunner,
   mockFreshOpenClawPluginDiscovery,
+  clearMockCreatedSandboxIdentity,
   mockCreatedSandboxIdentityList,
   installVerifiedSandboxCreateFixture,
   managedSandboxPolicyReceiptFixture,

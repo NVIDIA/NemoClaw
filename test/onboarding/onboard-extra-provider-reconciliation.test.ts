@@ -92,16 +92,32 @@ runner.run = (command, opts = {}) => {
   if (normalized.includes("provider get -g nemoclaw ")) {
     return { status: 0, stdout: "" };
   }
-  return normalized.includes("sandbox get") && normalized.includes("my-assistant")
-    ? { status: 0, stdout: Buffer.from("my-assistant\nId: fixture-created-sandbox\n"), stderr: Buffer.alloc(0) }
-    : { status: 0 };
+  if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) {
+    if (sandboxCreated) {
+      return {
+        status: 0,
+        stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"),
+        stderr: Buffer.alloc(0),
+      };
+    }
+    const stderr = Buffer.from("Error: sandbox my-assistant not found\n");
+    return {
+      status: 1,
+      stdout: Buffer.alloc(0),
+      stderr,
+      output: [null, Buffer.alloc(0), stderr],
+    };
+  }
+  return { status: 0 };
 };
 runner.runCapture = (command) => {
   const normalized = _n(command);
-  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
+  const createdIdentity = sandboxCreated
+    ? fixtureMocks.mockCreatedSandboxIdentityList(command)
+    : null;
   if (createdIdentity !== null) return createdIdentity;
   if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) {
-    return sandboxCreated ? "my-assistant\nId: fixture-created-sandbox" : "";
+    return sandboxCreated ? "my-assistant\nId: sbx-4f2a91c0d7" : "";
   }
   if (normalized.includes("sandbox list")) return sandboxCreated ? "my-assistant Ready" : "";
   const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
@@ -156,6 +172,7 @@ const createReservedSandbox = () => createSandbox(
   const firstSandboxName = await createReservedSandbox();
   registry.removeSandbox("my-assistant");
   sandboxCreated = false;
+  fixtureMocks.clearMockCreatedSandboxIdentity();
   const sandboxNames = [
     firstSandboxName,
     await createReservedSandbox(),
