@@ -192,7 +192,7 @@ export function prepareCreateSandboxMessaging(
     : [];
   const reusableMessagingChannels: string[] = [];
 
-  if (input.enabledChannels != null) {
+  if (input.enabledChannels != null || input.requireExactProviderBinding === true) {
     for (const {
       name,
       envKey,
@@ -203,7 +203,11 @@ export function prepareCreateSandboxMessaging(
       const channel = input.getMessagingChannelForEnvKey(envKey);
       if (!channel) continue;
       const channelDisabled = disabledChannelNames.has(channel);
-      if (!input.enabledChannels.includes(channel) && !(channelDisabled && retainWhileDisabled)) {
+      if (
+        input.enabledChannels != null &&
+        !input.enabledChannels.includes(channel) &&
+        !(channelDisabled && retainWhileDisabled)
+      ) {
         continue;
       }
       if (channelDisabled && !retainWhileDisabled) continue;
@@ -231,10 +235,10 @@ export function prepareCreateSandboxMessaging(
   // The name carries the channel but not the agent, and onboard can recreate a
   // sandbox name under a different agent, so match the gateway binding against
   // the selected profile rather than accepting any provider with that name.
-  if (input.enabledChannels != null) {
+  if (input.enabledChannels != null || input.requireExactProviderBinding === true) {
     for (const profile of bridgeProfiles) {
       const channel = profile.channelId;
-      if (!input.enabledChannels.includes(channel)) continue;
+      if (input.enabledChannels != null && !input.enabledChannels.includes(channel)) continue;
       if (disabledChannelNames.has(channel)) continue;
       for (const name of bridgeProviderNamesForChannel(input.sandboxName, channel, [profile])) {
         if (messagingTokenDefs.some((def) => def.name === name && def.token)) continue;

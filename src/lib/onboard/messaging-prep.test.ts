@@ -83,6 +83,31 @@ describe("prepareCreateSandboxMessaging", () => {
     );
   });
 
+  it("reattaches an exact durable provider when rebuild resumes without channel prompts", () => {
+    const providerMatchesGatewayCredential = vi.fn(
+      (name: string, type: string, credentialKey: string) =>
+        name === "demo-discord-bridge" &&
+        type === "nemoclaw-mcp-v1" &&
+        credentialKey === "DISCORD_BOT_TOKEN",
+    );
+
+    const result = prepareCreateSandboxMessaging(
+      createInput({
+        enabledChannels: null,
+        requireExactProviderBinding: true,
+        providerMatchesGatewayCredential,
+      }),
+    );
+
+    expect(result.reusableMessagingProviders).toContain("demo-discord-bridge");
+    expect(result.reusableMessagingChannels).toContain("discord");
+    expect(providerMatchesGatewayCredential).toHaveBeenCalledWith(
+      "demo-discord-bridge",
+      "nemoclaw-mcp-v1",
+      "DISCORD_BOT_TOKEN",
+    );
+  });
+
   it("reuses an existing gateway bridge provider when the bridge secret is not resolvable", () => {
     // Deferred rebuild in a fresh process: the pasted secret is env-only and
     // gone, so no bridge token def exists — but the gateway still durably
