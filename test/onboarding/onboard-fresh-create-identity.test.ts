@@ -62,12 +62,28 @@ describe("fresh create identity", () => {
       expectedOutcome: "staged-messaging-refusal" as const,
     },
     {
-      title: "preserves a newly created sandbox when non-TTY policy selection is cancelled (#9833)",
+      title: "makes a tier-cancelled created sandbox recovery-only (#9833)",
       apfInterceptorRequested: false,
       provider: "nvidia-prod",
       model: "gpt-5.4",
       agent: null,
-      expectedOutcome: "cancel-after-create" as const,
+      expectedOutcome: "cancel-after-create-tier" as const,
+    },
+    {
+      title: "makes a tier-preset-cancelled created sandbox recovery-only (#9833)",
+      apfInterceptorRequested: false,
+      provider: "nvidia-prod",
+      model: "gpt-5.4",
+      agent: null,
+      expectedOutcome: "cancel-after-create-tier-presets" as const,
+    },
+    {
+      title: "makes a custom-preset-cancelled created sandbox recovery-only (#9833)",
+      apfInterceptorRequested: false,
+      provider: "nvidia-prod",
+      model: "gpt-5.4",
+      agent: null,
+      expectedOutcome: "cancel-after-create-custom-presets" as const,
     },
   ])(
     "$title",
@@ -134,27 +150,29 @@ const apfInterceptorRequested = ${JSON.stringify(apfInterceptorRequested)};
 const agent = ${JSON.stringify(agent)};
 const model = ${JSON.stringify(model)};
 const provider = ${JSON.stringify(provider)};
-const cancelAfterCreate = ${JSON.stringify(expectedOutcome === "cancel-after-create")};
+const cancellationSelector = ${JSON.stringify(
+        expectedOutcome.startsWith("cancel-after-create-")
+          ? expectedOutcome.slice("cancel-after-create-".length)
+          : null,
+      )};
+const cancelAfterCreate = cancellationSelector !== null;
+const recoveryReentry = process.env.NEMOCLAW_RECOVERY_REENTRY || "";
 const stagedMessagingRefusal = ${JSON.stringify(expectedOutcome === "staged-messaging-refusal")};
 const postCreateAuthorityRefusal = ${JSON.stringify(
         expectedOutcome === "post-create-authority-refusal",
       )};
 let cancelPrompt = false;
 const originalGetCredential = credentials.getCredential;
-if (stagedMessagingRefusal) {
-  credentials.getCredential = (...args) => {
-    credentialReadCalls += 1;
-    if (typeof args[0] !== "string") return null;
-    return originalGetCredential(...args);
-  };
-}
+credentials.getCredential = (...args) => {
+  credentialReadCalls += 1;
+  if (typeof args[0] !== "string") return null;
+  return originalGetCredential(...args);
+};
 const originalReserveSandboxInferenceRoute = registry.reserveSandboxInferenceRoute;
-if (stagedMessagingRefusal) {
-  registry.reserveSandboxInferenceRoute = (...args) => {
-    routeReservationCalls += 1;
-    return originalReserveSandboxInferenceRoute(...args);
-  };
-}
+registry.reserveSandboxInferenceRoute = (...args) => {
+  routeReservationCalls += 1;
+  return originalReserveSandboxInferenceRoute(...args);
+};
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
   _deleted = _deleted || cmd.includes("sandbox delete");
@@ -198,11 +216,16 @@ runner.run = (command, opts = {}) => {
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
+	const retainedRegistryEntry = recoveryReentry && fs.existsSync(${JSON.stringify(payloadPath)})
+	  ? JSON.parse(fs.readFileSync(${JSON.stringify(payloadPath)}, "utf8")).currentRegistryEntry
+	  : null;
+	const registryMutationCalls = [];
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
 	  sandboxName: "my-assistant",
 	  provider,
 	  model,
 	  apfInterceptorRequested,
+	  getSandbox: () => retainedRegistryEntry,
 	  onVerifyCreatedPolicy: (input) => {
 	    if (postCreateAuthorityRefusal) {
 	      throw new Error("external policy authority changed");
@@ -211,7 +234,13 @@ runner.run = (command, opts = {}) => {
 	      fs.readFileSync(input.policySourcePath, "utf8"),
 	    ).policy;
 	  },
-	  registerSandbox: (entry) => { registeredSandbox = entry; },
+	  registerSandbox: (entry) => {
+	    registeredSandbox = entry;
+	    registryMutationCalls.push({ operation: "register", name: entry.name });
+	  },
+	  updateSandbox: (name) => { registryMutationCalls.push({ operation: "update", name }); },
+	  setDefault: (name) => { registryMutationCalls.push({ operation: "set-default", name }); },
+	  removeSandbox: (name) => { registryMutationCalls.push({ operation: "remove", name }); },
 	});
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => {
@@ -269,13 +298,17 @@ childProcess.spawn = (...args) => {
 
 const onboardModule = require(${onboardPath});
 const { createSandbox } = onboardModule;
-if (cancelAfterCreate) {
+if (cancelAfterCreate && !recoveryReentry) {
   const session = onboardModule.onboardSession.createSession({
     mode: "interactive",
     sandboxName: "my-assistant",
     metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
   });
   onboardModule.onboardSession.saveSession(session);
+  onboardModule.registerIncompleteOnboardExitHandlerForSession(
+    onboardModule.onboardSession,
+    () => false,
+  );
 }
 
 const writePayload = (sandboxName, creationError, exitCode = 0) => {
@@ -296,6 +329,7 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
     registeredSandbox,
     credentialReadCalls,
     routeReservationCalls,
+    registryMutationCalls,
     currentRegistryEntry: cancelAfterCreate ? registry.getSandbox("my-assistant") : null,
     savedSession: cancelAfterCreate ? onboardModule.onboardSession.loadSession() : null,
     createCommand: createCommand?.command ?? null,
@@ -305,6 +339,25 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
+	  if (recoveryReentry) {
+	    try {
+	      await onboardModule.onboard({
+	        resume: recoveryReentry === "explicit",
+	        fresh: recoveryReentry === "fresh-same",
+	        sandboxName: recoveryReentry === "fresh-same" ? "my-assistant" : undefined,
+	        deferProcessExit: true,
+	      });
+	      writePayload(null, "recovery-only onboarding unexpectedly continued", 0);
+	    } catch (error) {
+	      writePayload(
+	        null,
+	        error instanceof Error ? error.message : String(error),
+	        typeof error?.code === "number" ? error.code : 1,
+	      );
+	    }
+	    clearInterval(keepAlive);
+	    return;
+	  }
 	  const createArgs = fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
 	    [null, model, provider, null, null, null, null, null, agent, null, null, null, []],
 	    createFixture,
@@ -323,7 +376,20 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
 	    if (cancelAfterCreate) {
 	      process.on("exit", (code) => writePayload(sandboxName, null, code));
 	      cancelPrompt = true;
-	      await onboardModule.selectPolicyTier();
+	      if (cancellationSelector === "tier") {
+	        await onboardModule.selectPolicyTier();
+	      } else if (cancellationSelector === "tier-presets") {
+	        await onboardModule.selectTierPresetsAndAccess(
+	          "balanced",
+	          [{ name: "github", description: "GitHub" }],
+	          ["github"],
+	        );
+	      } else {
+	        await onboardModule.presetsCheckboxSelector(
+	          [{ name: "github", description: "GitHub" }],
+	          ["github"],
+	        );
+	      }
 	      throw new Error("expected policy selection cancellation");
 	    }
 	    writePayload(sandboxName, null);
@@ -345,7 +411,7 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
         ...process.env,
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: expectedOutcome === "cancel-after-create" ? "" : "1",
+        NEMOCLAW_NON_INTERACTIVE: expectedOutcome.startsWith("cancel-after-create-") ? "" : "1",
         OPENSHELL_DRIVERS: "docker",
         NEMOCLAW_MESSAGING_PLAN_B64:
           expectedOutcome === "staged-messaging-refusal"
@@ -361,7 +427,8 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
         timeout: 30000,
       });
 
-      assert.equal(result.status, expectedOutcome === "cancel-after-create" ? 1 : 0, result.stderr);
+      const cancellationOutcome = expectedOutcome.startsWith("cancel-after-create-");
+      assert.equal(result.status, cancellationOutcome ? 1 : 0, result.stderr);
       assert.ok(fs.existsSync(payloadPath), result.stderr);
       const payload = JSON.parse(fs.readFileSync(payloadPath, "utf8"));
       const providerEffectCommands = payload.commandNames.filter((command: string) =>
@@ -486,8 +553,18 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
           identityFingerprint,
         );
         assert.equal(payload.currentRegistryEntry.name, "my-assistant");
-        assert.equal(payload.savedSession.status, "in_progress");
+        assert.equal(payload.savedSession.status, "recovery_required");
+        assert.equal(payload.savedSession.resumable, false);
         assert.equal(payload.savedSession.sandboxName, "my-assistant");
+        assert.equal(
+          payload.savedSession.cancellationRecovery.reason,
+          "cancelled_after_sandbox_creation",
+        );
+        assert.equal(payload.savedSession.cancellationRecovery.sandboxName, "my-assistant");
+        assert.equal(
+          payload.savedSession.cancellationRecovery.sandboxIdentityFingerprint,
+          identityFingerprint,
+        );
         assert.equal(
           payload.commandNames.some((command: string) => command.includes("sandbox delete")),
           false,
@@ -499,6 +576,50 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
         assert.match(result.stderr, /remove only resources whose ownership is confirmed/u);
         assert.match(result.stderr, /confirm that the exact sandbox is absent/u);
         assert.match(result.stderr, /rotate any credential/u);
+
+        const reentryCases = [
+          {
+            mode: "automatic",
+            messages: [
+              /preserved sandbox 'my-assistant' in recovery-only state/u,
+              /resume, reuse, and recreation are disabled/u,
+            ],
+          },
+          {
+            mode: "explicit",
+            messages: [
+              /preserved sandbox 'my-assistant' in recovery-only state/u,
+              /resume, reuse, and recreation are disabled/u,
+            ],
+          },
+          {
+            mode: "fresh-same",
+            messages: [
+              /requires --fresh with an explicit sandbox name different from the retained sandbox/u,
+            ],
+          },
+        ] as const;
+        for (const { messages, mode: reentryMode } of reentryCases) {
+          const reentry = spawnSync(process.execPath, [scriptPath], {
+            cwd: repoRoot,
+            encoding: "utf-8",
+            env: {
+              ...childEnv,
+              NEMOCLAW_RECOVERY_REENTRY: reentryMode,
+            },
+            timeout: 30000,
+          });
+          assert.equal(reentry.status, 0, reentry.stderr);
+          const reentryPayload = JSON.parse(fs.readFileSync(payloadPath, "utf8"));
+          assert.equal(reentryPayload.exitCode, 1);
+          messages.forEach((message) => assert.match(reentry.stderr, message));
+          assert.deepEqual(reentryPayload.commandNames, []);
+          assert.equal(reentryPayload.credentialReadCalls, 0);
+          assert.equal(reentryPayload.routeReservationCalls, 0);
+          assert.deepEqual(reentryPayload.registryMutationCalls, []);
+          assert.deepEqual(reentryPayload.currentRegistryEntry, payload.currentRegistryEntry);
+          assert.deepEqual(reentryPayload.savedSession, payload.savedSession);
+        }
       };
       const assertions = {
         "managed-provider": assertManagedProviderCreation,
@@ -506,7 +627,9 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
         "providerless-apf": assertProviderlessApfCreation,
         "post-create-authority-refusal": assertPostCreateAuthorityRefusal,
         "staged-messaging-refusal": assertStagedMessagingRefusal,
-        "cancel-after-create": assertCancellationRecovery,
+        "cancel-after-create-tier": assertCancellationRecovery,
+        "cancel-after-create-tier-presets": assertCancellationRecovery,
+        "cancel-after-create-custom-presets": assertCancellationRecovery,
       };
       assertions[expectedOutcome]();
     },

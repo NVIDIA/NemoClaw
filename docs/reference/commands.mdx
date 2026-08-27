@@ -902,7 +902,7 @@ Do not delete the sandbox by mutable name.
 Provider registrations and gateway-bound credentials created before cancellation may remain.
 Ask an OpenShell administrator to inspect the exact sandbox identity, provider registrations, and gateway-bound credentials, then retain them or remove only resources whose ownership is confirmed.
 Before reusing the sandbox name, confirm that the exact sandbox is absent and rotate any credential that may have been configured or exposed before cancellation.
-Do not resume or recreate that incomplete sandbox.
+NemoClaw records the incomplete sandbox as recovery-only and rejects automatic resume, explicit `--resume`, reuse, and recreation.
 After an OpenShell administrator verifies the live durable ID, removes that exact sandbox through an identity-bound procedure, and confirms removal, rerun the original onboarding command with the same required provider, model, agent, policy, and environment inputs, add `--fresh`, and change only the sandbox name.
 `--fresh` starts a new session and does not retain those selections.
 

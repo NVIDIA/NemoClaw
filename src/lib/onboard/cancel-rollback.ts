@@ -24,6 +24,8 @@ export { restoreDefaultAfterRecreate, wasSandboxDefault } from "./default-preser
 export interface SandboxCancelRollbackDeps {
   /** Emit an operator-facing line (stderr). */
   log(message: string): void;
+  /** Persist the recovery-only session before process exit completes. */
+  recordRecovery?(sandboxName: string, sandboxIdentityFingerprint?: string): void;
 }
 
 export interface SandboxCancelRollback {
@@ -65,6 +67,7 @@ export function buildCancelRollbackMessage(
 
 export interface InstallSandboxCancelRollbackOptions {
   log?: (message: string) => void;
+  recordRecovery?: SandboxCancelRollbackDeps["recordRecovery"];
   /** Override for tests; defaults to `process.on("exit", ...)`. */
   registerExitHandler?: (handler: () => void) => void;
 }
@@ -82,6 +85,7 @@ export function installSandboxCancelRollback(
 ): SandboxCancelRollback {
   const rollback = createSandboxCancelRollback({
     log: opts.log ?? ((message) => console.error(message)),
+    recordRecovery: opts.recordRecovery,
   });
   const register =
     opts.registerExitHandler ??
@@ -117,7 +121,14 @@ export function createSandboxCancelRollback(
     readonly identityFingerprint: string | null;
   } | null = null;
   let cancelRequested = false;
+  let recoveryRecorded = false;
   let done = false;
+
+  const recordArmedRecovery = (): void => {
+    if (recoveryRecorded || armedSandbox === null) return;
+    recoveryRecorded = true;
+    deps.recordRecovery?.(armedSandbox.name, armedSandbox.identityFingerprint ?? undefined);
+  };
 
   return {
     arm(sandboxName: string, sandboxIdentityFingerprint?: string): void {
@@ -135,6 +146,10 @@ export function createSandboxCancelRollback(
     },
     markCancelled(): void {
       cancelRequested = true;
+      // Persist before requesting process exit. This also covers callers that
+      // defer the real exit and prevents later exit handlers from replacing
+      // the recovery-only marker with an ordinary resumable failure.
+      recordArmedRecovery();
     },
     isArmed(): boolean {
       return armedSandbox !== null;
@@ -143,6 +158,7 @@ export function createSandboxCancelRollback(
       if (done || !cancelRequested || armedSandbox === null) return;
       done = true;
       const { name: sandboxName, identityFingerprint } = armedSandbox;
+      recordArmedRecovery();
       armedSandbox = null;
       for (const line of buildCancelRollbackMessage(
         sandboxName,

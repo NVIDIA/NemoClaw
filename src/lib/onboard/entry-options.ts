@@ -34,6 +34,7 @@ export interface OnboardEntryOptionsInput {
    * flag-only behavior for callers that don't load the session.
    */
   persistedSessionStatus?: string | null;
+  persistedRecoverySandboxName?: string | null;
 }
 
 export interface OnboardEntryOptionsDeps {
@@ -57,6 +58,11 @@ export interface ResolvedOnboardEntryOptions {
   requestedSandboxName: string | null;
   cannotPrompt: boolean;
 }
+
+type PersistedOnboardEntrySession = {
+  readonly status: string;
+  readonly cancellationRecovery?: { readonly sandboxName: string } | null;
+};
 
 type NonInteractiveEntryOptions = { nonInteractive?: boolean };
 type ResumableEntryOptions = NonInteractiveEntryOptions & {
@@ -105,6 +111,7 @@ export function resolveOnboardRunOptions(
     stdinIsTty: Boolean(process.stdin?.isTTY),
     stdoutIsTty: Boolean(process.stdout?.isTTY),
   },
+  persistedRecoverySandboxName: string | null = null,
 ) {
   const resume =
     options.resume === true || (options.fresh !== true && persistedSessionStatus === "in_progress");
@@ -115,7 +122,13 @@ export function resolveOnboardRunOptions(
   return {
     resume,
     nonInteractive,
-    entryOptionsInput: { opts: options, env, ...terminal, persistedSessionStatus },
+    entryOptionsInput: {
+      opts: options,
+      env,
+      ...terminal,
+      persistedSessionStatus,
+      persistedRecoverySandboxName,
+    },
   };
 }
 
@@ -125,12 +138,15 @@ export function resolveOnboardRunEntryOptions(
   persistedSessionStatus: string | null,
   isNonInteractiveEnv: () => boolean,
   deps: Omit<OnboardEntryOptionsDeps, "isNonInteractive">,
+  persistedRecoverySandboxName: string | null = null,
 ) {
   const context = resolveOnboardRunOptions(
     options,
     env,
     persistedSessionStatus,
     isNonInteractiveEnv,
+    undefined,
+    persistedRecoverySandboxName,
   );
   return {
     ...context,
@@ -143,18 +159,25 @@ export function resolveOnboardRunEntryOptions(
 
 export function resolveDefaultRunEntryOptions(
   options: OnboardEntryOptionsInput["opts"] & { autoYes?: boolean; nonInteractive?: boolean },
-  persistedSessionStatus: string | null,
+  persistedSession: PersistedOnboardEntrySession | null,
   validateSandboxName: OnboardEntryOptionsDeps["validateName"],
   env: NodeJS.ProcessEnv = process.env,
 ) {
-  return resolveOnboardRunEntryOptions(options, env, persistedSessionStatus, isNonInteractiveEnv, {
-    validateName: validateSandboxName,
-    reservedSandboxNames: RESERVED_SANDBOX_NAMES,
-    cliDisplayName,
-    getNameValidationGuidance,
-    error: (message) => console.error(message),
-    exitProcess: (code) => process.exit(code),
-  });
+  return resolveOnboardRunEntryOptions(
+    options,
+    env,
+    persistedSession?.status ?? null,
+    isNonInteractiveEnv,
+    {
+      validateName: validateSandboxName,
+      reservedSandboxNames: RESERVED_SANDBOX_NAMES,
+      cliDisplayName,
+      getNameValidationGuidance,
+      error: (message) => console.error(message),
+      exitProcess: (code) => process.exit(code),
+    },
+    persistedSession?.cancellationRecovery?.sandboxName ?? null,
+  );
 }
 
 export function assertDefaultSandboxNameAllowed(sandboxName: string): void {
@@ -279,6 +302,34 @@ export function resolveOnboardEntryOptions(
       deps.exitProcess(1);
     }
     requestedSandboxName = validated;
+  }
+  if (input.persistedSessionStatus === "recovery_required") {
+    const recoverySandboxName = input.persistedRecoverySandboxName?.trim() || null;
+    if (!fresh) {
+      deps.error(
+        `  Onboarding cannot continue because cancellation preserved sandbox '${recoverySandboxName ?? "unknown"}' in recovery-only state.`,
+      );
+      deps.error(
+        "  Automatic and explicit resume, reuse, and recreation are disabled to protect the retained sandbox.",
+      );
+      deps.error(
+        "  After an OpenShell administrator completes identity-bound recovery or removal, start fresh with --fresh --name <new-name>.",
+      );
+      deps.exitProcess(1);
+    }
+    if (
+      !recoverySandboxName ||
+      !requestedSandboxName ||
+      requestedSandboxName === recoverySandboxName
+    ) {
+      deps.error(
+        "  Recovery-only onboarding state requires --fresh with an explicit sandbox name different from the retained sandbox.",
+      );
+      deps.error(
+        "  Verify identity-bound removal with an OpenShell administrator before starting the new onboarding session.",
+      );
+      deps.exitProcess(1);
+    }
   }
   if (cannotPrompt && !resume && requestedFromDockerfile && !requestedSandboxName) {
     deps.error(

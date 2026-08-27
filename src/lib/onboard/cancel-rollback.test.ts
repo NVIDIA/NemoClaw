@@ -115,9 +115,11 @@ describe("createSandboxCancelRollback", () => {
 describe("installSandboxCancelRollback", () => {
   it("registers a non-destructive exit handler that retains external recovery state (#9833)", () => {
     const log = vi.fn();
+    const recordRecovery = vi.fn();
     const exitHandlers: Array<() => void> = [];
     const rollback = installSandboxCancelRollback({
       log,
+      recordRecovery,
       registerExitHandler: (handler) => exitHandlers.push(handler),
     });
 
@@ -126,6 +128,31 @@ describe("installSandboxCancelRollback", () => {
     rollback.markCancelled();
     exitHandlers[0]();
 
+    expect(recordRecovery).toHaveBeenCalledWith("new-sb", SANDBOX_FINGERPRINT);
+    expect(log.mock.calls.flat().join("\n")).toContain(SANDBOX_FINGERPRINT);
+  });
+
+  it("persists recovery before a deferred process exit and records it once (#9833)", () => {
+    const log = vi.fn();
+    const recordRecovery = vi.fn();
+    const exitHandlers: Array<() => void> = [];
+    const rollback = installSandboxCancelRollback({
+      log,
+      recordRecovery,
+      registerExitHandler: (handler) => exitHandlers.push(handler),
+    });
+    const deferredExit = new Error("deferred exit");
+    const cancel = makeOnboardCancelExit(rollback, vi.fn(), () => {
+      throw deferredExit;
+    });
+
+    rollback.arm("new-sb", SANDBOX_FINGERPRINT);
+    expect(() => cancel()).toThrow(deferredExit);
+    expect(recordRecovery).toHaveBeenCalledOnce();
+    expect(recordRecovery).toHaveBeenCalledWith("new-sb", SANDBOX_FINGERPRINT);
+
+    exitHandlers[0]();
+    expect(recordRecovery).toHaveBeenCalledOnce();
     expect(log.mock.calls.flat().join("\n")).toContain(SANDBOX_FINGERPRINT);
   });
 

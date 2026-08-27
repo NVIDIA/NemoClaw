@@ -2635,9 +2635,9 @@ const onboardRuntimeBoundary = new OnboardRuntimeBoundary({
     toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
   maybeForceE2eStepFailure,
 });
-
-const sandboxCancelRollback = installSandboxCancelRollback({}); // #4614
-
+const sandboxCancelRollback = installSandboxCancelRollback({
+  recordRecovery: onboardSession.markCancellationRecovery,
+}); // #4614
 const {
   arePolicyPresetsApplied,
   computeSetupPresetSuggestions,
@@ -2752,7 +2752,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   AUTO_YES = opts.autoYes === true || process.env.NEMOCLAW_YES === "1";
   const entryOptions = onboardEntryOptions.resolveDefaultRunEntryOptions(
     opts,
-    onboardSession.loadSession()?.status ?? null,
+    onboardSession.loadSession(),
     validateName,
   );
   const { fresh, nonInteractive, cannotPrompt, resume } = entryOptions;

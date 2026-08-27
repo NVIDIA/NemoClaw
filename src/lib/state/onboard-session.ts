@@ -65,6 +65,7 @@ export { normalizePersistedSandboxHostMounts } from "./registry/host-mount";
 
 export const SESSION_VERSION = 1;
 export const MACHINE_SNAPSHOT_VERSION = 1;
+export const CANCELLATION_RECOVERY_STATUS = "recovery_required";
 const INVALID_HOST_MOUNT_SESSIONS = new WeakSet<object>();
 export const SESSION_DIR = nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT);
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
@@ -105,6 +106,13 @@ export interface SessionFailure {
   message: string | null;
   recordedAt: string;
   interrupted?: boolean;
+}
+
+export interface SessionCancellationRecovery {
+  readonly reason: "cancelled_after_sandbox_creation";
+  readonly sandboxName: string;
+  readonly sandboxIdentityFingerprint: string | null;
+  readonly recordedAt: string;
 }
 
 export interface SessionMetadata {
@@ -205,6 +213,7 @@ export interface Session {
   lastStepStarted: string | null;
   lastCompletedStep: string | null;
   failure: SessionFailure | null;
+  cancellationRecovery: SessionCancellationRecovery | null;
   agent: string | null;
   sandboxName: string | null;
   provider: string | null;
@@ -365,6 +374,7 @@ export interface DebugSessionSummary {
   lastStepStarted: string | null;
   lastCompletedStep: string | null;
   failure: SessionFailure | null;
+  cancellationRecovery: SessionCancellationRecovery | null;
   gatewayAuthority: GatewayOwnerDescription | null;
   machine: OnboardMachineSnapshot;
   steps: Record<string, StepState>;
@@ -678,6 +688,31 @@ export function sanitizeFailure(
   return step || message ? { step, message, recordedAt, interrupted } : null;
 }
 
+function parseSessionCancellationRecovery(
+  value: SessionJsonValue | undefined,
+): SessionCancellationRecovery | null {
+  if (!isObject(value) || value.reason !== "cancelled_after_sandbox_creation") return null;
+  const sandboxName = readString(value.sandboxName);
+  const recordedAt = readCanonicalIsoTimestamp(value.recordedAt);
+  const fingerprint =
+    value.sandboxIdentityFingerprint === null ? null : readString(value.sandboxIdentityFingerprint);
+  if (
+    !sandboxName ||
+    sandboxName.length > NAME_MAX_LENGTH ||
+    !NAME_VALID_PATTERN.test(sandboxName) ||
+    !recordedAt ||
+    (fingerprint !== null && !/^[0-9a-f]{64}$/u.test(fingerprint))
+  ) {
+    return null;
+  }
+  return {
+    reason: "cancelled_after_sandbox_creation",
+    sandboxName,
+    sandboxIdentityFingerprint: fingerprint,
+    recordedAt,
+  };
+}
+
 // ── Session CRUD ─────────────────────────────────────────────────
 
 function createMachineSnapshot(
@@ -775,6 +810,9 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     lastStepStarted: overrides.lastStepStarted ?? null,
     lastCompletedStep: overrides.lastCompletedStep ?? null,
     failure: overrides.failure ?? null,
+    cancellationRecovery: parseSessionCancellationRecovery(
+      overrides.cancellationRecovery as SessionJsonValue | undefined,
+    ),
     agent: overrides.agent ?? null,
     sandboxName: overrides.sandboxName ?? null,
     provider: overrides.provider ?? null,
@@ -900,6 +938,14 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
   ) {
     return null;
   }
+  const cancellationRecovery = parseSessionCancellationRecovery(data.cancellationRecovery);
+  if (
+    hasOwn(data, "cancellationRecovery") &&
+    data.cancellationRecovery !== null &&
+    !cancellationRecovery
+  ) {
+    return null;
+  }
 
   const normalized = createSession({
     sessionId: readString(data.sessionId) ?? undefined,
@@ -943,11 +989,20 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     lastStepStarted: readString(data.lastStepStarted),
     lastCompletedStep: readString(data.lastCompletedStep),
     failure: sanitizeFailure(isObject(data.failure) ? data.failure : null),
+    cancellationRecovery,
     metadata: parseSessionMetadata(data.metadata),
     checkpoint: data.checkpoint as unknown as OnboardCheckpoint | null,
   });
   normalized.resumable = data.resumable !== false;
   normalized.status = readString(data.status) ?? normalized.status;
+  if (
+    (normalized.status === CANCELLATION_RECOVERY_STATUS) !== Boolean(cancellationRecovery) ||
+    (cancellationRecovery !== null &&
+      (normalized.resumable !== false ||
+        normalized.sandboxName !== cancellationRecovery.sandboxName))
+  ) {
+    return null;
+  }
   if (
     normalized.stationExpressIntent &&
     (data.resumable !== true ||
@@ -1577,6 +1632,43 @@ export function updateSession(mutator: (session: Session) => Session | void): Se
   return saveSession(next);
 }
 
+export function markCancellationRecovery(
+  sandboxName: string,
+  sandboxIdentityFingerprint?: string,
+): Session {
+  if (
+    sandboxName.length > NAME_MAX_LENGTH ||
+    !NAME_VALID_PATTERN.test(sandboxName) ||
+    (sandboxIdentityFingerprint !== undefined &&
+      !/^[0-9a-f]{64}$/u.test(sandboxIdentityFingerprint))
+  ) {
+    throw new Error("Cannot record cancellation recovery with invalid sandbox identity data.");
+  }
+  return updateSession((session) => {
+    if (session.sandboxName !== null && session.sandboxName !== sandboxName) {
+      throw new Error("Cannot record cancellation recovery for a different onboarding sandbox.");
+    }
+    const recordedAt = new Date().toISOString();
+    session.sandboxName = sandboxName;
+    session.resumable = false;
+    session.status = CANCELLATION_RECOVERY_STATUS;
+    session.cancellationRecovery = {
+      reason: "cancelled_after_sandbox_creation",
+      sandboxName,
+      sandboxIdentityFingerprint: sandboxIdentityFingerprint ?? null,
+      recordedAt,
+    };
+    session.failure = {
+      step: session.lastStepStarted,
+      message:
+        "Onboarding was cancelled after sandbox creation; administrator recovery is required.",
+      recordedAt,
+      interrupted: true,
+    };
+    return session;
+  });
+}
+
 export type CompareAndSwapSessionResult = "updated" | "busy" | "mismatch";
 
 /**
@@ -1754,6 +1846,12 @@ export function finalizeIncompleteOnboardStep(
 ): Session | null {
   const existing = loadSession();
   if (!existing) return null;
+  // A cancellation after sandbox creation has its own fail-closed lifecycle.
+  // Preserve that durable marker when the ordinary process-exit backstop runs
+  // later in the same exit sequence.
+  if (existing.status === CANCELLATION_RECOVERY_STATUS && existing.cancellationRecovery !== null) {
+    return existing;
+  }
   if (isTerminalOnboardMachineState(existing.machine.state)) return existing;
 
   let emitted = false;
@@ -1940,6 +2038,7 @@ export function summarizeForDebug(
     lastStepStarted: session.lastStepStarted,
     lastCompletedStep: session.lastCompletedStep,
     failure: sanitizeFailure(session.failure),
+    cancellationRecovery: session.cancellationRecovery,
     gatewayAuthority,
     machine: session.machine,
     steps: Object.fromEntries(
