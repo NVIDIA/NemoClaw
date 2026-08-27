@@ -28,8 +28,8 @@ const GATEWAY_OBSERVER_LOCAL_PATH = path.join(
   "lib",
   "issue-4462-fresh-agent-gateway-snapshot.py",
 );
-// OpenShell extracts a single-file upload beneath DEST, so pass the parent
-// directory and execute the resulting file path.
+// OpenShell treats the upload destination as a directory. Upload to /tmp and
+// execute the uploaded file by its basename.
 const GATEWAY_OBSERVER_REMOTE_DIR = "/tmp";
 const GATEWAY_OBSERVER_REMOTE_PATH = `${GATEWAY_OBSERVER_REMOTE_DIR}/issue-4462-fresh-agent-gateway-snapshot.py`;
 
