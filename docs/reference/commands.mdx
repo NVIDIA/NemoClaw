@@ -451,6 +451,22 @@ If onboarding printed `Journaled replacement` before it stopped, rerun the origi
 The replacement can continue without an explicit `--resume` flag.
 Refer to [Continue an Interrupted Replacement](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement) for the identity checks and failure conditions.
 
+<Warning title="Recover a Deferred Provider Refresh Failure">
+If provider attachment fails after NemoClaw verifies the created sandbox, it preserves the exact identity and policy checkpoint and does not publish the completed sandbox registry entry.
+The live OpenShell sandbox can still be `Ready`; the diagnostic reports its observed state and whether its durable identity still matches the checkpoint.
+The provider-refresh record stores the current phase and attached provider names, not credentials.
+The recovery command attempts to wipe manifest-defined agent state, destroys the exact checkpointed sandbox, and removes its registry entry.
+The `--force` option suppresses confirmation:
+
+```bash
+$$nemoclaw <sandbox> destroy --force
+```
+
+Run the command only for the sandbox named by that diagnostic.
+It revalidates the checkpoint and live identity during deletion and refuses to destroy a same-name replacement.
+After the command confirms destruction, retry onboarding.
+</Warning>
+
 Use `--fresh` to discard the saved onboarding session and start the wizard from the beginning.
 This clears stale or failed session state before NemoClaw creates a new session record.
 It also bypasses locally recorded sandbox base-image resolution metadata and reruns normal candidate resolution.

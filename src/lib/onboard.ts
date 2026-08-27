@@ -1673,7 +1673,6 @@ const createSandboxWithBaseImageResolution =
   sandboxCreateOrchestration.createSandboxWithBaseImageResolution(
     sandboxCreateOrchestrationRuntime,
   );
-
 const { createSandbox, createSandboxWithTemporaryManagedRuntime } =
   agentOnboard.createHermesApiPortScopedSandboxEntryPoints({
     createBaseImageResolutionContext: () =>

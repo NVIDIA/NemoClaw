@@ -55,6 +55,7 @@ function managedCheckpoint(
       | "route"
       | "policyHash"
       | "policyVersion"
+      | "providerRefresh"
     >
   > = {},
 ): PendingSandboxPolicyVerification {
@@ -1090,6 +1091,43 @@ describe("sandbox inference route reservation", () => {
           replacement,
         ),
       ).toThrow(/incomplete verified sandbox create checkpoint/u);
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("durably advances an exact provider refresh without authorizing the sandbox (#10153)", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-provider-refresh-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      const { create } = reserveQualifiedCreate(registry);
+      const initial = managedCheckpoint();
+      const stopping = managedCheckpoint({
+        providerRefresh: {
+          schemaVersion: 1,
+          phase: "stopping",
+          attachedProviders: ["alpha-telegram"],
+        },
+      });
+      const stopped = managedCheckpoint({
+        providerRefresh: {
+          schemaVersion: 1,
+          phase: "stopped",
+          attachedProviders: ["alpha-telegram"],
+        },
+      });
+      registry.recordPendingSandboxPolicyVerification(create, initial);
+
+      registry.recordPendingSandboxPolicyVerification(create, stopping, { expected: initial });
+      const recorded = registry.recordPendingSandboxPolicyVerification(create, stopped, {
+        expected: stopping,
+      });
+
+      expect(recorded.pendingPolicyVerification).toEqual(stopped);
+      expect(recorded).not.toHaveProperty("policyAuthority");
+      expect(registry.getDefault()).toBeNull();
     } finally {
       await fs.rm(home, { recursive: true, force: true });
     }

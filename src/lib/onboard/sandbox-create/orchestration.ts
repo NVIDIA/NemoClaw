@@ -38,6 +38,7 @@ import {
 } from "./policy-creation-receipt";
 import {
   attachProvidersAfterSandboxCreation,
+  isDeferredProviderRefreshError,
   publishAttachedProvidersBeforeDockerSandboxCreation,
   validateAttachedMessagingProvidersBeforeSandboxCreation,
 } from "./provider-publication";
@@ -220,8 +221,8 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
     const compensationErrors = cleanupTemporarySources();
     const validationDetail =
       validationError instanceof Error && isPolicyAuthorityRefusalError(validationError)
-      ? validationError.message
-      : null;
+        ? validationError.message
+        : null;
     const identityGuidance = exactIdentity
       ? ` Durable sandbox identity fingerprint: ${exactIdentity}. Use it only to compare the surviving sandbox with the failed create. Do not delete the sandbox by name, even after this comparison. Contact the OpenShell administrator for an identity-bound recovery or removal procedure.`
       : " OpenShell did not return a durable identity for comparison. Do not delete the sandbox by name. Contact the OpenShell administrator for an identity-bound recovery or removal procedure.";
@@ -267,6 +268,7 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
       );
       return capturedIdentity;
     } catch (validationError) {
+      if (isDeferredProviderRefreshError(validationError)) throw validationError;
       return refuseAfterCreate(validationError);
     }
   };
@@ -446,6 +448,11 @@ export function createProviderEffectBoundary(input: {
   readonly runOpenshell: SandboxCreateOrchestrationRuntime["runOpenshell"];
   readonly waitForSandboxReady: SandboxCreateOrchestrationRuntime["waitForSandboxReady"];
   readonly revalidateSandboxIdentity: (exactIdentity: string, operation: string) => void;
+  readonly inspectSandbox: () => import("../sandbox-recreate-transaction").SandboxRecreateObservation;
+  readonly recordProviderRefresh: (
+    phase: import("../../state/registry/types").PendingSandboxProviderRefreshPhase,
+    attachedProviders: readonly string[],
+  ) => void;
 }): ProviderEffectBoundary {
   const validate = () =>
     validateAttachedMessagingProvidersBeforeSandboxCreation(
@@ -497,6 +504,8 @@ export function createProviderEffectBoundary(input: {
         {
           runOpenshell: input.runOpenshell,
           waitForSandboxReady: input.waitForSandboxReady,
+          inspectSandbox: input.inspectSandbox,
+          recordProviderRefresh: input.recordProviderRefresh,
           revalidateSandboxIdentity: (operation) => {
             input.revalidateSandboxIdentity(context.lifecycleLiveIdentityFingerprint, operation);
             context.revalidatePolicyRequirements(operation);
@@ -1488,10 +1497,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                 ).messagingTokenDefs;
               },
               runProviderPreDeleteCleanup: (verifiedPolicyRevalidation) => {
-                (verifiedPolicyRevalidation ??
-                  ((operation) => revalidatePolicyAuthority(false, operation)))(
-                  `cleaning up providers for sandbox '${sandboxName}'`,
-                );
+                (
+                  verifiedPolicyRevalidation ??
+                  ((operation) => revalidatePolicyAuthority(false, operation))
+                )(`cleaning up providers for sandbox '${sandboxName}'`);
                 runSandboxProviderPreDeleteCleanup(sandboxName, {
                   runOpenshell,
                   redact,
@@ -1502,10 +1511,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                 upsertMessagingProviders(tokenDefs, {
                   ...options,
                   revalidatePolicyRequirements: (operation) =>
-                    (options.revalidatePolicyRequirements ??
-                      ((targetOperation) => revalidatePolicyAuthority(false, targetOperation)))(
-                      operation,
-                    ),
+                    (
+                      options.revalidatePolicyRequirements ??
+                      ((targetOperation) => revalidatePolicyAuthority(false, targetOperation))
+                    )(operation),
                 }),
               getHermesToolGatewayProviderName: (targetSandbox) =>
                 getHermesToolGatewayBroker().getHermesToolGatewayProviderName(targetSandbox),
@@ -1696,8 +1705,26 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       revalidateCreatedSandboxIdentity(boundary.lifecycleLiveIdentityFingerprint, operation);
       registry.requireCurrentPendingSandboxPolicyVerification(
         requireCreateReservation(),
-        pendingSandboxPolicyVerificationForBoundary(boundary),
+        requirePendingPolicyVerification(),
       );
+    };
+    const recordPendingProviderRefresh = (
+      phase: import("../../state/registry/types").PendingSandboxProviderRefreshPhase,
+      attachedProviders: readonly string[],
+    ): void => {
+      const current = requirePendingPolicyVerification();
+      const next: PendingSandboxPolicyVerification = {
+        ...current,
+        providerRefresh: {
+          schemaVersion: 1,
+          phase,
+          attachedProviders: [...attachedProviders],
+        },
+      };
+      registry.recordPendingSandboxPolicyVerification(requireCreateReservation(), next, {
+        expected: current,
+      });
+      pendingPolicyVerification = next;
     };
     const runCreateFlow = async (
       attemptCreateArgv: string[],
@@ -1951,6 +1978,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         ),
       runOpenshell,
       waitForSandboxReady,
+      inspectSandbox: () => getSandboxRecreateObservation(sandboxName, GATEWAY_NAME),
+      recordProviderRefresh: recordPendingProviderRefresh,
       revalidateSandboxIdentity: (exactIdentity, operation) =>
         sandboxRecreateTransaction.revalidateCreatedSandboxLifecycleRegistration(
           { sandboxName, gatewayName: GATEWAY_NAME },

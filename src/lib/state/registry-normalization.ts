@@ -35,7 +35,50 @@ const PENDING_POLICY_VERIFICATION_KEYS = new Set([
   "policyHash",
   "policyVersion",
   "policyCreationReceipt",
+  "providerRefresh",
 ]);
+
+const PENDING_PROVIDER_REFRESH_PHASES = new Set([
+  "attaching",
+  "stopping",
+  "stopped",
+  "started",
+  "ready",
+]);
+
+function normalizePendingProviderRefresh(
+  value: unknown,
+): PendingSandboxPolicyVerification["providerRefresh"] {
+  if (value === undefined) return undefined;
+  if (
+    !isObjectRecord(value) ||
+    Object.keys(value).some(
+      (key) => key !== "schemaVersion" && key !== "phase" && key !== "attachedProviders",
+    ) ||
+    value.schemaVersion !== 1 ||
+    typeof value.phase !== "string" ||
+    !PENDING_PROVIDER_REFRESH_PHASES.has(value.phase) ||
+    !Array.isArray(value.attachedProviders) ||
+    value.attachedProviders.some(
+      (name) =>
+        typeof name !== "string" ||
+        name.length === 0 ||
+        name.length > 512 ||
+        name.trim() !== name ||
+        /[\u0000-\u001f\u007f]/u.test(name),
+    ) ||
+    new Set(value.attachedProviders).size !== value.attachedProviders.length
+  ) {
+    throw new Error(
+      "Sandbox registry contains an invalid pending provider refresh; repair the registry before continuing",
+    );
+  }
+  return {
+    schemaVersion: 1,
+    phase: value.phase as NonNullable<PendingSandboxPolicyVerification["providerRefresh"]>["phase"],
+    attachedProviders: [...value.attachedProviders],
+  };
+}
 
 /** Keep legacy absence unknown and reject every unrecognized authority value. */
 export function normalizeSandboxPolicyAuthority(
@@ -97,6 +140,7 @@ export function normalizePendingSandboxPolicyVerification(
     );
   }
   let boundary;
+  const providerRefresh = normalizePendingProviderRefresh(value.providerRefresh);
   try {
     boundary = parseNemoClawPolicyCreationReceipt({
       schemaVersion: 1,
@@ -149,6 +193,7 @@ export function normalizePendingSandboxPolicyVerification(
       policyHash: boundary.policyHash,
       policyVersion: boundary.policyVersion,
       policyCreationReceipt: receipt,
+      ...(providerRefresh ? { providerRefresh } : {}),
     };
   }
   if (value.policyCreationReceipt !== undefined) {
@@ -169,6 +214,7 @@ export function normalizePendingSandboxPolicyVerification(
     route: value.route,
     policyHash: boundary.policyHash,
     policyVersion: boundary.policyVersion,
+    ...(providerRefresh ? { providerRefresh } : {}),
   };
 }
 

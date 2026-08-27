@@ -8,6 +8,8 @@ import {
   MESSAGING_CREDENTIAL_PROVIDER_TYPE,
 } from "../../messaging/provider-profile";
 import type { SandboxEntry } from "../../state/registry";
+import type { PendingSandboxProviderRefreshPhase } from "../../state/registry/types";
+import { cliName } from "../branding";
 import { inspectGatewayCredentialOnlyProviderBinding } from "../gateway-provider-metadata";
 import type { SandboxCreateIntent } from "../sandbox-create-intent-types";
 
@@ -35,6 +37,14 @@ type DeferredProviderAttachmentInput = {
 
 type DeferredProviderAttachmentDeps = Pick<SandboxCreateOrchestrationRuntime, "runOpenshell"> & {
   readonly revalidateSandboxIdentity: (operation: string) => void;
+  readonly inspectSandbox: () => {
+    readonly state: "missing" | "not_ready" | "ready";
+    readonly liveIdentityFingerprint: string | null;
+  };
+  readonly recordProviderRefresh: (
+    phase: PendingSandboxProviderRefreshPhase,
+    attachedProviders: readonly string[],
+  ) => void;
   readonly waitForSandboxReady: (
     sandboxName: string,
     attempts?: number,
@@ -44,6 +54,51 @@ type DeferredProviderAttachmentDeps = Pick<SandboxCreateOrchestrationRuntime, "r
 
 const PROVIDER_REFRESH_READY_ATTEMPTS = 30;
 const PROVIDER_REFRESH_READY_DELAY_SECONDS = 2;
+
+export class DeferredProviderRefreshError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DeferredProviderRefreshError";
+  }
+}
+
+export function isDeferredProviderRefreshError(
+  error: unknown,
+): error is DeferredProviderRefreshError {
+  return error instanceof DeferredProviderRefreshError;
+}
+
+function providerRefreshFailure(
+  input: DeferredProviderAttachmentInput,
+  deps: DeferredProviderAttachmentDeps,
+  phase: PendingSandboxProviderRefreshPhase,
+  detail: string,
+): never {
+  let identity = "could not be revalidated";
+  try {
+    deps.revalidateSandboxIdentity(
+      `classifying deferred provider refresh failure for sandbox '${input.sandboxName}'`,
+    );
+    identity = "still matches the checkpointed exact identity";
+  } catch {
+    // The recovery command below reads the same durable checkpoint and refuses
+    // a same-name replacement. Do not replace the original failure with the
+    // identity error or expose command output.
+  }
+  let observedState = "unknown";
+  try {
+    observedState = deps.inspectSandbox().state;
+  } catch {
+    // Keep the recovery classification fail closed when status is unavailable.
+  }
+  throw new DeferredProviderRefreshError(
+    `Deferred provider refresh for sandbox '${input.sandboxName}' failed during phase '${phase}': ${detail}. ` +
+      `The live sandbox state is '${observedState}' and its identity ${identity}. ` +
+      `NemoClaw preserved the secret-free provider-refresh checkpoint and did not publish the completed registry entry. ` +
+      `Recovery attempts to wipe manifest-defined agent state, destroys the exact checkpointed sandbox, and removes its registry entry. ` +
+      `Run \`${cliName()} ${input.sandboxName} destroy --force\` before retrying onboarding; --force suppresses confirmation, and the command refuses to destroy a same-name replacement.`,
+  );
+}
 
 function expectedCredentialBindings(input: ProviderPreparationInput) {
   return new Map(
@@ -178,6 +233,8 @@ export function attachProvidersAfterSandboxCreation(
 ): void {
   if (input.providerNames.length === 0) return;
 
+  const attachedProviders: string[] = [];
+  deps.recordProviderRefresh("attaching", attachedProviders);
   for (const providerName of input.providerNames) {
     deps.revalidateSandboxIdentity(
       `attaching provider '${providerName}' to sandbox '${input.sandboxName}'`,
@@ -187,37 +244,73 @@ export function attachProvidersAfterSandboxCreation(
       { ignoreError: true, suppressOutput: true },
     );
     if (attached.status !== 0) {
-      throw new Error(
-        `OpenShell did not attach provider '${providerName}' to the verified sandbox.`,
+      providerRefreshFailure(
+        input,
+        deps,
+        "attaching",
+        `OpenShell did not attach provider '${providerName}' to the verified sandbox`,
       );
     }
     deps.revalidateSandboxIdentity(
       `confirming provider '${providerName}' on sandbox '${input.sandboxName}'`,
     );
+    attachedProviders.push(providerName);
+    deps.recordProviderRefresh("attaching", attachedProviders);
   }
 
-  deps.revalidateSandboxIdentity(
-    `refreshing attached providers on sandbox '${input.sandboxName}'`,
-  );
+  deps.revalidateSandboxIdentity(`refreshing attached providers on sandbox '${input.sandboxName}'`);
+  deps.recordProviderRefresh("stopping", attachedProviders);
   const stopped = deps.runOpenshell(
     ["sandbox", "stop", "-g", input.gatewayName, input.sandboxName],
     { ignoreError: true, suppressOutput: true },
   );
   if (stopped.status !== 0) {
-    throw new Error(
-      `OpenShell did not stop sandbox '${input.sandboxName}' to refresh its attached providers.`,
+    providerRefreshFailure(
+      input,
+      deps,
+      "stopping",
+      `OpenShell did not stop the sandbox to refresh its attached providers`,
     );
   }
+  try {
+    deps.revalidateSandboxIdentity(
+      `starting the exact stopped sandbox '${input.sandboxName}' after provider refresh`,
+    );
+  } catch {
+    providerRefreshFailure(
+      input,
+      deps,
+      "stopping",
+      "the stopped sandbox identity changed before restart",
+    );
+  }
+  deps.recordProviderRefresh("stopped", attachedProviders);
 
   const started = deps.runOpenshell(
     ["sandbox", "start", "-g", input.gatewayName, input.sandboxName],
     { ignoreError: true, suppressOutput: true },
   );
   if (started.status !== 0) {
-    throw new Error(
-      `OpenShell did not restart sandbox '${input.sandboxName}' after refreshing its attached providers.`,
+    providerRefreshFailure(
+      input,
+      deps,
+      "stopped",
+      `OpenShell did not restart the sandbox after refreshing its attached providers`,
     );
   }
+  try {
+    deps.revalidateSandboxIdentity(
+      `waiting for the exact restarted sandbox '${input.sandboxName}' after provider refresh`,
+    );
+  } catch {
+    providerRefreshFailure(
+      input,
+      deps,
+      "stopped",
+      "the restarted sandbox identity changed before readiness verification",
+    );
+  }
+  deps.recordProviderRefresh("started", attachedProviders);
   if (
     !deps.waitForSandboxReady(
       input.sandboxName,
@@ -225,11 +318,15 @@ export function attachProvidersAfterSandboxCreation(
       PROVIDER_REFRESH_READY_DELAY_SECONDS,
     )
   ) {
-    throw new Error(
-      `OpenShell did not report sandbox '${input.sandboxName}' ready after refreshing its attached providers.`,
+    providerRefreshFailure(
+      input,
+      deps,
+      "started",
+      `OpenShell did not report the sandbox ready after refreshing its attached providers`,
     );
   }
   deps.revalidateSandboxIdentity(
     `confirming refreshed providers on sandbox '${input.sandboxName}'`,
   );
+  deps.recordProviderRefresh("ready", attachedProviders);
 }

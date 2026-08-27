@@ -127,6 +127,9 @@ describe("sandbox provider preparation", () => {
       events.push(`ready ${args.join(" ")}`);
       return true;
     });
+    const recordProviderRefresh = vi.fn((phase: string, providers: readonly string[]) => {
+      events.push(`record ${phase} ${providers.join(",")}`);
+    });
 
     attachProvidersAfterSandboxCreation(
       {
@@ -137,22 +140,36 @@ describe("sandbox provider preparation", () => {
       {
         runOpenshell: runOpenshell as never,
         waitForSandboxReady,
+        inspectSandbox: vi.fn(() => ({
+          state: "ready" as const,
+          liveIdentityFingerprint: "a".repeat(64),
+        })),
+        recordProviderRefresh,
         revalidateSandboxIdentity: (operation) => events.push(operation),
       },
     );
 
     expect(events).toEqual([
+      "record attaching ",
       "attaching provider 'inference' to sandbox 'alpha'",
       "sandbox provider attach -g nemoclaw alpha inference",
       "confirming provider 'inference' on sandbox 'alpha'",
+      "record attaching inference",
       "attaching provider 'alpha-telegram' to sandbox 'alpha'",
       "sandbox provider attach -g nemoclaw alpha alpha-telegram",
       "confirming provider 'alpha-telegram' on sandbox 'alpha'",
+      "record attaching inference,alpha-telegram",
       "refreshing attached providers on sandbox 'alpha'",
+      "record stopping inference,alpha-telegram",
       "sandbox stop -g nemoclaw alpha",
+      "starting the exact stopped sandbox 'alpha' after provider refresh",
+      "record stopped inference,alpha-telegram",
       "sandbox start -g nemoclaw alpha",
+      "waiting for the exact restarted sandbox 'alpha' after provider refresh",
+      "record started inference,alpha-telegram",
       "ready alpha 30 2",
       "confirming refreshed providers on sandbox 'alpha'",
+      "record ready inference,alpha-telegram",
     ]);
   });
 
@@ -166,6 +183,8 @@ describe("sandbox provider preparation", () => {
       {
         runOpenshell: runOpenshell as never,
         waitForSandboxReady,
+        inspectSandbox: vi.fn(),
+        recordProviderRefresh: vi.fn(),
         revalidateSandboxIdentity,
       },
     );
@@ -176,7 +195,7 @@ describe("sandbox provider preparation", () => {
   });
 
   it("fails closed when the refreshed sandbox does not become ready", () => {
-    const runOpenshell = vi.fn(() => ({
+    const runOpenshell = vi.fn((_args: string[]) => ({
       status: 0,
       stdout: "secret-stdout",
       stderr: "secret-stderr",
@@ -192,16 +211,85 @@ describe("sandbox provider preparation", () => {
         {
           runOpenshell: runOpenshell as never,
           waitForSandboxReady: vi.fn(() => false),
+          inspectSandbox: vi.fn(() => ({
+            state: "not_ready" as const,
+            liveIdentityFingerprint: "a".repeat(64),
+          })),
+          recordProviderRefresh: vi.fn(),
           revalidateSandboxIdentity: vi.fn(),
         },
       ),
-    ).toThrow(
-      "OpenShell did not report sandbox 'alpha' ready after refreshing its attached providers.",
-    );
+    ).toThrow(/failed during phase 'started'.*destroy --force/u);
     expect(runOpenshell.mock.calls.map(([args]) => args)).toEqual([
       ["sandbox", "provider", "attach", "-g", "nemoclaw", "alpha", "alpha-telegram"],
       ["sandbox", "stop", "-g", "nemoclaw", "alpha"],
       ["sandbox", "start", "-g", "nemoclaw", "alpha"],
+    ]);
+  });
+
+  it("records a stopped refresh and emits identity-bound recovery when restart fails (#10153)", () => {
+    const phases: string[] = [];
+    const runOpenshell = vi.fn((args: string[]) => ({
+      status: args[1] === "start" ? 1 : 0,
+      stdout: "secret-stdout",
+      stderr: "secret-stderr",
+    }));
+
+    expect(() =>
+      attachProvidersAfterSandboxCreation(
+        {
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          providerNames: ["alpha-telegram"],
+        },
+        {
+          runOpenshell: runOpenshell as never,
+          waitForSandboxReady: vi.fn(() => true),
+          inspectSandbox: vi.fn(() => ({
+            state: "not_ready" as const,
+            liveIdentityFingerprint: "a".repeat(64),
+          })),
+          recordProviderRefresh: (phase) => phases.push(phase),
+          revalidateSandboxIdentity: vi.fn(),
+        },
+      ),
+    ).toThrow(/failed during phase 'stopped'.*exact checkpointed sandbox/u);
+    expect(phases).toEqual(["attaching", "attaching", "stopping", "stopped"]);
+  });
+
+  it("does not start a same-name replacement after the verified sandbox stops (#10153)", () => {
+    const runOpenshell = vi.fn((_args: string[]) => ({ status: 0 }));
+    const revalidateSandboxIdentity = vi
+      .fn()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementation(() => {
+        throw new Error("identity changed");
+      });
+
+    expect(() =>
+      attachProvidersAfterSandboxCreation(
+        {
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          providerNames: ["alpha-telegram"],
+        },
+        {
+          runOpenshell: runOpenshell as never,
+          waitForSandboxReady: vi.fn(() => true),
+          inspectSandbox: vi.fn(() => ({
+            state: "not_ready" as const,
+            liveIdentityFingerprint: "b".repeat(64),
+          })),
+          recordProviderRefresh: vi.fn(),
+          revalidateSandboxIdentity,
+        },
+      ),
+    ).toThrow(/stopped sandbox identity changed before restart/u);
+    expect(runOpenshell.mock.calls.map(([args]) => args.slice(0, 2))).toEqual([
+      ["sandbox", "provider"],
+      ["sandbox", "stop"],
     ]);
   });
 
@@ -222,11 +310,16 @@ describe("sandbox provider preparation", () => {
             stderr: "secret-stderr",
           })) as never,
           waitForSandboxReady: vi.fn(() => true),
+          inspectSandbox: vi.fn(() => ({
+            state: "ready" as const,
+            liveIdentityFingerprint: "a".repeat(64),
+          })),
+          recordProviderRefresh: vi.fn(),
           revalidateSandboxIdentity,
         },
       ),
-    ).toThrow("OpenShell did not attach provider 'alpha-telegram' to the verified sandbox.");
-    expect(revalidateSandboxIdentity).toHaveBeenCalledOnce();
+    ).toThrow(/did not attach provider 'alpha-telegram'.*destroy --force/u);
+    expect(revalidateSandboxIdentity).toHaveBeenCalledTimes(2);
   });
 
   it("confirms an exact messaging binding before and after publication (#9875)", () => {
