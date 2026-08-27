@@ -40,7 +40,10 @@ import {
   type PortableInferenceActivation,
   PortableInferenceDescriptorError,
 } from "./experimental/portable-inference-descriptor";
-import { GatewayManagementDeclarationError } from "./gateway-management";
+import {
+  GatewayManagementDeclarationError,
+  GatewayStateConflictError,
+} from "./gateway-management";
 import { GatewayAuthorityError, gatewayAuthorityFailureLines } from "./gateway-teardown-authority";
 import {
   LOCAL_MODEL_PROFILE_ENABLED_ENV,
@@ -545,6 +548,10 @@ function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps):
     return reportOnboardCommandError(deps, `  ${error.message}`);
   }
   if (error instanceof PortableInferenceDescriptorError) {
+    return reportOnboardCommandError(deps, `  ${error.message}`);
+  }
+  if (error instanceof GatewayStateConflictError) {
+    error.markReported();
     return reportOnboardCommandError(deps, `  ${error.message}`);
   }
   // Gateway-authority refusals are reported, never rethrown. Recreation is not

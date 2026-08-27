@@ -19,6 +19,7 @@ import {
 } from "./docker-driver-gateway-jwt-bundle";
 import { PORTABLE_HOST_GATEWAY_IP } from "./docker-driver-platform";
 import { parseDockerDriverGatewayRuntimeMarker } from "./docker-driver-gateway-runtime-marker";
+import { GatewayStateConflictError } from "./gateway-management";
 import { noteOnboardResumeHintShown } from "./resume-hint";
 
 export type { DockerDriverGatewayJwtBundle } from "./docker-driver-gateway-jwt-bundle";
@@ -270,7 +271,7 @@ function hasOwnedPreAuthGatewayDatabaseState(stateDir: string, state: fs.Stats):
 }
 
 function ambiguousGatewayConfig(configPath: string, detail: string): Error {
-  return new Error(
+  return new GatewayStateConflictError(
     `Refusing to rewrite ${configPath}: NemoClaw cannot prove its generated gateway identity (${detail})`,
   );
 }
@@ -287,7 +288,7 @@ function ambiguousGatewayConfig(configPath: string, detail: string): Error {
  * complaint, and so the suggested recovery does not just repeat the exact
  * command that failed.
  */
-class CrossDriverGatewayConflictError extends Error {}
+class CrossDriverGatewayConflictError extends GatewayStateConflictError {}
 
 function crossDriverGatewayConflict(
   configPath: string,

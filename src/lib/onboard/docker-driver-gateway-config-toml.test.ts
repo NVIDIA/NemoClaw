@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+import { GatewayStateConflictError } from "./gateway-management";
 import { printOnboardResumeHint, resetOnboardResumeHintForTests } from "./resume-hint";
 import {
   baseGatewayEnv,
@@ -339,6 +340,9 @@ describe("docker-driver-gateway config TOML", () => {
 
       expect(() =>
         prepareDockerDriverGatewayConfigEnv(podmanEnv, stateDir, "/usr/bin/openshell-sandbox"),
+      ).toThrow(GatewayStateConflictError);
+      expect(() =>
+        prepareDockerDriverGatewayConfigEnv(podmanEnv, stateDir, "/usr/bin/openshell-sandbox"),
       ).toThrow(
         /already configures a 'docker'-driver OpenShell gateway.*this run selected the 'podman' driver.*NemoClaw-managed state.*nemoclaw uninstall.*preserves externally managed or supervised state.*lifecycle authority.*NEMOCLAW_GATEWAY_PORT.*separate state directory.*NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR/s,
       );
@@ -412,7 +416,7 @@ describe("docker-driver-gateway config TOML", () => {
       } catch (cause) {
         error = cause;
       }
-      expect(error).toBeInstanceOf(Error);
+      expect(error).toBeInstanceOf(GatewayStateConflictError);
       expect((error as Error).message).toMatch(
         /cannot prove its generated gateway identity \(the config does not match NemoClaw's schema\)/,
       );
