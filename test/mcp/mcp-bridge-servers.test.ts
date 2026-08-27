@@ -339,7 +339,7 @@ describe("authenticated MCP live fixtures", () => {
       [
         "#!/bin/sh",
         `printf '%s' '${credentialPrefix}' >&2`,
-        "sleep 1",
+        "sleep 0.01",
         `printf '%s\\n' '${credentialTail}' >&2`,
         "exit 1",
         "",
