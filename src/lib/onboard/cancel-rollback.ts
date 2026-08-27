@@ -111,25 +111,29 @@ export function installSandboxCancelRollback(
 ): SandboxCancelRollback {
   const rollback = createSandboxCancelRollback({
     prepareSandboxContainerDeletion: (name) => {
-      const checkpoint = opts.registry.getSandbox(name)?.pendingPolicyVerification;
-      if (!checkpoint) return null;
+      const entry = opts.registry.getSandbox(name);
+      const checkpoint = entry?.pendingPolicyVerification;
+      const gatewayName = checkpoint?.gatewayName ?? entry?.gatewayName;
+      const sandboxIdentityFingerprint =
+        checkpoint?.sandboxIdentityFingerprint ?? entry?.lifecycleLiveIdentityFingerprint;
+      if (!gatewayName || !sandboxIdentityFingerprint) return null;
       const inspectIdentity =
         opts.inspectOpenShellSandboxIdentityFingerprint ??
         inspectOpenShellSandboxIdentityFingerprint;
       const liveFingerprint = inspectIdentity({
         sandboxName: name,
-        gatewayName: checkpoint.gatewayName,
+        gatewayName,
       });
-      const currentCheckpoint = opts.registry.getSandbox(name)?.pendingPolicyVerification;
+      const currentEntry = opts.registry.getSandbox(name);
       if (
-        liveFingerprint !== checkpoint.sandboxIdentityFingerprint ||
-        !isDeepStrictEqual(currentCheckpoint, checkpoint)
+        liveFingerprint !== sandboxIdentityFingerprint ||
+        !isDeepStrictEqual(currentEntry, entry)
       ) {
-        throw new Error("pending sandbox policy verification identity changed");
+        throw new Error("sandbox deletion authority changed");
       }
       return {
-        gatewayName: checkpoint.gatewayName,
-        sandboxIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
+        gatewayName,
+        sandboxIdentityFingerprint,
       };
     },
     deleteSandboxContainer: (name, gatewayName) =>
@@ -200,6 +204,9 @@ export function createSandboxCancelRollback(
       try {
         deletionAuthority = deps.prepareSandboxContainerDeletion?.(sandboxName) ?? null;
       } catch {
+        deletionAuthority = null;
+      }
+      if (deps.prepareSandboxContainerDeletion && !deletionAuthority) {
         deps.log("");
         deps.log(
           `  Onboarding cancelled — preserved incomplete sandbox '${sandboxName}' because its durable creation identity could not be proved immediately before deletion.`,
