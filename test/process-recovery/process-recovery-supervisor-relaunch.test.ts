@@ -81,10 +81,20 @@ function composedRelaunchTransaction(
     .fn()
     .mockReturnValueOnce(containerIds.old)
     .mockReturnValue(containerIds.replacement);
-  const runOpenshell = vi.fn(() => ({ status: 0, stdout: "No sandboxes found.\n" }));
+  const runOpenshell = vi.fn((args: readonly string[]) => {
+    order.push(`openshell-${args[1]}`);
+    return { status: 0, stdout: "No sandboxes found.\n" };
+  });
+  let activeSandboxName = "";
+  const runCaptureOpenshell = vi.fn(() =>
+    runCaptureOpenshell.mock.calls.length === 1
+      ? "No sandboxes found.\n"
+      : `${activeSandboxName}  2026-08-23 10:00:02  Ready\n`,
+  );
   const relaunchManagedSupervisorSessionImpl = vi.fn(
-    (sandboxName: string, options: Parameters<typeof relaunchManagedSupervisorSession>[1]) =>
-      relaunchManagedSupervisorSession(sandboxName, {
+    (sandboxName: string, options: Parameters<typeof relaunchManagedSupervisorSession>[1]) => {
+      activeSandboxName = sandboxName;
+      return relaunchManagedSupervisorSession(sandboxName, {
         quiet: options.quiet,
         deps: {
           ...options.deps,
@@ -114,6 +124,7 @@ function composedRelaunchTransaction(
             };
           }),
           removeBackup: vi.fn(() => true),
+          runCaptureOpenshell,
           runOpenshell,
           recreate: vi.fn(() => ({
             applied: true as const,
@@ -131,9 +142,15 @@ function composedRelaunchTransaction(
           })),
           finalize: finalizeTransaction,
         },
-      }),
+      });
+    },
   );
-  return { finalizeTransaction, relaunchManagedSupervisorSessionImpl, runOpenshell };
+  return {
+    finalizeTransaction,
+    relaunchManagedSupervisorSessionImpl,
+    runCaptureOpenshell,
+    runOpenshell,
+  };
 }
 
 function scriptedPinnedGatewayRecovery(
@@ -497,11 +514,11 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
           dockerStop,
         }),
     );
-    const { relaunchManagedSupervisorSessionImpl } = composedRelaunchTransaction(
-      order,
-      finalizeTransaction,
-      { old: oldContainerId, replacement: replacementContainerId },
-    );
+    const { relaunchManagedSupervisorSessionImpl, runCaptureOpenshell } =
+      composedRelaunchTransaction(order, finalizeTransaction, {
+        old: oldContainerId,
+        replacement: replacementContainerId,
+      });
     const requestGatewaySupervisorAction = vi.fn((_name: string, action: string) =>
       action === "recover" ? { status: 1, stdout: "", stderr: "SUPERVISOR_NOT_RUNNING" } : null,
     );
@@ -550,7 +567,6 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       forwardStarted ||= args.join(" ") === "forward start --background 18789 legacy-handoff-box";
       return { status: 0 } as never;
     });
-
     const result = checkAndRecoverSandboxProcesses("legacy-handoff-box", {
       quiet: true,
       isSandboxGatewayRunningImpl: () => false,
@@ -559,7 +575,6 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       relaunchManagedSupervisorSessionImpl,
       waitForRecreatedSandboxOpenShellReadyImpl,
     });
-
     expect(result).toMatchObject({
       checked: true,
       wasRunning: false,
@@ -574,14 +589,10 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       oldContainerId,
       expect.objectContaining({ ignoreError: true }),
     );
-    expect(dockerStart).toHaveBeenCalledWith(
-      replacementContainerId,
-      expect.objectContaining({ ignoreError: true }),
-    );
+    expect(dockerStart).not.toHaveBeenCalled();
+    expect(order).toContain("openshell-stop");
+    expect(order).toContain("openshell-start");
     expect(waitForRecreatedSandboxOpenShellReadyImpl).toHaveBeenCalledTimes(2);
-    expect(dockerStart.mock.invocationCallOrder[0]).toBeLessThan(
-      waitForRecreatedSandboxOpenShellReadyImpl.mock.invocationCallOrder[1],
-    );
     expect(waitForRecreatedSandboxOpenShellReadyImpl.mock.invocationCallOrder[1]).toBeLessThan(
       runOpenshell.mock.invocationCallOrder[0],
     );
@@ -589,7 +600,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       ["forward", "start", "--background", "18789", "legacy-handoff-box"],
       expect.objectContaining({ ignoreError: true }),
     );
-    expect(captureOpenshell).toHaveBeenCalledWith(
+    expect(runCaptureOpenshell).toHaveBeenCalledWith(
       ["sandbox", "list"],
       expect.objectContaining({
         killProcessTreeOnTimeout: true,
@@ -613,22 +624,22 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       finalReadinessReady: true,
     },
     {
-      condition: "OpenShell does not retire the previous lifecycle record",
+      condition: "OpenShell does not acknowledge the authoritative stop",
       finalizeOutcome: () => ({
-        backupRemoved: true,
-        lifecycleReleaseObserved: false,
+        backupRemoved: false,
+        lifecycleStopAcknowledged: false,
         replacementRestarted: false,
-        replacementStoppedForCommit: true,
+        replacementStoppedForCommit: false,
         rolledBack: false,
         stateRestored: true,
       }),
-      expectedDetail: "OpenShell did not retire the previous lifecycle record",
+      expectedDetail: "OpenShell did not acknowledge the authoritative stop",
       expectedReadinessCalls: 1,
       finalPinnedAction: () => ACCEPTED_MANAGED_PROBE,
       finalReadinessReady: true,
     },
     {
-      condition: "Docker cannot start the replacement container",
+      condition: "OpenShell cannot start the replacement container",
       finalizeOutcome: () => ({
         backupRemoved: true,
         replacementRestarted: false,
@@ -636,7 +647,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
         rolledBack: false,
         stateRestored: true,
       }),
-      expectedDetail: "Docker could not start the replacement container",
+      expectedDetail: "OpenShell could not start the replacement container",
       expectedReadinessCalls: 1,
       finalPinnedAction: () => ACCEPTED_MANAGED_PROBE,
       finalReadinessReady: true,

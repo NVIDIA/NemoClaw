@@ -1135,8 +1135,9 @@ On Jetson/Tegra hosts, the compatibility path uses the NVIDIA runtime and adds e
 These include selected `/dev/nvmap`, `/dev/nvhost-*`, and `/dev/nvgpu/igpu0/*` nodes plus real `/dev/dri/renderD*` character devices.
 After compatibility recreation starts, onboarding keeps the pre-patch container as a rollback backup until the replacement passes the Ready, GPU, and applicable local-inference checks.
 If one of those checks fails before backup removal, onboarding prints failure diagnostics and attempts to restore the pre-patch container.
-To commit the replacement, NemoClaw stops it, removes the rollback backup, and waits until a successful OpenShell sandbox list has no row with that sandbox name.
-NemoClaw then starts the replacement as the final container lifecycle event and verifies OpenShell supervisor readiness again within the same handoff deadline.
+To commit the replacement, NemoClaw first asks OpenShell to stop the sandbox so its durable lifecycle row reaches `Stopped` before any irreversible Docker mutation.
+It then stops the exact transaction-owned replacement, removes the rollback backup, and asks OpenShell to start the sandbox so OpenShell owns the `Starting` lifecycle fence.
+NemoClaw verifies a `Ready` row, a working sandbox exec, and that the exact replacement is the sole running labeled container within the final handoff deadline.
 If that final handoff cannot be confirmed, onboarding exits with the container diagnostics and cleanup guidance instead of reporting success.
 If rollback fails, onboarding reports that the pre-patch container was not restored and prints container-cleanup guidance.
 GPU-proof diagnostics are captured before rollback and can print that guidance before the final container state is known, so inspect the sandbox and its labeled Docker containers before running a deletion command.
@@ -1845,6 +1846,10 @@ NemoClaw waits for the exact replacement to pass managed gateway health and Open
 After state restoration, it restarts the gateway in the exact replacement container and requires an authenticated `ok` result.
 It then runs the managed settle check.
 It commits only after the replacement identity, state restoration, gateway restart, and settle check pass.
+At the final commit handoff, NemoClaw asks OpenShell to stop the sandbox before it mutates either exact container.
+After OpenShell acknowledges that stop, NemoClaw stops the exact replacement, removes the rollback container, and asks OpenShell to start the sandbox through its authoritative lifecycle path.
+This preserves OpenShell's stopped/starting event fence while stale Docker removal snapshots settle; raw Docker stop/start events cannot strand the lifecycle row in `Error` or `Deleting`.
+If the authoritative stop fails, NemoClaw leaves both containers intact. If the start or final `Ready`/exec/exact-container proof fails after rollback-container removal, NemoClaw reports that automatic rollback is unavailable.
 If OpenShell re-registration, state restoration, or a later gateway check fails, NemoClaw attempts to roll back the replacement.
 The primary dashboard or API host forward stays stopped.
 NemoClaw removes the temporary state backup after a successful restore or rollback.
@@ -1853,20 +1858,24 @@ Mounted state remains available, but a committed swap does not retain other writ
 It is idempotent.
 When `recover` repairs a stopped built-in OpenClaw or Hermes gateway, it repeats the recovery action only for these exact transient results:
 
-- Status `1` with blank stdout and exactly one stderr line, `SUPERVISOR_BUSY`.
+- Status `1` with blank stdout and exactly one stderr line: `SUPERVISOR_NOT_RUNNING`, `SUPERVISOR_DISCOVERY_PENDING`, `PRIVILEGED_CONTROL_UNAVAILABLE`, `GATEWAY_HEALTH_TIMEOUT`, or `SUPERVISOR_BUSY`.
 - Status `137` with blank stdout and stderr.
 - Status `1` with blank stdout and exactly one stderr line, `Error response from daemon: Container <id> is restarting, wait until the container is running`.
 
 For the Docker result, `<id>` must be a 64-character lowercase hexadecimal ID that matches the selected registry-owned container.
 Recovery makes at most 11 controller attempts in total.
 It stops after 3 of those attempts return `SUPERVISOR_BUSY`.
-Managed settle confirmation treats exact `SUPERVISOR_BUSY` as inconclusive within its configured window.
+The managed controller emits `SUPERVISOR_DISCOVERY_PENDING` only when an incomplete process-table scan during startup cannot yet prove either one exact supervisor or clean supervisor absence.
+That result delays recovery but cannot authorize container recreation or accept a supervisor identity; a later request must perform the complete identity proof again.
+Managed settle confirmation treats exact `SUPERVISOR_BUSY` and `SUPERVISOR_DISCOVERY_PENDING` results as inconclusive within its configured window.
 Status `137` and the Docker restart result remain terminal during that confirmation.
-The managed supervisor startup waiter accepts the two container-transition results within its separate 11-attempt bound.
+The managed supervisor startup waiter accepts the four exact startup results, `SUPERVISOR_BUSY`, and the two container-transition results within its separate 11-attempt bound.
 Unbound container IDs, reformatted Docker errors, status `137` with nonblank output, and other diagnostic results are terminal.
 NemoClaw treats `SUPERVISOR_UNAVAILABLE` as terminal because the managed controller uses it for integrity refusals, ambiguous discovery, and process-identity changes.
 It does not repeat the recovery action or treat the settle probe as inconclusive, and instead prints host-side restart and rebuild guidance.
 Other controller failures also stop immediately.
+Only an exact `SUPERVISOR_NOT_RUNNING` result that remains after the bounded startup retries can enter transactional legacy keepalive recreation.
+The pinned controller probe must then confirm the missing supervisor before recreation proceeds.
 If the gateway is already running, the command exits zero without force-restarting it; it can still re-evaluate supported safety checks and check or recover host-side forwards.
 Use [`$$nemoclaw <name> gateway restart`](#$$nemoclaw-name-gateway-restart) when you deliberately need a running gateway to reload runtime configuration or plugins.
 
