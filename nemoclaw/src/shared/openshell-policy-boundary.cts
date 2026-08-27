@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isDeepStrictEqual } from "node:util";
-
 import YAML from "yaml";
 
 export type OpenShellPolicyMapping = Record<string, unknown>;
@@ -71,6 +69,26 @@ const MISSING_POLICY_DOCUMENT =
 
 function isMapping(value: unknown): value is OpenShellPolicyMapping {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function policyValuesEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => policyValuesEqual(value, right[index]))
+    );
+  }
+  if (!isMapping(left) || !isMapping(right)) return false;
+  const leftKeys = Object.keys(left);
+  return (
+    leftKeys.length === Object.keys(right).length &&
+    leftKeys.every(
+      (key) => Object.hasOwn(right, key) && policyValuesEqual(left[key], right[key]),
+    )
+  );
 }
 
 function isPolicyAuthority(value: unknown): value is OpenShellPolicyAuthority {
@@ -296,7 +314,7 @@ function assertPolicyRequirementContainmentForOwner(
   for (const key of Object.keys(requiredNetwork).sort()) {
     if (!observedNetwork || !Object.hasOwn(observedNetwork, key)) {
       missing.push(key);
-    } else if (!isDeepStrictEqual(observedNetwork[key], requiredNetwork[key])) {
+    } else if (!policyValuesEqual(observedNetwork[key], requiredNetwork[key])) {
       drifted.push(key);
     }
   }
@@ -308,7 +326,7 @@ function assertPolicyRequirementContainmentForOwner(
   for (const key of requiredSections) {
     if (!Object.hasOwn(effectivePolicy, key)) {
       missingSections.push(key);
-    } else if (!isDeepStrictEqual(effectivePolicy[key], required[key])) {
+    } else if (!policyValuesEqual(effectivePolicy[key], required[key])) {
       driftedSections.push(key);
     }
   }
