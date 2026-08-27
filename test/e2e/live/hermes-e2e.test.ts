@@ -199,7 +199,7 @@ async function postDestroyGatewayBestEffort(run: () => Promise<unknown>): Promis
   try {
     await run();
   } catch {
-    // The explicit sandbox-destroy assertion remains the primary phase-9 contract.
+    // The explicit sandbox-destroy assertion remains the primary phase-7 contract.
   }
 }
 
@@ -290,12 +290,11 @@ test(
       timeoutMs: 120_000,
     });
 
-    // Phase 0: pre-cleanup, after the secret gate so local skipped runs do not
-    // mutate host state.
+    // Phase 1: pre-cleanup and prerequisites, after the secret gate so local
+    // skipped runs do not mutate host state.
     progress.phase("prepare clean Hermes runner");
     await cleanupHermes("pre-cleanup");
 
-    // Phase 1: prerequisites.
     const dockerInfo = await host.command("docker", ["info"], {
       artifactName: "phase-1-docker-info",
       env: buildAvailabilityProbeEnv(),
@@ -435,11 +434,11 @@ test(
       /CONNECT tunnel failed, response 403|The requested URL returned error: 403|policy[_ ]denied|not allowed by any policy/i,
     );
 
-    // Phase 4: Hermes health and sandbox state.
+    // Continue Phase 3 with Hermes health and sandbox state.
     let health: ShellProbeResult | undefined;
     for (let attempt = 1; attempt <= 15; attempt += 1) {
       health = await sandbox.exec(SANDBOX_NAME, ["curl", "-sf", HERMES_HEALTH_URL], {
-        artifactName: `phase-4-hermes-health-attempt-${attempt}`,
+        artifactName: `phase-3-hermes-health-attempt-${attempt}`,
         env: commandEnv(),
         timeoutMs: 20_000,
       });
@@ -451,7 +450,7 @@ test(
     expect(resultText(health!)).toMatch(/"ok"/i);
 
     const hermesVersion = await sandbox.exec(SANDBOX_NAME, ["hermes", "--version"], {
-      artifactName: "phase-4-hermes-version",
+      artifactName: "phase-3-hermes-version",
       env: commandEnv(),
       timeoutMs: 30_000,
     });
@@ -464,7 +463,7 @@ test(
         "test -f /sandbox/.hermes/config.yaml && test -d /sandbox/.hermes && touch /sandbox/.hermes/test-write && rm -f /sandbox/.hermes/test-write && echo OK",
       ),
       {
-        artifactName: "phase-4-hermes-config-state",
+        artifactName: "phase-3-hermes-config-state",
         env: commandEnv(),
         timeoutMs: 30_000,
       },
@@ -496,10 +495,10 @@ test(
         dashboardPort: Number(HERMES_DASHBOARD_PORT),
       });
     }
-    await expectDashboardReachable("phase-4-dashboard-host-probe");
+    await expectDashboardReachable("phase-3-dashboard-host-probe");
 
     progress.phase("restart Hermes gateway and validate supervision");
-    // Phase 5: verify restart and recovery across the real sandbox process boundary.
+    // Phase 4: verify restart and recovery across the real sandbox process boundary.
     const gatewayProcessScript = trustedSandboxShellScript(
       [
         "ps -eo user=,pid=,ppid=,args= |",
@@ -520,7 +519,7 @@ test(
       assertHermesHasNoRoutingSidecars(topology, expectedGatewayPid);
     };
     const beforeRestartProcess = await sandbox.execShell(SANDBOX_NAME, gatewayProcessScript, {
-      artifactName: "phase-5-hermes-gateway-process-before-restart",
+      artifactName: "phase-4-hermes-gateway-process-before-restart",
       env: commandEnv(),
       timeoutMs: 30_000,
     });
@@ -531,32 +530,27 @@ test(
 
     if (rootSupervisorTopology) {
       const stopApiForward = await sandbox.openshell(["forward", "stop", "8642", SANDBOX_NAME], {
-        artifactName: "phase-5-stop-hermes-api-forward-before-restart",
+        artifactName: "phase-4-stop-hermes-api-forward-before-restart",
         env: commandEnv(),
         timeoutMs: 30_000,
       });
       expect(stopApiForward.exitCode, resultText(stopApiForward)).toBe(0);
 
       const restart = await host.command("nemohermes", [SANDBOX_NAME, "gateway", "restart"], {
-        artifactName: "phase-5-nemohermes-gateway-restart",
+        artifactName: "phase-4-nemohermes-gateway-restart",
         env: commandEnv(),
         timeoutMs: 180_000,
       });
       expect(restart.exitCode, resultText(restart)).toBe(0);
 
       const afterRestartProcess = await sandbox.execShell(SANDBOX_NAME, gatewayProcessScript, {
-        artifactName: "phase-5-hermes-gateway-process-after-restart",
+        artifactName: "phase-4-hermes-gateway-process-after-restart",
         env: commandEnv(),
         timeoutMs: 30_000,
       });
       expect(afterRestartProcess.exitCode, resultText(afterRestartProcess)).toBe(0);
       const afterGateway = parseGatewayProcess(afterRestartProcess.stdout);
       expect(afterGateway.pid).not.toBe(beforeGateway.pid);
-      await assertNoStandaloneRoutingSidecars(
-        "phase-5-hermes-routing-topology-after-root-supervised-restart",
-        Number(afterGateway.pid),
-      );
-
       // Deliberately terminate the exact tracked PID instead of invoking
       // `hermes gateway stop`: upstream's graceful command writes a planned-stop
       // marker and can return while a split-UID gateway is still alive. This
@@ -575,7 +569,7 @@ test(
           ].join("; "),
         ),
         {
-          artifactName: "phase-5-stop-hermes-gateway-before-recover",
+          artifactName: "phase-4-stop-hermes-gateway-before-recover",
           env: commandEnv(),
           timeoutMs: 30_000,
         },
@@ -584,20 +578,24 @@ test(
       expect(stopGatewayForRecover.stdout).toContain("GATEWAY_STOPPED");
 
       const recoverStoppedGateway = await host.command("nemohermes", [SANDBOX_NAME, "recover"], {
-        artifactName: "phase-5-nemohermes-recover-stopped-gateway",
+        artifactName: "phase-4-nemohermes-recover-stopped-gateway",
         env: commandEnv(),
         timeoutMs: 180_000,
       });
       expect(recoverStoppedGateway.exitCode, resultText(recoverStoppedGateway)).toBe(0);
 
       const afterRecoverProcess = await sandbox.execShell(SANDBOX_NAME, gatewayProcessScript, {
-        artifactName: "phase-5-hermes-gateway-process-after-recover",
+        artifactName: "phase-4-hermes-gateway-process-after-recover",
         env: commandEnv(),
         timeoutMs: 30_000,
       });
       expect(afterRecoverProcess.exitCode, resultText(afterRecoverProcess)).toBe(0);
       const recoveredGateway = parseGatewayProcess(afterRecoverProcess.stdout);
       expect(recoveredGateway.pid).not.toBe(afterGateway.pid);
+      await assertNoStandaloneRoutingSidecars(
+        "phase-4-hermes-routing-topology-after-root-supervised-recover",
+        Number(recoveredGateway.pid),
+      );
       recoveredRootGatewayPid = recoveredGateway.pid;
     } else {
       expect(beforeGateway.owner).toBe("sandbox");
@@ -608,7 +606,7 @@ test(
           String.raw`ps -eo user=,pid=,ppid=,args= | awk '$1 == "sandbox" && $3 == 1 && ($4 ~ /(^|\/)(bash|nemoclaw-start)$/) && index($0, "nemoclaw-start") { print $1 " " $2 " " $3; found = 1; exit } END { exit found ? 0 : 1 }'`,
         ),
         {
-          artifactName: "phase-5-openshell-managed-hermes-supervisor",
+          artifactName: "phase-4-openshell-managed-hermes-supervisor",
           env: commandEnv(),
           timeoutMs: 30_000,
         },
@@ -629,7 +627,7 @@ test(
           ].join("; "),
         ),
         {
-          artifactName: "phase-5-managed-hermes-introduce-raw-secret",
+          artifactName: "phase-4-managed-hermes-introduce-raw-secret",
           env: commandEnv(),
           timeoutMs: 30_000,
         },
@@ -640,7 +638,7 @@ test(
         "nemohermes",
         [SANDBOX_NAME, "gateway", "restart", "--quiet"],
         {
-          artifactName: "phase-5-managed-hermes-refuse-raw-secret-restart",
+          artifactName: "phase-4-managed-hermes-refuse-raw-secret-restart",
           env: commandEnv(),
           timeoutMs: 180_000,
         },
@@ -651,7 +649,7 @@ test(
       );
 
       const afterManagedRefusal = await sandbox.execShell(SANDBOX_NAME, gatewayProcessScript, {
-        artifactName: "phase-5-managed-hermes-gateway-after-boundary-refusal",
+        artifactName: "phase-4-managed-hermes-gateway-after-boundary-refusal",
         env: commandEnv(),
         timeoutMs: 30_000,
       });
@@ -669,7 +667,7 @@ test(
           ].join("; "),
         ),
         {
-          artifactName: "phase-5-managed-hermes-restore-env",
+          artifactName: "phase-4-managed-hermes-restore-env",
           env: commandEnv(),
           timeoutMs: 30_000,
         },
@@ -677,7 +675,7 @@ test(
       expect(restoreManagedEnv.exitCode, resultText(restoreManagedEnv)).toBe(0);
 
       const stopApiForward = await sandbox.openshell(["forward", "stop", "8642", SANDBOX_NAME], {
-        artifactName: "phase-5-stop-managed-hermes-api-forward",
+        artifactName: "phase-4-stop-managed-hermes-api-forward",
         env: commandEnv(),
         timeoutMs: 30_000,
       });
@@ -687,7 +685,7 @@ test(
         "nemohermes",
         [SANDBOX_NAME, "gateway", "restart"],
         {
-          artifactName: "phase-5-restart-openshell-managed-hermes-gateway",
+          artifactName: "phase-4-restart-openshell-managed-hermes-gateway",
           env: commandEnv(),
           timeoutMs: 180_000,
         },
@@ -695,18 +693,13 @@ test(
       expect(restartManagedGateway.exitCode, resultText(restartManagedGateway)).toBe(0);
 
       const afterManagedRestart = await sandbox.execShell(SANDBOX_NAME, gatewayProcessScript, {
-        artifactName: "phase-5-managed-hermes-gateway-after-restart",
+        artifactName: "phase-4-managed-hermes-gateway-after-restart",
         env: commandEnv(),
         timeoutMs: 30_000,
       });
       expect(afterManagedRestart.exitCode, resultText(afterManagedRestart)).toBe(0);
       const restartedManagedGateway = parseGatewayProcess(afterManagedRestart.stdout);
       expect(restartedManagedGateway.pid).not.toBe(beforeGateway.pid);
-      await assertNoStandaloneRoutingSidecars(
-        "phase-5-hermes-routing-topology-after-managed-restart",
-        Number(restartedManagedGateway.pid),
-      );
-
       const stopGateway = await sandbox.execShell(
         SANDBOX_NAME,
         trustedSandboxShellScript(
@@ -719,7 +712,7 @@ test(
           ].join("; "),
         ),
         {
-          artifactName: "phase-5-stop-managed-hermes-gateway",
+          artifactName: "phase-4-stop-managed-hermes-gateway",
           env: commandEnv(),
           timeoutMs: 30_000,
         },
@@ -728,43 +721,47 @@ test(
       expect(stopGateway.stdout).toContain("GATEWAY_STOPPED");
 
       const recoverManagedGateway = await host.command("nemohermes", [SANDBOX_NAME, "recover"], {
-        artifactName: "phase-5-recover-openshell-managed-hermes-gateway",
+        artifactName: "phase-4-recover-openshell-managed-hermes-gateway",
         env: commandEnv(),
         timeoutMs: 180_000,
       });
       expect(recoverManagedGateway.exitCode, resultText(recoverManagedGateway)).toBe(0);
 
       const afterRecoverProcess = await sandbox.execShell(SANDBOX_NAME, gatewayProcessScript, {
-        artifactName: "phase-5-managed-hermes-gateway-after-recover",
+        artifactName: "phase-4-managed-hermes-gateway-after-recover",
         env: commandEnv(),
         timeoutMs: 30_000,
       });
       expect(afterRecoverProcess.exitCode, resultText(afterRecoverProcess)).toBe(0);
       const recoveredGateway = parseGatewayProcess(afterRecoverProcess.stdout);
       expect(recoveredGateway.pid).not.toBe(restartedManagedGateway.pid);
+      await assertNoStandaloneRoutingSidecars(
+        "phase-4-hermes-routing-topology-after-managed-recover",
+        Number(recoveredGateway.pid),
+      );
     }
 
     const recoveredHealth = await host.command(
       "curl",
       ["-sf", "--max-time", "10", HERMES_HOST_HEALTH_URL],
       {
-        artifactName: "phase-5-hermes-host-health-after-recover",
+        artifactName: "phase-4-hermes-host-health-after-recover",
         env: commandEnv(),
         timeoutMs: 30_000,
       },
     );
     expect(recoveredHealth.exitCode, resultText(recoveredHealth)).toBe(0);
     expect(resultText(recoveredHealth)).toMatch(/"ok"/i);
-    await expectDashboardReachable("phase-5-dashboard-host-after-recover");
+    await expectDashboardReachable("phase-4-dashboard-host-after-recover");
 
     // OpenClaw launch qualification now reads its structured JSONL session
     // store. Hermes owns a different SQLite contract, so this target must not
     // infer Hermes replies from terminal copy through the OpenClaw helper.
     progress.phase("exercise hosted and inference.local routes");
-    // Phase 6: live inference through both the external provider and the
+    // Phase 5: live inference through both the external provider and the
     // sandbox's inference.local route.
     const directChat = await inference.directChat("Reply with exactly one word: PONG", {
-      artifactName: "phase-6-direct-inference-chat",
+      artifactName: "phase-5-direct-inference-chat",
       maxTokens: 1024,
     });
     expect(exhaustedReasoningBudget(directChat)).toBe(false);
@@ -784,7 +781,7 @@ test(
         "https://inference.local/v1/chat/completions",
       ],
       {
-        artifactName: "phase-6-inference-local-chat",
+        artifactName: "phase-5-inference-local-chat",
         env: commandEnv(),
         timeoutMs: 120_000,
       },
@@ -795,9 +792,9 @@ test(
     expectPong("Hermes sandbox inference.local chat", sandboxChatJson);
 
     progress.phase("read logs and, under root supervision, validate locked configuration");
-    // Phase 7: host CLI diagnostics.
+    // Phase 6: host CLI diagnostics and root-supervised configuration integrity.
     const logs = await host.command("nemoclaw", [SANDBOX_NAME, "logs"], {
-      artifactName: "phase-7-nemoclaw-logs",
+      artifactName: "phase-6-nemoclaw-logs",
       env: commandEnv(),
       timeoutMs: 60_000,
     });
@@ -810,7 +807,7 @@ test(
       // Root-supervised Hermes has a separate locked-configuration boundary.
       // Keep one live refusal proof in the topology that owns that behavior.
       const shieldsUp = await host.command("nemohermes", [SANDBOX_NAME, "shields", "up"], {
-        artifactName: "phase-7-nemohermes-shields-up",
+        artifactName: "phase-6-nemohermes-shields-up",
         env: commandEnv(),
         timeoutMs: 120_000,
       });
@@ -831,7 +828,7 @@ test(
             ].join("; "),
           ),
           {
-            artifactName: "phase-7-introduce-locked-hermes-configuration-drift",
+            artifactName: "phase-6-introduce-locked-hermes-configuration-drift",
             env: commandEnv(),
             timeoutMs: 30_000,
           },
@@ -842,7 +839,7 @@ test(
           "nemohermes",
           [SANDBOX_NAME, "gateway", "restart", "--quiet"],
           {
-            artifactName: "phase-7-refuse-locked-hermes-configuration-drift",
+            artifactName: "phase-6-refuse-locked-hermes-configuration-drift",
             env: commandEnv(),
             timeoutMs: 180_000,
           },
@@ -856,7 +853,7 @@ test(
           SANDBOX_NAME,
           gatewayProcessScript,
           {
-            artifactName: "phase-7-hermes-gateway-after-locked-configuration-refusal",
+            artifactName: "phase-6-hermes-gateway-after-locked-configuration-refusal",
             env: commandEnv(),
             timeoutMs: 30_000,
           },
@@ -881,7 +878,7 @@ test(
             ].join("; "),
           ),
           {
-            artifactName: "phase-7-restore-locked-hermes-configuration",
+            artifactName: "phase-6-restore-locked-hermes-configuration",
             env: commandEnv(),
             timeoutMs: 30_000,
           },
@@ -897,18 +894,18 @@ test(
       ? await assertSecurityPosture(host, sandbox, SANDBOX_NAME, "hermes")
       : null;
 
-    // Phase 8: explicit cleanup and post-destroy registry proof.
+    // Phase 7: explicit cleanup and post-destroy registry proof.
     progress.phase("finalize Hermes sandbox resources");
     if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1") {
       const destroy = await host.command("nemoclaw", [SANDBOX_NAME, "destroy", "--yes"], {
-        artifactName: "phase-8-nemoclaw-destroy",
+        artifactName: "phase-7-nemoclaw-destroy",
         env: commandEnv(),
         timeoutMs: 120_000,
       });
       expect(destroy.exitCode, resultText(destroy)).toBe(0);
       await postDestroyGatewayBestEffort(() =>
         sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-          artifactName: "phase-8-openshell-gateway-destroy",
+          artifactName: "phase-7-openshell-gateway-destroy",
           env: commandEnv(),
           timeoutMs: 60_000,
         }),
@@ -929,7 +926,7 @@ test(
         hermesSkillInstalled: true,
         hermesSkillDiscovered: true,
         hermesSkillUsedInFreshSession: true,
-        standaloneRoutingSidecarsAbsentAfterRestart: true,
+        standaloneRoutingSidecarsAbsentAfterRecovery: true,
         dashboardChecked: hermesDashboardE2eEnabled(),
         securityPostureChecked: securityPosture !== null,
       },
