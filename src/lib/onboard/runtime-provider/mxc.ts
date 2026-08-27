@@ -20,9 +20,14 @@ import {
   type RuntimeProviderWorkloadProfile,
 } from "./contract";
 import { createMxcNativeArtifactBootstrapSurface } from "./mxc-bootstrap";
+import {
+  createMxcNativeArtifactBootstrapOperations,
+  type MxcNativeArtifactControlPlane,
+} from "./mxc-bootstrap-operations";
 
 export interface MxcRuntimeProviderOptions {
   readonly hostFacts: WindowsMxcHostFacts;
+  readonly bootstrapControlPlane: MxcNativeArtifactControlPlane;
 }
 
 const MXC_PROVIDER_ID = "mxc";
@@ -82,6 +87,7 @@ function acceptsNativeArtifactReceipt(receipt: SandboxWorkloadReceipt | undefine
  */
 export function createMxcRuntimeProviderBundle({
   hostFacts,
+  bootstrapControlPlane,
 }: MxcRuntimeProviderOptions): RuntimeProviderBundle {
   const lifecycleReason =
     "OpenShell MXC direct start and stop of an existing sandbox are not qualified.";
@@ -138,7 +144,9 @@ export function createMxcRuntimeProviderBundle({
     stateMutation: unsupported(
       "The MXC runtime provider state mutation surface remains disabled until lifecycle and cleanup pass live E2E.",
     ),
-    bootstrap: createMxcNativeArtifactBootstrapSurface(),
+    bootstrap: createMxcNativeArtifactBootstrapSurface(
+      createMxcNativeArtifactBootstrapOperations(bootstrapControlPlane),
+    ),
     snapshot: unsupported("OpenShell MXC snapshot and restore are unavailable."),
     recovery: unsupported(
       "OpenShell MXC gateway-restart reconciliation and orphan recovery are unavailable.",

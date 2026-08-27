@@ -9,6 +9,7 @@ import {
   parseOpenShellSandboxId,
   resolveCreatedOpenShellSandboxId,
   resolveOpenShellSandboxId,
+  settleCreatedOpenShellSandboxId,
 } from "../adapters/openshell/sandbox-identity";
 import { printSandboxCreateRecoveryHints } from "../build-context";
 import { streamSandboxCreate } from "../sandbox/create-stream";
@@ -344,6 +345,33 @@ export function createSandboxGpuCreateAttemptRunner(
     const createAttemptNonce = deferPostCreateEffects
       ? randomBytes(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH / 2).toString("hex")
       : null;
+    const persistIdentitySettlementRecovery = (): void => {
+      if (!createAttemptNonce) {
+        throw new Error("Sandbox create-attempt identity was not generated.");
+      }
+      const persist = input.persistRetainedSandboxRecovery;
+      if (!persist) {
+        throw new Error("Verified sandbox creation has no durable recovery evidence owner.");
+      }
+      const message =
+        `Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${createAttemptNonce}. ` +
+        `Sandbox '${input.sandboxName}' reached Ready before OpenShell returned one exact durable create identity. ` +
+        `Gateway '${input.gatewayName}'. ` +
+        "OpenShell did not return one exact durable sandbox identity for this create attempt. " +
+        "Do not delete a sandbox by mutable name; preserve it until an OpenShell administrator resolves the create-attempt label to one sandbox.";
+      let persisted = false;
+      try {
+        persisted = persist(message);
+      } catch {
+        persisted = false;
+      }
+      console.error(`  ${message}`);
+      if (!persisted) {
+        console.error(
+          "  NemoClaw could not save this create-attempt evidence. Preserve the terminal output for an OpenShell administrator.",
+        );
+      }
+    };
     const captureRetainedSandboxRecovery = () => {
       if (!input.requirePolicylessCreate || !createAttemptNonce) return {};
       let liveIdentityFingerprint: string | null = null;
@@ -542,14 +570,16 @@ export function createSandboxGpuCreateAttemptRunner(
             let sandboxId: string;
             try {
               sandboxId = createAttemptNonce
-                ? resolveCreatedOpenShellSandboxId({
+                ? settleCreatedOpenShellSandboxId({
                     sandboxName: input.sandboxName,
                     gatewayName: input.gatewayName,
                     createAttemptNonce,
                     runCaptureOpenshell: deps.runCaptureOpenshell,
+                    sleep: (milliseconds) => deps.sleep(milliseconds / 1000),
                   })
                 : resolveOpenShellSandboxId(input.sandboxName, deps.runCaptureOpenshell);
             } catch (error) {
+              if (createAttemptNonce) persistIdentitySettlementRecovery();
               throw new Error(
                 createFailure?.kind === "sandbox_create_incomplete"
                   ? "Managed bootstrap incomplete create did not return one exact durable sandbox identity after Ready."
@@ -670,13 +700,15 @@ export function createSandboxGpuCreateAttemptRunner(
       }
       let sandboxId: string;
       try {
-        sandboxId = resolveCreatedOpenShellSandboxId({
+        sandboxId = settleCreatedOpenShellSandboxId({
           sandboxName: input.sandboxName,
           gatewayName: input.gatewayName,
           createAttemptNonce,
           runCaptureOpenshell: deps.runCaptureOpenshell,
+          sleep: (milliseconds) => deps.sleep(milliseconds / 1000),
         });
       } catch (error) {
+        persistIdentitySettlementRecovery();
         throw new Error(
           `Sandbox '${input.sandboxName}' was created, but OpenShell did not return one exact durable sandbox identity before post-create effects.`,
           { cause: error },
