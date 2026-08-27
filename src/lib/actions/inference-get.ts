@@ -9,6 +9,7 @@ import {
   type LlamaCppRouteDetails,
 } from "../inference/config";
 import { getLiveGatewayInference } from "../inference/live";
+import { inspectManagedLlamaCppOwnership } from "../inference/llama-cpp/managed-state";
 import * as registry from "../state/registry";
 
 export interface InferenceGetOptions {
@@ -65,7 +66,7 @@ export async function runInferenceGet(
     : null;
   const llamaCpp =
     sandbox?.provider === result.inference.provider && sandbox.model === result.inference.model
-      ? getLlamaCppRouteDetails(sandbox)
+      ? getLlamaCppRouteDetails(sandbox, inspectManagedLlamaCppOwnership)
       : null;
   const payload: InferenceGetResult = {
     provider: result.inference.provider,

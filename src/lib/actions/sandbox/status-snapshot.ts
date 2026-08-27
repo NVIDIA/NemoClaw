@@ -20,6 +20,7 @@ import {
   planInferenceRouteReconcile,
   type RecordedInferenceRoute,
 } from "../../inference/config";
+import { inspectManagedLlamaCppOwnership } from "../../inference/llama-cpp/managed-state";
 import {
   type ProviderHealthProbeOptions,
   type ProviderHealthStatus,
@@ -766,7 +767,10 @@ async function buildSandboxStatusReport(
     model: liveRoute?.model ?? currentModel,
     provider: liveRoute?.provider ?? currentProvider,
     servingProfileProvenance: sb?.servingProfileProvenance ?? null,
-    llamaCpp: getLlamaCppRouteDetails(sb),
+    // Suppress attribution when the gateway's live route has drifted away
+    // from this sandbox's recorded route (#10256) — the shared gateway
+    // route may belong to a different sandbox or provider entirely.
+    llamaCpp: routeDrift ? null : getLlamaCppRouteDetails(sb, inspectManagedLlamaCppOwnership),
     recordedRoute,
     liveRoute,
     routeDrift,

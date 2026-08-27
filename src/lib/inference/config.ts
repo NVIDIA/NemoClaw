@@ -13,10 +13,7 @@ import {
   LLAMA_CPP_HOST_OPENAI_BASE_URL,
   LLAMA_CPP_PROVIDER_NAME,
 } from "./llama-cpp/contract";
-import {
-  inspectManagedLlamaCppOwnership,
-  type ManagedLlamaCppOwnership,
-} from "./llama-cpp/managed-state";
+import type { ManagedLlamaCppOwnership } from "./llama-cpp/managed-state";
 import { DEFAULT_OLLAMA_MODEL } from "./local";
 import { OPENROUTER_CREDENTIAL_ENV, OPENROUTER_PROVIDER_NAME } from "./openrouter";
 
@@ -119,7 +116,7 @@ type LlamaCppRouteSelection = {
   hostLocalInferenceProvenance?: unknown;
 };
 
-type InspectManagedLlamaCppOwnership = (
+export type InspectManagedLlamaCppOwnership = (
   sandboxName: string,
   gatewayPort?: number,
 ) => ManagedLlamaCppOwnership;
@@ -128,10 +125,14 @@ type InspectManagedLlamaCppOwnership = (
  * Describe durable llama.cpp ownership without reading the runtime credential.
  *
  * An attached route exposes only the fixed, credential-free loopback endpoint.
+ *
+ * This module's other exports are pure; `inspectOwnership` is required (no
+ * default) so this file never itself performs filesystem I/O. Callers pass
+ * `inspectManagedLlamaCppOwnership` from `./llama-cpp/managed-state`.
  */
 export function getLlamaCppRouteDetails(
   route: LlamaCppRouteSelection | null | undefined,
-  inspectOwnership: InspectManagedLlamaCppOwnership = inspectManagedLlamaCppOwnership,
+  inspectOwnership: InspectManagedLlamaCppOwnership,
 ): LlamaCppRouteDetails | null {
   if (!route || route.provider !== LLAMA_CPP_PROVIDER_NAME) return null;
   if (

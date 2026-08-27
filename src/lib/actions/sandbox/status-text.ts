@@ -7,6 +7,7 @@ import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, RD, YW } from "../../cli/terminal-style";
 import { shellQuote } from "../../core/shell-quote";
 import { formatInferenceRouteDriftForDisplay, getLlamaCppRouteDetails } from "../../inference/config";
+import { inspectManagedLlamaCppOwnership } from "../../inference/llama-cpp/managed-state";
 import type { ProviderHealthStatus } from "../../inference/health";
 import * as nim from "../../inference/nim";
 import { getEffectiveReasoningEffort } from "../../inference/selection";
@@ -362,7 +363,11 @@ export function printSandboxDetails(context: SandboxStatusTextContext): SandboxS
     console.log(`    Serving recipe:  ${provenance.recipe.id}`);
     console.log(`    Catalog digest:  ${provenance.catalogDigest}`);
   }
-  const llamaCpp = getLlamaCppRouteDetails(sb);
+  // Suppress attribution when the gateway's live route has drifted away
+  // from this sandbox's recorded route (#10256).
+  const llamaCpp = context.routeDrift
+    ? null
+    : getLlamaCppRouteDetails(sb, inspectManagedLlamaCppOwnership);
   if (llamaCpp) {
     console.log(`    Llama.cpp: ${llamaCpp.kind}`);
     if (llamaCpp.kind === "attached") console.log(`    Endpoint: ${llamaCpp.endpointUrl}`);
