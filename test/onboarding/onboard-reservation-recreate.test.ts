@@ -266,7 +266,9 @@ const { createSandbox } = require(${onboardPath});
       assert.equal(
         result.status,
         replaceBeforeCleanup ? 1 : 0,
-        result.stderr || result.error?.message || "onboarding subprocess returned an unexpected status",
+        result.stderr ||
+          result.error?.message ||
+          "onboarding subprocess returned an unexpected status",
       );
       const payload = trailingJsonPayload<{
         sandboxName: string | null;
@@ -385,8 +387,8 @@ if (mode === "seed") {
       "my-assistant": {
         name: "my-assistant",
         gatewayName: "nemoclaw",
-        provider: "nvidia-prod",
-        model: "gpt-5.4",
+        provider: null,
+        model: null,
         endpointUrl: null,
         endpointSource: null,
         credentialEnv: null,
@@ -404,8 +406,8 @@ if (mode === "seed") {
     intent: {
       agent: "openclaw",
       fromDockerfile: null,
-      provider: "nvidia-prod",
-      model: "gpt-5.4",
+      provider: null,
+      model: null,
       preferredInferenceApi: null,
       sandboxGpuConfig: null,
       gatewayName: "nemoclaw",
@@ -420,8 +422,8 @@ if (mode === "seed") {
 
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
   sandboxName: "my-assistant",
-  provider: "nvidia-prod",
-  model: "gpt-5.4",
+  provider: null,
+  model: null,
   sessionId: "session-owner",
   durableRegistry: true,
 });
@@ -515,7 +517,7 @@ const { createSandbox } = require(${onboardPath});
 const transaction = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
 if (!transaction) throw new Error("verified-create recovery has no lifecycle journal");
 const createArgs = fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
-  [null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, null, null, null, []],
+  [null, null, null, null, "my-assistant", null, null, null, null, null, null, null, []],
   createFixture,
 );
 createArgs[15] = {
@@ -584,7 +586,10 @@ createArgs[16] = async () => {
       assert.match(retained.error, /automatic sandbox cleanup was not safe/u);
       assert.equal(retained.registryEntry.pendingRouteReservation, true);
       assert.ok(retained.registryEntry.pendingPolicyVerification);
-      assert.match(retained.registryEntry.lifecycleLiveIdentityFingerprint ?? "", /^[0-9a-f]{64}$/u);
+      assert.match(
+        retained.registryEntry.lifecycleLiveIdentityFingerprint ?? "",
+        /^[0-9a-f]{64}$/u,
+      );
       assert.equal(retained.journal.phase, "created");
       assert.equal(
         retained.journal.targetLiveIdentityFingerprint,
@@ -605,8 +610,16 @@ createArgs[16] = async () => {
           policyAuthority?: string;
         };
       }>(second.stdout);
-      const createEvents = fs.readFileSync(createCountPath, "utf8").trim().split(/\n/u).filter(Boolean);
-      const effectEvents = fs.readFileSync(effectCountPath, "utf8").trim().split(/\n/u).filter(Boolean);
+      const createEvents = fs
+        .readFileSync(createCountPath, "utf8")
+        .trim()
+        .split(/\n/u)
+        .filter(Boolean);
+      const effectEvents = fs
+        .readFileSync(effectCountPath, "utf8")
+        .trim()
+        .split(/\n/u)
+        .filter(Boolean);
       assert.equal(createEvents.length, 1, "recovery must never create a second sandbox");
       assert.match(
         recovered.error ?? "completed",

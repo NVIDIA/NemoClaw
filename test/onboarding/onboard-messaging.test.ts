@@ -156,7 +156,6 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
 });
 `;
       fs.writeFileSync(scriptPath, script);
-
       const result = spawnSync(process.execPath, [scriptPath], {
         cwd: repoRoot,
         encoding: "utf-8",
@@ -786,7 +785,8 @@ const { createSandbox } = require(${onboardPath});
 
       const result = spawnSync(process.execPath, [scriptPath], {
         cwd: repoRoot,
-        encoding: "utf-8", timeout: 30_000,
+        encoding: "utf-8",
+        timeout: 30_000,
         env: {
           ...process.env,
           HOME: tmpDir,

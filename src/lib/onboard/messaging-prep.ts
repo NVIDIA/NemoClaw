@@ -97,7 +97,6 @@ export function prepareCreateSandboxMessaging(
       return {
         name: credential.providerNameTemplate.replaceAll("{sandboxName}", input.sandboxName),
         envKey: credential.providerEnvKey,
-        token: input.getValidatedMessagingTokenByEnvKey(input.channels, credential.providerEnvKey),
         providerType: staticProviderType ?? MESSAGING_CREDENTIAL_PROVIDER_TYPE,
         retainWhileDisabled: staticProviderType !== null,
       };
@@ -107,7 +106,11 @@ export function prepareCreateSandboxMessaging(
         !enabledEnvKeys ||
         enabledEnvKeys.has(envKey) ||
         (retainWhileDisabled && disabledEnvKeys.has(envKey)),
-    );
+    )
+    .map((definition) => ({
+      ...definition,
+      token: input.getValidatedMessagingTokenByEnvKey(input.channels, definition.envKey),
+    }));
   const messagingTokenDefs: MessagingTokenDef[] = messagingCredentialDefs
     .filter(({ envKey }) => !disabledEnvKeys.has(envKey))
     .map(({ retainWhileDisabled: _retainWhileDisabled, ...definition }) => definition);
