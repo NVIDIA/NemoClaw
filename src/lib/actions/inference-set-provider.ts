@@ -141,8 +141,8 @@ type ProviderObservation =
     }
   | { kind: "error"; status: number | null };
 
-function providerSurface(binding: InferenceSetProviderBinding): ProviderSurface {
-  return binding.providerType === "anthropic"
+function providerSurface(providerType: InferenceSetProviderBinding["providerType"]): ProviderSurface {
+  return providerType === "anthropic"
     ? { type: "anthropic", configKey: "ANTHROPIC_BASE_URL" }
     : { type: "openai", configKey: "OPENAI_BASE_URL" };
 }
@@ -221,10 +221,10 @@ function assertProviderOwnership(options: {
   observation: ProviderObservation;
   providerName: string;
   surface: ProviderSurface;
-  binding: InferenceSetProviderBinding;
+  credentialEnv: string;
   allowCreate: boolean;
 }): "create" | "update" {
-  const { observation, providerName, surface, binding } = options;
+  const { observation, providerName, surface, credentialEnv } = options;
   if (observation.kind === "absent") {
     if (!options.allowCreate) {
       // The credential this route needs is held by NemoClaw's local no-auth
@@ -250,7 +250,7 @@ function assertProviderOwnership(options: {
   if (
     !matchesGatewayProviderBinding(
       observation.metadata,
-      expectedShape(providerName, surface, binding.credentialEnv),
+      expectedShape(providerName, surface, credentialEnv),
     )
   ) {
     throw new InferenceSetError(
@@ -291,6 +291,33 @@ function mutationArgs(options: {
   return args;
 }
 
+/**
+ * Verify a live gateway provider still carries this sandbox's durable binding,
+ * without creating or updating it. A route selection that mutates no provider
+ * still hands OpenShell's stored credential to whatever provider now answers to
+ * that name, so a same-name foreign or malformed binding has to be rejected
+ * before the selection, not only when a provider mutation is prepared.
+ */
+export function assertInferenceSetProviderOwnership(options: {
+  gatewayName: string;
+  providerName: string;
+  providerType: InferenceSetProviderBinding["providerType"];
+  credentialEnv: string;
+  captureOpenshell: CaptureProviderCommand;
+}): void {
+  assertProviderOwnership({
+    observation: inspectProvider(
+      options.captureOpenshell,
+      options.gatewayName,
+      options.providerName,
+    ),
+    providerName: options.providerName,
+    surface: providerSurface(options.providerType),
+    credentialEnv: options.credentialEnv,
+    allowCreate: false,
+  });
+}
+
 export function prepareInferenceSetProviderBinding(options: {
   gatewayName: string;
   providerName: string;
@@ -300,13 +327,13 @@ export function prepareInferenceSetProviderBinding(options: {
   allowCreate?: boolean;
 }): { action: "create" | "update"; commit: () => void; rollback: () => void } {
   const { gatewayName, providerName, binding, captureOpenshell } = options;
-  const surface = providerSurface(binding);
+  const surface = providerSurface(binding.providerType);
   const before = inspectProvider(captureOpenshell, gatewayName, providerName);
   const action = assertProviderOwnership({
     observation: before,
     providerName,
     surface,
-    binding,
+    credentialEnv: binding.credentialEnv,
     allowCreate: options.allowCreate !== false,
   });
 

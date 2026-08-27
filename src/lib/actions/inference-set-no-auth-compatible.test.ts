@@ -149,6 +149,44 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
     ]);
   });
 
+  it("refuses a foreign live binding before selecting the route with no endpoint options", async () => {
+    const captureOpenshell = noAuthProviderCapture({ credentialEnv: "COMPATIBLE_API_KEY" });
+    const deps = createDeps({
+      config: CONFIG,
+      entry: noAuthEntry(),
+      session: noAuthSession(),
+      captureOpenshell,
+    });
+
+    await expect(
+      runInferenceSet({ provider: "compatible-endpoint", model: "model-b" }, deps),
+    ).rejects.toThrow(/malformed, foreign/);
+
+    expect(inferenceSetArgs(captureOpenshell)).toEqual([]);
+    expect(providerMutationArgs(captureOpenshell)).toEqual([]);
+    expect(deps.calls.probeSandboxRoute).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+  });
+
+  it("refuses an absent provider before selecting the route with no endpoint options", async () => {
+    const captureOpenshell = noAuthProviderCapture({ initiallyPresent: false });
+    const deps = createDeps({
+      config: CONFIG,
+      entry: noAuthEntry(),
+      session: noAuthSession(),
+      captureOpenshell,
+    });
+
+    await expect(
+      runInferenceSet({ provider: "compatible-endpoint", model: "model-b" }, deps),
+    ).rejects.toThrow(/Re-run onboarding to restore the provider/);
+
+    expect(inferenceSetArgs(captureOpenshell)).toEqual([]);
+    expect(providerMutationArgs(captureOpenshell)).toEqual([]);
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
   it("retries the sandbox probe when it fails before reaching an HTTP status", async () => {
     const captureOpenshell = noAuthProviderCapture();
     const probeSandboxRoute = vi

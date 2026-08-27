@@ -74,6 +74,7 @@ import {
 import {
   type InferenceSetSandboxRouteProbe,
   assertInferenceSetCommandAvailable,
+  assertInferenceSetProviderOwnership,
   prepareInferenceSetProviderBinding,
   probeInferenceSetSandboxRoute,
   probeInferenceSetSandboxRouteUntilConverged,
@@ -94,6 +95,7 @@ import {
   isSandboxBridgeProviderBinding,
   prepareInferenceSetRoute,
   type RegistryInferenceMetadata,
+  sandboxCustomCompatibleCredentialEnv,
   usesLoopbackNoAuthProxyRoute,
 } from "./inference-set-route-containment";
 
@@ -1094,6 +1096,19 @@ async function runInferenceSetWithoutHostLock(
         // not replace the provider binding.
         providerMutation = null;
       }
+    } else if (loopbackNoAuthProxyRoute) {
+      // A model-only switch builds no provider binding, so nothing above
+      // inspects the live provider. This route's credential is the local
+      // no-auth proxy token that OpenShell holds and sends on selection, and
+      // its host-side verification is skipped, so confirm the durable binding
+      // is still the one onboarding registered before selecting it.
+      assertInferenceSetProviderOwnership({
+        gatewayName: preparedRoute.gatewayName,
+        providerName: provider,
+        providerType: preMutationInferenceApi === "anthropic-messages" ? "anthropic" : "openai",
+        credentialEnv: sandboxCustomCompatibleCredentialEnv(entry, provider),
+        captureOpenshell: deps.captureOpenshell,
+      });
     }
     if (providerMutation) {
       appliedProvider = providerMutation.action === "create";
