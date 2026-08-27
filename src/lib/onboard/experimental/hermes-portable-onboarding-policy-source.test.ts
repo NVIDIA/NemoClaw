@@ -13,6 +13,7 @@ import {
   createHermesPortableTransactionFixture,
   HERMES_PORTABLE_TEST_LIVE_IDENTITY,
   HERMES_PORTABLE_TEST_POLICY,
+  HERMES_PORTABLE_TEST_SANDBOX_ID,
   hermesPortableReservationForOnboarding,
 } from "../../../../test/helpers/hermes-portable-onboarding-fixture";
 import type { SandboxEntry } from "../../state/registry";
@@ -59,11 +60,11 @@ function metadata(): { status: number; output: string; stdout: string; stderr: s
 function readiness(): { status: number; output: string; stdout: string; stderr: string } {
   const stdout = JSON.stringify([
     {
-      id: "sandbox-id-1",
+      id: HERMES_PORTABLE_TEST_SANDBOX_ID,
       name: "alpha",
       labels: {},
       resource_version: 1,
-      created_at: "2026-08-27T00:00:00Z",
+      created_at: "2026-01-01T00:00:00Z",
       phase: "Ready",
       current_policy_version: 4,
     },

@@ -2088,9 +2088,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       if (agentCreateInput.hermesPortableLifecycle) {
         throw new Error("Hermes portable onboarding cannot resume an ordinary verified create.");
       }
+      const policySourcePath = policySourcePathForRoute(checkpoint.route);
       const boundary = {
         ...verifiedSandboxPolicyBoundaryFromPendingCheckpoint(checkpoint),
-        policySourcePath: policySourcePathForRoute(checkpoint.route),
+        policySourcePath,
       };
       admittedCreateReservation = admitCreateReservation();
       registry.requireCurrentPendingSandboxPolicyVerification(
@@ -2110,7 +2111,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         gatewayPort: GATEWAY_PORT,
         lifecycleGeneration: createdSandboxLifecycle.generation,
         lifecycleLiveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
-        policySourcePath: boundary.policySourcePath,
+        policySourcePath,
         route: checkpoint.route,
         operation: `resume sandbox creation for '${sandboxName}'`,
         registration: boundary.registration,

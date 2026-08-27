@@ -9,12 +9,10 @@ import { serializedHostLocalInferenceReceipt } from "../../../test/helpers/host-
 import type { InferenceSelection } from "../inference/selection";
 import type { SandboxInferenceRouteReservationDisposition } from "./registry/route-reservation";
 import type { PendingSandboxPolicyVerification, SandboxEntry } from "./registry/types";
-
 function ownedReservation(disposition: SandboxInferenceRouteReservationDisposition) {
   expect(disposition.kind).toBe("owned");
   return (disposition as Extract<typeof disposition, { kind: "owned" }>).reservation;
 }
-
 const EXACT_ROUTE_SELECTION = {
   provider: "ollama-local",
   model: "qwen3-vl:4b",
@@ -26,14 +24,12 @@ const EXACT_ROUTE_SELECTION = {
   compatibleEndpointReasoningEffort: null,
   nimContainer: null,
 } as const;
-
 const EXACT_ROUTE_AUTHORITY = {
   sandboxName: "alpha",
   gatewayName: "nemoclaw",
   sessionId: "session-owner",
   selection: EXACT_ROUTE_SELECTION,
 } as const;
-
 const EXACT_ROUTE_RESERVATION = {
   name: EXACT_ROUTE_AUTHORITY.sandboxName,
   gatewayName: EXACT_ROUTE_AUTHORITY.gatewayName,
@@ -41,10 +37,8 @@ const EXACT_ROUTE_RESERVATION = {
   pendingRouteReservation: true as const,
   ...EXACT_ROUTE_SELECTION,
 };
-
 const LIFECYCLE_GENERATION = "123e4567-e89b-42d3-a456-426614174983";
 const LIVE_IDENTITY_FINGERPRINT = "a".repeat(64);
-
 function managedCheckpoint(
   overrides: Partial<
     Pick<
@@ -88,7 +82,6 @@ function managedCheckpoint(
     },
   };
 }
-
 function externalCheckpoint(
   overrides: Partial<
     Pick<PendingSandboxPolicyVerification, "policyHash" | "policyVersion" | "route">
@@ -110,7 +103,6 @@ function externalCheckpoint(
     ...overrides,
   };
 }
-
 function createdSandboxRegistrationInput(
   sandboxName: string,
   gatewayName: string,
@@ -146,7 +138,6 @@ function createdSandboxRegistrationInput(
     gatewayPort: 8080,
   };
 }
-
 const EXACT_QUALIFIED_ROUTE_RESERVATION = {
   name: EXACT_ROUTE_AUTHORITY.sandboxName,
   gatewayName: EXACT_ROUTE_AUTHORITY.gatewayName,
@@ -159,7 +150,6 @@ const EXACT_QUALIFIED_ROUTE_RESERVATION = {
   credentialEnv: EXACT_ROUTE_SELECTION.credentialEnv,
   preferredInferenceApi: EXACT_ROUTE_SELECTION.preferredInferenceApi,
 };
-
 function reserveQualifiedRoute(registry: typeof import("./registry")) {
   registry.reserveSandboxInferenceRoute(EXACT_ROUTE_AUTHORITY.sandboxName, {
     ...EXACT_ROUTE_SELECTION,
@@ -173,7 +163,6 @@ function reserveQualifiedRoute(registry: typeof import("./registry")) {
     ),
   );
 }
-
 function reserveQualifiedCreate(registry: typeof import("./registry")) {
   const route = reserveQualifiedRoute(registry);
   const create = registry.qualifyPendingSandboxCreateReservation(
@@ -182,7 +171,6 @@ function reserveQualifiedCreate(registry: typeof import("./registry")) {
   );
   return { route, create };
 }
-
 function completedEntry(checkpoint: PendingSandboxPolicyVerification): SandboxEntry {
   return {
     name: EXACT_ROUTE_AUTHORITY.sandboxName,
@@ -199,20 +187,17 @@ function completedEntry(checkpoint: PendingSandboxPolicyVerification): SandboxEn
       : {}),
   };
 }
-
 describe("sandbox inference route reservation", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.resetModules();
   });
-
   it("persists a complete route without claiming the default sandbox", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
     vi.stubEnv("HOME", home);
     vi.resetModules();
     try {
       const registry = await import("./registry");
-
       expect(
         registry.reserveSandboxInferenceRoute("alpha", {
           provider: "compatible-endpoint",
@@ -223,7 +208,6 @@ describe("sandbox inference route reservation", () => {
           gatewayName: "nemoclaw-9090",
         }),
       ).toBe(true);
-
       expect(registry.listSandboxes()).toMatchObject({
         defaultSandbox: null,
         sandboxes: [
@@ -249,7 +233,6 @@ describe("sandbox inference route reservation", () => {
       await fs.rm(home, { recursive: true, force: true });
     }
   });
-
   it.each([
     [
       "fresh Model Router route",
@@ -338,12 +321,10 @@ describe("sandbox inference route reservation", () => {
         expect(
           routeKeys.filter((key) => reconstructedSelection[key] !== reservedSelection[key]),
         ).toEqual(["endpointSource"]);
-
         const registered = registerCreatedSandbox({
           ...createdSandboxRegistrationInput(sandboxName, gatewayName, reconstructedSelection),
           reservationSessionId: sessionId,
         });
-
         expect(registered).toMatchObject({
           ...reservedSelection,
           pendingRouteReservation: true,
@@ -355,7 +336,6 @@ describe("sandbox inference route reservation", () => {
       }
     },
   );
-
   it("rejects creation registration from a foreign reservation session and preserves the pending row (#10214)", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
     vi.stubEnv("HOME", home);
