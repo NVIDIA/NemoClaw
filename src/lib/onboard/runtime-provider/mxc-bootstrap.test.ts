@@ -411,7 +411,7 @@ describe("inactive MXC native-artifact bootstrap", () => {
     ],
   ] as const)(
     "retains a created or ambiguous resource after %s (#8178)",
-    async (_label, verifyAndCreate, verifyReadiness, reason, verificationExpected) => {
+    async (_label, verifyAndCreate, verifyReadiness, reason, readinessExpected) => {
       const verify = vi.fn(verifyReadiness);
       const receipt = await nativeBootstrap({
         verifyAndCreate,
@@ -422,12 +422,39 @@ describe("inactive MXC native-artifact bootstrap", () => {
         outcome: "retained",
         reason,
         resourceState: "possibly-retained",
-        cleanup: { attempted: true, resourceRemovalAuthorized: true, removed: false },
+        cleanup: {
+          attempted: readinessExpected,
+          resourceRemovalAuthorized: readinessExpected,
+          removed: false,
+        },
         recoveryRequired: true,
       });
-      expect(verify).toHaveBeenCalledTimes(verificationExpected ? 1 : 0);
+      expect(verify).toHaveBeenCalledTimes(readinessExpected ? 1 : 0);
     },
   );
+
+  it("keeps mismatched create evidence when plan recovery reports absent (#8178)", async () => {
+    const recoverCreate = vi.fn(async () => ({ status: "absent" as const }));
+    const verifyReadiness = vi.fn();
+    const receipt = await nativeBootstrap({
+      verifyAndCreate: async (plan) => ({
+        ...verifiedCreateOutcome(plan),
+        sandboxName: `${plan.sandboxName}-drift`,
+      }),
+      verifyReadiness,
+      recoverCreate,
+    }).run(bootstrapInput());
+
+    expect(receipt).toMatchObject({
+      outcome: "retained",
+      reason: "recovery-not-proven",
+      resourceState: "possibly-retained",
+      cleanup: { attempted: false, resourceRemovalAuthorized: false, removed: false },
+      recoveryRequired: true,
+    });
+    expect(recoverCreate).not.toHaveBeenCalled();
+    expect(verifyReadiness).not.toHaveBeenCalled();
+  });
 
   it("recovers the exact operation handle after an ambiguous create and on retry (#8178)", async () => {
     const recoveredHandles: string[] = [];

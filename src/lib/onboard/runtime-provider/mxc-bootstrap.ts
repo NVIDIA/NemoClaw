@@ -308,7 +308,7 @@ async function runMxcNativeArtifactBootstrap(
       created.artifactDigest !== plan.workload.artifact.digest ||
       created.executableDigest !== plan.workload.launch.executable.digest
     ) {
-      return recoverMxcNativeArtifactBootstrap(plan, operations);
+      return result(plan, "retained", "recovery-not-proven", "possibly-retained");
     }
     try {
       const readiness = await operations.verifyReadiness(plan, created);
