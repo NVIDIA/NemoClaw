@@ -108,8 +108,11 @@ describe("created sandbox fixture", () => {
     expect(fixture.capture(["openshell", "sandbox", "get", "-g", "gateway-alpha", "alpha"])).toBe(
       "",
     );
+    expect(
+      fixture.run(["openshell", "sandbox", "get", "-g", "gateway-alpha", "alpha"]),
+    ).toMatchObject({ status: 1 });
 
-    const replacementNonce = "b".repeat(62);
+    const replacementNonce = "b".repeat(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH);
     fixture.recreate(createCommand(replacementNonce));
     const replacementSandboxId = fixture.state.sandboxId;
     expect(replacementSandboxId).not.toBe(priorSandboxId);
@@ -156,7 +159,11 @@ describe("created sandbox fixture", () => {
     const fixture = createCreatedSandboxFixture({ gatewayName: "gateway-alpha" });
     fixture.create(createCommand());
 
-    expect(fixture.capture(selectorListCommand("gateway-alpha", "b".repeat(62)))).toBe("[]");
+    expect(
+      fixture.capture(
+        selectorListCommand("gateway-alpha", "b".repeat(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH)),
+      ),
+    ).toBe("[]");
   });
 
   it("rejects a malformed create-attempt nonce (#10463)", () => {

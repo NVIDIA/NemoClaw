@@ -498,9 +498,15 @@ function createCreatedSandboxFixture(options = {}) {
 
   const run = (command) => {
     const output = observe(command, true);
-    return output === null
-      ? null
-      : { status: 0, stdout: Buffer.from(output), stderr: Buffer.alloc(0) };
+    if (output === null) return null;
+    if (output === "") {
+      return {
+        status: 1,
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.from(`Error: sandbox ${state.sandboxName} not found\n`),
+      };
+    }
+    return { status: 0, stdout: Buffer.from(output), stderr: Buffer.alloc(0) };
   };
 
   const create = (command) => {
