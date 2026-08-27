@@ -170,6 +170,23 @@ describe("retained create recovery persistence", () => {
     );
   });
 
+  it("reports persistence failure when the saved recovery readback differs (#9833)", () => {
+    const message = `Create-attempt label: ai.nvidia.nemoclaw.create-attempt=${"a".repeat(62)}`;
+    const changedMessage = `Create-attempt label: ai.nvidia.nemoclaw.create-attempt=${"b".repeat(62)}`;
+    const finalizeIncompleteOnboardStep = vi.fn(() => ({
+      failure: { message: changedMessage },
+      steps: { sandbox: { error: changedMessage } },
+    }));
+
+    expect(
+      persistRetainedSandboxRecoveryMessage(message, finalizeIncompleteOnboardStep),
+    ).toBe(false);
+    expect(finalizeIncompleteOnboardStep).toHaveBeenCalledExactlyOnceWith(
+      "sandbox",
+      message,
+    );
+  });
+
   it("reports persistence failure when the onboard session is already terminal (#9211)", async () => {
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-recovery-"));
 

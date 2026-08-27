@@ -54,12 +54,36 @@ import {
 export const createOnboardPolicyAuthorityBindings =
   policyAuthorityPreflight.createOnboardPolicyAuthorityBindings;
 
+type RetainedSandboxRecoveryReadback = {
+  readonly failure?: { readonly message?: string | null } | null;
+  readonly steps?: {
+    readonly sandbox?: { readonly error?: string | null } | null;
+  } | null;
+};
+
 /** Persist one create-attempt recovery message through the onboard session owner. */
 export function persistRetainedSandboxRecoveryMessage(
   message: string,
-  finalizeIncompleteOnboardStep: (stepName: string, message: string) => unknown | null,
+  finalizeIncompleteOnboardStep: (
+    stepName: string,
+    message: string,
+  ) => RetainedSandboxRecoveryReadback | null,
 ): boolean {
-  return finalizeIncompleteOnboardStep("sandbox", message) !== null;
+  const stored = finalizeIncompleteOnboardStep("sandbox", message);
+  const storedFailure = stored?.failure?.message;
+  const storedStep = stored?.steps?.sandbox?.error;
+  const authorityFields = [
+    message.match(
+      /Create-attempt label: ai\.nvidia\.nemoclaw\.create-attempt=[0-9a-f]{62}/u,
+    )?.[0],
+    message.match(/Durable sandbox identity fingerprint: [0-9a-f]{64}/u)?.[0],
+  ].filter((field): field is string => Boolean(field));
+  return (
+    typeof storedFailure === "string" &&
+    storedFailure === storedStep &&
+    authorityFields.length > 0 &&
+    authorityFields.every((field) => storedFailure.includes(field))
+  );
 }
 
 /** Select the policyless APF create plan only when no active global policy exists. */

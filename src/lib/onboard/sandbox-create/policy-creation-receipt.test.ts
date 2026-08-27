@@ -558,4 +558,20 @@ describe("created sandbox policy receipt", () => {
       ),
     ).toThrow(/effective sandbox policy changed during verification/u);
   });
+
+  it("refuses changed APF-selected policy contents under an unchanged reported identity (#9833)", () => {
+    vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValueOnce(gatewayInfo())
+      .mockReturnValueOnce(metadata())
+      .mockReturnValueOnce(
+        metadata({ policy: { version: 1, network_policies: {} } }),
+      );
+
+    expect(() =>
+      verifyCreatedApfInterceptorPolicyRegistration(
+        { ...INPUT, operation: "verify APF-selected policy" },
+        readyReadOnlyPolicyDeps(),
+      ),
+    ).toThrow(/verified policy must supply the exact required entries/u);
+  });
 });
