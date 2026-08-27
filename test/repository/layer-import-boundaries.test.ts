@@ -248,6 +248,29 @@ describe("CLI layer import boundaries (#6245)", () => {
     }
   });
 
+  it("resolves JavaScript output specifiers to TypeScript source modules (#6245)", () => {
+    const target = fixturePath("src/lib/adapters", "javascript-specifier-target");
+    const importer = fixturePath("src/lib/domain", "javascript-specifier-importer");
+    const specifier = path
+      .relative(path.dirname(importer), target)
+      .split(path.sep)
+      .join("/")
+      .replace(/\.ts$/, ".js");
+    try {
+      fs.writeFileSync(target, "export const value = true;\n");
+      fs.writeFileSync(importer, `import { value } from "${specifier}";\nexport { value };\n`);
+
+      expect(findLayerImportBoundaryViolations(importer)).toEqual([
+        expect.objectContaining({
+          detail: `domain must not import ${path.relative(REPO_ROOT, target)}`,
+        }),
+      ]);
+    } finally {
+      fs.rmSync(importer, { force: true });
+      fs.rmSync(target, { force: true });
+    }
+  });
+
   it("resolves an extensionless directory import to its index module (#6245)", () => {
     const targetDir = fs.mkdtempSync(
       path.join(REPO_ROOT, "src/lib/actions/__boundary-extensionless-directory-"),

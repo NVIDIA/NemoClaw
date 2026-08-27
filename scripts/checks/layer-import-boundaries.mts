@@ -133,13 +133,37 @@ function resolveInternalImport(fromAbsPath: string, specifier: string): string |
   if (!specifier.startsWith(".")) return null;
   const base = path.resolve(path.dirname(fromAbsPath), specifier);
   const extensions = [".ts", ".tsx", ".mts", ".cts"];
-  const candidates = [
-    ...extensions.map((extension) => `${base}${extension}`),
-    ...extensions.map((extension) => path.join(base, `index${extension}`)),
-    base,
-  ];
+  const extension = path.extname(base);
+  const replacementExtensions =
+    extension === ".js"
+      ? [".ts", ".tsx"]
+      : extension === ".mjs"
+        ? [".mts"]
+        : extension === ".cjs"
+          ? [".cts"]
+          : [];
+  const candidates = extension
+    ? [
+        base,
+        ...replacementExtensions.map(
+          (replacement) => base.slice(0, -extension.length) + replacement,
+        ),
+      ]
+    : [
+        ...extensions.map((candidate) => `${base}${candidate}`),
+        ...extensions.map((candidate) => path.join(base, `index${candidate}`)),
+      ];
   const found = candidates.find((candidate) => existsSync(candidate));
-  if (!found) return toRepoPath(`${base}.ts`);
+  if (!found) {
+    const replacement = replacementExtensions[0];
+    return toRepoPath(
+      replacement
+        ? base.slice(0, -extension.length) + replacement
+        : extension
+          ? base
+          : `${base}.ts`,
+    );
+  }
   try {
     return toRepoPath(realpathSync(found));
   } catch {
