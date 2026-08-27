@@ -302,6 +302,9 @@ export interface HermesPortableTransactionFixtureOptions {
   beforeCompareAndSetRegistryGatewayPort?: (entry: SandboxEntry | null) => SandboxEntry | null;
   podmanAuthority?: HermesPortablePodmanExecutableAuthority;
   readRegistry?: () => SandboxEntry | null;
+  revalidatePendingCreateRegistry?: HermesPortableOnboardingDeps<{
+    ready: true;
+  }>["revalidatePendingCreateRegistry"];
   compareAndSetRegistryGatewayPort?: HermesPortableOnboardingDeps<{
     ready: true;
   }>["compareAndSetRegistryGatewayPort"];
@@ -349,6 +352,7 @@ export function createHermesPortableTransactionFixture(
       [
         "container update",
         () => {
+          events.push("restart-policy");
           restartPolicy = options.updateFails ? restartPolicy : "unless-stopped";
           return options.updateFails
             ? { status: null, stdout: "", stderr: "timed out" }
@@ -414,15 +418,20 @@ export function createHermesPortableTransactionFixture(
     ...(options.readSandboxReadyPublicationClockMs
       ? { readSandboxReadyPublicationClockMs: options.readSandboxReadyPublicationClockMs }
       : {}),
-    createSandbox: async (argv, buildContextPath) => {
+    createSandbox: async (argv, buildContextPath, effectivePolicySourcePath) => {
       events.push("create");
       if (options.createSandbox) {
-        const created = await options.createSandbox(argv, buildContextPath);
+        const created = await options.createSandbox(
+          argv,
+          buildContextPath,
+          effectivePolicySourcePath,
+        );
         present = true;
         return created;
       }
       const policyIndex = argv.indexOf("--policy");
       expect(argv[policyIndex + 1]).toContain("policy.");
+      expect(argv[policyIndex + 1]).toBe(effectivePolicySourcePath);
       expect(argv[argv.indexOf("--from") + 1]).toBe(
         options.expectedDockerfilePath ?? "/private/staged-hermes/Dockerfile",
       );
@@ -431,6 +440,9 @@ export function createHermesPortableTransactionFixture(
       return { ready: true };
     },
     readRegistry: options.readRegistry ?? (() => registryEntry),
+    ...(options.revalidatePendingCreateRegistry
+      ? { revalidatePendingCreateRegistry: options.revalidatePendingCreateRegistry }
+      : {}),
     compareAndSetRegistryGatewayPort:
       options.compareAndSetRegistryGatewayPort ??
       ((name, expected, gatewayPort) => {

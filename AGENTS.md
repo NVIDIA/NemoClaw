@@ -13,6 +13,7 @@ Status: Active development. Interfaces may change without notice.
 
 Technical correctness, passing tests, and green CI do not establish product approval.
 Before implementing or approving a change that creates a supported integration, solution recipe, custom image, third-party stack, or other product surface, confirm that an accepted issue or design decision establishes the scope and that ownership, lifecycle, compatibility, security, and validation expectations are defined.
+The recorded decision must be `Accept` before implementation begins. The record must state the reason, placement, accountable maintainer, and validation plan. `Request changes`, `Defer`, and `Decline` do not authorize implementation. Small documentation corrections and low-risk fixes do not require this decision.
 If the product decision is missing, do not approve or document the contribution as canonical NemoClaw behavior.
 Stop and request maintainer direction, or route an independent solution through [Community Solutions](docs/resources/community-contributions.mdx).
 
@@ -108,10 +109,9 @@ When writing tests:
 - Plugin tests use TypeScript and are co-located with their source files
 - Import CLI source from ordinary tests. Put genuine compiled-artifact assertions under `test/package-contract/`.
 - Keep project globs disjoint and exhaustive; `npm run test:projects:check` compares filesystem candidates with Vitest and rejects missing, overlapping, or unexpected membership.
-- Deterministic projects clear mock calls, restore `vi.spyOn`, and undo `vi.stubEnv` and `vi.stubGlobal` before each test. Create those spies and stubs in `beforeEach` or the test body unless a documented import-time stub must run before module evaluation. Restore direct environment or global mutations yourself, and reset mock implementations explicitly when needed. Live E2E and automatic `mockReset` are intentionally excluded.
+- Follow `test/README.md` for regression evidence, source-shape exceptions, assertion, cleanup, language, and title contracts.
 - Use `npm run test:changed` or `npm run test:watch` for focused CLI, plugin, and E2E-support feedback. Add only concrete opaque-input mappings to `test/helpers/vitest-watch-triggers.ts` when the import graph cannot see a YAML, Python, shell, generated, or workflow dependency.
 - Use `npm run test:shuffle -- --sequence.seed=<seed>` to replay a printed test-order seed. Use `npm run test:diagnose:leaks` for async-resource or shutdown-hang diagnostics; both commands keep coverage disabled, and leak diagnostics can accompany exit code 0 when assertions pass.
-- Write behavior-oriented titles, put local issue references in a final `(#1234)` suffix, and use `npm run test:spec` for the hierarchical specification view.
 - Mock external dependencies; don't call real NVIDIA APIs in unit tests
 - E2E tests run on ephemeral Brev cloud instances
 
@@ -138,6 +138,7 @@ Every source file needs the repository SPDX header; the pre-commit hook inserts 
 
 - `bin/` launcher and remaining `scripts/*.js`: **CommonJS** (`require`/`module.exports`), Node.js 22.19+
 - `test/`: **ESM** (`import`/`export`)
+- Do not add new JavaScript source files. Prefer TypeScript when modifying existing JavaScript. New test files must use TypeScript.
 - Oxlint uses `oxlint.config.ts`. The isolated `oxlint.type-aware.config.ts` configuration enforces `typescript/no-floating-promises` for plugin sources.
 
 - Use `eslint-plugin-sonarjs` only for the `oxlint.config.ts` cognitive-complexity rules documented in [`tools/lint/DEPENDENCY-REVIEW.md`](tools/lint/DEPENDENCY-REVIEW.md).
@@ -267,6 +268,13 @@ Follow `.agents/skills/_shared/pr-follow-up.md`.
 - Put Hermes executable wrappers under `agents/hermes/`
 - Keep `agents/hermes/generate-config.ts` as a thin build-time entrypoint; add Hermes env parsing, config construction, registry handling, and serialization under `agents/hermes/config/`
 - Do not add Hermes behavior for an OpenClaw issue without a Hermes-specific repro or acceptance test
+
+### Blueprint Image Pins
+
+When the managed sandbox image changes, update `digest` and `components.sandbox.image` in
+`nemoclaw-blueprint/blueprint.yaml` with the same immutable SHA-256 digest. Release tooling must
+update both fields together. `test/onboarding/validate-blueprint.test.ts` rejects mutable tags and
+mismatched digests.
 
 ### Gotchas
 

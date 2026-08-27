@@ -336,9 +336,7 @@ describe("sandbox inference route reservation", () => {
           "preferredInferenceApi",
         ] as const;
         expect(
-          routeKeys.filter(
-            (key) => reconstructedSelection[key] !== reservedSelection[key],
-          ),
+          routeKeys.filter((key) => reconstructedSelection[key] !== reservedSelection[key]),
         ).toEqual(["endpointSource"]);
 
         const registered = registerCreatedSandbox({
@@ -1057,7 +1055,7 @@ describe("sandbox inference route reservation", () => {
     vi.resetModules();
     try {
       const registry = await import("./registry");
-      const { create } = reserveQualifiedCreate(registry);
+      const { route, create } = reserveQualifiedCreate(registry);
       const initial = managedCheckpoint({ route: "native" });
       const replacement = managedCheckpoint({
         route: "compatibility",
@@ -1065,12 +1063,22 @@ describe("sandbox inference route reservation", () => {
         policyHash: "sha256:policy-2",
         policyVersion: 2,
       });
-      registry.recordPendingSandboxPolicyVerification(create, initial);
+      const initialEntry = registry.recordPendingSandboxPolicyVerification(create, initial);
+      const admittedCheckpoint = ownedReservation(
+        registry.classifySandboxInferenceRouteReservation(EXACT_ROUTE_AUTHORITY, initialEntry),
+      );
 
       const rotated = registry.recordPendingSandboxPolicyVerification(create, replacement, {
         expected: initial,
       });
       expect(rotated.pendingPolicyVerification).toEqual(replacement);
+      expect(registry.isCurrentSandboxInferenceRouteReservation(route, rotated)).toBe(true);
+      expect(registry.isCurrentSandboxInferenceRouteReservation(admittedCheckpoint, rotated)).toBe(
+        false,
+      );
+      expect(() =>
+        registry.requireCurrentPendingSandboxPolicyVerification(create, initial),
+      ).toThrow(/verified checkpoint changed/u);
       expect(
         registry.recordPendingSandboxPolicyVerification(create, replacement, {
           expected: initial,
@@ -1301,6 +1309,39 @@ describe("sandbox inference route reservation qualification (#9203)", () => {
     });
 
     expect(disposition.kind).toBe("owned");
+  });
+
+  it("recognizes only an exact verified-create checkpoint overlay as pending authority (#10423)", async () => {
+    const { classifySandboxInferenceRouteReservation, isCurrentSandboxInferenceRouteReservation } =
+      await import("./registry/route-reservation");
+    const admitted = ownedReservation(
+      classifySandboxInferenceRouteReservation(
+        EXACT_ROUTE_AUTHORITY,
+        EXACT_QUALIFIED_ROUTE_RESERVATION,
+      ),
+    );
+    const checkpoint = managedCheckpoint();
+    const pending = {
+      ...EXACT_QUALIFIED_ROUTE_RESERVATION,
+      gatewayPort: checkpoint.gatewayPort,
+      lifecycleGeneration: checkpoint.lifecycleGeneration,
+      lifecycleLiveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
+      pendingPolicyVerification: checkpoint,
+    };
+
+    expect(classifySandboxInferenceRouteReservation(EXACT_ROUTE_AUTHORITY, pending).kind).toBe(
+      "owned",
+    );
+    expect(isCurrentSandboxInferenceRouteReservation(admitted, pending)).toBe(true);
+    expect(
+      classifySandboxInferenceRouteReservation(EXACT_ROUTE_AUTHORITY, {
+        ...pending,
+        gatewayPort: 8081,
+      }),
+    ).toMatchObject({
+      kind: "conflict",
+      detail: "the inference route reservation verified create checkpoint is malformed",
+    });
   });
 
   it.each([
