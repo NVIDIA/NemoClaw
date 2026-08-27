@@ -1823,16 +1823,12 @@ RUN --mount=from=openclaw-managed-messaging-npm-cache,source=/out/npm-cache,targ
     else \
         trusted_cache=/usr/local/share/nemoclaw/wechat-npm-cache; \
     fi; \
-    assert_trusted_cache_safe() { \
-        cache_phase="$1"; \
-        unsafe_cache_entry="$(find -L "$trusted_cache" \( ! -user root -o -perm /022 \) -print -quit)"; \
-        if [ -n "$unsafe_cache_entry" ]; then \
-            printf 'ERROR: trusted messaging cache is unsafe phase=%s path=%s reason=not-root-owned-or-group-world-writable\n' \
-                "$cache_phase" "$unsafe_cache_entry" >&2; \
-            exit 1; \
-        fi; \
-    }; \
-    assert_trusted_cache_safe before-install; \
+    unsafe_cache_entry="$(find -L "$trusted_cache" \( ! -user root -o -perm /022 \) -print -quit)"; \
+    if [ -n "$unsafe_cache_entry" ]; then \
+        printf 'ERROR: trusted messaging cache is unsafe phase=before-install path=%s reason=not-root-owned-or-group-world-writable\n' \
+            "$unsafe_cache_entry" >&2; \
+        exit 1; \
+    fi; \
     install_cache="$(mktemp -d /tmp/nemoclaw-wechat-npm-cache.XXXXXX)"; \
     trap 'rm -rf "$install_cache"' EXIT; \
     cp -R "$trusted_cache"/. "$install_cache"/; \
