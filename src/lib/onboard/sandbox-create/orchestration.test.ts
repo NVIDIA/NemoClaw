@@ -81,6 +81,33 @@ describe("retained create recovery persistence", () => {
       "Create-attempt label: ai.nvidia.nemoclaw.create-attempt=authority",
     );
   });
+
+  it("reports persistence failure when the onboard session is already terminal (#9211)", async () => {
+    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-recovery-"));
+
+    try {
+      vi.stubEnv("HOME", tempHome);
+      vi.resetModules();
+      const session = await import("../../state/onboard-session");
+      session.saveSession(session.createSession({ sandboxName: "alpha" }));
+      session.finalizeIncompleteOnboardStep("sandbox", "Earlier sandbox failure");
+
+      expect(
+        persistRetainedSandboxRecoveryMessage(
+          "Create-attempt label: ai.nvidia.nemoclaw.create-attempt=unpersisted",
+          session.finalizeIncompleteOnboardStep,
+        ),
+      ).toBe(false);
+
+      const stored = session.loadSession();
+      expect(stored?.failure?.message).toBe("Earlier sandbox failure");
+      expect(stored?.steps.sandbox?.error).toBe("Earlier sandbox failure");
+    } finally {
+      vi.resetModules();
+      fs.rmSync(tempHome, { force: true, recursive: true });
+      vi.unstubAllEnvs();
+    }
+  });
 });
 
 describe("APF create policy selection", () => {
