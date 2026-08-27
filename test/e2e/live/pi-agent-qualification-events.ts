@@ -56,6 +56,13 @@ export function piQualificationOnboardArgs(catalogPath: string, sandboxName: str
   ];
 }
 
+export function piImageSourceParityPaths(
+  dockerfiles: readonly string[],
+  copiedSources: readonly string[],
+): string[] {
+  return [...new Set([".dockerignore", ...dockerfiles, ...copiedSources])].sort();
+}
+
 function record(value: unknown, label: string): JsonRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be an object`);

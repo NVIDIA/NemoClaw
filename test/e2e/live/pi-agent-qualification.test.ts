@@ -34,6 +34,7 @@ import {
   parsePiJsonEvents,
   parsePiInferenceEvidence,
   parsePiRuntimePackageEvidence,
+  piImageSourceParityPaths,
   piQualificationOnboardArgs,
   qualificationPlatform,
   qualifyPiReadTask,
@@ -324,17 +325,12 @@ test(
     expect(receipt.contract.platform).toBe(platform);
     expect(receipt.contract.source.repository).toBe("NVIDIA/NemoClaw");
     const piDockerfiles = ["agents/pi/Dockerfile", "agents/pi/Dockerfile.base"];
-    const imageSourcePaths = [
-      ...new Set([
-        ".dockerignore",
-        ...piDockerfiles,
-        ...piDockerfiles.flatMap((dockerfile) =>
-          directDockerfileCopySources(path.join(REPO_ROOT, dockerfile), dockerfile).map(
-            ({ source }) => (source.startsWith("agents/pi/") ? "agents/pi" : source),
-          ),
-        ),
-      ]),
-    ].sort();
+    const copiedSources = piDockerfiles.flatMap((dockerfile) =>
+      directDockerfileCopySources(path.join(REPO_ROOT, dockerfile), dockerfile).map(
+        ({ source }) => source,
+      ),
+    );
+    const imageSourcePaths = piImageSourceParityPaths(piDockerfiles, copiedSources);
     const sourceParity = await host.command(
       "git",
       ["diff", "--quiet", receipt.contract.source.revision, "HEAD", "--", ...imageSourcePaths],
