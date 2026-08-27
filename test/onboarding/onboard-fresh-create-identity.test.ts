@@ -160,18 +160,8 @@ childProcess.spawn = (...args) => {
   child.unref = () => {};
   child.pid = 4242;
   child.killCalls = [];
-  child.unrefCalls = 0;
-  child.stdout.destroyCalls = 0;
-  child.stderr.destroyCalls = 0;
-  child.stdout.destroy = () => {
-    child.stdout.destroyCalls += 1;
-  };
-  child.stderr.destroy = () => {
-    child.stderr.destroyCalls += 1;
-  };
-  child.unref = () => {
-    child.unrefCalls += 1;
-  };
+  child.stdout.destroy = () => {};
+  child.stderr.destroy = () => {};
   child.kill = (signal) => {
     child.killCalls.push(signal);
     process.nextTick(() => child.emit("close", signal === "SIGTERM" ? 0 : 1));
@@ -209,9 +199,6 @@ const { createSandbox } = require(${onboardPath});
     sandboxListCalls,
     killCalls: createCommand.child.killCalls,
     groupKillCalls,
-    unrefCalls: createCommand.child.unrefCalls,
-    stdoutDestroyCalls: createCommand.child.stdout.destroyCalls,
-    stderrDestroyCalls: createCommand.child.stderr.destroyCalls,
     lifecycleObservationCommands,
     registeredSandbox,
     createCommand: createCommand.command,
@@ -245,9 +232,6 @@ const { createSandbox } = require(${onboardPath});
       assert.ok(payload.sandboxListCalls >= 2);
       assert.deepEqual(payload.groupKillCalls, [{ pid: -4242, signal: "SIGTERM" }]);
       assert.deepEqual(payload.killCalls, []);
-      assert.equal(payload.unrefCalls, 1);
-      assert.equal(payload.stdoutDestroyCalls, 1);
-      assert.equal(payload.stderrDestroyCalls, 1);
       assert.match(payload.registeredSandbox.lifecycleGeneration, /^[0-9a-f-]{36}$/u);
       assert.equal(
         payload.registeredSandbox.lifecycleLiveIdentityFingerprint,

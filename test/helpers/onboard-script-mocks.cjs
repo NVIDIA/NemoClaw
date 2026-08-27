@@ -333,9 +333,24 @@ function mockOnboardRunCapture(command, options = {}) {
   return mockSandboxExecCurl(command, options);
 }
 
+let publishedCreatedSandboxIdentity = null;
+
 function mockCreatedSandboxIdentityList(command, options = {}) {
   const args = Array.isArray(command) ? command.map(String) : [];
   const sandboxIndex = args.indexOf("sandbox");
+  if (
+    publishedCreatedSandboxIdentity !== null &&
+    sandboxIndex >= 0 &&
+    args[sandboxIndex + 1] === "get" &&
+    args.at(-1) === publishedCreatedSandboxIdentity.name
+  ) {
+    return [
+      `Name: ${publishedCreatedSandboxIdentity.name}`,
+      `Id: ${publishedCreatedSandboxIdentity.id}`,
+      "Phase: Ready",
+      "",
+    ].join("\n");
+  }
   if (
     sandboxIndex < 0 ||
     args[sandboxIndex + 1] !== "list" ||
@@ -349,20 +364,50 @@ function mockCreatedSandboxIdentityList(command, options = {}) {
   const prefix = "ai.nvidia.nemoclaw.create-attempt=";
   if (!selector.startsWith(prefix)) return null;
   const nonce = selector.slice(prefix.length);
-  return JSON.stringify([
-    {
-      id: options.sandboxId || "fixture-created-sandbox",
-      name: options.sandboxName || "my-assistant",
-      labels: { "ai.nvidia.nemoclaw.create-attempt": nonce },
-      resource_version: 1,
-      created_at: "2026-08-25T00:00:00Z",
-      phase: "Ready",
-      current_policy_version: 1,
-    },
-  ]);
+  publishedCreatedSandboxIdentity = {
+    id: options.sandboxId || "fixture-created-sandbox",
+    name: options.sandboxName || "my-assistant",
+    labels: { "ai.nvidia.nemoclaw.create-attempt": nonce },
+    resource_version: 1,
+    created_at: "2026-08-25T00:00:00Z",
+    phase: "Ready",
+    current_policy_version: 1,
+  };
+  return JSON.stringify([publishedCreatedSandboxIdentity]);
+}
+
+function mockPublishedCreatedSandboxGet(command) {
+  const args = Array.isArray(command) ? command.map(String) : [];
+  const sandboxIndex = args.indexOf("sandbox");
+  if (
+    publishedCreatedSandboxIdentity === null ||
+    sandboxIndex < 0 ||
+    args[sandboxIndex + 1] !== "get" ||
+    args.at(-1) !== publishedCreatedSandboxIdentity.name
+  ) {
+    return null;
+  }
+  return {
+    status: 0,
+    stdout: Buffer.from(
+      `Name: ${publishedCreatedSandboxIdentity.name}\nId: ${publishedCreatedSandboxIdentity.id}\nPhase: Ready\n`,
+    ),
+    stderr: Buffer.alloc(0),
+  };
 }
 
 function installVerifiedSandboxCreateFixture(registry, options) {
+  publishedCreatedSandboxIdentity = null;
+  const runner = require(path.resolve(__dirname, "../../src/lib/runner.ts"));
+  if (runner.run.__nemoclawCreatedSandboxIdentityFixture !== true) {
+    const run = runner.run;
+    const wrappedRun = (command, runOptions) => {
+      const result = run(command, runOptions);
+      return mockPublishedCreatedSandboxGet(command) ?? result;
+    };
+    wrappedRun.__nemoclawCreatedSandboxIdentityFixture = true;
+    runner.run = wrappedRun;
+  }
   const sandboxName = options.sandboxName;
   const gatewayName = options.gatewayName || "nemoclaw";
   const sessionId = options.sessionId || "integration-fixture-session";
@@ -461,6 +506,7 @@ function installVerifiedSandboxCreateFixture(registry, options) {
         pendingEntry = null;
         publishedEntry = null;
         sourceEntry = null;
+        publishedCreatedSandboxIdentity = null;
       }
       options.removeSandbox?.(name);
       return true;
@@ -931,6 +977,7 @@ module.exports = {
   mockDockerSandboxLifecycleReleaseFromRunner,
   mockFreshOpenClawPluginDiscovery,
   mockCreatedSandboxIdentityList,
+  mockPublishedCreatedSandboxGet,
   installVerifiedSandboxCreateFixture,
   managedSandboxPolicyReceiptFixture,
   mockOnboardRunCapture,

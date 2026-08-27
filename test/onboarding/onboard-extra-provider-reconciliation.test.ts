@@ -66,6 +66,7 @@ const { EventEmitter } = require("node:events");
 const _n = (command) => (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
 
 const commands = [];
+let sandboxCreated = false;
 
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
@@ -85,16 +86,18 @@ runner.run = (command, opts = {}) => {
   if (normalized.includes("provider get -g nemoclaw ")) {
     return { status: 0, stdout: "" };
   }
-  return normalized.includes("sandbox get") && normalized.includes("my-assistant")
-    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+  return sandboxCreated && normalized.includes("sandbox get") && normalized.includes("my-assistant")
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: fixture-created-sandbox\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
 };
 runner.runCapture = (command) => {
   const normalized = _n(command);
   const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
   if (createdIdentity !== null) return createdIdentity;
-  if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) return "";
-  if (normalized.includes("sandbox list")) return "my-assistant Ready";
+  if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) {
+    return sandboxCreated ? "my-assistant\nId: fixture-created-sandbox" : "";
+  }
+  if (normalized.includes("sandbox list")) return sandboxCreated ? "my-assistant Ready" : "";
   const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
   if (mockedCapture !== null) return mockedCapture;
   if (normalized.includes("forward list")) {
@@ -113,6 +116,7 @@ sandboxBaseImage.resolveSandboxBaseImage = () => ({
 });
 
 childProcess.spawn = (...args) => {
+  sandboxCreated = true;
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -151,8 +155,11 @@ const createReservedSandbox = () => createSandbox(
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  const firstSandboxName = await createReservedSandbox();
+  registry.removeSandbox("my-assistant");
+  sandboxCreated = false;
   const sandboxNames = [
-    await createReservedSandbox(),
+    firstSandboxName,
     await createReservedSandbox(),
   ];
   console.log(JSON.stringify({
