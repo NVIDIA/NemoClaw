@@ -89,7 +89,14 @@ export async function probeInferenceSetSandboxRouteUntilConverged(
   const inferenceApiChanged = options.previousInferenceApi !== options.targetInferenceApi;
   return await retryUntilAsync(() => deps.probe(options.input), {
     accept: (result) =>
-      result.ok || !inferenceApiChanged || (result.httpStatus !== 400 && result.httpStatus !== 404),
+      result.ok ||
+      // A probe that never reached an HTTP status failed below the route: the
+      // sandbox could not reach the gateway while it was still reloading the
+      // changed selection, or the first request after an idle period outran the
+      // probe timeout. Retry those on the same convergence schedule instead of
+      // rolling a valid selection back on a transport blip.
+      (result.httpStatus !== null &&
+        (!inferenceApiChanged || (result.httpStatus !== 400 && result.httpStatus !== 404))),
     retryDelaysMs: ROUTE_FAMILY_CONVERGENCE_RETRY_DELAYS_MS,
     onRetry: deps.onRetry,
     sleep: deps.sleep,
@@ -215,9 +222,25 @@ function assertProviderOwnership(options: {
   providerName: string;
   surface: ProviderSurface;
   binding: InferenceSetProviderBinding;
+  allowCreate: boolean;
 }): "create" | "update" {
   const { observation, providerName, surface, binding } = options;
-  if (observation.kind === "absent") return "create";
+  if (observation.kind === "absent") {
+    if (!options.allowCreate) {
+      // The credential this route needs is held by NemoClaw's local no-auth
+      // proxy, not by a host credential this command can resolve, and the
+      // reachable base URL is the proxy's bridge address rather than the
+      // recorded loopback URL. Creating the provider here would register an
+      // unreachable, credential-less binding, so stop before any mutation.
+      throw new InferenceSetError(
+        `Provider '${providerName}' is no longer registered on this sandbox's gateway and cannot be ` +
+          `recreated by inference set: its endpoint was onboarded without authentication, so the ` +
+          `provider binding is owned by onboarding. Re-run onboarding to restore the provider.`,
+        2,
+      );
+    }
+    return "create";
+  }
   if (observation.kind === "error") {
     throw new InferenceSetError(
       `Could not inspect provider '${providerName}' (status ${observation.status ?? "unknown"}); no provider mutation was attempted.`,
@@ -273,6 +296,8 @@ export function prepareInferenceSetProviderBinding(options: {
   providerName: string;
   binding: InferenceSetProviderBinding;
   captureOpenshell: CaptureProviderCommand;
+  /** False when only onboarding can rebuild this provider's binding. */
+  allowCreate?: boolean;
 }): { action: "create" | "update"; commit: () => void; rollback: () => void } {
   const { gatewayName, providerName, binding, captureOpenshell } = options;
   const surface = providerSurface(binding);
@@ -282,6 +307,7 @@ export function prepareInferenceSetProviderBinding(options: {
     providerName,
     surface,
     binding,
+    allowCreate: options.allowCreate !== false,
   });
 
   const apply = (): void => {

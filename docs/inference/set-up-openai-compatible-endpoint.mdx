@@ -295,6 +295,10 @@ NEMOCLAW_PROVIDER=custom \
 | `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` | Inference-only compatibility alias for `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`. Inference onboarding combines entries from both variables. |
 | `COMPATIBLE_API_KEY` | Endpoint API key. Required unless loopback no-auth mode is selected. |
 
+A loopback endpoint onboarded in no-auth mode keeps that binding after onboarding.
+`nemoclaw <sandbox-name> inference set` accepts the recorded endpoint URL, or no `--endpoint-url` at all, and verifies the new route from inside the sandbox because the gateway reaches the endpoint through a local proxy.
+Omit `--credential-env`: the recorded no-auth binding is the only value this route accepts, and only onboarding can rebuild that binding.
+
 <AgentOnly variant="openclaw">
 
 For OpenClaw, `NEMOCLAW_REASONING_EFFORT` accepts `low`, `medium`, `high`, or `default`.
