@@ -464,6 +464,7 @@ let testedBootstrap = false;
 let installedTypeScriptLoader;
 Object.defineProperty(Module._extensions, ".ts", {
   configurable: true,
+  enumerable: true,
   get() {
     return installedTypeScriptLoader;
   },
