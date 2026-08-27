@@ -605,11 +605,6 @@ function plannedMessagingCredentialKeys(tokenDef) {
   ];
 }
 
-function containsOnlyPlannedMessagingCredentialKeys(metadata, plannedKeys) {
-  const expected = new Set(plannedKeys);
-  return Boolean(metadata && metadata.credentialKeys.every((key) => expected.has(key)));
-}
-
 function containsPlannedMessagingCredentialKeys(metadata, plannedKeys) {
   if (!metadata) return false;
   const observed = new Set(metadata.credentialKeys);
@@ -633,9 +628,7 @@ function preflightMessagingProviderBindings(tokenDefs, _runOpenshell) {
     const metadata =
       inspection.kind === "exact" ? readGatewayProviderMetadata(name, _runOpenshell) : null;
     const plannedKeys = plannedMessagingCredentialKeys(tokenDef);
-    const matches =
-      containsOnlyPlannedMessagingCredentialKeys(metadata, plannedKeys) &&
-      containsPlannedMessagingCredentialKeys(metadata, plannedKeys);
+    const matches = containsPlannedMessagingCredentialKeys(metadata, plannedKeys);
     if (matches) continue;
     failures.push({
       name,
@@ -797,7 +790,6 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
             type: providerType || "generic",
             credentialKey: envKey,
           }) &&
-          containsOnlyPlannedMessagingCredentialKeys(verifiedMetadata, plannedKeys) &&
           containsPlannedMessagingCredentialKeys(verifiedMetadata, plannedKeys);
         if (!verified) {
           result = {

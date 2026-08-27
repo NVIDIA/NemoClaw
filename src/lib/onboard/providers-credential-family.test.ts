@@ -140,14 +140,13 @@ it("does not create a credential family without its canonical credential (#10153
   expect(commands.some((command) => command.includes("provider create"))).toBe(false);
 });
 
-it.each([
-  ["a missing", `${CANONICAL_KEY}, ${AGENT_A_KEY}`],
-  ["an unplanned", `${CANONICAL_KEY}, ${AGENT_A_KEY}, ${AGENT_B_KEY}, ${CANONICAL_KEY}_AGENT_C`],
-])("rejects a resumed provider with %s namespaced credential (#10153)", (_case, observed) => {
+it("rejects a resumed provider missing a submitted namespaced credential (#10153)", () => {
   const commands: string[] = [];
   const runOpenshell: RunOpenshell = (command) => {
     commands.push(command.join(" "));
-    return command[1] === "get" ? providerMetadata(observed) : profileResult();
+    return command[1] === "get"
+      ? providerMetadata(`${CANONICAL_KEY}, ${AGENT_A_KEY}`)
+      : profileResult();
   };
 
   expect(() =>
@@ -163,4 +162,32 @@ it.each([
     ),
   ).toThrow(/does not match the required/u);
   expect(commands.some((command) => /provider (create|update)/u.test(command))).toBe(false);
+});
+
+it("retains an existing namespaced credential not submitted by an update (#10153)", () => {
+  const commands: string[] = [];
+  const retainedKey = `${CANONICAL_KEY}_AGENT_C`;
+  const runOpenshell: RunOpenshell = (command) => {
+    commands.push(command.join(" "));
+    return command[1] === "get"
+      ? providerMetadata(`${CANONICAL_KEY}, ${AGENT_A_KEY}, ${AGENT_B_KEY}, ${retainedKey}`)
+      : profileResult();
+  };
+
+  expect(
+    upsertMessagingProviders(
+      [
+        tokenDef("telegram-test-token", [
+          { envKey: AGENT_A_KEY, token: "telegram-agent-a-test-token" },
+          { envKey: AGENT_B_KEY, token: "telegram-agent-b-test-token" },
+        ]),
+      ],
+      runOpenshell,
+      { bestEffort: true, requireExactBindings: true },
+    ),
+  ).toEqual([PROVIDER_NAME]);
+  expect(commands).toContain(
+    `provider update ${PROVIDER_NAME} --credential ${CANONICAL_KEY} --credential ${AGENT_A_KEY} --credential ${AGENT_B_KEY}`,
+  );
+  expect(commands.every((command) => !command.includes(`--credential ${retainedKey}`))).toBe(true);
 });
