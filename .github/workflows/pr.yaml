@@ -123,12 +123,10 @@ jobs:
             .github/actions/ci-install-dependencies.sh
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
-            scripts/checks/materialize-locked-npm-cache-seed.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-audit.mts
-            scripts/lib/seed-reviewed-npm-cache.mts
           sparse-checkout-cone-mode: false
 
       - name: Download verified OpenShell SDK archive
@@ -171,12 +169,10 @@ jobs:
             .github/workflows/openshell-sdk-package-pr.yaml
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
-            scripts/checks/materialize-locked-npm-cache-seed.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-audit.mts
-            scripts/lib/seed-reviewed-npm-cache.mts
           sparse-checkout-cone-mode: false
 
       - name: Locate exact base-controlled SDK package run
@@ -314,12 +310,10 @@ jobs:
             .github/actions/ci-install-dependencies.sh
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
-            scripts/checks/materialize-locked-npm-cache-seed.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-audit.mts
-            scripts/lib/seed-reviewed-npm-cache.mts
           sparse-checkout-cone-mode: false
 
       - name: Download verified OpenShell SDK archive
@@ -356,12 +350,10 @@ jobs:
             .github/actions/ci-install-dependencies.sh
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
-            scripts/checks/materialize-locked-npm-cache-seed.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-audit.mts
-            scripts/lib/seed-reviewed-npm-cache.mts
           sparse-checkout-cone-mode: false
 
       - name: Download verified OpenShell SDK archive
@@ -480,12 +472,10 @@ jobs:
             .github/actions/ci-install-dependencies.sh
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
-            scripts/checks/materialize-locked-npm-cache-seed.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-audit.mts
-            scripts/lib/seed-reviewed-npm-cache.mts
           sparse-checkout-cone-mode: false
 
       - name: Download verified OpenShell SDK archive
@@ -592,12 +582,10 @@ jobs:
             .github/actions/ci-install-dependencies.sh
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
-            scripts/checks/materialize-locked-npm-cache-seed.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-audit.mts
-            scripts/lib/seed-reviewed-npm-cache.mts
           sparse-checkout-cone-mode: false
 
       - name: Download verified OpenShell SDK archive
@@ -643,12 +631,10 @@ jobs:
             .github/actions/ci-install-dependencies.sh
             ci/reviewed-npm-audit.json
             scripts/audit-reviewed-npm-graph.mts
-            scripts/checks/materialize-locked-npm-cache-seed.mts
             scripts/checks/prepare-ci-npm-install.mts
             scripts/lib/openclaw-npm-remediation.mts
             scripts/lib/reviewed-npm-archive.mts
             scripts/lib/reviewed-npm-audit.mts
-            scripts/lib/seed-reviewed-npm-cache.mts
           sparse-checkout-cone-mode: false
 
       - name: Download verified OpenShell SDK archive

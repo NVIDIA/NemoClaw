@@ -51,6 +51,22 @@ function cacheRequest(): ReviewedNpmCacheRequest {
   };
 }
 
+function writeSyntheticLock(
+  reviewed: ReviewedNpmCacheRequest,
+  filename: string,
+  packageRecord: Readonly<Record<string, unknown>>,
+): string {
+  const lockfilePath = path.join(reviewed.tempDirectory as string, filename);
+  fs.writeFileSync(
+    lockfilePath,
+    `${JSON.stringify({
+      lockfileVersion: 3,
+      packages: { "": {}, "node_modules/@example/reviewed": packageRecord },
+    })}\n`,
+  );
+  return lockfilePath;
+}
+
 function cachedArchiveRunner(
   calls: Array<{ args: readonly string[]; request: ReviewedNpmArchiveRequest }>,
   mutation?: Readonly<{ filename?: string; integrity?: string; packageSpec: string }>,
@@ -239,19 +255,19 @@ describe("reviewed npm archive", () => {
 
   it("allows nested shrinkwrap metadata only for explicit cache-seed inspection", () => {
     const reviewed = cacheRequest();
-    const lock = JSON.parse(fs.readFileSync(WECHAT_LOCK, "utf-8"));
-    lock.packages["node_modules/@tencent-weixin/openclaw-weixin"].hasShrinkwrap = true;
-    const lockfilePath = path.join(reviewed.tempDirectory as string, "shrinkwrap-seed-lock.json");
-    fs.writeFileSync(lockfilePath, `${JSON.stringify(lock, null, 2)}\n`);
+    const lockfilePath = writeSyntheticLock(reviewed, "shrinkwrap-seed-lock.json", {
+      hasShrinkwrap: true,
+      integrity: INTEGRITY,
+      resolved: TARBALL_URL,
+      version: "1.2.3",
+    });
     const request = { lockfilePath, registryOrigin: "https://registry.npmjs.org/" };
 
     expect(() => verifyReviewedNpmLockPackages(request)).toThrow(
       "must not delegate to nested shrinkwrap",
     );
     expect(verifyReviewedNpmLockPackages({ ...request, allowNestedShrinkwrap: true })).toEqual([
-      "@tencent-weixin/openclaw-weixin@2.4.3",
-      "qrcode-terminal@0.12.0",
-      "zod@4.4.3",
+      PACKAGE_SPEC,
     ]);
   });
 
@@ -297,11 +313,11 @@ describe("reviewed npm archive", () => {
 
   it("rejects an off-origin locked archive before npm can read the cache", () => {
     const reviewed = cacheRequest();
-    const lock = JSON.parse(fs.readFileSync(WECHAT_LOCK, "utf-8"));
-    lock.packages["node_modules/qrcode-terminal"].resolved =
-      "https://registry.example.test/qrcode-terminal-0.12.0.tgz";
-    const lockfilePath = path.join(reviewed.tempDirectory as string, "off-origin-lock.json");
-    fs.writeFileSync(lockfilePath, `${JSON.stringify(lock, null, 2)}\n`);
+    const lockfilePath = writeSyntheticLock(reviewed, "off-origin-lock.json", {
+      integrity: INTEGRITY,
+      resolved: "https://registry.example.test/reviewed-1.2.3.tgz",
+      version: "1.2.3",
+    });
     let npmCalled = false;
 
     expect(() =>
