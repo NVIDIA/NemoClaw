@@ -2323,17 +2323,20 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       revalidateCreatedSandboxIdentity(boundary.lifecycleLiveIdentityFingerprint, operation);
       const registration =
         boundary.route !== "none" && boundary.registration.policyAuthority === "nemoclaw-managed"
-          ? verifyCreatedSandboxPolicyRegistration({
-              sandboxName,
-              gatewayName: GATEWAY_NAME,
-              gatewayPort: GATEWAY_PORT,
-              lifecycleGeneration: createdSandboxLifecycle.generation,
-              lifecycleLiveIdentityFingerprint: boundary.lifecycleLiveIdentityFingerprint,
-              policySourcePath: boundary.policySourcePath,
-              route: boundary.route,
-              operation,
-              plannedAuthority: "nemoclaw-managed",
-            })
+          ? verifyCreatedSandboxPolicyRegistration(
+              {
+                sandboxName,
+                gatewayName: GATEWAY_NAME,
+                gatewayPort: GATEWAY_PORT,
+                lifecycleGeneration: createdSandboxLifecycle.generation,
+                lifecycleLiveIdentityFingerprint: boundary.lifecycleLiveIdentityFingerprint,
+                policySourcePath: boundary.policySourcePath,
+                route: boundary.route,
+                operation,
+                plannedAuthority: "nemoclaw-managed",
+              },
+              { sleep: sleepSeconds },
+            )
           : revalidateCreatedSandboxPolicyRegistration({
               sandboxName,
               gatewayName: GATEWAY_NAME,
