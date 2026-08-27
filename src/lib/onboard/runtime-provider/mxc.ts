@@ -26,7 +26,6 @@ import {
   type MxcNativeArtifactControlPlane,
 } from "./mxc-bootstrap-operations";
 import {
-  MxcOpenShellAttachmentError,
   qualifyMxcOpenShellAttachment,
   type MxcOpenShellAttachmentAuthority,
   type MxcOpenShellAttachmentObservation,
@@ -49,8 +48,8 @@ export interface MxcExistingInstallationRuntimeProviderOptions {
   readonly openshellAttachmentAuthority: MxcOpenShellAttachmentAuthority;
   readonly attachmentObservation: MxcOpenShellAttachmentObservationRequest;
   readonly bootstrapControlPlane: MxcNativeArtifactControlPlane;
-  /** Provider-owned test seam; production composition must use the stable default observer. */
-  readonly observeFileDigest?: MxcOpenShellFileDigestObserver;
+  /** Trusted native boundary; Windows composition must reject reparse points and identity drift. */
+  readonly observeFileDigest: MxcOpenShellFileDigestObserver;
 }
 
 const MXC_PROVIDER_ID = "mxc";
@@ -245,15 +244,7 @@ export async function createMxcRuntimeProviderBundleFromExistingInstallation({
         await observeAndQualify();
         return bootstrap.run(input);
       },
-      recover: async (input) => {
-        try {
-          await observeAndQualify();
-        } catch (error) {
-          if (!(error instanceof MxcOpenShellAttachmentError)) throw error;
-          // Recovery can remove only the original exact resource; attachment drift must not retain it.
-        }
-        return bootstrap.recover(input);
-      },
+      recover: async (input) => bootstrap.recover(input),
     },
   };
 }

@@ -3,7 +3,8 @@
 
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
-import { open, lstat } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { lstat, open } from "node:fs/promises";
 import path from "node:path";
 
 import { cloneAndDeepFreeze } from "../../core/immutable";
@@ -68,20 +69,38 @@ export interface MxcOpenShellAttachmentObservationRequest {
   readonly installation: MxcOpenShellInstallationLayout;
 }
 
+/**
+ * Trusted native observation boundary for one installation file.
+ *
+ * The implementation must reject reparse points and non-regular files, hash one stable handle,
+ * and fail when the path or handle identity changes during observation.
+ */
 export type MxcOpenShellFileDigestObserver = (filePath: string) => Promise<string>;
 
-const DEFAULT_FILE_OPERATIONS: MxcOpenShellStableFileOperations = {
-  lstat: async (filePath) => lstat(filePath, { bigint: true }),
-  open: async (filePath) => {
-    const handle = await open(filePath, "r");
-    return {
-      stat: async () => handle.stat({ bigint: true }),
-      read: async (buffer, offset, length, position) =>
-        handle.read(buffer, offset, length, position),
-      close: async () => handle.close(),
-    };
-  },
-};
+function stableOpenFlags(): number {
+  if (typeof fsConstants.O_NOFOLLOW !== "number" || typeof fsConstants.O_NONBLOCK !== "number") {
+    throw new Error("stable no-follow file observation is unavailable");
+  }
+  return fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK;
+}
+
+/** Create a no-follow stable-file reader, or fail closed when the OS lacks required flags. */
+export function createMxcOpenShellStableFileOperations(): MxcOpenShellStableFileOperations {
+  return {
+    lstat: async (filePath) => lstat(filePath, { bigint: true }),
+    open: async (filePath) => {
+      const handle = await open(filePath, stableOpenFlags());
+      return {
+        stat: async () => handle.stat({ bigint: true }),
+        read: async (buffer, offset, length, position) =>
+          handle.read(buffer, offset, length, position),
+        close: async () => handle.close(),
+      };
+    },
+  };
+}
+
+const DEFAULT_FILE_OPERATIONS = createMxcOpenShellStableFileOperations();
 
 function record(value: unknown, label: string): Record<string, unknown> {
   if (
@@ -294,7 +313,7 @@ function parseRequest(value: unknown): {
 /** Observe an existing OpenShell installation without executing or changing it. */
 export async function observeMxcOpenShellAttachment(
   request: unknown,
-  observeDigest: MxcOpenShellFileDigestObserver = readStableMxcOpenShellFileSha256,
+  observeDigest: MxcOpenShellFileDigestObserver,
 ): Promise<MxcOpenShellAttachmentObservation> {
   const { observedDistribution, observedGateway, installation } = parseRequest(request);
   const observations = [

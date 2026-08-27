@@ -196,7 +196,7 @@ describe("inactive OpenShell MXC runtime provider", () => {
     expect(recoverCreate).not.toHaveBeenCalled();
   });
 
-  it("uses exact recovery after installed files drift (#8178)", async () => {
+  it("uses exact recovery without re-reading installed files (#8178)", async () => {
     const attachment = mxcOpenShellAttachmentFixture();
     const accepted = attachment.observation;
     const acceptedDigests = [
@@ -206,15 +206,7 @@ describe("inactive OpenShell MXC runtime provider", () => {
       accepted.components.wxcExecSha256,
       accepted.gateway.configSha256,
     ];
-    const observedDigests = [
-      ...acceptedDigests,
-      accepted.distribution.sha256,
-      accepted.components.cliSha256,
-      "6".repeat(64),
-      accepted.components.wxcExecSha256,
-      accepted.gateway.configSha256,
-    ];
-    const observeFileDigest = vi.fn(async () => observedDigests.shift()!);
+    const observeFileDigest = vi.fn(async () => acceptedDigests.shift()!);
     const verifyAndCreate = vi.fn(async () => ({ status: "unknown" as const }));
     const verifyReadiness = vi.fn();
     const recoverCreate = vi.fn(async () => ({ status: "absent" as const }));
@@ -243,7 +235,7 @@ describe("inactive OpenShell MXC runtime provider", () => {
       resourceState: "absent",
       recoveryRequired: false,
     });
-    expect(observeFileDigest).toHaveBeenCalledTimes(10);
+    expect(observeFileDigest).toHaveBeenCalledTimes(5);
     expect(verifyAndCreate).not.toHaveBeenCalled();
     expect(verifyReadiness).not.toHaveBeenCalled();
     expect(recoverCreate).toHaveBeenCalledOnce();

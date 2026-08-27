@@ -3,10 +3,15 @@
 
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
+import { mkdtemp, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  createMxcOpenShellStableFileOperations,
   observeMxcOpenShellAttachment,
   readStableMxcOpenShellFileSha256,
   type MxcOpenShellAttachmentObservationRequest,
@@ -292,5 +297,34 @@ describe("inactive OpenShell MXC installation observer", () => {
       readStableMxcOpenShellFileSha256("C:\\OpenShell\\package.zip", operations),
     ).rejects.toThrow(/stable regular-file handle/u);
     expect(open).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(
+    typeof fsConstants.O_NOFOLLOW !== "number" || typeof fsConstants.O_NONBLOCK !== "number",
+  )("rejects a symbolic-link swap at the no-follow open boundary (#8178)", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "nemoclaw-mxc-observer-"));
+    const candidate = path.join(directory, "openshell.zip");
+    const replacement = path.join(directory, "replacement.zip");
+    const nativeOperations = createMxcOpenShellStableFileOperations();
+    try {
+      await writeFile(candidate, "accepted package bytes");
+      await writeFile(replacement, "replacement package bytes");
+      const observePath = vi.fn(nativeOperations.lstat).mockImplementationOnce(async (filePath) => {
+        const observed = await nativeOperations.lstat(filePath);
+        await unlink(candidate);
+        await symlink(replacement, candidate);
+        return observed;
+      });
+      const operations: MxcOpenShellStableFileOperations = {
+        lstat: observePath,
+        open: nativeOperations.open,
+      };
+
+      await expect(readStableMxcOpenShellFileSha256(candidate, operations)).rejects.toThrow(
+        /stable regular-file handle/u,
+      );
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
   });
 });
