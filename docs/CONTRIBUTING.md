@@ -12,7 +12,8 @@ The PR title names the next patch tag after that release tag.
 The PR body names both tags and explains the development and release-cutoff procedures.
 Each later push to `main` that changes a path outside `docs/**`, `fern/docs.yml`, and `fern/assets/**` refreshes the same PR with an independently reviewed cumulative patch.
 The publisher fast-forwards the branch and stops if a person changes the branch or PR metadata.
-The publisher never force-pushes.
+The publisher never force-pushes. Maintainers can review the automation's
+[credential ownership contract](../tools/post-merge-docs/README.md).
 
 ## When to Update Docs
 
