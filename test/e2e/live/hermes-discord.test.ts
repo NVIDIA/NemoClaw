@@ -206,7 +206,7 @@ const HERMES_DISCORD_PYTHON_GATEWAY_PROOF = String.raw`
 import asyncio
 import inspect
 import os
-from pathlib import Path
+import re
 
 try:
     import aiohttp
@@ -219,11 +219,10 @@ except Exception as exc:
 
 
 def read_env_token():
-    env_text = Path("/sandbox/.hermes/.env").read_text(encoding="utf-8")
-    for line in env_text.splitlines():
-        if line.startswith("DISCORD_BOT_TOKEN="):
-            return line.split("=", 1)[1]
-    raise RuntimeError("missing DISCORD_BOT_TOKEN in /sandbox/.hermes/.env")
+    token = os.environ.get("DISCORD_BOT_TOKEN", "")
+    if not re.fullmatch(r"openshell:resolve:env:v[1-9][0-9]*_DISCORD_BOT_TOKEN", token):
+        raise RuntimeError("DISCORD_BOT_TOKEN is not the revision-scoped process placeholder")
+    return token
 
 
 def note_heartbeat_ack(ws, results, previous_ack=None):
