@@ -380,7 +380,7 @@ The rerun takes one of these actions:
 - It starts a new replacement when the journaled replacement provably never took effect.
 
 NemoClaw treats a journaled replacement as void when the sandbox registry row and the live same-name sandbox report the same OpenShell identity, and that identity is not the journaled replacement.
-The rerun then reports `Discarded the void replacement journal for '<name>'` and records a fresh journal against that live source.
+The rerun then reports `Discarded the void replacement journal for '<name>'; its source sandbox is still registered and live.` and records a fresh journal against that live source.
 A journal whose replacement never took therefore stops blocking `rebuild` for the rest of the session.
 
 The journal binds the durable source registry row, so it does not resume after a command that rewrites that row.
