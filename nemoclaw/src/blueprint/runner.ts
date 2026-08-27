@@ -203,7 +203,7 @@ type StatusPolicyTransition = BlueprintPolicyTransitionReceipt & {
 };
 
 const POLICY_TRANSITION_RECONCILIATION_ACTION =
-  "Call the direct blueprint runner API with action arguments `reconcile --run-id <run_id from this status record>` before you retry `apply` or `rollback`.";
+  "Do not retry `apply` or `rollback`. Ask a NemoClaw maintainer to call `actionReconcile(runId)` through the direct blueprint runner API for this exact run.";
 
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 const REST_PROTOCOLS = new Set(["rest"]);

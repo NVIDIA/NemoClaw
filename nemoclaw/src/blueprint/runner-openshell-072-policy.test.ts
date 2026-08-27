@@ -1210,13 +1210,11 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
       run_id: runId,
       policy_transition: {
         status: "incomplete",
-        reconciliation_action: expect.stringContaining(
-          "action arguments `reconcile --run-id <run_id from this status record>`",
-        ),
+        reconciliation_action: expect.stringContaining("actionReconcile(runId)"),
       },
     });
     stdoutCapture.reset();
-    await main(["reconcile", "--run-id", runId]);
+    await actionReconcile(runId);
     expect(JSON.parse(store.get(`${stateDir}/plan.json`)?.content ?? "{}")).toMatchObject({
       policy_authority: {
         policy_creation_receipt: {
@@ -1379,7 +1377,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
       policy_transition: {
         status: "incomplete",
         reconciliation_required: true,
-        reconciliation_action: expect.stringContaining("reconcile"),
+        reconciliation_action: expect.stringContaining("actionReconcile(runId)"),
       },
     });
   });
