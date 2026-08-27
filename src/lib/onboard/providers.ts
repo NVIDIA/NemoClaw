@@ -599,7 +599,9 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
 function plannedMessagingCredentialKeys(tokenDef) {
   return [
     tokenDef.envKey,
-    ...(tokenDef.additionalCredentials ?? []).map(({ envKey }) => envKey),
+    ...(tokenDef.additionalCredentials ?? [])
+      .filter(({ token }) => Boolean(token))
+      .map(({ envKey }) => envKey),
   ];
 }
 

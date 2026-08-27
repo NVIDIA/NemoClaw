@@ -34,6 +34,7 @@ const PROVIDER_NAME = "alpha-telegram-bridge";
 const CANONICAL_KEY = "TELEGRAM_BOT_TOKEN";
 const AGENT_A_KEY = "TELEGRAM_BOT_TOKEN_AGENT_A";
 const AGENT_B_KEY = "TELEGRAM_BOT_TOKEN_AGENT_B";
+const MISSING_KEY = "TELEGRAM_BOT_TOKEN_AGENT_MISSING";
 
 function tokenDef(
   token: string | null,
@@ -93,6 +94,7 @@ it("creates one messaging provider with its namespaced credentials (#10153)", ()
       [
         tokenDef("telegram-test-token", [
           { envKey: AGENT_A_KEY, token: "telegram-agent-a-test-token" },
+          { envKey: MISSING_KEY, token: null },
         ]),
       ],
       runOpenshell,
@@ -101,6 +103,7 @@ it("creates one messaging provider with its namespaced credentials (#10153)", ()
   expect(commands).toContain(
     `provider create --name ${PROVIDER_NAME} --type nemoclaw-mcp-v1 --credential ${CANONICAL_KEY} --credential ${AGENT_A_KEY}`,
   );
+  expect(commands.every((command) => !command.includes(MISSING_KEY))).toBe(true);
 });
 
 it("rejects an update that omits a submitted namespaced credential (#10153)", () => {
@@ -150,9 +153,9 @@ it.each([
   expect(() =>
     upsertMessagingProviders(
       [
-        tokenDef(null, [
-          { envKey: AGENT_A_KEY, token: null },
-          { envKey: AGENT_B_KEY, token: null },
+        tokenDef("telegram-test-token", [
+          { envKey: AGENT_A_KEY, token: "telegram-agent-a-test-token" },
+          { envKey: AGENT_B_KEY, token: "telegram-agent-b-test-token" },
         ]),
       ],
       runOpenshell,
