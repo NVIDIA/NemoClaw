@@ -2164,6 +2164,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         gatewayName: GATEWAY_NAME,
         providerExistsInGateway,
         armCancelRollback: sandboxCancelRollback.arm,
+        markCancellationRecovery: onboardSession.markCancellationRecovery,
         dockerInfoFormat,
         runCapture,
         revalidatePolicyAuthority: (operation) => revalidatePolicyAuthority(true, operation),

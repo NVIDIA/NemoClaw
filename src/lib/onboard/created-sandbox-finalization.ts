@@ -254,6 +254,7 @@ export function completeOrdinaryOnboardSandboxCreation(
     readonly gatewayName: string;
     readonly providerExistsInGateway: (providerName: string) => boolean;
     readonly armCancelRollback: (sandboxName: string, sandboxIdentityFingerprint: string) => void;
+    readonly markCancellationRecovery: (sandboxName: string) => unknown;
     readonly dockerInfoFormat: Parameters<typeof warnIfLandlockUnsupported>[0]["dockerInfoFormat"];
     readonly runCapture: Parameters<typeof warnIfLandlockUnsupported>[0]["runCapture"];
     readonly revalidatePolicyAuthority: (operation: string) => void;
@@ -289,6 +290,7 @@ export function completeOrdinaryOnboardSandboxCreation(
       !lifecycleLiveIdentityFingerprint ||
       !/^[0-9a-f]{64}$/u.test(lifecycleLiveIdentityFingerprint)
     ) {
+      deps.markCancellationRecovery(input.sandboxName);
       for (const line of [
         "",
         `  Sandbox '${input.sandboxName}' was created on gateway '${deps.gatewayName}', but NemoClaw could not verify its durable identity.`,

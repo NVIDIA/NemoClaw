@@ -63,6 +63,7 @@ describe("new sandbox cancellation recovery", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const runFile = vi.fn();
     const armCancelRollback = vi.fn();
+    const markCancellationRecovery = vi.fn();
 
     expect(() =>
       completeOrdinaryOnboardSandboxCreation(
@@ -80,6 +81,7 @@ describe("new sandbox cancellation recovery", () => {
           gatewayName: "nemoclaw",
           providerExistsInGateway: () => true,
           armCancelRollback,
+          markCancellationRecovery,
           dockerInfoFormat: () => "",
           runCapture: () => "",
           revalidatePolicyAuthority: vi.fn(),
@@ -96,6 +98,8 @@ describe("new sandbox cancellation recovery", () => {
     expect(guidance).toContain("add --fresh, and use a new sandbox name");
     expect(runFile).not.toHaveBeenCalled();
     expect(armCancelRollback).not.toHaveBeenCalled();
+    expect(markCancellationRecovery).toHaveBeenCalledOnce();
+    expect(markCancellationRecovery).toHaveBeenCalledWith("new-sandbox");
   });
 });
 
