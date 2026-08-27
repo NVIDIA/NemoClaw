@@ -247,6 +247,7 @@ export function normalizeSandboxPolicyAttribution(entry: SandboxEntry): SandboxE
   const pendingPolicyVerification = normalizePendingSandboxPolicyVerification(
     entry.pendingPolicyVerification,
   );
+  const pendingRegistrationPublication = entry.pendingRegistrationPublication === true;
   if (
     pendingPolicyVerification &&
     (entry.pendingRouteReservation !== true ||
@@ -267,6 +268,14 @@ export function normalizeSandboxPolicyAttribution(entry: SandboxEntry): SandboxE
       "Sandbox registry pending policy verification does not match its route reservation",
     );
   }
+  if (
+    pendingRegistrationPublication &&
+    (!pendingPolicyVerification || pendingPolicyVerification.providerRefresh === undefined)
+  ) {
+    throw new Error(
+      "Sandbox registry pending registration publication requires a provider refresh checkpoint",
+    );
+  }
   const {
     policies: _policies,
     customPolicies: _customPolicies,
@@ -277,6 +286,7 @@ export function normalizeSandboxPolicyAttribution(entry: SandboxEntry): SandboxE
     policyAuthority: _policyAuthority,
     policyCreationReceipt: _policyCreationReceipt,
     pendingPolicyVerification: _pendingPolicyVerification,
+    pendingRegistrationPublication: _pendingRegistrationPublication,
     ...rest
   } = entry;
   if (policyAuthority === "externally-managed") {
@@ -285,6 +295,7 @@ export function normalizeSandboxPolicyAttribution(entry: SandboxEntry): SandboxE
       policies: [],
       policyAuthority,
       ...(pendingPolicyVerification ? { pendingPolicyVerification } : {}),
+      ...(pendingRegistrationPublication ? { pendingRegistrationPublication: true as const } : {}),
     };
   }
 
@@ -306,6 +317,7 @@ export function normalizeSandboxPolicyAttribution(entry: SandboxEntry): SandboxE
     ...(policyAuthority !== undefined ? { policyAuthority } : {}),
     ...(policyCreationReceipt ? { policyCreationReceipt } : {}),
     ...(pendingPolicyVerification ? { pendingPolicyVerification } : {}),
+    ...(pendingRegistrationPublication ? { pendingRegistrationPublication: true as const } : {}),
   };
 }
 

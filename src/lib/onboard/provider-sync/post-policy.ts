@@ -4,6 +4,7 @@
 import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
 import type { PendingSandboxPolicyVerification } from "../../state/registry";
 import type { OpenshellCliHelpers } from "../openshell-cli";
+import { asDeferredProviderRefreshError } from "../sandbox-create/provider-publication";
 
 type ProviderSyncInput = {
   sandboxName: string;
@@ -21,7 +22,7 @@ const providers = require("../providers") as {
   synchronizeMessagingProvidersAfterPolicy(
     input: ProviderSyncInput,
     deps: Record<string, unknown>,
-  ): Promise<void>;
+  ): Promise<PendingSandboxPolicyVerification | undefined>;
 };
 
 type ProviderSyncRuntime = Pick<
@@ -42,28 +43,43 @@ export function bind(
   runtime: ProviderSyncRuntime,
   runGatewayOpenshell: OpenshellCliHelpers["runOpenshell"],
 ) {
-  return (input: ProviderSyncInput) =>
-    providers.synchronizeMessagingProvidersAfterPolicy(input, {
-      rebindMessagingCapabilities: runtime.sandboxCreateIntentResolver.rebind,
-      upsertMessagingProviders: runtime.upsertMessagingProviders,
-      runGatewayOpenshell,
-      runOpenshell: runtime.runOpenshell,
-      sleepSeconds: runtime.sleepSeconds,
-      waitForSandboxReady: runtime.waitForSandboxReady,
-      gatewayName: runtime.GATEWAY_NAME,
-      advancePendingSandboxProviderRefresh: runtime.registry.advancePendingSandboxProviderRefresh,
-      revalidateSandboxIdentity: (operation: string) => {
-        if (!input.lifecycleGeneration || !input.sandboxIdentityFingerprint) {
-          throw new Error(`Cannot ${operation}: sandbox lifecycle identity is not recorded.`);
-        }
-        runtime.sandboxRecreateTransaction.revalidateCreatedSandboxLifecycleRegistration(
-          { sandboxName: input.sandboxName, gatewayName: runtime.GATEWAY_NAME },
-          {
-            lifecycleGeneration: input.lifecycleGeneration,
-            lifecycleLiveIdentityFingerprint: input.sandboxIdentityFingerprint,
-          },
-          runtime.getSandboxRecreateObservation,
+  return async (input: ProviderSyncInput) => {
+    try {
+      const checkpoint = await providers.synchronizeMessagingProvidersAfterPolicy(input, {
+        rebindMessagingCapabilities: runtime.sandboxCreateIntentResolver.rebind,
+        upsertMessagingProviders: runtime.upsertMessagingProviders,
+        runGatewayOpenshell,
+        runOpenshell: runtime.runOpenshell,
+        sleepSeconds: runtime.sleepSeconds,
+        waitForSandboxReady: runtime.waitForSandboxReady,
+        gatewayName: runtime.GATEWAY_NAME,
+        advancePendingSandboxProviderRefresh: runtime.registry.advancePendingSandboxProviderRefresh,
+        revalidateSandboxIdentity: (operation: string) => {
+          if (!input.lifecycleGeneration || !input.sandboxIdentityFingerprint) {
+            throw new Error(`Cannot ${operation}: sandbox lifecycle identity is not recorded.`);
+          }
+          runtime.sandboxRecreateTransaction.revalidateCreatedSandboxLifecycleRegistration(
+            { sandboxName: input.sandboxName, gatewayName: runtime.GATEWAY_NAME },
+            {
+              lifecycleGeneration: input.lifecycleGeneration,
+              lifecycleLiveIdentityFingerprint: input.sandboxIdentityFingerprint,
+            },
+            runtime.getSandboxRecreateObservation,
+          );
+        },
+      });
+      if (checkpoint?.providerRefresh?.phase === "ready") {
+        runtime.registry.publishPendingSandboxProviderRefresh(
+          input.sandboxName,
+          input.reservationSessionId ?? "",
+          checkpoint,
         );
-      },
-    });
+      }
+    } catch (error) {
+      if (input.pendingPolicyVerification?.providerRefresh) {
+        throw asDeferredProviderRefreshError(input.sandboxName, error);
+      }
+      throw error;
+    }
+  };
 }

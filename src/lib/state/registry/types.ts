@@ -171,6 +171,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   policyCreationReceipt?: NemoClawPolicyCreationReceipt;
   /** Verified create boundary retained until final registration publishes atomically. */
   pendingPolicyVerification?: PendingSandboxPolicyVerification;
+  /** Full registration is staged but cannot publish until provider refresh reaches ready. */
+  pendingRegistrationPublication?: true;
   policies?: string[];
   customPolicies?: CustomPolicyEntry[];
   /** Operator exclusions from the agent baseline policy, replayed on rebuild. */

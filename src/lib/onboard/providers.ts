@@ -1075,6 +1075,7 @@ async function synchronizeMessagingProvidersAfterPolicy(input, deps) {
     },
     deps,
   );
+  return pendingPolicyVerification;
 }
 
 module.exports = {

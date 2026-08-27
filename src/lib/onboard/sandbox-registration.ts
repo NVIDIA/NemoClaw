@@ -400,8 +400,19 @@ export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): 
           reservationSessionId: input.reservationSessionId,
         }
       : undefined;
+  const providerRefreshPending =
+    input.verifiedCreate?.checkpoint.providerRefresh !== undefined &&
+    input.verifiedCreate.checkpoint.providerRefresh.phase !== "ready";
   const registrationOptions = input.verifiedCreate
-    ? { verifiedCreate: input.verifiedCreate }
+    ? {
+        verifiedCreate: input.verifiedCreate,
+        ...(providerRefreshPending
+          ? {
+              pending: true as const,
+              reservationSessionId: input.verifiedCreate.reservation.authority.sessionId,
+            }
+          : {}),
+      }
     : pendingOptions;
   const registered =
     input.inferenceRouteReservation || registrationOptions

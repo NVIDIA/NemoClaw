@@ -53,6 +53,18 @@ export function isDeferredProviderRefreshError(
   return error instanceof DeferredProviderRefreshError;
 }
 
+/** Preserve the identity-bound recovery action for any deferred provider failure. */
+export function asDeferredProviderRefreshError(
+  sandboxName: string,
+  error: unknown,
+): DeferredProviderRefreshError {
+  if (isDeferredProviderRefreshError(error)) return error;
+  const detail = error instanceof Error ? error.message : "Messaging provider refresh failed.";
+  return new DeferredProviderRefreshError(
+    `${detail} NemoClaw preserved the verified create checkpoint. To recover, run 'nemoclaw ${sandboxName} destroy --force'. This suppresses confirmation, attempts to wipe manifest-defined agent state, destroys the exact checkpointed sandbox, and removes its registry entry before onboarding can be retried.`,
+  );
+}
+
 function expectedCredentialBindings(input: ProviderPreparationInput) {
   return new Map(
     input.messagingProviderRequests

@@ -3,6 +3,8 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { bind } from "./post-policy";
+
 type RunResult = { status: number; stdout?: string; stderr?: string };
 type RunOptions = { env?: Record<string, string | undefined> };
 type RunOpenshell = (command: string[], options?: RunOptions) => RunResult;
@@ -229,6 +231,141 @@ describe("post-policy messaging provider synchronization", () => {
 
     expect(phases).toEqual(["attaching", "stopping", "stopped", "started", "ready"]);
     expect(revalidateSandboxIdentity).toHaveBeenCalled();
+  });
+
+  it("publishes the staged registration after the production refresh reaches ready (#10153)", async () => {
+    const placeholder = "TELEGRAM_BOT_TOKEN\topenshell:resolve:env:v12_TELEGRAM_BOT_TOKEN";
+    const checkpoint = {
+      schemaVersion: 1 as const,
+      state: "verified-create" as const,
+      policyAuthority: "nemoclaw-managed" as const,
+      observedPolicyAuthority: "owner-unknown" as const,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      sandboxName: "alpha",
+      lifecycleGeneration: "generation-1",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      route: "native" as const,
+      policyHash: "sha256:policy",
+      policyVersion: 1,
+      policyCreationReceipt: {} as never,
+      providerRefresh: {
+        schemaVersion: 1 as const,
+        phase: "attaching" as const,
+        attachedProviders: ["alpha-telegram-bridge"],
+      },
+    };
+    const publishPendingSandboxProviderRefresh = vi.fn();
+    const synchronize = bind(
+      {
+        GATEWAY_NAME: "nemoclaw",
+        sandboxCreateIntentResolver: {
+          rebind: vi.fn(async () => ({
+            messagingTokenDefs: [
+              {
+                name: "alpha-telegram-bridge",
+                envKey: "TELEGRAM_BOT_TOKEN",
+                token: "must-not-appear-in-argv",
+                providerType: "nemoclaw-mcp-v1",
+              },
+            ],
+            reusableMessagingProviders: [],
+          })),
+        },
+        upsertMessagingProviders: vi.fn(),
+        runOpenshell: vi.fn((args: string[]) => ({
+          status: 0,
+          stdout: args[1] === "exec" ? placeholder : "",
+        })),
+        sleepSeconds: vi.fn(),
+        waitForSandboxReady: vi.fn(() => true),
+        getSandboxRecreateObservation: vi.fn(),
+        sandboxRecreateTransaction: {
+          revalidateCreatedSandboxLifecycleRegistration: vi.fn(),
+        },
+        registry: {
+          advancePendingSandboxProviderRefresh: vi.fn(
+            (
+              _name: string,
+              _session: string,
+              expected: typeof checkpoint,
+              providerRefresh: typeof checkpoint.providerRefresh,
+            ) => ({ ...expected, providerRefresh }),
+          ),
+          publishPendingSandboxProviderRefresh,
+        },
+      } as never,
+      vi.fn(),
+    );
+
+    await synchronize({
+      sandboxName: "alpha",
+      enabledChannels: ["telegram"],
+      agent: null,
+      webSearchConfig: null,
+      lifecycleGeneration: "generation-1",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      pendingPolicyVerification: checkpoint,
+      reservationSessionId: "session-1",
+    });
+
+    expect(publishPendingSandboxProviderRefresh).toHaveBeenCalledWith(
+      "alpha",
+      "session-1",
+      expect.objectContaining({ providerRefresh: expect.objectContaining({ phase: "ready" }) }),
+    );
+  });
+
+  it("reports the identity-bound destroy action after a production refresh failure (#10153)", async () => {
+    const synchronize = bind(
+      {
+        GATEWAY_NAME: "nemoclaw",
+        sandboxCreateIntentResolver: {
+          rebind: vi.fn(async () => ({
+            messagingTokenDefs: [
+              {
+                name: "alpha-telegram-bridge",
+                envKey: "TELEGRAM_BOT_TOKEN",
+                token: "must-not-appear-in-argv",
+                providerType: "nemoclaw-mcp-v1",
+              },
+            ],
+            reusableMessagingProviders: [],
+          })),
+        },
+        upsertMessagingProviders: vi.fn(() => {
+          throw new Error("Provider publication failed.");
+        }),
+        runOpenshell: vi.fn(),
+        sleepSeconds: vi.fn(),
+        waitForSandboxReady: vi.fn(() => true),
+        getSandboxRecreateObservation: vi.fn(),
+        sandboxRecreateTransaction: {
+          revalidateCreatedSandboxLifecycleRegistration: vi.fn(),
+        },
+        registry: {
+          advancePendingSandboxProviderRefresh: vi.fn(),
+          publishPendingSandboxProviderRefresh: vi.fn(),
+        },
+      } as never,
+      vi.fn(),
+    );
+
+    await expect(
+      synchronize({
+        sandboxName: "alpha",
+        enabledChannels: ["telegram"],
+        agent: null,
+        webSearchConfig: null,
+        pendingPolicyVerification: {
+          providerRefresh: {
+            schemaVersion: 1,
+            phase: "attaching",
+            attachedProviders: ["alpha-telegram-bridge"],
+          },
+        } as never,
+      }),
+    ).rejects.toThrow("nemoclaw alpha destroy --force");
   });
 
   it("does not relaunch when a post-policy credential never appears", () => {
