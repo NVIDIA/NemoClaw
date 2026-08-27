@@ -62,10 +62,28 @@ function cancelRecoveryIdentity(
 
 /** Persist one create-attempt recovery message through the onboard session owner. */
 export function persistRetainedSandboxRecoveryMessage(
-  message: string,
-  finalizeIncompleteOnboardStep: (stepName: string, message: string) => unknown | null,
+  input: {
+    readonly sandboxName: string;
+    readonly message: string;
+    readonly sandboxIdentityFingerprint?: string;
+  },
+  markRetainedSandboxRecovery: (
+    sandboxName: string,
+    message: string,
+    sandboxIdentityFingerprint?: string,
+  ) => unknown | null,
 ): boolean {
-  return finalizeIncompleteOnboardStep("sandbox", message) !== null;
+  try {
+    return (
+      markRetainedSandboxRecovery(
+        input.sandboxName,
+        input.message,
+        input.sandboxIdentityFingerprint,
+      ) !== null
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** Select the policyless APF create plan only when no active global policy exists. */
@@ -1887,8 +1905,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                 : {}),
               persistRetainedSandboxRecovery: (message) =>
                 persistRetainedSandboxRecoveryMessage(
-                  message,
-                  onboardSession.finalizeIncompleteOnboardStep,
+                  { sandboxName, message },
+                  onboardSession.markRetainedSandboxRecovery,
                 ),
               provider,
               sandboxGpuConfig: effectiveSandboxGpuConfig,

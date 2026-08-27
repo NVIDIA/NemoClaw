@@ -109,7 +109,7 @@ export interface SessionFailure {
 }
 
 export interface SessionCancellationRecovery {
-  readonly reason: "cancelled_after_sandbox_creation";
+  readonly reason: "cancelled_after_sandbox_creation" | "retained_after_sandbox_creation_failure";
   readonly sandboxName: string;
   readonly sandboxIdentityFingerprint: string | null;
   readonly recordedAt: string;
@@ -691,7 +691,13 @@ export function sanitizeFailure(
 function parseSessionCancellationRecovery(
   value: SessionJsonValue | undefined,
 ): SessionCancellationRecovery | null {
-  if (!isObject(value) || value.reason !== "cancelled_after_sandbox_creation") return null;
+  if (
+    !isObject(value) ||
+    (value.reason !== "cancelled_after_sandbox_creation" &&
+      value.reason !== "retained_after_sandbox_creation_failure")
+  ) {
+    return null;
+  }
   const sandboxName = readString(value.sandboxName);
   const recordedAt = readCanonicalIsoTimestamp(value.recordedAt);
   const fingerprint =
@@ -706,7 +712,7 @@ function parseSessionCancellationRecovery(
     return null;
   }
   return {
-    reason: "cancelled_after_sandbox_creation",
+    reason: value.reason,
     sandboxName,
     sandboxIdentityFingerprint: fingerprint,
     recordedAt,
@@ -1667,6 +1673,60 @@ export function markCancellationRecovery(
     };
     return session;
   });
+}
+
+export function markRetainedSandboxRecovery(
+  sandboxName: string,
+  message: string,
+  sandboxIdentityFingerprint?: string,
+): Session {
+  if (
+    sandboxName.length > NAME_MAX_LENGTH ||
+    !NAME_VALID_PATTERN.test(sandboxName) ||
+    (sandboxIdentityFingerprint !== undefined &&
+      !/^[0-9a-f]{64}$/u.test(sandboxIdentityFingerprint))
+  ) {
+    throw new Error("Cannot record retained sandbox recovery with invalid identity data.");
+  }
+  const saved = updateSession((session) => {
+    if (session.sandboxName !== null && session.sandboxName !== sandboxName) {
+      throw new Error(
+        "Cannot record retained sandbox recovery for a different onboarding sandbox.",
+      );
+    }
+    const recordedAt = new Date().toISOString();
+    const sanitizedMessage = redactSensitiveText(message);
+    session.sandboxName = sandboxName;
+    session.resumable = false;
+    session.status = CANCELLATION_RECOVERY_STATUS;
+    session.cancellationRecovery = {
+      reason: "retained_after_sandbox_creation_failure",
+      sandboxName,
+      sandboxIdentityFingerprint: sandboxIdentityFingerprint ?? null,
+      recordedAt,
+    };
+    session.failure = {
+      step: session.lastStepStarted,
+      message: sanitizedMessage,
+      recordedAt,
+      interrupted: true,
+    };
+    const sandboxStep = session.steps.sandbox;
+    if (sandboxStep) sandboxStep.error = sanitizedMessage;
+    return session;
+  });
+  const reread = loadSession();
+  if (
+    reread?.sessionId !== saved.sessionId ||
+    reread.status !== CANCELLATION_RECOVERY_STATUS ||
+    reread.resumable !== false ||
+    reread.cancellationRecovery?.reason !== "retained_after_sandbox_creation_failure" ||
+    reread.cancellationRecovery.sandboxName !== sandboxName ||
+    reread.cancellationRecovery.sandboxIdentityFingerprint !== (sandboxIdentityFingerprint ?? null)
+  ) {
+    throw new Error("Retained sandbox recovery did not survive durable readback.");
+  }
+  return reread;
 }
 
 export type CompareAndSwapSessionResult = "updated" | "busy" | "mismatch";

@@ -46,12 +46,25 @@ describe("retained create recovery persistence", () => {
         session.saveSession(session.createSession({ sandboxName: "alpha" }));
 
         expect(
-          persistRetainedSandboxRecoveryMessage(message, session.finalizeIncompleteOnboardStep),
+          persistRetainedSandboxRecoveryMessage(
+            {
+              sandboxName: "alpha",
+              message,
+              ...(fingerprint ? { sandboxIdentityFingerprint: fingerprint } : {}),
+            },
+            session.markRetainedSandboxRecovery,
+          ),
         ).toBe(true);
 
         const stored = session.loadSession();
-        expect(stored?.machine.state).toBe("failed");
-        expect(stored?.steps.sandbox?.status).toBe("failed");
+        expect(stored?.status).toBe("recovery_required");
+        expect(stored?.resumable).toBe(false);
+        expect(stored?.cancellationRecovery?.reason).toBe(
+          "retained_after_sandbox_creation_failure",
+        );
+        expect(stored?.cancellationRecovery?.sandboxName).toBe("alpha");
+        expect(stored?.machine.state).not.toBe("failed");
+        expect(stored?.steps.sandbox?.status).not.toBe("failed");
         expect(stored?.failure?.message).toContain(createAttemptLabel);
         expect(stored?.steps.sandbox?.error).toContain(createAttemptLabel);
         const fingerprintExpectation = fingerprint
@@ -72,13 +85,17 @@ describe("retained create recovery persistence", () => {
 
     expect(
       persistRetainedSandboxRecoveryMessage(
-        "Create-attempt label: ai.nvidia.nemoclaw.create-attempt=authority",
+        {
+          sandboxName: "alpha",
+          message: "Create-attempt label: ai.nvidia.nemoclaw.create-attempt=authority",
+        },
         finalizeIncompleteOnboardStep,
       ),
     ).toBe(false);
     expect(finalizeIncompleteOnboardStep).toHaveBeenCalledExactlyOnceWith(
-      "sandbox",
+      "alpha",
       "Create-attempt label: ai.nvidia.nemoclaw.create-attempt=authority",
+      undefined,
     );
   });
 
@@ -94,14 +111,18 @@ describe("retained create recovery persistence", () => {
 
       expect(
         persistRetainedSandboxRecoveryMessage(
-          "Create-attempt label: ai.nvidia.nemoclaw.create-attempt=unpersisted",
-          session.finalizeIncompleteOnboardStep,
+          {
+            sandboxName: "alpha",
+            message: "Create-attempt label: ai.nvidia.nemoclaw.create-attempt=unpersisted",
+          },
+          session.markRetainedSandboxRecovery,
         ),
-      ).toBe(false);
+      ).toBe(true);
 
       const stored = session.loadSession();
-      expect(stored?.failure?.message).toBe("Earlier sandbox failure");
-      expect(stored?.steps.sandbox?.error).toBe("Earlier sandbox failure");
+      expect(stored?.status).toBe("recovery_required");
+      expect(stored?.failure?.message).toContain("create-attempt=unpersisted");
+      expect(stored?.steps.sandbox?.error).toContain("create-attempt=unpersisted");
     } finally {
       vi.resetModules();
       fs.rmSync(tempHome, { force: true, recursive: true });
