@@ -77,7 +77,6 @@ export default async function prepare_nemoclaw_pr_candidate(input: {
     notes: string[];
   };
   body: string | null;
-  templateSha: string | null;
   readyToPublish: boolean;
   blockers: { code: string; message: string }[];
   warnings: { code: string; message: string }[];
@@ -117,7 +116,15 @@ export default async function prepare_nemoclaw_pr_candidate(input: {
       baseRef: (input.remote ?? "origin") + "/" + (input.baseBranch ?? "main"),
     });
     blockers.push(...rendered.blockers.map((message) => ({ code: "pr-body-evidence", message })));
-    warnings.push(...rendered.warnings.map((message) => ({ code: "pr-body-warning", message })));
+    const docsChanged = preflight.changedFiles.some(
+      (path) =>
+        path.startsWith("docs/") || path === "fern/docs.yml" || path.startsWith("fern/assets/"),
+    );
+    if (docsChanged && input.body.docs?.buildPassed !== true)
+      blockers.push({
+        code: "docs-build-evidence",
+        message: "Documentation changes require a passing npm run docs result.",
+      });
   } else
     warnings.push({
       code: "body-input-required",
@@ -127,7 +134,6 @@ export default async function prepare_nemoclaw_pr_candidate(input: {
     preflight,
     validation,
     body: rendered?.body ?? null,
-    templateSha: rendered?.templateSha ?? null,
     readyToPublish: blockers.length === 0 && Boolean(rendered),
     blockers,
     warnings,

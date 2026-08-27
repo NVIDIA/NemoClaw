@@ -30,13 +30,7 @@ export default async function render_nemoclaw_pr_body(input: {
   };
   dco: { commitsVerified: boolean; name: string; email: string };
   noSecrets: boolean;
-}): Promise<{
-  body: string;
-  templateSha: string;
-  selectedChecks: string[];
-  blockers: string[];
-  warnings: string[];
-}> {
+}): Promise<{ body: string; blockers: string[] }> {
   const rejectControlCharacters = (value) => {
     if (typeof value === "string" && /[\u0000-\u001f\u007f]/.test(value))
       throw new Error("PR body inputs must not contain control characters");
@@ -85,20 +79,10 @@ export default async function render_nemoclaw_pr_body(input: {
   ])
     if (!trustedTemplate.includes(heading))
       throw new Error("Trusted pull request template is missing " + heading);
-  const tree = await tools.bash({
-    command: "git rev-parse --verify " + quote(baseRef + "^{tree}"),
-    workdir: input.workdir,
-    description: "Resolve trusted template tree",
-    timeoutMs: 10000,
-  });
-  if (tree.kind !== "foreground" || tree.exitCode !== 0)
-    throw new Error("Could not resolve trusted template tree");
   const tests = input.tests;
   if (!tests || !["added-or-updated", "existing", "not-applicable"].includes(tests.result))
     throw new Error("tests.result is invalid");
-  const blockers = [],
-    warnings = [],
-    selected = [];
+  const blockers = [];
   if (tests.result !== "not-applicable" && !tests.evidence)
     blockers.push("Test evidence is required.");
   if (tests.result !== "added-or-updated" && !tests.justification)
@@ -124,7 +108,6 @@ export default async function render_nemoclaw_pr_body(input: {
       throw new Error("relatedIssues contains an invalid relationship");
   const verification = [];
   const addEvidence = (label, detail) => {
-    selected.push(label);
     verification.push("- " + label + ": " + line(detail, label));
   };
   addEvidence(
@@ -211,11 +194,5 @@ export default async function render_nemoclaw_pr_body(input: {
   );
   body = body.trim() + "\n";
   if (body.length > 60000) throw new Error("Rendered PR body exceeds 60000 characters");
-  return {
-    body,
-    templateSha: tree.stdout.text.trim(),
-    selectedChecks: selected,
-    blockers,
-    warnings,
-  };
+  return { body, blockers };
 }
