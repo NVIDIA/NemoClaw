@@ -119,6 +119,10 @@ nemoclaw_runtime_state_mutation_checkpoint() {
   kill -STOP "$$"
   if nemoclaw_runtime_state_mutation_gate resume; then
     if nemoclaw_runtime_state_mutation_acknowledge_release; then
+      # The acknowledgement helper stops itself after publishing. The root
+      # controller resumes that exact child, then this parent stops only after
+      # Bash has reaped it and observed success.
+      kill -STOP "$$"
       return 0
     fi
     printf '%s\n' '[SECURITY] Runtime state mutation release acknowledgement failed; holding startup.' >&2

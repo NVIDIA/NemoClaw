@@ -454,6 +454,14 @@ wait "$controller_pid"
       expect(fs.existsSync(waited)).toBe(true);
       expect(acknowledge).not.toContain("mktemp");
       expect(acknowledge).not.toContain("mv");
+      const checkpoint = start.indexOf(
+        "if nemoclaw_runtime_state_mutation_acknowledge_release; then",
+      );
+      const parentStop = start.indexOf('kill -STOP "$$"', checkpoint);
+      const acknowledgedReturn = start.indexOf("return 0", parentStop);
+      expect(checkpoint).toBeGreaterThan(0);
+      expect(parentStop).toBeGreaterThan(checkpoint);
+      expect(acknowledgedReturn).toBeGreaterThan(parentStop);
     } finally {
       fs.rmSync(temporary, { force: true, recursive: true });
     }

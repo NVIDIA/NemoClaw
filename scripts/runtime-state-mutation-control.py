@@ -1375,7 +1375,7 @@ def _receipt_payload(marker: dict[str, object]) -> dict[str, object]:
 def _released_receipt_payload(
     marker: dict[str, object], completed_ledger_sha256: str, release_state: str
 ) -> dict[str, object]:
-    if release_state not in ("intent", "complete"):
+    if release_state not in ("intent", "acknowledged", "complete"):
         _fail("released-receipt-invalid")
     return {
         "schemaVersion": SCHEMA_VERSION,
@@ -1393,7 +1393,7 @@ def _validate_released_receipt(value: object) -> dict[str, object]:
     if (
         type(receipt["schemaVersion"]) is not int
         or receipt["schemaVersion"] != SCHEMA_VERSION
-        or receipt["releaseState"] not in ("intent", "complete")
+        or receipt["releaseState"] not in ("intent", "acknowledged", "complete")
     ):
         _fail("released-receipt-invalid")
     marker = _validate_marker(receipt["marker"])
@@ -2145,10 +2145,9 @@ def _wait_for_startup_release_ack(
     while True:
         if _read_startup_release_ack(marker, fence, release_payload) is not None:
             _recapture_reference(fence.start, "activation-release-identity-drift")
-            # The gate publishes the acknowledgement before its direct child
-            # returns to the startup shell. Keep this transaction active until
-            # that child exits so a following fence cannot stop the parent and
-            # terminate the publisher before the parent receives success.
+            # The exact publisher stops after writing the acknowledgement. Its
+            # parent stops only after the controller resumes that child, Bash
+            # reaps it, and the parent observes success.
             _wait_for_release_ack_publisher(fence)
             return
         remaining = deadline - time.monotonic()
@@ -2175,23 +2174,29 @@ def _is_release_ack_publisher(
 
 def _wait_for_release_ack_publisher(fence: FenceProof) -> None:
     deadline = time.monotonic() + PROCESS_STATE_SECONDS
-    stable_absence = 0
+    resumed_publisher: ProcessReference | None = None
     while True:
-        _recapture_reference(fence.start, "activation-release-identity-drift")
+        start = _recapture_reference(
+            fence.start, "activation-release-identity-drift"
+        )
         publishers = tuple(
             process
             for process in _capture_writer_processes(fence.writer_uids)
             if _is_release_ack_publisher(process, fence.start)
         )
-        if not publishers:
-            stable_absence += 1
-            if stable_absence >= STABLE_SCANS:
-                return
-            time.sleep(POLL_SECONDS)
-            continue
-        stable_absence = 0
-        if len(publishers) != 1:
+        if len(publishers) > 1:
             _fail("activation-release-ack-invalid")
+        if publishers:
+            publisher = publishers[0]
+            if resumed_publisher is not None and not _process_matches_reference(
+                publisher, resumed_publisher
+            ):
+                _fail("activation-release-ack-invalid")
+            if publisher.state in ("T", "t") and resumed_publisher is None:
+                _signal_exact_process(publisher, signal.SIGCONT)
+                resumed_publisher = _process_reference(publisher)
+        elif not publishers and start.state in ("T", "t"):
+            return
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             _fail("activation-release-ack-timeout")
@@ -4153,7 +4158,7 @@ def _acquire(
     if released is not None and released["transactionId"] == request.transaction_id:
         _fail(
             "transaction-release-pending"
-            if released["releaseState"] == "intent"
+            if released["releaseState"] != "complete"
             else "transaction-already-released"
         )
     fence = _discover_fence(mount_namespace)
@@ -4250,6 +4255,31 @@ def _prove_released_activation(
     _prove_live_activation(marker, fence, service, activation)
 
 
+def _prove_parent_acknowledged_activation(
+    marker: dict[str, object], fence: FenceProof, activation: ActivationProof
+) -> None:
+    persistent = set(activation.persistent_pids)
+    for reference in activation.processes:
+        if reference.pid not in persistent:
+            continue
+        process = _recapture_reference(reference, "activation-process-drift")
+        if process.state in ("T", "t"):
+            _fail("activation-process-stopped")
+    start = _recapture_reference(fence.start, "start-process-identity-drift")
+    if start.state not in ("T", "t"):
+        _fail("activation-release-parent-running")
+    supervisor = _recapture_reference(fence.supervisor, "supervisor-identity-drift")
+    if supervisor.state in ("T", "t"):
+        _fail("supervisor-process-stopped")
+    service_reference = next(
+        process
+        for process in activation.processes
+        if process.pid == activation.service_pid
+    )
+    service = _recapture_reference(service_reference, "activation-service-drift")
+    _prove_live_activation(marker, fence, service, activation)
+
+
 def _release_activation_hold(durable_fd: int, marker: dict[str, object]) -> None:
     fence = _fence_from_value(marker["fence"])
     activation = _activation_from_marker(marker)
@@ -4261,6 +4291,11 @@ def _release_activation_hold(durable_fd: int, marker: dict[str, object]) -> None
         _activation_release_payload(marker, fence, activation)
     )
     _prove_fence_shape(fence, str(marker["mountNamespace"]))
+    acknowledged = _read_startup_release_ack(
+        marker, fence, release_payload
+    ) is not None
+    start = _recapture_reference(fence.start, "start-process-identity-drift")
+    parent_already_acknowledged = acknowledged and start.state in ("T", "t")
     persistent = set(activation.persistent_pids)
     for reference in activation.processes:
         if _reference_is_terminated(reference):
@@ -4268,13 +4303,23 @@ def _release_activation_hold(durable_fd: int, marker: dict[str, object]) -> None
                 _fail("activation-process-drift")
             continue
         _resume_reference(reference)
-    _resume_reference(fence.start)
+    if not parent_already_acknowledged:
+        _resume_reference(fence.start)
     # Resume the exact pinned OpenShell supervisor last. Until the proven
     # workload is live, keeping PID 1 stopped prevents it from advertising a
     # transient Ready state or admitting unrelated sandbox commands.
     _resume_reference(fence.supervisor)
-    _prove_released_activation(marker, fence, activation)
     _wait_for_startup_release_ack(marker, fence, release_payload)
+    _prove_parent_acknowledged_activation(marker, fence, activation)
+
+
+def _resume_acknowledged_parent(marker: dict[str, object]) -> None:
+    fence = _fence_from_value(marker["fence"])
+    activation = _activation_from_marker(marker)
+    if activation is None:
+        _fail("activation-marker-invalid")
+    _resume_reference(fence.start)
+    _prove_released_activation(marker, fence, activation)
 
 
 def _complete_released_receipt(
@@ -4288,6 +4333,15 @@ def _complete_released_receipt(
     if receipt["releaseState"] == "intent":
         _assert_runtime_binding(marker)
         _release_activation_hold(durable_fd, marker)
+        receipt = _write_released_receipt(
+            durable_fd,
+            marker,
+            str(receipt["completedLedgerSha256"]),
+            "acknowledged",
+        )
+    if receipt["releaseState"] == "acknowledged":
+        _assert_runtime_binding(marker)
+        _resume_acknowledged_parent(marker)
         receipt = _write_released_receipt(
             durable_fd,
             marker,

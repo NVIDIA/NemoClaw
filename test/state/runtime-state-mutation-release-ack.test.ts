@@ -16,6 +16,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import signal
 import sys
 import tempfile
 
@@ -130,7 +131,7 @@ with tempfile.TemporaryDirectory() as root:
         )
         publisher = control.ProcessIdentity(
             22,
-            "S",
+            "T",
             start.pid,
             "202",
             start.uids,
@@ -144,20 +145,35 @@ with tempfile.TemporaryDirectory() as root:
             15,
         )
         publisher_scans = {"count": 0}
+        publisher_signals = []
+        start_state = {"value": "S"}
         def capture_publishers(_uids):
             publisher_scans["count"] += 1
-            return (
-                (publisher,)
-                if publisher_scans["count"] in (1, 3)
-                else ()
-            )
+            return (publisher,) if publisher_scans["count"] == 1 else ()
         control._capture_writer_processes = capture_publishers
-        control._recapture_reference = lambda *_args: None
+        control._recapture_reference = lambda *_args: control.ProcessIdentity(
+            start.pid,
+            start_state["value"],
+            start.parent_pid,
+            start.start_identity,
+            start.uids,
+            (control.NEMOCLAW_START_PATH,),
+            start.proc_device,
+            start.proc_inode,
+        )
+        def signal_publisher(selected, requested):
+            publisher_signals.append(
+                [selected.pid, requested == signal.SIGCONT]
+            )
+            start_state["value"] = "T"
+        control._signal_exact_process = signal_publisher
         control.POLL_SECONDS = 0
         results["publisherWait"] = code(
             lambda: control._wait_for_release_ack_publisher(fence)
         )
         results["publisherScans"] = publisher_scans["count"]
+        results["publisherSignals"] = publisher_signals
+        results["parentStopped"] = start_state["value"] == "T"
         os.unlink(control.STARTUP_RELEASE_ACK_NAME, dir_fd=directory_fd)
         record_rejection(
             directory_fd,
@@ -197,7 +213,7 @@ print(json.dumps(results, sort_keys=True))
 `;
 
 describe("runtime state mutation release acknowledgement", () => {
-  it("accepts the exact acknowledgement after its startup child exits (#10155)", () => {
+  it("resumes the exact acknowledgement child and waits for its parent (#10155)", () => {
     const result = spawnSync("python3", ["-I", "-c", HARNESS, CONTROLLER], {
       encoding: "utf8",
     });
@@ -205,8 +221,10 @@ describe("runtime state mutation release acknowledgement", () => {
     expect(JSON.parse(result.stdout)).toEqual({
       cleaned: true,
       committed: "ok",
+      parentStopped: true,
       pendingIgnored: true,
-      publisherScans: 6,
+      publisherScans: 2,
+      publisherSignals: [[22, true]],
       publisherWait: "ok",
       wrongNonce: "activation-release-ack-invalid",
       wrongRelease: "activation-release-ack-invalid",

@@ -231,14 +231,14 @@ describe("runtime state mutation controller", () => {
       ["resume", 78],
       ["resume", 10],
       ["resume", 1],
-      ["health"],
       ["release-ack"],
+      ["parent-ack-health"],
     ]);
     expect(harnessResult.release_retry_events).toEqual([
       ["verify-checkpoint"],
       ["release-receipt"],
-      ["health"],
       ["release-ack"],
+      ["parent-ack-health"],
     ]);
     expect(harnessResult.transient_exit_release_events).toEqual([
       ["verify-checkpoint"],
@@ -248,12 +248,13 @@ describe("runtime state mutation controller", () => {
       ["resume", 77],
       ["resume", 10],
       ["resume", 1],
-      ["health"],
       ["release-ack"],
+      ["parent-ack-health"],
     ]);
     expect(harnessResult.persistent_exit_release).toBe("activation-process-drift");
     const events = harnessResult.state_events as unknown[][];
     expect(events).toContainEqual(["release-hold", "intent"]);
+    expect(events).toContainEqual(["release-parent-resume", "acknowledged"]);
     expect(events).toContainEqual(["protocol-cleanup", "activation-proven"]);
   });
 

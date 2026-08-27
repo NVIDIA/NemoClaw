@@ -19,6 +19,7 @@ import json
 import os
 import re
 import secrets
+import signal
 import stat
 import sys
 from typing import NoReturn
@@ -739,6 +740,10 @@ def main(argv: list[str] | None = None) -> int:
         state = _run(arguments[0])
         print(state)
         if arguments[0] == "acknowledge":
+            # Keep the exact publisher inspectable until the root controller
+            # resumes it. Its parent cannot report success before this process
+            # exits and is reaped.
+            os.kill(os.getpid(), signal.SIGSTOP)
             return 0
         return {
             "inactive": 0,

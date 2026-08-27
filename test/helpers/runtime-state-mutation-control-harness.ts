@@ -46,6 +46,8 @@ real_wait_for_reference_running = control._wait_for_reference_running
 real_prove_fence_shape = control._prove_fence_shape
 real_resume_reference = control._resume_reference
 real_prove_released_activation = control._prove_released_activation
+real_prove_parent_acknowledged_activation = control._prove_parent_acknowledged_activation
+real_resume_acknowledged_parent = control._resume_acknowledged_parent
 control._assert_private_procfs = lambda: None
 control._open_activation_guard_pidfd = lambda _reference: os.open(
     os.devnull, os.O_RDONLY
@@ -404,6 +406,10 @@ with tempfile.TemporaryDirectory() as root:
         receipt = control._load_released_receipt(durable_fd)
         events.append(["release-hold", receipt["releaseState"]])
     control._release_activation_hold = release_hold
+    def resume_acknowledged_parent(_marker):
+        receipt = control._load_released_receipt(durable_fd)
+        events.append(["release-parent-resume", receipt["releaseState"]])
+    control._resume_acknowledged_parent = resume_acknowledged_parent
     try:
         active_value = acquire_value()
         active = parse("acquire", active_value)
@@ -1011,7 +1017,15 @@ with tempfile.TemporaryDirectory() as root:
 
 release_states = {1: "T", 10: "T", 75: "T", 76: "T", 77: "T", 78: "T"}
 release_events = []
-control._wait_for_startup_release_ack = lambda *_args: release_events.append(["release-ack"])
+release_ack_exists = {"value": False}
+control._read_startup_release_ack = lambda *_args: (
+    {"acknowledged": True} if release_ack_exists["value"] else None
+)
+def wait_for_startup_release_ack(*_args):
+    release_events.append(["release-ack"])
+    release_ack_exists["value"] = True
+    release_states[10] = "T"
+control._wait_for_startup_release_ack = wait_for_startup_release_ack
 def state_process(original):
     return control.ProcessIdentity(
         original.pid,
@@ -1045,6 +1059,9 @@ def resume_reference(reference):
     return state_process(by_release_pid[reference.pid])
 control._resume_reference = resume_reference
 control._prove_released_activation = lambda *_args: release_events.append(["health"])
+control._prove_parent_acknowledged_activation = lambda *_args: release_events.append(
+    ["parent-ack-health"]
+)
 control._verify_activation_checkpoint = lambda *_args: release_events.append(["verify-checkpoint"])
 control._publish_activation_release = lambda *_args: release_events.append(["release-receipt"])
 terminated_release_pids = set()
@@ -1067,12 +1084,14 @@ with tempfile.TemporaryDirectory() as root:
 
         release_events.clear()
         release_states.update({1: "T", 10: "T", 75: "T", 76: "T", 77: "T", 78: "T"})
+        release_ack_exists["value"] = False
         terminated_release_pids.add(78)
         real_release_activation_hold(durable_fd, marker_for_helpers)
         results["transient_exit_release_events"] = list(release_events)
 
         release_events.clear()
         release_states.update({1: "T", 10: "T", 75: "T", 76: "T", 77: "T", 78: "T"})
+        release_ack_exists["value"] = False
         terminated_release_pids.clear()
         terminated_release_pids.add(77)
         results["persistent_exit_release"] = code(

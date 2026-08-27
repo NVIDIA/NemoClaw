@@ -18,6 +18,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import signal
 import sys
 import tempfile
 
@@ -155,6 +156,26 @@ with tempfile.TemporaryDirectory() as root:
     with open(release_ack_path, "rb") as stream:
         results["release_ack"] = json.load(stream)
     results["release_ack_committed"] = gate._run("acknowledge")
+    publisher_pid = os.fork()
+    if publisher_pid == 0:
+        null_fd = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(null_fd, 1)
+        os.dup2(null_fd, 2)
+        os.close(null_fd)
+        os._exit(gate.main(["acknowledge"]))
+    stopped_pid, stopped_status = os.waitpid(publisher_pid, os.WUNTRACED)
+    results["release_publisher_stopped"] = (
+        stopped_pid == publisher_pid
+        and os.WIFSTOPPED(stopped_status)
+        and os.WSTOPSIG(stopped_status) == signal.SIGSTOP
+    )
+    os.kill(publisher_pid, signal.SIGCONT)
+    resumed_pid, resumed_status = os.waitpid(publisher_pid, 0)
+    results["release_publisher_resumed"] = (
+        resumed_pid == publisher_pid
+        and os.WIFEXITED(resumed_status)
+        and os.WEXITSTATUS(resumed_status) == 0
+    )
     gate._capture_parent = lambda: {**start, "pid": 42}
     results["foreign_parent_ack"] = code(lambda: gate._run("acknowledge"))
     gate._capture_parent = lambda: start
@@ -217,6 +238,8 @@ describe("runtime state mutation startup gate", () => {
       release_ack_write_failure: "release-ack-write-failed",
       release_ack_nonce: "b".repeat(64),
       release_ack_committed: "b".repeat(64),
+      release_publisher_stopped: true,
+      release_publisher_resumed: true,
       foreign_parent_ack: "gate-start-mismatch",
       tampered_release: "release-candidate-mismatch",
       symlink_directory: "unsafe-directory",
