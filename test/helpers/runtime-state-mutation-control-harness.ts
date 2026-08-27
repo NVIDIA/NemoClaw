@@ -268,7 +268,7 @@ reference_signal_attempts = []
 control._recapture_reference = lambda _reference, _code="fenced-process-drift": start
 def signal_reference_after_rescan(selected, requested):
     reference_signal_attempts.append([selected.pid, requested])
-    if len(reference_signal_attempts) == 1:
+    if len(reference_signal_attempts) < 4:
         raise control.ControlError("writer-pid-reused")
 control._signal_exact_process = signal_reference_after_rescan
 real_signal_reference(control._process_reference(start), signal.SIGSTOP)
@@ -285,6 +285,12 @@ control._signal_exact_process = lambda _selected, _requested: (_ for _ in ()).th
 results["replaced_reference_signal"] = code(
     lambda: real_signal_reference(control._process_reference(start), signal.SIGSTOP)
 )
+control._recapture_reference = lambda _reference, _code="fenced-process-drift": start
+control.PROCESS_STATE_SECONDS = 0
+results["reference_signal_timeout"] = code(
+    lambda: real_signal_reference(control._process_reference(start), signal.SIGSTOP)
+)
+control.PROCESS_STATE_SECONDS = 5
 control._recapture_reference = real_recapture_reference
 control._signal_exact_process = real_signal_exact_process
 with tempfile.TemporaryDirectory() as atomic_root:

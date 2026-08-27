@@ -2758,17 +2758,24 @@ def _signal_exact_process(process: ProcessIdentity, requested_signal: int) -> No
 
 
 def _signal_reference(reference: ProcessReference, requested_signal: int) -> None:
-    for attempt in range(2):
+    deadline = time.monotonic() + PROCESS_STATE_SECONDS
+    while True:
         process = _recapture_reference(reference)
         try:
             _signal_exact_process(process, requested_signal)
             return
         except ControlError as error:
-            if error.code != "writer-pid-reused" or attempt > 0:
+            if error.code != "writer-pid-reused":
                 raise
-            # Re-open the persisted exact reference once. A real replacement
-            # fails recapture; a process that still matches can be signalled
-            # through a fresh pidfd without weakening the identity check.
+            # Re-open the persisted exact reference within the existing
+            # process-state deadline. A real replacement fails recapture; a
+            # process that still matches can be signalled through a fresh
+            # pidfd without weakening the identity check. A busy restart can
+            # cross more than one short-lived PID snapshot before settling.
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            time.sleep(min(POLL_SECONDS, remaining))
 
 
 def _wait_for_reference_state(

@@ -104,13 +104,16 @@ describe("runtime state mutation controller", () => {
     expect(harnessResult.writer_pid_reuse_scans_remaining).toBe(0);
   });
 
-  it("recaptures an exact process reference before retrying a raced signal (#10155)", () => {
+  it("keeps recapturing an exact process reference across raced signals (#10155)", () => {
     const sigstop = harnessResult.sigstop as number;
     expect(harnessResult.reference_signal_attempts).toEqual([
       [10, sigstop],
       [10, sigstop],
+      [10, sigstop],
+      [10, sigstop],
     ]);
     expect(harnessResult.replaced_reference_signal).toBe("fenced-process-drift");
+    expect(harnessResult.reference_signal_timeout).toBe("writer-pid-reused");
   });
 
   it("publishes, rolls an activated fence back, and recovers every durable phase (#7744)", () => {
