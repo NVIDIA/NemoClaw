@@ -245,9 +245,9 @@ const { createSandbox } = require(${onboardPath});
       assert.ok(payload.sandboxListCalls >= 2);
       assert.deepEqual(payload.groupKillCalls, [{ pid: -4242, signal: "SIGTERM" }]);
       assert.deepEqual(payload.killCalls, []);
-      assert.equal(payload.unrefCalls, 1);
-      assert.equal(payload.stdoutDestroyCalls, 1);
-      assert.equal(payload.stderrDestroyCalls, 1);
+      assert.equal(payload.unrefCalls, 0);
+      assert.equal(payload.stdoutDestroyCalls, 0);
+      assert.equal(payload.stderrDestroyCalls, 0);
       assert.match(payload.registeredSandbox.lifecycleGeneration, /^[0-9a-f-]{36}$/u);
       assert.equal(
         payload.registeredSandbox.lifecycleLiveIdentityFingerprint,

@@ -49,15 +49,18 @@
 // googlechat-trusted-proxy-fetch patch).
 //
 // ── Contract with the B-side wiring ──────────────────────────────────────────
-// The OpenShell provider's injectable credential key MUST be
-// `GOOGLE_CHAT_ACCESS_TOKEN`. When the provider is wired the gateway env carries
-// a REVISION-STAMPED placeholder `openshell:resolve:env:vNNN_GOOGLE_CHAT_ACCESS_TOKEN`.
-// This patch detects the credential is wired (env set) and returns the REVISION-LESS
-// alias `openshell:resolve:env:GOOGLE_CHAT_ACCESS_TOKEN` so the proxy always resolves
-// to the LATEST refreshed token — the revision-stamped form pins to the boot token,
-// which expires (~1h) and is not refreshed in a long-running process. When the env is
-// UNSET (the bridge provider was not wired) the patch THROWS, so a misconfigured
-// active channel fails loudly at send time instead of silently.
+// - The provider's injectable credential key MUST be `GOOGLE_CHAT_ACCESS_TOKEN`.
+// - Wired  -> env holds `openshell:resolve:env:vNNN_GOOGLE_CHAT_ACCESS_TOKEN`.
+//            This patch forwards that value VERBATIM.
+// - Unwired-> env unset, and the patch THROWS at send time rather than failing
+//            silently.
+// - A raw (non-placeholder) value passes through unchanged, for manual
+//   non-OpenShell deployments.
+//
+// Earlier versions substituted the revision-less alias, which OpenShell 0.0.106
+// refuses: this channel's provider profile declares `endpoints:`, so the key is
+// identity-bound and any placeholder without a revision resolves to
+// `credential_unavailable`. Forward what the gateway injected, unchanged.
 //
 // ── Long-term fix (remove this once it lands) ─────────────────────────────────
 // The clean fix is upstream in OpenClaw: a native pre-minted-token auth mode
@@ -133,29 +136,18 @@ export const outboundAuthPatchInternals = {} as OutboundAuthPatchInternals;
     );
   }
 
-  // The guard injected at the top of getGoogleChatAccessToken's body. When the
-  // OpenShell-provided credential is present (the env var is set), return the
-  // REVISION-LESS placeholder `openshell:resolve:env:<KEY>` — NOT the env var's
-  // own value. The sandbox env holds a *revision-stamped* placeholder
-  // (`openshell:resolve:env:vNNN_<KEY>`) that the proxy pins to the BOOT token;
-  // that token expires (~1h, Google SA tokens) and is NOT refreshed inside a
-  // long-running gateway process, so returning it directly makes outbound replies
-  // die after the first token lifetime ("credential is expired"). The revision-less
-  // alias always resolves to the LATEST refreshed token (gateway re-mints on
-  // schedule); a raw (non-placeholder) env value is returned as-is for manual
-  // non-OpenShell deployments. When the env is UNSET the guard THROWS (the outbound
-  // bearer must come from the gateway credential). Built as a single line (no
-  // template-literal escaping) for a clean source rewrite.
+  // Guard injected at the top of getGoogleChatAccessToken's body:
+  // - env set   -> return it verbatim (see the contract note above).
+  // - env unset -> throw; the bearer must come from the gateway credential.
+  // Emitted as one line, so the source rewrite needs no template-literal escaping.
   function buildBearerShortCircuitSource(): string {
-    var canonical = "openshell:resolve:env:" + ENV_VAR;
     return (
       'var __nemoGcRaw = (typeof process !== "undefined" && process.env) ' +
       "? process.env." +
       ENV_VAR +
       ' : void 0; if (typeof __nemoGcRaw === "string" && __nemoGcRaw.length > 0) { ' +
-      'return __nemoGcRaw.indexOf("openshell:resolve:env:") === 0 ? "' +
-      canonical +
-      '" : __nemoGcRaw; } throw new Error("nemoclaw googlechat: ' +
+      "return __nemoGcRaw; } " +
+      'throw new Error("nemoclaw googlechat: ' +
       ENV_VAR +
       ' is not set; the gateway-minted outbound bearer is unavailable"); /* ' +
       CALL_MARKER +
