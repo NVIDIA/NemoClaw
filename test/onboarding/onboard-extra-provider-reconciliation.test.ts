@@ -89,7 +89,6 @@ runner.run = (command, opts = {}) => {
     ? { status: 0, stdout: Buffer.from("my-assistant\nId: fixture-created-sandbox\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
 };
-require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 runner.runCapture = (command) => {
   const normalized = _n(command);
   const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
@@ -103,6 +102,7 @@ runner.runCapture = (command) => {
   }
   return "";
 };
+require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 sandboxBaseImage.resolveSandboxBaseImage = () => ({
