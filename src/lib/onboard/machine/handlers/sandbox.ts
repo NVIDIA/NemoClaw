@@ -1837,6 +1837,7 @@ class SandboxStateFlow<
     staleExtraProviders: readonly string[],
     resourceProfile: ResourceProfile | null,
     hermesToolGateways: readonly string[],
+    deferSandboxEffectsUntilPolicyVerification: boolean,
   ): Promise<CompleteSandboxCreateIntent> {
     clearExternallyManagedPolicyPresets(state.session, this.deps.updateSession);
     const reuseRegisteredCredentials = this.resumesSandboxPrompts && this.options.resume;
@@ -1892,7 +1893,7 @@ class SandboxStateFlow<
       ...(this.options.authoritativePolicyTier !== undefined
         ? { policyTier: this.options.authoritativePolicyTier }
         : {}),
-      ...deferredSandboxEffectsIntent(this.deferSandboxEffectsUntilPolicyVerification()),
+      ...deferredSandboxEffectsIntent(deferSandboxEffectsUntilPolicyVerification),
       ...(this.options.rebuildPreservedEnv
         ? { rebuildPreservedEnv: this.options.rebuildPreservedEnv }
         : {}),
@@ -2182,6 +2183,7 @@ class SandboxStateFlow<
     messagingPlan: SandboxMessagingPlan | null,
     registryMessagingAuthoritySnapshot: RegistryMessagingAuthority,
     decision: SandboxCreationDecision,
+    deferSandboxEffectsUntilPolicyVerification: boolean,
     activateVerifiedCredentialProviders?: (
       state: SandboxStepState<WebSearchConfig>,
       revalidatePolicyRequirements: (operation: string) => void,
@@ -2220,6 +2222,7 @@ class SandboxStateFlow<
         extraProviderPlan.staleExtraProviders,
         resourceProfile,
         effectiveHermesToolGateways,
+        deferSandboxEffectsUntilPolicyVerification,
       );
       this.assertProviderlessApfCreatePlan(createIntent);
       const providerlessApf =
@@ -2254,7 +2257,7 @@ class SandboxStateFlow<
       let sandboxName: string;
       try {
         revalidatePolicyRequirements(`create sandbox '${requestedSandboxName}'`);
-        if (this.options.fresh && !this.deferSandboxEffectsUntilPolicyVerification()) {
+        if (this.options.fresh && !deferSandboxEffectsUntilPolicyVerification) {
           this.deps.stopStaleDashboardListenersForSandbox(
             this.deps.listRegistrySandboxes().sandboxes,
             requestedSandboxName,
@@ -2546,7 +2549,17 @@ class SandboxStateFlow<
         ),
         verifiedPolicyRevalidation,
       );
-    if (!this.deferSandboxEffectsUntilPolicyVerification()) {
+    // A create-time policy with credential bindings cannot be installed before
+    // those providers are attached. For ordinary managed creation, register the
+    // required providers first and let `sandbox create --provider` attach them
+    // atomically with that policy. Keep APF-selected creation behind its strict
+    // post-create boundary because APF owns the initial policy.
+    const hasCreateTimeCredentialBindings =
+      webSearchProviderBindings.length > 0 || messagingProviderBindings.length > 0;
+    const deferCredentialProviderEffects =
+      this.deferSandboxEffectsUntilPolicyVerification() &&
+      (this.options.apfInterceptorRequested === true || !hasCreateTimeCredentialBindings);
+    if (!deferCredentialProviderEffects) {
       nextState = await activateCredentialProviders(nextState);
     }
     return this.createAndRecordSandbox(
@@ -2555,7 +2568,8 @@ class SandboxStateFlow<
       messaging.plan,
       registryMessagingAuthority,
       decision,
-      this.deferSandboxEffectsUntilPolicyVerification() ? activateCredentialProviders : undefined,
+      deferCredentialProviderEffects,
+      deferCredentialProviderEffects ? activateCredentialProviders : undefined,
     );
   }
 
