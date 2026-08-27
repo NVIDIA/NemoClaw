@@ -263,11 +263,13 @@ async def wait_for_heartbeat_ack(ws, results):
     raise AssertionError("timed out waiting for HEARTBEAT_ACK")
 
 
+results = []
+
+
 async def main():
     port = int(os.environ["FAKE_DISCORD_GATEWAY_CLIENT_PORT"])
     host = os.environ.get("FAKE_DISCORD_GATEWAY_CLIENT_HOST", "host.docker.internal")
     token = read_env_token()
-    results = []
     client = discord.Client(intents=discord.Intents.none())
     setup = getattr(client, "_async_setup_hook", None)
     if setup is not None:
@@ -326,6 +328,8 @@ async def main():
 try:
     asyncio.run(main())
 except Exception as exc:
+    if results:
+        print("\n".join(results))
     print(f"ERROR {type(exc).__name__}: {exc}")
 `;
 
@@ -623,6 +627,22 @@ PY`,
     fakeGateway.port,
     redactionValues,
   );
+  const gatewayCapture = await host.command(
+    "bash",
+    [
+      "-lc",
+      'if [ -f "$1" ]; then sed -n "1,80p" "$1"; else printf "MISSING_CAPTURE\\n"; fi',
+      "read-hermes-discord-gateway-capture",
+      fakeGateway.captureFile,
+    ],
+    {
+      artifactName: "hermes-discord-gateway-capture",
+      env,
+      redactionValues,
+      timeoutMs: 30_000,
+    },
+  );
+  expectExitZero(gatewayCapture, "Hermes Discord Gateway capture");
   expectExitZero(nativeGateway, "Hermes Python Discord Gateway protocol proof");
   expect(resultText(nativeGateway)).toContain("UPGRADE");
   expect(resultText(nativeGateway)).toContain("HELLO");
