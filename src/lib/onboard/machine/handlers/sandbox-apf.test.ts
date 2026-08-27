@@ -21,7 +21,7 @@ describe("APF sandbox create selection", () => {
     expect(apfCreateFingerprintFields(true)).toEqual(["apf-interceptor"]);
   });
 
-  it("defers fresh-create credentials behind the verified APF effect callback (#9833)", async () => {
+  it("defers providerless creation effects behind the verified APF callback (#9833)", async () => {
     const session = createSession({ apfInterceptorRequested: true });
     const { deps, calls } = createDeps(
       {
@@ -30,10 +30,6 @@ describe("APF sandbox create selection", () => {
           gatewayName: "nemoclaw",
           pendingRouteReservation: true,
           reservationSessionId: session.sessionId,
-          provider: "provider",
-          model: "model",
-          endpointUrl: null,
-          preferredInferenceApi: "openai-completions",
           webSearchEnabled: false,
           toolDisclosure: "progressive",
           fromDockerfile: null,
@@ -51,9 +47,15 @@ describe("APF sandbox create selection", () => {
       ...baseOptions(deps, session),
       fresh: true,
       apfInterceptorRequested: true,
+      model: "",
+      provider: "",
+      preferredInferenceApi: null,
     });
 
     expect(calls.stageCredentialProviders).not.toHaveBeenCalled();
+    expect(calls.configureWebSearch).not.toHaveBeenCalled();
+    expect(calls.validateBrave).not.toHaveBeenCalled();
+    expect(calls.setupMessaging).not.toHaveBeenCalled();
     expect(calls.createSandbox).toHaveBeenCalledOnce();
     const createCall = calls.createSandbox.mock.calls[0] ?? [];
     expect(createCall.at(-2)).toMatchObject({
@@ -72,6 +74,73 @@ describe("APF sandbox create selection", () => {
     );
   });
 
+  it.each([
+    [
+      "an explicit web-search environment selection",
+      { env: { NEMOCLAW_WEB_SEARCH_PROVIDER: "brave", BRAVE_API_KEY: "secret-value" } },
+    ],
+    ["a selected messaging channel", { selectedMessagingChannels: ["telegram"] }],
+  ])("rejects %s before credential, provider, or sandbox effects", async (_label, intent) => {
+    const session = createSession({ apfInterceptorRequested: true });
+    const { deps, calls } = createDeps({}, session);
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        ...intent,
+        fresh: true,
+        apfInterceptorRequested: true,
+        model: "",
+        provider: "",
+        preferredInferenceApi: null,
+      }),
+    ).rejects.toThrow(/supports providerless sandbox creation only/u);
+
+    expect(calls.configureWebSearch).not.toHaveBeenCalled();
+    expect(calls.validateBrave).not.toHaveBeenCalled();
+    expect(calls.setupMessaging).not.toHaveBeenCalled();
+    expect(calls.stageCredentialProviders).not.toHaveBeenCalled();
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+  });
+
+  it("rejects a resolved APF provider plan before sandbox or provider effects (#9833)", async () => {
+    const session = createSession({ apfInterceptorRequested: true });
+    const { deps, calls } = createDeps(
+      {
+        getSandboxRegistryEntry: (name) => ({
+          name,
+          gatewayName: "nemoclaw",
+          pendingRouteReservation: true,
+          reservationSessionId: session.sessionId,
+        }),
+        getSandboxRecreateObservation: () => ({
+          state: "missing" as const,
+          liveIdentityFingerprint: null,
+        }),
+        planRegisteredExtraProviders: () => ({
+          extraProviders: [],
+          staleExtraProviders: ["stale-provider"],
+        }),
+      },
+      session,
+    );
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        fresh: true,
+        apfInterceptorRequested: true,
+        model: "",
+        provider: "",
+        preferredInferenceApi: null,
+      }),
+    ).rejects.toThrow(/supports providerless sandbox creation only/u);
+
+    expect(calls.resolveCreateIntent).not.toHaveBeenCalled();
+    expect(calls.stageCredentialProviders).not.toHaveBeenCalled();
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+  });
+
   it("rejects registered sandbox adoption before credential staging (#9833)", async () => {
     const session = createSession({ apfInterceptorRequested: true });
     const { deps, calls } = createDeps({}, session);
@@ -81,6 +150,9 @@ describe("APF sandbox create selection", () => {
         ...baseOptions(deps, session),
         fresh: true,
         apfInterceptorRequested: true,
+        model: "",
+        provider: "",
+        preferredInferenceApi: null,
       }),
     ).rejects.toThrow(/cannot adopt registered sandbox/u);
 
@@ -106,6 +178,9 @@ describe("APF sandbox create selection", () => {
         ...baseOptions(deps, session),
         fresh: true,
         apfInterceptorRequested: true,
+        model: "",
+        provider: "",
+        preferredInferenceApi: null,
       }),
     ).rejects.toThrow(/cannot adopt live sandbox/u);
 

@@ -129,7 +129,7 @@ runner.runCapture = (command) => {
   }
   if (normalized.includes("sandbox get") && normalized.includes(sandboxName)) {
     return scenario === "reuse"
-      ? [sandboxName, "Id: fixture-created-sandbox"].join(String.fromCharCode(10))
+      ? [sandboxName, "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10))
       : "";
   }
   if (normalized.includes("sandbox list")) return sandboxName + " Ready";

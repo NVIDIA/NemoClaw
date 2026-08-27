@@ -17,6 +17,7 @@ import {
   HERMES_PORTABLE_RECEIPT_SCHEMA_VERSION,
   HERMES_PORTABLE_SUCCESSOR_SCHEMA_VERSION,
   captureHermesPortablePolicySource,
+  hasHermesPortableReceiptCandidate,
   hermesPortablePolicySourcePath,
   hermesPortableReceiptDirectory,
   hermesPortableReceiptInternals,
@@ -520,7 +521,25 @@ describe("Hermes portable receipt authority", () => {
     expect(repeated.identity).toEqual(historical.identity);
   });
 
-  it("requalifies an identical same-path policy copy only through schema 6 (#10423)", () => {
+  it("rejects a foreign-owned higher socket directory before schema-6 publication (#10423)", () => {
+    const socket = socketAuthority();
+    const reserved = publish(
+      pending({
+        socketAuthority: {
+          ...socket,
+          directoryChain: socket.directoryChain.map((entry, index) =>
+            index === 2 ? { ...entry, mode: String(0o40700), ownerUid: "2000" } : entry,
+          ),
+        },
+      }),
+    );
+    const configured = publish(configuring(reserved));
+    publish(active(configured));
+
+    expect(() => publishSuccessor()).toThrow("has invalid stable directory authority");
+  });
+
+  it("rejects direct schema-6 publication after an identical policy copy (#10423)", () => {
     const historical = publishActiveReceipt();
     const policyTarget = historical.receipt.policy.sourcePath;
     const replacement = `${policyTarget}.replacement`;
@@ -534,10 +553,11 @@ describe("Hermes portable receipt authority", () => {
       readHermesPortableLifecycleReceiptForClassification(SANDBOX, stateDir)?.receipt.phase,
     ).toBe("active");
 
-    const migrated = publishSuccessor();
-    expect(migrated.successor.receipt.predecessorActiveSha256).toBe(historical.sha256);
-    expect(readHermesPortableLifecycleReceipt(SANDBOX, stateDir)?.successor?.sha256).toBe(
-      migrated.successor.sha256,
+    expect(() => publishSuccessor()).toThrow(
+      "durable policy source disagrees with its receipt authority",
+    );
+    expect(readHermesPortableLifecycleReceiptForClassification(SANDBOX, stateDir)?.successor).toBe(
+      undefined,
     );
   });
 
@@ -553,7 +573,7 @@ describe("Hermes portable receipt authority", () => {
       "durable policy source disagrees with its semantic authority",
     );
     expect(() => publishSuccessor()).toThrow(
-      "durable policy source disagrees with its semantic authority",
+      "durable policy source disagrees with its receipt authority",
     );
   });
 
@@ -602,6 +622,7 @@ describe("Hermes portable receipt authority", () => {
         { stateDir: path.join(stateDir, "state") },
       ),
     ).toThrow("simulated schema-6 process exit");
+    expect(hasHermesPortableReceiptCandidate(SANDBOX, stateDir)).toBe(true);
     expect(() => readHermesPortableLifecycleReceipt(SANDBOX, stateDir)).toThrow(
       "incomplete or unknown publication evidence",
     );
