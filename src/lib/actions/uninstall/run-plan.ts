@@ -2885,7 +2885,11 @@ function executeOpenShellResourceCleanup(
     dockerIsAvailable(runtime)
   ) {
     // An unreachable gateway can leave a stopped sandbox container attached to the state volume.
-    removeDockerContainers(runtime);
+    removeDockerContainers(
+      runtime,
+      options.gatewayName || resolveGatewayName(GATEWAY_PORT),
+      sandboxNames,
+    );
   }
   if (
     !portableRuntimeCleanup &&
