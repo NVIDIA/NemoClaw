@@ -42,6 +42,9 @@ function runTerminalDashboardScenario(scenario: "create" | "reuse") {
   const dockerGpuSandboxCreatePath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "onboard", "docker-gpu-sandbox-create.ts"),
   );
+  const sandboxCreateStreamPath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "sandbox", "create-stream.ts"),
+  );
   const onboardScriptMocksPath = JSON.stringify(
     path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
   );
@@ -59,8 +62,7 @@ const fixtureMocks = require(${onboardScriptMocksPath});
 const agentDefs = require(${agentDefsPath});
 const agentOnboard = require(${agentOnboardPath});
 const dockerGpuSandboxCreate = require(${dockerGpuSandboxCreatePath});
-const childProcess = require("node:child_process");
-const { EventEmitter } = require("node:events");
+const sandboxCreateStream = require(${sandboxCreateStreamPath});
 const scenario = ${JSON.stringify(scenario)};
 const sandboxName = "deepagents-box";
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
@@ -70,7 +72,6 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
 const commands = [];
 const registerCalls = [];
 const updateCalls = [];
-const keepAlive = setInterval(() => {}, 1000);
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const managedCredentialByProviderSuffix = new Map([
   ["-telegram-bridge", "TELEGRAM_BOT_TOKEN"],
@@ -192,20 +193,11 @@ const createFixture =
       })
     : null;
 
-childProcess.spawn = (...args) => {
+sandboxCreateStream.streamSandboxCreate = async (command, args, env) => {
   if (scenario === "reuse") throw new Error("unexpected sandbox create");
-  createdSandbox.create(args.flat());
-  const child = new EventEmitter();
-  child.stdout = new EventEmitter();
-  child.stderr = new EventEmitter();
-  child.unref = () => {};
-  child.kill = () => true;
-  child.pid = 4242;
-  commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
-  process.nextTick(() => {
-    child.stdout.emit("data", Buffer.from("Created sandbox: " + sandboxName + "\n"));
-  });
-  return child;
+  createdSandbox.create([command, ...args]);
+  commands.push({ command: _n([command, ...args]), env });
+  return { status: 0, output: "Created sandbox: " + sandboxName, sawProgress: true };
 };
 
 const { createSandbox } = require(${onboardPath});
@@ -236,9 +228,7 @@ const agent = agentDefs.loadAgent("langchain-deepagents-code");
       : createArgs),
   );
   console.log(JSON.stringify({ resultName, commands, registerCalls, updateCalls }));
-  clearInterval(keepAlive);
 })().catch((error) => {
-  clearInterval(keepAlive);
   console.error(error);
   process.exit(1);
 });
