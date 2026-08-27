@@ -3,7 +3,9 @@
 
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+import InternalInstallerPlanCommand from "../../src/commands/internal/installer/plan";
 
 const CLI = path.join(import.meta.dirname, "../..", "bin", "nemoclaw.js");
 
@@ -60,7 +62,7 @@ describe("internal oclif namespace", () => {
     expect(result.stdout).toContain("nemoclaw internal dev npm-link-or-shim");
   });
 
-  it("exposes installer plan commands through oclif routing", () => {
+  it("exposes installer plan commands through oclif routing", async () => {
     const help = spawnSync(process.execPath, [CLI, "internal", "installer", "plan", "--help"], {
       encoding: "utf-8",
     });
@@ -96,33 +98,29 @@ describe("internal oclif namespace", () => {
       runtime: { ok: true },
     });
 
-    const deferredEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      NEMOCLAW_AGENT: "langchain-deepagents-code",
-      NEMOCLAW_PROVIDER: "build",
-    };
-    delete deferredEnv.NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE;
-    delete deferredEnv.NEMOCLAW_PROVIDER_KEY;
-    delete deferredEnv.NVIDIA_API_KEY;
-    delete deferredEnv.NVIDIA_INFERENCE_API_KEY;
-    const decision = spawnSync(
-      process.execPath,
-      [
-        CLI,
-        "internal",
-        "installer",
-        "plan",
-        "--defer-onboarding",
-        "--deferred-onboarding-supported",
-        "--registered-sandbox-count",
-        "0",
-        "--deferred-onboarding-decision",
-      ],
-      { encoding: "utf-8", env: deferredEnv },
-    );
-
-    expect(decision.status, decision.stderr).toBe(0);
-    expect(decision.stdout.trim()).toBe("defer");
+    vi.stubEnv("NEMOCLAW_AGENT", "langchain-deepagents-code");
+    vi.stubEnv("NEMOCLAW_PROVIDER", "build");
+    vi.stubEnv("NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE", "");
+    vi.stubEnv("NEMOCLAW_PROVIDER_KEY", "");
+    vi.stubEnv("NVIDIA_API_KEY", "");
+    vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "");
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      await InternalInstallerPlanCommand.run(
+        [
+          "--defer-onboarding",
+          "--deferred-onboarding-supported",
+          "--registered-sandbox-count",
+          "0",
+          "--deferred-onboarding-decision",
+        ],
+        process.cwd(),
+      );
+      expect(log).toHaveBeenCalledWith("defer");
+    } finally {
+      log.mockRestore();
+      vi.unstubAllEnvs();
+    }
   });
 
   it("exposes installer ref and env normalization helpers through oclif routing", () => {

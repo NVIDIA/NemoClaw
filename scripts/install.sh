@@ -5687,6 +5687,7 @@ clear_station_dual_pair_resume() {
 
 prepare_installer_host() {
   maybe_offer_express_install
+  validate_deferred_onboarding_request
   # Reject conflicting explicit Station selections and pending-pair bypasses
   # before the local host-preparation helper can mutate packages or Docker.
   validate_station_pair_selection
@@ -6174,10 +6175,6 @@ main() {
   # already recorded by preflight above. Station selection runs its pinned
   # host prerequisite preparation before the generic Docker bootstrap.
   prepare_installer_host
-
-  # Express selection can change the provider after the initial argument
-  # validation. Recheck the deferred-onboarding scope before installation.
-  validate_deferred_onboarding_request
 
   install_nemoclaw_before_onboarding
 

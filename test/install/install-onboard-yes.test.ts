@@ -738,6 +738,38 @@ describe("deferred onboarding", () => {
     },
   );
 
+  it("rejects an Express provider change before host preparation", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-deferred-order-"));
+    const tracePath = path.join(tempRoot, "trace.log");
+    const result = runInstallerSourcedBody(
+      `
+        set -e
+        export DEFER_ONBOARDING=1
+        export NEMOCLAW_AGENT=hermes
+        export NEMOCLAW_SOURCE_ROOT=${JSON.stringify(path.dirname(path.dirname(INSTALLER_PAYLOAD)))}
+        maybe_offer_express_install() {
+          NEMOCLAW_PROVIDER=install-vllm
+          export NEMOCLAW_PROVIDER
+        }
+        validate_station_pair_selection() { printf 'station\\n' >> "$TRACE_PATH"; }
+        ensure_station_express_host() { printf 'station-host\\n' >> "$TRACE_PATH"; }
+        prepare_portable_experimental_runtime_override() { printf 'portable\\n' >> "$TRACE_PATH"; }
+        ensure_docker() { printf 'docker\\n' >> "$TRACE_PATH"; }
+        ensure_openshell_build_deps() { printf 'openshell\\n' >> "$TRACE_PATH"; }
+        prepare_installer_host
+      `,
+      { extraEnv: { TRACE_PATH: tracePath } },
+    );
+    onTestFinished(() => {
+      result.remove();
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    });
+
+    expect(result.result.status).not.toBe(0);
+    expect(result.output).toContain("NVIDIA hosted inference only");
+    expect(fs.existsSync(tracePath)).toBe(false);
+  });
+
   it.each([
     ["NVIDIA_INFERENCE_API_KEY", { inferenceKey: "nvapi-primary-runtime-test" }],
     ["NVIDIA_API_KEY", { nvidiaApiKey: "nvapi-alias-runtime-test" }],
