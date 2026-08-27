@@ -179,7 +179,9 @@ describe("OpenShell sandbox identity reading", () => {
         runCaptureOpenshell,
         sleep,
       }),
-    ).toThrow("OpenShell did not return the exact created identity for sandbox 'alpha'.");
+    ).toThrow(
+      "OpenShell did not return the exact created identity for sandbox 'alpha'. Diagnostic class: selector-output-malformed.",
+    );
     expect(runCaptureOpenshell).toHaveBeenCalledOnce();
     expect(sleep).not.toHaveBeenCalled();
   });
@@ -198,7 +200,9 @@ describe("OpenShell sandbox identity reading", () => {
         runCaptureOpenshell,
         sleep,
       }),
-    ).toThrow("OpenShell did not return the exact created identity for sandbox 'alpha'.");
+    ).toThrow(
+      "OpenShell did not return the exact created identity for sandbox 'alpha'. Diagnostic class: selector-unavailable.",
+    );
     expect(runCaptureOpenshell).toHaveBeenCalledOnce();
     expect(sleep).not.toHaveBeenCalled();
   });

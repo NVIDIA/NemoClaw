@@ -123,7 +123,16 @@ type CreatedOpenShellSandboxIdentityInput = {
 type CreatedOpenShellSandboxIdentityObservation =
   | { readonly state: "matched"; readonly sandboxId: string }
   | { readonly state: "pending"; readonly sandboxId: string | null }
-  | { readonly state: "invalid" };
+  | {
+      readonly state: "invalid";
+      readonly diagnostic:
+        | "selector-unavailable"
+        | "selector-output-malformed"
+        | "selector-output-ambiguous"
+        | "selector-row-malformed"
+        | "selector-identity-mismatch"
+        | "selector-metadata-malformed";
+    };
 
 function assertCreateAttemptNonce(createAttemptNonce: string): void {
   if (!/^[0-9a-f]{62}$/u.test(createAttemptNonce)) {
@@ -131,9 +140,9 @@ function assertCreateAttemptNonce(createAttemptNonce: string): void {
   }
 }
 
-function createdIdentityError(sandboxName: string): Error {
+function createdIdentityError(sandboxName: string, diagnostic = "settlement-incomplete"): Error {
   return new Error(
-    `OpenShell did not return the exact created identity for sandbox '${sandboxName}'.`,
+    `OpenShell did not return the exact created identity for sandbox '${sandboxName}'. Diagnostic class: ${diagnostic}.`,
   );
 }
 
@@ -185,15 +194,17 @@ function observeCreatedOpenShellSandboxId(
       },
     );
   } catch {
-    return { state: "invalid" };
+    return { state: "invalid", diagnostic: "selector-unavailable" };
   }
   const rows = parseOpenShellSandboxListJson(output);
-  if (!rows) return { state: "invalid" };
+  if (!rows) return { state: "invalid", diagnostic: "selector-output-malformed" };
   if (rows.length === 0) return { state: "pending", sandboxId: null };
-  if (rows.length !== 1) return { state: "invalid" };
+  if (rows.length !== 1) {
+    return { state: "invalid", diagnostic: "selector-output-ambiguous" };
+  }
   const row = rows[0];
   if (!row || typeof row !== "object" || Array.isArray(row)) {
-    return { state: "invalid" };
+    return { state: "invalid", diagnostic: "selector-row-malformed" };
   }
   const candidate = row as Record<string, unknown>;
   const labels = candidate.labels;
@@ -206,12 +217,12 @@ function observeCreatedOpenShellSandboxId(
     !Object.values(labels as Record<string, unknown>).every((label) => typeof label === "string") ||
     (labels as Record<string, string>)[NEMOCLAW_CREATE_ATTEMPT_LABEL] !== input.createAttemptNonce
   ) {
-    return { state: "invalid" };
+    return { state: "invalid", diagnostic: "selector-identity-mismatch" };
   }
   if (!isStrictSandboxListJsonRow(candidate)) {
     return hasIncompleteCreatedIdentityMetadata(candidate)
       ? { state: "pending", sandboxId: candidate.id }
-      : { state: "invalid" };
+      : { state: "invalid", diagnostic: "selector-metadata-malformed" };
   }
   return { state: "matched", sandboxId: candidate.id };
 }
@@ -224,7 +235,12 @@ export function resolveCreatedOpenShellSandboxId(
     input,
     CREATED_IDENTITY_SETTLEMENT_TIMEOUT_MS,
   );
-  if (observation.state !== "matched") throw createdIdentityError(input.sandboxName);
+  if (observation.state !== "matched") {
+    throw createdIdentityError(
+      input.sandboxName,
+      observation.state === "invalid" ? observation.diagnostic : "settlement-pending",
+    );
+  }
   return observation.sandboxId;
 }
 
@@ -253,6 +269,7 @@ export function settleCreatedOpenShellSandboxId(input: {
 
   let previousNowMs = startedAt;
   let pendingSandboxId: string | null = null;
+  let diagnostic = "settlement-incomplete";
   const readNow = (): number => {
     const currentNowMs = now();
     if (!Number.isFinite(currentNowMs) || currentNowMs < previousNowMs) {
@@ -271,7 +288,10 @@ export function settleCreatedOpenShellSandboxId(input: {
       if (pendingSandboxId && observation.sandboxId !== pendingSandboxId) break;
       return observation.sandboxId;
     }
-    if (observation.state === "invalid") break;
+    if (observation.state === "invalid") {
+      diagnostic = observation.diagnostic;
+      break;
+    }
     if (observation.sandboxId === null) {
       if (pendingSandboxId) break;
     } else if (pendingSandboxId && observation.sandboxId !== pendingSandboxId) {
@@ -285,7 +305,7 @@ export function settleCreatedOpenShellSandboxId(input: {
     input.sleep(Math.min(CREATED_IDENTITY_SETTLEMENT_INTERVAL_MS, remainingAfterReadMs));
   }
 
-  throw createdIdentityError(input.sandboxName);
+  throw createdIdentityError(input.sandboxName, diagnostic);
 }
 
 /**
