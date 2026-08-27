@@ -741,7 +741,7 @@ describe("onboard provider helpers", () => {
     expect(calls.flatMap(({ command }) => command)).not.toContain(credential);
   });
 
-  it("accepts namespaced credentials retained by an existing messaging provider", () => {
+  it("accepts namespaced credentials retained by an existing messaging provider (#10153)", () => {
     const commands: string[] = [];
     const providerMetadata = {
       status: 0,

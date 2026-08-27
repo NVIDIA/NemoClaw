@@ -2576,7 +2576,7 @@ If you want to upgrade the sandbox while preserving state, use `$$nemoclaw <name
 
 <Warning title="Recover a Deferred Provider Refresh Failure">
 If provider attachment fails after NemoClaw verifies the created sandbox, it preserves the exact identity and policy checkpoint and does not publish the completed sandbox registry entry.
-The live OpenShell sandbox can still be `Ready`; the diagnostic reports its observed state and whether its durable identity still matches the checkpoint.
+The live OpenShell sandbox can still be `Ready` even though the completed registry entry is unavailable.
 The provider-refresh record stores the current phase and attached provider names, not credentials.
 The recovery command attempts to wipe manifest-defined agent state, destroys the exact checkpointed sandbox, and removes its registry entry.
 The `--force` option suppresses confirmation:
