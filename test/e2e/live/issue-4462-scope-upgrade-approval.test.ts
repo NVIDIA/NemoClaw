@@ -15,6 +15,7 @@ import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import {
   adminApprovalConnectScript,
   extractPendingRequestId,
+  ISSUE_4462_GATEWAY_COMPLETED_RUNS_SH,
   ISSUE_4462_SCOPE_UPGRADE_PHASES,
 } from "./issue-4462-admin-approval-helper.ts";
 
@@ -31,11 +32,9 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     ...buildAvailabilityProbeEnv(),
     PATH: `${os.homedir()}/.local/bin:${os.homedir()}/.npm-global/bin:${process.env.PATH ?? ""}`,
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-    // Keep the sole approval owner available for the complete install phase.
-    // The long post-settlement cadence prevents it from racing the later
-    // manual authorization proof.
+    // Keep the auto-pair watcher available through installation and the later
+    // live operator.write proof.
     NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: AUTO_PAIR_DEADLINE_SECS,
-    NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: AUTO_PAIR_DEADLINE_SECS,
     NEMOCLAW_FRESH: "1",
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_RECREATE_SANDBOX: "1",
@@ -504,14 +503,13 @@ contains_integer_42() {
 }
 
 approval_state() {
-python3 - "$@" 3<&3 4<&4 5<&5 <<'PY'
+python3 - "$@" 3<&3 4<&4 <<'PY'
 import base64, hashlib, json, os, re, sys, tempfile, time
 from pathlib import Path
 
-mode, want, expected_device_id, approve_rc=sys.argv[1:5]
+mode, want, expected_device_id=sys.argv[1:4]
 target_raw=os.fdopen(3).read().strip()
 snapshot_raw=os.fdopen(4).read().strip()
-raw_log=os.fdopen(5).read()[:2000]
 parsed_target=json.loads(target_raw) if target_raw else {}
 parsed_snapshot=json.loads(snapshot_raw) if snapshot_raw else {}
 target=parsed_target if isinstance(parsed_target, dict) else {}
@@ -519,16 +517,13 @@ snapshot=parsed_snapshot if isinstance(parsed_snapshot, dict) else {}
 root=Path(os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw')
 allowed={'operator.pairing','operator.read','operator.write'}
 final_scopes=allowed
-SETTLE_TIMEOUT_SECONDS=10.0
+SETTLE_TIMEOUT_SECONDS=15.0
 SETTLE_POLL_SECONDS=0.2
 SETTLE_ATTEMPTS=int(SETTLE_TIMEOUT_SECONDS / SETTLE_POLL_SECONDS) + 1
 
 def norm(value): return str(value or '').strip()
 def fail(message):
-    safe=re.sub(r'(?i)(["\x27]?[A-Za-z0-9_.-]*token["\x27]?\s*[:=]\s*["\x27]?)[A-Za-z0-9._~+/=-]{8,}', r'\1<redacted>', raw_log)
-    safe=re.sub(r'(?i)(Bearer\s+)\S+', r'\1<redacted>', safe)
-    if safe.strip(): print(safe, file=sys.stderr)
-    raise SystemExit(f'{message} (approve rc={approve_rc})')
+    raise SystemExit(message)
 def load(path):
     try: value=json.loads(path.read_text(encoding='utf-8'))
     except FileNotFoundError: return {}
@@ -1057,12 +1052,12 @@ PY
 }
 
 approval_target_json=
-approve_request() {
-  local request_id="$1" expected_device_id="$2" approve_output approve_rc prepare_output post_output prepared snapshot_json
+await_scope_upgrade() {
+  local request_id="$1" expected_device_id="$2" prepare_output post_output prepared snapshot_json
   local attempt=1 id_count=0 original_request_id seen_request_ids= target_json=
   while [ "$attempt" -le 3 ]; do
     original_request_id="$request_id"
-    if ! prepare_output="$(approval_state prepare "$request_id" "$expected_device_id" 0 3<<<"$target_json" 4</dev/null 5</dev/null)"; then
+    if ! prepare_output="$(approval_state prepare "$request_id" "$expected_device_id" 3<<<"$target_json" 4</dev/null)"; then
       return 1
     fi
     case "$prepare_output" in
@@ -1103,20 +1098,14 @@ approve_request() {
       id_count=$((id_count + 1))
     fi
     if [ -z "$target_json" ]; then target_json="$snapshot_json"; fi
-    echo "ISSUE_4462_STAGE=approve-scope-upgrade attempt=$attempt request=$request_id"
-    echo "ISSUE_4462_APPROVAL_CONTEXT=validated-repair-cli"
-    approve_rc=0
-    set +e
-    approve_output="$(openclaw devices approve "$request_id" --json 2>&1)"
-    approve_rc=$?
-    set -e
-    set +e
-    post_output="$(approval_state observe "$request_id" "$expected_device_id" "$approve_rc" \
-      3<<<"$target_json" 4<<<"$snapshot_json" 5<<<"$approve_output")"
-    post_rc=$?
-    set -e
-    unset approve_output snapshot_json
-    if [ "$post_rc" -ne 0 ]; then return 1; fi
+    echo "ISSUE_4462_STAGE=await-auto-scope-upgrade attempt=$attempt request=$request_id"
+    echo "ISSUE_4462_APPROVAL_CONTEXT=auto-pair-watcher-owned-repair-cli"
+    if ! post_output="$(approval_state observe "$request_id" "$expected_device_id" \
+      3<<<"$target_json" 4<<<"$snapshot_json")"; then
+      unset snapshot_json
+      return 1
+    fi
+    unset snapshot_json
     case "$post_output" in
       "CONVERGED "*)
         approval_target_json="$target_json"
@@ -1127,12 +1116,12 @@ approve_request() {
       *) echo "INVALID_APPROVAL_OBSERVE_RESULT" >&2; return 1 ;;
     esac
     if [ "$attempt" -ge 3 ]; then
-      echo "SCOPE_APPROVAL_RETRY_EXHAUSTED next=$request_id" >&2
+      echo "SCOPE_APPROVAL_WAIT_EXHAUSTED next=$request_id" >&2
       return 1
     fi
     attempt=$((attempt + 1))
   done
-  echo "SCOPE_APPROVAL_RETRY_EXHAUSTED" >&2
+  echo "SCOPE_APPROVAL_WAIT_EXHAUSTED" >&2
   return 1
 }
 
@@ -1192,8 +1181,8 @@ if [ -z "$request_id" ]; then
   request_id="$(printf '%s' "$state" | select_scope_request "$paired_device_id" 2>/dev/null || true)"
 fi
 
-approve_request "$request_id" "$paired_device_id"
-proof_output="$(approval_state prove "" "$paired_device_id" 0 3<<<"$approval_target_json" 4</dev/null 5</dev/null)"
+await_scope_upgrade "$request_id" "$paired_device_id"
+proof_output="$(approval_state prove "" "$paired_device_id" 3<<<"$approval_target_json" 4</dev/null)"
 case "$proof_output" in
   "CONVERGED "*) final_device="\${proof_output#CONVERGED }" ;;
   *) echo "INVALID_FINAL_APPROVAL_PROOF" >&2; exit 9 ;;
@@ -1217,7 +1206,7 @@ echo "ISSUE_4462_SCOPE_UPGRADE_OK device=$final_device request=\${request_id:-co
 `;
 }
 
-test("keeps fresh onboarding and scope approval on the gateway path without admin access (#4462)", {
+test("auto-pair watcher approves operator.write but leaves operator.admin for explicit approval (#4462)", {
   timeout: LIVE_TIMEOUT_MS,
   meta: { e2ePhases: ISSUE_4462_SCOPE_UPGRADE_PHASES },
 }, async ({ artifacts, cleanup: cleanupRegistry, host, progress, sandbox, secrets, skip }) => {
@@ -1232,7 +1221,7 @@ test("keeps fresh onboarding and scope approval on the gateway path without admi
       "the issue 5324 nemoclaw <name> exec transport reaches the local OpenClaw CLI pairing path",
       "the prepared connect shell keeps the injected gateway URL private while retaining port and token",
       "operator.admin remains pending until a reviewed devices approve, cron add retry, and cron run enqueue",
-      "CLI scope upgrade is approved without operator.admin",
+      "the auto-pair watcher approves operator.write without operator.admin",
       "final openclaw agent turn stays on the gateway path and answers 42",
     ],
   });
@@ -1283,7 +1272,6 @@ test("keeps fresh onboarding and scope approval on the gateway path without admi
 
   const captureFreshAgentGatewaySnapshot = async (
     phase: string,
-    minimumGatewayRuns: number,
   ): Promise<FreshAgentGatewaySnapshot> => {
     const result = await sandbox.exec(
       SANDBOX_NAME,
@@ -1293,7 +1281,7 @@ test("keeps fresh onboarding and scope approval on the gateway path without admi
         'printf \'%s\' "$1" | base64 -d | python3 - "$2"',
         "fresh-agent-gateway-snapshot",
         FRESH_AGENT_GATEWAY_SNAPSHOT_B64,
-        String(minimumGatewayRuns),
+        "0",
       ],
       {
         artifactName: phase,
@@ -1307,8 +1295,34 @@ test("keeps fresh onboarding and scope approval on the gateway path without admi
     await artifacts.writeJson(`${phase}.json`, snapshot);
     return snapshot;
   };
+  const observeGatewayCompletedRuns = async (
+    phase: string,
+    minimumGatewayRuns: number,
+  ): Promise<number> => {
+    const result = await sandbox.exec(
+      SANDBOX_NAME,
+      [
+        "sh",
+        "-lc",
+        ISSUE_4462_GATEWAY_COMPLETED_RUNS_SH,
+        "gateway-completed-runs",
+        String(minimumGatewayRuns),
+      ],
+      {
+        artifactName: phase,
+        env: env(),
+        redactionValues: [apiKey],
+        timeoutMs: 10_000,
+      },
+    );
+    expect(result.exitCode, resultText(result)).toBe(0);
+    const completedRuns = Number(result.stdout.trim());
+    expect(Number.isSafeInteger(completedRuns), resultText(result)).toBe(true);
+    await artifacts.writeJson(`${phase}.json`, { gatewayCompletedRuns: completedRuns });
+    return completedRuns;
+  };
   progress.phase("prove the first fresh agent turn stays on the gateway path");
-  const freshSnapshot = await captureFreshAgentGatewaySnapshot("phase-2-fresh-state-0", 0);
+  const freshSnapshot = await captureFreshAgentGatewaySnapshot("phase-2-fresh-state-0");
   expect(freshSnapshot.deviceId).not.toBe("");
   expect(freshSnapshot.publicKey).not.toBe("");
   expect(freshSnapshot.pairedCliCount).toBe(1);
@@ -1358,12 +1372,12 @@ test("keeps fresh onboarding and scope approval on the gateway path without admi
   );
   expect(freshAgent.stdout.trim(), freshAgentOutput).not.toBe("");
 
-  const gatewaySnapshot = await captureFreshAgentGatewaySnapshot(
-    "phase-2-fresh-state-1",
+  const gatewayCompletedRuns = await observeGatewayCompletedRuns(
+    "phase-2-gateway-run-count",
     freshSnapshot.gatewayCompletedRuns + 1,
   );
-  expect(gatewaySnapshot.gatewayCompletedRuns).toBe(freshSnapshot.gatewayCompletedRuns + 1);
-  progress.phase("approve the write-scope upgrade without admin");
+  expect(gatewayCompletedRuns).toBe(freshSnapshot.gatewayCompletedRuns + 1);
+  progress.phase("observe the auto-pair watcher approve operator.write without operator.admin");
   const encodedScopeUpgradeScript = Buffer.from(
     scopeUpgradeScript().replaceAll("\\${", "${"),
     "utf8",

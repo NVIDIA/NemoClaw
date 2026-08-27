@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -63,32 +63,100 @@ function runSelector(state: Record<string, unknown>, requestId = EXPECTED_REQUES
   }
 }
 
-describe("prepared connect-shell administrative approval", () => {
-  it("is valid shell and keeps admin approval explicit (#5324)", () => {
-    const script = adminApprovalConnectScript(
-      "/path with spaces/nemoclaw",
-      "e2e-issue-4462",
-      EXPECTED_REQUEST_ID,
-      "admin-cron",
-    );
-    const syntax = spawnSync("bash", ["-n"], { encoding: "utf-8", input: script });
+function runAdminApprovalScript(
+  gatewayUrl: string,
+  insecurePrivateWs?: string,
+): { commands: string[]; result: SpawnSyncReturns<string> } {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-admin-script-"));
+  const cliPath = path.join(root, "nemoclaw");
+  const openclawPath = path.join(root, "openclaw");
+  const devicesPath = path.join(root, "devices.json");
+  const commandLogPath = path.join(root, "openclaw.log");
+  fs.writeFileSync(
+    cliPath,
+    `#!/bin/sh
+set -eu
+[ "$#" -eq 2 ] && [ "$1" = "e2e-issue-4462" ] && [ "$2" = "connect" ]
+exec /bin/bash
+`,
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(
+    openclawPath,
+    `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >> "$FAKE_OPENCLAW_LOG"
+case "$1:$2" in
+  devices:list) cat "$FAKE_DEVICES_STATE" ;;
+  devices:approve) ;;
+  cron:add) printf '%s\\n' '{"id":"cron-1","name":"admin-cron"}' ;;
+  cron:run) printf '%s\\n' '{"ok":true,"ran":true}' ;;
+  *) exit 90 ;;
+esac
+`,
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(devicesPath, JSON.stringify(adminState()));
+  const childEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    PATH: `${root}:${process.env.PATH ?? ""}`,
+    FAKE_DEVICES_STATE: devicesPath,
+    FAKE_OPENCLAW_LOG: commandLogPath,
+    NEMOCLAW_OPENCLAW_GATEWAY_URL: gatewayUrl,
+    NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: insecurePrivateWs ?? "",
+    OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: "",
+    OPENCLAW_GATEWAY_URL: "",
+    OPENCLAW_GATEWAY_PORT: "18789",
+    OPENCLAW_GATEWAY_TOKEN: "test-gateway-token",
+  };
+  try {
+    const result = spawnSync("bash", [], {
+      encoding: "utf-8",
+      env: childEnv,
+      input: adminApprovalConnectScript(
+        cliPath,
+        "e2e-issue-4462",
+        EXPECTED_REQUEST_ID,
+        "admin-cron",
+      ),
+    });
+    const commands = fs.existsSync(commandLogPath)
+      ? fs.readFileSync(commandLogPath, "utf8").trim().split("\n")
+      : [];
+    return { commands, result };
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
 
-    expect(syntax.status, syntax.stderr).toBe(0);
-    expect(script).toContain("openclaw devices list --json");
-    expect(script).toContain('openclaw devices approve "$request_id"');
-    expect(script).toContain("norm(request.get('requestId')) == expected_request_id");
-    expect(script).toContain("request_scopes.issubset(allowed_scopes)");
-    expect(script).toContain("operator.admin was already granted before explicit approval");
-    expect(script).toContain("openclaw cron add");
-    expect(script).toContain('openclaw cron run "$cron_id"');
-    expect(script).toContain("value.get('enqueued') is True");
-    expect(script).toContain("value.get('runId')");
-    expect(script).toContain("value.get('name') == want");
-    expect(script.indexOf('openclaw devices approve "$request_id"')).toBeLessThan(
-      script.indexOf('openclaw cron run "$cron_id"'),
-    );
-    expect(script).not.toContain("pending.json");
-    expect(script).not.toContain("paired.json");
+describe("prepared connect-shell administrative approval", () => {
+  it.each([
+    ["loopback ws", "ws://127.0.0.1:18789", undefined],
+    ["marked private ws", "ws://10.200.0.2:18789", "1"],
+    ["private wss", "wss://192.168.1.2:18789", undefined],
+  ])("executes the explicit approval sequence over %s (#5324)", (_case, gatewayUrl, marker) => {
+    const { commands, result } = runAdminApprovalScript(gatewayUrl, marker);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
+    expect(commands).toEqual([
+      "devices list --json",
+      `devices approve ${EXPECTED_REQUEST_ID}`,
+      "cron add --name admin-cron --every 2h --agent main --session isolated --message hello",
+      "cron run cron-1",
+    ]);
+  });
+
+  it.each([
+    ["public ws", "ws://example.com:18789", "1"],
+    ["public wss", "wss://example.com:18789", undefined],
+    ["unmarked private ws", "ws://10.200.0.2:18789", undefined],
+  ])("rejects %s before invoking OpenClaw (#5324)", (_case, gatewayUrl, marker) => {
+    const { commands, result } = runAdminApprovalScript(gatewayUrl, marker);
+
+    expect(result.status).toBe(22);
+    expect(result.stderr).toContain("PRIVATE_GATEWAY_ALIAS_REJECTED");
+    expect(commands).toEqual([]);
   });
 
   it("extracts one exact requestId even when the gateway repeats it (#5324)", () => {

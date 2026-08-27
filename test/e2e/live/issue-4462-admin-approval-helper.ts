@@ -5,10 +5,23 @@ export const ISSUE_4462_SCOPE_UPGRADE_PHASES = [
   "confirm Docker credentials and clear the scope-upgrade sandbox",
   "install the OpenClaw sandbox",
   "prove the first fresh agent turn stays on the gateway path",
-  "approve the write-scope upgrade without admin",
+  "observe the auto-pair watcher approve operator.write without operator.admin",
   "trigger and approve an operator.admin request through connect",
   "clear the sandbox and record the approval contract",
 ] as const;
+
+export const ISSUE_4462_GATEWAY_COMPLETED_RUNS_SH = String.raw`minimum="$1"
+attempt=0
+while [ "$attempt" -le 50 ]; do
+  runs=0
+  if [ -r /tmp/gateway.log ]; then
+    runs="$(grep -Ec '\[agent\] run [^ ]+ ended with stopReason=' /tmp/gateway.log || true)"
+  fi
+  [ "$runs" -ge "$minimum" ] && break
+  attempt=$((attempt + 1))
+  sleep 0.1
+done
+printf '%s\n' "$runs"`;
 
 export const ADMIN_REQUEST_SELECTOR_PY = String.raw`import json, sys
 from pathlib import Path
@@ -132,7 +145,36 @@ export function adminApprovalConnectScript(
     "set -euo pipefail",
     'if [ -n "${OPENCLAW_GATEWAY_URL:-}" ]; then echo "PUBLIC_GATEWAY_URL_LEAK" >&2; exit 20; fi',
     'if [ -n "${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}" ]; then echo "PUBLIC_INSECURE_WS_LEAK" >&2; exit 21; fi',
-    'case "${NEMOCLAW_OPENCLAW_GATEWAY_URL:-}" in ws://*|wss://*) ;; *) echo "PRIVATE_GATEWAY_ALIAS_MISSING" >&2; exit 22 ;; esac',
+    'if ! python3 - "${NEMOCLAW_OPENCLAW_GATEWAY_URL:-}" "${NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}" <<\'PY_PRIVATE_GATEWAY\'; then echo "PRIVATE_GATEWAY_ALIAS_REJECTED" >&2; exit 22; fi',
+    "import ipaddress, sys, urllib.parse",
+    "url=sys.argv[1]",
+    "insecure_private_ws=sys.argv[2]",
+    "try:",
+    "    parsed=urllib.parse.urlsplit(url)",
+    "    host=parsed.hostname",
+    "    port=parsed.port",
+    "except ValueError:",
+    "    raise SystemExit('gateway alias is malformed')",
+    "if parsed.scheme not in {'ws','wss'} or not host or port is None:",
+    "    raise SystemExit('gateway alias must be an explicit WebSocket origin')",
+    "if parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in {'','/'}:",
+    "    raise SystemExit('gateway alias must not contain credentials, a path, a query, or a fragment')",
+    "loopback=host == 'localhost' or host == '127.0.0.1'",
+    "private=False",
+    "try:",
+    "    address=ipaddress.ip_address(host)",
+    "    private=any(address in network for network in (",
+    "        ipaddress.ip_network('10.0.0.0/8'),",
+    "        ipaddress.ip_network('172.16.0.0/12'),",
+    "        ipaddress.ip_network('192.168.0.0/16'),",
+    "    ))",
+    "except ValueError:",
+    "    pass",
+    "if not loopback and not private:",
+    "    raise SystemExit('gateway alias is not loopback or RFC1918 private')",
+    "if parsed.scheme == 'ws' and not loopback and insecure_private_ws != '1':",
+    "    raise SystemExit('private ws gateway alias is missing its trusted marker')",
+    "PY_PRIVATE_GATEWAY",
     '[ -n "${OPENCLAW_GATEWAY_PORT:-}" ] || { echo "GATEWAY_PORT_MISSING" >&2; exit 23; }',
     '[ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ] || { echo "GATEWAY_TOKEN_MISSING" >&2; exit 24; }',
     `expected_request_id=${JSON.stringify(expectedRequestId)}`,
