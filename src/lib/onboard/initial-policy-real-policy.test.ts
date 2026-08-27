@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -521,6 +522,55 @@ describe("initial sandbox policy real preset merge", () => {
         .filter((endpoint) => ["api.slack.com", "hooks.slack.com"].includes(endpoint.host ?? ""))
         .map((endpoint) => endpoint.credential_binding?.provider),
     ).toEqual([`${sandboxName}-slack-bridge`, `${sandboxName}-slack-bridge`]);
+    expect(JSON.stringify(effective)).not.toContain("{sandboxName}");
+  });
+
+  it("replaces a pre-merged unbound Slack route with sandbox credential bindings", () => {
+    const sandboxName = "slack-upgrade";
+    const source = fs.readFileSync(
+      repoPath("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+      "utf8",
+    );
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-policy-upgrade-"));
+    const basePolicyPath = path.join(tempRoot, "openclaw-sandbox.yaml");
+    cleanupFns.push(() => {
+      fs.rmSync(tempRoot, { force: true, recursive: true });
+      return true;
+    });
+    fs.writeFileSync(
+      basePolicyPath,
+      `${source}\n  slack:\n    name: slack\n    endpoints:\n      - host: slack.com\n        port: 443\n        protocol: rest\n        rules:\n          - allow: { method: POST, path: "/**" }\n`,
+      "utf8",
+    );
+
+    const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, ["slack"], {
+      agentName: "openclaw",
+      sandboxName,
+    });
+    const effective = readPreparedPolicy(prepared);
+    const endpoints = effective.network_policies?.slack?.endpoints ?? [];
+
+    expect(prepared.policyPath).not.toBe(basePolicyPath);
+    expect(prepared.credentialBindingProviders).toEqual([
+      `${sandboxName}-slack-app`,
+      `${sandboxName}-slack-bridge`,
+    ]);
+    expect(
+      endpoints.map((endpoint) => ({
+        host: endpoint.host,
+        path: endpoint.path,
+        provider: endpoint.credential_binding?.provider,
+      })),
+    ).toContainEqual({
+      host: "slack.com",
+      path: "/api/apps.connections.open",
+      provider: `${sandboxName}-slack-app`,
+    });
+    expect(
+      endpoints.filter(
+        (endpoint) => endpoint.credential_binding?.provider === `${sandboxName}-slack-bridge`,
+      ),
+    ).toHaveLength(3);
     expect(JSON.stringify(effective)).not.toContain("{sandboxName}");
   });
 
