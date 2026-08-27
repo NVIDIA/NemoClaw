@@ -2249,7 +2249,11 @@ function stopBedrockRuntimeAdapterForUninstall(
   throw new IncompleteBedrockRuntimeAdapterCleanupError();
 }
 
-function removeDockerContainers(runtime: UninstallRuntime, gatewayName?: string): void {
+function removeDockerContainers(
+  runtime: UninstallRuntime,
+  gatewayName: string,
+  sandboxNames: readonly string[],
+): void {
   const result = runtime.runDocker(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"], {
     env: runtime.env,
   });
@@ -2258,26 +2262,14 @@ function removeDockerContainers(runtime: UninstallRuntime, gatewayName?: string)
       const fields = dockerInventoryFields(line, 3);
       const image = fields[1] ?? "";
       const name = fields[2] ?? "";
-      if (!gatewayName) {
-        if (MANAGED_INFERENCE_CONTAINER_NAME_PATTERN.test(name)) {
-          return false;
-        }
-        // `openclaw` is deliberately absent: NemoClaw's containers are
-        // `openshell-*` (cluster and sandbox) and `nemoclaw-*` (gateway compat
-        // and managed inference), so that term only ever selected the separate
-        // OpenClaw project's containers for `docker rm -f` (#8496).
-        // Probe containers that run with `--rm` and no `--name`, such as
-        // `hermesBaseImageSupportsMcp`, take a random Docker name. Their
-        // NemoClaw image reference is the only way to reclaim one that an
-        // interrupted run orphaned.
-        return isOwnedDockerContainerName(name) || isOwnedDockerImageRepository(image);
-      }
+      if (MANAGED_INFERENCE_CONTAINER_NAME_PATTERN.test(name)) return false;
+      // Probe containers that run with `--rm` and no `--name`, such as
+      // `hermesBaseImageSupportsMcp`, take a random Docker name. Their
+      // NemoClaw image reference is the only way to reclaim one that an
+      // interrupted run orphaned.
       return (
-        name === `openshell-cluster-${gatewayName}` ||
-        name ===
-          (GATEWAY_PORT === DEFAULT_GATEWAY_PORT
-            ? "nemoclaw-openshell-gateway"
-            : `nemoclaw-openshell-gateway-${String(GATEWAY_PORT)}`)
+        isOwnedDockerContainerName(name, gatewayName, sandboxNames) ||
+        isOwnedDockerImageRepository(image)
       );
     })
     .map((line) => line.split(/\s+/)[0]);
@@ -2326,8 +2318,34 @@ function dockerImageRepository(imageRef: string): string {
   return tagSeparator > slashSeparator ? withoutDigest.slice(0, tagSeparator) : withoutDigest;
 }
 
-function isOwnedDockerContainerName(name: string): boolean {
-  return /^openshell-(?:cluster-)?/iu.test(name) || /^nemoclaw-/iu.test(name);
+function isOwnedDockerContainerName(
+  name: string,
+  gatewayName: string,
+  sandboxNames: readonly string[],
+): boolean {
+  if (name === `openshell-cluster-${gatewayName}`) return true;
+  if (
+    name ===
+    (GATEWAY_PORT === DEFAULT_GATEWAY_PORT
+      ? "nemoclaw-openshell-gateway"
+      : `nemoclaw-openshell-gateway-${String(GATEWAY_PORT)}`)
+  ) {
+    return true;
+  }
+  return sandboxNames.some(
+    (sandboxName) =>
+      name === `openshell-${sandboxName}` || isOpenShellWorkspaceContainer(name, sandboxName),
+  );
+}
+
+function isOpenShellWorkspaceContainer(name: string, sandboxName: string): boolean {
+  const sandboxMarker = `--${sandboxName}-`;
+  const markerIndex = name.lastIndexOf(sandboxMarker);
+  if (!name.startsWith("openshell-") || markerIndex === -1) return false;
+  const suffix = name.slice(markerIndex + sandboxMarker.length);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+    suffix,
+  );
 }
 
 function isOwnedDockerImageRepository(imageRef: string): boolean {
@@ -3089,9 +3107,8 @@ function executePlan(
       } else if (dockerIsAvailable(runtime)) {
         removeDockerContainers(
           runtime,
-          scopedToSelectedGateway
-            ? options.gatewayName || resolveGatewayName(GATEWAY_PORT)
-            : undefined,
+          options.gatewayName || resolveGatewayName(GATEWAY_PORT),
+          sandboxNames,
         );
         if (scopedToSelectedGateway) {
           runtime.log("Sibling gateways remain; kept shared Docker images.");
