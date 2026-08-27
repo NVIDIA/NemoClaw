@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  filterMockParityRelevantChangedFiles,
   isMockParityRelevantSourceChange,
   type MockParityManifest,
   validateMockParity,
@@ -82,6 +83,41 @@ describe("changed live E2E mock parity", () => {
         fileExists: exists,
       }),
     ).toEqual([`${live}: change at least one mapped fast PR test with the live E2E`]);
+  });
+
+  it.each([
+    {
+      expected: [],
+      fastHead: "export const fastBehavior = 2;\n",
+      title: "retains a token-changing mapped fast test",
+    },
+    {
+      expected: [`${live}: change at least one mapped fast PR test with the live E2E`],
+      fastHead: "// formatting only\n\nexport const fastBehavior = 1;\n",
+      title: "filters a comment-and-whitespace-only mapped fast test",
+    },
+  ])("$title", ({ expected, fastHead }) => {
+    const baseSources = new Map([
+      [live, "export const liveBehavior = 1;\n"],
+      [fast, "export const fastBehavior = 1;\n"],
+    ]);
+    const headSources = new Map([
+      [live, "export const liveBehavior = 2;\n"],
+      [fast, fastHead],
+    ]);
+    const relevantFiles = filterMockParityRelevantChangedFiles(
+      [live, fast],
+      (file) => baseSources.get(file) ?? null,
+      (file) => headSources.get(file) ?? null,
+    );
+
+    expect(
+      validateMockParity({
+        manifest: manifest([{ live, fast: [fast] }]),
+        changedFiles: relevantFiles,
+        fileExists: exists,
+      }),
+    ).toEqual(expected);
   });
 
   it("rejects a changed live E2E without a parity decision", () => {

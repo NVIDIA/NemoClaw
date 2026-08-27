@@ -172,6 +172,18 @@ function sourceAtRef(ref: string, file: string): string | null {
   }
 }
 
+/** Remove metadata-only live and fast test changes before parity validation. */
+export function filterMockParityRelevantChangedFiles(
+  files: readonly string[],
+  sourceAtBase: (file: string) => string | null,
+  sourceAtHead: (file: string) => string | null,
+): string[] {
+  return files.filter((file) => {
+    if (!LIVE_TEST.test(file) && !isFastPrTest(file)) return true;
+    return isMockParityRelevantSourceChange(sourceAtBase(file), sourceAtHead(file));
+  });
+}
+
 function changedFiles(base: string, head: string): string[] {
   const files = execFileSync(
     "git",
@@ -183,10 +195,11 @@ function changedFiles(base: string, head: string): string[] {
   )
     .split(/\r?\n/u)
     .filter(Boolean);
-  return files.filter((file) => {
-    if (!LIVE_TEST.test(file) && !isFastPrTest(file)) return true;
-    return isMockParityRelevantSourceChange(sourceAtRef(base, file), sourceAtRef(head, file));
-  });
+  return filterMockParityRelevantChangedFiles(
+    files,
+    (file) => sourceAtRef(base, file),
+    (file) => sourceAtRef(head, file),
+  );
 }
 
 function main(): void {
