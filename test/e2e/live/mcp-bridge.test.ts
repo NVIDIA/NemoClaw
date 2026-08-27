@@ -109,11 +109,12 @@ function mcpBridgeShardTest(shard: McpBridgeShard) {
 const test = mcpBridgeShardTest("openclaw");
 type McpAgent = "openclaw" | "hermes" | "langchain-deepagents-code";
 
-function expectManagedImageQualificationReceipt(sandboxName: string): void {
+function expectManagedImageQualificationReceipt(sandboxName: string, agent: McpAgent): void {
   const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
     sandboxes?: Record<string, { workload?: Record<string, unknown> }>;
   };
   assertMcpBridgeManagedImageReceipt({
+    expectedAgent: agent,
     workload: registry.sandboxes?.[sandboxName]?.workload,
   });
 }
@@ -164,7 +165,7 @@ async function onboardAgent(
       }),
   });
   expectExitZero(result, `onboard ${options.agent} sandbox for MCP bridge`);
-  expectManagedImageQualificationReceipt(options.sandboxName);
+  expectManagedImageQualificationReceipt(options.sandboxName, options.agent);
 }
 async function assertSecretAbsentFromSandbox(
   sandbox: SandboxClient,
