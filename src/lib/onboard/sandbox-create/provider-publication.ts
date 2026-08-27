@@ -8,7 +8,7 @@ import {
   MESSAGING_CREDENTIAL_PROVIDER_TYPE,
 } from "../../messaging/provider-profile";
 import type { SandboxEntry } from "../../state/registry";
-import { inspectGatewayCredentialOnlyProviderBinding } from "../gateway-provider-metadata";
+import { inspectGatewayCredentialFamilyProviderBinding } from "../gateway-provider-metadata";
 import type { SandboxCreateIntent } from "../sandbox-create-intent-types";
 
 type ProviderPreparationInput = {
@@ -56,8 +56,13 @@ function inspectExpectedMessagingBinding(
 ): boolean {
   const expected = expectedBindings.get(providerName);
   if (!expected) return true;
-  const inspection = inspectGatewayCredentialOnlyProviderBinding(expected, (args, options) =>
-    deps.runOpenshell([...args.slice(0, 2), "-g", input.gatewayName, ...args.slice(2)], options),
+  const inspection = inspectGatewayCredentialFamilyProviderBinding(
+    expected,
+    (args, options) =>
+      deps.runOpenshell(
+        [...args.slice(0, 2), "-g", input.gatewayName, ...args.slice(2)],
+        options,
+      ),
   );
   return inspection.kind === "exact";
 }
