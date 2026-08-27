@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import * as credentialStore from "../../credentials/store";
 import {
   type InferenceEndpointSource,
   normalizeInferenceSelection,
@@ -651,6 +652,45 @@ describe("core onboard flow phases", () => {
 
     expect(checkpointSandboxIdentity).not.toHaveBeenCalled();
     expect(reserveSandboxInferenceRoute).not.toHaveBeenCalled();
+  });
+
+  it("rejects an extra-placeholder provider before route, credential, provider, or sandbox effects", async () => {
+    const credentialRead = vi.spyOn(credentialStore, "getCredential").mockReturnValue(null);
+    const setupInference = vi.fn(async () => ({ ok: true as const }));
+    const reserveSandboxInferenceRoute = vi.fn(() => true);
+    const checkpointSandboxIdentity = vi.fn(async () => undefined);
+    const stageSandboxCredentialProviders = vi.fn();
+    const createSandbox = vi.fn(async () => "created-sandbox");
+    const { providerInference: providerPhase } = createPhases({
+      providerEnv: {
+        NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: "TELEGRAM_BOT_TOKEN_AGENT_A",
+        TELEGRAM_BOT_TOKEN_AGENT_A: "secret-canary",
+      },
+      providerDeps: {
+        checkpointSandboxIdentity,
+        reserveSandboxInferenceRoute,
+        setupInference,
+      },
+      sandboxOptions: { apfInterceptorRequested: true },
+      sandboxDeps: { createSandbox, stageSandboxCredentialProviders },
+    });
+
+    try {
+      await expect(
+        providerPhase.run(
+          context({ fresh: true, model: null, provider: null, selectedMessagingChannels: [] }),
+        ),
+      ).rejects.toThrow(/supports providerless sandbox creation only/u);
+
+      expect(checkpointSandboxIdentity).not.toHaveBeenCalled();
+      expect(reserveSandboxInferenceRoute).not.toHaveBeenCalled();
+      expect(credentialRead).not.toHaveBeenCalled();
+      expect(setupInference).not.toHaveBeenCalled();
+      expect(stageSandboxCredentialProviders).not.toHaveBeenCalled();
+      expect(createSandbox).not.toHaveBeenCalled();
+    } finally {
+      credentialRead.mockRestore();
+    }
   });
 
   it("rejects APF messaging intent before route reservation or external effects", async () => {

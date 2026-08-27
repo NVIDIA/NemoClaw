@@ -7,6 +7,11 @@ import {
 } from "../../inference/selection";
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../dcode-auto-approval";
+import {
+  canonicalPlaceholderKeys,
+  EXTRA_PLACEHOLDER_KEYS_ENV,
+  parseExtraPlaceholderKeys,
+} from "../extra-placeholder-keys";
 import type {
   createProviderRecoveryReceiptLedger,
   ProviderRecoveryReceipt,
@@ -151,6 +156,8 @@ function hasProviderBackedApfIntent(context: OnboardFlowContext, env: NodeJS.Pro
     context.hostLocalInferenceSandboxProofAuthority != null ||
     context.session?.servingProfileProvenance != null ||
     APF_PROVIDER_INTENT_ENV_KEYS.some((key) => String(env[key] ?? "").trim().length > 0) ||
+    parseExtraPlaceholderKeys(env[EXTRA_PLACEHOLDER_KEYS_ENV], canonicalPlaceholderKeys()).keys
+      .length > 0 ||
     !APF_PROVIDERLESS_WEB_SEARCH_ENV_VALUES.has(
       String(env.NEMOCLAW_WEB_SEARCH_PROVIDER ?? "")
         .trim()
