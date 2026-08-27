@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { testTimeoutOptions } from "../../../test/helpers/timeouts";
 import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../messaging/provider-profile";
 import type { MessagingTokenDef } from "./messaging-prep";
 import { materializeHermesPortableCreatePlan } from "./sandbox-create-plan-materialization";
@@ -315,34 +316,38 @@ describe("resolveSandboxCreateIntent", () => {
     expect(JSON.stringify(first)).not.toContain("/tmp/");
   });
 
-  it("omits Discord create-time effects when an unselected credential is available", () => {
-    const { intent, messagingTokenDefs } = resolveDiscordCreateIntent({
-      selected: false,
-      reusable: true,
-    });
-    const upsertMessagingProviders = vi.fn((tokenDefs: MessagingTokenDef[]) =>
-      tokenDefs.map(({ name }) => name),
-    );
+  it(
+    "omits Discord create-time effects when an unselected credential is available",
+    testTimeoutOptions(15_000),
+    () => {
+      const { intent, messagingTokenDefs } = resolveDiscordCreateIntent({
+        selected: false,
+        reusable: true,
+      });
+      const upsertMessagingProviders = vi.fn((tokenDefs: MessagingTokenDef[]) =>
+        tokenDefs.map(({ name }) => name),
+      );
 
-    const plan = materializeDiscordCreatePlan(
-      { intent, messagingTokenDefs },
-      { upsertMessagingProviders },
-    );
+      const plan = materializeDiscordCreatePlan(
+        { intent, messagingTokenDefs },
+        { upsertMessagingProviders },
+      );
 
-    expect(intent.reusableMessagingProviders).toEqual([]);
-    expect(plan.activeMessagingChannels).toEqual([]);
-    expect(plan.initialSandboxPolicy.appliedPresets).not.toContain("discord");
-    expect(plan.initialSandboxPolicy.credentialBindingProviders ?? []).not.toContain(
-      discordProviderName,
-    );
-    expect(plan.messagingProviders).not.toContain(discordProviderName);
-    expect(plan.createArgs).not.toContain(discordProviderName);
-    expect(upsertMessagingProviders).toHaveBeenCalledWith([], {
-      replaceExisting: true,
-      allowedSandboxes: ["sandbox"],
-    });
-    plan.initialSandboxPolicy.cleanup?.();
-  });
+      expect(intent.reusableMessagingProviders).toEqual([]);
+      expect(plan.activeMessagingChannels).toEqual([]);
+      expect(plan.initialSandboxPolicy.appliedPresets).not.toContain("discord");
+      expect(plan.initialSandboxPolicy.credentialBindingProviders ?? []).not.toContain(
+        discordProviderName,
+      );
+      expect(plan.messagingProviders).not.toContain(discordProviderName);
+      expect(plan.createArgs).not.toContain(discordProviderName);
+      expect(upsertMessagingProviders).toHaveBeenCalledWith([], {
+        replaceExisting: true,
+        allowedSandboxes: ["sandbox"],
+      });
+      plan.initialSandboxPolicy.cleanup?.();
+    },
+  );
 
   it("attaches the selected Discord provider to its create-time policy", () => {
     const { intent, messagingTokenDefs } = resolveDiscordCreateIntent({

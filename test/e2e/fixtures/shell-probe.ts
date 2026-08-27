@@ -5,7 +5,6 @@ import type { ArtifactSink } from "./artifacts.ts";
 import { type ChildProcessProgress, spawnObservedChild } from "./observed-child-process.ts";
 import { superviseChild } from "./shell/supervisor.ts";
 import type { TrustedShellCommand } from "./shell/trusted-command.ts";
-import { resolveLiveE2eWorkloadSourceEnv } from "./workload-source-env.ts";
 
 /**
  * Fixture-flavoured host shell probe.
@@ -223,7 +222,7 @@ export class ShellProbe {
       spawn: {
         cwd: options.cwd,
         detached: true,
-        env: resolveLiveE2eWorkloadSourceEnv({ ...(options.env ?? {}) }),
+        env: { ...(options.env ?? {}) },
         stdio: ["ignore", "pipe", "pipe"],
       },
     });
