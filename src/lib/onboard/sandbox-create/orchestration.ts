@@ -315,6 +315,7 @@ export function assertApfCreateIntent(
 
 function assertProviderlessApfCreateInput(input: {
   readonly createIntent: SandboxCreateIntent | null;
+  readonly agent: AgentDefinition | null;
   readonly model: string;
   readonly provider: string;
   readonly preferredInferenceApi: string | null;
@@ -324,7 +325,9 @@ function assertProviderlessApfCreateInput(input: {
 }): void {
   if (input.createIntent?.apfInterceptorRequested !== true) return;
   const resolved = input.createIntent.resolved;
+  const requestedAgent = input.agent?.name.trim().toLowerCase() ?? "openclaw";
   const hasProviderIntent =
+    requestedAgent !== "openclaw" ||
     input.webSearchConfig !== null ||
     input.createIntent.reuseRegisteredCredentials === true ||
     [
@@ -1085,6 +1088,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     assertApfCreateIntent(createIntent);
     assertProviderlessApfCreateInput({
       createIntent,
+      agent,
       model,
       provider,
       preferredInferenceApi,

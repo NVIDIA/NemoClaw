@@ -37,6 +37,14 @@ describe("fresh create identity", () => {
       expectedOutcome: "provider-refusal" as const,
     },
     {
+      title: "rejects a nondefault agent before credential reads or sandbox inspection (#9833)",
+      apfInterceptorRequested: true,
+      provider: null,
+      model: null,
+      agent: { name: "hermes" },
+      expectedOutcome: "unsupported-agent-refusal" as const,
+    },
+    {
       title:
         "registers providerless APF only after identity, policy, and checkpoint verification (#9833)",
       apfInterceptorRequested: true,
@@ -633,6 +641,11 @@ if (${JSON.stringify(
           false,
         );
       };
+      const assertUnsupportedAgentRefusal = () => {
+        assertProviderBackedApfRefusal();
+        assert.deepEqual(payload.commandNames, []);
+        assert.equal(payload.sandboxListCalls, 0);
+      };
       const assertStagedMessagingRefusal = () => {
         assert.match(
           payload.creationError,
@@ -979,6 +992,7 @@ if (${JSON.stringify(
       const assertions = {
         "managed-provider": assertManagedProviderCreation,
         "provider-refusal": assertProviderBackedApfRefusal,
+        "unsupported-agent-refusal": assertUnsupportedAgentRefusal,
         "providerless-apf": assertProviderlessApfCreation,
         "post-create-authority-refusal": assertPostCreateAuthorityRefusal,
         "post-create-runner-refusal": assertPostCreateRunnerRefusal,
