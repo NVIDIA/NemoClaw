@@ -130,7 +130,11 @@ type CreatedOpenShellSandboxIdentityObservation =
         | "selector-execution-not-found"
         | "selector-execution-permission"
         | "selector-execution-nonzero"
-        | "selector-execution-failed"
+        | "selector-execution-buffer-limit"
+        | "selector-execution-resource-unavailable"
+        | "selector-execution-other-code"
+        | "selector-execution-uncoded-error"
+        | "selector-execution-non-error"
         | "selector-output-malformed"
         | "selector-output-ambiguous"
         | "selector-row-malformed"
@@ -177,18 +181,30 @@ function classifySelectorExecutionError(
   | "selector-execution-not-found"
   | "selector-execution-permission"
   | "selector-execution-nonzero"
-  | "selector-execution-failed" {
-  if (!error || typeof error !== "object") return "selector-execution-failed";
+  | "selector-execution-buffer-limit"
+  | "selector-execution-resource-unavailable"
+  | "selector-execution-other-code"
+  | "selector-execution-uncoded-error"
+  | "selector-execution-non-error" {
+  if (!error || typeof error !== "object") return "selector-execution-non-error";
   const candidate = error as { readonly code?: unknown; readonly message?: unknown };
   if (candidate.code === "ETIMEDOUT") return "selector-execution-timeout";
   if (candidate.code === "ENOENT") return "selector-execution-not-found";
   if (candidate.code === "EACCES" || candidate.code === "EPERM") {
     return "selector-execution-permission";
   }
-  return typeof candidate.message === "string" &&
+  if (candidate.code === "ENOBUFS") return "selector-execution-buffer-limit";
+  if (candidate.code === "EAGAIN") return "selector-execution-resource-unavailable";
+  if (
+    typeof candidate.message === "string" &&
     /^Command failed with status \d+$/u.test(candidate.message)
-    ? "selector-execution-nonzero"
-    : "selector-execution-failed";
+  ) {
+    return "selector-execution-nonzero";
+  }
+  if ("code" in candidate) return "selector-execution-other-code";
+  return typeof candidate.message === "string"
+    ? "selector-execution-uncoded-error"
+    : "selector-execution-non-error";
 }
 
 function observeCreatedOpenShellSandboxId(

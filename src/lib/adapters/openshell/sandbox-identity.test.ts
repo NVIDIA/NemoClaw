@@ -18,6 +18,12 @@ import {
 } from "./sandbox-identity";
 
 const CREATE_ATTEMPT_NONCE = "a".repeat(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH);
+const SELECTOR_ERROR_CANARIES = {
+  diagnosticMessage: "diagnostic-message-canary",
+  codeAdjacent: "code-adjacent-canary",
+  stdout: "stdout-canary",
+  stderr: "stderr-canary",
+};
 
 function sandboxListJson(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify([
@@ -189,21 +195,78 @@ describe("OpenShell sandbox identity reading", () => {
   it.each([
     [
       "timeout",
-      Object.assign(new Error("timeout canary"), { code: "ETIMEDOUT" }),
+      Object.assign(new Error("timeout canary"), SELECTOR_ERROR_CANARIES, { code: "ETIMEDOUT" }),
       "selector-execution-timeout",
     ],
     [
       "missing executable",
-      Object.assign(new Error("missing canary"), { code: "ENOENT" }),
+      Object.assign(new Error("missing canary"), SELECTOR_ERROR_CANARIES, { code: "ENOENT" }),
       "selector-execution-not-found",
     ],
     [
       "permission error",
-      Object.assign(new Error("permission canary"), { code: "EACCES" }),
+      Object.assign(new Error("permission canary"), SELECTOR_ERROR_CANARIES, { code: "EACCES" }),
       "selector-execution-permission",
     ],
-    ["nonzero exit", new Error("Command failed with status 1"), "selector-execution-nonzero"],
-    ["unknown throw", new Error("unknown canary"), "selector-execution-failed"],
+    [
+      "alternate permission error",
+      Object.assign(new Error("alternate permission canary"), SELECTOR_ERROR_CANARIES, {
+        code: "EPERM",
+      }),
+      "selector-execution-permission",
+    ],
+    [
+      "nonzero exit",
+      Object.assign(new Error("Command failed with status 1"), SELECTOR_ERROR_CANARIES),
+      "selector-execution-nonzero",
+    ],
+    [
+      "buffer limit",
+      Object.assign(new Error("buffer limit canary"), SELECTOR_ERROR_CANARIES, { code: "ENOBUFS" }),
+      "selector-execution-buffer-limit",
+    ],
+    [
+      "resource unavailable",
+      Object.assign(new Error("resource unavailable canary"), SELECTOR_ERROR_CANARIES, {
+        code: "EAGAIN",
+      }),
+      "selector-execution-resource-unavailable",
+    ],
+    [
+      "unknown string code",
+      {
+        ...SELECTOR_ERROR_CANARIES,
+        code: "unknown-code-canary",
+        message: "unknown string code message canary",
+      },
+      "selector-execution-other-code",
+    ],
+    [
+      "unknown numeric code",
+      { ...SELECTOR_ERROR_CANARIES, code: 17, message: "unknown numeric code message canary" },
+      "selector-execution-other-code",
+    ],
+    [
+      "unknown object code",
+      {
+        ...SELECTOR_ERROR_CANARIES,
+        code: { value: "object-code-canary" },
+        message: "unknown object code message canary",
+      },
+      "selector-execution-other-code",
+    ],
+    [
+      "uncoded error",
+      Object.assign(new Error("uncoded error canary"), SELECTOR_ERROR_CANARIES),
+      "selector-execution-uncoded-error",
+    ],
+    ["string throw", "string throw canary", "selector-execution-non-error"],
+    ["null throw", null, "selector-execution-non-error"],
+    [
+      "plain object throw",
+      { ...SELECTOR_ERROR_CANARIES, value: "plain object canary" },
+      "selector-execution-non-error",
+    ],
   ])(
     "refuses selector %s without retrying or disclosing its error (#10423)",
     (_case, error, diagnostic) => {
@@ -225,7 +288,10 @@ describe("OpenShell sandbox identity reading", () => {
         caught = settlementError;
       }
       expect(String(caught)).toContain(`Diagnostic class: ${diagnostic}.`);
-      expect(String(caught)).not.toContain(String((error as Error).message));
+      expect(String(caught)).not.toContain("canary");
+      expect(String(caught)).not.toContain("sandbox-alpha");
+      expect(String(caught)).not.toContain(CREATE_ATTEMPT_NONCE);
+      expect(String(caught)).not.toContain(NEMOCLAW_CREATE_ATTEMPT_LABEL);
       expect(runCaptureOpenshell).toHaveBeenCalledOnce();
       expect(sleep).not.toHaveBeenCalled();
     },
