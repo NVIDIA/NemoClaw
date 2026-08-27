@@ -46,6 +46,8 @@ function registerSourceRequire() {
 // Vitest setup files and NODE_OPTIONS preloads both depend on this hook.
 registerSourceRequire();
 
+const { ONBOARD_READY_SANDBOX_ID } = require("./onboard-openshell-fixture.ts");
+
 function normalizeCommand(command) {
   return (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
 }
@@ -323,7 +325,7 @@ function createCreatedSandboxFixture(options = {}) {
   );
   const initialSandboxId = hasOwn(options, "sandboxId")
     ? options.sandboxId
-    : "fixture-created-sandbox";
+    : ONBOARD_READY_SANDBOX_ID;
   const initialLifecycleState = hasOwn(options, "lifecycleState")
     ? options.lifecycleState
     : "absent";
@@ -712,7 +714,7 @@ function managedSandboxPolicyReceiptFixture(entry, options = {}) {
   const gatewayName = options.gatewayName || "nemoclaw";
   const gatewayPort = options.gatewayPort || 8080;
   const lifecycleGeneration = options.lifecycleGeneration || "123e4567-e89b-42d3-a456-426614174983";
-  const sandboxId = options.sandboxId || "fixture-created-sandbox";
+  const sandboxId = options.sandboxId || ONBOARD_READY_SANDBOX_ID;
   const sandboxIdentityFingerprint = require("node:crypto")
     .createHash("sha256")
     .update(sandboxId)

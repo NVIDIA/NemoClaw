@@ -440,7 +440,7 @@ runner.runCapture = (command) => {
   const normalized = _n(command);
   if (normalized.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:8080";
   if (normalized.includes("policy get") && normalized.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
-  if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) return ["my-assistant", "Id: fixture-created-sandbox"].join(String.fromCharCode(10));
+  if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) return ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
   if (normalized.includes("sandbox list")) return "my-assistant NotReady";
   // Keep dashboard allocation inside this restore-intent fixture; host port
   // occupancy is unrelated to the not-ready decision under test.

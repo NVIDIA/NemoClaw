@@ -8,13 +8,17 @@ function writeExecutable(target: string, contents: string): void {
   fs.writeFileSync(target, contents, { mode: 0o755 });
 }
 
+export const ONBOARD_READY_SANDBOX_ID = "sbx-4f2a91c0d7";
+
 export function writeOkOpenshell(
   fakeBin: string,
   options: { gatewayPort?: number; readySandboxGet?: boolean } = {},
 ): void {
   const gatewayPort = options.gatewayPort ?? 8080;
   const sandboxGet = options.readySandboxGet
-    ? 'if [ "${1:-}" = sandbox ] && [ "${2:-}" = get ]; then printf "Sandbox:\\n\\n  Id: fixture-created-sandbox\\n  Name: %s\\n  Phase: Ready\\n" "${!#}"; fi\n'
+    ? 'if [ "${1:-}" = sandbox ] && [ "${2:-}" = get ]; then printf "Sandbox:\\n\\n  Id: ' +
+      ONBOARD_READY_SANDBOX_ID +
+      '\\n  Name: %s\\n  Phase: Ready\\n" "${!#}"; fi\n'
     : "";
   writeExecutable(
     path.join(fakeBin, "openshell"),
