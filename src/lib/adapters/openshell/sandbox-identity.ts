@@ -210,15 +210,25 @@ export function settleCreatedOpenShellSandboxId(input: {
     throw createdIdentityError(input.sandboxName);
   }
 
+  let previousNowMs = startedAt;
+  const readNow = (): number => {
+    const currentNowMs = now();
+    if (!Number.isFinite(currentNowMs) || currentNowMs < previousNowMs) {
+      throw createdIdentityError(input.sandboxName);
+    }
+    previousNowMs = currentNowMs;
+    return currentNowMs;
+  };
+
   for (;;) {
-    const remainingMs = Math.floor(deadlineMs - now());
+    const remainingMs = Math.floor(deadlineMs - readNow());
     if (remainingMs <= 0) break;
 
     const observation = observeCreatedOpenShellSandboxId(input, remainingMs);
     if (observation.state === "matched") return observation.sandboxId;
     if (observation.state === "invalid") break;
 
-    const remainingAfterReadMs = Math.floor(deadlineMs - now());
+    const remainingAfterReadMs = Math.floor(deadlineMs - readNow());
     if (remainingAfterReadMs <= 0) break;
     input.sleep(Math.min(CREATED_IDENTITY_SETTLEMENT_INTERVAL_MS, remainingAfterReadMs));
   }

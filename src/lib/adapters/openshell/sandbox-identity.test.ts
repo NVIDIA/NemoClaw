@@ -235,6 +235,57 @@ describe("OpenShell sandbox identity reading", () => {
     );
   });
 
+  it.each([
+    ["NaN", Number.NaN],
+    ["positive infinity", Number.POSITIVE_INFINITY],
+    ["negative infinity", Number.NEGATIVE_INFINITY],
+  ])(
+    "refuses a non-finite %s settlement clock sample before selector lookup (#9211)",
+    (_case, invalidNow) => {
+      const now = vi.fn().mockReturnValueOnce(0).mockReturnValueOnce(invalidNow);
+      const runCaptureOpenshell = vi.fn(() => "[]");
+      const sleep = vi.fn();
+
+      expect(() =>
+        settleCreatedOpenShellSandboxId({
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          createAttemptNonce: CREATE_ATTEMPT_NONCE,
+          runCaptureOpenshell,
+          now,
+          sleep,
+        }),
+      ).toThrow("OpenShell did not return the exact created identity for sandbox 'alpha'.");
+
+      expect(runCaptureOpenshell).not.toHaveBeenCalled();
+      expect(sleep).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses a backward settlement clock sample before sleeping (#9211)", () => {
+    const now = vi
+      .fn<() => number>()
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(999);
+    const runCaptureOpenshell = vi.fn(() => "[]");
+    const sleep = vi.fn();
+
+    expect(() =>
+      settleCreatedOpenShellSandboxId({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        createAttemptNonce: CREATE_ATTEMPT_NONCE,
+        runCaptureOpenshell,
+        now,
+        sleep,
+      }),
+    ).toThrow("OpenShell did not return the exact created identity for sandbox 'alpha'.");
+
+    expect(runCaptureOpenshell).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
   it("reads each sandbox ID once per process (#9316)", () => {
     const runCommand = vi.fn(() => ({ status: 0, stdout: "Name: alpha\nID: sandbox-alpha\n" }));
     const readSandboxId = createOpenshellSandboxIdReader("/usr/bin/openshell", runCommand);
