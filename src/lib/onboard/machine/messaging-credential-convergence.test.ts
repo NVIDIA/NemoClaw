@@ -78,6 +78,7 @@ function harness(
   initialConfig = CANONICAL,
   behavior: {
     readonly advanceVersion?: boolean;
+    readonly attachStatus?: number;
     readonly providerId?: string;
     readonly publishObservation?: boolean;
     readonly replacementIdOnRestart?: string;
@@ -101,10 +102,19 @@ function harness(
         };
       case "provider:update":
         resourceVersion += behavior.advanceVersion === false ? 0 : 1;
-        observation = behavior.publishObservation === false ? observation : CURRENT;
         return { status: 0, stdout: "", stderr: "" };
       default:
         switch (true) {
+          case args[0] === "sandbox" && args[1] === "provider" && args[2] === "attach":
+            observation =
+              (behavior.attachStatus ?? 0) === 0 && behavior.publishObservation !== false
+                ? CURRENT
+                : observation;
+            return {
+              status: behavior.attachStatus ?? 0,
+              stdout: "",
+              stderr: (behavior.attachStatus ?? 0) === 0 ? "" : "attach failed",
+            };
           case args[0] === "sandbox" && args.includes("cat"):
             return { status: 0, stdout: config, stderr: "" };
           case args[0] === "sandbox" && runOptions.input !== undefined:
@@ -161,6 +171,11 @@ describe("managed messaging credential convergence", () => {
     const update = scope.calls.find(({ args }) => args[0] === "provider" && args[1] === "update");
     expect(update?.args).toEqual(["provider", "update", "-g", "nemoclaw", PROVIDER]);
     expect(update?.options.env).toBeUndefined();
+    expect(
+      scope.calls.some(
+        ({ args }) => args.join(" ") === `sandbox provider attach -g nemoclaw alpha ${PROVIDER}`,
+      ),
+    ).toBe(true);
     expect(JSON.parse(scope.getConfig()).channels.telegram.accounts.default.botToken).toBe(CURRENT);
     expect(durablePlan.credentialBindings[0]?.placeholder).toBe(CANONICAL);
     expect(scope.restartManagedGateway).toHaveBeenCalledExactlyOnceWith("alpha");
@@ -287,6 +302,27 @@ describe("managed messaging credential convergence", () => {
         convergenceDeps(scope),
       ),
     ).rejects.toThrow("expected messaging provider generation");
+    expect(scope.restartManagedGateway).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when OpenShell cannot refresh the sandbox provider attachment", async () => {
+    const scope = harness("absent", CANONICAL, { attachStatus: 1 });
+
+    await expect(
+      convergeManagedMessagingCredentials(
+        {
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          openshellDriver: "podman",
+          plan: plan(),
+          expectedProviderIds: new Map([[PROVIDER, PROVIDER_ID]]),
+        },
+        convergenceDeps(scope),
+      ),
+    ).rejects.toThrow("did not refresh messaging provider");
+    expect(JSON.parse(scope.getConfig()).channels.telegram.accounts.default.botToken).toBe(
+      CANONICAL,
+    );
     expect(scope.restartManagedGateway).not.toHaveBeenCalled();
   });
 

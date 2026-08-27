@@ -230,6 +230,18 @@ export async function convergeManagedMessagingCredentials(
           `OpenShell did not confirm the expected messaging provider generation after final convergence.`,
         );
       }
+      // OpenShell 0.0.106 treats an already-attached provider as an
+      // idempotent attachment while still publishing a sandbox update. That
+      // update makes the supervisor reload the current provider snapshot.
+      const attached = runOpenshell(
+        ["sandbox", "provider", "attach", input.sandboxName, binding.providerName],
+        { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], suppressOutput: true },
+      );
+      if (attached.status !== 0) {
+        throw new Error(
+          `OpenShell did not refresh messaging provider '${binding.providerName}' on sandbox '${input.sandboxName}'.`,
+        );
+      }
       current = await waitForRevision(
         input.sandboxName,
         binding.providerEnvKey,
