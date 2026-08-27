@@ -48,7 +48,7 @@ function buildGatewayYaml(presetNames: string[]): string {
   const { stdout } = runScript(`
     const parts = ["version: 1", "", "network_policies:"];
     for (const name of ${names}) {
-      const content = policies.loadPreset(name);
+      const content = policies.loadPresetForSandbox("repro-2010-sandbox", name);
       if (!content) continue;
       const entries = policies.extractPresetEntries(content);
       if (!entries) continue;
@@ -72,7 +72,7 @@ function buildGatewayYamlWithCustom(
   const { stdout } = runScript(`
     const parts = ["version: 1", "", "network_policies:"];
     for (const name of ${names}) {
-      const content = policies.loadPreset(name);
+      const content = policies.loadPresetForSandbox("repro-2010-sandbox", name);
       if (!content) continue;
       const entries = policies.extractPresetEntries(content);
       if (!entries) continue;
@@ -140,7 +140,7 @@ function callGetGatewayPresets(
       return pk.length > 0 && pk.every(k => keys.has(k));
     };
     for (const preset of policies.listPresets()) {
-      const c = policies.loadPreset(preset.name); if (!c) continue;
+      const c = policies.loadPresetForSandbox("repro-2010-sandbox", preset.name); if (!c) continue;
       if (matchContent(c)) matched.push(preset.name);
     }
     for (const entry of customPresets) {

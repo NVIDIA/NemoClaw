@@ -1570,8 +1570,11 @@ export function applyChannelPresetIfAvailable(
     const applied = Object.prototype.hasOwnProperty.call(options, "disclosedPresetState")
       ? policies.applyPreset(sandboxName, channelName, {
           disclosedPresetState: options.disclosedPresetState,
+          includeMessagingCredentialBindings: true,
         })
-      : policies.applyPreset(sandboxName, channelName);
+      : policies.applyPreset(sandboxName, channelName, {
+          includeMessagingCredentialBindings: true,
+        });
     if (!applied) {
       console.error(
         `  ${YW}⚠${R} Cannot enable channel '${channelName}': policy preset failed to apply.`,
