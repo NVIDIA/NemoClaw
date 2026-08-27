@@ -415,6 +415,29 @@ export const finalizationHandlerDeps = {
       return null;
     }
   },
+  readManagedMessagingRuntimeIdentity(name: string) {
+    try {
+      const entry = finalizationHandlerRuntime.loadRegistryPersistence().load().sandboxes[name];
+      if (
+        typeof entry?.gatewayName !== "string" ||
+        typeof entry.lifecycleGeneration !== "string" ||
+        typeof entry.openshellDriver !== "string" ||
+        (entry.lifecycleLiveIdentityFingerprint !== undefined &&
+          entry.lifecycleLiveIdentityFingerprint !== null &&
+          typeof entry.lifecycleLiveIdentityFingerprint !== "string")
+      ) {
+        return null;
+      }
+      return {
+        gatewayName: entry.gatewayName,
+        lifecycleGeneration: entry.lifecycleGeneration,
+        lifecycleLiveIdentityFingerprint: entry.lifecycleLiveIdentityFingerprint ?? null,
+        openshellDriver: entry.openshellDriver,
+      };
+    } catch {
+      return null;
+    }
+  },
   settlePortablePairing(
     name: string,
     options: {
