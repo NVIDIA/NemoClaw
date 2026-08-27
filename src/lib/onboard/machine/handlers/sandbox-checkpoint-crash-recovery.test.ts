@@ -138,10 +138,8 @@ function realStageSandboxCredentialProviders(
   const registration = createCredentialProviderRegistration({
     root: "/repo",
     runOpenshell: runOpenshell as unknown as CredentialProviderRegistrationDeps["runOpenshell"],
-    redact: (input) => input,
     getGatewayName: () => "nemoclaw",
     getCredential: () => null,
-    normalizeCredentialValue: (value) => (typeof value === "string" ? value.trim() : ""),
     updateSession: (mutator) => (mutator(registrationSession) ?? registrationSession) as Session,
     stagedLegacyValues: new Map(),
     migratedLegacyKeys: new Set(),

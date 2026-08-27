@@ -237,6 +237,16 @@ function loadPresetForAgent(name: string, options: PresetLoadOptions = {}): stri
 function loadPreset(name: string): string | null {
   return loadPresetForAgent(name, { agent: "openclaw" });
 }
+
+function getCredentialBoundMessagingChannelsFromEntry(
+  sandbox: ReturnType<typeof registry.getSandbox>,
+): string[] {
+  const disabledChannels = new Set(registry.getDisabledMessagingChannelsFromEntry(sandbox));
+  return registry
+    .getConfiguredMessagingChannelsFromEntry(sandbox)
+    .filter((channel) => !disabledChannels.has(channel));
+}
+
 // The single sandbox->host bridge hostname OpenShell provisions. An endpoint
 // that pins `allowed_ips` for THIS host is the legitimate host-gateway flow
 // (e.g. web_fetch to host.openshell.internal); `allowed_ips` on any other host
@@ -397,7 +407,7 @@ function loadPresetForSandbox(
   try {
     const sandbox = registry.getSandbox(sandboxName);
     sandboxAgent = sandbox?.agent ?? null;
-    configuredMessagingChannels = registry.getConfiguredMessagingChannelsFromEntry(sandbox);
+    configuredMessagingChannels = getCredentialBoundMessagingChannelsFromEntry(sandbox);
   } catch {
     sandboxAgent = null;
     configuredMessagingChannels = [];
@@ -2102,9 +2112,9 @@ function removePreset(
       const teamsActive =
         presetName === "teams"
           ? false
-          : registry
-              .getConfiguredMessagingChannelsFromEntry(registry.getSandbox(sandboxName))
-              .includes("teams");
+          : getCredentialBoundMessagingChannelsFromEntry(
+              registry.getSandbox(sandboxName),
+            ).includes("teams");
       updated = reconcileTeamsOutlookLoginCredentialBinding(updated, sandboxName, teamsActive);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -3094,9 +3104,9 @@ function applyPresetContent(
     if (!options.custom && (presetName === "teams" || presetName === "outlook")) {
       const teamsConfigured =
         options.includeMessagingCredentialBindings === true ||
-        registry
-          .getConfiguredMessagingChannelsFromEntry(registry.getSandbox(sandboxName))
-          .includes("teams");
+        getCredentialBoundMessagingChannelsFromEntry(registry.getSandbox(sandboxName)).includes(
+          "teams",
+        );
       merged = reconcileTeamsOutlookLoginCredentialBinding(merged, sandboxName, teamsConfigured);
     }
   } catch (error) {
@@ -3369,9 +3379,9 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
   }
   if (uniquePresetNames.some((name) => name === "teams" || name === "outlook")) {
     try {
-      const teamsConfigured = registry
-        .getConfiguredMessagingChannelsFromEntry(registry.getSandbox(sandboxName))
-        .includes("teams");
+      const teamsConfigured = getCredentialBoundMessagingChannelsFromEntry(
+        registry.getSandbox(sandboxName),
+      ).includes("teams");
       merged = reconcileTeamsOutlookLoginCredentialBinding(merged, sandboxName, teamsConfigured);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
