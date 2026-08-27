@@ -790,41 +790,28 @@ async function inspectActiveGatewayBinding(): Promise<GatewayBinding> {
   return { name, ...(await inspectGatewayEndpoint(name)) };
 }
 
-async function runBlueprintPolicyAuthorityCommand(
-  command: string[],
-  subject: "global" | "sandbox",
-  gateway: string,
-): Promise<Awaited<ReturnType<typeof runCmd>>> {
-  let result: Awaited<ReturnType<typeof runCmd>>;
-  try {
-    result = await runCmd(command, {
-      gateway,
-      maxBuffer: POLICY_AUTHORITY_MAX_BYTES,
-      reject: false,
-      timeout: POLICY_AUTHORITY_TIMEOUT_MS,
-    });
-  } catch {
-    throw new Error(
-      `OpenShell ${subject} policy authority inspection failed. Policy-dependent operations must stop.`,
-    );
-  }
-  if (
-    result.exitCode !== 0 ||
-    Buffer.byteLength(result.stdout, "utf8") + Buffer.byteLength(result.stderr, "utf8") >
-      POLICY_AUTHORITY_MAX_BYTES
-  ) {
-    throw new Error(
-      `OpenShell ${subject} policy authority inspection failed. Policy-dependent operations must stop.`,
-    );
-  }
-  return result;
+type BlueprintInspectionFailure =
+  | {
+      readonly kind: "policy-authority";
+      readonly subject: "global" | "sandbox";
+    }
+  | {
+      readonly kind: "receipt";
+      readonly subject: "gateway" | "policy" | "sandbox";
+    };
+
+function blueprintInspectionFailureMessage(failure: BlueprintInspectionFailure): string {
+  return failure.kind === "policy-authority"
+    ? `OpenShell ${failure.subject} policy authority inspection failed. Policy-dependent operations must stop.`
+    : `OpenShell ${failure.subject} receipt inspection failed.`;
 }
 
-async function runBlueprintReceiptInspectionCommand(
+async function runBlueprintInspectionCommand(
   command: string[],
-  subject: "gateway" | "policy" | "sandbox",
   gateway: string,
+  failure: BlueprintInspectionFailure,
 ): Promise<Awaited<ReturnType<typeof runCmd>>> {
+  const failureMessage = blueprintInspectionFailureMessage(failure);
   let result: Awaited<ReturnType<typeof runCmd>>;
   try {
     result = await runCmd(command, {
@@ -834,14 +821,14 @@ async function runBlueprintReceiptInspectionCommand(
       timeout: POLICY_AUTHORITY_TIMEOUT_MS,
     });
   } catch {
-    throw new Error(`OpenShell ${subject} receipt inspection failed.`);
+    throw new Error(failureMessage);
   }
   if (
     result.exitCode !== 0 ||
     Buffer.byteLength(result.stdout, "utf8") + Buffer.byteLength(result.stderr, "utf8") >
       POLICY_AUTHORITY_MAX_BYTES
   ) {
-    throw new Error(`OpenShell ${subject} receipt inspection failed.`);
+    throw new Error(failureMessage);
   }
   return result;
 }
@@ -859,10 +846,10 @@ async function inspectBlueprintPolicyAuthority(
 ): Promise<BlueprintPolicyAuthorityInspection | null> {
   const subject = sandboxName === undefined ? "global" : "sandbox";
   if (sandboxName === undefined) {
-    const history = await runBlueprintPolicyAuthorityCommand(
+    const history = await runBlueprintInspectionCommand(
       ["openshell", "policy", "list", "-g", gateway, "--global", "--limit", "1"],
-      subject,
       gateway,
+      { kind: "policy-authority", subject },
     );
     const historyState = classifyOpenShellGlobalPolicyHistory(history.stdout, history.stderr);
     if (historyState === "absent") {
@@ -878,7 +865,10 @@ async function inspectBlueprintPolicyAuthority(
     sandboxName === undefined
       ? ["openshell", "policy", "get", "-g", gateway, "--global", "--full", "--output", "json"]
       : ["openshell", "policy", "get", "-g", gateway, "--full", "--output", "json", sandboxName];
-  const result = await runBlueprintPolicyAuthorityCommand(command, subject, gateway);
+  const result = await runBlueprintInspectionCommand(command, gateway, {
+    kind: "policy-authority",
+    subject,
+  });
   if (sandboxName === undefined) {
     try {
       const activeGlobalPolicy = parseActiveGlobalPolicyAuthorityMetadata(result.stdout);
@@ -969,10 +959,10 @@ function policyForOwnershipProof(policy: UnknownRecord): UnknownRecord {
 }
 
 async function inspectGatewayEndpoint(name: string): Promise<{ host: string; port: number }> {
-  const info = await runBlueprintReceiptInspectionCommand(
+  const info = await runBlueprintInspectionCommand(
     ["openshell", "gateway", "info", "-g", name],
-    "gateway",
     name,
+    { kind: "receipt", subject: "gateway" },
   );
   return parseSingleManagedGatewayEndpoint(`${info.stderr}\n${info.stdout}`);
 }
@@ -982,10 +972,10 @@ async function inspectSandboxIdentityFingerprint(
   sandboxName: string,
   requireReady = true,
 ): Promise<string> {
-  const result = await runBlueprintReceiptInspectionCommand(
+  const result = await runBlueprintInspectionCommand(
     ["openshell", "sandbox", "get", "-g", gateway, sandboxName],
-    "sandbox",
     gateway,
+    { kind: "receipt", subject: "sandbox" },
   );
   const output = `${result.stderr}\n${result.stdout}`;
   const lines = output.replace(/\u001b\[[0-9;]*m/g, "").split(/\r?\n/);
@@ -2209,10 +2199,10 @@ export async function actionApply(
       assertBlueprintExternalPolicyRequirements(observedPolicyAuthority, policyAdditions);
       if (observedPolicyAuthority.authority === "nemoclaw-managed") {
         progress(78, "Applying policy additions");
-        const currentPolicy = await runBlueprintReceiptInspectionCommand(
+        const currentPolicy = await runBlueprintInspectionCommand(
           ["openshell", "policy", "get", "-g", policyGateway.name, "--base", sandboxName],
-          "policy",
           policyGateway.name,
+          { kind: "receipt", subject: "policy" },
         );
 
         const mergedPolicyFile = join(stateDir, "merged-policy.yaml");
