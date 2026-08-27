@@ -9,6 +9,8 @@ import type { AgentDefinition } from "../../agent/defs";
 import { normalizeInferenceSelection, type InferenceSelection } from "../../inference/selection";
 import {
   fingerprintOpenShellSandboxLiveIdentity,
+  NEMOCLAW_CREATE_ATTEMPT_LABEL,
+  NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH,
   parseOpenShellSandboxId,
 } from "../../adapters/openshell/sandbox-identity";
 import {
@@ -251,6 +253,46 @@ export function createHermesPortableReadyCapture(
   };
 }
 
+const CREATE_ATTEMPT_SELECTOR_PREFIX = `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=`;
+
+function scopeHermesPortableCreatedIdentityArgs(
+  args: string[],
+  gatewayName: string,
+): string[] | null {
+  if (
+    args.length !== 10 ||
+    args[0] !== "sandbox" ||
+    args[1] !== "list" ||
+    args[2] !== "-g" ||
+    args[3] !== gatewayName ||
+    args[4] !== "--selector" ||
+    args[6] !== "--output" ||
+    args[7] !== "json" ||
+    args[8] !== "--limit" ||
+    args[9] !== "2"
+  ) {
+    return null;
+  }
+  const selector = args[5]!;
+  if (!selector.startsWith(CREATE_ATTEMPT_SELECTOR_PREFIX)) return null;
+  const nonce = selector.slice(CREATE_ATTEMPT_SELECTOR_PREFIX.length);
+  if (nonce.length !== NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH || !/^[0-9a-f]+$/u.test(nonce)) {
+    return null;
+  }
+  return [
+    "sandbox",
+    "list",
+    "-g",
+    gatewayName,
+    "--selector",
+    `${CREATE_ATTEMPT_SELECTOR_PREFIX}${nonce}`,
+    "--output",
+    "json",
+    "--limit",
+    "2",
+  ];
+}
+
 /** Route create readiness and failed-create cleanup through exact schema-5 authority. */
 export function createHermesPortableReadyRunner(
   sandboxName: string,
@@ -259,7 +301,8 @@ export function createHermesPortableReadyRunner(
 ): (args: string[], options?: Record<string, unknown>) => HermesPortableOpenShellResult {
   return (args) => {
     const scoped =
-      args[0] === "sandbox" && args[1] === "list" && args.length === 2
+      scopeHermesPortableCreatedIdentityArgs(args, gatewayName) ??
+      (args[0] === "sandbox" && args[1] === "list" && args.length === 2
         ? ["sandbox", "list", "-g", gatewayName]
         : args[0] === "sandbox" && args[1] === "get" && args.length === 3 && args[2] === sandboxName
           ? ["sandbox", "get", "-g", gatewayName, args[2]!]
@@ -276,7 +319,7 @@ export function createHermesPortableReadyRunner(
                 args[4] === "--" &&
                 args[5] === "true"
               ? ["sandbox", "exec", "-g", gatewayName, "--name", args[3]!, "--", "true"]
-              : null;
+              : null);
     if (!scoped) fail("create lifecycle attempted an unsupported OpenShell command");
     return capture(scoped);
   };
