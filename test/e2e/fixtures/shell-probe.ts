@@ -222,7 +222,10 @@ export class ShellProbe {
       spawn: {
         cwd: options.cwd,
         detached: true,
-        env: { ...(options.env ?? {}) },
+        env: {
+          ...(process.env.PATH === undefined ? {} : { PATH: process.env.PATH }),
+          ...(options.env ?? {}),
+        },
         stdio: ["ignore", "pipe", "pipe"],
       },
     });
