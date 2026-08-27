@@ -55,17 +55,13 @@ Follow the skill or workflow that DORI returns.
 - Read the full target page before editing it.
 - Map code changes to existing pages before proposing a new page.
 - For every target page, use the
-  [agent variant rules](CONTRIBUTING.md#agent-variant-generation) to determine which agent runtimes
+  [agent variant rules](AUTOMATION.md#agent-variant-generation) to determine which agent runtimes
   execute the documented behavior and which guide variants must publish it.
 - Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only when AI-agent docs routing guidance changes.
 
 ## Execute the Change
 
-1. Apply the applicable procedures in the documentation contributor guide, including the
-   [changelog](CONTRIBUTING.md#updating-the-changelog),
-   [agent variant](CONTRIBUTING.md#agent-variant-generation),
-   [route-style link](CONTRIBUTING.md#route-style-links), and
-   [writing convention](CONTRIBUTING.md#writing-conventions) rules.
-2. Run the commands required by
-   [Doc-Only PR Verification](CONTRIBUTING.md#doc-only-pr-verification) for the changed surface and
+1. Apply the documentation [style](STYLE.md) and [automation](AUTOMATION.md) contracts for the
+   changed surface.
+2. Follow the contributor guide's [validation](CONTRIBUTING.md#validate-the-change) procedure and
    obtain an independent documentation writer review before a direct documentation-only handoff.
