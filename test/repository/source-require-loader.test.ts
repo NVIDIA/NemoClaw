@@ -438,13 +438,49 @@ fs.linkSync = function replaceSourceRequireLock(existingPath, claimPath) {
     const root = fs.mkdtempSync(path.join(REPO_ROOT, "src/.source-require-bootstrap-"));
     roots.push(root);
     const fixturePath = path.join(root, "fixture.ts");
+    const unexpectedPath = path.join(root, "unexpected.ts");
     fs.writeFileSync(fixturePath, "export const value = 42;\n");
+    fs.writeFileSync(unexpectedPath, "export const unexpected = true;\n");
     trackCacheArtifacts(fs.realpathSync(fixturePath));
     const script = `
 const Module = require("node:module");
 const path = require("node:path");
 const typescriptPath = require.resolve("typescript");
 const nativeTypeScriptLoader = Module._extensions[".ts"];
+const expected = new Set([
+  path.resolve(${JSON.stringify(path.join(import.meta.dirname, "../helpers", "register-source-require.ts"))}),
+  path.resolve(${JSON.stringify(path.join(import.meta.dirname, "../helpers", "source-require-cache.ts"))}),
+]);
+const compiled = [];
+const originalCompile = Module.prototype._compile;
+Module.prototype._compile = function recordBootstrapSource(source, filename) {
+  if (expected.has(path.resolve(filename))) {
+    compiled.push({ filename: path.resolve(filename), sourceMapped: source.includes("sourceMappingURL=data:application/json;base64") });
+  }
+  return originalCompile.call(this, source, filename);
+};
+let rejectedUnexpected = false;
+let testedBootstrap = false;
+let installedTypeScriptLoader;
+Object.defineProperty(Module._extensions, ".ts", {
+  configurable: true,
+  get() {
+    return installedTypeScriptLoader;
+  },
+  set(handler) {
+    // The lazy hook is installed and later restored before bootstrap. Only
+    // exercise the bootstrap handler after TypeScript has been loaded.
+    if (require.cache[typescriptPath] !== undefined && handler && !testedBootstrap) {
+      testedBootstrap = true;
+      try {
+        handler({ _compile() { throw new Error("unexpected module was compiled"); } }, ${JSON.stringify(unexpectedPath)});
+      } catch (error) {
+        rejectedUnexpected = String(error).includes("Refusing to bootstrap unexpected TypeScript module");
+      }
+    }
+    installedTypeScriptLoader = handler;
+  },
+});
 require(${JSON.stringify(SOURCE_REQUIRE_HOOK)});
 if (require.cache[typescriptPath] !== undefined) {
   console.error(JSON.stringify({ typescriptLoaded: true }));
@@ -456,9 +492,12 @@ if (require.cache[typescriptPath] !== undefined) {
   if (
     fixture.value !== 42 ||
     require.cache[typescriptPath] === undefined ||
-    registeredTypeScriptLoader === nativeTypeScriptLoader
+    registeredTypeScriptLoader === nativeTypeScriptLoader ||
+    !rejectedUnexpected ||
+    compiled.length !== 2 ||
+    compiled.some((entry) => !entry.sourceMapped)
   ) {
-    console.error(JSON.stringify({ fixture, typescriptLoaded: require.cache[typescriptPath] !== undefined }));
+    console.error(JSON.stringify({ fixture, compiled, rejectedUnexpected, typescriptLoaded: require.cache[typescriptPath] !== undefined }));
     process.exitCode = 9;
   }
 }

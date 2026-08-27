@@ -82,6 +82,11 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
+      "test": "binds trusted base publication to the generic NVIDIA GPU job",
+      "category": "security"
+    },
+    {
       "file": "test/agents/hermes/hermes-final-image-layout.test.ts",
       "test": "pins $source to its current bytes at $target",
       "category": "security"
