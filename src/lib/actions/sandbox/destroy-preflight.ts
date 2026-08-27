@@ -3,6 +3,11 @@
 
 import os from "node:os";
 
+import {
+  defaultHermesForwardWatcherHost,
+  type HermesForwardWatcherHost,
+  reapManagedHermesForwardWatchers,
+} from "../../adapters/openshell/hermes-forward-watcher";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { withModelRouterPortLifecycleLock } from "../../inference/gateway-route-mutation-lock";
 import { DEFAULT_MODEL_ROUTER_PORT, isRoutedInferenceProvider } from "../../onboard/model-router";
@@ -19,6 +24,7 @@ import type {
   releaseOnboardLock,
   Session,
 } from "../../state/onboard-session";
+import { resolveNemoclawStateDir } from "../../state/paths";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { type DestroyRunOpenshell, selectGatewayForSandboxDestroy } from "./destroy-gateway";
@@ -32,6 +38,31 @@ export type SandboxDestroyPreflight = {
   sandbox: SandboxEntry | null;
   sandboxConfirmedAbsent: boolean;
 };
+
+/**
+ * Stop the managed Hermes forward watcher `install.sh` planted for this
+ * sandbox. The watcher restarts the sandbox's API forward every 10 seconds, and
+ * destroy never reaped it, so a destroyed sandbox left one running against a
+ * name the next onboard reuses (#10385).
+ *
+ * `stateDir` defaults from `resolveNemoclawStateDir()` (test-isolation-aware)
+ * rather than being resolved from `$HOME` inside the reap call, so a test that
+ * forgets to inject it reads an empty/wrong directory instead of this
+ * function silently reading — and, through the reap's signal path,
+ * potentially killing a process under — the invoking user's real
+ * `~/.nemoclaw` state.
+ */
+export function stopHermesForwardWatchersForDestroyedSandbox(
+  sandboxName: string,
+  host?: HermesForwardWatcherHost,
+  stateDir?: string,
+): void {
+  reapManagedHermesForwardWatchers(
+    stateDir ?? resolveNemoclawStateDir(),
+    { sandbox: sandboxName },
+    host ?? defaultHermesForwardWatcherHost(),
+  );
+}
 
 export function stopSandboxInferenceResources(
   sandboxName: string,

@@ -4,6 +4,13 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import {
+  defaultHermesForwardWatcherHost,
+  describeManagedHermesForwardWatchers,
+  findManagedHermesForwardWatchers,
+  type HermesForwardWatcherHost,
+  reapManagedHermesForwardWatchers,
+} from "../adapters/openshell/hermes-forward-watcher";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { isPolicyAuthorityRefusalError } from "../adapters/openshell/policy-authority";
 import type { AgentDefinition } from "../agent/defs";
@@ -42,6 +49,7 @@ import {
 import {
   buildDetachedForwardStartSpawn,
   buildForwardStartProgressLogger,
+  looksLikeForwardListenerStartFailure,
   looksLikeForwardPortConflict,
   runDetachedForwardStartWithRetries,
 } from "./forward-start";
@@ -50,6 +58,7 @@ import {
   resolveMessagingHostForwardForSandbox,
 } from "./messaging-host-forward";
 import { buildSshForwardHintLines } from "./ssh-forward-hint";
+import { resolveNemoclawStateDir } from "../state/paths";
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 export const CONTROL_UI_PORT = DASHBOARD_PORT;
@@ -73,6 +82,21 @@ export interface OnboardDashboardDeps {
   sleep(seconds: number): void;
   /** Environment used to detect an SSH session for the port-forward hint. */
   env?: NodeJS.ProcessEnv;
+  /**
+   * Process host used to reap a stale managed Hermes forward watcher before
+   * this sandbox's forward starts. Tests inject a fake process table (#10385).
+   */
+  hermesForwardWatcherHost?: HermesForwardWatcherHost;
+  /**
+   * State directory the watcher reap above reads. Kept as its own seam,
+   * defaulted from `resolveNemoclawStateDir()` (test-isolation-aware) rather
+   * than resolved from `$HOME` inside the reap call, so a test that forgets to
+   * inject it reads an empty/wrong directory instead of this function
+   * silently reading — and, through the reap's signal path, potentially
+   * killing a process under — the invoking user's real `~/.nemoclaw` state
+   * (#10385).
+   */
+  hermesForwardWatcherStateDir?: string;
   // Sandbox-registry lookup used by `ensureDashboardForward` for the
   // cross-gateway dashboard port view. Tests inject a stub so the allocator
   // never reads the runner's real `~/.nemoclaw/sandboxes.json`; production
@@ -233,6 +257,11 @@ function printWslFallback(fallbackDashboardUrls: string[], indent: string): void
 
 export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): OnboardDashboardHelpers {
   const runCapture = deps.runCapture ?? defaultRunCapture;
+  const hermesForwardWatcherHost =
+    deps.hermesForwardWatcherHost ??
+    defaultHermesForwardWatcherHost({ env: deps.env ?? process.env });
+  const hermesForwardWatcherStateDir =
+    deps.hermesForwardWatcherStateDir ?? resolveNemoclawStateDir();
 
   function getDashboardForwardPort(
     chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
@@ -339,6 +368,17 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const messagingForward = resolveMessagingHostForwardForSandbox(sandboxName);
     if (messagingForward) preservedPorts.add(String(messagingForward.port));
     const preferredPort = Number(getDashboardForwardPort(chatUiUrl));
+    // `install.sh` plants a managed watcher that restarts this sandbox's API
+    // forward every 10 seconds. It reaps the previous one only in its own
+    // post-onboard restore step, so a watcher from an earlier cycle is still
+    // live while onboarding runs. It then races every forward stop and start
+    // below, and each side tears down the other's still-settling ssh listener,
+    // which leaves the API port refused across retries (#10385).
+    reapManagedHermesForwardWatchers(
+      hermesForwardWatcherStateDir,
+      { port: preferredPort, sandbox: sandboxName },
+      hermesForwardWatcherHost,
+    );
     const makeStopForwardForSandbox = () =>
       createSandboxForwardStopper({
         runOpenshell: deps.runOpenshell,
@@ -456,6 +496,21 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         console.warn(`  Free the port, then reconnect: ${deps.cliName()} ${sandboxName} connect`);
       } else {
         console.warn(`! Port ${actualPort} forward did not start: ${fwdDiagnostic.slice(0, 240)}`);
+        // A watcher this reap could not stop keeps restarting the same forward.
+        // Name it here so the next occurrence is diagnosable on sight (#10385).
+        const survivingWatchers = looksLikeForwardListenerStartFailure(fwdDiagnostic)
+          ? findManagedHermesForwardWatchers(
+              hermesForwardWatcherStateDir,
+              { port: actualPort, sandbox: sandboxName },
+              hermesForwardWatcherHost,
+            )
+          : [];
+        if (survivingWatchers.length > 0) {
+          console.warn(
+            `  A managed Hermes forward watcher is still running for '${sandboxName}' on port ${actualPort}: ` +
+              `${describeManagedHermesForwardWatchers(survivingWatchers)}. Stop it before retrying.`,
+          );
+        }
         console.warn(
           `  Reconnect after resolving the issue: ${deps.cliName()} ${sandboxName} connect`,
         );

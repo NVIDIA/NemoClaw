@@ -5313,6 +5313,42 @@ An HTTP status of `200` or `401` means the host port forward is reachable.
 Any other status, `000`, or connection failure requires fresh diagnostics.
 Rerun `$$nemoclaw onboard` and follow the reported `gateway` or `api` failure.
 
+### Onboarding Reports That a Hermes Forward Watcher Is Still Running
+
+The installer starts a background forward watcher after it onboards a Hermes sandbox.
+The watcher probes the sandbox's API port every 10 seconds and restarts the port forward when the probe fails.
+
+Onboarding stops the watcher recorded for a sandbox and port before it starts that port's forward.
+Sandbox destroy stops every watcher recorded for a sandbox once its delete succeeds or it was already gone; a failed delete leaves the watcher running, because the sandbox is still live and needs its self-healing forward.
+Both stop a process only after confirming that it runs as the current user and that its command line is exactly the watcher NemoClaw recorded.
+
+Running `$$nemoclaw onboard` directly on a sandbox that already has a watcher also stops that watcher.
+Only the installer plants a replacement; onboarding and destroy never do, including a `destroy` followed by a fresh `onboard`.
+The sandbox keeps working, but its forward stops auto-recovering from a dropped listener until you reinstall.
+
+When a watcher survives that check and the forward still fails to open its listener, onboarding names the surviving process:
+
+```text
+! Port 8642 forward did not start: local forward listener did not open on 127.0.0.1:8642 within 10000ms
+  A managed Hermes forward watcher is still running for 'hermes' on port 8642: pid 60642 (/home/user/.nemoclaw/state/hermes-hermes-8642.forward.pid.js). Stop it before retrying.
+```
+
+A surviving watcher restarts the same forward while onboarding is establishing it, and each side can stop the other's listener.
+Confirm the reported process before you stop it:
+
+```bash
+ps -p <pid> -o user=,args=
+```
+
+That command reporting your own user and a command line that *contains* the watcher script path from the diagnostic is not enough — NemoClaw only ever names a watcher here after confirming its command line matches exactly (`node <script> <openshell> <port> <sandbox>`), not merely that it contains that script path.
+Stop it only when the full command line matches that exact form:
+
+```bash
+kill <pid>
+```
+
+Then rerun `$$nemoclaw onboard`.
+
 ### `docker port` shows no mapping for 8642 even though forwarding works
 
 OpenShell port forwards are host-side relays managed by the OpenShell gateway process, not Docker `-p` publish mappings on the sandbox container.

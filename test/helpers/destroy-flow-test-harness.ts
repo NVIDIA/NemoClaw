@@ -44,6 +44,7 @@ export type DestroyHarness = {
   promptSpy: MockInstance;
   removeManagedHermesStateVolumeSpy: MockInstance;
   removeSandboxSpy: MockInstance;
+  stopHermesForwardWatchersForDestroyedSandboxSpy: MockInstance;
   retirePortableLifecycleReceiptSpy: MockInstance;
   portableDestroyRevalidateSpy: MockInstance;
   portableDestroyVerifyAbsentSpy: MockInstance;
@@ -511,6 +512,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const removeManagedHermesStateVolumeSpy = vi
     .spyOn(sandboxProviderCleanup, "removeManagedHermesStateVolume")
     .mockReturnValue(options.managedHermesStateVolumeCleanupResult ?? { status: "not-applicable" });
+  const stopHermesForwardWatchersForDestroyedSandboxSpy = vi
+    .spyOn(destroyPreflight, "stopHermesForwardWatchersForDestroyedSandbox")
+    .mockImplementation(() => undefined);
   const stopNimByNameSpy = vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => {
     if (options.stopInferenceError !== undefined) {
       throw new Error(options.stopInferenceError);
@@ -628,6 +632,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     promptSpy,
     removeManagedHermesStateVolumeSpy,
     removeSandboxSpy,
+    stopHermesForwardWatchersForDestroyedSandboxSpy,
     retirePortableLifecycleReceiptSpy,
     revokeHttpsPinRuntimeAdapterRouteSpy,
     restoreMcpBridgesAfterDestroyAbortSpy,

@@ -586,6 +586,30 @@ describe("destroySandbox flow", () => {
     );
   });
 
+  it("reaps the sandbox's Hermes forward watcher even when state-volume cleanup fails and exits (#10385)", async () => {
+    // OpenShell has already deleted the sandbox by this point; the watcher
+    // this call stops is an orphan's, not a live sandbox's self-healing, so
+    // it must not outlive the confirmed delete just because an unrelated,
+    // independently-retryable cleanup step failed afterward.
+    const harness = createDestroyHarness({
+      agent: "hermes",
+      openshellDriver: "docker",
+      workload: managedHermesWorkload,
+      managedHermesStateVolumeCleanupResult: {
+        status: "failed",
+        detail: "volume is still in use",
+        volumeName: "nemoclaw-hermes-state-v1-alpha",
+      },
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.stopHermesForwardWatchersForDestroyedSandboxSpy).toHaveBeenCalledWith("alpha");
+    expect(
+      harness.stopHermesForwardWatchersForDestroyedSandboxSpy.mock.invocationCallOrder[0],
+    ).toBeLessThan(harness.removeManagedHermesStateVolumeSpy.mock.invocationCallOrder[0]);
+  });
+
   it("leaves a foreign same-name Hermes volume untouched and completes registry cleanup", async () => {
     const harness = createDestroyHarness({
       agent: "hermes",
