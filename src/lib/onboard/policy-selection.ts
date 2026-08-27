@@ -17,6 +17,7 @@ import {
 import {
   allMessagingChannelPolicyPresets,
   mergePolicyMessagingChannels,
+  pruneInactiveHermesMessagingPolicyPresets,
 } from "./messaging-policy-presets";
 import {
   isInactiveObservabilityPolicyPreset,
@@ -255,35 +256,42 @@ export function computeSetupPresetSuggestions(
     ? new Set(allMessagingChannelPolicyPresets(enabledChannels))
     : null;
   const supportOptions = { webSearchSupported: options.webSearchSupported };
-  const suggestions = deps.tiers
-    .resolveTierPresets(tierName)
-    .map((preset) => preset.name)
-    .filter((name) => setupPolicyPresetAppliesToAgent(name, agent))
-    // Discord egress names a sandbox-scoped credential provider. An open tier
-    // may contain the preset, but OpenShell rejects it unless the channel is
-    // active and its provider is attached to the sandbox.
-    .filter(
-      (name) =>
-        name !== "discord" || activeMessagingPresets === null || activeMessagingPresets.has(name),
-    )
-    .filter(
-      (name) =>
-        !isStaleBuiltinWebSearchPolicyPreset(name, {
-          webSearchConfig,
-          customPresetNames: options.customPresetNames,
-        }),
-    )
-    .filter(
-      (name) =>
-        !isInactiveObservabilityPolicyPreset(name, {
-          agent,
-          observabilityEnabled,
-          customPresetNames: options.customPresetNames,
-          customOwnsObservability: options.customOwnsObservability,
-        }),
-    )
-    .filter((name) => deps.policies.setupPolicyPresetSupported(name, supportOptions))
-    .filter((name) => !known || known.has(name));
+  const suggestions = pruneInactiveHermesMessagingPolicyPresets(
+    deps.tiers
+      .resolveTierPresets(tierName)
+      .map((preset) => preset.name)
+      .filter((name) => setupPolicyPresetAppliesToAgent(name, agent))
+      // Discord egress names a sandbox-scoped credential provider. An open tier
+      // may contain the preset, but OpenShell rejects it unless the channel is
+      // active and its provider is attached to the sandbox.
+      .filter(
+        (name) =>
+          name !== "discord" ||
+          activeMessagingPresets === null ||
+          activeMessagingPresets.has(name),
+      )
+      .filter(
+        (name) =>
+          !isStaleBuiltinWebSearchPolicyPreset(name, {
+            webSearchConfig,
+            customPresetNames: options.customPresetNames,
+          }),
+      )
+      .filter(
+        (name) =>
+          !isInactiveObservabilityPolicyPreset(name, {
+            agent,
+            observabilityEnabled,
+            customPresetNames: options.customPresetNames,
+            customOwnsObservability: options.customOwnsObservability,
+          }),
+      )
+      .filter((name) => deps.policies.setupPolicyPresetSupported(name, supportOptions))
+      .filter((name) => !known || known.has(name)),
+    enabledChannels,
+    agent,
+    options.customPresetNames,
+  );
   const add = (name: string) => {
     if (!setupPolicyPresetAppliesToAgent(name, agent)) return;
     if (
@@ -453,6 +461,7 @@ async function setupPoliciesWithSelectionInner(
   );
   const pruneUnavailablePresets = createUnavailablePolicyPresetPruner({
     disabledChannels,
+    enabledChannels,
     agent,
     observabilityEnabled,
     webSearchConfig,
@@ -553,13 +562,27 @@ async function setupPoliciesWithSelectionInner(
     let isAuthoritative = false;
 
     if (policyMode === "skip" || policyMode === "none" || policyMode === "no") {
-      const retainedPresets = ensureRequiredTierPolicyPresets(
-        tierName,
-        filterSuppressedAgentRequiredPresets(
-          excludePresets(pruneUnavailablePresets(currentAppliedPresets)),
+      const retainedPresets = mergeRequiredSetupPolicyPresets(
+        ensureRequiredTierPolicyPresets(
           tierName,
-          agent,
+          filterSuppressedAgentRequiredPresets(
+            excludePresets(pruneUnavailablePresets(currentAppliedPresets)),
+            tierName,
+            agent,
+          ),
         ),
+        {
+          enabledChannels,
+          hermesToolGateways,
+          agent,
+          observabilityEnabled,
+          knownPresetNames: knownPresets,
+          env: deps.env,
+          tierName,
+          webSearchConfig,
+          customPresetNames,
+          customOwnsObservability,
+        },
       );
       const selectionChanged =
         retainedPresets.length !== currentAppliedPresets.length ||

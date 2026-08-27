@@ -81,7 +81,6 @@ runner.run = (command) => {
     ? { status: 0, stdout: Buffer.from("my-assistant\nId: fixture-created-sandbox\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
 };
-fixtureMocks.mockDockerSandboxLifecycleReleaseFromRunner();
 runner.runCapture = (command) => {
   const cmd = _n(command);
   if (cmd.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:8080";
@@ -103,6 +102,7 @@ runner.runCapture = (command) => {
   }
   return "";
 };
+fixtureMocks.mockDockerSandboxLifecycleReleaseFromRunner();
 const sourceEntry = fixtureMocks.managedSandboxPolicyReceiptFixture({
   name: "my-assistant",
   gpuEnabled: false,

@@ -106,10 +106,9 @@ runner.run = (command) => {
     return { status: 0, stdout: "No sandboxes found.\n" };
   }
   return cmd.includes("sandbox get") && cmd.includes("my-assistant")
-    ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: fixture-created-sandbox\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
 };
-require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 runner.runCapture = (command) => {
   const cmd = _n(command);
   const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
@@ -127,6 +126,7 @@ runner.runCapture = (command) => {
   }
   return "";
 };
+require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 
 onboardSession.saveSession(onboardSession.createSession({
   sessionId: "session-owner",
@@ -174,8 +174,10 @@ const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry,
   sandboxName: "my-assistant",
   provider: "nvidia-prod",
   model: "gpt-5.4",
+  sessionId: "session-owner",
   getSandbox: registry.getSandbox,
   removeSandbox,
+  sourceSandboxId: "fixture-created-sandbox",
 });
 
 const preflight = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"))});
