@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { RetainedSandboxRecoveryContext } from "../state/onboard-session";
+
 // Re-exported so the onboard entrypoint imports its sandbox default/cancel
 // lifecycle helpers from a single module.
 export { restoreDefaultAfterRecreate, wasSandboxDefault } from "./default-preservation";
@@ -25,12 +27,20 @@ export interface SandboxCancelRollbackDeps {
   /** Emit an operator-facing line (stderr). */
   log(message: string): void;
   /** Persist the recovery-only session before process exit completes. */
-  recordRecovery?(sandboxName: string, sandboxIdentityFingerprint?: string): void;
+  recordRecovery?(
+    sandboxName: string,
+    sandboxIdentityFingerprint?: string,
+    context?: RetainedSandboxRecoveryContext,
+  ): void;
 }
 
 export interface SandboxCancelRollback {
   /** Arm cancellation recovery guidance for a just-created sandbox. */
-  arm(sandboxName: string, sandboxIdentityFingerprint?: string): void;
+  arm(
+    sandboxName: string,
+    sandboxIdentityFingerprint?: string,
+    context?: RetainedSandboxRecoveryContext,
+  ): void;
   /** Disarm once the sandbox is past the cancellable policy-selection window. */
   disarm(): void;
   /** Record that the operator cancelled at a cancellable step. */
@@ -121,6 +131,7 @@ export function createSandboxCancelRollback(
   let armedSandbox: {
     readonly name: string;
     readonly identityFingerprint: string | null;
+    readonly context: RetainedSandboxRecoveryContext | undefined;
   } | null = null;
   let cancelRequested = false;
   let recoveryRecorded = false;
@@ -132,7 +143,11 @@ export function createSandboxCancelRollback(
     if (recoveryRecorded) return true;
     if (armedSandbox === null) return false;
     try {
-      deps.recordRecovery?.(armedSandbox.name, armedSandbox.identityFingerprint ?? undefined);
+      deps.recordRecovery?.(
+        armedSandbox.name,
+        armedSandbox.identityFingerprint ?? undefined,
+        armedSandbox.context,
+      );
       recoveryRecorded = true;
       recoveryPersistenceFailed = false;
       return true;
@@ -143,7 +158,11 @@ export function createSandboxCancelRollback(
   };
 
   return {
-    arm(sandboxName: string, sandboxIdentityFingerprint?: string): void {
+    arm(
+      sandboxName: string,
+      sandboxIdentityFingerprint?: string,
+      context?: RetainedSandboxRecoveryContext,
+    ): void {
       armedSandbox = {
         name: sandboxName,
         identityFingerprint:
@@ -151,6 +170,7 @@ export function createSandboxCancelRollback(
           /^[0-9a-f]{64}$/u.test(sandboxIdentityFingerprint)
             ? sandboxIdentityFingerprint
             : null,
+        context,
       };
     },
     disarm(): void {

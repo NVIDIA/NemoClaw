@@ -30,23 +30,26 @@ describe("retained sandbox recovery state", () => {
   it("persists verified identity and secret-free resource evidence independently", async () => {
     const recovery = await import("./onboard-session");
     const fingerprint = "a".repeat(64);
-
-    const recorded = recovery.recordRetainedSandboxRecovery({
+    const input = {
       sandboxName: "retained-sb",
       sandboxIdentityFingerprint: fingerprint,
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
       lifecycleGeneration: "00000000-0000-4000-8000-000000000001",
+      verifiedEffectivePolicyIdentity: { hash: "sha256:policy-1", activeVersion: 1 },
       resources: evidence,
       reason: "cancelled_after_sandbox_creation",
       recordedAt: "2026-08-27T00:00:00.000Z",
-    });
+    } as const;
+
+    const recorded = recovery.recordRetainedSandboxRecovery(input);
 
     expect(recovery.listRetainedSandboxRecoveryRecords()).toEqual([recorded]);
     expect(recorded).toMatchObject({
       sandboxName: "retained-sb",
       sandboxIdentityFingerprint: fingerprint,
       identityWasUnavailable: false,
+      verifiedEffectivePolicyIdentity: input.verifiedEffectivePolicyIdentity,
       resources: evidence,
     });
     expect(fs.readFileSync(recovery.RETAINED_SANDBOX_RECOVERY_FILE, "utf8")).not.toContain(
@@ -63,6 +66,7 @@ describe("retained sandbox recovery state", () => {
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
       lifecycleGeneration: null,
+      verifiedEffectivePolicyIdentity: null,
       resources: {
         sharedInferenceProviders: [],
         sandboxScopedProviders: [],
@@ -76,6 +80,32 @@ describe("retained sandbox recovery state", () => {
       identityWasUnavailable: true,
       lifecycleGeneration: null,
     });
+  });
+
+  it("preserves distinct unresolved lifecycle tuples for one sandbox name (#9833)", async () => {
+    const recovery = await import("./onboard-session");
+    const first = recovery.recordRetainedSandboxRecovery({
+      sandboxName: "retained-sb",
+      sandboxIdentityFingerprint: "1".repeat(64),
+      gatewayName: "nemoclaw-18080",
+      gatewayPort: 18080,
+      lifecycleGeneration: "00000000-0000-4000-8000-000000000001",
+      verifiedEffectivePolicyIdentity: { hash: "sha256:policy-1", activeVersion: 1 },
+      resources: evidence,
+      reason: "cancelled_after_sandbox_creation",
+    });
+    const second = recovery.recordRetainedSandboxRecovery({
+      sandboxName: "retained-sb",
+      sandboxIdentityFingerprint: "2".repeat(64),
+      gatewayName: "nemoclaw-18080",
+      gatewayPort: 18080,
+      lifecycleGeneration: "00000000-0000-4000-8000-000000000002",
+      verifiedEffectivePolicyIdentity: { hash: "sha256:policy-2", activeVersion: 2 },
+      resources: evidence,
+      reason: "retained_after_sandbox_creation_failure",
+    });
+
+    expect(recovery.listRetainedSandboxRecoveryRecords()).toEqual([first, second]);
   });
 
   it("refuses a symbolic-link recovery state without reading its target", async () => {
@@ -100,6 +130,7 @@ describe("retained sandbox recovery state", () => {
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
       lifecycleGeneration: "generation-1",
+      verifiedEffectivePolicyIdentity: null,
       resources: evidence,
       reason: "cancelled_after_sandbox_creation",
     });
@@ -131,6 +162,7 @@ describe("retained sandbox recovery state", () => {
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
       lifecycleGeneration: "legacy-generation",
+      verifiedEffectivePolicyIdentity: null,
       resources: evidence,
       reason: "cancelled_after_sandbox_creation",
     });
@@ -158,6 +190,7 @@ describe("retained sandbox recovery state", () => {
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
       lifecycleGeneration: null,
+      verifiedEffectivePolicyIdentity: null,
       resources: evidence,
       reason: "retained_after_sandbox_creation_failure",
     });

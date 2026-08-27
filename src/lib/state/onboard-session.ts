@@ -68,6 +68,7 @@ import {
   type RecordRetainedSandboxRecoveryInput,
   type RetainedSandboxRecoveryRecord,
   type RetainedSandboxRecoveryReason,
+  type RetainedSandboxVerifiedEffectivePolicyIdentity,
 } from "./onboard-session/retained-sandbox-recovery";
 import type { SandboxHostMount } from "./registry/types";
 import { hasUnsafeHostMountTerminalText } from "./registry/host-mount";
@@ -1655,6 +1656,7 @@ export interface RetainedSandboxRecoveryContext {
   readonly gatewayName?: string;
   readonly gatewayPort?: number;
   readonly lifecycleGeneration?: string | null;
+  readonly verifiedEffectivePolicyIdentity?: RetainedSandboxVerifiedEffectivePolicyIdentity | null;
 }
 
 function persistIndependentRetainedSandboxRecovery(
@@ -1678,6 +1680,7 @@ function persistIndependentRetainedSandboxRecovery(
     gatewayName: context.gatewayName ?? session.metadata.gatewayName,
     gatewayPort: context.gatewayPort ?? GATEWAY_PORT,
     lifecycleGeneration: context.lifecycleGeneration ?? null,
+    verifiedEffectivePolicyIdentity: context.verifiedEffectivePolicyIdentity ?? null,
     resources: {
       sharedInferenceProviders: session.provider ? [session.provider] : [],
       sandboxScopedProviders: session.stagedCredentialProviders,

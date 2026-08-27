@@ -131,8 +131,29 @@ describe("installSandboxCancelRollback", () => {
     rollback.markCancelled();
     exitHandlers[0]();
 
-    expect(recordRecovery).toHaveBeenCalledWith("new-sb", SANDBOX_FINGERPRINT);
+    expect(recordRecovery).toHaveBeenCalledWith("new-sb", SANDBOX_FINGERPRINT, undefined);
     expect(log.mock.calls.flat().join("\n")).toContain(SANDBOX_FINGERPRINT);
+  });
+
+  it("forwards the full verified tuple from cancellation to durable state (#9833)", () => {
+    const recordRecovery = vi.fn();
+    const recoveryContext = {
+      gatewayName: "nemoclaw-18080",
+      gatewayPort: 18080,
+      lifecycleGeneration: "00000000-0000-4000-8000-000000000004",
+      verifiedEffectivePolicyIdentity: { hash: "sha256:policy-4", activeVersion: 4 },
+    } as const;
+    const rollback = createSandboxCancelRollback({ log: vi.fn(), recordRecovery });
+    const armWithContext = rollback.arm as (
+      sandboxName: string,
+      sandboxIdentityFingerprint: string,
+      context: typeof recoveryContext,
+    ) => void;
+
+    armWithContext("new-sb", SANDBOX_FINGERPRINT, recoveryContext);
+    rollback.markCancelled();
+
+    expect(recordRecovery).toHaveBeenCalledWith("new-sb", SANDBOX_FINGERPRINT, recoveryContext);
   });
 
   it("persists recovery before a deferred process exit and records it once (#9833)", () => {
@@ -152,7 +173,7 @@ describe("installSandboxCancelRollback", () => {
     rollback.arm("new-sb", SANDBOX_FINGERPRINT);
     expect(() => cancel()).toThrow(deferredExit);
     expect(recordRecovery).toHaveBeenCalledOnce();
-    expect(recordRecovery).toHaveBeenCalledWith("new-sb", SANDBOX_FINGERPRINT);
+    expect(recordRecovery).toHaveBeenCalledWith("new-sb", SANDBOX_FINGERPRINT, undefined);
 
     exitHandlers[0]();
     expect(recordRecovery).toHaveBeenCalledOnce();
@@ -180,7 +201,7 @@ describe("installSandboxCancelRollback", () => {
 
     exitHandlers[0]();
     expect(recordRecovery).toHaveBeenCalledTimes(2);
-    expect(recordRecovery).toHaveBeenLastCalledWith("new-sb", SANDBOX_FINGERPRINT);
+    expect(recordRecovery).toHaveBeenLastCalledWith("new-sb", SANDBOX_FINGERPRINT, undefined);
     const guidance = log.mock.calls.flat().join("\n");
     expect(guidance).toContain(SANDBOX_FINGERPRINT);
     expect(guidance).not.toContain("could not save the onboarding recovery record");
@@ -234,7 +255,7 @@ describe("installSandboxCancelRollback", () => {
     exitHandlers[0]();
 
     expect(recordRecovery).toHaveBeenCalledTimes(3);
-    expect(recordRecovery).toHaveBeenNthCalledWith(3, "new-sb", SANDBOX_FINGERPRINT);
+    expect(recordRecovery).toHaveBeenNthCalledWith(3, "new-sb", SANDBOX_FINGERPRINT, undefined);
     const guidanceCalls = log.mock.calls.filter(([message]) =>
       String(message).includes("preserved incomplete sandbox"),
     );

@@ -254,7 +254,7 @@ runner.run = (command, opts = {}) => {
 };
 	runner.runCapture = (command) => {
 	  const cmd = _n(command);
-	  if (cmd.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:8080";
+	  if (cmd.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:18080";
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) {
 	    if (postCreateFinalizationRefusal && registeredSandbox) {
 	      throw new Error("final onboarding policy check failed");
@@ -294,6 +294,7 @@ runner.run = (command, opts = {}) => {
   let checkpointReadCalls = 0;
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
 	  sandboxName: "my-assistant",
+	  gatewayName: "nemoclaw-18080",
 	  provider,
 	  model,
 	  apfInterceptorRequested,
@@ -403,7 +404,7 @@ if (cancelAfterCreate && !recoveryReentry) {
   const session = onboardModule.onboardSession.createSession({
     mode: "interactive",
     sandboxName: "my-assistant",
-    metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
+    metadata: { gatewayName: "nemoclaw-18080", fromDockerfile: null },
   });
   onboardModule.onboardSession.saveSession(session);
   onboardModule.registerIncompleteOnboardExitHandlerForSession(
@@ -433,6 +434,7 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
     checkpointReadCalls,
     registryMutationCalls,
     currentRegistryEntry: cancelAfterCreate ? registry.getSandbox("my-assistant") : null,
+    recoveryRegistryEntry: registry.getSandbox("my-assistant"),
     savedSession:
       cancelAfterCreate ||
       postCreateAuthorityRefusal ||
@@ -455,7 +457,7 @@ if (${JSON.stringify(
 }
 
 (async () => {
-  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  process.env.OPENSHELL_GATEWAY = "nemoclaw-18080";
 	  if (recoveryReentry) {
 	    if (recoveryReentry === "fresh-different-no-journal") {
 	      try {
@@ -491,7 +493,7 @@ if (${JSON.stringify(
 	        onboardModule.onboardSession.createSession({
 	          mode: resolved.nonInteractive ? "non-interactive" : "interactive",
 	          sandboxName: resolved.requestedSandboxName,
-	          metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
+	          metadata: { gatewayName: "nemoclaw-18080", fromDockerfile: null },
 	        }),
 	      );
 	      writePayload("replacement-sb", null, 0);
@@ -572,6 +574,7 @@ if (${JSON.stringify(
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_NON_INTERACTIVE: expectedOutcome.startsWith("cancel-after-create-") ? "" : "1",
+        NEMOCLAW_GATEWAY_PORT: "18080",
         OPENSHELL_DRIVERS: "docker",
         NEMOCLAW_MESSAGING_PLAN_B64:
           expectedOutcome === "staged-messaging-refusal"
@@ -601,6 +604,17 @@ if (${JSON.stringify(
           command,
         ),
       );
+      const identityFingerprint = createHash("sha256").update("sbx-fresh-create").digest("hex");
+      const assertRecoveryTuple = (record: Record<string, unknown>) => {
+        assert.equal(record.gatewayName, "nemoclaw-18080");
+        assert.equal(record.gatewayPort, 18080);
+        assert.equal(record.sandboxIdentityFingerprint, identityFingerprint);
+        assert.equal(record.lifecycleGeneration, payload.recoveryRegistryEntry.lifecycleGeneration);
+        assert.deepEqual(record.verifiedEffectivePolicyIdentity, {
+          hash: "fixture-policy",
+          activeVersion: 1,
+        });
+      };
       const assertProviderBackedApfRefusal = () => {
         assert.match(
           payload.creationError,
@@ -658,7 +672,7 @@ if (${JSON.stringify(
           /--label ai\.nvidia\.nemoclaw\.create-attempt=[0-9a-f]{62}/u,
         );
         const ownerScopedObservations = payload.lifecycleObservationCommands.filter(
-          (command: string) => command.includes("-g nemoclaw"),
+          (command: string) => command.includes("-g nemoclaw-18080"),
         );
         assert.ok(
           ownerScopedObservations.length >= 6,
@@ -667,8 +681,8 @@ if (${JSON.stringify(
         assert.ok(
           ownerScopedObservations.every(
             (command: string) =>
-              command.includes("sandbox get -g nemoclaw my-assistant") ||
-              command.includes("sandbox list -g nemoclaw"),
+              command.includes("sandbox get -g nemoclaw-18080 my-assistant") ||
+              command.includes("sandbox list -g nemoclaw-18080"),
           ),
           `fresh identity observations must remain scoped to the owning gateway: ${JSON.stringify(ownerScopedObservations)}`,
         );
@@ -690,7 +704,6 @@ if (${JSON.stringify(
         assert.deepEqual(providerExposureCommands, []);
       };
       const assertPostCreateAuthorityRefusal = () => {
-        const identityFingerprint = createHash("sha256").update("sbx-fresh-create").digest("hex");
         assert.equal(payload.sandboxName, null);
         assert.equal(payload.sandboxCreated, true);
         assert.equal(payload.deleted, false);
@@ -716,18 +729,17 @@ if (${JSON.stringify(
           identityFingerprint,
         );
         assert.equal(payload.retainedRecoveryRecords.length, 1);
-        assert.deepEqual(payload.retainedRecoveryRecords[0], {
-          ...payload.retainedRecoveryRecords[0],
-          sandboxName: "my-assistant",
-          sandboxIdentityFingerprint: identityFingerprint,
-          identityWasUnavailable: false,
-          gatewayName: "nemoclaw",
-          gatewayPort: 8080,
-          reason: "retained_after_sandbox_creation_failure",
-        });
+        const record = payload.retainedRecoveryRecords[0];
+        assert.equal(record.sandboxName, "my-assistant");
+        assert.equal(record.sandboxIdentityFingerprint, identityFingerprint);
+        assert.equal(record.identityWasUnavailable, false);
+        assert.equal(record.gatewayName, "nemoclaw-18080");
+        assert.equal(record.gatewayPort, 18080);
+        assert.match(record.lifecycleGeneration, /^[0-9a-f-]{36}$/u);
+        assert.equal(record.verifiedEffectivePolicyIdentity, null);
+        assert.equal(record.reason, "retained_after_sandbox_creation_failure");
       };
       const assertPostCreateRunnerRefusal = () => {
-        const identityFingerprint = createHash("sha256").update("sbx-fresh-create").digest("hex");
         assert.equal(payload.sandboxName, null);
         assert.equal(payload.sandboxCreated, true);
         assert.equal(payload.deleted, false);
@@ -741,6 +753,7 @@ if (${JSON.stringify(
         );
         assert.equal(payload.retainedRecoveryRecords.length, 1);
         assert.equal(payload.retainedRecoveryRecords[0].sandboxName, "my-assistant");
+        assertRecoveryTuple(payload.retainedRecoveryRecords[0]);
         assert.ok(payload.checkpointReadCalls >= 6);
         assert.equal(
           payload.commandNames.filter((command: string) => command.includes("sandbox create"))
@@ -749,7 +762,6 @@ if (${JSON.stringify(
         );
       };
       const assertPostCreateRegistrationRefusal = () => {
-        const identityFingerprint = createHash("sha256").update("sbx-fresh-create").digest("hex");
         assert.equal(payload.sandboxName, null);
         assert.equal(payload.sandboxCreated, true);
         assert.equal(payload.deleted, false);
@@ -762,18 +774,13 @@ if (${JSON.stringify(
           identityFingerprint,
         );
         assert.equal(payload.retainedRecoveryRecords.length, 1);
-        assert.deepEqual(payload.retainedRecoveryRecords[0], {
-          ...payload.retainedRecoveryRecords[0],
-          sandboxName: "my-assistant",
-          sandboxIdentityFingerprint: identityFingerprint,
-          identityWasUnavailable: false,
-          gatewayName: "nemoclaw",
-          gatewayPort: 8080,
-          reason: "retained_after_sandbox_creation_failure",
-        });
+        const record = payload.retainedRecoveryRecords[0];
+        assert.equal(record.sandboxName, "my-assistant");
+        assert.equal(record.identityWasUnavailable, false);
+        assert.equal(record.reason, "retained_after_sandbox_creation_failure");
+        assertRecoveryTuple(record);
       };
       const assertPostCreateRegistrationRecoveryReadbackFailure = () => {
-        const identityFingerprint = createHash("sha256").update("sbx-fresh-create").digest("hex");
         assert.equal(payload.sandboxName, null);
         assert.equal(payload.sandboxCreated, true);
         assert.equal(payload.deleted, false);
@@ -829,6 +836,7 @@ if (${JSON.stringify(
         assert.equal(payload.savedSession.resumable, false);
         assert.equal(payload.retainedRecoveryRecords.length, 1);
         assert.equal(payload.retainedRecoveryRecords[0].sandboxName, "my-assistant");
+        assertRecoveryTuple(payload.retainedRecoveryRecords[0]);
         assert.equal(
           payload.commandNames.filter((command: string) => command.includes("sandbox create"))
             .length,
@@ -836,7 +844,6 @@ if (${JSON.stringify(
         );
       };
       const assertPostCreateFinalizationRefusal = () => {
-        const identityFingerprint = createHash("sha256").update("sbx-fresh-create").digest("hex");
         assert.equal(payload.sandboxName, null);
         assert.equal(payload.sandboxCreated, true);
         assert.equal(payload.deleted, false);
@@ -851,9 +858,9 @@ if (${JSON.stringify(
           payload.savedSession.cancellationRecovery.sandboxIdentityFingerprint,
           identityFingerprint,
         );
+        assertRecoveryTuple(payload.retainedRecoveryRecords[0]);
       };
       const assertCancellationRecovery = () => {
-        const identityFingerprint = createHash("sha256").update("sbx-fresh-create").digest("hex");
         assert.equal(payload.exitCode, 1);
         assert.equal(payload.sandboxName, "my-assistant");
         assert.equal(payload.deleted, false);
@@ -879,6 +886,7 @@ if (${JSON.stringify(
           payload.commandNames.some((command: string) => command.includes("sandbox delete")),
           false,
         );
+        assertRecoveryTuple(payload.retainedRecoveryRecords[0]);
         assert.match(result.stderr, /preserved incomplete sandbox 'my-assistant'/u);
         assert.match(result.stderr, new RegExp(identityFingerprint, "u"));
         assert.match(result.stderr, /Do not delete the sandbox by mutable sandbox name/u);

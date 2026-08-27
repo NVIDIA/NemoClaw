@@ -27,6 +27,13 @@ import {
   runWithPostCreateRecovery,
 } from "./orchestration";
 
+const UNVERIFIED_RECOVERY_CONTEXT = {
+  gatewayName: "nemoclaw",
+  gatewayPort: 8080,
+  lifecycleGeneration: "generation-1",
+  verifiedEffectivePolicyIdentity: null,
+} as const;
+
 describe("retained create recovery persistence", () => {
   it.each([
     ["available fingerprint", "f".repeat(64)],
@@ -55,6 +62,7 @@ describe("retained create recovery persistence", () => {
               sandboxName: "alpha",
               message,
               ...(fingerprint ? { sandboxIdentityFingerprint: fingerprint } : {}),
+              recoveryContext: UNVERIFIED_RECOVERY_CONTEXT,
             },
             session.markRetainedSandboxRecovery,
           ),
@@ -84,6 +92,34 @@ describe("retained create recovery persistence", () => {
     },
   );
 
+  it("forwards the full verified recovery tuple to durable state (#9833)", () => {
+    const recoveryContext = {
+      gatewayName: "nemoclaw-18080",
+      gatewayPort: 18080,
+      lifecycleGeneration: "00000000-0000-4000-8000-000000000004",
+      verifiedEffectivePolicyIdentity: { hash: "sha256:policy-4", activeVersion: 4 },
+    } as const;
+    const markRetainedSandboxRecovery = vi.fn(() => true);
+    const input = {
+      stage: "registry publication" as const,
+      sandboxName: "alpha",
+      gatewayName: recoveryContext.gatewayName,
+      lifecycleGeneration: recoveryContext.lifecycleGeneration,
+      exactIdentity: "f".repeat(64),
+      recoveryContext,
+      markRetainedSandboxRecovery,
+    };
+
+    persistPostCreateRecovery(input);
+
+    expect(markRetainedSandboxRecovery).toHaveBeenCalledWith(
+      "alpha",
+      expect.stringContaining(recoveryContext.lifecycleGeneration),
+      "f".repeat(64),
+      recoveryContext,
+    );
+  });
+
   it("reports persistence failure when no onboard session owns the recovery (#9211)", () => {
     const finalizeIncompleteOnboardStep = vi.fn(() => null);
 
@@ -92,6 +128,7 @@ describe("retained create recovery persistence", () => {
         {
           sandboxName: "alpha",
           message: "Create-attempt label: ai.nvidia.nemoclaw.create-attempt=authority",
+          recoveryContext: UNVERIFIED_RECOVERY_CONTEXT,
         },
         finalizeIncompleteOnboardStep,
       ),
@@ -100,6 +137,7 @@ describe("retained create recovery persistence", () => {
       "alpha",
       "Create-attempt label: ai.nvidia.nemoclaw.create-attempt=authority",
       undefined,
+      UNVERIFIED_RECOVERY_CONTEXT,
     );
   });
 
@@ -118,6 +156,7 @@ describe("retained create recovery persistence", () => {
           {
             sandboxName: "alpha",
             message: "Create-attempt label: ai.nvidia.nemoclaw.create-attempt=unpersisted",
+            recoveryContext: UNVERIFIED_RECOVERY_CONTEXT,
           },
           session.markRetainedSandboxRecovery,
         ),
@@ -162,6 +201,7 @@ describe("retained create recovery persistence", () => {
           gatewayName: "nemoclaw",
           lifecycleGeneration: "generation-1",
           exactIdentity: "f".repeat(64),
+          recoveryContext: UNVERIFIED_RECOVERY_CONTEXT,
           markRetainedSandboxRecovery,
         });
 
@@ -719,6 +759,36 @@ describe("sandbox create policy authority checks", () => {
     expect(persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
       expect.stringContaining("left sandbox 'alpha' in place"),
       exactIdentity,
+      "verified",
+    );
+  });
+
+  it("retains verified policy evidence when checkpoint persistence fails (#9833)", async () => {
+    const verifiedEvidence = { policyHash: "sha256:policy-4", policyVersion: 4 } as const;
+    const persistRetainedSandboxRecovery = vi.fn(() => true);
+
+    await expect(
+      runSandboxCreateWithPolicyAuthorityChecks({
+        sandboxName: "alpha",
+        revalidate: vi.fn(),
+        create: async (verifyCreatedSandbox) => {
+          await verifyCreatedSandbox("created");
+          return "created";
+        },
+        ...exactIdentityBoundary(),
+        verifyCreatedPolicy: () => verifiedEvidence,
+        persistVerifiedPolicy: () => {
+          throw new Error("checkpoint write failed");
+        },
+        persistRetainedSandboxRecovery,
+        cleanupTemporarySources: vi.fn(),
+      }),
+    ).rejects.toThrow("automatic sandbox cleanup was not safe");
+
+    expect(persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
+      expect.stringContaining("left sandbox 'alpha' in place"),
+      exactIdentity,
+      verifiedEvidence,
     );
   });
 
@@ -743,6 +813,7 @@ describe("sandbox create policy authority checks", () => {
     expect(persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
       expect.stringContaining("left sandbox 'alpha' in place"),
       exactIdentity,
+      "verified",
     );
   });
 

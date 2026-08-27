@@ -10,6 +10,7 @@ import { HERMES_PORTABLE_OPENSHELL_VERSION } from "../../adapters/openshell/reso
 import type { AgentDefinition } from "../../agent/defs";
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { BackupResult } from "../../state/sandbox";
+import type { RetainedSandboxRecoveryContext } from "../../state/onboard-session";
 import type { SandboxEntry } from "../../state/registry";
 import type {
   PendingSandboxPolicyVerification,
@@ -66,15 +67,22 @@ export function persistRetainedSandboxRecoveryMessage(
     readonly sandboxName: string;
     readonly message: string;
     readonly sandboxIdentityFingerprint?: string;
+    readonly recoveryContext: RetainedSandboxRecoveryContext;
   },
   markRetainedSandboxRecovery: (
     sandboxName: string,
     message: string,
     sandboxIdentityFingerprint?: string,
+    context?: RetainedSandboxRecoveryContext,
   ) => unknown | null,
 ): boolean {
   return Boolean(
-    markRetainedSandboxRecovery(input.sandboxName, input.message, input.sandboxIdentityFingerprint),
+    markRetainedSandboxRecovery(
+      input.sandboxName,
+      input.message,
+      input.sandboxIdentityFingerprint,
+      input.recoveryContext,
+    ),
   );
 }
 
@@ -151,10 +159,12 @@ export function persistPostCreateRecovery(input: {
   readonly gatewayName: string;
   readonly lifecycleGeneration: string;
   readonly exactIdentity?: string;
+  readonly recoveryContext: RetainedSandboxRecoveryContext;
   readonly markRetainedSandboxRecovery: (
     sandboxName: string,
     message: string,
     sandboxIdentityFingerprint?: string,
+    context?: RetainedSandboxRecoveryContext,
   ) => unknown | null;
 }): void {
   const message =
@@ -168,6 +178,7 @@ export function persistPostCreateRecovery(input: {
         sandboxName: input.sandboxName,
         message,
         ...(input.exactIdentity ? { sandboxIdentityFingerprint: input.exactIdentity } : {}),
+        recoveryContext: input.recoveryContext,
       },
       input.markRetainedSandboxRecovery,
     );
@@ -471,12 +482,14 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
   readonly persistRetainedSandboxRecovery?: (
     message: string,
     exactIdentity: string | null,
+    evidence: Evidence | null,
   ) => boolean;
   readonly retainedSandboxRecoveryRetryOwner?: PostCreateRecoveryRetryOwner;
   readonly cleanupTemporarySources: () => void;
 }): Promise<Result> {
   input.revalidate(false, `creating sandbox '${input.sandboxName}'`);
   let exactIdentity: string | null = null;
+  let observedPolicyEvidence: Evidence | null = null;
   let cleanupAttempted = false;
   let recoveryAttempted = false;
   const cleanupTemporarySources = (): unknown[] => {
@@ -506,7 +519,11 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
     if (input.persistRetainedSandboxRecovery) {
       try {
         persistRetainedSandboxRecoveryWithRetry(input.retainedSandboxRecoveryRetryOwner, () =>
-          input.persistRetainedSandboxRecovery!(recoveryGuidance, exactIdentity),
+          input.persistRetainedSandboxRecovery!(
+            recoveryGuidance,
+            exactIdentity,
+            observedPolicyEvidence,
+          ),
         );
       } catch (error) {
         compensationErrors.push(error);
@@ -533,6 +550,7 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
         `verifying effective policy for sandbox '${input.sandboxName}'`,
       );
       const evidence = input.verifyCreatedPolicy(created, capturedIdentity);
+      observedPolicyEvidence = evidence;
       input.revalidateCreatedSandboxIdentity(
         capturedIdentity,
         `recording verified policy for sandbox '${input.sandboxName}'`,
@@ -2012,21 +2030,35 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         pendingSandboxPolicyVerificationForBoundary(boundary),
       );
     };
+    const retainedSandboxRecoveryContext = (
+      boundary: VerifiedSandboxPolicyBoundary | null,
+    ): RetainedSandboxRecoveryContext => {
+      const checkpoint = boundary ? pendingSandboxPolicyVerificationForBoundary(boundary) : null;
+      return {
+        gatewayName: GATEWAY_NAME,
+        gatewayPort: GATEWAY_PORT,
+        lifecycleGeneration: createdSandboxLifecycle.generation,
+        verifiedEffectivePolicyIdentity: checkpoint
+          ? { hash: checkpoint.policyHash, activeVersion: checkpoint.policyVersion }
+          : null,
+      };
+    };
     const recordPostCreateRecovery = (
       stage: "registry publication" | "onboarding finalization",
-    ): void =>
+    ): void => {
+      const boundary = requireVerifiedPolicyGate();
       postCreateRecoveryRetryOwner.record(() =>
         persistPostCreateRecovery({
           stage,
           sandboxName,
           gatewayName: GATEWAY_NAME,
           lifecycleGeneration: createdSandboxLifecycle.generation,
-          ...(verifiedPolicyGate
-            ? { exactIdentity: verifiedPolicyGate.lifecycleLiveIdentityFingerprint }
-            : {}),
+          exactIdentity: boundary.lifecycleLiveIdentityFingerprint,
+          recoveryContext: retainedSandboxRecoveryContext(boundary),
           markRetainedSandboxRecovery: onboardSession.markRetainedSandboxRecovery,
         }),
       );
+    };
     const persistCreateFlowRecovery = (
       message: string,
       exactIdentity: string | null = null,
@@ -2037,6 +2069,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             sandboxName,
             message,
             ...(exactIdentity ? { sandboxIdentityFingerprint: exactIdentity } : {}),
+            recoveryContext: retainedSandboxRecoveryContext(verifiedPolicyGate),
           },
           onboardSession.markRetainedSandboxRecovery,
         ),
@@ -2106,12 +2139,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         revalidateVerifiedPolicy: (_identity, _exactIdentity, boundary, operation) => {
           revalidateVerifiedPolicyRegistration(boundary, operation);
         },
-        persistRetainedSandboxRecovery: (message, exactIdentity) =>
+        persistRetainedSandboxRecovery: (message, exactIdentity, boundary) =>
           persistRetainedSandboxRecoveryMessage(
             {
               sandboxName,
               message,
               ...(exactIdentity ? { sandboxIdentityFingerprint: exactIdentity } : {}),
+              recoveryContext: retainedSandboxRecoveryContext(boundary),
             },
             onboardSession.markRetainedSandboxRecovery,
           ),
@@ -2416,8 +2450,18 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             scriptsDir: SCRIPTS,
             gatewayName: GATEWAY_NAME,
             providerExistsInGateway,
-            armCancelRollback: sandboxCancelRollback.arm,
-            markCancellationRecovery: onboardSession.markCancellationRecovery,
+            armCancelRollback: (name, identity) =>
+              sandboxCancelRollback.arm(
+                name,
+                identity,
+                retainedSandboxRecoveryContext(requireVerifiedPolicyGate()),
+              ),
+            markCancellationRecovery: (name) =>
+              onboardSession.markCancellationRecovery(
+                name,
+                undefined,
+                retainedSandboxRecoveryContext(requireVerifiedPolicyGate()),
+              ),
             dockerInfoFormat,
             runCapture,
             revalidatePolicyAuthority: (operation) => revalidatePolicyAuthority(true, operation),
