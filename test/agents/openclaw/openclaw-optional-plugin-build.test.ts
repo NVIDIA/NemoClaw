@@ -118,3 +118,44 @@ it.runIf(process.platform === "linux")(
     }
   },
 );
+
+it.each([
+  { expectedPhase: "agent-install", union: "0" },
+  { expectedPhase: "managed-image-capability-union", union: "1" },
+])("selects only the $expectedPhase messaging install phase", ({ expectedPhase, union }) => {
+  const dockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile"), "utf-8");
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-messaging-phase-selection-"));
+  const trustedCache = path.join(tmp, "trusted-cache");
+  const installCacheTemplate = path.join(tmp, "install-cache.XXXXXX");
+
+  try {
+    fs.mkdirSync(trustedCache);
+    fs.writeFileSync(path.join(trustedCache, "fixture"), "fixture\n");
+    const command = dockerRunCommandBetween(
+      dockerfile,
+      "RUN --mount=from=openclaw-managed-messaging-npm-cache",
+      "# Copy the full candidate runtime payload after the stable offline plugin",
+    )
+      .replaceAll("/opt/nemoclaw-managed-messaging-npm-cache", trustedCache)
+      .replaceAll("/usr/local/share/nemoclaw/wechat-npm-cache", trustedCache)
+      .replaceAll("/tmp/nemoclaw-wechat-npm-cache.XXXXXX", installCacheTemplate);
+    const { calls, result } = runLoggedDockerShell(
+      command,
+      tmp,
+      ["find() { :; }", 'node() { printf "node %s\\n" "$*" >> "$call_log"; }'],
+      {
+        env: {
+          NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: union,
+          OPENCLAW_VERSION: "2026.7.1",
+        },
+      },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(calls.trim().split("\n")).toEqual([
+      `node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase ${expectedPhase}`,
+    ]);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});

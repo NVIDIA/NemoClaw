@@ -1833,21 +1833,18 @@ RUN --mount=from=openclaw-managed-messaging-npm-cache,source=/out/npm-cache,targ
     trap 'rm -rf "$install_cache"' EXIT; \
     cp -R "$trusted_cache"/. "$install_cache"/; \
     chmod -R u+rwX,go-w "$install_cache"; \
+    messaging_phase=agent-install; \
     if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
         export NPM_CONFIG_CACHE="$install_cache"; \
         export NPM_CONFIG_OFFLINE=true; \
         export NPM_CONFIG_AUDIT=false; \
         export NPM_CONFIG_FUND=false; \
+        messaging_phase=managed-image-capability-union; \
     fi; \
     NEMOCLAW_WECHAT_NPM_INSTALL_CACHE="$install_cache" \
         OPENCLAW_VERSION="${OPENCLAW_VERSION}" \
-        node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase agent-install; \
-    if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
-        NEMOCLAW_WECHAT_NPM_INSTALL_CACHE="$install_cache" \
-            OPENCLAW_VERSION="${OPENCLAW_VERSION}" \
-            node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts \
-                --agent openclaw --phase managed-image-capability-union; \
-    fi; \
+        node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts \
+            --agent openclaw --phase "$messaging_phase"; \
     rm -rf "$install_cache"; \
     trap - EXIT; \
     test ! -e "$install_cache"
