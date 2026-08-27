@@ -9,7 +9,7 @@ After each push, wait for automated reviews, collect feedback for the latest PR 
 
 1. Record the latest PR commit SHA and the local candidate commit SHA.
 2. Wait for required automated reviews to settle.
-3. Collect every required check and paginated comment, review, and thread source. Apply reviewer or bot filters only after collection, then keep actionable unresolved threads.
+3. Collect every required check, Advisor result, and paginated comment, review, and thread source. Apply reviewer or bot filters only after collection, then keep actionable unresolved threads.
 4. Read the latest PR commit SHA again. Restart if it changed.
 5. Re-evaluate earlier findings and group valid findings by cause and acceptance evidence.
 
