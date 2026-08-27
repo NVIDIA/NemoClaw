@@ -537,13 +537,13 @@ function installVerifiedSandboxCreateFixture(registry, options) {
     },
   });
   require.cache[receiptPath].exports = receipt;
-  return { sessionId };
+  return { sessionId, selection };
 }
 
 function sandboxCreateArgsWithVerifiedReservation(args, fixture) {
   const createArgs = [...args];
   while (createArgs.length < 15) createArgs.push(null);
-  createArgs[14] = { sessionId: fixture.sessionId };
+  createArgs[14] = { sessionId: fixture.sessionId, selection: fixture.selection };
   return createArgs;
 }
 

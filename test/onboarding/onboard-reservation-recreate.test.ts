@@ -263,7 +263,7 @@ const { createSandbox } = require(${onboardPath});
       assert.equal(
         result.status,
         replaceBeforeCleanup ? 1 : 0,
-        result.stderr || result.error?.message,
+        result.stderr || result.error?.message || "onboarding subprocess returned an unexpected status",
       );
       const payload = trailingJsonPayload<{
         sandboxName: string | null;
@@ -415,7 +415,7 @@ if (mode === "seed") {
   });
 }
 
-fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
   sandboxName: "my-assistant",
   provider: "nvidia-prod",
   model: "gpt-5.4",
@@ -518,7 +518,6 @@ childProcess.spawn = (...args) => {
 const { createSandbox } = require(${onboardPath});
 const transaction = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
 if (!transaction) throw new Error("verified-create recovery has no lifecycle journal");
-const createFixture = { sessionId: "session-owner" };
 const createArgs = fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
   [null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, null, null, null, []],
   createFixture,
