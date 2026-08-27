@@ -1303,7 +1303,7 @@ test(STALE_BASE_REBUILD
     },
   );
   expectExitZero(restoredEnv, "read Hermes .env after rebuild");
-  expect(restoredEnv.stdout).toContain(`DISCORD_BOT_TOKEN=${DISCORD_PLACEHOLDER}`);
+  expect(restoredEnv.stdout).not.toContain("DISCORD_BOT_TOKEN=");
 
   const postRebuildApiTokenDigest = await hermesApiTokenDigest(
     host,

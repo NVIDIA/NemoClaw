@@ -216,7 +216,14 @@ describe("channels stop/start Google Chat live composition", () => {
   ] as const)(
     "creates the real %s provider profile without putting the fixture value in argv",
     (agent, sandboxName, providerType) => {
-      const originalUpsert = vi.fn(() => ["original-provider"]);
+      const delegatedName = `${sandboxName}-slack-bridge`;
+      const delegatedTokenDef = {
+        name: delegatedName,
+        envKey: "SLACK_BOT_TOKEN",
+        token: "e2e-fake-slack-token",
+        providerType: "nemoclaw-mcp-v1",
+      };
+      const originalUpsert = vi.fn(() => [delegatedName]);
       const providerDependencies: FixtureProviderDependencies = {
         upsertMessagingProviders: originalUpsert,
       };
@@ -235,6 +242,7 @@ describe("channels stop/start Google Chat live composition", () => {
       });
       const providerNames = providerDependencies.upsertMessagingProviders(
         [
+          delegatedTokenDef,
           {
             name: `${sandboxName}-googlechat-bridge`,
             envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
@@ -246,7 +254,10 @@ describe("channels stop/start Google Chat live composition", () => {
         { revalidatePolicyRequirements },
       );
 
-      expect(providerNames).toEqual([`${sandboxName}-googlechat-bridge`]);
+      expect(providerNames).toEqual([delegatedName, `${sandboxName}-googlechat-bridge`]);
+      expect(originalUpsert).toHaveBeenCalledWith([delegatedTokenDef], run, {
+        revalidatePolicyRequirements,
+      });
       expect(ensureProfiles).toHaveBeenCalledOnce();
       const profileDependencies = ensureProfiles.mock.calls[0]?.[1] as {
         redact: (value: string) => string;

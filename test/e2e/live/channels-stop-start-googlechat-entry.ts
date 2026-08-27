@@ -113,15 +113,19 @@ export function installGooglechatCredentialFixture(
   const original = providerDependencies.upsertMessagingProviders;
 
   providerDependencies.upsertMessagingProviders = (tokenDefs, providerRun, options = {}) => {
+    const fixtureTokenDefs = tokenDefs.filter(({ name }) => name === expectedName);
+    const fixtureTokenDef = fixtureTokenDefs[0];
     if (
-      tokenDefs.length !== 1 ||
-      tokenDefs[0]?.name !== expectedName ||
-      tokenDefs[0]?.envKey !== "GOOGLE_CHAT_ACCESS_TOKEN" ||
-      tokenDefs[0]?.providerType !== expectedType
+      fixtureTokenDefs.length !== 1 ||
+      fixtureTokenDef?.envKey !== "GOOGLE_CHAT_ACCESS_TOKEN" ||
+      fixtureTokenDef?.providerType !== expectedType
     ) {
       throw new Error("Google Chat live fixture received an unexpected provider definition");
     }
 
+    const delegatedTokenDefs = tokenDefs.filter(({ name }) => name !== expectedName);
+    const delegatedProviderNames =
+      delegatedTokenDefs.length === 0 ? [] : original(delegatedTokenDefs, providerRun, options);
     const baseRun = providerRun ?? run;
     const revalidate = () =>
       options.revalidatePolicyRequirements?.(
@@ -131,7 +135,7 @@ export function installGooglechatCredentialFixture(
       revalidate();
       return baseRun(args, runOptions);
     };
-    ensureProfiles(tokenDefs, {
+    ensureProfiles(fixtureTokenDefs, {
       root,
       runOpenshell: effectiveRun,
       redact: (value) => value.replaceAll(GOOGLECHAT_E2E_ACCESS_TOKEN, "[redacted]"),
@@ -172,7 +176,8 @@ export function installGooglechatCredentialFixture(
     if (created.status !== 0) {
       throw new Error(`Google Chat live fixture could not create provider '${expectedName}'`);
     }
-    return [expectedName];
+    const registered = new Set([...delegatedProviderNames, expectedName]);
+    return tokenDefs.map(({ name }) => name).filter((name) => registered.has(name));
   };
 
   return () => {
