@@ -377,6 +377,10 @@ describe("messaging provider installed-runtime proofs", () => {
     );
     expect(TELEGRAM_INSTALLED_RUNTIME_PROOF_SOURCE).toContain("sendMessageTelegram");
     expect(TELEGRAM_INSTALLED_RUNTIME_PROOF_SOURCE).toContain("host.openshell.internal");
+    expect(TELEGRAM_INSTALLED_RUNTIME_PROOF_SOURCE).toContain(
+      "process.env.TELEGRAM_BOT_TOKEN",
+    );
+    expect(TELEGRAM_INSTALLED_RUNTIME_PROOF_SOURCE).not.toContain("account.botToken");
     expect(TELEGRAM_INSTALLED_RUNTIME_PROOF_SOURCE).not.toContain("telegram/test-api.js");
   });
 
