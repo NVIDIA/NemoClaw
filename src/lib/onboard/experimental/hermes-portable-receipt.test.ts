@@ -504,7 +504,6 @@ describe("Hermes portable receipt authority", () => {
 
   it("publishes deterministic schema-6 authority without changing schema-5 history (#10423)", () => {
     const historical = publishActiveReceipt();
-    const historicalIdentity = fs.statSync(historical.path, { bigint: true });
 
     const published = publishSuccessor();
     const repeated = publishSuccessor();
@@ -515,12 +514,10 @@ describe("Hermes portable receipt authority", () => {
       phase: "active",
     });
     expect(repeated.successor.bytes).toEqual(published.successor.bytes);
-    expect(fs.readFileSync(historical.path)).toEqual(historical.bytes);
-    const after = fs.statSync(historical.path, { bigint: true });
-    expect({ dev: after.dev, ino: after.ino }).toEqual({
-      dev: historicalIdentity.dev,
-      ino: historicalIdentity.ino,
-    });
+    expect(published.bytes).toEqual(historical.bytes);
+    expect(published.identity).toEqual(historical.identity);
+    expect(repeated.bytes).toEqual(historical.bytes);
+    expect(repeated.identity).toEqual(historical.identity);
   });
 
   it("requalifies an identical same-path policy copy only through schema 6 (#10423)", () => {
@@ -568,19 +565,27 @@ describe("Hermes portable receipt authority", () => {
         fs.renameSync(target, backing);
         fs.symlinkSync(backing, target);
       },
+      () => "ELOOP",
     ],
     [
       "hard-link substitution",
       (target: string) => fs.linkSync(target, path.join(stateDir, "policy-hardlink.yaml")),
+      (target: string) => `file is unsafe: ${target}`,
     ],
-    ["unsafe mode", (target: string) => fs.chmodSync(target, 0o644)],
-  ])("rejects %s during schema-6 requalification (#10423)", (_label, mutate) => {
+    [
+      "unsafe mode",
+      (target: string) => fs.chmodSync(target, 0o644),
+      (target: string) => `file is unsafe: ${target}`,
+    ],
+  ])("rejects %s during schema-6 requalification (#10423)", (_label, mutate, expected) => {
     publishActiveReceipt();
     const target = readHermesPortableLifecycleReceipt(SANDBOX, stateDir)!.receipt.policy.sourcePath;
     mutate(target);
 
-    expect(() => readHermesPortableLifecycleReceiptForClassification(SANDBOX, stateDir)).toThrow();
-    expect(() => publishSuccessor()).toThrow();
+    expect(() => readHermesPortableLifecycleReceiptForClassification(SANDBOX, stateDir)).toThrow(
+      expected(target),
+    );
+    expect(() => publishSuccessor()).toThrow(expected(target));
   });
 
   it("reconciles an exact interrupted schema-6 publication (#10423)", () => {

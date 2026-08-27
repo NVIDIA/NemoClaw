@@ -410,6 +410,14 @@ describe("Hermes portable lifecycle", () => {
       ),
     ).toThrow("durable policy source disagrees with its receipt authority");
 
+    expect(() =>
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () => requalifyHermesPortableSandboxAuthority(SANDBOX, lifecycleContext(), fixture.deps),
+        { stateDir: path.join(stateDir, "state") },
+      ),
+    ).toThrow("Portable host authority mutation requires the current HOME fence");
+
     const migrated = await withPortableHostFence(stateDir, () =>
       withMcpLifecycleLockSync(
         SANDBOX,

@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PodmanExecutableAuthority, PodmanSocketAuthority } from "../../adapters/podman";
 import type { HermesPortableOpenShellExecutableAuthority } from "../../adapters/openshell/resolve-shared";
@@ -79,7 +79,7 @@ function environment(): NodeJS.ProcessEnv {
   };
 }
 
-function snapshot(): HermesPortableReceiptSnapshot & {
+function snapshot(withSuccessor = true): HermesPortableReceiptSnapshot & {
   readonly receipt: HermesPortableConfiguredReceipt;
 } {
   const bytes = fs.readFileSync(policyPath);
@@ -165,16 +165,18 @@ function snapshot(): HermesPortableReceiptSnapshot & {
     path: path.join(root, "active.json"),
     identity: { dev: 1n, ino: 2n },
   };
-  return {
-    ...historical,
-    successor: {
-      receipt: createHermesPortableSuccessorReceipt(historical),
-      bytes: Buffer.from("successor"),
-      sha256: "5".repeat(64),
-      path: path.join(root, "authority.json"),
-      identity: { dev: 1n, ino: 3n },
-    },
-  };
+  return withSuccessor
+    ? {
+        ...historical,
+        successor: {
+          receipt: createHermesPortableSuccessorReceipt(historical),
+          bytes: Buffer.from("successor"),
+          sha256: "5".repeat(64),
+          path: path.join(root, "authority.json"),
+          identity: { dev: 1n, ino: 3n },
+        },
+      }
+    : historical;
 }
 
 beforeEach(() => {
@@ -186,6 +188,54 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
 describe("Hermes Portable schema-6 operation authority", () => {
+  it("keeps schema-5 authority durable unless requalification is explicit (#10423)", () => {
+    const durable = snapshot(false);
+    const captureSocketAuthority = vi.fn(() => socket("99"));
+    const captureOpenShellExecutableAuthority = vi.fn();
+    const capturePodmanExecutableAuthority = vi.fn();
+
+    const authority = qualifyHermesPortableOperatingAuthority(durable, {
+      env: environment(),
+      captureSocketAuthority,
+      captureOpenShellExecutableAuthority,
+      capturePodmanExecutableAuthority,
+    });
+
+    expect(authority.receipt).toBe(durable.receipt);
+    expect(authority.assertCurrent).not.toThrow();
+    expect(captureSocketAuthority).not.toHaveBeenCalled();
+    expect(captureOpenShellExecutableAuthority).not.toHaveBeenCalled();
+    expect(capturePodmanExecutableAuthority).not.toHaveBeenCalled();
+  });
+
+  it("captures operation-local authority for an explicitly admitted schema-5 receipt (#10423)", () => {
+    const captureSocketAuthority = vi.fn(() => socket("99"));
+    const captureOpenShellExecutableAuthority = vi.fn(() => ({
+      version: "0.0.106" as const,
+      executable: executable("/usr/bin/openshell", "b".repeat(64)),
+    }));
+    const capturePodmanExecutableAuthority = vi.fn(() => ({
+      version: "5.7.0" as const,
+      executable: executable("/usr/bin/podman", "c".repeat(64)),
+    }));
+
+    const authority = qualifyHermesPortableOperatingAuthority(
+      snapshot(false),
+      {
+        env: environment(),
+        captureSocketAuthority,
+        captureOpenShellExecutableAuthority,
+        capturePodmanExecutableAuthority,
+      },
+      { permitSchema5Requalification: true },
+    );
+
+    expect(authority.receipt.socketAuthority.inode).toBe("99");
+    expect(captureSocketAuthority).toHaveBeenCalledOnce();
+    expect(captureOpenShellExecutableAuthority).toHaveBeenCalledOnce();
+    expect(capturePodmanExecutableAuthority).toHaveBeenCalledOnce();
+  });
+
   it("admits new filesystem-instance identities while stable semantics agree (#10423)", () => {
     const authority = qualifyHermesPortableOperatingAuthority(snapshot(), {
       env: environment(),

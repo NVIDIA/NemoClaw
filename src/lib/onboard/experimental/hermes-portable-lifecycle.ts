@@ -443,7 +443,7 @@ export function requalifyHermesPortableSandboxAuthority(
     permitSchema5Requalification: true,
   });
   const published = publishHermesPortableSuccessorReceipt(sandboxName, stateDir);
-  qualify(sandboxName, context, deps, undefined, ["Ready", "Error", "Stopped"]);
+  qualify(sandboxName, context, deps, published, ["Ready", "Error", "Stopped"]);
   return { kind: snapshot.successor ? "already-current" : "migrated", snapshot: published };
 }
 
