@@ -41,6 +41,7 @@ export interface ActiveSandboxPolicyState {
   pendingPolicyVerification?: PendingSandboxPolicyVerification;
   policyAuthority?: SandboxPolicyAuthority;
   policyTier?: string | null;
+  reservationSessionId?: string;
   /** Preset names already applied to the sandbox, as recorded in the registry. */
   policies?: string[] | null;
 }
@@ -157,6 +158,7 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
       lifecycleGeneration?: string;
       sandboxIdentityFingerprint?: string;
       pendingPolicyVerification?: PendingSandboxPolicyVerification;
+      reservationSessionId?: string;
       revalidatePolicyRequirements?: (operation: string) => void;
     }): Promise<void>;
   };
@@ -338,6 +340,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       lifecycleGeneration: activeSandbox?.lifecycleGeneration,
       sandboxIdentityFingerprint: activeSandbox?.lifecycleLiveIdentityFingerprint,
       pendingPolicyVerification: activeSandbox?.pendingPolicyVerification,
+      reservationSessionId: activeSandbox?.reservationSessionId,
       revalidatePolicyRequirements,
     });
   };

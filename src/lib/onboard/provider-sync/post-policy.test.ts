@@ -187,6 +187,7 @@ describe("post-policy messaging provider synchronization", () => {
         agent: null,
         webSearchConfig: null,
         pendingPolicyVerification: checkpoint,
+        reservationSessionId: "session-1",
       },
       {
         rebindMessagingCapabilities: vi.fn(async () => ({
@@ -211,7 +212,12 @@ describe("post-policy messaging provider synchronization", () => {
         gatewayName: "nemoclaw",
         revalidateSandboxIdentity,
         advancePendingSandboxProviderRefresh: vi.fn(
-          (_name: string, expected: typeof checkpoint, providerRefresh: { phase: string }) => {
+          (
+            _name: string,
+            _reservationSessionId: string,
+            expected: typeof checkpoint,
+            providerRefresh: { phase: string },
+          ) => {
             phases.push(providerRefresh.phase);
             return { ...expected, providerRefresh };
           },

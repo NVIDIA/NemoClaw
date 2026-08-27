@@ -13,6 +13,7 @@ type ProviderSyncInput = {
   lifecycleGeneration?: string;
   sandboxIdentityFingerprint?: string;
   pendingPolicyVerification?: PendingSandboxPolicyVerification;
+  reservationSessionId?: string;
   revalidatePolicyRequirements?(operation: string): void;
 };
 

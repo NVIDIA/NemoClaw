@@ -1017,6 +1017,7 @@ async function synchronizeMessagingProvidersAfterPolicy(input, deps) {
     );
     pendingPolicyVerification = deps.advancePendingSandboxProviderRefresh(
       input.sandboxName,
+      input.reservationSessionId,
       pendingPolicyVerification,
       { schemaVersion: 1, phase, attachedProviders: providerNames },
     );

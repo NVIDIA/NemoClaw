@@ -312,6 +312,7 @@ export function recordPendingSandboxPolicyVerification(
 /** Advance only the mutable provider-refresh receipt on one exact pending create. */
 export function advancePendingSandboxProviderRefresh(
   name: string,
+  reservationSessionId: string,
   expected: PendingSandboxPolicyVerification,
   providerRefresh: NonNullable<PendingSandboxPolicyVerification["providerRefresh"]>,
 ): PendingSandboxPolicyVerification {
@@ -320,7 +321,12 @@ export function advancePendingSandboxProviderRefresh(
     ...expected,
     providerRefresh,
   });
-  if (!expectedCheckpoint || !nextCheckpoint || expectedCheckpoint.sandboxName !== name) {
+  if (
+    !reservationSessionId ||
+    !expectedCheckpoint ||
+    !nextCheckpoint ||
+    expectedCheckpoint.sandboxName !== name
+  ) {
     throw new PolicyAuthorityRefusalError(
       `Cannot advance sandbox '${name}' provider refresh without an exact verified create checkpoint`,
     );
@@ -331,6 +337,7 @@ export function advancePendingSandboxProviderRefresh(
     if (
       !current ||
       current.pendingRouteReservation !== true ||
+      current.reservationSessionId !== reservationSessionId ||
       current.name !== expectedCheckpoint.sandboxName ||
       current.gatewayName !== expectedCheckpoint.gatewayName ||
       current.gatewayPort !== expectedCheckpoint.gatewayPort ||

@@ -337,9 +337,7 @@ describe("sandbox inference route reservation", () => {
           "preferredInferenceApi",
         ] as const;
         expect(
-          routeKeys.filter(
-            (key) => reconstructedSelection[key] !== reservedSelection[key],
-          ),
+          routeKeys.filter((key) => reconstructedSelection[key] !== reservedSelection[key]),
         ).toEqual(["endpointSource"]);
 
         const registered = registerCreatedSandbox({
@@ -1128,6 +1126,28 @@ describe("sandbox inference route reservation", () => {
       expect(recorded.pendingPolicyVerification).toEqual(stopped);
       expect(recorded).not.toHaveProperty("policyAuthority");
       expect(registry.getDefault()).toBeNull();
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a provider refresh from a different create session (#10153)", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-provider-session-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      const { create } = reserveQualifiedCreate(registry);
+      const checkpoint = managedCheckpoint();
+      registry.recordPendingSandboxPolicyVerification(create, checkpoint);
+
+      expect(() =>
+        registry.advancePendingSandboxProviderRefresh("alpha", "different-session", checkpoint, {
+          schemaVersion: 1,
+          phase: "attaching",
+          attachedProviders: ["alpha-telegram"],
+        }),
+      ).toThrow(/verified create checkpoint changed/u);
     } finally {
       await fs.rm(home, { recursive: true, force: true });
     }

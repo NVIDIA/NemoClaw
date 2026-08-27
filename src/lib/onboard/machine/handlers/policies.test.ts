@@ -37,6 +37,7 @@ describe("handlePoliciesState", () => {
       lifecycleGeneration: undefined,
       sandboxIdentityFingerprint: undefined,
       pendingPolicyVerification: undefined,
+      reservationSessionId: undefined,
       revalidatePolicyRequirements: undefined,
     });
     expect(calls.complete).toHaveBeenCalledOnce();
