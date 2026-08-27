@@ -517,7 +517,9 @@ const { createSandbox } = require(${onboardPath});
       const preflightPath = JSON.stringify(path.join(repoRoot, "src/lib/onboard/preflight.ts"));
       const credentialsPath = JSON.stringify(path.join(repoRoot, "src/lib/credentials/store.ts"));
       const telegramCredentialKeys = [
-        "TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN_AGENT_A", "TELEGRAM_BOT_TOKEN_AGENT_B",
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_BOT_TOKEN_AGENT_A",
+        "TELEGRAM_BOT_TOKEN_AGENT_B",
       ];
       const providerCredentialKeys = {
         "compatible-endpoint": ["COMPATIBLE_API_KEY"],
@@ -596,7 +598,10 @@ const { createSandbox } = require(${onboardPath});
             NEMOCLAW_NON_INTERACTIVE: "1",
             NEMOCLAW_TEST_FAIL_PROVIDER: failedProvider || "",
             ...Object.fromEntries(
-              [...Object.values(providerCredentialKeys).flat(), "GITHUB_TOKEN"].map((key) => [key, ""]),
+              [...Object.values(providerCredentialKeys).flat(), "GITHUB_TOKEN"].map((key) => [
+                key,
+                "",
+              ]),
             ),
           },
         });
