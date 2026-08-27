@@ -20,7 +20,9 @@ import type {
 } from "../manifest";
 import { isProviderPlaceholderForEnvKey } from "../provider-placeholders";
 import {
+  HERMES_ENV_RENDER_TARGET,
   migrationOnlyEnvTargets,
+  ownedCredentialEnvKeys,
   readEnvLineKey,
   staleCredentialEnvKeys,
 } from "./credential-env-cleanup";
@@ -125,6 +127,33 @@ export async function applyAgentConfigAtOpenShell(
     appliedHooks,
     unresolvedTemplateRefs: uniqueStrings(enabledRender.flatMap((render) => render.templateRefs)),
   };
+}
+
+/**
+ * Repair the Hermes env file after starting an image built with an older
+ * applier. This deliberately touches only the manifest-owned credential key
+ * space and reports whether the gateway must reload the file.
+ */
+export function reconcileCredentialEnvAtOpenShell(
+  plan: SandboxMessagingPlan,
+  options: { readonly runOpenshell: MessagingOpenShellRunner },
+): { readonly changed: boolean; readonly target?: string } {
+  if (plan.agent !== "hermes" || ownedCredentialEnvKeys(plan).size === 0) {
+    return { changed: false };
+  }
+
+  const render = filterEnabledPlanEntries(plan, plan.agentRender).filter(
+    (entry): entry is SandboxMessagingEnvLinesRenderPlan =>
+      entry.target === HERMES_ENV_RENDER_TARGET && isEnvLinesRender(entry),
+  );
+  const target = resolveSandboxAgentConfigTarget(HERMES_ENV_RENDER_TARGET, plan.agent);
+  const existing = readSandboxFile(plan.sandboxName, target, options.runOpenshell);
+  if (existing === undefined) return { changed: false };
+
+  const contents = applyEnvLines(plan, existing, render);
+  if (contents === existing) return { changed: false };
+  writeSandboxFile(plan.sandboxName, target, contents, options.runOpenshell);
+  return { changed: true, target };
 }
 
 function hookRequestsForPhases(

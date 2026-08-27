@@ -552,22 +552,16 @@ async function addGooglechatForLiveE2e(
 ): Promise<void> {
   const entrypoint = path.join(REPO_ROOT, "test/e2e/live/channels-stop-start-googlechat-entry.ts");
   const tsx = path.join(REPO_ROOT, "node_modules/tsx/dist/cli.mjs");
-  const add = await host.command("node", [tsx, entrypoint, SANDBOX_NAME], {
-    artifactName: "channels-stop-start-add-googlechat-live-e2e",
+  const addAndRebuild = await host.command("node", [tsx, entrypoint, SANDBOX_NAME], {
+    artifactName: "channels-stop-start-add-and-rebuild-googlechat-live-e2e",
     env,
     redactionValues: redactions,
     timeoutMs: 10 * 60_000,
   });
-  expectExitZero(add, "add Google Chat through live-E2E capability composition");
-
-  const rebuild = await rebuildSandbox(
-    host,
-    SANDBOX_NAME,
-    env,
-    redactions,
-    "rebuild-add-googlechat-live-e2e",
+  expectExitZero(
+    addAndRebuild,
+    "add and rebuild Google Chat through live-E2E capability composition",
   );
-  expectExitZero(rebuild, "rebuild after adding Google Chat through live-E2E composition");
   await expectSandboxReady(
     host,
     SANDBOX_NAME,

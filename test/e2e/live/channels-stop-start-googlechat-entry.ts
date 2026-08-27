@@ -9,6 +9,7 @@ import * as policyChannelDependenciesModule from "../../../src/lib/actions/sandb
 import * as policyChannelModule from "../../../src/lib/actions/sandbox/policy-channel.ts";
 import * as openshellRuntimeModule from "../../../src/lib/adapters/openshell/runtime.ts";
 import * as messagingBridgeProviderModule from "../../../src/lib/onboard/messaging-bridge-provider.ts";
+import * as onboardProvidersModule from "../../../src/lib/onboard/providers.ts";
 import * as statePathsModule from "../../../src/lib/state/paths.ts";
 import { assertChannelsStopStartSandboxName } from "./channels-stop-start-safety.ts";
 import type { AgentKind } from "./phase6-messaging-helpers.ts";
@@ -20,6 +21,17 @@ type OpenshellRuntimeModule = typeof import("../../../src/lib/adapters/openshell
 type MessagingBridgeProviderModule =
   typeof import("../../../src/lib/onboard/messaging-bridge-provider.ts");
 type StatePathsModule = typeof import("../../../src/lib/state/paths.ts");
+type ProviderUpsertOptions = {
+  readonly replaceExisting?: boolean;
+  readonly revalidatePolicyRequirements?: (operation: string) => void;
+};
+type ProviderDependencies = {
+  upsertMessagingProviders(
+    tokenDefs: Parameters<typeof policyChannelDependencies.upsertMessagingProviders>[0],
+    run: typeof runOpenshell,
+    options?: ProviderUpsertOptions,
+  ): string[];
+};
 
 const policyChannel = (
   "default" in policyChannelModule ? policyChannelModule.default : policyChannelModule
@@ -41,6 +53,9 @@ const messagingBridgeProvider = (
     : messagingBridgeProviderModule
 ) as MessagingBridgeProviderModule;
 const { ensureMessagingBridgeProfiles } = messagingBridgeProvider;
+const onboardProviders = (
+  "default" in onboardProvidersModule ? onboardProvidersModule.default : onboardProvidersModule
+) as ProviderDependencies;
 const statePaths = (
   "default" in statePathsModule ? statePathsModule.default : statePathsModule
 ) as StatePathsModule;
@@ -59,11 +74,12 @@ interface GooglechatLiveE2eDependencies {
     dependencies: AddSandboxChannelDependencies,
   ) => Promise<void>;
   readonly installCredentialFixture: (sandboxName: string, agent: AgentKind) => () => void;
+  readonly rebuildSandbox?: (sandboxName: string, args: string[]) => Promise<unknown>;
 }
 
 interface GooglechatCredentialFixtureDependencies {
   readonly ensureProfiles?: typeof ensureMessagingBridgeProfiles;
-  readonly policyDependencies?: Pick<typeof policyChannelDependencies, "upsertMessagingProviders">;
+  readonly providerDependencies?: ProviderDependencies;
   readonly root?: string;
   readonly run?: typeof runOpenshell;
 }
@@ -89,14 +105,14 @@ export function installGooglechatCredentialFixture(
 ): () => void {
   assertChannelsStopStartSandboxName(sandboxName, agent);
   const ensureProfiles = dependencies.ensureProfiles ?? ensureMessagingBridgeProfiles;
-  const policyDependencies = dependencies.policyDependencies ?? policyChannelDependencies;
+  const providerDependencies = dependencies.providerDependencies ?? onboardProviders;
   const root = dependencies.root ?? ROOT;
   const run = dependencies.run ?? runOpenshell;
   const expectedName = `${sandboxName}-googlechat-bridge`;
   const expectedType = PROVIDER_TYPE_BY_AGENT[agent];
-  const original = policyDependencies.upsertMessagingProviders;
+  const original = providerDependencies.upsertMessagingProviders;
 
-  policyDependencies.upsertMessagingProviders = (tokenDefs) => {
+  providerDependencies.upsertMessagingProviders = (tokenDefs, providerRun, options = {}) => {
     if (
       tokenDefs.length !== 1 ||
       tokenDefs[0]?.name !== expectedName ||
@@ -106,19 +122,37 @@ export function installGooglechatCredentialFixture(
       throw new Error("Google Chat live fixture received an unexpected provider definition");
     }
 
+    const baseRun = providerRun ?? run;
+    const revalidate = () =>
+      options.revalidatePolicyRequirements?.(
+        `manage Google Chat live fixture provider '${expectedName}'`,
+      );
+    const effectiveRun: typeof runOpenshell = (args, runOptions) => {
+      revalidate();
+      return baseRun(args, runOptions);
+    };
     ensureProfiles(tokenDefs, {
       root,
-      runOpenshell: run,
+      runOpenshell: effectiveRun,
       redact: (value) => value.replaceAll(GOOGLECHAT_E2E_ACCESS_TOKEN, "[redacted]"),
     });
-    const existing = run(["provider", "get", expectedName], {
+    const existing = effectiveRun(["provider", "get", expectedName], {
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
     if (existing.status === 0) {
-      throw new Error(`Google Chat live fixture provider '${expectedName}' survived pre-clean`);
+      if (!options.replaceExisting) {
+        throw new Error(`Google Chat live fixture provider '${expectedName}' survived pre-clean`);
+      }
+      const removed = effectiveRun(["provider", "delete", expectedName], {
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (removed.status !== 0) {
+        throw new Error(`Google Chat live fixture could not replace provider '${expectedName}'`);
+      }
     }
-    const created = run(
+    const created = effectiveRun(
       [
         "provider",
         "create",
@@ -142,14 +176,43 @@ export function installGooglechatCredentialFixture(
   };
 
   return () => {
-    policyDependencies.upsertMessagingProviders = original;
+    providerDependencies.upsertMessagingProviders = original;
   };
 }
 
 const DEFAULT_DEPENDENCIES: GooglechatLiveE2eDependencies = {
   addSandboxChannel,
   installCredentialFixture: installGooglechatCredentialFixture,
+  rebuildSandbox: (sandboxName, args) =>
+    policyChannelDependencies.rebuildSandbox(sandboxName, args),
 };
+
+function requireLiveAudience(input: GooglechatLiveE2eComposition): string {
+  assertChannelsStopStartSandboxName(input.sandboxName, input.agent);
+  const audience = input.audience.trim();
+  if (!audience) {
+    throw new Error("GOOGLECHAT_AUDIENCE is required for the channels-stop-start live target");
+  }
+  return audience;
+}
+
+async function addGooglechatWithInstalledFixture(
+  input: GooglechatLiveE2eComposition,
+  audience: string,
+  dependencies: GooglechatLiveE2eDependencies,
+): Promise<void> {
+  await dependencies.addSandboxChannel(
+    input.sandboxName,
+    { channel: "googlechat" },
+    input.agent === "openclaw"
+      ? {
+          googlechatNonInteractiveAudienceCapability: Object.freeze({
+            audience,
+          }),
+        }
+      : {},
+  );
+}
 
 /**
  * The sole composition root that grants non-interactive Google Chat audience
@@ -159,23 +222,30 @@ export async function addGooglechatForChannelsStopStartLiveE2e(
   input: GooglechatLiveE2eComposition,
   dependencies: GooglechatLiveE2eDependencies = DEFAULT_DEPENDENCIES,
 ): Promise<void> {
-  assertChannelsStopStartSandboxName(input.sandboxName, input.agent);
-  const audience = input.audience.trim();
-  if (!audience) {
-    throw new Error("GOOGLECHAT_AUDIENCE is required for the channels-stop-start live target");
+  const audience = requireLiveAudience(input);
+
+  const restore = dependencies.installCredentialFixture(input.sandboxName, input.agent);
+  try {
+    await addGooglechatWithInstalledFixture(input, audience, dependencies);
+  } finally {
+    restore();
+  }
+}
+
+/** Keep the fake OAuth mint installed across both provider registrations. */
+export async function addAndRebuildGooglechatForChannelsStopStartLiveE2e(
+  input: GooglechatLiveE2eComposition,
+  dependencies: GooglechatLiveE2eDependencies = DEFAULT_DEPENDENCIES,
+): Promise<void> {
+  const audience = requireLiveAudience(input);
+  if (!dependencies.rebuildSandbox) {
+    throw new Error("Google Chat live rebuild dependency is unavailable");
   }
 
   const restore = dependencies.installCredentialFixture(input.sandboxName, input.agent);
   try {
-    await dependencies.addSandboxChannel(
-      input.sandboxName,
-      { channel: "googlechat" },
-      input.agent === "openclaw"
-        ? {
-            googlechatNonInteractiveAudienceCapability: Object.freeze({ audience }),
-          }
-        : {},
-    );
+    await addGooglechatWithInstalledFixture(input, audience, dependencies);
+    await dependencies.rebuildSandbox(input.sandboxName, ["--yes"]);
   } finally {
     restore();
   }
@@ -188,7 +258,7 @@ async function main(): Promise<void> {
   if (agent !== "openclaw" && agent !== "hermes") {
     throw new Error("NEMOCLAW_CHANNELS_STOP_START_AGENT must be openclaw or hermes");
   }
-  await addGooglechatForChannelsStopStartLiveE2e({
+  await addAndRebuildGooglechatForChannelsStopStartLiveE2e({
     sandboxName: process.argv[2] ?? "",
     agent,
     audience: process.env.GOOGLECHAT_AUDIENCE ?? "",
