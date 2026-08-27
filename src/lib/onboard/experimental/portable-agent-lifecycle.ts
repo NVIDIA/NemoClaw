@@ -19,6 +19,7 @@ import {
   inspectPortableAgentReceiptAuthority,
   inspectPortableAgentReceiptAuthorityForClassification,
   inspectPortableAgentReceiptAuthorityForRequalification,
+  type PortableAgentReceiptAuthority,
 } from "./hermes-portable-receipt";
 import { qualifyHermesPortableOperatingAuthority } from "./hermes-portable-operating-authority";
 import {
@@ -171,13 +172,10 @@ export interface PortableAgentLifecycleAuthorityDeps {
   readonly inspectReceiptDisposition?: (sandboxName: string) => PortableAgentReceiptDisposition;
   readonly readRegistry: (sandboxName: string) => SandboxEntry | null;
 }
-/** Strictly distinguish absent, OpenClaw, and Hermes receipt authority. */
-export function inspectPortableAgentReceiptDisposition(
-  sandboxName: string,
-  env: NodeJS.ProcessEnv = process.env,
-  stateDir = defaultPortableDemoStateDir(env),
+
+function receiptDisposition(
+  authority: PortableAgentReceiptAuthority,
 ): PortableAgentReceiptDisposition {
-  const authority = inspectPortableAgentReceiptAuthorityForClassification(sandboxName, stateDir);
   if (authority.kind === "none") return { kind: "absent" };
   if (authority.kind === "openclaw") return { kind: "openclaw" };
   const { receipt } = authority.snapshot;
@@ -193,26 +191,26 @@ export function inspectPortableAgentReceiptDisposition(
   };
 }
 
+/** Strictly distinguish absent, OpenClaw, and Hermes receipt authority. */
+export function inspectPortableAgentReceiptDisposition(
+  sandboxName: string,
+  env: NodeJS.ProcessEnv = process.env,
+  stateDir = defaultPortableDemoStateDir(env),
+): PortableAgentReceiptDisposition {
+  return receiptDisposition(
+    inspectPortableAgentReceiptAuthorityForClassification(sandboxName, stateDir),
+  );
+}
+
 /** Classify copied Hermes authority while the probe owns its lifecycle fence. */
 function inspectPortableAgentReceiptDispositionForRequalification(
   sandboxName: string,
   env: NodeJS.ProcessEnv = process.env,
   stateDir = defaultPortableDemoStateDir(env),
 ): PortableAgentReceiptDisposition {
-  const authority = inspectPortableAgentReceiptAuthorityForRequalification(sandboxName, stateDir);
-  if (authority.kind === "none") return { kind: "absent" };
-  if (authority.kind === "openclaw") return { kind: "openclaw" };
-  const { receipt } = authority.snapshot;
-  return {
-    kind: "hermes",
-    phase: receipt.phase,
-    gatewayName: receipt.gatewayName,
-    lifecycleGeneration: receipt.lifecycleGeneration,
-    liveIdentityFingerprint:
-      receipt.phase === "pending"
-        ? null
-        : createHash("sha256").update(receipt.container.sandboxId).digest("hex"),
-  };
+  return receiptDisposition(
+    inspectPortableAgentReceiptAuthorityForRequalification(sandboxName, stateDir),
+  );
 }
 
 /** Requalify only Hermes authority while the probe owns both Portable fences. */

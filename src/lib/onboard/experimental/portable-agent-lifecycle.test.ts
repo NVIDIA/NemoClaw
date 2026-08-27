@@ -158,10 +158,15 @@ describe("portable agent lifecycle dispatch", () => {
   });
 
   it("routes probe-only schema migration to the exact Hermes lifecycle owner (#10423)", () => {
-    mocks.inspect.mockReturnValue(hermes("active"));
-    mocks.readRegistry.mockReturnValue(hermesRegistryEntry({ provider: "ollama-local" }));
+    const receiptAuthority = hermes("active");
+    const entry = hermesRegistryEntry({ provider: "ollama-local" });
+    mocks.inspectClassification.mockReturnValue(receiptAuthority);
+    mocks.inspectRequalification.mockReturnValue(receiptAuthority);
+    mocks.readRegistry.mockReturnValue(entry);
     mocks.requalifyHermes.mockReturnValue({ kind: "migrated" });
 
+    const classified = qualifyPortableAgentLifecycleAuthority("alpha", lifecycleAuthorityDeps);
+    expect(classified).toEqual({ ...hermesDisposition("active"), entry });
     expect(
       requalifyPortableAgentSandboxAuthority("alpha", {
         ...lifecycleAuthorityDeps,
@@ -177,6 +182,8 @@ describe("portable agent lifecycle dispatch", () => {
       }),
       expect.objectContaining({ stateDir: "/state" }),
     );
+    expect(mocks.inspectClassification).toHaveBeenCalledWith("alpha", expect.any(String));
+    expect(mocks.inspectRequalification).toHaveBeenCalledWith("alpha", "/state");
     expect(mocks.recoverOpenClaw).not.toHaveBeenCalled();
   });
 
