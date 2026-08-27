@@ -2,10 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Permissive policy for development/testing — applied by `shields down`.
-# All known endpoints use protocol: rest + access: full (allow any HTTP method on
-# any path). This routes traffic through the L7 proxy's normal TLS-termination
-# path so it works transparently from any execution context (sandbox exec, SSH,
-# interactive shell) without requiring proxy environment setup.
+# Known endpoints use inspected REST routes. Most allow all methods and paths;
+# raw GitHub remains GET/HEAD-only for Homebrew downloads. This works from any
+# execution context without requiring proxy environment setup.
 #
 # WARNING: This policy disables most sandbox security restrictions.
 # Do not use in production.
@@ -276,7 +275,9 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        access: full
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: HEAD, path: "/**" }
       - host: objects.githubusercontent.com
         port: 443
         protocol: rest

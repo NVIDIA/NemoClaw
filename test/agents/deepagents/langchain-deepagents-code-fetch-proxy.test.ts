@@ -140,7 +140,7 @@ print("root-owned-proxy-verification-ok")
         {
           agentName: "langchain-deepagents-code",
           policyTier: "balanced",
-          additionalPresets: ["observability-otlp-local"],
+          additionalPresets: ["observability-otlp-local", "brew"],
         },
       );
 
@@ -151,11 +151,12 @@ print("root-owned-proxy-verification-ok")
         const endpoints = Object.values(policy.network_policies ?? {}).flatMap(
           (networkPolicy) => networkPolicy.endpoints ?? [],
         );
-        const rawGitHub = endpoints.find(
+        const rawGitHubEndpoints = endpoints.filter(
           (endpoint) => endpoint.host === "raw.githubusercontent.com",
         );
 
-        expect(rawGitHub).toMatchObject({
+        expect(rawGitHubEndpoints).toHaveLength(2);
+        expect(rawGitHubEndpoints[0]).toMatchObject({
           port: 443,
           protocol: "rest",
           enforcement: "enforce",
@@ -164,7 +165,17 @@ print("root-owned-proxy-verification-ok")
             { allow: { method: "HEAD", path: "/**" } },
           ],
         });
-        expect(rawGitHub).not.toHaveProperty("access");
+        expect(rawGitHubEndpoints[0]).not.toHaveProperty("access");
+        expect(rawGitHubEndpoints[1]).toMatchObject({
+          port: 443,
+          protocol: "rest",
+          enforcement: "enforce",
+          rules: [
+            { allow: { method: "GET", path: "/**" } },
+            { allow: { method: "HEAD", path: "/**" } },
+          ],
+        });
+        expect(rawGitHubEndpoints[1]).not.toHaveProperty("access");
 
         const effectiveHosts = new Set(endpoints.map((endpoint) => endpoint.host));
 

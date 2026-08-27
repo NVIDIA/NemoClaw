@@ -540,12 +540,16 @@ describe("effective built-in policy contracts", () => {
         "/usr/local/bin/brew",
       ].sort(),
     );
-    ["github.com", "raw.githubusercontent.com"].forEach((host) => {
-      const endpoint = requireEndpoint(brew, host);
-      expect(endpoint).toMatchObject({ port: 443, access: "full" });
-      expect(endpoint).not.toHaveProperty("protocol");
-      expect(endpoint).not.toHaveProperty("tls");
-    });
+    const github = requireEndpoint(brew, "github.com");
+    expect(github).toMatchObject({ port: 443, access: "full" });
+    expect(github).not.toHaveProperty("protocol");
+    expect(github).not.toHaveProperty("tls");
+
+    const rawGitHub = requireEndpoint(brew, "raw.githubusercontent.com");
+    expect(rawGitHub).toMatchObject({ port: 443, protocol: "rest", enforcement: "enforce" });
+    expect(rawGitHub).not.toHaveProperty("access");
+    expect(rawGitHub).not.toHaveProperty("tls");
+    expect(methods(rawGitHub)).toEqual(["GET", "HEAD"]);
     (brew.endpoints ?? []).filter(
       (candidate) => !["github.com", "raw.githubusercontent.com"].includes(candidate.host ?? ""),
     ).forEach((endpoint) => {

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Permissive policy for OpenClaw — applied by `shields down`.
-# All known OpenClaw-relevant endpoints opened with access: full (no L7 filtering).
+# Most OpenClaw endpoints allow all methods; raw GitHub remains GET/HEAD-only.
 # Filesystem: include_workdir: true makes the sandbox home directory writable.
 #
 # WARNING: This policy disables most sandbox security restrictions.
@@ -231,7 +231,9 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        access: full
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: HEAD, path: "/**" }
       - host: objects.githubusercontent.com
         port: 443
         protocol: rest

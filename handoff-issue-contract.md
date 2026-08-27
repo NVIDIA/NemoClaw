@@ -1,97 +1,93 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Issue #8614 closure contract
+# Issue closure contract: #10380
 
-## Reporter workflow
+## Scope authority and sources
 
-Source: [issue body](https://github.com/NVIDIA/NemoClaw/issues/8614) and [reporter follow-up](https://github.com/NVIDIA/NemoClaw/issues/8614#issuecomment-5224815419).
+- GitHub issue #10380 defines the reported Deep Agents Code workflow, Linux environments, expected local denial, and observed upstream GitHub response.
+- The reporter's issue body requires managed `raw.githubusercontent.com` access to permit only GET and HEAD.
+- The maintainer comment identifies the `brew` preset as the balanced-tier permissive route. It requires OpenShell rule-enforcement verification and Homebrew regression evidence before the shared preset is narrowed.
+- The copied `issue-10380.md` analysis requires GET, HEAD, local POST denial, and a real Homebrew install through a balanced managed-proxy sandbox.
+- The current user instruction authorizes the shared-policy change. It also requires coverage for an equivalent permissive policy entry when that entry represents the same Homebrew route.
+- The current GitHub timeline has no linked issue or pull request. GitHub search found no existing pull request for #10380. Therefore, this contract closes only #10380.
 
-Environment reported by `zxman0126`: NemoClaw v0.0.102, Hermes Agent 0.19.0 sandbox, and DGX Spark GB10.
+## Reporter workflow and environment
 
-1. Run `config set memory.provider`; observe an immediate gateway SIGTERM and restart.
-2. Run `config set model.supports_vision`; observe no immediate restart and a restart note.
-3. Write `platforms.teams.home_channel.chat_id` before its required `platform` field.
-4. Trigger a restart with another config write; observe `HomeChannel.from_dict` fail and the gateway enter relaunch quarantine after five exits.
-5. Rebuild the sandbox and run `config set` before `recover`; observe a compat-hash failure that a later `recover` does not repair.
-6. Rebuild again, run `recover`, and then run `config set`; observe the write succeed.
-7. Inspect `/tmp/gateway.log`, `~/.hermes/logs/agent.log`, and the integrity-frozen `.env`; observe that the useful traceback and managed `.env` writes are not disclosed by the host command.
-8. Set `security.allow_private_urls` to `true`, then set `browser.cdp_url` to `http://10.200.0.1:9223`; observe CLI rejection before Hermes receives the value.
-
-The required local reproduction uses the built worktree `./bin/nemoclaw.js`, Hermes sandbox `triage-8614`, and ports unique to this issue.
+- Agent: LangChain Deep Agents Code.
+- Platform: Linux. The reporter reproduced the defect on Jetson Thor and Ubuntu 22.04, 24.04, 24.04 GPU, and 26 GPU runners.
+- Reported versions: Node.js 22.22.x-22.23.x, npm 10.9.x, Docker Engine 29.x, OpenShell 0.0.106, and NemoClaw 0.0.114.
+- Required local environment: the current Linux and GPU host, a uniquely named issue-10380 sandbox, and per-worktree NemoClaw state when supported.
+- Entry path: build this checkout, run `./bin/nemoclaw.js`, onboard Deep Agents Code with the balanced tier and managed proxy, then execute the probe through the user-facing sandbox command.
+- Probe setup: source `/tmp/nemoclaw-proxy-env.sh` inside the sandbox and use its configured HTTP or HTTPS proxy.
+- Reported request: POST `https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/README.md`.
 
 ## Expected behavior
 
-- NemoClaw validates a complete Hermes candidate configuration before persistence.
-- NemoClaw rejects an incomplete structural write with the missing field or path.
-- Rejection leaves the configuration file, managed `.env`, integrity hashes, gateway state, and quarantine state unchanged.
-- A valid complete structural write succeeds.
-- A successful rebuild leaves Hermes configuration writable. If the security model requires recovery, NemoClaw rejects the write before mutation and prints the exact recovery command; recovery then succeeds without another rebuild.
-- Hermes config output truthfully states possible or observed gateway restart effects and readiness or recovery state.
-- A failed Hermes restart reports a bounded, sanitized tail from `/tmp/gateway.log`.
-- Config output discloses managed `.env` effects without exposing values or secrets.
-- Private URLs remain rejected by default.
-- An explicit `security.allow_private_urls: true` opt-in permits the private `browser.cdp_url` through CLI validation and the Hermes plugin runtime override.
-- The accepted private URL works through the complete supported sandbox path.
-- A user can recover from config-driven relaunch failure without an additional rebuild when the preserved valid configuration permits recovery.
+- GET to an approved raw GitHub path succeeds.
+- HEAD to an approved raw GitHub path succeeds.
+- POST to the same path is denied by the local managed policy or proxy before the request reaches GitHub.
+- The denial response does not contain the GitHub Unicorn HTML page or other upstream GitHub HTML.
+- Formula metadata, bottle metadata, bottle downloads, and `brew install` continue to work through the Homebrew policy routes.
 
-## Observed behavior
+## Observed behavior before the fix
 
-- Hermes candidate writes receive integrity and MCP checks but not complete Hermes structural validation.
-- An incomplete `home_channel` object persists and fails during Hermes boot.
-- Repeated gateway exits quarantine relaunch until sandbox recreation.
-- Rebuild can leave frozen-input compatibility hashes stale until gateway recovery refreshes them.
-- The first post-rebuild config write can fail after partial reconciliation, and later recovery can remain insufficient.
-- Restart effects differ by key and command output does not explain the effect accurately.
-- The actionable boot traceback remains only in the in-container `/tmp/gateway.log`.
-- Managed `TEAMS_HOME_CHANNEL*` `.env` updates are not disclosed.
-- CLI URL validation rejects private hosts without reading the explicit Hermes opt-in.
-- The Hermes plugin forces `_allow_private_urls_resolved` to false, which defeats the runtime opt-in even if CLI validation permits the URL.
+- GET succeeds through the managed proxy.
+- POST reaches GitHub and returns HTTP 403 with the GitHub Unicorn HTML page.
+- The `brew` preset grants `raw.githubusercontent.com` with `access: full` and no method rules.
+- Balanced and open tiers select the shared `brew` preset.
+- Deep Agents Code already declares a separate host-wide GET/HEAD route. The permissive overlapping `brew` route defeats the intended read-only result.
 
-## Acceptance paths and sources
+## Closure requirements and acceptance evidence
 
-Sources:
+1. Verify OpenShell 0.0.106 enforces an existing REST rule before changing policy files.
+   - Source: maintainer comment and copied analysis.
+   - Evidence: a real sandbox request that an existing rule allows with GET or HEAD and denies with POST locally.
+   - Stop condition: if OpenShell forwards the disallowed request, NemoClaw policy changes cannot close #10380.
 
-- [Issue body](https://github.com/NVIDIA/NemoClaw/issues/8614): restart behavior, structural-write quarantine, rebuild and recovery ordering, diagnostics, managed `.env` effects, and expected recovery behavior.
-- [Reporter follow-up](https://github.com/NVIDIA/NemoClaw/issues/8614#issuecomment-5224815419): private URL default rejection and explicit opt-in.
-- `issue-8614.md`: current-code analysis and the coordinated closing scope.
-- GitHub timeline and `closedByPullRequestsReferences`, fetched before implementation: no linked pull request or review exists; the only cross-reference is another issue.
+2. Reproduce the reporter workflow before editing policy code.
+   - Source: issue body and current user instruction.
+   - Evidence: a worktree CLI onboard of a uniquely named Deep Agents Code sandbox with balanced managed proxy, followed by the exact raw GitHub POST through the user-facing sandbox workflow.
+   - Required result: upstream HTTP 403 and GitHub HTML prove the defect is present.
 
-Acceptance paths:
+3. Make the shared Homebrew raw GitHub route read-only.
+   - Source: issue expected result, maintainer root-cause comment, copied analysis, and current user instruction.
+   - Required policy: host-wide GET and HEAD rules with REST enforcement; no `access: full` on this endpoint.
+   - Composition requirement: every checked-in permissive `brew` policy entry that represents the same Homebrew route must use the same method limit. A remaining equivalent full-access entry would leave the failure class reachable.
 
-1. Incomplete `platforms.teams.home_channel` write: reject before persistence; preserve files and hashes; do not restart or quarantine Hermes.
-2. Complete `platforms.teams.home_channel` write: persist the valid candidate and report managed `.env` effects.
-3. Rebuild integrity lifecycle: a direct subsequent config write succeeds, or a pre-mutation gate prints the exact `recover` command and the write succeeds after one recovery without another rebuild.
-4. Restart disclosure: output does not promise that Hermes remains running when the write can restart it; output reports readiness or the required recovery action.
-5. Restart failure: output includes useful, bounded, sanitized gateway diagnostics and excludes representative secrets.
-6. Private URL default: reject `browser.cdp_url` on a private host when the opt-in is absent or false.
-7. Private URL opt-in: accept the same URL only after explicit opt-in, preserve validation for unrelated URL risks, and pass the setting through the Hermes plugin runtime.
-8. Quarantine recovery: preserve or restore a valid configuration and provide a non-rebuild recovery path when the sandbox can recover safely.
+4. Preserve intended raw GitHub reads.
+   - Source: issue expected result and copied analysis.
+   - Evidence: GET returns HTTP 200 with the NemoClaw README. HEAD returns an accepted success response without a body.
+
+5. Preserve Homebrew formula and bottle workflows.
+   - Source: maintainer comment, copied analysis, and current user instruction.
+   - Evidence: the Deep Agents balanced sandbox accepts the formula, raw-content, and GHCR routes that its shared `brew` preset opens.
+   - Evidence: a balanced OpenClaw sandbox, the supported runtime whose base policy and image provide the Homebrew prefix, completes `brew --prefix` and installs a small bottle such as `hello` through the same shared `brew` preset.
+   - Runtime boundary: the Deep Agents base policy does not grant `/home/linuxbrew`, and its v0.0.114 base image does not contain `brew`. Therefore, an actual `brew install` in that agent is not a supported Homebrew consumer and is not valid regression evidence for the shared preset.
+
+6. Deny the reported mutation locally after the fix.
+   - Source: issue expected result and current user instruction.
+   - Evidence: repeat the same user-facing POST after rebuilding and recreating or updating the sandbox policy.
+   - Required result: local policy or method denial, no upstream GitHub HTML, and no successful mutation request.
+
+7. Add durable policy regression coverage.
+   - Source: repository QA-escaped-defect requirements and current user instruction.
+   - Evidence: policy-consumer tests assert GET and HEAD are the only methods for the shared Homebrew raw GitHub route and all equivalent checked-in policy copies.
+   - The test must fail against the pre-fix policy and pass after the fix.
+
+8. Complete repository and publication gates.
+   - Source: current user instruction and repository contributor workflow.
+   - Evidence: before-fix, pre-commit, post-commit, and pre-push handoff gates; focused tests; `npm test`; fresh-context reviews; signed commit; verified GitHub commit; current-head PR checks.
 
 ## Explicit non-goals
 
-- Do not weaken private-host rejection by default.
-- Do not add an unrestricted global SSRF bypass.
-- Do not duplicate the Hermes schema in NemoClaw when the bundled Hermes parser or schema can validate a candidate without side effects.
-- Do not expose configuration values, credentials, tokens, or an unbounded gateway log.
-- Do not claim an exact upstream restart-key matrix unless the implementation owns and verifies that matrix.
-- Do not change OpenClaw configuration behavior unless a shared owner requires the same correction.
-- Do not add Hermes behavior unrelated to this config lifecycle.
-- Do not use a rebuild as the normal repair for a rejected candidate configuration.
-- Do not open a partial PR or use `Relates to #8614` if any closure item remains unimplemented or unvalidated.
-
-## Required validation evidence
-
-Before the fix, capture the reporter failure with the built worktree `./bin/nemoclaw.js` on `yimoj-colossus-dev` after dependency installation, CLI and plugin builds, and worktree OpenShell installation. Supporting helpers, direct imports, fixtures, unit tests, and raw `openshell` commands do not replace this evidence.
-
-After the fix, capture real worktree CLI transcripts for Hermes sandbox `triage-8614` with unique ports:
-
-- incomplete `home_channel` write rejected with no persistence, hash change, restart, or quarantine;
-- valid complete `home_channel` write accepted;
-- rebuild followed by config set succeeds, or exact pre-gate recovery ordering succeeds without another rebuild;
-- forced restart failure reports a bounded sanitized diagnostic tail;
-- private `browser.cdp_url` rejected by default;
-- the same private URL accepted end to end only after explicit opt-in;
-- managed `.env` and restart effects disclosed without secret values.
-
-Automated evidence must include focused tests for candidate structural validation, atomic unchanged files and hashes, rebuild postconditions, recovery ordering, bounded log length, log redaction, managed `.env` disclosure, private URL default rejection, explicit CLI opt-in, and Hermes plugin runtime opt-in. Run targeted builds and tests, the repository pre-commit gate, independent Codex review, the signed commit and post-commit gate, and the pre-push gate including `npm test`.
+- Do not claim support or validation for non-Linux platforms. The issue body excludes them from the confirmed platform scope.
+- Do not change OpenShell code. If OpenShell 0.0.106 does not enforce declared REST rules, stop because a NemoClaw-only change cannot close #10380.
+- Do not narrow raw GitHub paths. Deep Agents Code must follow repository, revision, and file paths that vary by task, so the existing agent policy intentionally uses `/**`.
+- Do not remove GET or HEAD access required for raw content, formulae, or bottles.
+- Do not broaden POST access on another GitHub host or policy to compensate for this denial.
+- Do not change the personal tier's explicit broad L4 internet posture. It is a separate user-selected policy contract.
+- Do not change unrelated service-specific raw GitHub routes, such as the pinned OpenClaw pricing file or WhatsApp version lookup.
+- Do not add a Homebrew binary or change package provisioning. The `brew` preset states that the base image already provides the binary.
+- Do not change Git-based Homebrew operations. The preset explicitly routes those operations through the separate `github` preset.
+- Do not claim that a unit test, helper invocation, raw OpenShell command, or CI job replaces the required worktree CLI E2E evidence.
