@@ -10,7 +10,6 @@ import { describe, expect, it } from "vitest";
 import {
   makeNetworkSimulatingFixture,
   makeWrapperFixture,
-  runBounded,
   runWrapper,
   runWrapperAsync,
 } from "../../helpers/langchain-deepagents-code-image.ts";
@@ -185,7 +184,11 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
       }
     }
 
-    await runBounded(cases, 4);
+    const runNext = async (): Promise<void> => {
+      const next = cases.shift();
+      await (next ? next().then(runNext) : Promise.resolve());
+    };
+    await Promise.all([runNext(), runNext(), runNext(), runNext()]);
   });
 
   it.each([

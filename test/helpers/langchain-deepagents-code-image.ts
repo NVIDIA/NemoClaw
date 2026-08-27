@@ -120,16 +120,6 @@ export function runWrapper(
   });
 }
 
-export async function runBounded(tasks: Array<() => Promise<void>>, width: number): Promise<void> {
-  const runNext = async (): Promise<void> => {
-    const next = tasks.shift();
-    if (!next) return;
-    await next();
-    await runNext();
-  };
-  await Promise.all(Array.from({ length: width }, runNext));
-}
-
 export async function runWrapperAsync(
   wrapperPath: string,
   args: readonly string[],
