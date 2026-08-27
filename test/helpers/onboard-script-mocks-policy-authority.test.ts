@@ -41,6 +41,24 @@ describe("mockCreatedSandboxIdentityList", () => {
     ).toContain('"name":"my-assistant"');
   });
 
+  it("publishes identity through the Linux process-tree timeout wrapper (#10238, #9833)", () => {
+    expect(
+      mockCreatedSandboxIdentityList(
+        [
+          "/usr/bin/timeout",
+          "--signal=KILL",
+          "29.75s",
+          "/opt/openshell",
+          ...exactCreateQuery.slice(1),
+        ],
+        {
+          gatewayName: "nemoclaw-test",
+          sandboxName: "my-assistant",
+        },
+      ),
+    ).toContain('"name":"my-assistant"');
+  });
+
   it.each([
     [
       "an unscoped query",
@@ -63,6 +81,16 @@ describe("mockCreatedSandboxIdentityList", () => {
       exactCreateQuery.filter((part) => part !== "--limit" && part !== "2"),
     ],
     ["a different row bound", exactCreateQuery.map((part) => (part === "2" ? "3" : part))],
+    [
+      "an untrusted timeout wrapper",
+      [
+        "/usr/bin/timeout",
+        "--signal=TERM",
+        "29.75s",
+        "/opt/openshell",
+        ...exactCreateQuery.slice(1),
+      ],
+    ],
   ])("rejects %s (#9833)", (_case, command) => {
     expect(mockCreatedSandboxIdentityList(command, { gatewayName: "nemoclaw-test" })).toBeNull();
   });

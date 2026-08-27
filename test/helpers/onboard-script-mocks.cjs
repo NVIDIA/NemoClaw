@@ -346,6 +346,17 @@ function exactOpenShellArgs(command) {
   const verbs = new Set(["gateway", "policy", "sandbox"]);
   if (verbs.has(args[0])) return args;
   if (args.length > 1 && verbs.has(args[1])) return args.slice(1);
+  if (
+    args.length > 4 &&
+    args[0] === "/usr/bin/timeout" &&
+    args[1] === "--signal=KILL" &&
+    /^(?:0\.[0-9]+|[1-9][0-9]*(?:\.[0-9]+)?)s$/u.test(args[2]) &&
+    args[3].length > 0 &&
+    !args[3].startsWith("-") &&
+    verbs.has(args[4])
+  ) {
+    return args.slice(4);
+  }
   return null;
 }
 
