@@ -212,7 +212,9 @@ function createStatefulMessagingProviderRunner({
     ) {
       return {
         status: 0,
-        stdout: Buffer.from(`Name: ${readySandboxName}\nId: sbx-4f2a91c0d7\n`),
+        stdout: Buffer.from(
+          `Name: ${readySandboxName}\nId: fixture-created-sandbox\nPhase: Ready\n`,
+        ),
         stderr: Buffer.alloc(0),
       };
     }
@@ -333,6 +335,9 @@ function mockOnboardRunCapture(command, options = {}) {
   return mockSandboxExecCurl(command, options);
 }
 
+let publishedCreatedSandboxIdentity = null;
+let publishedCreatedGatewayPort = 8080;
+
 function mockCreatedSandboxIdentityList(command, options = {}) {
   const args = Array.isArray(command) ? command.map(String) : [];
   const sandboxIndex = args.indexOf("sandbox");
@@ -349,23 +354,23 @@ function mockCreatedSandboxIdentityList(command, options = {}) {
   const prefix = "ai.nvidia.nemoclaw.create-attempt=";
   if (!selector.startsWith(prefix)) return null;
   const nonce = selector.slice(prefix.length);
-  return JSON.stringify([
-    {
-      id: options.sandboxId || "fixture-created-sandbox",
-      name: options.sandboxName || "my-assistant",
-      labels: { "ai.nvidia.nemoclaw.create-attempt": nonce },
-      resource_version: 1,
-      created_at: "2026-08-25T00:00:00Z",
-      phase: "Ready",
-      current_policy_version: 1,
-    },
-  ]);
+  publishedCreatedSandboxIdentity = {
+    id: options.sandboxId || "fixture-created-sandbox",
+    name: options.sandboxName || "my-assistant",
+    labels: { "ai.nvidia.nemoclaw.create-attempt": nonce },
+    resource_version: 1,
+    created_at: "2026-08-25T00:00:00Z",
+    phase: "Ready",
+    current_policy_version: 1,
+  };
+  return JSON.stringify([publishedCreatedSandboxIdentity]);
 }
 
 function installVerifiedSandboxCreateFixture(registry, options) {
   mockStructuredOpenShellCaptureFromRunner();
   const sandboxName = options.sandboxName;
   const gatewayName = options.gatewayName || "nemoclaw";
+  publishedCreatedGatewayPort = options.gatewayPort || 8080;
   const sessionId = options.sessionId || "integration-fixture-session";
   const selection = {
     provider: options.provider,
@@ -678,6 +683,20 @@ function mockStructuredOpenShellCaptureFromRunner() {
   const runner = require(path.resolve(__dirname, "../../src/lib/runner.ts"));
   const client = require(path.resolve(__dirname, "../../src/lib/adapters/openshell/client.ts"));
   client.captureOpenshellCommand = (binary, args, options = {}) => {
+    if (args[0] === "gateway" && args[1] === "info") {
+      const stdout = `Gateway endpoint: http://127.0.0.1:${publishedCreatedGatewayPort}\n`;
+      return {
+        status: 0,
+        output: stdout.trim(),
+        ...(options.includeStreams === true ? { stdout, stderr: "" } : {}),
+      };
+    }
+    const isCreatedSandboxPolicyRead =
+      args[0] === "policy" &&
+      args[1] === "get" &&
+      args.includes("--full") &&
+      args.includes("--output") &&
+      publishedCreatedSandboxIdentity?.name === String(args.at(-1) || "");
     const isFreshGlobalPolicyHistoryRead =
       args[0] === "policy" &&
       args[1] === "list" &&
@@ -698,9 +717,38 @@ function mockStructuredOpenShellCaptureFromRunner() {
         includeStderr: false,
       }) || "",
     );
+    if (isCreatedSandboxPolicyRead && stdout.trim().length === 0) {
+      const fallback = JSON.stringify({
+        scope: "sandbox",
+        sandbox: publishedCreatedSandboxIdentity.name,
+        status: "effective",
+        policy_source: "sandbox",
+        hash: "fixture-policy",
+        active_version: 1,
+        policy: { version: 1, network_policies: {} },
+      });
+      return {
+        status: 0,
+        output: fallback,
+        ...(options.includeStreams === true ? { stdout: fallback, stderr: "" } : {}),
+      };
+    }
     const isSandboxGet = args[0] === "sandbox" && args[1] === "get";
     if (isSandboxGet && stdout.trim().length === 0) {
       const sandboxName = String(args.at(-1) || "unknown");
+      if (publishedCreatedSandboxIdentity?.name === sandboxName) {
+        const readyOutput = [
+          `Name: ${sandboxName}`,
+          `Id: ${publishedCreatedSandboxIdentity.id}`,
+          "Phase: Ready",
+          "",
+        ].join("\n");
+        return {
+          status: 0,
+          output: readyOutput.trim(),
+          ...(options.includeStreams === true ? { stdout: readyOutput, stderr: "" } : {}),
+        };
+      }
       const stderr = `Error: sandbox ${sandboxName} not found\n`;
       return {
         status: 1,
