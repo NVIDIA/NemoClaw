@@ -280,7 +280,7 @@ The wizard creates an OpenShell gateway, registers inference providers, selects 
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```bash
-$$nemoclaw onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
+$$nemoclaw onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--apf-interceptor] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--host-mount <host:/sandbox/path>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--vllm-gpu-device <index-or-uuid>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
 ```
 
 <AgentOnly variant="hermes">
@@ -396,8 +396,9 @@ It also rejects stored authority or filesystem ownership drift without falling b
 
 OpenClaw onboarding does not enter the `complete` state until NemoClaw proves that the local CLI operator pairing is settled.
 Ordinary onboarding first observes the canonical local CLI device.
-If the device is not settled and has no exact pending request, NemoClaw runs one bounded request producer on the owning gateway.
-It waits for the same-device request, approves at most once, and verifies the final settled state.
+If the device is pairing-only, the host runs one bounded request producer on the owning gateway.
+The in-sandbox watcher is the only component that approves the ordinary onboarding upgrade.
+The host observes through any same-device pending state and verifies the final settled state without sending an approval.
 Portable onboarding accepts one exact already-pending canonical write upgrade, avoids a duplicate producer, and still requires strict same-device settlement before completion.
 The paired device must have exactly the `operator.pairing` and `operator.write` scopes.
 Any pairing request considered during bounded repair must request exactly those scopes.
@@ -458,6 +459,38 @@ The installer also accepts `--fresh` and forwards it to `$$nemoclaw onboard`, wh
 `--resume` and `--fresh` are mutually exclusive.
 For an existing completed sandbox, use `--fresh --name <sandbox-name> --recreate-sandbox` when you intentionally want onboarding to replace that sandbox with a new provider, model, agent, or startup setting.
 Use `$$nemoclaw <sandbox-name> rebuild` when you want NemoClaw to recreate the sandbox from its recorded registry metadata without changing those selections.
+
+#### `--apf-interceptor`
+
+Use this option to request a policyless sandbox creation for an APF-interceptor flow.
+The option requires these conditions:
+
+- Start a new onboarding session.
+  Use `--fresh` when a saved onboarding session exists.
+- Select a sandbox name that has no registry entry or live OpenShell sandbox.
+- Keep the active global policy absent.
+- Do not combine the option with `--resume` or `--recreate-sandbox`.
+- Do not select the Portable experimental profile.
+
+NemoClaw omits a caller policy from every sandbox creation attempt.
+After creation, NemoClaw binds the returned durable sandbox identity and verifies its effective policy.
+The policy must be sandbox-scoped and contain every policy entry required by the prepared configuration.
+NemoClaw then records the policy as externally managed and read-only.
+This verification does not establish that APF injected the policy.
+
+```bash
+$$nemoclaw onboard --fresh --apf-interceptor --name my-apf-sandbox
+```
+
+<Warning title="Recover an Incomplete APF Creation">
+If post-create verification or native GPU fallback fails after OpenShell may have created the sandbox, NemoClaw preserves the incomplete sandbox because automatic deletion would use its mutable name.
+Do not destroy that sandbox by name.
+Retain the reported sandbox name, create-attempt label, and durable identity fingerprint for comparison only.
+If OpenShell did not return the fingerprint, recovery remains blocked until an administrator resolves the create-attempt label to one exact sandbox.
+Ask an OpenShell administrator to obtain the exact live durable ID, verify it against the fingerprint, and use an identity-bound removal procedure.
+After the administrator confirms removal, start a fresh onboarding attempt.
+`--resume` and `--recreate-sandbox` cannot recover the incomplete attempt.
+</Warning>
 
 #### `--tool-disclosure <progressive|direct>`
 
@@ -944,8 +977,8 @@ Docker and Podman gateways cannot reuse one state directory. For NemoClaw-manage
 
 Without `--from`, onboarding through the OpenShell Docker driver for OpenClaw, Hermes, and LangChain Deep Agents Code selects an immutable managed image for the installed release and host architecture.
 NemoClaw validates the complete three-agent publication cohort before selecting any member.
-If registry or catalog availability prevents resolution, the ordinary `prefer-managed` path builds the shipped, reviewed repository Dockerfile instead; it never selects an unpinned `:latest` image.
-Available catalog evidence that is incomplete, mixed, mutable, wrong-platform, or identity-inconsistent fails closed before sandbox creation.
+If registry or catalog availability prevents resolution, stock onboarding stops before sandbox creation and does not build a shipped Dockerfile.
+Catalog evidence that is incomplete, mixed, mutable, wrong-platform, or identity-inconsistent also fails closed before sandbox creation.
 The portable experimental profile and native Podman are not part of this activation.
 
 Build the sandbox image from a custom Dockerfile instead of the stock NemoClaw image.
@@ -4438,7 +4471,7 @@ The `$$nemoclaw setup` command is deprecated.
 Use `$$nemoclaw onboard` instead.
 </Warning>
 
-This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```bash
 $$nemoclaw setup
@@ -4451,7 +4484,7 @@ The `$$nemoclaw setup-spark` command is deprecated.
 Use the standard installer and run `$$nemoclaw onboard` instead, because current OpenShell releases handle the older DGX Spark cgroup behavior.
 </Warning>
 
-This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `$$nemoclaw onboard` and accepts the same flags: `--profile <name>`, `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--apf-interceptor`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--host-mount`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--vllm-gpu-device`, `--agent`, `--agents <agents.yaml>`, `--tool-disclosure <progressive|direct>`, `--observability` / `--no-observability`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```bash
 $$nemoclaw setup-spark
@@ -5052,7 +5085,7 @@ OpenClaw-specific onboarding configuration:
 | `TAVILY_API_KEY` | Tavily Search API key | Supplies and implicitly selects Tavily Search when no provider is set and no Brave key is available. NemoClaw validates the key and stores it in OpenShell rather than the sandbox. |
 | `NEMOCLAW_AGENT_TIMEOUT` | positive integer (seconds) | Onboarding setting that overrides `agents.defaults.timeoutSeconds` and `models.providers.<provider-id>.timeoutSeconds` in the generated OpenClaw config. Set it before onboarding creates or recreates the sandbox. Setting it only for a later `$$nemoclaw <name> agent` invocation does not change the existing sandbox. Raise for slow inference. |
 | `NEMOCLAW_MCP_SHADOW_DIAGNOSTICS` | literal `1` to enable | Forwards opt-in successful Streamable HTTP MCP timing diagnostics to a newly created or rebuilt OpenClaw sandbox. It does not change timeouts, retries, requests, or responses. Unset it and rebuild after evidence collection to restore failure-only logging. Other values are ignored. |
-| `NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS` | positive number of seconds | Sets the post-pairing poll cadence for the in-sandbox OpenClaw auto-pair watcher. Defaults to `5` so late allowlisted CLI and browser scope upgrades are approved before clients time out. Raise only on load-sensitive gateways. |
+| `NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS` | positive number of seconds | Sets the in-sandbox OpenClaw auto-pair watcher cadence after the canonical local CLI device reaches the exact baseline scopes and has no same-device pending request. Defaults to `5` seconds. Before that settlement, the watcher polls every `1` second. Raise only on load-sensitive gateways. |
 | `NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS` | positive integer | Sets how many fast polls run after the watcher observes a fresh allowlisted scope-upgrade request. Defaults to `5`; set lower only when you need to reduce gateway polling. |
 | `NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS` | positive number of seconds | Sets the fast-reentry interval after a fresh allowlisted scope-upgrade request. Defaults to `1`. |
 | `NEMOCLAW_CONTEXT_WINDOW` | positive integer (tokens) | Overrides the model's context-window value in the generated OpenClaw config. |

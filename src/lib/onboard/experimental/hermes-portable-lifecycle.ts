@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { TextDecoder } from "node:util";
 
@@ -84,6 +84,7 @@ export interface HermesPortableLifecycleDeps {
     args: readonly string[],
     timeoutMs: number,
   ) => HermesPortableLifecycleCommandResult;
+  readonly launchOpenShell?: (args: readonly string[]) => void;
   readonly assertOpenShellExecutableAuthority?: (
     authority: HermesPortableOpenShellExecutableAuthority,
     childEnv: NodeJS.ProcessEnv,
@@ -145,6 +146,24 @@ function defaultCaptureOpenShell(
       stderr: result.stderr ?? Buffer.alloc(0),
       ...(result.error ? { error: result.error } : {}),
     };
+  };
+}
+
+function defaultLaunchOpenShell(
+  binary: string,
+  commandEnv: NodeJS.ProcessEnv,
+  runtimeAuthority: HermesPortableConfiguredReceipt["runtimeAuthority"],
+): (args: readonly string[]) => void {
+  const env = buildHermesPortableOpenShellEnv(commandEnv, runtimeAuthority);
+  return (args) => {
+    const child = spawn(binary, [...args], {
+      detached: true,
+      env,
+      shell: false,
+      stdio: "ignore",
+    });
+    child.once("error", () => undefined);
+    child.unref();
   };
 }
 
@@ -509,6 +528,29 @@ export function recoverHermesPortableSandboxLifecycle(
     });
     if (!execReady) fail("did not reconnect to the selected OpenShell gateway");
     qualified = qualify(sandboxName, context, deps, qualified.snapshot);
+    if (
+      observeHermesPortableAuthenticatedHealth(qualified.receipt, qualified.containerDeps) ===
+      "ready"
+    ) {
+      qualify(sandboxName, context, deps, qualified.snapshot);
+      return wasRunning ? { kind: "already-running" } : { kind: "recovered" };
+    }
+    if (startedByRecovery) {
+      qualified = qualify(sandboxName, context, deps, qualified.snapshot);
+      const rawLaunch =
+        deps.launchOpenShell ??
+        defaultLaunchOpenShell(
+          commandAuthority.executablePath,
+          commandEnv,
+          qualified.receipt.runtimeAuthority,
+        );
+      buildHermesPortableOpenShellCommandAuthority(
+        qualified.receipt,
+        commandEnv,
+        assertExecutable,
+      );
+      rawLaunch(openshellExecArgs(qualified.receipt, qualified.receipt.startup.argv));
+    }
     const recovered = waitFor(STARTUP_TIMEOUT_MS, deps, () => {
       const current = qualify(sandboxName, context, deps, qualified.snapshot);
       return (

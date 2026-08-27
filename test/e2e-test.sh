@@ -162,7 +162,24 @@ if [ "${1:-}" = "status" ]; then
   printf '%s\n' 'Gateway Status' '  Status: Connected' '  Gateway: fixture-gateway'
   exit 0
 fi
+if [ "${1:-} ${2:-}" = "gateway info" ]; then
+  printf '%s\n' 'Gateway endpoint: http://127.0.0.1:8080'
+  exit 0
+fi
+if [ "${1:-} ${2:-}" = "sandbox get" ]; then
+  sandbox="${@: -1}"
+  printf 'Name: %s\nId: fixture-sandbox-id\nPhase: Ready\n' "$sandbox"
+  exit 0
+fi
 if [ "${1:-} ${2:-}" = "policy list" ]; then
+  exit 0
+fi
+if [ "${1:-} ${2:-}" = "policy set" ]; then
+  if [ "$#" -ne 8 ] || [ "${5:-}" != "--policy" ] || [ -z "${6:-}" ]; then
+    echo "unexpected policy write: expected policy set -g fixture-gateway --policy <file> --wait <sandbox>" >&2
+    exit 64
+  fi
+  cp "$6" "${BASH_SOURCE[0]%/*}/effective-policy.yaml"
   exit 0
 fi
 if [ "${1:-} ${2:-}" = "policy get" ]; then
@@ -170,7 +187,28 @@ if [ "${1:-} ${2:-}" = "policy get" ]; then
 fi
 if [ "${1:-} ${2:-}" = "policy get" ] && [[ " $* " == *" --output json "* ]]; then
   sandbox="${@: -1}"
-  printf '{"scope":"sandbox","sandbox":"%s","status":"effective","policy_source":"sandbox","policy":{}}\n' "$sandbox"
+  policy_file=/opt/nemoclaw-blueprint/policies/openclaw-sandbox.yaml
+  policy_hash=sha256:fixture-policy
+  policy_version=1
+  if [ -f "${BASH_SOURCE[0]%/*}/effective-policy.yaml" ]; then
+    policy_file="${BASH_SOURCE[0]%/*}/effective-policy.yaml"
+    policy_hash=sha256:fixture-mutated-policy
+    policy_version=2
+  fi
+  node -e '
+    const fs = require("node:fs");
+    const YAML = require("/opt/nemoclaw/node_modules/yaml");
+    const policy = YAML.parse(fs.readFileSync(process.argv[2], "utf8"));
+    process.stdout.write(JSON.stringify({
+      scope: "sandbox",
+      sandbox: process.argv[1],
+      status: "effective",
+      policy_source: "sandbox",
+      hash: process.argv[3],
+      active_version: Number(process.argv[4]),
+      policy,
+    }) + "\n");
+  ' "$sandbox" "$policy_file" "$policy_hash" "$policy_version"
   exit 0
 fi
 case "$*" in
@@ -189,7 +227,10 @@ case "$*" in
 esac
 SH
 chmod 0755 "$FAKE_OPENSHELL_BIN/openshell"
-PATH="$FAKE_OPENSHELL_BIN:$PATH" NEMOCLAW_BLUEPRINT_PATH=/opt/nemoclaw-blueprint node --input-type=module -e "
+PATH="$FAKE_OPENSHELL_BIN:$PATH" \
+  NEMOCLAW_BLUEPRINT_PATH=/opt/nemoclaw-blueprint \
+  OPENSHELL_SANDBOX_POLICY=/opt/nemoclaw-blueprint/policies/openclaw-sandbox.yaml \
+  node --input-type=module -e "
   const { main } = await import('/opt/nemoclaw/dist/blueprint/runner.js');
   await main(['apply', '--profile', 'ncp']);
 " 2>&1 | tee "$APPLY_OUTPUT"

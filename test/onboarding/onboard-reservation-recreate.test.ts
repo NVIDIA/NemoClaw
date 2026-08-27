@@ -35,27 +35,30 @@ describe("onboard sandbox recreate reservation safety", () => {
       reservationSessionId: null,
       expectedRemoval: true,
     },
-  ] as const)("$name (#6562)", { timeout: 60_000 }, async ({
-    reservationSessionId,
-    expectedRemoval,
-  }) => {
-    const workspace = createOnboardProcessWorkspace("nemoclaw-onboard-reservation-survives-");
-    onTestFinished(() => workspace.remove());
-    const scriptPath = workspace.path("reservation-survives.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-    const onboardSessionPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
-    );
+  ] as const)(
+    "$name (#6562)",
+    { timeout: 60_000 },
+    async ({ reservationSessionId, expectedRemoval }) => {
+      const workspace = createOnboardProcessWorkspace("nemoclaw-onboard-reservation-survives-");
+      onTestFinished(() => workspace.remove());
+      const scriptPath = workspace.path("reservation-survives.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+      const registryPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "state", "registry.ts"),
+      );
+      const onboardSessionPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
+      );
 
-    writeOkOpenshell(workspace.binDir);
+      writeOkOpenshell(workspace.binDir);
 
-    const script = String.raw`
+      const script = String.raw`
 const runner = require(${runnerPath});
 require(${onboardScriptMocksPath}).mockStandaloneGatewayTeardownAuthority();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
+const fixtureMocks = require(${onboardScriptMocksPath});
 const onboardSession = require(${onboardSessionPath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
@@ -80,7 +83,9 @@ runner.run = (command) => {
 require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 runner.runCapture = (command) => {
   const cmd = _n(command);
-  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return sandboxRecreated ? ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10)) : sandboxDeleted ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
+  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
+  if (createdIdentity !== null) return createdIdentity;
+  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return sandboxRecreated ? ["my-assistant", "Id: fixture-created-sandbox"].join(String.fromCharCode(10)) : sandboxDeleted ? "" : ["my-assistant", "Id: fixture-created-sandbox"].join(String.fromCharCode(10));
   if (cmd.includes("sandbox list")) {
     return sandboxRecreated ? "my-assistant Ready" : sandboxDeleted ? "" : "my-assistant NotReady";
   }
@@ -97,22 +102,38 @@ runner.runCapture = (command) => {
 onboardSession.loadSession = () => ({ sessionId: "session-owner" });
 
 const reservationSessionId = ${JSON.stringify(reservationSessionId)};
-registry.getSandbox = () => ({
+let sourceEntry = {
   name: "my-assistant",
   gpuEnabled: false,
   pendingRouteReservation: true,
   ...(reservationSessionId === null ? {} : { reservationSessionId }),
-});
+};
+registry.getSandbox = () => sourceEntry;
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
-registry.removeSandbox = (name) => {
+const removeSandbox = (name) => {
   events.push({ kind: "removeSandbox", name });
+  sourceEntry = null;
   return true;
 };
+registry.removeSandbox = removeSandbox;
+const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+  sandboxName: "my-assistant",
+  provider: "nvidia-prod",
+  model: "gpt-5.4",
+  getSandbox: registry.getSandbox,
+  removeSandbox,
+});
 
 const preflight = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"))});
 preflight.checkPortAvailable = async () => ({ ok: true });
+const policyAuthorityPreflight = require(${JSON.stringify(
+        path.join(repoRoot, "src", "lib", "onboard", "policy-authority", "preflight.ts"),
+      )});
+policyAuthorityPreflight.qualifySandboxPolicyAuthority = () => ({
+  authority: "nemoclaw-managed",
+});
 
 childProcess.spawn = (...args) => {
   sandboxRecreated = true;
@@ -135,45 +156,65 @@ const { createSandbox } = require(${onboardPath});
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
   process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
-  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+  const sandboxName = await createSandbox(
+    ...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+      [
+        null,
+        "gpt-5.4",
+        "nvidia-prod",
+        null,
+        "my-assistant",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        [],
+      ],
+      createFixture,
+    ),
+  );
   console.log(JSON.stringify({ sandboxName, events }));
 })().catch((error) => {
   console.error(error);
   process.exit(1);
 });
 `;
-    fs.writeFileSync(scriptPath, script);
+      fs.writeFileSync(scriptPath, script);
 
-    const result = runOnboardProcess([scriptPath], {
-      env: workspaceEnv(workspace, {
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG: "1",
-        NEMOCLAW_SANDBOX_PREBUILD: "1",
-      }),
-      timeoutMs: 30_000,
-    });
+      const result = runOnboardProcess([scriptPath], {
+        env: workspaceEnv(workspace, {
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG: "1",
+          NEMOCLAW_SANDBOX_PREBUILD: "1",
+        }),
+        timeoutMs: 30_000,
+      });
 
-    assert.equal(result.status, 0, result.stderr || result.error?.message);
-    const payload = trailingJsonPayload<{
-      sandboxName: string;
-      events: Array<{ kind: string; cmd?: string; name?: string }>;
-    }>(result.stdout);
-    assert.equal(payload.sandboxName, "my-assistant");
+      assert.equal(result.status, 0, result.stderr || result.error?.message);
+      const payload = trailingJsonPayload<{
+        sandboxName: string;
+        events: Array<{ kind: string; cmd?: string; name?: string }>;
+      }>(result.stdout);
+      assert.equal(payload.sandboxName, "my-assistant");
 
-    const events = payload.events;
-    const removedReservation = events.some(
-      (e) => e.kind === "removeSandbox" && e.name === "my-assistant",
-    );
-    assert.equal(
-      removedReservation,
-      expectedRemoval,
-      expectedRemoval
-        ? "must delete abandoned pending route reservations during recreate"
-        : "must not delete the current session's pending route reservation during recreate",
-    );
-    assert.ok(
-      events.some((e) => e.kind === "run" && (e.cmd || "").includes("sandbox delete")),
-      "should still delete the not-ready gateway sandbox before rebuilding",
-    );
-  });
+      const events = payload.events;
+      const removedReservation = events.some(
+        (e) => e.kind === "removeSandbox" && e.name === "my-assistant",
+      );
+      assert.equal(
+        removedReservation,
+        expectedRemoval,
+        expectedRemoval
+          ? "must delete abandoned pending route reservations during recreate"
+          : "must not delete the current session's pending route reservation during recreate",
+      );
+      assert.ok(
+        events.some((e) => e.kind === "run" && (e.cmd || "").includes("sandbox delete")),
+        "should still delete the not-ready gateway sandbox before rebuilding",
+      );
+    },
+  );
 });

@@ -140,7 +140,7 @@ confirms that it peels to the candidate, report the tag as cut. Then continue th
 
 ## Post-Tag States
 
-The tag event starts `Release / Latest Tag`, `Docs / Publish Public`, and `Images / Base Images`.
+The tag event starts `Release / Latest Tag`, `Docs / Publish Public`, and `Images / Publish Base and Managed Images`.
 Monitor the exact tag and candidate runs concurrently. Draft the Announcement while they run.
 
 Report the tag as cut before this follow-through. Post-tag results never change tag success. Verify
