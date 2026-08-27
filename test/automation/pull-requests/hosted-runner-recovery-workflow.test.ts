@@ -56,7 +56,7 @@ function collectStrings(value: unknown): string[] {
 describe("hosted-runner recovery workflow boundary", () => {
   it("subscribes only to completed platform-evidence runs (#7140)", () => {
     const value = workflow();
-    expect(value.name).toBe("Automation / Platform CI Runner");
+    expect(value.name).toBe("Automation / Recover Platform CI Runner");
     expect(value.on).toEqual({
       workflow_run: {
         workflows: ["CI / Platform Compatibility"],

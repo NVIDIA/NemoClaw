@@ -257,6 +257,7 @@ const ONBOARD_SANDBOX_INSPECT = {
     Labels: {
       "openshell.ai/managed-by": "openshell",
       "openshell.ai/sandbox-name": "my-assistant",
+      "openshell.ai/sandbox-namespace": "test-gateway",
     },
     Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
     Cmd: [],
@@ -636,13 +637,19 @@ function mockDockerSandboxLifecycleReleaseFromRunner() {
     const normalized = normalizeCommand(command);
     if (
       finalCommitReleased &&
-      normalized.startsWith("docker ps -a --no-trunc ") &&
-      normalized.includes("label=openshell.ai/sandbox-name=my-assistant") &&
-      normalized.endsWith("--format {{.ID}}")
+      ((normalized.startsWith("docker ps -a --no-trunc ") &&
+        normalized.includes("label=openshell.ai/sandbox-name=my-assistant") &&
+        normalized.endsWith("--format {{.ID}}")) ||
+        normalized ===
+          `docker inspect --type container --format {{ index .Config.Labels "openshell.ai/sandbox-namespace" }} ${ONBOARD_SANDBOX_NEW_CONTAINER_ID}`)
     ) {
       return {
         status: 0,
-        stdout: Buffer.from(`${ONBOARD_SANDBOX_NEW_CONTAINER_ID}\n`),
+        stdout: Buffer.from(
+          normalized.startsWith("docker inspect ")
+            ? "test-gateway\n"
+            : `${ONBOARD_SANDBOX_NEW_CONTAINER_ID}\n`,
+        ),
         stderr: Buffer.alloc(0),
       };
     }
@@ -675,17 +682,6 @@ function mockDockerSandboxLifecycleReleaseFromRunner() {
   };
   wrappedRun.__nemoclawDockerLifecycleFixture = true;
   runner.run = wrappedRun;
-}
-
-function mockManagedImageFallback() {
-  const catalog = require(
-    path.resolve(__dirname, "../../src/lib/onboard/managed-image/catalog.ts"),
-  );
-  catalog.resolveManagedImageCatalogFromGhcr = async () => {
-    throw new catalog.ManagedImageCatalogUnavailableError(
-      "integration fixture intentionally exercises the trusted Dockerfile fallback",
-    );
-  };
 }
 
 function mockFreshOpenClawPluginDiscovery() {
@@ -896,7 +892,6 @@ function mockManagedImageBootstrap() {
   };
 }
 
-process.env.NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK === "1" && mockManagedImageFallback();
 if (process.env.NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG === "1") {
   mockManagedImageCatalog();
   mockManagedImageBootstrap();

@@ -24,6 +24,11 @@ import {
 import { TELEGRAM_INSTALLED_RUNTIME_PROOF_SOURCE } from "../live/messaging-providers-telegram-runtime-proof.ts";
 
 const FAKE_TELEGRAM_API = path.resolve(import.meta.dirname, "../lib/fake-telegram-api.cjs");
+const FAKE_SLACK_API = path.resolve(import.meta.dirname, "../lib/fake-slack-api.cjs");
+const MESSAGING_PROVIDERS_HELPERS_SOURCE = fs.readFileSync(
+  path.resolve(import.meta.dirname, "../live/messaging-providers-helpers.ts"),
+  "utf8",
+);
 const LIVE_MESSAGING_PROVIDERS_SOURCE = fs.readFileSync(
   path.resolve(import.meta.dirname, "../live/messaging-providers.test.ts"),
   "utf8",
@@ -48,6 +53,55 @@ async function waitFor(predicate: () => boolean, message: string): Promise<void>
 }
 
 describe("messaging provider installed-runtime proofs", () => {
+  it("publishes independent fake Slack REST and websocket ports", async () => {
+    expect(MESSAGING_PROVIDERS_HELPERS_SOURCE.match(/"0:8080"/gu)).toHaveLength(1);
+    expect(MESSAGING_PROVIDERS_HELPERS_SOURCE).toContain('"0:8081"');
+    expect(MESSAGING_PROVIDERS_HELPERS_SOURCE).toContain('"FAKE_SLACK_API_WEBSOCKET_PORT=8081"');
+    expect(MESSAGING_PROVIDERS_HELPERS_SOURCE).toContain('["port", container, "8081/tcp"]');
+
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-slack-ports-"));
+    const portFile = path.join(dir, "port");
+    const captureFile = path.join(dir, "capture.jsonl");
+    const child = spawn(process.execPath, [FAKE_SLACK_API], {
+      env: {
+        ...process.env,
+        FAKE_SLACK_API_HOST: "127.0.0.1",
+        FAKE_SLACK_API_PORT: "0",
+        FAKE_SLACK_API_WEBSOCKET_PORT: "0",
+        FAKE_SLACK_API_PORT_FILE: portFile,
+        FAKE_SLACK_API_CAPTURE_FILE: captureFile,
+        FAKE_SLACK_API_EXPECTED_BOT_TOKEN: "xoxb-fake-slack-port-test",
+        FAKE_SLACK_API_EXPECTED_APP_TOKEN: "xapp-fake-slack-port-test",
+      },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+
+    try {
+      await waitFor(() => fs.existsSync(portFile), `fake Slack listeners did not start: ${stderr}`);
+      const listening = fs
+        .readFileSync(captureFile, "utf8")
+        .trim()
+        .split(/\r?\n/u)
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
+        .filter((entry) => entry.event === "listening");
+      expect(listening).toHaveLength(2);
+      expect(listening.map((entry) => entry.kind).sort()).toEqual(["rest", "websocket"]);
+      expect(new Set(listening.map((entry) => entry.port)).size).toBe(2);
+    } finally {
+      child.kill("SIGTERM");
+      await new Promise<void>((resolve) =>
+        child.exitCode !== null ? resolve() : child.once("exit", () => resolve()),
+      );
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 10_000);
+
   it("keeps raw process-probe tokens out of argv and fails closed", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-process-token-probe-"));
     const token = `xoxb-nemoclaw-process-probe-secret-${process.pid}`;

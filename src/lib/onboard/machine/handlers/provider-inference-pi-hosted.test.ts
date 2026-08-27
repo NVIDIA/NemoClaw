@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createSession } from "../../../state/onboard-session";
 import { handleProviderInferenceState } from "./provider-inference";
-import { baseOptions, baseSelection, createDeps } from "./provider-inference.test-support";
+import { baseOptions, createDeps } from "./provider-inference.test-support";
 
 describe("Pi hosted inference selection", () => {
   it("keeps Pi on NVIDIA hosted inference without extending host-local support", async () => {
@@ -31,28 +31,28 @@ describe("Pi hosted inference selection", () => {
   });
 
   it("keeps Pi host-local inference outside the accepted application boundary", async () => {
-    const setupNim = vi.fn(async () => ({
-      ...baseSelection,
+    const session = createSession({
       provider: "vllm-local",
       model: "pi-local-model",
-      endpointUrl: null,
-      credentialEnv: null,
       preferredInferenceApi: "openai-completions",
-    }));
+    });
+    session.steps.provider_selection.status = "complete";
     const resolver = vi.fn(() => null);
     const { deps, calls } = createDeps({
-      setupNim,
       resolveHostLocalInferenceStartupSelection: resolver,
     });
 
     await expect(
       handleProviderInferenceState({
-        ...baseOptions(deps, createSession()),
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "pi-local",
         agent: { name: "pi" },
       }),
     ).rejects.toThrow("Unsupported host-local inference application 'pi'.");
 
     expect(resolver).not.toHaveBeenCalled();
+    expect(calls.setupNim).not.toHaveBeenCalled();
     expect(calls.setupInference).not.toHaveBeenCalled();
   });
 });

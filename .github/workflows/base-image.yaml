@@ -10,7 +10,7 @@
 # Base images contain the expensive, rarely-changing layers. Complete image
 # publication consumes exact base digests from the same trusted workflow run.
 
-name: Images / Base Images
+name: Images / Publish Base and Managed Images
 
 on:
   push:
@@ -102,7 +102,6 @@ env:
 
 jobs:
   reviewed-npm-audit:
-    name: npm Audit
     if: github.repository == 'NVIDIA/NemoClaw'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -124,7 +123,7 @@ jobs:
   # attempt. Keep each digest on a distinct job output so completion order cannot
   # replace the sibling architecture with an empty matrix output.
   build-openclaw-amd64:
-    name: Platform Digests / OpenClaw / amd64
+    name: Build OpenClaw base image (amd64)
     if: github.repository == 'NVIDIA/NemoClaw'
     needs:
       - reviewed-npm-audit
@@ -144,7 +143,7 @@ jobs:
       registry_password: ${{ secrets.GITHUB_TOKEN }}
 
   build-openclaw-arm64:
-    name: Platform Digests / OpenClaw / arm64
+    name: Build OpenClaw base image (arm64)
     if: github.repository == 'NVIDIA/NemoClaw'
     needs:
       - reviewed-npm-audit
@@ -167,7 +166,7 @@ jobs:
   # Build each sibling image on native architecture runners and publish only immutable platform digests.
   # Each manifest job updates its image tags after both platform builds pass.
   build-hermes-amd64:
-    name: Platform Digests / Hermes / amd64
+    name: Build Hermes base image (amd64)
     if: github.repository == 'NVIDIA/NemoClaw'
     needs:
       - reviewed-npm-audit
@@ -186,7 +185,7 @@ jobs:
       registry_password: ${{ secrets.GITHUB_TOKEN }}
 
   build-hermes-arm64:
-    name: Platform Digests / Hermes / arm64
+    name: Build Hermes base image (arm64)
     if: github.repository == 'NVIDIA/NemoClaw'
     needs:
       - reviewed-npm-audit
@@ -205,7 +204,7 @@ jobs:
       registry_password: ${{ secrets.GITHUB_TOKEN }}
 
   build-dcode-amd64:
-    name: Platform Digests / Deep Agents Code / amd64
+    name: Build Deep Agents Code base image (amd64)
     if: github.repository == 'NVIDIA/NemoClaw'
     needs:
       - reviewed-npm-audit
@@ -224,7 +223,7 @@ jobs:
       registry_password: ${{ secrets.GITHUB_TOKEN }}
 
   build-dcode-arm64:
-    name: Platform Digests / Deep Agents Code / arm64
+    name: Build Deep Agents Code base image (arm64)
     if: github.repository == 'NVIDIA/NemoClaw'
     needs:
       - reviewed-npm-audit
@@ -246,7 +245,7 @@ jobs:
   # CI can validate exact digests, while Pi stays out of the shipped
   # managed-image agent cohort.
   build-pi-amd64:
-    name: Platform Digests / Pi / amd64
+    name: Build Pi base image (amd64)
     if: github.repository == 'NVIDIA/NemoClaw'
     needs:
       - reviewed-npm-audit
@@ -265,7 +264,7 @@ jobs:
       registry_password: ${{ secrets.GITHUB_TOKEN }}
 
   build-pi-arm64:
-    name: Platform Digests / Pi / arm64
+    name: Build Pi base image (arm64)
     if: github.repository == 'NVIDIA/NemoClaw'
     needs:
       - reviewed-npm-audit
@@ -284,7 +283,7 @@ jobs:
       registry_password: ${{ secrets.GITHUB_TOKEN }}
 
   build-and-push-pi:
-    name: Manifests / Pi
+    name: Build and push Pi base image
     if: github.repository == 'NVIDIA/NemoClaw'
     needs:
       - build-pi-amd64
@@ -312,7 +311,7 @@ jobs:
           registry-username: ${{ github.actor }}
           registry-password: ${{ secrets.GITHUB_TOKEN }}
   build-and-push-hermes:
-    name: Manifests / Hermes
+    name: Build and push Hermes base image
     if: github.repository == 'NVIDIA/NemoClaw'
     needs:
       - build-hermes-amd64
@@ -343,7 +342,7 @@ jobs:
 
 
   build-and-push-dcode:
-    name: Manifests / Deep Agents Code
+    name: Build and push Deep Agents Code base image
     if: github.repository == 'NVIDIA/NemoClaw'
     needs:
       - build-dcode-amd64
@@ -376,7 +375,7 @@ jobs:
   # Preserve the established required-check name while making tag publication
   # contingent on both native platform builds succeeding.
   build-and-push-openclaw:
-    name: Manifests / OpenClaw
+    name: Build and push OpenClaw base image
     if: github.repository == 'NVIDIA/NemoClaw'
     needs:
       - build-openclaw-amd64
@@ -410,7 +409,7 @@ jobs:
   # publisher promotes no mutable cohort alias until every agent and platform
   # has passed its immutable-digest validation.
   publish-managed-images:
-    name: Managed Images
+    name: Publish complete managed images
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) &&

@@ -165,8 +165,8 @@ describe("created sandbox identity gate", () => {
       "runtime-check",
       "revalidate:apply runtime patch for sandbox 'alpha'",
       "runtime-patch",
-      "revalidate:reconnect sandbox supervisor for 'alpha'",
       "reconnect",
+      "revalidate:reconnect sandbox supervisor for 'alpha'",
       "readiness",
       "revalidate:commit runtime readiness for sandbox 'alpha'",
       "commit",
@@ -424,7 +424,7 @@ describe("created sandbox identity gate", () => {
     expect(mocks.verifyGpuSandboxAccessAfterReady).not.toHaveBeenCalled();
   });
 
-  it("stops before supervisor work when the durable checkpoint drifts (#9833)", async () => {
+  it("reconnects before rejecting lifecycle drift from the transient recreate state (#9833)", async () => {
     let nonce = "";
     const input = noGpuInput();
     input.verifyCreatedSandboxBeforeEffects = vi.fn();
@@ -445,7 +445,7 @@ describe("created sandbox identity gate", () => {
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("checkpoint changed");
 
     expect(patch.ensureApplied).toHaveBeenCalledOnce();
-    expect(patch.waitForSupervisorReconnectIfNeeded).not.toHaveBeenCalled();
+    expect(patch.waitForSupervisorReconnectIfNeeded).toHaveBeenCalledOnce();
     expect(mocks.waitForCreatedSandboxReadyWithTrace).not.toHaveBeenCalled();
     expect(mocks.verifyGpuSandboxAccessAfterReady).not.toHaveBeenCalled();
   });
