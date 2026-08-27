@@ -166,14 +166,17 @@ beforeEach(() => {
   const isRefreshStatus = (args: readonly string[]): boolean =>
     args[0] === "provider" && args[1] === "refresh" && args[2] === "status";
 
-  runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockImplementation((args) => ({
-    pid: 0,
-    output: [null, "", ""],
-    stdout: isRefreshStatus(args) ? refreshStatusTable(args) : "",
-    stderr: "",
-    status: args[0] === "provider" && args[1] === "get" ? 1 : 0,
-    signal: null,
-  }));
+  runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockImplementation((args) => {
+    const providerMissing = args[0] === "provider" && args[1] === "get";
+    return {
+      pid: 0,
+      output: [null, "", ""],
+      stdout: isRefreshStatus(args) ? refreshStatusTable(args) : "",
+      stderr: providerMissing ? `provider '${args[args.length - 1]}' not found` : "",
+      status: providerMissing ? 1 : 0,
+      signal: null,
+    };
+  });
 
   const healthyGatewayState = {
     state: "healthy_named",
