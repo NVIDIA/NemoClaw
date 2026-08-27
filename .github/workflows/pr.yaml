@@ -234,7 +234,7 @@ jobs:
           for attempt in $(seq 1 96); do
             runs="$(gh api \
               "repos/$GITHUB_REPOSITORY/actions/workflows/openshell-sdk-package-pr.yaml/runs?event=pull_request_target&per_page=100")"
-            match="$(jq -cer \
+            matches="$(jq -cer \
               --arg base "$BASE_SHA" \
               --arg head "$HEAD_SHA" \
               --argjson pr "$PR_NUMBER" '
@@ -242,32 +242,42 @@ jobs:
                   select(.event == "pull_request_target") |
                   select(any(.pull_requests[]?;
                     .number == $pr and .head.sha == $head and .base.sha == $base))] |
-                sort_by(.created_at) | reverse | .[0] // empty
+                sort_by(.created_at) | reverse
               ' <<<"$runs" 2>/dev/null || true)"
-            if [ -n "$match" ]; then
-              status="$(jq -r '.status' <<<"$match")"
-              if [ "$status" = "completed" ]; then
+            if jq -e 'length > 0' <<<"$matches" >/dev/null 2>&1; then
+              pending_run=false
+              newest_completed_url=""
+              while IFS= read -r match; do
+                status="$(jq -r '.status' <<<"$match")"
+                if [ "$status" != "completed" ]; then
+                  pending_run=true
+                  continue
+                fi
+                run_url="$(jq -er '.html_url | select(type == "string" and startswith("https://github.com/"))' <<<"$match")"
+                if [ -z "$newest_completed_url" ]; then
+                  newest_completed_url="$run_url"
+                fi
                 conclusion="$(jq -r '.conclusion' <<<"$match")"
                 if [ "$conclusion" != "success" ]; then
-                  echo "::error title=SDK package workflow failed::Expected success, got ${conclusion}."
-                  exit 1
+                  continue
                 fi
                 run_id="$(jq -er '.id | select(type == "number" and . > 0 and . <= 9007199254740991)' <<<"$match")"
-                run_url="$(jq -er '.html_url | select(type == "string" and startswith("https://github.com/"))' <<<"$match")"
                 artifact_listing_url="repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?per_page=100"
                 if ! artifacts="$(gh api "$artifact_listing_url")"; then
-                  echo "::error title=SDK package artifact unavailable::Could not inspect the reviewed SDK archive from $run_url. Rerun the SDK package workflow for this latest PR commit."
+                  echo "::error title=SDK package artifact unavailable::Could not inspect the reviewed SDK archive from $run_url. After GitHub Actions access returns, rerun the failed openshell-sdk-package job in CI / Pull Request."
                   exit 1
                 fi
                 expected_artifact="openshell-sdk-$HEAD_SHA"
-                if ! jq -e --arg name "$expected_artifact" '
+                if jq -e --arg name "$expected_artifact" '
                   [.artifacts[]? | select(.name == $name and .expired == false)] | length == 1
                 ' <<<"$artifacts" >/dev/null; then
-                  echo "::error title=SDK package artifact unavailable::The reviewed SDK archive from $run_url is missing or expired. Rerun the SDK package workflow for this latest PR commit."
-                  exit 1
+                  echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+                  exit 0
                 fi
-                echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
-                exit 0
+              done < <(jq -c '.[]' <<<"$matches")
+              if [ "$pending_run" = "false" ]; then
+                echo "::error title=SDK package artifact unavailable::No unexpired reviewed SDK archive is available. Last checked $newest_completed_url. Rerun Security / Package OpenShell SDK for PR for this latest PR commit. Then rerun the failed openshell-sdk-package job in CI / Pull Request."
+                exit 1
               fi
             fi
             sleep 5
