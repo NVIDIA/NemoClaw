@@ -10,7 +10,11 @@ const UNVERSIONED_PLACEHOLDER = "openshell:resolve:env:BRAVE_API_KEY";
 
 function openClawConfig(apiKey?: unknown, retiredApiKey?: unknown): string {
   return JSON.stringify({
-    tools: { web: { search: { enabled: true, provider: "brave", apiKey: retiredApiKey } } },
+    tools: {
+      web: {
+        search: { enabled: true, provider: "brave", apiKey: retiredApiKey },
+      },
+    },
     plugins: { entries: { brave: { config: { webSearch: { apiKey } } } } },
   });
 }
@@ -34,6 +38,8 @@ describe("Brave Search E2E configuration assertion", () => {
   });
 
   it("rejects a credential from the retired inline search configuration", () => {
-    expect(() => assertBraveConfig(openClawConfig(undefined, VERSIONED_PLACEHOLDER))).toThrow();
+    expect(() =>
+      assertBraveConfig(openClawConfig(VERSIONED_PLACEHOLDER, "test-raw-brave-key")),
+    ).toThrow();
   });
 });

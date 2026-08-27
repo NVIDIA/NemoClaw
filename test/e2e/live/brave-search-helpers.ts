@@ -196,7 +196,7 @@ export async function onboardBrave(
 
 export function assertBraveConfig(configText: string): string {
   const parsedConfig = JSON.parse(configText) as {
-    tools?: { web?: { search?: { enabled?: unknown; provider?: unknown } } };
+    tools?: { web?: { search?: { enabled?: unknown; provider?: unknown; apiKey?: unknown } } };
     plugins?: {
       entries?: { brave?: { config?: { webSearch?: { apiKey?: unknown } } } };
     };
@@ -204,6 +204,7 @@ export function assertBraveConfig(configText: string): string {
   const searchConfig = parsedConfig.tools?.web?.search;
   expect(searchConfig?.enabled, configText).toBe(true);
   expect(searchConfig?.provider, configText).toBe("brave");
+  expect(searchConfig?.apiKey, configText).toBeUndefined();
   const placeholderValue = parsedConfig.plugins?.entries?.brave?.config?.webSearch?.apiKey;
   const placeholder =
     typeof placeholderValue === "string" && placeholderValue ? placeholderValue : undefined;
