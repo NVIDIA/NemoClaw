@@ -8,7 +8,13 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const START_SCRIPT = path.join(import.meta.dirname, "..", "../../..", "scripts", "nemoclaw-start.sh");
+const START_SCRIPT = path.join(
+  import.meta.dirname,
+  "..",
+  "../../..",
+  "scripts",
+  "nemoclaw-start.sh",
+);
 
 function messagingRuntimeSetupSection(src: string, planPath: string): string {
   const start = src.indexOf("# ── Messaging runtime setup from manifest metadata");
@@ -66,7 +72,10 @@ function encodeRuntimeSetupPlan(channelId: string, value: Record<string, unknown
 describe("Slack runtime env normalization (#4274)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
-  function runNormalize(env: Record<string, string | undefined> = {}): {
+  function runNormalize(
+    env: Record<string, string | undefined> = {},
+    botMatch = "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
+  ): {
     bot: string;
     app: string;
     result: ReturnType<typeof spawnSync>;
@@ -78,7 +87,7 @@ describe("Slack runtime env normalization (#4274)", () => {
       envAliases: [
         {
           envKey: "SLACK_BOT_TOKEN",
-          match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
+          match: botMatch,
           value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
           message:
             "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
@@ -135,6 +144,19 @@ describe("Slack runtime env normalization (#4274)", () => {
     expect(run.app).toBe("xapp-OPENSHELL-RESOLVE-ENV-v51_SLACK_APP_TOKEN");
     expect(run.bot).not.toContain("openshell:resolve:env:");
     expect(run.app).not.toContain("openshell:resolve:env:");
+  });
+
+  it("uses Python lookbehind semantics when matching a revision-scoped Slack alias (#10153)", () => {
+    const run = runNormalize(
+      {
+        SLACK_BOT_TOKEN: "openshell:resolve:env:v42_SLACK_BOT_TOKEN",
+      },
+      "(?<=openshell:)resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
+    );
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.bot).toBe("xoxb-OPENSHELL-RESOLVE-ENV-v42_SLACK_BOT_TOKEN");
+    expect(run.result.stderr).toContain("Normalized SLACK_BOT_TOKEN runtime placeholder");
   });
 
   it("preserves Slack credential revisions longer than 20 digits (#10153)", () => {
