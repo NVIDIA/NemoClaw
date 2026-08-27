@@ -178,14 +178,14 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 
 For changes authored by a NemoClaw maintainer:
 
-Use `upstream` as the local remote name for the canonical `NVIDIA/NemoClaw`
-repository. Before continuing, run `git remote get-url upstream` and verify
-that the URL resolves to that repository; the authentication method is
+Use `origin` as the local remote name for the canonical `NVIDIA/NemoClaw`
+repository. Before continuing, run `git remote get-url origin` and verify that
+the URL resolves to that repository; the authentication method is
 environment-specific.
 
-- Fetch the latest `main` commit with `git fetch upstream main`.
-- Create the feature branch with `git switch -c <feature-branch> upstream/main`.
-- Push it with `git push --set-upstream upstream <feature-branch>` instead of
+- Fetch the latest `main` commit with `git fetch origin main`.
+- Create the feature branch with `git switch -c <feature-branch> FETCH_HEAD`.
+- Push it with `git push --set-upstream origin <feature-branch>` instead of
   pushing it to a personal fork.
 
 ### Before Making Changes
