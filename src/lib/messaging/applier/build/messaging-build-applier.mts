@@ -29,6 +29,11 @@ import { telegramManifest } from "../../channels/telegram/manifest.ts";
 import { wechatManifest } from "../../channels/wechat/manifest.ts";
 import { whatsappManifest } from "../../channels/whatsapp/manifest.ts";
 import type { ChannelAgentPackageRuntimeLockSpec, ChannelManifest } from "../../manifest/types.ts";
+import {
+  migrationOnlyEnvTargets,
+  readEnvLineKey,
+  staleCredentialEnvKeys,
+} from "../credential-env-cleanup.ts";
 import { allowRenderedOpenClawPlugins } from "../openclaw-plugin-allow.ts";
 import {
   selectActiveMessagingChannelIds,
@@ -327,9 +332,13 @@ export function applyMessagingAgentRenderToLocalFiles(
     grouped.set(render.target, entries);
   }
 
+  for (const target of migrationOnlyEnvTargets(plan, new Set(grouped.keys()))) {
+    grouped.set(target, []);
+  }
+
   for (const [target, renderEntries] of grouped) {
     const kinds = uniqueStrings(renderEntries.map((entry) => entry.kind));
-    if (kinds.length !== 1) {
+    if (kinds.length > 1) {
       throw new MessagingBuildApplierError(
         `Cannot apply mixed messaging render kinds to ${target}.`,
       );
@@ -337,9 +346,7 @@ export function applyMessagingAgentRenderToLocalFiles(
     if (kinds[0] === "json-fragment") {
       appliedTargets.push(applyJsonRenderEntriesToLocalFile(plan, target, renderEntries, options));
     } else {
-      appliedTargets.push(
-        applyEnvRenderEntriesToLocalFile(plan.agent, target, renderEntries, options),
-      );
+      appliedTargets.push(applyEnvRenderEntriesToLocalFile(plan, target, renderEntries, options));
     }
   }
 
@@ -921,26 +928,39 @@ function applyJsonRenderEntriesToLocalFile(
 }
 
 function applyEnvRenderEntriesToLocalFile(
-  agent: MessagingAgentId,
+  plan: MessagingBuildPlan,
   target: string,
   renderEntries: readonly MessagingRenderEntry[],
   options: { readonly homeDir?: string },
 ): string {
-  const targetPath = resolveAgentRenderTarget(agent, target, options);
+  const targetPath = resolveAgentRenderTarget(plan.agent, target, options);
   const envLines =
     readTextIfExists(targetPath)
       ?.split(/\r?\n/)
       .filter((line) => line.length > 0) ?? [];
+  const rendered = new Set<string>();
   for (const render of renderEntries) {
     if (!Array.isArray(render.lines)) {
       throw new MessagingBuildApplierError(
         `Messaging env render '${render.renderId ?? render.channelId}' is missing lines.`,
       );
     }
-    mergeEnvLines(envLines, readEnvRenderLines(render));
+    const lines = readEnvRenderLines(render);
+    for (const line of lines) {
+      const key = readEnvLineKey(line);
+      if (key) rendered.add(key);
+    }
+    mergeEnvLines(envLines, lines);
   }
+  // Hermes loads this file with override=True, so a credential line the plan
+  // owns but no longer renders would shadow the injected value.
+  const stale = staleCredentialEnvKeys(plan, rendered);
+  const keptLines = envLines.filter((line) => {
+    const key = readEnvLineKey(line);
+    return key === null || !stale.has(key);
+  });
   mkdirSync(dirname(targetPath), { recursive: true });
-  writeFileSync(targetPath, envLines.length > 0 ? `${envLines.join("\n")}\n` : "");
+  writeFileSync(targetPath, keptLines.length > 0 ? `${keptLines.join("\n")}\n` : "");
   chmodSync(targetPath, 0o600);
   return targetPath;
 }
@@ -1741,13 +1761,6 @@ function formatGeneratedYamlScalar(value: MessagingSerializableValue): string {
     return JSON.stringify(value);
   }
   return value;
-}
-
-function readEnvLineKey(line: string): string | null {
-  const index = line.indexOf("=");
-  if (index <= 0) return null;
-  const key = line.slice(0, index).trim();
-  return key.length > 0 ? key : null;
 }
 
 function isTruthyEnv(value: string | undefined): boolean {

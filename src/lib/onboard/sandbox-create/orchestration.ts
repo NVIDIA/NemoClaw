@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHermesCredentialEnvReconciliationRuntime } from "../../actions/sandbox/runtime/hermes-lifecycle";
 import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
 import {
   assertRecordedPolicyAuthority,
@@ -9,6 +10,7 @@ import {
 import { HERMES_PORTABLE_OPENSHELL_VERSION } from "../../adapters/openshell/resolve-shared";
 import type { AgentDefinition } from "../../agent/defs";
 import type { WebSearchConfig } from "../../inference/web-search";
+import type { SandboxMessagingPlan } from "../../messaging/manifest";
 import type { BackupResult } from "../../state/sandbox";
 import type { SandboxEntry } from "../../state/registry";
 import type {
@@ -45,7 +47,6 @@ import {
   publishAttachedProvidersBeforeDockerSandboxCreation,
   validateAttachedMessagingProvidersBeforeSandboxCreation,
 } from "./provider-publication";
-
 export const createOnboardPolicyAuthorityBindings =
   policyAuthorityPreflight.createOnboardPolicyAuthorityBindings;
 
@@ -237,6 +238,65 @@ export async function completeHermesPortableSandboxRegistration(input: {
     throw new Error("Hermes portable sandbox registration returned no authority.");
   }
   return registered;
+}
+
+type CreatedHermesCredentialEnvReconciliationDeps = {
+  readonly reconcileCredentialEnv: (plan: SandboxMessagingPlan) => {
+    readonly changed: boolean;
+  };
+  readonly restartGateway: (sandboxName: string) => {
+    readonly status: number;
+    readonly stdout: string;
+    readonly stderr: string;
+  } | null;
+  readonly parseRestartCompletion: (
+    result: {
+      readonly status: number;
+      readonly stdout: string;
+      readonly stderr: string;
+    } | null,
+  ) => unknown | null;
+  readonly waitForGateway: (sandboxName: string) => boolean;
+  readonly revalidatePolicyAuthority: (operation: string) => void;
+};
+
+/**
+ * Reconcile credentials rendered by an older managed Hermes image before
+ * onboarding reports success. A changed env file is not effective until the
+ * exact managed gateway supervisor restarts and passes its authenticated probe.
+ */
+export function reconcileCreatedHermesCredentialEnvironment(
+  input: {
+    readonly sandboxName: string;
+    readonly plan: SandboxMessagingPlan | null;
+  },
+  deps: CreatedHermesCredentialEnvReconciliationDeps,
+): void {
+  if (input.plan?.agent !== "hermes") return;
+
+  deps.revalidatePolicyAuthority(
+    `reconciling Hermes messaging credentials for sandbox '${input.sandboxName}'`,
+  );
+  const reconciliation = deps.reconcileCredentialEnv(input.plan);
+  deps.revalidatePolicyAuthority(
+    `confirming Hermes messaging credential reconciliation for sandbox '${input.sandboxName}'`,
+  );
+  if (!reconciliation.changed) return;
+
+  const restart = deps.restartGateway(input.sandboxName);
+  if (!deps.parseRestartCompletion(restart)) {
+    throw new Error(
+      `Hermes messaging credential reconciliation changed the gateway environment for sandbox '${input.sandboxName}', but the managed gateway restart did not complete.`,
+    );
+  }
+  if (!deps.waitForGateway(input.sandboxName)) {
+    throw new Error(
+      `Hermes messaging credential reconciliation restarted sandbox '${input.sandboxName}', but the managed gateway did not remain healthy.`,
+    );
+  }
+  deps.revalidatePolicyAuthority(
+    `completing Hermes messaging credential reconciliation for sandbox '${input.sandboxName}'`,
+  );
 }
 
 /**
@@ -2147,6 +2207,16 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       try {
         await completeCreatedSandboxRegistration(created, null);
         apfPolicyRegistrationFinalized = apfInterceptorRequested;
+        reconcileCreatedHermesCredentialEnvironment(
+          {
+            sandboxName,
+            plan: plannedMessagingState?.plan ?? null,
+          },
+          createHermesCredentialEnvReconciliationRuntime(
+            (args, options) => runOpenshell([...args], options),
+            (operation) => revalidatePolicyAuthority(true, operation),
+          ),
+        );
       } finally {
         cleanupInitialCreateSource();
       }
