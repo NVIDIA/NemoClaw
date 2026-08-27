@@ -46,6 +46,7 @@ import {
   publishAttachedProvidersBeforeDockerSandboxCreation,
   validateAttachedMessagingProvidersBeforeSandboxCreation,
 } from "./provider-publication";
+export { bind as bindPostPolicyProviderSync } from "../provider-sync/post-policy";
 
 export const createOnboardPolicyAuthorityBindings =
   policyAuthorityPreflight.createOnboardPolicyAuthorityBindings;
@@ -1738,6 +1739,14 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       return verifiedPolicyGate;
     };
     const requirePendingPolicyVerification = (): PendingSandboxPolicyVerification => {
+      const recordedCheckpoint = registry.getSandbox(sandboxName)?.pendingPolicyVerification;
+      if (recordedCheckpoint) {
+        registry.requireCurrentPendingSandboxPolicyVerification(
+          requireCreateReservation(),
+          recordedCheckpoint,
+        );
+        pendingPolicyVerification = recordedCheckpoint;
+      }
       if (!pendingPolicyVerification) {
         throw new Error("Sandbox creation has no durable verified policy checkpoint.");
       }

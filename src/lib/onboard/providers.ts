@@ -586,14 +586,42 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
   return { ok: true };
 }
 
+function plannedMessagingCredentialKeys(tokenDef) {
+  return [
+    tokenDef.envKey,
+    ...(tokenDef.additionalCredentials ?? [])
+      .filter(({ token }) => Boolean(token))
+      .map(({ envKey }) => envKey),
+  ];
+}
+
+function matchesPlannedMessagingCredentialKeys(metadata, plannedKeys, requireComplete) {
+  const expected = new Set(plannedKeys);
+  return Boolean(
+    metadata &&
+    metadata.credentialKeys.every((key) => expected.has(key)) &&
+    (!requireComplete || expected.size === metadata.credentialKeys.length),
+  );
+}
+
 function preflightMessagingProviderBindings(tokenDefs, _runOpenshell) {
   const failures = [];
-  for (const { name, envKey, token, providerType } of tokenDefs) {
-    if (!token || !providerType || !providerExistsInGateway(name, _runOpenshell)) continue;
-    const matches = matchesGatewayCredentialFamilyProviderBinding(
-      readGatewayProviderMetadata(name, _runOpenshell),
-      { name, type: providerType, credentialKey: envKey, allowExtendedCredentialKeys: true },
-    );
+  for (const tokenDef of tokenDefs) {
+    const { name, envKey, providerType } = tokenDef;
+    if (!providerType || !providerExistsInGateway(name, _runOpenshell)) continue;
+    const metadata = readGatewayProviderMetadata(name, _runOpenshell);
+    const matches =
+      matchesGatewayCredentialFamilyProviderBinding(metadata, {
+        name,
+        type: providerType,
+        credentialKey: envKey,
+        allowExtendedCredentialKeys: true,
+      }) &&
+      matchesPlannedMessagingCredentialKeys(
+        metadata,
+        plannedMessagingCredentialKeys(tokenDef),
+        false,
+      );
     if (matches) continue;
     failures.push({
       name,
@@ -738,8 +766,7 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
               .map((credential) => credential.envKey),
           ],
           allowExtendedCredentialKeys:
-            providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE ||
-            additionalCredentials.length > 0,
+            providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE || additionalCredentials.length > 0,
         },
       );
       if (result.ok) mutatedProviderNames.push(name);
@@ -752,12 +779,11 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
             credentialKey: envKey,
             allowExtendedCredentialKeys: true,
           }) &&
-          [
-            envKey,
-            ...additionalCredentials
-              .filter(({ token }) => Boolean(token))
-              .map(({ envKey }) => envKey),
-          ].every((credentialKey) => verifiedMetadata?.credentialKeys.includes(credentialKey));
+          matchesPlannedMessagingCredentialKeys(
+            verifiedMetadata,
+            plannedMessagingCredentialKeys({ envKey, additionalCredentials }),
+            true,
+          );
         if (!verified) {
           result = {
             ok: false,
@@ -853,8 +879,8 @@ function parseRevisionedPlaceholders(output, expectedEnvKeys) {
 function samePlaceholderSnapshot(left, right) {
   return Boolean(
     left &&
-      left.size === right.size &&
-      [...right].every(([envKey, placeholder]) => left.get(envKey) === placeholder),
+    left.size === right.size &&
+    [...right].every(([envKey, placeholder]) => left.get(envKey) === placeholder),
   );
 }
 
@@ -870,6 +896,9 @@ function waitForStableProviderPlaceholders(sandboxName, gatewayName, envKeys, de
   let lastObserved = new Set();
   for (let attempt = 0; attempt < PLACEHOLDER_SYNC_ATTEMPTS; attempt += 1) {
     deps.revalidatePolicyRequirements?.(
+      `observing post-policy messaging credentials for sandbox '${sandboxName}'`,
+    );
+    deps.revalidateSandboxIdentity?.(
       `observing post-policy messaging credentials for sandbox '${sandboxName}'`,
     );
     const result = deps.runOpenshell(
@@ -914,12 +943,19 @@ function waitForStableProviderPlaceholders(sandboxName, gatewayName, envKeys, de
 
 /** Prove post-policy credential projection, relaunch, and prove the live runtime again. */
 function finalizePostPolicyMessagingProviderSync(input, deps) {
-  if (input.envKeys.length === 0) return;
+  if (input.envKeys.length === 0) {
+    input.advanceProviderRefresh?.("ready");
+    return;
+  }
   waitForStableProviderPlaceholders(input.sandboxName, input.gatewayName, input.envKeys, deps);
 
   deps.revalidatePolicyRequirements?.(
     `restarting sandbox '${input.sandboxName}' with synchronized messaging credentials`,
   );
+  deps.revalidateSandboxIdentity?.(
+    `stopping sandbox '${input.sandboxName}' with synchronized messaging credentials`,
+  );
+  input.advanceProviderRefresh?.("stopping");
   const stopped = deps.runOpenshell(
     ["sandbox", "stop", "-g", input.gatewayName, input.sandboxName],
     { ignoreError: true, suppressOutput: true },
@@ -929,6 +965,13 @@ function finalizePostPolicyMessagingProviderSync(input, deps) {
       `OpenShell did not stop sandbox '${input.sandboxName}' after messaging credential synchronization.`,
     );
   }
+  deps.revalidateSandboxIdentity?.(
+    `confirming stopped sandbox '${input.sandboxName}' before restart`,
+  );
+  input.advanceProviderRefresh?.("stopped");
+  deps.revalidateSandboxIdentity?.(
+    `starting sandbox '${input.sandboxName}' with synchronized messaging credentials`,
+  );
   const started = deps.runOpenshell(
     ["sandbox", "start", "-g", input.gatewayName, input.sandboxName],
     { ignoreError: true, suppressOutput: true },
@@ -938,6 +981,7 @@ function finalizePostPolicyMessagingProviderSync(input, deps) {
       `OpenShell did not restart sandbox '${input.sandboxName}' after messaging credential synchronization.`,
     );
   }
+  input.advanceProviderRefresh?.("started");
   if (
     !deps.waitForSandboxReady(
       input.sandboxName,
@@ -950,6 +994,7 @@ function finalizePostPolicyMessagingProviderSync(input, deps) {
     );
   }
   waitForStableProviderPlaceholders(input.sandboxName, input.gatewayName, input.envKeys, deps);
+  input.advanceProviderRefresh?.("ready");
   deps.revalidatePolicyRequirements?.(
     `confirming synchronized messaging runtime for sandbox '${input.sandboxName}'`,
   );
@@ -963,6 +1008,20 @@ async function synchronizeMessagingProvidersAfterPolicy(input, deps) {
     agent: input.agent,
     reuseRegisteredCredentials: true,
   });
+  let pendingPolicyVerification = input.pendingPolicyVerification;
+  const providerNames = [...new Set(messaging.messagingTokenDefs.map(({ name }) => name))];
+  const advanceProviderRefresh = (phase) => {
+    if (!pendingPolicyVerification) return;
+    deps.revalidateSandboxIdentity?.(
+      `recording provider refresh phase '${phase}' for sandbox '${input.sandboxName}'`,
+    );
+    pendingPolicyVerification = deps.advancePendingSandboxProviderRefresh(
+      input.sandboxName,
+      pendingPolicyVerification,
+      { schemaVersion: 1, phase, attachedProviders: providerNames },
+    );
+  };
+  advanceProviderRefresh("attaching");
   deps.upsertMessagingProviders(
     messaging.messagingTokenDefs,
     {
@@ -996,7 +1055,12 @@ async function synchronizeMessagingProvidersAfterPolicy(input, deps) {
       .map((credential) => credential.envKey),
   ]);
   finalizePostPolicyMessagingProviderSync(
-    { sandboxName: input.sandboxName, gatewayName: deps.gatewayName, envKeys },
+    {
+      sandboxName: input.sandboxName,
+      gatewayName: deps.gatewayName,
+      envKeys,
+      advanceProviderRefresh,
+    },
     deps,
   );
 }

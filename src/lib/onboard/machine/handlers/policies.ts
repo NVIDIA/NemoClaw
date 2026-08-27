@@ -8,6 +8,7 @@ import {
   type SandboxPolicyAuthority,
 } from "../../../adapters/openshell/policy-authority";
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
+import type { PendingSandboxPolicyVerification } from "../../../state/registry";
 import {
   getActiveChannelsFromPlan,
   getDisabledChannelsFromPlan,
@@ -33,7 +34,11 @@ export interface PolicyPresetEntry {
 }
 
 export interface ActiveSandboxPolicyState {
+  gatewayName?: string | null;
+  lifecycleGeneration?: string;
+  lifecycleLiveIdentityFingerprint?: string;
   messaging?: { plan: SandboxMessagingPlan } | null;
+  pendingPolicyVerification?: PendingSandboxPolicyVerification;
   policyAuthority?: SandboxPolicyAuthority;
   policyTier?: string | null;
   /** Preset names already applied to the sandbox, as recorded in the registry. */
@@ -149,6 +154,9 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
       enabledChannels: string[];
       agent: Agent;
       webSearchConfig: WebSearchConfig | null;
+      lifecycleGeneration?: string;
+      sandboxIdentityFingerprint?: string;
+      pendingPolicyVerification?: PendingSandboxPolicyVerification;
       revalidatePolicyRequirements?: (operation: string) => void;
     }): Promise<void>;
   };
@@ -327,6 +335,9 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       enabledChannels: policyMessagingChannels,
       agent,
       webSearchConfig,
+      lifecycleGeneration: activeSandbox?.lifecycleGeneration,
+      sandboxIdentityFingerprint: activeSandbox?.lifecycleLiveIdentityFingerprint,
+      pendingPolicyVerification: activeSandbox?.pendingPolicyVerification,
       revalidatePolicyRequirements,
     });
   };

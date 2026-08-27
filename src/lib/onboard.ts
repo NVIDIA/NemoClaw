@@ -404,6 +404,7 @@ const credentialNavigation: typeof import("./onboard/credential-navigation") = r
 const { BACK_TO_SELECTION, createCredentialPromptHelpers, isBackToSelection } =
   credentialNavigation;
 const {
+  mapSessionUpdates,
   toSessionUpdates,
 }: typeof import("./onboard/session-updates") = require("./onboard/session-updates");
 const gatewayReuse: typeof import("./onboard/gateway-reuse") = require("./onboard/gateway-reuse");
@@ -2630,8 +2631,7 @@ const {
   printAgentDashboardUi: agentOnboard.printDashboardUi,
 });
 const onboardRuntimeBoundary = new OnboardRuntimeBoundary({
-  toSessionUpdates: (updates: Record<string, unknown>) =>
-    toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+  toSessionUpdates: mapSessionUpdates,
   maybeForceE2eStepFailure,
 });
 
@@ -3177,8 +3177,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             startRecordedStep,
             recordStepComplete,
             recordStepRejected,
-            toSessionUpdates: (updates) =>
-              toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+            toSessionUpdates: mapSessionUpdates,
             skippedStepMessage,
             recordStateSkipped,
             recordRepairEvent,
@@ -3303,8 +3302,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             finalizeSandboxRouteReservation: registry.finalizeSandboxRouteReservation,
             getSandboxAgentRegistryFields,
             recordStepComplete,
-            toSessionUpdates: (updates) =>
-              toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+            toSessionUpdates: mapSessionUpdates,
             skippedStepMessage,
             recordStateSkipped,
             recordRepairEvent,
@@ -3324,6 +3322,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       setupInferenceFactory.selectGatewayForFollowupOrExit(GATEWAY_NAME, runOpenshell);
       const finalFlowContext = prepareFinalOnboardFlowContext(coreFlowResult);
       let liveFinalFlowContext: InitialOnboardFlowContext = finalFlowContext;
+      const syncProviders = sandboxCreateOrchestration.bindPostPolicyProviderSync(
+        sandboxCreateOrchestrationRuntime,
+        runCoreGatewayOpenshell,
+      );
       const finalFlowPhases = createFinalOnboardFlowPhases<
         InitialOnboardFlowContext,
         import("./dashboard/contract").DashboardDeliveryChain,
@@ -3364,8 +3366,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           setupOpenclaw,
           syncNemoClawConfigInSandbox,
           recordStepComplete,
-          toSessionUpdates: (updates) =>
-            toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+          toSessionUpdates: mapSessionUpdates,
         },
         policiesDeps: {
           loadSession: onboardSession.loadSession,
@@ -3387,19 +3388,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           setupPoliciesWithSelection,
           updateSession: onboardSession.updateSession,
           recordStepComplete,
-          toSessionUpdates: (updates) =>
-            toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+          toSessionUpdates: mapSessionUpdates,
           persistAppliedPolicyPresets: policyPresetCarry.persistFinalizedPolicyPresets,
-          synchronizeMessagingProvidersAfterPolicy: (input) =>
-            onboardProviders.synchronizeMessagingProvidersAfterPolicy(input, {
-              rebindMessagingCapabilities: sandboxCreateIntentResolver.rebind,
-              upsertMessagingProviders,
-              runGatewayOpenshell: runCoreGatewayOpenshell,
-              runOpenshell,
-              sleepSeconds,
-              waitForSandboxReady,
-              gatewayName: GATEWAY_NAME,
-            }),
+          synchronizeMessagingProvidersAfterPolicy: syncProviders,
         },
         finalization: {
           stagedLegacyKeys,
@@ -3411,8 +3402,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           ensureAgentDashboardForward: ensureFinalizationAgentDashboardForward,
           setDefaultSandbox: registry.setDefault,
           verifyWebSearchInsideSandbox,
-          toSessionUpdates: (updates) =>
-            toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+          toSessionUpdates: mapSessionUpdates,
           removeLegacyCredentialsFile,
           cleanupStaleHostFiles,
           getChatUiUrl: () => process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`,

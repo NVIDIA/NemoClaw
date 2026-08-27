@@ -34,6 +34,9 @@ describe("handlePoliciesState", () => {
       enabledChannels: ["telegram"],
       agent: null,
       webSearchConfig: null,
+      lifecycleGeneration: undefined,
+      sandboxIdentityFingerprint: undefined,
+      pendingPolicyVerification: undefined,
       revalidatePolicyRequirements: undefined,
     });
     expect(calls.complete).toHaveBeenCalledOnce();

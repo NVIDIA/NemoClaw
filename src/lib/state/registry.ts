@@ -219,8 +219,7 @@ function assertPendingPolicyVerificationMatchesRegistration(
     checkpoint.gatewayName === requestedEntry.gatewayName &&
     checkpoint.gatewayPort === requestedEntry.gatewayPort &&
     checkpoint.lifecycleGeneration === requestedEntry.lifecycleGeneration &&
-    checkpoint.sandboxIdentityFingerprint ===
-      requestedEntry.lifecycleLiveIdentityFingerprint &&
+    checkpoint.sandboxIdentityFingerprint === requestedEntry.lifecycleLiveIdentityFingerprint &&
     checkpoint.policyAuthority === requestedEntry.policyAuthority &&
     reservation.authority.sandboxName === requestedEntry.name &&
     reservation.authority.gatewayName === requestedEntry.gatewayName &&
@@ -307,6 +306,50 @@ export function recordPendingSandboxPolicyVerification(
     data.sandboxes[name] = desiredEntry;
     save(data);
     return structuredClone(desiredEntry);
+  });
+}
+
+/** Advance only the mutable provider-refresh receipt on one exact pending create. */
+export function advancePendingSandboxProviderRefresh(
+  name: string,
+  expected: PendingSandboxPolicyVerification,
+  providerRefresh: NonNullable<PendingSandboxPolicyVerification["providerRefresh"]>,
+): PendingSandboxPolicyVerification {
+  const expectedCheckpoint = normalizePendingSandboxPolicyVerification(expected);
+  const nextCheckpoint = normalizePendingSandboxPolicyVerification({
+    ...expected,
+    providerRefresh,
+  });
+  if (!expectedCheckpoint || !nextCheckpoint || expectedCheckpoint.sandboxName !== name) {
+    throw new PolicyAuthorityRefusalError(
+      `Cannot advance sandbox '${name}' provider refresh without an exact verified create checkpoint`,
+    );
+  }
+  return withLock(() => {
+    const data = load();
+    const current = data.sandboxes[name];
+    if (
+      !current ||
+      current.pendingRouteReservation !== true ||
+      current.name !== expectedCheckpoint.sandboxName ||
+      current.gatewayName !== expectedCheckpoint.gatewayName ||
+      current.gatewayPort !== expectedCheckpoint.gatewayPort ||
+      current.lifecycleGeneration !== expectedCheckpoint.lifecycleGeneration ||
+      current.lifecycleLiveIdentityFingerprint !== expectedCheckpoint.sandboxIdentityFingerprint ||
+      current.policyAuthority !== undefined ||
+      current.policyCreationReceipt !== undefined ||
+      !isDeepStrictEqual(current.pendingPolicyVerification, expectedCheckpoint)
+    ) {
+      throw new PolicyAuthorityRefusalError(
+        `Cannot advance sandbox '${name}' provider refresh after its verified create checkpoint changed`,
+      );
+    }
+    data.sandboxes[name] = normalizeSandboxPolicyAttribution({
+      ...current,
+      pendingPolicyVerification: nextCheckpoint,
+    });
+    save(data);
+    return structuredClone(nextCheckpoint);
   });
 }
 

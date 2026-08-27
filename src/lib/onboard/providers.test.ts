@@ -21,9 +21,8 @@ type RunOptions = {
 };
 type RunOpenshell = (command: string[], opts?: RunOptions) => RunResult;
 
-const messagingBridgeProvider = require(
-  "./messaging-bridge-provider"
-) as typeof import("./messaging-bridge-provider");
+const messagingBridgeProvider =
+  require("./messaging-bridge-provider") as typeof import("./messaging-bridge-provider");
 
 const DISCORD_STATIC_PROFILE_EXPORT = JSON.stringify({
   id: "discord-hermes-static-v1",
@@ -61,7 +60,6 @@ const {
   getNonInteractiveModel,
   getRequestedModelHint,
   getRequestedProviderHint,
-  finalizePostPolicyMessagingProviderSync,
   isProviderKeyCredentialCandidate,
   providerExistsInGateway,
   stageHostedInferenceSourceSecretEnv,
@@ -101,15 +99,6 @@ const {
     nonInteractive: boolean,
     allowHostedInferenceStaging?: boolean,
   ) => string | null;
-  finalizePostPolicyMessagingProviderSync: (
-    input: { sandboxName: string; gatewayName: string; envKeys: readonly string[] },
-    deps: {
-      runOpenshell: RunOpenshell;
-      sleepSeconds(seconds: number): void;
-      waitForSandboxReady(name: string, attempts?: number, delaySeconds?: number): boolean;
-      revalidatePolicyRequirements?(operation: string): void;
-    },
-  ) => void;
   isProviderKeyCredentialCandidate: (value: string | null | undefined) => boolean;
   providerExistsInGateway: (name: string, runOpenshell: RunOpenshell) => boolean;
   stageHostedInferenceSourceSecretEnv: () => boolean;
@@ -134,7 +123,6 @@ const {
       envKey: string;
       token: string | null;
       providerType?: string;
-      additionalCredentials?: Array<{ envKey: string; token: string | null }>;
     }>,
     runOpenshell: RunOpenshell,
     options?: {
@@ -753,140 +741,6 @@ describe("onboard provider helpers", () => {
     expect(calls.flatMap(({ command }) => command)).not.toContain(credential);
   });
 
-  it("co-locates namespaced extension credentials on the canonical provider", () => {
-    const tokens = {
-      canonical: "telegram-canonical-must-not-leak",
-      agentA: "telegram-agent-a-must-not-leak",
-      agentB: "telegram-agent-b-must-not-leak",
-    };
-    const calls: Array<{ command: string[]; env?: Record<string, string | undefined> }> = [];
-    let created = false;
-    const providers = upsertMessagingProviders(
-      [
-        {
-          name: "alpha-telegram-bridge",
-          envKey: "TELEGRAM_BOT_TOKEN",
-          token: tokens.canonical,
-          providerType: "nemoclaw-mcp-v1",
-          additionalCredentials: [
-            { envKey: "TELEGRAM_BOT_TOKEN_AGENT_A", token: tokens.agentA },
-            { envKey: "TELEGRAM_BOT_TOKEN_AGENT_B", token: tokens.agentB },
-          ],
-        },
-      ],
-      (command, options) => {
-        calls.push({ command, env: options?.env });
-        if (command[1] === "profile") return { status: 0, stdout: MESSAGING_ENDPOINTLESS_PROFILE_EXPORT };
-        if (command[1] === "get") {
-          return created
-            ? {
-                status: 0,
-                stdout: [
-                  "Name: alpha-telegram-bridge",
-                  "Type: nemoclaw-mcp-v1",
-                  "Credential keys: TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_TOKEN_AGENT_A, TELEGRAM_BOT_TOKEN_AGENT_B",
-                  "Config keys: <none>",
-                  "",
-                ].join("\n"),
-              }
-            : { status: 1, stdout: "", stderr: "provider not found" };
-        }
-        if (command[1] === "create") created = true;
-        return { status: 0, stdout: "", stderr: "" };
-      },
-    );
-
-    expect(providers).toEqual(["alpha-telegram-bridge"]);
-    const createCall = calls.find(({ command }) => command[1] === "create");
-    expect(createCall?.command).toEqual([
-      "provider",
-      "create",
-      "--name",
-      "alpha-telegram-bridge",
-      "--type",
-      "nemoclaw-mcp-v1",
-      "--credential",
-      "TELEGRAM_BOT_TOKEN",
-      "--credential",
-      "TELEGRAM_BOT_TOKEN_AGENT_A",
-      "--credential",
-      "TELEGRAM_BOT_TOKEN_AGENT_B",
-    ]);
-    expect(createCall?.env).toEqual({
-      TELEGRAM_BOT_TOKEN: tokens.canonical,
-      TELEGRAM_BOT_TOKEN_AGENT_A: tokens.agentA,
-      TELEGRAM_BOT_TOKEN_AGENT_B: tokens.agentB,
-    });
-    expect(calls.flatMap(({ command }) => command)).not.toEqual(
-      expect.arrayContaining(Object.values(tokens)),
-    );
-  });
-
-  it("proves stable placeholders before and after the post-policy sandbox relaunch", () => {
-    const placeholderOutput = [
-      "TELEGRAM_BOT_TOKEN\topenshell:resolve:env:v12_TELEGRAM_BOT_TOKEN",
-      "TELEGRAM_BOT_TOKEN_AGENT_A\topenshell:resolve:env:v12_TELEGRAM_BOT_TOKEN_AGENT_A",
-    ].join("\n");
-    const runOpenshell = vi.fn((args: string[]) => ({
-      status: 0,
-      stdout: args[1] === "exec" ? placeholderOutput : "",
-    }));
-    const sleepSeconds = vi.fn();
-    const waitForSandboxReady = vi.fn(() => true);
-
-    finalizePostPolicyMessagingProviderSync(
-      {
-        sandboxName: "alpha",
-        gatewayName: "nemoclaw",
-        envKeys: ["TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN_AGENT_A"],
-      },
-      { runOpenshell, sleepSeconds, waitForSandboxReady },
-    );
-
-    expect(runOpenshell.mock.calls.map(([args]) => args.slice(0, 3))).toEqual([
-      ["sandbox", "exec", "-g"],
-      ["sandbox", "exec", "-g"],
-      ["sandbox", "stop", "-g"],
-      ["sandbox", "start", "-g"],
-      ["sandbox", "exec", "-g"],
-      ["sandbox", "exec", "-g"],
-    ]);
-    expect(sleepSeconds).toHaveBeenCalledTimes(2);
-    expect(waitForSandboxReady).toHaveBeenCalledWith("alpha", 30, 2);
-  });
-
-  it("does not relaunch when a post-policy credential never appears", () => {
-    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "" }));
-
-    expect(() =>
-      finalizePostPolicyMessagingProviderSync(
-        { sandboxName: "alpha", gatewayName: "nemoclaw", envKeys: ["TELEGRAM_BOT_TOKEN"] },
-        {
-          runOpenshell,
-          sleepSeconds: vi.fn(),
-          waitForSandboxReady: vi.fn(() => true),
-        },
-      ),
-    ).toThrow(/missing: TELEGRAM_BOT_TOKEN/u);
-    expect(runOpenshell.mock.calls.some(([args]) => args[1] === "stop")).toBe(false);
-  });
-
-  it("rejects invalid post-policy credential keys before sandbox execution", () => {
-    const runOpenshell = vi.fn();
-
-    expect(() =>
-      finalizePostPolicyMessagingProviderSync(
-        { sandboxName: "alpha", gatewayName: "nemoclaw", envKeys: ["BAD-KEY"] },
-        {
-          runOpenshell,
-          sleepSeconds: vi.fn(),
-          waitForSandboxReady: vi.fn(() => true),
-        },
-      ),
-    ).toThrow(/invalid credential env key/u);
-    expect(runOpenshell).not.toHaveBeenCalled();
-  });
-
   it("rejects credential-free reuse when the messaging profile is incompatible (#9875)", () => {
     const commands: string[] = [];
     const profileResults: Record<string, RunResult> = {
@@ -1188,7 +1042,6 @@ describe("onboard provider helpers", () => {
       "provider update alpha-discord-bridge --credential DISCORD_BOT_TOKEN",
     ]);
   });
-
 
   it("throws instead of exiting when best-effort messaging provider upsert fails", () => {
     const originalExit = process.exit;

@@ -99,3 +99,8 @@ export function toSessionUpdates(updates: OnboardSessionUpdateInput = {}): Sessi
   }
   return normalized;
 }
+
+/** Adapt state-machine update bags to the validated session projection. */
+export function mapSessionUpdates(updates: Record<string, unknown>): SessionUpdates {
+  return toSessionUpdates(updates as OnboardSessionUpdateInput);
+}

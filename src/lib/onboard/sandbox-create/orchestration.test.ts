@@ -96,12 +96,6 @@ describe("deferred provider effect authority", () => {
       },
       revalidatePolicyAuthorityBeforeCreate: vi.fn(),
       runOpenshell: runOpenshell as never,
-      waitForSandboxReady: vi.fn(() => true),
-      inspectSandbox: vi.fn(() => ({
-        state: "ready" as const,
-        liveIdentityFingerprint: "a".repeat(64),
-      })),
-      recordProviderRefresh: vi.fn(),
       revalidateSandboxIdentity,
     });
     const runAfterVerifiedCreate = boundary.runAfterVerifiedCreate;
