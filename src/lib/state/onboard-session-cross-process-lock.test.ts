@@ -137,10 +137,13 @@ describe("cross-process onboard lock", () => {
       JSON.stringify(session.createSession({ sessionId: "replacement", sandboxName: "bravo" })),
     );
     const originalRead = fs.readFileSync;
+    const originalRename = fs.renameSync;
+    let readThroughPinnedDescriptor = false;
     const readSpy = vi.spyOn(fs, "readFileSync").mockImplementation((source, options) => {
-      return source !== session.SESSION_FILE
+      return typeof source !== "number" || readThroughPinnedDescriptor
         ? originalRead(source, options as never)
         : (() => {
+            readThroughPinnedDescriptor = true;
             originalRename(stateDirectory, lockedDirectory);
             originalRename(replacementDirectory, stateDirectory);
             try {
@@ -151,12 +154,12 @@ describe("cross-process onboard lock", () => {
             }
           })();
     });
-    const originalRename = fs.renameSync;
     try {
       expect(session.loadSession()?.sessionId).toBe("original");
     } finally {
       readSpy.mockRestore();
     }
+    expect(readThroughPinnedDescriptor).toBe(true);
   });
 
   it("refuses a session delete through a restored replacement directory (#9833)", () => {

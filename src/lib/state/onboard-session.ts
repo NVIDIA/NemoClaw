@@ -873,7 +873,15 @@ function parseSessionCancellationRecovery(
     !lifecycleGeneration ||
     verifiedEffectivePolicyIdentity === undefined ||
     !createAttemptNonce ||
-    !/^[0-9a-f]{62}$/u.test(createAttemptNonce)
+    !/^[0-9a-f]{62}$/u.test(createAttemptNonce) ||
+    (policyCreationReceipt !== null &&
+      (policyCreationReceipt.gatewayName !== gatewayName ||
+        policyCreationReceipt.gatewayPort !== Number(gatewayPort) ||
+        policyCreationReceipt.sandboxName !== sandboxName ||
+        policyCreationReceipt.lifecycleGeneration !== lifecycleGeneration ||
+        policyCreationReceipt.sandboxIdentityFingerprint !== fingerprint ||
+        policyCreationReceipt.policyHash !== verifiedEffectivePolicyIdentity?.hash ||
+        policyCreationReceipt.policyVersion !== verifiedEffectivePolicyIdentity?.activeVersion))
   ) {
     return null;
   }

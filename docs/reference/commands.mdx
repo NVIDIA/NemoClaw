@@ -430,7 +430,8 @@ For a new or fresh session, `--yes` and `NEMOCLAW_YES=1` accept supported confir
 If onboarding returns without reaching the final `complete` state, the command exits with status `1`.
 When that result is resumable, NemoClaw keeps the session `in_progress` at its last checkpoint instead of marking it failed, so correct the reported condition and run `$$nemoclaw onboard --resume`.
 
-If onboarding cannot complete after sandbox creation, NemoClaw preserves the sandbox and records its immutable identity and verified policy evidence for recovery.
+If onboarding cannot complete after sandbox creation, NemoClaw preserves the sandbox and records its create-attempt label.
+When available, NemoClaw also records a durable identity fingerprint and verified policy evidence for recovery.
 Automatic and explicit resume, reuse, recreation, and fresh onboarding with that sandbox name remain blocked.
 Do not destroy the retained sandbox by name.
 Ask an OpenShell administrator to verify the exact live durable ID before using an identity-bound removal procedure.

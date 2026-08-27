@@ -955,6 +955,46 @@ export function createProviderEffectBoundary(input: {
   };
 }
 
+type SandboxProviderCleanupAuthority =
+  | {
+      readonly revalidateSandboxIdentity: (operation: string) => void;
+    }
+  | {
+      readonly observeSandbox: () => ReturnType<
+        SandboxCreateOrchestrationRuntime["getSandboxRecreateObservation"]
+      >;
+      readonly revalidatePolicyAuthority: (operation: string) => void;
+    };
+
+export function runAuthorityBoundProviderCleanup(
+  input: {
+    readonly sandboxName: string;
+    readonly runProviderPreDeleteCleanup: SandboxCreateOrchestrationRuntime["runSandboxProviderPreDeleteCleanup"];
+    readonly runOpenshell: SandboxCreateOrchestrationRuntime["runOpenshell"];
+    readonly redact: SandboxCreateOrchestrationRuntime["redact"];
+    readonly tolerateMissingSandbox?: boolean;
+  } & SandboxProviderCleanupAuthority,
+): void {
+  const revalidateSandboxIdentity =
+    "observeSandbox" in input
+      ? (operation: string): void => {
+          if (input.observeSandbox().state !== "missing") {
+            throw new Error(
+              `Cannot clean up providers for sandbox '${input.sandboxName}': a sandbox with that name appeared after absence was verified while ${operation}.`,
+            );
+          }
+          input.revalidatePolicyAuthority(operation);
+        }
+      : input.revalidateSandboxIdentity;
+  revalidateSandboxIdentity(`cleaning up providers for sandbox '${input.sandboxName}'`);
+  input.runProviderPreDeleteCleanup(input.sandboxName, {
+    runOpenshell: input.runOpenshell,
+    redact: input.redact,
+    ...(input.tolerateMissingSandbox ? { tolerateMissingSandbox: true } : {}),
+    revalidateSandboxIdentity,
+  });
+}
+
 export function readSandboxRecreateRegistryEntry(input: {
   readonly sandboxName: string;
   readonly recreateTransaction: boolean;
@@ -1949,12 +1989,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
 
       revalidatePolicyAuthority(true, `recreating sandbox '${sandboxName}'`);
       if (recreateRuntime.beginDelete() === "source") {
-        revalidatePolicyAuthority(true, `cleaning up providers for sandbox '${sandboxName}'`);
-        runSandboxProviderPreDeleteCleanup(sandboxName, {
+        runAuthorityBoundProviderCleanup({
+          sandboxName,
+          revalidateSandboxIdentity: (operation) => revalidatePolicyAuthority(true, operation),
+          runProviderPreDeleteCleanup: runSandboxProviderPreDeleteCleanup,
           runOpenshell,
           redact,
-          revalidateSandboxIdentity: (operation) =>
-            revalidatePolicyAuthority(true, operation),
         });
         revalidatePolicyAuthority(true, `deleting sandbox '${sandboxName}'`);
         runOpenshell(
@@ -2104,14 +2144,20 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                 ).messagingTokenDefs;
               },
               runProviderPreDeleteCleanup: (verifiedPolicyRevalidation) => {
-                (
-                  verifiedPolicyRevalidation ??
-                  ((operation) => revalidatePolicyAuthority(false, operation))
-                )(`cleaning up providers for sandbox '${sandboxName}'`);
-                runSandboxProviderPreDeleteCleanup(sandboxName, {
+                runAuthorityBoundProviderCleanup({
+                  sandboxName,
+                  runProviderPreDeleteCleanup: runSandboxProviderPreDeleteCleanup,
                   runOpenshell,
                   redact,
                   tolerateMissingSandbox: true,
+                  ...(verifiedPolicyRevalidation
+                    ? { revalidateSandboxIdentity: verifiedPolicyRevalidation }
+                    : {
+                        observeSandbox: () =>
+                          getSandboxRecreateObservation(sandboxName, GATEWAY_NAME),
+                        revalidatePolicyAuthority: (operation: string) =>
+                          revalidatePolicyAuthority(false, operation),
+                      }),
                 });
               },
               upsertMessagingProviders: (tokenDefs, options) =>

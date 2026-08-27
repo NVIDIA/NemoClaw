@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   deleteProviderWithRecovery,
   detachSandboxProviders,
+  type DetachSandboxProvidersDeps,
   emitProviderDetachResidualHint,
   parseAttachedSandboxes,
   recoverAttachedProvider,
@@ -78,17 +79,20 @@ describe("detachSandboxProviders", () => {
       liveIdentity = "identity-b";
       return { status: 0 };
     });
-    const revalidateSandboxIdentity = vi.fn(() => {
-      liveIdentity === expectedIdentity || (() => { throw new Error("sandbox identity changed"); })();
+    const revalidateSandboxIdentity = vi.fn((_operation: string) => {
+      liveIdentity === expectedIdentity ||
+        (() => {
+          throw new Error("sandbox identity changed");
+        })();
     });
+    const deps: DetachSandboxProvidersDeps = { runOpenshell, revalidateSandboxIdentity };
 
-    expect(() =>
-      detachSandboxProviders("alpha", {
-        runOpenshell,
-        revalidateSandboxIdentity,
-      } as never),
-    ).toThrow(/sandbox identity changed/u);
+    expect(() => detachSandboxProviders("alpha", deps)).toThrow(/sandbox identity changed/u);
     expect(calls).toHaveLength(1);
+    expect(revalidateSandboxIdentity.mock.calls.map(([operation]) => operation)).toEqual([
+      expect.stringMatching(/^detaching provider /u),
+      expect.stringMatching(/^confirming provider /u),
+    ]);
   });
 
   it("treats provider-scoped NotFound / not attached outputs as success-equivalent", () => {

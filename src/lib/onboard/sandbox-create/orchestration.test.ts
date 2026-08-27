@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { PolicyAuthorityRefusalError } from "../../adapters/openshell/policy-authority";
 import type { SandboxEntry } from "../../state/registry";
+import { runSandboxProviderPreDeleteCleanup } from "../sandbox-provider-cleanup";
 import {
   applyManagedSandboxRebuildPolicyCarryForward,
   assertApfCreateIntent,
@@ -24,6 +25,7 @@ import {
   readSandboxRecreateRegistryEntry,
   reconcileCreatedHermesCredentialEnvironment,
   resolveSandboxCreatePolicyAuthority,
+  runAuthorityBoundProviderCleanup,
   runAsyncWithPostCreateRecovery,
   runSandboxCreateWithPolicyAuthorityChecks,
   runWithPostCreateRecovery,
@@ -467,6 +469,71 @@ describe("APF create policy selection", () => {
 });
 
 describe("deferred provider effect authority", () => {
+  it("carries identity authority through every provider cleanup effect (#9833)", () => {
+    let liveIdentity = "identity-a";
+    const operations: string[] = [];
+    const revalidateSandboxIdentity = vi.fn((operation: string) => {
+      operations.push(operation);
+      liveIdentity === "identity-a" ||
+        (() => {
+          throw new Error("sandbox identity changed");
+        })();
+    });
+    const runProviderPreDeleteCleanup = vi.fn((_sandboxName, deps) => {
+      expect(deps.revalidateSandboxIdentity).toBe(revalidateSandboxIdentity);
+      deps.revalidateSandboxIdentity?.("detaching provider");
+      liveIdentity = "identity-b";
+      deps.revalidateSandboxIdentity?.("confirming provider detach");
+      return { detached: [], failures: [] };
+    });
+
+    expect(() =>
+      runAuthorityBoundProviderCleanup({
+        sandboxName: "alpha",
+        revalidateSandboxIdentity,
+        runProviderPreDeleteCleanup,
+        runOpenshell: vi.fn(),
+        redact: (value) => value,
+      }),
+    ).toThrow(/sandbox identity changed/u);
+    expect(runProviderPreDeleteCleanup).toHaveBeenCalledOnce();
+    expect(operations).toEqual([
+      "cleaning up providers for sandbox 'alpha'",
+      "detaching provider",
+      "confirming provider detach",
+    ]);
+  });
+
+  it("refuses provider cleanup when a sandbox appears after verified absence (#9833)", () => {
+    let observationCount = 0;
+    const revalidatePolicyAuthority = vi.fn();
+    const runOpenshell = vi.fn(() => ({
+      pid: 1,
+      output: [null, "", ""],
+      stdout: "",
+      stderr: "",
+      status: 0,
+      signal: null,
+    }));
+
+    expect(() =>
+      runAuthorityBoundProviderCleanup({
+        sandboxName: "alpha",
+        observeSandbox: () =>
+          observationCount++ === 0
+            ? { state: "missing", liveIdentityFingerprint: null }
+            : { state: "ready", liveIdentityFingerprint: "f".repeat(64) },
+        revalidatePolicyAuthority,
+        runProviderPreDeleteCleanup: runSandboxProviderPreDeleteCleanup,
+        runOpenshell,
+        redact: (value) => value,
+        tolerateMissingSandbox: true,
+      }),
+    ).toThrow(/appeared after absence was verified/u);
+    expect(revalidatePolicyAuthority).toHaveBeenCalledOnce();
+    expect(runOpenshell).not.toHaveBeenCalled();
+  });
+
   it("refuses every deferred provider attachment before a same-name replacement can receive credentials (#9833)", async () => {
     const revalidatePolicyRequirements = vi.fn();
     const runOpenshell = vi.fn(() => ({ status: 0 }));
