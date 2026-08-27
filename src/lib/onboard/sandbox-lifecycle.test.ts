@@ -46,6 +46,7 @@ describe("sandbox recreate reservation ownership", () => {
   beforeEach(() => {
     registryState.removeSandbox.mockReset();
     registryState.removeSandboxRouteReservationIfCurrent.mockReset();
+    registryState.removeSandboxRouteReservationIfCurrent.mockReturnValue(true);
     onboardSessionState.lockHeld = true;
     onboardSessionState.sessionId = "session-owner";
     onboardSessionState.recreate = null;
@@ -73,6 +74,22 @@ describe("sandbox recreate reservation ownership", () => {
     expect(registryState.removeSandboxRouteReservationIfCurrent).not.toHaveBeenCalled();
   });
 
+  it("removes an exact stale route reservation while the recreate journal is active (#9833)", () => {
+    onboardSessionState.recreate = { sandboxName: "alpha", phase: "deleting" };
+    const entry = {
+      name: "alpha",
+      pendingRouteReservation: true as const,
+      reservationSessionId: "session-other",
+    };
+
+    removeSandboxUnlessSessionReservation(entry, "alpha");
+
+    expect(registryState.removeSandbox).not.toHaveBeenCalled();
+    expect(registryState.removeSandboxRouteReservationIfCurrent).toHaveBeenCalledExactlyOnceWith(
+      entry,
+    );
+  });
+
   it.each([
     {
       label: "foreign-session",
@@ -94,6 +111,30 @@ describe("sandbox recreate reservation ownership", () => {
     expect(registryState.removeSandboxRouteReservationIfCurrent).toHaveBeenCalledWith(entry);
   });
 
+  it.each([
+    ["foreign", "session-other"],
+    ["unstamped", undefined],
+  ] as const)(
+    "preserves a %s verified-create checkpoint when stale-reservation cleanup is refused (#9833)",
+    (_label, reservationSessionId) => {
+      registryState.removeSandboxRouteReservationIfCurrent.mockReturnValue(false);
+      const entry = {
+        name: "alpha",
+        pendingRouteReservation: true as const,
+        ...(reservationSessionId ? { reservationSessionId } : {}),
+        pendingPolicyVerification: {} as never,
+      };
+
+      expect(() => removeSandboxUnlessSessionReservation(entry, "alpha")).toThrow(
+        /pending create recovery state.*identity-bound cleanup/u,
+      );
+      expect(registryState.removeSandbox).not.toHaveBeenCalled();
+      expect(registryState.removeSandboxRouteReservationIfCurrent).toHaveBeenCalledExactlyOnceWith(
+        entry,
+      );
+    },
+  );
+
   it("preserves a foreign reservation without exclusive stale-session authority (#9833)", () => {
     onboardSessionState.lockHeld = false;
     removeSandboxUnlessSessionReservation(
@@ -114,6 +155,7 @@ describe("sandbox lifecycle MCP destroy boundaries", () => {
   beforeEach(() => {
     registryState.removeSandbox.mockReset();
     registryState.removeSandboxRouteReservationIfCurrent.mockReset();
+    registryState.removeSandboxRouteReservationIfCurrent.mockReturnValue(true);
     onboardSessionState.lockHeld = true;
     registryState.sandbox = null;
     onboardSessionState.sessionId = "session-owner";

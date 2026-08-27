@@ -210,6 +210,11 @@ type LifecycleRegistrationFields = Pick<SandboxEntry, "lifecycleGeneration">;
 
 export interface SandboxGpuCreateFlowInput {
   sandboxName: string;
+  /** Resume the exact sandbox retained after its verified-create checkpoint was persisted. */
+  resumeVerifiedCreate?: {
+    readonly route: SelectedDockerGpuRoute;
+    readonly liveIdentityFingerprint: string;
+  };
   /** Reject every initial or fallback create attempt that carries a caller policy. */
   requirePolicylessCreate?: true;
   /** Durably retain exact APF create-attempt recovery evidence before a fallback refusal exits. */
@@ -302,15 +307,23 @@ export interface SandboxGpuCreateFlowDeps {
   createManagedBootstrapAdapter?: (stateRoot: string) => ManagedBootstrapAdapter;
 }
 
-export interface SandboxGpuCreateFlowResult {
-  createResult: StreamSandboxCreateResult;
+interface SandboxGpuCreateFlowResultCommon {
   runtimePatch: ManagedBootstrapRuntimePatch;
   route: SelectedDockerGpuRoute;
-  firstCreateOutput: string;
   /** Mutable tag/reference retained only for registry and image-GC bookkeeping. */
   registryImageRef: string | null;
   lifecycleRegistrationFields: LifecycleRegistrationFields;
 }
+
+export type SandboxGpuCreateFlowResult = SandboxGpuCreateFlowResultCommon &
+  (
+    | {
+        readonly origin: "created";
+        readonly createResult: StreamSandboxCreateResult;
+        readonly firstCreateOutput: string;
+      }
+    | { readonly origin: "resumed" }
+  );
 
 /** Bind only the schema-5 GPU proof child to its admitted command authorities. */
 export function createHermesPortableGpuProofAuthority(input: {
@@ -394,8 +407,9 @@ export async function runSandboxGpuCreateFlow(
         }
       : deps,
   );
-  const gpuCreateOutcome = await sandboxGpuCreateAttempt
-    .executeSandboxGpuCreatePlan(input.gpuRoutePlan, {
+  const gpuCreateOutcome = await (input.resumeVerifiedCreate
+    ? attemptRunner.runAttempt(input.resumeVerifiedCreate.route)
+    : sandboxGpuCreateAttempt.executeSandboxGpuCreatePlan(input.gpuRoutePlan, {
       runAttempt: attemptRunner.runAttempt,
       captureNativeFailure: (failure) => {
         const routeAdapter = adaptDockerGpuRouteForPatch(failure.route);
@@ -503,7 +517,7 @@ export async function runSandboxGpuCreateFlow(
         input.sandboxGpuConfig.sandboxGpuProof = null;
       },
       traceEvent: addTraceEvent,
-    })
+      }))
     .catch((error: unknown) => {
       if (error instanceof ManagedBootstrapRecoveryBlockedError) {
         exitForManagedBootstrapRecovery(error);
@@ -511,20 +525,26 @@ export async function runSandboxGpuCreateFlow(
       throw error;
     });
   if (!gpuCreateOutcome.ok) {
+    const preparationRefused =
+      "preparationRefused" in gpuCreateOutcome
+        ? gpuCreateOutcome.preparationRefused
+        : undefined;
+    const cleanupRefused =
+      "cleanupRefused" in gpuCreateOutcome ? gpuCreateOutcome.cleanupRefused : undefined;
+    const nativeCleanupHandoff =
+      "nativeCleanupHandoff" in gpuCreateOutcome
+        ? gpuCreateOutcome.nativeCleanupHandoff
+        : undefined;
     console.error("");
     console.error("  Operator-authorized GPU fallback stopped before compatibility retry.");
-    if (gpuCreateOutcome.preparationRefused) {
-      console.error(
-        `  Compatibility retry could not be prepared: ${gpuCreateOutcome.preparationRefused}`,
-      );
+    if (preparationRefused) {
+      console.error(`  Compatibility retry could not be prepared: ${preparationRefused}`);
     }
-    if (gpuCreateOutcome.cleanupRefused) {
-      console.error(
-        `  Cleanup could not be proven safe: ${redactFull(gpuCreateOutcome.cleanupRefused)}`,
-      );
+    if (cleanupRefused) {
+      console.error(`  Cleanup could not be proven safe: ${redactFull(cleanupRefused)}`);
     }
     console.error(
-      gpuCreateOutcome.nativeCleanupHandoff
+      nativeCleanupHandoff
         ? `  Managed bootstrap retained exact owner-cleanup authority for sandbox '${input.sandboxName}'. Do not delete a runtime by mutable sandbox name; preserve it for identity-bound recovery.`
         : hermesPortableLifecycle
           ? `  Hermes portable sandbox '${input.sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`
@@ -601,14 +621,25 @@ export async function runSandboxGpuCreateFlow(
     }
   }
 
-  return {
-    ...gpuCreateOutcome.value,
+  const common = {
+    runtimePatch: gpuCreateOutcome.value.runtimePatch,
     route: gpuCreateOutcome.route,
-    firstCreateOutput: attemptRunner.state.firstCreateOutput,
     registryImageRef,
     lifecycleRegistrationFields: {
       ...(input.lifecycleGeneration ? { lifecycleGeneration: input.lifecycleGeneration } : {}),
       ...(portableLifecycleGeneration ? { lifecycleGeneration: portableLifecycleGeneration } : {}),
     },
+  };
+  if (input.resumeVerifiedCreate) return { ...common, origin: "resumed" };
+  const createResult =
+    "createResult" in gpuCreateOutcome.value ? gpuCreateOutcome.value.createResult : null;
+  if (!createResult) {
+    throw new Error("Sandbox create completed without its create result.");
+  }
+  return {
+    ...common,
+    origin: "created",
+    createResult,
+    firstCreateOutput: attemptRunner.state.firstCreateOutput,
   };
 }

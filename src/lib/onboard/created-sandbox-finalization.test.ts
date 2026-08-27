@@ -487,6 +487,10 @@ describe("created DCode sandbox finalization", () => {
     const lifecycleLiveIdentityFingerprint = "a".repeat(64);
     const lifecycle = {
       generation: "generation-1",
+      recordExactIdentity: () => ({
+        lifecycleGeneration: "generation-1",
+        lifecycleLiveIdentityFingerprint,
+      }),
       capture: () => ({
         lifecycleGeneration: "generation-1",
         lifecycleLiveIdentityFingerprint,
@@ -1122,6 +1126,10 @@ describe("created sandbox completion actions", () => {
       } as SandboxGpuCreateFlowResult;
       const lifecycle = {
         generation: "generation-1",
+        recordExactIdentity: () => ({
+          lifecycleGeneration: "generation-1",
+          lifecycleLiveIdentityFingerprint: "a".repeat(64),
+        }),
         capture: () => {
           order.push("lifecycle-capture");
           return {

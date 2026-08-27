@@ -466,15 +466,17 @@ function installVerifiedSandboxCreateFixture(registry, options) {
       return true;
     },
   };
-  for (const [name, value] of Object.entries(registryFixture)) {
-    Object.defineProperty(registry, name, {
-      value,
-      configurable: true,
-      enumerable: true,
-      writable: true,
-    });
+  if (options.durableRegistry !== true) {
+    for (const [name, value] of Object.entries(registryFixture)) {
+      Object.defineProperty(registry, name, {
+        value,
+        configurable: true,
+        enumerable: true,
+        writable: true,
+      });
+    }
+    require.cache[registryPath].exports = registry;
   }
-  require.cache[registryPath].exports = registry;
 
   const receiptPath = require.resolve(
     path.resolve(__dirname, "../../src/lib/onboard/sandbox-create/policy-creation-receipt.ts"),
