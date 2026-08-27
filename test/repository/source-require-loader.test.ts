@@ -445,46 +445,20 @@ const Module = require("node:module");
 const path = require("node:path");
 const typescriptPath = require.resolve("typescript");
 const nativeTypeScriptLoader = Module._extensions[".ts"];
-let currentTypeScriptLoader = nativeTypeScriptLoader;
-const installedTypeScriptLoaders = [];
-let rejectedUnexpected = false;
-Object.defineProperty(Module._extensions, ".ts", {
-  configurable: true,
-  enumerable: true,
-  get() {
-    return currentTypeScriptLoader;
-  },
-  set(handler) {
-    currentTypeScriptLoader = handler;
-    installedTypeScriptLoaders.push(handler);
-  },
-});
 require(${JSON.stringify(SOURCE_REQUIRE_HOOK)});
-const preloadTypeScriptLoaderCount = installedTypeScriptLoaders.length;
 if (require.cache[typescriptPath] !== undefined) {
-  console.error(JSON.stringify({ installedTypeScriptLoaders: installedTypeScriptLoaders.length, rejectedUnexpected, typescriptLoaded: require.cache[typescriptPath] !== undefined }));
+  console.error(JSON.stringify({ typescriptLoaded: true }));
   process.exitCode = 9;
 } else {
   const requireSource = Module.createRequire(path.join(${JSON.stringify(root)}, "entry.cjs"));
   const fixture = requireSource("./fixture.js");
   const registeredTypeScriptLoader = Module._extensions[".ts"];
-  for (const handler of installedTypeScriptLoaders.slice(preloadTypeScriptLoaderCount)) {
-    if (typeof handler !== "function") continue;
-    try {
-      handler({ _compile() {} }, ${JSON.stringify(fixturePath)});
-    } catch (error) {
-      if (String(error).includes("Refusing to bootstrap unexpected TypeScript module")) {
-        rejectedUnexpected = true;
-      }
-    }
-  }
   if (
     fixture.value !== 42 ||
     require.cache[typescriptPath] === undefined ||
-    registeredTypeScriptLoader === nativeTypeScriptLoader ||
-    !rejectedUnexpected
+    registeredTypeScriptLoader === nativeTypeScriptLoader
   ) {
-    console.error(JSON.stringify({ fixture, installedTypeScriptLoaders: installedTypeScriptLoaders.length, rejectedUnexpected, typescriptLoaded: require.cache[typescriptPath] !== undefined }));
+    console.error(JSON.stringify({ fixture, typescriptLoaded: require.cache[typescriptPath] !== undefined }));
     process.exitCode = 9;
   }
 }

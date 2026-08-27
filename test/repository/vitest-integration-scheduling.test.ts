@@ -9,14 +9,14 @@ import {
 } from "../helpers/integration-project-scheduling";
 
 describe("CLI coverage shard scheduling", () => {
-  it("uses two workers for a validated CI shard (#6237)", () => {
+  it("uses one worker for a validated CI shard (#6237)", () => {
     expect(
       resolveCliCoverageShardScheduling({
         isCi: true,
         cliShard: "2",
         cliShardCount: "12",
       }),
-    ).toEqual({ maxWorkers: 2 });
+    ).toEqual({ maxWorkers: 1 });
   });
 
   it.each([

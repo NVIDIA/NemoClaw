@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 const LOCAL_INTEGRATION_WORKER_CAP = 4;
-const CLI_COVERAGE_SHARD_WORKER_CAP = 2;
+const CLI_COVERAGE_SHARD_WORKER_CAP = 1;
 
 interface IntegrationProjectSchedulingContext {
   isCi: boolean;
