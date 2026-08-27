@@ -19,7 +19,32 @@ export default async function run_github_cli(input: {
   if (input.args.some((arg) => arg === "--hostname" || arg.startsWith("--hostname=")))
     throw new Error("GitHub hostname selection is not allowed");
   const command = input.args[0] ?? "";
-  const operation = input.args[1] ?? "";
+  let operation = input.args[1] ?? "";
+  if (command === "api") {
+    const optionsWithValues = new Set([
+      "--method",
+      "-X",
+      "-f",
+      "-F",
+      "--field",
+      "--raw-field",
+      "--input",
+      "--jq",
+      "--template",
+      "--cache",
+      "--hostname",
+    ]);
+    for (let index = 1; index < input.args.length; index += 1) {
+      const arg = input.args[index] ?? "";
+      if (optionsWithValues.has(arg)) {
+        index += 1;
+        continue;
+      }
+      if (arg.startsWith("-")) continue;
+      operation = arg;
+      break;
+    }
+  }
   const allowed = {
     api: null,
     auth: new Set(["status"]),
