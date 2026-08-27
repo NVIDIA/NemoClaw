@@ -688,15 +688,11 @@ PY`,
     sandbox,
     SANDBOX_NAME,
     `
-import fs from "node:fs";
 import https from "node:https";
-const env = fs.readFileSync("/sandbox/.hermes/.env", "utf8");
-const line = env.split(/\\n/).find((entry) => entry.startsWith("DISCORD_BOT_TOKEN="));
-const token = line ? line.slice("DISCORD_BOT_TOKEN=".length) : "";
-switch (token ? "present" : "missing") {
-  case "missing":
-    console.log(JSON.stringify({ error: "missing_token" }));
-    process.exit(0);
+const token = process.env.DISCORD_BOT_TOKEN ?? "";
+if (!/^openshell:resolve:env:v[1-9][0-9]*_DISCORD_BOT_TOKEN$/.test(token)) {
+  console.log(JSON.stringify({ error: "invalid_token_placeholder" }));
+  process.exit(0);
 }
 const req = https.request({
   hostname: "discord.com",
