@@ -2432,6 +2432,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       );
       try {
         await completeCreatedSandboxRegistration(created, null);
+        verifiedPolicyRegistrationFinalized = true;
         reconcileCreatedHermesCredentialEnvironment(
           {
             sandboxName,
@@ -2442,7 +2443,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             (operation) => revalidatePolicyAuthority(true, operation),
           ),
         );
-        verifiedPolicyRegistrationFinalized = true;
       } finally {
         cleanupInitialCreateSource();
       }

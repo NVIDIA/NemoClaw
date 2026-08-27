@@ -27,6 +27,17 @@ import {
 describe("created Hermes credential environment reconciliation", () => {
   const plan = { agent: "hermes" } as never;
 
+  it("finalizes policy registration before reconciling credentials (#9833)", () => {
+    const source = fs.readFileSync(new URL("./orchestration.ts", import.meta.url), "utf8");
+    const completed = source.indexOf("await completeCreatedSandboxRegistration(created, null);");
+    const finalized = source.indexOf("verifiedPolicyRegistrationFinalized = true;", completed);
+    const reconciled = source.indexOf("reconcileCreatedHermesCredentialEnvironment(", completed);
+
+    expect(completed).toBeGreaterThan(-1);
+    expect(finalized).toBeGreaterThan(completed);
+    expect(reconciled).toBeGreaterThan(finalized);
+  });
+
   it("restarts and rechecks the managed gateway after changing the env file", () => {
     const events: string[] = [];
     const restart = { status: 0, stdout: "managed completion", stderr: "" };
