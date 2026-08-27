@@ -351,7 +351,7 @@ function mockCreatedSandboxIdentityList(command, options = {}) {
   const nonce = selector.slice(prefix.length);
   return JSON.stringify([
     {
-      id: options.sandboxId || "fixture-created-sandbox",
+      id: options.sandboxId || "sbx-4f2a91c0d7",
       name: options.sandboxName || "my-assistant",
       labels: { "ai.nvidia.nemoclaw.create-attempt": nonce },
       resource_version: 1,
@@ -550,7 +550,7 @@ function managedSandboxPolicyReceiptFixture(entry, options = {}) {
   const gatewayName = options.gatewayName || "nemoclaw";
   const gatewayPort = options.gatewayPort || 8080;
   const lifecycleGeneration = options.lifecycleGeneration || "123e4567-e89b-42d3-a456-426614174983";
-  const sandboxId = options.sandboxId || "fixture-created-sandbox";
+  const sandboxId = options.sandboxId || "sbx-4f2a91c0d7";
   const sandboxIdentityFingerprint = require("node:crypto")
     .createHash("sha256")
     .update(sandboxId)
