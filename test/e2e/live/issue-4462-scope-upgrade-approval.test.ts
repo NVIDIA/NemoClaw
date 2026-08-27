@@ -27,7 +27,10 @@ const GATEWAY_OBSERVER_LOCAL_PATH = path.join(
   "lib",
   "issue-4462-fresh-agent-gateway-snapshot.py",
 );
-const GATEWAY_OBSERVER_REMOTE_PATH = "/tmp/issue-4462-fresh-agent-gateway-snapshot.py";
+// OpenShell extracts a single-file upload beneath DEST, so pass the parent
+// directory and execute the resulting file path.
+const GATEWAY_OBSERVER_REMOTE_DIR = "/tmp";
+const GATEWAY_OBSERVER_REMOTE_PATH = `${GATEWAY_OBSERVER_REMOTE_DIR}/issue-4462-fresh-agent-gateway-snapshot.py`;
 
 validateSandboxName(SANDBOX_NAME);
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
@@ -169,7 +172,7 @@ test(
     const upload = await sandbox.upload(
       SANDBOX_NAME,
       GATEWAY_OBSERVER_LOCAL_PATH,
-      GATEWAY_OBSERVER_REMOTE_PATH,
+      GATEWAY_OBSERVER_REMOTE_DIR,
       {
         artifactName: "phase-2-upload-gateway-observer",
         env: env(),
