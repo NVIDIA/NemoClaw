@@ -883,7 +883,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         stockManagedRuntime: managedWorkloadOnboard.shouldActivateStockManagedRuntime({
           portableLifecycle: sandboxGpuCreateFlow.resolvePortableLifecycleMode(agent),
           hermesPortableLifecycle: agentCreateInput.hermesPortableLifecycle,
-          apfInterceptorRequested: createIntent?.apfInterceptorRequested === true,
           agentName: requestedAgentName,
         }),
         tempManagedRuntimeCatalog,
