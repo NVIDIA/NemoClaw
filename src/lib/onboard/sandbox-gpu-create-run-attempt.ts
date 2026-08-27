@@ -585,9 +585,7 @@ export function createSandboxGpuCreateAttemptRunner(
       await verifyCreatedSandboxBeforeEffects(identity.sandboxId, route, input);
       createdSandboxVerified = true;
       if (deferPostCreateEffects) {
-        revalidatePostCreateEffect(
-          `activate managed sandbox network for '${input.sandboxName}'`,
-        );
+        revalidatePostCreateEffect(`activate managed sandbox network for '${input.sandboxName}'`);
         await managedLifecycle?.prepareNetwork();
       }
     } else if (managedBootstrap && managedLifecycle) {
@@ -797,9 +795,10 @@ export function createSandboxGpuCreateAttemptRunner(
       revalidatePostCreateEffect(`validate runtime patch for sandbox '${input.sandboxName}'`);
       await runtimePatch.exitOnPatchError();
     }
-    const preRecreateIdentity = deferRestartSafeCutover && !resumedSandboxId
-      ? probeExactOpenShellSandboxId(input.sandboxName, deps)
-      : null;
+    const preRecreateIdentity =
+      deferRestartSafeCutover && !resumedSandboxId
+        ? probeExactOpenShellSandboxId(input.sandboxName, deps)
+        : null;
     const expectedRecreatedSandboxId =
       resumedSandboxId ??
       (preRecreateIdentity?.state === "identified" ? preRecreateIdentity.sandboxId : null);
@@ -811,7 +810,7 @@ export function createSandboxGpuCreateAttemptRunner(
       printCreateFailureDiagnostics(input.sandboxName, {
         backupPath: input.restoreBackupPath,
       });
-        process.exit(createResult?.status === 0 ? 1 : (createResult?.status ?? 1));
+      process.exit(createResult?.status === 0 ? 1 : (createResult?.status ?? 1));
     }
     if (!portableLifecycle || managedLifecycle) {
       revalidatePostCreateEffect(`apply runtime patch for sandbox '${input.sandboxName}'`);
