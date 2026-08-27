@@ -3,7 +3,6 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
 import { setGlobalCliActionRuntimeHooksForTest } from "./global";
 import { runCredentialsAddAction } from "./credentials-add";
