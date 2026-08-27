@@ -91,6 +91,12 @@ describe("Podman socket authority", () => {
         uid: 1000,
       }),
     ).toThrow("writable by another user or group");
+    expect(() =>
+      capturePodmanSocketAuthority(SOCKET_PATH, {
+        lstat: secureLstat({}, { "/run/user": { mode: 0o700n, uid: 2000n } }),
+        uid: 1000,
+      }),
+    ).toThrow("expected root or current uid 1000");
   });
 
   it("accepts the rootless systemd socket mode inside a private current-user directory", () => {

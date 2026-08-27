@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   isLifecycleLockHeld: vi.fn(),
   inspect: vi.fn(),
   inspectClassification: vi.fn(),
+  inspectRequalification: vi.fn(),
   readRegistry: vi.fn(),
   buildOpenShellCommandAuthority: vi.fn(),
   buildOpenShellEnv: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock("../../state/mcp-lifecycle-lock-acquisition", () => ({
 vi.mock("./hermes-portable-receipt", () => ({
   inspectPortableAgentReceiptAuthority: mocks.inspect,
   inspectPortableAgentReceiptAuthorityForClassification: mocks.inspectClassification,
+  inspectPortableAgentReceiptAuthorityForRequalification: mocks.inspectRequalification,
 }));
 vi.mock("./hermes-portable-lifecycle", () => ({
   assertHermesPortableSandboxLifecycleAuthority: mocks.assertHermesAuthority,
@@ -116,6 +118,7 @@ describe("portable agent lifecycle dispatch", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.inspectClassification.mockImplementation((...args) => mocks.inspect(...args));
+    mocks.inspectRequalification.mockImplementation((...args) => mocks.inspect(...args));
     mocks.buildOpenShellEnv.mockImplementation(
       (env: NodeJS.ProcessEnv, authority: Record<string, string>) => ({
         PATH: env.PATH,

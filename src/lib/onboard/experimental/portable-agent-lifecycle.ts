@@ -18,6 +18,7 @@ import {
 import {
   inspectPortableAgentReceiptAuthority,
   inspectPortableAgentReceiptAuthorityForClassification,
+  inspectPortableAgentReceiptAuthorityForRequalification,
 } from "./hermes-portable-receipt";
 import { qualifyHermesPortableOperatingAuthority } from "./hermes-portable-operating-authority";
 import {
@@ -118,15 +119,16 @@ export function assertHermesPortableCommandSupported(
   sandboxName: string,
   argv: readonly string[],
 ): void {
-  const authority = inspectPortableAgentReceiptAuthorityForClassification(
-    sandboxName,
-    defaultPortableDemoStateDir(process.env),
-  );
   const separator = argv.indexOf("--");
   const hostArgv = separator === -1 ? argv : argv.slice(0, separator);
   const doctorFix = commandId === "sandbox:doctor" && hostArgv.includes("--fix");
   const supported = HERMES_PORTABLE_COMMANDS.has(commandId) && !doctorFix;
-  if (authority.kind !== "hermes" || supported) return;
+  if (supported) return;
+  const authority = inspectPortableAgentReceiptAuthorityForClassification(
+    sandboxName,
+    defaultPortableDemoStateDir(process.env),
+  );
+  if (authority.kind !== "hermes") return;
   if (doctorFix) {
     throw new Error(`${HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE} Command: ${commandId}`);
   }
@@ -191,12 +193,44 @@ export function inspectPortableAgentReceiptDisposition(
   };
 }
 
+/** Classify copied Hermes authority while the probe owns its lifecycle fence. */
+function inspectPortableAgentReceiptDispositionForRequalification(
+  sandboxName: string,
+  env: NodeJS.ProcessEnv = process.env,
+  stateDir = defaultPortableDemoStateDir(env),
+): PortableAgentReceiptDisposition {
+  const authority = inspectPortableAgentReceiptAuthorityForRequalification(sandboxName, stateDir);
+  if (authority.kind === "none") return { kind: "absent" };
+  if (authority.kind === "openclaw") return { kind: "openclaw" };
+  const { receipt } = authority.snapshot;
+  return {
+    kind: "hermes",
+    phase: receipt.phase,
+    gatewayName: receipt.gatewayName,
+    lifecycleGeneration: receipt.lifecycleGeneration,
+    liveIdentityFingerprint:
+      receipt.phase === "pending"
+        ? null
+        : createHash("sha256").update(receipt.container.sandboxId).digest("hex"),
+  };
+}
+
 /** Requalify only Hermes authority while the probe owns both Portable fences. */
 export function requalifyPortableAgentSandboxAuthority(
   sandboxName: string,
   deps: PortableAgentLifecycleDeps & PortableAgentLifecycleAuthorityDeps,
 ) {
-  const authority = qualifyPortableAgentLifecycleAuthority(sandboxName, deps);
+  const authority = qualifyPortableAgentLifecycleAuthority(sandboxName, {
+    ...deps,
+    inspectReceiptDisposition:
+      deps.inspectReceiptDisposition ??
+      ((name) =>
+        inspectPortableAgentReceiptDispositionForRequalification(
+          name,
+          deps.env ?? process.env,
+          deps.stateDir,
+        )),
+  });
   if (authority.kind !== "hermes") return { kind: "not-hermes" as const };
   if (authority.phase !== "active" || !authority.entry) {
     throw new Error("Hermes portable lifecycle authority is missing or incomplete.");
