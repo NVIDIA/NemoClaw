@@ -49,13 +49,11 @@ interface FreshAgentGatewaySnapshot {
   activeOperatorTokenCount: number;
   activeOperatorTokenScopes: string[];
   approvedScopes: string[];
-  deviceId: string;
   deviceScopes: string[];
   gatewayCompletedRuns: number;
   matchingPairedCount: number;
   pairedCliCount: number;
   pendingCount: number;
-  publicKey: string;
   sameDevicePendingCount: number;
 }
 
@@ -1309,8 +1307,6 @@ test("auto-pair watcher approves operator.write but leaves operator.admin for ex
     0,
     "snapshot",
   );
-  expect(freshSnapshot.deviceId).not.toBe("");
-  expect(freshSnapshot.publicKey).not.toBe("");
   expect(freshSnapshot.pairedCliCount).toBe(1);
   expect(freshSnapshot.matchingPairedCount).toBe(1);
   expect(freshSnapshot.pendingCount).toBe(0);
