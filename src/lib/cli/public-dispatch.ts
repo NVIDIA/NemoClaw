@@ -19,10 +19,10 @@ const {
   canonicalCommandFlagLines,
   canonicalUsageList,
   globalCommandTokens,
+  matchSandboxRoute,
   sandboxActionTokensForDispatch,
 } = require("./command-registry");
 
-import { shellQuote } from "../core/shell-quote";
 import { migrateLegacyPortState } from "../state/legacy-port-migration";
 import {
   type NormalizedArgv,
@@ -275,21 +275,14 @@ function printGlobalStatusScopeHint(sandboxName: string, args: readonly string[]
  * Reporting a missing sandbox sends the reader to `onboard` for a sandbox they
  * never asked for (#10212).
  */
-// Arguments a POSIX shell passes through verbatim. Anything else, including an
-// empty argument, is quoted so the printed command reproduces what the reader
-// typed instead of resplitting on whitespace.
-const VERBATIM_HINT_ARGUMENT = /^[A-Za-z0-9_@%+=:,./-]+$/u;
-
-function quoteHintArgument(argument: string): string {
-  return VERBATIM_HINT_ARGUMENT.test(argument) ? argument : shellQuote(argument);
-}
-
 function printSandboxScopeHint(action: string, remainingArgs: readonly string[]): never {
-  const argSuffix =
-    remainingArgs.length > 0 ? ` ${remainingArgs.map(quoteHintArgument).join(" ")}` : "";
+  // Render the registered route, never the tokens the reader typed. An action
+  // argument can carry a credential, a newline that forges a diagnostic line,
+  // or an ESC byte that rewrites terminal output.
+  const route: string[] = matchSandboxRoute([action, ...remainingArgs]) ?? [action];
   console.error(`  '${action}' is a sandbox command. It needs a sandbox name.`);
   console.error("");
-  console.error(`  Run: ${CLI_NAME} <name> ${action}${argSuffix}`);
+  console.error(`  Run: ${CLI_NAME} <name> ${route.join(" ")}`);
   const allNames = registeredSandboxNames();
   if (allNames.length > 0) {
     console.error(`  Registered sandboxes: ${allNames.join(", ")}`);

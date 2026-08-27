@@ -660,47 +660,70 @@ describe("CLI dispatch", () => {
     });
   });
 
-  it("carries trailing arguments into the sandbox-first grammar hint (#10212)", async () => {
+  it("omits a flag argument from the sandbox-first grammar hint (#10212)", async () => {
     await withDirectPublicDispatch(async ({ dispatchCli, stderr }) => {
       await expect(dispatchCli(["doctor", "--json"])).rejects.toThrow("process.exit:1");
 
-      expect(stderr.join("\n")).toContain("Run: nemoclaw <name> doctor --json");
+      const output = stderr.join("\n");
+      expect(output).toContain("Run: nemoclaw <name> doctor");
+      expect(output).not.toContain("--json");
     });
   });
 
-  it("quotes a hint argument that contains whitespace (#10212)", async () => {
+  it("omits a credential-bearing action argument from the hint (#10212)", async () => {
     await withDirectPublicDispatch(async ({ dispatchCli, stderr }) => {
-      await expect(dispatchCli(["exec", "--", "echo", "hello world"])).rejects.toThrow(
-        "process.exit:1",
-      );
+      await expect(
+        dispatchCli(["exec", "--", "curl", "-H", "Authorization: Bearer nvapi-SECRET12345"]),
+      ).rejects.toThrow("process.exit:1");
 
-      // Joining raw would print `echo hello world`, which resplits into two
-      // arguments when the reader copies the command.
-      expect(stderr.join("\n")).toContain("Run: nemoclaw <name> exec -- echo 'hello world'");
+      const output = stderr.join("\n");
+      expect(output).toContain("Run: nemoclaw <name> exec");
+      expect(output).not.toContain("nvapi-SECRET12345");
+      expect(output).not.toContain("Authorization");
     });
   });
 
-  it("quotes an empty hint argument so it survives a copied command (#10212)", async () => {
+  it("omits a newline argument that would forge a diagnostic line (#10212)", async () => {
     await withDirectPublicDispatch(async ({ dispatchCli, stderr }) => {
-      await expect(dispatchCli(["exec", ""])).rejects.toThrow("process.exit:1");
+      await expect(
+        dispatchCli(["exec", "x\n  Sandbox alpha was destroyed."]),
+      ).rejects.toThrow("process.exit:1");
 
-      expect(stderr.join("\n")).toContain("Run: nemoclaw <name> exec ''");
+      const output = stderr.join("\n");
+      expect(output).toContain("Run: nemoclaw <name> exec");
+      expect(output).not.toContain("Sandbox alpha was destroyed.");
     });
   });
 
-  it("escapes a single quote inside a hint argument (#10212)", async () => {
+  it("omits an escape byte that would rewrite terminal output (#10212)", async () => {
     await withDirectPublicDispatch(async ({ dispatchCli, stderr }) => {
-      await expect(dispatchCli(["exec", "--", "echo", "it's"])).rejects.toThrow("process.exit:1");
+      await expect(dispatchCli(["exec", "\u001b[31mRED"])).rejects.toThrow("process.exit:1");
 
-      expect(stderr.join("\n")).toContain(`Run: nemoclaw <name> exec -- echo 'it'\\''s'`);
+      const output = stderr.join("\n");
+      expect(output).toContain("Run: nemoclaw <name> exec");
+      expect(output).not.toContain("\u001b");
+      expect(output).not.toContain("RED");
     });
   });
 
-  it("leaves an ordinary flag argument unquoted in the hint (#10212)", async () => {
+  it("bounds the hint length for a long action argument (#10212)", async () => {
     await withDirectPublicDispatch(async ({ dispatchCli, stderr }) => {
-      await expect(dispatchCli(["doctor", "--json"])).rejects.toThrow("process.exit:1");
+      const long = "A".repeat(4000);
+      await expect(dispatchCli(["exec", long])).rejects.toThrow("process.exit:1");
 
-      expect(stderr.join("\n")).toContain("Run: nemoclaw <name> doctor --json");
+      const runLine = stderr.find((line) => line.includes("Run: nemoclaw <name>")) ?? "";
+      expect(runLine).toBe("  Run: nemoclaw <name> exec");
+      expect(runLine.length).toBeLessThan(80);
+    });
+  });
+
+  it("renders the registered route for an unregistered trailing token (#10212)", async () => {
+    await withDirectPublicDispatch(async ({ dispatchCli, stderr }) => {
+      await expect(dispatchCli(["policy", "not-a-verb"])).rejects.toThrow("process.exit:1");
+
+      const output = stderr.join("\n");
+      expect(output).toContain("Run: nemoclaw <name> policy");
+      expect(output).not.toContain("not-a-verb");
     });
   });
 
