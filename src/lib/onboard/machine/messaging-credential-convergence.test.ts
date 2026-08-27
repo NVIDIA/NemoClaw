@@ -77,11 +77,7 @@ function harness(
   initialObservation: "absent" | "canonical" | typeof CURRENT,
   initialConfig = CANONICAL,
   behavior: {
-    readonly advanceVersion?: boolean;
-    readonly attachStatus?: number;
-    readonly detachStatus?: number;
     readonly providerId?: string;
-    readonly publishObservation?: boolean;
     readonly replacementIdOnRestart?: string;
   } = {},
 ) {
@@ -101,28 +97,8 @@ function harness(
           stdout: exactProviderOutput(providerId, resourceVersion),
           stderr: "",
         };
-      case "provider:update":
-        resourceVersion += behavior.advanceVersion === false ? 0 : 1;
-        return { status: 0, stdout: "", stderr: "" };
       default:
         switch (true) {
-          case args[0] === "sandbox" && args[1] === "provider" && args[2] === "attach":
-            observation =
-              (behavior.attachStatus ?? 0) === 0 && behavior.publishObservation !== false
-                ? CURRENT
-                : observation;
-            return {
-              status: behavior.attachStatus ?? 0,
-              stdout: "",
-              stderr: (behavior.attachStatus ?? 0) === 0 ? "" : "attach failed",
-            };
-          case args[0] === "sandbox" && args[1] === "provider" && args[2] === "detach":
-            observation = (behavior.detachStatus ?? 0) === 0 ? "absent" : observation;
-            return {
-              status: behavior.detachStatus ?? 0,
-              stdout: "",
-              stderr: (behavior.detachStatus ?? 0) === 0 ? "" : "detach failed",
-            };
           case args[0] === "sandbox" && args.includes("cat"):
             return { status: 0, stdout: config, stderr: "" };
           case args[0] === "sandbox" && runOptions.input !== undefined:
@@ -154,7 +130,7 @@ function convergenceDeps(
 }
 
 describe("managed messaging credential convergence", () => {
-  it("republishes an absent credential from OpenShell custody and projects its exact revision", async () => {
+  it("keeps an endpointless credential out of process env and retains its canonical config alias", async () => {
     const durablePlan = plan();
     const scope = harness("absent");
 
@@ -171,25 +147,16 @@ describe("managed messaging credential convergence", () => {
       ),
     ).toEqual({
       kind: "converged",
-      updatedProviders: [PROVIDER],
-      projectedTargets: ["/sandbox/.openclaw/openclaw.json"],
-      restartRequired: true,
+      updatedProviders: [],
+      projectedTargets: [],
+      restartRequired: false,
     });
-
-    const update = scope.calls.find(({ args }) => args[0] === "provider" && args[1] === "update");
-    expect(update?.args).toEqual(["provider", "update", "-g", "nemoclaw", PROVIDER]);
-    expect(update?.options.env).toBeUndefined();
-    expect(
-      scope.calls
-        .map(({ args }) => args.join(" "))
-        .filter((command) => command.startsWith("sandbox provider")),
-    ).toEqual([
-      `sandbox provider detach -g nemoclaw alpha ${PROVIDER}`,
-      `sandbox provider attach -g nemoclaw alpha ${PROVIDER}`,
-    ]);
-    expect(JSON.parse(scope.getConfig()).channels.telegram.accounts.default.botToken).toBe(CURRENT);
+    expect(JSON.parse(scope.getConfig()).channels.telegram.accounts.default.botToken).toBe(
+      CANONICAL,
+    );
     expect(durablePlan.credentialBindings[0]?.placeholder).toBe(CANONICAL);
-    expect(scope.restartManagedGateway).toHaveBeenCalledExactlyOnceWith("alpha");
+    expect(scope.calls.some(({ args }) => args[1] === "provider")).toBe(false);
+    expect(scope.restartManagedGateway).not.toHaveBeenCalled();
   });
 
   it("does not republish an already-current unchanged projection", async () => {
@@ -325,51 +292,6 @@ describe("managed messaging credential convergence", () => {
     );
   });
 
-  it("requires one exact provider resource-version increment", async () => {
-    const scope = harness("absent", CANONICAL, { advanceVersion: false });
-
-    await expect(
-      convergeManagedMessagingCredentials(
-        {
-          sandboxName: "alpha",
-          gatewayName: "nemoclaw",
-          openshellDriver: "podman",
-          plan: plan(),
-          expectedProviderIds: new Map([[PROVIDER, PROVIDER_ID]]),
-        },
-        convergenceDeps(scope),
-      ),
-    ).rejects.toThrow("expected messaging provider generation");
-    expect(scope.restartManagedGateway).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ["detach", { detachStatus: 1 }, "did not detach messaging provider"],
-    ["reattach", { attachStatus: 1 }, "did not refresh messaging provider"],
-  ])(
-    "fails closed when OpenShell cannot %s the sandbox provider",
-    async (_label, behavior, error) => {
-      const scope = harness("absent", CANONICAL, behavior);
-
-      await expect(
-        convergeManagedMessagingCredentials(
-          {
-            sandboxName: "alpha",
-            gatewayName: "nemoclaw",
-            openshellDriver: "podman",
-            plan: plan(),
-            expectedProviderIds: new Map([[PROVIDER, PROVIDER_ID]]),
-          },
-          convergenceDeps(scope),
-        ),
-      ).rejects.toThrow(error);
-      expect(JSON.parse(scope.getConfig()).channels.telegram.accounts.default.botToken).toBe(
-        CANONICAL,
-      );
-      expect(scope.restartManagedGateway).not.toHaveBeenCalled();
-    },
-  );
-
   it("rejects provider replacement during the managed gateway restart", async () => {
     const scope = harness(CURRENT, CANONICAL, {
       replacementIdOnRestart: "replacement-after-restart",
@@ -387,29 +309,6 @@ describe("managed messaging credential convergence", () => {
         convergenceDeps(scope),
       ),
     ).rejects.toThrow("changed during final credential activation");
-  });
-
-  it("bounds the provider synchronization wait to five minutes", async () => {
-    const scope = harness("absent", CANONICAL, { publishObservation: false });
-    let now = 0;
-    const sleep = vi.fn(async (milliseconds: number) => {
-      now += milliseconds;
-    });
-
-    await expect(
-      convergeManagedMessagingCredentials(
-        {
-          sandboxName: "alpha",
-          gatewayName: "nemoclaw",
-          openshellDriver: "podman",
-          plan: plan(),
-          expectedProviderIds: new Map([[PROVIDER, PROVIDER_ID]]),
-        },
-        convergenceDeps(scope, { now: () => now, sleep }),
-      ),
-    ).rejects.toThrow("did not synchronize");
-    expect(sleep).toHaveBeenCalledTimes(300);
-    expect(now).toBe(300_000);
   });
 
   it("projects prefix-overlapping env names only at exact placeholder boundaries", () => {

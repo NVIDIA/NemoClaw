@@ -16,7 +16,6 @@ import { resolveRegisteredRuntimeProvider } from "../runtime-provider/selection"
 import { createGatewayScopedOpenshellRunner } from "../setup-inference";
 
 const SAFE_ENV_KEY = /^[A-Z][A-Z0-9_]{0,127}$/u;
-const PROVIDER_SYNC_TIMEOUT_MS = 300_000;
 const REVISION = /^openshell:resolve:env:v[0-9]{1,20}_([A-Z][A-Z0-9_]{0,127})$/u;
 const DURABLE_REVISION =
   /(?:^openshell:resolve:env:|OPENSHELL-RESOLVE-ENV-)v[0-9]{1,20}_[A-Z][A-Z0-9_]{0,127}$/u;
@@ -33,8 +32,6 @@ export interface ManagedMessagingCredentialConvergenceInput {
 
 export interface ManagedMessagingCredentialConvergenceDeps {
   readonly runOpenshell: OpenshellCliHelpers["runOpenshell"];
-  readonly sleep?: (milliseconds: number) => Promise<void>;
-  readonly now?: () => number;
   readonly restartManagedGateway: (sandboxName: string) => {
     readonly ok: boolean;
     readonly detail?: string;
@@ -115,34 +112,6 @@ function observeCredential(
   return output as CredentialObservation;
 }
 
-async function waitForCredentialProjection(
-  sandboxName: string,
-  envKey: string,
-  previous: CredentialObservation,
-  runOpenshell: OpenshellCliHelpers["runOpenshell"],
-  deps: Pick<ManagedMessagingCredentialConvergenceDeps, "sleep" | "now">,
-): Promise<Exclude<CredentialObservation, "absent">> {
-  const now = deps.now ?? Date.now;
-  const sleep =
-    deps.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
-  const deadline = now() + PROVIDER_SYNC_TIMEOUT_MS;
-  while (true) {
-    const observation = observeCredential(sandboxName, envKey, runOpenshell);
-    if (
-      observation === "canonical" ||
-      (observation.startsWith("openshell:resolve:env:v") && observation !== previous)
-    ) {
-      return observation as Exclude<CredentialObservation, "absent">;
-    }
-    if (now() >= deadline) {
-      throw new Error(
-        `OpenShell did not synchronize a current messaging credential revision for '${envKey}'.`,
-      );
-    }
-    await sleep(1_000);
-  }
-}
-
 function genericCredentialBindings(plan: SandboxMessagingPlan): CredentialBinding[] {
   const profiles = messagingBridgeProfilesForAgent(plan.agent);
   const bindings = filterEnabledPlanEntries(plan, plan.credentialBindings).filter(
@@ -198,76 +167,16 @@ export async function convergeManagedMessagingCredentials(
         `Managed messaging provider '${binding.providerName}' has no registration ownership receipt.`,
       );
     }
-    let providerState = inspectGatewayCredentialOnlyProviderAuthority(expected, runOpenshell);
+    const providerState = inspectGatewayCredentialOnlyProviderAuthority(expected, runOpenshell);
     if (providerState.kind !== "exact" || providerState.id !== expectedProviderId) {
       throw new Error(
         `Managed messaging provider '${binding.providerName}' no longer matches its immutable registration authority.`,
       );
     }
-    const previous = observeCredential(input.sandboxName, binding.providerEnvKey, runOpenshell);
-    let current = previous;
-    if (previous === "absent") {
-      // The provider already owns the credential. A no-field update asks
-      // OpenShell to republish that stored value after final policy binding
-      // without returning the raw credential to NemoClaw host memory.
-      const result = runOpenshell(["provider", "update", binding.providerName], {
-        ignoreError: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      if (result.status !== 0) {
-        throw new Error(
-          `OpenShell did not republish messaging provider '${binding.providerName}' after final policy binding.`,
-        );
-      }
-      const previousVersion = providerState.resourceVersion;
-      providerState = inspectGatewayCredentialOnlyProviderAuthority(expected, runOpenshell);
-      if (
-        providerState.kind !== "exact" ||
-        providerState.id !== expectedProviderId ||
-        providerState.resourceVersion !== previousVersion + 1
-      ) {
-        throw new Error(
-          `OpenShell did not confirm the expected messaging provider generation after final convergence.`,
-        );
-      }
-      const detached = runOpenshell(
-        ["sandbox", "provider", "detach", input.sandboxName, binding.providerName],
-        { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], suppressOutput: true },
-      );
-      if (detached.status !== 0) {
-        runOpenshell(["sandbox", "provider", "attach", input.sandboxName, binding.providerName], {
-          ignoreError: true,
-          stdio: ["ignore", "pipe", "pipe"],
-          suppressOutput: true,
-        });
-        throw new Error(
-          `OpenShell did not detach messaging provider '${binding.providerName}' for sandbox refresh.`,
-        );
-      }
-      const attached = runOpenshell(
-        ["sandbox", "provider", "attach", input.sandboxName, binding.providerName],
-        { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], suppressOutput: true },
-      );
-      if (attached.status !== 0) {
-        runOpenshell(["sandbox", "provider", "attach", input.sandboxName, binding.providerName], {
-          ignoreError: true,
-          stdio: ["ignore", "pipe", "pipe"],
-          suppressOutput: true,
-        });
-        throw new Error(
-          `OpenShell did not refresh messaging provider '${binding.providerName}' on sandbox '${input.sandboxName}'.`,
-        );
-      }
-      current = await waitForCredentialProjection(
-        input.sandboxName,
-        binding.providerEnvKey,
-        previous,
-        runOpenshell,
-        deps,
-      );
-      updatedProviders.push(binding.providerName);
+    const current = observeCredential(input.sandboxName, binding.providerEnvKey, runOpenshell);
+    if (current.startsWith("openshell:resolve:env:v")) {
+      placeholders.set(binding.providerEnvKey, current);
     }
-    if (current !== "canonical") placeholders.set(binding.providerEnvKey, current);
     expectedVersions.set(binding.providerName, providerState.resourceVersion);
   }
 
