@@ -29,14 +29,9 @@ import type { HermesPortableConfiguredReceipt } from "./experimental/hermes-port
 import { warnIfLandlockUnsupported } from "./landlock-warning";
 import * as managedWorkloadOnboard from "./managed-workload/onboard-orchestration";
 import { printMessagingProviderMissing } from "./preflight-messages";
-import {
-  pendingSandboxPolicyVerificationForBoundary,
-} from "./sandbox-create/policy-creation-receipt";
+import { pendingSandboxPolicyVerificationForBoundary } from "./sandbox-create/policy-creation-receipt";
 import type { SandboxGpuCreateFlowResult } from "./sandbox-gpu-create-flow";
-import type {
-  VerifiedSandboxPolicyBoundary,
-  VerifiedSandboxPolicyRegistration,
-} from "./types";
+import type { VerifiedSandboxPolicyBoundary, VerifiedSandboxPolicyRegistration } from "./types";
 import type { SelectionDrift } from "./selection-drift";
 import { applyOnboardVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 import {
@@ -474,8 +469,7 @@ export function createCreatedSandboxCompletionActions(
               policyAuthority: verifiedPolicyRegistration.policyAuthority,
               ...(verifiedPolicyRegistration.policyAuthority === "nemoclaw-managed"
                 ? {
-                    policyCreationReceipt:
-                      verifiedPolicyRegistration.policyCreationReceipt,
+                    policyCreationReceipt: verifiedPolicyRegistration.policyCreationReceipt,
                   }
                 : {}),
               inferenceRouteReservation,
@@ -488,13 +482,17 @@ export function createCreatedSandboxCompletionActions(
   };
 }
 
-function assertVerifiedCreateMatchesPolicyBoundary(
+export function assertVerifiedCreateMatchesPolicyBoundary(
   boundary: VerifiedSandboxPolicyBoundary,
   verifiedCreate: NonNullable<CreatedSandboxRegistrationInput["verifiedCreate"]>,
 ): void {
+  const { providerRefresh, ...verifiedPolicyCheckpoint } = verifiedCreate.checkpoint;
+  if (providerRefresh && providerRefresh.phase !== "ready") {
+    throw new Error("Verified sandbox provider refresh is incomplete.");
+  }
   if (
     !isDeepStrictEqual(
-      verifiedCreate.checkpoint,
+      verifiedPolicyCheckpoint,
       pendingSandboxPolicyVerificationForBoundary(boundary),
     )
   ) {
@@ -566,8 +564,8 @@ type OnboardGatewayBinding = {
 };
 type OnboardPreparedPolicy = Omit<
   Pick<
-  managedWorkloadOnboard.PreparedOnboardSandboxWorkloadLaunch,
-  "initialSandboxPolicy" | "policyTier" | "policyAuthority" | "dashboardRemoteBindPrepared"
+    managedWorkloadOnboard.PreparedOnboardSandboxWorkloadLaunch,
+    "initialSandboxPolicy" | "policyTier" | "policyAuthority" | "dashboardRemoteBindPrepared"
   >,
   "policyAuthority"
 > & {

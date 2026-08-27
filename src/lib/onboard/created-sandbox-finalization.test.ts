@@ -9,8 +9,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { SandboxEntry } from "../state/registry";
+import type { PendingSandboxProviderRefreshPhase } from "../state/registry/types";
 import * as sandboxState from "../state/sandbox";
 import {
+  assertVerifiedCreateMatchesPolicyBoundary,
   createCreatedSandboxCompletionActions,
   createOnboardCreatedSandboxCompletion,
   createOnboardCreatedSandboxRegistration,
@@ -55,6 +57,60 @@ describe("created sandbox registration authority", () => {
     expect(cleanupBuildContext).not.toHaveBeenCalled();
     expect(complete).not.toHaveBeenCalled();
   });
+});
+
+describe("verified create provider refresh finalization", () => {
+  const policyCreationReceipt = {
+    schemaVersion: 1 as const,
+    origin: "sandbox-create" as const,
+    gatewayName: "nemoclaw",
+    gatewayPort: 8080,
+    sandboxName: "hermes",
+    lifecycleGeneration: "generation-1",
+    sandboxIdentityFingerprint: "a".repeat(64),
+    policyHash: "sha256:effective",
+    policyVersion: 1,
+  };
+  const boundary = {
+    registration: {
+      policyAuthority: "nemoclaw-managed" as const,
+      policyCreationReceipt,
+      observedPolicyAuthority: "owner-unknown" as const,
+    },
+    sandboxName: "hermes",
+    gatewayName: "nemoclaw",
+    gatewayPort: 8080,
+    lifecycleGeneration: "generation-1",
+    lifecycleLiveIdentityFingerprint: "a".repeat(64),
+    route: "native" as const,
+  };
+  const verifiedCreate = (phase: PendingSandboxProviderRefreshPhase) =>
+    ({
+      reservation: {} as never,
+      checkpoint: {
+        ...pendingSandboxPolicyVerificationForBoundary(boundary),
+        providerRefresh: {
+          schemaVersion: 1 as const,
+          phase,
+          attachedProviders: ["nvidia-prod"],
+        },
+      },
+    }) as NonNullable<CreatedSandboxRegistrationInput["verifiedCreate"]>;
+
+  it("accepts registry publication after provider refresh reaches ready (#10153)", () => {
+    expect(() =>
+      assertVerifiedCreateMatchesPolicyBoundary(boundary, verifiedCreate("ready")),
+    ).not.toThrow();
+  });
+
+  it.each(["attaching", "stopping", "stopped", "started"] as const)(
+    "rejects registry publication while provider refresh is %s (#10153)",
+    (phase) => {
+      expect(() =>
+        assertVerifiedCreateMatchesPolicyBoundary(boundary, verifiedCreate(phase)),
+      ).toThrow("Verified sandbox provider refresh is incomplete.");
+    },
+  );
 });
 
 function executable(file: string, contents: string): void {
