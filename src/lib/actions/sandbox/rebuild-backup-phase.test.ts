@@ -151,6 +151,131 @@ describe("rebuild web-search policy normalization", () => {
     expect(result?.backupManifest?.customPolicies).toEqual([customDiscordPolicy]);
   });
 
+  // Built-in only: the test above passes even when the pruner is a no-op, because its
+  // custom `discord` is exempt by name and a later stage removes it. (#10153)
+  it.each([
+    { label: "Hermes", entryAgent: "hermes" as const, planAgent: "hermes" as const },
+    { label: "OpenClaw", entryAgent: null, planAgent: "openclaw" as const },
+  ])(
+    "drops a built-in inactive channel preset for $label during rebuild (#10153)",
+    ({ entryAgent, planAgent }) => {
+      const result = runRebuildBackupPhase({
+        sandboxName: "alpha",
+        sandboxEntry: {
+          name: "alpha",
+          agent: entryAgent,
+          policies: ["discord", "slack"],
+          policyPresetsFinalized: true,
+        },
+        staleRecovery: false,
+        preparedRecoveryManifest: { policyPresets: ["discord", "slack"] } as never,
+        messagingPlan: {
+          schemaVersion: 1,
+          sandboxName: "alpha",
+          agent: planAgent,
+          workflow: "rebuild",
+          channels: [
+            {
+              channelId: "slack",
+              displayName: "Slack",
+              authMode: "token-paste",
+              active: true,
+              selected: true,
+              configured: true,
+              disabled: false,
+              inputs: [],
+              hooks: [],
+            },
+          ],
+          disabledChannels: [],
+          credentialBindings: [],
+          networkPolicy: { presets: [], entries: [] },
+          agentRender: [],
+          buildSteps: [],
+          stateUpdates: [],
+          healthChecks: [],
+        },
+        webSearchConfig: null,
+        log: vi.fn(),
+        bail: (message): never => {
+          throw new Error(message);
+        },
+        relockShieldsIfNeeded: () => true,
+      });
+
+      expect(result?.policyPresets).toEqual(["slack"]);
+    },
+  );
+
+  // Configured channel with no credential: `active: false`, `disabled: false`. (#10153)
+  it("drops a channel preset the plan cannot start during rebuild (#10153)", () => {
+    const result = runRebuildBackupPhase({
+      sandboxName: "alpha",
+      sandboxEntry: {
+        name: "alpha",
+        agent: null,
+        policies: ["discord", "slack"],
+        policyPresetsFinalized: true,
+      },
+      staleRecovery: false,
+      preparedRecoveryManifest: { policyPresets: ["discord", "slack"] } as never,
+      messagingPlan: {
+        schemaVersion: 1,
+        sandboxName: "alpha",
+        agent: "openclaw",
+        workflow: "rebuild",
+        channels: [
+          {
+            channelId: "slack",
+            displayName: "Slack",
+            authMode: "token-paste",
+            active: true,
+            selected: true,
+            configured: true,
+            disabled: false,
+            inputs: [],
+            hooks: [],
+          },
+          {
+            channelId: "discord",
+            displayName: "Discord",
+            authMode: "token-paste",
+            // Required secret with no credential; an empty `inputs` would be startable.
+            active: false,
+            selected: true,
+            configured: true,
+            disabled: false,
+            inputs: [
+              {
+                channelId: "discord",
+                inputId: "botToken",
+                kind: "secret",
+                required: true,
+                credentialAvailable: false,
+              },
+            ],
+            hooks: [],
+          },
+        ],
+        disabledChannels: [],
+        credentialBindings: [],
+        networkPolicy: { presets: [], entries: [] },
+        agentRender: [],
+        buildSteps: [],
+        stateUpdates: [],
+        healthChecks: [],
+      },
+      webSearchConfig: null,
+      log: vi.fn(),
+      bail: (message): never => {
+        throw new Error(message);
+      },
+      relockShieldsIfNeeded: () => true,
+    });
+
+    expect(result?.policyPresets).toEqual(["slack"]);
+  });
+
   it("records when --force skips a total backup failure", () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);

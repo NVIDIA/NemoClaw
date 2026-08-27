@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type WebSearchConfig, webSearchProviderForConfig } from "../../inference/web-search";
-import type { SandboxMessagingPlan } from "../../messaging";
+import { getActiveChannelIdsFromPlan, type SandboxMessagingPlan } from "../../messaging";
 import {
   mergeRebuildMessagingPolicyPresets,
-  pruneInactiveHermesMessagingPolicyPresets,
+  pruneInactiveMessagingPolicyPresets,
 } from "../../onboard/messaging-policy-presets";
 import {
   isDcodeAgent,
@@ -222,20 +222,23 @@ export function runRebuildBackupPhase(
       )
     : [];
   const disabledChannels = [...(input.messagingPlan?.disabledChannels ?? [])];
-  const enabledChannelIds = (input.messagingPlan?.channels ?? [])
-    .filter((channel) => !channel.disabled)
-    .map((channel) => channel.channelId);
+  // `!disabled` alone kept presets for channels the plan cannot start. (#10153)
+  const enabledChannelIds = input.messagingPlan
+    ? getActiveChannelIdsFromPlan(input.messagingPlan)
+    : [];
   const mergedPolicyPresets = mergeRebuildMessagingPolicyPresets(
     backupManifest?.policyPresets,
     registryPolicyPresets,
     enabledChannelIds,
     disabledChannels,
   );
+  // The registry stores `agent: null` for OpenClaw, which reads as out of scope.
+  // The plan carries a typed `MessagingAgentId`. (#10153)
   const activeMessagingPolicyPresets = input.messagingPlan
-    ? pruneInactiveHermesMessagingPolicyPresets(
+    ? pruneInactiveMessagingPolicyPresets(
         mergedPolicyPresets,
         enabledChannelIds,
-        input.sandboxEntry.agent,
+        input.messagingPlan.agent,
         new Set(
           (input.sandboxEntry.customPolicies ?? []).map((policy) =>
             policy.name.trim().toLowerCase(),

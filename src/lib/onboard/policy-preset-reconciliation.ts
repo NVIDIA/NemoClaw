@@ -7,7 +7,7 @@ import { mergeRequiredHermesToolGatewayPolicyPresets } from "./hermes-managed-to
 import {
   mergeEnabledMessagingChannelPolicyPresets,
   pruneDisabledMessagingPolicyPresets,
-  pruneInactiveHermesMessagingPolicyPresets,
+  pruneInactiveMessagingPolicyPresets,
 } from "./messaging-policy-presets";
 import {
   isInactiveObservabilityPolicyPreset,
@@ -49,7 +49,7 @@ export function mergeRequiredSetupPolicyPresets(
         customOwnsObservability: options.customOwnsObservability,
       }),
   );
-  const activeAgentPresets = pruneInactiveHermesMessagingPolicyPresets(
+  const activeAgentPresets = pruneInactiveMessagingPolicyPresets(
     agentFilteredPresets,
     options.enabledChannels,
     options.agent,
@@ -160,7 +160,7 @@ export function createUnavailablePolicyPresetPruner(options: {
   // Custom and interactive selections may explicitly opt into a built-in web-search
   // preset without storing provider config. Inactive observability remains ineligible.
   return (presetNames, pruning = {}) =>
-    pruneInactiveHermesMessagingPolicyPresets(
+    pruneInactiveMessagingPolicyPresets(
       pruneDisabledMessagingPolicyPresets(presetNames, options.disabledChannels),
       options.enabledChannels,
       options.agent,
