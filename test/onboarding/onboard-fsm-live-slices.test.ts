@@ -24,6 +24,7 @@ type ProbeMode =
   | "dashboard-port-composition"
   | "ordinary-policy-tier"
   | "providerless-staged-messaging"
+  | "stale-recovery-admission"
   | "ahead-core";
 
 interface ProbeOptions {
@@ -221,6 +222,7 @@ const coreFlowPhases = require(${coreFlowPhasesPath});
 const registry = require(${registryPath});
 const called = [];
 const sentinel = new Error("slice-called");
+const staleAdmissionExit = new Error("stale recovery admission refused");
 
 if (scenario.mode === "dashboard-port-composition") {
   const finalizationHandlerDeps = require(${finalizationDepsPath}).finalizationHandlerDeps;
@@ -447,6 +449,42 @@ if (
   });
 }
 
+if (scenario.mode === "stale-recovery-admission") {
+  const listRetainedSandboxRecoveryRecords =
+    onboardSession.listRetainedSandboxRecoveryRecords;
+  let recoveryReads = 0;
+  onboardSession.listRetainedSandboxRecoveryRecords = () => {
+    recoveryReads += 1;
+    if (recoveryReads === 1) {
+      onboardSession.recordRetainedSandboxRecovery({
+        sandboxName: "fsm-sandbox",
+        sandboxIdentityFingerprint: "a".repeat(64),
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        lifecycleGeneration: "stale-admission-generation",
+        verifiedEffectivePolicyIdentity: null,
+        resources: {
+          sharedInferenceProviders: [],
+          sandboxScopedProviders: [],
+          credentialEnvironmentVariables: [],
+        },
+        reason: "retained_after_sandbox_creation_failure",
+      });
+      return [];
+    }
+    return listRetainedSandboxRecoveryRecords();
+  };
+  process.exit = () => {
+    throw staleAdmissionExit;
+  };
+}
+
+const ownsAuthoritativeOnboardLock = scenario.mode.startsWith("authoritative-");
+if (ownsAuthoritativeOnboardLock) {
+  const lock = onboardSession.acquireOnboardLock("authoritative rebuild fixture");
+  if (!lock.acquired) throw new Error("authoritative rebuild fixture did not acquire onboard lock");
+}
+
 const { onboard } = require(${onboardPath});
 
 (async () => {
@@ -471,9 +509,11 @@ const { onboard } = require(${onboardPath});
     });
     throw new Error("expected slice sentinel");
   } catch (error) {
+    if (ownsAuthoritativeOnboardLock) onboardSession.releaseOnboardLock();
     if (
       error === sentinel ||
       error?.message === sentinel.message ||
+      (scenario.mode === "stale-recovery-admission" && error === staleAdmissionExit) ||
       (scenario.mode === "endpoint-override" &&
         error?.name === "OpenShellGatewayEndpointOverrideError") ||
       (scenario.mode === "providerless-staged-messaging" &&
@@ -563,6 +603,10 @@ describe("live onboard FSM slice boundaries", () => {
       runSliceProbe({ slice: "initial", mode: "providerless-staged-messaging" }),
       [],
     );
+  });
+
+  it("rechecks retained sandbox admission after acquiring the onboarding lock (#9833)", () => {
+    assert.deepEqual(runSliceProbe({ slice: "initial", mode: "stale-recovery-admission" }), []);
   });
 
   it("enters the core slice after the initial slice reaches provider selection", () => {

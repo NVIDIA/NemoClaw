@@ -120,6 +120,43 @@ describe("retained sandbox recovery state", () => {
     expect(fs.readFileSync(externalState, "utf8")).toBe(externalContents);
   });
 
+  it("refuses a symbolic-link recovery state directory ancestor (#9833)", async () => {
+    const externalStateDirectory = path.join(home, "external-state");
+    fs.mkdirSync(externalStateDirectory);
+    fs.symlinkSync(externalStateDirectory, path.join(home, ".nemoclaw"), "dir");
+    const recovery = await import("./onboard-session");
+
+    expect(() => recovery.listRetainedSandboxRecoveryRecords()).toThrow(/symbolic link/u);
+  });
+
+  it("refuses recovery publication after the locked state directory is replaced (#9833)", async () => {
+    const recovery = await import("./onboard-session");
+    expect(recovery.acquireOnboardLock("recovery directory replacement test").acquired).toBe(true);
+    const originalDirectory = path.dirname(recovery.RETAINED_SANDBOX_RECOVERY_FILE);
+    const displacedDirectory = `${originalDirectory}.displaced`;
+    const replacementDirectory = path.join(home, "replacement-state");
+    fs.renameSync(originalDirectory, displacedDirectory);
+    fs.mkdirSync(replacementDirectory);
+    fs.symlinkSync(replacementDirectory, originalDirectory, "dir");
+
+    expect(() =>
+      recovery.recordRetainedSandboxRecovery({
+        sandboxName: "retained-sb",
+        sandboxIdentityFingerprint: "f".repeat(64),
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        lifecycleGeneration: "generation-1",
+        verifiedEffectivePolicyIdentity: null,
+        resources: evidence,
+        reason: "retained_after_sandbox_creation_failure",
+      }),
+    ).toThrow(/symbolic link|lock ownership changed/u);
+    expect(fs.existsSync(path.join(replacementDirectory, "retained-sandbox-recovery.json"))).toBe(
+      false,
+    );
+    expect(fs.existsSync(path.join(displacedDirectory, "onboard.lock"))).toBe(true);
+  });
+
   it("does not expose a caller-supplied recovery resolution path (#9833)", async () => {
     const recovery = await import("./onboard-session");
     const recoveryStore = await import("./onboard-session/retained-sandbox-recovery");

@@ -2750,13 +2750,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   );
   setOnboardBrandingAgent(opts.agent || process.env.NEMOCLAW_AGENT || null);
   AUTO_YES = opts.autoYes === true || process.env.NEMOCLAW_YES === "1";
-  const entryOptions = onboardEntryOptions.resolveDefaultRunEntryOptions(
-    opts,
-    onboardSession.loadSession(),
-    validateName,
-    process.env,
-    onboardSession.listRetainedSandboxRecoveryRecords().map((record) => record.sandboxName),
-  );
+  const resolveEntryOptions = () =>
+    onboardEntryOptions.resolveDefaultRunEntryOptionsFromState(opts, validateName, onboardSession);
+  const entryOptions = resolveEntryOptions();
   const { fresh, nonInteractive, cannotPrompt, resume } = entryOptions;
   const { requestedFromDockerfile, requestedSandboxName } = entryOptions;
   NON_INTERACTIVE = nonInteractive;
@@ -2796,6 +2792,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     preserveDeferredExitSession = false,
     preserveIncompleteSession = false;
   try {
+    resolveEntryOptions();
     await portableRetirementEntry.run(async () => {
       const lockedRuntime = await resumeRuntime.prepare(
         opts,

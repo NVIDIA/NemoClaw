@@ -397,7 +397,30 @@ export interface DebugSessionSummary {
 // ── Helpers ──────────────────────────────────────────────────────
 
 function ensureSessionDir(): void {
+  assertSessionDirectoryHasNoSymlinks();
   fs.mkdirSync(SESSION_DIR, { recursive: true, mode: 0o700 });
+  assertSessionDirectoryHasNoSymlinks();
+  const stat = fs.lstatSync(SESSION_DIR);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error("NemoClaw onboarding state directory is not a secure directory.");
+  }
+}
+
+function assertSessionDirectoryHasNoSymlinks(): void {
+  const home = path.resolve(process.env.HOME || "/tmp");
+  let current = path.resolve(SESSION_DIR);
+  while (current !== home && current !== path.dirname(current)) {
+    try {
+      if (fs.lstatSync(current).isSymbolicLink()) {
+        throw new Error(
+          `NemoClaw onboarding state directory cannot be a symbolic link: ${current}`,
+        );
+      }
+    } catch (error) {
+      if (!(isErrnoException(error) && error.code === "ENOENT")) throw error;
+    }
+    current = path.dirname(current);
+  }
 }
 
 export function sessionPath(): string {
@@ -1236,6 +1259,46 @@ function lockHolderStillMatches(lock: LockInfo): boolean {
 // descriptor rather than a value re-read from disk. See #1281.
 let heldLockFd: number | null = null;
 
+export function assertOnboardLockOwned(): void {
+  if (heldLockFd === null) {
+    throw new Error("This process does not own the NemoClaw onboarding lock.");
+  }
+  assertSessionDirectoryHasNoSymlinks();
+  const descriptorStat = fs.fstatSync(heldLockFd);
+  const pathStat = fs.lstatSync(LOCK_FILE);
+  if (
+    !descriptorStat.isFile() ||
+    descriptorStat.nlink !== 1 ||
+    pathStat.isSymbolicLink() ||
+    !pathStat.isFile() ||
+    pathStat.nlink !== 1 ||
+    descriptorStat.dev !== pathStat.dev ||
+    descriptorStat.ino !== pathStat.ino
+  ) {
+    throw new Error("NemoClaw onboarding lock ownership changed during the operation.");
+  }
+}
+
+function withOwnedOnboardLock<T>(command: string, operation: () => T): T {
+  const managesOnboardLock = heldLockFd === null;
+  if (managesOnboardLock) {
+    const lock = acquireOnboardLock(command);
+    if (!lock.acquired) {
+      throw new Error(
+        "Cannot update onboarding recovery while another onboarding run owns the lock.",
+      );
+    }
+  }
+  try {
+    assertOnboardLockOwned();
+    const result = operation();
+    assertOnboardLockOwned();
+    return result;
+  } finally {
+    if (managesOnboardLock) releaseOnboardLock();
+  }
+}
+
 export function acquireOnboardLock(command: string | null = null): LockResult {
   ensureSessionDir();
   const payload = JSON.stringify(
@@ -1337,6 +1400,13 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
       throw writeError;
     }
     heldLockFd = fd;
+    try {
+      assertOnboardLockOwned();
+    } catch (error) {
+      heldLockFd = null;
+      fs.closeSync(fd);
+      throw error;
+    }
     return { acquired: true, lockFile: LOCK_FILE, stale: false };
   }
 
@@ -1691,13 +1761,18 @@ function persistIndependentRetainedSandboxRecovery(
 }
 
 export function listRetainedSandboxRecoveryRecords(): readonly RetainedSandboxRecoveryRecord[] {
-  return readRetainedSandboxRecoveryRecords(RETAINED_SANDBOX_RECOVERY_FILE);
+  if (heldLockFd !== null) assertOnboardLockOwned();
+  const records = readRetainedSandboxRecoveryRecords(RETAINED_SANDBOX_RECOVERY_FILE);
+  if (heldLockFd !== null) assertOnboardLockOwned();
+  return records;
 }
 
 export function recordRetainedSandboxRecovery(
   input: RecordRetainedSandboxRecoveryInput,
 ): RetainedSandboxRecoveryRecord {
-  return writeRetainedSandboxRecovery(RETAINED_SANDBOX_RECOVERY_FILE, input);
+  return withOwnedOnboardLock("nemoclaw retained sandbox recovery", () =>
+    writeRetainedSandboxRecovery(RETAINED_SANDBOX_RECOVERY_FILE, input),
+  );
 }
 
 export function markCancellationRecovery(
@@ -1713,36 +1788,38 @@ export function markCancellationRecovery(
   ) {
     throw new Error("Cannot record cancellation recovery with invalid sandbox identity data.");
   }
-  const saved = updateSession((session) => {
-    if (session.sandboxName !== null && session.sandboxName !== sandboxName) {
-      throw new Error("Cannot record cancellation recovery for a different onboarding sandbox.");
-    }
-    const recordedAt = new Date().toISOString();
-    session.sandboxName = sandboxName;
-    session.resumable = false;
-    session.status = CANCELLATION_RECOVERY_STATUS;
-    session.cancellationRecovery = {
-      reason: "cancelled_after_sandbox_creation",
-      sandboxName,
-      sandboxIdentityFingerprint: sandboxIdentityFingerprint ?? null,
-      recordedAt,
-    };
-    session.failure = {
-      step: session.lastStepStarted,
-      message:
-        "Onboarding was cancelled after sandbox creation; administrator recovery is required.",
-      recordedAt,
-      interrupted: true,
-    };
-    return session;
+  return withOwnedOnboardLock("nemoclaw cancellation recovery", () => {
+    const saved = updateSession((session) => {
+      if (session.sandboxName !== null && session.sandboxName !== sandboxName) {
+        throw new Error("Cannot record cancellation recovery for a different onboarding sandbox.");
+      }
+      const recordedAt = new Date().toISOString();
+      session.sandboxName = sandboxName;
+      session.resumable = false;
+      session.status = CANCELLATION_RECOVERY_STATUS;
+      session.cancellationRecovery = {
+        reason: "cancelled_after_sandbox_creation",
+        sandboxName,
+        sandboxIdentityFingerprint: sandboxIdentityFingerprint ?? null,
+        recordedAt,
+      };
+      session.failure = {
+        step: session.lastStepStarted,
+        message:
+          "Onboarding was cancelled after sandbox creation; administrator recovery is required.",
+        recordedAt,
+        interrupted: true,
+      };
+      return session;
+    });
+    persistIndependentRetainedSandboxRecovery(
+      saved,
+      "cancelled_after_sandbox_creation",
+      sandboxIdentityFingerprint ?? null,
+      context,
+    );
+    return saved;
   });
-  persistIndependentRetainedSandboxRecovery(
-    saved,
-    "cancelled_after_sandbox_creation",
-    sandboxIdentityFingerprint ?? null,
-    context,
-  );
-  return saved;
 }
 
 export function markRetainedSandboxRecovery(
@@ -1759,51 +1836,54 @@ export function markRetainedSandboxRecovery(
   ) {
     throw new Error("Cannot record retained sandbox recovery with invalid identity data.");
   }
-  const saved = updateSession((session) => {
-    if (session.sandboxName !== null && session.sandboxName !== sandboxName) {
-      throw new Error(
-        "Cannot record retained sandbox recovery for a different onboarding sandbox.",
-      );
+  return withOwnedOnboardLock("nemoclaw retained sandbox recovery", () => {
+    const saved = updateSession((session) => {
+      if (session.sandboxName !== null && session.sandboxName !== sandboxName) {
+        throw new Error(
+          "Cannot record retained sandbox recovery for a different onboarding sandbox.",
+        );
+      }
+      const recordedAt = new Date().toISOString();
+      const sanitizedMessage = redactSensitiveText(message);
+      session.sandboxName = sandboxName;
+      session.resumable = false;
+      session.status = CANCELLATION_RECOVERY_STATUS;
+      session.cancellationRecovery = {
+        reason: "retained_after_sandbox_creation_failure",
+        sandboxName,
+        sandboxIdentityFingerprint: sandboxIdentityFingerprint ?? null,
+        recordedAt,
+      };
+      session.failure = {
+        step: session.lastStepStarted,
+        message: sanitizedMessage,
+        recordedAt,
+        interrupted: true,
+      };
+      const sandboxStep = session.steps.sandbox;
+      if (sandboxStep) sandboxStep.error = sanitizedMessage;
+      return session;
+    });
+    const reread = loadSession();
+    if (
+      reread?.sessionId !== saved.sessionId ||
+      reread.status !== CANCELLATION_RECOVERY_STATUS ||
+      reread.resumable !== false ||
+      reread.cancellationRecovery?.reason !== "retained_after_sandbox_creation_failure" ||
+      reread.cancellationRecovery.sandboxName !== sandboxName ||
+      reread.cancellationRecovery.sandboxIdentityFingerprint !==
+        (sandboxIdentityFingerprint ?? null)
+    ) {
+      throw new Error("Retained sandbox recovery did not survive durable readback.");
     }
-    const recordedAt = new Date().toISOString();
-    const sanitizedMessage = redactSensitiveText(message);
-    session.sandboxName = sandboxName;
-    session.resumable = false;
-    session.status = CANCELLATION_RECOVERY_STATUS;
-    session.cancellationRecovery = {
-      reason: "retained_after_sandbox_creation_failure",
-      sandboxName,
-      sandboxIdentityFingerprint: sandboxIdentityFingerprint ?? null,
-      recordedAt,
-    };
-    session.failure = {
-      step: session.lastStepStarted,
-      message: sanitizedMessage,
-      recordedAt,
-      interrupted: true,
-    };
-    const sandboxStep = session.steps.sandbox;
-    if (sandboxStep) sandboxStep.error = sanitizedMessage;
-    return session;
+    persistIndependentRetainedSandboxRecovery(
+      reread,
+      "retained_after_sandbox_creation_failure",
+      sandboxIdentityFingerprint ?? null,
+      context,
+    );
+    return reread;
   });
-  const reread = loadSession();
-  if (
-    reread?.sessionId !== saved.sessionId ||
-    reread.status !== CANCELLATION_RECOVERY_STATUS ||
-    reread.resumable !== false ||
-    reread.cancellationRecovery?.reason !== "retained_after_sandbox_creation_failure" ||
-    reread.cancellationRecovery.sandboxName !== sandboxName ||
-    reread.cancellationRecovery.sandboxIdentityFingerprint !== (sandboxIdentityFingerprint ?? null)
-  ) {
-    throw new Error("Retained sandbox recovery did not survive durable readback.");
-  }
-  persistIndependentRetainedSandboxRecovery(
-    reread,
-    "retained_after_sandbox_creation_failure",
-    sandboxIdentityFingerprint ?? null,
-    context,
-  );
-  return reread;
 }
 
 export type CompareAndSwapSessionResult = "updated" | "busy" | "mismatch";

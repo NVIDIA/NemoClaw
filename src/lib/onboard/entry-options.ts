@@ -67,6 +67,11 @@ type PersistedOnboardEntrySession = {
   readonly cancellationRecovery?: { readonly sandboxName: string } | null;
 };
 
+interface DefaultRunEntryState {
+  loadSession(): PersistedOnboardEntrySession | null;
+  listRetainedSandboxRecoveryRecords(): readonly { readonly sandboxName: string }[];
+}
+
 type NonInteractiveEntryOptions = { nonInteractive?: boolean };
 type ResumableEntryOptions = NonInteractiveEntryOptions & {
   resume?: boolean;
@@ -191,6 +196,21 @@ export function resolveDefaultRunEntryOptions(
     persistedSession?.cancellationRecovery?.sandboxName ?? null,
     persistedSession?.sandboxName ?? null,
     retainedRecoverySandboxNames,
+  );
+}
+
+export function resolveDefaultRunEntryOptionsFromState(
+  options: OnboardEntryOptionsInput["opts"] & { autoYes?: boolean; nonInteractive?: boolean },
+  validateSandboxName: OnboardEntryOptionsDeps["validateName"],
+  state: DefaultRunEntryState,
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  return resolveDefaultRunEntryOptions(
+    options,
+    state.loadSession(),
+    validateSandboxName,
+    env,
+    state.listRetainedSandboxRecoveryRecords().map((record) => record.sandboxName),
   );
 }
 

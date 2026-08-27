@@ -65,6 +65,13 @@ interface RetainedSandboxRecoveryState {
   readonly resolutions: readonly RetainedSandboxAdministratorResolutionReceipt[];
 }
 
+interface RetainedSandboxStateDirectory {
+  readonly ancestors: readonly { readonly path: string; readonly stat: fs.Stats }[];
+  readonly descriptor: number;
+  readonly path: string;
+  readonly stat: fs.Stats;
+}
+
 export interface RecordRetainedSandboxRecoveryInput {
   readonly sandboxName: string;
   readonly sandboxIdentityFingerprint: string | null;
@@ -83,15 +90,130 @@ const emptyState = (): RetainedSandboxRecoveryState => ({
   resolutions: [],
 });
 
+function sameFileIdentity(left: fs.Stats, right: fs.Stats): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function stateDirectoryAncestors(directory: string): string[] {
+  const home = path.resolve(process.env.HOME ?? path.dirname(directory));
+  const resolved = path.resolve(directory);
+  const relative = path.relative(home, resolved);
+  if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
+    return [resolved];
+  }
+  const ancestors: string[] = [];
+  let current = home;
+  for (const component of relative.split(path.sep).filter(Boolean)) {
+    current = path.join(current, component);
+    ancestors.push(current);
+  }
+  return ancestors;
+}
+
+function assertStateDirectoryComponent(candidate: string, stat: fs.Stats): void {
+  if (stat.isSymbolicLink()) {
+    throw new Error(
+      `Retained sandbox recovery state directory cannot be a symbolic link: ${candidate}`,
+    );
+  }
+  if (!stat.isDirectory()) {
+    throw new Error(`Retained sandbox recovery state directory is not a directory: ${candidate}`);
+  }
+}
+
+function openStateDirectory(
+  filePath: string,
+  create: boolean,
+): RetainedSandboxStateDirectory | null {
+  const directory = path.dirname(filePath);
+  const ancestorPaths = stateDirectoryAncestors(directory);
+  for (const candidate of ancestorPaths) {
+    try {
+      assertStateDirectoryComponent(candidate, fs.lstatSync(candidate));
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        (error as NodeJS.ErrnoException).code === "ENOENT"
+      ) {
+        continue;
+      }
+      throw error;
+    }
+  }
+  if (create) fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+
+  const ancestors: Array<{ path: string; stat: fs.Stats }> = [];
+  try {
+    for (const candidate of ancestorPaths) {
+      const stat = fs.lstatSync(candidate);
+      assertStateDirectoryComponent(candidate, stat);
+      ancestors.push({ path: candidate, stat });
+    }
+  } catch (error) {
+    if (
+      !create &&
+      error instanceof Error &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      return null;
+    }
+    throw error;
+  }
+
+  const flags =
+    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_DIRECTORY ?? 0);
+  const descriptor = fs.openSync(directory, flags);
+  try {
+    const descriptorStat = fs.fstatSync(descriptor);
+    const pathStat = fs.lstatSync(directory);
+    assertStateDirectoryComponent(directory, descriptorStat);
+    assertStateDirectoryComponent(directory, pathStat);
+    if (!sameFileIdentity(descriptorStat, pathStat)) {
+      throw new Error("Retained sandbox recovery state directory changed during validation.");
+    }
+    return { ancestors, descriptor, path: directory, stat: descriptorStat };
+  } catch (error) {
+    fs.closeSync(descriptor);
+    throw error;
+  }
+}
+
+function revalidateStateDirectory(directory: RetainedSandboxStateDirectory): void {
+  for (const ancestor of directory.ancestors) {
+    const current = fs.lstatSync(ancestor.path);
+    assertStateDirectoryComponent(ancestor.path, current);
+    if (!sameFileIdentity(ancestor.stat, current)) {
+      throw new Error("Retained sandbox recovery state directory changed during validation.");
+    }
+  }
+  const descriptorStat = fs.fstatSync(directory.descriptor);
+  const pathStat = fs.lstatSync(directory.path);
+  assertStateDirectoryComponent(directory.path, descriptorStat);
+  assertStateDirectoryComponent(directory.path, pathStat);
+  if (
+    !sameFileIdentity(directory.stat, descriptorStat) ||
+    !sameFileIdentity(directory.stat, pathStat)
+  ) {
+    throw new Error("Retained sandbox recovery state directory changed during validation.");
+  }
+}
+
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function readStateFile(filePath: string): unknown {
+  const directory = openStateDirectory(filePath, false);
+  if (directory === null) return emptyState();
   try {
+    revalidateStateDirectory(directory);
     const file = openRegularFileNoFollow(filePath);
     try {
-      return JSON.parse(file.readUtf8());
+      const value = JSON.parse(file.readUtf8());
+      revalidateStateDirectory(directory);
+      return value;
     } finally {
       file.close();
     }
@@ -112,13 +234,15 @@ function readStateFile(filePath: string): unknown {
       throw new Error("Retained sandbox recovery state cannot be a symbolic link.");
     }
     throw error;
+  } finally {
+    fs.closeSync(directory.descriptor);
   }
 }
 
 function writeStateFile(filePath: string, state: RetainedSandboxRecoveryState): void {
-  const directory = path.dirname(filePath);
-  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const directory = openStateDirectory(filePath, true)!;
   try {
+    revalidateStateDirectory(directory);
     if (fs.lstatSync(filePath).isSymbolicLink()) {
       throw new Error("Retained sandbox recovery state cannot be a symbolic link.");
     }
@@ -130,30 +254,64 @@ function writeStateFile(filePath: string, state: RetainedSandboxRecoveryState): 
         (error as NodeJS.ErrnoException).code === "ENOENT"
       )
     ) {
+      fs.closeSync(directory.descriptor);
       throw error;
     }
   }
   const temporary = path.join(
-    directory,
+    directory.path,
     `.retained-sandbox-recovery.${String(process.pid)}.${randomUUID()}.tmp`,
   );
+  let descriptor: number | null = null;
+  let temporaryStat: fs.Stats | null = null;
   try {
-    fs.writeFileSync(temporary, JSON.stringify(state, null, 2), { mode: 0o600 });
-    const descriptor = fs.openSync(temporary, "r");
-    try {
-      fs.fsyncSync(descriptor);
-    } finally {
-      fs.closeSync(descriptor);
+    descriptor = fs.openSync(
+      temporary,
+      fs.constants.O_WRONLY |
+        fs.constants.O_CREAT |
+        fs.constants.O_EXCL |
+        (fs.constants.O_NOFOLLOW ?? 0),
+      0o600,
+    );
+    fs.writeFileSync(descriptor, JSON.stringify(state, null, 2));
+    fs.fchmodSync(descriptor, 0o600);
+    fs.fsyncSync(descriptor);
+    const descriptorStat = fs.fstatSync(descriptor);
+    temporaryStat = descriptorStat;
+    const pathStat = fs.lstatSync(temporary);
+    if (
+      !descriptorStat.isFile() ||
+      descriptorStat.nlink !== 1 ||
+      pathStat.isSymbolicLink() ||
+      !pathStat.isFile() ||
+      pathStat.nlink !== 1 ||
+      !sameFileIdentity(descriptorStat, pathStat)
+    ) {
+      throw new Error("Retained sandbox recovery temporary state changed during validation.");
     }
+    fs.closeSync(descriptor);
+    descriptor = null;
+    revalidateStateDirectory(directory);
     fs.renameSync(temporary, filePath);
-    const directoryDescriptor = fs.openSync(directory, fs.constants.O_RDONLY);
-    try {
-      fs.fsyncSync(directoryDescriptor);
-    } finally {
-      fs.closeSync(directoryDescriptor);
-    }
+    revalidateStateDirectory(directory);
+    fs.fsyncSync(directory.descriptor);
   } finally {
-    fs.rmSync(temporary, { force: true });
+    if (descriptor !== null) fs.closeSync(descriptor);
+    try {
+      revalidateStateDirectory(directory);
+      const pathStat = fs.lstatSync(temporary);
+      if (
+        temporaryStat !== null &&
+        pathStat.isFile() &&
+        pathStat.nlink === 1 &&
+        sameFileIdentity(temporaryStat, pathStat)
+      ) {
+        fs.unlinkSync(temporary);
+      }
+    } catch {
+      // Preserve the original result. Ambiguous paths are left untouched.
+    }
+    fs.closeSync(directory.descriptor);
   }
 }
 
