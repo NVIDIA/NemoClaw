@@ -268,6 +268,7 @@ describe("policy channel remove/enable flows", () => {
       "        port: 443",
       "        protocol: rest",
       "        enforcement: enforce",
+      // An already-matching live policy carries the materialized provider.
       "        credential_binding:",
       "          provider: alpha-telegram-bridge",
       "        rules:",

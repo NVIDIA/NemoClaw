@@ -159,6 +159,13 @@ beforeEach(() => {
     .spyOn(policyChannelDependencies, "stopGooglechatWebhookTunnel")
     .mockImplementation(() => undefined);
 
+  // Onboarding polls `provider refresh status` before creating the sandbox.
+  // Status-table columns: PROVIDER, CREDENTIAL_KEY, STRATEGY, STATUS.
+  const refreshStatusTable = (args: readonly string[]): string =>
+    `${args[3] ?? ""}  ${args[5] ?? ""}  google-service-account-jwt  refreshed\n`;
+  const isRefreshStatus = (args: readonly string[]): boolean =>
+    args[0] === "provider" && args[1] === "refresh" && args[2] === "status";
+
   runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockImplementation((args) => {
     const missingProvider = args[0] === "provider" && args[1] === "get";
     const providerName = args[2] ?? "unknown";
@@ -166,7 +173,7 @@ beforeEach(() => {
     return {
       pid: 0,
       output: [null, "", stderr],
-      stdout: "",
+      stdout: isRefreshStatus(args) ? refreshStatusTable(args) : "",
       stderr,
       status: missingProvider ? 1 : 0,
       signal: null,

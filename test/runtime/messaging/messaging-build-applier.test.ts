@@ -1272,7 +1272,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
         'if (args[0] !== "doctor" || args[1] !== "--fix" || args[2] !== "--non-interactive") process.exit(46);',
         'const configPath = path.join(process.env.HOME, ".openclaw", "openclaw.json");',
         'const config = JSON.parse(fs.readFileSync(configPath, "utf8"));',
-        'if (config.channels?.telegram?.accounts?.default?.botToken !== "openshell:resolve:env:TELEGRAM_BOT_TOKEN") process.exit(40);',
+        'if (config.channels?.telegram?.accounts?.default?.botToken !== undefined) process.exit(40);',
         "if (config.channels?.discord?.enabled !== true) process.exit(41);",
         "if (config.plugins?.entries?.discord?.enabled !== true) process.exit(42);",
         "if (config.plugins?.entries?.slack?.enabled !== true) process.exit(43);",
@@ -1327,9 +1327,9 @@ describe("messaging-build-applier.mts: agent-install", () => {
         fs.readFileSync(path.join(tmp, ".openclaw", "openclaw.json"), "utf-8"),
       );
       expect(managedConfig.channels?.telegram?.accounts?.default).toMatchObject({
-        botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
         enabled: true,
       });
+      expect(managedConfig.channels?.telegram?.accounts?.default?.botToken).toBeUndefined();
       expect(managedConfig.channels?.discord?.enabled).toBe(true);
       expect(managedConfig.plugins?.entries?.discord).toEqual({ enabled: true });
       expect(managedConfig.channels?.slack?.enabled).toBe(true);
@@ -1437,7 +1437,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       expect(configYaml).toContain("enabled: true");
       const envFile = fs.readFileSync(path.join(hermesDir, ".env"), "utf-8");
       expect(envFile).toContain("API_SERVER_PORT=18642\n");
-      expect(envFile).toContain("TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN\n");
+      expect(envFile).not.toContain("TELEGRAM_BOT_TOKEN=");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
