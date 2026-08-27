@@ -46,6 +46,14 @@ describe("fresh create identity", () => {
       expectedOutcome: "providerless-apf" as const,
     },
     {
+      title: "surfaces retained sandbox recovery through the public error message (#9833)",
+      apfInterceptorRequested: true,
+      provider: null,
+      model: null,
+      agent: null,
+      expectedOutcome: "post-create-authority-refusal" as const,
+    },
+    {
       title: "rejects staged messaging intent before any onboarding side effect (#9833)",
       apfInterceptorRequested: true,
       provider: null,
@@ -128,6 +136,9 @@ const model = ${JSON.stringify(model)};
 const provider = ${JSON.stringify(provider)};
 const cancelAfterCreate = ${JSON.stringify(expectedOutcome === "cancel-after-create")};
 const stagedMessagingRefusal = ${JSON.stringify(expectedOutcome === "staged-messaging-refusal")};
+const postCreateAuthorityRefusal = ${JSON.stringify(
+        expectedOutcome === "post-create-authority-refusal",
+      )};
 let cancelPrompt = false;
 const originalGetCredential = credentials.getCredential;
 if (stagedMessagingRefusal) {
@@ -193,6 +204,9 @@ runner.run = (command, opts = {}) => {
 	  model,
 	  apfInterceptorRequested,
 	  onVerifyCreatedPolicy: (input) => {
+	    if (postCreateAuthorityRefusal) {
+	      throw new Error("external policy authority changed");
+	    }
 	    effectivePolicy = require(${policyMergePath}).parseOpenShellPolicy(
 	      fs.readFileSync(input.policySourcePath, "utf8"),
 	    ).policy;
@@ -444,6 +458,23 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
         assert.doesNotMatch(payload.createCommand, /(?:^|\s)--provider(?:\s|$)/u);
         assert.deepEqual(providerExposureCommands, []);
       };
+      const assertPostCreateAuthorityRefusal = () => {
+        const identityFingerprint = createHash("sha256").update("sbx-fresh-create").digest("hex");
+        assert.equal(payload.sandboxName, null);
+        assert.equal(payload.sandboxCreated, true);
+        assert.equal(payload.deleted, false);
+        assert.match(payload.creationError, /left sandbox 'my-assistant' in place/u);
+        assert.match(payload.creationError, new RegExp(identityFingerprint, "u"));
+        assert.match(
+          payload.creationError,
+          /did not run OpenShell's mutable-name deletion command because the name may now identify a replacement sandbox/u,
+        );
+        assert.match(payload.creationError, /Do not delete the sandbox by mutable sandbox name/u);
+        assert.match(
+          payload.creationError,
+          /Ask the OpenShell administrator.*identity-bound recovery or removal procedure/u,
+        );
+      };
       const assertCancellationRecovery = () => {
         const identityFingerprint = createHash("sha256").update("sbx-fresh-create").digest("hex");
         assert.equal(payload.exitCode, 1);
@@ -469,6 +500,7 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
         "managed-provider": assertManagedProviderCreation,
         "provider-refusal": assertProviderBackedApfRefusal,
         "providerless-apf": assertProviderlessApfCreation,
+        "post-create-authority-refusal": assertPostCreateAuthorityRefusal,
         "staged-messaging-refusal": assertStagedMessagingRefusal,
         "cancel-after-create": assertCancellationRecovery,
       };

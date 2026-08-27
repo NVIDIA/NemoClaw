@@ -446,12 +446,18 @@ describe("sandbox create policy authority checks", () => {
     }).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(AggregateError);
+    expect((error as AggregateError).message).toMatch(
+      new RegExp(
+        `left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*did not run OpenShell's mutable-name deletion command.*Do not delete the sandbox by mutable sandbox name.*OpenShell administrator.*identity-bound recovery or removal procedure`,
+        "u",
+      ),
+    );
     expect((error as AggregateError).errors).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           message: expect.stringMatching(
             new RegExp(
-              `left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*Do not delete the sandbox by name, even after this comparison.*Contact the OpenShell administrator for an identity-bound recovery or removal procedure`,
+              `left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*did not run OpenShell's mutable-name deletion command.*Do not delete the sandbox by mutable sandbox name.*OpenShell administrator.*identity-bound recovery or removal procedure`,
               "u",
             ),
           ),
@@ -489,7 +495,7 @@ describe("sandbox create policy authority checks", () => {
         expect.objectContaining({
           message: expect.stringMatching(
             new RegExp(
-              `left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*Do not delete the sandbox by name, even after this comparison`,
+              `left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*Do not delete the sandbox by mutable sandbox name`,
               "u",
             ),
           ),
@@ -804,6 +810,9 @@ describe("sandbox create policy authority checks", () => {
     }).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(AggregateError);
+    expect((error as AggregateError).message).toMatch(
+      /left sandbox 'alpha' in place.*did not return a durable sandbox identity fingerprint.*Do not delete the sandbox by mutable sandbox name.*identity-bound recovery or removal procedure/u,
+    );
     expect((error as AggregateError).errors).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ message: expect.stringContaining("post-create verification") }),
