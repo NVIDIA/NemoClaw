@@ -451,6 +451,9 @@ export function createCreatedSandboxCompletionActions(
             assertVerifiedCreateMatchesPolicyBoundary(verifiedPolicyBoundary, verifiedCreate);
             return (deps.registerCreatedSandbox ?? registerCreatedSandbox)({
               ...options.registration,
+              inferenceSelection:
+                inferenceRouteReservation?.authority.selection ??
+                options.registration.inferenceSelection,
               runtimeFields: {
                 ...options.registration.runtimeFields,
                 sandboxGpuProof:

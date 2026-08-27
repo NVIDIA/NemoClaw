@@ -1177,6 +1177,8 @@ class SandboxStateFlow<
     state: SandboxStepState<WebSearchConfig>,
     sandboxName: string,
   ): void {
+    const entry = this.deps.getSandboxRegistryEntry(sandboxName);
+    if (entry?.pendingRouteReservation !== true) return;
     const sessionId = state.session?.sessionId;
     if (sessionId && this.deps.finalizeSandboxRouteReservation(sandboxName, sessionId)) return;
     this.deps.error(

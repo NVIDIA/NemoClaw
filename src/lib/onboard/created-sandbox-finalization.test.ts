@@ -9,6 +9,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { SandboxEntry } from "../state/registry";
+import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
 import * as sandboxState from "../state/sandbox";
 import {
   createCreatedSandboxCompletionActions,
@@ -1144,6 +1145,25 @@ describe("created sandbox completion actions", () => {
             container: { imageId: "hermes:test" },
           } as unknown as HermesPortableConfiguredReceipt)
         : null;
+      const inferenceRouteReservation = {
+        authority: {
+          sandboxName: "hermes",
+          gatewayName: "nemoclaw",
+          sessionId: "session-1",
+          selection: {
+            provider: "ollama",
+            model: "qwen3-vl:4b",
+            endpointUrl: "http://host.openshell.internal:11436/v1",
+            endpointSource: "onboard" as const,
+            credentialEnv: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN",
+            preferredInferenceApi: "openai-completions",
+            compatibleEndpointReasoning: null,
+            compatibleEndpointReasoningEffort: null,
+            nimContainer: null,
+          },
+        },
+        entry: { name: "hermes" },
+      } satisfies QualifiedSandboxInferenceRouteReservation;
 
       await completion.complete(
         schema5 ? null : created,
@@ -1152,6 +1172,7 @@ describe("created sandbox completion actions", () => {
         manageDashboard,
         () => ({ lifecycleGeneration: "generation-1" }),
         lifecycle,
+        inferenceRouteReservation,
       );
 
       expect(order).toEqual([
@@ -1176,6 +1197,8 @@ describe("created sandbox completion actions", () => {
           policyCreationReceipt: expect.objectContaining({
             policyHash: "sha256:effective",
           }),
+          inferenceSelection: inferenceRouteReservation.authority.selection,
+          inferenceRouteReservation,
           verifiedCreate,
           runtimeFields: expect.objectContaining({ sandboxGpuProof: gpuProof }),
         }),
