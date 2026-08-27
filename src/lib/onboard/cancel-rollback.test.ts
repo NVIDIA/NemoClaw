@@ -156,6 +156,31 @@ describe("installSandboxCancelRollback", () => {
     expect(log.mock.calls.flat().join("\n")).toContain(SANDBOX_FINGERPRINT);
   });
 
+  it("retries recovery from the exit handler after the immediate durable write fails (#9833)", () => {
+    const log = vi.fn();
+    const recordRecovery = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw new Error("recovery write failed");
+      })
+      .mockImplementationOnce(() => undefined);
+    const exitHandlers: Array<() => void> = [];
+    const rollback = installSandboxCancelRollback({
+      log,
+      recordRecovery,
+      registerExitHandler: (handler) => exitHandlers.push(handler),
+    });
+
+    rollback.arm("new-sb", SANDBOX_FINGERPRINT);
+    expect(() => rollback.markCancelled()).toThrow("recovery write failed");
+    expect(recordRecovery).toHaveBeenCalledOnce();
+
+    exitHandlers[0]();
+    expect(recordRecovery).toHaveBeenCalledTimes(2);
+    expect(recordRecovery).toHaveBeenLastCalledWith("new-sb", SANDBOX_FINGERPRINT);
+    expect(log.mock.calls.flat().join("\n")).toContain(SANDBOX_FINGERPRINT);
+  });
+
   it("preserves missing-checkpoint recovery state without a mutable-name fallback (#9833)", () => {
     const log = vi.fn();
     const exitHandlers: Array<() => void> = [];

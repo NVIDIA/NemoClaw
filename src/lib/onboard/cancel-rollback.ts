@@ -126,8 +126,8 @@ export function createSandboxCancelRollback(
 
   const recordArmedRecovery = (): void => {
     if (recoveryRecorded || armedSandbox === null) return;
-    recoveryRecorded = true;
     deps.recordRecovery?.(armedSandbox.name, armedSandbox.identityFingerprint ?? undefined);
+    recoveryRecorded = true;
   };
 
   return {
@@ -156,9 +156,9 @@ export function createSandboxCancelRollback(
     },
     runIfArmed(): void {
       if (done || !cancelRequested || armedSandbox === null) return;
-      done = true;
       const { name: sandboxName, identityFingerprint } = armedSandbox;
       recordArmedRecovery();
+      done = true;
       armedSandbox = null;
       for (const line of buildCancelRollbackMessage(
         sandboxName,
