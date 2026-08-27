@@ -73,9 +73,10 @@ export default async function monitor_nemoclaw_e2e_run_group(input: {
       throw new Error("GitHub E2E run monitoring returned an invalid bounded response");
     }
   };
-  const sleep = () => new Promise((resolve) => setTimeout(resolve, intervalMs));
   const deadline = Date.now() + timeoutMs;
-  let polls = 0;
+  let polls = 0,
+    currentInterval = intervalMs,
+    lastFingerprint = null;
   let selected = [];
   let reason = null;
   while (true) {
@@ -107,7 +108,21 @@ export default async function monitor_nemoclaw_e2e_run_group(input: {
       reason = selected.some((run) => run.missing) ? "run-not-in-bounded-list" : "timeout";
       break;
     }
-    await sleep();
+    const fingerprint = JSON.stringify(
+      selected.map((run) => [
+        run.databaseId,
+        Boolean(run.missing),
+        run.headSha ?? null,
+        run.status ?? null,
+        run.conclusion ?? null,
+      ]),
+    );
+    if (lastFingerprint === null || fingerprint !== lastFingerprint) currentInterval = intervalMs;
+    else currentInterval = Math.min(Math.max(60000, intervalMs), currentInterval * 2);
+    lastFingerprint = fingerprint;
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(currentInterval, remainingMs)));
   }
   const jobSummaries = [];
   if (input.includeJobs !== false) {

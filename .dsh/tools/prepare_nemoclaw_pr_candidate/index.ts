@@ -9,10 +9,13 @@ export default async function prepare_nemoclaw_pr_candidate(input: {
   refreshBase?: boolean;
   apply?: boolean;
   body?: {
-    summary: string;
+    outcome: string;
+    reason: string;
     changes: string[];
-    relatedIssue?: { number: Integer; keyword: "Fixes" | "Closes" };
-    typeOfChange: "code" | "code-with-docs" | "docs-prose" | "docs-code-samples";
+    relatedIssues?: {
+      number: Integer;
+      keyword: "Fixes" | "Closes" | "Resolves" | "Refs" | "Relates to" | "Part of";
+    }[];
     tests: {
       result: "added-or-updated" | "existing" | "not-applicable";
       evidence?: string;
@@ -23,7 +26,13 @@ export default async function prepare_nemoclaw_pr_candidate(input: {
     hooks: { passed: boolean; evidence?: string };
     broadGate?: { passed: boolean; evidence: string };
     docs?: { buildPassed?: boolean; styleReviewed?: boolean; newPagesValidated?: boolean };
-    dgxStation?: { testedCommit: string; scenario: string; result: string; evidenceUrl: string };
+    dgxStation?: {
+      testedCommit: string;
+      scenario: string;
+      result: string;
+      evidenceUrl: string;
+      exceptionReason?: string;
+    };
     dco: { commitsVerified: boolean; name: string; email: string };
     noSecrets: boolean;
   };
@@ -94,8 +103,8 @@ export default async function prepare_nemoclaw_pr_candidate(input: {
       workdir: input.workdir,
       baseRef: (input.remote ?? "origin") + "/" + (input.baseBranch ?? "main"),
     });
-    blockers.push(...rendered.blockers);
-    warnings.push(...rendered.warnings);
+    blockers.push(...rendered.blockers.map((message) => ({ code: "pr-body-evidence", message })));
+    warnings.push(...rendered.warnings.map((message) => ({ code: "pr-body-warning", message })));
   } else
     warnings.push({
       code: "body-input-required",

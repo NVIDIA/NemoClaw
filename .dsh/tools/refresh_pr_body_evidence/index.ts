@@ -186,52 +186,49 @@ export default async function refresh_pr_body_evidence(input: {
   }
   const renderBody = (initialBody) => {
     let body = initialBody;
-    if (input.docsReceipt) {
-      const replacement =
-        "- [x] Documentation writer subagent reviewed the completed changes\n- Result: \x60" +
-        input.docsReceipt.result +
-        "\x60\n- Evidence: " +
-        input.docsReceipt.evidence.trim() +
-        "\n- Agent: " +
-        input.docsReceipt.agent.trim() +
-        "\n<!-- docs-review-head-sha: " +
-        localHead +
-        " -->\n<!-- docs-review-agents-blob-sha: " +
-        agentsBlob +
-        " -->";
-      const pattern =
-        /- \[[ xX]\] Documentation writer subagent reviewed the completed changes\n- Result: `[^`]+`\n- Evidence: [^\n]*\n- Agent: [^\n]*\n<!-- docs-review-head-sha: [^>]+ -->\n<!-- docs-review-agents-blob-sha: [^>]+ -->/;
-      if (pattern.test(body)) body = body.replace(pattern, replacement);
-      else {
-        const anchor = /\n## Verification\n/u;
-        if (!anchor.test(body)) throw new Error("Could not find Verification section");
-        body = body.replace(
-          anchor,
-          "\n## Documentation Writer Review\n\n" + replacement + "\n\n## Verification\n",
-        );
+    if (!/(^|\n)## Verification\n/u.test(body))
+      throw new Error("Could not find Verification section");
+    const upsertVerification = (key, lines) => {
+      const startMarker = "<!-- nemoclaw-" + key + ":start -->";
+      const endMarker = "<!-- nemoclaw-" + key + ":end -->";
+      const block = startMarker + "\n" + lines.join("\n") + "\n" + endMarker;
+      const pattern = new RegExp(
+        "<!-- nemoclaw-" + key + ":start -->[\\s\\S]*?<!-- nemoclaw-" + key + ":end -->",
+        "gu",
+      );
+      const complete = [...body.matchAll(pattern)];
+      const starts = body.split(startMarker).length - 1;
+      const ends = body.split(endMarker).length - 1;
+      if (starts !== ends || starts > 1 || complete.length !== starts)
+        throw new Error("PR body contains invalid or duplicate " + key + " evidence markers");
+      if (complete.length === 1) {
+        body = body.replace(pattern, block);
+        return;
       }
-    }
-    if (input.targetedValidationLine) {
-      const pattern =
-        /- \[[ xX]\] Targeted behavior tests pass for the current change set, or tests are marked not applicable above — [^\n]*/;
-      if (!pattern.test(body)) throw new Error("Could not find targeted validation line");
-      body = body.replace(
-        pattern,
-        "- [x] Targeted behavior tests pass for the current change set, or tests are marked not applicable above — " +
-          input.targetedValidationLine.trim(),
-      );
-    }
-    if (input.broadGate) {
-      const pattern = /- \[[ xX]\] Applicable broad gate passed[^\n]*/;
-      if (!pattern.test(body)) throw new Error("Could not find broad gate line");
-      body = body.replace(
-        pattern,
-        "- [" +
-          (input.broadGate.passed ? "x" : " ") +
-          "] Applicable broad gate passed — " +
+      const reviewNotes = body.indexOf("\n## Review notes");
+      const divider = body.indexOf("\n---");
+      const insertion = reviewNotes >= 0 ? reviewNotes : divider;
+      if (insertion < 0) throw new Error("Could not find the end of Verification section");
+      body = body.slice(0, insertion).trimEnd() + "\n" + block + "\n" + body.slice(insertion);
+    };
+    if (input.docsReceipt)
+      upsertVerification("docs-review", [
+        "- Documentation review: `" + input.docsReceipt.result + "`",
+        "- Documentation evidence: " + input.docsReceipt.evidence.trim(),
+        "- Documentation agent: " + input.docsReceipt.agent.trim(),
+        "<!-- docs-review-head-sha: " + localHead + " -->",
+        "<!-- docs-review-agents-blob-sha: " + agentsBlob + " -->",
+      ]);
+    if (input.targetedValidationLine)
+      upsertVerification("targeted-validation", [
+        "- Targeted validation: " + input.targetedValidationLine.trim(),
+      ]);
+    if (input.broadGate)
+      upsertVerification("broad-gate", [
+        "- Broad gate: " +
+          (input.broadGate.passed ? "passed — " : "not run — ") +
           input.broadGate.evidence.trim(),
-      );
-    }
+      ]);
     return body;
   };
   const previewBody = renderBody(String(pr.body ?? ""));
@@ -266,6 +263,22 @@ export default async function refresh_pr_body_evidence(input: {
       "PR " + input.number + " commit changed to " + finalPr.headSha + "; expected " + localHead,
     );
   const body = renderBody(String(finalPr.body ?? ""));
+  if (body === finalPr.body)
+    return {
+      ok: true,
+      apply: true,
+      mutated: false,
+      wouldUpdate: false,
+      number: input.number,
+      repo,
+      prState: finalPr.state,
+      headSha: localHead,
+      agentsBlob,
+      bodyChanged: false,
+      polls,
+      waitedMs,
+      updatedAt: finalPr.updatedAt,
+    };
   const temporary = await run("umask 077; mktemp", "Create pull request body file");
   if (!temporary.startsWith("/") || /[\r\n\0]/.test(temporary))
     throw new Error("Could not create a safe pull request body file");

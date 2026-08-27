@@ -68,7 +68,6 @@ export default async function wait_for_nemoclaw_pr_check(input: {
       app: cut(check.app?.slug || check.app?.name, 500),
     };
   };
-  const sleep = () => new Promise((resolve) => setTimeout(resolve, intervalMs));
   const initial = await readHead();
   const headSha = String(initial?.headRefOid || "");
   if (!/^[0-9a-f]{40}$/.test(headSha))
@@ -85,7 +84,9 @@ export default async function wait_for_nemoclaw_pr_check(input: {
     name,
   };
   const deadline = Date.now() + timeoutMs;
-  let last = null;
+  let last = null,
+    currentInterval = intervalMs,
+    lastFingerprint = null;
   while (Date.now() <= deadline) {
     const current = await readHead();
     const currentHeadSha = String(current?.headRefOid || "");
@@ -125,7 +126,18 @@ export default async function wait_for_nemoclaw_pr_check(input: {
         check: checkView(last),
       };
     }
-    await sleep();
+    const fingerprint = JSON.stringify([
+      currentHeadSha,
+      Number.isInteger(last?.id) ? last.id : null,
+      last?.status ?? null,
+      last?.conclusion ?? null,
+    ]);
+    if (lastFingerprint === null || fingerprint !== lastFingerprint) currentInterval = intervalMs;
+    else currentInterval = Math.min(Math.max(60000, intervalMs), currentInterval * 2);
+    lastFingerprint = fingerprint;
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(currentInterval, remainingMs)));
   }
   return {
     done: false,
