@@ -23,39 +23,25 @@ describe("auto-pair approval pass behaviour (#4616)", () => {
   pyIt25s("approves only one exact local clone pairing transition on a shared gateway", () => {
     const policy = readAutoPairApprovalPolicyModule();
     expect(policy).toBeTruthy();
-    const productionScript = buildAutoPairApprovalScript(
-      Buffer.from(policy as string, "utf-8").toString("base64"),
-      {
-        emitSummary: true,
-        emitReceipt: true,
-        localDeviceOnly: true,
-        budget: { maxApprovals: 1 },
+    const policyB64 = Buffer.from(policy as string, "utf-8").toString("base64");
+    const script = buildAutoPairApprovalScript(policyB64, {
+      emitSummary: true,
+      emitReceipt: true,
+      localDeviceOnly: true,
+      budget: { maxApprovals: 1, pendingReadPollS: 0.001 },
+    });
+    const timeoutScript = buildAutoPairApprovalScript(policyB64, {
+      emitSummary: true,
+      emitReceipt: true,
+      localDeviceOnly: true,
+      budget: {
+        maxApprovals: 1,
+        approveTimeoutS: 0.25,
+        pendingReadPollS: 0.001,
+        postTimeoutObserveS: 0.02,
+        postTimeoutPollS: 0.001,
       },
-    );
-    const script = productionScript.replace("PENDING_READ_POLL_S = 0.1", "PENDING_READ_POLL_S = 0.001");
-    expect(script).not.toBe(productionScript);
-    const productionTimeoutScript = buildAutoPairApprovalScript(
-      Buffer.from(policy as string, "utf-8").toString("base64"),
-      {
-        emitSummary: true,
-        emitReceipt: true,
-        localDeviceOnly: true,
-        budget: { maxApprovals: 1, approveTimeoutS: 0.25 },
-      },
-    );
-    const timeoutScript = productionTimeoutScript
-      .replace("PENDING_READ_POLL_S = 0.1", "PENDING_READ_POLL_S = 0.001")
-      .replace(
-        "observe_deadline = time.monotonic() + 4",
-        "observe_deadline = time.monotonic() + 0.02",
-      )
-      .replace(
-        "time.sleep(min(0.1, remaining_observe_time))",
-        "time.sleep(min(0.001, remaining_observe_time))",
-      );
-    expect(timeoutScript).toContain("PENDING_READ_POLL_S = 0.001");
-    expect(timeoutScript).toContain("observe_deadline = time.monotonic() + 0.02");
-    expect(timeoutScript).toContain("time.sleep(min(0.001, remaining_observe_time))");
+    });
     const tmpDir = fs.realpathSync(
       fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-restored-clone-pair-")),
     );
