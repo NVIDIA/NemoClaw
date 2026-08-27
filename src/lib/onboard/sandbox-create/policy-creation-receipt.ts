@@ -365,7 +365,6 @@ type CreatedSandboxPolicyRevalidationInput = Omit<
 function revalidateCreatedSandboxPolicyRegistrationInternal(
   input: CreatedSandboxPolicyRevalidationInput,
   deps: CreatedSandboxPolicyReceiptDeps,
-  allowManagedReceiptRefresh: boolean,
 ): VerifiedSandboxPolicyRegistration {
   assertOpenShellGatewayPortBinding({
     gatewayName: input.gatewayName,
@@ -395,22 +394,6 @@ function revalidateCreatedSandboxPolicyRegistrationInternal(
         policyVersion: before.policyIdentity.activeVersion,
       });
     } catch (error) {
-      if (allowManagedReceiptRefresh) {
-        return verifyCreatedSandboxPolicyRegistration(
-          {
-            sandboxName: input.sandboxName,
-            gatewayName: input.gatewayName,
-            gatewayPort: input.gatewayPort,
-            lifecycleGeneration: input.lifecycleGeneration,
-            lifecycleLiveIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
-            policySourcePath: input.policySourcePath,
-            route: input.route,
-            operation: input.operation,
-            plannedAuthority: "nemoclaw-managed",
-          },
-          deps,
-        );
-      }
       throw new PolicyAuthorityRefusalError(
         `Refusing to ${input.operation}: the NemoClaw policy creation receipt no longer matches the live sandbox policy.`,
         "owner-unknown",
@@ -447,13 +430,5 @@ export function revalidateCreatedSandboxPolicyRegistration(
   input: CreatedSandboxPolicyRevalidationInput,
   deps: CreatedSandboxPolicyReceiptDeps = {},
 ): VerifiedSandboxPolicyRegistration {
-  return revalidateCreatedSandboxPolicyRegistrationInternal(input, deps, false);
-}
-
-/** Rebind one in-progress verified create transaction to its exact stable live policy. */
-export function refreshVerifiedCreatePolicyRegistration(
-  input: CreatedSandboxPolicyRevalidationInput,
-  deps: CreatedSandboxPolicyReceiptDeps = {},
-): VerifiedSandboxPolicyRegistration {
-  return revalidateCreatedSandboxPolicyRegistrationInternal(input, deps, true);
+  return revalidateCreatedSandboxPolicyRegistrationInternal(input, deps);
 }

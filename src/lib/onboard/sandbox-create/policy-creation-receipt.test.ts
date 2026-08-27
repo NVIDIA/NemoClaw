@@ -7,7 +7,6 @@ import * as openshellRuntimeModule from "../../adapters/openshell/runtime";
 import {
   type CreatedSandboxPolicyReceiptDeps,
   pendingSandboxPolicyVerificationForBoundary,
-  refreshVerifiedCreatePolicyRegistration,
   revalidateCreatedSandboxPolicyRegistration,
   verifiedSandboxPolicyBoundaryFromPendingCheckpoint,
   verifyCreatedApfInterceptorPolicyRegistration,
@@ -511,36 +510,26 @@ describe("created sandbox policy receipt", () => {
     ).toBe(registration);
   });
 
-  it("refreshes a managed receipt only inside its verified create transaction (#9833)", () => {
+  it("does not expose receipt refresh through the registration revalidation API (#9833)", () => {
     const replacementMetadata = metadata({
       hash: "sha256:replacement",
       active_version: 5,
     });
     vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
       .mockReturnValueOnce(gatewayInfo())
-      .mockReturnValueOnce(replacementMetadata)
-      .mockReturnValueOnce(gatewayInfo())
-      .mockReturnValueOnce(replacementMetadata)
-      .mockReturnValueOnce({ status: 0, output: POLICY, stdout: POLICY, stderr: "" })
       .mockReturnValueOnce(replacementMetadata);
 
-    expect(
-      refreshVerifiedCreatePolicyRegistration(
+    expect(() =>
+      revalidateCreatedSandboxPolicyRegistration(
         {
           ...INPUT,
+          route: "native",
           operation: "continue verified sandbox creation",
           registration: MANAGED_REGISTRATION,
         },
         readyReadOnlyPolicyDeps(),
       ),
-    ).toEqual({
-      ...MANAGED_REGISTRATION,
-      policyCreationReceipt: {
-        ...MANAGED_REGISTRATION.policyCreationReceipt,
-        policyHash: "sha256:replacement",
-        policyVersion: 5,
-      },
-    });
+    ).toThrow(/creation receipt no longer matches/u);
   });
 
   it("does not refresh a managed receipt outside its verified create transaction (#9833)", () => {
