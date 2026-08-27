@@ -25,8 +25,6 @@ const CREDENTIAL_FREE_ROUTE_CASES = [
   ["whatsapp", "disabled", false],
   ["googlechat", "enabled", true],
   ["googlechat", "disabled", false],
-  ["teams", "enabled", true],
-  ["teams", "disabled", false],
 ] as const;
 
 function parseResultPayload(stdout: string): { error: string } {

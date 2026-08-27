@@ -167,6 +167,7 @@ describe("built-in messaging channel metadata", () => {
     expect(listRequiredCreateTimeMessagingPolicyPresetNames()).toEqual([
       "telegram",
       "discord",
+      "wechat",
       "slack",
       "teams",
     ]);

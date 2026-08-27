@@ -97,7 +97,7 @@ function sandboxFiles(seed: Readonly<Record<string, string>>): {
 }
 
 describe("MessagingSetupApplier credential env cleanup", () => {
-  it("refreshes a rendered provider placeholder from the live credential revision", async () => {
+  it("refreshes a rendered provider placeholder from the live credential revision (#10153)", async () => {
     vi.stubEnv("WECHAT_ACCOUNT_ID", "wechat-account");
     vi.stubEnv("WECHAT_BASE_URL", "https://ilinkai.weixin.qq.com");
     const plan = await buildHermesWeChatEnvPlan();
