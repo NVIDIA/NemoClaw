@@ -13,6 +13,7 @@ import {
 import {
   createLegacyKeepaliveFixture,
   type LegacyKeepaliveFixtureDeps,
+  parseLegacyKeepaliveHandoffReceipt,
   rewriteManagedInspectForLegacyKeepalive,
 } from "../live/gateway-guard-legacy-keepalive-fixture.ts";
 
@@ -126,6 +127,66 @@ function managedRuntimeInspectWithoutOciImageUser(
 }
 
 describe("gateway guard legacy keepalive fixture", () => {
+  it("parses the final handoff receipt after recreation progress output", () => {
+    expect(
+      parseLegacyKeepaliveHandoffReceipt(
+        [
+          "  ✓ Sandbox 'e2e-2701' became Ready",
+          "  Waiting for final replacement handoff...",
+          JSON.stringify({
+            oldContainerId: OLD_CONTAINER_ID,
+            newContainerId: NEW_CONTAINER_ID,
+            startupCommand: "sleep infinity",
+          }),
+          "",
+        ].join("\n"),
+      ),
+    ).toEqual({
+      oldContainerId: OLD_CONTAINER_ID,
+      newContainerId: NEW_CONTAINER_ID,
+      startupCommand: "sleep infinity",
+    });
+  });
+
+  it.each([
+    { name: "missing receipt", output: "Waiting for handoff\n" },
+    {
+      name: "conflicting receipts",
+      output: [
+        JSON.stringify({
+          oldContainerId: OLD_CONTAINER_ID,
+          newContainerId: NEW_CONTAINER_ID,
+          startupCommand: "sleep infinity",
+        }),
+        JSON.stringify({
+          oldContainerId: NEW_CONTAINER_ID,
+          newContainerId: "c".repeat(64),
+          startupCommand: "sleep infinity",
+        }),
+      ].join("\n"),
+    },
+    {
+      name: "unchanged container identity",
+      output: JSON.stringify({
+        oldContainerId: OLD_CONTAINER_ID,
+        newContainerId: OLD_CONTAINER_ID,
+        startupCommand: "sleep infinity",
+      }),
+    },
+    {
+      name: "unexpected startup command",
+      output: JSON.stringify({
+        oldContainerId: OLD_CONTAINER_ID,
+        newContainerId: NEW_CONTAINER_ID,
+        startupCommand: "unreviewed",
+      }),
+    },
+  ])("rejects $name in the handoff receipt", ({ output }) => {
+    expect(() => parseLegacyKeepaliveHandoffReceipt(output)).toThrow(
+      /exactly one final JSON handoff receipt|handoff receipt is invalid/u,
+    );
+  });
+
   it("recreates only the pinned sandbox container with the reviewed supervisor and legacy workload (#9364)", () => {
     const dockerCapture = vi.fn(() => managedRuntimeInspect());
     const recreate = vi.fn((_, deps: Parameters<LegacyKeepaliveFixtureDeps["recreate"]>[1]) => {

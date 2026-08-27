@@ -16,7 +16,7 @@ const TYPESCRIPT = path.resolve("node_modules/typescript/bin/tsc");
 const POLICY_BOUNDARY_CONFIG = path.resolve("nemoclaw/tsconfig.shared.json");
 const tempDirs: string[] = [];
 
-function runBinding(policyFile: string, protocol?: string) {
+function runBinding(policyFile: string, protocol = "websocket") {
   return spawnSync(
     process.execPath,
     [
@@ -28,7 +28,7 @@ function runBinding(policyFile: string, protocol?: string) {
       "e2e-hermes-discord-discord-bridge",
       "host.docker.internal",
       "43117",
-      ...(protocol ? [protocol] : []),
+      protocol,
     ],
     { encoding: "utf8", killSignal: "SIGKILL", timeout: 15_000 },
   );
@@ -65,6 +65,7 @@ describe("Hermes Discord E2E policy binding", () => {
         "    endpoints:",
         "      - host: host.docker.internal",
         "        port: 43117",
+        "        protocol: websocket",
         "      - host: discord.com",
         "        port: 443",
         "",
@@ -83,6 +84,7 @@ describe("Hermes Discord E2E policy binding", () => {
             {
               host: "host.docker.internal",
               port: 43117,
+              protocol: "websocket",
               credential_binding: { provider: "e2e-hermes-discord-discord-bridge" },
             },
             { host: "discord.com", port: 443 },
@@ -91,6 +93,31 @@ describe("Hermes Discord E2E policy binding", () => {
       },
     });
     expect(fs.statSync(policyFile).mode & 0o777).toBe(0o600);
+  });
+
+  it("rejects a missing protocol before choosing among shared endpoints (#10155)", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-messaging-policy-"));
+    tempDirs.push(tempDir);
+    const policyFile = path.join(tempDir, "policy.yaml");
+    fs.writeFileSync(policyFile, "version: 1\nnetwork_policies: {}\n");
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--disable-warning=DEP0205",
+        "--import",
+        "tsx",
+        HELPER,
+        policyFile,
+        "e2e-hermes-discord-discord-bridge",
+        "host.docker.internal",
+        "43117",
+      ],
+      { encoding: "utf8", killSignal: "SIGKILL", timeout: 15_000 },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("<protocol>");
   });
 
   it("binds only the requested protocol when a fake host and port are shared", () => {

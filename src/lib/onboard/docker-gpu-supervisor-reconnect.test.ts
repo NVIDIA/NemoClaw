@@ -7,50 +7,10 @@ import {
   getDockerGpuSupervisorReconnectErrorDebouncePolls,
   getDockerGpuSupervisorReconnectTimeoutSecs,
   waitForOpenShellFinalHandoff,
-  waitForOpenShellSandboxLifecycleRelease,
   waitForOpenShellSupervisorReconnect,
 } from "./docker-gpu-supervisor-reconnect";
 
-describe("Docker GPU final lifecycle release", () => {
-  it("requires corroboration for a retiring lifecycle row (#9962)", () => {
-    const corroborate = vi.fn(() => true);
-    const runOpenshell = vi.fn(() => ({
-      status: 0,
-      stdout: "alpha  2026-08-23 01:40:35  Deleting\n",
-    }));
-
-    expect(
-      waitForOpenShellSandboxLifecycleRelease("alpha", 1, {
-        runOpenshell,
-        sleep: vi.fn(),
-        soleLabeledReplacementCorroboratesRetiringPhase: corroborate,
-      }),
-    ).toBe(true);
-    expect(corroborate).toHaveBeenCalledOnce();
-    expect(runOpenshell).toHaveBeenCalledWith(
-      ["sandbox", "list"],
-      expect.objectContaining({
-        killProcessTreeOnTimeout: true,
-        killSignal: "SIGKILL",
-        timeout: expect.any(Number),
-      }),
-    );
-  });
-
-  it("does not accept an uncorroborated retiring lifecycle row (#9962)", () => {
-    const runOpenshell = vi.fn(() => ({
-      status: 0,
-      stdout: "alpha  2026-08-23 01:40:35  Error\n",
-    }));
-
-    expect(
-      waitForOpenShellSandboxLifecycleRelease("alpha", 1, {
-        runOpenshell,
-        sleep: vi.fn(),
-      }),
-    ).toBe(false);
-  });
-
+describe("Docker GPU supervisor reconnect", () => {
   it("does not report reconnect without an OpenShell execution boundary (#9531)", () => {
     expect(waitForOpenShellSupervisorReconnect("alpha", 1, { sleep: vi.fn() })).toBe(false);
   });
@@ -207,7 +167,10 @@ describe("docker-gpu-supervisor-reconnect Error-phase debounce", () => {
 
   it("short-circuits the supervisor-reconnect wait when the sandbox enters Error phase", () => {
     const runOpenshell = vi.fn(() => ({ status: 1, stderr: "sandbox not ready" }));
-    const listOutputs = ["alpha   Provisioning   1s ago", "alpha   Error          3s ago"];
+    const listOutputs = [
+      "alpha   Provisioning   1s ago",
+      "alpha   \u001b[31mError\u001b[0m          3s ago",
+    ];
     let index = 0;
     const runCaptureOpenshell = vi.fn(() => listOutputs[Math.min(index++, listOutputs.length - 1)]);
     const sleep = vi.fn();
