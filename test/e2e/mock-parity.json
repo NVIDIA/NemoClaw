@@ -186,12 +186,14 @@
       "live": "test/e2e/live/gateway-guard-recovery.test.ts",
       "fast": [
         "src/lib/actions/sandbox/supervisor-relaunch.test.ts",
+        "src/lib/onboard/docker-gpu-patch-finalize.test.ts",
         "src/lib/onboard/docker-startup-command-patch.test.ts",
         "src/lib/sandbox/privileged-exec.test.ts",
         "test/inference/managed/managed-gateway-control.test.ts",
         "test/agents/openclaw/runtime/nemoclaw-start-guard-recovery.test.ts",
         "test/e2e/support/gateway-guard-legacy-keepalive-fixture.test.ts",
-        "test/process-recovery/process-recovery-supervisor-relaunch.test.ts"
+        "test/process-recovery/process-recovery-supervisor-relaunch.test.ts",
+        "test/onboarding/docker-final-handoff-lifecycle.test.ts"
       ]
     },
     {

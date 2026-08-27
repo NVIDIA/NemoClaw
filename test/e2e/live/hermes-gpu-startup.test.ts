@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import { cleanupUnlessVerified } from "../fixtures/cleanup-resources.ts";
 import {
   type HostCliClient,
@@ -457,6 +458,11 @@ test(
       ? captureFailedGpuContainer(host, gpuDiagnosticsDir)
       : Promise.resolve());
     expect(install.exitCode, resultText(install)).toBe(0);
+    assertStockManagedImageReceipt({
+      environment: env,
+      expectedAgent: "hermes",
+      sandboxName: SANDBOX_NAME,
+    });
 
     const verifyFallback = async (wrapper: ReturnType<typeof createHermesGpuFallbackWrapper>) => {
       const fallbackEvents = readHermesGpuFallbackEvents(wrapper.eventsPath);
