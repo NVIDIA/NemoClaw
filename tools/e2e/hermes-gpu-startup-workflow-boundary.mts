@@ -122,7 +122,11 @@ export function validateHermesGpuStartupWorkflow(
   if (job["runs-on"] !== "linux-amd64-gpu-rtxpro6000-latest-1") {
     errors.push(`${JOB_NAME} job must run on the native RTX PRO 6000 GPU runner`);
   }
-  if (job.needs !== "generate-matrix" || job.if !== EXPECTED_SELECTOR) {
+  if (
+    JSON.stringify(job.needs) !==
+      JSON.stringify(["base-image-publication", "generate-matrix"]) ||
+    job.if !== EXPECTED_SELECTOR
+  ) {
     errors.push(`${JOB_NAME} job must use the trusted execution plan behind generate-matrix`);
   }
   if (job["timeout-minutes"] !== 90) {
