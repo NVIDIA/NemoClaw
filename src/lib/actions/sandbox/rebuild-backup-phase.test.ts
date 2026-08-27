@@ -45,15 +45,20 @@ describe("rebuild web-search policy normalization", () => {
     // Balanced and Open both default `brave` as tier egress, so a rebuild that
     // declines web search keeps it and still drops `tavily`, which neither tier
     // defaults.
-    for (const policyTier of ["balanced", "open"]) {
-      expect(
-        normalizeRebuildWebSearchPolicyPresets(
-          ["npm", "brave", "tavily"],
-          { name: "alpha", agent: "openclaw", policyTier },
-          null,
-        ),
-      ).toEqual(["npm", "brave"]);
-    }
+    expect(
+      normalizeRebuildWebSearchPolicyPresets(
+        ["npm", "brave", "tavily"],
+        { name: "alpha", agent: "openclaw", policyTier: "balanced" },
+        null,
+      ),
+    ).toEqual(["npm", "brave"]);
+    expect(
+      normalizeRebuildWebSearchPolicyPresets(
+        ["npm", "brave", "tavily"],
+        { name: "alpha", agent: "openclaw", policyTier: "open" },
+        null,
+      ),
+    ).toEqual(["npm", "brave"]);
   });
 
   it("preserves DCode's standalone Tavily and excludes custom names from built-in replay", () => {
