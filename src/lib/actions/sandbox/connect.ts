@@ -112,7 +112,11 @@ import {
   resolveSandboxDashboardPort,
   waitForManagedGatewaySupervisor,
 } from "./process-recovery";
-import { recoverHermesPortableInferenceForConnectProbe } from "./probe/hermes-portable-inference-recovery";
+import {
+  classifyHermesPortableInferenceConnectRecoveryFailure,
+  recoverHermesPortableInferenceForConnectProbe,
+  type HermesPortableInferenceConnectRecoveryFailure,
+} from "./probe/hermes-portable-inference-recovery";
 import { runTerminalAgentConnectProbe } from "./terminal-connect-probe";
 import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 
@@ -450,6 +454,24 @@ function failHermesPortableInferenceRoute(sandboxName: string, reason: string): 
   process.exit(1);
 }
 
+function failHermesPortableInferenceRecovery(
+  sandboxName: string,
+  failure: HermesPortableInferenceConnectRecoveryFailure,
+): never {
+  const detail =
+    failure === "runtime-restoration-unproved"
+      ? "NemoClaw could not prove restoration of the exact stopped managed inference runtime. Do not run another probe or launch until the recorded runtime state is inspected."
+      : failure === "registry-restoration-unproved"
+        ? "NemoClaw could not prove restoration of the exact stopped Portable registry. Do not run another probe or launch until the recorded registry state is inspected."
+        : failure === "authority-drift"
+          ? "Recorded managed inference authority changed during recovery. Do not run another probe or launch until the current Portable state is inspected."
+          : "Managed inference recovery stopped without a verified result. Do not run another probe or launch until the current Portable state is inspected.";
+  console.error(
+    `  Error: Hermes Portable inference recovery for '${sandboxName}' failed. ${detail}`,
+  );
+  process.exit(1);
+}
+
 function captureHermesPortableOpenShell(
   sandboxName: string,
   args: string[],
@@ -601,9 +623,12 @@ function recoverHermesPortableInferenceRouteForProbeOnlyOrExit(
       },
     });
   } catch (error) {
-    failHermesPortableInferenceRoute(
+    if (error instanceof HermesPortableInferenceRouteVerificationError) {
+      failHermesPortableInferenceRoute(sandboxName, error.reason);
+    }
+    failHermesPortableInferenceRecovery(
       sandboxName,
-      error instanceof HermesPortableInferenceRouteVerificationError ? error.reason : "unreachable",
+      classifyHermesPortableInferenceConnectRecoveryFailure(error),
     );
   }
   if (!verified) failHermesPortableInferenceRoute(sandboxName, "unreachable");

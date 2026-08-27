@@ -250,6 +250,21 @@ export function createHermesPortableOllamaRuntimeAuthority(options: {
 
 export type HermesPortableOllamaRecoveryResult = "recovered" | "reused";
 
+export type HermesPortableOllamaRecoveryFailure =
+  | "authority-drift"
+  | "runtime-restoration-unproved"
+  | "registry-restoration-unproved";
+
+export class HermesPortableOllamaRecoveryError extends Error {
+  constructor(
+    readonly failure: HermesPortableOllamaRecoveryFailure,
+    message: string,
+  ) {
+    super(`Hermes Portable managed inference recovery failed: ${message}`);
+    this.name = "HermesPortableOllamaRecoveryError";
+  }
+}
+
 export interface HermesPortableOllamaRecoveryInput {
   readonly intent: "connect-probe-only";
   readonly sandboxName: string;
@@ -283,8 +298,11 @@ const DEFAULT_RECOVERY_DEPS: HermesPortableOllamaRecoveryDeps = Object.freeze({
   prepareStartup: prepareHostLocalInferenceStartup,
 });
 
-function failRecovery(message: string): never {
-  throw new Error(`Hermes Portable managed inference recovery failed: ${message}`);
+function failRecovery(
+  message: string,
+  failure: HermesPortableOllamaRecoveryFailure = "authority-drift",
+): never {
+  throw new HermesPortableOllamaRecoveryError(failure, message);
 }
 
 function requireExactRecoveryReceipt(
@@ -379,7 +397,10 @@ function restoreStoppedRuntime(
   serializedReceipt: string,
 ): void {
   if (prepared.publicationState() !== "unpublished") {
-    failRecovery("exact stopped runtime restoration is indeterminate");
+    failRecovery(
+      "exact stopped runtime restoration is indeterminate",
+      "runtime-restoration-unproved",
+    );
   }
   const rollback = prepared.rollback();
   if (
@@ -387,7 +408,7 @@ function restoreStoppedRuntime(
     rollback.status !== hostLocalInferenceRollbackStatus("stopped") ||
     serializeHostLocalInferenceReceipt(rollback.receipt) !== serializedReceipt
   ) {
-    failRecovery("rollback returned different runtime authority");
+    failRecovery("rollback returned different runtime authority", "runtime-restoration-unproved");
   }
   const restored = runtime.inspectManaged(receipt);
   requireExactRecoveryReceipt(
@@ -395,7 +416,12 @@ function restoreStoppedRuntime(
     restored.receipt,
     "rollback inspection changed receipt",
   );
-  if (restored.running) failRecovery("rollback did not restore the exact stopped runtime");
+  if (restored.running) {
+    failRecovery(
+      "rollback did not restore the exact stopped runtime",
+      "runtime-restoration-unproved",
+    );
+  }
 }
 
 /** Resume and re-prove only the exact published Hermes Portable Ollama runtime. */
@@ -578,18 +604,27 @@ export function recoverHermesPortableOllamaInference(
         ollamaStateRestored = true;
         requireCurrent();
       } catch {
-        failRecovery("recovery failed and exact stopped-state restoration was not proved");
+        failRecovery(
+          "recovery failed and exact stopped-state restoration was not proved",
+          "runtime-restoration-unproved",
+        );
       }
       throw error;
     }
   } catch (error) {
     if (!ollamaStateRestored) {
-      failRecovery("recovery failed before dependent runtime restoration was proved");
+      failRecovery(
+        "recovery failed before dependent runtime restoration was proved",
+        "runtime-restoration-unproved",
+      );
     }
     try {
       registryRecovery.rollback();
     } catch {
-      failRecovery("recovery failed and exact stopped-registry restoration was not proved");
+      failRecovery(
+        "recovery failed and exact stopped-registry restoration was not proved",
+        "registry-restoration-unproved",
+      );
     }
     throw error;
   }

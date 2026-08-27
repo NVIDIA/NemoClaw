@@ -77,6 +77,11 @@ export type ConnectHarnessOptions = {
     string | { status?: number | null; output?: string | null; stderr?: string | null }
   >;
   hermesConfig?: ConfigObject;
+  hermesInferenceRecoveryFailure?:
+    | "authority-drift"
+    | "runtime-restoration-unproved"
+    | "registry-restoration-unproved"
+    | "recovery-failed";
   registryEntry?: Partial<SandboxEntry>;
   registryEntries?: Array<Partial<SandboxEntry> & Pick<SandboxEntry, "name">>;
   sessionAgent?: unknown;
@@ -165,6 +170,9 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const gatewayState = requireDist("../../src/lib/actions/sandbox/gateway-state.js");
   const hermesInferenceRecovery = requireDist(
     "../../src/lib/actions/sandbox/probe/hermes-portable-inference-recovery.js",
+  );
+  const hermesOllamaInference = requireDist(
+    "../../src/lib/onboard/experimental/hermes-portable-ollama-inference.js",
   );
   const processRecovery = requireDist("../../src/lib/actions/sandbox/process-recovery.js");
   const autoPairApproval = requireDist("../../src/lib/actions/sandbox/auto-pair-approval.js");
@@ -269,6 +277,15 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const recoverHermesPortableOllamaInferenceSpy = vi
     .spyOn(hermesInferenceRecovery, "recoverHermesPortableInferenceForConnectProbe")
     .mockImplementation(((input: { verifyRoute: () => unknown }) => {
+      if (options.hermesInferenceRecoveryFailure === "recovery-failed") {
+        throw new Error("nested recovery diagnostic canary");
+      }
+      if (options.hermesInferenceRecoveryFailure) {
+        throw new hermesOllamaInference.HermesPortableOllamaRecoveryError(
+          options.hermesInferenceRecoveryFailure,
+          "nested recovery diagnostic canary",
+        );
+      }
       input.verifyRoute();
       return "reused";
     }) as never);
