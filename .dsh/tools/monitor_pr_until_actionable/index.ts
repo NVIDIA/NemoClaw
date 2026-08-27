@@ -11,7 +11,6 @@ export default async function monitor_pr_until_actionable(input: {
   ignoreChecks?: string[];
   ignoreReviewIds?: Integer[];
   ignoreCommentIds?: Integer[];
-  ignoreDiscussionCommentIds?: Integer[];
   settleCheckPrefixes?: string[];
   findingBodyCharacters?: Integer;
 }): Promise<{
@@ -23,6 +22,12 @@ export default async function monitor_pr_until_actionable(input: {
   currentHeadSha: string;
   pendingChecks: { name: string; state: string; link: string }[];
   failedChecks: { name: string; state: string; link: string }[];
+  discussionComments: {
+    id: Integer;
+    user?: string;
+    body?: string;
+    url?: string;
+  }[];
   findings: {
     type: string;
     id: Integer;
@@ -81,17 +86,14 @@ export default async function monitor_pr_until_actionable(input: {
   const ignoredChecks = new Set(input.ignoreChecks ?? []),
     ignoredReviews = validateIds(input.ignoreReviewIds, "ignoreReviewIds"),
     ignoredComments = validateIds(input.ignoreCommentIds, "ignoreCommentIds"),
-    ignoredDiscussionComments = validateIds(
-      input.ignoreDiscussionCommentIds,
-      "ignoreDiscussionCommentIds",
-    ),
     deadline = Date.now() + timeout,
     snapshots = [],
     observedSettlePrefixes = new Set();
   let observedChecks = false,
     lastPendingChecks = [],
     lastFailedChecks = [],
-    lastFindings = [];
+    lastFindings = [],
+    lastDiscussionComments = [];
   while (Date.now() <= deadline) {
     const cycle = await tools.collect_nemoclaw_pr_review_cycle({
       workdir: input.workdir,
@@ -113,6 +115,7 @@ export default async function monitor_pr_until_actionable(input: {
         currentHeadSha: head,
         pendingChecks: [],
         failedChecks: [],
+        discussionComments: [],
         findings: [],
         snapshots,
       };
@@ -163,8 +166,7 @@ export default async function monitor_pr_until_actionable(input: {
             !ignoredReviews.has(Number(x.id))) ||
           (x.type === "inline-comment" &&
             unresolvedRootIds.has(Number(x.id)) &&
-            !ignoredComments.has(Number(x.id))) ||
-          (x.type === "discussion-comment" && !ignoredDiscussionComments.has(Number(x.id))),
+            !ignoredComments.has(Number(x.id))),
       )
       .map((x) => ({
         type: String(x.type),
@@ -176,9 +178,20 @@ export default async function monitor_pr_until_actionable(input: {
         ...(typeof x.body === "string" ? { body: x.body.slice(0, findingBodyCharacters) } : {}),
         ...(typeof x.url === "string" ? { url: x.url } : {}),
       }));
+    const discussionComments = cycle.items
+      .filter((item) => item.type === "discussion-comment")
+      .map((item) => ({
+        id: Number(item.id),
+        ...(typeof item.user === "string" ? { user: item.user } : {}),
+        ...(typeof item.body === "string"
+          ? { body: item.body.slice(0, findingBodyCharacters) }
+          : {}),
+        ...(typeof item.url === "string" ? { url: item.url } : {}),
+      }));
     lastPendingChecks = pendingChecks;
     lastFailedChecks = failedChecks;
     lastFindings = findings;
+    lastDiscussionComments = discussionComments;
     const snapshot = {
       headSha: head,
       checkCount: checks.length,
@@ -218,6 +231,7 @@ export default async function monitor_pr_until_actionable(input: {
         currentHeadSha: head,
         pendingChecks,
         failedChecks,
+        discussionComments,
         findings,
         snapshots,
       };
@@ -232,6 +246,7 @@ export default async function monitor_pr_until_actionable(input: {
     currentHeadSha: input.expectedHeadSha,
     pendingChecks: lastPendingChecks,
     failedChecks: lastFailedChecks,
+    discussionComments: lastDiscussionComments,
     findings: lastFindings,
     snapshots,
   };

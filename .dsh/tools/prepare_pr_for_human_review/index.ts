@@ -35,6 +35,8 @@ export default async function prepare_pr_for_human_review(input: {
   const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
   if (!Number.isSafeInteger(input.pullNumber) || input.pullNumber < 1)
     throw new Error("pullNumber must be positive");
+  if (!["blocked", "docs-updated", "no-docs-needed"].includes(input.docsResult))
+    throw new Error("docsResult is invalid");
   const repo = input.repository ?? "NVIDIA/NemoClaw";
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo))
     throw new Error("repository must be owner/name");

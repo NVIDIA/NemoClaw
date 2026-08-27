@@ -57,6 +57,8 @@ export default async function refresh_pr_body_evidence(input: {
     return value.trim();
   };
   if (input.docsReceipt) {
+    if (!["blocked", "docs-updated", "no-docs-needed"].includes(input.docsReceipt.result))
+      throw new Error("docsReceipt.result is invalid");
     oneLine("Documentation evidence", input.docsReceipt.evidence);
     oneLine("Documentation agent", input.docsReceipt.agent);
   }

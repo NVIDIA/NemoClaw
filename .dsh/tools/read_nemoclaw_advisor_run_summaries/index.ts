@@ -99,19 +99,17 @@ set -e
 [ "\$consumer" -eq 0 ] && { [ "\$producer" -eq 0 ] || [ "\$producer" -eq 141 ]; } || exit 19
 bytes=\$(stat -c %s "\$zip")
 [ "\$bytes" -le 5000000 ] || { echo 'compressed artifact exceeds bound' >&2; exit 20; }
-mapfile -t entries < <(zipinfo -1 "\$zip")
-[ "\${#entries[@]}" -le 100 ] || { echo 'artifact inventory exceeds 100 entries' >&2; exit 21; }
-summary=''
-for entry in "\${entries[@]}"; do
-  case "\$entry" in
-    /*|../*|*/../*|*'/..') echo 'unsafe artifact entry' >&2; exit 22 ;;
-    *summary.md)
-      [ -z "\$summary" ] || { echo 'artifact contains multiple summary files' >&2; exit 23; }
-      summary="\$entry"
-      ;;
-  esac
-done
-[ -n "\$summary" ] || { echo 'artifact has no summary Markdown file' >&2; exit 24; }
+test_summary=\$(LC_ALL=C zipinfo -t "\$zip" 2>/dev/null) || { echo 'artifact ZIP is malformed' >&2; exit 21; }
+[[ "\$test_summary" != *$'\n'* && "\$test_summary" =~ ^([0-9]+)[[:space:]]files?,[[:space:]]([0-9]+)[[:space:]]bytes[[:space:]]uncompressed, ]] || { echo 'artifact ZIP summary is ambiguous' >&2; exit 21; }
+[ "\${BASH_REMATCH[1]}" -le 100 ] || { echo 'artifact inventory exceeds 100 entries' >&2; exit 21; }
+[ "\${BASH_REMATCH[2]}" -le 20000000 ] || { echo 'expanded artifact exceeds 20,000,000 bytes' >&2; exit 21; }
+LC_ALL=C zipinfo -l "\$zip" > "\$tmp/listing" 2>/dev/null || exit 21
+LC_ALL=C zipinfo -1 "\$zip" > "\$tmp/names" 2>/dev/null || exit 21
+[ "\$(wc -c < "\$tmp/listing")" -le 1000000 ] || { echo 'artifact listing exceeds bound' >&2; exit 21; }
+awk -v declared_count="\${BASH_REMATCH[1]}" 'NR==FNR { exact[FNR]=$0; names=FNR; next } BEGIN { count=0; state="ok" } FNR <= 2 { next } /^[bcdlps-][rwxStTs-]{9}[[:space:]]/ { count++; mode=substr($0,1,1); size=$4; line=$0; for (i=1;i<=10;i++) sub(/^[^[:space:]]+[[:space:]]+/, "", line); name=exact[count]; if (line != name || (mode != "-" && mode != "d") || size !~ /^[0-9]+$/) state="unsafe"; parts=split(name, component, "/"); if (name == "" || substr(name,1,1) == "-" || substr(name,1,1) == "/" || index(name,sprintf("%c",92)) || name ~ /[[:cntrl:]]/ || index(name,"*") || index(name,"?") || index(name,"[") || seen[name]++) state="unsafe"; for (part=1; part<=parts; part++) if (component[part] == "..") state="unsafe"; if (mode == "-" && name ~ /summary[.]md$/) { selected++; selected_size=size; selected_name=name } } END { if (state != "ok" || count != names || count != declared_count) exit 2; if (selected != 1) exit 3; printf "%s\t%s", selected_size, selected_name }' "\$tmp/names" "\$tmp/listing" > "\$tmp/selected" || { echo 'artifact entries are unsafe, ambiguous, or missing one summary' >&2; exit 22; }
+IFS=\$'\t' read -r declared summary < "\$tmp/selected" || [ -n "\$summary" ]
+[ -n "\$summary" ] && [[ "\$declared" =~ ^[0-9]+$ ]] || { echo 'artifact summary metadata is invalid' >&2; exit 24; }
+[ "\$declared" -le 20000000 ] || { echo 'summary entry exceeds expanded-size bound' >&2; exit 24; }
 set +e
 unzip -p "\$zip" "\$summary" | head -c ${maxCharacters * 4 + 1} > "\$tmp/summary"
 statuses=("\${PIPESTATUS[@]}")
@@ -119,6 +117,11 @@ producer=\${statuses[0]}
 consumer=\${statuses[1]}
 set -e
 [ "\$consumer" -eq 0 ] && { [ "\$producer" -eq 0 ] || [ "\$producer" -eq 141 ]; } || exit 25
+actual=\$(stat -c %s "\$tmp/summary")
+expected=\$declared
+bound=${maxCharacters * 4 + 1}
+[ "\$expected" -le "\$bound" ] || expected=\$bound
+[ "\$actual" -eq "\$expected" ] || { echo 'summary size differs from archive metadata' >&2; exit 25; }
 printf '%s\n' "\$summary"
 [ "\$(stat -c %s \"\$tmp/summary\")" -gt ${maxCharacters * 4} ] && printf '1\n' || printf '0\n'
 base64 -w 0 "\$tmp/summary"`;

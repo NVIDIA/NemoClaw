@@ -54,6 +54,11 @@ export default async function commit_push_refresh_pr(input: {
     input.files?.some((file) => typeof file !== "string" || !file || file.includes("\0"))
   )
     throw new Error("files must contain 1 to 200 valid paths");
+  if (
+    input.docsResult !== undefined &&
+    !["blocked", "docs-updated", "no-docs-needed"].includes(input.docsResult)
+  )
+    throw new Error("docsResult is invalid");
   const willPush = input.push !== false;
   const willRefresh = input.refreshBody !== false;
   if (willRefresh && !willPush)
@@ -347,6 +352,7 @@ export default async function commit_push_refresh_pr(input: {
               stale: monitored.stale,
               pendingChecks: monitored.pendingChecks,
               failedChecks: monitored.failedChecks,
+              discussionComments: monitored.discussionComments,
               findings: monitored.findings,
             },
     }),

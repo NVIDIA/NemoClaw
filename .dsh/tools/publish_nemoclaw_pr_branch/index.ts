@@ -185,21 +185,34 @@ export default async function publish_nemoclaw_pr_branch(input: {
     "Push pull request candidate branch",
   );
   const verified = [];
+  let verificationError = null;
   for (const sha of commits) {
-    const r = await tools.run_github_cli({
-      workdir: input.workdir,
-      args: [
-        "api",
-        "repos/" + repo + "/commits/" + sha,
-        "--jq",
-        '[.commit.verification.verified, (.commit.verification.reason // "")] | @tsv',
-      ],
-      timeoutMs: 120000,
-    });
-    const [ok, reason] = r.stdout.trim().split("\t");
-    verified.push({ sha, verified: ok === "true", reason: reason || null });
+    try {
+      const r = await tools.run_github_cli({
+        workdir: input.workdir,
+        args: [
+          "api",
+          "repos/" + repo + "/commits/" + sha,
+          "--jq",
+          '[.commit.verification.verified, (.commit.verification.reason // "")] | @tsv',
+        ],
+        timeoutMs: 120000,
+      });
+      const [ok, reason] = r.stdout.trim().split("\t");
+      verified.push({ sha, verified: ok === "true", reason: reason || null });
+    } catch (error) {
+      const detail = await tools.project_diagnostic_text({
+        lines: [String(error?.message ?? error)],
+        maxLines: 5,
+        maxCharacters: 1000,
+        maxLineCharacters: 500,
+      });
+      verificationError = detail.text || "GitHub commit verification read failed";
+      break;
+    }
   }
-  const allVerified = verified.every((c) => c.verified);
+  const allVerified =
+    !verificationError && verified.length === commits.length && verified.every((c) => c.verified);
   return {
     apply: true,
     mutated: true,
@@ -211,6 +224,10 @@ export default async function publish_nemoclaw_pr_branch(input: {
     headSha: head,
     commits: verified,
     allVerified,
-    blocker: allVerified ? null : "One or more published commits are not verified.",
+    blocker: allVerified
+      ? null
+      : verificationError
+        ? "Commit verification is incomplete: " + verificationError
+        : "One or more published commits are not verified.",
   };
 }
