@@ -6,7 +6,7 @@ set -euo pipefail
 
 WORKSPACE_PATH="/sandbox/.openclaw/workspace"
 BACKUP_BASE="${HOME}/.nemoclaw/backups"
-FILES=(SOUL.md USER.md IDENTITY.md AGENTS.md MEMORY.md)
+FILES=(SOUL.md USER.md IDENTITY.md AGENTS.md TOOLS.md HEARTBEAT.md POLICY.md MEMORY.md)
 DIRS=(memory)
 
 RED='\033[0;31m'
