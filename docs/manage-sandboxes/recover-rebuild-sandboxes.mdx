@@ -320,8 +320,9 @@ The session then follows the current default selected through `inference set`, w
 <AgentOnly variant="hermes">
 The rebuild command preserves Hermes state, registered policies, and managed MCP configuration while recreating the container.
 It reuses a messaging provider only when its exact type and credential keys match the recorded channel binding.
-A stopped channel remains inactive and contributes no token upsert, rendered runtime configuration, or channel startup effect.
-A policy-required provider attachment is the narrow exception: when stopped Hermes Discord retains a credential-bound policy, rebuild attaches its exact validated static provider without starting Discord.
+A stopped channel remains inactive and contributes no token upsert, rendered runtime configuration, channel startup effect, or inactive built-in messaging preset.
+Exact custom policies remain preserved for separate replay.
+A policy-required provider attachment is the narrow exception: when a preserved custom policy still credential-binds stopped Hermes Discord, rebuild attaches its exact validated static provider without starting Discord.
 If that required provider is missing or incompatible, restore or re-add the channel credentials, then rerun the rebuild.
 A rebuild creates a new sandbox home and a new Hermes API bearer token.
 After the rebuild succeeds, retrieve the replacement token before reconnecting API clients:

@@ -1010,21 +1010,31 @@ def _discover_supervisor(reader: ProcReader) -> ProcessIdentity:
     matches, inconclusive = _supervisor_candidates(reader, pid1, sandbox_uid)
     if inconclusive:
         # Busy agents can create or reap an unrelated short-lived process while
-        # /proc is being read. Retry only when one exact supervisor was already
-        # proven, and require that same pinned identity on every scan. A missing,
-        # changing, or duplicate supervisor still fails closed immediately.
-        if len(matches) != 1:
+        # /proc is being read. A restart can expose this churn before the
+        # supervisor's argv is observable, so zero matches plus an incomplete
+        # scan is not the clean two-scan absence proof below. Keep one exact
+        # supervisor pinned when it is already visible. If no supervisor was
+        # visible, require a fresh controller request after one appears rather
+        # than accepting an identity born during this ambiguous scan. The host
+        # retries only the exact SUPERVISOR_DISCOVERY_PENDING marker within its
+        # existing bound; duplicate or changing identities remain terminal.
+        if len(matches) > 1:
             raise ControlError("SUPERVISOR_UNAVAILABLE")
-        expected = matches[0].stable_key()
+        expected = matches[0].stable_key() if matches else None
         deadline = time.monotonic() + PROCESS_PROOF_GRACE_SECONDS
         while inconclusive:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise ControlError("SUPERVISOR_UNAVAILABLE")
+                raise ControlError("SUPERVISOR_DISCOVERY_PENDING")
             time.sleep(min(PROCESS_PROOF_RETRY_SECONDS, remaining))
             _recapture_exact_identity(reader, pid1, deadline=deadline)
             matches, inconclusive = _supervisor_candidates(reader, pid1, sandbox_uid)
-            if len(matches) != 1 or matches[0].stable_key() != expected:
+            if len(matches) > 1:
+                raise ControlError("SUPERVISOR_UNAVAILABLE")
+            if expected is None:
+                if matches:
+                    raise ControlError("SUPERVISOR_DISCOVERY_PENDING")
+            elif len(matches) != 1 or matches[0].stable_key() != expected:
                 raise ControlError("SUPERVISOR_UNAVAILABLE")
     if len(matches) == 0:
         # A zero-match scan is the only absence signal that may authorize the
