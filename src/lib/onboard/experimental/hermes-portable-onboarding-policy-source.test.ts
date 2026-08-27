@@ -13,6 +13,7 @@ import {
   createHermesPortableTransactionFixture,
   HERMES_PORTABLE_TEST_LIVE_IDENTITY,
   HERMES_PORTABLE_TEST_POLICY,
+  HERMES_PORTABLE_TEST_SANDBOX_ID,
   hermesPortableReservationForOnboarding,
 } from "../../../../test/helpers/hermes-portable-onboarding-fixture";
 import type { SandboxEntry } from "../../state/registry";
@@ -53,6 +54,21 @@ function metadata(): { status: number; output: string; stdout: string; stderr: s
     hash: "sha256:effective",
     policy: { version: 1 },
   });
+  return { status: 0, output: stdout, stdout, stderr: "" };
+}
+
+function readiness(): { status: number; output: string; stdout: string; stderr: string } {
+  const stdout = JSON.stringify([
+    {
+      id: HERMES_PORTABLE_TEST_SANDBOX_ID,
+      name: "alpha",
+      labels: {},
+      resource_version: 1,
+      created_at: "2026-01-01T00:00:00Z",
+      phase: "Ready",
+      current_policy_version: 4,
+    },
+  ]);
   return { status: 0, output: stdout, stdout, stderr: "" };
 }
 
@@ -154,6 +170,7 @@ network_policies:
     vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
       .mockReturnValueOnce(gatewayInfo())
       .mockReturnValueOnce(metadata())
+      .mockReturnValueOnce(readiness())
       .mockReturnValueOnce({
         status: 0,
         output: HERMES_PORTABLE_TEST_POLICY,
@@ -208,6 +225,7 @@ network_policies:
           return { ready: true as const };
         },
         captureCreatedSandboxIdentity: () => HERMES_PORTABLE_TEST_LIVE_IDENTITY,
+        persistCreatedSandboxIdentity: vi.fn(),
         revalidateCreatedSandboxIdentity: vi.fn(),
         verifyCreatedPolicy: (identity) =>
           verifyCreatedSandboxEffectivePolicy({
@@ -367,6 +385,7 @@ network_policies:
           return "created";
         },
         captureCreatedSandboxIdentity: () => HERMES_PORTABLE_TEST_LIVE_IDENTITY,
+        persistCreatedSandboxIdentity: vi.fn(),
         revalidateCreatedSandboxIdentity: vi.fn(),
         verifyCreatedPolicy: (identity) =>
           verifyCreatedSandboxEffectivePolicy({

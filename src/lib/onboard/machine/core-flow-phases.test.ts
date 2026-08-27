@@ -341,8 +341,8 @@ describe("core onboard flow phases", () => {
       return durableSession;
     });
     const createSandbox = vi.fn(async (...args: unknown[]) => {
-      const authority = args[14] as { sessionId?: unknown } | null;
-      const createIntent = args[15] as {
+      const authority = args.at(-3) as { sessionId?: unknown } | null;
+      const createIntent = args.at(-2) as {
         endpointSource?: InferenceEndpointSource | null;
       };
       const reservation = getSandbox(sandboxName);

@@ -2636,8 +2636,9 @@ const onboardRuntimeBoundary = new OnboardRuntimeBoundary({
   maybeForceE2eStepFailure,
 });
 const sandboxCancelRollback = installSandboxCancelRollback({
+  cliName: cliName(),
   recordRecovery: onboardSession.markCancellationRecovery,
-}); // #4614
+}); // #4614, #9833
 const {
   arePolicyPresetsApplied,
   computeSetupPresetSuggestions,

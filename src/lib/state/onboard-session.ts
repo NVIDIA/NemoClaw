@@ -1352,6 +1352,16 @@ function lockHolderStillMatches(lock: LockInfo): boolean {
 // descriptor rather than a value re-read from disk. See #1281.
 let heldLockFd: number | null = null;
 
+/** Report whether this process still holds the exclusive onboarding writer lock. */
+export function isOnboardLockHeldByCurrentProcess(): boolean {
+  try {
+    assertOnboardLockOwned();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function assertOnboardLockOwned(): void {
   if (heldLockFd === null) {
     throw new Error("This process does not own the NemoClaw onboarding lock.");

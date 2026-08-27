@@ -26,6 +26,8 @@ export { restoreDefaultAfterRecreate, wasSandboxDefault } from "./default-preser
 export interface SandboxCancelRollbackDeps {
   /** Emit an operator-facing line (stderr). */
   log(message: string): void;
+  /** Agent-specific CLI name used for the recovery command. */
+  cliName?: string;
   /** Persist the recovery-only session before process exit completes. */
   recordRecovery?(
     sandboxName: string,
@@ -54,6 +56,7 @@ export interface SandboxCancelRollback {
 export function buildCancelRollbackMessage(
   sandboxName: string,
   sandboxIdentityFingerprint?: string,
+  cliName?: string,
 ): string[] {
   return [
     "",
@@ -68,6 +71,7 @@ export function buildCancelRollbackMessage(
           "  Ask an OpenShell administrator to establish the exact sandbox identity before recovery or removal.",
         ]),
     "  NemoClaw did not run OpenShell's mutable-name deletion command because the name may now identify a replacement sandbox.",
+    `  Run \`${cliName ?? "nemoclaw"} onboard --resume\` to continue the saved onboarding session.`,
     "  Do not delete the sandbox by mutable sandbox name.",
     "  Shared inference providers are gateway configuration and are not sandbox cleanup targets.",
     "  Sandbox-scoped provider registrations or gateway-bound credentials may remain when the durable recovery record lists them.",
@@ -78,6 +82,7 @@ export function buildCancelRollbackMessage(
 }
 
 export interface InstallSandboxCancelRollbackOptions {
+  cliName?: string;
   log?: (message: string) => void;
   recordRecovery?: SandboxCancelRollbackDeps["recordRecovery"];
   /** Override for tests; defaults to `process.on("exit", ...)`. */
@@ -93,9 +98,10 @@ export interface InstallSandboxCancelRollbackOptions {
  * The handler does nothing unless it is armed and the operator cancels.
  */
 export function installSandboxCancelRollback(
-  opts: InstallSandboxCancelRollbackOptions,
+  opts: InstallSandboxCancelRollbackOptions = {},
 ): SandboxCancelRollback {
   const rollback = createSandboxCancelRollback({
+    cliName: opts.cliName ?? "nemoclaw",
     log: opts.log ?? ((message) => console.error(message)),
     recordRecovery: opts.recordRecovery,
   });
@@ -200,6 +206,7 @@ export function createSandboxCancelRollback(
         for (const line of buildCancelRollbackMessage(
           sandboxName,
           identityFingerprint ?? undefined,
+          deps.cliName,
         )) {
           deps.log(line);
         }

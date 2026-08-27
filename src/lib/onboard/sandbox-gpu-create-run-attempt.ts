@@ -574,14 +574,38 @@ export function createSandboxGpuCreateAttemptRunner(
             ? "create"
             : undefined,
       });
-    let createResult: Awaited<ReturnType<typeof streamSandboxCreate>>;
+    let createResult: Awaited<ReturnType<typeof streamSandboxCreate>> | null = null;
+    let resumedSandboxId: string | null = null;
     let managedIncompleteCreateRecovered = false;
     let createdSandboxVerified = false;
     const failAfterCreatedSandboxVerification = (message: string, status: number): never => {
       if (createdSandboxVerified) throw new Error(message);
       return process.exit(status);
     };
-    if (managedBootstrap && managedLifecycle) {
+    if (input.resumeVerifiedCreate) {
+      if (route !== input.resumeVerifiedCreate.route) {
+        throw new Error("Verified sandbox recovery route changed before continuation.");
+      }
+      const identity = probeExactOpenShellSandboxId(input.sandboxName, deps);
+      if (identity.state !== "identified") {
+        throw new Error(
+          `Cannot resume sandbox '${input.sandboxName}': its exact live identity is unavailable.`,
+        );
+      }
+      const liveIdentityFingerprint = fingerprintSandboxRecreateValue(identity.sandboxId);
+      if (liveIdentityFingerprint !== input.resumeVerifiedCreate.liveIdentityFingerprint) {
+        throw new Error(
+          `Cannot resume sandbox '${input.sandboxName}': its live identity changed after the verified checkpoint.`,
+        );
+      }
+      resumedSandboxId = identity.sandboxId;
+      await verifyCreatedSandboxBeforeEffects(identity.sandboxId, route, input);
+      createdSandboxVerified = true;
+      if (deferPostCreateEffects) {
+        revalidatePostCreateEffect(`activate managed sandbox network for '${input.sandboxName}'`);
+        await managedLifecycle?.prepareNetwork();
+      }
+    } else if (managedBootstrap && managedLifecycle) {
       try {
         createResult = await managedLifecycle.runCreate(
           async ({ heldWorkloadArgv, bootstrapIdentity }) => {
@@ -685,9 +709,9 @@ export function createSandboxGpuCreateAttemptRunner(
     } else {
       createResult = await streamCreate();
     }
-    if (!state.firstCreateOutput) state.firstCreateOutput = createResult.output;
+    if (createResult && !state.firstCreateOutput) state.firstCreateOutput = createResult.output;
     if (!deferPostCreateEffects) await runtimePatch.exitOnPatchError();
-    if (createResult.status !== 0) {
+    if (createResult && createResult.status !== 0) {
       const failure = classifySandboxCreateFailure(createResult.output);
       if (failure.kind === "sandbox_create_incomplete") {
         console.warn("");
@@ -790,11 +814,13 @@ export function createSandboxGpuCreateAttemptRunner(
       revalidatePostCreateEffect(`validate runtime patch for sandbox '${input.sandboxName}'`);
       await runtimePatch.exitOnPatchError();
     }
-    const preRecreateIdentity = deferRestartSafeCutover
-      ? probeExactOpenShellSandboxId(input.sandboxName, deps)
-      : null;
+    const preRecreateIdentity =
+      deferRestartSafeCutover && !resumedSandboxId
+        ? probeExactOpenShellSandboxId(input.sandboxName, deps)
+        : null;
     const expectedRecreatedSandboxId =
-      preRecreateIdentity?.state === "identified" ? preRecreateIdentity.sandboxId : null;
+      resumedSandboxId ??
+      (preRecreateIdentity?.state === "identified" ? preRecreateIdentity.sandboxId : null);
     if (deferRestartSafeCutover && !expectedRecreatedSandboxId) {
       console.error("");
       console.error(
@@ -805,7 +831,7 @@ export function createSandboxGpuCreateAttemptRunner(
       });
       failAfterCreatedSandboxVerification(
         `Sandbox '${input.sandboxName}' did not return one exact durable sandbox ID before runtime recreation after verified creation.`,
-        createResult.status === 0 ? 1 : createResult.status,
+        createResult?.status === 0 ? 1 : (createResult?.status ?? 1),
       );
     }
     if (!portableLifecycle || managedLifecycle) {
@@ -898,7 +924,7 @@ export function createSandboxGpuCreateAttemptRunner(
       }
       failAfterCreatedSandboxVerification(
         `Sandbox '${input.sandboxName}' did not become ready after verified creation.`,
-        createResult.status === 0 ? 1 : createResult.status,
+        createResult?.status === 0 ? 1 : (createResult?.status ?? 1),
       );
     }
     if (input.sandboxGpuConfig.sandboxGpuEnabled) {
@@ -982,7 +1008,7 @@ export function createSandboxGpuCreateAttemptRunner(
     return {
       ok: true,
       route,
-      value: { createResult, runtimePatch },
+      value: createResult ? { createResult, runtimePatch } : { runtimePatch },
     } as const;
   };
 

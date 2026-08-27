@@ -121,6 +121,95 @@ beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
 
 describe("created sandbox identity gate", () => {
+  it("resumes the exact verified sandbox without issuing another create (#9833)", async () => {
+    const events: string[] = [];
+    const sandboxId = "alpha-sandbox-id";
+    const input = noGpuInput();
+    input.resumeVerifiedCreate = {
+      route: "none",
+      liveIdentityFingerprint: fingerprintSandboxRecreateValue(sandboxId),
+    };
+    input.verifyCreatedSandboxBeforeEffects = vi.fn(async (identity) => {
+      events.push("verify-created");
+      expect(identity).toEqual({
+        sandboxId,
+        liveIdentityFingerprint: fingerprintSandboxRecreateValue(sandboxId),
+        route: "none",
+      });
+    });
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn((operation) =>
+      events.push(`revalidate:${operation}`),
+    );
+    const patch = createGpuPatchFixture();
+    patch.exitOnPatchError.mockImplementation(() => events.push("runtime-check"));
+    patch.ensureApplied.mockImplementation(() => events.push("runtime-patch"));
+    patch.waitForSupervisorReconnectIfNeeded.mockImplementation(() => events.push("reconnect"));
+    patch.commitAfterReady.mockImplementation(() => events.push("commit"));
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mocks.waitForCreatedSandboxReadyWithTrace.mockImplementation(() => {
+      events.push("readiness");
+      return { ready: true, reason: "ready", failurePhase: null };
+    });
+    const deps = createGpuFlowDeps();
+    vi.mocked(deps.runOpenshell).mockImplementation((args) =>
+      args.join(" ") === "sandbox get alpha"
+        ? { status: 0, stdout: `Name: alpha\nId: ${sandboxId}\nState: Ready\n`, stderr: "" }
+        : { status: 0, stdout: "", stderr: "" },
+    );
+    deps.installPortableDemoLifecycle = vi.fn(() => {
+      events.push("portable-lifecycle");
+      return "generation-1";
+    });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
+      origin: "resumed",
+      route: "none",
+    });
+
+    expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
+    expect(events).toEqual([
+      "verify-created",
+      "revalidate:activate managed sandbox network for 'alpha'",
+      "revalidate:validate runtime patch for sandbox 'alpha'",
+      "runtime-check",
+      "revalidate:apply runtime patch for sandbox 'alpha'",
+      "runtime-patch",
+      "reconnect",
+      "revalidate:reconnect sandbox supervisor for 'alpha'",
+      "readiness",
+      "revalidate:commit runtime readiness for sandbox 'alpha'",
+      "commit",
+      "revalidate:record portable lifecycle for sandbox 'alpha'",
+      "portable-lifecycle",
+    ]);
+  });
+
+  it("refuses a changed live identity before resumed effects (#9833)", async () => {
+    const input = noGpuInput();
+    input.resumeVerifiedCreate = {
+      route: "none",
+      liveIdentityFingerprint: fingerprintSandboxRecreateValue("expected-id"),
+    };
+    input.verifyCreatedSandboxBeforeEffects = vi.fn();
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    const patch = createGpuPatchFixture();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    const deps = createGpuFlowDeps();
+    vi.mocked(deps.runOpenshell).mockImplementation((args) =>
+      args.join(" ") === "sandbox get alpha"
+        ? { status: 0, stdout: "Name: alpha\nId: replacement-id\nState: Ready\n", stderr: "" }
+        : { status: 0, stdout: "", stderr: "" },
+    );
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "live identity changed after the verified checkpoint",
+    );
+
+    expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
+    expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
+    expect(patch.ensureApplied).not.toHaveBeenCalled();
+  });
+
   it("requires a durable recovery owner for verified create attempts (#9211)", async () => {
     const input = noGpuInput();
     input.verifyCreatedSandboxBeforeEffects = vi.fn();
