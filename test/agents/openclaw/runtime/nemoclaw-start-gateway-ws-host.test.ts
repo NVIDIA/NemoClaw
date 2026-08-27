@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 const requireForTest = createRequire(import.meta.url);
 const YAML = requireForTest("yaml");
 
-const START_SCRIPT = path.join(import.meta.dirname, "..", "../../..", "scripts", "nemoclaw-start.sh");
+const START_SCRIPT = path.join(import.meta.dirname, "../../../..", "scripts", "nemoclaw-start.sh");
 
 const startScriptSource = fs.readFileSync(START_SCRIPT, "utf-8");
 
@@ -558,7 +558,7 @@ describe("gateway websocket url host derivation", () => {
 describe("gateway dial-back base policy", () => {
   function loadYaml(relativePath: string): Record<string, unknown> {
     return YAML.parse(
-      fs.readFileSync(path.join(import.meta.dirname, "..", "../../..", relativePath), "utf-8"),
+      fs.readFileSync(path.join(import.meta.dirname, "../../../..", relativePath), "utf-8"),
     ) as Record<string, unknown>;
   }
 

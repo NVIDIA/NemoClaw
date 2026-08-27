@@ -57,6 +57,8 @@ export default async function refresh_pr_body_evidence(input: {
     return value.trim();
   };
   if (input.docsReceipt) {
+    if (!["blocked", "docs-updated", "no-docs-needed"].includes(input.docsReceipt.result))
+      throw new Error("docsReceipt.result is invalid");
     oneLine("Documentation evidence", input.docsReceipt.evidence);
     oneLine("Documentation agent", input.docsReceipt.agent);
   }
@@ -199,9 +201,15 @@ export default async function refresh_pr_body_evidence(input: {
         " -->";
       const pattern =
         /- \[[ xX]\] Documentation writer subagent reviewed the completed changes\n- Result: `[^`]+`\n- Evidence: [^\n]*\n- Agent: [^\n]*\n<!-- docs-review-head-sha: [^>]+ -->\n<!-- docs-review-agents-blob-sha: [^>]+ -->/;
-      if (!pattern.test(body))
-        throw new Error("Could not find Documentation Writer Review receipt block");
-      body = body.replace(pattern, replacement);
+      if (pattern.test(body)) body = body.replace(pattern, replacement);
+      else {
+        const anchor = /\n## Verification\n/u;
+        if (!anchor.test(body)) throw new Error("Could not find Verification section");
+        body = body.replace(
+          anchor,
+          "\n## Documentation Writer Review\n\n" + replacement + "\n\n## Verification\n",
+        );
+      }
     }
     if (input.targetedValidationLine) {
       const pattern =

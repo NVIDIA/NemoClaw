@@ -179,7 +179,7 @@ runner.runCapture = (command) => {
     ].join("\n");
   }
   if (normalized.includes("sandbox get")) {
-    return sandboxCreated ? sandboxName + "\nId: fixture-created-sandbox\n" : "";
+    return sandboxCreated ? sandboxName + "\nId: sbx-4f2a91c0d7\n" : "";
   }
   if (normalized.includes("sandbox list")) return sandboxName + " Ready";
   return "";
@@ -275,7 +275,6 @@ const { createSandbox } = require(${onboardPath});
       HOME: tmpDir,
       NEMOCLAW_HOME: path.join(tmpDir, ".nemoclaw"),
       NEMOCLAW_NON_INTERACTIVE: "1",
-      NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK: "1",
       PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
     },
   });

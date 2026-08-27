@@ -94,6 +94,63 @@ describe("rebuild web-search policy normalization", () => {
     expect(result?.backupWasForceSkipped).toBe(false);
   });
 
+  it("removes inactive built-in Hermes channel egress during rebuild", () => {
+    const customDiscordPolicy = { name: "discord", content: "network_policies: {}\n" };
+    const preparedRecoveryManifest = {
+      policyPresets: ["discord"],
+      customPolicies: [customDiscordPolicy],
+    } as never;
+
+    const result = runRebuildBackupPhase({
+      sandboxName: "alpha",
+      sandboxEntry: {
+        name: "alpha",
+        agent: "hermes",
+        policies: ["discord"],
+        customPolicies: [customDiscordPolicy],
+        policyPresetsFinalized: true,
+      },
+      staleRecovery: false,
+      preparedRecoveryManifest,
+      messagingPlan: {
+        schemaVersion: 1,
+        sandboxName: "alpha",
+        agent: "hermes",
+        workflow: "rebuild",
+        channels: [
+          {
+            channelId: "slack",
+            displayName: "Slack",
+            authMode: "token-paste",
+            active: true,
+            selected: true,
+            configured: true,
+            disabled: false,
+            inputs: [],
+            hooks: [],
+          },
+        ],
+        disabledChannels: [],
+        credentialBindings: [],
+        networkPolicy: { presets: [], entries: [] },
+        agentRender: [],
+        buildSteps: [],
+        stateUpdates: [],
+        healthChecks: [],
+      },
+      webSearchConfig: null,
+      log: vi.fn(),
+      bail: (message): never => {
+        throw new Error(message);
+      },
+      relockShieldsIfNeeded: () => true,
+    });
+
+    expect(result?.policyPresets).toEqual(["slack"]);
+    expect(result?.backupManifest).toBe(preparedRecoveryManifest);
+    expect(result?.backupManifest?.customPolicies).toEqual([customDiscordPolicy]);
+  });
+
   it("records when --force skips a total backup failure", () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);

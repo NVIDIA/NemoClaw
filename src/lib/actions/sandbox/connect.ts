@@ -84,6 +84,7 @@ import {
   type HermesPortableActiveLifecycleAuthority,
   printGatewayLifecycleHint,
   qualifyPortableAgentLifecycleAuthority,
+  requalifyPortableAgentSandboxAuthority,
   recoverPortableDemoSandboxLifecycleForConnect,
   isTerminalSandboxPhase,
   TERMINAL_SANDBOX_PHASES,
@@ -462,7 +463,7 @@ function portableAgentLifecycleAuthorityDeps() {
   return { readRegistry: registry.getSandbox };
 }
 
-/** Verify the recorded schema-5 route without invoking any inference repair. */
+/** Verify the recorded Hermes route without invoking any inference repair. */
 function verifyHermesPortableInferenceRouteOrExit(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
@@ -1725,6 +1726,9 @@ async function prepareConnectSandboxWithinLifecycleFence(
   probeTiming?: ProbeTimingRecorder,
 ): Promise<PreparedConnectChild | null> {
   if (probeOnly) {
+    probeTiming!.measure("authority", () =>
+      requalifyPortableAgentSandboxAuthority(sandboxName, portableAgentLifecycleAuthorityDeps()),
+    );
     let readiness = await probeTiming!.measureAsync("readiness", () =>
       inspectLaunchReadiness(sandboxName),
     );
