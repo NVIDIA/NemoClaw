@@ -21,9 +21,8 @@ type RunOptions = {
 };
 type RunOpenshell = (command: string[], opts?: RunOptions) => RunResult;
 
-const messagingBridgeProvider = require(
-  "./messaging-bridge-provider"
-) as typeof import("./messaging-bridge-provider");
+const messagingBridgeProvider =
+  require("./messaging-bridge-provider") as typeof import("./messaging-bridge-provider");
 
 const DISCORD_STATIC_PROFILE_EXPORT = JSON.stringify({
   id: "discord-hermes-static-v1",
@@ -733,13 +732,14 @@ describe("onboard provider helpers", () => {
 
     expect(providers).toEqual(["alpha-discord-bridge"]);
     expect(calls.map(({ command }) => command.join(" "))).toEqual([
+      "provider get alpha-discord-bridge",
       "provider profile export nemoclaw-mcp-v1 --output json",
       expect.stringMatching(/^provider profile import --file .*nemoclaw-mcp-v1\.yaml$/),
       "provider get alpha-discord-bridge",
       "provider create --name alpha-discord-bridge --type nemoclaw-mcp-v1 --credential DISCORD_BOT_TOKEN",
       "provider get alpha-discord-bridge",
     ]);
-    expect(calls[3]?.env).toEqual({ DISCORD_BOT_TOKEN: credential });
+    expect(calls[4]?.env).toEqual({ DISCORD_BOT_TOKEN: credential });
     expect(calls.flatMap(({ command }) => command)).not.toContain(credential);
   });
 
@@ -772,12 +772,21 @@ describe("onboard provider helpers", () => {
         (command) => {
           const joined = command.join(" ");
           commands.push(joined);
-          return profileResults[command[2] ?? ""] ?? { status: 0, stdout: "", stderr: "" };
+          return command[1] === "get"
+            ? {
+                status: 0,
+                stdout:
+                  "Name: alpha-discord-bridge\nType: nemoclaw-mcp-v1\nCredential keys: DISCORD_BOT_TOKEN\nConfig keys: <none>\n",
+              }
+            : (profileResults[command[2] ?? ""] ?? { status: 0, stdout: "", stderr: "" });
         },
         { bestEffort: true },
       ),
     ).toThrow(/does not match NemoClaw's endpointless messaging credential contract/u);
-    expect(commands).toEqual(["provider profile export nemoclaw-mcp-v1 --output json"]);
+    expect(commands).toEqual([
+      "provider get alpha-discord-bridge",
+      "provider profile export nemoclaw-mcp-v1 --output json",
+    ]);
   });
 
   it.each([
@@ -885,6 +894,7 @@ describe("onboard provider helpers", () => {
 
     expect(providers).toEqual([name]);
     expect(commands).toEqual([
+      `provider get ${name}`,
       "provider profile export nemoclaw-mcp-v1 --output json",
       `provider get ${name}`,
       `provider delete ${name}`,
@@ -1044,7 +1054,6 @@ describe("onboard provider helpers", () => {
       "provider update alpha-discord-bridge --credential DISCORD_BOT_TOKEN",
     ]);
   });
-
 
   it("throws instead of exiting when best-effort messaging provider upsert fails", () => {
     const originalExit = process.exit;

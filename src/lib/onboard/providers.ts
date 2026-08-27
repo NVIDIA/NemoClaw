@@ -611,6 +611,41 @@ function containsPlannedMessagingCredentialKeys(metadata, plannedKeys) {
   return plannedKeys.every((key) => observed.has(key));
 }
 
+function requiresCredentialFamilyBinding(tokenDef) {
+  return (
+    tokenDef.providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE ||
+    (tokenDef.additionalCredentials ?? []).length > 0
+  );
+}
+
+function preflightCredentialFamilyProviderBindings(tokenDefs, runOpenshell) {
+  const failures = [];
+  for (const tokenDef of tokenDefs) {
+    if (!requiresCredentialFamilyBinding(tokenDef)) continue;
+    const { name, envKey, providerType } = tokenDef;
+    const requiredProviderType = providerType || "generic";
+    const inspection = inspectGatewayCredentialFamilyProviderBinding(
+      {
+        name,
+        type: requiredProviderType,
+        credentialKey: envKey,
+      },
+      runOpenshell,
+    );
+    if (inspection.kind === "missing" || inspection.kind === "exact") continue;
+    failures.push({
+      name,
+      message:
+        inspection.kind === "indeterminate"
+          ? `Could not inspect messaging provider '${name}'; no provider mutation was attempted.`
+          : requiredProviderType === MESSAGING_CREDENTIAL_PROVIDER_TYPE
+            ? `Messaging provider '${name}' does not match the required endpointless credential binding.`
+            : `Messaging provider '${name}' does not match the required '${requiredProviderType}' credential binding.`,
+    });
+  }
+  return failures;
+}
+
 function preflightMessagingProviderBindings(tokenDefs, _runOpenshell) {
   const failures = [];
   for (const tokenDef of tokenDefs) {
@@ -663,6 +698,19 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
     options.revalidatePolicyRequirements,
     "inspect or change a messaging bridge provider",
   );
+  const familyBindingFailures = preflightCredentialFamilyProviderBindings(
+    tokenDefs,
+    runMessagingBridgeOpenshell,
+  );
+  if (familyBindingFailures.length > 0 && !options.replaceExisting) {
+    const message = familyBindingFailures
+      .map(({ name, message: failure }) => `${name}: ${failure}`)
+      .join("; ");
+    if (options.bestEffort) throw new MessagingProviderBindingConflictError(message);
+    console.error(`\n  ✗ Failed to create messaging provider: ${message}`);
+    process.exit(1);
+  }
+
   // Provider creation order. Bridges (e.g. Google Chat) need two steps bracketing
   // the uniform create loop, ordered around `provider create`:
   //
@@ -723,13 +771,18 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   const failures = [];
   for (const { name, envKey, token, providerType, additionalCredentials = [] } of tokenDefs) {
     if (!token && !additionalCredentials.some((credential) => Boolean(credential.token))) continue;
+    const requiresFamilyBinding = requiresCredentialFamilyBinding({
+      providerType,
+      additionalCredentials,
+    });
     let knownExists;
     let result;
-    if (providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE) {
+    if (requiresFamilyBinding) {
+      const requiredProviderType = providerType || "generic";
       const inspection = inspectGatewayCredentialFamilyProviderBinding(
         {
           name,
-          type: providerType,
+          type: requiredProviderType,
           credentialKey: envKey,
         },
         runMessagingBridgeOpenshell,
@@ -744,7 +797,11 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
         result = {
           ok: false,
           status: 1,
-          message: `Messaging provider '${name}' does not match the required endpointless credential binding.`,
+          reason: "binding-conflict",
+          message:
+            requiredProviderType === MESSAGING_CREDENTIAL_PROVIDER_TYPE
+              ? `Messaging provider '${name}' does not match the required endpointless credential binding.`
+              : `Messaging provider '${name}' does not match the required '${requiredProviderType}' credential binding.`,
         };
       } else {
         knownExists = inspection.kind !== "missing";
@@ -767,7 +824,9 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
           knownExists,
           allowedSandboxes: options.allowedSandboxes,
           revalidatePolicyRequirements: options.revalidatePolicyRequirements,
-          requireExactBinding: Boolean(options.requireExactBindings && providerType),
+          requireExactBinding: Boolean(
+            requiresFamilyBinding || (options.requireExactBindings && providerType),
+          ),
           credentialEnvs: [
             envKey,
             ...additionalCredentials
@@ -778,10 +837,7 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
         },
       );
       if (result.ok) mutatedProviderNames.push(name);
-      if (
-        result.ok &&
-        (providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE || additionalCredentials.length > 0)
-      ) {
+      if (result.ok && requiresFamilyBinding) {
         const verifiedMetadata = readGatewayProviderMetadata(name, runMessagingBridgeOpenshell);
         const plannedKeys = plannedMessagingCredentialKeys({ envKey, additionalCredentials });
         const verified =
@@ -789,8 +845,7 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
             name,
             type: providerType || "generic",
             credentialKey: envKey,
-          }) &&
-          containsPlannedMessagingCredentialKeys(verifiedMetadata, plannedKeys);
+          }) && containsPlannedMessagingCredentialKeys(verifiedMetadata, plannedKeys);
         if (!verified) {
           result = {
             ok: false,

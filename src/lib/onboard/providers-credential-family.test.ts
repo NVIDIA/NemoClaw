@@ -4,7 +4,8 @@
 import { expect, it } from "vitest";
 
 type RunResult = { status: number; stdout?: string; stderr?: string };
-type RunOpenshell = (command: string[]) => RunResult;
+type RunOptions = { env?: Record<string, string> };
+type RunOpenshell = (command: string[], options?: RunOptions) => RunResult;
 
 type TokenDef = {
   name: string;
@@ -121,6 +122,55 @@ it("rejects an update that omits a submitted namespaced credential (#10153)", ()
       { bestEffort: true },
     ),
   ).toThrow(/did not confirm messaging provider/u);
+});
+
+it("rejects a later mismatched provider before submitting any family credentials (#10153)", () => {
+  const canonicalSecret = "brave-canonical-test-secret";
+  const extensionSecret = "brave-extension-test-secret";
+  const commands: Array<{ command: string; env: Record<string, string> }> = [];
+  const runOpenshell: RunOpenshell = (command, options = {}) => {
+    commands.push({ command: command.join(" "), env: options.env ?? {} });
+    switch (command[1]) {
+      case "get":
+        return command[2] === PROVIDER_NAME
+          ? missingProvider()
+          : {
+              status: 0,
+              stdout: [
+                "Name: alpha-brave-search",
+                "Type: openai",
+                "Credential keys: BRAVE_API_KEY",
+                "Config keys: <none>",
+                "",
+              ].join("\n"),
+            };
+      default:
+        return { status: 0 };
+    }
+  };
+
+  expect(() =>
+    upsertMessagingProviders(
+      [
+        tokenDef("telegram-test-token", []),
+        {
+          name: "alpha-brave-search",
+          envKey: "BRAVE_API_KEY",
+          token: canonicalSecret,
+          providerType: "brave",
+          additionalCredentials: [{ envKey: "BRAVE_API_KEY_AGENT_A", token: extensionSecret }],
+        },
+      ],
+      runOpenshell,
+      { bestEffort: true },
+    ),
+  ).toThrow(/does not match the required 'brave' credential binding/u);
+  expect(commands.some(({ command }) => /provider (?:create|update)/u.test(command))).toBe(false);
+  expect(
+    commands.some(({ env }) =>
+      Object.values(env).some((value) => [canonicalSecret, extensionSecret].includes(value)),
+    ),
+  ).toBe(false);
 });
 
 it("does not create a credential family without its canonical credential (#10153)", () => {
