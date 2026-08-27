@@ -204,7 +204,7 @@ describe("prepared connect-shell administrative approval", () => {
     ["cron:add", 28, "ADMIN_CRON_RETRY_FAILED", "scope-upgrade-pending", 3],
     ["cron:run", 29, "ADMIN_CRON_RUN_FAILED", "timeout", 4],
   ] as const)(
-    "retains a safe diagnostic when %s fails (#5324)",
+    "reports a fixed failure classification without raw command output when %s fails (#5324)",
     (failureCommand, expectedStatus, marker, diagnostic, expectedCommandCount) => {
       const { commands, result } = runAdminApprovalScript(
         "ws://127.0.0.1:18789",
@@ -264,7 +264,7 @@ describe("prepared connect-shell administrative approval", () => {
     expect(result.stderr).toContain("approved scope arrays disagree");
   });
 
-  it("rejects an admin request from a different paired CLI identity (#5324)", () => {
+  it("rejects an operator.admin request from a different paired CLI identity (#5324)", () => {
     const state = adminState();
     const localDevice = (state.paired as Array<Record<string, unknown>>)[0];
     const otherDevice = {
