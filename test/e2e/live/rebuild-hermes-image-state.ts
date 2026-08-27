@@ -6,6 +6,7 @@ import {
   LOCAL_SANDBOX_IMAGE_REPO,
   SANDBOX_FROM_IMAGE_REPO,
 } from "../../../src/lib/domain/sandbox/image-tag";
+import { MANAGED_IMAGE_REPOSITORIES } from "../../../src/lib/onboard/managed-image/contract";
 
 export interface RebuildHermesRegistryImageState {
   openshellDriver: "docker";
@@ -31,16 +32,18 @@ export async function cleanupTrackedRebuildHermesImage(
   if (imageTag !== null) await remove(imageTag);
 }
 
-export function requireRebuildHermesInitialImageTag(value: unknown, sandboxName: string): string {
+export function requireRebuildHermesFinalImageRef(value: unknown, sandboxName: string): string {
   const prefix = `${LOCAL_SANDBOX_IMAGE_REPO}:${sandboxName}-`;
-  const imageTag = typeof value === "string" ? value : "";
-  const buildPart = imageTag.startsWith(prefix) ? imageTag.slice(prefix.length) : "";
-  if (!/^\d+$/.test(buildPart)) {
-    throw new Error(
-      `initial Hermes fixture imageTag must be an owned ${prefix}<build> tag; got ${imageTag || "<missing>"}`,
-    );
-  }
-  return imageTag;
+  const imageRef = typeof value === "string" ? value : "";
+  const buildPart = imageRef.startsWith(prefix) ? imageRef.slice(prefix.length) : "";
+  const managedDigestPrefix = `${MANAGED_IMAGE_REPOSITORIES.hermes}@sha256:`;
+  const managedDigest = imageRef.startsWith(managedDigestPrefix)
+    ? imageRef.slice(managedDigestPrefix.length)
+    : "";
+  if (/^\d+$/.test(buildPart) || /^[0-9a-f]{64}$/.test(managedDigest)) return imageRef;
+  throw new Error(
+    `rebuilt Hermes image reference must be an immutable ${managedDigestPrefix}<digest> or owned ${prefix}<build> reference; got ${imageRef || "<missing>"}`,
+  );
 }
 
 export function requireRebuildHermesReplacementLifecycleReceipt(

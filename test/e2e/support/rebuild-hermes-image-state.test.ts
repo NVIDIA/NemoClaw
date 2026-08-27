@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   cleanupTrackedRebuildHermesImage,
   rebuildHermesRegistryImageState,
-  requireRebuildHermesInitialImageTag,
+  requireRebuildHermesFinalImageRef,
   requireRebuildHermesReplacementLifecycleReceipt,
 } from "../live/rebuild-hermes-image-state.ts";
 
@@ -20,24 +20,38 @@ describe("Hermes rebuild fixture image ownership", () => {
     expect(remove).toHaveBeenCalledExactlyOnceWith("openshell/sandbox-from:1784010200");
   });
 
-  it("accepts only the initial local image owned by the fixture sandbox", () => {
+  it("accepts only an immutable managed image or local image owned by the fixture sandbox", () => {
     const sandboxName = "e2e-rebuild-hermes-123";
-    const imageTag = `nemoclaw-sandbox-local:${sandboxName}-1784010000`;
+    const localImageRef = `nemoclaw-sandbox-local:${sandboxName}-1784010000`;
+    const managedImageRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:${"a".repeat(64)}`;
 
-    expect(requireRebuildHermesInitialImageTag(imageTag, sandboxName)).toBe(imageTag);
-    expect(() => requireRebuildHermesInitialImageTag(undefined, sandboxName)).toThrow("<missing>");
+    expect(requireRebuildHermesFinalImageRef(localImageRef, sandboxName)).toBe(localImageRef);
+    expect(requireRebuildHermesFinalImageRef(managedImageRef, sandboxName)).toBe(managedImageRef);
+    expect(() => requireRebuildHermesFinalImageRef(undefined, sandboxName)).toThrow("<missing>");
     expect(() =>
-      requireRebuildHermesInitialImageTag(
+      requireRebuildHermesFinalImageRef(
         "nemoclaw-sandbox-local:another-sandbox-1784010000",
         sandboxName,
       ),
     ).toThrow("owned");
     expect(() =>
-      requireRebuildHermesInitialImageTag(
+      requireRebuildHermesFinalImageRef(
         `nemoclaw-sandbox-local:${sandboxName}-base-1784010000`,
         sandboxName,
       ),
     ).toThrow("owned");
+    expect(() =>
+      requireRebuildHermesFinalImageRef(
+        `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`,
+        sandboxName,
+      ),
+    ).toThrow("immutable");
+    expect(() =>
+      requireRebuildHermesFinalImageRef(
+        "ghcr.io/nvidia/nemoclaw/hermes-sandbox:latest",
+        sandboxName,
+      ),
+    ).toThrow("immutable");
   });
 
   it("requires the replacement registry row to carry its journaled live identity", () => {

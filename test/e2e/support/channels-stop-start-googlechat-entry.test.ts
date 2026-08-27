@@ -290,49 +290,70 @@ describe("channels stop/start Google Chat live composition", () => {
     },
   );
 
-  it("replaces the detached fixture provider during rebuild", () => {
-    const providerDependencies: FixtureProviderDependencies = {
-      upsertMessagingProviders: vi.fn(() => []),
-    };
-    const calls: string[][] = [];
-    const run = ((args: string[]) => {
-      calls.push(args);
-      return { status: 0 };
-    }) as unknown as FixtureRunner;
-    const restore = installGooglechatCredentialFixture("e2e-oc-ch-cycle", "openclaw", {
-      ensureProfiles: vi.fn(),
-      providerDependencies,
-      root: "/repo",
-      run,
-    });
-
-    providerDependencies.upsertMessagingProviders(
+  it.each([
+    [
+      {},
       [
-        {
-          name: "e2e-oc-ch-cycle-googlechat-bridge",
-          envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-          token: null,
-          providerType: "google-chat-bridge",
-        },
+        ["provider", "get", "e2e-oc-ch-cycle-googlechat-bridge"],
+        [
+          "provider",
+          "update",
+          "e2e-oc-ch-cycle-googlechat-bridge",
+          "--credential",
+          "GOOGLE_CHAT_ACCESS_TOKEN",
+        ],
       ],
-      run,
+    ],
+    [
       { replaceExisting: true },
-    );
-
-    expect(calls).toEqual([
-      ["provider", "get", "e2e-oc-ch-cycle-googlechat-bridge"],
-      ["provider", "delete", "e2e-oc-ch-cycle-googlechat-bridge"],
       [
-        "provider",
-        "create",
-        "--name",
-        "e2e-oc-ch-cycle-googlechat-bridge",
-        "--type",
-        "google-chat-bridge",
-        "--credential",
-        "GOOGLE_CHAT_ACCESS_TOKEN",
+        ["provider", "get", "e2e-oc-ch-cycle-googlechat-bridge"],
+        ["provider", "delete", "e2e-oc-ch-cycle-googlechat-bridge"],
+        [
+          "provider",
+          "create",
+          "--name",
+          "e2e-oc-ch-cycle-googlechat-bridge",
+          "--type",
+          "google-chat-bridge",
+          "--credential",
+          "GOOGLE_CHAT_ACCESS_TOKEN",
+        ],
       ],
-    ]);
-    restore();
-  });
+    ],
+  ] as const)(
+    "reconciles an existing fixture provider with options %o",
+    (options, expectedCalls) => {
+      const providerDependencies: FixtureProviderDependencies = {
+        upsertMessagingProviders: vi.fn(() => []),
+      };
+      const calls: string[][] = [];
+      const run = ((args: string[]) => {
+        calls.push(args);
+        return { status: 0 };
+      }) as unknown as FixtureRunner;
+      const restore = installGooglechatCredentialFixture("e2e-oc-ch-cycle", "openclaw", {
+        ensureProfiles: vi.fn(),
+        providerDependencies,
+        root: "/repo",
+        run,
+      });
+
+      providerDependencies.upsertMessagingProviders(
+        [
+          {
+            name: "e2e-oc-ch-cycle-googlechat-bridge",
+            envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+            token: null,
+            providerType: "google-chat-bridge",
+          },
+        ],
+        run,
+        options,
+      );
+
+      expect(calls).toEqual(expectedCalls);
+      restore();
+    },
+  );
 });

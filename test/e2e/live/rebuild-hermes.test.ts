@@ -55,7 +55,7 @@ import {
   cleanupTrackedRebuildHermesImage,
   type RebuildHermesRegistryImageState,
   rebuildHermesRegistryImageState,
-  requireRebuildHermesInitialImageTag,
+  requireRebuildHermesFinalImageRef,
   requireRebuildHermesReplacementLifecycleReceipt,
 } from "./rebuild-hermes-image-state.ts";
 import {
@@ -1340,17 +1340,17 @@ test(STALE_BASE_REBUILD
   const updatedRegistryVersion = rebuiltRegistry.agentVersion;
   expect(updatedRegistryVersion).toEqual(expect.any(String));
   expect(updatedRegistryVersion).not.toBe(OLD_HERMES_REGISTRY_VERSION);
-  const rebuiltImageTag = requireRebuildHermesInitialImageTag(
+  const rebuiltImageRef = requireRebuildHermesFinalImageRef(
     rebuiltRegistry.imageTag,
     SANDBOX_NAME,
   );
   expect(
-    rebuiltImageTag,
+    rebuiltImageRef,
     "Hermes rebuild must replace the seeded derived image with a new managed image",
   ).not.toBe(seededOldSandboxImageState.imageTag);
   const finalImageInspect = await host.command(
     "docker",
-    ["image", "inspect", "--format", "{{json .}}", rebuiltImageTag],
+    ["image", "inspect", "--format", "{{json .}}", rebuiltImageRef],
     {
       artifactName: "phase-7-inspect-final-hermes-base-identity",
       env: buildAvailabilityProbeEnv(),
@@ -1369,9 +1369,9 @@ test(STALE_BASE_REBUILD
     finalImageInspect.stdout.trim(),
   );
   await artifacts.writeJson("phase-7-final-base-identity.json", {
-    rebuiltImageTag,
+    rebuiltImageRef,
     rebuiltDashboardPort,
-    resolutionMetadata: readSandboxBaseImageResolutionMetadata(rebuiltImageTag),
+    resolutionMetadata: readSandboxBaseImageResolutionMetadata(rebuiltImageRef),
     ...finalBaseEvidence,
   });
 

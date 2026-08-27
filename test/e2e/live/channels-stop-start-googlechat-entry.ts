@@ -144,10 +144,7 @@ export function installGooglechatCredentialFixture(
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    if (existing.status === 0) {
-      if (!options.replaceExisting) {
-        throw new Error(`Google Chat live fixture provider '${expectedName}' survived pre-clean`);
-      }
+    if (existing.status === 0 && options.replaceExisting) {
       const removed = effectiveRun(["provider", "delete", expectedName], {
         ignoreError: true,
         stdio: ["ignore", "pipe", "pipe"],
@@ -156,25 +153,27 @@ export function installGooglechatCredentialFixture(
         throw new Error(`Google Chat live fixture could not replace provider '${expectedName}'`);
       }
     }
-    const created = effectiveRun(
-      [
-        "provider",
-        "create",
-        "--name",
-        expectedName,
-        "--type",
-        expectedType,
-        "--credential",
-        "GOOGLE_CHAT_ACCESS_TOKEN",
-      ],
-      {
-        env: { GOOGLE_CHAT_ACCESS_TOKEN: GOOGLECHAT_E2E_ACCESS_TOKEN },
-        ignoreError: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-    if (created.status !== 0) {
-      throw new Error(`Google Chat live fixture could not create provider '${expectedName}'`);
+    const action = existing.status === 0 && !options.replaceExisting ? "update" : "create";
+    const providerArgs =
+      action === "update"
+        ? ["provider", "update", expectedName, "--credential", "GOOGLE_CHAT_ACCESS_TOKEN"]
+        : [
+            "provider",
+            "create",
+            "--name",
+            expectedName,
+            "--type",
+            expectedType,
+            "--credential",
+            "GOOGLE_CHAT_ACCESS_TOKEN",
+          ];
+    const mutated = effectiveRun(providerArgs, {
+      env: { GOOGLE_CHAT_ACCESS_TOKEN: GOOGLECHAT_E2E_ACCESS_TOKEN },
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (mutated.status !== 0) {
+      throw new Error(`Google Chat live fixture could not ${action} provider '${expectedName}'`);
     }
     const registered = new Set([...delegatedProviderNames, expectedName]);
     return tokenDefs.map(({ name }) => name).filter((name) => registered.has(name));
