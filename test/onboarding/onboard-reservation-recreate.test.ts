@@ -277,7 +277,7 @@ const { createSandbox } = require(${onboardPath});
       assert.match(
         payload.error ?? "completed",
         replaceBeforeCleanup
-          ? /pending create recovery state.*identity-bound cleanup/u
+          ? /pending create recovery state.*--resume.*only when that session retains authority/u
           : /^completed$/u,
       );
 
