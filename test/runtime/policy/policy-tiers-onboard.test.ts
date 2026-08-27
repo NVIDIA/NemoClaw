@@ -612,16 +612,31 @@ describe("policy tier setup", () => {
     assert.ok(!result.appliedCalls.includes("brave"));
   });
 
-  it("removes a previously-applied built-in Brave preset when Brave search is declined", async () => {
-    const result = await runPolicySetup(
-      { tierName: "balanced", currentApplied: ["brave", "npm"] },
-      { webSearchConfig: null, webSearchSupported: true },
-    );
+  // Declining web search on re-onboard reuse must not narrow an egress preset
+  // the applied tier itself defaults. Both reuse entry points carry the applied
+  // set forward through `appliedForPreservation`, so both are covered here.
+  it.each([
+    { tier: "balanced", nonInteractive: true, preserved: true },
+    { tier: "balanced", nonInteractive: false, preserved: true },
+    { tier: "restricted", nonInteractive: true, preserved: false },
+  ])(
+    "re-onboard reuse on $tier with web search declined keeps a previously-applied Brave preset only where the tier defaults it, non-interactive $nonInteractive (#10404)",
+    async ({ tier, nonInteractive, preserved }) => {
+      const result = await runPolicySetup(
+        {
+          tierName: tier,
+          recordedPolicyTier: tier,
+          nonInteractive,
+          currentApplied: ["npm", "pypi", "huggingface", "brew", "brave", "openclaw-pricing"],
+        },
+        { agent: "openclaw", webSearchConfig: null, webSearchSupported: true },
+      );
 
-    assert.ok(!result.applied.includes("brave"));
-    assert.ok(result.removedCalls.includes("brave"));
-    assert.ok(!result.appliedCalls.includes("brave"));
-  });
+      assert.equal(result.applied.includes("brave"), preserved);
+      assert.equal(result.removedCalls.includes("brave"), !preserved);
+      assert.ok(!result.appliedCalls.includes("brave"));
+    },
+  );
 
   it.each([
     ["OpenClaw", "openclaw", "no web search", null, []],

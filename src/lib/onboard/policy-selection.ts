@@ -459,7 +459,6 @@ async function setupPoliciesWithSelectionInner(
     customPresetNames,
     customOwnsObservability,
   });
-  const appliedForPreservation = pruneUnavailablePresets(applied);
   const filterSupportedPresetNames = (presetNames: string[]) =>
     filterSetupPolicyPresetNamesForAgent(excludePresets(presetNames), agent).filter(
       (name) =>
@@ -527,6 +526,13 @@ async function setupPoliciesWithSelectionInner(
   options.revalidatePolicyRequirements?.(`record the policy tier for sandbox '${sandboxName}'`);
   deps.setPolicyTier?.(sandboxName, tierName);
   const personalTier = tierName === PERSONAL_POLICY_TIER_NAME;
+  // The carry-forward set decides which *already applied* presets survive, so it
+  // needs the applied tier for the same provenance exemption the resume reapply
+  // above uses: `brave` on Balanced/Open is that tier's egress default, not a
+  // stale web-search leftover, so declining the web-search tool on re-onboard
+  // must not narrow it. Resolved after `tierName` so a freshly prompted tier
+  // counts too; Restricted lists no such default and still prunes. (#6844, #10404)
+  const appliedForPreservation = pruneUnavailablePresets(applied, { tierName });
   const suggestions = excludePresets(
     pruneUnavailablePresets(
       computeSetupPresetSuggestions(deps, tierName, {
@@ -556,7 +562,7 @@ async function setupPoliciesWithSelectionInner(
       const retainedPresets = ensureRequiredTierPolicyPresets(
         tierName,
         filterSuppressedAgentRequiredPresets(
-          excludePresets(pruneUnavailablePresets(currentAppliedPresets)),
+          excludePresets(pruneUnavailablePresets(currentAppliedPresets, { tierName })),
           tierName,
           agent,
         ),
@@ -625,6 +631,7 @@ async function setupPoliciesWithSelectionInner(
     chosen = excludePresets(
       pruneUnavailablePresets(chosen, {
         preserveExplicitWebSearch: isAuthoritative || personalTier,
+        tierName,
       }),
     );
     chosen = ensureRequiredTierPolicyPresets(tierName, chosen);

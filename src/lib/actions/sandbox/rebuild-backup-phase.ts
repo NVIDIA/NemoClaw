@@ -88,9 +88,14 @@ export function normalizeRebuildWebSearchPolicyPresets(
     // Never substitute a same-name built-in during onboard or restore.
     if (customPresetNames.has(name)) return false;
     if (preserveStandaloneDcodeTavily && name === "tavily") return true;
+    // Same provenance exemption the onboard reuse path applies: a tier's own
+    // egress default (`brave` on Balanced/Open) is not a stale web-search
+    // leftover, so rebuilding a sandbox with web search declined must not
+    // narrow it. (#10404)
     return !isStaleBuiltinWebSearchPolicyPreset(name, {
       webSearchConfig,
       customPresetNames,
+      tierName: sandboxEntry.policyTier,
     });
   });
   if (
