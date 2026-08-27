@@ -421,6 +421,7 @@ describe("channels add applies a matching policy preset (#3437)", () => {
       expect(applyPresetSpy).toHaveBeenCalledOnce();
       expect(applyPresetSpy).toHaveBeenCalledWith("test-sb", channel, {
         disclosedPresetState: "absent",
+        includeMessagingCredentialBindings: true,
       });
       expect(loadPresetForSandboxSpy).toHaveBeenCalledWith("test-sb", channel);
       expect(callOrder.indexOf(`applyPreset:${channel}`)).toBeLessThan(
@@ -455,6 +456,7 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     expect(applyPresetSpy).toHaveBeenCalledOnce();
     expect(applyPresetSpy).toHaveBeenCalledWith("test-sb", "whatsapp", {
       disclosedPresetState: "absent",
+      includeMessagingCredentialBindings: true,
     });
     expect(callOrder.indexOf("scopeDisclosure")).toBeLessThan(callOrder.indexOf("updateSandbox"));
     expect(callOrder.indexOf("applyPreset:whatsapp")).toBeLessThan(
@@ -473,6 +475,7 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     expect(updateSandboxSpy).not.toHaveBeenCalled();
     expect(applyPresetSpy).toHaveBeenCalledWith("test-sb", "whatsapp", {
       disclosedPresetState: "absent",
+      includeMessagingCredentialBindings: true,
     });
     expect(callOrder).not.toContain("promptAndRebuild");
   });
@@ -571,6 +574,7 @@ describe("channels add applies a matching policy preset (#3437)", () => {
 
     expect(applyPresetSpy).toHaveBeenCalledWith("test-sb", "telegram", {
       disclosedPresetState: "absent",
+      includeMessagingCredentialBindings: true,
     });
     expect(updateSandboxSpy).not.toHaveBeenCalled();
     expect(deleteCredentialSpy).toHaveBeenCalledWith("TELEGRAM_BOT_TOKEN");
@@ -731,6 +735,7 @@ describe("channels add/remove keeps session.policyPresets in sync with registry"
 
     expect(applyPresetSpy).toHaveBeenCalledWith("test-sb", "slack", {
       disclosedPresetState: "absent",
+      includeMessagingCredentialBindings: true,
     });
     expect(sessionUpdates).toEqual([]);
     expect(sessionState?.policyPresets).toEqual(["npm", "github"]);
@@ -743,6 +748,7 @@ describe("channels add/remove keeps session.policyPresets in sync with registry"
 
     expect(applyPresetSpy).toHaveBeenCalledWith("test-sb", "slack", {
       disclosedPresetState: "absent",
+      includeMessagingCredentialBindings: true,
     });
     expect(sessionUpdates).toEqual([]);
     expect(callOrder).toContain("promptAndRebuild");
@@ -755,6 +761,7 @@ describe("channels add/remove keeps session.policyPresets in sync with registry"
 
     expect(applyPresetSpy).toHaveBeenCalledWith("test-sb", "slack", {
       disclosedPresetState: "absent",
+      includeMessagingCredentialBindings: true,
     });
     expect(callOrder).toContain("promptAndRebuild");
   });

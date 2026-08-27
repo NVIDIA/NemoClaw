@@ -122,6 +122,7 @@ export function qualifySandboxPolicyAuthority(
     readonly recordedAuthorities: readonly (SandboxPolicyAuthority | null | undefined)[];
     readonly recordedSandbox?: SandboxEntry | null;
     readonly readRecordedSandbox?: (sandboxName: string) => SandboxEntry | null;
+    readonly currentSessionId?: string | null;
     readonly prepareRequiredPolicy: () => InitialSandboxPolicy;
     readonly operation: string;
   },
@@ -148,6 +149,7 @@ export function qualifySandboxPolicyAuthority(
         gatewayName: input.gatewayName,
         recordedSandbox: input.recordedSandbox ?? null,
         readRecordedSandbox: input.readRecordedSandbox,
+        currentSessionId: input.currentSessionId,
         inspection: sandboxInspection,
         operation: input.operation,
       },
@@ -209,6 +211,7 @@ function qualifyRecordedSandboxPolicyAuthority(
     readonly gatewayName: string;
     readonly recordedSandbox: SandboxEntry | null;
     readonly readRecordedSandbox?: (sandboxName: string) => SandboxEntry | null;
+    readonly currentSessionId?: string | null;
     readonly inspection: SandboxPolicyAuthorityInspection;
     readonly operation: string;
   },
@@ -216,11 +219,15 @@ function qualifyRecordedSandboxPolicyAuthority(
 ): QualifiedSandboxPolicyAuthority {
   const recorded = input.recordedSandbox;
   const gatewayPort = recorded?.gatewayPort;
-  const recordedReservationId = recorded?.reservationSessionId;
+  const pendingReservationIsCurrent =
+    recorded?.pendingRouteReservation !== true ||
+    (recorded.pendingPolicyVerification === undefined &&
+      typeof input.currentSessionId === "string" &&
+      input.currentSessionId.length > 0 &&
+      recorded.reservationSessionId === input.currentSessionId);
   if (
     !recorded?.policyAuthority ||
-    (recorded.pendingRouteReservation === true &&
-      (typeof recordedReservationId !== "string" || recordedReservationId.length === 0)) ||
+    !pendingReservationIsCurrent ||
     recorded.gatewayName !== input.gatewayName ||
     typeof gatewayPort !== "number" ||
     !Number.isSafeInteger(gatewayPort) ||
@@ -248,9 +255,9 @@ function qualifyRecordedSandboxPolicyAuthority(
       "owner-unknown",
     );
   }
-  const confirmedInspection = (
-    deps.inspectSandboxPolicyAuthority ?? inspectSandboxPolicyAuthority
-  )({ sandboxName: input.sandboxName, gatewayName: input.gatewayName });
+  const confirmedInspection = (deps.inspectSandboxPolicyAuthority ?? inspectSandboxPolicyAuthority)(
+    { sandboxName: input.sandboxName, gatewayName: input.gatewayName },
+  );
   const afterIdentity = inspectIdentity({
     sandboxName: input.sandboxName,
     gatewayName: input.gatewayName,
@@ -259,7 +266,8 @@ function qualifyRecordedSandboxPolicyAuthority(
     beforeIdentity !== afterIdentity ||
     confirmedInspection.authority !== "owner-unknown" ||
     confirmedInspection.policyIdentity.hash !== input.inspection.policyIdentity.hash ||
-    confirmedInspection.policyIdentity.activeVersion !== input.inspection.policyIdentity.activeVersion
+    confirmedInspection.policyIdentity.activeVersion !==
+      input.inspection.policyIdentity.activeVersion
   ) {
     throw new PolicyAuthorityRefusalError(
       `Refusing to ${input.operation}: the sandbox or policy identity changed during verification.`,
@@ -291,7 +299,8 @@ function qualifyRecordedSandboxPolicyAuthority(
   if (
     !confirmedRecorded ||
     confirmedRecorded.pendingRouteReservation !== recorded.pendingRouteReservation ||
-    confirmedRecorded.reservationSessionId !== recordedReservationId ||
+    confirmedRecorded.reservationSessionId !== recorded.reservationSessionId ||
+    confirmedRecorded.pendingPolicyVerification !== undefined ||
     confirmedRecorded.policyAuthority !== recorded.policyAuthority ||
     !isDeepStrictEqual(confirmedRecorded.policyCreationReceipt, recorded.policyCreationReceipt) ||
     confirmedRecorded.lifecycleGeneration !== recorded.lifecycleGeneration ||
@@ -367,6 +376,7 @@ export function requiredOnboardPolicyPresets(input: {
 
 /** Keep gateway and provider authority checks out of the onboarding entry point. */
 type PolicyAuthoritySession = {
+  sessionId?: string | null;
   policyAuthority?: SandboxPolicyAuthority | null;
   policyPresets?: string[] | null;
 };
@@ -404,6 +414,7 @@ export function createOnboardPolicyAuthorityBindings<Session extends PolicyAutho
     const agent = requirements.agent ?? runtime.agentDefs.loadAgent("openclaw");
     const sandboxName = requirements.sandboxName ?? getDefaultSandboxNameForAgent(agent);
     const observed = runtime.inspectSandboxForCreate(sandboxName);
+    const currentSession = runtime.onboardSession.loadSession();
     qualifySandboxPolicyAuthority(
       {
         sandboxName,
@@ -411,10 +422,11 @@ export function createOnboardPolicyAuthorityBindings<Session extends PolicyAutho
         liveExists: observed.liveExists,
         recordedAuthorities: [
           observed.existingEntry?.policyAuthority,
-          runtime.onboardSession.loadSession()?.policyAuthority,
+          currentSession?.policyAuthority,
         ],
         recordedSandbox: observed.existingEntry,
         readRecordedSandbox: (name) => runtime.inspectSandboxForCreate(name).existingEntry,
+        currentSessionId: currentSession?.sessionId,
         operation: requirements.operation,
         prepareRequiredPolicy: () =>
           prepareInitialSandboxCreatePolicy(
