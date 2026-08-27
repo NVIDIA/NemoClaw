@@ -40,6 +40,32 @@ describe("Hermes Portable created-identity capture", () => {
     expect(capture).toHaveBeenCalledExactlyOnceWith(CREATED_IDENTITY_SELECTOR_ARGS);
   });
 
+  it("routes the exact post-create publication lookup through the receipt gateway (#10423)", () => {
+    const capture = vi.fn(() => ({
+      status: 0,
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.alloc(0),
+    }));
+    const run = createHermesPortableReadyRunner("alpha", "nemoclaw", capture);
+    const args = ["sandbox", "get", "-g", "nemoclaw", "alpha"];
+
+    expect(run(args).status).toBe(0);
+    expect(capture).toHaveBeenCalledExactlyOnceWith(args);
+  });
+
+  it.each([
+    ["wrong gateway", ["sandbox", "get", "-g", "other", "alpha"]],
+    ["wrong sandbox", ["sandbox", "get", "-g", "nemoclaw", "beta"]],
+    ["reordered gateway", ["sandbox", "get", "alpha", "-g", "nemoclaw"]],
+    ["extra argument", ["sandbox", "get", "-g", "nemoclaw", "alpha", "extra"]],
+  ])("rejects a post-create publication lookup with %s before capture (#10423)", (_case, args) => {
+    const capture = vi.fn();
+    const run = createHermesPortableReadyRunner("alpha", "nemoclaw", capture);
+
+    expect(() => run(args)).toThrow("unsupported OpenShell command");
+    expect(capture).not.toHaveBeenCalled();
+  });
+
   it.each([
     [
       "wrong gateway",

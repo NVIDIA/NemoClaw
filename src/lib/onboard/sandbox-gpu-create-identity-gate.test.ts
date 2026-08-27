@@ -63,6 +63,10 @@ import {
   resetGpuFlowMocks,
   setupGpuFlowMocks,
 } from "./__test-helpers__/sandbox-gpu-create-flow";
+import {
+  createHermesPortableReadyCapture,
+  createHermesPortableReadyRunner,
+} from "./experimental/hermes-portable-onboarding";
 import { runSandboxGpuCreateFlow } from "./sandbox-gpu-create-flow";
 import { fingerprintSandboxRecreateValue } from "./sandbox-recreate-transaction";
 
@@ -263,6 +267,89 @@ describe("created sandbox identity gate", () => {
       ["sandbox", "get", "alpha"],
       expect.anything(),
     );
+  });
+
+  it("carries Hermes receipt authority from selector settlement through publication lookup (#10423)", async () => {
+    const events: string[] = [];
+    let nonce = "";
+    const input = noGpuInput();
+    const patch = createGpuPatchFixture();
+    input.verifyCreatedSandboxBeforeEffects = vi.fn(async () => {
+      events.push("verify-policy");
+    });
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mocks.streamSandboxCreate.mockImplementation(async (_command, args, _env, options) => {
+      events.push("create");
+      nonce = createAttemptNonce(args);
+      expect(options.readyCheck?.()).toBe(true);
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+    mocks.waitForCreatedSandboxReadyWithTrace.mockReturnValue({
+      ready: true,
+      reason: "ready",
+      failurePhase: null,
+    });
+    const capture = vi.fn((args: readonly string[]) => {
+      const results = {
+        [["sandbox", "list", "-g", "nemoclaw"].join("\0")]: () => {
+          events.push("ready-visible");
+          return { status: 0, stdout: Buffer.from("alpha Ready"), stderr: Buffer.alloc(0) };
+        },
+        [[
+          "sandbox",
+          "list",
+          "-g",
+          "nemoclaw",
+          "--selector",
+          `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`,
+          "--output",
+          "json",
+          "--limit",
+          "2",
+        ].join("\0")]: () => {
+          events.push("selector-settled");
+          return {
+            status: 0,
+            stdout: Buffer.from(
+              sandboxListJson("alpha-sandbox-id", {
+                [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce,
+              }),
+            ),
+            stderr: Buffer.alloc(0),
+          };
+        },
+        [["sandbox", "get", "-g", "nemoclaw", "alpha"].join("\0")]: () => {
+          events.push("publication-get");
+          return {
+            status: 0,
+            stdout: Buffer.from("ID: alpha-sandbox-id\n"),
+            stderr: Buffer.alloc(0),
+          };
+        },
+      } satisfies Readonly<
+        Record<string, () => { status: number; stdout: Buffer; stderr: Buffer }>
+      >;
+      return (
+        results[args.join("\0") as keyof typeof results] ??
+        (() => ({ status: 1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) }))
+      )();
+    });
+    const deps = createGpuFlowDeps();
+    deps.runOpenshell = createHermesPortableReadyRunner("alpha", "nemoclaw", capture);
+    deps.runCaptureOpenshell = createHermesPortableReadyCapture("alpha", "nemoclaw", capture);
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "none" });
+
+    expect(events.slice(0, 5)).toEqual([
+      "create",
+      "ready-visible",
+      "selector-settled",
+      "publication-get",
+      "verify-policy",
+    ]);
+    expect(input.verifyCreatedSandboxBeforeEffects).toHaveBeenCalledOnce();
+    expect(capture).toHaveBeenCalledWith(["sandbox", "get", "-g", "nemoclaw", "alpha"]);
   });
 
   it.each([
