@@ -160,6 +160,17 @@ const MEMORY_PATH_SEGMENTS = [
 ];
 
 /**
+ * Multi-agent deployments place each named agent's workspace beside the default
+ * one as `/sandbox/.openclaw/workspace-<agent>/`, with its own `memory/` daily
+ * notes (docs/manage-sandboxes/workspace-files.mdx). `MEMORY_PATH_SEGMENTS`
+ * carries only the default `/.openclaw/workspace/`, so an absolute write into a
+ * named workspace — the form `api.resolvePath` produces in the gateway-managed
+ * runtime — matched no classifier and skipped the scan entirely. Anchoring on
+ * `/.openclaw/` keeps unrelated project directories out.
+ */
+const NAMED_WORKSPACE_SEGMENT = /\/\.openclaw\/workspace-[^/]+\//;
+
+/**
  * Canonical OpenClaw workspace files — these basenames are always treated as
  * persistent memory regardless of the surrounding path. Catches the case
  * where the host has CWD'd into the workspace directory and the agent
@@ -238,6 +249,7 @@ export function isMemoryPath(filePath: unknown): boolean {
   const normalizedPath = normalizePathForMemoryClassification(filePath);
   const normalizedRelativePath = dropLeadingParentSegments(normalizedPath);
   if (MEMORY_PATH_SEGMENTS.some((segment) => normalizedPath.includes(segment))) return true;
+  if (NAMED_WORKSPACE_SEGMENT.test(normalizedPath)) return true;
   if (MEMORY_BASENAMES.has(basenameOf(normalizedPath))) return true;
   if (MEMORY_RELATIVE_PREFIXES.some((prefix) => normalizedRelativePath.startsWith(prefix))) {
     return true;
