@@ -64,7 +64,7 @@ export interface MessagingChannelPolicyResolverDeps {
 }
 
 export interface CredentialBoundMessagingPolicyOmission {
-  readonly channelId: string;
+  readonly channelId: string | null;
   readonly reason: string;
   readonly recoveryAction: string;
 }
@@ -72,6 +72,21 @@ export interface CredentialBoundMessagingPolicyOmission {
 export type CredentialBoundMessagingPolicyOmissionReporter = (
   omission: CredentialBoundMessagingPolicyOmission,
 ) => void;
+
+export function formatCredentialBoundMessagingPolicyOmission(
+  sandboxName: string,
+  omission: CredentialBoundMessagingPolicyOmission,
+): string {
+  const omissionContext =
+    omission.channelId === null
+      ? `credential-bound messaging routes for sandbox '${sandboxName}'`
+      : `the credential-bound messaging route for sandbox '${sandboxName}', channel ` +
+        `'${omission.channelId}'`;
+  return (
+    `  Warning: NemoClaw omitted ${omissionContext}: ${omission.reason}. ` +
+    `Recovery: ${omission.recoveryAction}.`
+  );
+}
 
 export function materializeMessagingPolicySandboxName(
   content: string,
@@ -276,6 +291,12 @@ export function composeCredentialBoundMessagingPolicies(
           `${messagingRouteRecoveryAction(sandboxName, channelId)}.`,
       );
     }
+    reportOmission?.({
+      channelId: null,
+      reason:
+        "the channel plan is unavailable and the live policy has no recognized messaging route",
+      recoveryAction: messagingRouteRecoveryAction(sandboxName, null),
+    });
     for (const policy of messagingPolicies) removeMessagingPolicy(networkPolicies, policy);
     return YAML.stringify(target);
   }

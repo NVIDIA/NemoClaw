@@ -285,6 +285,34 @@ describe("applyPermissivePolicy", () => {
     }
   });
 
+  it("reports omitted messaging routes when the channel plan is unavailable (#10153)", () => {
+    const sandboxName = "missing-plan-safe";
+    const observed = runPermissivePolicy({
+      agent: "openclaw",
+      livePolicy: YAML.stringify({
+        network_policies: {
+          github: { endpoints: [{ host: "github.com", port: 443 }] },
+        },
+      }),
+      policySetStatus: 0,
+      sandboxName,
+    });
+    try {
+      expect(observed.result.status).toBe(0);
+      expect(observed.result.stderr).toContain(
+        `NemoClaw omitted credential-bound messaging routes for sandbox '${sandboxName}': ` +
+          "the channel plan is unavailable and the live policy has no recognized messaging " +
+          "route. Recovery: " +
+          `for each intended channel, run \`nemoclaw ${sandboxName} channels add <channel>\`; ` +
+          "approve each rebuild prompt in an interactive terminal, or run " +
+          `\`nemoclaw ${sandboxName} rebuild\` after adding every intended channel in ` +
+          "non-interactive mode.",
+      );
+    } finally {
+      observed.cleanup();
+    }
+  });
+
   it("rejects a live credential-free route when the channel plan is unavailable (#10153)", () => {
     const sandboxName = "missing-free-route";
     const observed = runPermissivePolicy({

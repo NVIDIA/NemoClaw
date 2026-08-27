@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 import {
@@ -503,9 +503,9 @@ describe("MessagingSetupApplier", () => {
           ? {
               status: 0,
               stdout:
-              "Name: demo-telegram-bridge\nType: generic\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n",
-          }
-        : { status: 0 };
+                "Name: demo-telegram-bridge\nType: generic\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n",
+            }
+          : { status: 0 };
     };
 
     expect(() =>
@@ -819,29 +819,26 @@ describe("MessagingSetupApplier", () => {
         },
       }),
     };
-    const runOpenshell: MessagingOpenShellRunner = (args, options) => {
-      const command = args.join(" ");
-      if (command.includes('printenv "$key"')) {
-        return {
-          status: 0,
-          stdout: [
-            "TELEGRAM_BOT_TOKEN\topenshell:resolve:env:v42_TELEGRAM_BOT_TOKEN",
-            "SLACK_BOT_TOKEN\topenshell:resolve:env:v42_SLACK_BOT_TOKEN",
-            "SLACK_APP_TOKEN\topenshell:resolve:env:v42_SLACK_APP_TOKEN",
-            "SLACK_APP_TOKEN\txapp-real-token-must-not-be-read",
-          ].join("\n"),
-        };
-      }
-      const target = String(args.at(-1));
-      if (args.includes("cat") && options?.input === undefined) {
-        return { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" };
-      }
-      if (options?.input !== undefined) {
-        files[target] = options.input;
+    const runOpenshell = vi
+      .fn<MessagingOpenShellRunner>()
+      .mockImplementationOnce(() => ({
+        status: 0,
+        stdout: [
+          "TELEGRAM_BOT_TOKEN\topenshell:resolve:env:v42_TELEGRAM_BOT_TOKEN",
+          "SLACK_BOT_TOKEN\topenshell:resolve:env:v42_SLACK_BOT_TOKEN",
+          "SLACK_APP_TOKEN\topenshell:resolve:env:v42_SLACK_APP_TOKEN",
+          "SLACK_APP_TOKEN\txapp-real-token-must-not-be-read",
+        ].join("\n"),
+      }))
+      .mockImplementationOnce((args) => {
+        const target = String(args.at(-1));
+        return { status: 0, stdout: files[target] ?? "" };
+      })
+      .mockImplementationOnce((args, options) => {
+        const target = String(args.at(-1));
+        files[target] = options?.input ?? "";
         return { status: 0 };
-      }
-      return { status: 1 };
-    };
+      });
 
     await MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, { runOpenshell });
 

@@ -36,6 +36,7 @@ import {
   listMessagingPolicyPresetMetadata,
   loadMessagingChannelPolicyPreset,
   composeCredentialBoundMessagingPolicies,
+  formatCredentialBoundMessagingPolicyOmission,
 } from "../messaging/channels";
 import type { MessagingAgentId } from "../messaging/manifest";
 import { resolveGatewayPortFromName, resolveSandboxGatewayName } from "../onboard/gateway-binding";
@@ -3640,11 +3641,7 @@ function applyPermissivePolicy(sandboxName: string): void {
     messagingAgent,
     messagingPlan,
     (omission) => {
-      console.error(
-        `  Warning: omitted the credential-bound messaging route for sandbox '${sandboxName}', ` +
-          `channel '${omission.channelId}': ${omission.reason}. ` +
-          `Recovery: ${omission.recoveryAction}.`,
-      );
+      console.error(formatCredentialBoundMessagingPolicyOmission(sandboxName, omission));
     },
   );
   recheckPolicyMutationAuthority(sandboxName, operation, authority);
@@ -3677,6 +3674,7 @@ export {
   excludeBaselineEntry,
   extractPresetEntries,
   filterSetupPolicyPresets,
+  formatCredentialBoundMessagingPolicyOmission,
   getAppliedPresets,
   getBaselineExclusionRuntimeStatus,
   getGatewayPresets,

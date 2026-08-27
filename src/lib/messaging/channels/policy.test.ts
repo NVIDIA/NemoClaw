@@ -50,7 +50,7 @@ function createPolicyWithFixtures(
 
 function composeHermesTelegramPolicy(providerAvailable: boolean) {
   const sandboxName = "hermes-telegram";
-  const omissions: Array<{ channelId: string; reason: string }> = [];
+  const omissions: Array<{ channelId: string | null; reason: string }> = [];
   const composed = composeCredentialBoundMessagingPolicies(
     YAML.stringify({ network_policies: {} }),
     YAML.stringify({
