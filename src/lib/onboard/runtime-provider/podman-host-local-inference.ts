@@ -2744,6 +2744,8 @@ function createPreparedStartup(options: {
   readonly onCommitValidationFailure: (error: unknown) => void;
   /** First external publication side effect; failures after entry are indeterminate. */
   readonly beforeWrite?: () => void;
+  /** The durable receipt already exists and must be verified, not written again. */
+  readonly publishedResume?: boolean;
   readonly rollback: () => "removed" | "restored" | "retained";
   readonly redactor: PodmanInferenceRedactor;
 }): HostLocalInferencePreparedStartup {
@@ -2835,6 +2837,32 @@ function createPreparedStartup(options: {
         throw error;
       }
     },
+    ...(options.publishedResume
+      ? {
+          finalizePublishedResume(assertPublishedAuthority: () => void) {
+            if (state !== "validated") {
+              throw new Error(
+                `Podman inference startup cannot finalize a published resume without fresh validation from state '${state}'.`,
+              );
+            }
+            try {
+              options.validatePublication?.();
+              assertPublishedAuthority();
+            } catch (error) {
+              try {
+                options.onCommitValidationFailure(error);
+              } catch (captureError) {
+                throw new Error(
+                  `${errorEvidence(options.redactor, error)} Published-resume failure evidence capture also failed: ${errorEvidence(options.redactor, captureError)}`,
+                );
+              }
+              throw error;
+            }
+            state = "committed";
+            return options.receipt;
+          },
+        }
+      : {}),
     rollback() {
       requireRollbackSafe("roll back");
       state = "rolling-back";
@@ -3631,6 +3659,7 @@ export function createPodmanHostLocalInferenceRuntime(
         validateReceipt(receipt);
       },
       validatePublication: assertReceiptAuthority,
+      publishedResume: true,
       onCommitValidationFailure: (error) => {
         onFailureEvidence(
           Object.freeze({

@@ -29,7 +29,6 @@ import { retryUntil } from "../../core/retry";
 
 import { spawnExitCode } from "../../core/process-exit";
 import { shellQuote } from "../../core/shell-quote";
-import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
 import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import {
   formatInferenceRouteDriftForDisplay,
@@ -82,6 +81,7 @@ import {
   assertHermesPortableLifecycleForConnect,
   buildHermesPortableCommandAuthority,
   type HermesPortableActiveLifecycleAuthority,
+  getNamedGatewayLifecycleState,
   printGatewayLifecycleHint,
   qualifyPortableAgentLifecycleAuthority,
   requalifyPortableAgentSandboxAuthority,
@@ -112,6 +112,7 @@ import {
   resolveSandboxDashboardPort,
   waitForManagedGatewaySupervisor,
 } from "./process-recovery";
+import { recoverHermesPortableInferenceForConnectProbe } from "./probe/hermes-portable-inference-recovery";
 import { runTerminalAgentConnectProbe } from "./terminal-connect-probe";
 import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 
@@ -304,9 +305,11 @@ async function runSandboxConnectProbe(
   sandboxName: string,
   {
     hermesPortable = false,
+    probeOnly,
     probeTiming,
-  }: { hermesPortable?: boolean; probeTiming?: ProbeTimingRecorder } = {},
+  }: { hermesPortable?: boolean; probeOnly: true; probeTiming?: ProbeTimingRecorder },
 ): Promise<void> {
+  if (probeOnly !== true) throw new Error("connect recovery requires probe-only authority");
   const measure = <T>(stage: "inference" | "pairing", operation: () => T): T =>
     probeTiming ? probeTiming.measure(stage, operation) : operation();
   const measureAsync = <T>(
@@ -316,7 +319,10 @@ async function runSandboxConnectProbe(
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const agentName = agentRuntime.getAgentDisplayName(agent);
   if (hermesPortable) {
-    measure("inference", () => verifyHermesPortableInferenceRouteOrExit(sandboxName, agent));
+    if (probeOnly !== true) throw new Error("Hermes inference recovery requires probe-only mode");
+    measure("inference", () =>
+      recoverHermesPortableInferenceRouteForProbeOnlyOrExit(sandboxName, agent),
+    );
     console.log(
       `  Probe complete: ${agentName} passed receipt-owned authenticated health in '${sandboxName}'.`,
     );
@@ -463,8 +469,18 @@ function portableAgentLifecycleAuthorityDeps() {
   return { readRegistry: registry.getSandbox };
 }
 
-/** Verify the recorded Hermes route without invoking any inference repair. */
-function verifyHermesPortableInferenceRouteOrExit(
+class HermesPortableInferenceRouteVerificationError extends Error {
+  constructor(readonly reason: string) {
+    super("Hermes Portable inference route verification failed");
+  }
+}
+
+function refuseHermesPortableInferenceRoute(reason: string): never {
+  throw new HermesPortableInferenceRouteVerificationError(reason);
+}
+
+/** Verify the recorded Hermes route without invoking repair or process exit. */
+function verifyHermesPortableInferenceRoute(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
   expectedAuthority?: HermesPortableActiveLifecycleAuthority,
@@ -477,12 +493,12 @@ function verifyHermesPortableInferenceRouteOrExit(
       portableAgentLifecycleAuthorityDeps(),
     );
   } catch {
-    failHermesPortableInferenceRoute(sandboxName, "missing or incomplete");
+    refuseHermesPortableInferenceRoute("missing or incomplete");
   }
   const sandbox = authority.entry;
   const inference = registry.getSandboxEntryInference(sandbox);
   if (inference.kind !== "configured") {
-    failHermesPortableInferenceRoute(sandboxName, "not configured");
+    refuseHermesPortableInferenceRoute("not configured");
   }
   assertNoOpenShellGatewayEndpointOverride();
   const routeAuthority = {
@@ -497,11 +513,11 @@ function verifyHermesPortableInferenceRouteOrExit(
     { timeout: OPENSHELL_PROBE_TIMEOUT_MS },
   );
   if (liveResult.status !== 0 || liveResult.error) {
-    failHermesPortableInferenceRoute(sandboxName, "unreachable");
+    refuseHermesPortableInferenceRoute("unreachable");
   }
   const live = parseGatewayInference(liveResult.output);
   if (planInferenceRouteReconcile(live, inference).kind !== "aligned") {
-    failHermesPortableInferenceRoute(sandboxName, "different from its recorded provider or model");
+    refuseHermesPortableInferenceRoute("different from its recorded provider or model");
   }
   const probe = parseSandboxInferenceRouteProbeResult(
     captureHermesPortableOpenShell(
@@ -518,7 +534,7 @@ function verifyHermesPortableInferenceRouteOrExit(
     (inference.provider === "ollama-local" &&
       (probe.httpStatus === undefined || probe.httpStatus < 200 || probe.httpStatus >= 300))
   ) {
-    failHermesPortableInferenceRoute(sandboxName, "unreachable");
+    refuseHermesPortableInferenceRoute("unreachable");
   }
   let finalAuthority: ReturnType<typeof requireHermesPortableActiveLifecycleAuthority>;
   try {
@@ -528,7 +544,7 @@ function verifyHermesPortableInferenceRouteOrExit(
       portableAgentLifecycleAuthorityDeps(),
     );
   } catch {
-    failHermesPortableInferenceRoute(sandboxName, "changed during verification");
+    refuseHermesPortableInferenceRoute("changed during verification");
   }
   if (
     finalAuthority.entry.gatewayName !== routeAuthority.gatewayName ||
@@ -536,9 +552,62 @@ function verifyHermesPortableInferenceRouteOrExit(
     finalAuthority.entry.provider !== routeAuthority.provider ||
     finalAuthority.entry.model !== routeAuthority.model
   ) {
-    failHermesPortableInferenceRoute(sandboxName, "changed during verification");
+    refuseHermesPortableInferenceRoute("changed during verification");
   }
   return finalAuthority.entry;
+}
+
+/** Verify the recorded Hermes route without invoking any inference repair. */
+function verifyHermesPortableInferenceRouteOrExit(
+  sandboxName: string,
+  agent: InferenceRouteProbeAgent,
+  expectedAuthority?: HermesPortableActiveLifecycleAuthority,
+): SandboxEntry {
+  try {
+    return verifyHermesPortableInferenceRoute(sandboxName, agent, expectedAuthority);
+  } catch (error) {
+    failHermesPortableInferenceRoute(
+      sandboxName,
+      error instanceof HermesPortableInferenceRouteVerificationError ? error.reason : "unreachable",
+    );
+  }
+}
+
+/** Resume published Ollama authority only for the explicit probe-only command. */
+function recoverHermesPortableInferenceRouteForProbeOnlyOrExit(
+  sandboxName: string,
+  agent: InferenceRouteProbeAgent,
+  expectedAuthority?: HermesPortableActiveLifecycleAuthority,
+): SandboxEntry {
+  let authority: HermesPortableActiveLifecycleAuthority;
+  try {
+    authority = requireHermesPortableActiveLifecycleAuthority(
+      sandboxName,
+      expectedAuthority,
+      portableAgentLifecycleAuthorityDeps(),
+    );
+  } catch {
+    failHermesPortableInferenceRoute(sandboxName, "missing or incomplete");
+  }
+  let verified: SandboxEntry | null = null;
+  try {
+    recoverHermesPortableInferenceForConnectProbe({
+      sandboxName,
+      authority,
+      readRegistry: registry.getSandbox,
+      verifyRoute: () => {
+        verified = verifyHermesPortableInferenceRoute(sandboxName, agent, authority);
+        return verified;
+      },
+    });
+  } catch (error) {
+    failHermesPortableInferenceRoute(
+      sandboxName,
+      error instanceof HermesPortableInferenceRouteVerificationError ? error.reason : "unreachable",
+    );
+  }
+  if (!verified) failHermesPortableInferenceRoute(sandboxName, "unreachable");
+  return verified;
 }
 
 const GATEWAY_UNAVAILABLE_RE =
@@ -1770,8 +1839,11 @@ async function prepareConnectSandboxWithinLifecycleFence(
               portableAgentLifecycleAuthorityDeps(),
             ),
           );
+          if (probeOnly !== true) {
+            throw new Error("Hermes inference recovery requires probe-only mode");
+          }
           const verified = probeTiming!.measure("inference", () =>
-            verifyHermesPortableInferenceRouteOrExit(
+            recoverHermesPortableInferenceRouteForProbeOnlyOrExit(
               sandboxName,
               acceptedReadiness.agent,
               activeAuthority,
@@ -1839,7 +1911,11 @@ async function prepareConnectSandboxWithinLifecycleFence(
               );
             }
             requalify();
-            await runSandboxConnectProbe(sandboxName, { hermesPortable, probeTiming });
+            await runSandboxConnectProbe(sandboxName, {
+              hermesPortable,
+              probeOnly: true,
+              probeTiming,
+            });
             requalify();
           },
         });

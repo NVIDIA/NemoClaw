@@ -47,6 +47,7 @@ export type ConnectHarness = {
   inspectLaunchReadinessSpy: MockInstance;
   launchReadinessMutationGateSpy: MockInstance;
   publishLaunchReadinessSpy: MockInstance;
+  recoverHermesPortableOllamaInferenceSpy: MockInstance;
   settlePortablePairingSpy: MockInstance;
   preflightVllmSpy: MockInstance;
   probeLocalProviderHealthSpy: MockInstance;
@@ -162,6 +163,9 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const agentRuntime = requireDist("../../src/lib/agent/runtime.js");
   const dns = requireDist("../../src/lib/actions/dns/index.js");
   const gatewayState = requireDist("../../src/lib/actions/sandbox/gateway-state.js");
+  const hermesInferenceRecovery = requireDist(
+    "../../src/lib/actions/sandbox/probe/hermes-portable-inference-recovery.js",
+  );
   const processRecovery = requireDist("../../src/lib/actions/sandbox/process-recovery.js");
   const autoPairApproval = requireDist("../../src/lib/actions/sandbox/auto-pair-approval.js");
   const connectVllmPreflight = requireDist(
@@ -262,6 +266,12 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
       expected,
       portableAuthorityDeps(),
     )) as never);
+  const recoverHermesPortableOllamaInferenceSpy = vi
+    .spyOn(hermesInferenceRecovery, "recoverHermesPortableInferenceForConnectProbe")
+    .mockImplementation(((input: { verifyRoute: () => unknown }) => {
+      input.verifyRoute();
+      return "reused";
+    }) as never);
   const requalifyPortableAgentAuthoritySpy = vi
     .spyOn(gatewayState, "requalifyPortableAgentSandboxAuthority")
     .mockReturnValue({ kind: "not-hermes" });
@@ -496,6 +506,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     inspectLaunchReadinessSpy,
     launchReadinessMutationGateSpy,
     publishLaunchReadinessSpy,
+    recoverHermesPortableOllamaInferenceSpy,
     preflightVllmSpy,
     probeLocalProviderHealthSpy,
     probeOllamaAuthProxyHealthSpy,

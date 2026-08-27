@@ -6,7 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as gatewayRuntime from "../../gateway-runtime-action";
 import * as registry from "../../state/registry";
 import * as gatewaySelect from "./gateway-select";
-import { getReconciledSandboxGatewayState } from "./gateway-state";
+import {
+  captureHermesPortableInferenceRecoveryGateway,
+  getReconciledSandboxGatewayState,
+} from "./gateway-state";
 
 describe("getReconciledSandboxGatewayState observe mode", () => {
   beforeEach(() => {
@@ -110,5 +113,16 @@ describe("getReconciledSandboxGatewayState observe mode", () => {
     expect(gatewaySelect.selectSandboxOwningGateway).not.toHaveBeenCalled();
     expect(getState).toHaveBeenCalledWith("beta", "nemoclaw-8091");
     expect(result).toMatchObject({ state: "present" });
+  });
+});
+
+describe("Hermes Portable inference recovery gateway", () => {
+  it("rejects command environment drift before executable qualification", () => {
+    expect(() =>
+      captureHermesPortableInferenceRecoveryGateway("alpha", ["provider", "get", "ollama"], {
+        env: { UNEXPECTED: "value" },
+        timeout: 1_000,
+      }),
+    ).toThrow("rejected command environment drift");
   });
 });
