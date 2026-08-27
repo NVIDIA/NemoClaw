@@ -612,23 +612,30 @@ function preflightMessagingProviderBindings(tokenDefs, _runOpenshell) {
   const failures = [];
   for (const tokenDef of tokenDefs) {
     const { name, envKey, providerType } = tokenDef;
-    if (!providerType || !providerExistsInGateway(name, _runOpenshell)) continue;
-    const metadata = readGatewayProviderMetadata(name, _runOpenshell);
-    const matches =
-      matchesGatewayCredentialFamilyProviderBinding(metadata, {
+    if (!providerType) continue;
+    const inspection = inspectGatewayCredentialFamilyProviderBinding(
+      {
         name,
         type: providerType,
         credentialKey: envKey,
         allowExtendedCredentialKeys: true,
-      }) &&
-      containsOnlyPlannedMessagingCredentialKeys(
-        metadata,
-        plannedMessagingCredentialKeys(tokenDef),
-      );
+      },
+      _runOpenshell,
+    );
+    if (inspection.kind === "missing") continue;
+    const metadata =
+      inspection.kind === "exact" ? readGatewayProviderMetadata(name, _runOpenshell) : null;
+    const matches = containsOnlyPlannedMessagingCredentialKeys(
+      metadata,
+      plannedMessagingCredentialKeys(tokenDef),
+    );
     if (matches) continue;
     failures.push({
       name,
-      message: `Existing provider '${name}' does not match the required '${providerType}' credential binding.`,
+      message:
+        inspection.kind === "indeterminate" || (inspection.kind === "exact" && !metadata)
+          ? `Could not inspect messaging provider '${name}'; no provider mutation was attempted.`
+          : `Existing provider '${name}' does not match the required '${providerType}' credential binding.`,
     });
   }
   return failures;

@@ -111,7 +111,6 @@ export function validateAttachedMessagingProvidersBeforeSandboxCreation(
       ),
     ),
   ].filter((name) => expectedBindings.has(name));
-  if (attachedMessagingProviders.length === 0) return;
 
   if (
     attachedMessagingProviders.some(
@@ -139,6 +138,14 @@ export function validateAttachedMessagingProvidersBeforeSandboxCreation(
     deps.cleanupCreateSources();
     throw new Error(
       `OpenShell did not confirm messaging provider '${providerName}' before sandbox creation.`,
+    );
+  }
+
+  for (const providerName of input.extraProviders) {
+    if (expectedBindings.has(providerName) || deps.providerExistsInGateway(providerName)) continue;
+    deps.cleanupCreateSources();
+    throw new Error(
+      `OpenShell did not confirm attached provider '${providerName}' before sandbox creation.`,
     );
   }
 }

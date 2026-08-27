@@ -86,7 +86,7 @@ runner.run = (command, opts = {}) => {
     return { status: 0, stdout: "" };
   }
   return normalized.includes("sandbox get") && normalized.includes("my-assistant")
-    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: fixture-created-sandbox\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
 };
 require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
@@ -219,8 +219,14 @@ const createReservedSandbox = () => createSandbox(
           [
             "provider get -g nemoclaw brave-search",
             "provider get -g nemoclaw brave-search",
+            "provider get -g nemoclaw brave-search",
+            "provider get -g nemoclaw brave-search",
             "provider get -g nemoclaw custom-provider",
             "provider get -g nemoclaw custom-provider",
+            "provider get -g nemoclaw custom-provider",
+            "provider get -g nemoclaw custom-provider",
+            "provider get -g nemoclaw my-slack-bridge",
+            "provider get -g nemoclaw my-slack-bridge",
             "provider get -g nemoclaw my-slack-bridge",
             "provider get -g nemoclaw my-slack-bridge",
             "provider get -g nemoclaw nvidia-prod",

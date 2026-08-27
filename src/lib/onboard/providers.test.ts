@@ -1241,7 +1241,7 @@ describe("onboard provider helpers", () => {
     );
   });
 
-  it("preflights every exact binding before creating any messaging provider", () => {
+  it("preflights every exact binding before mutating any messaging provider", () => {
     const commands: string[] = [];
 
     expect(() =>
@@ -1262,13 +1262,13 @@ describe("onboard provider helpers", () => {
         ],
         (command) => {
           commands.push(command.join(" "));
-          return command[1] === "get" && command[2] === "alpha-discord-bridge"
-            ? { status: 1, stdout: "", stderr: "not found" }
+          return command[1] === "get" && command[2] === "beta-discord-bridge"
+            ? { status: 2, stdout: "", stderr: "transport unavailable" }
             : {
                 status: 0,
                 stdout: [
-                  "Name: beta-discord-bridge",
-                  "Type: generic",
+                  "Name: alpha-discord-bridge",
+                  "Type: discord-hermes-static-v1",
                   "Credential keys: DISCORD_BOT_TOKEN",
                   "Config keys: <none>",
                   "",
@@ -1280,6 +1280,7 @@ describe("onboard provider helpers", () => {
     ).toThrow(
       expect.objectContaining({
         code: "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT",
+        message: expect.stringContaining("Could not inspect messaging provider"),
         mutatedProviderNames: [],
       }),
     );

@@ -262,6 +262,27 @@ describe("sandbox provider preparation", () => {
     expect(harness.cleanupCreateSources).not.toHaveBeenCalled();
   });
 
+  it("rejects an unavailable extra provider before any publication (#10153)", () => {
+    const harness = createHarness();
+    const extraProvider = "my-assistant-extra-telegram-bot-token-agent-a";
+    harness.providerExistsInGateway.mockReturnValue(false);
+
+    expect(() =>
+      prepareProviders(
+        publicationInput({
+          messagingProviders: [],
+          messagingProviderRequests: [],
+          extraProviders: [extraProvider],
+        }),
+        harness.deps,
+      ),
+    ).toThrowError(
+      `OpenShell did not confirm attached provider '${extraProvider}' before sandbox creation.`,
+    );
+    expect(harness.runOpenshell).not.toHaveBeenCalled();
+    expect(harness.cleanupCreateSources).toHaveBeenCalledOnce();
+  });
+
   it("rejects an unavailable generic messaging provider before any publication (#10153)", () => {
     const harness = createHarness(null);
     const genericProvider = "my-assistant-extra-telegram-bot-token-agent-a";
