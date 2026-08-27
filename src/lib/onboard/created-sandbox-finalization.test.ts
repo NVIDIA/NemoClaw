@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SandboxEntry } from "../state/registry";
 import * as sandboxState from "../state/sandbox";
 import {
+  completeOrdinaryOnboardSandboxCreation,
   createCreatedSandboxCompletionActions,
   createOnboardCreatedSandboxCompletion,
   createOnboardCreatedSandboxRegistration,
@@ -54,6 +55,47 @@ describe("created sandbox registration authority", () => {
 
     expect(cleanupBuildContext).not.toHaveBeenCalled();
     expect(complete).not.toHaveBeenCalled();
+  });
+});
+
+describe("new sandbox cancellation recovery", () => {
+  it("preserves recovery guidance when the durable identity is unavailable (#9833)", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const runFile = vi.fn();
+    const armCancelRollback = vi.fn();
+
+    expect(() =>
+      completeOrdinaryOnboardSandboxCreation(
+        {
+          sandboxName: "new-sandbox",
+          sandboxWasLiveDefault: false,
+          runtimeFields: { openshellDriver: "docker" } as never,
+          messagingProviders: [],
+          liveExists: false,
+        },
+        {
+          setDefault: vi.fn(),
+          runFile,
+          scriptsDir: "/repo/scripts",
+          gatewayName: "nemoclaw",
+          providerExistsInGateway: () => true,
+          armCancelRollback,
+          dockerInfoFormat: () => "",
+          runCapture: () => "",
+          revalidatePolicyAuthority: vi.fn(),
+          applyVmDnsMonkeypatch: vi.fn(),
+        },
+      ),
+    ).toThrow("Sandbox 'new-sandbox' has no exact identity for cancel recovery.");
+
+    const guidance = error.mock.calls.flat().join("\n");
+    expect(guidance).toContain("Sandbox 'new-sandbox' was created on gateway 'nemoclaw'");
+    expect(guidance).toContain("registry entry and onboarding session were preserved");
+    expect(guidance).toContain("Do not delete the sandbox by mutable sandbox name");
+    expect(guidance).toContain("establish the exact live durable identity before removal");
+    expect(guidance).toContain("add --fresh, and use a new sandbox name");
+    expect(runFile).not.toHaveBeenCalled();
+    expect(armCancelRollback).not.toHaveBeenCalled();
   });
 });
 

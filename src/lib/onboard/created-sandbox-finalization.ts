@@ -289,6 +289,16 @@ export function completeOrdinaryOnboardSandboxCreation(
       !lifecycleLiveIdentityFingerprint ||
       !/^[0-9a-f]{64}$/u.test(lifecycleLiveIdentityFingerprint)
     ) {
+      for (const line of [
+        "",
+        `  Sandbox '${input.sandboxName}' was created on gateway '${deps.gatewayName}', but NemoClaw could not verify its durable identity.`,
+        "  The sandbox registry entry and onboarding session were preserved for recovery.",
+        "  Do not delete the sandbox by mutable sandbox name.",
+        "  Ask an OpenShell administrator to establish the exact live durable identity before removal.",
+        "  After confirmed identity-bound removal, rerun the original onboarding command with the same required inputs, add --fresh, and use a new sandbox name.",
+      ]) {
+        console.error(line);
+      }
       throw new Error(`Sandbox '${input.sandboxName}' has no exact identity for cancel recovery.`);
     }
     deps.armCancelRollback(input.sandboxName, lifecycleLiveIdentityFingerprint);
