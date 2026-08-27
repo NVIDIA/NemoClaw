@@ -20,6 +20,8 @@ type PreparationRequest = Readonly<{
   targetRoot: string;
 }>;
 
+type AuditConfig = ReturnType<typeof parseAuditConfig>;
+
 export type ReviewedSourceRegistryPackage = Readonly<{
   artifactName: string;
   integrity: string;
@@ -87,10 +89,13 @@ export async function seedReviewedSourceRegistryArtifact(
   );
 }
 
-function inspectReviewedLocks(targetRoot: string) {
-  const config = parseAuditConfig(
+function readTrustedAuditConfig(): AuditConfig {
+  return parseAuditConfig(
     readFileSync(join(TRUSTED_REPOSITORY_ROOT, "ci/reviewed-npm-audit.json"), "utf8"),
   );
+}
+
+function inspectReviewedLocks(targetRoot: string, config: AuditConfig) {
   const reviewed = config.sourceRegistryPackage;
   const reviewedRegistryPackages = [
     {
@@ -120,20 +125,21 @@ function inspectReviewedLocks(targetRoot: string) {
 }
 
 export function inspectCiNpmInstall(targetRoot: string) {
-  const inspected = inspectReviewedLocks(resolve(targetRoot));
+  const inspected = inspectReviewedLocks(resolve(targetRoot), readTrustedAuditConfig());
   return {
     artifactName: inspected.reviewed.artifactName,
     required: inspected.reviewedLockfilePath !== undefined,
   } as const;
 }
 
-export async function prepareCiNpmInstall(
+async function prepareCiNpmInstallWithConfig(
   request: PreparationRequest,
+  config: AuditConfig,
   put?: CachePut,
 ): Promise<void> {
   const targetRoot = resolve(request.targetRoot);
   const cacheDirectory = resolve(request.cacheDirectory);
-  const { config, reviewed, reviewedLockfilePath } = inspectReviewedLocks(targetRoot);
+  const { reviewed, reviewedLockfilePath } = inspectReviewedLocks(targetRoot, config);
   const sdkIsLocked = reviewedLockfilePath !== undefined;
 
   if (request.mode === "registry") return;
@@ -164,6 +170,21 @@ export async function prepareCiNpmInstall(
     },
     put,
   );
+}
+
+export async function prepareCiNpmInstallWithReviewedConfig(
+  request: PreparationRequest,
+  reviewedConfigSource: string,
+  put?: CachePut,
+): Promise<void> {
+  return prepareCiNpmInstallWithConfig(request, parseAuditConfig(reviewedConfigSource), put);
+}
+
+export async function prepareCiNpmInstall(
+  request: PreparationRequest,
+  put?: CachePut,
+): Promise<void> {
+  return prepareCiNpmInstallWithConfig(request, readTrustedAuditConfig(), put);
 }
 
 function requestFromEnvironment(): PreparationRequest {

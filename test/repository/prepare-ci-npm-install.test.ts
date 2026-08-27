@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  prepareCiNpmInstallWithReviewedConfig,
   seedReviewedSourceRegistryArtifact,
   type ReviewedSourceRegistryPackage,
 } from "../../scripts/checks/prepare-ci-npm-install.mts";
@@ -24,6 +25,49 @@ const reviewed: ReviewedSourceRegistryPackage = {
   tarballUrl: "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.0.106/reviewed-fixture",
 };
 
+function reviewedLock() {
+  return {
+    lockfileVersion: 3,
+    name: "reviewed-sdk-artifact-fixture",
+    packages: {
+      "": { dependencies: { "@nvidia/openshell-sdk": "0.0.106" } },
+      "node_modules/@nvidia/openshell-sdk": {
+        integrity: reviewed.integrity,
+        resolved: reviewed.tarballUrl,
+        version: "0.0.106",
+      },
+    },
+    version: "1.0.0",
+  };
+}
+
+function publicLock() {
+  return {
+    lockfileVersion: 3,
+    name: "public-lock-fixture",
+    packages: { "": {} },
+    version: "1.0.0",
+  };
+}
+
+function reviewedConfigSource() {
+  return JSON.stringify({
+    archiveGraphId: "reviewed-archive-graph",
+    archivePackages: [],
+    archiveTarVersion: "7.5.21",
+    artifactDirectory: "artifacts/reviewed-npm-audit",
+    exceptionFile: "ci/npm-audit-exceptions.json",
+    lockedGraphs: [],
+    nodeVersion: "22.23.2",
+    registryOrigin: "https://registry.npmjs.org/",
+    schemaVersion: 2,
+    severityThreshold: "high",
+    sourceNestedShrinkwrapPackages: [],
+    sourceRegistryPackage: reviewed,
+    sourceRegistryPackagesWithoutIntegrity: [],
+  });
+}
+
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "nemoclaw-reviewed-sdk-artifact-"));
   temporaryRoots.push(root);
@@ -33,23 +77,32 @@ function fixture() {
   mkdirSync(artifactDirectory);
   mkdirSync(cacheDirectory);
   writeFileSync(join(artifactDirectory, artifactName), archiveBytes);
-  writeFileSync(
-    lockfilePath,
-    JSON.stringify({
-      lockfileVersion: 3,
-      name: "reviewed-sdk-artifact-fixture",
-      packages: {
-        "": { dependencies: { "@nvidia/openshell-sdk": "0.0.106" } },
-        "node_modules/@nvidia/openshell-sdk": {
-          integrity: reviewed.integrity,
-          resolved: reviewed.tarballUrl,
-          version: "0.0.106",
-        },
-      },
-      version: "1.0.0",
-    }),
-  );
+  writeFileSync(lockfilePath, JSON.stringify(reviewedLock()));
   return { artifactDirectory, cacheDirectory, lockfilePath, root };
+}
+
+function installFixture(reviewedLocation: "root" | "nemoclaw") {
+  const source = fixture();
+  const nestedRoot = join(source.root, "nemoclaw");
+  mkdirSync(nestedRoot);
+  writeFileSync(
+    source.lockfilePath,
+    JSON.stringify(reviewedLocation === "root" ? reviewedLock() : publicLock()),
+  );
+  writeFileSync(
+    join(nestedRoot, "package-lock.json"),
+    JSON.stringify(reviewedLocation === "nemoclaw" ? reviewedLock() : publicLock()),
+  );
+  return source;
+}
+
+function installRequest(source: ReturnType<typeof installFixture>, mode: "artifact" | "registry") {
+  return {
+    artifactDirectory: source.artifactDirectory,
+    cacheDirectory: source.cacheDirectory,
+    mode,
+    targetRoot: source.root,
+  } as const;
 }
 
 function request(source: ReturnType<typeof fixture>) {
@@ -70,6 +123,76 @@ afterEach(() => {
 });
 
 describe("trusted OpenShell SDK archive preparation", () => {
+  it("requires the reviewed archive when the root lock uses the SDK", async () => {
+    const source = installFixture("root");
+    const put = vi.fn(async () => undefined);
+    rmSync(source.artifactDirectory, { force: true, recursive: true });
+
+    await expect(
+      prepareCiNpmInstallWithReviewedConfig(
+        installRequest(source, "artifact"),
+        reviewedConfigSource(),
+        put,
+      ),
+    ).rejects.toThrow("reviewed OpenShell SDK artifact is required");
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("requires the reviewed archive when the plugin lock uses the SDK", async () => {
+    const source = installFixture("nemoclaw");
+    const put = vi.fn(async () => undefined);
+    rmSync(source.artifactDirectory, { force: true, recursive: true });
+
+    await expect(
+      prepareCiNpmInstallWithReviewedConfig(
+        installRequest(source, "artifact"),
+        reviewedConfigSource(),
+        put,
+      ),
+    ).rejects.toThrow("reviewed OpenShell SDK artifact is required");
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("passes the verified archive from the root lock to npm cache preparation", async () => {
+    const source = installFixture("root");
+    const put = vi.fn(async () => undefined);
+
+    await prepareCiNpmInstallWithReviewedConfig(
+      installRequest(source, "artifact"),
+      reviewedConfigSource(),
+      put,
+    );
+
+    expect(put).toHaveBeenCalledTimes(2);
+  });
+
+  it("passes the verified archive from the plugin lock to npm cache preparation", async () => {
+    const source = installFixture("nemoclaw");
+    const put = vi.fn(async () => undefined);
+
+    await prepareCiNpmInstallWithReviewedConfig(
+      installRequest(source, "artifact"),
+      reviewedConfigSource(),
+      put,
+    );
+
+    expect(put).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses registry mode without requiring or caching an archive", async () => {
+    const source = installFixture("root");
+    const put = vi.fn(async () => undefined);
+    rmSync(source.artifactDirectory, { force: true, recursive: true });
+
+    await prepareCiNpmInstallWithReviewedConfig(
+      installRequest(source, "registry"),
+      reviewedConfigSource(),
+      put,
+    );
+
+    expect(put).not.toHaveBeenCalled();
+  });
+
   it("seeds only the exact reviewed tarball request and package identity", async () => {
     const source = fixture();
     const calls: Array<readonly [string, string, Buffer, unknown?]> = [];

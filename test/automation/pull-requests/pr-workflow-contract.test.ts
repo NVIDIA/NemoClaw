@@ -430,6 +430,7 @@ describe("pull request and main workflow contracts", () => {
   // source-shape-contract: security -- The PR workflow must select an exact base-controlled package run before publishing its archive internally
   it("passes only the base-packaged SDK archive to pull request dependency jobs", () => {
     const packageJob = prWorkflow.jobs["openshell-sdk-package"];
+    expect(packageJob["timeout-minutes"]).toBe(10);
     expect(packageJob.permissions).toEqual({ actions: "read", contents: "read" });
     expect(packageJob.outputs).toEqual({ required: "${{ steps.locate.outputs.required }}" });
     expect(requiredWorkflowStep(packageJob, "Checkout base package decision").with).toMatchObject({
@@ -450,6 +451,8 @@ describe("pull request and main workflow contracts", () => {
     );
     expect(locate.run).toContain("requires two valid public-registry npm lockfiles");
     expect(locate.run).toContain("actions/workflows/openshell-sdk-package-pr.yaml/runs");
+    expect(locate.run).toContain("for attempt in $(seq 1 96)");
+    expect(locate.run).toContain("sleep 5");
     expect(locate.run).toContain(".head.sha == $head and .base.sha == $base");
     expect(locate.run).toContain("required=false");
     expect(locate.run).toContain('[ "$HEAD_REPOSITORY" != "$GITHUB_REPOSITORY" ]');

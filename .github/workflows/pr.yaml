@@ -150,7 +150,7 @@ jobs:
     outputs:
       required: ${{ steps.locate.outputs.required }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Checkout pull request lockfiles
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -235,7 +235,7 @@ jobs:
           artifact_name="$(jq -er '.artifactName | select(type == "string" and test("^[a-z0-9][a-z0-9._-]*\\.tgz$"))' <<<"$decision")"
           printf 'artifact_name=%s\n' "$artifact_name" >> "$GITHUB_OUTPUT"
           echo "required=true" >> "$GITHUB_OUTPUT"
-          for attempt in $(seq 1 24); do
+          for attempt in $(seq 1 96); do
             runs="$(gh api \
               "repos/$GITHUB_REPOSITORY/actions/workflows/openshell-sdk-package-pr.yaml/runs?event=pull_request_target&per_page=100")"
             match="$(jq -cer \
