@@ -12,6 +12,7 @@ export type ProviderCommandOptions = {
   env?: Record<string, string | undefined>;
   ignoreError?: boolean;
   stdio?: StdioOptions;
+  suppressOutput?: boolean;
   timeout?: number;
 };
 

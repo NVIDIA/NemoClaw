@@ -3,6 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
 import { setGlobalCliActionRuntimeHooksForTest } from "./global";
 import { runCredentialsAddAction } from "./credentials-add";
@@ -32,6 +33,8 @@ function providerAdapter(
     ok: true,
     value: { state: "imported" },
   });
+  const ensureEndpointlessProviderProfile: OpenShellProviderAdapter["ensureEndpointlessProviderProfile"] =
+    async () => ({ ok: true, value: { state: "ready" } });
   const inspectProviderProfile: OpenShellProviderAdapter["inspectProviderProfile"] = async () => ({
     ok: true,
     value: { credentialKeys: [] },
@@ -48,6 +51,7 @@ function providerAdapter(
     listProviders: vi.fn(listProviders),
     createProvider: vi.fn(createProvider),
     importProviderProfile: vi.fn(importProviderProfile),
+    ensureEndpointlessProviderProfile: vi.fn(ensureEndpointlessProviderProfile),
     inspectProviderProfile: vi.fn(inspectProviderProfile),
     deleteProvider: vi.fn(deleteProvider),
     detachProvider: vi.fn(detachProvider),
@@ -98,6 +102,32 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(JSON.stringify(result)).not.toContain("credential-value");
   });
 
+  it("reconciles the OpenAI profile through the injected provider adapter (#9806)", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "host-only-value");
+    const adapter = providerAdapter();
+
+    const result = await runCredentialsAddAction(
+      {
+        provider: "openai-prod",
+        type: "openai",
+        credentials: ["OPENAI_API_KEY"],
+        configPairs: [],
+        fromExisting: false,
+      },
+      { providerAdapter: adapter },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(adapter.ensureEndpointlessProviderProfile).toHaveBeenCalledWith({
+      target: { kind: "selected" },
+      profileType: "openai",
+      profilePath: expect.stringMatching(/provider-profiles\/openai\.yaml$/u),
+      inferenceCapable: true,
+      timeoutMs: 30_000,
+    });
+    expect(adapter.createProvider).toHaveBeenCalledOnce();
+  });
+
   it("lists credentials separately from messaging bridge providers (#9806)", async () => {
     const listProviders: OpenShellProviderAdapter["listProviders"] = async () => ({
       ok: true,
@@ -133,6 +163,12 @@ describe("credential actions use typed OpenShell provider results", () => {
     ["timeout", "The OpenShell provider operation timed out.", false, undefined],
     ["command", "OpenShell rejected the provider query.", false, undefined],
     ["transport", "OpenShell could not start the provider operation.", false, "process_start"],
+    [
+      "transport",
+      "The selected OpenShell gateway identity does not match the recorded identity.",
+      false,
+      "identity_mismatch",
+    ],
     ["transport", "OpenShell could not reach the selected gateway.", true, "unreachable"],
   ] as const)(
     "uses the typed %s provider-list failure for recovery guidance (#9806)",
@@ -222,8 +258,31 @@ describe("credential actions use typed OpenShell provider results", () => {
       );
 
       expect(result.exitCode).toBe(1);
-      expect(deleteProvider).toHaveBeenCalledTimes(2);
+      expect(deleteProvider).toHaveBeenCalledOnce();
       expect(detachProvider).not.toHaveBeenCalled();
     },
   );
+
+  it("does not partially detach a mixed valid and invalid attachment list (#9806)", async () => {
+    const deleteProvider = vi.fn<OpenShellProviderAdapter["deleteProvider"]>().mockResolvedValue({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "attached",
+        message: "provider remains attached",
+        attachedSandboxes: ["alpha", "invalid/name"],
+      },
+    });
+    const detachProvider = vi.fn<OpenShellProviderAdapter["detachProvider"]>();
+    const adapter = providerAdapter({ deleteProvider, detachProvider });
+
+    const result = await runCredentialsResetAction(
+      { provider: "custom-provider", confirmed: true },
+      { providerAdapter: adapter },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(deleteProvider).toHaveBeenCalledOnce();
+    expect(detachProvider).not.toHaveBeenCalled();
+  });
 });

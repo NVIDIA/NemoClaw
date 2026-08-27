@@ -8,6 +8,7 @@ import {
   type CreateOpenShellProviderRequest,
   type DeleteOpenShellProviderRequest,
   type DetachOpenShellProviderRequest,
+  type EnsureOpenShellEndpointlessProviderProfileRequest,
   type ImportOpenShellProviderProfileRequest,
   type InspectOpenShellProviderProfileRequest,
   type OpenShellProviderAdapter,
@@ -16,6 +17,7 @@ import {
   type OpenShellProviderResult,
 } from "./provider-adapter";
 import type { OpenShellGatewayTarget } from "./sandbox-observer";
+import { ensureEndpointlessProviderProfile as reconcileEndpointlessProviderProfile } from "./provider-profile";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "./timeouts";
 
 export type CapturedProviderCommandResult = Readonly<{
@@ -31,6 +33,7 @@ export type RunProviderCommand = (
     env?: Record<string, string | undefined>;
     ignoreError: true;
     stdio: ["ignore", "pipe", "pipe"];
+    suppressOutput?: boolean;
     timeout: number;
   },
 ) => CapturedProviderCommandResult;
@@ -73,15 +76,20 @@ function redactProviderDiagnostic(output: string, secrets: readonly string[]): s
   return redactFull(safe).trim();
 }
 
-function attachedSandboxNames(output: string): string[] {
+function attachedSandboxNames(output: string): string[] | null {
   const match = ATTACHED_TO_SANDBOX_RE.exec(output);
-  if (!match?.[1]) return [];
-  return match[1]
+  if (!match?.[1]) return null;
+  const names = match[1]
     .split(/[,\s]+/u)
     .map((name) => name.trim().replace(/[.'"`]+$/u, ""))
-    .filter(
-      (name) => name.length > 0 && name.length <= NAME_MAX_LENGTH && NAME_VALID_PATTERN.test(name),
-    );
+    .filter(Boolean);
+  if (
+    names.length === 0 ||
+    names.some((name) => name.length > NAME_MAX_LENGTH || !NAME_VALID_PATTERN.test(name))
+  ) {
+    return null;
+  }
+  return names;
 }
 
 function commandError(
@@ -118,8 +126,15 @@ function commandError(
       message: "OpenShell could not authenticate the provider operation.",
     };
   }
+  if (/\bhandshake verification failed\b/iu.test(output)) {
+    return {
+      kind: "transport",
+      reason: "identity_mismatch",
+      message: "The selected OpenShell gateway identity does not match the recorded identity.",
+    };
+  }
   if (
-    /\b(?:handshake verification failed|connection refused|client error \(connect\)|tcp connect error|transport error|connection reset|connection aborted|connection closed|no active gateway|no gateway configured)\b/iu.test(
+    /\b(?:connection refused|client error \(connect\)|tcp connect error|transport error|connection reset|connection aborted|connection closed|no active gateway|no gateway configured)\b/iu.test(
       output,
     )
   ) {
@@ -133,7 +148,7 @@ function commandError(
     return { kind: "command", reason: "already_exists", message };
   }
   const attachedSandboxes = attachedSandboxNames(output);
-  if (attachedSandboxes.length > 0) {
+  if (attachedSandboxes) {
     return { kind: "command", reason: "attached", message, attachedSandboxes };
   }
   if (/\bNotFound\b|\bnot\s+found\b|does\s+not\s+exist|already\s+absent/iu.test(output)) {
@@ -206,11 +221,13 @@ export function createCliOpenShellProviderAdapter(
     request: OpenShellProviderRequest,
     env?: Record<string, string>,
     gatewayFlagIndex = 2,
+    suppressOutput = false,
   ) =>
     run(scopedArgs(args, request.target, gatewayFlagIndex), {
       ...(env ? { env } : {}),
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
+      ...(suppressOutput ? { suppressOutput: true } : {}),
       timeout: timeoutFor(request),
     });
 
@@ -265,6 +282,31 @@ export function createCliOpenShellProviderAdapter(
     return error ? failure(error) : success({ state: "imported" });
   };
 
+  const ensureEndpointlessProviderProfile: OpenShellProviderAdapter["ensureEndpointlessProviderProfile"] =
+    async (request: EnsureOpenShellEndpointlessProviderProfileRequest) => {
+      const result = reconcileEndpointlessProviderProfile({
+        profileId: request.profileType,
+        inferenceCapable: request.inferenceCapable,
+        profilePath: request.profilePath,
+        runOpenshell: (args, options) =>
+          invoke(args, request, undefined, 2, options?.suppressOutput === true),
+      });
+      if (result.ok) return success({ state: "ready" });
+      const reason =
+        result.reason === "export-failed"
+          ? "profile_export_failed"
+          : result.reason === "import-failed"
+            ? "profile_import_failed"
+            : "profile_incompatible";
+      const message =
+        result.reason === "export-failed"
+          ? "OpenShell could not read the provider profile for validation."
+          : result.reason === "import-failed"
+            ? "OpenShell could not import the provider profile."
+            : "The existing OpenShell provider profile does not match the required contract.";
+      return failure({ kind: "command", reason, message });
+    };
+
   const inspectProviderProfile: OpenShellProviderAdapter["inspectProviderProfile"] = async (
     request: InspectOpenShellProviderProfileRequest,
   ) => {
@@ -312,6 +354,7 @@ export function createCliOpenShellProviderAdapter(
     listProviders,
     createProvider,
     importProviderProfile,
+    ensureEndpointlessProviderProfile,
     inspectProviderProfile,
     deleteProvider,
     detachProvider,

@@ -8,6 +8,7 @@ import type {
 } from "../../adapters/openshell/provider-adapter";
 import { selectedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
+import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../name-validation";
 import { CLI_NAME } from "../../cli/branding";
 import {
   isBridgeProviderName,
@@ -158,7 +159,20 @@ async function deleteProviderWithRecovery(
       : { ok: false, error: result.error, recoveryFailures };
   }
 
-  for (const sandbox of result.error.attachedSandboxes ?? []) {
+  const attachedSandboxes = result.error.attachedSandboxes ?? [];
+  if (
+    attachedSandboxes.length === 0 ||
+    attachedSandboxes.some(
+      (sandbox) =>
+        sandbox.length === 0 ||
+        sandbox.length > NAME_MAX_LENGTH ||
+        !NAME_VALID_PATTERN.test(sandbox),
+    )
+  ) {
+    return { ok: false, error: result.error, recoveryFailures };
+  }
+
+  for (const sandbox of attachedSandboxes) {
     const detach = await providerAdapter.detachProvider({ ...request, sandboxName: sandbox });
     if (!detach.ok) recoveryFailures.push({ sandbox, error: detach.error });
   }

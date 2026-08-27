@@ -8,9 +8,15 @@ export type OpenShellProviderCommandReason =
   | "attached"
   | "failed"
   | "invalid_request"
-  | "not_found";
+  | "not_found"
+  | "profile_export_failed"
+  | "profile_import_failed"
+  | "profile_incompatible";
 
-export type OpenShellProviderTransportReason = "process_start" | "unreachable";
+export type OpenShellProviderTransportReason =
+  | "identity_mismatch"
+  | "process_start"
+  | "unreachable";
 
 export type OpenShellProviderError =
   | Readonly<{
@@ -60,6 +66,13 @@ export type ImportOpenShellProviderProfileRequest = OpenShellProviderRequest &
     profilePath: string;
   }>;
 
+export type EnsureOpenShellEndpointlessProviderProfileRequest =
+  ImportOpenShellProviderProfileRequest &
+    Readonly<{
+      profileType: string;
+      inferenceCapable: boolean;
+    }>;
+
 export type InspectOpenShellProviderProfileRequest = OpenShellProviderRequest &
   Readonly<{
     profileType: string;
@@ -77,6 +90,10 @@ export type DetachOpenShellProviderRequest = DeleteOpenShellProviderRequest &
 
 export type OpenShellProviderProfileImport = Readonly<{
   state: "already_present" | "imported";
+}>;
+
+export type OpenShellEndpointlessProviderProfile = Readonly<{
+  state: "ready";
 }>;
 
 export type OpenShellProviderCreate = Readonly<{
@@ -104,6 +121,10 @@ export interface OpenShellProviderAdapter {
   importProviderProfile(
     request: ImportOpenShellProviderProfileRequest,
   ): Promise<OpenShellProviderResult<OpenShellProviderProfileImport>>;
+
+  ensureEndpointlessProviderProfile(
+    request: EnsureOpenShellEndpointlessProviderProfileRequest,
+  ): Promise<OpenShellProviderResult<OpenShellEndpointlessProviderProfile>>;
 
   inspectProviderProfile(
     request: InspectOpenShellProviderProfileRequest,

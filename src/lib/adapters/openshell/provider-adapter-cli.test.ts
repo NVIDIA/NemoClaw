@@ -166,6 +166,27 @@ describe("CLI OpenShell provider adapter", () => {
     ]);
   });
 
+  it("reconciles an endpointless profile inside the CLI adapter (#9806)", async () => {
+    const run = vi
+      .fn()
+      .mockReturnValueOnce(captured(1, "", "provider profile not found"))
+      .mockReturnValueOnce(captured(0));
+    const adapter = createCliOpenShellProviderAdapter({ run });
+
+    await expect(
+      adapter.ensureEndpointlessProviderProfile({
+        target: selectedOpenShellGateway(),
+        profileType: "openai",
+        profilePath: "/repo/provider-profiles/openai.yaml",
+        inferenceCapable: true,
+      }),
+    ).resolves.toEqual({ ok: true, value: { state: "ready" } });
+    expect(run.mock.calls.map(([args]) => args)).toEqual([
+      ["provider", "profile", "export", "openai", "--output", "json"],
+      ["provider", "profile", "import", "--file", "/repo/provider-profiles/openai.yaml"],
+    ]);
+  });
+
   it("returns a schema failure for an invalid provider profile (#9806)", async () => {
     const adapter = createCliOpenShellProviderAdapter({
       run: () => captured(0, "not-json"),
@@ -237,6 +258,7 @@ describe("CLI OpenShell provider adapter", () => {
   });
 
   it.each([
+    "provider is attached to sandbox(es): alpha, invalid/name",
     "provider is attached to sandbox(es): --gateway, invalid/name",
     "provider is attached to sandbox(es):",
   ])("does not return unvalidated attachment targets from %s (#9806)", async (diagnostic) => {
@@ -262,6 +284,12 @@ describe("CLI OpenShell provider adapter", () => {
       captured(1, "", "authentication failed: credential-value"),
       "OpenShell could not authenticate the provider operation.",
       undefined,
+    ],
+    [
+      "transport",
+      captured(1, "", "handshake verification failed"),
+      "The selected OpenShell gateway identity does not match the recorded identity.",
+      "identity_mismatch",
     ],
     [
       "transport",
