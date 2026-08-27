@@ -28,6 +28,15 @@ import type {
 } from "./types";
 
 const AGENT_CONFIG_HOOK_PHASES = new Set<ChannelHookPhase>(["apply", "post-agent-install"]);
+const OPENSHELL_ENV_PLACEHOLDER_PREFIX = "openshell:resolve:env:";
+const OPENSHELL_ALIAS_PLACEHOLDER_MARKER = "-OPENSHELL-RESOLVE-ENV-";
+const RUNTIME_PLACEHOLDER_PROBE = [
+  'prefix="openshell:resolve:env:"',
+  'for key do value="$(printenv "$key" 2>/dev/null || true)"',
+  'if [ "$value" = "${prefix}${key}" ]; then printf "%s\\t%s\\n" "$key" "$value"; continue; fi',
+  'case "$value" in "${prefix}"v*_"$key") revision="${value#${prefix}v}"; revision="${revision%_${key}}"; case "$revision" in ""|*[!0-9]*) ;; *) printf "%s\\t%s\\n" "$key" "$value" ;; esac ;; esac',
+  "done",
+].join("; ");
 
 export function listHookRequests(
   plan: SandboxMessagingPlan,
@@ -66,6 +75,10 @@ export async function applyAgentConfigAtOpenShell(
   }
 
   const enabledRender = filterEnabledPlanEntries(plan, plan.agentRender);
+  const placeholderRules = credentialPlaceholderRules(
+    plan,
+    readRuntimeCredentialPlaceholders(plan, options.runOpenshell),
+  );
   const disabledChannelIds = new Set(plan.disabledChannels);
   const disabledJsonRender = plan.agentRender.filter(
     (entry): entry is SandboxMessagingJsonRenderPlan =>
@@ -94,8 +107,9 @@ export async function applyAgentConfigAtOpenShell(
                 isJsonRender(entry) && disabledChannelIds.has(entry.channelId),
             ),
             resolvedTarget,
+            placeholderRules,
           )
-        : applyEnvLines(existing, render.filter(isEnvLinesRender));
+        : applyEnvLines(existing, render.filter(isEnvLinesRender), placeholderRules);
     writeSandboxFile(plan.sandboxName, resolvedTarget, contents, options.runOpenshell);
     appliedTargets.push(resolvedTarget);
   }
@@ -223,10 +237,10 @@ function applyJsonFragments(
   render: readonly SandboxMessagingJsonRenderPlan[],
   disabledRender: readonly SandboxMessagingJsonRenderPlan[],
   target: string,
+  rules: readonly CredentialPlaceholderRule[],
 ): string {
   const format = target.endsWith(".yaml") || target.endsWith(".yml") ? "yaml" : "json";
   const root = parseStructuredConfig(existing, target, format);
-  const rules = credentialPlaceholderRules(plan);
   for (const entry of disabledRender) {
     deleteJsonPath(root, entry.path);
   }
@@ -274,17 +288,96 @@ function parseStructuredConfig(
 type CredentialPlaceholderRule = {
   readonly envKey: string;
   readonly placeholder: string;
+  readonly runtimePlaceholder?: string;
 };
 
-function credentialPlaceholderRules(plan: SandboxMessagingPlan): CredentialPlaceholderRule[] {
+function credentialPlaceholderRules(
+  plan: SandboxMessagingPlan,
+  runtimePlaceholders: ReadonlyMap<string, string>,
+): CredentialPlaceholderRule[] {
   const active = new Set(enabledPlanChannels(plan).map((channel) => channel.channelId));
   return plan.credentialBindings.flatMap((binding) => {
     if (!active.has(binding.channelId)) return [];
     if (typeof binding.providerEnvKey !== "string" || typeof binding.placeholder !== "string") {
       return [];
     }
-    return [{ envKey: binding.providerEnvKey, placeholder: binding.placeholder }];
+    const runtimePlaceholder = runtimePlaceholders.get(binding.providerEnvKey);
+    return [
+      {
+        envKey: binding.providerEnvKey,
+        placeholder: binding.placeholder,
+        ...(runtimePlaceholder ? { runtimePlaceholder } : {}),
+      },
+    ];
   });
+}
+
+function readRuntimeCredentialPlaceholders(
+  plan: SandboxMessagingPlan,
+  runOpenshell: MessagingOpenShellRunner,
+): ReadonlyMap<string, string> {
+  const active = new Set(enabledPlanChannels(plan).map((channel) => channel.channelId));
+  const envKeys = uniqueStrings(
+    plan.credentialBindings.flatMap((binding) =>
+      active.has(binding.channelId) && typeof binding.providerEnvKey === "string"
+        ? [binding.providerEnvKey]
+        : [],
+    ),
+  );
+  if (envKeys.length === 0) return new Map();
+  const result = runOpenshell(
+    [
+      "sandbox",
+      "exec",
+      "--name",
+      plan.sandboxName,
+      "--",
+      "sh",
+      "-c",
+      RUNTIME_PLACEHOLDER_PROBE,
+      "sh",
+      ...envKeys,
+    ],
+    {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      suppressOutput: true,
+    },
+  );
+  if (result.status !== 0) return new Map();
+  const allowed = new Set(envKeys);
+  const placeholders = new Map<string, string>();
+  for (const line of String(result.stdout ?? "").split(/\r?\n/u)) {
+    const separator = line.indexOf("\t");
+    if (separator <= 0) continue;
+    const envKey = line.slice(0, separator);
+    const value = line.slice(separator + 1);
+    if (
+      allowed.has(envKey) &&
+      value.startsWith(OPENSHELL_ENV_PLACEHOLDER_PREFIX) &&
+      isProviderPlaceholderForEnvKey(value, envKey)
+    ) {
+      placeholders.set(envKey, value);
+    }
+  }
+  return placeholders;
+}
+
+function alignPlaceholderWithRuntimeRevision(
+  desired: string,
+  runtimePlaceholder: string,
+  envKey: string,
+): string {
+  if (
+    !runtimePlaceholder.startsWith(OPENSHELL_ENV_PLACEHOLDER_PREFIX) ||
+    !isProviderPlaceholderForEnvKey(runtimePlaceholder, envKey)
+  ) {
+    return desired;
+  }
+  if (desired.startsWith(OPENSHELL_ENV_PLACEHOLDER_PREFIX)) return runtimePlaceholder;
+  const aliasIndex = desired.indexOf(OPENSHELL_ALIAS_PLACEHOLDER_MARKER);
+  if (aliasIndex <= 0 || !isProviderPlaceholderForEnvKey(desired, envKey)) return desired;
+  return `${desired.slice(0, aliasIndex + OPENSHELL_ALIAS_PLACEHOLDER_MARKER.length)}${runtimePlaceholder.slice(OPENSHELL_ENV_PLACEHOLDER_PREFIX.length)}`;
 }
 
 function preserveCredentialPlaceholders(
@@ -294,6 +387,9 @@ function preserveCredentialPlaceholders(
 ): MessagingSerializableValue {
   if (typeof desired === "string") {
     const rule = rules.find((candidate) => candidate.placeholder === desired);
+    if (rule?.runtimePlaceholder) {
+      return alignPlaceholderWithRuntimeRevision(desired, rule.runtimePlaceholder, rule.envKey);
+    }
     if (
       rule &&
       typeof existing === "string" &&
@@ -370,14 +466,22 @@ function setJsonPath(
 function applyEnvLines(
   existing: string | undefined,
   render: readonly SandboxMessagingEnvLinesRenderPlan[],
+  rules: readonly CredentialPlaceholderRule[],
 ): string {
+  const existingValues = new Map<string, string>();
+  for (const line of (existing ?? "").split(/\n/u)) {
+    const key = readEnvLineKey(line);
+    if (key) existingValues.set(key, line.slice(line.indexOf("=") + 1));
+  }
   const desired = new Map<string, string>();
   const rawDesiredLines: string[] = [];
   for (const entry of render) {
     for (const line of entry.lines) {
       const key = readEnvLineKey(line);
       if (key) {
-        desired.set(key, line);
+        const value = line.slice(line.indexOf("=") + 1);
+        const resolved = preserveCredentialPlaceholders(value, existingValues.get(key), rules);
+        desired.set(key, `${key}=${String(resolved)}`);
       } else {
         rawDesiredLines.push(line);
       }

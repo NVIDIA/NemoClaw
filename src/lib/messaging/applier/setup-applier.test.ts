@@ -711,7 +711,18 @@ describe("MessagingSetupApplier", () => {
       runOpenshell,
     });
 
-    expect(calls.map((call) => call.args)).toEqual([
+    expect(calls[0]?.args).toEqual(
+      expect.arrayContaining([
+        "sandbox",
+        "exec",
+        "--name",
+        "demo",
+        "sh",
+        "-c",
+        "TELEGRAM_BOT_TOKEN",
+      ]),
+    );
+    expect(calls.slice(1).map((call) => call.args)).toEqual([
       ["sandbox", "exec", "--name", "demo", "--", "cat", "/sandbox/.openclaw/openclaw.json"],
       [
         "sandbox",
@@ -726,7 +737,7 @@ describe("MessagingSetupApplier", () => {
         "/sandbox/.openclaw/openclaw.json",
       ],
     ]);
-    expect(calls[1]?.input).toBeTruthy();
+    expect(calls[2]?.input).toBeTruthy();
     const openclawConfig = JSON.parse(files["/sandbox/.openclaw/openclaw.json"] ?? "{}");
     expect(openclawConfig.agents.list).toEqual(["default"]);
     expect(openclawConfig.channels.telegram.accounts.default).toMatchObject({
@@ -778,6 +789,73 @@ describe("MessagingSetupApplier", () => {
       enabled: true,
       groupPolicy: "open",
     });
+  });
+
+  it("refreshes persisted provider placeholders from the live sandbox credential revision", async () => {
+    const plan = await buildOnboardPlan(
+      {
+        TELEGRAM_BOT_TOKEN: "123456:telegram-token",
+        SLACK_BOT_TOKEN: "xoxb-slack-token",
+        SLACK_APP_TOKEN: "xapp-slack-token",
+      },
+      ["telegram", "slack"],
+    );
+    const files: Record<string, string> = {
+      "/sandbox/.openclaw/openclaw.json": JSON.stringify({
+        channels: {
+          telegram: {
+            accounts: {
+              default: { botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN" },
+            },
+          },
+          slack: {
+            accounts: {
+              default: {
+                botToken: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+                appToken: "xapp-OPENSHELL-RESOLVE-ENV-v7_SLACK_APP_TOKEN",
+              },
+            },
+          },
+        },
+      }),
+    };
+    const runOpenshell: MessagingOpenShellRunner = (args, options) => {
+      const command = args.join(" ");
+      if (command.includes('printenv "$key"')) {
+        return {
+          status: 0,
+          stdout: [
+            "TELEGRAM_BOT_TOKEN\topenshell:resolve:env:v42_TELEGRAM_BOT_TOKEN",
+            "SLACK_BOT_TOKEN\topenshell:resolve:env:v42_SLACK_BOT_TOKEN",
+            "SLACK_APP_TOKEN\topenshell:resolve:env:v42_SLACK_APP_TOKEN",
+            "SLACK_APP_TOKEN\txapp-real-token-must-not-be-read",
+          ].join("\n"),
+        };
+      }
+      const target = String(args.at(-1));
+      if (args.includes("cat") && options?.input === undefined) {
+        return { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" };
+      }
+      if (options?.input !== undefined) {
+        files[target] = options.input;
+        return { status: 0 };
+      }
+      return { status: 1 };
+    };
+
+    await MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, { runOpenshell });
+
+    const config = JSON.parse(files["/sandbox/.openclaw/openclaw.json"] ?? "{}");
+    expect(config.channels.telegram.accounts.default.botToken).toBe(
+      "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN",
+    );
+    expect(config.channels.slack.accounts.default.botToken).toBe(
+      "xoxb-OPENSHELL-RESOLVE-ENV-v42_SLACK_BOT_TOKEN",
+    );
+    expect(config.channels.slack.accounts.default.appToken).toBe(
+      "xapp-OPENSHELL-RESOLVE-ENV-v42_SLACK_APP_TOKEN",
+    );
+    expect(JSON.stringify(config)).not.toContain("real-token-must-not-be-read");
   });
 
   it("renders every built-in Hermes credential and allowlist through the sandbox applier", async () => {

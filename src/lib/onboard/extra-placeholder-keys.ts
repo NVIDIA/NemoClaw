@@ -3,7 +3,6 @@
 
 import { getCredential, normalizeCredentialValue } from "../credentials/store";
 import * as webSearch from "../inference/web-search";
-import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../messaging/provider-profile";
 import { getChannelTokenKeys, listChannels } from "../sandbox/channels";
 
 interface MessagingTokenDefShape {
@@ -113,7 +112,9 @@ export function registerExtraPlaceholderProviders(
       name: `${sandboxName}-extra-${extraPlaceholderProviderSlug(envKey)}`,
       envKey,
       token,
-      providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+      // Extra keys are not owned by a single credential-bound channel route;
+      // keep them generic so OpenShell exposes their attached placeholders.
+      providerType: "generic",
     });
   }
   return [...parsed.keys];

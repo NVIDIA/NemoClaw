@@ -153,7 +153,8 @@ describe("fixture redaction entry point", () => {
 
   it("preserves managed credential references and non-credential JSON identifiers", () => {
     const discordReference = "openshell:resolve:env:DISCORD_BOT_TOKEN";
-    const versionedReference = "openshell:resolve:env:v2237303833964223913_WECHAT_BOT_TOKEN";
+    const versionedReference = `openshell:resolve:env:v${"2".repeat(32)}_WECHAT_BOT_TOKEN`;
+    const versionedSlackReference = `xapp-OPENSHELL-RESOLVE-ENV-v${"3".repeat(32)}_SLACK_APP_TOKEN`;
     const slackReference = "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN";
     const discordAssignment = `DISCORD_BOT_TOKEN=${discordReference}`;
     const text = JSON.stringify({
@@ -162,6 +163,7 @@ describe("fixture redaction entry point", () => {
       token: discordReference,
       versionedToken: versionedReference,
       botToken: slackReference,
+      appToken: versionedSlackReference,
     });
 
     expect(redactString(text)).toBe(text);
@@ -193,7 +195,6 @@ describe("fixture redaction entry point", () => {
     ["bracket suffix", "TOKEN=openshell:resolve:env:FOO]opaqueCredentialPayloadZ1234567890"],
     ["nested assignment", "TOKEN=foo=openshell:resolve:env:FOO"],
     ["short prefix", "TOKEN=short:openshell:resolve:env:FOO"],
-    ["oversized revision", `TOKEN=openshell:resolve:env:v${"1".repeat(21)}_FOO`],
     ["oversized identifier", `TOKEN=openshell:resolve:env:${"A".repeat(129)}`],
     ["mixed case", "TOKEN=OpenShell:Resolve:Env:FOO"],
     ["lowercase Slack", "TOKEN=xoxb-openshell-resolve-env-SLACK_BOT_TOKEN"],

@@ -467,6 +467,8 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     const wechatAccount = channelAccount(config, "openclaw-weixin", state.wechatAccount);
 
     const telegramBotToken = accountString(telegramAccount, "botToken");
+    const slackBotToken = accountString(slackAccount, "botToken");
+    const slackAppToken = accountString(slackAccount, "appToken");
     check(telegramBotToken.length > 0, "M6: Telegram botToken present in openclaw.json");
     check(
       telegramBotToken !== state.tokens.telegram,
@@ -504,6 +506,11 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     check(
       accountString(slackAccount, "groupPolicy") === "allowlist",
       "M11g: Slack groupPolicy is allowlist",
+    );
+    check(
+      /^xoxb-OPENSHELL-RESOLVE-ENV-v[0-9]+_SLACK_BOT_TOKEN$/u.test(slackBotToken) &&
+        /^xapp-OPENSHELL-RESOLVE-ENV-v[0-9]+_SLACK_APP_TOKEN$/u.test(slackAppToken),
+      "M11i: Slack config aliases match the live OpenShell credential revisions",
     );
     const slackChannels = slackAccount.channels;
     const slackWildcard =
@@ -837,7 +844,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       sandbox,
       fakeSlack.port,
       "/api/auth.test",
-      "Bearer xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+      `Bearer ${slackBotToken}`,
       redactionValues,
     );
     check(
@@ -885,7 +892,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       sandbox,
       fakeSlack.port,
       "/api/apps.connections.open",
-      "Bearer xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+      `Bearer ${slackAppToken}`,
       redactionValues,
     );
     check(

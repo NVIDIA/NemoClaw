@@ -1764,6 +1764,27 @@ def rewrite(value):
             if count:
                 refreshed.add(key)
                 value = updated
+        alias_index = value.find(alias_marker)
+        if alias_index > 0:
+            alias_suffix = value[alias_index + len(alias_marker) :]
+            for env_key in keys:
+                if alias_suffix != env_key and not re.fullmatch(
+                    rf"v[0-9]+_{re.escape(env_key)}", alias_suffix
+                ):
+                    continue
+                runtime_value = os.environ.get(env_key, "")
+                if not runtime_value.startswith(prefix):
+                    continue
+                runtime_suffix = runtime_value[len(prefix) :]
+                if runtime_suffix != env_key and not re.fullmatch(
+                    rf"v[0-9]+_{re.escape(env_key)}", runtime_suffix
+                ):
+                    continue
+                updated = value[: alias_index + len(alias_marker)] + runtime_suffix
+                if updated != value:
+                    refreshed.add(env_key)
+                    value = updated
+                break
         return value
     if isinstance(value, list):
         return [rewrite(item) for item in value]
@@ -1817,7 +1838,7 @@ def walk_for_warnings(value, path):
             alias_env_key = value[alias_index + len(alias_marker) :]
             token_scheme = value[:alias_index] + "-"
             for env_key in keys:
-                if env_key != alias_env_key:
+                if not placeholder_suffix_matches_env_key(alias_env_key, env_key):
                     continue
                 label = path_label(path)
                 env_value = os.environ.get(env_key, "")
@@ -2100,11 +2121,22 @@ import sys
 with open(sys.argv[1], encoding="utf-8") as handle:
     plan = json.load(handle)
 for alias in plan.get("envAliases", []):
-    if not re.search(alias["match"], os.environ.get(alias["envKey"], "")):
+    env_key = alias["envKey"]
+    runtime_value = os.environ.get(env_key, "")
+    if not re.search(alias["match"], runtime_value):
         continue
+    value = alias["value"]
+    marker = "-OPENSHELL-RESOLVE-ENV-"
+    placeholder_prefix = "openshell:resolve:env:"
+    if marker in value and runtime_value.startswith(placeholder_prefix):
+        runtime_suffix = runtime_value[len(placeholder_prefix) :]
+        if re.fullmatch(rf"v[0-9]+_{re.escape(env_key)}", runtime_suffix):
+            alias_prefix, alias_suffix = value.split(marker, 1)
+            if alias_suffix == env_key:
+                value = alias_prefix + marker + runtime_suffix
     print("\t".join([
-        alias["envKey"],
-        alias["value"],
+        env_key,
+        value,
         alias.get("message", ""),
     ]))
 PYMESSAGINGALIASES

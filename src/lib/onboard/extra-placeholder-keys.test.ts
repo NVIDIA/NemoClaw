@@ -194,7 +194,7 @@ describe("registerExtraPlaceholderProviders", () => {
     }
   }
 
-  it("appends one profile-backed tokenDef per validated extra key with the operator-supplied token (#9875)", () => {
+  it("appends one generic tokenDef per validated extra key with the operator-supplied token", () => {
     withEnv(
       {
         [EXTRA_PLACEHOLDER_KEYS_ENV]: "TELEGRAM_BOT_TOKEN_AGENT_A SLACK_BOT_TOKEN_AGENT_B",
@@ -219,13 +219,13 @@ describe("registerExtraPlaceholderProviders", () => {
             name: "my-sandbox-extra-telegram-bot-token-agent-a",
             envKey: "TELEGRAM_BOT_TOKEN_AGENT_A",
             token: "telegram-token-A",
-            providerType: "nemoclaw-mcp-v1",
+            providerType: "generic",
           },
           {
             name: "my-sandbox-extra-slack-bot-token-agent-b",
             envKey: "SLACK_BOT_TOKEN_AGENT_B",
             token: "slack-token-B",
-            providerType: "nemoclaw-mcp-v1",
+            providerType: "generic",
           },
         ]);
       },
@@ -257,7 +257,7 @@ describe("registerExtraPlaceholderProviders", () => {
             name: "my-sandbox-extra-telegram-bot-token-agent-missing",
             envKey: "TELEGRAM_BOT_TOKEN_AGENT_MISSING",
             token: null,
-            providerType: "nemoclaw-mcp-v1",
+            providerType: "generic",
           },
         ]);
       },
