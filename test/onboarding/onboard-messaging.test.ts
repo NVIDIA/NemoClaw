@@ -18,10 +18,7 @@ import {
   parseMessagingFixturePayload,
   writeCustomMessagingDockerfile,
 } from "../helpers/messaging-plan-fixtures";
-import {
-  type RunOnboardProcessOptions,
-  runOnboardProcess,
-} from "../helpers/onboard-child-process-harness";
+import { runBoundedOnboardScript } from "../helpers/onboard-child-process-harness";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 
 type CommandEntry = {
@@ -34,19 +31,13 @@ type CommandEntry = {
   providerRevisions?: Record<string, number | undefined> | null;
   rawCredentialInEnv?: boolean;
 };
-
 const parseStdoutJson = parseMessagingFixturePayload;
-
 const repoRoot = path.join(import.meta.dirname, "../..");
 const requireForTest = createRequire(import.meta.url);
 const yamlModulePath = requireForTest.resolve("yaml");
 const onboardScriptMocksPath = JSON.stringify(
   path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
 );
-const runMessagingProcess = (
-  scriptPath: string,
-  options: Omit<RunOnboardProcessOptions, "killSignal" | "timeoutMs">,
-) => runOnboardProcess([scriptPath], { ...options, timeoutMs: 45_000, killSignal: "SIGKILL" });
 beforeEach(() => {
   vi.stubEnv("NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG", "1");
   vi.stubEnv("NEMOCLAW_SANDBOX_PREBUILD", "1");
@@ -167,7 +158,7 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
 });
 `;
       fs.writeFileSync(scriptPath, script);
-      const result = runMessagingProcess(scriptPath, {
+      const result = runBoundedOnboardScript(scriptPath, {
         cwd: repoRoot,
         env: {
           ...process.env,
@@ -798,8 +789,7 @@ const { createSandbox } = require(${onboardPath});
 });
 `;
       fs.writeFileSync(scriptPath, script);
-
-      const result = runMessagingProcess(scriptPath, {
+      const result = runBoundedOnboardScript(scriptPath, {
         cwd: repoRoot,
         env: {
           ...process.env,

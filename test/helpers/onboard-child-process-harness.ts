@@ -115,6 +115,14 @@ export function runOnboardProcess(
   };
 }
 
+/** Runs a generated onboarding script with a bounded hard-kill timeout. */
+export function runBoundedOnboardScript(
+  scriptPath: string,
+  options: Omit<RunOnboardProcessOptions, "killSignal" | "timeoutMs">,
+): OnboardProcessResult {
+  return runOnboardProcess([scriptPath], { ...options, timeoutMs: 45_000, killSignal: "SIGKILL" });
+}
+
 /**
  * Parses the last stdout line that is a JSON object; scenario scripts print
  * their result payload after any incidental logging. Throws with the full
