@@ -38,13 +38,12 @@ export const OPENCLAW_CONFIG_RESTORE_OWNERSHIP = {
    * `agents` is durable except its primary model routing reference, which the
    * fresh rebuild re-owns (see `agentPrimaryModelPath`) so a managed-model
    * switch followed by rebuild does not leave the agent pinned to the old
-   * model, and its heartbeat schedule (see `agentHeartbeatPath`).
+   * model, and its heartbeat schedule, which the fresh rebuild re-owns in
+   * `reconcileAgentHeartbeat`.
    */
   backupDurableSections: ["mcp", "mcpServers", "customAgents", "agents"],
   /** Fresh rebuild owns the agent's primary model routing within `agents`. */
   agentPrimaryModelPath: ["agents", "defaults", "model", "primary"],
-  /** Fresh rebuild owns the agent heartbeat schedule, including its absence. */
-  agentHeartbeatPath: ["agents", "defaults", "heartbeat"],
   /** NemoClaw's cross-agent disclosure selection owns this generated key. */
   currentGeneratedToolFields: ["toolSearch"],
 } as const;
