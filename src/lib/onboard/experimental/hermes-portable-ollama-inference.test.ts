@@ -57,6 +57,41 @@ const GPU_DEVICE = "nvidia.com/gpu=GPU-12345678-1234-1234-1234-123456789abc";
 const temporaryDirectories: string[] = [];
 const environmentRestorers: Array<() => void> = [];
 
+function exactTestFileIdentity(metadata: fs.BigIntStats): string {
+  return [
+    metadata.dev,
+    metadata.ino,
+    metadata.mode,
+    metadata.nlink,
+    metadata.uid,
+    metadata.gid,
+    metadata.size,
+    metadata.mtimeNs,
+    metadata.ctimeNs,
+  ].join(":");
+}
+
+function snapshotExactTestFile(filePath: string) {
+  const descriptor = fs.openSync(
+    filePath,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+  );
+  try {
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    expect(before.isFile()).toBe(true);
+    expect(before.isSymbolicLink()).toBe(false);
+    expect(before.nlink).toBe(1n);
+    const contents = fs.readFileSync(descriptor, "utf8");
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    const named = fs.lstatSync(filePath, { bigint: true });
+    expect(exactTestFileIdentity(after)).toBe(exactTestFileIdentity(before));
+    expect(exactTestFileIdentity(named)).toBe(exactTestFileIdentity(after));
+    return { contents, metadata: after };
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
 interface PullFailure {
   readonly image: string;
   readonly result: ContainerEngineCommandResult;
@@ -298,10 +333,8 @@ describe("Hermes Portable Ollama inference activation", () => {
     const journal = await publishPortableInference(fixture);
     const receiptPath = inferenceReceiptPath(fixture);
     const journalPath = gatewayJournalPath(fixture);
-    const receiptBefore = fs.readFileSync(receiptPath, "utf8");
-    const journalBefore = fs.readFileSync(journalPath, "utf8");
-    const receiptMetadata = fs.statSync(receiptPath, { bigint: true });
-    const journalMetadata = fs.statSync(journalPath, { bigint: true });
+    const receiptBefore = snapshotExactTestFile(receiptPath);
+    const journalBefore = snapshotExactTestFile(journalPath);
     const mutationsBefore = fixture.gatewayProvider
       .calls()
       .filter(({ args }) => args[0] === "provider" && args[1] !== "get").length;
@@ -313,21 +346,23 @@ describe("Hermes Portable Ollama inference activation", () => {
       runGatewayOpenshell: fixture.gatewayProvider.run,
     });
     authority.assertCurrent();
-    expect(authority.receiptWriter.writeExact(receiptBefore)).toBe(receiptBefore);
+    expect(authority.receiptWriter.writeExact(receiptBefore.contents)).toBe(receiptBefore.contents);
 
-    expect(fs.readFileSync(receiptPath, "utf8")).toBe(receiptBefore);
-    expect(fs.readFileSync(journalPath, "utf8")).toBe(journalBefore);
-    expect(fs.statSync(receiptPath, { bigint: true })).toMatchObject({
-      dev: receiptMetadata.dev,
-      ino: receiptMetadata.ino,
-      mtimeNs: receiptMetadata.mtimeNs,
-      ctimeNs: receiptMetadata.ctimeNs,
+    const receiptAfter = snapshotExactTestFile(receiptPath);
+    const journalAfter = snapshotExactTestFile(journalPath);
+    expect(receiptAfter.contents).toBe(receiptBefore.contents);
+    expect(journalAfter.contents).toBe(journalBefore.contents);
+    expect(receiptAfter.metadata).toMatchObject({
+      dev: receiptBefore.metadata.dev,
+      ino: receiptBefore.metadata.ino,
+      mtimeNs: receiptBefore.metadata.mtimeNs,
+      ctimeNs: receiptBefore.metadata.ctimeNs,
     });
-    expect(fs.statSync(journalPath, { bigint: true })).toMatchObject({
-      dev: journalMetadata.dev,
-      ino: journalMetadata.ino,
-      mtimeNs: journalMetadata.mtimeNs,
-      ctimeNs: journalMetadata.ctimeNs,
+    expect(journalAfter.metadata).toMatchObject({
+      dev: journalBefore.metadata.dev,
+      ino: journalBefore.metadata.ino,
+      mtimeNs: journalBefore.metadata.mtimeNs,
+      ctimeNs: journalBefore.metadata.ctimeNs,
     });
     expect(
       fixture.gatewayProvider
