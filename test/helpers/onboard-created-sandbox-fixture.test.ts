@@ -53,8 +53,15 @@ function selectorListCommand(gatewayName: string | null, nonce = CREATE_ATTEMPT_
   ];
 }
 
-function createCommand(nonce = CREATE_ATTEMPT_NONCE): string[] {
-  return ["openshell", "sandbox", "create", "--label", `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`];
+function createCommand(nonce = CREATE_ATTEMPT_NONCE, gatewayName: string | null = null): string[] {
+  return [
+    "openshell",
+    "sandbox",
+    "create",
+    ...(gatewayName === null ? [] : ["-g", gatewayName]),
+    "--label",
+    `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`,
+  ];
 }
 
 describe("created sandbox fixture", () => {
@@ -165,6 +172,22 @@ describe("created sandbox fixture", () => {
     ).toBeNull();
     expect(fixture.capture(selectorListCommand(null))).toBeNull();
     expect(fixture.capture(["openshell", "sandbox", "get", "alpha"])).toBeNull();
+  });
+
+  it("rejects create and recreate commands for another gateway (#10463)", () => {
+    const fixture = createCreatedSandboxFixture({ gatewayName: "gateway-alpha" });
+
+    expect(() => fixture.create(createCommand(CREATE_ATTEMPT_NONCE, "gateway-bravo"))).toThrow(
+      "Created sandbox fixture requires its configured gateway.",
+    );
+    expect(fixture.state.lifecycleState).toBe("absent");
+
+    fixture.create(createCommand());
+    fixture.delete();
+    expect(() => fixture.recreate(createCommand(CREATE_ATTEMPT_NONCE, "gateway-bravo"))).toThrow(
+      "Created sandbox fixture requires its configured gateway.",
+    );
+    expect(fixture.state.lifecycleState).toBe("deleted");
   });
 
   it("does not answer a selector for another create attempt (#10463)", () => {

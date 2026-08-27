@@ -418,6 +418,9 @@ function createCreatedSandboxFixture(options = {}) {
     if (!details || details.action !== "create") {
       throw new Error("Created sandbox fixture requires one sandbox create command.");
     }
+    if (details.gatewayName !== null && details.gatewayName !== state.gatewayName) {
+      throw new Error("Created sandbox fixture requires its configured gateway.");
+    }
     const prefix = `${sandboxIdentity.NEMOCLAW_CREATE_ATTEMPT_LABEL}=`;
     const labels = details.args.flatMap((arg, index) => {
       if (arg === "--label") return [details.args[index + 1] || ""];
