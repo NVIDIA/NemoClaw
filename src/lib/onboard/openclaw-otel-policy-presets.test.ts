@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("./messaging-policy-presets", () => ({
   mergeEnabledMessagingChannelPolicyPresets: (presets: string[]) => presets,
   requiredMessagingChannelPolicyPresets: () => [],
+  pruneInactiveHermesMessagingPolicyPresets: (presets: string[]) => presets,
   pruneDisabledMessagingPolicyPresets: (presets: string[]) => presets,
   mergeAppliedPolicyPresetsForDisabledMessagingCleanup: (presets: string[]) => presets,
   hasDisabledMessagingPolicyPreset: () => false,

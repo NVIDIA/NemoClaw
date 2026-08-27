@@ -421,6 +421,7 @@ if (process.argv[2] !== "tui") {
           }) + "\n";
       client.end(body);
     });
+    process.umask(0o177);
     await new Promise((resolve, reject) => {
       replacement.once("error", reject);
       replacement.listen(socketPath, resolve);

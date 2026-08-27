@@ -51,12 +51,27 @@ function bootstrapInput(): RuntimeProviderNativeArtifactBootstrapInput {
   };
 }
 
-function nativeBootstrap() {
+function nativeBootstrap(
+  operations: Omit<RuntimeProviderNativeArtifactBootstrapOperations, "recoverCreate"> &
+    Partial<Pick<RuntimeProviderNativeArtifactBootstrapOperations, "recoverCreate">>,
+) {
   const surface = createMxcRuntimeProviderBundle({
     hostFacts: {
       platform: "win32",
       nativeArchitecture: "x64",
       release: "10.0.28120",
+    },
+    bootstrapControlPlane: {
+      contractVersion: 1,
+      providerId: "mxc",
+      recoverCreate: async (plan) => ({
+        status: "retained",
+        authoritySha256: plan.authoritySha256,
+        providerHandle: plan.providerHandle,
+        sandboxName: plan.sandboxName,
+        lifecycleGeneration: plan.lifecycleGeneration,
+      }),
+      ...operations,
     },
   }).bootstrap;
   expect(surface).toMatchObject({ supported: true, bootstrapKind: "native-artifact" });
@@ -68,6 +83,8 @@ function readyEvidence(
 ): RuntimeProviderNativeArtifactReadinessEvidence {
   return {
     authoritySha256: plan.authoritySha256,
+    providerHandle: plan.providerHandle,
+    sandboxName: plan.sandboxName,
     lifecycleGeneration: plan.lifecycleGeneration,
     artifactDigest: plan.workload.artifact.digest,
     executableDigest: plan.workload.launch.executable.digest,
@@ -79,6 +96,9 @@ function verifiedCreateOutcome(plan: RuntimeProviderNativeArtifactBootstrapPlan)
   return {
     status: "created" as const,
     authoritySha256: plan.authoritySha256,
+    providerHandle: plan.providerHandle,
+    sandboxName: plan.sandboxName,
+    lifecycleGeneration: plan.lifecycleGeneration,
     artifactDigest: plan.workload.artifact.digest,
     executableDigest: plan.workload.launch.executable.digest,
   };
@@ -96,15 +116,17 @@ describe("inactive MXC native-artifact bootstrap", () => {
         Reflect.set(plan.workload.launch.environmentNames, "0", "MUTATED");
         return created;
       }),
-      verifyReadiness: vi.fn(async (plan) => {
+      verifyReadiness: vi.fn(async (plan, created) => {
         expect(plan.artifactRoot).toBe("C:\\openclaw-2026-7-1");
         expect(plan.workload.artifact.digest).toBe(NATIVE_RECEIPT.artifact.digest);
         expect(plan.workload.launch.environmentNames[0]).toBe("HOME");
+        expect(created).toEqual(verifiedCreateOutcome(plan));
         return readyEvidence(plan);
       }),
+      recoverCreate: vi.fn(async () => ({ status: "absent" as const })),
     };
 
-    const receipt = await nativeBootstrap().run(bootstrapInput(), operations);
+    const receipt = await nativeBootstrap(operations).run(bootstrapInput());
 
     expect(observedPlan).toMatchObject({
       schemaVersion: 1,
@@ -129,13 +151,18 @@ describe("inactive MXC native-artifact bootstrap", () => {
         USERPROFILE: `${SHARE_DIRECTORY}\\home`,
       },
       authoritySha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      providerHandle: expect.stringMatching(/^mxc-native-artifact-v1:[a-f0-9]{64}$/u),
     });
     expect(receipt).toEqual({
       outcome: "ready",
       reason: null,
       authoritySha256: observedPlan!.authoritySha256,
+      providerHandle: observedPlan!.providerHandle,
+      sandboxName: "alpha",
+      lifecycleGeneration: LIFECYCLE_GENERATION,
       resourceState: "active",
-      cleanup: { attempted: false, resourceRemovalAuthorized: false },
+      cleanup: { attempted: false, resourceRemovalAuthorized: false, removed: false },
+      recoveryRequired: false,
     });
     expect(Object.isFrozen(receipt)).toBe(true);
     expect(Object.isFrozen(receipt.cleanup)).toBe(true);
@@ -217,121 +244,36 @@ describe("inactive MXC native-artifact bootstrap", () => {
     ],
   ] as const)("rejects %s before the create boundary (#8178)", async (_label, mutate, message) => {
     const verifyAndCreate = vi.fn();
-    await expect(
-      nativeBootstrap().run(mutate(bootstrapInput()), {
-        verifyAndCreate,
-        verifyReadiness: vi.fn(),
-      }),
-    ).rejects.toThrow(message);
+    const bootstrap = nativeBootstrap({
+      verifyAndCreate,
+      verifyReadiness: vi.fn(),
+    });
+    await expect(bootstrap.run(mutate(bootstrapInput()))).rejects.toThrow(message);
     expect(verifyAndCreate).not.toHaveBeenCalled();
   });
 
-  it("rejects the obsolete separated verification and create operations (#8178)", async () => {
-    const verifyArtifactIdentity = vi.fn();
-    const create = vi.fn();
-
-    await expect(
-      nativeBootstrap().run(bootstrapInput(), {
-        verifyArtifactIdentity,
-        create,
-        verifyReadiness: vi.fn(),
-      } as unknown as RuntimeProviderNativeArtifactBootstrapOperations),
-    ).rejects.toThrow(/atomic artifact verification and create plus readiness operations/u);
-    expect(verifyArtifactIdentity).not.toHaveBeenCalled();
-    expect(create).not.toHaveBeenCalled();
-  });
-
-  it("refuses launch when a reparse target changes inside atomic verification and create (#8178)", async () => {
-    let resolvedExecutableTarget = "C:\\verified-artifact\\node.exe";
-    const launch = vi.fn();
+  it("reports an absent resource when the provider rejects artifact substitution (#8178)", async () => {
     const verifyReadiness = vi.fn();
-    const verifyAndCreate = vi.fn(async (plan: RuntimeProviderNativeArtifactBootstrapPlan) => {
-      const verifiedTarget = resolvedExecutableTarget;
-      const createForVerifiedTarget = new Map([
-        [
-          verifiedTarget,
-          () => {
-            launch(plan.executablePath);
-            return verifiedCreateOutcome(plan);
-          },
-        ],
-      ]);
-      resolvedExecutableTarget = "C:\\substituted-artifact\\node.exe";
-      return (
-        createForVerifiedTarget.get(resolvedExecutableTarget)?.() ?? {
-          status: "not-created" as const,
-          reason: "artifact-verification-failed" as const,
-        }
-      );
-    });
+    const verifyAndCreate = vi.fn(async () => ({
+      status: "not-created" as const,
+      reason: "artifact-verification-failed" as const,
+    }));
 
-    const receipt = await nativeBootstrap().run(bootstrapInput(), {
+    const receipt = await nativeBootstrap({
       verifyAndCreate,
       verifyReadiness,
-    });
+    }).run(bootstrapInput());
 
     expect(receipt).toMatchObject({
       outcome: "not-created",
       reason: "artifact-verification-failed",
       resourceState: "absent",
-      cleanup: { attempted: false, resourceRemovalAuthorized: false },
+      cleanup: { attempted: false, resourceRemovalAuthorized: false, removed: false },
+      recoveryRequired: false,
     });
     expect(verifyAndCreate).toHaveBeenCalledOnce();
-    expect(launch).not.toHaveBeenCalled();
     expect(verifyReadiness).not.toHaveBeenCalled();
   });
-
-  it.each([
-    {
-      label: "malformed atomic outcome",
-      verifyAndCreate: async () =>
-        undefined as unknown as Awaited<
-          ReturnType<RuntimeProviderNativeArtifactBootstrapOperations["verifyAndCreate"]>
-        >,
-      reason: "create-outcome-unknown",
-    },
-    {
-      label: "artifact digest drift",
-      verifyAndCreate: async (plan: RuntimeProviderNativeArtifactBootstrapPlan) => ({
-        ...verifiedCreateOutcome(plan),
-        artifactDigest: `sha256:${"0".repeat(64)}`,
-      }),
-      reason: "create-authority-mismatch",
-    },
-    {
-      label: "executable digest drift",
-      verifyAndCreate: async (plan: RuntimeProviderNativeArtifactBootstrapPlan) => ({
-        ...verifiedCreateOutcome(plan),
-        executableDigest: `sha256:${"0".repeat(64)}`,
-      }),
-      reason: "create-authority-mismatch",
-    },
-    {
-      label: "atomic operation failure",
-      verifyAndCreate: async (_plan: RuntimeProviderNativeArtifactBootstrapPlan) => {
-        throw new Error("untrusted artifact verification detail");
-      },
-      reason: "create-outcome-unknown",
-    },
-  ] as const)(
-    "retains an ambiguous resource after $label (#8178)",
-    async ({ verifyAndCreate, reason }) => {
-      const verifyReadiness = vi.fn();
-      const receipt = await nativeBootstrap().run(bootstrapInput(), {
-        verifyAndCreate,
-        verifyReadiness,
-      });
-
-      expect(receipt).toMatchObject({
-        outcome: "retained",
-        reason,
-        resourceState: "possibly-retained",
-        cleanup: { attempted: false, resourceRemovalAuthorized: false },
-      });
-      expect(JSON.stringify(receipt)).not.toContain("untrusted artifact verification detail");
-      expect(verifyReadiness).not.toHaveBeenCalled();
-    },
-  );
 
   it("isolates writable shares by sandbox lifecycle generation (#8178)", async () => {
     const plans: RuntimeProviderNativeArtifactBootstrapPlan[] = [];
@@ -341,13 +283,12 @@ describe("inactive MXC native-artifact bootstrap", () => {
         return { status: "not-created" as const, reason: "create-rejected" as const };
       }),
       verifyReadiness: vi.fn(),
+      recoverCreate: vi.fn(async () => ({ status: "absent" as const })),
     };
 
-    await nativeBootstrap().run(bootstrapInput(), operations);
-    await nativeBootstrap().run(
-      { ...bootstrapInput(), lifecycleGeneration: "generation-8" },
-      operations,
-    );
+    const bootstrap = nativeBootstrap(operations);
+    await bootstrap.run(bootstrapInput());
+    await bootstrap.run({ ...bootstrapInput(), lifecycleGeneration: "generation-8" });
 
     expect(plans).toHaveLength(2);
     expect(plans[0]!.shareDirectory).not.toBe(plans[1]!.shareDirectory);
@@ -373,7 +314,7 @@ describe("inactive MXC native-artifact bootstrap", () => {
       verifyAndCreate: async () => ({ status: "unknown" as const }),
       expected: {
         outcome: "retained",
-        reason: "create-outcome-unknown",
+        reason: "recovery-not-proven",
         resourceState: "possibly-retained",
       },
     },
@@ -384,20 +325,25 @@ describe("inactive MXC native-artifact bootstrap", () => {
       },
       expected: {
         outcome: "retained",
-        reason: "create-outcome-unknown",
+        reason: "recovery-not-proven",
         resourceState: "possibly-retained",
       },
     },
   ])("reports fail-closed state after $label (#8178)", async ({ verifyAndCreate, expected }) => {
     const verifyReadiness = vi.fn();
-    const receipt = await nativeBootstrap().run(bootstrapInput(), {
+    const receipt = await nativeBootstrap({
       verifyAndCreate,
       verifyReadiness,
-    });
+    }).run(bootstrapInput());
 
     expect(receipt).toMatchObject({
       ...expected,
-      cleanup: { attempted: false, resourceRemovalAuthorized: false },
+      cleanup: {
+        attempted: expected.resourceState === "possibly-retained",
+        resourceRemovalAuthorized: expected.resourceState === "possibly-retained",
+        removed: false,
+      },
+      recoveryRequired: expected.resourceState === "possibly-retained",
     });
     expect(JSON.stringify(receipt)).not.toContain("nvapi-secret-must-not-escape");
     expect(verifyReadiness).not.toHaveBeenCalled();
@@ -411,7 +357,27 @@ describe("inactive MXC native-artifact bootstrap", () => {
         authoritySha256: "0".repeat(64),
       }),
       async (plan: RuntimeProviderNativeArtifactBootstrapPlan) => readyEvidence(plan),
-      "create-authority-mismatch",
+      "recovery-not-proven",
+      false,
+    ],
+    [
+      "create sandbox identity drift",
+      async (plan: RuntimeProviderNativeArtifactBootstrapPlan) => ({
+        ...verifiedCreateOutcome(plan),
+        sandboxName: `${plan.sandboxName}-drift`,
+      }),
+      async (plan: RuntimeProviderNativeArtifactBootstrapPlan) => readyEvidence(plan),
+      "recovery-not-proven",
+      false,
+    ],
+    [
+      "create provider handle drift",
+      async (plan: RuntimeProviderNativeArtifactBootstrapPlan) => ({
+        ...verifiedCreateOutcome(plan),
+        providerHandle: `mxc-native-artifact-v1:${"0".repeat(64)}`,
+      }),
+      async (plan: RuntimeProviderNativeArtifactBootstrapPlan) => readyEvidence(plan),
+      "recovery-not-proven",
       false,
     ],
     [
@@ -421,7 +387,17 @@ describe("inactive MXC native-artifact bootstrap", () => {
         ...readyEvidence(plan),
         lifecycleGeneration: `${plan.lifecycleGeneration}-drift`,
       }),
-      "readiness-not-proven",
+      "recovery-not-proven",
+      true,
+    ],
+    [
+      "readiness provider handle drift",
+      async (plan: RuntimeProviderNativeArtifactBootstrapPlan) => verifiedCreateOutcome(plan),
+      async (plan: RuntimeProviderNativeArtifactBootstrapPlan) => ({
+        ...readyEvidence(plan),
+        providerHandle: `mxc-native-artifact-v1:${"0".repeat(64)}`,
+      }),
+      "recovery-not-proven",
       true,
     ],
     [
@@ -430,25 +406,115 @@ describe("inactive MXC native-artifact bootstrap", () => {
       async (_plan: RuntimeProviderNativeArtifactBootstrapPlan) => {
         throw new Error("untrusted readiness detail");
       },
-      "readiness-not-proven",
+      "recovery-not-proven",
       true,
     ],
   ] as const)(
     "retains a created or ambiguous resource after %s (#8178)",
-    async (_label, verifyAndCreate, verifyReadiness, reason, verificationExpected) => {
+    async (_label, verifyAndCreate, verifyReadiness, reason, readinessExpected) => {
       const verify = vi.fn(verifyReadiness);
-      const receipt = await nativeBootstrap().run(bootstrapInput(), {
+      const receipt = await nativeBootstrap({
         verifyAndCreate,
         verifyReadiness: verify,
-      });
+      }).run(bootstrapInput());
 
       expect(receipt).toMatchObject({
         outcome: "retained",
         reason,
         resourceState: "possibly-retained",
-        cleanup: { attempted: false, resourceRemovalAuthorized: false },
+        cleanup: {
+          attempted: readinessExpected,
+          resourceRemovalAuthorized: readinessExpected,
+          removed: false,
+        },
+        recoveryRequired: true,
       });
-      expect(verify).toHaveBeenCalledTimes(verificationExpected ? 1 : 0);
+      expect(verify).toHaveBeenCalledTimes(readinessExpected ? 1 : 0);
     },
   );
+
+  it("keeps mismatched create evidence when plan recovery reports absent (#8178)", async () => {
+    const recoverCreate = vi.fn(async () => ({ status: "absent" as const }));
+    const verifyReadiness = vi.fn();
+    const receipt = await nativeBootstrap({
+      verifyAndCreate: async (plan) => ({
+        ...verifiedCreateOutcome(plan),
+        sandboxName: `${plan.sandboxName}-drift`,
+      }),
+      verifyReadiness,
+      recoverCreate,
+    }).run(bootstrapInput());
+
+    expect(receipt).toMatchObject({
+      outcome: "retained",
+      reason: "recovery-not-proven",
+      resourceState: "possibly-retained",
+      cleanup: { attempted: false, resourceRemovalAuthorized: false, removed: false },
+      recoveryRequired: true,
+    });
+    expect(recoverCreate).not.toHaveBeenCalled();
+    expect(verifyReadiness).not.toHaveBeenCalled();
+  });
+
+  it("recovers the exact operation handle after an ambiguous create and on retry (#8178)", async () => {
+    const recoveredHandles: string[] = [];
+    const recoverCreate = vi.fn(async (plan: RuntimeProviderNativeArtifactBootstrapPlan) => {
+      recoveredHandles.push(plan.providerHandle);
+      return recoveredHandles.length === 1
+        ? {
+            status: "removed" as const,
+            authoritySha256: plan.authoritySha256,
+            providerHandle: plan.providerHandle,
+            sandboxName: plan.sandboxName,
+            lifecycleGeneration: plan.lifecycleGeneration,
+          }
+        : { status: "absent" as const };
+    });
+    const bootstrap = nativeBootstrap({
+      verifyAndCreate: async () => ({ status: "unknown" }),
+      verifyReadiness: vi.fn(),
+      recoverCreate,
+    });
+
+    const first = await bootstrap.run(bootstrapInput());
+    const retry = await bootstrap.recover(bootstrapInput());
+
+    expect(first).toMatchObject({
+      outcome: "not-created",
+      reason: "recovered",
+      resourceState: "absent",
+      cleanup: { attempted: true, resourceRemovalAuthorized: true, removed: true },
+      recoveryRequired: false,
+    });
+    expect(retry).toMatchObject({
+      outcome: "not-created",
+      reason: "recovered",
+      resourceState: "absent",
+      cleanup: { attempted: true, resourceRemovalAuthorized: true, removed: true },
+      recoveryRequired: false,
+    });
+    expect(recoveredHandles).toEqual([first.providerHandle, first.providerHandle]);
+  });
+
+  it("does not authorize removal when recovery evidence changes resource identity (#8178)", async () => {
+    const receipt = await nativeBootstrap({
+      verifyAndCreate: async () => ({ status: "unknown" }),
+      verifyReadiness: vi.fn(),
+      recoverCreate: async (plan) => ({
+        status: "removed",
+        authoritySha256: plan.authoritySha256,
+        providerHandle: plan.providerHandle,
+        sandboxName: `${plan.sandboxName}-drift`,
+        lifecycleGeneration: plan.lifecycleGeneration,
+      }),
+    }).run(bootstrapInput());
+
+    expect(receipt).toMatchObject({
+      outcome: "retained",
+      reason: "recovery-not-proven",
+      resourceState: "possibly-retained",
+      cleanup: { attempted: true, resourceRemovalAuthorized: false, removed: false },
+      recoveryRequired: true,
+    });
+  });
 });

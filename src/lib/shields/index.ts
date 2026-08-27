@@ -142,6 +142,7 @@ const {
 }: typeof import("./mutable-config-repair") = require("./mutable-config-repair");
 const {
   HERMES_RUNTIME_STATE_MUTATION_CAPABILITY_PATH,
+  hermesRuntimeProviderPhaseBlocksMutation,
   hasActiveHermesRuntimeProviderStateMutation,
   runHermesRuntimeProviderStateMutation,
   supportsHermesRuntimeProviderStateMutation,
@@ -432,6 +433,7 @@ const INTERACTIVE_AUTO_RESTORE_RETRY_MS = 5_000;
 const INTERACTIVE_AUTO_RESTORE_MAX_ATTEMPTS =
   Math.floor(AUTO_RESTORE_COMPLETION_GRACE_MS / INTERACTIVE_AUTO_RESTORE_RETRY_MS) + 1;
 const HERMES_RUNTIME_CONFIG_GUARD = "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py";
+const HERMES_MANAGED_GATEWAY_CONTROL = "/usr/local/bin/nemoclaw-gateway-control";
 const HERMES_PYTHON = "/opt/hermes/.venv/bin/python";
 const HERMES_RESTART_SEAL_STATE = "/run/nemoclaw/hermes-restart-seal.json";
 const HERMES_CONFIG_HASH = "/etc/nemoclaw/hermes.config-hash";
@@ -456,6 +458,9 @@ const HERMES_CONFIG_GUARD_TIMEOUT_MS = 11 * 60 * 1000;
 // stalls until DOCKER_STATE_MUTATION_GUARD_TIMEOUT_MS (15min). Probe
 // OpenShell's own Phase first with a short, fail-open bound.
 const HERMES_RUNTIME_PROVIDER_PHASE_PROBE_TIMEOUT_MS = 30_000;
+const HERMES_RUNTIME_PROVIDER_RELEASE_READY_TIMEOUT_MS = 60_000;
+const HERMES_RUNTIME_PROVIDER_RELEASE_READY_POLL_MS = 250;
+const HERMES_RUNTIME_PROVIDER_MCP_RESTART_TIMEOUT_MS = 12 * 60_000;
 const MAX_SHIELDS_POLICY_ARTIFACT_BYTES = 16 * 1024 * 1024;
 
 type BoundShieldsPolicyArtifact = {
@@ -1612,6 +1617,55 @@ function probeHermesRuntimeProviderSandboxPhase(sandboxName: string): string | n
   }
 }
 
+function waitForHermesRuntimeProviderReleaseReady(sandboxName: string): void {
+  let phase = probeHermesRuntimeProviderSandboxPhase(sandboxName);
+  if (phase === null || phase === "Ready" || phase === "Running") return;
+
+  const deadline = Date.now() + HERMES_RUNTIME_PROVIDER_RELEASE_READY_TIMEOUT_MS;
+  let lastObservedPhase = phase;
+  while (Date.now() < deadline) {
+    Atomics.wait(
+      transitionPollBuffer,
+      0,
+      0,
+      Math.min(HERMES_RUNTIME_PROVIDER_RELEASE_READY_POLL_MS, deadline - Date.now()),
+    );
+    phase = probeHermesRuntimeProviderSandboxPhase(sandboxName);
+    if (phase === "Ready" || phase === "Running") return;
+    if (phase !== null) lastObservedPhase = phase;
+  }
+  throw new Error(
+    `Hermes runtime-provider state mutation released its process fence, but sandbox '${sandboxName}' did not return to Ready or Running (last observed phase '${lastObservedPhase}').`,
+  );
+}
+
+function restartHermesManagedMcpAfterProviderRelease(
+  sandboxName: string,
+  sandbox: ReturnType<typeof requireHermesRuntimeProviderSandbox>,
+): void {
+  if (Object.keys(sandbox.mcp?.bridges ?? {}).length === 0) return;
+  const nonce = randomBytes(32).toString("hex");
+  let output: string;
+  try {
+    output = privilegedSandboxExecCapture(
+      sandboxName,
+      [HERMES_MANAGED_GATEWAY_CONTROL, "restart", nonce],
+      HERMES_RUNTIME_PROVIDER_MCP_RESTART_TIMEOUT_MS,
+    );
+  } catch {
+    output = "";
+  }
+  const lines = output.split(/\r?\n/u);
+  const completion = lines[0]?.match(
+    new RegExp(`^v1 ${nonce} complete (?:ok|already-running) [0-9]+ ([1-9][0-9]*)$`, "u"),
+  );
+  if (completion === null || lines.length !== 2 || lines[1] !== `GATEWAY_PID=${completion[1]}`) {
+    throw new Error(
+      `Hermes managed MCP discovery did not restart successfully after releasing the runtime-provider process fence for sandbox '${sandboxName}'.`,
+    );
+  }
+}
+
 function runHermesProviderProtectionTransition(
   sandboxName: string,
   configTarget: AgentConfigTarget,
@@ -1620,7 +1674,12 @@ function runHermesProviderProtectionTransition(
 ): void {
   const sandbox = requireHermesRuntimeProviderSandbox(sandboxName);
   const phase = probeHermesRuntimeProviderSandboxPhase(sandboxName);
-  if (phase !== null && phase !== "Ready" && phase !== "Running") {
+  if (
+    hermesRuntimeProviderPhaseBlocksMutation(
+      phase,
+      hasActiveRuntimeProviderStateMutation(sandboxName),
+    )
+  ) {
     throw new Error(
       `Hermes runtime-provider state mutation is unavailable because sandbox '${sandboxName}' has OpenShell phase '${phase}', not Ready or Running. Run '${CLI_NAME} ${sandboxName} status'. Resolve the reported phase, then retry.`,
     );
@@ -1633,6 +1692,15 @@ function runHermesProviderProtectionTransition(
     target: targetPosture,
     rollback,
   });
+  // Releasing the exact process fence resumes OpenShell PID 1 last. OpenShell
+  // then asynchronously republishes the sandbox lifecycle phase; callers must
+  // not issue route or mutation commands during that Provisioning interval.
+  waitForHermesRuntimeProviderReleaseReady(sandboxName);
+  // The fenced gateway can prove local health while OpenShell PID 1 is held,
+  // but Hermes performs network MCP discovery before exposing that health.
+  // Restart once after release so configured managed bridges are discovered
+  // with the exact supervisor/network control path live.
+  restartHermesManagedMcpAfterProviderRelease(sandboxName, sandbox);
 }
 
 function verifyHermesProviderMutablePosture(sandboxName: string, target: AgentConfigTarget): void {

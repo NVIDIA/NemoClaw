@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import { performance } from "node:perf_hooks";
 
 const ANSI_RE = /\x1b\[[0-9;]*m/gu;
 const SANDBOX_ID_RE = /^[A-Za-z0-9._-]+$/u;
@@ -24,6 +25,8 @@ export function fingerprintOpenShellSandboxId(sandboxId: string): string | null 
 
 export const NEMOCLAW_CREATE_ATTEMPT_LABEL = "ai.nvidia.nemoclaw.create-attempt" as const;
 export const NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH = 62 as const;
+const CREATED_IDENTITY_SETTLEMENT_TIMEOUT_MS = 30_000;
+const CREATED_IDENTITY_SETTLEMENT_INTERVAL_MS = 250;
 
 export interface OpenShellSandboxListJsonRow {
   readonly id: string;
@@ -105,15 +108,34 @@ export function resolveOpenShellSandboxId(
  * supplied on `sandbox create`; a same-name replacement without that label is
  * rejected before the caller can run post-create effects.
  */
-export function resolveCreatedOpenShellSandboxId(input: {
+type CreatedOpenShellSandboxIdentityInput = {
   readonly sandboxName: string;
   readonly gatewayName: string;
   readonly createAttemptNonce: string;
   readonly runCaptureOpenshell: (args: string[], options?: Record<string, unknown>) => string;
-}): string {
-  if (!/^[0-9a-f]{62}$/u.test(input.createAttemptNonce)) {
+};
+
+type CreatedOpenShellSandboxIdentityObservation =
+  | { readonly state: "matched"; readonly sandboxId: string }
+  | { readonly state: "pending" }
+  | { readonly state: "invalid" };
+
+function assertCreateAttemptNonce(createAttemptNonce: string): void {
+  if (!/^[0-9a-f]{62}$/u.test(createAttemptNonce)) {
     throw new Error("OpenShell sandbox create-attempt identity is invalid.");
   }
+}
+
+function createdIdentityError(sandboxName: string): Error {
+  return new Error(
+    `OpenShell did not return the exact created identity for sandbox '${sandboxName}'.`,
+  );
+}
+
+function observeCreatedOpenShellSandboxId(
+  input: CreatedOpenShellSandboxIdentityInput,
+  timeout: number,
+): CreatedOpenShellSandboxIdentityObservation {
   let output: string;
   try {
     output = input.runCaptureOpenshell(
@@ -131,29 +153,88 @@ export function resolveCreatedOpenShellSandboxId(input: {
       ],
       {
         ignoreError: false,
-        timeout: 30_000,
+        timeout,
         maxBuffer: 1024 * 1024,
         killSignal: "SIGKILL",
         killProcessTreeOnTimeout: true,
       },
     );
   } catch {
-    throw new Error(
-      `OpenShell did not return the exact created identity for sandbox '${input.sandboxName}'.`,
-    );
+    return { state: "invalid" };
   }
   const rows = parseStrictOpenShellSandboxListJson(output);
-  const row = rows?.length === 1 ? rows[0] : null;
+  if (!rows) return { state: "invalid" };
+  if (rows.length === 0) return { state: "pending" };
+  if (rows.length !== 1) return { state: "invalid" };
+  const row = rows[0];
   if (
     !row ||
     row.name !== input.sandboxName ||
     row.labels[NEMOCLAW_CREATE_ATTEMPT_LABEL] !== input.createAttemptNonce
   ) {
-    throw new Error(
-      `OpenShell did not return the exact created identity for sandbox '${input.sandboxName}'.`,
-    );
+    return { state: "invalid" };
   }
-  return row.id;
+  return { state: "matched", sandboxId: row.id };
+}
+
+export function resolveCreatedOpenShellSandboxId(
+  input: CreatedOpenShellSandboxIdentityInput,
+): string {
+  assertCreateAttemptNonce(input.createAttemptNonce);
+  const observation = observeCreatedOpenShellSandboxId(
+    input,
+    CREATED_IDENTITY_SETTLEMENT_TIMEOUT_MS,
+  );
+  if (observation.state !== "matched") throw createdIdentityError(input.sandboxName);
+  return observation.sandboxId;
+}
+
+/**
+ * Settle the nonce-owned identity after OpenShell reports the create Ready.
+ * Only an empty selector result is retryable; malformed, ambiguous, or
+ * mismatched results remain terminal before any post-create effect.
+ */
+export function settleCreatedOpenShellSandboxId(input: {
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly createAttemptNonce: string;
+  readonly runCaptureOpenshell: (args: string[], options?: Record<string, unknown>) => string;
+  readonly now?: () => number;
+  readonly sleep: (milliseconds: number) => void;
+}): string {
+  assertCreateAttemptNonce(input.createAttemptNonce);
+  const now = input.now ?? (() => performance.now());
+  const startedAt = now();
+  const deadlineMs = startedAt + CREATED_IDENTITY_SETTLEMENT_TIMEOUT_MS;
+
+  if (!Number.isFinite(startedAt) || !Number.isFinite(deadlineMs) || deadlineMs <= startedAt) {
+    throw createdIdentityError(input.sandboxName);
+  }
+
+  let previousNowMs = startedAt;
+  const readNow = (): number => {
+    const currentNowMs = now();
+    if (!Number.isFinite(currentNowMs) || currentNowMs < previousNowMs) {
+      throw createdIdentityError(input.sandboxName);
+    }
+    previousNowMs = currentNowMs;
+    return currentNowMs;
+  };
+
+  for (;;) {
+    const remainingMs = Math.floor(deadlineMs - readNow());
+    if (remainingMs <= 0) break;
+
+    const observation = observeCreatedOpenShellSandboxId(input, remainingMs);
+    if (observation.state === "matched") return observation.sandboxId;
+    if (observation.state === "invalid") break;
+
+    const remainingAfterReadMs = Math.floor(deadlineMs - readNow());
+    if (remainingAfterReadMs <= 0) break;
+    input.sleep(Math.min(CREATED_IDENTITY_SETTLEMENT_INTERVAL_MS, remainingAfterReadMs));
+  }
+
+  throw createdIdentityError(input.sandboxName);
 }
 
 /**

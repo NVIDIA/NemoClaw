@@ -5,11 +5,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { Args } from "@oclif/core";
+import { Args, Flags } from "@oclif/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as receiptAuthority from "../onboard/experimental/hermes-portable-receipt";
 import * as portableHostAuthority from "../state/portable-uninstall-retirement";
-import { withMcpLifecycleLock } from "../state/mcp-lifecycle-lock-acquisition";
+import {
+  isMcpLifecycleLockHeld,
+  withMcpLifecycleLock,
+} from "../state/mcp-lifecycle-lock-acquisition";
 import { log } from "./logger";
 import { type CommandExitResult, NemoClawCommand } from "./nemoclaw-oclif-command";
 
@@ -143,10 +146,38 @@ class GlobalUseMutationCommand extends NemoClawCommand {
   }
 }
 
+class ProbeOnlyConnectCommand extends NemoClawCommand {
+  static id = "sandbox:connect";
+  static args = { sandboxName: Args.string({ required: true }) };
+  static flags = { "probe-only": Flags.boolean() };
+  static observed = { host: false, lifecycle: false };
+
+  public async run(): Promise<void> {
+    const { args } = await this.parse(ProbeOnlyConnectCommand);
+    const sandboxName = args.sandboxName!;
+    ProbeOnlyConnectCommand.observed = {
+      host: fs.existsSync(
+        portableHostAuthority.portableHostFencePath(process.env.HOME || os.homedir()),
+      ),
+      lifecycle: isMcpLifecycleLockHeld(sandboxName),
+    };
+  }
+}
+
 function useHermesPortableAuthority(): void {
-  vi.spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthority").mockReturnValue({
+  vi.spyOn(
+    receiptAuthority,
+    "inspectPortableAgentReceiptAuthorityForClassification",
+  ).mockReturnValue({
     kind: "hermes",
-    snapshot: { receipt: { phase: "active" } } as never,
+    snapshot: {
+      receipt: {
+        phase: "active",
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "generation-1",
+        container: { sandboxId: "sandbox-id" },
+      },
+    } as never,
   });
 }
 
@@ -259,6 +290,18 @@ describe("NemoClawCommand", () => {
     expect(ParsedUnsupportedSandboxCommand.ran).toBe(false);
   });
 
+  it("holds the Portable host fence outside the probe-only lifecycle fence (#10423)", async () => {
+    vi.stubEnv("HOME", stateDir);
+    vi.stubEnv("NEMOCLAW_TEST_BASE_HOME", stateDir);
+    useHermesPortableAuthority();
+    await ProbeOnlyConnectCommand.run(["alpha", "--probe-only"], process.cwd());
+
+    expect(ProbeOnlyConnectCommand.observed).toEqual({ host: true, lifecycle: true });
+    expect(
+      fs.existsSync(portableHostAuthority.portableHostFencePath(process.env.HOME || os.homedir())),
+    ).toBe(false);
+  });
+
   it("resolves a flag-first parsed sandbox before acquiring the lifecycle fence (#9203)", async () => {
     useHermesPortableAuthority();
 
@@ -269,9 +312,10 @@ describe("NemoClawCommand", () => {
   });
 
   it("holds the lifecycle fence through the ordinary action before schema-5 publication (#9203)", async () => {
-    vi.spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthority").mockReturnValue({
-      kind: "none",
-    });
+    vi.spyOn(
+      receiptAuthority,
+      "inspectPortableAgentReceiptAuthorityForClassification",
+    ).mockReturnValue({ kind: "none" });
     let releaseAction!: () => void;
     const actionWaiting = new Promise<void>((resolve) => {
       releaseAction = resolve;
@@ -301,7 +345,7 @@ describe("NemoClawCommand", () => {
 
   it("classifies schema-5 publication that wins the lifecycle fence before dispatch (#9203)", async () => {
     const inspect = vi
-      .spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthority")
+      .spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthorityForClassification")
       .mockReturnValue({ kind: "none" });
     let releasePublisher!: () => void;
     const publisherWaiting = new Promise<void>((resolve) => {
@@ -352,7 +396,7 @@ describe("NemoClawCommand", () => {
 
   it("reclassifies raw commands after waiting for schema-5 publication (#9203)", async () => {
     const inspect = vi
-      .spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthority")
+      .spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthorityForClassification")
       .mockReturnValue({ kind: "none" });
     let releasePublisher!: () => void;
     const publisherWaiting = new Promise<void>((resolve) => {
