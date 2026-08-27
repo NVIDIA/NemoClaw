@@ -41,11 +41,11 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     ...buildAvailabilityProbeEnv(),
     PATH: `${os.homedir()}/.local/bin:${os.homedir()}/.npm-global/bin:${process.env.PATH ?? ""}`,
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-    // Before settlement, the watcher polls once per second regardless of these
-    // interval values. After settlement, the 30-minute intervals keep it asleep
-    // while the test proves explicit operator.admin approval.
+    // Keep fast re-entry at one second until the expected operator.write upgrade
+    // settles. After settlement, the 30-minute slow interval keeps the watcher
+    // asleep while the test proves explicit operator.admin approval.
     NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: AUTO_PAIR_DEADLINE_SECS,
-    NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: AUTO_PAIR_DEADLINE_SECS,
+    NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "1",
     NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: AUTO_PAIR_DEADLINE_SECS,
     NEMOCLAW_FRESH: "1",
     NEMOCLAW_NON_INTERACTIVE: "1",
