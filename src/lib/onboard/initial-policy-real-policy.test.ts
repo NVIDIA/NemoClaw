@@ -121,6 +121,10 @@ describe("initial sandbox policy real preset merge", () => {
     MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
     MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY,
   ] as const;
+  const hermesRuntimeStateMutationControl = {
+    receipts: "/var/lib/nemoclaw/runtime-state-mutation",
+    startupHandoff: "/run/nemoclaw/runtime-state-mutation-startup",
+  } as const;
 
   it("covers the complete shipped managed startup trust policy matrix", () => {
     const policyIdentities = managedImagePolicyCases.map(
@@ -165,6 +169,26 @@ describe("initial sandbox policy real preset merge", () => {
       ).toEqual([]);
     },
   );
+
+  it.each([
+    ["agents/hermes/policy-additions.yaml", "restricted"],
+    ["agents/hermes/policy-permissive.yaml", "permissive"],
+  ])("grants the exact Hermes state-mutation control channels in the %s policy", (policyPath) => {
+    const effective = readPreparedPolicy(
+      prepareInitialSandboxCreatePolicy(repoPath(...policyPath.split("/")), [], {
+        agentName: "hermes",
+      }),
+    );
+    const readOnly = effective.filesystem_policy?.read_only ?? [];
+    const readWrite = effective.filesystem_policy?.read_write ?? [];
+
+    expect(readOnly).toContain(hermesRuntimeStateMutationControl.receipts);
+    expect(readWrite).not.toContain(hermesRuntimeStateMutationControl.receipts);
+    expect(readWrite).toContain(hermesRuntimeStateMutationControl.startupHandoff);
+    expect(readOnly).not.toContain(hermesRuntimeStateMutationControl.startupHandoff);
+    expect([...readOnly, ...readWrite]).not.toContain("/var/lib/nemoclaw");
+    expect([...readOnly, ...readWrite]).not.toContain("/run/nemoclaw");
+  });
 
   it.each(
     managedImagePolicyCases.flatMap((policyCase) =>
