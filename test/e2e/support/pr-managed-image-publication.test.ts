@@ -129,6 +129,7 @@ on:
         "scripts/checks/run-managed-image-openshell-e2e.ts",
         "src/lib/actions/maintenance.test.ts",
         "src/lib/actions/maintenance.ts",
+        "src/lib/actions/sandbox/process-recovery.ts",
         "src/lib/actions/sandbox/mcp-bridge-input-targets.test.ts",
         "src/lib/actions/sandbox/mcp-bridge-tool-discovery.test.ts",
         "src/lib/actions/sandbox/mcp-bridge-tool-discovery.ts",
@@ -176,6 +177,7 @@ on:
     expect(source).not.toContain("scripts/install.sh");
     expect(source).not.toContain("scripts/checks/run-managed-image-openshell-e2e.ts");
     expect(source).not.toContain("src/lib/actions/maintenance.ts");
+    expect(source).not.toContain("src/lib/actions/sandbox/process-recovery.ts");
     expect(source).not.toContain("src/lib/actions/sandbox/mcp-bridge-tool-discovery.ts");
     expect(source).not.toContain("src/lib/actions/sandbox/stopped-sandbox-backup.ts");
     expect(source).not.toContain("src/lib/adapters/podman/index.ts");
