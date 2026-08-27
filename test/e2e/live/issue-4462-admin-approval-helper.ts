@@ -9,17 +9,31 @@ export const ISSUE_4462_SCOPE_UPGRADE_PHASES = [
   "record the approval contract",
 ] as const;
 
-export const ADMIN_REQUEST_SELECTOR_PY = String.raw`import json, re, sys
+export const ADMIN_REQUEST_SELECTOR_PY = String.raw`import base64, json, os, re, sys
 from pathlib import Path
 
 data=json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
 request_id_path=Path(sys.argv[2])
+identity_path=Path(os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw') / 'identity' / 'device.json'
+identity=json.loads(identity_path.read_text(encoding='utf-8'))
+if not isinstance(identity, dict): raise SystemExit('local CLI identity must be an object')
 pending=data.get('pending') or []
 paired=data.get('paired') or []
 allowed_scopes={'operator.pairing','operator.read','operator.write','operator.admin'}
 non_admin_scopes={'operator.pairing','operator.read','operator.write'}
 
 def norm(value): return str(value or '').strip()
+def identity_public_key(value):
+    direct=norm(value.get('publicKey'))
+    if direct: return direct
+    pem=norm(value.get('publicKeyPem'))
+    if not pem: return ''
+    body=''.join(line.strip() for line in pem.splitlines() if not line.startswith('-----'))
+    try: der=base64.b64decode(body, validate=True)
+    except Exception: return ''
+    prefix=bytes.fromhex('302a300506032b6570032100')
+    if len(der) != len(prefix) + 32 or not der.startswith(prefix): return ''
+    return base64.urlsafe_b64encode(der[len(prefix):]).decode('ascii').rstrip('=')
 def scope_view(value, key):
     if key not in value or value.get(key) is None: return None
     raw=value.get(key)
@@ -87,6 +101,8 @@ if 'operator.admin' not in request_scopes or not request_scopes.issubset(allowed
     raise SystemExit(f'cron requestId has unexpected scopes: {sorted(request_scopes)}')
 device_id=norm(request.get('deviceId'))
 public_key=norm(request.get('publicKey'))
+if device_id != norm(identity.get('deviceId')) or public_key != identity_public_key(identity):
+    raise SystemExit('pending admin request does not match the local CLI identity')
 matching_devices=[device for device in paired if isinstance(device, dict) and norm(device.get('deviceId')) == device_id]
 if not device_id or len(matching_devices) != 1:
     raise SystemExit(f'cron requestId must match exactly one paired device, found {len(matching_devices)}')
@@ -147,6 +163,21 @@ export function adminApprovalConnectScript(
     "PY_PRIVATE_GATEWAY",
     '[ -n "${OPENCLAW_GATEWAY_PORT:-}" ] || { echo "GATEWAY_PORT_MISSING" >&2; exit 23; }',
     '[ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ] || { echo "GATEWAY_TOKEN_MISSING" >&2; exit 24; }',
+    "report_failure() {",
+    '  stage="$1"',
+    '  source="$2"',
+    '  python3 - "$stage" "$source" <<\'PY_SAFE_FAILURE\'',
+    "import re, sys",
+    "from pathlib import Path",
+    "stage=sys.argv[1]",
+    "raw=Path(sys.argv[2]).read_text(encoding='utf-8', errors='replace')[-4096:]",
+    "text=re.sub(r'(?i)\\b(?:bearer\\s+)?[a-z0-9+/=_-]{20,}\\b', '<redacted>', raw)",
+    "text=re.sub(r'(?i)\\b(?:request|device|cron|run)[-_][a-z0-9_-]+\\b', '<identifier>', text)",
+    "text=re.sub(r'(?i)\\b(requestId|deviceId|publicKey|token|runId|cronId|id)\\b\\s*[\"\\\']?\\s*[:=]\\s*[\"\\\']?[^,\\s\"\\\'\\]}]+', lambda match: f'{match.group(1)}=<redacted>', text)",
+    "text=' '.join(text.split())[:512] or 'no safe detail'",
+    "print(f'{stage} detail={text}', file=sys.stderr)",
+    "PY_SAFE_FAILURE",
+    "}",
     `cron_name=${JSON.stringify(cronName)}`,
     'devices_json="$(mktemp)"',
     'devices_err="$(mktemp)"',
@@ -156,15 +187,15 @@ export function adminApprovalConnectScript(
     'cron_id_file="$(mktemp)"',
     'cron_run_output="$(mktemp)"',
     'trap \'rm -f -- "$devices_json" "$devices_err" "$request_id_file" "$approve_output" "$cron_output" "$cron_id_file" "$cron_run_output"\' EXIT',
-    'if ! openclaw devices list --json >"$devices_json" 2>"$devices_err"; then echo "ADMIN_DEVICES_LIST_FAILED" >&2; exit 25; fi',
+    'if ! openclaw devices list --json >"$devices_json" 2>"$devices_err"; then report_failure "ADMIN_DEVICES_LIST_FAILED" "$devices_err"; exit 25; fi',
     'if ! python3 - "$devices_json" "$request_id_file" <<\'PY_ADMIN_REQUEST\'; then echo "ADMIN_REQUEST_SELECTION_FAILED" >&2; exit 26; fi',
     ...ADMIN_REQUEST_SELECTOR_PY.split("\n"),
     "PY_ADMIN_REQUEST",
     'request_id="$(cat "$request_id_file")"',
     '[ -n "$request_id" ] || { echo "ADMIN_REQUEST_ID_MISSING" >&2; exit 26; }',
     'echo "ISSUE_5324_STAGE=explicit-admin-approval"',
-    'if ! openclaw devices approve "$request_id" >"$approve_output" 2>&1; then echo "ADMIN_APPROVE_FAILED" >&2; exit 27; fi',
-    'if ! openclaw cron add --name "$cron_name" --every 2h --agent main --session isolated --message "hello" >"$cron_output" 2>&1; then echo "ADMIN_CRON_RETRY_FAILED" >&2; exit 28; fi',
+    'if ! openclaw devices approve "$request_id" >"$approve_output" 2>&1; then report_failure "ADMIN_APPROVE_FAILED" "$approve_output"; exit 27; fi',
+    'if ! openclaw cron add --name "$cron_name" --every 2h --agent main --session isolated --message "hello" >"$cron_output" 2>&1; then report_failure "ADMIN_CRON_RETRY_FAILED" "$cron_output"; exit 28; fi',
     // OpenClaw 2026.6.10 and 2026.7.1 classify cron.add and cron.run at the same
     // operator.admin gateway-method boundary (gateway/methods/core-descriptors.ts).
     // The exact-request approval above therefore grants the scope both use.
@@ -187,7 +218,7 @@ export function adminApprovalConnectScript(
     'cron_id="$(cat "$cron_id_file")"',
     '[ -n "$cron_id" ] || { echo "ADMIN_CRON_ID_MISSING" >&2; exit 28; }',
     'echo "ISSUE_5324_STAGE=cron-run"',
-    'if ! openclaw cron run "$cron_id" >"$cron_run_output" 2>&1; then echo "ADMIN_CRON_RUN_FAILED" >&2; exit 29; fi',
+    'if ! openclaw cron run "$cron_id" >"$cron_run_output" 2>&1; then report_failure "ADMIN_CRON_RUN_FAILED" "$cron_run_output"; exit 29; fi',
     'if ! python3 - "$cron_run_output" <<\'PY_CRON_RUN\'; then echo "ADMIN_CRON_RUN_RESULT_INVALID" >&2; exit 30; fi',
     "import json, sys",
     "from pathlib import Path",

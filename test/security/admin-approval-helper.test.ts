@@ -13,6 +13,8 @@ import {
 } from "../e2e/live/issue-4462-admin-approval-helper.ts";
 
 const EXPECTED_REQUEST_ID = "12345678-1234-4123-8123-123456789abc";
+const LOCAL_DEVICE_ID = "device-1";
+const LOCAL_PUBLIC_KEY = "public-key-1";
 
 function adminState(tokenShape: "array" | "object" = "array"): Record<string, unknown> {
   const operatorToken = {
@@ -23,8 +25,8 @@ function adminState(tokenShape: "array" | "object" = "array"): Record<string, un
     pending: [
       {
         requestId: EXPECTED_REQUEST_ID,
-        deviceId: "device-1",
-        publicKey: "public-key-1",
+        deviceId: LOCAL_DEVICE_ID,
+        publicKey: LOCAL_PUBLIC_KEY,
         clientId: "cli",
         clientMode: "cli",
         role: "operator",
@@ -34,8 +36,8 @@ function adminState(tokenShape: "array" | "object" = "array"): Record<string, un
     ],
     paired: [
       {
-        deviceId: "device-1",
-        publicKey: "public-key-1",
+        deviceId: LOCAL_DEVICE_ID,
+        publicKey: LOCAL_PUBLIC_KEY,
         clientId: "cli",
         clientMode: "cli",
         role: "operator",
@@ -48,14 +50,28 @@ function adminState(tokenShape: "array" | "object" = "array"): Record<string, un
   };
 }
 
-function runSelector(state: Record<string, unknown>) {
+function writeLocalIdentity(
+  stateRoot: string,
+  identity: Record<string, unknown> = {
+    deviceId: LOCAL_DEVICE_ID,
+    publicKey: LOCAL_PUBLIC_KEY,
+  },
+): void {
+  fs.mkdirSync(path.join(stateRoot, "identity"), { recursive: true });
+  fs.writeFileSync(path.join(stateRoot, "identity", "device.json"), JSON.stringify(identity));
+}
+
+function runSelector(state: Record<string, unknown>, identity?: Record<string, unknown>) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-admin-selector-"));
+  const stateRoot = path.join(root, "openclaw-state");
   const statePath = path.join(root, "devices.json");
   const requestIdPath = path.join(root, "selected-request-id");
+  writeLocalIdentity(stateRoot, identity);
   fs.writeFileSync(statePath, JSON.stringify(state));
   try {
     const result = spawnSync("python3", ["-", statePath, requestIdPath], {
       encoding: "utf-8",
+      env: { ...process.env, OPENCLAW_STATE_DIR: stateRoot },
       input: ADMIN_REQUEST_SELECTOR_PY,
     });
     const selectedRequestId = fs.existsSync(requestIdPath)
@@ -70,12 +86,15 @@ function runSelector(state: Record<string, unknown>) {
 function runAdminApprovalScript(
   gatewayUrl: string,
   insecurePrivateWs?: string,
+  failAt?: string,
 ): { commands: string[]; result: SpawnSyncReturns<string> } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-admin-script-"));
   const cliPath = path.join(root, "nemoclaw");
   const openclawPath = path.join(root, "openclaw");
   const devicesPath = path.join(root, "devices.json");
   const commandLogPath = path.join(root, "openclaw.log");
+  const stateRoot = path.join(root, "openclaw-state");
+  writeLocalIdentity(stateRoot);
   fs.writeFileSync(
     cliPath,
     `#!/bin/sh
@@ -90,6 +109,10 @@ exec /bin/bash
     `#!/bin/sh
 set -eu
 printf '%s\\n' "$*" >> "$FAKE_OPENCLAW_LOG"
+if [ "\${FAKE_OPENCLAW_FAIL_AT:-}" = "$1:$2" ]; then
+  printf '%s\\n' 'requestId=12345678-1234-4123-8123-123456789abc deviceId=device-secret-id publicKey=abcdefghijklmnopqrstuvwxyz012345 token=sensitive-token-value cronId=cron-secret-id' >&2
+  exit 41
+fi
 case "$1:$2" in
   devices:list) cat "$FAKE_DEVICES_STATE" ;;
   devices:approve) ;;
@@ -105,9 +128,11 @@ esac
     ...process.env,
     PATH: `${root}:${process.env.PATH ?? ""}`,
     FAKE_DEVICES_STATE: devicesPath,
+    FAKE_OPENCLAW_FAIL_AT: failAt ?? "",
     FAKE_OPENCLAW_LOG: commandLogPath,
     NEMOCLAW_OPENCLAW_GATEWAY_URL: gatewayUrl,
     NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: insecurePrivateWs ?? "",
+    OPENCLAW_STATE_DIR: stateRoot,
     OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: "",
     OPENCLAW_GATEWAY_URL: "",
     OPENCLAW_GATEWAY_PORT: "18789",
@@ -150,6 +175,25 @@ describe("prepared connect-shell administrative approval", () => {
   });
 
   it.each([
+    ["devices:list", 25, "ADMIN_DEVICES_LIST_FAILED"],
+    ["devices:approve", 27, "ADMIN_APPROVE_FAILED"],
+    ["cron:add", 28, "ADMIN_CRON_RETRY_FAILED"],
+    ["cron:run", 29, "ADMIN_CRON_RUN_FAILED"],
+  ])(
+    "reports bounded diagnostics without request, device, public key, token, or cron identifiers when %s fails (#5324)",
+    (failAt, expectedStatus, expectedClassification) => {
+      const { result } = runAdminApprovalScript("ws://127.0.0.1:18789", undefined, failAt);
+
+      expect(result.status).toBe(expectedStatus);
+      expect(result.stderr).toContain(`${expectedClassification} detail=`);
+      expect(Buffer.byteLength(result.stderr, "utf8")).toBeLessThan(1_024);
+      expect(result.stderr).not.toMatch(
+        /12345678-1234-4123-8123-123456789abc|device-secret-id|abcdefghijklmnopqrstuvwxyz012345|sensitive-token-value|cron-secret-id/u,
+      );
+    },
+  );
+
+  it.each([
     ["public ws", "ws://example.com:18789", "1"],
     ["public wss", "wss://example.com:18789", undefined],
     ["unmarked private ws", "ws://10.200.0.2:18789", undefined],
@@ -170,6 +214,17 @@ describe("prepared connect-shell administrative approval", () => {
       expect(result.selectedRequestId).toBe(EXPECTED_REQUEST_ID);
     },
   );
+
+  it("rejects a pending operator.admin request for a different paired CLI identity (#5324)", () => {
+    const result = runSelector(adminState(), {
+      deviceId: "other-device",
+      publicKey: "other-public-key",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("does not match the local CLI identity");
+    expect(result.selectedRequestId).toBe("");
+  });
 
   it("does not infer the distinct pairing scope while comparing approved views (#5324)", () => {
     const state = adminState("object");

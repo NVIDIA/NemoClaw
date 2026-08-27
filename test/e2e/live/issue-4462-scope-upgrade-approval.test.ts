@@ -176,20 +176,6 @@ test(
       },
     );
     expect(upload.exitCode, "Gateway observer upload failed; inspect the phase artifact").toBe(0);
-    cleanupRegistry.trackDisposable("remove the gateway observer", async () => {
-      const removal = await sandbox.exec(
-        SANDBOX_NAME,
-        ["rm", "-f", "--", GATEWAY_OBSERVER_REMOTE_PATH],
-        {
-          artifactName: "cleanup-gateway-observer",
-          env: env(),
-          persistArtifacts: false,
-          redactionValues: [apiKey],
-          timeoutMs: GATEWAY_OBSERVATION_TIMEOUT_MS,
-        },
-      );
-      expect(removal.exitCode, "Gateway observer cleanup failed").toBe(0);
-    });
 
     const captureGatewayObservation = async <T>(
       phase: string,

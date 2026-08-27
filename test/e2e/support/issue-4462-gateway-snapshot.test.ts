@@ -80,4 +80,22 @@ describe("fresh-agent gateway snapshot artifacts", () => {
       rmSync(fixtureRoot, { force: true, recursive: true });
     }
   });
+
+  it("reports the completed gateway-run count after reaching the requested minimum (#4462)", () => {
+    const fixtureRoot = mkdtempSync(path.join(tmpdir(), "nemoclaw-issue-4462-runs-"));
+    const gatewayLog = path.join(fixtureRoot, "gateway.log");
+    writeFileSync(gatewayLog, "[agent] run fixture ended with stopReason=stop\n", "utf8");
+
+    try {
+      const result = spawnSync(
+        "python3",
+        [SNAPSHOT_SCRIPT, "1", "gateway-runs", "30", fixtureRoot, gatewayLog],
+        { encoding: "utf8", timeout: 10_000 },
+      );
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({ gatewayCompletedRuns: 1 });
+    } finally {
+      rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
 });
