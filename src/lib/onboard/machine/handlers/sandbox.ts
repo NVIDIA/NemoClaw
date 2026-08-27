@@ -2477,6 +2477,7 @@ class SandboxStateFlow<
         null,
         registryMessagingAuthority,
         decision,
+        true,
         async (state) =>
           this.checkpointMessaging(this.checkpointWebSearch(state, null), {
             plan: null,
@@ -2557,8 +2558,7 @@ class SandboxStateFlow<
     const hasCreateTimeCredentialBindings =
       webSearchProviderBindings.length > 0 || messagingProviderBindings.length > 0;
     const deferCredentialProviderEffects =
-      this.deferSandboxEffectsUntilPolicyVerification() &&
-      (this.options.apfInterceptorRequested === true || !hasCreateTimeCredentialBindings);
+      this.deferSandboxEffectsUntilPolicyVerification() && !hasCreateTimeCredentialBindings;
     if (!deferCredentialProviderEffects) {
       nextState = await activateCredentialProviders(nextState);
     }
