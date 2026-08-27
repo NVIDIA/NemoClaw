@@ -10,10 +10,11 @@ import {
 
 type CreatedSandboxFixture = {
   readonly capture: (command: string[]) => string | null;
-  readonly create: () => void;
+  readonly create: (command: string[]) => void;
   readonly delete: () => void;
-  readonly recreate: () => void;
+  readonly recreate: (command: string[]) => void;
   readonly setPhase: (phase: string) => void;
+  readonly run: (command: string[]) => { status: number; stdout: Buffer; stderr: Buffer } | null;
   readonly state: Readonly<{
     sandboxName: string;
     sandboxId: string;
@@ -21,6 +22,8 @@ type CreatedSandboxFixture = {
     phase: string;
     lifecycleState: string;
     generation: number;
+    createAttemptNonce: string | null;
+    ownerScopedIdentityObserved: boolean;
   }>;
 };
 
@@ -30,19 +33,28 @@ const { createCreatedSandboxFixture } = require("./onboard-script-mocks.cjs") as
 
 const CREATE_ATTEMPT_NONCE = "a".repeat(62);
 
-function selectorListCommand(gatewayName: string): string[] {
+function selectorListCommand(gatewayName: string | null, nonce = CREATE_ATTEMPT_NONCE): string[] {
   return [
     "openshell",
     "sandbox",
     "list",
-    "-g",
-    gatewayName,
+    ...(gatewayName === null ? [] : ["-g", gatewayName]),
     "--selector",
-    `ai.nvidia.nemoclaw.create-attempt=${CREATE_ATTEMPT_NONCE}`,
+    `ai.nvidia.nemoclaw.create-attempt=${nonce}`,
     "--output",
     "json",
     "--limit",
     "2",
+  ];
+}
+
+function createCommand(nonce = CREATE_ATTEMPT_NONCE): string[] {
+  return [
+    "openshell",
+    "sandbox",
+    "create",
+    "--label",
+    `ai.nvidia.nemoclaw.create-attempt=${nonce}`,
   ];
 }
 
@@ -55,7 +67,7 @@ describe("created sandbox fixture", () => {
     });
 
     expect(fixture.capture(selectorListCommand("gateway-alpha"))).toBe("[]");
-    fixture.create();
+    fixture.create(createCommand());
     const createdSandboxId = fixture.state.sandboxId;
 
     const selectorOutput = fixture.capture(selectorListCommand("gateway-alpha"));
@@ -66,6 +78,7 @@ describe("created sandbox fixture", () => {
     const listOutput = fixture.capture(["openshell", "sandbox", "list", "-g", "gateway-alpha"]);
     expect(listOutput).toBe("alpha Ready\n");
     expect(fixture.state.sandboxId).toBe(createdSandboxId);
+    expect(fixture.run(["openshell", "sandbox", "get", "alpha"])).toBeNull();
 
     const getOutput = fixture.capture([
       "openshell",
@@ -76,6 +89,11 @@ describe("created sandbox fixture", () => {
       "alpha",
     ]);
     expect(parseOpenShellSandboxId(getOutput ?? "")).toBe(createdSandboxId);
+    expect(
+      parseOpenShellSandboxId(
+        fixture.run(["openshell", "sandbox", "get", "alpha"])?.stdout.toString() ?? "",
+      ),
+    ).toBe(createdSandboxId);
   });
 
   it("invalidates the prior ID before recreation publishes a new ID (#10463)", () => {
@@ -84,7 +102,7 @@ describe("created sandbox fixture", () => {
       sandboxId: "sandbox-alpha",
       gatewayName: "gateway-alpha",
     });
-    fixture.create();
+    fixture.create(createCommand());
     const priorSandboxId = fixture.state.sandboxId;
 
     fixture.delete();
@@ -93,12 +111,14 @@ describe("created sandbox fixture", () => {
       "",
     );
 
-    fixture.recreate();
+    const replacementNonce = "b".repeat(62);
+    fixture.recreate(createCommand(replacementNonce));
     const replacementSandboxId = fixture.state.sandboxId;
     expect(replacementSandboxId).not.toBe(priorSandboxId);
     const replacementRows = parseStrictOpenShellSandboxListJson(
-      fixture.capture(selectorListCommand("gateway-alpha")) ?? "",
+      fixture.capture(selectorListCommand("gateway-alpha", replacementNonce)) ?? "",
     );
+    expect(fixture.capture(selectorListCommand("gateway-alpha"))).toBe("[]");
     expect(replacementRows?.[0]?.id).toBe(replacementSandboxId);
     expect(replacementRows?.[0]?.id).not.toBe(priorSandboxId);
     expect(
@@ -124,11 +144,28 @@ describe("created sandbox fixture", () => {
       sandboxId: "sandbox-alpha",
       gatewayName: "gateway-alpha",
     });
-    fixture.create();
+    fixture.create(createCommand());
 
     expect(fixture.capture(selectorListCommand("gateway-bravo"))).toBeNull();
     expect(
       fixture.capture(["openshell", "sandbox", "get", "-g", "gateway-bravo", "alpha"]),
     ).toBeNull();
+    expect(fixture.capture(selectorListCommand(null))).toBeNull();
+    expect(fixture.capture(["openshell", "sandbox", "get", "alpha"])).toBeNull();
+  });
+
+  it("does not answer a selector for another create attempt (#10463)", () => {
+    const fixture = createCreatedSandboxFixture({ gatewayName: "gateway-alpha" });
+    fixture.create(createCommand());
+
+    expect(fixture.capture(selectorListCommand("gateway-alpha", "b".repeat(62)))).toBe("[]");
+  });
+
+  it("rejects a malformed create-attempt nonce (#10463)", () => {
+    const fixture = createCreatedSandboxFixture();
+
+    expect(() => fixture.create(createCommand("invalid"))).toThrow(
+      "Created sandbox fixture requires one valid create-attempt label.",
+    );
   });
 });

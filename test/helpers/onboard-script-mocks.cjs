@@ -334,8 +334,14 @@ function createCreatedSandboxFixture(options = {}) {
     phase: hasOwn(options, "phase") ? options.phase : "Ready",
     lifecycleState: initialLifecycleState,
     generation: initialLifecycleState === "created" ? 1 : 0,
+    createAttemptNonce: null,
+    ownerScopedIdentityObserved: initialLifecycleState === "created",
   };
   const lifecycleStates = new Set(["absent", "created", "deleted"]);
+  const createAttemptNoncePattern = new RegExp(
+    `^[0-9a-f]{${sandboxIdentity.NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH}}$`,
+    "u",
+  );
 
   const assertState = () => {
     if (
@@ -361,6 +367,12 @@ function createCreatedSandboxFixture(options = {}) {
     if (!lifecycleStates.has(state.lifecycleState)) {
       throw new Error("Created sandbox fixture requires one known lifecycle state.");
     }
+    if (
+      state.createAttemptNonce !== null &&
+      !createAttemptNoncePattern.test(state.createAttemptNonce)
+    ) {
+      throw new Error("Created sandbox fixture requires one valid create-attempt nonce.");
+    }
   };
 
   const commandDetails = (command) => {
@@ -369,18 +381,45 @@ function createCreatedSandboxFixture(options = {}) {
     if (sandboxIndex < 0) return null;
     const gatewayIndex = args.findIndex((arg) => arg === "-g" || arg === "--gateway");
     const gatewayName = gatewayIndex >= 0 ? args[gatewayIndex + 1] || null : null;
-    if (gatewayName !== null && gatewayName !== state.gatewayName) return null;
-    return { args, action: args[sandboxIndex + 1] || null };
+    return { args, action: args[sandboxIndex + 1] || null, gatewayName };
+  };
+
+  const nonceFromCreateCommand = (command) => {
+    const details = commandDetails(command);
+    if (!details || details.action !== "create") {
+      throw new Error("Created sandbox fixture requires one sandbox create command.");
+    }
+    const prefix = `${sandboxIdentity.NEMOCLAW_CREATE_ATTEMPT_LABEL}=`;
+    const labels = details.args.flatMap((arg, index) => {
+      if (arg === "--label") return [details.args[index + 1] || ""];
+      return arg.startsWith("--label=") ? [arg.slice("--label=".length)] : [];
+    });
+    const nonces = labels
+      .filter((label) => label.startsWith(prefix))
+      .map((label) => label.slice(prefix.length));
+    if (nonces.length !== 1 || !createAttemptNoncePattern.test(nonces[0])) {
+      throw new Error("Created sandbox fixture requires one valid create-attempt label.");
+    }
+    return nonces[0];
   };
 
   const isCreated = () => state.lifecycleState === "created";
-  const capture = (command) => {
+  const observe = (command, allowPublishedUnscopedGet) => {
     const details = commandDetails(command);
     if (!details) return null;
-    const { args, action } = details;
+    const { args, action, gatewayName } = details;
     if (action === "get") {
+      const wrongGateway = gatewayName !== null && gatewayName !== state.gatewayName;
+      const unscopedBeforePublication =
+        gatewayName === null && (!allowPublishedUnscopedGet || !state.ownerScopedIdentityObserved);
+      if (wrongGateway || unscopedBeforePublication) {
+        return null;
+      }
       const sandboxName = args.at(-1);
       if (sandboxName !== state.sandboxName) return null;
+      if (gatewayName === state.gatewayName && isCreated()) {
+        state.ownerScopedIdentityObserved = true;
+      }
       return isCreated()
         ? `Name: ${state.sandboxName}\nId: ${state.sandboxId}\nPhase: ${state.phase}\n`
         : "";
@@ -389,6 +428,7 @@ function createCreatedSandboxFixture(options = {}) {
 
     const selectorIndex = args.indexOf("--selector");
     if (selectorIndex >= 0) {
+      if (gatewayName !== state.gatewayName) return null;
       const selector = args[selectorIndex + 1] || "";
       const prefix = `${sandboxIdentity.NEMOCLAW_CREATE_ATTEMPT_LABEL}=`;
       if (!selector.startsWith(prefix)) return null;
@@ -397,6 +437,7 @@ function createCreatedSandboxFixture(options = {}) {
       }
       if (!isCreated()) return "[]";
       const nonce = selector.slice(prefix.length);
+      if (nonce !== state.createAttemptNonce) return "[]";
       return JSON.stringify([
         {
           id: state.sandboxId,
@@ -410,21 +451,35 @@ function createCreatedSandboxFixture(options = {}) {
       ]);
     }
 
+    if (gatewayName !== null && gatewayName !== state.gatewayName) return null;
     return isCreated() ? `${state.sandboxName} ${state.phase}\n` : "No sandboxes found.\n";
   };
 
+  const capture = (command) => observe(command, false);
+
   const run = (command) => {
-    const output = capture(command);
+    const output = observe(command, true);
     return output === null
       ? null
       : { status: 0, stdout: Buffer.from(output), stderr: Buffer.alloc(0) };
   };
 
-  const create = () => {
-    if (state.lifecycleState === "created") return;
+  const create = (command) => {
+    const details = commandDetails(command);
+    if (!details || details.action !== "create") return;
+    const createAttemptNonce = nonceFromCreateCommand(command);
+    if (state.lifecycleState === "created") {
+      if (createAttemptNonce !== state.createAttemptNonce) {
+        throw new Error("Created sandbox fixture cannot change a live create attempt.");
+      }
+      return;
+    }
     if (state.lifecycleState !== "absent") {
       throw new Error("Created sandbox fixture cannot create a deleted sandbox.");
     }
+    state.createAttemptNonce = createAttemptNonce;
+    state.ownerScopedIdentityObserved = false;
+    assertState();
     state.lifecycleState = "created";
     state.generation += 1;
   };
@@ -434,14 +489,18 @@ function createCreatedSandboxFixture(options = {}) {
       throw new Error("Created sandbox fixture can delete only a created sandbox.");
     }
     state.lifecycleState = "deleted";
+    state.ownerScopedIdentityObserved = false;
   };
 
-  const recreate = () => {
+  const recreate = (command) => {
     if (state.lifecycleState !== "deleted") {
       throw new Error("Created sandbox fixture can recreate only a deleted sandbox.");
     }
+    const createAttemptNonce = nonceFromCreateCommand(command);
     state.generation += 1;
     state.sandboxId = `${initialSandboxId}-recreated-${state.generation - 1}`;
+    state.createAttemptNonce = createAttemptNonce;
+    state.ownerScopedIdentityObserved = false;
     assertState();
     state.lifecycleState = "created";
   };

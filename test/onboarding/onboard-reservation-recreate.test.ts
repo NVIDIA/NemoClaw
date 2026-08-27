@@ -135,7 +135,7 @@ policyAuthorityPreflight.qualifySandboxPolicyAuthority = () => ({
 childProcess.spawn = (...args) => {
   const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
   if (command.includes("sandbox create")) {
-    createdSandbox.recreate();
+    createdSandbox.recreate(args.flat());
     createdSandbox.setPhase("Ready");
   }
   const child = new EventEmitter();

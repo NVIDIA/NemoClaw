@@ -135,8 +135,8 @@ const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry,
 });
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
-sandboxCreateStream.streamSandboxCreate = async () => {
-  createdSandbox.create();
+sandboxCreateStream.streamSandboxCreate = async (...args) => {
+  createdSandbox.create(args.flat());
   return {
     status: 0,
     output: "Built image openshell/sandbox-from:123\nCreated sandbox: my-assistant",

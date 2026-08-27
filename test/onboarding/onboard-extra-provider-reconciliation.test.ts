@@ -111,7 +111,7 @@ sandboxBaseImage.resolveSandboxBaseImage = () => ({
 });
 
 childProcess.spawn = (...args) => {
-  createdSandbox.create();
+  createdSandbox.create(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();

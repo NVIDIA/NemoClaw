@@ -568,8 +568,11 @@ childProcess.spawn = (command, args = [], options = {}) => {
     return poison("docker build");
   }
   if (normalized.includes("sandbox create")) {
-    if (createdSandbox.state.lifecycleState === "deleted") createdSandbox.recreate();
-    else createdSandbox.create();
+    if (createdSandbox.state.lifecycleState === "deleted") {
+      createdSandbox.recreate([command, ...argv]);
+    } else {
+      createdSandbox.create([command, ...argv]);
+    }
   }
   spawnCalls.push({ command: String(command), args: argv });
   const child = new EventEmitter();

@@ -166,7 +166,7 @@ const createFixture =
 
 childProcess.spawn = (...args) => {
   if (scenario === "reuse") throw new Error("unexpected sandbox create");
-  createdSandbox.create();
+  createdSandbox.create(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();

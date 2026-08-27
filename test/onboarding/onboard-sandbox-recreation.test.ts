@@ -194,7 +194,7 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 
 childProcess.spawn = (...args) => {
   const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
-  if (command.includes("sandbox create")) createdSandbox.recreate();
+  if (command.includes("sandbox create")) createdSandbox.recreate(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -374,7 +374,7 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 
 	childProcess.spawn = (...args) => {
 	  const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
-	  if (command.includes("sandbox create")) createdSandbox.recreate();
+	  if (command.includes("sandbox create")) createdSandbox.recreate(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -540,7 +540,7 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 
 	childProcess.spawn = (...args) => {
 	  const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
-	  if (command.includes("sandbox create")) createdSandbox.recreate();
+	  if (command.includes("sandbox create")) createdSandbox.recreate(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -704,7 +704,7 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 	childProcess.spawn = (...args) => {
 	  const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
 	  if (command.includes("sandbox create")) {
-	    createdSandbox.recreate();
+	    createdSandbox.recreate(args.flat());
 	    createdSandbox.setPhase("Ready");
 	  }
   const child = new EventEmitter();
@@ -856,7 +856,7 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 
 	childProcess.spawn = (...args) => {
 	  const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
-	  if (command.includes("sandbox create")) createdSandbox.recreate();
+	  if (command.includes("sandbox create")) createdSandbox.recreate(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -1167,7 +1167,7 @@ credentials.prompt = async () => "y";
 
 	childProcess.spawn = (...args) => {
 	  const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
-	  if (command.includes("sandbox create")) createdSandbox.recreate();
+	  if (command.includes("sandbox create")) createdSandbox.recreate(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -1325,7 +1325,7 @@ credentials.prompt = async () => "y";
 const fakeSpawn = (...args) => {
   const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
   if (command.includes("sandbox create") && createdSandbox.state.lifecycleState === "deleted") {
-    createdSandbox.recreate();
+    createdSandbox.recreate(args.flat());
     createdSandbox.setPhase("Ready");
   }
   const child = new EventEmitter();
