@@ -81,13 +81,15 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
 const commands = [];
-const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ sandboxName: "my-assistant" });
-const messagingProviderRunner = fixtureMocks.createStatefulMessagingProviderRunner({ commands });
-runner.run = (command, options = {}) =>
-  createdSandbox.run(command) ?? messagingProviderRunner(command, options);
+runner.run = require(${onboardScriptMocksPath}).createStatefulMessagingProviderRunner({
+  commands,
+  readySandboxName: "my-assistant",
+});
 runner.runCapture = (command) => {
-  const sandboxCapture = createdSandbox.capture(command);
-  if (sandboxCapture !== null) return sandboxCapture;
+  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
+  if (createdIdentity !== null) return createdIdentity;
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
+  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   if (_n(command).includes("provider get")) return "Provider: discord-bridge";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
   {
@@ -110,7 +112,6 @@ const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry,
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 childProcess.spawn = (...args) => {
-  createdSandbox.create(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -364,13 +365,15 @@ const nonSlackMessagingEnvKeys = [
 
 const commands = [];
 let registeredSandbox = null;
-const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ sandboxName: "my-assistant" });
-const messagingProviderRunner = fixtureMocks.createStatefulMessagingProviderRunner({ commands });
-runner.run = (command, options = {}) =>
-  createdSandbox.run(command) ?? messagingProviderRunner(command, options);
+runner.run = require(${onboardScriptMocksPath}).createStatefulMessagingProviderRunner({
+  commands,
+  readySandboxName: "my-assistant",
+});
 runner.runCapture = (command) => {
-  const sandboxCapture = createdSandbox.capture(command);
-  if (sandboxCapture !== null) return sandboxCapture;
+  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
+  if (createdIdentity !== null) return createdIdentity;
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
+  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
@@ -397,7 +400,6 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
-  createdSandbox.create(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -526,7 +528,6 @@ const fixtureMocks = require(${onboardScriptMocksPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const childProcess = require("node:child_process"), { EventEmitter } = require("node:events");
 const commands = [], credentialKeys = ${JSON.stringify(providerCredentialKeys)}; let registered = null;
-const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ sandboxName: "my-assistant" });
 const providers = Object.keys(credentialKeys), revisions = new Map(providers.map((name) => [name, 1]));
 const rawGatewayCredential = ${JSON.stringify(rawGatewayCredential)}, gatewaySecrets = new Map(providers.map((name) => [name, rawGatewayCredential]));
 registry.registerSandbox({ name: "my-assistant", messaging: { schemaVersion: 1, plan: ${messagingPlanLiteral(["slack", "telegram", "whatsapp"])} } });
@@ -539,11 +540,13 @@ runner.run = (command, opts = {}) => {
   const refresh = normalized.match(/provider update -g nemoclaw ([^ ]+)$/)?.[1];
   if (refresh && gatewaySecrets.has(refresh)) { if (refresh === process.env.NEMOCLAW_TEST_FAIL_PROVIDER) return { status: 1 }; revisions.set(refresh, revisions.get(refresh) + 1); return { status: 0 }; }
   if (normalized.includes("provider get")) return { status: 1 };
-  return createdSandbox.run(command) ?? { status: 0 };
+  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\nPhase: Ready\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
 runner.runCapture = (command) => {
-  const sandboxCapture = createdSandbox.capture(command);
-  if (sandboxCapture !== null) return sandboxCapture;
+  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
+  if (createdIdentity !== null) return createdIdentity;
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
+  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
   if (mockedCapture !== null) return mockedCapture;
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
@@ -559,7 +562,6 @@ const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry,
 });
 preflight.checkPortAvailable = async () => ({ ok: true }); credentials.prompt = async () => "";
 childProcess.spawn = (...args) => {
-  createdSandbox.create(args.flat());
   const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.unref = () => {}; child.pid = 4242;
   const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]); const attachedProviders = [...command.matchAll(/--provider ([^ ]+)/g)].map((match) => match[1]);
   commands.push({ command, providerRevisions: command.includes("sandbox create") ? Object.fromEntries(attachedProviders.map((name) => [name, revisions.get(name)])) : null, rawCredentialInEnv: Object.values(args[2]?.env || {}).includes(rawGatewayCredential) });
@@ -706,9 +708,6 @@ const fs = require("node:fs");
 
 const commands = []; let dockerfileContent;
 const registerCalls = [];
-const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
-  sandboxName: "my-assistant",
-});
 registry.registerSandbox({
   name: "my-assistant",
   messaging: { schemaVersion: 1, plan: ${messagingPlanLiteral(["telegram"], ["telegram"])} },
@@ -718,11 +717,13 @@ runner.run = (command, opts = {}) => {
   commands.push({ command: normalized, env: opts.env || null });
   if (normalized.includes("provider get -g nemoclaw my-assistant-telegram-bridge")) return { status: 0, stdout: "Name: my-assistant-telegram-bridge\nType: nemoclaw-mcp-v1\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n" };
   if (normalized.includes("provider get")) return { status: 1 };
-  return createdSandbox.run(command) ?? { status: 0 };
+  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\nPhase: Ready\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
 runner.runCapture = (command) => {
-  const sandboxCapture = createdSandbox.capture(command);
-  if (sandboxCapture !== null) return sandboxCapture;
+  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
+  if (createdIdentity !== null) return createdIdentity;
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
+  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
@@ -748,7 +749,6 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
-  createdSandbox.create(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -875,16 +875,17 @@ const fs = require("node:fs");
 
 const commands = []; let dockerfileContent;
 const registerCalls = [];
-const createdSandbox = fixtureMocks.createCreatedSandboxFixture();
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
-  commands.push({ command: normalized, env: opts.env || null });
+  commands.push({ command: normalized, env: opts.env || null }); if (normalized.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   if (normalized.includes("provider get")) return { status: 1 };
-  return createdSandbox.run(command) ?? { status: 0 };
+  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\nPhase: Ready\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
 runner.runCapture = (command) => {
-  const createdIdentity = createdSandbox.capture(command);
+  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
   if (createdIdentity !== null) return createdIdentity;
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
+  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
@@ -909,7 +910,6 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
-  createdSandbox.create(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -1045,16 +1045,17 @@ registry.registerSandbox({
 
 const commands = []; let dockerfileContent;
 const registerCalls = [];
-const createdSandbox = fixtureMocks.createCreatedSandboxFixture();
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
-  commands.push({ command: normalized, env: opts.env || null });
+  commands.push({ command: normalized, env: opts.env || null }); if (normalized.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   if (normalized.includes("provider get")) return { status: 1 };
-  return createdSandbox.run(command) ?? { status: 0 };
+  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\nPhase: Ready\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
 runner.runCapture = (command) => {
-  const createdIdentity = createdSandbox.capture(command);
+  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
   if (createdIdentity !== null) return createdIdentity;
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
+  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
@@ -1080,7 +1081,6 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
-  createdSandbox.create(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -1383,12 +1383,15 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const commands = [];
-const createdSandbox = fixtureMocks.createCreatedSandboxFixture();
-const providerRunner = require(${onboardScriptMocksPath}).createStatefulMessagingProviderRunner({ commands });
-runner.run = (command, opts = {}) => createdSandbox.run(command) ?? providerRunner(command, opts);
+runner.run = require(${onboardScriptMocksPath}).createStatefulMessagingProviderRunner({
+  commands,
+  readySandboxName: "my-assistant",
+});
 runner.runCapture = (command) => {
-  const createdIdentity = createdSandbox.capture(command);
+  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
   if (createdIdentity !== null) return createdIdentity;
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
+  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
@@ -1409,7 +1412,6 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
-  createdSandbox.create(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -1522,14 +1524,15 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const commands = [];
-const createdSandbox = fixtureMocks.createCreatedSandboxFixture();
 runner.run = (command, opts = {}) => {
-  commands.push({ command: _n(command), env: opts.env || null });
-  return createdSandbox.run(command) ?? { status: 0 };
+  commands.push({ command: _n(command), env: opts.env || null }); if (_n(command).includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
+  return _n(command).includes("sandbox get") && _n(command).includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\nPhase: Ready\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
 runner.runCapture = (command) => {
-  const createdIdentity = createdSandbox.capture(command);
+  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
   if (createdIdentity !== null) return createdIdentity;
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
+  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
@@ -1550,7 +1553,6 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
-  createdSandbox.create(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();

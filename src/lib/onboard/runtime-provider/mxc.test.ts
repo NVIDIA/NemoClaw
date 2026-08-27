@@ -8,12 +8,19 @@ import type { SandboxWorkloadReceipt } from "../../state/registry/types";
 import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
 import { encodeManagedStartupProfile } from "../managed-startup/profile";
 import { nativeArtifactWorkloadReceiptFixture } from "../workload/native-artifact-test-fixture";
-import type { RuntimeProviderNativeArtifactBootstrapSurface } from "./contract";
+import type {
+  RuntimeProviderNativeArtifactBootstrapInput,
+  RuntimeProviderNativeArtifactBootstrapSurface,
+} from "./contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./current";
 import { createDockerRuntimeProviderBundle } from "./docker";
-import { createMxcRuntimeProviderBundle } from "./mxc";
+import {
+  createMxcRuntimeProviderBundle,
+  createMxcRuntimeProviderBundleFromExistingInstallation,
+} from "./mxc";
 import type { MxcNativeArtifactControlPlane } from "./mxc-bootstrap-operations";
 import { mxcOpenShellAttachmentFixture } from "./mxc-openshell-attachment-test-fixture";
+import type { MxcOpenShellAttachmentObservationRequest } from "./mxc-openshell-observer";
 import {
   createRuntimeProviderBundleRegistry,
   RuntimeProviderRegistrationError,
@@ -50,7 +57,231 @@ function candidateBundle() {
   });
 }
 
+function attachmentObservation(): MxcOpenShellAttachmentObservationRequest {
+  const source = mxcOpenShellAttachmentFixture().observation;
+  return {
+    contractVersion: 1,
+    providerId: "mxc",
+    mode: "attach-existing",
+    observedDistribution: {
+      version: source.distribution.version,
+      revision: source.distribution.revision,
+    },
+    observedGateway: {
+      driver: source.gateway.driver,
+      backend: source.gateway.backend,
+    },
+    installation: {
+      distributionArtifactPath: "C:\\OpenShell\\packages\\openshell-0.0.21.zip",
+      distributionRoot: source.distributionRoot,
+      cliPath: source.cliPath,
+      gatewayPath: source.gatewayPath,
+      wxcExecPath: source.wxcExecPath,
+      gatewayConfigPath: source.gatewayConfigPath,
+    },
+  };
+}
+
+function bootstrapInput(): RuntimeProviderNativeArtifactBootstrapInput {
+  return {
+    providerId: "mxc",
+    sandboxName: "alpha",
+    lifecycleGeneration: "generation-7",
+    driveRoot: "C:\\",
+    artifactRoot: "C:\\openclaw-2026-7-1",
+    workload: {
+      ...NATIVE_RECEIPT,
+      launch: {
+        ...NATIVE_RECEIPT.launch,
+        environmentNames: [
+          "HOME",
+          "OPENCLAW_CONFIG_PATH",
+          "OPENCLAW_HOME",
+          "OPENCLAW_STATE_DIR",
+          "PATH",
+          "TEMP",
+          "TMP",
+          "USERPROFILE",
+        ],
+      },
+    },
+  };
+}
+
 describe("inactive OpenShell MXC runtime provider", () => {
+  it("constructs the candidate only after observing the existing installation (#8178)", async () => {
+    const attachment = mxcOpenShellAttachmentFixture();
+    const controlPlane = {
+      ...inactiveBootstrapControlPlane(),
+      verifyAndCreate: vi.fn(async () => ({ status: "unknown" as const })),
+    };
+    const accepted = attachment.observation;
+    const digests = new Map<string, string>([
+      ["C:\\OpenShell\\packages\\openshell-0.0.21.zip", accepted.distribution.sha256],
+      ["C:\\OpenShell\\bin\\openshell.exe", accepted.components.cliSha256],
+      ["C:\\OpenShell\\bin\\openshell-gateway.exe", accepted.components.gatewaySha256],
+      ["C:\\OpenShell\\mxc\\wxc-exec.exe", accepted.components.wxcExecSha256],
+      ["C:\\ProgramData\\NVIDIA\\OpenShell\\gateway.toml", accepted.gateway.configSha256],
+    ]);
+    const observeFileDigest = vi.fn(async (filePath: string) => digests.get(filePath)!);
+
+    const provider = await createMxcRuntimeProviderBundleFromExistingInstallation({
+      hostFacts: {
+        platform: "win32",
+        nativeArchitecture: "x64",
+        release: "10.0.28000.1836",
+      },
+      openshellAttachmentAuthority: attachment.authority,
+      attachmentObservation: attachmentObservation(),
+      bootstrapControlPlane: controlPlane,
+      observeFileDigest,
+    });
+
+    expect(provider.preflightDoctor.inspectHost()).toMatchObject({
+      status: "info",
+      detail: expect.stringMatching(/OpenShell 0\.0\.21/u),
+    });
+    expect(observeFileDigest).toHaveBeenCalledTimes(5);
+    expect(controlPlane.verifyAndCreate).not.toHaveBeenCalled();
+    expect(Object.hasOwn(CURRENT_RUNTIME_PROVIDER_BUNDLES, "mxc")).toBe(false);
+  });
+
+  it("blocks bootstrap run when installed files drift (#8178)", async () => {
+    const attachment = mxcOpenShellAttachmentFixture();
+    const accepted = attachment.observation;
+    const acceptedDigests = [
+      accepted.distribution.sha256,
+      accepted.components.cliSha256,
+      accepted.components.gatewaySha256,
+      accepted.components.wxcExecSha256,
+      accepted.gateway.configSha256,
+    ];
+    const observedDigests = [
+      ...acceptedDigests,
+      accepted.distribution.sha256,
+      accepted.components.cliSha256,
+      "6".repeat(64),
+      accepted.components.wxcExecSha256,
+      accepted.gateway.configSha256,
+    ];
+    const observeFileDigest = vi.fn(async () => observedDigests.shift()!);
+    const verifyAndCreate = vi.fn(async () => ({ status: "unknown" as const }));
+    const verifyReadiness = vi.fn();
+    const recoverCreate = vi.fn(async () => ({ status: "absent" as const }));
+    const provider = await createMxcRuntimeProviderBundleFromExistingInstallation({
+      hostFacts: {
+        platform: "win32",
+        nativeArchitecture: "x64",
+        release: "10.0.28000.1836",
+      },
+      openshellAttachmentAuthority: attachment.authority,
+      attachmentObservation: attachmentObservation(),
+      bootstrapControlPlane: {
+        contractVersion: 1,
+        providerId: "mxc",
+        verifyAndCreate,
+        verifyReadiness,
+        recoverCreate,
+      },
+      observeFileDigest,
+    });
+    const bootstrap = provider.bootstrap as RuntimeProviderNativeArtifactBootstrapSurface;
+
+    await expect(bootstrap.run({} as never)).rejects.toThrow(
+      /observed distribution identity does not match/u,
+    );
+    expect(observeFileDigest).toHaveBeenCalledTimes(10);
+    expect(verifyAndCreate).not.toHaveBeenCalled();
+    expect(verifyReadiness).not.toHaveBeenCalled();
+    expect(recoverCreate).not.toHaveBeenCalled();
+  });
+
+  it("uses exact recovery without re-reading installed files (#8178)", async () => {
+    const attachment = mxcOpenShellAttachmentFixture();
+    const accepted = attachment.observation;
+    const acceptedDigests = [
+      accepted.distribution.sha256,
+      accepted.components.cliSha256,
+      accepted.components.gatewaySha256,
+      accepted.components.wxcExecSha256,
+      accepted.gateway.configSha256,
+    ];
+    const observeFileDigest = vi.fn(async () => acceptedDigests.shift()!);
+    const verifyAndCreate = vi.fn(async () => ({ status: "unknown" as const }));
+    const verifyReadiness = vi.fn();
+    const recoverCreate = vi.fn(async () => ({ status: "absent" as const }));
+    const provider = await createMxcRuntimeProviderBundleFromExistingInstallation({
+      hostFacts: {
+        platform: "win32",
+        nativeArchitecture: "x64",
+        release: "10.0.28000.1836",
+      },
+      openshellAttachmentAuthority: attachment.authority,
+      attachmentObservation: attachmentObservation(),
+      bootstrapControlPlane: {
+        contractVersion: 1,
+        providerId: "mxc",
+        verifyAndCreate,
+        verifyReadiness,
+        recoverCreate,
+      },
+      observeFileDigest,
+    });
+    const bootstrap = provider.bootstrap as RuntimeProviderNativeArtifactBootstrapSurface;
+
+    await expect(bootstrap.recover(bootstrapInput())).resolves.toMatchObject({
+      outcome: "not-created",
+      reason: "recovered",
+      resourceState: "absent",
+      recoveryRequired: false,
+    });
+    expect(observeFileDigest).toHaveBeenCalledTimes(5);
+    expect(verifyAndCreate).not.toHaveBeenCalled();
+    expect(verifyReadiness).not.toHaveBeenCalled();
+    expect(recoverCreate).toHaveBeenCalledOnce();
+    expect(recoverCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authoritySha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        lifecycleGeneration: "generation-7",
+        providerHandle: expect.stringMatching(/^mxc-native-artifact-v1:[a-f0-9]{64}$/u),
+        providerId: "mxc",
+        sandboxName: "alpha",
+      }),
+    );
+  });
+
+  it("rejects installed-file substitution before constructing the candidate (#8178)", async () => {
+    const attachment = mxcOpenShellAttachmentFixture();
+    const accepted = attachment.observation;
+    const observedDigests = new Map<string, string>([
+      ["C:\\OpenShell\\packages\\openshell-0.0.21.zip", accepted.distribution.sha256],
+      [accepted.cliPath, accepted.components.cliSha256],
+      [accepted.gatewayPath, "6".repeat(64)],
+      [accepted.wxcExecPath, accepted.components.wxcExecSha256],
+      [accepted.gatewayConfigPath, accepted.gateway.configSha256],
+    ]);
+    const observeFileDigest = vi.fn(async (filePath: string) => observedDigests.get(filePath)!);
+    const verifyAndCreate = vi.fn(async () => ({ status: "unknown" as const }));
+
+    await expect(
+      createMxcRuntimeProviderBundleFromExistingInstallation({
+        hostFacts: {
+          platform: "win32",
+          nativeArchitecture: "x64",
+          release: "10.0.28000.1836",
+        },
+        openshellAttachmentAuthority: attachment.authority,
+        attachmentObservation: attachmentObservation(),
+        bootstrapControlPlane: {
+          ...inactiveBootstrapControlPlane(),
+          verifyAndCreate,
+        },
+        observeFileDigest,
+      }),
+    ).rejects.toThrow(/observed distribution identity does not match/u);
+    expect(verifyAndCreate).not.toHaveBeenCalled();
+  });
+
   it("registers one identity-consistent candidate without entering production selection (#8178)", () => {
     const providers = createRuntimeProviderBundleRegistry([["mxc", candidateBundle()]]);
     const provider = providers.mxc!;

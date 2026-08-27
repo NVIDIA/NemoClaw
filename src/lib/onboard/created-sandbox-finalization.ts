@@ -302,6 +302,13 @@ export function createHermesPortableCreatedSandboxLifecycle(
   });
   return {
     generation: receipt.lifecycleGeneration,
+    recordExactIdentity: (liveIdentityFingerprint) => {
+      const current = requireCurrent();
+      if (current.lifecycleLiveIdentityFingerprint !== liveIdentityFingerprint) {
+        throw new Error("Hermes portable created identity disagrees with receipt authority.");
+      }
+      return current;
+    },
     capture: (fields) => {
       if (fields.lifecycleGeneration !== receipt.lifecycleGeneration) {
         throw new Error("Hermes portable registry generation disagrees with receipt authority.");
@@ -427,8 +434,8 @@ export function createCreatedSandboxCompletionActions(
       const resolved = managedWorkloadOnboard.resolveOnboardSandboxWorkloadReceipt({
         ...options.workload,
         registryImageRef: created?.registryImageRef ?? configuredReceipt?.container.imageId ?? null,
-        firstCreateOutput: created?.firstCreateOutput ?? "",
-        createOutput: created?.createResult.output ?? "",
+        firstCreateOutput: created?.origin === "created" ? created.firstCreateOutput : "",
+        createOutput: created?.origin === "created" ? created.createResult.output : "",
       });
       const finalLifecycle = lifecycle.revalidate(verifiedLifecycle);
       assertVerifiedPolicyBoundaryMatchesLifecycle(
@@ -449,8 +456,18 @@ export function createCreatedSandboxCompletionActions(
           register: (openclawImagePluginInstalls) => {
             const verifiedCreate = options.policy.getVerifiedCreateRegistrationAuthority();
             assertVerifiedCreateMatchesPolicyBoundary(verifiedPolicyBoundary, verifiedCreate);
+            const verifiedInferenceRouteReservation = verifiedCreate.reservation;
+            if (
+              inferenceRouteReservation &&
+              !isDeepStrictEqual(inferenceRouteReservation, verifiedInferenceRouteReservation)
+            ) {
+              throw new Error(
+                "Sandbox registration inference route differs from its verified create reservation.",
+              );
+            }
             return (deps.registerCreatedSandbox ?? registerCreatedSandbox)({
               ...options.registration,
+              inferenceSelection: verifiedInferenceRouteReservation.authority.selection,
               runtimeFields: {
                 ...options.registration.runtimeFields,
                 sandboxGpuProof:
@@ -478,7 +495,7 @@ export function createCreatedSandboxCompletionActions(
                       verifiedPolicyRegistration.policyCreationReceipt,
                   }
                 : {}),
-              inferenceRouteReservation,
+              inferenceRouteReservation: verifiedInferenceRouteReservation,
               verifiedCreate,
             });
           },

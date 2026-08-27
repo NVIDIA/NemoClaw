@@ -274,7 +274,9 @@ describe("applyChannelPresetIfAvailable refresh contract", () => {
     const ok = applyChannelPresetIfAvailable("alpha", "discord");
 
     expect(ok).toBe(true);
-    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "discord");
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "discord", {
+      includeMessagingCredentialBindings: true,
+    });
     expect(refreshSpy).toHaveBeenCalledTimes(1);
     expect(refreshSpy).toHaveBeenCalledWith("alpha");
   });
@@ -285,7 +287,9 @@ describe("applyChannelPresetIfAvailable refresh contract", () => {
     const ok = applyChannelPresetIfAvailable("alpha", "discord");
 
     expect(ok).toBe(false);
-    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "discord");
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "discord", {
+      includeMessagingCredentialBindings: true,
+    });
     expect(refreshSpy).not.toHaveBeenCalled();
   });
 

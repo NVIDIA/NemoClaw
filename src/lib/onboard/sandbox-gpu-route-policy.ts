@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
+
 import {
   canFallbackToDockerGpuCompatibility,
   type DockerGpuRoutePlan,
   initialDockerGpuRoute,
 } from "./docker-gpu-route";
 import type { InitialSandboxPolicy } from "./initial-policy";
-import { openShellPolicyValuesEqual } from "../policy/merge";
 
 const PROC_PATH = "/proc";
 const OPENSHELL_PROXY_REQUIRED_READ_ONLY_PATHS = new Set([
@@ -79,7 +80,7 @@ export function isOpenShellNativeGpuBaselineEnrichment(
   live: Record<string, unknown>,
 ): boolean {
   if (
-    !openShellPolicyValuesEqual(
+    !isDeepStrictEqual(
       policyWithoutFilesystemPolicy(intended),
       policyWithoutFilesystemPolicy(live),
     )
@@ -101,7 +102,7 @@ export function isOpenShellNativeGpuBaselineEnrichment(
   const intendedFilesystemRecord = intendedFilesystem as Record<string, unknown>;
   const liveFilesystemRecord = liveFilesystem as Record<string, unknown>;
   if (
-    !openShellPolicyValuesEqual(
+    !isDeepStrictEqual(
       filesystemPolicyWithoutPaths(intendedFilesystemRecord),
       filesystemPolicyWithoutPaths(liveFilesystemRecord),
     )

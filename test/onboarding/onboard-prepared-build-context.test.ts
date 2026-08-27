@@ -82,7 +82,6 @@ const scenario = ${JSON.stringify(scenario)};
 const buildCtx = ${JSON.stringify(preparedBuildCtx)};
 const buildId = ${JSON.stringify(buildId)};
 const sandboxName = "prepared-dcode";
-const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ sandboxName });
 const commands = [];
 const registerCalls = [];
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
@@ -93,6 +92,9 @@ const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry,
 });
 const runner = require(${runnerPath});
 const preflight = require(${preflightPath});
+const policyAuthorityPreflight = require(${JSON.stringify(
+    path.join(repoRoot, "src", "lib", "onboard", "policy-authority", "preflight.ts"),
+  )});
 const credentials = require(${credentialsPath});
 const buildContextStage = require(${buildContextStagePath});
 const dockerfilePatchFlow = require(${dockerfilePatchFlowPath});
@@ -107,6 +109,7 @@ let cleanupCalls = 0;
 let patchCalls = 0;
 let patchSleepUsesSeconds = null;
 let stageCalls = 0;
+let sandboxCreated = false;
 
 dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch = (options) => {
   patchSleepUsesSeconds = options.deps.sleep === wait.sleepSeconds;
@@ -152,8 +155,9 @@ runner.run = (command) => {
   commands.push(normalized);
   const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
-  const sandboxResult = createdSandbox.run(command);
-  return sandboxResult ?? { status: 0 };
+  return normalized.includes("sandbox get") && normalized.includes(sandboxName)
+    ? { status: 0, stdout: Buffer.from(sandboxName + "\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    : { status: 0 };
 };
 runner.runFile = (file, args = []) => {
   commands.push(normalize([file, ...args]));
@@ -161,8 +165,8 @@ runner.runFile = (file, args = []) => {
 };
 runner.runCapture = (command) => {
   const normalized = normalize(command);
-  const sandboxCapture = createdSandbox.capture(command);
-  if (sandboxCapture !== null) return sandboxCapture;
+  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command, { sandboxName });
+  if (createdIdentity !== null) return createdIdentity;
   if (
     normalized.includes(
       "sandbox exec --name " +
@@ -177,15 +181,21 @@ runner.runCapture = (command) => {
       "Endpoint: https://inference.local/v1",
     ].join("\n");
   }
+  if (normalized.includes("sandbox get")) {
+    return sandboxCreated ? sandboxName + "\nId: sbx-4f2a91c0d7\n" : "";
+  }
+  if (normalized.includes("sandbox list")) return sandboxCreated ? sandboxName + " Ready" : "";
   return "";
 };
 registry.getDefault = () => null;
 registry.listExtraProviders = () => [];
 preflight.checkPortAvailable = async () => ({ ok: true });
+policyAuthorityPreflight.qualifySandboxPolicyAuthority = () => ({
+  authority: "nemoclaw-managed",
+});
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
-  createdSandbox.create(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -193,6 +203,7 @@ childProcess.spawn = (...args) => {
   child.pid = 6195;
   commands.push(normalize([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]));
   process.nextTick(() => {
+    sandboxCreated = true;
     child.stdout.emit("data", Buffer.from("Created sandbox: " + sandboxName + "\n"));
     child.emit("close", 0);
   });
@@ -219,24 +230,29 @@ const { createSandbox } = require(${onboardPath});
   let errorMessage = null;
   try {
     await createSandbox(
-      null,
-      "nvidia/nemotron-3-super-120b-a12b",
-      "nvidia-prod",
-      null,
-      sandboxName,
-      null,
-      null,
-      scenario === "custom-dockerfile" ? "/tmp/custom/Dockerfile" : null,
-      agent,
-      null,
-      null,
-      null,
-      [],
-      null,
-      { sessionId: createFixture.sessionId },
-      null,
-      null,
-      preparedBuildContext,
+      ...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+        [
+          null,
+          "nvidia/nemotron-3-super-120b-a12b",
+          "nvidia-prod",
+          null,
+          sandboxName,
+          null,
+          null,
+          scenario === "custom-dockerfile" ? "/tmp/custom/Dockerfile" : null,
+          agent,
+          null,
+          null,
+          null,
+          [],
+          null,
+          null,
+          null,
+          null,
+          preparedBuildContext,
+        ],
+        createFixture,
+      ),
     );
   } catch (error) {
     errorMessage = error instanceof Error ? error.message : String(error);
