@@ -2810,7 +2810,7 @@ jobs:
       - name: Run live E2E tests
         env:
           E2E_TARGET_ID: ${{ matrix.id }}
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           TARGET_ID: ${{ matrix.id }}
         run: |
           set -euo pipefail
