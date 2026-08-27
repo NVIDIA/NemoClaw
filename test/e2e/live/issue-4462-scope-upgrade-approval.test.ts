@@ -12,7 +12,6 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { trackIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
 import { ISSUE_4462_PAIRING_SEED_PY } from "../fixtures/issue-4462-pairing-seed.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
-import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   adminApprovalConnectScript,
   extractPendingRequestId,
@@ -1396,14 +1395,14 @@ test("keeps fresh onboarding and scope approval on the gateway path without admi
   // operator.admin always requires a reviewed `devices approve`. The pending
   // request is selected by its requested scope + CLI/operator role, never by
   // command name (ADMIN_REQUEST_SELECTOR_PY in issue-4462-admin-approval-helper.ts).
-  // Every non-TUI OpenClaw command (`agent`, `cron add`, `cron run`, `exec`)
-  // reaches the gateway through the same device-token operator client and is
-  // gated purely by the scope it requests. This test exercises both tiers on
-  // that single shared boundary: operator.write via the gateway-backed `agent`
-  // turns above, and operator.admin via the `cron add` trigger + manual
-  // approval below. `cron run` and `exec` cannot follow a different approval
-  // path — whichever tier they request is one of the two already proven here,
-  // so no separate per-command evidence is required to close #5324.
+  // Every non-TUI OpenClaw command in the reproduction (`agent`, `cron add`,
+  // `cron run`) reaches the gateway through the same device-token operator
+  // client and is gated purely by the scope it requests. This test exercises
+  // both tiers on that single shared boundary: operator.write via the
+  // gateway-backed `agent` turns above, and operator.admin via the `cron add`
+  // trigger + manual approval below. The issue's `exec` label refers to the
+  // NemoClaw host transport exercised below, not an OpenClaw gateway command.
+  // No separate per-command scope evidence is required to close #5324.
   progress.phase("trigger and approve an operator.admin request through connect");
   const cronName = `issue-5324-admin-${Date.now()}-${process.pid}`;
   // #5324's `exec` is NemoClaw's host transport, not an OpenClaw CLI
