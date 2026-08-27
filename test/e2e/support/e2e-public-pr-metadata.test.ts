@@ -20,6 +20,7 @@ function authenticationEnvironment(): NodeJS.ProcessEnv {
     GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
     INCLUDE_LAUNCHABLE: "false",
     JOBS: "",
+    NVIDIA_OWNED: "false",
     PATH: process.env.PATH,
     PR_NUMBER: "42",
     WORKFLOW_EVENT: "workflow_dispatch",
@@ -102,17 +103,42 @@ describe("public PR metadata authentication", () => {
   });
 
   it.each([
-    ["denied response", "curl() { return 22; }"],
-    ["malformed response", "curl() { printf '{'; }"],
-  ])("fails closed on a terminal %s", (_caseName, curlStub) => {
+    ["Authenticate manual PR dispatch", "denied response", "", "curl() { return 22; }"],
+    ["Authenticate manual PR dispatch", "malformed response", "", "curl() { printf '{'; }"],
+    [
+      "Validate manual PR checkout",
+      "denied response",
+      'git() { printf "%s\\n" "$CHECKOUT_SHA"; }',
+      "curl() { return 22; }",
+    ],
+    [
+      "Validate manual PR checkout",
+      "malformed response",
+      'git() { printf "%s\\n" "$CHECKOUT_SHA"; }',
+      "curl() { printf '{'; }",
+    ],
+  ])("fails closed on a terminal %s in %s", (stepName, _caseName, commandStub, curlStub) => {
     const workflow = readE2eOperationsWorkflow();
-    const authentication = workflow.jobs["generate-matrix"].steps!.find(
-      (step) => step.name === "Authenticate manual PR dispatch",
+    const step = workflow.jobs["generate-matrix"].steps!.find(
+      (candidate) => candidate.name === stepName,
     )!;
     const result = spawnSync(
       "bash",
-      ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", `${curlStub}\n${authentication.run}`],
-      { encoding: "utf8", env: authenticationEnvironment() },
+      [
+        "--noprofile",
+        "--norc",
+        "-e",
+        "-o",
+        "pipefail",
+        "-c",
+        `${commandStub}\n${curlStub}\n${step.run}`,
+      ],
+      {
+        encoding: "utf8",
+        env: authenticationEnvironment(),
+        killSignal: "SIGKILL",
+        timeout: 30_000,
+      },
     );
 
     expect(result.error).toBeUndefined();
