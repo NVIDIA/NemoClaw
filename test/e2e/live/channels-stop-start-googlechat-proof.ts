@@ -47,7 +47,7 @@ if not re.fullmatch(r"openshell:resolve:env:v[1-9][0-9]*_GOOGLE_CHAT_ACCESS_TOKE
     raise RuntimeError("Google Chat credential is not revision-scoped")
 
 sys.path.insert(0, "/opt/hermes")
-override_path = "/sandbox/.hermes/plugins/nemoclaw/googlechat_adapter.py"
+override_path = "/src/lib/messaging/channels/googlechat/runtime/hermes-adapter.py"
 spec = importlib.util.spec_from_file_location("nemoclaw_googlechat_e2e", override_path)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
@@ -84,14 +84,14 @@ async def run():
     return statuses
 
 print(json.dumps({
-    "installedOverride": adapter_class.__name__ == "SandboxGoogleChatAdapter",
+    "candidateOverride": adapter_class.__name__ == "SandboxGoogleChatAdapter",
     "placeholder": "revision-scoped",
     "statuses": asyncio.run(run()),
 }))
 `;
 
 interface GooglechatBoundaryProof {
-  readonly installedOverride?: boolean;
+  readonly candidateOverride?: boolean;
   readonly placeholder: string;
   readonly statuses: number[];
 }
@@ -128,6 +128,6 @@ export async function expectGooglechatCredentialBoundary(
     agent === "openclaw" ? [401] : [401, 401],
   );
   if (agent === "hermes") {
-    expect(proof.installedOverride, "installed Hermes Google Chat override loaded").toBe(true);
+    expect(proof.candidateOverride, "candidate Hermes Google Chat override loaded").toBe(true);
   }
 }
