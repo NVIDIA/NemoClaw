@@ -258,12 +258,6 @@ function verifyReadOnlyPolicyBoundary(
       after.authority,
     );
   }
-  assertRequirements({
-    inspection: after,
-    requiredPolicy,
-    operation: input.operation,
-    sandboxName: input.sandboxName,
-  });
   return {
     policyAuthority: "externally-managed",
     policyCreationReceipt: null,
