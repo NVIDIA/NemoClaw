@@ -131,6 +131,7 @@ const {
       replaceExisting?: boolean;
       revalidatePolicyRequirements?(operation: string): void;
       requireExactBindings?: boolean;
+      sleepSeconds?(seconds: number): void;
     },
   ) => string[];
 };
@@ -739,6 +740,54 @@ describe("onboard provider helpers", () => {
     ]);
     expect(calls[3]?.env).toEqual({ DISCORD_BOT_TOKEN: credential });
     expect(calls.flatMap(({ command }) => command)).not.toContain(credential);
+  });
+
+  it("waits for an updated messaging provider revision to become observable", () => {
+    const commands: string[] = [];
+    const sleep = vi.fn();
+    let providerLookups = 0;
+    const providerMetadata = (type: string) => ({
+      status: 0,
+      stdout:
+        `Name: alpha-telegram-bridge\nType: ${type}\n` +
+        "Credential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n",
+      stderr: "",
+    });
+
+    const providers = upsertMessagingProviders(
+      [
+        {
+          name: "alpha-telegram-bridge",
+          envKey: "TELEGRAM_BOT_TOKEN",
+          token: "telegram-test-token",
+          providerType: "nemoclaw-mcp-v1",
+        },
+      ],
+      (command) => {
+        commands.push(command.join(" "));
+        if (command[1] === "profile") {
+          return { status: 0, stdout: MESSAGING_ENDPOINTLESS_PROFILE_EXPORT, stderr: "" };
+        }
+        if (command[1] === "get") {
+          providerLookups += 1;
+          return providerLookups === 2
+            ? providerMetadata("generic")
+            : providerMetadata("nemoclaw-mcp-v1");
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+      { sleepSeconds: sleep },
+    );
+
+    expect(providers).toEqual(["alpha-telegram-bridge"]);
+    expect(sleep).toHaveBeenCalledOnce();
+    expect(commands).toEqual([
+      "provider profile export nemoclaw-mcp-v1 --output json",
+      "provider get alpha-telegram-bridge",
+      "provider update alpha-telegram-bridge --credential TELEGRAM_BOT_TOKEN",
+      "provider get alpha-telegram-bridge",
+      "provider get alpha-telegram-bridge",
+    ]);
   });
 
   it("rejects credential-free reuse when the messaging profile is incompatible (#9875)", () => {

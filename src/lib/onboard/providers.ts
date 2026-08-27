@@ -33,6 +33,8 @@ const {
 } = require("../messaging/provider-profile");
 
 const MESSAGING_PROVIDER_BINDING_CONFLICT = "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT";
+const MESSAGING_PROVIDER_CONFIRM_ATTEMPTS = 10;
+const MESSAGING_PROVIDER_CONFIRM_DELAY_SECONDS = 1;
 
 class MessagingProviderBindingConflictError extends Error {
   constructor(message, mutatedProviderNames = []) {
@@ -604,6 +606,36 @@ function matchesPlannedMessagingCredentialKeys(metadata, plannedKeys, requireCom
   );
 }
 
+function confirmMessagingProviderMutation(
+  name,
+  providerType,
+  envKey,
+  additionalCredentials,
+  runOpenshell,
+  sleepSecondsImpl,
+) {
+  for (let attempt = 0; attempt < MESSAGING_PROVIDER_CONFIRM_ATTEMPTS; attempt += 1) {
+    const verifiedMetadata = readGatewayProviderMetadata(name, runOpenshell);
+    const verified =
+      matchesGatewayCredentialFamilyProviderBinding(verifiedMetadata, {
+        name,
+        type: providerType,
+        credentialKey: envKey,
+        allowExtendedCredentialKeys: true,
+      }) &&
+      matchesPlannedMessagingCredentialKeys(
+        verifiedMetadata,
+        plannedMessagingCredentialKeys({ envKey, additionalCredentials }),
+        true,
+      );
+    if (verified) return true;
+    if (attempt + 1 < MESSAGING_PROVIDER_CONFIRM_ATTEMPTS) {
+      sleepSecondsImpl(MESSAGING_PROVIDER_CONFIRM_DELAY_SECONDS);
+    }
+  }
+  return false;
+}
+
 function preflightMessagingProviderBindings(tokenDefs, _runOpenshell) {
   const failures = [];
   for (const tokenDef of tokenDefs) {
@@ -644,7 +676,7 @@ function preflightMessagingProviderBindings(tokenDefs, _runOpenshell) {
  * of terminating the CLI.
  * @param {Array<{name: string, envKey: string, token: string|null, providerType?: string}>} tokenDefs
  * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
- * @param {{replaceExisting?: boolean, bestEffort?: boolean, allowedSandboxes?: readonly string[], requireExactBindings?: boolean, revalidatePolicyRequirements?: (operation: string) => void}} options - Forwarded to every upsertProvider call.
+ * @param {{replaceExisting?: boolean, bestEffort?: boolean, allowedSandboxes?: readonly string[], requireExactBindings?: boolean, revalidatePolicyRequirements?: (operation: string) => void, sleepSeconds?: (seconds: number) => void}} options - Forwarded to every upsertProvider call.
  * @returns {string[]} Provider names that were upserted.
  */
 function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
@@ -771,19 +803,19 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
       );
       if (result.ok) mutatedProviderNames.push(name);
       if (result.ok && providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE) {
-        const verifiedMetadata = readGatewayProviderMetadata(name, runMessagingBridgeOpenshell);
-        const verified =
-          matchesGatewayCredentialFamilyProviderBinding(verifiedMetadata, {
-            name,
-            type: providerType,
-            credentialKey: envKey,
-            allowExtendedCredentialKeys: true,
-          }) &&
-          matchesPlannedMessagingCredentialKeys(
-            verifiedMetadata,
-            plannedMessagingCredentialKeys({ envKey, additionalCredentials }),
-            true,
-          );
+        // OpenShell can acknowledge provider update before its registry read
+        // path exposes the new revision. Rebuild immediately republishes every
+        // detached messaging provider, so a single post-update read creates a
+        // deterministic race. Keep the exact-binding postcondition fail-closed,
+        // but allow the bounded control-plane convergence window.
+        const verified = confirmMessagingProviderMutation(
+          name,
+          providerType,
+          envKey,
+          additionalCredentials,
+          runMessagingBridgeOpenshell,
+          options.sleepSeconds ?? (() => undefined),
+        );
         if (!verified) {
           result = {
             ok: false,
