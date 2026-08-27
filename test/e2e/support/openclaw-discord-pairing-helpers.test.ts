@@ -339,6 +339,24 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     },
   );
 
+  it.each(["SLACK_APP_TOKEN", "SLACK_BOT_TOKEN"])(
+    "accepts an OpenShell credential revision longer than 20 digits for %s",
+    (name) => {
+      const result = spawnSync(process.execPath, ["--input-type=module"], {
+        input: `${SLACK_PROBE_INPUT_VALIDATION_SOURCE}\nparseManagedCredentialReference(${JSON.stringify(name)}); console.log("VALID");\n`,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          [name]: `openshell:resolve:env:v123456789012345678901_${name}`,
+        },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("VALID\n");
+      expect(result.stdout).not.toContain("openshell:resolve:env:");
+    },
+  );
+
   it.each([
     { name: "missing", value: "" },
     { name: "raw secret", value: "xapp-raw-secret" },

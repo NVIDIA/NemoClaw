@@ -388,7 +388,7 @@ function parseProxyTarget() {
 function parseManagedCredentialReference(name) {
   if (name !== "SLACK_APP_TOKEN" && name !== "SLACK_BOT_TOKEN") throw new Error("unexpected Slack credential reference name");
   const value = process.env[name] || "";
-  if (!new RegExp("^openshell:resolve:env:v[0-9]{1,20}_" + name + "$").test(value)) {
+  if (!new RegExp("^openshell:resolve:env:v[0-9]+_" + name + "$").test(value)) {
     throw new Error(name + " must be the revision-scoped OpenShell credential reference issued to the sandbox");
   }
   return value;
