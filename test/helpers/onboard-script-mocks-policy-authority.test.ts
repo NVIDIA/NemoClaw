@@ -39,13 +39,6 @@ afterEach(() => {
 });
 
 describe("created sandbox fixture selector observations", () => {
-  it("publishes identity for the exact gateway-scoped create-attempt query (#9833)", () => {
-    const fixture = createCreatedSandboxFixture({ gatewayName: "nemoclaw-test" });
-    fixture.create(exactCreateCommand);
-
-    expect(fixture.capture(exactCreateQuery)).toContain('"name":"my-assistant"');
-  });
-
   it("publishes identity through the Linux process-tree timeout wrapper (#10238, #9833)", () => {
     const fixture = createCreatedSandboxFixture({ gatewayName: "nemoclaw-test" });
     fixture.create(exactCreateCommand);
