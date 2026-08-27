@@ -78,7 +78,11 @@ function assistantText(message: unknown): string | null {
 }
 
 export function derivePiImageSourcePaths(dockerfiles: readonly string[]): string[] {
-  const paths = new Set<string>([".dockerignore"]);
+  const paths = new Set<string>([
+    ".dockerignore",
+    "agents/pi/Dockerfile",
+    "agents/pi/Dockerfile.base",
+  ]);
   for (const dockerfile of dockerfiles) {
     const logicalLines = dockerfile.replace(/\\\r?\n\s*/gu, " ").split(/\r?\n/u);
     for (const rawLine of logicalLines) {

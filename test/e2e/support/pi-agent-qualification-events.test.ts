@@ -72,7 +72,13 @@ describe("Pi qualification event oracle", () => {
         "COPY agents/pi/start.sh /usr/local/bin/start\nCOPY extra/runtime.txt /runtime.txt",
         "COPY --from=builder /built/runtime /runtime",
       ]),
-    ).toEqual([".dockerignore", "agents/pi", "extra/runtime.txt"]);
+    ).toEqual([
+      ".dockerignore",
+      "agents/pi",
+      "agents/pi/Dockerfile",
+      "agents/pi/Dockerfile.base",
+      "extra/runtime.txt",
+    ]);
   });
 
   it("rejects ambiguous Dockerfile copy inputs", () => {
