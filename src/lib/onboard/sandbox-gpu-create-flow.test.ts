@@ -127,10 +127,10 @@ const PORTABLE_RUNTIME_AUTHORITY: CheckpointPortableRuntimeAuthority = {
 
 type OpenShellResult = ReturnType<SandboxGpuCreateFlowDeps["runOpenshell"]>;
 
-function readySandboxGetResult(): OpenShellResult {
+function readySandboxGetResult(sandboxId = "alpha-sandbox-id"): OpenShellResult {
   return {
     status: 0,
-    stdout: "Name: alpha\nId: alpha-sandbox-id\nState: Ready\n",
+    stdout: `Name: alpha\nId: ${sandboxId}\nState: Ready\n`,
     stderr: "",
   };
 }
@@ -353,6 +353,7 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     const deps = createDeps();
     const adapterOverride = {} as never;
     deps.createManagedBootstrapAdapter = vi.fn(() => adapterOverride);
+    deps.runOpenshell = vi.fn(() => readySandboxGetResult("alpha-sandbox-id"));
     vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
       args[1] === "get" ? "ID: alpha-sandbox-id\n" : "alpha Ready",
     );

@@ -9,6 +9,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { SandboxEntry } from "../state/registry";
+import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
 import * as sandboxState from "../state/sandbox";
 import {
   createCreatedSandboxCompletionActions,
@@ -487,6 +488,10 @@ describe("created DCode sandbox finalization", () => {
     const lifecycleLiveIdentityFingerprint = "a".repeat(64);
     const lifecycle = {
       generation: "generation-1",
+      recordExactIdentity: () => ({
+        lifecycleGeneration: "generation-1",
+        lifecycleLiveIdentityFingerprint,
+      }),
       capture: () => ({
         lifecycleGeneration: "generation-1",
         lifecycleLiveIdentityFingerprint,
@@ -1000,8 +1005,27 @@ describe("created sandbox completion actions", () => {
         lifecycleLiveIdentityFingerprint: "a".repeat(64),
         route: "native" as const,
       };
+      const inferenceRouteReservation = {
+        authority: {
+          sandboxName: "hermes",
+          gatewayName: "nemoclaw",
+          sessionId: "session-1",
+          selection: {
+            provider: "ollama",
+            model: "qwen3-vl:4b",
+            endpointUrl: "http://host.openshell.internal:11436/v1",
+            endpointSource: "onboard" as const,
+            credentialEnv: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN",
+            preferredInferenceApi: "openai-completions",
+            compatibleEndpointReasoning: null,
+            compatibleEndpointReasoningEffort: null,
+            nimContainer: null,
+          },
+        },
+        entry: { name: "hermes" },
+      } satisfies QualifiedSandboxInferenceRouteReservation;
       const verifiedCreate = {
-        reservation: {} as never,
+        reservation: inferenceRouteReservation,
         checkpoint: pendingSandboxPolicyVerificationForBoundary(verifiedPolicyBoundary),
       } as NonNullable<CreatedSandboxRegistrationInput["verifiedCreate"]>;
       const completion = createCreatedSandboxCompletionActions(
@@ -1122,6 +1146,10 @@ describe("created sandbox completion actions", () => {
       } as SandboxGpuCreateFlowResult;
       const lifecycle = {
         generation: "generation-1",
+        recordExactIdentity: () => ({
+          lifecycleGeneration: "generation-1",
+          lifecycleLiveIdentityFingerprint: "a".repeat(64),
+        }),
         capture: () => {
           order.push("lifecycle-capture");
           return {
@@ -1144,7 +1172,6 @@ describe("created sandbox completion actions", () => {
             container: { imageId: "hermes:test" },
           } as unknown as HermesPortableConfiguredReceipt)
         : null;
-
       await completion.complete(
         schema5 ? null : created,
         configuredReceipt,
@@ -1152,6 +1179,7 @@ describe("created sandbox completion actions", () => {
         manageDashboard,
         () => ({ lifecycleGeneration: "generation-1" }),
         lifecycle,
+        schema5 ? inferenceRouteReservation : undefined,
       );
 
       expect(order).toEqual([
@@ -1176,6 +1204,8 @@ describe("created sandbox completion actions", () => {
           policyCreationReceipt: expect.objectContaining({
             policyHash: "sha256:effective",
           }),
+          inferenceSelection: inferenceRouteReservation.authority.selection,
+          inferenceRouteReservation,
           verifiedCreate,
           runtimeFields: expect.objectContaining({ sandboxGpuProof: gpuProof }),
         }),
