@@ -1238,7 +1238,9 @@ exit 0
         "        port: 443\n" +
         "        access: full\n";
 
-      const result = policies.mergePresetNamesIntoPolicy(current, ["slack"]);
+      const result = policies.mergePresetNamesIntoPolicy(current, ["slack"], {
+        sandboxName: "slack-preset",
+      });
 
       expect(result.appliedPresets).toEqual(["slack"]);
       expect(result.missingPresets).toEqual([]);

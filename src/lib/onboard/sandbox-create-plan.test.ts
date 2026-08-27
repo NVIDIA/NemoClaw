@@ -5,13 +5,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { testTimeoutOptions } from "../../../test/helpers/timeouts";
 import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../messaging/provider-profile";
 import type { MessagingTokenDef } from "./messaging-prep";
-import { materializeHermesPortableCreatePlan } from "./sandbox-create-plan-materialization";
+import {
+  materializeHermesPortableCreatePlan,
+  prepareSandboxCreatePolicy,
+} from "./sandbox-create-plan-materialization";
 import {
   materializeSandboxCreatePlan,
   resolveSandboxCreateIntent,
   resolveSandboxCreateMessagingProviderRequests,
   resolveSandboxCreatePolicyTier,
 } from "./sandbox-create-plan";
+import type { prepareInitialSandboxCreatePolicy } from "./initial-policy";
 import type { SandboxGpuCreateConfig } from "./sandbox-gpu-create";
 
 const sandboxGpuConfig: SandboxGpuCreateConfig = {
@@ -179,6 +183,41 @@ function expectCredentialBindingFailure({
   expect(cleanupProviders).not.toHaveBeenCalled();
   expect(upsertProviders).not.toHaveBeenCalled();
 }
+
+describe("prepareSandboxCreatePolicy", () => {
+  it("passes the sandbox name so credential-binding presets can materialize", () => {
+    const intent = resolveSandboxCreateIntent({
+      basePolicyPath: "/repo/policy.yaml",
+      sandboxName: "bound-sandbox",
+      channels,
+      enabledChannels: ["telegram"],
+      disabledChannelNames: new Set(),
+      messagingProviderRequests: [],
+      primaryMessagingCredentialEnvKeys: [],
+      reusableMessagingChannels: [],
+      reusableMessagingProviders: [],
+      hermesToolGateways: [],
+      sandboxGpuConfig: disabledSandboxGpuConfig,
+      gpuCreateArgs: [],
+      gpuRoutePlan: "native-only",
+      sandboxGpuLogMessage: null,
+      policyTier: null,
+    });
+    const seenOptions: Array<Record<string, unknown>> = [];
+    const preparePolicy: typeof prepareInitialSandboxCreatePolicy = (
+      _basePolicyPath,
+      _channels,
+      options,
+    ) => {
+      seenOptions.push(options as unknown as Record<string, unknown>);
+      return { policyPath: "/tmp/policy.yaml", appliedPresets: [] };
+    };
+
+    prepareSandboxCreatePolicy(intent, preparePolicy);
+
+    expect(seenOptions[0]).toMatchObject({ sandboxName: "bound-sandbox" });
+  });
+});
 
 describe("resolveSandboxCreatePolicyTier", () => {
   it("recognizes Personal as a create-time policy tier", () => {
