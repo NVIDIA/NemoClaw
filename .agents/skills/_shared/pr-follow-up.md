@@ -3,39 +3,35 @@
 
 # Follow Up on PR CI and Reviews
 
-After each PR push, let required reviews settle, collect one complete snapshot, and repair all valid findings as one change set. Keep monitoring bounded; pending clean checks can remain pending in the handoff.
+After each push, wait for automated reviews, collect feedback for the latest PR commit, repair valid findings together, validate once, and push once. Do not request reviews from maintainers.
 
-## Preserve repository-owned review routing
-
-Do not request reviews from maintainers.
-
-## Monitor and collect once
-
-Use bounded monitoring while useful work remains. Do not repeatedly print unchanged check lists or full review bodies. Return states, identifiers, and clipped evidence; read full evidence only for an actionable item.
-
-Before editing, collect one complete snapshot for `NVIDIA/NemoClaw` and the PR number:
+## Collect
 
 1. Record the latest PR commit SHA and the local candidate commit SHA.
 2. Wait for required automated reviews to settle.
-3. Read every required check and paginated comment, review, and thread source. Filter to actionable unresolved threads only after collection.
+3. Collect every required check and paginated comment, review, and thread source. Apply reviewer or bot filters only after collection, then keep actionable unresolved threads.
 4. Read the latest PR commit SHA again. Restart if it changed.
-5. Re-evaluate earlier findings against the latest commit. Classify and group valid findings by cause and acceptance evidence.
+5. Re-evaluate earlier findings and group valid findings by cause and acceptance evidence.
 
-Apply reviewer or bot filters only after collection is complete.
+Keep monitoring bounded. Return states, identifiers, and short excerpts; read full evidence only when needed.
 
-## Handle results
+## Decide
 
-Follow [Documentation Writing and Review](documentation-writing-review.md) for explanatory text. Apply [Root-Cause and Sensitive-Workflow State Checks](root-cause-and-state-checks.md) to valid code or CI findings, and record the operation and failure class.
+| Result | Action |
+|---|---|
+| Valid finding or failed check | Group by cause and repair the complete group. |
+| Style suggestion or false positive | Leave unchanged unless an explanation is needed. |
+| Ambiguous, risky, broad, or design-changing feedback | Ask the user. |
+| No actionable finding | Report the remaining checks. |
 
-- **Valid finding or CI failure:** Add it to the relevant root-cause group and repair the complete group once.
-- **Style comment or false positive:** Avoid unnecessary changes; explain only when a reviewer needs the decision.
-- **Ambiguous, risky, broad, or design-changing feedback:** Ask the user before changing behavior.
+Apply [Root-Cause and Sensitive-Workflow State Checks](root-cause-and-state-checks.md) to valid code or CI findings, and record the operation and failure class.
 
-## Repair and push once
+## Repair and publish
 
 1. Set the repair scope from the complete collection for the same latest PR commit.
-2. Repair all scoped groups as one coherent change set, run targeted validation once, and commit after it passes.
-3. Reflect on your work before pushing. If the latest PR commit changes or a finding still requires a change, restart without pushing.
-4. Push and resume monitoring.
+2. Repair all accepted groups and run targeted validation once. Continue only after it passes.
+3. Follow [Documentation Writing and Review](documentation-writing-review.md) for explanatory text, then reflect on the change.
+4. Confirm that the latest PR commit has not changed and no finding still requires a change.
+5. Commit, push once, and resume this cycle.
 
-For Git or GitHub access errors, follow [Git and GitHub Access Hard Stop](git-github-hard-stop.md). Resolve mechanical conflicts in this workflow; ask only when resolution can change behavior or contributor intent.
+For Git or GitHub access errors, follow [Git and GitHub Access Hard Stop](git-github-hard-stop.md). Resolve mechanical conflicts here; ask only when resolution can change the required outcome.
