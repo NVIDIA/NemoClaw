@@ -187,6 +187,7 @@
       "fast": [
         "src/lib/actions/sandbox/supervisor-relaunch.test.ts",
         "src/lib/onboard/docker-gpu-patch-finalize.test.ts",
+        "src/lib/onboard/docker-gpu-supervisor-reconnect.test.ts",
         "src/lib/onboard/docker-startup-command-patch.test.ts",
         "src/lib/sandbox/privileged-exec.test.ts",
         "test/inference/managed/managed-gateway-control.test.ts",

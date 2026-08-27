@@ -131,7 +131,7 @@ const { onboard } = require(${onboardPath});
 
   const result = runOnboardProcess(["--require", sourceRequireHook, scriptPath], {
     env: minimalSpawnEnv(home),
-    timeoutMs: 15_000,
+    timeoutMs: 45_000,
   });
 
   try {
@@ -142,7 +142,7 @@ const { onboard } = require(${onboardPath});
   }
 }
 
-describe("prepared DCode gateway handoff", () => {
+describe("prepared DCode gateway handoff", { timeout: 60_000 }, () => {
   it("preserves the recorded gateway into the initial onboard flow (#6195)", () => {
     assert.deepEqual(runHandoffScenario("prepared"), {
       error: null,

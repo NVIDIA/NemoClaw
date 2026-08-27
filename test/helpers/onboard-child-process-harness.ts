@@ -73,6 +73,10 @@ export interface RunOnboardProcessOptions {
   cwd?: string;
   /** Kill the child after this many milliseconds. */
   timeoutMs?: number;
+  /** Signal used when the timeout expires. */
+  killSignal?: NodeJS.Signals;
+  /** Optional stdin for interactive process fixtures. */
+  input?: string;
 }
 
 /** The decoded outcome of one spawned process run. */
@@ -96,6 +100,8 @@ export function runOnboardProcess(
     encoding: "utf-8",
     env: options.env,
     ...(options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs }),
+    ...(options.killSignal === undefined ? {} : { killSignal: options.killSignal }),
+    ...(options.input === undefined ? {} : { input: options.input }),
   });
   const stdout = result.stdout ?? "";
   const stderr = result.stderr ?? "";

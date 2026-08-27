@@ -136,8 +136,19 @@ export function validateMockParity(options: {
   }
 
   for (const liveFile of [...new Set(changedFiles)].filter((file) => LIVE_TEST.test(file))) {
-    if (!entries.has(liveFile)) {
+    const entry = entries.get(liveFile);
+    if (!entry) {
       errors.push(`${liveFile}: changed live E2E needs an entry in ${DEFAULT_PARITY_MANIFEST}`);
+      continue;
+    }
+    const mappedFastTests = Array.isArray(entry.fast)
+      ? entry.fast.filter((fastFile): fastFile is string => typeof fastFile === "string")
+      : [];
+    if (
+      mappedFastTests.length > 0 &&
+      !mappedFastTests.some((fastFile) => changedFiles.includes(fastFile))
+    ) {
+      errors.push(`${liveFile}: change at least one mapped fast PR test with the live E2E`);
     }
   }
 
@@ -172,11 +183,10 @@ function changedFiles(base: string, head: string): string[] {
   )
     .split(/\r?\n/u)
     .filter(Boolean);
-  return files.filter(
-    (file) =>
-      !LIVE_TEST.test(file) ||
-      isMockParityRelevantSourceChange(sourceAtRef(base, file), sourceAtRef(head, file)),
-  );
+  return files.filter((file) => {
+    if (!LIVE_TEST.test(file) && !isFastPrTest(file)) return true;
+    return isMockParityRelevantSourceChange(sourceAtRef(base, file), sourceAtRef(head, file));
+  });
 }
 
 function main(): void {

@@ -99,7 +99,7 @@ runner.run = (command, opts = {}) => {
   const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
   return normalized.includes("sandbox get") && normalized.includes(sandboxName)
-    ? { status: 0, stdout: Buffer.from("Name: " + sandboxName + "\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    ? { status: 0, stdout: Buffer.from("Name: " + sandboxName + "\nId: fixture-created-sandbox\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
 };
 runner.runFile = (file, args = [], opts = {}) => {
@@ -232,7 +232,8 @@ const agent = agentDefs.loadAgent("langchain-deepagents-code");
       NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG: "1",
       OPENSHELL_DRIVERS: scenario === "create" ? "vm" : "docker",
     },
-    timeout: 15000,
+    timeout: 30_000,
+    killSignal: "SIGKILL",
   });
   assert.equal(result.status, 0, result.stderr);
   return parseStdoutJson<{

@@ -68,10 +68,20 @@ describe("changed live E2E mock parity", () => {
     expect(
       validateMockParity({
         manifest: manifest([{ live, fast: [fast] }]),
-        changedFiles: [live],
+        changedFiles: [live, fast],
         fileExists: exists,
       }),
     ).toEqual([]);
+  });
+
+  it("rejects a stale fast-test mapping for changed live behavior", () => {
+    expect(
+      validateMockParity({
+        manifest: manifest([{ live, fast: [fast] }]),
+        changedFiles: [live],
+        fileExists: exists,
+      }),
+    ).toEqual([`${live}: change at least one mapped fast PR test with the live E2E`]);
   });
 
   it("rejects a changed live E2E without a parity decision", () => {
@@ -84,7 +94,7 @@ describe("changed live E2E mock parity", () => {
     expect(
       validateMockParity({
         manifest: manifest([{ live, fast: ["test/e2e/live/not-fast.test.ts", fast] }]),
-        changedFiles: [live],
+        changedFiles: [live, fast],
         fileExists: (file) => file === live,
       }),
     ).toEqual([

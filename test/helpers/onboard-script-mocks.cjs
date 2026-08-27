@@ -212,7 +212,7 @@ function createStatefulMessagingProviderRunner({
     ) {
       return {
         status: 0,
-        stdout: Buffer.from(`Name: ${readySandboxName}\nId: sbx-4f2a91c0d7\n`),
+        stdout: Buffer.from(`Name: ${readySandboxName}\nId: ${ONBOARD_CREATED_SANDBOX_ID}\n`),
         stderr: Buffer.alloc(0),
       };
     }
@@ -247,6 +247,9 @@ const OPENCLAW_SECURITY_INVENTORY_PROBE = [
 
 const ONBOARD_SANDBOX_OLD_CONTAINER_ID = "a".repeat(64);
 const ONBOARD_SANDBOX_NEW_CONTAINER_ID = "b".repeat(64);
+const { ONBOARD_CREATED_SANDBOX_ID } = require(
+  path.resolve(__dirname, "./onboard-openshell-fixture.ts"),
+);
 const ONBOARD_SANDBOX_INSPECT = {
   Id: ONBOARD_SANDBOX_OLD_CONTAINER_ID,
   Image: `sha256:${"c".repeat(64)}`,
@@ -351,7 +354,7 @@ function mockCreatedSandboxIdentityList(command, options = {}) {
   const nonce = selector.slice(prefix.length);
   return JSON.stringify([
     {
-      id: options.sandboxId || "fixture-created-sandbox",
+      id: options.sandboxId || ONBOARD_CREATED_SANDBOX_ID,
       name: options.sandboxName || "my-assistant",
       labels: { "ai.nvidia.nemoclaw.create-attempt": nonce },
       resource_version: 1,
@@ -550,7 +553,7 @@ function managedSandboxPolicyReceiptFixture(entry, options = {}) {
   const gatewayName = options.gatewayName || "nemoclaw";
   const gatewayPort = options.gatewayPort || 8080;
   const lifecycleGeneration = options.lifecycleGeneration || "123e4567-e89b-42d3-a456-426614174983";
-  const sandboxId = options.sandboxId || "fixture-created-sandbox";
+  const sandboxId = options.sandboxId || ONBOARD_CREATED_SANDBOX_ID;
   const sandboxIdentityFingerprint = require("node:crypto")
     .createHash("sha256")
     .update(sandboxId)
@@ -924,6 +927,7 @@ if (process.env.NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG === "1") {
 }
 
 module.exports = {
+  ONBOARD_CREATED_SANDBOX_ID,
   mockEndpointlessProviderProfileRun,
   mockManagedEndpointlessProviderProfileRun,
   createStatefulMessagingProviderRunner,
