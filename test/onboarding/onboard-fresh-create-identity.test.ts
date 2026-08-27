@@ -44,6 +44,14 @@ describe("fresh create identity", () => {
       agent: null,
       expectedOutcome: "providerless-apf" as const,
     },
+    {
+      title: "preserves a newly created sandbox when non-TTY policy selection is cancelled (#9833)",
+      apfInterceptorRequested: false,
+      provider: "nvidia-prod",
+      model: "gpt-5.4",
+      agent: null,
+      expectedOutcome: "cancel-after-create" as const,
+    },
   ])(
     "$title",
     {
@@ -107,6 +115,8 @@ const apfInterceptorRequested = ${JSON.stringify(apfInterceptorRequested)};
 const agent = ${JSON.stringify(agent)};
 const model = ${JSON.stringify(model)};
 const provider = ${JSON.stringify(provider)};
+const cancelAfterCreate = ${JSON.stringify(expectedOutcome === "cancel-after-create")};
+let cancelPrompt = false;
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
   _deleted = _deleted || cmd.includes("sandbox delete");
@@ -163,7 +173,12 @@ runner.run = (command, opts = {}) => {
 	  registerSandbox: (entry) => { registeredSandbox = entry; },
 	});
 preflight.checkPortAvailable = async () => ({ ok: true });
-credentials.prompt = async () => "";
+credentials.prompt = async () => {
+  if (cancelPrompt) {
+    throw Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" });
+  }
+  return "";
+};
 
 const groupKillCalls = [];
 const realProcessKill = process.kill.bind(process);
@@ -211,13 +226,24 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath});
+const onboardModule = require(${onboardPath});
+const { createSandbox } = onboardModule;
+if (cancelAfterCreate) {
+  const session = onboardModule.onboardSession.createSession({
+    mode: "interactive",
+    sandboxName: "my-assistant",
+    metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
+  });
+  onboardModule.onboardSession.saveSession(session);
+}
 
-const writePayload = (sandboxName, creationError) => {
+const writePayload = (sandboxName, creationError, exitCode = 0) => {
   const createCommand = commands.find((entry) => entry.command.includes("sandbox create"));
   fs.writeFileSync(${JSON.stringify(payloadPath)}, JSON.stringify({
     sandboxName,
     creationError,
+    exitCode,
+    deleted: _deleted,
     sandboxCreated,
     sandboxListCalls,
     killCalls: createCommand?.child?.killCalls ?? [],
@@ -227,6 +253,8 @@ const writePayload = (sandboxName, creationError) => {
     stderrDestroyCalls: createCommand?.child?.stderr.destroyCalls ?? 0,
     lifecycleObservationCommands,
     registeredSandbox,
+    currentRegistryEntry: cancelAfterCreate ? registry.getSandbox("my-assistant") : null,
+    savedSession: cancelAfterCreate ? onboardModule.onboardSession.loadSession() : null,
     createCommand: createCommand?.command ?? null,
     commandNames: commands.map((entry) => entry.command),
   }));
@@ -249,8 +277,15 @@ const writePayload = (sandboxName, creationError) => {
 	  }
 	  try {
 	    const sandboxName = await createSandbox(...createArgs);
+	    if (cancelAfterCreate) {
+	      process.on("exit", (code) => writePayload(sandboxName, null, code));
+	      cancelPrompt = true;
+	      await onboardModule.selectPolicyTier();
+	      throw new Error("expected policy selection cancellation");
+	    }
 	    writePayload(sandboxName, null);
 	  } catch (error) {
+	    if (cancelAfterCreate) throw error;
 	    if (!apfInterceptorRequested) throw error;
 	    writePayload(null, error instanceof Error ? error.message : String(error));
 	  }
@@ -263,20 +298,22 @@ const writePayload = (sandboxName, creationError) => {
 `;
       fs.writeFileSync(scriptPath, script);
 
+      const childEnv = {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: expectedOutcome === "cancel-after-create" ? "" : "1",
+        OPENSHELL_DRIVERS: "docker",
+      };
       const result = spawnSync(process.execPath, [scriptPath], {
         cwd: repoRoot,
         encoding: "utf-8",
-        env: {
-          ...process.env,
-          HOME: tmpDir,
-          PATH: `${fakeBin}:${process.env.PATH || ""}`,
-          NEMOCLAW_NON_INTERACTIVE: "1",
-          OPENSHELL_DRIVERS: "docker",
-        },
+        env: childEnv,
         timeout: 30000,
       });
 
-      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.status, expectedOutcome === "cancel-after-create" ? 1 : 0, result.stderr);
+      assert.ok(fs.existsSync(payloadPath), result.stderr);
       const payload = JSON.parse(fs.readFileSync(payloadPath, "utf8"));
       const providerEffectCommands = payload.commandNames.filter((command: string) =>
         /(?:^|\s)provider (?:create|update|delete|profile import)\b|(?:^|\s)sandbox provider (?:attach|detach)\b/u.test(
@@ -352,10 +389,32 @@ const writePayload = (sandboxName, creationError) => {
         assert.doesNotMatch(payload.createCommand, /(?:^|\s)--provider(?:\s|$)/u);
         assert.deepEqual(providerExposureCommands, []);
       };
+      const assertCancellationRecovery = () => {
+        const identityFingerprint = createHash("sha256").update("sbx-fresh-create").digest("hex");
+        assert.equal(payload.exitCode, 1);
+        assert.equal(payload.sandboxName, "my-assistant");
+        assert.equal(payload.deleted, false);
+        assert.equal(payload.registeredSandbox.name, "my-assistant");
+        assert.equal(
+          payload.currentRegistryEntry.lifecycleLiveIdentityFingerprint,
+          identityFingerprint,
+        );
+        assert.equal(payload.currentRegistryEntry.name, "my-assistant");
+        assert.equal(payload.savedSession.status, "in_progress");
+        assert.equal(payload.savedSession.sandboxName, "my-assistant");
+        assert.equal(
+          payload.commandNames.some((command: string) => command.includes("sandbox delete")),
+          false,
+        );
+        assert.match(result.stderr, /preserved incomplete sandbox 'my-assistant'/u);
+        assert.match(result.stderr, new RegExp(identityFingerprint, "u"));
+        assert.match(result.stderr, /Do not delete the sandbox by mutable sandbox name/u);
+      };
       const assertions = {
         "managed-provider": assertManagedProviderCreation,
         "provider-refusal": assertProviderBackedApfRefusal,
         "providerless-apf": assertProviderlessApfCreation,
+        "cancel-after-create": assertCancellationRecovery,
       };
       assertions[expectedOutcome]();
     },

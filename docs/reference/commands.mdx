@@ -494,7 +494,6 @@ $$nemoclaw onboard --fresh --apf-interceptor --name my-apf-sandbox
 
 <Warning title="Recover an Incomplete APF Creation">
 If post-create verification or native GPU fallback fails after OpenShell may have created the sandbox, NemoClaw preserves the incomplete sandbox because automatic deletion would use its mutable name.
-The same preservation applies if you cancel at the policy-tier selector or either policy-preset selector after sandbox creation.
 Do not destroy that sandbox by name.
 Retain the reported sandbox name, create-attempt label, and durable identity fingerprint for comparison only.
 If OpenShell did not return the fingerprint, recovery remains blocked until an administrator resolves the create-attempt label to one exact sandbox.
@@ -899,7 +898,8 @@ Pairing and `TELEGRAM_ALLOWED_IDS` still govern direct messages.
 If you cancel a brand-new onboarding run at the policy-tier selector or either policy-preset selector after sandbox creation, NemoClaw preserves the incomplete sandbox, registry entry, and onboarding session for identity-bound recovery.
 NemoClaw reports the durable sandbox identity fingerprint when it is available and never deletes the sandbox by mutable name.
 Do not resume or recreate that incomplete sandbox.
-After an OpenShell administrator verifies the live durable ID, removes that exact sandbox through an identity-bound procedure, and confirms removal, repeat the original onboarding intent with `$$nemoclaw onboard --fresh --name <new-sandbox>`.
+After an OpenShell administrator verifies the live durable ID, removes that exact sandbox through an identity-bound procedure, and confirms removal, rerun the original onboarding command with the same required provider, model, agent, policy, and environment inputs, add `--fresh`, and change only the sandbox name.
+`--fresh` starts a new session and does not retain those selections.
 
 If you run onboarding again with the same sandbox name and choose a different inference provider or model, NemoClaw detects the drift and recreates the sandbox so the running agent config matches your selection.
 In interactive mode, the wizard asks for confirmation before delete and recreate.

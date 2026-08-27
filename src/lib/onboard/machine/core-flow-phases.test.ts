@@ -20,6 +20,7 @@ import {
   createProviderInferenceOnboardFlowPhase,
   createSandboxOnboardFlowPhase,
   type EndpointProvenanceOptions,
+  isCoreFlowCompleteBeforeFinalization,
   type ProviderInferenceOnboardFlowPhaseOptions,
   runCoreOnboardFlowSlice,
   type SandboxOnboardFlowPhaseOptions,
@@ -796,6 +797,12 @@ describe("core onboard flow phases", () => {
     const sandboxResult = await sandboxPhase.run(providerResult.context);
 
     expect(sandboxResult.result).toMatchObject({ type: "complete" });
+    expect(
+      isCoreFlowCompleteBeforeFinalization({
+        context: sandboxResult.context,
+        session: { machine: { state: "complete" } },
+      }),
+    ).toBe(true);
     expect(setupNim).not.toHaveBeenCalled();
     expect(setupInference).not.toHaveBeenCalled();
     expect(createSandbox).toHaveBeenCalledOnce();
