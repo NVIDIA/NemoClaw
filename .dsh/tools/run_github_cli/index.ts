@@ -16,6 +16,8 @@ export default async function run_github_cli(input: {
     throw new Error("GitHub CLI arguments exceed the total size bound");
   if (input.args.some((arg) => /^(?:-H|--header)$/u.test(arg) || /authorization\s*:/iu.test(arg)))
     throw new Error("credential-bearing GitHub CLI arguments are not allowed");
+  if (input.args.some((arg) => arg === "--hostname" || arg.startsWith("--hostname=")))
+    throw new Error("GitHub hostname selection is not allowed");
   const command = input.args[0] ?? "";
   const operation = input.args[1] ?? "";
   const allowed = {
@@ -34,6 +36,12 @@ export default async function run_github_cli(input: {
     throw new Error("GitHub CLI command is outside the audited transport allowlist");
   if ((command === "auth" && operation !== "status") || input.args.includes("--show-token"))
     throw new Error("credential-exporting GitHub CLI operations are not allowed");
+  if (
+    command === "api" &&
+    operation !== "graphql" &&
+    (!/^[A-Za-z0-9]/u.test(operation) || /[\s\\#]/u.test(operation) || operation.includes("://"))
+  )
+    throw new Error("GitHub API endpoint must be a relative GitHub API path");
   const methods = [];
   for (let index = 0; index < input.args.length; index += 1) {
     const arg = input.args[index];
@@ -62,12 +70,16 @@ export default async function run_github_cli(input: {
       /^(?:-f|-F|--field|--raw-field)$/u.test(arg) && /^query=/u.test(input.args[index + 1] ?? ""),
   );
   const queryDocument = queryArgument ?? (queryIndex >= 0 ? input.args[queryIndex + 1] : undefined);
-  const graphQlRead =
-    command === "api" &&
-    operation === "graphql" &&
-    queryDocument !== undefined &&
-    !queryDocument.includes("@") &&
-    !/(^|[^A-Za-z])mutation([^A-Za-z]|$)/iu.test(queryDocument);
+  const graphQlOperation = (() => {
+    if (command !== "api" || operation !== "graphql" || queryDocument === undefined) return null;
+    const document = queryDocument.replace(/^(?:query=|--raw-field=query=|--field=query=)/u, "");
+    const lexical = document.replace(/#[^\r\n]*/gu, " ");
+    const declarations = [...lexical.matchAll(/(?:^|[}\s])(query|mutation|subscription)\b/gu)].map(
+      (match) => match[1],
+    );
+    return declarations.length === 1 ? declarations[0] : null;
+  })();
+  const graphQlRead = graphQlOperation === "query";
   const mutating =
     (command === "api" &&
       (operation === "graphql"

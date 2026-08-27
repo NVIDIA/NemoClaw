@@ -105,9 +105,9 @@ placement and specialized evidence. Common starting points are:
 npm run test:changed
 ```
 
-Normal Git hooks validate committed changes. If hooks were skipped or unavailable, refresh
-`origin/main` after committing and run `npm run validate:pr`. This command compares committed changes
-with `origin/main`; it does not validate uncommitted changes.
+Normal Git hooks validate committed changes. If hooks were skipped or unavailable, commit the
+changes, run `git fetch origin main`, then run `npm run validate:pr`. This command compares committed
+changes with `origin/main`; it does not validate uncommitted changes.
 
 Use the commands defined in [`package.json`](package.json) for component type-checking, builds,
 documentation validation, or focused test projects. Use repository-wide validation only when the
