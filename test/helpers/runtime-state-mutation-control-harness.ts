@@ -618,6 +618,23 @@ control.KILL_SECONDS = 5
 real_exclude_writers((1000, 1001), (control._process_reference(stopped_start),))
 results["writer_signals"] = writer_signals
 results["writer_scans_remaining"] = len(scans)
+
+pid_reuse_scans = [
+    (stopped_start, intruder),
+    (stopped_start,),
+    (stopped_start,),
+    (stopped_start,),
+]
+pid_reuse_signals = []
+control._capture_writer_processes = lambda _uids: pid_reuse_scans.pop(0)
+def reject_replaced_writer(selected, requested):
+    pid_reuse_signals.append([selected.pid, requested])
+    raise control.ControlError("writer-pid-reused")
+control._signal_exact_process = reject_replaced_writer
+real_exclude_writers((1000, 1001), (control._process_reference(stopped_start),))
+results["writer_pid_reuse_signals"] = pid_reuse_signals
+results["writer_pid_reuse_scans_remaining"] = len(pid_reuse_scans)
+
 control._capture_writer_processes = lambda _uids: (intruder,)
 control.TERM_SECONDS = 0
 control.KILL_SECONDS = 0

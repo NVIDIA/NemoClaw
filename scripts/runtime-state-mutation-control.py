@@ -2798,7 +2798,15 @@ def _exclude_writers(
         for writer in unexpected:
             identity = (writer.pid, writer.start_identity, requested)
             if identity not in signalled:
-                _signal_exact_process(writer, requested)
+                try:
+                    _signal_exact_process(writer, requested)
+                except ControlError as error:
+                    if error.code != "writer-pid-reused":
+                        raise
+                    # The pidfd check proved that this captured writer no longer
+                    # owns the PID. Do not signal its replacement; the next scan
+                    # authenticates the replacement as a separate writer.
+                    continue
                 signalled.add(identity)
         time.sleep(POLL_SECONDS)
 
