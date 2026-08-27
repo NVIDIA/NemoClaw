@@ -31,10 +31,13 @@ describe("createSandboxCancelRollback", () => {
     expect(guidance).toContain("OpenShell administrator");
     expect(guidance).toContain("did not run OpenShell's mutable-name deletion command");
     expect(guidance).toContain("Do not delete the sandbox by mutable sandbox name");
-    expect(guidance).toContain("Provider registrations and gateway-bound credentials");
-    expect(guidance).toContain("remove only resources whose ownership is confirmed");
+    expect(guidance).toContain("Shared inference providers are gateway configuration");
+    expect(guidance).toContain("not sandbox cleanup targets");
+    expect(guidance).toContain("sandbox-scoped resources whose ownership is confirmed");
     expect(guidance).toContain("confirm that the exact sandbox is absent");
-    expect(guidance).toContain("rotate any credential");
+    expect(guidance).toContain("credential environment name alone does not prove exposure");
+    expect(guidance).toContain("rotate a credential only when identity-bound inspection proves");
+    expect(guidance).not.toContain("rotate any credential");
   });
 
   it.each([

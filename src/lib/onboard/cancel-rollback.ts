@@ -59,9 +59,11 @@ export function buildCancelRollbackMessage(
         ]),
     "  NemoClaw did not run OpenShell's mutable-name deletion command because the name may now identify a replacement sandbox.",
     "  Do not delete the sandbox by mutable sandbox name.",
-    "  Provider registrations and gateway-bound credentials created before cancellation may remain.",
-    "  Ask an OpenShell administrator to inspect the exact sandbox identity, provider registrations, and gateway-bound credentials. Retain them or remove only resources whose ownership is confirmed.",
-    "  Before reusing the sandbox name, confirm that the exact sandbox is absent and rotate any credential that may have been configured or exposed before cancellation.",
+    "  Shared inference providers are gateway configuration and are not sandbox cleanup targets.",
+    "  Sandbox-scoped provider registrations or gateway-bound credentials may remain when the durable recovery record lists them.",
+    "  Ask an OpenShell administrator to inspect the exact sandbox identity and remove only sandbox-scoped resources whose ownership is confirmed for this retained sandbox.",
+    "  A recorded credential environment name alone does not prove exposure; rotate a credential only when identity-bound inspection proves that it was exposed or attached to a retained sandbox-scoped resource.",
+    "  Before reusing the sandbox name, confirm that the exact sandbox is absent and record the identity-bound administrator resolution.",
   ];
 }
 
