@@ -11,6 +11,7 @@ import { nativeArtifactWorkloadReceiptFixture } from "../workload/native-artifac
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./current";
 import { createDockerRuntimeProviderBundle } from "./docker";
 import { createMxcRuntimeProviderBundle } from "./mxc";
+import type { MxcNativeArtifactControlPlane } from "./mxc-bootstrap-operations";
 import {
   createRuntimeProviderBundleRegistry,
   RuntimeProviderRegistrationError,
@@ -21,6 +22,18 @@ const NATIVE_RECEIPT = nativeArtifactWorkloadReceiptFixture(
   encodeManagedStartupProfile(managedStartupE2eProfile("openclaw")),
 );
 
+function inactiveBootstrapControlPlane(): MxcNativeArtifactControlPlane {
+  return {
+    contractVersion: 1,
+    providerId: "mxc",
+    verifyAndCreate: async () => ({ status: "unknown" }),
+    verifyReadiness: async () => {
+      throw new Error("inactive test control plane has no readiness evidence");
+    },
+    recoverCreate: async () => ({ status: "absent" }),
+  };
+}
+
 function candidateBundle() {
   return createMxcRuntimeProviderBundle({
     hostFacts: {
@@ -28,36 +41,31 @@ function candidateBundle() {
       nativeArchitecture: "x64",
       release: "10.0.28000.1836",
     },
+    bootstrapControlPlane: inactiveBootstrapControlPlane(),
   });
 }
 
 describe("inactive OpenShell MXC runtime provider", () => {
-  it.each([
-    "plan",
-    "capabilities",
-    "preflightDoctor",
-    "gateway",
-    "workload",
-    "lifecycle",
-    "mutationAuthority",
-    "stateMutation",
-    "bootstrap",
-    "snapshot",
-    "recovery",
-    "cleanup",
-    "containerEngine",
-  ] as const)(
-    "registers one identity-consistent candidate without entering production selection [%s] (#8178)",
-    (surface) => {
-      const providers = createRuntimeProviderBundleRegistry([["mxc", candidateBundle()]]);
-      const provider = providers.mxc!;
+  it("registers one identity-consistent candidate without entering production selection (#8178)", () => {
+    const providers = createRuntimeProviderBundleRegistry([["mxc", candidateBundle()]]);
+    const provider = providers.mxc!;
 
-      expect(Object.hasOwn(CURRENT_RUNTIME_PROVIDER_BUNDLES, "mxc")).toBe(false);
-      expect(provider.identity).toMatchObject({ id: "mxc", displayName: "OpenShell MXC" });
-
-      expect(provider[surface].providerId, surface).toBe("mxc");
-    },
-  );
+    expect(Object.hasOwn(CURRENT_RUNTIME_PROVIDER_BUNDLES, "mxc")).toBe(false);
+    expect(provider.identity).toMatchObject({ id: "mxc", displayName: "OpenShell MXC" });
+    expect(provider.plan.providerId).toBe("mxc");
+    expect(provider.capabilities.providerId).toBe("mxc");
+    expect(provider.preflightDoctor.providerId).toBe("mxc");
+    expect(provider.gateway.providerId).toBe("mxc");
+    expect(provider.workload.providerId).toBe("mxc");
+    expect(provider.lifecycle.providerId).toBe("mxc");
+    expect(provider.mutationAuthority.providerId).toBe("mxc");
+    expect(provider.stateMutation.providerId).toBe("mxc");
+    expect(provider.bootstrap.providerId).toBe("mxc");
+    expect(provider.snapshot.providerId).toBe("mxc");
+    expect(provider.recovery.providerId).toBe("mxc");
+    expect(provider.cleanup.providerId).toBe("mxc");
+    expect(provider.containerEngine.providerId).toBe("mxc");
+  });
 
   it("accepts only a validated OpenClaw Windows native-artifact receipt (#8178)", () => {
     const provider = candidateBundle();
@@ -97,6 +105,7 @@ describe("inactive OpenShell MXC runtime provider", () => {
         nativeArchitecture: "x64",
         release: "6.6.87.2-microsoft-standard-WSL2",
       },
+      bootstrapControlPlane: inactiveBootstrapControlPlane(),
     });
     expect(rejected.preflightDoctor.inspectHost()).toMatchObject({
       status: "fail",
@@ -116,16 +125,6 @@ describe("inactive OpenShell MXC runtime provider", () => {
     "fails closed for every unqualified mutation and lifecycle surface [$scenario] (#8178)",
     ({ scenario }) => {
       const provider = candidateBundle();
-
-      expect(provider.capabilities).toMatchObject({
-        hostLocalInference: false,
-        directLifecycle: false,
-        workloadImageCleanup: false,
-        readOnlyHostMounts: {
-          supported: false,
-          reason: expect.stringMatching(/host-directory sharing contract/u),
-        },
-      });
       const surface = (
         {
           lifecycle: provider.lifecycle,
@@ -139,16 +138,29 @@ describe("inactive OpenShell MXC runtime provider", () => {
       )[scenario]!;
       expect(surface).toMatchObject({ providerId: "mxc", supported: false });
       expect("reason" in surface ? surface.reason : "").not.toBe("");
-
-      expect(provider.preflightDoctor.preflightLifecycle("start", {} as never)).toMatchObject({
-        exitCode: 1,
-        message: expect.stringMatching(/direct start and stop/u),
-      });
-      expect(() => requireRuntimeProviderMutationAuthority(provider, "registration")).toThrow(
-        /does not authorize 'registration'/u,
-      );
     },
   );
+
+  it("keeps unqualified capability and mutation authority disabled (#8178)", () => {
+    const provider = candidateBundle();
+
+    expect(provider.capabilities).toMatchObject({
+      hostLocalInference: false,
+      directLifecycle: false,
+      workloadImageCleanup: false,
+      readOnlyHostMounts: {
+        supported: false,
+        reason: expect.stringMatching(/host-directory sharing contract/u),
+      },
+    });
+    expect(provider.preflightDoctor.preflightLifecycle("start", {} as never)).toMatchObject({
+      exitCode: 1,
+      message: expect.stringMatching(/direct start and stop/u),
+    });
+    expect(() => requireRuntimeProviderMutationAuthority(provider, "registration")).toThrow(
+      /does not authorize 'registration'/u,
+    );
+  });
 
   it("exposes native-artifact bootstrap without enabling direct lifecycle or cleanup (#8178)", () => {
     const provider = candidateBundle();
@@ -157,7 +169,7 @@ describe("inactive OpenShell MXC runtime provider", () => {
       providerId: "mxc",
       supported: true,
       bootstrapKind: "native-artifact",
-      contractVersion: 3,
+      contractVersion: 4,
     });
     expect(provider.lifecycle).toMatchObject({
       providerId: "mxc",
@@ -176,11 +188,11 @@ describe("inactive OpenShell MXC runtime provider", () => {
     });
   });
 
-  it("rejects the version-2 separated native-artifact bootstrap operations contract (#8178)", () => {
+  it("rejects the version-3 caller-supplied native-artifact operations contract (#8178)", () => {
     const provider = candidateBundle();
     const obsolete = {
       ...provider,
-      bootstrap: { ...provider.bootstrap, contractVersion: 2 },
+      bootstrap: { ...provider.bootstrap, contractVersion: 3 },
     } as unknown as typeof provider;
 
     expect(() => createRuntimeProviderBundleRegistry([["mxc", obsolete]])).toThrow(
