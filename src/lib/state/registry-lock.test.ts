@@ -330,6 +330,64 @@ describe("process-bound registry locking", () => {
   });
 });
 
+// Exhausting the budget used to report only that it ran out, leaving the
+// documented `onboard --resume` recovery with nothing to act on (#10461).
+describe("registry lock exhaustion remediation", () => {
+  it("names a live owner and how to take the lock from it", () => {
+    const test = fixture("nemoclaw-live-owner-remediation-");
+    writeExactGeneration(test, 4242, PROCESS_IDENTITY);
+    markStale(test.lockDir);
+
+    expect(() =>
+      withRegistryLockAt(test.registryFile, () => undefined, {
+        ...exactDeps({ readProcessIdentity: () => null }),
+        maxRetries: 1,
+      }),
+    ).toThrow(`Owner PID 4242 is still running; wait for it to finish, or stop it and remove it with: rm -rf ${JSON.stringify(test.lockDir)}`);
+  });
+
+  it("reports a stale lock when the owner exits while the contender waits", () => {
+    const test = fixture("nemoclaw-dead-owner-remediation-");
+    writeExactGeneration(test, 4242, PROCESS_IDENTITY);
+    markStale(test.lockDir);
+    // Alive for the retry loop, gone by the time the budget runs out.
+    const liveness = vi.fn(() => liveness.mock.calls.length <= 1);
+
+    expect(() =>
+      withRegistryLockAt(test.registryFile, () => undefined, {
+        ...exactDeps({ isProcessAlive: liveness, readProcessIdentity: () => null }),
+        maxRetries: 1,
+      }),
+    ).toThrow(`Owner PID 4242 is no longer running, so the lock is stale; remove it with: rm -rf ${JSON.stringify(test.lockDir)}`);
+  });
+
+  it("reports an ownerless lock directory", () => {
+    const test = fixture("nemoclaw-ownerless-remediation-");
+    fs.mkdirSync(test.lockDir, { mode: 0o700, recursive: true });
+    markStale(test.lockDir);
+
+    expect(() =>
+      withRegistryLockAt(test.registryFile, () => undefined, {
+        ...exactDeps({ now: () => LOCK_MTIME }),
+        maxRetries: 1,
+      }),
+    ).toThrow(`The lock records no owner; remove it with: rm -rf ${JSON.stringify(test.lockDir)}`);
+  });
+
+  it("still reports the retry count alongside the remediation", () => {
+    const test = fixture("nemoclaw-retry-count-remediation-");
+    fs.mkdirSync(test.lockDir, { mode: 0o700, recursive: true });
+    markStale(test.lockDir);
+
+    expect(() =>
+      withRegistryLockAt(test.registryFile, () => undefined, {
+        ...exactDeps({ now: () => LOCK_MTIME }),
+        maxRetries: 1,
+      }),
+    ).toThrow(/after 1 retries\./);
+  });
+});
+
 describe("generation-safe registry lock removal", () => {
   it("holds and releases one opaque process-bound generation", () => {
     const test = fixture("nemoclaw-opaque-handle-");

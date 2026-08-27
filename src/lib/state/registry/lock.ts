@@ -223,7 +223,31 @@ function acquire(directory: string, exact: boolean, deps: RegistryLockDeps): Acq
     }
     return { ...generation, ownerFile, processFile, processRecord: record };
   }
-  throw new Error(`Failed to acquire lock on ${directory} after ${String(retries)} retries`);
+  throw new Error(
+    `Failed to acquire lock on ${directory} after ${String(retries)} retries. ${lockHolderRemediation(paths, alive, directory)}`,
+  );
+}
+
+/**
+ * Describe who holds an unacquirable lock and how to clear it.
+ *
+ * Exhausting the retry budget reported only that the budget ran out, which
+ * leaves the documented recovery path — rerunning onboard with `--resume` —
+ * with nothing to act on. Name the recorded owner, whether it still exists,
+ * and the command that clears the lock, matching the guidance the onboard
+ * lock already prints in `beginPortableOnboardRetirementEntry` (#10461).
+ */
+function lockHolderRemediation(
+  paths: Paths,
+  alive: (pid: number) => boolean,
+  directory: string,
+): string {
+  const removal = `remove it with: rm -rf ${JSON.stringify(directory)}`;
+  const pid = ownerPid(paths.owner);
+  if (pid === null) return `The lock records no owner; ${removal}`;
+  return alive(pid)
+    ? `Owner PID ${String(pid)} is still running; wait for it to finish, or stop it and ${removal}`
+    : `Owner PID ${String(pid)} is no longer running, so the lock is stale; ${removal}`;
 }
 
 function release(acquired: Acquired): void {
