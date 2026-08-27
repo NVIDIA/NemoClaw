@@ -265,8 +265,7 @@ export default async function commit_push_refresh_pr(input: {
             remoteState: pushResult.remoteState,
             blocker: pushResult.blocker,
             recovery:
-              "Re-read verification for the published commit, reconcile the PR branch, and continue evidence refresh only after every commit is verified. Do not create or push another commit.",
-            recovery: "Reconcile the recorded PR branch before any retry.",
+              "Reconcile the recorded PR branch and local commit without writing. Retry publication only if the expected commit is absent. Refresh evidence only after the PR commit and verification match the local commit.",
           }),
         };
       if (!pushResult.allVerified)
