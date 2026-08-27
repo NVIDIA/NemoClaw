@@ -7,6 +7,7 @@ import {
   rebuildHermesRegistryImageState,
   requireRebuildHermesFinalImageRef,
   requireRebuildHermesReplacementLifecycleReceipt,
+  verifyRebuildHermesManagedImageIdentity,
 } from "../live/rebuild-hermes-image-state.ts";
 
 describe("Hermes rebuild fixture image ownership", () => {
@@ -76,6 +77,34 @@ describe("Hermes rebuild fixture image ownership", () => {
         lifecycleLiveIdentityFingerprint: "unproven",
       }),
     ).toThrow("live lifecycle identity");
+  });
+
+  it("binds the running managed image to its exact immutable registry receipt", () => {
+    const reference = `ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:${"a".repeat(64)}`;
+    const inspect = JSON.stringify({
+      Id: `sha256:${"b".repeat(64)}`,
+      RepoDigests: [reference],
+      Os: "linux",
+      Architecture: "amd64",
+    });
+
+    expect(verifyRebuildHermesManagedImageIdentity(reference, inspect)).toEqual({
+      lane: "managed-image",
+      reference,
+      imageId: `sha256:${"b".repeat(64)}`,
+      os: "linux",
+      architecture: "amd64",
+      repoDigestVerified: true,
+    });
+    expect(() =>
+      verifyRebuildHermesManagedImageIdentity(
+        `ghcr.io/nvidia/nemoclaw/hermes-sandbox@sha256:${"c".repeat(64)}`,
+        inspect,
+      ),
+    ).toThrow("exact managed image receipt");
+    expect(() => verifyRebuildHermesManagedImageIdentity(reference, "not-json")).toThrow(
+      "not valid JSON",
+    );
   });
 
   it("retains the exact OpenShell-derived tag in managed rebuild state", () => {

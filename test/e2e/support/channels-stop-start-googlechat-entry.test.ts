@@ -10,6 +10,7 @@ import {
   addGooglechatForChannelsStopStartLiveE2e,
   GOOGLECHAT_E2E_ACCESS_TOKEN,
   installGooglechatCredentialFixture,
+  rebuildGooglechatForChannelsStopStartLiveE2e,
 } from "../live/channels-stop-start-googlechat-entry.ts";
 
 type FixtureRunner = typeof import("../../../src/lib/adapters/openshell/runtime.ts").runOpenshell;
@@ -207,6 +208,29 @@ describe("channels stop/start Google Chat live composition", () => {
         },
       ),
     ).rejects.toThrow("planned rebuild failed");
+    expect(restore).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the provider fixture installed across a later lifecycle rebuild", async () => {
+    const events: string[] = [];
+    const restore = vi.fn(() => events.push("restore"));
+
+    await rebuildGooglechatForChannelsStopStartLiveE2e(
+      { sandboxName: "e2e-oc-ch-cycle", agent: "openclaw" },
+      {
+        installCredentialFixture: () => {
+          events.push("install");
+          return restore;
+        },
+        addSandboxChannel: async () => {},
+        rebuildSandbox: async (_sandboxName, args) => {
+          expect(args).toEqual(["--yes"]);
+          events.push("rebuild");
+        },
+      },
+    );
+
+    expect(events).toEqual(["install", "rebuild", "restore"]);
     expect(restore).toHaveBeenCalledOnce();
   });
 

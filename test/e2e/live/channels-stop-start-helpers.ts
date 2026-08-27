@@ -571,6 +571,21 @@ async function addGooglechatForLiveE2e(
   );
 }
 
+async function rebuildWithGooglechatFixtureForLiveE2e(
+  host: import("../fixtures/clients/host.ts").HostCliClient,
+  env: NodeJS.ProcessEnv,
+  redactions: string[],
+) {
+  const entrypoint = path.join(REPO_ROOT, "test/e2e/live/channels-stop-start-googlechat-entry.ts");
+  const tsx = path.join(REPO_ROOT, "node_modules/tsx/dist/cli.mjs");
+  return host.command("node", [tsx, entrypoint, SANDBOX_NAME, "--rebuild-only"], {
+    artifactName: `rebuild-start-all-${AGENT}`,
+    env,
+    redactionValues: redactions,
+    timeoutMs: 30 * 60_000,
+  });
+}
+
 async function policyPresetState(
   host: import("../fixtures/clients/host.ts").HostCliClient,
   env: NodeJS.ProcessEnv,
@@ -786,13 +801,7 @@ export async function runChannelsStopStartTarget({
   for (const channel of CHANNELS) await runChannelCommand(host, env, redactions, "start", channel);
   expectChannelInputs(env);
   for (const channel of CHANNELS) expectPlanChannelState(channel, "active");
-  const startRebuild = await rebuildSandbox(
-    host,
-    SANDBOX_NAME,
-    env,
-    redactions,
-    `rebuild-start-all-${AGENT}`,
-  );
+  const startRebuild = await rebuildWithGooglechatFixtureForLiveE2e(host, env, redactions);
   expectExitZero(startRebuild, "rebuild after starting all channels");
   expectChannelInputs(env);
   await expectAgentConfig(sandbox, "active", "after-start", redactions);

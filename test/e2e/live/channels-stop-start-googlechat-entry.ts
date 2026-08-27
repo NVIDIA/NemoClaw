@@ -255,6 +255,23 @@ export async function addAndRebuildGooglechatForChannelsStopStartLiveE2e(
   }
 }
 
+/** Keep the fake OAuth mint installed while a later lifecycle rebuild reconciles Google Chat. */
+export async function rebuildGooglechatForChannelsStopStartLiveE2e(
+  input: Pick<GooglechatLiveE2eComposition, "sandboxName" | "agent">,
+  dependencies: GooglechatLiveE2eDependencies = DEFAULT_DEPENDENCIES,
+): Promise<void> {
+  if (!dependencies.rebuildSandbox) {
+    throw new Error("Google Chat live rebuild dependency is unavailable");
+  }
+
+  const restore = dependencies.installCredentialFixture(input.sandboxName, input.agent);
+  try {
+    await dependencies.rebuildSandbox(input.sandboxName, ["--yes"]);
+  } finally {
+    restore();
+  }
+}
+
 async function main(): Promise<void> {
   const agent = (process.env.NEMOCLAW_CHANNELS_STOP_START_AGENT ?? process.env.NEMOCLAW_AGENT) as
     | AgentKind
@@ -262,8 +279,15 @@ async function main(): Promise<void> {
   if (agent !== "openclaw" && agent !== "hermes") {
     throw new Error("NEMOCLAW_CHANNELS_STOP_START_AGENT must be openclaw or hermes");
   }
+  const sandboxName = process.argv[2] ?? "";
+  const mode = process.argv[3];
+  if (mode === "--rebuild-only") {
+    await rebuildGooglechatForChannelsStopStartLiveE2e({ sandboxName, agent });
+    return;
+  }
+  if (mode) throw new Error(`unknown Google Chat live E2E mode '${mode}'`);
   await addAndRebuildGooglechatForChannelsStopStartLiveE2e({
-    sandboxName: process.argv[2] ?? "",
+    sandboxName,
     agent,
     audience: process.env.GOOGLECHAT_AUDIENCE ?? "",
   });
