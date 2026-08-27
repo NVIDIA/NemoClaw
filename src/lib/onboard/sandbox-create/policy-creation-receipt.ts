@@ -200,6 +200,7 @@ export function verifyCreatedSandboxPolicyCreationReceipt(
     sandboxName: input.sandboxName,
     gatewayName: input.gatewayName,
   });
+  waitForCreatedSandboxPolicyReadiness(input, before.policyIdentity.activeVersion, deps);
   let liveBasePolicy: ReturnType<typeof parseOpenShellPolicy>["policy"];
   try {
     liveBasePolicy = parseOpenShellPolicy(
@@ -208,7 +209,6 @@ export function verifyCreatedSandboxPolicyCreationReceipt(
   } catch {
     refusal("the live base policy could not be compared");
   }
-  waitForCreatedSandboxPolicyReadiness(input, before.policyIdentity.activeVersion, deps);
   const after = inspectSandboxPolicyAuthority({
     sandboxName: input.sandboxName,
     gatewayName: input.gatewayName,

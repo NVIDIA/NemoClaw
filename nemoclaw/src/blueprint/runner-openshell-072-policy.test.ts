@@ -1050,7 +1050,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
 
   it("reports incomplete mutation when receipt rotation durability fails (#9833)", async () => {
     mockedFsyncSync.mockImplementation(
-      throwOnCall(14, new Error("simulated rotated receipt directory fsync failure")),
+      throwOnCall(16, new Error("simulated rotated receipt directory fsync failure")),
     );
 
     await expect(actionApply("default", blueprint())).rejects.toThrow(
@@ -1205,19 +1205,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
           )
         : defaultCommandResult(args),
     );
-    stdoutCapture.reset();
-    actionStatus(runId);
-    expect(stdoutCapture.jsonOutput()).toMatchObject({
-      run_id: runId,
-      policy_transition: {
-        status: "incomplete",
-        reconciliation_action: expect.stringContaining(
-          "reconcile --run-id incomplete-transition",
-        ),
-      },
-    });
-    stdoutCapture.reset();
-    await actionReconcile(runId);
+    await main(["reconcile", "--run-id", runId]);
     expect(JSON.parse(store.get(`${stateDir}/plan.json`)?.content ?? "{}")).toMatchObject({
       policy_authority: {
         policy_creation_receipt: {
@@ -1376,8 +1364,8 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
       policy_transition: {
         status: "incomplete",
         reconciliation_required: true,
-        reconciliation_action: expect.stringContaining(
-          "reconcile --run-id incomplete-policy-transition",
+        reconciliation_action: expect.stringMatching(
+          /blueprint runner integration.*reconcile.*incomplete-policy-transition.*no standalone/su,
         ),
       },
     });

@@ -354,7 +354,10 @@ describe("created sandbox policy receipt", () => {
         events.push("policy-initial");
         return metadata();
       })
-      .mockReturnValueOnce({ status: 0, output: POLICY, stdout: POLICY, stderr: "" })
+      .mockImplementationOnce(() => {
+        events.push("base-policy");
+        return { status: 0, output: POLICY, stdout: POLICY, stderr: "" };
+      })
       .mockImplementationOnce(() => {
         events.push("policy-later");
         return metadata({ hash: "sha256:replacement", active_version: 5 });
@@ -372,6 +375,7 @@ describe("created sandbox policy receipt", () => {
       "policy-version-pending",
       "poll",
       "policy-ready",
+      "base-policy",
       "policy-later",
     ]);
     expect(sleep).toHaveBeenCalledExactlyOnceWith(1);
@@ -563,9 +567,7 @@ describe("created sandbox policy receipt", () => {
     vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
       .mockReturnValueOnce(gatewayInfo())
       .mockReturnValueOnce(metadata())
-      .mockReturnValueOnce(
-        metadata({ policy: { version: 1, network_policies: {} } }),
-      );
+      .mockReturnValueOnce(metadata({ policy: { version: 1, network_policies: {} } }));
 
     expect(() =>
       verifyCreatedApfInterceptorPolicyRegistration(

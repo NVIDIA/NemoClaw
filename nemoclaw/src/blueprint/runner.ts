@@ -182,6 +182,7 @@ type BlueprintPolicyCreationTransition = {
   gateway_port: number;
   sandbox_name: string;
   lifecycle_generation: string;
+  sandbox_identity_fingerprint?: string;
 };
 
 type BlueprintPolicyTransitionReceipt = {
@@ -200,8 +201,23 @@ type StatusPolicyTransition = BlueprintPolicyTransitionReceipt & {
   reconciliation_action?: string;
 };
 
+type StatusPolicyCreationTransition = BlueprintPolicyCreationTransition & {
+  recovery_required: true;
+  recovery_action: string;
+};
+
 function policyTransitionReconciliationAction(runId: string): string {
-  return `Do not retry \`apply\` or \`rollback\`. Run the NemoClaw blueprint runner's \`reconcile --run-id ${runId}\` action for this exact run.`;
+  return `Do not retry \`apply\` or \`rollback\`. Through the NemoClaw blueprint runner integration that created this run, invoke its \`reconcile\` action with run ID ${runId}. There is no standalone \`reconcile\` host command.`;
+}
+
+function policyCreationRecoveryAction(
+  runId: string,
+  transition: BlueprintPolicyCreationTransition,
+): string {
+  const identity = transition.sandbox_identity_fingerprint
+    ? `The recorded immutable sandbox identity fingerprint is ${transition.sandbox_identity_fingerprint}.`
+    : "No immutable sandbox identity fingerprint was recorded; an OpenShell administrator must establish it from trusted gateway evidence before any recovery mutation.";
+  return `Automated retry, rollback, detach, and cleanup are disabled for run ${runId}. Preserve the run receipt and retained resources. Through the NemoClaw blueprint runner integration, inspect status for run ${runId}, then ask an OpenShell administrator to perform identity-bound recovery for sandbox ${JSON.stringify(transition.sandbox_name)} on gateway ${JSON.stringify(transition.gateway)} (${transition.gateway_host}:${String(transition.gateway_port)}) and lifecycle generation ${transition.lifecycle_generation}. ${identity} Do not mutate any sandbox or provider by name.`;
 }
 
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
@@ -241,6 +257,7 @@ const POLICY_CREATION_TRANSITION_KEYS = [
   "gateway_port",
   "sandbox_name",
   "lifecycle_generation",
+  "sandbox_identity_fingerprint",
 ] as const;
 const POLICY_TRANSITION_KEYS = [
   "status",
@@ -1261,7 +1278,7 @@ type StatusRunPlan = {
   inference_provider_created_by_apply?: boolean;
   policy_additions?: PolicyAdditions;
   policy_authority?: BlueprintPolicyAuthorityReceipt;
-  policy_creation_transition?: BlueprintPolicyCreationTransition;
+  policy_creation_transition?: StatusPolicyCreationTransition;
   policy_transition?: StatusPolicyTransition;
   inference?: SafeInferencePlan;
   identity?: RuntimeIdentityReceipt;
@@ -1330,7 +1347,10 @@ function isBlueprintPolicyCreationTransition(
     isValidPort(value.gateway_port) &&
     isValidName(value.sandbox_name) &&
     typeof value.lifecycle_generation === "string" &&
-    UUID_PATTERN.test(value.lifecycle_generation)
+    UUID_PATTERN.test(value.lifecycle_generation) &&
+    (value.sandbox_identity_fingerprint === undefined ||
+      (typeof value.sandbox_identity_fingerprint === "string" &&
+        /^[a-f0-9]{64}$/u.test(value.sandbox_identity_fingerprint)))
   );
 }
 
@@ -1565,7 +1585,14 @@ function buildStatusRunPlan(source: unknown, fallbackRunId: string): StatusRunPl
     return null;
   }
   if (isBlueprintPolicyCreationTransition(source.policy_creation_transition)) {
-    safePlan.policy_creation_transition = source.policy_creation_transition;
+    safePlan.policy_creation_transition = {
+      ...source.policy_creation_transition,
+      recovery_required: true,
+      recovery_action: policyCreationRecoveryAction(
+        safePlan.run_id,
+        source.policy_creation_transition,
+      ),
+    };
   }
   if (
     source.policy_transition !== undefined &&
@@ -1916,6 +1943,13 @@ export async function actionApply(
       policyGateway.name,
       sandboxName,
     );
+    if (configuredSandboxPolicy) {
+      policyCreationTransition = {
+        ...policyCreationTransition!,
+        sandbox_identity_fingerprint: sandboxIdentityFingerprint,
+      };
+      persistRunPlan();
+    }
     const observedPolicyAuthority = await inspectBlueprintPolicyAuthority(
       policyGateway.name,
       sandboxName,
