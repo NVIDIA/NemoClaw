@@ -1824,7 +1824,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             operation: `verify effective policy for sandbox '${sandboxName}'`,
           };
           const registration = apfInterceptorRequested
-            ? verifyCreatedApfInterceptorPolicyRegistration(registrationInput)
+            ? verifyCreatedApfInterceptorPolicyRegistration(registrationInput, {
+                sleep: sleepSeconds,
+              })
             : verifyCreatedSandboxPolicyRegistration(
                 {
                   ...registrationInput,

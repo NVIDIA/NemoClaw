@@ -93,6 +93,7 @@ function waitForCreatedSandboxPolicyReadiness(
   input: CreatedSandboxPolicyReceiptInput,
   policyVersion: number,
   deps: CreatedSandboxPolicyReceiptDeps,
+  reject: (reason: string) => never = refusal,
 ): void {
   const inspectReadiness = deps.inspectPolicyReadiness ?? inspectOpenShellSandboxPolicyReadiness;
   for (let observation = 0; observation < POLICY_READINESS_MAX_OBSERVATIONS; observation += 1) {
@@ -104,13 +105,13 @@ function waitForCreatedSandboxPolicyReadiness(
     });
     if (readiness.state === "ready") return;
     if (observation === POLICY_READINESS_MAX_OBSERVATIONS - 1) {
-      refusal(
+      reject(
         readiness.reason === "sandbox-not-ready"
           ? "the exact sandbox did not reach Ready during policy verification"
           : "the exact sandbox did not activate the verified policy version",
       );
     }
-    if (!deps.sleep) refusal("the bounded policy readiness check could not continue");
+    if (!deps.sleep) reject("the bounded policy readiness check could not continue");
     deps.sleep(POLICY_READINESS_POLL_INTERVAL_SECONDS);
   }
 }
@@ -232,6 +233,17 @@ function verifyReadOnlyPolicyBoundary(
     operation: input.operation,
     sandboxName: input.sandboxName,
   });
+  waitForCreatedSandboxPolicyReadiness(
+    input,
+    before.policyIdentity.activeVersion,
+    deps,
+    (reason) => {
+      throw new PolicyAuthorityRefusalError(
+        `Refusing to ${input.operation}: ${reason}.`,
+        before.authority,
+      );
+    },
+  );
   const after = inspectSandboxPolicyAuthority({
     sandboxName: input.sandboxName,
     gatewayName: input.gatewayName,

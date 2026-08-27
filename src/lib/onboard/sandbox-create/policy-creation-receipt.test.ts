@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as openshellRuntimeModule from "../../adapters/openshell/runtime";
 import {
+  type CreatedSandboxPolicyReceiptDeps,
   revalidateCreatedSandboxPolicyRegistration,
   verifyCreatedApfInterceptorPolicyRegistration,
   verifyCreatedSandboxPolicyRegistration,
@@ -82,6 +83,39 @@ function gatewayInfo(): { status: number; output: string; stdout: string; stderr
 function readyPolicy() {
   return { state: "ready" as const };
 }
+
+function readyReadOnlyPolicyDeps(): CreatedSandboxPolicyReceiptDeps {
+  return {
+    readFile: vi.fn(() => POLICY) as never,
+    inspectPolicyReadiness: readyPolicy,
+    sleep: vi.fn(),
+  };
+}
+
+const READ_ONLY_REGISTRATION_CASES = [
+  {
+    label: "APF-selected",
+    policySource: "sandbox",
+    verify: (deps: CreatedSandboxPolicyReceiptDeps) =>
+      verifyCreatedApfInterceptorPolicyRegistration(
+        { ...INPUT, operation: "verify APF-selected policy" },
+        deps,
+      ),
+  },
+  {
+    label: "externally managed",
+    policySource: "global",
+    verify: (deps: CreatedSandboxPolicyReceiptDeps) =>
+      verifyCreatedSandboxPolicyRegistration(
+        {
+          ...INPUT,
+          operation: "verify externally managed policy",
+          plannedAuthority: "externally-managed",
+        },
+        deps,
+      ),
+  },
+] as const;
 
 describe("created sandbox policy receipt", () => {
   beforeEach(() => {
@@ -301,7 +335,7 @@ describe("created sandbox policy receipt", () => {
     expect(
       verifyCreatedApfInterceptorPolicyRegistration(
         { ...INPUT, operation: "verify APF-selected policy" },
-        { readFile: vi.fn(() => POLICY) as never },
+        readyReadOnlyPolicyDeps(),
       ),
     ).toEqual({
       policyAuthority: "externally-managed",
@@ -324,7 +358,7 @@ describe("created sandbox policy receipt", () => {
           operation: "verify externally managed policy",
           plannedAuthority: "externally-managed",
         },
-        { readFile: vi.fn(() => POLICY) as never },
+        readyReadOnlyPolicyDeps(),
       ),
     ).toEqual({
       policyAuthority: "externally-managed",
@@ -357,6 +391,58 @@ describe("created sandbox policy receipt", () => {
     ).toBe(registration);
   });
 
+  it.each(READ_ONLY_REGISTRATION_CASES)(
+    "waits for the exact $label sandbox policy version before registration (#9833)",
+    ({ policySource, verify }) => {
+      vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+        .mockReturnValueOnce(gatewayInfo())
+        .mockReturnValueOnce(metadata({ policy_source: policySource }))
+        .mockReturnValueOnce(metadata({ policy_source: policySource }));
+      const inspectPolicyReadiness = vi
+        .fn()
+        .mockReturnValueOnce({
+          state: "transient" as const,
+          reason: "policy-version-pending" as const,
+        })
+        .mockReturnValueOnce({ state: "ready" as const });
+      const sleep = vi.fn();
+
+      expect(
+        verify({
+          readFile: vi.fn(() => POLICY) as never,
+          inspectPolicyReadiness,
+          sleep,
+        }),
+      ).toMatchObject({ policyAuthority: "externally-managed" });
+      expect(inspectPolicyReadiness).toHaveBeenCalledTimes(2);
+      expect(sleep).toHaveBeenCalledExactlyOnceWith(1);
+    },
+  );
+
+  it.each(READ_ONLY_REGISTRATION_CASES)(
+    "refuses $label registration while the exact sandbox remains non-Ready (#9833)",
+    ({ policySource, verify }) => {
+      vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+        .mockReturnValueOnce(gatewayInfo())
+        .mockReturnValueOnce(metadata({ policy_source: policySource }));
+      const inspectPolicyReadiness = vi.fn(() => ({
+        state: "transient" as const,
+        reason: "sandbox-not-ready" as const,
+      }));
+      const sleep = vi.fn();
+
+      expect(() =>
+        verify({
+          readFile: vi.fn(() => POLICY) as never,
+          inspectPolicyReadiness,
+          sleep,
+        }),
+      ).toThrow(/did not reach Ready during policy verification/u);
+      expect(inspectPolicyReadiness).toHaveBeenCalledTimes(5);
+      expect(sleep).toHaveBeenCalledTimes(4);
+    },
+  );
+
   it("refuses a global policy source for APF-selected creation (#9833)", () => {
     vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
       .mockReturnValueOnce(gatewayInfo())
@@ -365,7 +451,7 @@ describe("created sandbox policy receipt", () => {
     expect(() =>
       verifyCreatedApfInterceptorPolicyRegistration(
         { ...INPUT, operation: "verify APF-selected policy" },
-        { readFile: vi.fn(() => POLICY) as never },
+        readyReadOnlyPolicyDeps(),
       ),
     ).toThrow(/does not match the selected read-only policy source/u);
   });
@@ -378,7 +464,7 @@ describe("created sandbox policy receipt", () => {
     expect(() =>
       verifyCreatedApfInterceptorPolicyRegistration(
         { ...INPUT, operation: "verify APF-selected policy" },
-        { readFile: vi.fn(() => POLICY) as never },
+        readyReadOnlyPolicyDeps(),
       ),
     ).toThrow(/verified policy must supply the exact required entries/u);
   });
@@ -395,7 +481,7 @@ describe("created sandbox policy receipt", () => {
     expect(() =>
       verifyCreatedApfInterceptorPolicyRegistration(
         { ...INPUT, operation: "verify APF-selected policy" },
-        { readFile: vi.fn(() => POLICY) as never },
+        readyReadOnlyPolicyDeps(),
       ),
     ).toThrow(/effective sandbox policy changed during verification/u);
   });
