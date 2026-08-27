@@ -89,7 +89,9 @@ describe("policy channel remove/enable flows", () => {
     expect(String(command)).toContain(
       "/sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session",
     );
-    expect(String(command)).toContain("/sandbox/.hermes/dashboard-home/platforms/whatsapp/session");
+    expect(String(command)).toContain(
+      "/sandbox/.hermes/dashboard-home/platforms/whatsapp/session",
+    );
   }
 
   async function removeWhatsappNonInteractive() {
@@ -148,9 +150,7 @@ describe("policy channel remove/enable flows", () => {
   it.each([
     { scenario: "exec transport", execStatus: 0, usesSsh: false },
     { scenario: "SSH fallback", execStatus: 1, usesSsh: true },
-  ])(
-    "clears every Hermes WhatsApp session path through $scenario",
-    async ({ execStatus, usesSsh }) => {
+  ])("clears every Hermes WhatsApp session path through $scenario", async ({ execStatus, usesSsh }) => {
       const { updateSandbox } = await arrangeHermesWhatsappRemoval();
       vi.mocked(processRecovery.executeSandboxExecCommand).mockReturnValue({
         status: execStatus,
@@ -180,35 +180,36 @@ describe("policy channel remove/enable flows", () => {
       expect(transport.mock.invocationCallOrder[0]).toBeLessThan(
         updateSandbox.mock.invocationCallOrder[0],
       );
-    },
-  );
+    });
 
   it("keeps channel state unchanged when both Hermes cleanup transports fail", async () => {
-    const { rebuildSandbox, removePreset, updateSandbox } = await arrangeHermesWhatsappRemoval();
-    const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell");
-    vi.mocked(processRecovery.executeSandboxExecCommand).mockReturnValue({
-      status: 1,
-      stdout: "",
-      stderr: "exec unavailable",
+      const { rebuildSandbox, removePreset, updateSandbox } = await arrangeHermesWhatsappRemoval();
+      const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell");
+      vi.mocked(processRecovery.executeSandboxExecCommand).mockReturnValue({
+        status: 1,
+        stdout: "",
+        stderr: "exec unavailable",
+      });
+      vi.mocked(processRecovery.executeSandboxCommand).mockReturnValue({
+        status: 1,
+        stdout: "",
+        stderr: "ssh unavailable",
+      });
+
+      await expect(removeWhatsappNonInteractive()).rejects.toThrow("process.exit(1)");
+
+      expectHermesSessionCleanup(
+        vi.mocked(processRecovery.executeSandboxExecCommand).mock.calls[0]?.[1],
+      );
+      expectHermesSessionCleanup(
+        vi.mocked(processRecovery.executeSandboxCommand).mock.calls[0]?.[1],
+      );
+
+      expect(runOpenshell).not.toHaveBeenCalled();
+      expect(updateSandbox).not.toHaveBeenCalled();
+      expect(removePreset).not.toHaveBeenCalled();
+      expect(rebuildSandbox).not.toHaveBeenCalled();
     });
-    vi.mocked(processRecovery.executeSandboxCommand).mockReturnValue({
-      status: 1,
-      stdout: "",
-      stderr: "ssh unavailable",
-    });
-
-    await expect(removeWhatsappNonInteractive()).rejects.toThrow("process.exit(1)");
-
-    expectHermesSessionCleanup(
-      vi.mocked(processRecovery.executeSandboxExecCommand).mock.calls[0]?.[1],
-    );
-    expectHermesSessionCleanup(vi.mocked(processRecovery.executeSandboxCommand).mock.calls[0]?.[1]);
-
-    expect(runOpenshell).not.toHaveBeenCalled();
-    expect(updateSandbox).not.toHaveBeenCalled();
-    expect(removePreset).not.toHaveBeenCalled();
-    expect(rebuildSandbox).not.toHaveBeenCalled();
-  });
 
   it("supports stop dry runs for configured Hermes channels", async () => {
     vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha", agent: "hermes" });

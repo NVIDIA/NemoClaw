@@ -536,7 +536,7 @@ runner.run = (command, opts = {}) => {
   const normalized = _n(command); commands.push({ command: normalized, env: opts.env || null });
   const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false); if (profileResult !== null) return profileResult;
   const providerGet = normalized.match(/provider get -g nemoclaw ([^ ]+)$/)?.[1]; if (providerGet === process.env.NEMOCLAW_TEST_FAIL_PROVIDER) return { status: 2, stderr: "transport unavailable" };
-  if (providerGet && revisions.has(providerGet)) return { status: 0, stdout: "Name: " + providerGet + "\nType: " + (providerGet === "compatible-endpoint" ? "openai" : providerGet.startsWith("my-assistant-extra-") ? "generic" : "nemoclaw-mcp-v1") + "\nCredential keys: " + credentialKeys[providerGet] + "\nConfig keys: " + (providerGet === "compatible-endpoint" ? "OPENAI_BASE_URL" : "<none>") + "\n" };
+  if (providerGet && revisions.has(providerGet)) return { status: 0, stdout: "Name: " + providerGet + "\nType: " + (providerGet === "compatible-endpoint" ? "openai" : "nemoclaw-mcp-v1") + "\nCredential keys: " + credentialKeys[providerGet] + "\nConfig keys: " + (providerGet === "compatible-endpoint" ? "OPENAI_BASE_URL" : "<none>") + "\n" };
   const refresh = normalized.match(/provider update -g nemoclaw ([^ ]+)$/)?.[1];
   if (refresh && gatewaySecrets.has(refresh)) { if (refresh === process.env.NEMOCLAW_TEST_FAIL_PROVIDER) return { status: 1 }; revisions.set(refresh, revisions.get(refresh) + 1); return { status: 0 }; }
   if (normalized.includes("provider get")) return { status: 1 };
@@ -657,7 +657,7 @@ const { createSandbox } = require(${onboardPath});
       assert.deepEqual(deniedPayload.temporaryCreateSources, []);
       assert.match(
         deniedPayload.error,
-        /did not confirm attached provider 'my-assistant-extra-telegram-bot-token-agent-b' before sandbox creation/,
+        /did not confirm messaging provider 'my-assistant-extra-telegram-bot-token-agent-b' before sandbox creation/,
       );
       const combinedOutput = result.stdout + result.stderr + denied.stdout + denied.stderr;
       assert.equal(

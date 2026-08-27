@@ -8,16 +8,12 @@ import {
   type SandboxPolicyAuthority,
 } from "../../../adapters/openshell/policy-authority";
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
-import type { PendingSandboxPolicyVerification } from "../../../state/registry";
 import { normalizeAgentNameForResumeState } from "../../agent-resume-state";
 import {
   getActiveChannelsFromPlan,
   getDisabledChannelsFromPlan,
 } from "../../messaging-plan-session";
-import {
-  allMessagingChannelPolicyPresets,
-  messagingChannelsForPolicyPresets,
-} from "../../messaging-policy-presets";
+import { messagingChannelsForPolicyPresets } from "../../messaging-policy-presets";
 import type { HostLocalInferenceSandboxProofAuthority } from "../../runtime-provider/host-local-inference-routing";
 import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
@@ -27,14 +23,9 @@ export interface PolicyPresetEntry {
 }
 
 export interface ActiveSandboxPolicyState {
-  gatewayName?: string | null;
-  lifecycleGeneration?: string;
-  lifecycleLiveIdentityFingerprint?: string;
   messaging?: { plan: SandboxMessagingPlan } | null;
-  pendingPolicyVerification?: PendingSandboxPolicyVerification;
   policyAuthority?: SandboxPolicyAuthority;
   policyTier?: string | null;
-  reservationSessionId?: string;
   /** Preset names already applied to the sandbox, as recorded in the registry. */
   policies?: string[] | null;
 }
@@ -143,17 +134,6 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
     // re-onboard reintroduces removed tier defaults (e.g. a removed Balanced
     // `npm`). See #4621.
     persistAppliedPolicyPresets(sandboxName: string, appliedPolicyPresets: string[]): boolean;
-    synchronizeMessagingProvidersAfterPolicy?(input: {
-      sandboxName: string;
-      enabledChannels: string[];
-      agent: Agent;
-      webSearchConfig: WebSearchConfig | null;
-      lifecycleGeneration?: string;
-      sandboxIdentityFingerprint?: string;
-      pendingPolicyVerification?: PendingSandboxPolicyVerification;
-      reservationSessionId?: string;
-      revalidatePolicyRequirements?: (operation: string) => void;
-    }): Promise<void>;
   };
 }
 
@@ -195,10 +175,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   const recordedMessagingChannels = getActiveChannelsFromPlan(latestSession?.messagingPlan);
   const activeSandbox = deps.getActiveSandbox(sandboxName);
   const sessionPolicyAuthority = latestSession?.policyAuthority ?? null;
-  const registryPolicyAuthority =
-    activeSandbox?.policyAuthority ??
-    activeSandbox?.pendingPolicyVerification?.policyAuthority ??
-    null;
+  const registryPolicyAuthority = activeSandbox?.policyAuthority ?? null;
   const authorityOperation = `continue policy setup for sandbox '${sandboxName}'`;
   if (sessionPolicyAuthority && registryPolicyAuthority) {
     assertRecordedPolicyAuthority(
@@ -315,31 +292,6 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     !policyResumeSelection.disabledMessagingPolicyPresetApplied &&
     !policyResumeSelection.suppressedAgentRequiredPresetsLive &&
     deps.arePolicyPresetsApplied(sandboxName, recordedPolicyPresetsForSupport);
-  const synchronizeMessagingProvidersAfterPolicy = async (
-    knownLivePresets: readonly string[],
-  ): Promise<void> => {
-    const requiredMessagingPresets = allMessagingChannelPolicyPresets(policyMessagingChannels);
-    if (
-      requiredMessagingPresets.length === 0 ||
-      !requiredMessagingPresets.every((preset) => knownLivePresets.includes(preset))
-    ) {
-      return;
-    }
-    revalidatePolicyRequirements?.(
-      `synchronize messaging providers after policy binding for sandbox '${sandboxName}'`,
-    );
-    await deps.synchronizeMessagingProvidersAfterPolicy?.({
-      sandboxName,
-      enabledChannels: policyMessagingChannels,
-      agent,
-      webSearchConfig,
-      lifecycleGeneration: activeSandbox?.lifecycleGeneration,
-      sandboxIdentityFingerprint: activeSandbox?.lifecycleLiveIdentityFingerprint,
-      pendingPolicyVerification: activeSandbox?.pendingPolicyVerification,
-      reservationSessionId: activeSandbox?.reservationSessionId,
-      revalidatePolicyRequirements,
-    });
-  };
 
   let appliedPolicyPresets = recordedPolicyPresetsForSupport;
   let session: Session | null;
@@ -365,7 +317,6 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       reason: "resume",
       policyPresets: recordedPolicyPresetsForSupport,
     });
-    await synchronizeMessagingProvidersAfterPolicy(recordedPolicyPresetsForSupport);
     revalidatePolicyRequirements?.(`complete resumed policy setup for sandbox '${sandboxName}'`);
     session = await deps.recordStepComplete(
       "policies",
@@ -428,14 +379,13 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     // without exclusions or a missing tier requirement), which leaves the live
     // applied set untouched and would otherwise be clobbered with []. See
     // #4621.
-    if (hostLocalInferenceRouteOnly) verifySandboxInferenceRoute();
-    await synchronizeMessagingProvidersAfterPolicy(appliedPolicyPresets);
     if (reflectsLiveAppliedSet) {
       revalidatePolicyRequirements?.(`persist policy presets for sandbox '${sandboxName}'`);
       if (!deps.persistAppliedPolicyPresets(sandboxName, appliedPolicyPresets)) {
         throw new Error(`Failed to persist finalized policy presets for sandbox '${sandboxName}'.`);
       }
     }
+    if (hostLocalInferenceRouteOnly) verifySandboxInferenceRoute();
     revalidatePolicyRequirements?.(`complete policy setup for sandbox '${sandboxName}'`);
     session = await deps.recordStepComplete(
       "policies",

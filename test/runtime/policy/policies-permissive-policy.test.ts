@@ -11,7 +11,7 @@ import YAML from "yaml";
 
 import {
   managedPolicyMetadata,
-  managedSandboxEntry,
+  managedRegistrationSource,
   SANDBOX_ID,
 } from "./managed-policy-receipt-fixture";
 
@@ -20,13 +20,6 @@ const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "policy"
 const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"));
 const SOURCE_NODE_ARGS = ["--import", "tsx"];
 
-const CREDENTIAL_FREE_ROUTE_CASES = [
-  ["whatsapp", "enabled", true],
-  ["whatsapp", "disabled", false],
-  ["googlechat", "enabled", true],
-  ["googlechat", "disabled", false],
-] as const;
-
 function parseResultPayload(stdout: string): { error: string } {
   const marker = "__RESULT__";
   const markerIndex = stdout.indexOf(marker);
@@ -34,16 +27,7 @@ function parseResultPayload(stdout: string): { error: string } {
   return JSON.parse(stdout.slice(markerIndex + marker.length));
 }
 
-function runPermissivePolicy(options: {
-  agent?: "hermes" | "openclaw";
-  disabledChannels?: string[];
-  enabledChannels?: string[];
-  livePolicy?: string;
-  livePolicyStatus?: number;
-  expectPolicySet?: boolean;
-  policySetStatus: number;
-  sandboxName: string;
-}): {
+function runHermesPermissivePolicy(policySetStatus: number): {
   result: ReturnType<typeof spawnSync>;
   policy: string;
   stagedPath: string;
@@ -53,78 +37,30 @@ function runPermissivePolicy(options: {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-permissive-"));
   const fakeOpenshell = path.join(tmpDir, "openshell");
   const policyOut = path.join(tmpDir, "policy.yaml");
-  const livePolicyPath = path.join(tmpDir, "live-policy.yaml");
   const stagedRecord = path.join(tmpDir, "staged.txt");
-  fs.writeFileSync(
-    livePolicyPath,
-    options.livePolicy ?? YAML.stringify({ version: 1, network_policies: {} }),
-  );
-  const sandboxEntry = managedSandboxEntry(options.sandboxName, options.agent ?? "openclaw");
-  Object.assign(
-    sandboxEntry,
-    options.enabledChannels !== undefined || options.disabledChannels !== undefined
-      ? {
-          messaging: {
-            schemaVersion: 1,
-            plan: {
-              schemaVersion: 1,
-              sandboxName: options.sandboxName,
-              agent: options.agent ?? "openclaw",
-              workflow: "onboard",
-              channels: [
-                ...(options.enabledChannels ?? []).map((channelId) => ({
-                  channelId,
-                  configured: true,
-                  active: true,
-                  disabled: false,
-                })),
-                ...(options.disabledChannels ?? []).map((channelId) => ({
-                  channelId,
-                  configured: true,
-                  active: false,
-                  disabled: true,
-                })),
-              ],
-              disabledChannels: options.disabledChannels ?? [],
-              credentialBindings: [],
-              networkPolicy: { presets: [], entries: [] },
-              agentRender: [],
-              buildSteps: [],
-              stateUpdates: [],
-              healthChecks: [],
-            },
-          },
-        }
-      : {},
-  );
-  const registration = `registry.registerSandbox(${JSON.stringify(sandboxEntry)});`;
   const script = String.raw`
 const registry = require(${REGISTRY_PATH});
 const policies = require(${POLICIES_PATH});
-${registration}
-policies.applyPermissivePolicy(${JSON.stringify(options.sandboxName)});
+${managedRegistrationSource("hermes-sandbox", "hermes")}
+policies.applyPermissivePolicy("hermes-sandbox");
 `;
   fs.writeFileSync(
     fakeOpenshell,
     `#!/usr/bin/env bash
 set -euo pipefail
 if [ "$1 $2" = "sandbox get" ]; then
-  printf 'Name: ${options.sandboxName}\nId: ${SANDBOX_ID}\nPhase: Ready\n'
+  printf 'Name: hermes-sandbox\nId: ${SANDBOX_ID}\nPhase: Ready\n'
   exit 0
 fi
 if [ "$1 $2" = "policy get" ]; then
   if [[ " $* " == *" --output json "* ]]; then
-    printf '%s\n' ${JSON.stringify(managedPolicyMetadata(options.sandboxName))}
+    printf '%s\n' ${JSON.stringify(managedPolicyMetadata("hermes-sandbox"))}
     exit 0
   fi
   if [ -f ${JSON.stringify(policyOut)} ]; then
     cat ${JSON.stringify(policyOut)}
   else
-    if [ "${options.livePolicyStatus ?? 0}" -ne 0 ]; then
-      printf 'message: fixture live policy read failure\n' >&2
-      exit "${options.livePolicyStatus ?? 0}"
-    fi
-    cat ${JSON.stringify(livePolicyPath)}
+    printf 'Version: 1\nHash: fixture-policy\n---\nversion: 1\n\nnetwork_policies: {}\n'
   fi
   exit 0
 fi
@@ -140,12 +76,12 @@ if [ "$1 $2" = "policy set" ]; then
   mode="$(node -e 'process.stdout.write((require("node:fs").statSync(process.argv[1]).mode & 0o777).toString(8))' "$policy_file")"
   printf '%s\n%s\n' "$policy_file" "$mode" > ${JSON.stringify(stagedRecord)}
   cp "$policy_file" ${JSON.stringify(policyOut)}
-  if [ "${options.policySetStatus}" -eq 0 ]; then
+  if [ "${policySetStatus}" -eq 0 ]; then
     printf 'Policy version 2 submitted\nPolicy version 2 loaded\n'
     exit 0
   fi
   printf 'message: fixture rejection\n' >&2
-  exit "${options.policySetStatus}"
+  exit "${policySetStatus}"
 fi
 exit 1
 `,
@@ -161,16 +97,10 @@ exit 1
       NEMOCLAW_OPENSHELL_BIN: fakeOpenshell,
     },
   });
-  const expectPolicySet = options.expectPolicySet ?? true;
-  expect(fs.existsSync(stagedRecord), `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBe(
-    expectPolicySet,
-  );
-  const [stagedPath, stagedMode] = expectPolicySet
-    ? fs.readFileSync(stagedRecord, "utf-8").trim().split("\n")
-    : ["", ""];
+  const [stagedPath, stagedMode] = fs.readFileSync(stagedRecord, "utf-8").trim().split("\n");
   return {
     result,
-    policy: expectPolicySet ? fs.readFileSync(policyOut, "utf-8") : "",
+    policy: fs.readFileSync(policyOut, "utf-8"),
     stagedPath,
     stagedMode,
     cleanup: () => fs.rmSync(tmpDir, { recursive: true, force: true }),
@@ -184,19 +114,7 @@ describe("applyPermissivePolicy", () => {
   ])(
     "materializes the Hermes Discord provider and removes staged policy material after %s",
     (_case, policySetStatus) => {
-      const observed = runPermissivePolicy({
-        agent: "hermes",
-        enabledChannels: ["discord"],
-        livePolicy: YAML.stringify({
-          network_policies: {
-            discord: {
-              endpoints: [{ credential_binding: { provider: "hermes-sandbox-discord-bridge" } }],
-            },
-          },
-        }),
-        policySetStatus,
-        sandboxName: "hermes-sandbox",
-      });
+      const observed = runHermesPermissivePolicy(policySetStatus);
       try {
         expect(observed.result.status).toBe(policySetStatus);
         expect(observed.stagedMode).toBe("600");
@@ -227,221 +145,6 @@ describe("applyPermissivePolicy", () => {
       }
     },
   );
-
-  it("reports an enabled OpenClaw route omitted for absent live providers (#10153)", () => {
-    const sandboxName = "fallback-openclaw";
-    const observed = runPermissivePolicy({
-      agent: "openclaw",
-      enabledChannels: ["telegram"],
-      policySetStatus: 0,
-      sandboxName,
-    });
-    try {
-      expect(observed.result.status).toBe(0);
-      expect(observed.stagedMode).toBe("600");
-      expect(fs.existsSync(observed.stagedPath)).toBe(false);
-      const policy = YAML.parse(observed.policy);
-      expect(policy.network_policies.telegram_bot).toBeUndefined();
-      expect(policy.network_policies.slack).toBeUndefined();
-      expect(observed.policy).not.toContain("{sandboxName}");
-      expect(observed.result.stderr).toContain(
-        `sandbox '${sandboxName}', channel 'telegram': ` +
-          "the live policy has no credential providers; expected 1. Recovery: " +
-          `run \`nemoclaw ${sandboxName} channels add telegram\`; approve the rebuild prompt in ` +
-          `an interactive terminal, or run \`nemoclaw ${sandboxName} rebuild\` afterward in ` +
-          "non-interactive mode.",
-      );
-      expect(observed.result.stderr).not.toContain("channel 'slack'");
-    } finally {
-      observed.cleanup();
-    }
-  });
-
-  it("rejects an unreadable live policy when the channel plan is unavailable (#10153)", () => {
-    const sandboxName = "unreadable-openclaw";
-    const observed = runPermissivePolicy({
-      agent: "openclaw",
-      expectPolicySet: false,
-      livePolicyStatus: 23,
-      policySetStatus: 0,
-      sandboxName,
-    });
-    try {
-      expect(observed.result.status).not.toBe(0);
-      expect(observed.result.stderr).toContain(
-        `Could not read the live policy for sandbox '${sandboxName}' through gateway ` +
-          "'nemoclaw'; credential-bound messaging routes cannot be verified.",
-      );
-      expect(observed.result.stderr).toContain(
-        `for each intended channel, run \`nemoclaw ${sandboxName} channels add <channel>\`; ` +
-          "approve each rebuild prompt in an interactive terminal, or run " +
-          `\`nemoclaw ${sandboxName} rebuild\` after adding every intended channel in ` +
-          "non-interactive mode.",
-      );
-    } finally {
-      observed.cleanup();
-    }
-  });
-
-  it("reports omitted messaging routes when the channel plan is unavailable (#10153)", () => {
-    const sandboxName = "missing-plan-safe";
-    const observed = runPermissivePolicy({
-      agent: "openclaw",
-      livePolicy: YAML.stringify({
-        network_policies: {
-          github: { endpoints: [{ host: "github.com", port: 443 }] },
-        },
-      }),
-      policySetStatus: 0,
-      sandboxName,
-    });
-    try {
-      expect(observed.result.status).toBe(0);
-      expect(observed.result.stderr).toContain(
-        `NemoClaw omitted credential-bound messaging routes for sandbox '${sandboxName}': ` +
-          "the channel plan is unavailable and the live policy has no recognized messaging " +
-          "route. Recovery: " +
-          `for each intended channel, run \`nemoclaw ${sandboxName} channels add <channel>\`; ` +
-          "approve each rebuild prompt in an interactive terminal, or run " +
-          `\`nemoclaw ${sandboxName} rebuild\` after adding every intended channel in ` +
-          "non-interactive mode.",
-      );
-    } finally {
-      observed.cleanup();
-    }
-  });
-
-  it("rejects a live credential-free route when the channel plan is unavailable (#10153)", () => {
-    const sandboxName = "missing-free-route";
-    const observed = runPermissivePolicy({
-      agent: "openclaw",
-      expectPolicySet: false,
-      livePolicy: YAML.stringify({
-        network_policies: {
-          whatsapp: { endpoints: [{ host: "web.whatsapp.com", port: 443 }] },
-        },
-      }),
-      policySetStatus: 0,
-      sandboxName,
-    });
-    try {
-      expect(observed.result.status).not.toBe(0);
-      expect(observed.result.stderr).toContain(
-        `sandbox '${sandboxName}', channel 'whatsapp' because the channel plan is unavailable. ` +
-          `Recovery: run \`nemoclaw ${sandboxName} channels add whatsapp\`; approve the rebuild ` +
-          `prompt in an interactive terminal, or run \`nemoclaw ${sandboxName} rebuild\` ` +
-          "afterward in non-interactive mode.",
-      );
-    } finally {
-      observed.cleanup();
-    }
-  });
-
-  it.each([
-    ["OpenClaw", "telegram_bot", "missing-oc-plan"],
-    ["Hermes", "telegram", "missing-h-plan"],
-  ] as const)(
-    "rejects a live %s Telegram route when the channel plan is unavailable (#10153)",
-    (_liveAgent, policyKey, sandboxName) => {
-      const observed = runPermissivePolicy({
-        agent: "openclaw",
-        expectPolicySet: false,
-        livePolicy: YAML.stringify({
-          network_policies: {
-            [policyKey]: {
-              endpoints: [{ credential_binding: { provider: `${sandboxName}-telegram-bridge` } }],
-            },
-          },
-        }),
-        policySetStatus: 0,
-        sandboxName,
-      });
-      try {
-        expect(observed.result.status).not.toBe(0);
-        expect(observed.result.stderr).toContain(
-          `sandbox '${sandboxName}', channel 'telegram' because the channel plan is unavailable. ` +
-            `Recovery: run \`nemoclaw ${sandboxName} channels add telegram\`; approve the rebuild ` +
-            `prompt in an interactive terminal, or run \`nemoclaw ${sandboxName} rebuild\` ` +
-            "afterward in non-interactive mode.",
-        );
-      } finally {
-        observed.cleanup();
-      }
-    },
-  );
-
-  it.each(CREDENTIAL_FREE_ROUTE_CASES)(
-    "keeps the OpenClaw %s route %s in a direct permissive policy (#10153)",
-    (channelId, _state, enabled) => {
-      const observed = runPermissivePolicy({
-        agent: "openclaw",
-        ...(enabled ? { enabledChannels: [channelId] } : { disabledChannels: [channelId] }),
-        policySetStatus: 0,
-        sandboxName: `free-${channelId}`,
-      });
-      try {
-        const policies = YAML.parse(observed.policy).network_policies;
-        expect(policies[channelId] !== undefined).toBe(enabled);
-      } finally {
-        observed.cleanup();
-      }
-    },
-  );
-
-  it("retains OpenClaw routes when the live policy has each exact provider set (#10153)", () => {
-    const sandboxName = "configured-openclaw";
-    const observed = runPermissivePolicy({
-      agent: "openclaw",
-      enabledChannels: ["telegram", "slack"],
-      livePolicy: YAML.stringify({
-        network_policies: {
-          telegram_bot: {
-            endpoints: [{ credential_binding: { provider: `${sandboxName}-telegram-bridge` } }],
-          },
-          slack: {
-            endpoints: [
-              { credential_binding: { provider: `${sandboxName}-slack-app` } },
-              { credential_binding: { provider: `${sandboxName}-slack-bridge` } },
-            ],
-          },
-        },
-      }),
-      policySetStatus: 0,
-      sandboxName,
-    });
-    try {
-      expect(observed.result.status).toBe(0);
-      const policy = YAML.parse(observed.policy);
-      expect(
-        new Set(
-          policy.network_policies.telegram_bot.endpoints.map(
-            (endpoint: { credential_binding?: { provider?: string } }) =>
-              endpoint.credential_binding?.provider,
-          ),
-        ),
-      ).toEqual(new Set([`${sandboxName}-telegram-bridge`]));
-      const slackEndpoints = policy.network_policies.slack.endpoints as Array<{
-        credential_binding?: { provider?: string };
-        host?: string;
-        rules?: Array<{ allow?: { method?: string; path?: string } }>;
-      }>;
-      expect(
-        new Set(slackEndpoints.map((endpoint) => endpoint.credential_binding?.provider)),
-      ).toEqual(new Set([`${sandboxName}-slack-app`, `${sandboxName}-slack-bridge`]));
-      expect(
-        slackEndpoints.find(
-          (endpoint) =>
-            endpoint.host === "slack.com" &&
-            endpoint.credential_binding?.provider === `${sandboxName}-slack-app`,
-        ),
-      ).toMatchObject({
-        rules: [{ allow: { method: "POST", path: "/api/apps.connections.open" } }],
-      });
-      expect(observed.policy).not.toContain("{sandboxName}");
-    } finally {
-      observed.cleanup();
-    }
-  });
 
   it("rejects an invalid sandbox name before the permissive policy command", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-permissive-invalid-"));

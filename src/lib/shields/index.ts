@@ -42,7 +42,6 @@ const {
   buildPolicyGetCommand,
   buildPolicySetCommand,
   finalizePolicyMutationReceipt,
-  formatCredentialBoundMessagingPolicyOmission,
   parseCurrentPolicy,
   resolvePermissivePolicyPath,
   assertNemoClawManagedPolicy,
@@ -50,7 +49,6 @@ const {
   inspectPolicyRecoveryAuthority,
   isExternalPolicyAuthorityRefusalError,
   isPolicyAuthorityRefusalError,
-  readMessagingPolicyPlan,
   recheckPolicyMutationAuthority,
   rejectFinalPolicySetResult: rejectFinalShieldsPolicySetResult,
 } = require("../policy");
@@ -5865,16 +5863,7 @@ function shieldsDownWithoutHostLock(
         livePolicyYaml: policyYaml,
         managedMcpPolicies,
         readBasePolicy: () => fs.readFileSync(basePath, "utf-8"),
-        ...(target.agentName === "hermes" || target.agentName === "openclaw"
-          ? {
-              messagingAgent: target.agentName,
-              messagingPlan: readMessagingPolicyPlan(sandboxName),
-              reportMessagingPolicyOmission: (omission) => {
-                console.error(formatCredentialBoundMessagingPolicyOmission(sandboxName, omission));
-              },
-              sandboxName,
-            }
-          : {}),
+        ...(target.agentName === "hermes" ? { sandboxName } : {}),
       });
       policyFileIsTemp = policyFile !== basePath;
     } else if (fs.existsSync(policyName)) {

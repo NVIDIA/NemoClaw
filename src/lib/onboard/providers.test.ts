@@ -21,8 +21,9 @@ type RunOptions = {
 };
 type RunOpenshell = (command: string[], opts?: RunOptions) => RunResult;
 
-const messagingBridgeProvider =
-  require("./messaging-bridge-provider") as typeof import("./messaging-bridge-provider");
+const messagingBridgeProvider = require(
+  "./messaging-bridge-provider"
+) as typeof import("./messaging-bridge-provider");
 
 const DISCORD_STATIC_PROFILE_EXPORT = JSON.stringify({
   id: "discord-hermes-static-v1",
@@ -123,7 +124,6 @@ const {
       envKey: string;
       token: string | null;
       providerType?: string;
-      additionalCredentials?: Array<{ envKey: string; token: string | null }>;
     }>,
     runOpenshell: RunOpenshell,
     options?: {
@@ -742,89 +742,6 @@ describe("onboard provider helpers", () => {
     expect(calls.flatMap(({ command }) => command)).not.toContain(credential);
   });
 
-  it("accepts namespaced credentials retained by an existing messaging provider (#10153)", () => {
-    const commands: string[] = [];
-    const providerMetadata = {
-      status: 0,
-      stdout: [
-        "Name: alpha-telegram-bridge",
-        "Type: nemoclaw-mcp-v1",
-        "Credential keys: TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_TOKEN_AGENT_A",
-        "Config keys: <none>",
-        "",
-      ].join("\n"),
-      stderr: "",
-    };
-
-    const providers = upsertMessagingProviders(
-      [
-        {
-          name: "alpha-telegram-bridge",
-          envKey: "TELEGRAM_BOT_TOKEN",
-          token: "telegram-test-token",
-          providerType: "nemoclaw-mcp-v1",
-        },
-      ],
-      (command) => {
-        commands.push(command.join(" "));
-        switch (command[1]) {
-          case "profile":
-            return { status: 0, stdout: MESSAGING_ENDPOINTLESS_PROFILE_EXPORT, stderr: "" };
-          case "get":
-            return providerMetadata;
-          default:
-            return { status: 0, stdout: "", stderr: "" };
-        }
-      },
-    );
-
-    expect(providers).toEqual(["alpha-telegram-bridge"]);
-    expect(commands).toEqual([
-      "provider profile export nemoclaw-mcp-v1 --output json",
-      "provider get alpha-telegram-bridge",
-      "provider update alpha-telegram-bridge --credential TELEGRAM_BOT_TOKEN",
-      "provider get alpha-telegram-bridge",
-    ]);
-  });
-
-  it("rejects an update that omits a submitted namespaced credential (#10153)", () => {
-    expect(() =>
-      upsertMessagingProviders(
-        [
-          {
-            name: "alpha-telegram-bridge",
-            envKey: "TELEGRAM_BOT_TOKEN",
-            token: "telegram-test-token",
-            providerType: "nemoclaw-mcp-v1",
-            additionalCredentials: [
-              {
-                envKey: "TELEGRAM_BOT_TOKEN_AGENT_A",
-                token: "telegram-agent-a-test-token",
-              },
-            ],
-          },
-        ],
-        (command) =>
-          command[1] === "profile"
-            ? { status: 0, stdout: MESSAGING_ENDPOINTLESS_PROFILE_EXPORT, stderr: "" }
-            : command[1] === "get"
-              ? {
-                  status: 0,
-                  stdout: [
-                    "Name: alpha-telegram-bridge",
-                    "Type: nemoclaw-mcp-v1",
-                    "Credential keys: TELEGRAM_BOT_TOKEN",
-                    "Config keys: <none>",
-                    "",
-                  ].join("\n"),
-                  stderr: "",
-                }
-              : { status: 0, stdout: "", stderr: "" },
-        { bestEffort: true },
-      ),
-    ).toThrow(/did not confirm messaging provider/u);
-  });
-
   it("rejects credential-free reuse when the messaging profile is incompatible (#9875)", () => {
     const commands: string[] = [];
     const profileResults: Record<string, RunResult> = {
@@ -1127,6 +1044,7 @@ describe("onboard provider helpers", () => {
     ]);
   });
 
+
   it("throws instead of exiting when best-effort messaging provider upsert fails", () => {
     const originalExit = process.exit;
     process.exit = ((code?: number | string | null) => {
@@ -1241,7 +1159,7 @@ describe("onboard provider helpers", () => {
     );
   });
 
-  it("preflights every exact binding before mutating any messaging provider", () => {
+  it("preflights every exact binding before creating any messaging provider", () => {
     const commands: string[] = [];
 
     expect(() =>
@@ -1262,13 +1180,13 @@ describe("onboard provider helpers", () => {
         ],
         (command) => {
           commands.push(command.join(" "));
-          return command[1] === "get" && command[2] === "beta-discord-bridge"
-            ? { status: 2, stdout: "", stderr: "transport unavailable" }
+          return command[1] === "get" && command[2] === "alpha-discord-bridge"
+            ? { status: 1, stdout: "", stderr: "not found" }
             : {
                 status: 0,
                 stdout: [
-                  "Name: alpha-discord-bridge",
-                  "Type: discord-hermes-static-v1",
+                  "Name: beta-discord-bridge",
+                  "Type: generic",
                   "Credential keys: DISCORD_BOT_TOKEN",
                   "Config keys: <none>",
                   "",
@@ -1280,7 +1198,6 @@ describe("onboard provider helpers", () => {
     ).toThrow(
       expect.objectContaining({
         code: "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT",
-        message: expect.stringContaining("Could not inspect messaging provider"),
         mutatedProviderNames: [],
       }),
     );

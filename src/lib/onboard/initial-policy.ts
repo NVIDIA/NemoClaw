@@ -560,16 +560,8 @@ function resolveInitialSandboxCreatePolicy(
     const existingCreateTimePresets = requestedCreateTimePresets.filter((preset) =>
       basePolicyNames.has(preset),
     );
-    const messagingCreateTimePresetSet = new Set(messagingCreateTimePresets);
     const createTimePresets = requestedCreateTimePresets.filter(
-      (preset) =>
-        !basePolicyNames.has(preset) ||
-        // An older agent/base policy may already carry an unbound messaging
-        // route. Once the target sandbox identity is known, replace that route
-        // with the channel-owned policy so its credential providers are exact.
-        // Merely recording the existing key leaves OpenShell with no eligible
-        // provider placeholders (the live messaging E2E exercises this upgrade).
-        (options.sandboxName !== undefined && messagingCreateTimePresetSet.has(preset)),
+      (preset) => !basePolicyNames.has(preset),
     );
     if (createTimePresets.length === 0) {
       return result(dedupe([...existingChannelPresets, ...existingCreateTimePresets]));

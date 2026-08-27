@@ -8,20 +8,65 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const MESSAGING_RUNTIME_ENV_ALIASES = path.join(
-  import.meta.dirname,
-  "..",
-  "../../..",
-  "scripts",
-  "lib",
-  "sandbox-init.sh",
-);
+const START_SCRIPT = path.join(import.meta.dirname, "..", "../../..", "scripts", "nemoclaw-start.sh");
+
+function messagingRuntimeSetupSection(src: string, planPath: string): string {
+  const start = src.indexOf("# ── Messaging runtime setup from manifest metadata");
+  const end = src.indexOf("_read_gateway_token()", start);
+  expect(start).toBeGreaterThan(-1);
+  expect(end).toBeGreaterThan(start);
+  return src
+    .slice(start, end)
+    .replace(
+      '_MESSAGING_RUNTIME_SETUP_PLAN="/tmp/nemoclaw-messaging-runtime-setup.json"',
+      `_MESSAGING_RUNTIME_SETUP_PLAN=${JSON.stringify(planPath)}`,
+    );
+}
+
+function encodeRuntimeSetupPlan(channelId: string, value: Record<string, unknown>): string {
+  const withChannelId = (entries: unknown) =>
+    Array.isArray(entries)
+      ? entries.map((entry) => ({ channelId, ...(entry as Record<string, unknown>) }))
+      : [];
+  return Buffer.from(
+    JSON.stringify({
+      schemaVersion: 1,
+      sandboxName: "test-sandbox",
+      agent: "openclaw",
+      workflow: "rebuild",
+      channels: [
+        {
+          channelId,
+          displayName: channelId,
+          authMode: "token-paste",
+          active: true,
+          selected: true,
+          configured: true,
+          disabled: false,
+          inputs: [],
+          hooks: [],
+        },
+      ],
+      disabledChannels: [],
+      credentialBindings: [],
+      networkPolicy: { presets: [], entries: [] },
+      agentRender: [],
+      buildSteps: [],
+      runtimeSetup: {
+        nodePreloads: withChannelId(value.nodePreloads),
+        envAliases: withChannelId(value.envAliases),
+        secretScans: withChannelId(value.secretScans),
+      },
+      stateUpdates: [],
+      healthChecks: [],
+    }),
+  ).toString("base64");
+}
 
 describe("Slack runtime env normalization (#4274)", () => {
-  function runNormalize(
-    env: Record<string, string | undefined> = {},
-    botMatch = "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
-  ): {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  function runNormalize(env: Record<string, string | undefined> = {}): {
     bot: string;
     app: string;
     result: ReturnType<typeof spawnSync>;
@@ -33,7 +78,7 @@ describe("Slack runtime env normalization (#4274)", () => {
       envAliases: [
         {
           envKey: "SLACK_BOT_TOKEN",
-          match: botMatch,
+          match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
           value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
           message:
             "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
@@ -47,15 +92,16 @@ describe("Slack runtime env normalization (#4274)", () => {
         },
       ],
     };
-    fs.writeFileSync(planPath, JSON.stringify(runtimeValue));
     fs.writeFileSync(
       scriptPath,
       [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
-        `_SANDBOX_INIT_DIR=${JSON.stringify(path.join(import.meta.dirname, "..", "../../..", "scripts", "lib"))}`,
-        `_MESSAGING_RUNTIME_SETUP_PLAN=${JSON.stringify(planPath)}`,
-        `source ${JSON.stringify(MESSAGING_RUNTIME_ENV_ALIASES)}`,
+        'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; else command id "$@"; fi; }',
+        'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
+        `export NEMOCLAW_MESSAGING_PLAN_B64=${JSON.stringify(encodeRuntimeSetupPlan("slack", runtimeValue))}`,
+        messagingRuntimeSetupSection(src, planPath),
+        "write_messaging_runtime_setup_plan",
         "apply_messaging_runtime_env_aliases",
         'printf "BOT=%s\\n" "${SLACK_BOT_TOKEN-__UNSET__}"',
         'printf "APP=%s\\n" "${SLACK_APP_TOKEN-__UNSET__}"',
@@ -78,42 +124,29 @@ describe("Slack runtime env normalization (#4274)", () => {
     return { bot, app, result };
   }
 
-  it("preserves OpenShell credential revisions in Bolt-compatible Slack aliases (#10153)", () => {
+  it("normalizes revision-scoped Slack placeholders to Bolt-compatible aliases", () => {
     const run = runNormalize({
       SLACK_BOT_TOKEN: "openshell:resolve:env:v51_SLACK_BOT_TOKEN",
       SLACK_APP_TOKEN: "openshell:resolve:env:v51_SLACK_APP_TOKEN",
     });
 
     expect(run.result.status, run.result.stderr).toBe(0);
-    expect(run.bot).toBe("xoxb-OPENSHELL-RESOLVE-ENV-v51_SLACK_BOT_TOKEN");
-    expect(run.app).toBe("xapp-OPENSHELL-RESOLVE-ENV-v51_SLACK_APP_TOKEN");
-    expect(run.bot).not.toContain("openshell:resolve:env:");
-    expect(run.app).not.toContain("openshell:resolve:env:");
+    expect(run.bot).toBe("xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN");
+    expect(run.app).toBe("xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN");
   });
 
-  it("uses Python lookbehind semantics when matching a revision-scoped Slack alias (#10153)", () => {
-    const run = runNormalize(
-      {
-        SLACK_BOT_TOKEN: "openshell:resolve:env:v42_SLACK_BOT_TOKEN",
-      },
-      "(?<=openshell:)resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
-    );
-
-    expect(run.result.status, run.result.stderr).toBe(0);
-    expect(run.bot).toBe("xoxb-OPENSHELL-RESOLVE-ENV-v42_SLACK_BOT_TOKEN");
-    expect(run.result.stderr).toContain("Normalized SLACK_BOT_TOKEN runtime placeholder");
-  });
-
-  it("preserves Slack credential revisions longer than 20 digits (#10153)", () => {
-    const revision = "123456789012345678901";
+  it("does not leak the revision suffix into the normalized env or logs", () => {
     const run = runNormalize({
-      SLACK_BOT_TOKEN: `openshell:resolve:env:v${revision}_SLACK_BOT_TOKEN`,
-      SLACK_APP_TOKEN: `openshell:resolve:env:v${revision}_SLACK_APP_TOKEN`,
+      SLACK_BOT_TOKEN: "openshell:resolve:env:v51_SLACK_BOT_TOKEN",
+      SLACK_APP_TOKEN: "openshell:resolve:env:v51_SLACK_APP_TOKEN",
     });
 
     expect(run.result.status, run.result.stderr).toBe(0);
-    expect(run.bot).toBe(`xoxb-OPENSHELL-RESOLVE-ENV-v${revision}_SLACK_BOT_TOKEN`);
-    expect(run.app).toBe(`xapp-OPENSHELL-RESOLVE-ENV-v${revision}_SLACK_APP_TOKEN`);
+    expect(run.bot).not.toContain("v51_");
+    expect(run.app).not.toContain("v51_");
+    expect(run.result.stderr).not.toContain("v51_");
+    expect(run.bot).not.toContain("openshell:resolve:env:");
+    expect(run.app).not.toContain("openshell:resolve:env:");
   });
 
   it("normalizes the canonical non-revision placeholder too", () => {

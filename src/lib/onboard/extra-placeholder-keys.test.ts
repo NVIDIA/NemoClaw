@@ -194,7 +194,7 @@ describe("registerExtraPlaceholderProviders", () => {
     }
   }
 
-  it("co-locates validated extra keys on their canonical credential-bound providers", () => {
+  it("appends one profile-backed tokenDef per validated extra key with the operator-supplied token (#9875)", () => {
     withEnv(
       {
         [EXTRA_PLACEHOLDER_KEYS_ENV]: "TELEGRAM_BOT_TOKEN_AGENT_A SLACK_BOT_TOKEN_AGENT_B",
@@ -207,21 +207,7 @@ describe("registerExtraPlaceholderProviders", () => {
           envKey: string;
           token: string | null;
           providerType?: string;
-          additionalCredentials?: Array<{ envKey: string; token: string | null }>;
-        }> = [
-          {
-            name: "my-sandbox-telegram-bridge",
-            envKey: "TELEGRAM_BOT_TOKEN",
-            token: "telegram-primary",
-            providerType: "nemoclaw-mcp-v1",
-          },
-          {
-            name: "my-sandbox-slack-bridge",
-            envKey: "SLACK_BOT_TOKEN",
-            token: "slack-primary",
-            providerType: "nemoclaw-mcp-v1",
-          },
-        ];
+        }> = [];
         const warnings: string[] = [];
         const extraKeys = registerExtraPlaceholderProviders("my-sandbox", messagingTokenDefs, (m) =>
           warnings.push(m),
@@ -230,22 +216,16 @@ describe("registerExtraPlaceholderProviders", () => {
         expect(warnings).toEqual([]);
         expect(messagingTokenDefs).toEqual([
           {
-            name: "my-sandbox-telegram-bridge",
-            envKey: "TELEGRAM_BOT_TOKEN",
-            token: "telegram-primary",
+            name: "my-sandbox-extra-telegram-bot-token-agent-a",
+            envKey: "TELEGRAM_BOT_TOKEN_AGENT_A",
+            token: "telegram-token-A",
             providerType: "nemoclaw-mcp-v1",
-            additionalCredentials: [
-              { envKey: "TELEGRAM_BOT_TOKEN_AGENT_A", token: "telegram-token-A" },
-            ],
           },
           {
-            name: "my-sandbox-slack-bridge",
-            envKey: "SLACK_BOT_TOKEN",
-            token: "slack-primary",
+            name: "my-sandbox-extra-slack-bot-token-agent-b",
+            envKey: "SLACK_BOT_TOKEN_AGENT_B",
+            token: "slack-token-B",
             providerType: "nemoclaw-mcp-v1",
-            additionalCredentials: [
-              { envKey: "SLACK_BOT_TOKEN_AGENT_B", token: "slack-token-B" },
-            ],
           },
         ]);
       },
@@ -253,8 +233,9 @@ describe("registerExtraPlaceholderProviders", () => {
   });
 
   it("registers a tokenDef with token=null when the operator forgot to export the credential", () => {
-    // The messaging provider upsert in onboard/providers.ts omits null-token
-    // extension credentials from the canonical OpenShell provider. The unit assertion pins that
+    // The messaging provider upsert in onboard/providers.ts already skips
+    // null-token entries so the row is not registered with the OpenShell
+    // gateway. The unit assertion here pins the contract that
     // registerExtraPlaceholderProviders never substitutes a placeholder value
     // for a missing credential.
     withEnv(
@@ -268,26 +249,15 @@ describe("registerExtraPlaceholderProviders", () => {
           envKey: string;
           token: string | null;
           providerType?: string;
-          additionalCredentials?: Array<{ envKey: string; token: string | null }>;
-        }> = [
-          {
-            name: "my-sandbox-telegram-bridge",
-            envKey: "TELEGRAM_BOT_TOKEN",
-            token: "telegram-primary",
-            providerType: "nemoclaw-mcp-v1",
-          },
-        ];
+        }> = [];
         const extraKeys = registerExtraPlaceholderProviders("my-sandbox", messagingTokenDefs);
         expect(extraKeys).toEqual(["TELEGRAM_BOT_TOKEN_AGENT_MISSING"]);
         expect(messagingTokenDefs).toEqual([
           {
-            name: "my-sandbox-telegram-bridge",
-            envKey: "TELEGRAM_BOT_TOKEN",
-            token: "telegram-primary",
+            name: "my-sandbox-extra-telegram-bot-token-agent-missing",
+            envKey: "TELEGRAM_BOT_TOKEN_AGENT_MISSING",
+            token: null,
             providerType: "nemoclaw-mcp-v1",
-            additionalCredentials: [
-              { envKey: "TELEGRAM_BOT_TOKEN_AGENT_MISSING", token: null },
-            ],
           },
         ]);
       },
@@ -307,56 +277,17 @@ describe("registerExtraPlaceholderProviders", () => {
           envKey: string;
           token: string | null;
           providerType?: string;
-          additionalCredentials?: Array<{ envKey: string; token: string | null }>;
-        }> = [
-          {
-            name: "my-sandbox-telegram-bridge",
-            envKey: "TELEGRAM_BOT_TOKEN",
-            token: "telegram-primary",
-            providerType: "nemoclaw-mcp-v1",
-          },
-        ];
+        }> = [];
         const warnings: string[] = [];
         const extraKeys = registerExtraPlaceholderProviders("my-sandbox", messagingTokenDefs, (m) =>
           warnings.push(m),
         );
         expect(extraKeys).toEqual(["TELEGRAM_BOT_TOKEN_AGENT_A"]);
-        expect(messagingTokenDefs[0]?.additionalCredentials?.map((d) => d.envKey)).toEqual([
-          "TELEGRAM_BOT_TOKEN_AGENT_A",
-        ]);
+        expect(messagingTokenDefs.map((d) => d.envKey)).toEqual(["TELEGRAM_BOT_TOKEN_AGENT_A"]);
         // The host secret never makes it onto a provider row, so the token
         // value cannot leak into the sandbox gateway.
         expect(JSON.stringify(messagingTokenDefs)).not.toContain("would-leak-if-registered");
         expect(warnings.some((w) => w.includes('"GITHUB_TOKEN"'))).toBe(true);
-      },
-    );
-  });
-
-  it("ignores an extension when its canonical provider is outside the selected plan", () => {
-    withEnv(
-      {
-        [EXTRA_PLACEHOLDER_KEYS_ENV]: "TELEGRAM_BOT_TOKEN_AGENT_A",
-        TELEGRAM_BOT_TOKEN_AGENT_A: "telegram-token-A",
-      },
-      () => {
-        const warnings: string[] = [];
-        const messagingTokenDefs: Array<{
-          name: string;
-          envKey: string;
-          token: string | null;
-          providerType?: string;
-          additionalCredentials?: Array<{ envKey: string; token: string | null }>;
-        }> = [];
-
-        expect(
-          registerExtraPlaceholderProviders("my-sandbox", messagingTokenDefs, (message) =>
-            warnings.push(message),
-          ),
-        ).toEqual([]);
-        expect(messagingTokenDefs).toEqual([]);
-        expect(warnings).toContain(
-          `${EXTRA_PLACEHOLDER_KEYS_ENV}: ignoring "TELEGRAM_BOT_TOKEN_AGENT_A" — its canonical credential is not part of the selected sandbox plan`,
-        );
       },
     );
   });

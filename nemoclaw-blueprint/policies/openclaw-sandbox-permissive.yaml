@@ -151,6 +151,96 @@ network_policies:
     binaries:
       - { path: "/**" }
 
+  # ── Messaging endpoints ──
+
+  telegram:
+    name: telegram
+    endpoints:
+      - host: api.telegram.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: "/**" }
+
+  discord:
+    name: discord
+    endpoints:
+      - host: discord.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: gateway.discord.gg
+        port: 443
+        protocol: websocket
+        enforcement: enforce
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
+      - host: "*.discord.gg"
+        port: 443
+        protocol: websocket
+        enforcement: enforce
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
+      - host: cdn.discordapp.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: media.discordapp.net
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: "/**" }
+
+  slack:
+    name: slack
+    endpoints:
+      - host: slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        request_body_credential_rewrite: true
+        access: full
+      - host: api.slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        request_body_credential_rewrite: true
+        access: full
+      - host: hooks.slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        request_body_credential_rewrite: true
+        access: full
+      - host: wss-primary.slack.com
+        port: 443
+        protocol: websocket
+        enforcement: enforce
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
+      - host: wss-backup.slack.com
+        port: 443
+        protocol: websocket
+        enforcement: enforce
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
+    binaries:
+      - { path: "/**" }
+
   # ── Package registries ──
 
   pypi:

@@ -22,8 +22,7 @@ const {
   LLAMA_CPP_PROVIDER_NAME,
 } = require("../inference/llama-cpp/contract");
 const {
-  inspectGatewayCredentialFamilyProviderBinding,
-  matchesGatewayCredentialFamilyProviderBinding,
+  inspectGatewayCredentialOnlyProviderBinding,
   matchesGatewayCredentialOnlyProviderBinding,
   readGatewayProviderMetadata,
 } = require("./gateway-provider-metadata");
@@ -434,15 +433,13 @@ function getRequestedModelHint(nonInteractive, allowHostedInferenceStaging = tru
  * @returns {string[]} Argument array for runOpenshell().
  */
 function buildProviderArgs(action, name, type, credentialEnv, baseUrl, opts = {}) {
-  const { includeCredential = true, credentialEnvs } = opts;
+  const { includeCredential = true } = opts;
   const args =
     action === "create"
       ? ["provider", "create", "--name", name, "--type", type]
       : ["provider", "update", name];
   if (includeCredential) {
-    for (const envKey of credentialEnvs ?? [credentialEnv]) {
-      args.push("--credential", envKey);
-    }
+    args.push("--credential", credentialEnv);
   }
   if (baseUrl && type === "openai") {
     args.push("--config", `OPENAI_BASE_URL=${baseUrl}`);
@@ -514,25 +511,15 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
     `inspect or change provider ${JSON.stringify(name)}`,
   );
   const exists = options.knownExists ?? providerExistsInGateway(name, runOpenshell);
-  const credentialEnvs = options.credentialEnvs ?? [credentialEnv];
-  const bindingMatches = (metadata) =>
-    options.allowExtendedCredentialKeys
-      ? matchesGatewayCredentialFamilyProviderBinding(metadata, {
-          name,
-          type,
-          credentialKey: credentialEnv,
-          allowExtendedCredentialKeys: true,
-        })
-      : matchesGatewayCredentialOnlyProviderBinding(metadata, {
-          name,
-          type,
-          credentialKey: credentialEnv,
-        });
   if (
     exists &&
     options.requireExactBinding &&
     !options.replaceExisting &&
-    !bindingMatches(readGatewayProviderMetadata(name, runOpenshell))
+    !matchesGatewayCredentialOnlyProviderBinding(readGatewayProviderMetadata(name, runOpenshell), {
+      name,
+      type,
+      credentialKey: credentialEnv,
+    })
   ) {
     return {
       ok: false,
@@ -565,15 +552,10 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
   // a credential value (rebuild after `channels add` with the original env
   // unset), drop the flag so `provider update` becomes a no-op merge — the
   // gateway already holds the secret.
-  const availableCredentialEnvs = credentialEnvs.filter(
-    (envKey) => typeof env[envKey] === "string" && env[envKey].length > 0,
-  );
-  const submittedCredentialEnvs = action === "create" ? credentialEnvs : availableCredentialEnvs;
-  const includeCredential = submittedCredentialEnvs.length > 0;
-  const args = buildProviderArgs(action, name, type, credentialEnv, baseUrl, {
-    includeCredential,
-    credentialEnvs: submittedCredentialEnvs,
-  });
+  const credentialValueAvailable =
+    !!credentialEnv && typeof env[credentialEnv] === "string" && env[credentialEnv].length > 0;
+  const includeCredential = action === "create" || credentialValueAvailable;
+  const args = buildProviderArgs(action, name, type, credentialEnv, baseUrl, { includeCredential });
   const runOpts = { ignoreError: true, env, stdio: ["ignore", "pipe", "pipe"] };
   const result = runOpenshell(args, runOpts);
   if (result.status !== 0) {
@@ -586,56 +568,18 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
   return { ok: true };
 }
 
-function plannedMessagingCredentialKeys(tokenDef) {
-  return [
-    tokenDef.envKey,
-    ...(tokenDef.additionalCredentials ?? [])
-      .filter(({ token }) => Boolean(token))
-      .map(({ envKey }) => envKey),
-  ];
-}
-
-function containsOnlyPlannedMessagingCredentialKeys(metadata, plannedKeys) {
-  const expected = new Set(plannedKeys);
-  return Boolean(
-    metadata && metadata.credentialKeys.every((key) => expected.has(key)),
-  );
-}
-
-function containsPlannedMessagingCredentialKeys(metadata, plannedKeys) {
-  if (!metadata) return false;
-  const observed = new Set(metadata.credentialKeys);
-  return plannedKeys.every((key) => observed.has(key));
-}
-
 function preflightMessagingProviderBindings(tokenDefs, _runOpenshell) {
   const failures = [];
-  for (const tokenDef of tokenDefs) {
-    const { name, envKey, providerType } = tokenDef;
-    if (!providerType) continue;
-    const inspection = inspectGatewayCredentialFamilyProviderBinding(
-      {
-        name,
-        type: providerType,
-        credentialKey: envKey,
-        allowExtendedCredentialKeys: true,
-      },
-      _runOpenshell,
-    );
-    if (inspection.kind === "missing") continue;
-    const metadata =
-      inspection.kind === "exact" ? readGatewayProviderMetadata(name, _runOpenshell) : null;
-    const matches = containsOnlyPlannedMessagingCredentialKeys(
-      metadata,
-      plannedMessagingCredentialKeys(tokenDef),
+  for (const { name, envKey, token, providerType } of tokenDefs) {
+    if (!token || !providerType || !providerExistsInGateway(name, _runOpenshell)) continue;
+    const matches = matchesGatewayCredentialOnlyProviderBinding(
+      readGatewayProviderMetadata(name, _runOpenshell),
+      { name, type: providerType, credentialKey: envKey },
     );
     if (matches) continue;
     failures.push({
       name,
-      message:
-        inspection.kind === "indeterminate" || (inspection.kind === "exact" && !metadata)
-          ? `Could not inspect messaging provider '${name}'; no provider mutation was attempted.`
-          : `Existing provider '${name}' does not match the required '${providerType}' credential binding.`,
+      message: `Existing provider '${name}' does not match the required '${providerType}' credential binding.`,
     });
   }
   return failures;
@@ -721,18 +665,13 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   const upserted = [];
   const mutatedProviderNames = [];
   const failures = [];
-  for (const { name, envKey, token, providerType, additionalCredentials = [] } of tokenDefs) {
-    if (!token && !additionalCredentials.some((credential) => Boolean(credential.token))) continue;
+  for (const { name, envKey, token, providerType } of tokenDefs) {
+    if (!token) continue;
     let knownExists;
     let result;
     if (providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE) {
-      const inspection = inspectGatewayCredentialFamilyProviderBinding(
-        {
-          name,
-          type: providerType,
-          credentialKey: envKey,
-          allowExtendedCredentialKeys: true,
-        },
+      const inspection = inspectGatewayCredentialOnlyProviderBinding(
+        { name, type: providerType, credentialKey: envKey },
         runMessagingBridgeOpenshell,
       );
       if (inspection.kind === "indeterminate") {
@@ -757,11 +696,7 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
         providerType || "generic",
         envKey,
         null,
-        Object.fromEntries(
-          [{ envKey, token }, ...additionalCredentials]
-            .filter((credential) => Boolean(credential.token))
-            .map((credential) => [credential.envKey, credential.token]),
-        ),
+        { [envKey]: token },
         _runOpenshell,
         {
           replaceExisting: Boolean(options.replaceExisting),
@@ -769,36 +704,15 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
           allowedSandboxes: options.allowedSandboxes,
           revalidatePolicyRequirements: options.revalidatePolicyRequirements,
           requireExactBinding: Boolean(options.requireExactBindings && providerType),
-          credentialEnvs: [
-            envKey,
-            ...additionalCredentials
-              .filter(({ token }) => Boolean(token))
-              .map((credential) => credential.envKey),
-          ],
-          allowExtendedCredentialKeys:
-            providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE || additionalCredentials.length > 0,
         },
       );
       if (result.ok) mutatedProviderNames.push(name);
       if (result.ok && providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE) {
-        const verifiedMetadata = readGatewayProviderMetadata(name, runMessagingBridgeOpenshell);
-        const verified =
-          matchesGatewayCredentialFamilyProviderBinding(verifiedMetadata, {
-            name,
-            type: providerType,
-            credentialKey: envKey,
-            allowExtendedCredentialKeys: true,
-          }) &&
-          // `provider update` merges the submitted credential keys. A rebuild
-          // can therefore observe namespaced credentials retained from the
-          // existing provider even when this staging pass submits only the
-          // canonical key. Require every submitted key to be present while the
-          // family matcher above rejects keys outside the canonical namespace.
-          containsPlannedMessagingCredentialKeys(
-            verifiedMetadata,
-            plannedMessagingCredentialKeys({ envKey, additionalCredentials }),
-          );
-        if (!verified) {
+        const verified = inspectGatewayCredentialOnlyProviderBinding(
+          { name, type: providerType, credentialKey: envKey },
+          runMessagingBridgeOpenshell,
+        );
+        if (verified.kind !== "exact") {
           result = {
             ok: false,
             status: 1,
@@ -860,244 +774,6 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   return upserted;
 }
 
-const PLACEHOLDER_SYNC_ATTEMPTS = 40;
-const PLACEHOLDER_SYNC_DELAY_SECONDS = 1;
-const PROVIDER_SYNC_READY_ATTEMPTS = 30;
-const PROVIDER_SYNC_READY_DELAY_SECONDS = 2;
-const PROVIDER_SYNC_ENV_KEY_PATTERN = /^[A-Z][A-Z0-9_]{0,127}$/;
-const REVISIONED_PLACEHOLDER_PATTERN =
-  /^openshell:resolve:env:v[0-9]{1,20}_([A-Z][A-Z0-9_]{0,127})$/u;
-const PLACEHOLDER_PROBE = [
-  'prefix="openshell:resolve:env:"',
-  'for key do value="$(printenv "$key" 2>/dev/null || true)"',
-  'case "$value" in "${prefix}"v*_"$key") revision="${value#${prefix}v}"; revision="${revision%_${key}}"; case "$revision" in ""|*[!0-9]*) ;; *) printf "%s\\t%s\\n" "$key" "$value" ;; esac ;; esac',
-  "done",
-].join("; ");
-
-function parseRevisionedPlaceholders(output, expectedEnvKeys) {
-  const placeholders = new Map();
-  const text = Buffer.isBuffer(output) ? output.toString("utf8") : String(output ?? "");
-  for (const line of text.split(/\r?\n/u)) {
-    const separator = line.indexOf("\t");
-    if (separator <= 0) continue;
-    const envKey = line.slice(0, separator);
-    const placeholder = line.slice(separator + 1);
-    const match = placeholder.match(REVISIONED_PLACEHOLDER_PATTERN);
-    if (expectedEnvKeys.has(envKey) && match?.[1] === envKey) {
-      placeholders.set(envKey, placeholder);
-    }
-  }
-  return placeholders;
-}
-
-function samePlaceholderSnapshot(left, right) {
-  return Boolean(
-    left &&
-    left.size === right.size &&
-    [...right].every(([envKey, placeholder]) => left.get(envKey) === placeholder),
-  );
-}
-
-function waitForStableProviderPlaceholders(sandboxName, gatewayName, envKeys, deps) {
-  const uniqueEnvKeys = [...new Set(envKeys)];
-  if (uniqueEnvKeys.some((envKey) => !PROVIDER_SYNC_ENV_KEY_PATTERN.test(envKey))) {
-    throw new Error("Cannot synchronize messaging providers with an invalid credential env key.");
-  }
-  if (uniqueEnvKeys.length === 0) return;
-
-  const expected = new Set(uniqueEnvKeys);
-  let prior = null;
-  let lastObserved = new Set();
-  for (let attempt = 0; attempt < PLACEHOLDER_SYNC_ATTEMPTS; attempt += 1) {
-    deps.revalidatePolicyRequirements?.(
-      `observing post-policy messaging credentials for sandbox '${sandboxName}'`,
-    );
-    const identityOperation =
-      `observing post-policy messaging credentials for sandbox '${sandboxName}'`;
-    if (deps.tryRevalidateReadySandboxIdentity) {
-      if (!deps.tryRevalidateReadySandboxIdentity(identityOperation)) {
-        prior = null;
-        if (attempt + 1 < PLACEHOLDER_SYNC_ATTEMPTS) {
-          deps.sleepSeconds(PLACEHOLDER_SYNC_DELAY_SECONDS);
-        }
-        continue;
-      }
-    } else {
-      deps.revalidateSandboxIdentity?.(identityOperation);
-    }
-    const result = deps.runOpenshell(
-      [
-        "sandbox",
-        "exec",
-        "-g",
-        gatewayName,
-        "--name",
-        sandboxName,
-        "--",
-        "sh",
-        "-c",
-        PLACEHOLDER_PROBE,
-        "sh",
-        ...uniqueEnvKeys,
-      ],
-      {
-        ignoreError: true,
-        suppressOutput: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-    if (result.status === 0) {
-      const observed = parseRevisionedPlaceholders(result.stdout, expected);
-      lastObserved = new Set(observed.keys());
-      if (observed.size === expected.size && samePlaceholderSnapshot(prior, observed)) return;
-      prior = observed.size === expected.size ? observed : null;
-    } else {
-      prior = null;
-    }
-    if (attempt + 1 < PLACEHOLDER_SYNC_ATTEMPTS) {
-      deps.sleepSeconds(PLACEHOLDER_SYNC_DELAY_SECONDS);
-    }
-  }
-
-  const missing = uniqueEnvKeys.filter((envKey) => !lastObserved.has(envKey));
-  throw new Error(
-    `OpenShell did not synchronize revisioned messaging credential placeholders into sandbox '${sandboxName}' after the bound policy became active${missing.length > 0 ? ` (missing: ${missing.join(", ")})` : ""}.`,
-  );
-}
-
-/** Prove post-policy credential projection, relaunch, and prove the live runtime again. */
-function finalizePostPolicyMessagingProviderSync(input, deps) {
-  if (input.envKeys.length === 0) {
-    input.advanceProviderRefresh?.("ready");
-    return;
-  }
-  if (
-    !deps.waitForSandboxReady(
-      input.sandboxName,
-      PROVIDER_SYNC_READY_ATTEMPTS,
-      PROVIDER_SYNC_READY_DELAY_SECONDS,
-    )
-  ) {
-    throw new Error(
-      `OpenShell did not report sandbox '${input.sandboxName}' ready after messaging provider synchronization.`,
-    );
-  }
-  waitForStableProviderPlaceholders(input.sandboxName, input.gatewayName, input.envKeys, deps);
-
-  deps.revalidatePolicyRequirements?.(
-    `restarting sandbox '${input.sandboxName}' with synchronized messaging credentials`,
-  );
-  deps.revalidateSandboxIdentity?.(
-    `stopping sandbox '${input.sandboxName}' with synchronized messaging credentials`,
-  );
-  input.advanceProviderRefresh?.("stopping");
-  const stopped = deps.runOpenshell(
-    ["sandbox", "stop", "-g", input.gatewayName, input.sandboxName],
-    { ignoreError: true, suppressOutput: true },
-  );
-  if (stopped.status !== 0) {
-    throw new Error(
-      `OpenShell did not stop sandbox '${input.sandboxName}' after messaging credential synchronization.`,
-    );
-  }
-  input.advanceProviderRefresh?.("stopped", { revalidateIdentity: false });
-  const started = deps.runOpenshell(
-    ["sandbox", "start", "-g", input.gatewayName, input.sandboxName],
-    { ignoreError: true, suppressOutput: true },
-  );
-  if (started.status !== 0) {
-    throw new Error(
-      `OpenShell did not restart sandbox '${input.sandboxName}' after messaging credential synchronization.`,
-    );
-  }
-  input.advanceProviderRefresh?.("started", { revalidateIdentity: false });
-  if (
-    !deps.waitForSandboxReady(
-      input.sandboxName,
-      PROVIDER_SYNC_READY_ATTEMPTS,
-      PROVIDER_SYNC_READY_DELAY_SECONDS,
-    )
-  ) {
-    throw new Error(
-      `OpenShell did not report sandbox '${input.sandboxName}' ready after messaging credential synchronization.`,
-    );
-  }
-  waitForStableProviderPlaceholders(input.sandboxName, input.gatewayName, input.envKeys, deps);
-  input.advanceProviderRefresh?.("ready");
-  deps.revalidatePolicyRequirements?.(
-    `confirming synchronized messaging runtime for sandbox '${input.sandboxName}'`,
-  );
-}
-
-async function synchronizeMessagingProvidersAfterPolicy(input, deps) {
-  const messaging = await deps.rebindMessagingCapabilities({
-    sandboxName: input.sandboxName,
-    enabledChannels: input.enabledChannels,
-    webSearchConfig: input.webSearchConfig,
-    agent: input.agent,
-    reuseRegisteredCredentials: true,
-  });
-  let pendingPolicyVerification = input.pendingPolicyVerification;
-  const providerNames = [...new Set(messaging.messagingTokenDefs.map(({ name }) => name))];
-  const advanceProviderRefresh = (phase, { revalidateIdentity = true } = {}) => {
-    if (!pendingPolicyVerification) return;
-    if (revalidateIdentity) {
-      deps.revalidateSandboxIdentity?.(
-        `recording provider refresh phase '${phase}' for sandbox '${input.sandboxName}'`,
-      );
-    }
-    pendingPolicyVerification = deps.advancePendingSandboxProviderRefresh(
-      input.sandboxName,
-      input.reservationSessionId,
-      pendingPolicyVerification,
-      { schemaVersion: 1, phase, attachedProviders: providerNames },
-    );
-  };
-  advanceProviderRefresh("attaching");
-  deps.upsertMessagingProviders(
-    messaging.messagingTokenDefs,
-    {
-      requireExactBindings: true,
-      revalidatePolicyRequirements: input.revalidatePolicyRequirements,
-    },
-    deps.runGatewayOpenshell,
-  );
-
-  const reusableProviderNames = new Set(messaging.reusableMessagingProviders);
-  for (const provider of messaging.messagingTokenDefs) {
-    if (provider.token || !reusableProviderNames.has(provider.name)) continue;
-    input.revalidatePolicyRequirements?.(
-      `republish messaging provider '${provider.name}' after policy binding`,
-    );
-    const refreshed = deps.runGatewayOpenshell(["provider", "update", provider.name], {
-      ignoreError: true,
-      suppressOutput: true,
-    });
-    if (refreshed.status !== 0) {
-      throw new Error(
-        `OpenShell did not republish messaging provider '${provider.name}' after policy binding.`,
-      );
-    }
-  }
-
-  const envKeys = messaging.messagingTokenDefs.flatMap((provider) => [
-    ...(provider.token || reusableProviderNames.has(provider.name) ? [provider.envKey] : []),
-    ...(provider.additionalCredentials ?? [])
-      .filter((credential) => Boolean(credential.token))
-      .map((credential) => credential.envKey),
-  ]);
-  finalizePostPolicyMessagingProviderSync(
-    {
-      sandboxName: input.sandboxName,
-      gatewayName: deps.gatewayName,
-      envKeys,
-      advanceProviderRefresh,
-    },
-    deps,
-  );
-  return pendingPolicyVerification;
-}
-
 module.exports = {
   isMessagingProviderBindingConflict,
   BUILD_ENDPOINT_URL,
@@ -1131,7 +807,5 @@ module.exports = {
   providerExistsInGateway,
   readGatewayProviderMetadata,
   upsertMessagingProviders,
-  finalizePostPolicyMessagingProviderSync,
-  synchronizeMessagingProvidersAfterPolicy,
   getSandboxInferenceConfig,
 };

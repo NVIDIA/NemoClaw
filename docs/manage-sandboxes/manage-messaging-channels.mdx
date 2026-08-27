@@ -125,59 +125,6 @@ A missing or incompatible required provider stops the rebuild before the replace
 </AgentOnly>
 If the command queues the change without rebuilding, the running sandbox keeps its existing bridge and network policy until you rebuild it.
 
-## Recover Messaging Routes
-
-Before `shields down` applies its relaxed policy, NemoClaw verifies credential-bound messaging routes against the saved channel plan and live policy.
-If the saved channel plan is unavailable and the live policy cannot be read, `shields down` stops without changing the live policy.
-If the saved channel plan is unavailable but the live policy is readable and contains a recognized messaging route, `shields down` stops without changing the live policy.
-If the saved channel plan is unavailable but the live policy is readable and contains no recognized messaging route, `shields down` continues after omitting all credential-bound messaging routes.
-When no recognized messaging route exists, `shields down` prints a warning and recovery steps for every intended channel.
-
-Run this command once for every channel that the sandbox must keep:
-
-```bash
-$$nemoclaw <sandbox> channels add <channel>
-```
-
-In an interactive terminal, approve each rebuild prompt.
-For channels whose required inputs support non-interactive enrollment, provide the required credentials and run every `channels add` command before one rebuild:
-
-```bash
-$$nemoclaw <sandbox> rebuild
-```
-
-Retry `shields down` after the rebuild.
-
-<AgentOnly variant="openclaw">
-For OpenClaw Google Chat recovery, run `$$nemoclaw <sandbox> channels add googlechat` in an interactive terminal.
-Follow the enrollment path that applies:
-
-- If NemoClaw reports that the webhook audience is already set, it reuses the previously supplied value.
-  NemoClaw does not display or confirm a new tunnel URL.
-- If `audienceType` is `project-number` and no audience is supplied, enter the Google Cloud project number at the audience prompt.
-  Do not follow the tunnel URL steps.
-- If `audienceType` is the default `app-url` value and no audience is supplied, complete these steps:
-
-  1. Open **Google Cloud Console** > **Google Chat API** > **Configuration**.
-  2. Under **Connection settings**, select **Use a common HTTP endpoint URL for all triggers**.
-  3. Paste the exact displayed HTTPS URL, including `/googlechat` and no trailing slash, into **HTTP endpoint URL**.
-  4. Confirm the enrollment prompt.
-
-Rebuild the sandbox after the selected enrollment path completes.
-Retry `shields down`.
-</AgentOnly>
-
-When the saved plan is available, `shields down` can continue without an affected credential-bound route.
-NemoClaw omits the route when its channel policy cannot be materialized or the live policy has an absent, partial, or mismatched credential provider set.
-The command prints the affected channel and its add and rebuild steps.
-Re-add each affected channel, rebuild the sandbox, and retry `shields down` before you rely on that channel during the maintenance window.
-
-<AgentOnly variant="hermes">
-The Hermes Telegram policy route must bind the exact `<sandbox>-telegram-bridge` provider.
-If the live route has no binding or names another provider, NemoClaw omits Telegram from the relaxed policy and prints the add and rebuild steps.
-Re-add Telegram, rebuild the sandbox, and retry `shields down` before you rely on Telegram during the maintenance window.
-</AgentOnly>
-
 ## Avoid Cross-Sandbox Conflicts
 
 <Warning title="Conflict Detection Scope">

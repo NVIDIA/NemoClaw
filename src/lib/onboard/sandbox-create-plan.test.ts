@@ -73,11 +73,7 @@ const channels = [
 
 const discordProviderName = "sandbox-discord-bridge";
 
-function resolveDiscordCreateIntent(input: {
-  selected: boolean;
-  reusable?: boolean;
-  additionalPresets?: string[];
-}) {
+function resolveDiscordCreateIntent(input: { selected: boolean; reusable?: boolean }) {
   const messagingTokenDefs: MessagingTokenDef[] = [
     {
       name: discordProviderName,
@@ -86,7 +82,7 @@ function resolveDiscordCreateIntent(input: {
       providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
     },
   ];
-  const resolvedIntent = resolveSandboxCreateIntent({
+  const intent = resolveSandboxCreateIntent({
     basePolicyPath: "nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
     sandboxName: "sandbox",
     channels,
@@ -107,18 +103,6 @@ function resolveDiscordCreateIntent(input: {
     agentName: "openclaw",
     policyTier: "balanced",
   });
-  const intent = input.additionalPresets
-    ? {
-        ...resolvedIntent,
-        policy: {
-          ...resolvedIntent.policy,
-          options: {
-            ...resolvedIntent.policy.options,
-            additionalPresets: [...input.additionalPresets],
-          },
-        },
-      }
-    : resolvedIntent;
   return { intent, messagingTokenDefs };
 }
 
@@ -129,7 +113,6 @@ type DiscordPlanOverrides = Partial<
     | "runProviderPreDeleteCleanup"
     | "upsertMessagingProviders"
     | "getHermesToolGatewayProviderName"
-    | "deferSandboxEffectsUntilPolicyVerification"
   >
 >;
 
@@ -417,28 +400,6 @@ describe("resolveSandboxCreateIntent", () => {
     expect(plan.initialSandboxPolicy.credentialBindingProviders).toEqual([discordProviderName]);
     expect(plan.messagingProviders).toEqual([discordProviderName]);
     expect(plan.createArgs).toContain(discordProviderName);
-    plan.initialSandboxPolicy.cleanup?.();
-  });
-
-  it("defers selected and rebuild-carried messaging policies until providers attach (#10153)", () => {
-    const { intent, messagingTokenDefs } = resolveDiscordCreateIntent({
-      selected: true,
-      additionalPresets: ["telegram", "npm"],
-    });
-
-    const plan = materializeDiscordCreatePlan(
-      { intent, messagingTokenDefs },
-      { deferSandboxEffectsUntilPolicyVerification: true },
-    );
-
-    expect(plan.activeMessagingChannels).toEqual(["discord"]);
-    expect(plan.initialSandboxPolicy.appliedPresets).not.toContain("discord");
-    expect(plan.initialSandboxPolicy.appliedPresets).not.toContain("telegram");
-    expect(plan.initialSandboxPolicy.appliedPresets).toContain("npm");
-    expect(plan.initialSandboxPolicy.credentialBindingProviders ?? []).toEqual([]);
-    expect(plan.messagingProviders).toEqual([discordProviderName]);
-    expect(plan.createArgs).not.toContain(discordProviderName);
-    expect(plan.activateDeferredProviderEffects?.(() => undefined)).toContain(discordProviderName);
     plan.initialSandboxPolicy.cleanup?.();
   });
 
@@ -746,7 +707,12 @@ describe("resolveSandboxCreateIntent", () => {
       "sandbox-hermes-tools",
       "custom-provider",
     ]);
-    expect(events).toEqual(["revalidate:cleaning up providers", "cleanup", "upsert", "hermes"]);
+    expect(events).toEqual([
+      "revalidate:cleaning up providers",
+      "cleanup",
+      "upsert",
+      "hermes",
+    ]);
   });
 
   it("keeps the NemoClaw policy on a managed create when effects are deferred (#9833)", () => {
@@ -785,7 +751,9 @@ describe("resolveSandboxCreateIntent", () => {
       getHermesToolGatewayProviderName: vi.fn(),
     });
 
-    expect(plan.createArgs).toEqual(expect.arrayContaining(["--policy", "/tmp/policy.yaml"]));
+    expect(plan.createArgs).toEqual(
+      expect.arrayContaining(["--policy", "/tmp/policy.yaml"]),
+    );
     expect(plan.createArgs).not.toContain("--provider");
   });
 

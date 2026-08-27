@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import YAML from "yaml";
 
 import {
-  composeCredentialBoundMessagingPolicies,
+  listBuiltInMessagingChannelManifests,
+  listMessagingPolicyPresetMetadata,
+} from "./metadata";
+import {
   createMessagingChannelPolicyResolver,
   listMessagingChannelPolicyPresets,
   loadMessagingChannelPolicyPreset,
@@ -16,13 +18,6 @@ import {
 type PolicyFixture = {
   readonly channelId: string;
   readonly presetName: string;
-};
-
-type PolicyEndpoint = {
-  readonly host?: string;
-  readonly path?: string;
-  readonly port?: number;
-  readonly credential_binding?: { readonly provider?: string };
 };
 
 function fixtureContentFor(
@@ -46,42 +41,6 @@ function createPolicyWithFixtures(
     readFileSync: (file) => fixtureContentFor(file, filesByChannel) ?? "",
     listPresetMetadata: () => presets,
   });
-}
-
-function composeHermesTelegramPolicy(providerAvailable: boolean) {
-  const sandboxName = "hermes-telegram";
-  const omissions: Array<{ channelId: string | null; reason: string }> = [];
-  const composed = composeCredentialBoundMessagingPolicies(
-    YAML.stringify({ network_policies: {} }),
-    YAML.stringify({
-      network_policies: {
-        telegram: {
-          endpoints: providerAvailable
-            ? [
-                {
-                  credential_binding: {
-                    provider: `${sandboxName}-telegram-bridge`,
-                  },
-                },
-              ]
-            : [],
-        },
-      },
-    }),
-    sandboxName,
-    "hermes",
-    {
-      channels: [{ channelId: "telegram", active: true, disabled: false }],
-      disabledChannels: [],
-    },
-    (omission) => omissions.push(omission),
-  );
-  const telegram = (
-    YAML.parse(composed) as {
-      network_policies: { telegram?: { endpoints?: PolicyEndpoint[] } };
-    }
-  ).network_policies.telegram;
-  return { omissions, sandboxName, telegram };
 }
 
 describe("messaging channel policy presets", () => {
@@ -168,106 +127,16 @@ describe("messaging channel policy presets", () => {
     },
   );
 
-  it("omits a disabled channel even when its live providers still match (#10153)", () => {
-    const sandboxName = "disabled-slack";
-    const composed = composeCredentialBoundMessagingPolicies(
-      YAML.stringify({
-        network_policies: {
-          slack: {
-            endpoints: [
-              {
-                host: "slack.com",
-                credential_binding: { provider: "{sandboxName}-slack-app" },
-              },
-              {
-                host: "api.slack.com",
-                credential_binding: { provider: "{sandboxName}-slack-bridge" },
-              },
-            ],
-          },
-        },
-      }),
-      YAML.stringify({
-        network_policies: {
-          slack: {
-            endpoints: [
-              { credential_binding: { provider: `${sandboxName}-slack-app` } },
-              { credential_binding: { provider: `${sandboxName}-slack-bridge` } },
-            ],
-          },
-        },
-      }),
-      sandboxName,
-      "openclaw",
-      {
-        channels: [{ channelId: "slack", active: false, disabled: true }],
-        disabledChannels: ["slack"],
-      },
+  it("ships a policy file for every manifest-supported agent and preset", () => {
+    const missing = listBuiltInMessagingChannelManifests().flatMap((manifest) =>
+      manifest.supportedAgents.flatMap((agent) =>
+        listMessagingPolicyPresetMetadata({ manifests: [manifest], agent }).flatMap((preset) =>
+          resolveMessagingChannelPolicyPresetPath(preset.presetName, agent)
+            ? []
+            : [`${manifest.id}/${agent}/${preset.presetName}`],
+        ),
+      ),
     );
-
-    expect(YAML.parse(composed).network_policies.slack).toBeUndefined();
-  });
-
-  it("composes the Slack app route more specifically than the bot route (#10153)", () => {
-    const sandboxName = "msg-binding-e2e";
-    const composed = composeCredentialBoundMessagingPolicies(
-      YAML.stringify({ network_policies: {} }),
-      YAML.stringify({
-        network_policies: {
-          slack: {
-            endpoints: [
-              { credential_binding: { provider: `${sandboxName}-slack-app` } },
-              { credential_binding: { provider: `${sandboxName}-slack-bridge` } },
-            ],
-          },
-        },
-      }),
-      sandboxName,
-      "openclaw",
-      {
-        channels: [{ channelId: "slack", active: true, disabled: false }],
-        disabledChannels: [],
-      },
-    );
-    const endpoints = (
-      YAML.parse(composed) as {
-        network_policies: { slack: { endpoints: PolicyEndpoint[] } };
-      }
-    ).network_policies.slack.endpoints.filter(
-      (endpoint) => endpoint.host === "slack.com" && endpoint.port === 443,
-    );
-    const appEndpoint = endpoints.find(
-      (endpoint) => endpoint.credential_binding?.provider === `${sandboxName}-slack-app`,
-    );
-    const botEndpoint = endpoints.find(
-      (endpoint) => endpoint.credential_binding?.provider === `${sandboxName}-slack-bridge`,
-    );
-
-    expect(appEndpoint).toMatchObject({ path: "/api/apps.connections.open" });
-    expect(botEndpoint?.path ?? "").toBe("");
-  });
-
-  it("retains the Hermes Telegram route when its bridge provider is available (#10153)", () => {
-    const { omissions, sandboxName, telegram } = composeHermesTelegramPolicy(true);
-
-    expect(telegram?.endpoints).toContainEqual(
-      expect.objectContaining({
-        host: "api.telegram.org",
-        credential_binding: { provider: `${sandboxName}-telegram-bridge` },
-      }),
-    );
-    expect(omissions).toEqual([]);
-  });
-
-  it("omits the Hermes Telegram route when its bridge provider is unavailable (#10153)", () => {
-    const { omissions, telegram } = composeHermesTelegramPolicy(false);
-
-    expect(telegram).toBeUndefined();
-    expect(omissions).toEqual([
-      expect.objectContaining({
-        channelId: "telegram",
-        reason: "the live policy has no credential providers; expected 1",
-      }),
-    ]);
+    expect(missing).toEqual([]);
   });
 });

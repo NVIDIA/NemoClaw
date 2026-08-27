@@ -27,21 +27,6 @@ interface PendingSandboxPolicyVerificationBoundary {
   readonly route: "none" | "native" | "compatibility";
   readonly policyHash: string;
   readonly policyVersion: number;
-  readonly providerRefresh?: PendingSandboxProviderRefresh;
-}
-
-export type PendingSandboxProviderRefreshPhase =
-  | "attaching"
-  | "stopping"
-  | "stopped"
-  | "started"
-  | "ready";
-
-/** Secret-free recovery receipt for deferred provider attachment and sandbox refresh. */
-export interface PendingSandboxProviderRefresh {
-  readonly schemaVersion: 1;
-  readonly phase: PendingSandboxProviderRefreshPhase;
-  readonly attachedProviders: readonly string[];
 }
 
 /** Durable, incomplete create boundary recorded before post-create effects. */
@@ -171,8 +156,6 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   policyCreationReceipt?: NemoClawPolicyCreationReceipt;
   /** Verified create boundary retained until final registration publishes atomically. */
   pendingPolicyVerification?: PendingSandboxPolicyVerification;
-  /** Full registration is staged but cannot publish until provider refresh reaches ready. */
-  pendingRegistrationPublication?: true;
   policies?: string[];
   customPolicies?: CustomPolicyEntry[];
   /** Operator exclusions from the agent baseline policy, replayed on rebuild. */

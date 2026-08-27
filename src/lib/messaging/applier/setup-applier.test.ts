@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import {
@@ -503,9 +503,9 @@ describe("MessagingSetupApplier", () => {
           ? {
               status: 0,
               stdout:
-                "Name: demo-telegram-bridge\nType: generic\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n",
-            }
-          : { status: 0 };
+              "Name: demo-telegram-bridge\nType: generic\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n",
+          }
+        : { status: 0 };
     };
 
     expect(() =>
@@ -711,18 +711,7 @@ describe("MessagingSetupApplier", () => {
       runOpenshell,
     });
 
-    expect(calls[0]?.args).toEqual(
-      expect.arrayContaining([
-        "sandbox",
-        "exec",
-        "--name",
-        "demo",
-        "sh",
-        "-c",
-        "TELEGRAM_BOT_TOKEN",
-      ]),
-    );
-    expect(calls.slice(1).map((call) => call.args)).toEqual([
+    expect(calls.map((call) => call.args)).toEqual([
       ["sandbox", "exec", "--name", "demo", "--", "cat", "/sandbox/.openclaw/openclaw.json"],
       [
         "sandbox",
@@ -737,7 +726,7 @@ describe("MessagingSetupApplier", () => {
         "/sandbox/.openclaw/openclaw.json",
       ],
     ]);
-    expect(calls[2]?.input).toBeTruthy();
+    expect(calls[1]?.input).toBeTruthy();
     const openclawConfig = JSON.parse(files["/sandbox/.openclaw/openclaw.json"] ?? "{}");
     expect(openclawConfig.agents.list).toEqual(["default"]);
     // No botToken: OpenClaw resolves the default account from the injected
@@ -751,6 +740,46 @@ describe("MessagingSetupApplier", () => {
     expect(result.appliedTargets).toEqual(["/sandbox/.openclaw/openclaw.json"]);
     expect(result.appliedHooks).toEqual([]);
     expect(result.unresolvedTemplateRefs).toEqual([]);
+  });
+
+  it("preserves runtime-scoped credential placeholders when reapplying render plans", async () => {
+    const plan = await buildOnboardPlan({ TELEGRAM_BOT_TOKEN: "123456:telegram-token" }, [
+      "telegram",
+    ]);
+    const scoped = "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN";
+    const files: Record<string, string> = {
+      "/sandbox/.openclaw/openclaw.json": JSON.stringify({
+        channels: {
+          telegram: {
+            accounts: {
+              default: {
+                botToken: scoped,
+              },
+            },
+          },
+        },
+      }),
+    };
+    const runOpenshell: MessagingOpenShellRunner = (args, options) => {
+      const target = String(args.at(-1));
+      if (args.includes("cat") && !options?.input) {
+        return { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" };
+      }
+      if (options?.input !== undefined) {
+        files[target] = options.input;
+        return { status: 0 };
+      }
+      return { status: 1 };
+    };
+
+    await MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, { runOpenshell });
+
+    const openclawConfig = JSON.parse(files["/sandbox/.openclaw/openclaw.json"] ?? "{}");
+    expect(openclawConfig.channels.telegram.accounts.default).toMatchObject({
+      botToken: scoped,
+      enabled: true,
+      groupPolicy: "open",
+    });
   });
 
   it("drops a stale credential env line the plan no longer renders", async () => {
@@ -803,11 +832,7 @@ describe("MessagingSetupApplier", () => {
     // Telegram's only remaining Hermes env line is the allowlist, so without
     // allowed IDs the whole env render collapses and the target never appears
     // in the render plan. The file on disk still has to be cleaned.
-    const plan = await buildOnboardPlan(
-      { TELEGRAM_BOT_TOKEN: "telegram-token" },
-      ["telegram"],
-      "hermes",
-    );
+    const plan = await buildOnboardPlan({ TELEGRAM_BOT_TOKEN: "telegram-token" }, ["telegram"], "hermes");
     const files: Record<string, string> = {
       "/sandbox/.hermes/.env": [
         "TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN",

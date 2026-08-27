@@ -709,31 +709,6 @@ describe("registerCreatedSandbox", () => {
     expect(registerSandbox).toHaveBeenCalledExactlyOnceWith(entry);
   });
 
-  it("stages a verified registration while its provider refresh is incomplete (#10153)", () => {
-    const registerSandbox = vi.fn();
-    const reservationSessionId = "session-1";
-    const route = { entry: {}, authority: { sessionId: reservationSessionId } } as never;
-    const checkpoint = {
-      providerRefresh: {
-        schemaVersion: 1 as const,
-        phase: "attaching" as const,
-        attachedProviders: ["alpha-telegram"],
-      },
-    } as never;
-    const entry = registerCreatedSandbox({
-      ...createdRegistryEntryInput({ lifecycleGeneration: "generation-1" }),
-      inferenceRouteReservation: route,
-      verifiedCreate: { reservation: route, checkpoint },
-      registerSandbox,
-    });
-
-    expect(registerSandbox).toHaveBeenCalledExactlyOnceWith(entry, route, {
-      pending: true,
-      reservationSessionId,
-      verifiedCreate: { reservation: route, checkpoint },
-    });
-  });
-
   it("persists lifecycle identity for a non-OpenClaw agent", () => {
     const agentDefs = requireDist("../agent/defs.js") as typeof import("../agent/defs");
     const registerSandbox = vi.fn();

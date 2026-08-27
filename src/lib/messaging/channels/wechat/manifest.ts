@@ -69,7 +69,7 @@ export const wechatManifest = {
       placeholder: "openshell:resolve:env:WECHAT_BOT_TOKEN",
     },
   ],
-  policyPresets: [{ name: "wechat", policyKeys: ["wechat_bridge"], requiredAtCreate: true }],
+  policyPresets: [{ name: "wechat", policyKeys: ["wechat_bridge"] }],
   render: [
     {
       id: "wechat-openclaw-plugin",

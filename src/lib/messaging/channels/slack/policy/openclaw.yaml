@@ -18,10 +18,10 @@ network_policies:
       # rejected as ambiguous.
       - host: slack.com
         port: 443
-        path: /api/apps.connections.open
         protocol: rest
         enforcement: enforce
         request_body_credential_rewrite: true
+        path: /api/apps.connections.open
         credential_binding:
           provider: "{sandboxName}-slack-app"
         rules:
@@ -64,8 +64,6 @@ network_policies:
         protocol: websocket
         enforcement: enforce
         websocket_credential_rewrite: true
-        credential_binding:
-          provider: "{sandboxName}-slack-app"
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: WEBSOCKET_TEXT, path: "/**" }
@@ -74,8 +72,6 @@ network_policies:
         protocol: websocket
         enforcement: enforce
         websocket_credential_rewrite: true
-        credential_binding:
-          provider: "{sandboxName}-slack-app"
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: WEBSOCKET_TEXT, path: "/**" }

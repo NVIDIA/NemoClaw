@@ -1764,27 +1764,6 @@ def rewrite(value):
             if count:
                 refreshed.add(key)
                 value = updated
-        alias_index = value.find(alias_marker)
-        if alias_index > 0:
-            alias_suffix = value[alias_index + len(alias_marker) :]
-            for env_key in keys:
-                if alias_suffix != env_key and not re.fullmatch(
-                    rf"v[0-9]+_{re.escape(env_key)}", alias_suffix
-                ):
-                    continue
-                runtime_value = os.environ.get(env_key, "")
-                if not runtime_value.startswith(prefix):
-                    continue
-                runtime_suffix = runtime_value[len(prefix) :]
-                if runtime_suffix != env_key and not re.fullmatch(
-                    rf"v[0-9]+_{re.escape(env_key)}", runtime_suffix
-                ):
-                    continue
-                updated = value[: alias_index + len(alias_marker)] + runtime_suffix
-                if updated != value:
-                    refreshed.add(env_key)
-                    value = updated
-                break
         return value
     if isinstance(value, list):
         return [rewrite(item) for item in value]
@@ -1838,7 +1817,7 @@ def walk_for_warnings(value, path):
             alias_env_key = value[alias_index + len(alias_marker) :]
             token_scheme = value[:alias_index] + "-"
             for env_key in keys:
-                if not placeholder_suffix_matches_env_key(alias_env_key, env_key):
+                if env_key != alias_env_key:
                     continue
                 label = path_label(path)
                 env_value = os.environ.get(env_key, "")
@@ -2106,6 +2085,37 @@ for entry in runtime_setup_entries("secretScans"):
 
 print(json.dumps({"nodePreloads": node_preloads, "envAliases": env_aliases, "secretScans": secret_scans}, sort_keys=True))
 PYMESSAGINGRUNTIME
+}
+
+apply_messaging_runtime_env_aliases() {
+  [ -f "$_MESSAGING_RUNTIME_SETUP_PLAN" ] || return 0
+  local _rows
+  _rows="$(
+    python3 - "$_MESSAGING_RUNTIME_SETUP_PLAN" <<'PYMESSAGINGALIASES'
+import json
+import os
+import re
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    plan = json.load(handle)
+for alias in plan.get("envAliases", []):
+    if not re.search(alias["match"], os.environ.get(alias["envKey"], "")):
+        continue
+    print("\t".join([
+        alias["envKey"],
+        alias["value"],
+        alias.get("message", ""),
+    ]))
+PYMESSAGINGALIASES
+  )" || return $?
+  [ -n "$_rows" ] || return 0
+
+  local _env_key _value _message
+  while IFS=$'\t' read -r _env_key _value _message; do
+    export "$_env_key=$_value"
+    [ -n "$_message" ] && printf '%s\n' "$_message" >&2
+  done <<<"$_rows"
 }
 
 node_options_has_require() {

@@ -17,7 +17,7 @@ import { initialDockerGpuRoute, resolveDockerGpuRoutePlan } from "../../onboard/
 import { isDockerDesktopWslRuntime } from "../../onboard/docker-gpu-sandbox-create";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
-  matchesGatewayCredentialFamilyProviderBinding,
+  matchesGatewayCredentialOnlyProviderBinding,
   readGatewayProviderMetadata,
 } from "../../onboard/gateway-provider-metadata";
 import { resolveSandboxGpuConfig } from "../../onboard/sandbox-gpu-mode";
@@ -59,14 +59,9 @@ function canReuseGatewayWebSearchCredential(
   const credentialEnv = webSearchEnvFor(provider);
   if (getCredential(credentialEnv)) return false;
   const providerName = `${sb.name}-${provider}-search`;
-  const matches = matchesGatewayCredentialFamilyProviderBinding(
+  const matches = matchesGatewayCredentialOnlyProviderBinding(
     readGatewayProviderMetadata(providerName, runOpenshell, resolveSandboxGatewayName(sb)),
-    {
-      name: providerName,
-      type: provider,
-      credentialKey: credentialEnv,
-      allowExtendedCredentialKeys: true,
-    },
+    { name: providerName, type: provider, credentialKey: credentialEnv },
   );
   if (matches) {
     log(

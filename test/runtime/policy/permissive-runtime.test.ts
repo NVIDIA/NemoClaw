@@ -21,8 +21,6 @@ const BASE_PERMISSIVE = YAML.stringify({
   landlock: { compatibility: "best_effort" },
 });
 
-const EMPTY_NETWORK_PERMISSIVE = YAML.stringify({ network_policies: {} });
-
 const MANAGED_POLICY: ExactManagedMcpPolicy = {
   key: "mcp_bridge_alpha",
   networkPolicy: {
@@ -33,69 +31,35 @@ const MANAGED_POLICY: ExactManagedMcpPolicy = {
   server: "alpha",
 };
 
-const SHIELDS_CREDENTIAL_FREE_ROUTE_CASES = [
-  ["whatsapp", "enabled", true],
-  ["whatsapp", "disabled", false],
-] as const;
+const HERMES_DISCORD_PERMISSIVE = YAML.stringify({
+  network_policies: {
+    discord: {
+      endpoints: [
+        {
+          host: "discord.com",
+          port: 443,
+          credential_binding: { provider: "{sandboxName}-discord-bridge" },
+        },
+        {
+          host: "gateway.discord.gg",
+          port: 443,
+          credential_binding: { provider: "{sandboxName}-discord-bridge" },
+        },
+        {
+          host: "*.discord.gg",
+          port: 443,
+          credential_binding: { provider: "{sandboxName}-discord-bridge" },
+        },
+        { host: "cdn.discordapp.com", port: 443 },
+      ],
+    },
+  },
+});
 
-const MISSING_PLAN_SHIELDS_CASES = [
-  [
-    "a live credential-free WhatsApp route",
-    YAML.stringify({
-      network_policies: {
-        whatsapp: { endpoints: [{ host: "web.whatsapp.com", port: 443 }] },
-      },
-    }),
-    "channel 'whatsapp'",
-  ],
-  ["an unreadable live policy", "", "the live policy could not be read"],
-] as const;
-
-const SLACK_PROVIDER_CASES = [
-  [
-    "openclaw",
-    "exact",
-    "openclaw-box",
-    ["openclaw-box-slack-app", "openclaw-box-slack-bridge"],
-    true,
-  ],
-  ["openclaw", "absent", "openclaw-box", [], false],
-  ["openclaw", "partial", "openclaw-box", ["openclaw-box-slack-app"], false],
-  [
-    "openclaw",
-    "mismatched",
-    "openclaw-box",
-    ["openclaw-box-slack-app", "openclaw-box-slack-bridge", "openclaw-box-unexpected-provider"],
-    false,
-  ],
-  ["hermes", "absent", "hermes-box", [], false],
-  ["hermes", "partial", "hermes-box", ["hermes-box-slack-app"], false],
-  [
-    "hermes",
-    "mismatched",
-    "hermes-box",
-    ["hermes-box-slack-app", "hermes-box-slack-bridge", "hermes-box-unexpected-provider"],
-    false,
-  ],
-] as const;
-
-const INVALID_SANDBOX_MESSAGING_CASES = [
-  [
-    "Slack",
-    "slack",
-    "slack",
-    [
-      { credential_binding: { provider: "bad:provider-slack-app" } },
-      { credential_binding: { provider: "bad:provider-slack-bridge" } },
-    ],
-  ],
-  [
-    "Discord",
-    "discord",
-    "discord",
-    [{ credential_binding: { provider: "bad:provider-discord-bridge" } }],
-  ],
-] as const;
+const HERMES_MESSAGING_PERMISSIVE = fs.readFileSync(
+  path.resolve(import.meta.dirname, "../../../agents/hermes/policy-permissive.yaml"),
+  "utf8",
+);
 
 type SlackEndpoint = {
   access?: string;
@@ -105,13 +69,6 @@ type SlackEndpoint = {
   rules?: Array<{ allow?: { method?: string; path?: string } }>;
 };
 
-function enabledMessagingSelection(...channelIds: string[]) {
-  return {
-    channels: channelIds.map((channelId) => ({ channelId, active: true, disabled: false })),
-    disabledChannels: [],
-  };
-}
-
 function expectExactHermesSlackCredentialRoutes(endpoints: SlackEndpoint[]): void {
   expect(
     endpoints.map((endpoint) => ({
@@ -120,9 +77,8 @@ function expectExactHermesSlackCredentialRoutes(endpoints: SlackEndpoint[]): voi
       path: endpoint.path,
       provider: endpoint.credential_binding?.provider,
       routes:
-        endpoint.rules?.map(
-          (rule) => `${String(rule.allow?.method)} ${String(rule.allow?.path)}`,
-        ) ?? [],
+        endpoint.rules?.map((rule) => `${String(rule.allow?.method)} ${String(rule.allow?.path)}`) ??
+        [],
     })),
   ).toEqual([
     {
@@ -133,25 +89,25 @@ function expectExactHermesSlackCredentialRoutes(endpoints: SlackEndpoint[]): voi
       routes: ["POST /api/apps.connections.open"],
     },
     {
-      access: undefined,
+      access: "full",
       host: "slack.com",
       path: undefined,
       provider: "hermes-box-slack-bridge",
-      routes: ["GET /**", "POST /**"],
+      routes: [],
     },
     {
-      access: undefined,
+      access: "full",
       host: "api.slack.com",
       path: undefined,
       provider: "hermes-box-slack-bridge",
-      routes: ["GET /**", "POST /**"],
+      routes: [],
     },
     {
-      access: undefined,
+      access: "full",
       host: "hooks.slack.com",
       path: undefined,
       provider: "hermes-box-slack-bridge",
-      routes: ["GET /**", "POST /**"],
+      routes: [],
     },
     {
       access: undefined,
@@ -198,140 +154,6 @@ afterEach(() => {
 });
 
 describe("buildRuntimePermissivePolicy (#3942)", () => {
-  it("keeps exact OpenClaw Telegram and Slack providers together in Shields down (#10153)", () => {
-    let stagedPolicy = "";
-    buildRuntimePermissivePolicy("/unused-openclaw-permissive.yaml", {
-      livePolicyYaml: YAML.stringify({
-        network_policies: {
-          telegram_bot: {
-            endpoints: [
-              {
-                credential_binding: { provider: "openclaw-box-telegram-bridge" },
-              },
-            ],
-          },
-          slack: {
-            endpoints: [
-              {
-                credential_binding: { provider: "openclaw-box-slack-app" },
-              },
-              {
-                credential_binding: { provider: "openclaw-box-slack-bridge" },
-              },
-            ],
-          },
-        },
-      }),
-      messagingAgent: "openclaw",
-      messagingPlan: enabledMessagingSelection("telegram", "slack"),
-      readBasePolicy: () => EMPTY_NETWORK_PERMISSIVE,
-      sandboxName: "openclaw-box",
-      writeTempPolicy: (yaml) => {
-        stagedPolicy = yaml;
-        return "/staged-openclaw-permissive.yaml";
-      },
-    });
-
-    const policies = YAML.parse(stagedPolicy).network_policies;
-    expect(policies.telegram_bot).toMatchObject({
-      endpoints: [
-        {
-          host: "api.telegram.org",
-          credential_binding: { provider: "openclaw-box-telegram-bridge" },
-        },
-      ],
-    });
-    expect(
-      new Set(
-        policies.telegram_bot.endpoints.map(
-          (endpoint: SlackEndpoint) => endpoint.credential_binding?.provider,
-        ),
-      ),
-    ).toEqual(new Set(["openclaw-box-telegram-bridge"]));
-    expect(
-      new Set(
-        policies.slack.endpoints.map(
-          (endpoint: SlackEndpoint) => endpoint.credential_binding?.provider,
-        ),
-      ),
-    ).toEqual(new Set(["openclaw-box-slack-app", "openclaw-box-slack-bridge"]));
-    expect(
-      policies.slack.endpoints.find(
-        (endpoint: SlackEndpoint) =>
-          endpoint.host === "slack.com" &&
-          endpoint.credential_binding?.provider === "openclaw-box-slack-app",
-      ),
-    ).toMatchObject({
-      rules: [{ allow: { method: "POST", path: "/api/apps.connections.open" } }],
-    });
-    expect(stagedPolicy).not.toContain("{sandboxName}");
-  });
-
-  it("omits OpenClaw Telegram egress when the live provider binding is absent (#10153)", () => {
-    let stagedPolicy = "";
-    buildRuntimePermissivePolicy("/unused-openclaw-permissive.yaml", {
-      livePolicyYaml: YAML.stringify({ network_policies: {} }),
-      messagingAgent: "openclaw",
-      messagingPlan: enabledMessagingSelection("telegram"),
-      readBasePolicy: () => EMPTY_NETWORK_PERMISSIVE,
-      sandboxName: "openclaw-box",
-      writeTempPolicy: (yaml) => {
-        stagedPolicy = yaml;
-        return "/staged-openclaw-permissive.yaml";
-      },
-    });
-
-    expect(YAML.parse(stagedPolicy).network_policies.telegram_bot).toBeUndefined();
-    expect(stagedPolicy).not.toContain("{sandboxName}");
-  });
-
-  it.each(SHIELDS_CREDENTIAL_FREE_ROUTE_CASES)(
-    "keeps the OpenClaw %s route %s in Shields down (#10153)",
-    (channelId, _state, enabled) => {
-      let stagedPolicy = "";
-      buildRuntimePermissivePolicy("/unused-openclaw-permissive.yaml", {
-        livePolicyYaml: YAML.stringify({ network_policies: {} }),
-        messagingAgent: "openclaw",
-        messagingPlan: enabled
-          ? enabledMessagingSelection(channelId)
-          : {
-              channels: [{ channelId, active: false, disabled: true }],
-              disabledChannels: [channelId],
-            },
-        readBasePolicy: () => EMPTY_NETWORK_PERMISSIVE,
-        sandboxName: "openclaw-box",
-        writeTempPolicy: (yaml) => {
-          stagedPolicy = yaml;
-          return "/staged-openclaw-permissive.yaml";
-        },
-      });
-      const policies = YAML.parse(stagedPolicy).network_policies;
-      expect(policies[channelId] !== undefined).toBe(enabled);
-    },
-  );
-
-  it.each(MISSING_PLAN_SHIELDS_CASES)(
-    "rejects Shields down without staging when the plan is unavailable with %s (#10153)",
-    (_case, livePolicyYaml, expectedFailure) => {
-      const writeTempPolicy = vi.fn(() => "/must-not-stage.yaml");
-      let failure = "";
-      try {
-        buildRuntimePermissivePolicy("/unused-openclaw-permissive.yaml", {
-          livePolicyYaml,
-          messagingAgent: "openclaw",
-          messagingPlan: null,
-          readBasePolicy: () => EMPTY_NETWORK_PERMISSIVE,
-          sandboxName: "missing-plan",
-          writeTempPolicy,
-        });
-      } catch (error) {
-        failure = error instanceof Error ? error.message : String(error);
-      }
-      expect(failure).toContain(expectedFailure);
-      expect(writeTempPolicy).not.toHaveBeenCalled();
-    },
-  );
-
   it("keeps the Hermes Discord provider binding in Shields down", () => {
     let stagedPolicy = "";
     const out = buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
@@ -347,9 +169,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
           },
         },
       }),
-      messagingAgent: "hermes",
-      messagingPlan: enabledMessagingSelection("discord"),
-      readBasePolicy: () => EMPTY_NETWORK_PERMISSIVE,
+      readBasePolicy: () => HERMES_DISCORD_PERMISSIVE,
       sandboxName: "hermes-box",
       writeTempPolicy: (yaml) => {
         stagedPolicy = yaml;
@@ -386,9 +206,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     let stagedPolicy = "";
     const out = buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
       livePolicyYaml: "",
-      messagingAgent: "hermes",
-      messagingPlan: enabledMessagingSelection("discord"),
-      readBasePolicy: () => EMPTY_NETWORK_PERMISSIVE,
+      readBasePolicy: () => HERMES_DISCORD_PERMISSIVE,
       sandboxName: "hermes-box",
       writeTempPolicy: (yaml) => {
         stagedPolicy = yaml;
@@ -420,9 +238,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
           },
         },
       }),
-      messagingAgent: "hermes",
-      messagingPlan: enabledMessagingSelection("slack"),
-      readBasePolicy: () => EMPTY_NETWORK_PERMISSIVE,
+      readBasePolicy: () => HERMES_MESSAGING_PERMISSIVE,
       sandboxName: "hermes-box",
       writeTempPolicy: (yaml) => {
         stagedPolicy = yaml;
@@ -460,9 +276,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
           },
         },
       }),
-      messagingAgent: "hermes",
-      messagingPlan: enabledMessagingSelection("discord", "slack"),
-      readBasePolicy: () => EMPTY_NETWORK_PERMISSIVE,
+      readBasePolicy: () => HERMES_MESSAGING_PERMISSIVE,
       sandboxName: "hermes-box",
       writeTempPolicy: (yaml) => {
         stagedPolicy = yaml;
@@ -477,54 +291,84 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     expect(stagedPolicy).not.toContain("{sandboxName}");
   });
 
-  it.each(SLACK_PROVIDER_CASES)(
-    "%s keeps Slack egress only when the live provider set is exact; observed %s (#10153)",
-    (agent, _providerState, sandboxName, providers, shouldKeep) => {
-      let stagedPolicy = "";
-      buildRuntimePermissivePolicy(`/unused-${agent}-permissive.yaml`, {
+  it.each([
+    ["absent", []],
+    ["bot only", ["hermes-box-slack-bridge"]],
+    ["app only", ["hermes-box-slack-app"]],
+    ["conflicting", ["hermes-box-slack-app", "hermes-box-slack-bridge", "other-slack-provider"]],
+  ])("omits Hermes Slack egress when the live provider pair is %s", (_name, providers) => {
+    let stagedPolicy = "";
+    buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
+      livePolicyYaml: YAML.stringify({
+        network_policies: {
+          slack: {
+            endpoints: providers.map((provider) => ({ credential_binding: { provider } })),
+          },
+        },
+      }),
+      readBasePolicy: () => HERMES_MESSAGING_PERMISSIVE,
+      sandboxName: "hermes-box",
+      writeTempPolicy: (yaml) => {
+        stagedPolicy = yaml;
+        return "/staged-hermes-permissive.yaml";
+      },
+    });
+
+    expect(YAML.parse(stagedPolicy).network_policies.slack).toBeUndefined();
+    expect(stagedPolicy).not.toContain("{sandboxName}");
+  });
+
+  it("rejects an unsafe Hermes sandbox name before staging Slack Shields down", () => {
+    const writeTempPolicy = vi.fn(() => "/must-not-stage.yaml");
+    let message = "";
+
+    try {
+      buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
         livePolicyYaml: YAML.stringify({
           network_policies: {
             slack: {
-              endpoints: providers.map((provider) => ({ credential_binding: { provider } })),
+              endpoints: [
+                { credential_binding: { provider: "bad:provider-slack-app" } },
+                { credential_binding: { provider: "bad:provider-slack-bridge" } },
+              ],
             },
           },
         }),
-        messagingAgent: agent,
-        messagingPlan: enabledMessagingSelection("slack"),
-        readBasePolicy: () => EMPTY_NETWORK_PERMISSIVE,
-        sandboxName,
-        writeTempPolicy: (yaml) => {
-          stagedPolicy = yaml;
-          return `/staged-${agent}-permissive.yaml`;
-        },
+        readBasePolicy: () => HERMES_MESSAGING_PERMISSIVE,
+        sandboxName: "bad:provider",
+        writeTempPolicy,
       });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
 
-      const slackPolicy = YAML.parse(stagedPolicy).network_policies.slack;
-      expect(slackPolicy !== undefined).toBe(shouldKeep);
-      expect(stagedPolicy).not.toContain("{sandboxName}");
-    },
-  );
+    expect(message).toContain("Cannot materialize the Shields-down credential provider binding");
+    expect(writeTempPolicy).not.toHaveBeenCalled();
+  });
 
-  it.each(INVALID_SANDBOX_MESSAGING_CASES)(
-    "rejects an unsafe Hermes sandbox name before staging %s Shields down",
-    (_label, channelId, policyKey, endpoints) => {
-      const writeTempPolicy = vi.fn(() => "/must-not-stage.yaml");
+  it("rejects an unsafe Hermes sandbox name before staging Shields down", () => {
+    const writeTempPolicy = vi.fn(() => "/must-not-stage.yaml");
 
-      expect(() =>
-        buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
-          livePolicyYaml: YAML.stringify({
-            network_policies: { [policyKey]: { endpoints } },
-          }),
-          messagingAgent: "hermes",
-          messagingPlan: enabledMessagingSelection(channelId),
-          readBasePolicy: () => EMPTY_NETWORK_PERMISSIVE,
-          sandboxName: "bad:provider",
-          writeTempPolicy,
+    expect(() =>
+      buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
+        livePolicyYaml: YAML.stringify({
+          network_policies: {
+            discord: {
+              endpoints: [
+                {
+                  credential_binding: { provider: "bad:provider-discord-bridge" },
+                },
+              ],
+            },
+          },
         }),
-      ).toThrow("Cannot materialize the Shields-down credential provider binding");
-      expect(writeTempPolicy).not.toHaveBeenCalled();
-    },
-  );
+        readBasePolicy: () => HERMES_DISCORD_PERMISSIVE,
+        sandboxName: "bad:provider",
+        writeTempPolicy,
+      }),
+    ).toThrow("Cannot materialize the Shields-down credential provider binding");
+    expect(writeTempPolicy).not.toHaveBeenCalled();
+  });
 
   it("preserves exact managed MCP entries without copying unrelated live egress (#7952)", () => {
     const liveYaml = YAML.stringify({

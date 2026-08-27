@@ -8,10 +8,7 @@ import {
   MESSAGING_CREDENTIAL_PROVIDER_TYPE,
 } from "../../messaging/provider-profile";
 import type { SandboxEntry } from "../../state/registry";
-import {
-  matchesGatewayCredentialFamilyProviderBinding,
-  readGatewayProviderMetadata,
-} from "../gateway-provider-metadata";
+import { inspectGatewayCredentialOnlyProviderBinding } from "../gateway-provider-metadata";
 import type { SandboxCreateIntent } from "../sandbox-create-intent-types";
 
 type ProviderPreparationInput = {
@@ -40,42 +37,15 @@ type DeferredProviderAttachmentDeps = Pick<SandboxCreateOrchestrationRuntime, "r
   readonly revalidateSandboxIdentity: (operation: string) => void;
 };
 
-export class DeferredProviderRefreshError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "DeferredProviderRefreshError";
-  }
-}
-
-export function isDeferredProviderRefreshError(
-  error: unknown,
-): error is DeferredProviderRefreshError {
-  return error instanceof DeferredProviderRefreshError;
-}
-
-/** Preserve the identity-bound recovery action for any deferred provider failure. */
-export function asDeferredProviderRefreshError(
-  sandboxName: string,
-  error: unknown,
-): DeferredProviderRefreshError {
-  if (isDeferredProviderRefreshError(error)) return error;
-  const detail = error instanceof Error ? error.message : "Messaging provider refresh failed.";
-  return new DeferredProviderRefreshError(
-    `${detail} NemoClaw preserved the verified create checkpoint. To recover, run 'nemoclaw ${sandboxName} destroy --force'. This suppresses confirmation, attempts to wipe manifest-defined agent state, destroys the exact checkpointed sandbox, and removes its registry entry before onboarding can be retried.`,
-  );
-}
-
-function expectedCredentialBindings(input: ProviderPreparationInput) {
+function expectedMessagingBindings(input: ProviderPreparationInput) {
   return new Map(
     input.messagingProviderRequests
-      .filter((request): request is typeof request & { readonly providerType: string } =>
-        Boolean(request.providerType),
-      )
-      .map(({ envKey, name, providerType }) => [
+      .filter(({ providerType }) => providerType === MESSAGING_CREDENTIAL_PROVIDER_TYPE)
+      .map(({ envKey, name }) => [
         name,
         {
           name,
-          type: providerType,
+          type: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
           credentialKey: envKey,
         },
       ]),
@@ -86,24 +56,21 @@ function inspectExpectedMessagingBinding(
   input: ProviderPreparationInput,
   deps: ProviderPreparationDeps,
   providerName: string,
-  expectedBindings: ReturnType<typeof expectedCredentialBindings>,
+  expectedBindings: ReturnType<typeof expectedMessagingBindings>,
 ): boolean {
   const expected = expectedBindings.get(providerName);
   if (!expected) return true;
-  const metadata = readGatewayProviderMetadata(providerName, (args, options) =>
+  const inspection = inspectGatewayCredentialOnlyProviderBinding(expected, (args, options) =>
     deps.runOpenshell([...args.slice(0, 2), "-g", input.gatewayName, ...args.slice(2)], options),
   );
-  return matchesGatewayCredentialFamilyProviderBinding(metadata, {
-    ...expected,
-    allowExtendedCredentialKeys: true,
-  });
+  return inspection.kind === "exact";
 }
 
 export function validateAttachedMessagingProvidersBeforeSandboxCreation(
   input: ProviderPreparationInput,
   deps: ProviderPreparationDeps,
 ): void {
-  const expectedBindings = expectedCredentialBindings(input);
+  const expectedBindings = expectedMessagingBindings(input);
   const attachedMessagingProviders = [
     ...new Set(
       [input.inferenceProvider, ...input.messagingProviders, ...input.extraProviders].filter(
@@ -111,26 +78,20 @@ export function validateAttachedMessagingProvidersBeforeSandboxCreation(
       ),
     ),
   ].filter((name) => expectedBindings.has(name));
+  if (attachedMessagingProviders.length === 0) return;
 
-  if (
-    attachedMessagingProviders.some(
-      (providerName) =>
-        expectedBindings.get(providerName)?.type === MESSAGING_CREDENTIAL_PROVIDER_TYPE,
-    )
-  ) {
-    try {
-      ensureMessagingCredentialProviderProfile({
-        root: REPOSITORY_ROOT,
-        runOpenshell: (args, options) =>
-          deps.runOpenshell(
-            [...args.slice(0, 2), "-g", input.gatewayName, ...args.slice(2)],
-            options,
-          ),
-      });
-    } catch (error) {
-      deps.cleanupCreateSources();
-      throw error;
-    }
+  try {
+    ensureMessagingCredentialProviderProfile({
+      root: REPOSITORY_ROOT,
+      runOpenshell: (args, options) =>
+        deps.runOpenshell(
+          [...args.slice(0, 2), "-g", input.gatewayName, ...args.slice(2)],
+          options,
+        ),
+    });
+  } catch (error) {
+    deps.cleanupCreateSources();
+    throw error;
   }
 
   for (const providerName of attachedMessagingProviders) {
@@ -138,14 +99,6 @@ export function validateAttachedMessagingProvidersBeforeSandboxCreation(
     deps.cleanupCreateSources();
     throw new Error(
       `OpenShell did not confirm messaging provider '${providerName}' before sandbox creation.`,
-    );
-  }
-
-  for (const providerName of input.extraProviders) {
-    if (expectedBindings.has(providerName) || deps.providerExistsInGateway(providerName)) continue;
-    deps.cleanupCreateSources();
-    throw new Error(
-      `OpenShell did not confirm attached provider '${providerName}' before sandbox creation.`,
     );
   }
 }
@@ -156,7 +109,7 @@ export function publishAttachedProvidersBeforeDockerSandboxCreation(
 ): void {
   if (input.openshellDriver !== "docker") return;
 
-  const expectedBindings = expectedCredentialBindings(input);
+  const expectedBindings = expectedMessagingBindings(input);
   const providersRequiringExistenceProbe = new Set(
     [
       input.inferenceProvider,

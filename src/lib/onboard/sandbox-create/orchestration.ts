@@ -43,14 +43,10 @@ import {
   verifyCreatedSandboxPolicyRegistration,
 } from "./policy-creation-receipt";
 import {
-  asDeferredProviderRefreshError,
   attachProvidersAfterSandboxCreation,
-  isDeferredProviderRefreshError,
   publishAttachedProvidersBeforeDockerSandboxCreation,
   validateAttachedMessagingProvidersBeforeSandboxCreation,
 } from "./provider-publication";
-export { bind as bindPostPolicyProviderSync } from "../provider-sync/post-policy";
-
 export const createOnboardPolicyAuthorityBindings =
   policyAuthorityPreflight.createOnboardPolicyAuthorityBindings;
 
@@ -403,7 +399,6 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
       );
       return capturedIdentity;
     } catch (validationError) {
-      if (isDeferredProviderRefreshError(validationError)) throw validationError;
       return refuseAfterCreate(validationError);
     }
   };
@@ -582,10 +577,6 @@ export function createProviderEffectBoundary(input: {
   readonly revalidatePolicyAuthorityBeforeCreate: () => void;
   readonly runOpenshell: SandboxCreateOrchestrationRuntime["runOpenshell"];
   readonly revalidateSandboxIdentity: (exactIdentity: string, operation: string) => void;
-  readonly beginDeferredProviderRefresh?: (
-    context: VerifiedSandboxCreateEffectsContext,
-    providerNames: readonly string[],
-  ) => void;
 }): ProviderEffectBoundary {
   const validate = () =>
     validateAttachedMessagingProvidersBeforeSandboxCreation(
@@ -611,49 +602,37 @@ export function createProviderEffectBoundary(input: {
     validateBeforeCreate: () => undefined,
     publishBeforeCreate: () => undefined,
     runAfterVerifiedCreate: async (context) => {
-      try {
-        context.revalidatePolicyRequirements(
-          `starting deferred provider effects for sandbox '${input.sandboxName}'`,
-        );
-        await input.runVerifiedSandboxCreateEffects?.(context);
-        context.revalidatePolicyRequirements(
-          `activating deferred providers for sandbox '${input.sandboxName}'`,
-        );
-        const providerNames =
-          input.activateDeferredProviderEffects?.(context.revalidatePolicyRequirements) ?? [];
-        const messagingProviderNames = providerNames.filter((providerName) =>
-          input.preparationInput.messagingProviderRequests.some(
-            (request) => request.name === providerName,
-          ),
-        );
-        if (messagingProviderNames.length > 0) {
-          input.beginDeferredProviderRefresh?.(context, messagingProviderNames);
-        }
-        validate();
-        context.revalidatePolicyRequirements(
-          `publishing deferred providers for sandbox '${input.sandboxName}'`,
-        );
-        publish();
-        context.revalidatePolicyRequirements(
-          `attaching deferred providers to sandbox '${input.sandboxName}'`,
-        );
-        attachProvidersAfterSandboxCreation(
-          {
-            sandboxName: input.sandboxName,
-            gatewayName: input.gatewayName,
-            providerNames,
+      context.revalidatePolicyRequirements(
+        `starting deferred provider effects for sandbox '${input.sandboxName}'`,
+      );
+      await input.runVerifiedSandboxCreateEffects?.(context);
+      context.revalidatePolicyRequirements(
+        `activating deferred providers for sandbox '${input.sandboxName}'`,
+      );
+      const providerNames =
+        input.activateDeferredProviderEffects?.(context.revalidatePolicyRequirements) ?? [];
+      validate();
+      context.revalidatePolicyRequirements(
+        `publishing deferred providers for sandbox '${input.sandboxName}'`,
+      );
+      publish();
+      context.revalidatePolicyRequirements(
+        `attaching deferred providers to sandbox '${input.sandboxName}'`,
+      );
+      attachProvidersAfterSandboxCreation(
+        {
+          sandboxName: input.sandboxName,
+          gatewayName: input.gatewayName,
+          providerNames,
+        },
+        {
+          runOpenshell: input.runOpenshell,
+          revalidateSandboxIdentity: (operation) => {
+            input.revalidateSandboxIdentity(context.lifecycleLiveIdentityFingerprint, operation);
+            context.revalidatePolicyRequirements(operation);
           },
-          {
-            runOpenshell: input.runOpenshell,
-            revalidateSandboxIdentity: (operation) => {
-              input.revalidateSandboxIdentity(context.lifecycleLiveIdentityFingerprint, operation);
-              context.revalidatePolicyRequirements(operation);
-            },
-          },
-        );
-      } catch (error) {
-        throw asDeferredProviderRefreshError(input.sandboxName, error);
-      }
+        },
+      );
     },
   };
 }
@@ -1824,14 +1803,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       return verifiedPolicyGate;
     };
     const requirePendingPolicyVerification = (): PendingSandboxPolicyVerification => {
-      const recordedCheckpoint = registry.getSandbox(sandboxName)?.pendingPolicyVerification;
-      if (recordedCheckpoint) {
-        registry.requireCurrentPendingSandboxPolicyVerification(
-          requireCreateReservation(),
-          recordedCheckpoint,
-        );
-        pendingPolicyVerification = recordedCheckpoint;
-      }
       if (!pendingPolicyVerification) {
         throw new Error("Sandbox creation has no durable verified policy checkpoint.");
       }
@@ -1882,7 +1853,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       revalidateCreatedSandboxIdentity(boundary.lifecycleLiveIdentityFingerprint, operation);
       registry.requireCurrentPendingSandboxPolicyVerification(
         requireCreateReservation(),
-        requirePendingPolicyVerification(),
+        pendingSandboxPolicyVerificationForBoundary(boundary),
       );
     };
     const runCreateFlow = async (
@@ -2145,22 +2116,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           },
           getSandboxRecreateObservation,
         ),
-      beginDeferredProviderRefresh: (context, providerNames) => {
-        context.revalidatePolicyRequirements(
-          `recording deferred provider refresh for sandbox '${sandboxName}'`,
-        );
-        const checkpoint = requirePendingPolicyVerification();
-        pendingPolicyVerification = registry.advancePendingSandboxProviderRefresh(
-          sandboxName,
-          requireCreateReservation().authority.sessionId,
-          checkpoint,
-          {
-            schemaVersion: 1,
-            phase: "attaching",
-            attachedProviders: [...providerNames],
-          },
-        );
-      },
     });
     providerEffectBoundary.validateBeforeCreate();
 

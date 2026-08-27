@@ -7,7 +7,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
-import YAML from "yaml";
 import {
   createHermesUnsafeConfigHarness,
   expectHermesShieldsUpRecord,
@@ -445,41 +444,6 @@ describe("OpenClaw shields flow rollback and recovery", () => {
     return createShieldsFlowHarness(requireSource, tmpDir, options);
   }
 
-  function openClawMessagingSandboxEntry(sandboxName: string, channelIds: string[]) {
-    return {
-      name: sandboxName,
-      agent: "openclaw" as const,
-      openshellDriver: "docker" as const,
-      messaging: {
-        schemaVersion: 1 as const,
-        plan: {
-          schemaVersion: 1 as const,
-          sandboxName,
-          agent: "openclaw" as const,
-          workflow: "onboard" as const,
-          channels: channelIds.map((channelId) => ({
-            channelId,
-            displayName: channelId,
-            authMode: "token-paste" as const,
-            active: true,
-            selected: true,
-            configured: true,
-            disabled: false,
-            inputs: [],
-            hooks: [],
-          })),
-          disabledChannels: [],
-          credentialBindings: [],
-          networkPolicy: { presets: [], entries: [] },
-          agentRender: [],
-          buildSteps: [],
-          stateUpdates: [],
-          healthChecks: [],
-        },
-      },
-    };
-  }
-
   function expectStagedDriverNeutralRecovery(
     errorSpy: MockInstance,
     sandboxName: string,
@@ -553,103 +517,6 @@ describe("OpenClaw shields flow rollback and recovery", () => {
     delete require.cache[requireSource.resolve("./permissive-runtime.js")];
     delete require.cache[requireSource.resolve("../actions/sandbox/mcp-bridge-policy.js")];
     delete require.cache[requireSource.resolve("../cli/branding.js")];
-  });
-
-  it("preserves OpenClaw messaging provider bindings in the applied Shields-down policy (#10153)", () => {
-    const sandboxName = "openclaw-messaging";
-    const harness = createHarness({
-      livePolicyYaml: YAML.stringify({
-        version: 1,
-        network_policies: {
-          telegram_bot: {
-            endpoints: [
-              {
-                credential_binding: { provider: `${sandboxName}-telegram-bridge` },
-              },
-            ],
-          },
-          slack: {
-            endpoints: [
-              { credential_binding: { provider: `${sandboxName}-slack-app` } },
-              { credential_binding: { provider: `${sandboxName}-slack-bridge` } },
-            ],
-          },
-        },
-      }),
-      processStartIdentity: "issue-10153-openclaw-owner",
-      sandboxEntry: openClawMessagingSandboxEntry(sandboxName, ["telegram", "slack"]),
-      sandboxName,
-    });
-    fs.writeFileSync(
-      path.join(tmpDir, "permissive.yaml"),
-      fs.readFileSync(
-        path.resolve(import.meta.dirname, "../../../agents/openclaw/policy-permissive.yaml"),
-        "utf8",
-      ),
-    );
-
-    harness.shieldsDown(sandboxName, {
-      timeout: "5m",
-      reason: "messaging provider binding",
-      throwOnError: true,
-    });
-
-    const applied = YAML.parse(harness.policySetBodies.at(-1)!);
-    const providers = Object.values(applied.network_policies)
-      .flatMap((policy) => (policy as { endpoints?: unknown[] }).endpoints ?? [])
-      .flatMap((endpoint) => {
-        const provider = (endpoint as { credential_binding?: { provider?: string } })
-          .credential_binding?.provider;
-        return provider ? [provider] : [];
-      });
-    expect(new Set(providers)).toEqual(
-      new Set([
-        `${sandboxName}-telegram-bridge`,
-        `${sandboxName}-slack-app`,
-        `${sandboxName}-slack-bridge`,
-      ]),
-    );
-  });
-
-  it("reports an enabled Slack route omitted for partial live providers (#10153)", () => {
-    const sandboxName = "partial-slack";
-    const harness = createHarness({
-      livePolicyYaml: YAML.stringify({
-        version: 1,
-        network_policies: {
-          slack: {
-            endpoints: [{ credential_binding: { provider: `${sandboxName}-slack-app` } }],
-          },
-        },
-      }),
-      processStartIdentity: "issue-10153-partial-slack-owner",
-      sandboxEntry: openClawMessagingSandboxEntry(sandboxName, ["slack"]),
-      sandboxName,
-    });
-    fs.writeFileSync(
-      path.join(tmpDir, "permissive.yaml"),
-      fs.readFileSync(
-        path.resolve(import.meta.dirname, "../../../agents/openclaw/policy-permissive.yaml"),
-        "utf8",
-      ),
-    );
-
-    harness.shieldsDown(sandboxName, {
-      timeout: "5m",
-      reason: "partial messaging provider binding",
-      throwOnError: true,
-    });
-
-    const applied = YAML.parse(harness.policySetBodies.at(-1)!);
-    expect(applied.network_policies.slack).toBeUndefined();
-    const stderr = harness.errorSpy.mock.calls.flat().map(String).join("\n");
-    expect(stderr).toContain(
-      `sandbox '${sandboxName}', channel 'slack': ` +
-        "the live policy credential-provider set is partial or mismatched; expected 2, found 1. " +
-        "Recovery: " +
-        `run \`nemoclaw ${sandboxName} channels add slack\`; approve the rebuild prompt in an ` +
-        `interactive terminal, or run \`nemoclaw ${sandboxName} rebuild\` afterward in non-interactive mode.`,
-    );
   });
 
   it.each(retryAgentCases)(
@@ -821,7 +688,7 @@ describe("OpenClaw shields flow rollback and recovery", () => {
     // base path. That is the state that makes the leak reachable.
     const harness = createHarness({
       livePolicyYaml:
-        "version: 1\nfilesystem_policy:\n  read_write:\n    - /proc\n  read_only:\n    - /opt/hermes\nnetwork_policies: {}\n",
+        "version: 1\nfilesystem_policy:\n  read_write:\n    - /proc\n  read_only:\n    - /opt/hermes\n",
       fork: () => {
         runtimeDirDuringFork = mkdtempSpy.mock.results
           .filter((result) => result.type === "return")

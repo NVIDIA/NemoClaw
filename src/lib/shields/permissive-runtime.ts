@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import YAML from "yaml";
 
 import { diagnosticPreview } from "../sandbox-name-contract";
@@ -20,10 +20,6 @@ import type {
   ExactManagedMcpPolicy,
   ManagedMcpPolicyOmission,
 } from "../actions/sandbox/mcp-bridge-policy";
-import { composeCredentialBoundMessagingPolicies } from "../messaging/channels/policy";
-import type { CredentialBoundMessagingPolicyOmissionReporter } from "../messaging/channels/policy";
-import type { MessagingAgentId } from "../messaging/manifest";
-import type { EnabledPlanSelection } from "../messaging/post-agent-install-selection";
 
 function canonicalPolicyValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalPolicyValue);
@@ -53,6 +49,7 @@ export function describeCanonicalPolicyReference(policy: Record<string, unknown>
     policyKeys.length > 0 ? policyKeys.map(diagnosticPreview).join(", ") : "(none)"
   }`;
 }
+import { materializeMessagingPolicySandboxName } from "../messaging/channels/policy";
 import { cleanupTempDir, secureTempFile } from "../onboard/temp-files";
 
 export { assertLegacyMcpPolicyRestoreSafe, isManagedMcpPolicyKey } from "./mcp-policy-transition";
@@ -125,16 +122,10 @@ export interface PermissiveRuntimeDeps {
   // coordinator. These entries remain active while the static policy replaces
   // the rest of the complete gateway policy.
   managedMcpPolicies?: readonly ExactManagedMcpPolicy[];
-  // Agent permissive messaging routes carry sandbox-scoped credential bindings.
-  // Supplying the target name makes composition fail closed unless every
-  // retained placeholder can be materialized before the policy is staged.
+  // Hermes permissive messaging routes carry sandbox-scoped credential
+  // bindings. Supplying the target name makes composition fail closed unless
+  // every retained placeholder can be materialized before the policy is staged.
   sandboxName?: string;
-  // Manifest metadata owns the policy keys and provider names for this agent.
-  messagingAgent?: MessagingAgentId;
-  // The registry plan owns which configured channels are currently active.
-  messagingPlan?: EnabledPlanSelection | null;
-  // The caller owns user-facing diagnostics before policy submission.
-  reportMessagingPolicyOmission?: CredentialBoundMessagingPolicyOmissionReporter;
 }
 
 export function buildRuntimePermissivePolicy(
@@ -145,12 +136,17 @@ export function buildRuntimePermissivePolicy(
   const liveRw = readStringList(live, "read_write");
   const liveRo = readStringList(live, "read_only");
   const managedMcpPolicies = deps.managedMcpPolicies ?? [];
-  if (
-    deps.sandboxName !== undefined &&
-    (deps.messagingAgent === undefined || deps.messagingPlan === undefined)
-  ) {
-    throw new Error("Cannot compose messaging bindings without agent and channel state");
-  }
+  const discordProviderName = deps.sandboxName ? `${deps.sandboxName}-discord-bridge` : null;
+  const slackProviderNames = deps.sandboxName
+    ? [`${deps.sandboxName}-slack-app`, `${deps.sandboxName}-slack-bridge`]
+    : [];
+  const preserveDiscordBinding =
+    discordProviderName !== null && policyUsesCredentialProvider(live, discordProviderName);
+  const preserveSlackBinding =
+    slackProviderNames.length > 0 &&
+    networkPolicyUsesExactCredentialProviders(live, "slack", slackProviderNames);
+  const preserveCredentialBinding = preserveDiscordBinding || preserveSlackBinding;
+
   // No live startup-sealed or filesystem state to carry forward — keep the
   // static path so the caller's apply path is unchanged unless exact managed
   // MCP entries must survive the complete-policy replacement.
@@ -190,15 +186,22 @@ export function buildRuntimePermissivePolicy(
     }
     return basePermissivePath;
   }
-  if (deps.sandboxName !== undefined && deps.messagingAgent !== undefined) {
-    const materialized = composeCredentialBoundMessagingPolicies(
+  if (deps.sandboxName !== undefined) {
+    const networkPolicies = base.network_policies;
+    if (networkPolicies && typeof networkPolicies === "object" && !Array.isArray(networkPolicies)) {
+      const policies = networkPolicies as Record<string, unknown>;
+      if (!preserveDiscordBinding) delete policies.discord;
+      if (!preserveSlackBinding) delete policies.slack;
+    }
+  }
+  if (deps.sandboxName !== undefined && preserveCredentialBinding) {
+    const materialized = materializeMessagingPolicySandboxName(
       YAML.stringify(base),
-      deps.livePolicyYaml,
       deps.sandboxName,
-      deps.messagingAgent,
-      deps.messagingPlan ?? null,
-      deps.reportMessagingPolicyOmission,
     );
+    if (materialized === null) {
+      throw new Error("Cannot materialize the Shields-down credential provider binding");
+    }
     base = safeYamlObject(materialized);
     if (!base) {
       throw new Error("Cannot parse the materialized Shields-down credential provider binding");
@@ -392,6 +395,59 @@ function safeYamlObject(text: string): Record<string, unknown> | null {
     return null;
   }
   return null;
+}
+
+function policyUsesCredentialProvider(
+  policy: Record<string, unknown> | null,
+  providerName: string,
+): boolean {
+  const networkPolicies = policy?.network_policies;
+  if (!networkPolicies || typeof networkPolicies !== "object" || Array.isArray(networkPolicies)) {
+    return false;
+  }
+  for (const networkPolicy of Object.values(networkPolicies)) {
+    if (!networkPolicy || typeof networkPolicy !== "object" || Array.isArray(networkPolicy)) {
+      continue;
+    }
+    const endpoints = (networkPolicy as Record<string, unknown>).endpoints;
+    if (!Array.isArray(endpoints)) continue;
+    for (const endpoint of endpoints) {
+      if (!endpoint || typeof endpoint !== "object" || Array.isArray(endpoint)) continue;
+      const binding = (endpoint as Record<string, unknown>).credential_binding;
+      if (!binding || typeof binding !== "object" || Array.isArray(binding)) continue;
+      if ((binding as Record<string, unknown>).provider === providerName) return true;
+    }
+  }
+  return false;
+}
+
+function networkPolicyUsesExactCredentialProviders(
+  policy: Record<string, unknown> | null,
+  policyName: string,
+  providerNames: readonly string[],
+): boolean {
+  const networkPolicies = policy?.network_policies;
+  if (!networkPolicies || typeof networkPolicies !== "object" || Array.isArray(networkPolicies)) {
+    return false;
+  }
+  const networkPolicy = (networkPolicies as Record<string, unknown>)[policyName];
+  if (!networkPolicy || typeof networkPolicy !== "object" || Array.isArray(networkPolicy)) {
+    return false;
+  }
+  const endpoints = (networkPolicy as Record<string, unknown>).endpoints;
+  if (!Array.isArray(endpoints)) return false;
+  const liveProviders = new Set<string>();
+  for (const endpoint of endpoints) {
+    if (!endpoint || typeof endpoint !== "object" || Array.isArray(endpoint)) continue;
+    const binding = (endpoint as Record<string, unknown>).credential_binding;
+    if (!binding || typeof binding !== "object" || Array.isArray(binding)) continue;
+    const provider = (binding as Record<string, unknown>).provider;
+    if (typeof provider === "string") liveProviders.add(provider);
+  }
+  return (
+    liveProviders.size === providerNames.length &&
+    providerNames.every((providerName) => liveProviders.has(providerName))
+  );
 }
 
 function readStringList(

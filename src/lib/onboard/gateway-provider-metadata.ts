@@ -37,11 +37,6 @@ export type GatewayCredentialOnlyProviderBinding = {
   credentialKey: string;
 };
 
-export type GatewayCredentialFamilyProviderBinding = GatewayCredentialOnlyProviderBinding & {
-  /** Extra keys must extend the canonical credential key with an underscore suffix. */
-  allowExtendedCredentialKeys: true;
-};
-
 /** Match the complete non-secret provider identity used for route decisions. */
 export function matchesGatewayProviderBinding(
   metadata: GatewayProviderMetadata | null,
@@ -73,23 +68,6 @@ export function matchesGatewayCredentialOnlyProviderBinding(
   );
 }
 
-/** Match a canonical credential plus zero or more explicitly namespaced extension keys. */
-export function matchesGatewayCredentialFamilyProviderBinding(
-  metadata: GatewayProviderMetadata | null,
-  expected: GatewayCredentialFamilyProviderBinding,
-): boolean {
-  return Boolean(
-    metadata &&
-      metadata.name === expected.name &&
-      metadata.type === expected.type &&
-      metadata.configKeys.length === 0 &&
-      metadata.credentialKeys.includes(expected.credentialKey) &&
-      metadata.credentialKeys.every(
-        (key) => key === expected.credentialKey || key.startsWith(`${expected.credentialKey}_`),
-      ),
-  );
-}
-
 type GatewayProviderCommandResult = {
   status?: number | null;
   stdout?: unknown;
@@ -115,8 +93,6 @@ export type GatewayCredentialOnlyProviderInspection =
   | { readonly kind: "exact" }
   | { readonly kind: "indeterminate" }
   | { readonly kind: "missing" };
-
-export type GatewayCredentialFamilyProviderInspection = GatewayCredentialOnlyProviderInspection;
 
 type ProviderField = "Name" | "Type" | "Credential keys" | "Config keys";
 
@@ -249,40 +225,6 @@ export function inspectGatewayCredentialOnlyProviderBinding(
 
   const metadata = parseGatewayProviderMetadata(output);
   return matchesGatewayCredentialOnlyProviderBinding(metadata, expected)
-    ? { kind: "exact" }
-    : { kind: "collision" };
-}
-
-/** Distinguish a namespaced credential family from absence and lookup failure. */
-export function inspectGatewayCredentialFamilyProviderBinding(
-  expected: GatewayCredentialFamilyProviderBinding,
-  runOpenshell: GatewayProviderRunner,
-): GatewayCredentialFamilyProviderInspection {
-  let result: GatewayProviderCommandResult;
-  try {
-    result = runOpenshell(["provider", "get", expected.name], {
-      ignoreError: true,
-      maxBuffer: PROVIDER_PROBE_DIAGNOSTIC_LIMIT,
-      suppressOutput: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: PROVIDER_PROBE_TIMEOUT_MS,
-    });
-  } catch {
-    return { kind: "indeterminate" };
-  }
-
-  const output = providerCommandOutput(result);
-  if (result.error || result.signal || result.status !== 0) {
-    return !result.error &&
-      !result.signal &&
-      result.status === 1 &&
-      reportsExactProviderNotFound(output, expected.name, PROVIDER_PROBE_DIAGNOSTIC_LIMIT)
-      ? { kind: "missing" }
-      : { kind: "indeterminate" };
-  }
-
-  const metadata = parseGatewayProviderMetadata(output);
-  return matchesGatewayCredentialFamilyProviderBinding(metadata, expected)
     ? { kind: "exact" }
     : { kind: "collision" };
 }

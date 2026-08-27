@@ -23,7 +23,6 @@ import {
   resolveSandboxCreatePolicyAuthority,
   runSandboxCreateWithPolicyAuthorityChecks,
 } from "./orchestration";
-import { DeferredProviderRefreshError } from "./provider-publication";
 
 describe("created Hermes credential environment reconciliation", () => {
   const plan = { agent: "hermes" } as never;
@@ -881,33 +880,6 @@ describe("sandbox create policy authority checks", () => {
     ).rejects.toThrow("automatic sandbox cleanup was not safe");
 
     expect(persistVerifiedPolicy).toHaveBeenCalledOnce();
-  });
-
-  it("preserves the provider-refresh recovery classification after creation (#10153)", async () => {
-    const cleanupTemporarySources = vi.fn();
-
-    await expect(
-      runSandboxCreateWithPolicyAuthorityChecks({
-        sandboxName: "alpha",
-        revalidate: vi.fn(),
-        create: async (verifyCreatedSandbox) => {
-          await verifyCreatedSandbox("created");
-          return "created";
-        },
-        captureCreatedSandboxIdentity: () => exactIdentity,
-        revalidateCreatedSandboxIdentity: vi.fn(),
-        verifyCreatedPolicy: () => "verified",
-        persistVerifiedPolicy: vi.fn(),
-        revalidateVerifiedPolicy: vi.fn(),
-        runVerifiedCreateEffects: async () => {
-          throw new DeferredProviderRefreshError(
-            "Deferred provider refresh failed; run the identity-bound recovery action.",
-          );
-        },
-        cleanupTemporarySources,
-      }),
-    ).rejects.toThrow("identity-bound recovery action");
-    expect(cleanupTemporarySources).toHaveBeenCalledOnce();
   });
 
   it("refuses continuation when identity changes during effective-policy verification (#9833)", async () => {

@@ -35,10 +35,8 @@ import {
   listMessagingChannelPolicyPresets,
   listMessagingPolicyPresetMetadata,
   loadMessagingChannelPolicyPreset,
-  composeCredentialBoundMessagingPolicies,
-  formatCredentialBoundMessagingPolicyOmission,
+  materializeMessagingPolicySandboxName,
 } from "../messaging/channels";
-import type { MessagingAgentId } from "../messaging/manifest";
 import { resolveGatewayPortFromName, resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
 import { OPENSHELL_SANDBOX_HOST_BRIDGE } from "../private-networks";
@@ -3716,16 +3714,6 @@ function resolvePermissivePolicyPath(sandboxName: string): string {
   return PERMISSIVE_POLICY_PATH;
 }
 
-function readMessagingPolicyPlan(
-  sandboxName: string,
-): ReturnType<typeof registry.getHydratedMessagingPlanFromEntry> {
-  try {
-    return registry.getHydratedMessagingPlanFromEntry(registry.getSandbox(sandboxName));
-  } catch {
-    return null;
-  }
-}
-
 function applyPermissivePolicy(sandboxName: string): void {
   if (!isValidName(sandboxName)) {
     throw new Error(
@@ -3743,34 +3731,15 @@ function applyPermissivePolicy(sandboxName: string): void {
     throw new Error(`Permissive policy not found: ${policyPath}`);
   }
   const policyDocument = fs.readFileSync(policyPath, "utf-8");
+  const materializedPolicy = materializeMessagingPolicySandboxName(policyDocument, sandboxName);
+  if (materializedPolicy === null) {
+    throw new Error("Cannot materialize the permissive policy credential provider binding");
+  }
+
   console.log("  Applying permissive policy...");
   assertOpenshellResolvable();
-  let messagingAgent: MessagingAgentId = "openclaw";
-  try {
-    if (registry.getSandbox(sandboxName)?.agent === "hermes") messagingAgent = "hermes";
-  } catch {
-    // Unregistered or unreadable legacy state uses the OpenClaw fallback.
-  }
-  const messagingPlan = readMessagingPolicyPlan(sandboxName);
-  const livePolicy = readCurrentSandboxPolicy(sandboxName, authority.gatewayName);
-  if (!livePolicy) {
-    console.warn(
-      `  Could not read the live policy for sandbox '${sandboxName}' through gateway ` +
-        `'${authority.gatewayName}'; credential-bound messaging routes cannot be verified.`,
-    );
-  }
-  const composedPolicy = composeCredentialBoundMessagingPolicies(
-    policyDocument,
-    livePolicy ?? "",
-    sandboxName,
-    messagingAgent,
-    messagingPlan,
-    (omission) => {
-      console.error(formatCredentialBoundMessagingPolicyOmission(sandboxName, omission));
-    },
-  );
   recheckPolicyMutationAuthority(sandboxName, operation, authority);
-  setReceiptBoundPolicyDocument(sandboxName, composedPolicy, {
+  setReceiptBoundPolicyDocument(sandboxName, materializedPolicy, {
     gatewayName: authority.gatewayName,
   });
   const observed = inspectPolicyMutationAuthority(
@@ -3799,7 +3768,6 @@ export {
   excludeBaselineEntry,
   extractPresetEntries,
   filterSetupPolicyPresets,
-  formatCredentialBoundMessagingPolicyOmission,
   getAppliedPresets,
   getBaselineExclusionRuntimeStatus,
   getGatewayPresets,
@@ -3831,7 +3799,6 @@ export {
   parsePresetPolicyKeys,
   prepareTrustedPrivatePolicyPresets,
   presetContentMatchesGateway,
-  readMessagingPolicyPlan,
   removeBuiltinPresetAttribution,
   removePreset,
   removePresetFromPolicy,
