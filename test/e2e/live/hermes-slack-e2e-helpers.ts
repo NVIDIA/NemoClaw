@@ -31,7 +31,18 @@ import {
   trackPreinstallSandboxCleanup,
 } from "./phase6-messaging-helpers.ts";
 
-const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes-slack";
+const HERMES_SLACK_E2E_SANDBOX_NAME = "e2e-hermes-slack";
+
+export function assertHermesSlackSandboxName(sandboxName: string): void {
+  if (sandboxName !== HERMES_SLACK_E2E_SANDBOX_NAME) {
+    throw new Error(
+      `Hermes Slack live test is destructive and only accepts sandbox name ${HERMES_SLACK_E2E_SANDBOX_NAME}; got ${sandboxName}`,
+    );
+  }
+}
+
+const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? HERMES_SLACK_E2E_SANDBOX_NAME;
+assertHermesSlackSandboxName(SANDBOX_NAME);
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN ?? "xoxb-test-hermes-slack-token";
 const SLACK_APP_TOKEN = process.env.SLACK_APP_TOKEN ?? "xapp-test-hermes-slack-app-token";
 const SLACK_CREDENTIAL_FINGERPRINTS = hermesSlackCredentialFingerprints([
@@ -252,8 +263,10 @@ export function registerHermesSlackCleanup(
     env: NodeJS.ProcessEnv;
     keepSandbox: boolean;
     redactionValues: string[];
+    sandboxName: string;
   },
 ): void {
+  assertHermesSlackSandboxName(options.sandboxName);
   registerSandboxCleanupUnlessKept(options.keepSandbox, () => {
     const gatewayCleanupOptions = {
       artifactName: "cleanup-hermes-slack-openshell-gateway-destroy",
@@ -278,7 +291,10 @@ export function registerHermesSlackCleanup(
       "nemoclaw",
       gatewayCleanupOptions,
     );
-    for (const provider of [`${SANDBOX_NAME}-slack-app`, `${SANDBOX_NAME}-slack-bridge`]) {
+    for (const provider of [
+      `${options.sandboxName}-slack-app`,
+      `${options.sandboxName}-slack-bridge`,
+    ]) {
       cleanup.trackDisposable(`delete OpenShell provider ${provider}`, () =>
         cleanupWhenOpenShellAvailable(
           host,
@@ -296,7 +312,7 @@ export function registerHermesSlackCleanup(
       cleanup,
       host,
       sandbox,
-      SANDBOX_NAME,
+      options.sandboxName,
       options.env,
       options.redactionValues,
       "cleanup-hermes-slack",
@@ -324,6 +340,7 @@ export async function runHermesSlackE2E({
       env,
       keepSandbox: process.env.NEMOCLAW_E2E_KEEP_SANDBOX === "1",
       redactionValues,
+      sandboxName: SANDBOX_NAME,
     },
   );
 

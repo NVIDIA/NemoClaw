@@ -18,21 +18,53 @@ function plan(agent: AgentKind, state: ChannelPlanExpectedState): Record<string,
     schemaVersion: 1,
     sandboxName: SANDBOX_NAME,
     agent,
+    workflow:
+      state === "active"
+        ? "start-channel"
+        : state === "disabled"
+          ? "stop-channel"
+          : "remove-channel",
     channels: present
       ? [
           {
             channelId: CHANNEL_ID,
+            displayName: "Slack",
+            authMode: "token-paste",
+            active: state === "active",
+            selected: true,
             configured: true,
-            ...(state === "active" ? { active: true } : { disabled: true }),
+            disabled: state === "disabled",
+            inputs: [],
           },
         ]
       : [],
     disabledChannels: state === "disabled" ? [CHANNEL_ID] : [],
     networkPolicy: {
       presets: present ? [CHANNEL_ID] : [],
-      entries: present ? [{ channelId: CHANNEL_ID }] : [],
+      entries: present
+        ? [
+            {
+              channelId: CHANNEL_ID,
+              presetName: CHANNEL_ID,
+              policyKeys: [CHANNEL_ID],
+              source: "manifest",
+            },
+          ]
+        : [],
     },
-    credentialBindings: present ? [{ channelId: CHANNEL_ID }] : [],
+    credentialBindings: present
+      ? [
+          {
+            channelId: CHANNEL_ID,
+            credentialId: "slackBotToken",
+            sourceInput: "botToken",
+            providerName: `${SANDBOX_NAME}-slack-bridge`,
+            providerEnvKey: "SLACK_BOT_TOKEN",
+            placeholder: "openshell:resolve:env:SLACK_BOT_TOKEN",
+            credentialAvailable: true,
+          },
+        ]
+      : [],
   };
 }
 
@@ -64,9 +96,9 @@ describe("channels stop/start persisted messaging plan state", () => {
     const value = plan("openclaw", "disabled");
     value.disabledChannels = [];
 
-    expect(errors(value, "openclaw", "disabled")).toContain(
-      "slack must be present in disabledChannels while disabled",
-    );
+    expect(errors(value, "openclaw", "disabled")).toEqual([
+      "messaging.plan must be a valid persisted plan for e2e-channel-cycle using openclaw",
+    ]);
   });
 
   it("rejects a required credential binding that disappeared", () => {
@@ -90,8 +122,21 @@ describe("channels stop/start persisted messaging plan state", () => {
 
   it("rejects runtime render and hook fields persisted into the plan", () => {
     const value = plan("hermes", "active");
-    value.agentRender = { generated: true };
-    value.channels = [{ channelId: CHANNEL_ID, configured: true, active: true, hooks: [] }];
+    value.agentRender = [
+      {
+        channelId: CHANNEL_ID,
+        agent: "hermes",
+        target: "config.yaml",
+        kind: "json-fragment",
+        path: "platforms.slack",
+        value: { enabled: true },
+        templateRefs: [],
+      },
+    ];
+    value.channels = (value.channels as Record<string, unknown>[]).map((channel) => ({
+      ...channel,
+      hooks: [],
+    }));
 
     expect(errors(value, "hermes", "active")).toEqual([
       "messaging.plan.agentRender must not persist",

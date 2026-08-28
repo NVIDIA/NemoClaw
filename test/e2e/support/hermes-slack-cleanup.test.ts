@@ -31,6 +31,7 @@ describe("Hermes Slack retained-resource cleanup", () => {
       env: {},
       keepSandbox: true,
       redactionValues: ["test-api-key"],
+      sandboxName: "e2e-hermes-slack",
     });
 
     expect(cleanup.trackGateway).not.toHaveBeenCalled();
@@ -46,10 +47,31 @@ describe("Hermes Slack retained-resource cleanup", () => {
       env: {},
       keepSandbox: false,
       redactionValues: ["test-api-key"],
+      sandboxName: "e2e-hermes-slack",
     });
 
     expect(cleanup.trackGateway).toHaveBeenCalledTimes(1);
     expect(cleanup.trackDisposable).toHaveBeenCalledTimes(3);
     expect(cleanup.trackSandbox).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a non-E2E sandbox name before registering destructive cleanup", () => {
+    const { cleanup, fixtures } = cleanupFixtures();
+
+    expect(() =>
+      registerHermesSlackCleanup(fixtures, {
+        apiKey: "test-api-key",
+        env: {},
+        keepSandbox: false,
+        redactionValues: ["test-api-key"],
+        sandboxName: "shared-hermes-sandbox",
+      }),
+    ).toThrow(
+      "Hermes Slack live test is destructive and only accepts sandbox name e2e-hermes-slack; got shared-hermes-sandbox",
+    );
+
+    expect(cleanup.trackGateway).not.toHaveBeenCalled();
+    expect(cleanup.trackDisposable).not.toHaveBeenCalled();
+    expect(cleanup.trackSandbox).not.toHaveBeenCalled();
   });
 });
