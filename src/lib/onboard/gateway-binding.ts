@@ -25,6 +25,7 @@ import { DEFAULT_GATEWAY_PORT } from "./gateway/state-dir";
 export {
   BASE_GATEWAY_STATE_DIR_NAME,
   ensureManagedGatewayStateRoot,
+  isManagedGatewayStateRootReservation,
   managedGatewayStateRootOwnershipFailure,
   MANAGED_GATEWAY_STATE_ROOT_MARKER,
   resolveGatewayStateDirForPort,

@@ -202,3 +202,16 @@ export function managedGatewayStateRootOwnershipFailure(
     ? null
     : "the managed gateway state root marker and legacy managed configuration are both missing";
 }
+
+/** Whether onboarding reserved this managed root but wrote no gateway state into it. */
+export function isManagedGatewayStateRootReservation(
+  target: ManagedGatewayStateRootTarget,
+): boolean {
+  if (stateRootMarkerOwnershipFailure(target) !== null) return false;
+  try {
+    const entries = fs.readdirSync(path.resolve(target.stateDir));
+    return entries.length === 1 && entries[0] === MANAGED_GATEWAY_STATE_ROOT_MARKER;
+  } catch {
+    return false;
+  }
+}

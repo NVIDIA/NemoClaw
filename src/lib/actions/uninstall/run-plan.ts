@@ -49,9 +49,10 @@ import {
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE,
 } from "../../onboard/docker-driver-gateway-service";
 import {
+  isManagedGatewayStateRootReservation,
+  managedGatewayStateRootOwnershipFailure,
   resolveGatewayName,
   resolveGatewayPortFromName,
-  managedGatewayStateRootOwnershipFailure,
   UnsafeGatewayStateDirectoryError,
 } from "../../onboard/gateway-binding";
 import { type GatewayOwner, isExternallySupervised } from "../../onboard/gateway-ownership";
@@ -62,6 +63,7 @@ import {
 import {
   externallySupervisedHostGatewayProcessOwnershipFailure,
   hasStateScopedSandboxNamespace,
+  isHostPortFree,
   processUsesStateScopedSandboxNamespace,
   scopedHostGatewayProcessOwnershipFailure,
   type StopHostGatewayOptions,
@@ -2998,6 +3000,141 @@ function canBeginOpenShellCleanup(
   );
 }
 
+function isRemovableConfiguredGatewayReservation(
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  teardownAuthority: GatewayOwner,
+  portableRuntimeCleanup: boolean,
+): boolean {
+  if (
+    options.keepOpenShell ||
+    portableRuntimeCleanup ||
+    isExternallySupervised(teardownAuthority) ||
+    !runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim()
+  ) {
+    return false;
+  }
+  if (
+    !isManagedGatewayStateRootReservation({
+      gatewayName: options.gatewayName || resolveGatewayName(GATEWAY_PORT),
+      gatewayPort: GATEWAY_PORT,
+      stateDir: paths.selectedGatewayLocalStateDir,
+    })
+  ) {
+    return false;
+  }
+  if (
+    teardownAuthority.source === "packaged-service" &&
+    runtime.getTrustedActiveOpenShellGatewayUserServiceIdentity({
+      commandExists: runtime.commandExists,
+      env: runtime.env,
+      existsSync: runtime.existsSync,
+      home: runtime.env.HOME || os.homedir(),
+      platform: runtime.platform,
+      spawnSyncImpl: runtime.run,
+      suppressUnsupportedVersionWarning: true,
+    })
+  ) {
+    return false;
+  }
+  return (runtime.isPortFree ?? isHostPortFree)(GATEWAY_PORT);
+}
+
+function removeConfiguredGatewayReservationIfSafe(
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  teardownAuthority: GatewayOwner,
+  portableRuntimeCleanup: boolean,
+): boolean {
+  if (
+    !isRemovableConfiguredGatewayReservation(
+      paths,
+      options,
+      runtime,
+      teardownAuthority,
+      portableRuntimeCleanup,
+    ) ||
+    !removePath(paths.selectedGatewayLocalStateDir, runtime)
+  ) {
+    return false;
+  }
+  runtime.log(
+    "Removed the unused configured gateway state reservation; no gateway resources were created.",
+  );
+  return true;
+}
+
+function canBeginOpenShellCleanupAfterReservation(
+  reservationRemoved: boolean,
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  scopedToSelectedGateway: boolean,
+  teardownAuthority: GatewayOwner,
+  portableRuntimeCleanup: boolean,
+): boolean {
+  return (
+    reservationRemoved ||
+    canBeginOpenShellCleanup(
+      paths,
+      options,
+      runtime,
+      scopedToSelectedGateway,
+      teardownAuthority,
+      portableRuntimeCleanup,
+    )
+  );
+}
+
+function removeManagedDefaultGatewayUserServiceAfterReservation(
+  reservationRemoved: boolean,
+  runtime: UninstallRuntime,
+  options: UninstallRunOptions,
+  externallySupervised: boolean,
+): boolean {
+  return (
+    reservationRemoved ||
+    removeManagedDefaultGatewayUserService(runtime, options, externallySupervised)
+  );
+}
+
+function stopHostGatewayProcessesAfterReservation(
+  reservationRemoved: boolean,
+  runtime: UninstallRuntime,
+  options: StopHostGatewayOptions,
+): void {
+  if (reservationRemoved) return;
+  stopHostGatewayProcessesForUninstall(runtime, options);
+}
+
+function executeOpenShellResourceCleanupAfterReservation(
+  reservationRemoved: boolean,
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  scopedToSelectedGateway: boolean,
+  sandboxNames: readonly string[],
+  managedHermesStateVolumes: readonly ManagedHermesStateVolumeContext[],
+  teardownAuthority: GatewayOwner,
+): boolean {
+  if (reservationRemoved) {
+    runtime.log("No OpenShell gateway resources were created; skipped gateway cleanup.");
+    return true;
+  }
+  return executeOpenShellResourceCleanup(
+    paths,
+    options,
+    runtime,
+    scopedToSelectedGateway,
+    sandboxNames,
+    managedHermesStateVolumes,
+    teardownAuthority,
+    false,
+  );
+}
+
 function executePlan(
   plan: UninstallPlan,
   paths: UninstallPaths,
@@ -3014,8 +3151,16 @@ function executePlan(
   portableRetirementEntries: ReturnType<typeof portableRetirementPreservationEntries>,
 ): { ok: boolean } {
   const externallySupervised = isExternallySupervised(teardownAuthority);
+  const removedConfiguredGatewayReservation = removeConfiguredGatewayReservationIfSafe(
+    paths,
+    options,
+    runtime,
+    teardownAuthority,
+    portableRuntimeCleanup,
+  );
   if (
-    !canBeginOpenShellCleanup(
+    !canBeginOpenShellCleanupAfterReservation(
+      removedConfiguredGatewayReservation,
       paths,
       options,
       runtime,
@@ -3089,7 +3234,12 @@ function executePlan(
       if (
         !scopedToSelectedGateway &&
         !portableRuntimeCleanup &&
-        !removeManagedDefaultGatewayUserService(runtime, options, externallySupervised)
+        !removeManagedDefaultGatewayUserServiceAfterReservation(
+          removedConfiguredGatewayReservation,
+          runtime,
+          options,
+          externallySupervised,
+        )
       ) {
         ok = false;
       }
@@ -3114,7 +3264,8 @@ function executePlan(
           });
           stopOrphanedOpenShell(runtime);
           if (!externallySupervised) {
-            stopHostGatewayProcessesForUninstall(
+            stopHostGatewayProcessesAfterReservation(
+              removedConfiguredGatewayReservation,
               runtime,
               GATEWAY_PORT === DEFAULT_GATEWAY_PORT
                 ? { logNoProcesses: true }
@@ -3149,7 +3300,8 @@ function executePlan(
       stopBedrockRuntimeAdapterForUninstall(paths, runtime, scopedToSelectedGateway);
     } else if (step.name === "OpenShell resources") {
       if (
-        !executeOpenShellResourceCleanup(
+        !executeOpenShellResourceCleanupAfterReservation(
+          removedConfiguredGatewayReservation,
           paths,
           options,
           runtime,
@@ -3157,7 +3309,6 @@ function executePlan(
           sandboxNames,
           managedHermesStateVolumes,
           teardownAuthority,
-          false,
         )
       ) {
         return { ok: false };
@@ -3530,7 +3681,18 @@ function prepareUninstallRun(
       return { kind: "complete", outcome: { exitCode: 1, plan } };
     }
   }
-  if (!portableRuntimeCleanup && !runtime.commandExists("openshell")) {
+  const removableConfiguredGatewayReservation = isRemovableConfiguredGatewayReservation(
+    paths,
+    resolvedOptions,
+    runtime,
+    teardownAuthority,
+    portableRuntimeCleanup,
+  );
+  if (
+    !portableRuntimeCleanup &&
+    !removableConfiguredGatewayReservation &&
+    !runtime.commandExists("openshell")
+  ) {
     runtime.error(OPENSHELL_COMMAND_MISSING_ERROR);
     return { kind: "complete", outcome: { exitCode: 1, plan } };
   }

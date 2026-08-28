@@ -4739,6 +4739,7 @@ If onboarding also set `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR`, pass its original
 Use the dedicated gateway state directory created for that port, not a shared or parent directory.
 Onboarding rejects relative overrides, the shared NemoClaw state root or its parents, and existing nonempty directories without valid NemoClaw-managed gateway configuration.
 Let onboarding create the directory when possible. If it already exists, it must be an owner-controlled, non-symbolic-link directory with mode `0700`.
+If onboarding stops immediately after reserving that directory, uninstall removes the marker-only reservation only while the selected gateway port is free; any gateway configuration, runtime marker, PID file, or live listener makes cleanup fail closed and preserve the directory.
 Successful managed cleanup recursively removes that directory and all contents; portable cleanup and `--keep-openshell` preserve it.
 Before cleanup, uninstall validates port-bound state-root ownership and exact live process identity; pre-marker gateways can use their owner-private generated configuration as the legacy ownership proof.
 
