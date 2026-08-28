@@ -19,7 +19,12 @@ import {
   parseServingProfileProvenance,
   type ServingProfileProvenance,
 } from "../inference/serving/profile-provenance";
-import { normalizeWebSearchConfig, type WebSearchConfig } from "../inference/web-search";
+import {
+  normalizeWebSearchConfig,
+  webSearchEnvFor,
+  webSearchProviderForConfig,
+  type WebSearchConfig,
+} from "../inference/web-search";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { compactSandboxMessagingPlanForPersistence } from "../messaging/persistence";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
@@ -48,7 +53,6 @@ import {
 } from "../onboard/station-express-resume";
 import { redactSensitiveText, redactUrl } from "../security/redact";
 import { inspectCheckpoint, serializeCheckpoint } from "./onboard-checkpoint";
-import { decisionUnset } from "./onboard-checkpoint-decision";
 import type { OnboardCheckpoint } from "./onboard-checkpoint-types";
 import {
   assignSafeToolDisclosureUpdate,
@@ -57,6 +61,15 @@ import {
   type ToolDisclosure,
 } from "./onboard-session-tool-disclosure";
 import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
+import {
+  listRetainedSandboxRecoveryRecords as readRetainedSandboxRecoveryRecords,
+  recordRetainedSandboxRecovery as writeRetainedSandboxRecovery,
+  retainedSandboxRecoveryFile,
+  type RecordRetainedSandboxRecoveryInput,
+  type RetainedSandboxRecoveryRecord,
+  type RetainedSandboxRecoveryReason,
+  type RetainedSandboxVerifiedEffectivePolicyIdentity,
+} from "./onboard-session/retained-sandbox-recovery";
 import type { SandboxHostMount } from "./registry/types";
 import { hasUnsafeHostMountTerminalText } from "./registry/host-mount";
 import { nemoclawStateRoot } from "./state-root";
@@ -65,10 +78,12 @@ export { normalizePersistedSandboxHostMounts } from "./registry/host-mount";
 
 export const SESSION_VERSION = 1;
 export const MACHINE_SNAPSHOT_VERSION = 1;
+export const CANCELLATION_RECOVERY_STATUS = "recovery_required";
 const INVALID_HOST_MOUNT_SESSIONS = new WeakSet<object>();
 export const SESSION_DIR = nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT);
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
 export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
+export const RETAINED_SANDBOX_RECOVERY_FILE = retainedSandboxRecoveryFile(SESSION_DIR);
 const SAFE_VLLM_INSTALL_MODEL = /^[A-Za-z0-9._:/-]+$/;
 
 export class InvalidPersistedPolicyAuthorityError extends Error {}
@@ -105,6 +120,13 @@ export interface SessionFailure {
   message: string | null;
   recordedAt: string;
   interrupted?: boolean;
+}
+
+export interface SessionCancellationRecovery {
+  readonly reason: "cancelled_after_sandbox_creation" | "retained_after_sandbox_creation_failure";
+  readonly sandboxName: string;
+  readonly sandboxIdentityFingerprint: string | null;
+  readonly recordedAt: string;
 }
 
 export interface SessionMetadata {
@@ -205,6 +227,7 @@ export interface Session {
   lastStepStarted: string | null;
   lastCompletedStep: string | null;
   failure: SessionFailure | null;
+  cancellationRecovery: SessionCancellationRecovery | null;
   agent: string | null;
   sandboxName: string | null;
   provider: string | null;
@@ -365,6 +388,7 @@ export interface DebugSessionSummary {
   lastStepStarted: string | null;
   lastCompletedStep: string | null;
   failure: SessionFailure | null;
+  cancellationRecovery: SessionCancellationRecovery | null;
   gatewayAuthority: GatewayOwnerDescription | null;
   machine: OnboardMachineSnapshot;
   steps: Record<string, StepState>;
@@ -373,7 +397,86 @@ export interface DebugSessionSummary {
 // ── Helpers ──────────────────────────────────────────────────────
 
 function ensureSessionDir(): void {
+  assertSessionDirectoryHasNoSymlinks();
   fs.mkdirSync(SESSION_DIR, { recursive: true, mode: 0o700 });
+  assertSessionDirectoryHasNoSymlinks();
+  const stat = fs.lstatSync(SESSION_DIR);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error("NemoClaw onboarding state directory is not a secure directory.");
+  }
+}
+
+function assertSessionDirectoryHasNoSymlinks(): void {
+  const home = path.resolve(process.env.HOME || "/tmp");
+  let current = path.resolve(SESSION_DIR);
+  while (current !== home && current !== path.dirname(current)) {
+    try {
+      if (fs.lstatSync(current).isSymbolicLink()) {
+        throw new Error(
+          `NemoClaw onboarding state directory cannot be a symbolic link: ${current}`,
+        );
+      }
+    } catch (error) {
+      if (!(isErrnoException(error) && error.code === "ENOENT")) throw error;
+    }
+    current = path.dirname(current);
+  }
+}
+
+interface PinnedSessionDirectory {
+  readonly descriptor: number;
+  readonly stat: fs.Stats;
+}
+
+function sameSessionFileIdentity(left: fs.Stats, right: fs.Stats): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function revalidatePinnedSessionDirectory(directory: PinnedSessionDirectory): void {
+  assertSessionDirectoryHasNoSymlinks();
+  const descriptorStat = fs.fstatSync(directory.descriptor);
+  const pathStat = fs.lstatSync(SESSION_DIR);
+  if (
+    !descriptorStat.isDirectory() ||
+    pathStat.isSymbolicLink() ||
+    !pathStat.isDirectory() ||
+    !sameSessionFileIdentity(directory.stat, descriptorStat) ||
+    !sameSessionFileIdentity(directory.stat, pathStat)
+  ) {
+    throw new Error("NemoClaw onboarding state directory changed during validation.");
+  }
+}
+
+function openPinnedSessionDirectory(): PinnedSessionDirectory {
+  ensureSessionDir();
+  const descriptor = fs.openSync(
+    SESSION_DIR,
+    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_DIRECTORY ?? 0),
+  );
+  try {
+    const directory = { descriptor, stat: fs.fstatSync(descriptor) };
+    revalidatePinnedSessionDirectory(directory);
+    return directory;
+  } catch (error) {
+    fs.closeSync(descriptor);
+    throw error;
+  }
+}
+
+function assertTemporarySessionFile(descriptor: number, temporary: string): fs.Stats {
+  const descriptorStat = fs.fstatSync(descriptor);
+  const pathStat = fs.lstatSync(temporary);
+  if (
+    !descriptorStat.isFile() ||
+    descriptorStat.nlink !== 1 ||
+    pathStat.isSymbolicLink() ||
+    !pathStat.isFile() ||
+    pathStat.nlink !== 1 ||
+    !sameSessionFileIdentity(descriptorStat, pathStat)
+  ) {
+    throw new Error("NemoClaw onboarding temporary state changed during validation.");
+  }
+  return descriptorStat;
 }
 
 export function sessionPath(): string {
@@ -678,6 +781,37 @@ export function sanitizeFailure(
   return step || message ? { step, message, recordedAt, interrupted } : null;
 }
 
+function parseSessionCancellationRecovery(
+  value: SessionJsonValue | undefined,
+): SessionCancellationRecovery | null {
+  if (
+    !isObject(value) ||
+    (value.reason !== "cancelled_after_sandbox_creation" &&
+      value.reason !== "retained_after_sandbox_creation_failure")
+  ) {
+    return null;
+  }
+  const sandboxName = readString(value.sandboxName);
+  const recordedAt = readCanonicalIsoTimestamp(value.recordedAt);
+  const fingerprint =
+    value.sandboxIdentityFingerprint === null ? null : readString(value.sandboxIdentityFingerprint);
+  if (
+    !sandboxName ||
+    sandboxName.length > NAME_MAX_LENGTH ||
+    !NAME_VALID_PATTERN.test(sandboxName) ||
+    !recordedAt ||
+    (fingerprint !== null && !/^[0-9a-f]{64}$/u.test(fingerprint))
+  ) {
+    return null;
+  }
+  return {
+    reason: value.reason,
+    sandboxName,
+    sandboxIdentityFingerprint: fingerprint,
+    recordedAt,
+  };
+}
+
 // ── Session CRUD ─────────────────────────────────────────────────
 
 function createMachineSnapshot(
@@ -775,6 +909,9 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     lastStepStarted: overrides.lastStepStarted ?? null,
     lastCompletedStep: overrides.lastCompletedStep ?? null,
     failure: overrides.failure ?? null,
+    cancellationRecovery: parseSessionCancellationRecovery(
+      overrides.cancellationRecovery as SessionJsonValue | undefined,
+    ),
     agent: overrides.agent ?? null,
     sandboxName: overrides.sandboxName ?? null,
     provider: overrides.provider ?? null,
@@ -900,6 +1037,14 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
   ) {
     return null;
   }
+  const cancellationRecovery = parseSessionCancellationRecovery(data.cancellationRecovery);
+  if (
+    hasOwn(data, "cancellationRecovery") &&
+    data.cancellationRecovery !== null &&
+    !cancellationRecovery
+  ) {
+    return null;
+  }
 
   const normalized = createSession({
     sessionId: readString(data.sessionId) ?? undefined,
@@ -943,11 +1088,20 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     lastStepStarted: readString(data.lastStepStarted),
     lastCompletedStep: readString(data.lastCompletedStep),
     failure: sanitizeFailure(isObject(data.failure) ? data.failure : null),
+    cancellationRecovery,
     metadata: parseSessionMetadata(data.metadata),
     checkpoint: data.checkpoint as unknown as OnboardCheckpoint | null,
   });
   normalized.resumable = data.resumable !== false;
   normalized.status = readString(data.status) ?? normalized.status;
+  if (
+    (normalized.status === CANCELLATION_RECOVERY_STATUS) !== Boolean(cancellationRecovery) ||
+    (cancellationRecovery !== null &&
+      (normalized.resumable !== false ||
+        normalized.sandboxName !== cancellationRecovery.sandboxName))
+  ) {
+    return null;
+  }
   if (
     normalized.stationExpressIntent &&
     (data.resumable !== true ||
@@ -1044,16 +1198,53 @@ function serializeSessionForDisk(session: Session): Record<string, unknown> {
 export function saveSession(session: Session): Session {
   const normalized = normalizeSession(session) || createSession();
   normalized.updatedAt = new Date().toISOString();
-  ensureSessionDir();
+  const directory = openPinnedSessionDirectory();
   const tmpFile = path.join(
     SESSION_DIR,
     `.onboard-session.${process.pid}.${Date.now()}.${randomUUID()}.tmp`,
   );
-  fs.writeFileSync(tmpFile, JSON.stringify(serializeSessionForDisk(normalized), null, 2), {
-    mode: 0o600,
-  });
-  fs.renameSync(tmpFile, SESSION_FILE);
-  return normalized;
+  let descriptor: number | null = null;
+  let temporaryStat: fs.Stats | null = null;
+  try {
+    descriptor = fs.openSync(
+      tmpFile,
+      fs.constants.O_WRONLY |
+        fs.constants.O_CREAT |
+        fs.constants.O_EXCL |
+        (fs.constants.O_NOFOLLOW ?? 0),
+      0o600,
+    );
+    revalidatePinnedSessionDirectory(directory);
+    temporaryStat = assertTemporarySessionFile(descriptor, tmpFile);
+    fs.writeFileSync(descriptor, JSON.stringify(serializeSessionForDisk(normalized), null, 2));
+    fs.fchmodSync(descriptor, 0o600);
+    fs.fsyncSync(descriptor);
+    temporaryStat = assertTemporarySessionFile(descriptor, tmpFile);
+    fs.closeSync(descriptor);
+    descriptor = null;
+    revalidatePinnedSessionDirectory(directory);
+    fs.renameSync(tmpFile, SESSION_FILE);
+    revalidatePinnedSessionDirectory(directory);
+    fs.fsyncSync(directory.descriptor);
+    return normalized;
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
+    try {
+      revalidatePinnedSessionDirectory(directory);
+      const pathStat = fs.lstatSync(tmpFile);
+      if (
+        temporaryStat !== null &&
+        pathStat.isFile() &&
+        pathStat.nlink === 1 &&
+        sameSessionFileIdentity(temporaryStat, pathStat)
+      ) {
+        fs.unlinkSync(tmpFile);
+      }
+    } catch {
+      // Preserve the original result. Ambiguous paths are left untouched.
+    }
+    fs.closeSync(directory.descriptor);
+  }
 }
 
 export function clearSession(): void {
@@ -1160,6 +1351,46 @@ function lockHolderStillMatches(lock: LockInfo): boolean {
 // window in the inode-only check by tying ownership to a live
 // descriptor rather than a value re-read from disk. See #1281.
 let heldLockFd: number | null = null;
+
+export function assertOnboardLockOwned(): void {
+  if (heldLockFd === null) {
+    throw new Error("This process does not own the NemoClaw onboarding lock.");
+  }
+  assertSessionDirectoryHasNoSymlinks();
+  const descriptorStat = fs.fstatSync(heldLockFd);
+  const pathStat = fs.lstatSync(LOCK_FILE);
+  if (
+    !descriptorStat.isFile() ||
+    descriptorStat.nlink !== 1 ||
+    pathStat.isSymbolicLink() ||
+    !pathStat.isFile() ||
+    pathStat.nlink !== 1 ||
+    descriptorStat.dev !== pathStat.dev ||
+    descriptorStat.ino !== pathStat.ino
+  ) {
+    throw new Error("NemoClaw onboarding lock ownership changed during the operation.");
+  }
+}
+
+function withOwnedOnboardLock<T>(command: string, operation: () => T): T {
+  const managesOnboardLock = heldLockFd === null;
+  if (managesOnboardLock) {
+    const lock = acquireOnboardLock(command);
+    if (!lock.acquired) {
+      throw new Error(
+        "Cannot update onboarding recovery while another onboarding run owns the lock.",
+      );
+    }
+  }
+  try {
+    assertOnboardLockOwned();
+    const result = operation();
+    assertOnboardLockOwned();
+    return result;
+  } finally {
+    if (managesOnboardLock) releaseOnboardLock();
+  }
+}
 
 /** Report whether this process holds the exclusive onboarding writer lock. */
 export function isOnboardLockHeldByCurrentProcess(): boolean {
@@ -1275,6 +1506,13 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
       throw writeError;
     }
     heldLockFd = fd;
+    try {
+      assertOnboardLockOwned();
+    } catch (error) {
+      heldLockFd = null;
+      fs.closeSync(fd);
+      throw error;
+    }
     return { acquired: true, lockFile: LOCK_FILE, stale: false };
   }
 
@@ -1590,6 +1828,170 @@ export function updateSession(mutator: (session: Session) => Session | void): Se
   return saveSession(next);
 }
 
+export interface RetainedSandboxRecoveryContext {
+  readonly gatewayName?: string;
+  readonly gatewayPort?: number;
+  readonly lifecycleGeneration?: string | null;
+  readonly verifiedEffectivePolicyIdentity?: RetainedSandboxVerifiedEffectivePolicyIdentity | null;
+}
+
+function persistIndependentRetainedSandboxRecovery(
+  session: Session,
+  reason: RetainedSandboxRecoveryReason,
+  sandboxIdentityFingerprint: string | null,
+  context: RetainedSandboxRecoveryContext,
+): void {
+  const messagingCredentialEnvironmentVariables =
+    session.messagingPlan?.credentialBindings.map((binding) => binding.providerEnvKey) ?? [];
+  const credentialEnvironmentVariables = [
+    ...(session.credentialEnv ? [session.credentialEnv] : []),
+    ...(session.webSearchConfig
+      ? [webSearchEnvFor(webSearchProviderForConfig(session.webSearchConfig))]
+      : []),
+    ...messagingCredentialEnvironmentVariables,
+  ];
+  writeRetainedSandboxRecovery(RETAINED_SANDBOX_RECOVERY_FILE, {
+    sandboxName: session.sandboxName!,
+    sandboxIdentityFingerprint,
+    gatewayName: context.gatewayName ?? session.metadata.gatewayName,
+    gatewayPort: context.gatewayPort ?? GATEWAY_PORT,
+    lifecycleGeneration: context.lifecycleGeneration ?? null,
+    verifiedEffectivePolicyIdentity: context.verifiedEffectivePolicyIdentity ?? null,
+    resources: {
+      sharedInferenceProviders: session.provider ? [session.provider] : [],
+      sandboxScopedProviders: session.stagedCredentialProviders,
+      credentialEnvironmentVariables,
+    },
+    reason,
+  });
+}
+
+export function listRetainedSandboxRecoveryRecords(): readonly RetainedSandboxRecoveryRecord[] {
+  if (heldLockFd !== null) assertOnboardLockOwned();
+  const records = readRetainedSandboxRecoveryRecords(RETAINED_SANDBOX_RECOVERY_FILE);
+  if (heldLockFd !== null) assertOnboardLockOwned();
+  return records;
+}
+
+export function recordRetainedSandboxRecovery(
+  input: RecordRetainedSandboxRecoveryInput,
+): RetainedSandboxRecoveryRecord {
+  return withOwnedOnboardLock("nemoclaw retained sandbox recovery", () =>
+    writeRetainedSandboxRecovery(RETAINED_SANDBOX_RECOVERY_FILE, input),
+  );
+}
+
+export function markCancellationRecovery(
+  sandboxName: string,
+  sandboxIdentityFingerprint?: string,
+  context: RetainedSandboxRecoveryContext = {},
+): Session {
+  if (
+    sandboxName.length > NAME_MAX_LENGTH ||
+    !NAME_VALID_PATTERN.test(sandboxName) ||
+    (sandboxIdentityFingerprint !== undefined &&
+      !/^[0-9a-f]{64}$/u.test(sandboxIdentityFingerprint))
+  ) {
+    throw new Error("Cannot record cancellation recovery with invalid sandbox identity data.");
+  }
+  return withOwnedOnboardLock("nemoclaw cancellation recovery", () => {
+    const saved = updateSession((session) => {
+      if (session.sandboxName !== null && session.sandboxName !== sandboxName) {
+        throw new Error("Cannot record cancellation recovery for a different onboarding sandbox.");
+      }
+      const recordedAt = new Date().toISOString();
+      session.sandboxName = sandboxName;
+      session.resumable = false;
+      session.status = CANCELLATION_RECOVERY_STATUS;
+      session.cancellationRecovery = {
+        reason: "cancelled_after_sandbox_creation",
+        sandboxName,
+        sandboxIdentityFingerprint: sandboxIdentityFingerprint ?? null,
+        recordedAt,
+      };
+      session.failure = {
+        step: session.lastStepStarted,
+        message:
+          "Onboarding was cancelled after sandbox creation; administrator recovery is required.",
+        recordedAt,
+        interrupted: true,
+      };
+      return session;
+    });
+    persistIndependentRetainedSandboxRecovery(
+      saved,
+      "cancelled_after_sandbox_creation",
+      sandboxIdentityFingerprint ?? null,
+      context,
+    );
+    return saved;
+  });
+}
+
+export function markRetainedSandboxRecovery(
+  sandboxName: string,
+  message: string,
+  sandboxIdentityFingerprint?: string,
+  context: RetainedSandboxRecoveryContext = {},
+): Session {
+  if (
+    sandboxName.length > NAME_MAX_LENGTH ||
+    !NAME_VALID_PATTERN.test(sandboxName) ||
+    (sandboxIdentityFingerprint !== undefined &&
+      !/^[0-9a-f]{64}$/u.test(sandboxIdentityFingerprint))
+  ) {
+    throw new Error("Cannot record retained sandbox recovery with invalid identity data.");
+  }
+  return withOwnedOnboardLock("nemoclaw retained sandbox recovery", () => {
+    const saved = updateSession((session) => {
+      if (session.sandboxName !== null && session.sandboxName !== sandboxName) {
+        throw new Error(
+          "Cannot record retained sandbox recovery for a different onboarding sandbox.",
+        );
+      }
+      const recordedAt = new Date().toISOString();
+      const sanitizedMessage = redactSensitiveText(message);
+      session.sandboxName = sandboxName;
+      session.resumable = false;
+      session.status = CANCELLATION_RECOVERY_STATUS;
+      session.cancellationRecovery = {
+        reason: "retained_after_sandbox_creation_failure",
+        sandboxName,
+        sandboxIdentityFingerprint: sandboxIdentityFingerprint ?? null,
+        recordedAt,
+      };
+      session.failure = {
+        step: session.lastStepStarted,
+        message: sanitizedMessage,
+        recordedAt,
+        interrupted: true,
+      };
+      const sandboxStep = session.steps.sandbox;
+      if (sandboxStep) sandboxStep.error = sanitizedMessage;
+      return session;
+    });
+    const reread = loadSession();
+    if (
+      reread?.sessionId !== saved.sessionId ||
+      reread.status !== CANCELLATION_RECOVERY_STATUS ||
+      reread.resumable !== false ||
+      reread.cancellationRecovery?.reason !== "retained_after_sandbox_creation_failure" ||
+      reread.cancellationRecovery.sandboxName !== sandboxName ||
+      reread.cancellationRecovery.sandboxIdentityFingerprint !==
+        (sandboxIdentityFingerprint ?? null)
+    ) {
+      throw new Error("Retained sandbox recovery did not survive durable readback.");
+    }
+    persistIndependentRetainedSandboxRecovery(
+      reread,
+      "retained_after_sandbox_creation_failure",
+      sandboxIdentityFingerprint ?? null,
+      context,
+    );
+    return reread;
+  });
+}
+
 export type CompareAndSwapSessionResult = "updated" | "busy" | "mismatch";
 
 /**
@@ -1714,7 +2116,7 @@ export function markStepRejected(stepName: string): Session {
       if (session.checkpoint) {
         session.checkpoint = {
           ...session.checkpoint,
-          sandboxIdentity: decisionUnset(),
+          sandboxIdentity: { kind: "unset" },
           updatedAt: new Date().toISOString(),
         };
       }
@@ -1767,6 +2169,12 @@ export function finalizeIncompleteOnboardStep(
 ): Session | null {
   const existing = loadSession();
   if (!existing) return null;
+  // A cancellation after sandbox creation has its own fail-closed lifecycle.
+  // Preserve that durable marker when the ordinary process-exit backstop runs
+  // later in the same exit sequence.
+  if (existing.status === CANCELLATION_RECOVERY_STATUS && existing.cancellationRecovery !== null) {
+    return existing;
+  }
   if (isTerminalOnboardMachineState(existing.machine.state)) return null;
 
   let emitted = false;
@@ -1953,6 +2361,7 @@ export function summarizeForDebug(
     lastStepStarted: session.lastStepStarted,
     lastCompletedStep: session.lastCompletedStep,
     failure: sanitizeFailure(session.failure),
+    cancellationRecovery: session.cancellationRecovery,
     gatewayAuthority,
     machine: session.machine,
     steps: Object.fromEntries(

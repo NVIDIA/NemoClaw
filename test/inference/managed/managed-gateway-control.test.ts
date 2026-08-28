@@ -69,6 +69,7 @@ control = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = control
 spec.loader.exec_module(control)
 
+harness_clock = [0.0]; control.time.monotonic = lambda: harness_clock[0]; control.time.sleep = lambda seconds: harness_clock.__setitem__(0, harness_clock[0] + seconds)
 def write_process(
     proc_root,
     namespace_path,

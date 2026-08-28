@@ -12,7 +12,7 @@ import {
   POLICY_HASH,
   POLICY_VERSION,
   SANDBOX_IDENTITY,
-} from "./managed-policy-receipt-fixture";
+} from "../../helpers/managed-policy-receipt-fixture";
 
 const requireForTest = createRequire(import.meta.url);
 const policies = requireForTest(

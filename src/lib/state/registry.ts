@@ -257,9 +257,7 @@ function assertPendingPolicyVerificationMatchesRegistration(
     checkpoint.policyAuthority === "nemoclaw-managed"
       ? isDeepStrictEqual(checkpoint.policyCreationReceipt, requestedEntry.policyCreationReceipt)
       : requestedEntry.policyCreationReceipt === undefined;
-  const mismatches: string[] = commonChecks
-    .filter(([, matches]) => !matches)
-    .map(([name]) => name);
+  const mismatches: string[] = commonChecks.filter(([, matches]) => !matches).map(([name]) => name);
   if (!authorityMatches) mismatches.push("policy receipt");
   if (mismatches.length > 0) {
     throw new PolicyAuthorityRefusalError(
@@ -672,6 +670,11 @@ type SandboxInferenceRouteReservation = Pick<
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
 };
 
+interface SandboxInferenceRouteReservationOptions {
+  /** Refuse instead of changing any existing registry row. */
+  requireAbsent?: boolean;
+}
+
 /**
  * Persist a route dependency before releasing the shared-gateway mutation
  * lock. A newly reserved row deliberately does not claim the default sandbox;
@@ -680,10 +683,12 @@ type SandboxInferenceRouteReservation = Pick<
 export function reserveSandboxInferenceRoute(
   name: string,
   route: SandboxInferenceRouteReservation,
+  options: SandboxInferenceRouteReservationOptions = {},
 ): boolean {
   return withLock(() => {
     const data = load();
     const existing = data.sandboxes[name];
+    if (options.requireAbsent === true && existing !== undefined) return false;
     const normalized = normalizeInferenceSelection(route);
     const provenance = cloneSandboxHostLocalInferenceProvenance(route.hostLocalInferenceProvenance);
     if (
