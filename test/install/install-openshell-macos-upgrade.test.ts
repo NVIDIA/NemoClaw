@@ -93,7 +93,10 @@ test ! -e "${runtimeDir}/openshell-gateway.pid"`;
   });
 }
 
-function runDarwinGatewayPidFile(contents: string, symlink = false, listenerPid = "") {
+function runDarwinGatewayPidFile(
+  contents: string,
+  options: { lsofDiagnostic?: string; listenerPid?: string; symlink?: boolean } = {},
+) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-darwin-gateway-pid-file-"));
   const home = path.join(tmp, "home");
   const bin = path.join(tmp, "bin");
@@ -106,14 +109,20 @@ function runDarwinGatewayPidFile(contents: string, symlink = false, listenerPid 
     path.join(bin, "lsof"),
     `#!/usr/bin/env bash
 if [ "\${1:-}" = "-nP" ] && [ "\${2:-}" = "-iTCP:8080" ] && [ "\${3:-}" = "-sTCP:LISTEN" ] && [ "\${4:-}" = "-t" ]; then
-  [ -n '${listenerPid}' ] || exit 1
-  printf '%s\\n' '${listenerPid}'
-  exit 0
+  [ -z '${options.lsofDiagnostic ?? ""}' ] || {
+    printf '%s\\n' '${options.lsofDiagnostic ?? ""}' >&2
+    exit 1
+  }
+  [ -z '${options.listenerPid ?? ""}' ] || {
+    printf '%s\\n' '${options.listenerPid ?? ""}'
+    exit 0
+  }
+  exit 1
 fi
-exit 1
+exit 2
 `,
   );
-  const writePidFile = symlink
+  const writePidFile = options.symlink
     ? () => {
         const target = path.join(tmp, "pid-target");
         fs.writeFileSync(target, contents);
@@ -141,6 +150,60 @@ stop_legacy_openshell_gateway_process`,
     },
   );
   return { result, pidFile };
+}
+
+function runVerifiedHomebrewInstallSelection(
+  options: { brewPrefixFailure?: boolean; missingGateway?: boolean } = {},
+) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-homebrew-install-selection-"));
+  const home = path.join(tmp, "home");
+  const bin = path.join(tmp, "bin");
+  const brewPrefix = path.join(tmp, "homebrew");
+  const openshellBin = path.join(brewPrefix, "bin", "openshell");
+  const gatewayBin = path.join(brewPrefix, "bin", "openshell-gateway");
+  const staleOpenshellBin = path.join(home, ".local", "bin", "openshell");
+  fs.mkdirSync(bin, { recursive: true });
+  fs.mkdirSync(path.dirname(openshellBin), { recursive: true });
+  fs.mkdirSync(path.dirname(staleOpenshellBin), { recursive: true });
+  writeExecutable(openshellBin, "#!/usr/bin/env bash\nexit 0\n");
+  writeExecutable(
+    options.missingGateway ? `${gatewayBin}.missing` : gatewayBin,
+    "#!/usr/bin/env bash\nexit 0\n",
+  );
+  writeExecutable(staleOpenshellBin, "#!/usr/bin/env bash\nexit 0\n");
+  writeExecutable(path.join(bin, "uname"), "#!/usr/bin/env bash\nprintf 'Darwin\\n'\n");
+  writeExecutable(
+    path.join(bin, "brew"),
+    options.brewPrefixFailure
+      ? `#!/usr/bin/env bash
+[ "\${1:-}" = "--prefix" ] && printf '%s\n' '${brewPrefix}'
+exit 2
+`
+      : `#!/usr/bin/env bash
+[ "\${1:-}" = "--prefix" ] && printf '%s\n' '${brewPrefix}'
+`,
+  );
+
+  const result = spawnSync(
+    "bash",
+    [
+      "-c",
+      `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
+spin() { return 0; }
+install_nemoclaw_openshell_gateway_user_service() { return 0; }
+maybe_install_openshell_during_install force
+printf 'openshell=%s\ngateway=%s\npath=%s\n' "$NEMOCLAW_OPENSHELL_BIN" "$NEMOCLAW_OPENSHELL_GATEWAY_BIN" "$(command -v openshell)"`,
+    ],
+    {
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: home,
+        PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    },
+  );
+  return { gatewayBin, openshellBin, result, staleOpenshellBin };
 }
 
 function runDarwinGatewayServiceStop(
@@ -350,7 +413,9 @@ describe("install.sh macOS OpenShell upgrade recovery", () => {
   });
 
   it("preserves registration recovery when a stale PID file has an active listener (#10369)", () => {
-    const { result, pidFile } = runDarwinGatewayPidFile("999999999\n", false, "4242");
+    const { result, pidFile } = runDarwinGatewayPidFile("999999999\n", {
+      listenerPid: "4242",
+    });
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("gateway port 8080 still has listener PID(s): 4242");
@@ -358,9 +423,23 @@ describe("install.sh macOS OpenShell upgrade recovery", () => {
     expect(fs.existsSync(pidFile)).toBe(true);
   });
 
+  it("preserves stale PID recovery when lsof cannot verify the gateway port (#10369)", () => {
+    const { result, pidFile } = runDarwinGatewayPidFile("999999999\n", {
+      lsofDiagnostic: "permission denied",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("lsof did not produce a conclusive listener observation");
+    expect(result.stderr).toContain(
+      "PID file, OpenShell registration, and sandbox backups were preserved",
+    );
+    expect(result.stderr).not.toContain("permission denied");
+    expect(fs.existsSync(pidFile)).toBe(true);
+  });
+
   it("rejects malformed or symlinked macOS gateway PID files (#10369)", () => {
     const malformed = runDarwinGatewayPidFile("not-a-pid\n");
-    const symlinked = runDarwinGatewayPidFile("999999999\n", true);
+    const symlinked = runDarwinGatewayPidFile("999999999\n", { symlink: true });
 
     expect(malformed.result.status).toBe(1);
     expect(malformed.result.stderr).toContain("invalid PID file");
@@ -407,40 +486,31 @@ describe("install.sh macOS OpenShell upgrade recovery", () => {
   });
 
   it("selects Homebrew binaries after a verified formula install (#10386)", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-homebrew-openshell-path-"));
-    const bin = path.join(tmp, "bin");
-    const brewPrefix = path.join(tmp, "homebrew");
-    const openshellBin = path.join(brewPrefix, "bin", "openshell");
-    const gatewayBin = path.join(brewPrefix, "bin", "openshell-gateway");
-    fs.mkdirSync(bin, { recursive: true });
-    fs.mkdirSync(path.dirname(openshellBin), { recursive: true });
-    writeExecutable(openshellBin, "#!/usr/bin/env bash\nexit 0\n");
-    writeExecutable(gatewayBin, "#!/usr/bin/env bash\nexit 0\n");
-    writeExecutable(path.join(bin, "uname"), "#!/usr/bin/env bash\nprintf 'Darwin\\n'\n");
-    writeExecutable(
-      path.join(bin, "brew"),
-      `#!/usr/bin/env bash
-[ "\${1:-}" = "--prefix" ] && printf '%s\n' '${brewPrefix}'
-`,
-    );
-
-    const result = spawnSync(
-      "bash",
-      [
-        "-c",
-        `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
-prefer_homebrew_openshell verified-install
-printf 'openshell=%s\ngateway=%s\npath=%s\n' "$NEMOCLAW_OPENSHELL_BIN" "$NEMOCLAW_OPENSHELL_GATEWAY_BIN" "$(command -v openshell)"`,
-      ],
-      {
-        encoding: "utf-8",
-        env: { ...process.env, PATH: `${bin}:/usr/bin:/bin` },
-      },
-    );
+    const { gatewayBin, openshellBin, result } = runVerifiedHomebrewInstallSelection();
 
     expect(result.status, result.stdout + result.stderr).toBe(0);
     expect(result.stdout).toContain(`openshell=${openshellBin}`);
     expect(result.stdout).toContain(`gateway=${gatewayBin}`);
     expect(result.stdout).toContain(`path=${openshellBin}`);
+  });
+
+  it("stops after a verified Homebrew install when brew cannot resolve its prefix (#10386)", () => {
+    const { result, staleOpenshellBin } = runVerifiedHomebrewInstallSelection({
+      brewPrefixFailure: true,
+    });
+
+    expect(fs.existsSync(staleOpenshellBin)).toBe(true);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("verified Homebrew OpenShell installation");
+  });
+
+  it("stops after a verified Homebrew install when the gateway binary is missing (#10386)", () => {
+    const { result, staleOpenshellBin } = runVerifiedHomebrewInstallSelection({
+      missingGateway: true,
+    });
+
+    expect(fs.existsSync(staleOpenshellBin)).toBe(true);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("verified Homebrew OpenShell installation");
   });
 });

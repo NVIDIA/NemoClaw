@@ -1455,7 +1455,7 @@ prefer_homebrew_openshell() {
   fi
 
   local brew_prefix openshell_bin gateway_bin
-  brew_prefix="$(brew --prefix 2>/dev/null || true)"
+  brew_prefix="$(brew --prefix 2>/dev/null)" || return 1
   [ -n "$brew_prefix" ] || return 1
   openshell_bin="${brew_prefix%/}/bin/openshell"
   gateway_bin="${brew_prefix%/}/bin/openshell-gateway"
@@ -2000,7 +2000,12 @@ maybe_install_openshell_during_install() {
   # install-openshell.sh returned success only after verifying and installing the
   # pinned formula, so selecting its Homebrew binaries does not need to re-read
   # the now-untrusted tap formula.
-  prefer_homebrew_openshell verified-install || prefer_user_local_openshell
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    prefer_homebrew_openshell verified-install \
+      || error "The verified Homebrew OpenShell installation did not provide executable CLI and gateway binaries. The installer stopped before gateway recovery."
+  else
+    prefer_user_local_openshell
+  fi
   install_nemoclaw_openshell_gateway_user_service
 }
 
@@ -3231,6 +3236,7 @@ stop_legacy_openshell_gateway_process() {
   esac
 
   local gateway_port runtime_dir pid_file pid gateway_exe listener_pids attempt
+  local listener_diagnostics_file listener_status listener_observation_valid
   gateway_port="$(resolve_nemoclaw_gateway_port)" || return 2
   if [ -n "${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR:-}" ]; then
     runtime_dir="${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR}"
@@ -3251,8 +3257,25 @@ stop_legacy_openshell_gateway_process() {
   if ! kill -0 "$pid" 2>/dev/null; then
     if [ "$platform" = "Darwin" ]; then
       command_exists lsof \
-        || error "Could not verify that gateway port ${gateway_port} is free after finding a stale PID file: ${pid_file}"
-      listener_pids="$(lsof -nP -iTCP:"${gateway_port}" -sTCP:LISTEN -t 2>/dev/null || true)"
+        || error "Could not verify gateway port ${gateway_port} because lsof is unavailable. The PID file, OpenShell registration, and sandbox backups were preserved."
+      listener_diagnostics_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-lsof-XXXXXX" 2>/dev/null)" \
+        || error "Could not prepare gateway port verification. The PID file, OpenShell registration, and sandbox backups were preserved."
+      _cleanup_files+=("$listener_diagnostics_file")
+      listener_status=0
+      listener_pids="$(lsof -nP -iTCP:"${gateway_port}" -sTCP:LISTEN -t 2>"$listener_diagnostics_file")" \
+        || listener_status=$?
+      listener_observation_valid=false
+      # lsof uses status 1 for both no matches and some operational failures.
+      if [ ! -s "$listener_diagnostics_file" ]; then
+        case "$listener_status" in
+          0) [ -n "$listener_pids" ] && listener_observation_valid=true ;;
+          1) [ -z "$listener_pids" ] && listener_observation_valid=true ;;
+        esac
+      fi
+      rm -f "$listener_diagnostics_file"
+      _cleanup_files=("${_cleanup_files[@]/$listener_diagnostics_file/}")
+      $listener_observation_valid \
+        || error "Could not verify gateway port ${gateway_port} because lsof did not produce a conclusive listener observation. The PID file, OpenShell registration, and sandbox backups were preserved."
       [ -z "$listener_pids" ] \
         || error "Refusing to retire the legacy OpenShell gateway from stale PID file ${pid_file}: gateway port ${gateway_port} still has listener PID(s): $(printf '%s' "$listener_pids" | tr '\n' ' '). Stop the listener or restore the correct owned PID file, then retry; sandbox backups were preserved."
     fi
