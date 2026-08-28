@@ -27,12 +27,6 @@ export type RetainedSandboxRecoveryReason =
   | "cancelled_after_sandbox_creation"
   | "retained_after_sandbox_creation_failure";
 
-export interface RetainedSandboxResourceEvidence {
-  readonly sharedInferenceProviders: readonly string[];
-  readonly sandboxScopedProviders: readonly string[];
-  readonly credentialEnvironmentVariables: readonly string[];
-}
-
 export interface RetainedSandboxVerifiedEffectivePolicyIdentity {
   readonly hash: string;
   readonly activeVersion: number;
@@ -50,7 +44,6 @@ export interface RetainedSandboxRecoveryRecord {
   readonly verifiedEffectivePolicyIdentity: RetainedSandboxVerifiedEffectivePolicyIdentity | null;
   readonly createAttemptNonce: string;
   readonly policyCreationReceipt: NemoClawPolicyCreationReceipt | null;
-  readonly resources: RetainedSandboxResourceEvidence;
   readonly reason: RetainedSandboxRecoveryReason;
   readonly recordedAt: string;
 }
@@ -76,7 +69,6 @@ export interface RecordRetainedSandboxRecoveryInput {
   readonly verifiedEffectivePolicyIdentity: RetainedSandboxVerifiedEffectivePolicyIdentity | null;
   readonly createAttemptNonce: string;
   readonly policyCreationReceipt: NemoClawPolicyCreationReceipt | null;
-  readonly resources: RetainedSandboxResourceEvidence;
   readonly reason: RetainedSandboxRecoveryReason;
   readonly recordedAt?: string;
 }
@@ -335,20 +327,6 @@ function validGatewayPort(value: unknown): value is number {
   return Number.isInteger(value) && Number(value) >= 1024 && Number(value) <= 65535;
 }
 
-function parseEvidence(value: unknown): RetainedSandboxResourceEvidence | null {
-  if (!isObjectRecord(value)) return null;
-  const parse = (candidate: unknown): string[] | null =>
-    Array.isArray(candidate) && candidate.every(validSafeEvidence)
-      ? [...new Set(candidate)].sort()
-      : null;
-  const sharedInferenceProviders = parse(value.sharedInferenceProviders);
-  const sandboxScopedProviders = parse(value.sandboxScopedProviders);
-  const credentialEnvironmentVariables = parse(value.credentialEnvironmentVariables);
-  return sharedInferenceProviders && sandboxScopedProviders && credentialEnvironmentVariables
-    ? { sharedInferenceProviders, sandboxScopedProviders, credentialEnvironmentVariables }
-    : null;
-}
-
 function parseVerifiedEffectivePolicyIdentity(
   value: unknown,
 ): RetainedSandboxVerifiedEffectivePolicyIdentity | null | undefined {
@@ -366,7 +344,6 @@ function parseVerifiedEffectivePolicyIdentity(
 
 function parseRecord(value: unknown): RetainedSandboxRecoveryRecord | null {
   if (!isObjectRecord(value)) return null;
-  const resources = parseEvidence(value.resources);
   const fingerprint = value.sandboxIdentityFingerprint;
   const verifiedEffectivePolicyIdentity = parseVerifiedEffectivePolicyIdentity(
     value.verifiedEffectivePolicyIdentity,
@@ -402,7 +379,6 @@ function parseRecord(value: unknown): RetainedSandboxRecoveryRecord | null {
         policyCreationReceipt.sandboxIdentityFingerprint !== fingerprint ||
         policyCreationReceipt.policyHash !== verifiedEffectivePolicyIdentity?.hash ||
         policyCreationReceipt.policyVersion !== verifiedEffectivePolicyIdentity?.activeVersion)) ||
-    !resources ||
     !["cancelled_after_sandbox_creation", "retained_after_sandbox_creation_failure"].includes(
       String(reason),
     ) ||
@@ -422,7 +398,6 @@ function parseRecord(value: unknown): RetainedSandboxRecoveryRecord | null {
     verifiedEffectivePolicyIdentity,
     createAttemptNonce: value.createAttemptNonce,
     policyCreationReceipt,
-    resources,
     reason: reason as RetainedSandboxRecoveryReason,
     recordedAt: value.recordedAt,
   };
@@ -469,8 +444,7 @@ function assertRecordInput(input: RecordRetainedSandboxRecoveryInput): void {
     !validGatewayPort(input.gatewayPort) ||
     (input.lifecycleGeneration !== null && !validSafeEvidence(input.lifecycleGeneration)) ||
     parseVerifiedEffectivePolicyIdentity(input.verifiedEffectivePolicyIdentity) === undefined ||
-    !/^[0-9a-f]{62}$/u.test(input.createAttemptNonce) ||
-    !parseEvidence(input.resources)
+    !/^[0-9a-f]{62}$/u.test(input.createAttemptNonce)
   ) {
     throw new Error("Cannot persist invalid retained sandbox recovery evidence.");
   }
@@ -522,7 +496,6 @@ export function recordRetainedSandboxRecovery(
     policyCreationReceipt: input.policyCreationReceipt
       ? parseNemoClawPolicyCreationReceipt(input.policyCreationReceipt)
       : null,
-    resources: parseEvidence(input.resources)!,
     reason: input.reason,
     recordedAt: input.recordedAt ?? new Date().toISOString(),
   };

@@ -455,14 +455,18 @@ When that result is resumable, NemoClaw keeps the session `in_progress` at its l
 If onboarding cannot complete after sandbox creation, NemoClaw preserves the sandbox and records its create-attempt label.
 When available, NemoClaw also records a durable identity fingerprint and verified policy evidence for recovery.
 Automatic and explicit resume, reuse, recreation, and fresh onboarding with that sandbox name remain blocked.
-Do not destroy the retained sandbox by name.
-Ask an OpenShell administrator to verify the exact live durable ID before using an identity-bound removal procedure.
-NemoClaw does not provide an operation to clear the recovery record, even after external removal.
-Start another onboarding run with a different name:
+Run `$$nemoclaw <sandbox-name> destroy` to complete identity-bound recovery.
+Destroy proceeds only after it verifies one retained recovery record and the immutable Docker sandbox identity.
+It removes only the qualified sandbox containers and clears the matching recovery record after verified cleanup.
+A foreign container, changed identity, failed Docker probe, or ambiguous recovery record stops cleanup and preserves the record.
+Do not delete the retained sandbox manually by mutable name.
+To onboard another sandbox while the record remains unresolved, supply a different explicit name:
 
 ```bash
-$$nemoclaw onboard --fresh --name <new-sandbox-name>
+$$nemoclaw onboard --name <new-sandbox-name>
 ```
+
+`--fresh` alone does not clear the recovery record or permit reuse of the retained sandbox name.
 
 <AgentOnly variant="openclaw">
 
@@ -530,12 +534,12 @@ $$nemoclaw onboard --fresh --apf-interceptor --name my-apf-sandbox
 
 <Warning title="Recover an Incomplete APF Creation">
 If post-create verification or native GPU fallback fails after OpenShell may have created the sandbox, NemoClaw preserves the incomplete sandbox because automatic deletion would use its mutable name.
-Do not destroy that sandbox by name.
-Retain the reported sandbox name, create-attempt label, and durable identity fingerprint for comparison only.
-If OpenShell did not return the fingerprint, recovery remains blocked until an administrator resolves the create-attempt label to one exact sandbox.
-Ask an OpenShell administrator to obtain the exact live durable ID, verify it against the fingerprint, and use an identity-bound removal procedure.
+Run `$$nemoclaw <sandbox-name> destroy` to verify the retained immutable identity, remove only the qualified sandbox containers, and clear the matching recovery record.
+A foreign container, changed identity, failed Docker probe, or ambiguous recovery record stops cleanup and preserves the record.
+Do not delete the retained sandbox manually by mutable name.
+If OpenShell did not return an identity fingerprint, recovery remains blocked until an administrator resolves the create-attempt label to one exact sandbox.
 This onboarding mode does not support `--resume` or `--recreate-sandbox`, regardless of whether sandbox creation began.
-After the administrator confirms identity-bound removal, repeat the original command with `--fresh` and a new name.
+After destroy completes, repeat the original command with `--fresh`.
 </Warning>
 
 </AgentOnly>
@@ -938,18 +942,15 @@ Pairing and `TELEGRAM_ALLOWED_IDS` still govern direct messages.
 If you cancel a brand-new onboarding run at the policy-tier selector or either policy-preset selector after sandbox creation, NemoClaw preserves the incomplete sandbox, registry entry, and onboarding session for identity-bound recovery.
 NemoClaw reports the durable sandbox identity fingerprint when it is available.
 It does not run OpenShell's mutable-name deletion command because the name may now identify a replacement sandbox.
-Do not delete the sandbox by mutable name.
-Shared inference providers are gateway configuration, not sandbox cleanup targets.
-Sandbox-scoped provider registrations or gateway-bound credentials may remain when the durable recovery record lists them.
-Ask an OpenShell administrator to inspect the exact sandbox identity and remove only sandbox-scoped resources whose ownership is confirmed for the retained sandbox.
-A credential environment name in the recovery record does not prove that its value was exposed.
-Rotate a credential only when identity-bound inspection proves that it was exposed or attached to a retained sandbox-scoped resource.
+Run `$$nemoclaw <sandbox-name> destroy` to complete cleanup through the retained immutable identity.
+Destroy removes only the qualified sandbox containers and clears the matching recovery record after it verifies their absence.
+If OpenShell already removed the sandbox, destroy can still clean up verified residual containers and retire the record.
+A foreign container, changed identity, failed Docker probe, or ambiguous recovery record stops cleanup and preserves the record.
+Do not delete the sandbox manually by mutable name.
 NemoClaw stores the recovery record independently from the active onboarding session.
 A fresh run with a different name can proceed without clearing that record, but automatic resume, explicit `--resume`, reuse, recreation, and fresh onboarding with the retained name remain blocked.
-NemoClaw has no supported operation in this release to clear the recovery record, so the retained name remains unavailable even after external recovery or removal.
-Preserve the record as evidence.
-Start fresh onboarding with `$$nemoclaw onboard --fresh --name <new-sandbox-name>`.
-Select the required provider, model, agent, policy, and environment inputs again because `--fresh` does not retain them.
+Start another onboarding run with `$$nemoclaw onboard --name <new-sandbox-name>`.
+`--fresh` alone does not clear the recovery record or permit reuse of the retained sandbox name.
 
 If you run onboarding again with the same sandbox name and choose a different inference provider or model, NemoClaw detects the drift and recreates the sandbox so the running agent config matches your selection.
 In interactive mode, the wizard asks for confirmation before delete and recreate.

@@ -6,6 +6,7 @@ import {
   OPENSHELL_MANAGED_BY_VALUE,
   OPENSHELL_SANDBOX_ID_LABEL,
   OPENSHELL_SANDBOX_NAME_LABEL,
+  OPENSHELL_SANDBOX_WORKSPACE_LABEL,
   removeExactOpenShellDockerSandboxContainers,
 } from "../../onboard/openshell-docker-sandbox-containers";
 import { fingerprintOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
@@ -18,9 +19,6 @@ import {
   classifyOpenShellSandboxPresence,
   type OpenShellSandboxPresence,
 } from "../../adapters/openshell/sandbox-presence";
-
-/** Workspace label OpenShell stamps on every managed sandbox container. */
-export const OPENSHELL_SANDBOX_WORKSPACE_LABEL = "openshell.ai/sandbox-workspace";
 
 const IDENTITY_VALUE_MAX_LENGTH = 256;
 const IDENTITY_DIAGNOSTIC_MAX_LENGTH = 500;

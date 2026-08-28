@@ -28,16 +28,12 @@ describe("createSandboxCancelRollback", () => {
     const guidance = log.mock.calls.flat().join("\n");
     expect(guidance).toContain("preserved incomplete sandbox 'new-sb'");
     expect(guidance).toContain(SANDBOX_FINGERPRINT);
-    expect(guidance).toContain("OpenShell administrator");
     expect(guidance).toContain("did not run OpenShell's mutable-name deletion command");
     expect(guidance).toContain("Do not delete the sandbox by mutable sandbox name");
     expect(guidance).toContain("Shared inference providers are gateway configuration");
     expect(guidance).toContain("not sandbox cleanup targets");
-    expect(guidance).toContain("sandbox-scoped resources whose ownership is confirmed");
     expect(guidance).toContain("nemoclaw new-sb destroy");
-    expect(guidance).toContain("credential environment name alone does not prove exposure");
-    expect(guidance).toContain("rotate a credential only when identity-bound inspection proves");
-    expect(guidance).not.toContain("rotate any credential");
+    expect(guidance).toContain("clear the matching recovery record");
   });
 
   it.each([

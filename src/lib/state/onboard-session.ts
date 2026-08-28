@@ -19,12 +19,7 @@ import {
   parseServingProfileProvenance,
   type ServingProfileProvenance,
 } from "../inference/serving/profile-provenance";
-import {
-  normalizeWebSearchConfig,
-  webSearchEnvFor,
-  webSearchProviderForConfig,
-  type WebSearchConfig,
-} from "../inference/web-search";
+import { normalizeWebSearchConfig, type WebSearchConfig } from "../inference/web-search";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { compactSandboxMessagingPlanForPersistence } from "../messaging/persistence";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
@@ -2004,22 +1999,6 @@ export interface RetainedSandboxRecoveryContext {
   readonly policyCreationReceipt: RetainedSandboxRecoveryRecord["policyCreationReceipt"];
 }
 
-function retainedSandboxResourceEvidence(session: Session) {
-  const messagingCredentialEnvironmentVariables =
-    session.messagingPlan?.credentialBindings.map((binding) => binding.providerEnvKey) ?? [];
-  return {
-    sharedInferenceProviders: session.provider ? [session.provider] : [],
-    sandboxScopedProviders: session.stagedCredentialProviders,
-    credentialEnvironmentVariables: [
-      ...(session.credentialEnv ? [session.credentialEnv] : []),
-      ...(session.webSearchConfig
-        ? [webSearchEnvFor(webSearchProviderForConfig(session.webSearchConfig))]
-        : []),
-      ...messagingCredentialEnvironmentVariables,
-    ],
-  };
-}
-
 function persistIndependentRetainedSandboxRecovery(
   session: Session,
   reason: RetainedSandboxRecoveryReason,
@@ -2035,7 +2014,6 @@ function persistIndependentRetainedSandboxRecovery(
     verifiedEffectivePolicyIdentity: context.verifiedEffectivePolicyIdentity,
     createAttemptNonce: context.createAttemptNonce,
     policyCreationReceipt: context.policyCreationReceipt,
-    resources: retainedSandboxResourceEvidence(session),
     reason,
   });
 }
@@ -2065,7 +2043,6 @@ export function listRetainedSandboxRecoveryRecords(): readonly RetainedSandboxRe
           verifiedEffectivePolicyIdentity: recovery.verifiedEffectivePolicyIdentity,
           createAttemptNonce: recovery.createAttemptNonce,
           policyCreationReceipt: recovery.policyCreationReceipt,
-          resources: retainedSandboxResourceEvidence(current),
           reason: recovery.reason,
           recordedAt: recovery.recordedAt,
         });

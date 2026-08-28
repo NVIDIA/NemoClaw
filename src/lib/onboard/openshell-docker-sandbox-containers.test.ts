@@ -13,13 +13,26 @@ const EMPTY_RUNTIME_FIELDS = [IMAGE_ID, BOOKKEEPING_IMAGE_REF, "", null, [], "ru
 const ACTIVATED_CONTAINER_ID = "b".repeat(64);
 const ROLLBACK_CONTAINER_ID = "c".repeat(64);
 
+function observeContainerIds(ids: readonly string[], malformedRows = 0) {
+  return {
+    status: "observed" as const,
+    rows: ids.map((id) => ({
+      id,
+      managedBy: "openshell",
+      workspace: "default",
+      sandboxId: "sb-alpha",
+    })),
+    malformedRows,
+  };
+}
+
 describe("removeExactOpenShellDockerSandboxContainers", () => {
   it("fails when Docker cannot confirm the exact container is absent after removal (#9073)", () => {
     const expectedContainerId = "a".repeat(64);
-    const queryContainers = vi
+    const inspectContainers = vi
       .fn()
-      .mockReturnValueOnce({ ok: true, ids: [expectedContainerId] })
-      .mockReturnValueOnce({ ok: true, ids: [expectedContainerId] });
+      .mockReturnValueOnce(observeContainerIds([expectedContainerId]))
+      .mockReturnValueOnce(observeContainerIds([expectedContainerId]));
     const forceRemove = vi.fn(() => ({ status: 0 }));
 
     expect(() =>
@@ -27,7 +40,7 @@ describe("removeExactOpenShellDockerSandboxContainers", () => {
         "alpha",
         [expectedContainerId],
         vi.fn(),
-        { queryContainers, forceRemove },
+        { inspectContainers, forceRemove },
       ),
     ).toThrow("could not confirm exact Docker container removal");
 
@@ -37,7 +50,7 @@ describe("removeExactOpenShellDockerSandboxContainers", () => {
   it("removes every remaining container from one exact failed attempt (#10547)", () => {
     const expectedContainerIds = ["a".repeat(64), "b".repeat(64)];
     let currentContainerIds = [...expectedContainerIds];
-    const queryContainers = vi.fn(() => ({ ok: true as const, ids: [...currentContainerIds] }));
+    const inspectContainers = vi.fn(() => observeContainerIds(currentContainerIds));
     const forceRemove = vi.fn((containerId: string) => {
       currentContainerIds = currentContainerIds.filter((candidate) => candidate !== containerId);
       return { status: 0 };
@@ -47,7 +60,7 @@ describe("removeExactOpenShellDockerSandboxContainers", () => {
       "alpha",
       expectedContainerIds,
       vi.fn(),
-      { queryContainers, forceRemove },
+      { inspectContainers, forceRemove },
     );
 
     expect(forceRemove.mock.calls.map(([containerId]) => containerId)).toEqual(
@@ -60,7 +73,7 @@ describe("removeExactOpenShellDockerSandboxContainers", () => {
     const alreadyRemovedId = "a".repeat(64);
     const remainingId = "b".repeat(64);
     let currentContainerIds = [remainingId];
-    const queryContainers = vi.fn(() => ({ ok: true as const, ids: [...currentContainerIds] }));
+    const inspectContainers = vi.fn(() => observeContainerIds(currentContainerIds));
     const forceRemove = vi.fn((containerId: string) => {
       currentContainerIds = currentContainerIds.filter((candidate) => candidate !== containerId);
       return { status: 0 };
@@ -70,7 +83,7 @@ describe("removeExactOpenShellDockerSandboxContainers", () => {
       "alpha",
       [alreadyRemovedId, remainingId],
       vi.fn(),
-      { queryContainers, forceRemove },
+      { inspectContainers, forceRemove },
     );
 
     expect(forceRemove).toHaveBeenCalledExactlyOnceWith(remainingId);
@@ -88,14 +101,30 @@ describe("removeExactOpenShellDockerSandboxContainers", () => {
         [expectedContainerId],
         vi.fn(),
         {
-          queryContainers: vi.fn(() => ({
-            ok: true as const,
-            ids: [replacementContainerId],
-          })),
+          inspectContainers: vi.fn(() => observeContainerIds([replacementContainerId])),
           forceRemove,
         },
       ),
     ).toThrow("refusing replacement cleanup");
+
+    expect(forceRemove).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed Docker identity output during exact cleanup (#10547)", () => {
+    const expectedContainerId = "a".repeat(64);
+    const forceRemove = vi.fn(() => ({ status: 0 }));
+
+    expect(() =>
+      removeExactOpenShellDockerSandboxContainers(
+        "alpha",
+        [expectedContainerId],
+        vi.fn(),
+        {
+          inspectContainers: vi.fn(() => observeContainerIds([], 1)),
+          forceRemove,
+        },
+      ),
+    ).toThrow("malformed container identity row");
 
     expect(forceRemove).not.toHaveBeenCalled();
   });

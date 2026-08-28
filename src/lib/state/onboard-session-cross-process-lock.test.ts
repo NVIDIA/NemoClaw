@@ -346,11 +346,6 @@ describe("cross-process onboard lock", () => {
           verifiedEffectivePolicyIdentity: null,
           createAttemptNonce: "c".repeat(62),
           policyCreationReceipt: null,
-          resources: {
-            sharedInferenceProviders: [],
-            sandboxScopedProviders: [],
-            credentialEnvironmentVariables: [],
-          },
           reason: "retained_after_sandbox_creation_failure",
         });
         process.stdout.write(JSON.stringify({ ok: true, recordId: recorded.recordId }));

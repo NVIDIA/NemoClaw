@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { dockerCapture, dockerRun } from "../adapters/docker";
+import {
+  inspectDockerSandboxIdentities,
+  type DockerSandboxIdentityObservation,
+} from "../adapters/docker/inspect";
 import type { DockerGpuPatchDeps } from "./docker-gpu-patch-types";
 
 export const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
@@ -9,6 +13,7 @@ export const OPENSHELL_MANAGED_BY_VALUE = "openshell";
 export const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 export const OPENSHELL_SANDBOX_ID_LABEL = "openshell.ai/sandbox-id";
 export const OPENSHELL_SANDBOX_NAMESPACE_LABEL = "openshell.ai/sandbox-namespace";
+export const OPENSHELL_SANDBOX_WORKSPACE_LABEL = "openshell.ai/sandbox-workspace";
 
 const DOCKER_SANDBOX_QUERY_TIMEOUT_MS = 30_000;
 const STALE_DOCKER_ORPHAN_TIMEOUT_MS = 30_000;
@@ -107,29 +112,51 @@ export function queryOpenShellDockerSandboxContainers(
   );
 }
 
-function queryDockerSandboxNameLabeledContainers(
-  sandboxName: string,
-  deps: DockerSandboxContainerQueryDeps = {},
-  timeoutMs: number = DOCKER_SANDBOX_QUERY_TIMEOUT_MS,
-): OpenShellDockerSandboxContainerQuery {
-  return queryDockerSandboxContainerIds(
-    sandboxContainerFilterArgs(sandboxName, undefined, false),
-    deps,
-    timeoutMs,
-  );
-}
-
 type StaleDockerOrphanCleanupDeps = {
   queryContainers?: typeof queryOpenShellDockerSandboxContainers;
   forceRemove?: (containerId: string) => { status?: number | null };
 };
+
+type ExactDockerContainerCleanupDeps = {
+  inspectContainers?: (sandboxName: string) => DockerSandboxIdentityObservation;
+  forceRemove?: (containerId: string) => { status?: number | null };
+};
+
+function inspectDockerSandboxNameLabeledContainers(
+  sandboxName: string,
+): DockerSandboxIdentityObservation {
+  return inspectDockerSandboxIdentities(`${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`, {
+    managedBy: OPENSHELL_MANAGED_BY_LABEL,
+    workspace: OPENSHELL_SANDBOX_WORKSPACE_LABEL,
+    sandboxId: OPENSHELL_SANDBOX_ID_LABEL,
+  });
+}
+
+function exactCleanupContainerIds(
+  observation: DockerSandboxIdentityObservation,
+  phase: "inspect" | "confirm",
+): string[] {
+  const failurePrefix =
+    phase === "inspect"
+      ? "could not inspect the exact Docker cleanup target"
+      : "could not confirm exact Docker container removal";
+  if (observation.status === "probe-failed") {
+    throw new Error(`${failurePrefix}: ${observation.detail || "Docker identity probe failed"}`);
+  }
+  if (observation.malformedRows > 0) {
+    throw new Error(
+      `${failurePrefix}: Docker returned ${String(observation.malformedRows)} malformed container identity row(s)`,
+    );
+  }
+  return observation.rows.map((row) => row.id);
+}
 
 /** Remove the remaining members of one immutable, prequalified Docker container set. */
 export function removeExactOpenShellDockerSandboxContainers(
   sandboxName: string,
   expectedContainerIds: readonly string[],
   log: (message: string) => void,
-  deps: StaleDockerOrphanCleanupDeps = {},
+  deps: ExactDockerContainerCleanupDeps = {},
 ): void {
   const expected = new Set(expectedContainerIds);
   if (
@@ -142,19 +169,16 @@ export function removeExactOpenShellDockerSandboxContainers(
   // Recovery retirement requires the mutable name itself to be unambiguous.
   // Inspect every name-labeled container, including foreign containers that do
   // not carry OpenShell's managed-by marker, while removing only qualified IDs.
-  const queryContainers = deps.queryContainers ?? queryDockerSandboxNameLabeledContainers;
-  const initial = queryContainers(sandboxName);
-  if (!initial.ok) {
-    throw new Error(`could not inspect the exact Docker cleanup target: ${initial.error}`);
-  }
-  const unexpected = initial.ids.filter((containerId) => !expected.has(containerId));
+  const inspectContainers = deps.inspectContainers ?? inspectDockerSandboxNameLabeledContainers;
+  const initialIds = exactCleanupContainerIds(inspectContainers(sandboxName), "inspect");
+  const unexpected = initialIds.filter((containerId) => !expected.has(containerId));
   if (unexpected.length > 0) {
     throw new Error(
       `found labeled Docker container(s) outside the retained identity set: ${unexpected.join(", ")}; refusing replacement cleanup`,
     );
   }
 
-  const remaining = new Set(initial.ids);
+  const remaining = new Set(initialIds);
   for (const containerId of expectedContainerIds) {
     if (!remaining.has(containerId)) continue;
     const removal = deps.forceRemove
@@ -170,8 +194,8 @@ export function removeExactOpenShellDockerSandboxContainers(
     log(`Removed exact Docker container '${containerId}' after OpenShell sandbox deletion`);
   }
 
-  const confirmed = queryContainers(sandboxName);
-  if (!confirmed.ok || confirmed.ids.length !== 0) {
+  const confirmedIds = exactCleanupContainerIds(inspectContainers(sandboxName), "confirm");
+  if (confirmedIds.length !== 0) {
     throw new Error("could not confirm exact Docker container removal");
   }
 }

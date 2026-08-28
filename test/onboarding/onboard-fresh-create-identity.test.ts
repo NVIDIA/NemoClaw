@@ -981,14 +981,8 @@ if (${JSON.stringify(
         assert.match(result.stderr, /Do not delete the sandbox by mutable sandbox name/u);
         assert.match(result.stderr, /Shared inference providers are gateway configuration/u);
         assert.match(result.stderr, /not sandbox cleanup targets/u);
-        assert.match(result.stderr, /sandbox-scoped resources whose ownership is confirmed/u);
         assert.match(result.stderr, /nemoclaw my-assistant destroy/u);
-        assert.match(result.stderr, /credential environment name alone does not prove exposure/u);
-        assert.match(
-          result.stderr,
-          /rotate a credential only when identity-bound inspection proves/u,
-        );
-        assert.doesNotMatch(result.stderr, /rotate any credential/u);
+        assert.match(result.stderr, /clear the matching recovery record/u);
 
         const differentName = spawnSync(process.execPath, [scriptPath], {
           cwd: repoRoot,

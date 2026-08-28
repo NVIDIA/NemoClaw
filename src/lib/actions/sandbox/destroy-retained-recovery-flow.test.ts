@@ -24,11 +24,6 @@ function retainedRecoveryRecord(sandboxId = "sb-alpha"): RetainedSandboxRecovery
     verifiedEffectivePolicyIdentity: null,
     createAttemptNonce: "c".repeat(62),
     policyCreationReceipt: null,
-    resources: {
-      sharedInferenceProviders: [],
-      sandboxScopedProviders: [],
-      credentialEnvironmentVariables: [],
-    },
     reason: "retained_after_sandbox_creation_failure",
     recordedAt: "2026-08-28T00:00:00.000Z",
   };

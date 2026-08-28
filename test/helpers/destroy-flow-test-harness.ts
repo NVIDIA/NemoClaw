@@ -161,7 +161,7 @@ export function resetDestroyModuleCache(): void {
 }
 
 export function traceDestroyBoundaryCalls(
-  harness: Pick<DestroyHarness, "runOpenshellSpy">,
+  harness: Pick<DestroyHarness, "runOpenshellSpy" | "setSandboxPresent">,
   trace: string[],
 ): void {
   harness.runOpenshellSpy.mockImplementation((args: unknown) => {
@@ -169,6 +169,7 @@ export function traceDestroyBoundaryCalls(
     switch (`${String(argv[0])}:${String(argv[1])}`) {
       case "sandbox:delete":
         trace.push("delete");
+        harness.setSandboxPresent(false);
         return { status: 0, stdout: "", stderr: "" };
       case "sandbox:list":
         return { status: 0, stdout: "[]", stderr: "" };
@@ -188,6 +189,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const events: string[] = [];
   const lifecycleLockEvents: string[] = [];
   let sandboxPresent = options.sandboxPresent !== false;
+  let exactDockerCleanupPhase = false;
   let sessionLockBusy = false;
   const sessionState = {
     sessionId: "session-alpha",
@@ -422,6 +424,8 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
       return session;
     });
   const gatewayPinsAtSandboxList: Array<string | undefined> = [];
+  let identityProbeCall = 0;
+  let absentListIdentityProbeCall: number | null = null;
   const runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockImplementation((args: unknown) => {
     const argv = Array.isArray(args) ? args : [];
     switch (`${String(argv[0])}:${String(argv[1])}`) {
@@ -435,6 +439,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
         };
       case "sandbox:list":
         gatewayPinsAtSandboxList.push(process.env.OPENSHELL_GATEWAY);
+        if (!sandboxPresent && absentListIdentityProbeCall === null) {
+          absentListIdentityProbeCall = identityProbeCall;
+        }
         return {
           status: 0,
           stdout: sandboxListJson(sandboxPresent ? ["alpha"] : []),
@@ -442,6 +449,8 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
         };
       case "sandbox:delete":
         events.push("delete");
+        sandboxPresent = false;
+        exactDockerCleanupPhase = true;
         return {
           status: options.deleteStatus === undefined ? 0 : options.deleteStatus,
           stdout: options.deleteOutput ?? "",
@@ -470,7 +479,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
         : names;
       return matchedNames.length > 0 ? `${matchedNames.join("\n")}\n` : "";
     });
-  let identityProbeCall = 0;
   let dockerOrphanIds = [...(options.dockerOrphanIds ?? [])];
   let dockerNameLabeledIds = [
     ...(options.dockerNameLabeledIds ?? options.dockerOrphanIds ?? []),
@@ -522,12 +530,32 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     }
     identityProbeCall += 1;
     options.onDockerRun?.(identityProbeCall);
+    // After OpenShell reports the sandbox absent, destroy performs one
+    // pre-mutation and five execution continuity observations before exact
+    // post-delete cleanup. Track that boundary relative to the list call so
+    // earlier record-selection observations do not affect the mock. Once
+    // entered, keep the phase across a failed cleanup retry.
+    if (
+      absentListIdentityProbeCall !== null &&
+      identityProbeCall - absentListIdentityProbeCall > 6
+    ) {
+      exactDockerCleanupPhase = true;
+    }
     const defaultIdentityResult = {
       status: 0,
       stdout: sandboxPresent ? "aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha" : "",
     };
+    const sequencedResult = options.dockerRunResultSequence?.[identityProbeCall - 1];
+    const exactCleanupResult = {
+      status: options.dockerOrphanQueryStatus ?? 0,
+      stdout: dockerNameLabeledIds
+        .map((id) => `${id}\topenshell\tdefault\tsb-alpha`)
+        .join("\n"),
+      stderr: "",
+    };
     const result =
-      options.dockerRunResultSequence?.[identityProbeCall - 1] ??
+      (exactDockerCleanupPhase ? exactCleanupResult : undefined) ??
+      sequencedResult ??
       dockerIdentityResult ??
       defaultIdentityResult;
     return result as ReturnType<typeof dockerRun.dockerRun>;
@@ -683,6 +711,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     },
     setSandboxPresent: (present: boolean) => {
       sandboxPresent = present;
+      if (!present) exactDockerCleanupPhase = true;
     },
     shieldsDownSpy,
     stopAllSpy,
