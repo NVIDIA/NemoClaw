@@ -220,6 +220,7 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
   const outputs = record(producer.outputs);
   const requiredOutputs = {
     cli_artifact_provenance: "${{ steps.record_cli_artifact.outputs.provenance }}",
+    managed_image_catalog: "${{ steps.package_cli_artifact.outputs.managed_image_catalog }}",
   };
   for (const [name, value] of Object.entries(requiredOutputs)) {
     if (outputs[name] !== value) {
