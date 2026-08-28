@@ -78,9 +78,9 @@ export const OPEN_SHELL_SANDBOX_OBSERVATION_DISPOSITIONS: Readonly<
   "src/commands/debug.ts": {
     directCommands: 2,
     legacyParserSites: 1,
-    ownerIssues: [9803],
+    ownerIssues: [9812],
     disposition: "follow-up",
-    reason: "PR #10537 migrates the debug liveness consumer to the typed observer.",
+    reason: "PR #10537 migrates liveness; the diagnostics slice owns remaining observation.",
   },
   "src/lib/actions/sandbox/destroy-gateway-cleanup.ts": {
     directCommands: 1,
@@ -253,9 +253,9 @@ export const OPEN_SHELL_SANDBOX_OBSERVATION_DISPOSITIONS: Readonly<
   "src/lib/onboard.ts": {
     directCommands: 0,
     legacyParserSites: 1,
-    ownerIssues: [9803, 9811],
+    ownerIssues: [9811],
     disposition: "follow-up",
-    reason: "Inventory, readiness, and sandbox lifecycle slices own the legacy parser binding.",
+    reason: "The sandbox lifecycle slice owns the onboarding legacy parser binding.",
   },
   "src/lib/onboard/sandbox-create-step.ts": {
     directCommands: 1,
@@ -288,9 +288,9 @@ export const OPEN_SHELL_SANDBOX_OBSERVATION_DISPOSITIONS: Readonly<
   "src/lib/onboard/sandbox-readiness-tracing.ts": {
     directCommands: 2,
     legacyParserSites: 0,
-    ownerIssues: [9803],
+    ownerIssues: [9811],
     disposition: "follow-up",
-    reason: "The inventory and readiness issue owns readiness trace observation.",
+    reason: "The sandbox lifecycle slice owns create readiness trace observation.",
   },
   "src/lib/onboard/sandbox-recreate-probe.ts": {
     directCommands: 2,
@@ -309,9 +309,9 @@ export const OPEN_SHELL_SANDBOX_OBSERVATION_DISPOSITIONS: Readonly<
   "src/lib/runtime-recovery.ts": {
     directCommands: 0,
     legacyParserSites: 6,
-    ownerIssues: [9803],
+    ownerIssues: [9807, 9811],
     disposition: "follow-up",
-    reason: "The inventory and readiness issue owns removal of legacy list parser projections.",
+    reason: "Gateway and sandbox lifecycle slices own removal of legacy parser projections.",
   },
   "src/lib/shields/index.ts": {
     directCommands: 1,
@@ -323,9 +323,9 @@ export const OPEN_SHELL_SANDBOX_OBSERVATION_DISPOSITIONS: Readonly<
   "src/lib/state/gateway.ts": {
     directCommands: 0,
     legacyParserSites: 6,
-    ownerIssues: [9803, 9807],
+    ownerIssues: [9807],
     disposition: "follow-up",
-    reason: "Inventory, readiness, and gateway lifecycle slices own the legacy classifiers.",
+    reason: "The gateway lifecycle slice owns the legacy sandbox and gateway classifiers.",
   },
 } as const;
 
