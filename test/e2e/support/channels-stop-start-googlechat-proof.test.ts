@@ -4,11 +4,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  assertGooglechatBoundaryProof,
-  parseGooglechatBoundaryProof,
+  assertGooglechatProviderEgressProof,
+  parseGooglechatProviderEgressProof,
 } from "../live/channels-stop-start-googlechat-proof.ts";
 
-describe("channels stop/start Google Chat credential-boundary proof", () => {
+describe("channels stop/start Google Chat provider-egress proof", () => {
   it.each([
     {
       agent: "openclaw" as const,
@@ -18,16 +18,16 @@ describe("channels stop/start Google Chat credential-boundary proof", () => {
       agent: "hermes" as const,
       proof: { installedOverride: true, placeholder: "revision-scoped", statuses: [401, 401] },
     },
-  ])("accepts the $agent boundary proof", ({ agent, proof }) => {
+  ])("accepts the $agent provider-egress proof", ({ agent, proof }) => {
     const stdout = `runtime noise\n${JSON.stringify(proof)}\n`;
 
     expect(() =>
-      assertGooglechatBoundaryProof(parseGooglechatBoundaryProof(stdout), agent),
+      assertGooglechatProviderEgressProof(parseGooglechatProviderEgressProof(stdout), agent),
     ).not.toThrow();
   });
 
   it("rejects malformed proof output", () => {
-    expect(() => parseGooglechatBoundaryProof("runtime noise\nnot-json\n")).toThrow();
+    expect(() => parseGooglechatProviderEgressProof("runtime noise\nnot-json\n")).toThrow();
   });
 
   it.each([
@@ -52,6 +52,6 @@ describe("channels stop/start Google Chat credential-boundary proof", () => {
       title: "a missing Hermes adapter override",
     },
   ])("rejects $title", ({ agent, proof }) => {
-    expect(() => assertGooglechatBoundaryProof(proof, agent)).toThrow();
+    expect(() => assertGooglechatProviderEgressProof(proof, agent)).toThrow();
   });
 });

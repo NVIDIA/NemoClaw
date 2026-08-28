@@ -629,7 +629,7 @@ done`,
   expectExitZero(bridgeResidue, "Hermes Slack bridge residue probe");
   expect(resultText(bridgeResidue).trim()).toBe("");
 
-  progress.phase("exercise Slack API through credential rewrite");
+  progress.phase("exercise Slack API egress with credential placeholders");
   const slackProbe = await sandboxShWithArgs(
     sandbox,
     SANDBOX_NAME,
@@ -645,8 +645,9 @@ import sys
 import urllib.error
 import urllib.request
 
-# Verified: this probe crosses the credential-rewrite boundary, so the proxy
-# chain has to be trusted, not just reachable.
+# This probe sends the revision-scoped placeholders through permitted Slack
+# provider egress. Upstream authentication responses prove reachability; the
+# messaging-providers target owns capture-based credential-rewrite proof.
 TLS_CONTEXT = ssl.create_default_context()
 INJECTED_RE = re.compile(r"^openshell:resolve:env:(v[0-9]+_)?(SLACK_BOT_TOKEN|SLACK_APP_TOKEN)$")
 
@@ -801,7 +802,7 @@ PY`,
       rawTokensAbsentFromFilesLogsAndProcesses: true,
       hermesScopedSlackPolicy: true,
       noLegacyDecodeBridgeResidue: true,
-      slackPythonCredentialRewriteEgress: true,
+      slackPythonProviderEgress: true,
       cleanupVerified: process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1",
     },
   });

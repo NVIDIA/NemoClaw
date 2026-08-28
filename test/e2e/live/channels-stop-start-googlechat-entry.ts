@@ -95,8 +95,9 @@ const PROVIDER_TYPE_BY_AGENT: Readonly<Record<AgentKind, string>> = {
  * Replace Google Chat's asynchronous Google OAuth mint only inside this live-test
  * composition root. The fixed value is not a credential. Creating the real
  * OpenShell provider with it still exercises provider identity, revision-scoped
- * sandbox injection, endpoint binding, L7 rewrite, and removal without requiring
- * a Google service account in CI.
+ * sandbox injection, bound provider egress, and removal without requiring a
+ * Google service account in CI. The upstream 401 response is an egress oracle,
+ * not proof of which authorization value the provider received.
  */
 export function installGooglechatCredentialFixture(
   sandboxName: string,

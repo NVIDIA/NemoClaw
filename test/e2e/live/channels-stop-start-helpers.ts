@@ -19,7 +19,7 @@ import {
 import { startChannelsStopStartProgress } from "./channels-stop-start-progress.ts";
 import { assertChannelsStopStartSandboxName } from "./channels-stop-start-safety.ts";
 import { GOOGLECHAT_E2E_ACCESS_TOKEN } from "./channels-stop-start-googlechat-entry.ts";
-import { expectGooglechatCredentialBoundary } from "./channels-stop-start-googlechat-proof.ts";
+import { expectGooglechatProviderEgress } from "./channels-stop-start-googlechat-proof.ts";
 import {
   type AgentKind,
   runSecondaryCleanup as bestEffortPreclean,
@@ -643,7 +643,7 @@ export async function runChannelsStopStartTarget({
   await artifacts.target.declare({
     id: "channels-stop-start",
     boundary:
-      "messaging onboard + channel lifecycle + Google Chat provider cleanup + revision-scoped outbound credential rewrite + installed Hermes pull/ack",
+      "messaging onboard + channel lifecycle + Google Chat provider cleanup + revision-scoped placeholder and provider egress + installed Hermes pull/ack",
     agent: AGENT,
     sandboxName: SANDBOX_NAME,
     channels: CHANNELS,
@@ -708,7 +708,7 @@ export async function runChannelsStopStartTarget({
   expectChannelInputs(env);
   for (const channel of CHANNELS) expectPlanChannelState(channel, "active");
   await expectAgentConfig(sandbox, "active", "baseline", redactions);
-  await expectGooglechatCredentialBoundary(sandbox, SANDBOX_NAME, AGENT, "baseline", redactions);
+  await expectGooglechatProviderEgress(sandbox, SANDBOX_NAME, AGENT, "baseline", redactions);
   await expectProvidersExist(host, env, redactions, "baseline");
   for (const channel of CHANNELS) {
     expect(
@@ -748,7 +748,7 @@ export async function runChannelsStopStartTarget({
   expectExitZero(startRebuild, "rebuild after starting all channels");
   expectChannelInputs(env);
   await expectAgentConfig(sandbox, "active", "after-start", redactions);
-  await expectGooglechatCredentialBoundary(sandbox, SANDBOX_NAME, AGENT, "after-start", redactions);
+  await expectGooglechatProviderEgress(sandbox, SANDBOX_NAME, AGENT, "after-start", redactions);
   await expectProvidersExist(host, env, redactions, "after-start");
   for (const channel of CHANNELS) expectPlanChannelState(channel, "active");
   for (const channel of CHANNELS) {

@@ -23,6 +23,7 @@ function runCredentialTransport(transportFailure = false) {
   temporaryDirectories.push(root);
   const openshell = join(root, "openshell");
   const calls = join(root, "openshell-calls.log");
+  const ssh = join(root, "ssh");
 
   writeFileSync(
     openshell,
@@ -36,6 +37,11 @@ function runCredentialTransport(transportFailure = false) {
     ].join("\n"),
   );
   chmodSync(openshell, 0o755);
+  writeFileSync(
+    ssh,
+    ["#!/bin/sh", 'printf "ssh-args=%s\\n" "$*" >>"$OPENSHELL_CALLS"', "exit 71"].join("\n"),
+  );
+  chmodSync(ssh, 0o755);
 
   const script = hermesSlackCredentialScanScript({
     openshellCommandPath: openshell,
@@ -47,6 +53,7 @@ function runCredentialTransport(transportFailure = false) {
     env: {
       ...process.env,
       OPENSHELL_CALLS: calls,
+      PATH: `${root}:${process.env.PATH ?? ""}`,
       SLACK_APP_TOKEN: "xapp-test-credential",
       SLACK_BOT_TOKEN: "xoxb-test-credential",
       TRANSPORT_FAILURE: transportFailure ? "1" : "0",
@@ -56,21 +63,17 @@ function runCredentialTransport(transportFailure = false) {
   return {
     calls: readFileSync(calls, "utf8"),
     result,
-    script,
   };
 }
 
 describe("Hermes Slack credential-scan transport", () => {
   it("sends credentials through the OpenShell sandbox exec boundary", () => {
-    const { calls, result, script } = runCredentialTransport();
+    const { calls, result } = runCredentialTransport();
 
     expect(result.status, result.stderr).toBe(0);
     expect(calls).toContain("args=sandbox exec --name e2e-hermes-slack -- sh -lc cat >/dev/null");
     expect(calls).toContain("payload=xoxb-test-credential\nxapp-test-credential");
-    expect(script).not.toContain("sandbox ssh-config");
-    expect(script).not.toMatch(/(?:^|\s)ssh(?:\s|$)/u);
-    expect(script).not.toContain("StrictHostKeyChecking=no");
-    expect(script).not.toContain("UserKnownHostsFile=/dev/null");
+    expect(calls).not.toContain("ssh-args=");
   });
 
   it("propagates an OpenShell sandbox exec transport failure", () => {
