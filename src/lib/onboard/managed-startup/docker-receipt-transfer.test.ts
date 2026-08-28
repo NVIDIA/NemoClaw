@@ -149,9 +149,14 @@ describe("Docker daemon receipt transfer", () => {
         case "cp":
           return { status: 1, stderr: "copy denied" };
         case "rm":
-          return { status: 1, stderr: "cleanup denied" };
+          throw new Error("seed cleanup threw");
         case "volume":
-          return args[1] === "rm" ? { status: 1, stderr: "cleanup denied" } : { status: 0 };
+          switch (args[1]) {
+            case "rm":
+              throw new Error("volume cleanup threw");
+            default:
+              return { status: 0 };
+          }
         default:
           return { status: 0 };
       }
@@ -171,6 +176,9 @@ describe("Docker daemon receipt transfer", () => {
         `${hostPath}.*seed container nemoclaw-managed-startup-receipt-seed-.*daemon volume nemoclaw-managed-startup-receipt-volume-`,
         "u",
       ),
+    );
+    expect(dockerRun.mock.calls.some(([args]) => args[0] === "volume" && args[1] === "rm")).toBe(
+      true,
     );
     expect(fs.existsSync(hostPath)).toBe(true);
   });

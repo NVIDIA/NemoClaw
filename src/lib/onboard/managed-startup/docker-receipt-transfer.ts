@@ -62,14 +62,21 @@ function cleanupVolumeBestEffort(
   dockerRun: DockerRun,
   dockerOptions: Record<string, unknown>,
 ): boolean {
-  const removed = dockerRun(["volume", "rm", volumeName], dockerOptions);
-  if (!hasZeroDockerExitStatus(removed)) {
+  try {
+    const removed = dockerRun(["volume", "rm", volumeName], dockerOptions);
+    if (!hasZeroDockerExitStatus(removed)) {
+      console.warn(
+        `  ⚠ Protected managed-startup daemon receipt volume could not be removed (${volumeName}): ${commandDetail(removed)}`,
+      );
+      return false;
+    }
+    return true;
+  } catch (error) {
     console.warn(
-      `  ⚠ Protected managed-startup daemon receipt volume could not be removed (${volumeName}): ${commandDetail(removed)}`,
+      `  ⚠ Protected managed-startup daemon receipt volume could not be removed (${volumeName}): ${error instanceof Error ? error.message : String(error)}`,
     );
     return false;
   }
-  return true;
 }
 
 function cleanupSeedBestEffort(
@@ -77,7 +84,11 @@ function cleanupSeedBestEffort(
   dockerRun: DockerRun,
   dockerOptions: Record<string, unknown>,
 ): boolean {
-  return hasZeroDockerExitStatus(dockerRun(["rm", "-f", seedName], dockerOptions));
+  try {
+    return hasZeroDockerExitStatus(dockerRun(["rm", "-f", seedName], dockerOptions));
+  } catch {
+    return false;
+  }
 }
 
 /**
