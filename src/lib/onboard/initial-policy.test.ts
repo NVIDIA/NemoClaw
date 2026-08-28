@@ -639,7 +639,7 @@ network_policies: {}
   it("keeps the base policy when no channel needs a create-time preset", () => {
     const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
 
-    expect(prepareInitialSandboxCreatePolicy(basePolicyPath, ["wechat"])).toEqual({
+    expect(prepareInitialSandboxCreatePolicy(basePolicyPath, ["whatsapp"])).toEqual({
       policyPath: basePolicyPath,
       appliedPresets: [],
     });
