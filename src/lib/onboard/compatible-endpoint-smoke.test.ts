@@ -638,7 +638,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(result.stdout).toContain("SLEEP_DELAYS=5,10");
   });
 
-  it("executes the provider-neutral proof for receipt-owned llama.cpp authority (#10423)", () => {
+  it("accepts llama.cpp direct-host authority in the generated provider-neutral proof (#10423)", () => {
     const result = runProviderNeutralScript({
       authority: {
         service: "llama-cpp",
