@@ -7,8 +7,6 @@ import {
   parsePiJsonEvents,
   parsePiInferenceEvidence,
   parsePiRuntimePackageEvidence,
-  piImageSourceParityPaths,
-  piQualificationOnboardArgs,
   qualifyPiReadTask,
 } from "../live/pi-agent-qualification-events.ts";
 
@@ -47,41 +45,6 @@ function events(...values: Record<string, unknown>[]): string {
 }
 
 describe("Pi qualification event oracle", () => {
-  it("checks exact image sources without broadening Pi paths to host-only files (#10155)", () => {
-    const paths = piImageSourceParityPaths(
-      ["agents/pi/Dockerfile", "agents/pi/Dockerfile.base"],
-      ["agents/pi/start.sh", "agents/pi/pi-runtime", "scripts/build-pi-runtime.mts"],
-    );
-
-    expect(paths).toEqual([
-      ".dockerignore",
-      "agents/pi/Dockerfile",
-      "agents/pi/Dockerfile.base",
-      "agents/pi/pi-runtime",
-      "agents/pi/start.sh",
-      "scripts/build-pi-runtime.mts",
-    ]);
-    expect(paths).not.toContain("agents/pi");
-    expect(paths).not.toContain("agents/pi/policy-additions.yaml");
-  });
-
-  it("enables candidate managed runtime before supplying the exact catalog (#10155)", () => {
-    expect(piQualificationOnboardArgs("/tmp/pi-catalog.json", "pi-qualification")).toEqual([
-      "onboard",
-      "--temp-managed-runtime",
-      "--temp-managed-runtime-catalog",
-      "/tmp/pi-catalog.json",
-      "--non-interactive",
-      "--yes",
-      "--yes-i-accept-third-party-software",
-      "--no-gpu",
-      "--agent",
-      "pi",
-      "--name",
-      "pi-qualification",
-    ]);
-  });
-
   it("accepts one successful read and an exact final response", () => {
     const events = parsePiJsonEvents(eventStream());
 

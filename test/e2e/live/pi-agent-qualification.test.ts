@@ -34,8 +34,6 @@ import {
   parsePiJsonEvents,
   parsePiInferenceEvidence,
   parsePiRuntimePackageEvidence,
-  piImageSourceParityPaths,
-  piQualificationOnboardArgs,
   qualificationPlatform,
   qualifyPiReadTask,
   readOptionalUtf8File,
@@ -330,7 +328,9 @@ test(
         ({ source }) => source,
       ),
     );
-    const imageSourcePaths = piImageSourceParityPaths(piDockerfiles, copiedSources);
+    const imageSourcePaths = [
+      ...new Set([".dockerignore", ...piDockerfiles, ...copiedSources]),
+    ].sort();
     const sourceParity = await host.command(
       "git",
       ["diff", "--quiet", receipt.contract.source.revision, "HEAD", "--", ...imageSourcePaths],
@@ -340,12 +340,28 @@ test(
     await preclean(host, lifecycle, sandbox, env);
 
     progress.phase("onboard Pi without a Dockerfile build");
-    const onboard = await host.nemoclaw(piQualificationOnboardArgs(catalogPath, SANDBOX_NAME), {
-      artifactName: "pi-candidate-onboard",
-      env,
-      redactionValues: inference.redactionValues(),
-      timeoutMs: 20 * 60_000,
-    });
+    const onboard = await host.nemoclaw(
+      [
+        "onboard",
+        "--temp-managed-runtime",
+        "--temp-managed-runtime-catalog",
+        catalogPath,
+        "--non-interactive",
+        "--yes",
+        "--yes-i-accept-third-party-software",
+        "--no-gpu",
+        "--agent",
+        "pi",
+        "--name",
+        SANDBOX_NAME,
+      ],
+      {
+        artifactName: "pi-candidate-onboard",
+        env,
+        redactionValues: inference.redactionValues(),
+        timeoutMs: 20 * 60_000,
+      },
+    );
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
     await host.expectListed(SANDBOX_NAME, { env });
     await host.expectStatus(SANDBOX_NAME, { env, timeoutMs: 120_000 });

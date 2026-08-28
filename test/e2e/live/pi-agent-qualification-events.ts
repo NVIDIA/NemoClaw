@@ -39,30 +39,6 @@ export interface PiRuntimePackageEvidence {
   readonly version: string;
 }
 
-export function piQualificationOnboardArgs(catalogPath: string, sandboxName: string): string[] {
-  return [
-    "onboard",
-    "--temp-managed-runtime",
-    "--temp-managed-runtime-catalog",
-    catalogPath,
-    "--non-interactive",
-    "--yes",
-    "--yes-i-accept-third-party-software",
-    "--no-gpu",
-    "--agent",
-    "pi",
-    "--name",
-    sandboxName,
-  ];
-}
-
-export function piImageSourceParityPaths(
-  dockerfiles: readonly string[],
-  copiedSources: readonly string[],
-): string[] {
-  return [...new Set([".dockerignore", ...dockerfiles, ...copiedSources])].sort();
-}
-
 function record(value: unknown, label: string): JsonRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be an object`);
