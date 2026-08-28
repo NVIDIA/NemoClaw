@@ -7,7 +7,7 @@ import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { dockerExecFileSync } from "../adapters/docker/exec";
-import { openshellSandboxSshHost } from "../adapters/openshell/sandbox-ssh-host";
+import { resolveOpenshellSandboxSshHost } from "../adapters/openshell/sandbox-ssh-host";
 import { DASHBOARD_PORT } from "../core/ports";
 import { createTarball as createDiagnosticsTarball } from "./tarball";
 
@@ -379,9 +379,15 @@ function collectSandboxInternals(
       warn(`Could not generate SSH config for sandbox '${sandboxName}', skipping internals`);
       return;
     }
-    writeFileSync(sshConfigPath, sshResult.stdout ?? "");
-
-    const sshHost = openshellSandboxSshHost(sandboxName);
+    const sshConfig = sshResult.stdout ?? "";
+    const sshHost = resolveOpenshellSandboxSshHost(sandboxName, sshConfig);
+    if (!sshHost) {
+      warn(
+        `SSH config did not declare sandbox '${sandboxName}', skipping internals`,
+      );
+      return;
+    }
+    writeFileSync(sshConfigPath, sshConfig);
     const sshBase = [
       "-F",
       sshConfigPath,

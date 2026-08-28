@@ -69,6 +69,7 @@ export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
       );
       if (liveNames === "denied") {
         console.error(`${RD}Warning:${R} OpenShell rejected the sandbox observation.`);
+        console.error("  Verify OpenShell authentication and gateway identity, then retry.\n");
         return null;
       }
       if (registered && liveNames && !liveNames.has(registered.name)) {
@@ -106,6 +107,7 @@ export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
       console.error(
         `${RD}Warning:${R} OpenShell rejected observation of sandbox '${defaultSandbox}'.`,
       );
+      console.error("  Verify OpenShell authentication and gateway identity, then retry.\n");
       return null;
     }
     if (liveNames && !liveNames.has(defaultSandbox)) {
