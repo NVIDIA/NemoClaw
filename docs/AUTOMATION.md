@@ -53,6 +53,21 @@ PR ready for review before continuing the change because automation does not ove
 The publisher also leaves a draft with previous workflow metadata unchanged. It reports the PR URL
 and stops without writing. Close that legacy draft so a later qualifying push can create a current
 workflow-owned draft, or mark it ready for review to transfer ownership to maintainers.
+
+### Recover an Orphaned Managed Branch
+
+If draft PR creation fails after branch creation, the publisher reports the exact branch and commit.
+Recover only that reported branch:
+
+1. Run `git ls-remote --heads origin refs/heads/<branch>` and confirm that its SHA matches the
+   reported commit.
+2. Run `gh pr list --repo NVIDIA/NemoClaw --state open --head <branch> --json number,url,headRefName`
+   and confirm that it returns no PRs.
+3. Replace `<branch>` with the exact reported name and run `git push origin --delete <branch>`.
+4. Rerun the failed workflow.
+
+Stop if the SHA differs or a PR uses the branch. Do not delete it.
+
 The [post-merge automation guide](../tools/post-merge-docs/README.md) owns its credential boundary.
 
 At release cutoff, follow the canonical maintainer

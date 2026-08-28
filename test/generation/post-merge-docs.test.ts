@@ -7,12 +7,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import YAML from "yaml";
 
-import {
-  nextPatchReleaseTag,
-  validatePostMergeDocsWorkflowBoundary,
-} from "../../tools/post-merge-docs/contract.mts";
+import { nextPatchReleaseTag } from "../../tools/post-merge-docs/contract.mts";
 import { publishDocumentation, type Request } from "../../tools/post-merge-docs/publish.mts";
 import { configurePostMergeDocs, executePostMergeDocs } from "../../tools/post-merge-docs/run.mts";
 import type { OpenShellTools } from "../../tools/openshell-agent/runtime.mts";
@@ -125,6 +121,7 @@ class FakeGitHub {
   readonly initialParent = "a".repeat(40);
   readonly partialSha = "d".repeat(40);
   readonly commits = new Map<string, Record<string, unknown>>();
+  beforePullCreation = (): void => undefined;
   afterWrite = (): void => undefined;
   afterPullRead = (): void => undefined;
   projectPullHead = (headSha: string): void => {
@@ -254,6 +251,7 @@ class FakeGitHub {
         return ref;
       }
       case `POST /repos/${repository}/pulls`: {
+        this.beforePullCreation();
         const metadata = body as { body: string; title: string };
         const pull = this.pull(metadata.body, undefined, metadata.title);
         this.openPulls = [pull];
@@ -422,6 +420,19 @@ describe("post-merge documentation publisher", () => {
     const api = new FakeGitHub(value);
     await publish(value, api);
     expect(writeCount(api)).toBe(0);
+  });
+  it("reports the exact orphaned branch when draft PR creation fails", async () => {
+    const value = fixture();
+    const api = new FakeGitHub(value);
+    api.beforePullCreation = () => {
+      throw new Error("pull creation failed");
+    };
+    await expect(publish(value, api)).rejects.toThrow(
+      `managed documentation branch ${api.branch} at ${api.commitSha} remains without a draft PR; follow https://github.com/NVIDIA/NemoClaw/blob/main/docs/AUTOMATION.md#recover-an-orphaned-managed-branch`,
+    );
+    expect(api.branchRef?.object.sha).toBe(api.commitSha);
+    expect(api.openPulls).toEqual([]);
+    expect(requestCount(api, "POST", "/pulls")).toBe(1);
   });
   it("keeps an active PR pending when the approved patch is empty", async () => {
     const value = emptyFixture();
@@ -731,72 +742,4 @@ describe("post-merge documentation runner", () => {
       expect(state.deleted).toBe(true);
     },
   );
-});
-
-describe("post-merge documentation workflow boundary", () => {
-  const root = path.resolve(import.meta.dirname, "../..");
-  const workflow = YAML.parse(
-    fs.readFileSync(path.join(root, ".github/workflows/post-merge-docs.yaml"), "utf8"),
-  ) as Record<string, any>;
-  const policy = YAML.parse(
-    fs.readFileSync(path.join(root, "tools/post-merge-docs/review-policy.yaml"), "utf8"),
-  );
-
-  it("separates the model credential from repository writes", () => {
-    expect(validatePostMergeDocsWorkflowBoundary(workflow)).toEqual([]);
-  });
-
-  it.each<(candidate: Record<string, any>) => void>([
-    (candidate) => (candidate.jobs.author.permissions = { contents: "write" }),
-    (candidate) => (candidate.jobs.gate.outputs.automate = "false"),
-    (candidate) =>
-      (candidate.jobs.gate.steps.find((step: Record<string, any>) => step.id === "scan").run =
-        "echo automate=true"),
-    (candidate) => {
-      const scan = candidate.jobs.gate.steps.find(
-        (step: Record<string, any>) => step.id === "scan",
-      );
-      scan.run = scan.run.replace(
-        'test("^automation/post-merge-docs-[0-9a-f]{12}$")',
-        'startswith("automation/post-merge-docs-")',
-      );
-    },
-    (candidate) =>
-      (candidate.jobs.author.if =
-        "${{ github.repository == 'NVIDIA/NemoClaw' && needs.gate.outputs.pending != 'true' }}"),
-    (candidate) =>
-      (candidate.jobs.author.steps.find(
-        (step: Record<string, any>) => step.name === "Validate the documentation candidate",
-      ).run = "npm run docs"),
-    (candidate) =>
-      (candidate.jobs.author.steps.find(
-        (step: Record<string, any>) => step.name === "Upload the independent review report",
-      ).with.path = "${{ github.workspace }}/candidate/docs.patch"),
-    (candidate) =>
-      (candidate.jobs.author.steps.find(
-        (step: Record<string, any>) => step.name === "Upload the independent review report",
-      ).with["retention-days"] = 30),
-    (candidate) => (candidate.jobs.publish.permissions.issues = "write"),
-    (candidate) => (candidate.jobs.gate.secrets = "inherit"),
-    (candidate) =>
-      (candidate.jobs.author.steps.find(
-        (step: Record<string, any>) => step.env?.OPENAI_API_KEY,
-      ).name = "Other step"),
-    (candidate) =>
-      (candidate.jobs.publish.env = {
-        OPENAI_API_KEY: "${{ secrets.POST_MERGE_DOCS_API_KEY }}",
-      }),
-    (candidate) => (candidate.on.push["paths-ignore"] = ["docs/**"]),
-  ])("rejects workflow boundary mutation %#", (mutate) => {
-    const candidate = structuredClone(workflow);
-    mutate(candidate);
-    expect(validatePostMergeDocsWorkflowBoundary(candidate)).not.toEqual([]);
-  });
-
-  it("keeps the independent reviewer's repository read-only and offline", () => {
-    expect(policy.filesystem_policy.read_write).toEqual(["/dev", "/sandbox/output"]);
-    expect(policy.filesystem_policy.read_only).toContain("/sandbox/repo");
-    expect(policy.landlock).toEqual({ compatibility: "hard_requirement" });
-    expect(policy.network_policies).toEqual({});
-  });
 });

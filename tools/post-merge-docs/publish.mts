@@ -461,7 +461,16 @@ export async function publishDocumentation(input: {
       })) as Pull;
     } catch (error) {
       const reconciled = await managed(repository, request);
-      if (reconciled.length !== 1 || reconciled[0]?.head.ref !== branch) throw error;
+      if (reconciled.length !== 1 || reconciled[0]?.head.ref !== branch) {
+        const orphaned = (await request("GET", refPath)) as {
+          object?: { sha?: string };
+        } | null;
+        if (!reconciled.length && orphaned?.object?.sha === commitSha)
+          fail(
+            `managed documentation branch ${branch} at ${commitSha} remains without a draft PR; follow https://github.com/${repository}/blob/main/docs/AUTOMATION.md#recover-an-orphaned-managed-branch`,
+          );
+        throw error;
+      }
       pull = reconciled[0];
     }
     checkedPull(pull, repository, branch, body, title);
