@@ -18,7 +18,7 @@ Both paths are experimental and use OpenAI Chat Completions through `https://inf
 | Path | NemoClaw manages | You manage | Use it when |
 |---|---|---|---|
 | Existing server | Provider registration, route validation, and sandbox traffic through `inference.local`. | The server binary or container, GGUF file, launch configuration, credential, upgrades, and lifecycle. | Your authenticated server already satisfies the llama.cpp fingerprint contract on loopback port `8081`. |
-| Managed DGX Spark | The exact YAML-selected image, GGUF acquisition and verification, launch configuration, credential, Docker lifecycle, diagnostics, and cleanup. | The qualified Linux host, Docker Engine, NVIDIA runtime prerequisites, storage, and any required Hugging Face credential. | You want the experimental Muse Glimmer or NVIDIA Nemotron profile without managing `llama-server` directly. |
+| Managed NVIDIA GPU host | The exact YAML-selected image, GGUF acquisition and verification, launch configuration, credential, Docker lifecycle, diagnostics, and cleanup. | A qualified DGX Spark Arm64 or Linux x86_64 NVIDIA GPU host, Docker Engine, NVIDIA runtime prerequisites, storage, and any required Hugging Face credential. | You want the experimental NVIDIA Nemotron profile, or the explicit DGX Spark Muse Glimmer profile, without managing `llama-server` directly. |
 
 Compared with other local options, Ollama emphasizes a simple local model workflow, while managed vLLM provides host-specific NVIDIA GPU profiles and broader model selection.
 NVIDIA NIM provides NVIDIA-packaged inference containers for validated NIM-capable GPUs.
@@ -83,11 +83,11 @@ $$nemoclaw my-assistant doctor
 If a compatible server does not satisfy the first-class fingerprint, use [Set Up an OpenAI-Compatible Endpoint](../custom-endpoints/set-up-openai-compatible-endpoint).
 That path supports operator-selected endpoints and ports without claiming llama.cpp-specific identity or lifecycle ownership.
 
-## Install Managed llama.cpp on DGX Spark
+## Install Managed llama.cpp on an NVIDIA GPU Host
 
-Use this experimental path when you want NemoClaw to manage one declarative llama.cpp recipe on one DGX Spark.
-The recommended recipe serves Meta Muse Glimmer 30B through the OpenAI Chat Completions API.
-The NVIDIA Nemotron 3 Nano 30B-A3B recipe remains available as a lower-priority profile.
+Use this experimental path when you want NemoClaw to manage one declarative llama.cpp recipe on a qualified DGX Spark Arm64 or Linux x86_64 NVIDIA GPU host.
+The recommended recipe serves NVIDIA Nemotron 3 Nano 30B-A3B through the OpenAI Chat Completions API.
+The Meta Muse Glimmer 30B recipe remains available by explicit selection, and existing Muse-owned installations are not migrated.
 
 <Note>
 This path is an experimental implementation.
@@ -100,11 +100,11 @@ The Muse Glimmer profile remains Experimental after bounded physical DGX Spark q
 
 Before you start, confirm these prerequisites:
 
-- Use a DGX Spark host with Linux on Arm64.
+- Use either a DGX Spark host with Linux on Arm64 or a Linux x86_64 host with one NVIDIA GPU.
+- Use NVIDIA driver version `580.65.06` or later on either host profile.
 - Confirm that Docker is operational on the host.
 - Confirm that the NVIDIA Container Toolkit is operational.
 - Confirm that NVIDIA Container Device Interface support is healthy.
-- Use NVIDIA driver version `580.65.06` or later.
 - Stop any process that uses host port `8081`.
 - Allow capacity for the pinned images, the GGUF file, and same-filesystem download staging.
 - Export `HF_TOKEN` only when the YAML-declared Hugging Face source requires authentication.
@@ -120,7 +120,7 @@ It creates an owner-only API key, a host-loopback listener on port `8081`, and a
 Only one managed llama.cpp runtime can exist per Docker authority, regardless of the owning OpenShell gateway or sandbox.
 </Warning>
 
-Run interactive onboarding on the DGX Spark:
+Run interactive onboarding on the qualified host:
 
 ```bash
 $$nemoclaw onboard
@@ -128,8 +128,9 @@ $$nemoclaw onboard
 
 NemoClaw lists compatible managed llama.cpp profiles in descending YAML `priority` order.
 During interactive onboarding without an explicit provider request, the menu ignores `NEMOCLAW_LLAMACPP_RECIPE` and marks the unique highest-priority compatible profile as `(recommended)`.
-The recommended profile appears as **Managed llama.cpp: Meta Muse Glimmer 30B on one DGX Spark (recommended)**.
-The NVIDIA Nemotron profile appears next without the recommendation marker.
+On DGX Spark, the recommended profile appears as **Managed llama.cpp: NVIDIA Nemotron 3 Nano 30B-A3B on one DGX Spark (recommended)**.
+On Linux x86_64, the recommended profile identifies one NVIDIA GPU instead.
+The Meta Muse Glimmer profile remains available on DGX Spark without the recommendation marker.
 Select any listed profile to install its exact repository-owned recipe.
 The selected menu entry determines the exact recipe even when `NEMOCLAW_LLAMACPP_RECIPE` names another recipe.
 
@@ -137,12 +138,12 @@ For non-interactive onboarding, select the repository-owned recipe explicitly:
 
 ```bash
 NEMOCLAW_PROVIDER=install-llama-cpp \
-NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.muse-glimmer-30b.spark-single.v1 \
+NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1 \
 NEMOCLAW_SANDBOX_NAME=my-assistant \
   $$nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
 ```
 
-Use `llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1` to select the lower-priority NVIDIA Nemotron recipe explicitly.
+Use `llama-cpp.muse-glimmer-30b.spark-single.v1` to select the Meta Muse Glimmer recipe explicitly.
 
 For non-interactive onboarding or an explicit `install-llama-cpp` provider request, an unset `NEMOCLAW_LLAMACPP_RECIPE` selects the unique highest-priority compatible automatic profile.
 If more than one compatible automatic profile has the highest priority, automatic non-interactive selection stops instead of selecting by catalog order.

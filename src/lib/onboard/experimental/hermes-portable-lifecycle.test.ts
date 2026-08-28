@@ -37,6 +37,7 @@ import {
   publishHermesPortableLifecycleReceipt,
   publishHermesPortableSuccessorReceipt,
   readHermesPortableLifecycleReceipt,
+  readHermesPortableLifecycleReceiptForRequalification,
   type HermesPortableConfiguredReceipt,
   type HermesPortablePendingReceipt,
 } from "./hermes-portable-receipt";
@@ -443,7 +444,7 @@ describe("Hermes portable lifecycle", () => {
     expect(removal.receipt.socketAuthority.inode).toBe("102");
   });
 
-  it("reconciles an interrupted schema-6 publication through the public probe path (#10423)", async () => {
+  it("reconciles an interrupted schema-6 publication inside both probe fences (#10423)", async () => {
     const receipt = activeReceipt(stateDir);
     expect(() =>
       withMcpLifecycleLockSync(
@@ -470,6 +471,146 @@ describe("Hermes portable lifecycle", () => {
     expect(recovered.kind).toBe("already-current");
     expect(readHermesPortableLifecycleReceipt(SANDBOX, stateDir)?.successor).toBeDefined();
   });
+
+  it("rejects successor-publication generation drift between lifecycle snapshots (#10423)", async () => {
+    const receipt = activeReceipt(stateDir);
+    const fixture = lifecycleDeps(receipt);
+
+    await withPortableHostFence(stateDir, () =>
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () => {
+          const expected = readHermesPortableLifecycleReceiptForRequalification(SANDBOX, stateDir)!;
+          expect(() =>
+            publishHermesPortableSuccessorReceipt(SANDBOX, stateDir, {
+              afterCanonicalLink: () => {
+                throw new Error("simulated schema-6 process exit");
+              },
+            }),
+          ).toThrow("simulated schema-6 process exit");
+
+          expect(() =>
+            hermesPortableLifecycleInternals.qualify(
+              SANDBOX,
+              lifecycleContext(),
+              fixture.deps,
+              expected,
+              ["Ready", "Error", "Stopped"],
+              { permitSchema5Requalification: true },
+            ),
+          ).toThrow("receipt authority changed");
+        },
+        { stateDir: path.join(stateDir, "state") },
+      ),
+    );
+  });
+
+  it("rejects policy generation replacement during schema-6 publication (#10423)", async () => {
+    const receipt = activeReceipt(stateDir);
+    const copiedPolicy = `${receipt.policy.sourcePath}.copy`;
+    fs.writeFileSync(copiedPolicy, fs.readFileSync(receipt.policy.sourcePath), { mode: 0o600 });
+    fs.renameSync(copiedPolicy, receipt.policy.sourcePath);
+    const fixture = lifecycleDeps(receipt);
+    const publishWithReplacement: typeof publishHermesPortableSuccessorReceipt = (
+      sandboxName,
+      receiptStateDir,
+      hooks,
+      authority,
+    ) =>
+      publishHermesPortableSuccessorReceipt(
+        sandboxName,
+        receiptStateDir,
+        {
+          ...hooks,
+          afterStageWrite: (written, total) => {
+            const replacement = `${receipt.policy.sourcePath}.during-publication`;
+            fs.writeFileSync(replacement, fs.readFileSync(receipt.policy.sourcePath), {
+              mode: 0o600,
+            });
+            fs.renameSync(replacement, receipt.policy.sourcePath);
+            hooks?.afterStageWrite?.(written, total);
+          },
+        },
+        authority,
+      );
+
+    await expect(
+      withPortableHostFence(stateDir, () =>
+        withMcpLifecycleLockSync(
+          SANDBOX,
+          () =>
+            requalifyHermesPortableSandboxAuthority(SANDBOX, lifecycleContext(), {
+              ...fixture.deps,
+              publishSuccessorReceipt: publishWithReplacement,
+            }),
+          { stateDir: path.join(stateDir, "state") },
+        ),
+      ),
+    ).rejects.toThrow("operation-local filesystem or runtime identity changed");
+  });
+
+  it.each(["socket", "openshell", "podman"] as const)(
+    "rejects %s identity generation replacement during schema-6 publication (#10423)",
+    async (owner) => {
+      const receipt = activeReceipt(stateDir);
+      let replaceIdentity = false;
+      const fixture = lifecycleDeps(receipt);
+      const operatingAuthority = {
+        ...fixture.deps.operatingAuthority,
+        captureSocketAuthority: () => ({
+          ...receipt.socketAuthority,
+          inode: owner === "socket" && replaceIdentity ? "103" : "102",
+        }),
+        captureOpenShellExecutableAuthority: () => ({
+          ...receipt.openshellExecutableAuthority,
+          executable: {
+            ...receipt.openshellExecutableAuthority.executable,
+            inode: owner === "openshell" && replaceIdentity ? "11" : "10",
+          },
+        }),
+        capturePodmanExecutableAuthority: () => ({
+          ...receipt.podmanExecutableAuthority,
+          executable: {
+            ...receipt.podmanExecutableAuthority.executable,
+            inode: owner === "podman" && replaceIdentity ? "31" : "30",
+          },
+        }),
+      };
+      const publishWithReplacement: typeof publishHermesPortableSuccessorReceipt = (
+        sandboxName,
+        receiptStateDir,
+        hooks,
+        authority,
+      ) =>
+        publishHermesPortableSuccessorReceipt(
+          sandboxName,
+          receiptStateDir,
+          {
+            ...hooks,
+            afterStageWrite: (written, total) => {
+              replaceIdentity = true;
+              hooks?.afterStageWrite?.(written, total);
+            },
+          },
+          authority,
+        );
+
+      await expect(
+        withPortableHostFence(stateDir, () =>
+          withMcpLifecycleLockSync(
+            SANDBOX,
+            () =>
+              requalifyHermesPortableSandboxAuthority(SANDBOX, lifecycleContext(), {
+                ...fixture.deps,
+                operatingAuthority,
+                publishSuccessorReceipt: publishWithReplacement,
+              }),
+            { stateDir: path.join(stateDir, "state") },
+          ),
+        ),
+      ).rejects.toThrow("operation-local filesystem or runtime identity changed");
+    },
+  );
 
   it("passes only private state, terminal, locale, and TLS variables to child commands (#9203)", () => {
     const runtimeAuthority = {

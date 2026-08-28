@@ -187,9 +187,9 @@ export function persistFinalizedPolicyPresets(
   sandboxName: string,
   appliedPolicyPresets: string[],
   listBuiltinPresetNames: () => string[] = defaultListBuiltinPresetNames,
-): void {
+): boolean {
   const customPresetNames = registry.getCustomPolicies(sandboxName).map((preset) => preset.name);
-  registry.updateSandbox(
+  return registry.updateSandbox(
     sandboxName,
     buildFinalizedPolicyPresetsUpdate(
       appliedPolicyPresets,

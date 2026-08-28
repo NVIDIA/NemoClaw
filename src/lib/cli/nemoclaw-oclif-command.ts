@@ -8,8 +8,8 @@ import {
   classifyHermesPortableCommand,
   HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE,
   HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE,
-  inspectPortableAgentReceiptDisposition,
 } from "../onboard/experimental/portable-agent-lifecycle";
+import { hasHermesPortableReceiptCandidate } from "../onboard/experimental/hermes-portable-receipt";
 import { defaultPortableDemoStateDir } from "../onboard/experimental/portable-runtime-receipt-readiness";
 import { redactForLog } from "../security/redact";
 import { isDeferredShieldsExit } from "../shields/deferred-exit";
@@ -106,16 +106,21 @@ export abstract class NemoClawCommand extends Command {
     const sandboxName = await this.resolveLifecycleSandboxName(portablePolicy);
     if (!sandboxName) return await super._run<T>();
     if (this.isInteractiveConnect(commandId)) return await super._run<T>();
+    const runLocked = () => {
+      if (typeof commandId === "string" && portablePolicy?.rawSandboxName) {
+        assertHermesPortableCommandSupported(commandId, sandboxName, this.argv);
+      }
+      return super._run<T>();
+    };
     const runWithLifecycleFence = () =>
-      withMcpLifecycleLock(sandboxName, () => {
-        if (typeof commandId === "string" && portablePolicy?.rawSandboxName) {
-          assertHermesPortableCommandSupported(commandId, sandboxName, this.argv);
-        }
-        return super._run<T>();
-      });
+      commandId === "sandbox:destroy"
+        ? withMcpLifecycleLock(sandboxName, runLocked, {
+            recoverAbandonedExpiredTimer: true,
+          })
+        : withMcpLifecycleLock(sandboxName, runLocked);
     if (
       this.isProbeOnlyConnect(commandId) &&
-      inspectPortableAgentReceiptDisposition(sandboxName).kind === "hermes"
+      hasHermesPortableReceiptCandidate(sandboxName, defaultPortableDemoStateDir(process.env))
     ) {
       return await withCurrentPortableHostFence(runWithLifecycleFence);
     }

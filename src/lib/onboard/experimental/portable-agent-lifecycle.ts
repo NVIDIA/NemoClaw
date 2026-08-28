@@ -18,6 +18,8 @@ import {
 import {
   inspectPortableAgentReceiptAuthority,
   inspectPortableAgentReceiptAuthorityForClassification,
+  inspectPortableAgentReceiptAuthorityForRequalification,
+  type PortableAgentReceiptAuthority,
 } from "./hermes-portable-receipt";
 import { qualifyHermesPortableOperatingAuthority } from "./hermes-portable-operating-authority";
 import {
@@ -118,15 +120,16 @@ export function assertHermesPortableCommandSupported(
   sandboxName: string,
   argv: readonly string[],
 ): void {
-  const authority = inspectPortableAgentReceiptAuthorityForClassification(
-    sandboxName,
-    defaultPortableDemoStateDir(process.env),
-  );
   const separator = argv.indexOf("--");
   const hostArgv = separator === -1 ? argv : argv.slice(0, separator);
   const doctorFix = commandId === "sandbox:doctor" && hostArgv.includes("--fix");
   const supported = HERMES_PORTABLE_COMMANDS.has(commandId) && !doctorFix;
-  if (authority.kind !== "hermes" || supported) return;
+  if (supported) return;
+  const authority = inspectPortableAgentReceiptAuthorityForClassification(
+    sandboxName,
+    defaultPortableDemoStateDir(process.env),
+  );
+  if (authority.kind !== "hermes") return;
   if (doctorFix) {
     throw new Error(`${HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE} Command: ${commandId}`);
   }
@@ -169,13 +172,10 @@ export interface PortableAgentLifecycleAuthorityDeps {
   readonly inspectReceiptDisposition?: (sandboxName: string) => PortableAgentReceiptDisposition;
   readonly readRegistry: (sandboxName: string) => SandboxEntry | null;
 }
-/** Strictly distinguish absent, OpenClaw, and Hermes receipt authority. */
-export function inspectPortableAgentReceiptDisposition(
-  sandboxName: string,
-  env: NodeJS.ProcessEnv = process.env,
-  stateDir = defaultPortableDemoStateDir(env),
+
+function receiptDisposition(
+  authority: PortableAgentReceiptAuthority,
 ): PortableAgentReceiptDisposition {
-  const authority = inspectPortableAgentReceiptAuthorityForClassification(sandboxName, stateDir);
   if (authority.kind === "none") return { kind: "absent" };
   if (authority.kind === "openclaw") return { kind: "openclaw" };
   const { receipt } = authority.snapshot;
@@ -191,12 +191,44 @@ export function inspectPortableAgentReceiptDisposition(
   };
 }
 
+/** Strictly distinguish absent, OpenClaw, and Hermes receipt authority. */
+export function inspectPortableAgentReceiptDisposition(
+  sandboxName: string,
+  env: NodeJS.ProcessEnv = process.env,
+  stateDir = defaultPortableDemoStateDir(env),
+): PortableAgentReceiptDisposition {
+  return receiptDisposition(
+    inspectPortableAgentReceiptAuthorityForClassification(sandboxName, stateDir),
+  );
+}
+
+/** Classify copied Hermes authority while the probe owns its lifecycle fence. */
+function inspectPortableAgentReceiptDispositionForRequalification(
+  sandboxName: string,
+  env: NodeJS.ProcessEnv = process.env,
+  stateDir = defaultPortableDemoStateDir(env),
+): PortableAgentReceiptDisposition {
+  return receiptDisposition(
+    inspectPortableAgentReceiptAuthorityForRequalification(sandboxName, stateDir),
+  );
+}
+
 /** Requalify only Hermes authority while the probe owns both Portable fences. */
 export function requalifyPortableAgentSandboxAuthority(
   sandboxName: string,
   deps: PortableAgentLifecycleDeps & PortableAgentLifecycleAuthorityDeps,
 ) {
-  const authority = qualifyPortableAgentLifecycleAuthority(sandboxName, deps);
+  const authority = qualifyPortableAgentLifecycleAuthority(sandboxName, {
+    ...deps,
+    inspectReceiptDisposition:
+      deps.inspectReceiptDisposition ??
+      ((name) =>
+        inspectPortableAgentReceiptDispositionForRequalification(
+          name,
+          deps.env ?? process.env,
+          deps.stateDir,
+        )),
+  });
   if (authority.kind !== "hermes") return { kind: "not-hermes" as const };
   if (authority.phase !== "active" || !authority.entry) {
     throw new Error("Hermes portable lifecycle authority is missing or incomplete.");
@@ -284,11 +316,7 @@ export function buildHermesPortableCommandEnvironment(
 }
 
 /** Requalify the exact executable and environment for one direct Hermes child. */
-export function buildHermesPortableCommandAuthority(
-  sandboxName: string,
-  env: NodeJS.ProcessEnv = process.env,
-  stateDir = defaultPortableDemoStateDir(env),
-) {
+function inspectHermesPortableCommandAuthority(sandboxName: string, stateDir: string) {
   if (!isMcpLifecycleLockHeld(sandboxName, path.join(stateDir, "state"))) {
     throw new Error("Hermes portable command authority requires the sandbox lifecycle lock");
   }
@@ -309,14 +337,15 @@ export function buildHermesPortableCommandAuthority(
     }
     throw error;
   }
-  if (authority.kind !== "hermes" || authority.snapshot.receipt.phase === "pending") {
-    throw new Error("Hermes portable lifecycle authority is missing or incomplete");
-  }
-  if (!authority.snapshot.successor) {
-    return buildHermesPortableOpenShellCommandAuthority(authority.snapshot.receipt, env);
-  }
-  if (authority.snapshot.receipt.phase !== "active") {
-    throw new Error("Hermes portable operating authority requires an active receipt");
+  return authority;
+}
+
+function qualifyOperatingCommandAuthority(
+  authority: Extract<ReturnType<typeof inspectPortableAgentReceiptAuthority>, { kind: "hermes" }>,
+  env: NodeJS.ProcessEnv,
+) {
+  if (!authority.snapshot.successor || authority.snapshot.receipt.phase !== "active") {
+    throw new Error("Hermes portable operating command authority is missing or incomplete");
   }
   const operatingAuthority = qualifyHermesPortableOperatingAuthority(
     authority.snapshot as typeof authority.snapshot & {
@@ -328,7 +357,39 @@ export function buildHermesPortableCommandAuthority(
     env,
   );
   operatingAuthority.assertCurrent();
-  return commandAuthority;
+  return { ...commandAuthority, assertCurrent: operatingAuthority.assertCurrent };
+}
+
+export function buildHermesPortableCommandAuthority(
+  sandboxName: string,
+  env: NodeJS.ProcessEnv = process.env,
+  stateDir = defaultPortableDemoStateDir(env),
+) {
+  const authority = inspectHermesPortableCommandAuthority(sandboxName, stateDir);
+  if (authority.kind !== "hermes" || authority.snapshot.receipt.phase === "pending") {
+    throw new Error("Hermes portable lifecycle authority is missing or incomplete");
+  }
+  if (!authority.snapshot.successor) {
+    return buildHermesPortableOpenShellCommandAuthority(authority.snapshot.receipt, env);
+  }
+  if (authority.snapshot.receipt.phase !== "active") {
+    throw new Error("Hermes portable operating authority requires an active receipt");
+  }
+  const qualified = qualifyOperatingCommandAuthority(authority, env);
+  return { env: qualified.env, executablePath: qualified.executablePath };
+}
+
+/** Retain one schema-6 command generation and its operation-local currentness fence. */
+export function qualifyHermesPortableOperatingCommandAuthority(
+  sandboxName: string,
+  env: NodeJS.ProcessEnv = process.env,
+  stateDir = defaultPortableDemoStateDir(env),
+) {
+  const authority = inspectHermesPortableCommandAuthority(sandboxName, stateDir);
+  if (authority.kind !== "hermes") {
+    throw new Error("Hermes portable operating command authority is missing or incomplete");
+  }
+  return qualifyOperatingCommandAuthority(authority, env);
 }
 
 /** Requalify a pending/configuring receipt only for its schema-5 onboarding child. */

@@ -204,6 +204,9 @@ function hasDirectProductionPathHint(text: string): boolean {
       text,
     ) ||
     /["'`](?:\.\.\/)*(?:package\.json|install\.sh|\.pre-commit-config\.yaml)["'`]/.test(text) ||
+    /["'`](?:\.\.\/)*tools\/mcp-tool-discovery-runtime\/reviewed-runtime-bundle(?:\/|["'`])/.test(
+      text,
+    ) ||
     /["'`](?:\.\.\/)+Dockerfile(?:\.base)?["'`]/.test(text) ||
     /["'`](?:\.\.\/)+bin\//.test(text) ||
     /["'`](?:\.\.\/)+agents\//.test(text) ||

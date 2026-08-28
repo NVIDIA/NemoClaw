@@ -9,11 +9,30 @@ network_policies:
   slack:
     name: slack
     endpoints:
+      # slack.com carries two credentials, so it is declared twice and split by
+      # `path`. A credential_binding authorizes one provider per endpoint, and
+      # OpenShell selects the endpoint by path specificity, so the narrow
+      # apps.connections.open entry wins for the Socket Mode handshake while
+      # every other Web API call falls to the broad entry. The two entries must
+      # agree on tls, allowed_ips, protocol, and enforcement or the policy is
+      # rejected as ambiguous.
       - host: slack.com
         port: 443
         protocol: rest
         enforcement: enforce
         request_body_credential_rewrite: true
+        path: /api/apps.connections.open
+        credential_binding:
+          provider: "{sandboxName}-slack-app"
+        rules:
+          - allow: { method: POST, path: "/api/apps.connections.open" }
+      - host: slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        request_body_credential_rewrite: true
+        credential_binding:
+          provider: "{sandboxName}-slack-bridge"
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -22,6 +41,8 @@ network_policies:
         protocol: rest
         enforcement: enforce
         request_body_credential_rewrite: true
+        credential_binding:
+          provider: "{sandboxName}-slack-bridge"
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -30,6 +51,8 @@ network_policies:
         protocol: rest
         enforcement: enforce
         request_body_credential_rewrite: true
+        credential_binding:
+          provider: "{sandboxName}-slack-bridge"
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
