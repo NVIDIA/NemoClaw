@@ -410,7 +410,7 @@ export function assertOpenClawHeartbeatStart(
   const result = runCommand(["docker", "logs", containerId], env, 15_000);
   if (result.status !== 0 || result.error) {
     throw new Error(
-      `could not read managed OpenClaw startup logs: ${redactProtectedGpuProof(commandDetail(result))}`,
+      `could not read managed OpenClaw startup logs (status=${String(result.status)}, spawnError=${String(Boolean(result.error))})`,
     );
   }
   const heartbeatStart = `${result.stdout ?? ""}\n${result.stderr ?? ""}`

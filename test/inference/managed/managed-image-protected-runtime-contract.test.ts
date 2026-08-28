@@ -113,20 +113,19 @@ describe("protected managed-image runtime contract", () => {
     );
   });
 
-  it("redacts credentials when managed OpenClaw startup logs cannot be read", () => {
+  it("does not expose JSON credentials when managed OpenClaw startup logs cannot be read", () => {
     const containerId = "a".repeat(64);
+    const secret = "json-api-key-secret";
     const runCommand = vi.fn<ManagedImageCommandRunner>(() => ({
       status: 1,
-      stdout: "",
-      stderr: "TELEGRAM_BOT_TOKEN=secret-value",
+      stdout: JSON.stringify({ apiKey: secret }),
+      stderr: JSON.stringify({ nested: { apiKey: secret } }),
     }));
 
     expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).toThrow(
-      "TELEGRAM_BOT_TOKEN=<REDACTED>",
+      "could not read managed OpenClaw startup logs (status=1, spawnError=false)",
     );
-    expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).not.toThrow(
-      "secret-value",
-    );
+    expect(() => assertOpenClawHeartbeatStart(containerId, {}, runCommand)).not.toThrow(secret);
   });
 
   it("binds the rollback failure adapter to the canonical managed-bootstrap state root", async () => {
