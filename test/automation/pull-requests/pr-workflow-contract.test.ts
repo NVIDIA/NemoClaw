@@ -160,6 +160,7 @@ function runWorkflowShellStep(
 type SdkPackageLocatorFixture = Readonly<{
   artifactFailureRunId?: number;
   artifactsByRunId?: Readonly<Record<string, unknown>>;
+  required?: boolean;
   runs: readonly unknown[];
   step: WorkflowStep;
   workflowRunFailure?: boolean;
@@ -180,7 +181,9 @@ function runSdkPackageLocator(fixture: SdkPackageLocatorFixture): Readonly<{
     mkdirSync(fakeBin);
     writeFileSync(
       join(inspectorDirectory, "prepare-ci-npm-install.mts"),
-      'process.stdout.write(JSON.stringify({ required: true, artifactName: "reviewed-sdk.tgz" }));\n',
+      `process.stdout.write(JSON.stringify({ required: ${String(
+        fixture.required ?? true,
+      )}, artifactName: "reviewed-sdk.tgz" }));\n`,
     );
     writeFileSync(join(workflowDirectory, "openshell-sdk-package-pr.yaml"), "name: test\n");
     writeFileSync(join(fakeBin, "seq"), "#!/bin/sh\nprintf '1\\n'\n", { mode: 0o755 });
@@ -558,6 +561,10 @@ describe("pull request and main workflow contracts", () => {
     expect(locate.run).toContain("available only to same-repository pull requests");
     expect(locate.run).not.toContain("@nvidia/openshell-sdk@0.0.106");
     expect(locate.run).not.toContain("nvidia-openshell-sdk-0.0.106.tgz");
+
+    const optionalPackage = runSdkPackageLocator({ required: false, runs: [], step: locate });
+    expect(optionalPackage.result).toMatchObject({ status: 0, stderr: "" });
+    expect(optionalPackage.githubOutput).toBe("required=false\n");
   });
 
   // The one-time bootstrap may proceed only while both lockfiles use the public registry.
