@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { PolicyAuthorityRefusalError } from "../../adapters/openshell/policy-authority";
 import type { SandboxEntry } from "../../state/registry";
+import { runSandboxProviderPreDeleteCleanup } from "../sandbox-provider-cleanup";
 import {
   applyManagedSandboxRebuildPolicyCarryForward,
   assertApfCreateIntent,
@@ -24,6 +25,7 @@ import {
   readSandboxRecreateRegistryEntry,
   reconcileCreatedHermesCredentialEnvironment,
   resolveSandboxCreatePolicyAuthority,
+  runAuthorityBoundProviderCleanup,
   runAsyncWithPostCreateRecovery,
   runSandboxCreateWithPolicyAuthorityChecks,
   runWithPostCreateRecovery,
@@ -34,6 +36,8 @@ const UNVERIFIED_RECOVERY_CONTEXT = {
   gatewayPort: 8080,
   lifecycleGeneration: "generation-1",
   verifiedEffectivePolicyIdentity: null,
+  createAttemptNonce: "c".repeat(62),
+  policyCreationReceipt: null,
 } as const;
 
 describe("created Hermes credential environment reconciliation", () => {
@@ -116,6 +120,35 @@ describe("created Hermes credential environment reconciliation", () => {
 
     expect(restartGateway).not.toHaveBeenCalled();
     expect(waitForGateway).not.toHaveBeenCalled();
+  });
+
+  it("refuses a same-name replacement at the credential mutation edge (#9833)", () => {
+    const expectedIdentity = "identity-a";
+    let liveIdentity = expectedIdentity;
+    const mutations: string[] = [];
+    const revalidatePolicyAuthority = vi.fn(() => {
+      liveIdentity === expectedIdentity || (() => { throw new Error("sandbox identity changed"); })();
+      liveIdentity = "identity-b";
+    });
+
+    expect(() =>
+      reconcileCreatedHermesCredentialEnvironment(
+        { sandboxName: "alpha", plan },
+        {
+          revalidatePolicyAuthority,
+          reconcileCredentialEnv: ((_plan: never, revalidate?: (operation: string) => void) => {
+            revalidate?.("mutating credential environment");
+            mutations.push(liveIdentity);
+            return { changed: true };
+          }) as never,
+          restartGateway: vi.fn(),
+          parseRestartCompletion: vi.fn(),
+          waitForGateway: vi.fn(),
+        },
+        vi.fn(),
+      ),
+    ).toThrow(/sandbox identity changed/u);
+    expect(mutations).toEqual([]);
   });
 
   it("fails onboarding when the changed gateway cannot prove restart completion", () => {
@@ -201,6 +234,18 @@ describe("retained create recovery persistence", () => {
       gatewayPort: 18080,
       lifecycleGeneration: "00000000-0000-4000-8000-000000000004",
       verifiedEffectivePolicyIdentity: { hash: "sha256:policy-4", activeVersion: 4 },
+      createAttemptNonce: "d".repeat(62),
+      policyCreationReceipt: {
+        schemaVersion: 1,
+        origin: "sandbox-create",
+        gatewayName: "nemoclaw-18080",
+        gatewayPort: 18080,
+        sandboxName: "alpha",
+        lifecycleGeneration: "00000000-0000-4000-8000-000000000004",
+        sandboxIdentityFingerprint: "f".repeat(64),
+        policyHash: "sha256:policy-4",
+        policyVersion: 4,
+      },
     } as const;
     const markRetainedSandboxRecovery = vi.fn(() => true);
     const input = {
@@ -424,6 +469,71 @@ describe("APF create policy selection", () => {
 });
 
 describe("deferred provider effect authority", () => {
+  it("carries identity authority through every provider cleanup effect (#9833)", () => {
+    let liveIdentity = "identity-a";
+    const operations: string[] = [];
+    const revalidateSandboxIdentity = vi.fn((operation: string) => {
+      operations.push(operation);
+      liveIdentity === "identity-a" ||
+        (() => {
+          throw new Error("sandbox identity changed");
+        })();
+    });
+    const runProviderPreDeleteCleanup = vi.fn((_sandboxName, deps) => {
+      expect(deps.revalidateSandboxIdentity).toBe(revalidateSandboxIdentity);
+      deps.revalidateSandboxIdentity?.("detaching provider");
+      liveIdentity = "identity-b";
+      deps.revalidateSandboxIdentity?.("confirming provider detach");
+      return { detached: [], failures: [] };
+    });
+
+    expect(() =>
+      runAuthorityBoundProviderCleanup({
+        sandboxName: "alpha",
+        revalidateSandboxIdentity,
+        runProviderPreDeleteCleanup,
+        runOpenshell: vi.fn(),
+        redact: (value) => value,
+      }),
+    ).toThrow(/sandbox identity changed/u);
+    expect(runProviderPreDeleteCleanup).toHaveBeenCalledOnce();
+    expect(operations).toEqual([
+      "cleaning up providers for sandbox 'alpha'",
+      "detaching provider",
+      "confirming provider detach",
+    ]);
+  });
+
+  it("refuses provider cleanup when a sandbox appears after verified absence (#9833)", () => {
+    let observationCount = 0;
+    const revalidatePolicyAuthority = vi.fn();
+    const runOpenshell = vi.fn(() => ({
+      pid: 1,
+      output: [null, "", ""],
+      stdout: "",
+      stderr: "",
+      status: 0,
+      signal: null,
+    }));
+
+    expect(() =>
+      runAuthorityBoundProviderCleanup({
+        sandboxName: "alpha",
+        observeSandbox: () =>
+          observationCount++ === 0
+            ? { state: "missing", liveIdentityFingerprint: null }
+            : { state: "ready", liveIdentityFingerprint: "f".repeat(64) },
+        revalidatePolicyAuthority,
+        runProviderPreDeleteCleanup: runSandboxProviderPreDeleteCleanup,
+        runOpenshell,
+        redact: (value) => value,
+        tolerateMissingSandbox: true,
+      }),
+    ).toThrow(/appeared after absence was verified/u);
+    expect(revalidatePolicyAuthority).toHaveBeenCalledOnce();
+    expect(runOpenshell).not.toHaveBeenCalled();
+  });
+
   it("refuses every deferred provider attachment before a same-name replacement can receive credentials (#9833)", async () => {
     const revalidatePolicyRequirements = vi.fn();
     const runOpenshell = vi.fn(() => ({ status: 0 }));
@@ -866,6 +976,7 @@ describe("sandbox create policy authority checks", () => {
       expect.stringContaining("left sandbox 'alpha' in place"),
       exactIdentity,
       "verified",
+      "created",
     );
   });
 
@@ -895,6 +1006,7 @@ describe("sandbox create policy authority checks", () => {
       expect.stringContaining("left sandbox 'alpha' in place"),
       exactIdentity,
       verifiedEvidence,
+      "created",
     );
   });
 
@@ -916,10 +1028,17 @@ describe("sandbox create policy authority checks", () => {
 
     expect(error).toBeInstanceOf(AggregateError);
     expect((error as AggregateError).errors).toContain(createFailure);
+    expect((error as AggregateError).message).toContain(
+      "post-create verification or finalization failed",
+    );
+    expect((error as AggregateError).message).not.toContain(
+      "after policy authority validation failed",
+    );
     expect(persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
       expect.stringContaining("left sandbox 'alpha' in place"),
       exactIdentity,
       "verified",
+      "created",
     );
   });
 
@@ -1316,6 +1435,7 @@ describe("sandbox create policy authority checks", () => {
       expect.stringContaining("left sandbox 'alpha' in place"),
       exactIdentity,
       null,
+      "created",
     );
   });
 

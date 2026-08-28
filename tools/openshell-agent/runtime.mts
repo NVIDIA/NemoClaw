@@ -361,16 +361,28 @@ export function deleteOpenShellSandbox(
   tools: OpenShellTools = defaultOpenShellTools,
 ): void {
   const commandEnv = credentialFreeEnvironment(env);
-  let names: string;
+  let names: string | undefined;
+  let listFailure: unknown;
   try {
     names = tools.run("openshell", ["sandbox", "list", "--names"], {
       capture: true,
       env: commandEnv,
     });
-  } catch {
-    return;
+  } catch (error) {
+    listFailure = error;
   }
-  if (names.split(/\r?\n/u).includes(name)) {
-    tools.run("openshell", ["sandbox", "delete", name], { env: commandEnv });
+  if (listFailure !== undefined || names?.split(/\r?\n/u).includes(name)) {
+    try {
+      tools.run("openshell", ["sandbox", "delete", name], { env: commandEnv });
+    } catch (error) {
+      const diagnostic = error instanceof Error ? error.message : String(error);
+      const listDiagnostic =
+        listFailure === undefined
+          ? ""
+          : `; sandbox listing also failed: ${listFailure instanceof Error ? listFailure.message : String(listFailure)}`;
+      throw new OpenShellAgentError(
+        `Failed to delete OpenShell sandbox ${name}: ${diagnostic}${listDiagnostic}`,
+      );
+    }
   }
 }
