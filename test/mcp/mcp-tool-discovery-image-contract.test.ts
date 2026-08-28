@@ -232,6 +232,98 @@ describe("MCP tool discovery image contract", () => {
     }
   });
 
+  it("accepts a Pi completion receipt in the reviewed managed startup runtime", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-startup-runtime-"));
+    const bundlePath = path.join(
+      repoRoot,
+      "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle",
+    );
+    const completionFile = path.join(fixture, "managed-bootstrap-completion.json");
+    const startupCompletionFile = path.join(fixture, "managed-startup-complete.json");
+    const runtimeEnvironmentFile = path.join(fixture, "managed-startup-runtime.env");
+    const bootstrapIdentity = "a".repeat(64);
+    const profileFingerprint = "b".repeat(64);
+    const runtimeEnvironment = "export NEMOCLAW_MODEL='nvidia/test'\n";
+    const runtimeEnvironmentSha256 = crypto
+      .createHash("sha256")
+      .update(runtimeEnvironment, "utf8")
+      .digest("hex");
+    const verificationScript = `
+      const fs = require("node:fs");
+      const originalFstatSync = fs.fstatSync;
+      fs.fstatSync = (descriptor, options) => {
+        const stat = originalFstatSync(descriptor, options);
+        return new Proxy(stat, {
+          get(target, property) {
+            if (property === "uid" || property === "gid") return 0n;
+            const value = Reflect.get(target, property, target);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+      };
+      const [bundle, completion, startupCompletion, runtimeEnvironment, expected] =
+        process.argv.slice(1);
+      const runtime = require(bundle);
+      const receipt = runtime.verifyManagedBootstrapImageCompletion(
+        JSON.parse(expected),
+        completion,
+        startupCompletion,
+        runtimeEnvironment,
+      );
+      process.stdout.write(JSON.stringify(receipt));
+    `;
+
+    try {
+      fs.writeFileSync(
+        completionFile,
+        `${JSON.stringify({
+          agent: "pi",
+          bootstrapIdentity,
+          profileFingerprint,
+          schemaVersion: 1,
+          transactionPending: false,
+        })}\n`,
+        { mode: 0o444 },
+      );
+      fs.writeFileSync(
+        startupCompletionFile,
+        `${JSON.stringify({
+          agent: "pi",
+          corporateCaMerged: false,
+          profileFingerprint,
+          runtimeEnvironmentSha256,
+          schemaVersion: 1,
+        })}\n`,
+        { mode: 0o444 },
+      );
+      fs.writeFileSync(runtimeEnvironmentFile, runtimeEnvironment, { mode: 0o444 });
+      const result = spawnSync(
+        process.execPath,
+        [
+          "-e",
+          verificationScript,
+          bundlePath,
+          completionFile,
+          startupCompletionFile,
+          runtimeEnvironmentFile,
+          JSON.stringify({ agent: "pi", bootstrapIdentity, profileFingerprint }),
+        ],
+        { encoding: "utf8" },
+      );
+
+      expect(result).toMatchObject({ status: 0, stderr: "" });
+      expect(JSON.parse(result.stdout)).toEqual({
+        schemaVersion: 1,
+        bootstrapIdentity,
+        agent: "pi",
+        profileFingerprint,
+        transactionPending: false,
+      });
+    } finally {
+      fs.rmSync(fixture, { force: true, recursive: true });
+    }
+  });
+
   it.skipIf(process.platform === "win32")(
     "rejects a cache seed that does not match the lockfile integrity",
     () => {
