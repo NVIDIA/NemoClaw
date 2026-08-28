@@ -22,10 +22,12 @@ function runDarwinGatewayProcessStop(
   const bin = path.join(tmp, "bin");
   const runtimeDir = path.join(tmp, "runtime");
   const gatewayBin = path.join(home, ".local", "bin", "openshell-gateway");
+  const foreignGatewayBin = path.join(tmp, "foreign-gateway");
   fs.mkdirSync(path.dirname(gatewayBin), { recursive: true });
   fs.mkdirSync(bin, { recursive: true });
   fs.mkdirSync(runtimeDir, { recursive: true });
   writeExecutable(gatewayBin, "#!/usr/bin/env bash\nexec sleep 60\n");
+  writeExecutable(foreignGatewayBin, "#!/usr/bin/env bash\nexec sleep 60\n");
   writeExecutable(path.join(bin, "uname"), "#!/usr/bin/env bash\nprintf 'Darwin\\n'\n");
   writeExecutable(
     path.join(bin, "ps"),
@@ -40,9 +42,7 @@ printf '%s\n' '${
   writeExecutable(
     path.join(bin, "lsof"),
     `#!/usr/bin/env bash
-printf 'p%s\nn%s\n' "$4" '${
-      options.trustedExecutable === false ? path.join(tmp, "foreign-gateway") : gatewayBin
-    }'
+printf 'p%s\nn%s\n' "$4" '${options.trustedExecutable === false ? foreignGatewayBin : gatewayBin}'
 `,
   );
 
