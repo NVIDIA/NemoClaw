@@ -39,7 +39,6 @@ describe("CLI OpenShell sandbox policy reader", () => {
         document: POLICY,
         reportedRevision: 4,
         appliedRevision: 3,
-        hasProviderComposedEntries: false,
       },
     });
     expect(capture).toHaveBeenCalledWith(
@@ -74,7 +73,6 @@ describe("CLI OpenShell sandbox policy reader", () => {
         document: "version: 1\nnetwork_policies:\n  _provider_nvidia: {}",
         reportedRevision: 9,
         appliedRevision: 9,
-        hasProviderComposedEntries: true,
       },
     });
     expect(capture).toHaveBeenCalledWith(

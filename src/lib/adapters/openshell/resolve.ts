@@ -32,7 +32,11 @@ export function openshellNotFoundDiagnosticLines(
   if (sourceEnv.HOME?.startsWith("/")) {
     checked.push(`${sourceEnv.HOME}/.local/bin/openshell`);
   }
-  checked.push("/usr/local/bin/openshell", "/usr/bin/openshell");
+  checked.push(
+    "/opt/homebrew/bin/openshell",
+    "/usr/local/bin/openshell",
+    "/usr/bin/openshell",
+  );
   return [
     "  openshell binary not found. Checked:",
     ...checked.map((location) => `    - ${location}`),

@@ -149,7 +149,6 @@ describe("getSandboxPolicy", () => {
           document: "version: 1\nnetwork_policies: {}",
           reportedRevision: 7,
           appliedRevision: 7,
-          hasProviderComposedEntries: false,
         },
       },
       displayOutput: "Version: 7\nActive: 7\n---\nversion: 1\nnetwork_policies: {}",

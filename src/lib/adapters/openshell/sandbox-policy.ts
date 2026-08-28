@@ -11,7 +11,6 @@ export type OpenShellSandboxPolicyRead = Readonly<{
   document: string;
   reportedRevision: number | null;
   appliedRevision: number | null;
-  hasProviderComposedEntries: boolean;
 }>;
 
 export type ReadOpenShellSandboxPolicyRequest = Readonly<{

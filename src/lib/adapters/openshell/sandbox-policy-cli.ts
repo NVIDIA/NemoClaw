@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { parseOpenShellPolicy } from "../../policy/merge";
-import { runCaptureEx } from "../../runner";
+import { captureOpenshellCommand } from "./client";
 import { openshellNotFoundDiagnosticLines, tryResolveOpenshellBinary } from "./command-argv";
 import { type OpenShellSandboxError, type OpenShellSandboxResult } from "./sandbox-observer";
 import {
@@ -58,18 +58,7 @@ const capturePolicyWithRunner: CapturePolicyCommand = (args, options) => {
       error: Object.assign(new Error("OpenShell binary not found"), { code: "ENOENT" }),
     };
   }
-  const captured = runCaptureEx([executable, ...args], { timeout: options.timeout });
-  const output = [captured.stdout, captured.stderr].filter(Boolean).join("\n");
-  const error = captured.timedOut
-    ? Object.assign(new Error("OpenShell policy read timed out"), { code: "ETIMEDOUT" })
-    : undefined;
-  return {
-    status: captured.exitCode,
-    output,
-    stdout: captured.stdout,
-    stderr: captured.stderr,
-    ...(error ? { error } : {}),
-  };
+  return captureOpenshellCommand(executable, args, options);
 };
 
 function stripAnsi(value = ""): string {
@@ -151,16 +140,6 @@ function metadataRevision(metadata: string, field: "Active" | "Version"): number
   return Number.isSafeInteger(revision) && revision >= 0 ? revision : null;
 }
 
-function hasProviderComposedEntries(policy: Record<string, unknown>): boolean {
-  const networkPolicies = policy.network_policies;
-  return (
-    typeof networkPolicies === "object" &&
-    networkPolicies !== null &&
-    !Array.isArray(networkPolicies) &&
-    Object.keys(networkPolicies).some((key) => key.startsWith("_provider_"))
-  );
-}
-
 function parsePolicyRead(
   request: ReadOpenShellSandboxPolicyRequest,
   displayOutput: string,
@@ -176,7 +155,6 @@ function parsePolicyRead(
         document: parsed.yamlBody,
         reportedRevision: metadataRevision(metadata, "Version"),
         appliedRevision: metadataRevision(metadata, "Active"),
-        hasProviderComposedEntries: hasProviderComposedEntries(parsed.policy),
       },
     };
   } catch {
