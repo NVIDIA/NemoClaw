@@ -19,6 +19,7 @@ import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 import { testTimeout } from "../../helpers/timeouts";
 
 const NO_IMAGE_E2E_JOBS = [
+  "external-gateway-health",
   "staging-brev-launchable",
   "staging-brev-launchable-identity",
   "shared-e2e",

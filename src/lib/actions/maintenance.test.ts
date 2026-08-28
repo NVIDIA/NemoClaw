@@ -1225,6 +1225,11 @@ describe("backupAll", () => {
     mocks.isSandboxContainerDefinitivelyAbsent.mockImplementation(
       (name: string) => name === "sb-stranded",
     );
+    mocks.withSandboxMutationLock.mockImplementation((name: string, action: () => unknown) =>
+      name === "sb-stranded"
+        ? Promise.reject(new Error("Sandbox mutation containment is active"))
+        : action(),
+    );
     mocks.backupSandboxState.mockReturnValue({
       success: true,
       backedUpDirs: ["workspace"],
@@ -1244,6 +1249,8 @@ describe("backupAll", () => {
     expect(exitSpy).not.toHaveBeenCalled();
     expect(mocks.backupSandboxState).toHaveBeenCalledWith("sb-good");
     expect(mocks.backupStartedSandboxState).not.toHaveBeenCalled();
+    expect(mocks.withSandboxMutationLock).toHaveBeenCalledTimes(1);
+    expect(mocks.withSandboxMutationLock).toHaveBeenCalledWith("sb-good", expect.any(Function));
     // The exemption requires a confirming second pinned listing after the loop.
     expect(mocks.captureSandboxListWithGatewayPreflightOrExit).toHaveBeenCalledTimes(2);
     expect(mocks.captureSandboxListWithGatewayPreflightOrExit).toHaveBeenNthCalledWith(

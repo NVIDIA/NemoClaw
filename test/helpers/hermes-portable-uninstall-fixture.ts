@@ -23,6 +23,7 @@ import { createPortableOnboardEnvironmentScope } from "../../src/lib/onboard/ses
 import {
   prepareHostLocalInferenceStartup,
   type HostLocalInferenceGatewayMutation,
+  type HostLocalInferenceStartupRequest,
 } from "../../src/lib/onboard/runtime-provider/host-local-inference-routing";
 import { HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL } from "../../src/lib/onboard/runtime-provider/host-local-inference-routing";
 import {
@@ -273,12 +274,14 @@ export interface HermesPortableUninstallFixture {
   readonly harness: ReturnType<typeof createPodmanHostLocalInferenceTestHarness>;
   readonly journalPath: string;
   readonly lifecycleReceiptRoot: string;
+  readonly lifecycleReceipt: HermesPortableConfiguredReceipt;
   readonly registryFile: string;
   readonly stateDir: string;
   readonly targetRow: SandboxEntry;
   readonly unrelatedFile: string;
   readonly authorityState: PortablePodmanAuthorityState;
   readonly inferenceDirectory: string;
+  readonly inferenceRequest: HostLocalInferenceStartupRequest;
   readonly operationEvents: readonly string[];
   readonly sandboxDeleteCount: () => number;
   readonly sandboxPresent: () => boolean;
@@ -567,12 +570,14 @@ export async function createHermesPortableUninstallFixture(
     harness,
     journalPath: path.join(stateDir, HERMES_PORTABLE_UNINSTALL_JOURNAL_FILE),
     lifecycleReceiptRoot: path.join(stateDir, "hermes-portable-lifecycle"),
+    lifecycleReceipt,
     registryFile,
     stateDir,
     targetRow,
     unrelatedFile,
     authorityState,
     inferenceDirectory,
+    inferenceRequest: selection.request,
     operationEvents: events,
     sandboxDeleteCount: () => sandboxDeleteCount,
     sandboxPresent: () => sandboxPresent,
