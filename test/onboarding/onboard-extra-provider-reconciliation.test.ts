@@ -92,11 +92,13 @@ runner.run = (command, opts = {}) => {
   if (normalized.includes("provider get -g nemoclaw ")) {
     return { status: 0, stdout: "" };
   }
-  if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) {
+if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) {
     if (sandboxCreated) {
       return {
         status: 0,
-        stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"),
+        stdout: Buffer.from(
+          "my-assistant\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\nPhase: Ready\n",
+        ),
         stderr: Buffer.alloc(0),
       };
     }
@@ -117,7 +119,9 @@ runner.runCapture = (command) => {
     : null;
   if (createdIdentity !== null) return createdIdentity;
   if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) {
-    return sandboxCreated ? "my-assistant\nId: sbx-4f2a91c0d7" : "";
+    return sandboxCreated
+      ? "my-assistant\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID
+      : "";
   }
   if (normalized.includes("sandbox list")) return sandboxCreated ? "my-assistant Ready" : "";
   const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
@@ -192,7 +196,8 @@ const createReservedSandbox = () => createSandbox(
         const result = spawnSync(process.execPath, [scriptPath], {
           cwd: repoRoot,
           encoding: "utf-8",
-          timeout: 30_000,
+          timeout: 60_000,
+          killSignal: "SIGKILL",
           env: {
             ...process.env,
             HOME: tmpDir,
