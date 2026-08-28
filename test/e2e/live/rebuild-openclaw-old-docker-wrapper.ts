@@ -6,49 +6,49 @@ import path from "node:path";
 
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 
-export interface LegacyOpenClawOpenShellWrapper {
+export interface LegacyOpenClawDockerWrapper {
   directory: string;
   executable: string;
   logFile: string;
 }
 
-export function createLegacyOpenClawOpenShellWrapper(options: {
+export function createLegacyOpenClawDockerWrapper(options: {
   root: string;
-  realOpenShell: string;
+  realDocker: string;
   baseImage: string;
   openClawVersion: string;
-}): LegacyOpenClawOpenShellWrapper {
+}): LegacyOpenClawDockerWrapper {
   const directory = path.join(options.root, "bin");
-  const executable = path.join(directory, "openshell");
-  const logFile = path.join(options.root, "sandbox-create-patch.log");
+  const executable = path.join(directory, "docker");
+  const logFile = path.join(options.root, "docker-build-patch.log");
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   fs.rmSync(logFile, { force: true });
   fs.writeFileSync(
     executable,
     `#!/usr/bin/env bash
 set -euo pipefail
-real_openshell=${shellQuote(options.realOpenShell)}
+real_docker=${shellQuote(options.realDocker)}
 base_image=${shellQuote(options.baseImage)}
 openclaw_version=${shellQuote(options.openClawVersion)}
 log_file=${shellQuote(logFile)}
 
-if [ "\${1:-}" != "sandbox" ] || [ "\${2:-}" != "create" ]; then
-  exec "$real_openshell" "$@"
+if [ "\${1:-}" != "build" ]; then
+  exec "$real_docker" "$@"
 fi
 
 dockerfile=""
 previous=""
 for argument in "$@"; do
-  if [ "$previous" = "--from" ]; then
+  if [ "$previous" = "-f" ] || [ "$previous" = "--file" ]; then
     dockerfile="$argument"
   fi
   case "$argument" in
-    --from=*) dockerfile="\${argument#--from=}" ;;
+    --file=*) dockerfile="\${argument#--file=}" ;;
   esac
   previous="$argument"
 done
 if [ -z "$dockerfile" ] || [ ! -f "$dockerfile" ]; then
-  echo "legacy OpenClaw fixture expected sandbox create --from <Dockerfile>" >&2
+  echo "legacy OpenClaw fixture expected docker build -f <Dockerfile>" >&2
   exit 64
 fi
 
@@ -109,11 +109,11 @@ blueprint.write_text(blueprint_source, encoding="utf-8")
 PY
 chmod a-w "$dockerfile" "$blueprint"
 
-printf 'patch sandbox create BASE_IMAGE=%s\n' "$base_image" >>"$log_file"
-printf 'patch sandbox create OPENCLAW_VERSION=%s\n' "$openclaw_version" >>"$log_file"
-printf 'patch sandbox create NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1\n' >>"$log_file"
-printf 'patch sandbox create min_openclaw_version=%s\n' "$openclaw_version" >>"$log_file"
-exec "$real_openshell" "$@"
+printf 'patch docker build BASE_IMAGE=%s\n' "$base_image" >>"$log_file"
+printf 'patch docker build OPENCLAW_VERSION=%s\n' "$openclaw_version" >>"$log_file"
+printf 'patch docker build NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1\n' >>"$log_file"
+printf 'patch docker build min_openclaw_version=%s\n' "$openclaw_version" >>"$log_file"
+exec "$real_docker" "$@"
 `,
     { encoding: "utf8", mode: 0o755 },
   );
