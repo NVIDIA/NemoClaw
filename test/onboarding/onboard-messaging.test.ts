@@ -796,11 +796,11 @@ const { createSandbox } = require(${onboardPath});
           HOME: tmpDir,
           PATH: `${fakeBin}:${process.env.PATH || ""}`,
           NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_SANDBOX_GPU: "0",
           NEMOCLAW_MESSAGING_PLAN_B64: messagingPlanB64,
           TELEGRAM_BOT_TOKEN: "",
         },
       });
-
       assert.equal(result.status, 0, result.stderr || result.error?.message);
       const payload = parseStdoutJson(result.stdout);
 

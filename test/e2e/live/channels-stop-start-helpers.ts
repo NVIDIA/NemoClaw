@@ -249,15 +249,10 @@ function expectPlanChannelState(channelId: string, expected: ChannelState): void
     expect(disabledChannels, `${channelId} missing from disabledChannels`).toContain(channelId);
   }
 
-  const networkPolicy =
-    plan.networkPolicy && typeof plan.networkPolicy === "object"
-      ? (plan.networkPolicy as Record<string, unknown>)
-      : {};
-  expect(stringArray(networkPolicy.presets), `${channelId} policy preset`).toContain(channelId);
   expect(
-    arrayRecords(networkPolicy.entries).some((entry) => entry.channelId === channelId),
-    `${channelId} policy entry`,
-  ).toBe(true);
+    Object.hasOwn(plan, "networkPolicy"),
+    "messaging.plan.networkPolicy should not persist",
+  ).toBe(false);
   const credentialBindings = arrayRecords(plan.credentialBindings);
   if (!Object.hasOwn(CHANNELS_WITHOUT_CREDENTIAL_BINDING, channelId)) {
     expect(
@@ -283,16 +278,9 @@ function expectPlanChannelRemoved(channelId: string): void {
   expect(stringArray(plan.disabledChannels), `${channelId} remained disabled`).not.toContain(
     channelId,
   );
-  const networkPolicy =
-    plan.networkPolicy && typeof plan.networkPolicy === "object"
-      ? (plan.networkPolicy as Record<string, unknown>)
-      : {};
-  expect(stringArray(networkPolicy.presets), `${channelId} policy preset remained`).not.toContain(
-    channelId,
-  );
   expect(
-    arrayRecords(networkPolicy.entries).some((entry) => entry.channelId === channelId),
-    `${channelId} policy entry remained`,
+    Object.hasOwn(plan, "networkPolicy"),
+    "messaging.plan.networkPolicy should not persist",
   ).toBe(false);
   expect(
     arrayRecords(plan.credentialBindings).some((entry) => entry.channelId === channelId),

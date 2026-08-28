@@ -181,16 +181,14 @@ function expectHostTelegramPlan(expected: "active" | "removed", context: string)
   const channel = channels.find((item) => item.channelId === "telegram");
   const disabledChannels = stringArray(plan.disabledChannels);
   const credentialBindings = planArray(plan, "credentialBindings");
-  const networkPolicy =
-    plan.networkPolicy && typeof plan.networkPolicy === "object"
-      ? (plan.networkPolicy as JsonRecord)
-      : {};
-  const networkEntries = planArray(networkPolicy, "entries");
-  const networkPresets = stringArray(networkPolicy.presets);
 
   expect(Object.hasOwn(plan, "agentRender"), "messaging.plan.agentRender should not persist").toBe(
     false,
   );
+  expect(
+    Object.hasOwn(plan, "networkPolicy"),
+    "messaging.plan.networkPolicy should not persist",
+  ).toBe(false);
   expect(
     channels.some((entry) => Object.hasOwn(entry, "hooks")),
     "messaging.plan.channels hooks should not persist",
@@ -203,14 +201,6 @@ function expectHostTelegramPlan(expected: "active" | "removed", context: string)
     ).toBeTruthy();
     expect(channel?.active, `telegram plan active expected true ${context}`).toBe(true);
     expect(channel?.disabled, `telegram plan disabled unexpectedly true ${context}`).not.toBe(true);
-    expect(
-      networkPresets,
-      `telegram missing from messaging.plan.networkPolicy.presets ${context}`,
-    ).toContain("telegram");
-    expect(
-      networkEntries.some((entry) => entry.channelId === "telegram"),
-      `telegram missing from messaging.plan.networkPolicy.entries ${context}`,
-    ).toBe(true);
     expect(
       credentialBindings.some(
         (entry) => entry.channelId === "telegram" && entry.providerEnvKey === "TELEGRAM_BOT_TOKEN",
@@ -225,14 +215,6 @@ function expectHostTelegramPlan(expected: "active" | "removed", context: string)
   expect(disabledChannels, `telegram still present in disabledChannels ${context}`).not.toContain(
     "telegram",
   );
-  expect(
-    networkPresets,
-    `telegram still present in networkPolicy.presets ${context}`,
-  ).not.toContain("telegram");
-  expect(
-    networkEntries.some((entry) => entry.channelId === "telegram"),
-    `telegram still present in networkPolicy.entries ${context}`,
-  ).toBe(false);
   expect(
     credentialBindings.some((entry) => entry.channelId === "telegram"),
     `telegram credential binding still present ${context}`,
@@ -419,7 +401,7 @@ test(
       sandboxName: SANDBOX_NAME,
       contract: [
         "onboard creates an OpenClaw sandbox with no Telegram channel",
-        "channels add telegram registers the bridge and persists messaging.plan",
+        "channels add telegram registers the bridge and persists a policy-free messaging.plan",
         "post-add rebuild reuses the gateway-stored inference credential when COMPATIBLE_API_KEY is absent",
         "post-add rebuild applies the Telegram policy preset and renders openclaw.json channel state",
         "channels remove telegram removes provider, policy, registry plan, and rendered channel state after rebuild",
