@@ -164,7 +164,7 @@ function expectTimerReplacementRejectedAfterMutation({
   expect(runSpy).toHaveBeenCalled();
   expect(transitionSpy).toHaveBeenCalled();
   expect(routeSpy).toHaveBeenCalledTimes(1);
-  expect(fs.existsSync(transitionPath)).toBe(false);
+  expect(fs.existsSync(transitionPath)).toBe(true);
 }
 
 const forwardPolicyFailureFixtures: ReadonlyArray<
@@ -251,13 +251,12 @@ describe("legacy Hermes shields compatibility", () => {
         ]),
       vi.spyOn(policy, "parseCurrentPolicy").mockImplementation((raw: unknown) => String(raw)),
       vi.spyOn(policy, "resolvePermissivePolicyPath").mockReturnValue(permissivePolicyPath),
-      ...shieldsFlow.bindManagedPolicyMutationAuthority(policy),
+      ...shieldsFlow.bindManagedPolicyMutationContext(policy),
       vi.spyOn(agentConfig, "resolveAgentConfig").mockImplementation(() => hermesTarget()),
       vi.spyOn(registry, "getSandbox").mockImplementation((name: unknown) => ({
         name: String(name),
         agent: "hermes",
         openshellDriver: "docker",
-        policyAuthority: "nemoclaw-managed",
         lifecycleGeneration: "legacy-generation",
         workload: { kind: "managed-image" },
       })),
@@ -1317,7 +1316,6 @@ describe("legacy Hermes shields compatibility", () => {
           processToken,
           sandboxName: sandbox.name,
           snapshotPath,
-          managedMcpPolicyKeys: [],
           forwardPolicy,
         }),
       );

@@ -363,7 +363,7 @@ export function buildHermesPortableCommandAuthority(
   return commandAuthority;
 }
 
-/** Requalify a pending/configuring receipt only for its schema-5 onboarding child. */
+/** Requalify a pending/configuring receipt only for its schema-7 onboarding child. */
 export function buildHermesPortableOnboardingCommandAuthority(
   sandboxName: string,
   gatewayName: string,

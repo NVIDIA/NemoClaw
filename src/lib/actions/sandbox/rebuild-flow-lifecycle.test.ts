@@ -50,7 +50,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expectNoSandboxDelete(harness.runOpenshellSpy);
   });
 
-  it("backs up once, recreates, restores, reapplies policy, and relocks on a successful OpenClaw rebuild", async ({
+  it("backs up once, recreates with the captured OpenShell policy, restores, and relocks on a successful OpenClaw rebuild", async ({
     onTestFinished,
   }) => {
     const restoreEnv = snapshotEnv(["NEMOCLAW_RECREATE_WITHOUT_BACKUP"]);
@@ -69,12 +69,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
     };
     const harness = createRebuildFlowHarness({
       applyPreset: () => true,
-      backupPolicyPresets: ["npm", "bad", "throw", "mcp-bridge-github"],
-      sandboxEntry: {
-        policies: ["npm", "mcp-bridge-github"],
-        policyPresetsFinalized: true,
-        policyTier: "balanced",
-      },
+      sandboxEntry: {},
       mcpPreparation: {
         entries: [mcpEntry],
         detachedProviderEntries: [mcpEntry],
@@ -107,7 +102,6 @@ describe("rebuildSandbox flow: lifecycle", () => {
         nonInteractive: true,
         recreateSandbox: true,
         authoritativeResumeConfig: true,
-        rebuildPolicyPresets: ["npm", "bad", "throw"],
         autoYes: true,
       }),
     );
@@ -129,7 +123,6 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.registryUpdateSpy.mock.invocationCallOrder[0]).toBeLessThan(
       harness.runOpenshellSpy.mock.invocationCallOrder[deleteCall],
     );
-    expect(harness.session.policyPresets).toEqual(["npm", "bad", "throw"]);
     expect(harness.session.steps.gateway.status).toBe("complete");
     expect(harness.session.steps.preflight.status).toBe("complete");
     expect(harness.session.steps.sandbox.status).toBe("pending");
@@ -143,15 +136,12 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
       "Preserving journaled source registry entry across sandbox recreation",
     );
-    expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "npm");
-    expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "bad");
-    expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "throw");
-    expect(harness.applyPresetSpy).not.toHaveBeenCalledWith("alpha", "mcp-bridge-github");
+    expect(harness.applyPresetSpy).not.toHaveBeenCalled();
+    expect(harness.onboardSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ rebuildPolicySourcePath: expect.any(String) }),
+    );
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
       agentVersion: "0.2.0",
-      policies: ["npm", "bad", "throw"],
-      policyTier: "balanced",
-      policyPresetsFinalized: true,
     });
     expect(harness.executeSandboxExecCommandSpy).toHaveBeenCalledWith(
       "alpha",
@@ -162,7 +152,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
     expect(process.env.NEMOCLAW_SANDBOX_NAME).toBe(originalSandboxName);
     expect(harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
-      "rebuilt successfully",
+      "rebuild completed",
     );
   });
 
@@ -183,109 +173,6 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.reattachMcpProvidersAfterRebuildAbortSpy).toHaveBeenCalledOnce();
     expect(harness.onboardSpy).not.toHaveBeenCalled();
     expectNoSandboxDelete(harness.runOpenshellSpy);
-  });
-
-  it("keeps baseline exclusions durable through successful replacement onboarding (#7194)", async () => {
-    const harness = createRebuildFlowHarness({
-      sandboxEntry: {
-        baselineExclusions: [
-          {
-            version: 1,
-            agent: "openclaw",
-            key: "openclaw_docs",
-            digest: "baseline-digest",
-            acknowledgedAt: "2026-07-19T00:00:00.000Z",
-            appliedAgentVersion: "2026.6.10",
-          },
-        ],
-      },
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes", "--verbose"], { throwOnError: true }),
-    ).resolves.toBeUndefined();
-
-    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith("alpha");
-    expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
-    expect(harness.onboardSpy).toHaveBeenCalledOnce();
-    expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
-      "Preserving journaled source registry entry across sandbox recreation",
-    );
-    expect(harness.restoreSandboxEntrySpy).not.toHaveBeenCalled();
-    expect(harness.restoreSandboxEntryIfMissingSpy).not.toHaveBeenCalled();
-  });
-
-  it("rejects a schema-invalid recorded-agent baseline before registry or live sandbox mutation (#7194)", async () => {
-    const harness = createRebuildFlowHarness({
-      agentPolicyAdditionsContent: `
-version: 1
-network_policies:
-  unsafe_entry:
-    name: unsafe_entry
-    endpoints:
-      - host: api.example.test
-        port: 443
-        access: full
-`,
-      preflightWithProductionBaselineResolver: true,
-      sandboxEntry: {
-        agent: "hermes",
-        baselineExclusions: [
-          {
-            version: 1,
-            agent: "hermes",
-            key: "nous_research",
-            digest: "baseline-digest",
-            acknowledgedAt: "2026-07-19T00:00:00.000Z",
-          },
-        ],
-      },
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes", "--verbose"], { throwOnError: true }),
-    ).rejects.toThrow("Replacement onboarding preflight failed");
-
-    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
-      "does not satisfy the shipped sandbox policy schema",
-    );
-    expect(harness.registryUpdateSpy).not.toHaveBeenCalled();
-    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-    expect(harness.prepareMcpBridgesForRebuildSpy).not.toHaveBeenCalled();
-    expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
-    expect(harness.onboardSpy).not.toHaveBeenCalled();
-    expectNoSandboxDelete(harness.runOpenshellSpy);
-  });
-
-  it("keeps baseline-exclusion retry metadata when inner replacement creation fails (#7194)", async () => {
-    const harness = createRebuildFlowHarness({
-      sandboxEntry: {
-        baselineExclusions: [
-          {
-            version: 1,
-            agent: "openclaw",
-            key: "openclaw_docs",
-            digest: "baseline-digest",
-            acknowledgedAt: "2026-07-19T00:00:00.000Z",
-            appliedAgentVersion: "2026.6.10",
-          },
-        ],
-      },
-      onboard: () => {
-        throw new Error("injected replacement create failure");
-      },
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes", "--verbose"], { throwOnError: true }),
-    ).rejects.toThrow("Recreate failed");
-
-    expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
-    expect(harness.restoreSandboxEntrySpy).not.toHaveBeenCalled();
-    expect(harness.restoreSandboxEntryIfMissingSpy).not.toHaveBeenCalled();
-    expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
-      "Preserving journaled source registry entry across sandbox recreation",
-    );
   });
 
   it("waits for post-delete sandbox absence before inner onboarding (#7194)", async () => {
@@ -451,86 +338,6 @@ network_policies:
     );
   });
 
-  it("relocks the recreated sandbox when recovery artifact cleanup fails (#9833)", async () => {
-    const recoveryArtifactPath = "/tmp/shields-external-policy-alpha.yaml";
-    const harness = createRebuildFlowHarness({
-      staleRecovery: true,
-      clearShieldsState: () => {
-        throw new Error(
-          `Could not remove external Shields policy recovery artifact '${recoveryArtifactPath}': permission denied`,
-        );
-      },
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow(
-      `Could not remove external Shields policy recovery artifact '${recoveryArtifactPath}': permission denied`,
-    );
-
-    expect(harness.onboardSpy).toHaveBeenCalledOnce();
-    expect(harness.relockSpy).toHaveBeenLastCalledWith(
-      "alpha",
-      expect.any(Object),
-      true,
-      "nemoclaw",
-    );
-  });
-
-  it("uses the no-exec MCP preparation path when recovering an absent sandbox", async () => {
-    const overrideEnvVar = "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF";
-    const restoreEnv = snapshotEnv([overrideEnvVar]);
-    const disposeImageRef = vi.fn(() => true);
-    process.env[overrideEnvVar] = "nemoclaw-hermes-sandbox-base-local:image-caller";
-    const mcpEntry = {
-      server: "github",
-      agent: "openclaw",
-      adapter: "mcporter",
-      url: "https://mcp.example.test/mcp",
-      env: ["GITHUB_TOKEN"],
-      providerName: "alpha-mcp-github",
-      policyName: "mcp-bridge-github",
-      addedAt: "2026-06-01T00:00:00.000Z",
-    };
-    try {
-      const harness = createRebuildFlowHarness({
-        staleRecovery: true,
-        sandboxEntry: { mcp: { bridges: { github: mcpEntry } } },
-        baseImagePreflight: {
-          ok: true,
-          imageRef: "nemoclaw-hermes-sandbox-base-local:image-preflighted",
-          overrideEnvVar,
-          disposeImageRef,
-        },
-        mcpPreparation: {
-          entries: [mcpEntry],
-          detachedProviderEntries: [],
-          scrubbedAdapterEntries: [],
-        },
-        onboard: () => {
-          expect(process.env[overrideEnvVar]).toBe(
-            "nemoclaw-hermes-sandbox-base-local:image-preflighted",
-          );
-        },
-      });
-
-      await expect(
-        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-      ).resolves.toBeUndefined();
-
-      expect(process.env[overrideEnvVar]).toBe("nemoclaw-hermes-sandbox-base-local:image-caller");
-      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-      expect(harness.prepareMcpBridgesForAbsentSandboxRebuildSpy).toHaveBeenCalledWith("alpha");
-      expect(harness.prepareMcpBridgesForRebuildSpy).not.toHaveBeenCalled();
-      expect(harness.warnUnpreservedUserManagedFilesSpy).not.toHaveBeenCalled();
-      expect(harness.reattachMcpProvidersAfterRebuildAbortSpy).not.toHaveBeenCalled();
-      expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
-      expect(disposeImageRef).toHaveBeenCalledOnce();
-    } finally {
-      restoreEnv();
-    }
-  });
-
   it("disposes the base-image handoff when live-state preflight fails (#7144)", async () => {
     const disposeImageRef = vi.fn(() => true);
     const harness = createRebuildFlowHarness({
@@ -615,76 +422,5 @@ network_policies:
     } finally {
       restoreEnv();
     }
-  });
-
-  it("restores enabled messaging presets while pruning disabled ones from final policies", async () => {
-    const disabledSlackPlan = {
-      schemaVersion: 1,
-      sandboxName: "alpha",
-      agent: "openclaw",
-      workflow: "rebuild",
-      channels: [
-        { channelId: "telegram", disabled: false },
-        { channelId: "discord", disabled: false },
-        { channelId: "whatsapp", disabled: false },
-        { channelId: "wechat", disabled: false },
-        { channelId: "slack", disabled: true },
-      ],
-      disabledChannels: ["slack"],
-      credentialBindings: [],
-      networkPolicy: { presets: [], entries: [] },
-      agentRender: [],
-      buildSteps: [],
-      stateUpdates: [],
-      healthChecks: [],
-    };
-    const harness = createRebuildFlowHarness({
-      applyPreset: () => true,
-      backupPolicyPresets: ["slack", "npm", "pypi", "telegram"],
-      buildMessagingRebuildPlan: () => disabledSlackPlan,
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).resolves.toBeUndefined();
-
-    expect(harness.applyPresetSpy.mock.calls.map((call) => call[1])).toEqual([
-      "npm",
-      "pypi",
-      "telegram",
-      "discord",
-      "whatsapp",
-      "wechat",
-    ]);
-    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
-      agentVersion: "0.2.0",
-      policies: ["npm", "pypi", "telegram", "discord", "whatsapp", "wechat"],
-      policyTier: null,
-      policyPresetsFinalized: undefined,
-    });
-  });
-
-  it("preserves a finalized empty policy selection and its tier", async () => {
-    const harness = createRebuildFlowHarness({
-      applyPreset: () => true,
-      backupPolicyPresets: [],
-      sandboxEntry: {
-        policies: [],
-        policyPresetsFinalized: true,
-        policyTier: "restricted",
-      },
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).resolves.toBeUndefined();
-
-    expect(harness.session.policyPresets).toEqual([]);
-    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
-      agentVersion: "0.2.0",
-      policies: [],
-      policyTier: "restricted",
-      policyPresetsFinalized: true,
-    });
   });
 });

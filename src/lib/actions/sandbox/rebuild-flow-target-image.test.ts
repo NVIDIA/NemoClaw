@@ -413,7 +413,6 @@ describe("rebuildSandbox flow: target image", () => {
         fromDockerfile: "/tmp/unrelated.Dockerfile",
       };
       harness.session.webSearchConfig = { fetchEnabled: true };
-      harness.session.policyPresets = ["foreign-preset"];
       harness.session.gpuPassthrough = true;
 
       await expect(
@@ -431,7 +430,7 @@ describe("rebuildSandbox flow: target image", () => {
       expect(harness.session.endpointUrl).not.toBe(staleEndpoint);
       expect(harness.session.metadata).toMatchObject({ fromDockerfile: null });
       expect(harness.session.webSearchConfig).toBeNull();
-      expect(harness.session.policyPresets).toEqual(["npm", "bad", "throw"]);
+      expect(harness.session).not.toHaveProperty("policyPresets");
       expect(harness.session.gpuPassthrough).toBe(false);
       expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
         ["sandbox", "delete", "-g", "nemoclaw", "alpha"],

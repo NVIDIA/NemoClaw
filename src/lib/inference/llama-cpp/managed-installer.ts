@@ -8,9 +8,9 @@ import path from "node:path";
 
 import type { ContainerEngine } from "../../adapters/container-engine";
 import {
-  isPolicyAuthorityRefusalError,
-  PolicyAuthorityRefusalError,
-} from "../../adapters/openshell/policy-authority";
+  isPolicyObservationError,
+  PolicyObservationError,
+} from "../../adapters/openshell/policy-state";
 import { checkPortAvailable } from "../../onboard/preflight";
 import type { RuntimeProviderBundle } from "../../onboard/runtime-provider/contract";
 import { createHostLocalCreateJournalStore } from "../../onboard/runtime-provider/host-local-create-journal";
@@ -725,9 +725,9 @@ export async function installManagedLlamaCpp(
       ownerCreated,
       paths,
     });
-    if (isPolicyAuthorityRefusalError(error)) {
+    if (isPolicyObservationError(error)) {
       if (rollbackError === null) throw error;
-      throw new PolicyAuthorityRefusalError(
+      throw new PolicyObservationError(
         `${reason} Fresh ownership rollback also failed: ${rollbackError}`,
       );
     }

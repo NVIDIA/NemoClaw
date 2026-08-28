@@ -28,6 +28,7 @@ import {
   onboardSession,
   openshellRuntime,
   policies,
+  policyGet,
   processRecovery,
   purgeRebuildModule,
   type RebuildFlowHarness,
@@ -63,6 +64,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  vi.spyOn(policyGet, "getSandboxPolicy").mockReturnValue({
+    yaml: "version: 1\nnetwork_policies:\n  host_preserved: {}\n",
+  });
 
   const session = createRebuildFlowSession(onboardSession.MACHINE_SNAPSHOT_VERSION);
   const rebuildShieldsWindow = { relocked: false, wasLocked: false };
@@ -426,7 +430,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
           dir: "/sandbox/.openclaw",
           backupPath: "/tmp/nemoclaw-rebuild-backup",
           timestamp: "2026-06-01T00:00:00.000Z",
-          policyPresets: overrides.backupPolicyPresets ?? ["npm", "bad", "throw"],
           ...(overrides.backupPreservedEnv
             ? { preservedEnv: structuredClone(overrides.backupPreservedEnv) }
             : {}),

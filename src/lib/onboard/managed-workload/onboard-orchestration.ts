@@ -358,7 +358,7 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
   };
   readonly plan: {
     readonly intent: SandboxCreateIntent;
-    readonly policyAuthority: MaterializeSandboxCreatePlanInput["policyAuthority"];
+    readonly policylessCreate?: boolean;
     readonly deferSandboxEffectsUntilPolicyVerification?: boolean;
     readonly rebindMessagingTokenDefs: () => Promise<readonly MessagingTokenDef[]>;
     readonly runProviderPreDeleteCleanup: MaterializeSandboxCreatePlanInput["runProviderPreDeleteCleanup"];
@@ -389,7 +389,6 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
 export interface PreparedOnboardSandboxWorkloadLaunch {
   readonly initialSandboxPolicy: InitialSandboxPolicy;
   readonly policyTier: string | null;
-  readonly policyAuthority: MaterializeSandboxCreatePlanInput["policyAuthority"];
   readonly messagingProviders: string[];
   readonly gpuRoutePlan: SandboxCreateIntent["gpuRoutePlan"];
   readonly compatibilityPolicyPath: string | null;
@@ -434,7 +433,7 @@ export async function prepareOnboardSandboxWorkloadLaunch(
   const createPlan = input.dependencies.materializeSandboxCreatePlan({
     intent: input.plan.intent,
     fromRef,
-    policyAuthority: input.plan.policyAuthority,
+    policylessCreate: input.plan.policylessCreate,
     deferSandboxEffectsUntilPolicyVerification:
       input.plan.deferSandboxEffectsUntilPolicyVerification,
     messagingTokenDefs: [...messagingTokenDefs],
@@ -522,7 +521,6 @@ export async function prepareOnboardSandboxWorkloadLaunch(
   return {
     initialSandboxPolicy: createPlan.initialSandboxPolicy,
     policyTier: createPlan.policyTier,
-    policyAuthority: createPlan.policyAuthority,
     messagingProviders: createPlan.messagingProviders,
     gpuRoutePlan: createPlan.gpuRoutePlan,
     compatibilityPolicyPath: createPlan.compatibilityPolicyPath,
@@ -540,14 +538,12 @@ export async function prepareOnboardSandboxWorkloadLaunch(
 export function prepareHermesPortableOnboardSandboxLaunch(input: {
   readonly intent: SandboxCreateIntent;
   readonly fromRef: string;
-  readonly policyAuthority: MaterializeSandboxCreatePlanInput["policyAuthority"];
   readonly launchInput: Omit<SandboxCreateLaunchInput, "createArgs">;
   readonly gpuConfig: SandboxGpuConfig;
 }): PreparedOnboardSandboxWorkloadLaunch {
   const createPlan = materializeHermesPortableCreatePlan({
     intent: input.intent,
     fromRef: input.fromRef,
-    policyAuthority: input.policyAuthority,
   });
   const launch = prepareSandboxCreateLaunch({
     ...input.launchInput,

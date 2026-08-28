@@ -91,7 +91,6 @@ describe("rebuild post-restore phase", () => {
     vi.spyOn(registry, "getSandbox").mockImplementation(
       () => ({ agent: agentName === "openclaw" ? null : agentName }) as never,
     );
-    vi.spyOn(registry, "getBaselineExclusions").mockReturnValue([]);
     vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
     vi.spyOn(messagingHostForward, "ensureMessagingHostForwardAfterRebuild").mockImplementation(
       () => {
@@ -198,17 +197,11 @@ describe("rebuild post-restore phase", () => {
 
     await runRebuildPostRestorePhase(args);
 
-    expect(
-      sessionModels.reconcileStalePinnedSessionModelsAfterRebuild,
-    ).not.toHaveBeenCalled();
+    expect(sessionModels.reconcileStalePinnedSessionModelsAfterRebuild).not.toHaveBeenCalled();
     expect(rebuildMessaging.reapplyMessagingManifestAfterOpenClawDoctor).not.toHaveBeenCalled();
     expect(shields.repairMutableConfigPerms).not.toHaveBeenCalled();
-    expect(
-      rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore,
-    ).not.toHaveBeenCalled();
-    expect(
-      rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestore,
-    ).not.toHaveBeenCalled();
+    expect(rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore).not.toHaveBeenCalled();
+    expect(rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestore).not.toHaveBeenCalled();
     expect(rebuildMcp.restoreMcpAfterRebuild).not.toHaveBeenCalled();
     expect(
       rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
@@ -552,29 +545,6 @@ describe("rebuild post-restore phase", () => {
     );
   });
 
-  it("discloses carried-over baseline exclusions in the successful rebuild summary (#7194)", async () => {
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    vi.spyOn(registry, "getBaselineExclusions").mockReturnValue([
-      {
-        version: 1,
-        agent: "hermes",
-        key: "nous_research",
-        digest: "digest-1",
-        acknowledgedAt: "2026-07-19T00:00:00.000Z",
-      },
-    ]);
-
-    await runRebuildPostRestorePhase(input());
-
-    expect(
-      logSpy.mock.calls.some(
-        (call) =>
-          typeof call[0] === "string" &&
-          call[0].includes("Baseline exclusions carried over: nous_research"),
-      ),
-    ).toBe(true);
-  });
-
   it("points Hermes rebuilds to the replacement API token retrieval command (#7175)", async () => {
     agentName = "hermes";
 
@@ -763,8 +733,6 @@ describe("rebuild post-restore phase", () => {
       "Mutable OpenClaw config hash was not refreshed",
       "Messaging webhook forward was not verified",
       "MCP bridge definitions were preserved but not fully refreshed",
-      "Policy presets failed to reapply: messaging-telegram",
-      "Exact live policy reconciliation was incomplete; remove failed: messaging-discord",
       "Shields were previously enabled",
     ];
     const offsets = ordered.map((fragment) => output.indexOf(fragment));

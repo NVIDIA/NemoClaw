@@ -143,6 +143,11 @@ function hasMatchingAgentRenderEntries(value: unknown, agent: string): boolean {
   );
 }
 
+function hasCanonicalNetworkPolicyReferences(value: unknown): boolean {
+  if (!isObjectRecord(value) || !Object.hasOwn(value, "entries")) return true;
+  return hasCanonicalChannelReferences(value.entries);
+}
+
 export function cloneSandboxMessagingPlan(plan: SandboxMessagingPlan): SandboxMessagingPlan {
   return JSON.parse(JSON.stringify(plan)) as SandboxMessagingPlan;
 }
@@ -266,11 +271,6 @@ function hasCanonicalChannelReferences(value: unknown): boolean {
         (entry) => isObjectRecord(entry) && isCanonicalMessagingChannelId(entry.channelId),
       ))
   );
-}
-
-function hasCanonicalNetworkPolicyReferences(value: unknown): boolean {
-  if (!isObjectRecord(value) || !Object.hasOwn(value, "entries")) return true;
-  return hasCanonicalChannelReferences(value.entries);
 }
 
 function hasCanonicalRuntimeSetupReferences(value: unknown): boolean {

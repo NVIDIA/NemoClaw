@@ -56,13 +56,13 @@ describe("ensureAgentFixedForward", () => {
     });
   });
 
-  it("rechecks policy authority before each fixed-forward start (#9833)", () => {
+  it("rechecks policy requirements before each fixed-forward start (#9833)", () => {
     const deps = makeDeps(() => "");
-    const revalidatePolicyAuthority = vi
+    const revalidatePolicyRequirements = vi
       .fn<(operation: string) => void>()
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => {
-        throw new Error("policy authority changed");
+        throw new Error("policy requirements changed");
       });
     vi.mocked(runDetachedForwardStartWithRetries).mockImplementationOnce((runSpawn) => {
       runSpawn({ stdout: 1, stderr: 2 });
@@ -75,14 +75,14 @@ describe("ensureAgentFixedForward", () => {
         "my-sandbox",
         18789,
         "messaging webhook",
-        revalidatePolicyAuthority,
+        revalidatePolicyRequirements,
       ),
-    ).toThrow("policy authority changed");
+    ).toThrow("policy requirements changed");
 
     expect(deps.runOpenshell).toHaveBeenCalledWith(
       ["forward", "stop", "18789", "my-sandbox"],
       expect.anything(),
     );
-    expect(revalidatePolicyAuthority).toHaveBeenCalledTimes(2);
+    expect(revalidatePolicyRequirements).toHaveBeenCalledTimes(2);
   });
 });

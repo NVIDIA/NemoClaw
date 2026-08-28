@@ -170,7 +170,7 @@ describe("inference selection validation", () => {
     }
   });
 
-  it("withholds OpenAI-like availability and capability caching when policy authority changes during the probe (#9833)", async () => {
+  it("withholds OpenAI-like availability and capability caching when policy requirements changes during the probe (#9833)", async () => {
     const capabilityCache = new OnboardInferenceCapabilityCache();
     const helpers = createInferenceSelectionValidationHelpers({
       isNonInteractive: () => false,
@@ -197,11 +197,11 @@ describe("inference selection validation", () => {
           {
             capabilityCache,
             revalidatePolicyRequirements: () => {
-              throw new Error("policy authority changed");
+              throw new Error("policy requirements changed");
             },
           },
         ),
-      ).rejects.toThrow("policy authority changed");
+      ).rejects.toThrow("policy requirements changed");
       expect(log.mock.calls.flat().join("\n")).not.toContain("available");
       expect(
         capabilityCache.takeCompletedOpenAiChat({
@@ -214,7 +214,7 @@ describe("inference selection validation", () => {
     }
   });
 
-  it("withholds Anthropic availability when policy authority changes during the probe (#9833)", async () => {
+  it("withholds Anthropic availability when policy requirements changes during the probe (#9833)", async () => {
     const helpers = createInferenceSelectionValidationHelpers({
       isNonInteractive: () => false,
       agentProductName: () => "OpenClaw",
@@ -238,10 +238,10 @@ describe("inference selection validation", () => {
           undefined,
           undefined,
           () => {
-            throw new Error("policy authority changed");
+            throw new Error("policy requirements changed");
           },
         ),
-      ).rejects.toThrow("policy authority changed");
+      ).rejects.toThrow("policy requirements changed");
       expect(log.mock.calls.flat().join("\n")).not.toContain("available");
     } finally {
       log.mockRestore();

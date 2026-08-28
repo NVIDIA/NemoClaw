@@ -67,6 +67,7 @@ const recreateOptions: RebuildRecreateOnboardOpts = {
   nonInteractive: true,
   recreateSandbox: true,
   authoritativeResumeConfig: true,
+  rebuildPolicySourcePath: "/tmp/current-policy.yaml",
   acceptThirdPartySoftware: true,
   agent: DCODE_AGENT,
   recreateProvider: "nvidia",
@@ -85,7 +86,6 @@ const recreateOptions: RebuildRecreateOnboardOpts = {
   dcodeAutoApprovalRequestedExplicitly: false,
   observabilityEnabled: true,
   observabilityRequestedExplicitly: true,
-  policyTier: "restricted",
   baseImageResolutionHint: null,
   rebuildGatewayAuthority: STANDALONE_GATEWAY_AUTHORITY,
 };
@@ -125,7 +125,6 @@ function makeInput(overrides: Partial<RebuildRecreatePhaseInput> = {}): RebuildR
       name: "alpha",
       agent: DCODE_AGENT,
       observabilityEnabled: true,
-      policyTier: "restricted",
     },
     sessionSnapshot: onboardSession.createSession({
       sandboxName: "alpha",
@@ -153,7 +152,7 @@ function makeInput(overrides: Partial<RebuildRecreatePhaseInput> = {}): RebuildR
     rebuildsHermesSandbox: false,
     hermesToolGateways: [],
     hasHermesToolGateways: false,
-    sessionPolicyPresets: ["observability-otlp-local"],
+    policySourcePath: "/tmp/current-policy.yaml",
     credentialEnv: "NVIDIA_API_KEY",
     baseImagePreflight: { ok: true, imageRef: null, overrideEnvVar: null },
     recoveryRecreate: false,
@@ -338,24 +337,6 @@ describe("runRebuildRecreatePhase handoff", () => {
     expect(onboardSpy).not.toHaveBeenCalled();
   });
 
-  it("pins the authoritative restricted tier during recreate and restores ambient policy input", async () => {
-    const previousPolicyTier = process.env.NEMOCLAW_POLICY_TIER;
-    process.env.NEMOCLAW_POLICY_TIER = "open";
-    try {
-      let observedTier: string | undefined;
-      vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async () => {
-        observedTier = process.env.NEMOCLAW_POLICY_TIER;
-      });
-
-      await expect(runRebuildRecreatePhase(makeInput())).resolves.toBe(true);
-
-      expect(observedTier).toBe("restricted");
-      expect(process.env.NEMOCLAW_POLICY_TIER).toBe("open");
-    } finally {
-      restoreEnv("NEMOCLAW_POLICY_TIER", previousPolicyTier);
-    }
-  });
-
   it("does not take a second backup during the inner recreate", async () => {
     const previousRecreateWithoutBackup = process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
     delete process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
@@ -400,7 +381,6 @@ describe("runRebuildRecreatePhase handoff", () => {
             name: "alpha",
             agent: "hermes",
             observabilityEnabled: true,
-            policyTier: "restricted",
           },
           rebuildAgent: "hermes",
           rebuildsHermesSandbox: true,

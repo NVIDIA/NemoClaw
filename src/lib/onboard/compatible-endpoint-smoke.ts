@@ -129,7 +129,7 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
   /** Force the provider-neutral inference.local proof for any supported agent. */
   forceCanonicalRoute?: boolean;
   hostLocalInferenceProofAuthority?: HostLocalInferenceSandboxProofAuthority;
-  /** Recheck policy authority after the sandbox proof and before success output. */
+  /** Recheck policy state after the sandbox proof and before success output. */
   beforeSuccess?: () => void;
 }): void {
   if (

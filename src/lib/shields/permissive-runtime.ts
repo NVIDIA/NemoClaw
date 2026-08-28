@@ -7,20 +7,6 @@ import YAML from "yaml";
 
 import { diagnosticPreview } from "../sandbox-name-contract";
 
-export {
-  type ExactManagedMcpPolicy,
-  hasManagedMcpPolicyClaims,
-  inspectExactManagedMcpPolicies,
-  inspectProvableManagedMcpPoliciesForDeadline,
-  inspectRecordedManagedMcpPolicies,
-  type ManagedMcpPolicyOmission,
-} from "../actions/sandbox/mcp-bridge-policy";
-
-import type {
-  ExactManagedMcpPolicy,
-  ManagedMcpPolicyOmission,
-} from "../actions/sandbox/mcp-bridge-policy";
-
 function canonicalPolicyValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalPolicyValue);
   if (!value || typeof value !== "object") return value;
@@ -52,12 +38,7 @@ export function describeCanonicalPolicyReference(policy: Record<string, unknown>
 import { materializeMessagingPolicySandboxName } from "../messaging/channels/policy";
 import { cleanupTempDir, secureTempFile } from "../onboard/temp-files";
 
-export { assertLegacyMcpPolicyRestoreSafe, isManagedMcpPolicyKey } from "./mcp-policy-transition";
-
-import {
-  composeDeadlineManagedMcpPolicies,
-  composeManagedMcpPolicies,
-} from "./mcp-policy-transition";
+import { composeLiveMcpPolicies } from "./mcp-policy-transition";
 
 const TEMP_FILE_PREFIX = "nemoclaw-permissive-runtime";
 
@@ -118,10 +99,6 @@ export interface PermissiveRuntimeDeps {
   // secureTempFile when omitted. Exposed so tests can drive the
   // write-failure fallback path without monkey-patching node:fs.
   writeTempPolicy?: (yaml: string) => string;
-  // Exact, live-matching generated MCP policies resolved by the Shields
-  // coordinator. These entries remain active while the static policy replaces
-  // the rest of the complete gateway policy.
-  managedMcpPolicies?: readonly ExactManagedMcpPolicy[];
   // Hermes permissive messaging routes carry sandbox-scoped credential
   // bindings. Supplying the target name makes composition fail closed unless
   // every retained placeholder can be materialized before the policy is staged.
@@ -135,7 +112,15 @@ export function buildRuntimePermissivePolicy(
   const live = deps.livePolicyYaml ? safeYamlObject(deps.livePolicyYaml) : null;
   const liveRw = readStringList(live, "read_write");
   const liveRo = readStringList(live, "read_only");
-  const managedMcpPolicies = deps.managedMcpPolicies ?? [];
+  const liveNetworkPolicies =
+    live?.network_policies &&
+    typeof live.network_policies === "object" &&
+    !Array.isArray(live.network_policies)
+      ? (live.network_policies as Record<string, unknown>)
+      : {};
+  const hasLiveMcpPolicies = Object.keys(liveNetworkPolicies).some((key) =>
+    key.startsWith("mcp_bridge_"),
+  );
   const discordProviderName = deps.sandboxName ? `${deps.sandboxName}-discord-bridge` : null;
   const slackProviderNames = deps.sandboxName
     ? [`${deps.sandboxName}-slack-app`, `${deps.sandboxName}-slack-bridge`]
@@ -148,13 +133,13 @@ export function buildRuntimePermissivePolicy(
   const preserveCredentialBinding = preserveDiscordBinding || preserveSlackBinding;
 
   // No live startup-sealed or filesystem state to carry forward — keep the
-  // static path so the caller's apply path is unchanged unless exact managed
-  // MCP entries must survive the complete-policy replacement.
+  // static path so the caller's apply path is unchanged unless live MCP
+  // entries must survive the complete-policy replacement.
   if (
     liveRw.length === 0 &&
     liveRo.length === 0 &&
     live?.landlock === undefined &&
-    managedMcpPolicies.length === 0 &&
+    !hasLiveMcpPolicies &&
     deps.sandboxName === undefined
   ) {
     return basePermissivePath;
@@ -164,8 +149,8 @@ export function buildRuntimePermissivePolicy(
   try {
     baseYaml = deps.readBasePolicy();
   } catch (error) {
-    if (managedMcpPolicies.length > 0) {
-      throw new Error("Cannot read the Shields-down policy while managed MCP policies are active", {
+    if (hasLiveMcpPolicies) {
+      throw new Error("Cannot read the Shields-down policy while live MCP policies are active", {
         cause: error,
       });
     }
@@ -178,8 +163,8 @@ export function buildRuntimePermissivePolicy(
   }
   let base = safeYamlObject(baseYaml);
   if (!base) {
-    if (managedMcpPolicies.length > 0) {
-      throw new Error("Cannot parse the Shields-down policy while managed MCP policies are active");
+    if (hasLiveMcpPolicies) {
+      throw new Error("Cannot parse the Shields-down policy while live MCP policies are active");
     }
     if (deps.sandboxName !== undefined) {
       throw new Error("Cannot parse the Shields-down policy with credential provider bindings");
@@ -240,16 +225,17 @@ export function buildRuntimePermissivePolicy(
     base.landlock = live.landlock;
   }
 
-  const yaml = composeManagedMcpPolicies(YAML.stringify(base), managedMcpPolicies);
+  const yaml = live
+    ? composeLiveMcpPolicies(YAML.stringify(base), deps.livePolicyYaml)
+    : YAML.stringify(base);
   if (deps.writeTempPolicy) {
     try {
       return deps.writeTempPolicy(yaml);
     } catch (error) {
-      if (managedMcpPolicies.length > 0) {
-        throw new Error(
-          "Cannot stage the Shields-down policy while managed MCP policies are active",
-          { cause: error },
-        );
+      if (hasLiveMcpPolicies) {
+        throw new Error("Cannot stage the Shields-down policy while live MCP policies are active", {
+          cause: error,
+        });
       }
       if (deps.sandboxName !== undefined) {
         throw new Error("Cannot stage the Shields-down credential provider binding", {
@@ -269,11 +255,10 @@ export function buildRuntimePermissivePolicy(
     // writeFileSync failed. Clean it up so we do not leak a 0700 dir
     // on /tmp every time the write path errors.
     if (tmpPath) cleanupTempDir(tmpPath, TEMP_FILE_PREFIX);
-    if (managedMcpPolicies.length > 0) {
-      throw new Error(
-        "Cannot stage the Shields-down policy while managed MCP policies are active",
-        { cause: error },
-      );
+    if (hasLiveMcpPolicies) {
+      throw new Error("Cannot stage the Shields-down policy while live MCP policies are active", {
+        cause: error,
+      });
     }
     if (deps.sandboxName !== undefined) {
       throw new Error("Cannot stage the Shields-down credential provider binding", {
@@ -284,44 +269,34 @@ export function buildRuntimePermissivePolicy(
   }
 }
 
-export interface ManagedMcpRuntimePolicyDeps {
-  managedMcpPolicies: readonly ExactManagedMcpPolicy[];
+export interface LiveMcpRuntimePolicyDeps {
+  livePolicyYaml: string;
   readBasePolicy: () => string;
-  snapshotManagedPolicyKeys?: readonly string[];
   writeTempPolicy?: (yaml: string) => string;
 }
 
 /**
- * Reconcile current generated MCP policies into a custom Shields-down policy
- * or a saved restrictive snapshot. Unlike the legacy filesystem-only fallback,
- * this path must fail closed: returning the unmodified base could silently
- * discard a managed entry or restore one that was removed during the
- * shields-down window.
+ * Preserve current live MCP policy entries in a custom Shields-down policy.
+ * OpenShell's live document is the only source used for their keys and content.
  */
-export function buildRuntimeManagedMcpPolicy(
+export function buildRuntimePolicyWithLiveMcpEntries(
   _basePolicyPath: string,
-  deps: ManagedMcpRuntimePolicyDeps,
+  deps: LiveMcpRuntimePolicyDeps,
 ): string {
-  const snapshotManagedPolicyKeys = deps.snapshotManagedPolicyKeys ?? [];
-
   let baseYaml: string;
   try {
     baseYaml = deps.readBasePolicy();
   } catch (error) {
-    throw new Error("Cannot read the Shields policy for managed MCP reconciliation", {
+    throw new Error("Cannot read the Shields policy while preserving live MCP entries", {
       cause: error,
     });
   }
-  const yaml = composeManagedMcpPolicies(
-    baseYaml,
-    deps.managedMcpPolicies,
-    snapshotManagedPolicyKeys,
-  );
+  const yaml = composeLiveMcpPolicies(baseYaml, deps.livePolicyYaml);
   if (deps.writeTempPolicy) {
     try {
       return deps.writeTempPolicy(yaml);
     } catch (error) {
-      throw new Error("Cannot stage the Shields policy for managed MCP reconciliation", {
+      throw new Error("Cannot stage the Shields policy with live MCP entries", {
         cause: error,
       });
     }
@@ -334,52 +309,7 @@ export function buildRuntimeManagedMcpPolicy(
     return tmpPath;
   } catch (error) {
     if (tmpPath) cleanupTempDir(tmpPath, TEMP_FILE_PREFIX);
-    throw new Error("Cannot stage the Shields policy for managed MCP reconciliation", {
-      cause: error,
-    });
-  }
-}
-
-export interface DeadlineManagedMcpRuntimePolicy {
-  path: string;
-  omissions: ManagedMcpPolicyOmission[];
-}
-
-export function buildDeadlineRuntimeManagedMcpPolicy(
-  basePolicyPath: string,
-  deps: ManagedMcpRuntimePolicyDeps,
-): DeadlineManagedMcpRuntimePolicy {
-  const baseYaml = deps.readBasePolicy();
-  const snapshotManagedPolicyKeys = deps.snapshotManagedPolicyKeys ?? [];
-  const composition = composeDeadlineManagedMcpPolicies(
-    baseYaml,
-    deps.managedMcpPolicies,
-    snapshotManagedPolicyKeys,
-  );
-  // With no saved or current managed MCP entries, composition records every
-  // reserved snapshot key as an omission. No omissions means the snapshot is
-  // valid without modification, so restoration does not need temporary storage.
-  if (
-    deps.managedMcpPolicies.length === 0 &&
-    snapshotManagedPolicyKeys.length === 0 &&
-    composition.omissions.length === 0
-  ) {
-    return { path: basePolicyPath, omissions: composition.omissions };
-  }
-  let runtimePath: string | null = null;
-  try {
-    runtimePath = deps.writeTempPolicy
-      ? deps.writeTempPolicy(composition.yaml)
-      : secureTempFile(TEMP_FILE_PREFIX, ".yaml");
-    if (!deps.writeTempPolicy) {
-      fs.writeFileSync(runtimePath, composition.yaml, { mode: 0o600 });
-    }
-    return { path: runtimePath, omissions: composition.omissions };
-  } catch (error) {
-    if (runtimePath && !deps.writeTempPolicy) {
-      cleanupTempDir(runtimePath, TEMP_FILE_PREFIX);
-    }
-    throw new Error("Cannot stage the deadline Shields policy for managed MCP reconciliation", {
+    throw new Error("Cannot stage the Shields policy with live MCP entries", {
       cause: error,
     });
   }

@@ -43,7 +43,7 @@ describe("OpenShell policy read boundaries", () => {
     vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", fakeOpenshell);
     try {
       expect(policies.getGatewayPresets("my-assistant")).toEqual([]);
-      expect(fs.readFileSync(argsFile, "utf-8").trim()).toBe("policy get --full my-assistant");
+      expect(fs.readFileSync(argsFile, "utf-8").trim()).toBe("policy get --base my-assistant");
     } finally {
       vi.unstubAllEnvs();
       fs.rmSync(tmpDir, { recursive: true, force: true });

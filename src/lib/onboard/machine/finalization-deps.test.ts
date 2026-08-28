@@ -144,7 +144,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
     const scope = ordinaryPairingDeps({
       observePairing: vi.fn(() => {
         revalidatePolicyRequirements = () => {
-          throw new Error("policy authority changed");
+          throw new Error("policy requirements changed");
         };
         return PAIRING_ONLY;
       }),
@@ -152,7 +152,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
     });
 
     await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).rejects.toThrow(
-      "policy authority changed",
+      "policy requirements changed",
     );
 
     expect(scope.deps.runWarmup).not.toHaveBeenCalled();
@@ -163,7 +163,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
     const scope = ordinaryPairingDeps({
       observePairing: vi.fn(() => {
         revalidatePolicyRequirements = () => {
-          throw new Error("policy authority changed");
+          throw new Error("policy requirements changed");
         };
         return SETTLED;
       }),
@@ -171,7 +171,7 @@ describe("ordinary OpenClaw pairing settlement", () => {
     });
 
     await expect(settleOrdinaryOpenClawPairing("alpha", scope.deps)).rejects.toThrow(
-      "policy authority changed",
+      "policy requirements changed",
     );
 
     expect(scope.deps.runWarmup).not.toHaveBeenCalled();

@@ -7,29 +7,23 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  managedPolicyInspection,
+  livePolicyInspection,
   managedSandboxEntry,
   SANDBOX_IDENTITY,
-} from "../../helpers/managed-policy-receipt-fixture";
+} from "../../helpers/live-policy-fixture";
 
-const {
-  getSandbox,
-  inspectOpenShellSandboxIdentityFingerprint,
-  inspectSandboxPolicyAuthority,
-  runCapture,
-} = vi.hoisted(() => ({
-  getSandbox: vi.fn(),
-  inspectOpenShellSandboxIdentityFingerprint: vi.fn(),
-  inspectSandboxPolicyAuthority: vi.fn(),
-  runCapture: vi.fn(),
-}));
+const { getSandbox, inspectOpenShellSandboxIdentityFingerprint, inspectSandboxPolicy, runCapture } =
+  vi.hoisted(() => ({
+    getSandbox: vi.fn(),
+    inspectOpenShellSandboxIdentityFingerprint: vi.fn(),
+    inspectSandboxPolicy: vi.fn(),
+    runCapture: vi.fn(),
+  }));
 
-vi.mock("../../../src/lib/adapters/openshell/policy-authority", async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import("../../../src/lib/adapters/openshell/policy-authority")
-  >()),
+vi.mock("../../../src/lib/adapters/openshell/policy-state", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/lib/adapters/openshell/policy-state")>()),
   inspectOpenShellSandboxIdentityFingerprint,
-  inspectSandboxPolicyAuthority,
+  inspectSandboxPolicy,
 }));
 
 vi.mock("../../../src/lib/runner", async (importOriginal) => ({
@@ -59,8 +53,8 @@ network_policies:
 beforeEach(() => {
   getSandbox.mockReset();
   getSandbox.mockImplementation((name: string) => managedSandboxEntry(name));
-  inspectSandboxPolicyAuthority.mockReset();
-  inspectSandboxPolicyAuthority.mockReturnValue(managedPolicyInspection());
+  inspectSandboxPolicy.mockReset();
+  inspectSandboxPolicy.mockReturnValue(livePolicyInspection());
   inspectOpenShellSandboxIdentityFingerprint.mockReset();
   inspectOpenShellSandboxIdentityFingerprint.mockReturnValue(SANDBOX_IDENTITY);
   runCapture.mockReset();

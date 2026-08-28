@@ -6,15 +6,10 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
-import {
-  parseNemoClawPolicyCreationReceipt,
-  type NemoClawPolicyCreationReceipt,
-} from "../../policy/merge";
-
-export { parseNemoClawPolicyCreationReceipt } from "../../policy/merge";
 
 const SCHEMA_VERSION = 1;
 const FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/u;
+const CREATE_ATTEMPT_NONCE_PATTERN = /^[0-9a-f]{62}$/u;
 const SAFE_EVIDENCE_PATTERN = /^[A-Za-z0-9._:@/-]{1,256}$/u;
 const NAME_MAX_LENGTH = 63;
 const NAME_VALID_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u;
@@ -33,11 +28,6 @@ export interface RetainedSandboxResourceEvidence {
   readonly credentialEnvironmentVariables: readonly string[];
 }
 
-export interface RetainedSandboxVerifiedEffectivePolicyIdentity {
-  readonly hash: string;
-  readonly activeVersion: number;
-}
-
 export interface RetainedSandboxRecoveryRecord {
   readonly schemaVersion: typeof SCHEMA_VERSION;
   readonly recordId: string;
@@ -47,9 +37,7 @@ export interface RetainedSandboxRecoveryRecord {
   readonly gatewayName: string;
   readonly gatewayPort: number;
   readonly lifecycleGeneration: string | null;
-  readonly verifiedEffectivePolicyIdentity: RetainedSandboxVerifiedEffectivePolicyIdentity | null;
   readonly createAttemptNonce: string;
-  readonly policyCreationReceipt: NemoClawPolicyCreationReceipt | null;
   readonly resources: RetainedSandboxResourceEvidence;
   readonly reason: RetainedSandboxRecoveryReason;
   readonly recordedAt: string;
@@ -73,9 +61,7 @@ export interface RecordRetainedSandboxRecoveryInput {
   readonly gatewayName: string;
   readonly gatewayPort: number;
   readonly lifecycleGeneration: string | null;
-  readonly verifiedEffectivePolicyIdentity: RetainedSandboxVerifiedEffectivePolicyIdentity | null;
   readonly createAttemptNonce: string;
-  readonly policyCreationReceipt: NemoClawPolicyCreationReceipt | null;
   readonly resources: RetainedSandboxResourceEvidence;
   readonly reason: RetainedSandboxRecoveryReason;
   readonly recordedAt?: string;
@@ -349,37 +335,11 @@ function parseEvidence(value: unknown): RetainedSandboxResourceEvidence | null {
     : null;
 }
 
-function parseVerifiedEffectivePolicyIdentity(
-  value: unknown,
-): RetainedSandboxVerifiedEffectivePolicyIdentity | null | undefined {
-  if (value === null || value === undefined) return null;
-  if (
-    !isObjectRecord(value) ||
-    !validSafeEvidence(value.hash) ||
-    !Number.isSafeInteger(value.activeVersion) ||
-    Number(value.activeVersion) < 1
-  ) {
-    return undefined;
-  }
-  return { hash: value.hash, activeVersion: Number(value.activeVersion) };
-}
-
 function parseRecord(value: unknown): RetainedSandboxRecoveryRecord | null {
   if (!isObjectRecord(value)) return null;
   const resources = parseEvidence(value.resources);
   const fingerprint = value.sandboxIdentityFingerprint;
-  const verifiedEffectivePolicyIdentity = parseVerifiedEffectivePolicyIdentity(
-    value.verifiedEffectivePolicyIdentity,
-  );
   const reason = value.reason;
-  let policyCreationReceipt: NemoClawPolicyCreationReceipt | null = null;
-  if (value.policyCreationReceipt !== null) {
-    try {
-      policyCreationReceipt = parseNemoClawPolicyCreationReceipt(value.policyCreationReceipt);
-    } catch {
-      return null;
-    }
-  }
   if (
     value.schemaVersion !== SCHEMA_VERSION ||
     typeof value.recordId !== "string" ||
@@ -391,17 +351,8 @@ function parseRecord(value: unknown): RetainedSandboxRecoveryRecord | null {
     !validSafeEvidence(value.gatewayName) ||
     !validGatewayPort(value.gatewayPort) ||
     (value.lifecycleGeneration !== null && !validSafeEvidence(value.lifecycleGeneration)) ||
-    verifiedEffectivePolicyIdentity === undefined ||
     typeof value.createAttemptNonce !== "string" ||
-    !/^[0-9a-f]{62}$/u.test(value.createAttemptNonce) ||
-    (policyCreationReceipt !== null &&
-      (policyCreationReceipt.gatewayName !== value.gatewayName ||
-        policyCreationReceipt.gatewayPort !== value.gatewayPort ||
-        policyCreationReceipt.sandboxName !== value.sandboxName ||
-        policyCreationReceipt.lifecycleGeneration !== value.lifecycleGeneration ||
-        policyCreationReceipt.sandboxIdentityFingerprint !== fingerprint ||
-        policyCreationReceipt.policyHash !== verifiedEffectivePolicyIdentity?.hash ||
-        policyCreationReceipt.policyVersion !== verifiedEffectivePolicyIdentity?.activeVersion)) ||
+    !CREATE_ATTEMPT_NONCE_PATTERN.test(value.createAttemptNonce) ||
     !resources ||
     !["cancelled_after_sandbox_creation", "retained_after_sandbox_creation_failure"].includes(
       String(reason),
@@ -419,9 +370,7 @@ function parseRecord(value: unknown): RetainedSandboxRecoveryRecord | null {
     gatewayName: value.gatewayName,
     gatewayPort: value.gatewayPort,
     lifecycleGeneration: value.lifecycleGeneration,
-    verifiedEffectivePolicyIdentity,
     createAttemptNonce: value.createAttemptNonce,
-    policyCreationReceipt,
     resources,
     reason: reason as RetainedSandboxRecoveryReason,
     recordedAt: value.recordedAt,
@@ -452,9 +401,7 @@ function recoveryRecordId(input: RecordRetainedSandboxRecoveryInput): string {
         input.sandboxName,
         input.sandboxIdentityFingerprint,
         input.lifecycleGeneration,
-        input.verifiedEffectivePolicyIdentity,
         input.createAttemptNonce,
-        input.policyCreationReceipt,
       ]),
     )
     .digest("hex");
@@ -468,30 +415,10 @@ function assertRecordInput(input: RecordRetainedSandboxRecoveryInput): void {
     !validSafeEvidence(input.gatewayName) ||
     !validGatewayPort(input.gatewayPort) ||
     (input.lifecycleGeneration !== null && !validSafeEvidence(input.lifecycleGeneration)) ||
-    parseVerifiedEffectivePolicyIdentity(input.verifiedEffectivePolicyIdentity) === undefined ||
-    !/^[0-9a-f]{62}$/u.test(input.createAttemptNonce) ||
+    !CREATE_ATTEMPT_NONCE_PATTERN.test(input.createAttemptNonce) ||
     !parseEvidence(input.resources)
   ) {
     throw new Error("Cannot persist invalid retained sandbox recovery evidence.");
-  }
-  if (input.policyCreationReceipt !== null) {
-    let receipt: NemoClawPolicyCreationReceipt;
-    try {
-      receipt = parseNemoClawPolicyCreationReceipt(input.policyCreationReceipt);
-    } catch {
-      throw new Error("Cannot persist invalid retained sandbox recovery evidence.");
-    }
-    if (
-      receipt.gatewayName !== input.gatewayName ||
-      receipt.gatewayPort !== input.gatewayPort ||
-      receipt.sandboxName !== input.sandboxName ||
-      receipt.lifecycleGeneration !== input.lifecycleGeneration ||
-      receipt.sandboxIdentityFingerprint !== input.sandboxIdentityFingerprint ||
-      receipt.policyHash !== input.verifiedEffectivePolicyIdentity?.hash ||
-      receipt.policyVersion !== input.verifiedEffectivePolicyIdentity?.activeVersion
-    ) {
-      throw new Error("Cannot persist mismatched retained sandbox recovery evidence.");
-    }
   }
 }
 
@@ -515,13 +442,7 @@ export function recordRetainedSandboxRecovery(
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
     lifecycleGeneration: input.lifecycleGeneration,
-    verifiedEffectivePolicyIdentity: input.verifiedEffectivePolicyIdentity
-      ? { ...input.verifiedEffectivePolicyIdentity }
-      : null,
     createAttemptNonce: input.createAttemptNonce,
-    policyCreationReceipt: input.policyCreationReceipt
-      ? parseNemoClawPolicyCreationReceipt(input.policyCreationReceipt)
-      : null,
     resources: parseEvidence(input.resources)!,
     reason: input.reason,
     recordedAt: input.recordedAt ?? new Date().toISOString(),

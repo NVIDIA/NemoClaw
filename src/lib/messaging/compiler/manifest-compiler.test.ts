@@ -1051,7 +1051,6 @@ describe("ManifestCompiler", () => {
         },
       ],
       credentials: [],
-      policyPresets: [],
       render: [],
       hooks: [],
     } as const satisfies ChannelManifest;
@@ -1119,7 +1118,6 @@ describe("ManifestCompiler", () => {
         },
       ],
       credentials: [],
-      policyPresets: [],
       render: [],
       hooks: [
         {
@@ -1202,7 +1200,6 @@ describe("ManifestCompiler", () => {
         },
       ],
       credentials: [],
-      policyPresets: [],
       render: [],
       hooks: [],
     } as const satisfies ChannelManifest;
@@ -1347,7 +1344,7 @@ describe("ManifestCompiler", () => {
           placeholder: "openshell:resolve:env:MATRIX_ACCESS_TOKEN",
         },
       ],
-      policyPresets: ["matrix"],
+      policyPresets: [{ name: "matrix", policyKeys: ["matrix"] }],
       render: [],
       hooks: [
         {

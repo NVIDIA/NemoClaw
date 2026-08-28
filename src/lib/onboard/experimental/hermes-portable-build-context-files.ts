@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/** Exact shipped files admitted by the schema-5 Hermes Dockerfile COPY contract. */
+/** Exact shipped files admitted by the schema-7 Hermes Dockerfile COPY contract. */
 export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "agents/hermes/build-mcp-digest.py", mode: "100644" },
   { path: "agents/hermes/config/build-env.ts", mode: "100644" },

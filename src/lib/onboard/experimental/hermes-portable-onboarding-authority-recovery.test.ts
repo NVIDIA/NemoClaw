@@ -36,7 +36,7 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(stateDir, { recursive: true, force: true }));
 
 describe("Hermes portable onboarding authority recovery", () => {
-  it("leaves a pre-existing active schema-5 receipt for probe-only migration (#10423)", async () => {
+  it("leaves a pre-existing active schema-7 receipt for probe-only migration (#10423)", async () => {
     const fixture = createHermesPortableTransactionFixture(input());
     await runHermesPortableOnboardingTransaction(input(), fixture.value);
     const authorityPath = path.join(
@@ -52,7 +52,7 @@ describe("Hermes portable onboarding authority recovery", () => {
     expect(fs.existsSync(authorityPath)).toBe(false);
   });
 
-  it("finishes only an interrupted schema-6 publication during active resume (#10423)", async () => {
+  it("finishes only an interrupted schema-8 publication during active resume (#10423)", async () => {
     const fixture = createHermesPortableTransactionFixture(input());
     await runHermesPortableOnboardingTransaction(input(), fixture.value);
     const authorityPath = path.join(
@@ -66,10 +66,10 @@ describe("Hermes portable onboarding authority recovery", () => {
         expect(() =>
           publishHermesPortableSuccessorReceipt(SANDBOX, stateDir, {
             afterCanonicalLink: () => {
-              throw new Error("simulated schema-6 process exit");
+              throw new Error("simulated schema-8 process exit");
             },
           }),
-        ).toThrow("simulated schema-6 process exit");
+        ).toThrow("simulated schema-8 process exit");
       },
       { stateDir: path.join(stateDir, "state") },
     );
@@ -77,7 +77,7 @@ describe("Hermes portable onboarding authority recovery", () => {
 
     const resumed = await runHermesPortableOnboardingTransaction(input(), fixture.value);
 
-    expect(resumed.active.successor?.receipt.schemaVersion).toBe(6);
+    expect(resumed.active.successor?.receipt.schemaVersion).toBe(8);
     expect(fs.statSync(authorityPath).nlink).toBe(1);
   });
 });

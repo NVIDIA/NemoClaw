@@ -83,7 +83,6 @@ import type {
   SandboxWorkloadReceipt,
 } from "./registry/types.js";
 import { cloneSandboxWorkloadReceipt } from "./registry/workload.js";
-import type { CustomPolicyEntry } from "./registry.js";
 import * as registry from "./registry.js";
 import { isSshTransportFailure } from "./ssh-transport.js";
 import { restoreStateFile } from "./state-file-restore.js";
@@ -130,16 +129,6 @@ export interface RebuildManifest {
   writableDir?: string;
   backupPath: string;
   blueprintDigest: string | null;
-  policyPresets?: string[];
-  /**
-   * Custom policy presets applied via `--from-file`/`--from-dir`, captured with
-   * full content so they can be re-applied on restore without the source file.
-   * Like `policyPresets`, these live in the gateway policy engine and are
-   * otherwise lost on destroy/recreate. Always present on snapshots created since
-   * this field was added (possibly an empty array, so restore can reconcile a
-   * zero-custom snapshot); absent only on legacy manifests.
-   */
-  customPolicies?: CustomPolicyEntry[];
   /** Allowlisted non-secret environment assignments captured for image recreation. */
   preservedEnv?: PreservedEnvFile[];
   /**
@@ -317,16 +306,6 @@ function isInstanceBackup(value: unknown): value is InstanceBackup {
   );
 }
 
-function isCustomPolicyEntryArray(value: unknown): value is CustomPolicyEntry[] {
-  if (!Array.isArray(value)) return false;
-  if (value.length === 0) return true;
-  try {
-    return registry.normalizeCustomPolicyEntries(value) !== undefined;
-  } catch {
-    return false;
-  }
-}
-
 function cloneOpenClawImagePluginInstalls(
   installs: readonly OpenClawImagePluginInstall[],
 ): OpenClawImagePluginInstall[] {
@@ -404,8 +383,6 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
     (value.blueprintDigest === undefined ||
       value.blueprintDigest === null ||
       typeof value.blueprintDigest === "string") &&
-    (value.policyPresets === undefined || isStringArray(value.policyPresets)) &&
-    (value.customPolicies === undefined || isCustomPolicyEntryArray(value.customPolicies)) &&
     (value.preservedEnv === undefined ||
       (value.agentType === "hermes" &&
         validatePreservedEnvFiles(value.preservedEnv, HERMES_PRESERVED_ENV_INVENTORY))) &&
@@ -1427,18 +1404,6 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   // a symlink swapped in between the first check and mkdirSync is caught here.
   rejectSymlinksOnPath(backupPath);
 
-  // Capture applied policy presets from the registry so they can be
-  // re-applied after rebuild. Presets live in the gateway policy engine,
-  // not on the sandbox filesystem, so they are lost on destroy/recreate.
-  const policyPresets: string[] = sb?.policies && sb.policies.length > 0 ? [...sb.policies] : [];
-  _log(`policyPresets from registry: [${policyPresets.join(",")}]`);
-  // Custom presets (--from-file/--from-dir) also live only in the gateway policy
-  // engine, so capture their full content for replay. Always record the field
-  // (even empty) so restore can tell a zero-custom snapshot (reconcile, remove
-  // any stale custom presets on the target) from a legacy snapshot (skip).
-  const customPolicies: CustomPolicyEntry[] = sb?.customPolicies ? [...sb.customPolicies] : [];
-  _log(`customPolicies from registry: [${customPolicies.map((c) => c.name).join(",")}]`);
-
   const manifest: RebuildManifest = {
     version: MANIFEST_VERSION,
     sandboxName,
@@ -1458,8 +1423,6 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     dir,
     backupPath,
     blueprintDigest: computeBlueprintDigest(),
-    policyPresets,
-    customPolicies,
     ...(agentName === "hermes" ? { preservedEnv: [] } : {}),
     ...snapshotAuthority,
     ...(providedName !== null ? { name: providedName } : {}),

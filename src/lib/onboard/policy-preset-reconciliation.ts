@@ -14,7 +14,7 @@ import {
   mergeRequiredObservabilityPolicyPresets,
 } from "./observability-policy-presets";
 import { mergeRequiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-presets";
-import { classifyPresetProvenance } from "../policy/preset-provenance";
+import { getTier } from "../policy/tiers";
 import {
   ensureRequiredTierPolicyPresets,
   filterSuppressedAgentRequiredPresets,
@@ -118,17 +118,9 @@ export function isStaleBuiltinWebSearchPolicyPreset(
   // host access on the Balanced/Open tiers) AND the built-in web-search provider
   // preset. When the preset is a default of the applied tier it is a tier egress
   // default, not a stale web-search leftover — keep it regardless of the web-search
-  // provider choice. Reuse the single provenance classifier so pruning and the
-  // policy-list display agree on WHY a preset is present, and so the exemption is
-  // scoped exactly to the applied tier (Restricted lists no such default → still
-  // pruned). classifyPresetProvenance's getTier() returns null for an unknown /
-  // non-canonical tier, so this fails safe (unknown → not "tier" → not exempt). (#6844)
-  if (
-    classifyPresetProvenance(name, {
-      tierName: options.tierName,
-      agentName: options.agentName,
-    }).source === "tier"
-  ) {
+  // provider choice. A tier supplied by the active selection flow can exempt
+  // its own default, but no tier is read from durable sandbox state.
+  if (getTier(options.tierName ?? "")?.presets.some((preset) => preset.name === name)) {
     return false;
   }
   if (name === "nous-web") {

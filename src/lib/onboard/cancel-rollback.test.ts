@@ -140,7 +140,6 @@ describe("installSandboxCancelRollback", () => {
       gatewayName: "nemoclaw-18080",
       gatewayPort: 18080,
       lifecycleGeneration: "00000000-0000-4000-8000-000000000004",
-      verifiedEffectivePolicyIdentity: { hash: "sha256:policy-4", activeVersion: 4 },
     } as const;
     const rollback = createSandboxCancelRollback({ log: vi.fn(), recordRecovery });
     const armWithContext = rollback.arm as (

@@ -13,7 +13,7 @@ import {
   managedPolicyMetadata,
   managedRegistrationSource,
   SANDBOX_ID,
-} from "../../helpers/managed-policy-receipt-fixture";
+} from "../../helpers/live-policy-fixture";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "policy", "index.ts"));

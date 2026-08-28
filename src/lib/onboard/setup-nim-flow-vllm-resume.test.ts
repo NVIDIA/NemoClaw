@@ -69,7 +69,7 @@ describe("createSetupNim vLLM resume", () => {
     expect(prompt).not.toHaveBeenCalled();
   });
 
-  it("refuses checkpoint-first vLLM installation when policy authority changes (#9833)", async () => {
+  it("refuses checkpoint-first vLLM installation when policy requirements changes (#9833)", async () => {
     const profile = { name: "DGX Spark" } as VllmProfile;
     const checkpointVllmInstallModel = vi.fn();
     const installEffect = vi.fn();
@@ -100,7 +100,7 @@ describe("createSetupNim vLLM resume", () => {
       }),
     );
     const revalidatePolicyRequirements = vi.fn(() => {
-      throw new Error("external policy authority must supply local inference");
+      throw new Error("live policy requirements changed before local inference");
     });
 
     await expect(
@@ -116,7 +116,7 @@ describe("createSetupNim vLLM resume", () => {
         undefined,
         revalidatePolicyRequirements,
       ),
-    ).rejects.toThrow(/external policy authority must supply/u);
+    ).rejects.toThrow(/live policy requirements changed before/u);
 
     expect(revalidatePolicyRequirements).toHaveBeenCalledWith(
       expect.objectContaining({

@@ -167,7 +167,7 @@ runner.runCapture = (command) => {
 
 registry.getSandbox = () =>
   scenario === "reuse"
-    ? fixtureMocks.managedSandboxPolicyReceiptFixture({
+    ? fixtureMocks.sandboxLifecycleFixture({
         name: sandboxName,
         gpuEnabled: false,
         agent: "langchain-deepagents-code",

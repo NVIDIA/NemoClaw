@@ -10,10 +10,6 @@ import { isObjectRecord } from "../core/json-types";
 import { getMessagingPolicyKeysByChannel } from "../messaging/channels";
 import * as policies from "../policy";
 import {
-  applyBaselineExclusions,
-  type BaselineExclusionRequest,
-} from "../policy/baseline-exclusion";
-import {
   collectPlatformIdentity,
   type PlatformIdentity,
 } from "../readiness/platform-qualification";
@@ -326,7 +322,6 @@ type InitialPolicyOptions = {
   agentName?: string | null;
   sandboxName?: string;
   policyTier?: string | null;
-  baselineExclusions?: readonly BaselineExclusionRequest[];
 };
 
 type PolicyMaterializer = (content: string, prefix: string) => InitialSandboxPolicy;
@@ -530,21 +525,6 @@ function resolveInitialSandboxCreatePolicy(
       }
     }
 
-    // Replay operator baseline exclusions before presets merge on top. Fails
-    // closed via applyBaselineExclusions when a recorded approval no longer
-    // matches the current baseline, so a changed release forces re-review.
-    const baselineExclusions = options.baselineExclusions ?? [];
-    if (baselineExclusions.length > 0) {
-      const excluded = applyBaselineExclusions(
-        basePolicy,
-        baselineExclusions,
-        policyAgent ?? "openclaw",
-      );
-      if (excluded.excludedKeys.length > 0) {
-        adoptPolicy(excluded.content, "nemoclaw-agent-policy");
-      }
-    }
-
     const basePolicyNames = getNetworkPolicyNames(basePolicy);
     if (basePolicyNames === null) {
       return result([]);
@@ -570,7 +550,6 @@ function resolveInitialSandboxCreatePolicy(
     const mergedPolicy = policies.mergePresetNamesIntoPolicy(basePolicy, createTimePresets, {
       agent: policyAgent,
       sandboxName: options.sandboxName,
-      excludedBaselineKeys: baselineExclusions.map((exclusion) => exclusion.key),
       credentialBoundMessagingChannels: activeMessagingChannels,
     });
     if (mergedPolicy.missingPresets.length > 0) {

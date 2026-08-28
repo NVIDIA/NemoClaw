@@ -72,7 +72,7 @@ describe("Hermes accepted replacement recovery", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     phaseMocks.recoverCronRestore.mockReturnValue("dispatch-reactivated");
     phaseMocks.runPreflight.mockResolvedValue({
-      sandboxEntry: { name: "alpha", customPolicies: [] },
+      sandboxEntry: { name: "alpha" },
       rebuildAgent: "hermes",
       versionCheck: {},
       targetConfig: {
@@ -121,8 +121,6 @@ describe("Hermes accepted replacement recovery", () => {
         preservedEnv: [],
       },
       backupWasForceSkipped: false,
-      policyPresets: [],
-      sessionPolicyPresets: [],
     });
     phaseMocks.openRecreateJournal.mockReturnValue({
       id: "journal-1",

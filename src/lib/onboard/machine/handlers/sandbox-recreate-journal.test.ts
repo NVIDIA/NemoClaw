@@ -167,58 +167,60 @@ it.each([
   "authority-unproven",
   "no-owned-image",
   "image-reused",
-] as const)("reports the bounded %s image-retirement skip after journaled recreation", async (reason) => {
+] as const)(
+  "reports the bounded %s image-retirement skip after journaled recreation",
+  async (reason) => {
+    const session = createSession({ sandboxName: "saved", agent: "openclaw" });
+    const journal = bindJournaledRecreate(session);
+    const sourceEntry: SandboxEntry = {
+      name: "saved",
+      provider: "provider",
+      model: "model",
+      endpointUrl: null,
+      preferredInferenceApi: "openai-completions",
+      webSearchEnabled: false,
+      toolDisclosure: "progressive",
+      fromDockerfile: null,
+      hermesAuthMethod: null,
+      imageTag: "openshell/sandbox-from:old",
+      workload: {
+        schemaVersion: 1,
+        kind: "legacy-dockerfile",
+        reference: "openshell/sandbox-from:old",
+        shared: false,
+      },
+    };
+    const retireReplacedSandboxWorkload = vi.fn(() => ({
+      status: "skipped" as const,
+      reason,
+    }));
+    const { deps, calls } = createDeps(
+      {
+        getSandboxReuseState: () => "not_ready",
+        getSandboxRecreateObservation: journal.observe,
+        getSandboxRegistryEntry: () => sourceEntry,
+        createSandbox: journal.completeCreate,
+        retireReplacedSandboxWorkload,
+      },
+      session,
+    );
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+    });
+
+    const diagnostics = calls.note.mock.calls
+      .map(([message]) => message)
+      .filter((message) => message.startsWith("  Obsolete sandbox image retirement skipped:"));
+    expect(diagnostics).toEqual([`  Obsolete sandbox image retirement skipped: ${reason}`]);
+    expect(retireReplacedSandboxWorkload).toHaveBeenCalledOnce();
+  },
+);
+
+it("does not carry a recorded preset list through post-delete onboard resume", async () => {
   const session = createSession({ sandboxName: "saved", agent: "openclaw" });
-  const journal = bindJournaledRecreate(session);
-  const sourceEntry: SandboxEntry = {
-    name: "saved",
-    provider: "provider",
-    model: "model",
-    endpointUrl: null,
-    preferredInferenceApi: "openai-completions",
-    webSearchEnabled: false,
-    toolDisclosure: "progressive",
-    fromDockerfile: null,
-    hermesAuthMethod: null,
-    imageTag: "openshell/sandbox-from:old",
-    workload: {
-      schemaVersion: 1,
-      kind: "legacy-dockerfile",
-      reference: "openshell/sandbox-from:old",
-      shared: false,
-    },
-  };
-  const retireReplacedSandboxWorkload = vi.fn(() => ({
-    status: "skipped" as const,
-    reason,
-  }));
-  const { deps, calls } = createDeps(
-    {
-      getSandboxReuseState: () => "not_ready",
-      getSandboxRecreateObservation: journal.observe,
-      getSandboxRegistryEntry: () => sourceEntry,
-      createSandbox: journal.completeCreate,
-      retireReplacedSandboxWorkload,
-    },
-    session,
-  );
-
-  await handleSandboxState({
-    ...baseOptions(deps, session),
-    resume: true,
-    sandboxName: "saved",
-  });
-
-  const diagnostics = calls.note.mock.calls
-    .map(([message]) => message)
-    .filter((message) => message.startsWith("  Obsolete sandbox image retirement skipped:"));
-  expect(diagnostics).toEqual([`  Obsolete sandbox image retirement skipped: ${reason}`]);
-  expect(retireReplacedSandboxWorkload).toHaveBeenCalledOnce();
-});
-
-it("carries filtered presets through post-delete onboard resume", async () => {
-  const session = createSession({ sandboxName: "saved", agent: "openclaw" });
-  session.policyPresets = ["github"];
   session.steps.sandbox.status = "complete";
   session.machine.state = "agent_setup";
   session.checkpoint = {
@@ -247,8 +249,6 @@ it("carries filtered presets through post-delete onboard resume", async () => {
     hermesAuthMethod: null,
     gatewayName: "nemoclaw",
     gatewayPort: 8080,
-    policies: ["github", "mcp-bridge-fake"],
-    policyPresetsFinalized: true,
   };
   const targetIntentFingerprint = fingerprintSandboxRecreateValue({
     sandboxName: "saved",
@@ -283,9 +283,8 @@ it("carries filtered presets through post-delete onboard resume", async () => {
     expect(createIntent).toMatchObject({
       recreate: true,
       recreateJournalTargetIntentFingerprint: targetIntentFingerprint,
-      rebuildPolicyPresets: ["github"],
       resolved: {
-        policy: { options: { additionalPresets: ["github"] } },
+        policy: { options: { additionalPresets: [] } },
       },
       recreateTransaction: {
         id: transaction.id,

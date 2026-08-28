@@ -21,9 +21,8 @@ type RunOptions = {
 };
 type RunOpenshell = (command: string[], opts?: RunOptions) => RunResult;
 
-const messagingBridgeProvider = require(
-  "./messaging-bridge-provider"
-) as typeof import("./messaging-bridge-provider");
+const messagingBridgeProvider =
+  require("./messaging-bridge-provider") as typeof import("./messaging-bridge-provider");
 
 const DISCORD_STATIC_PROFILE_EXPORT = JSON.stringify({
   id: "discord-hermes-static-v1",
@@ -936,7 +935,7 @@ describe("onboard provider helpers", () => {
       () => undefined,
       () => undefined,
       () => {
-        throw new Error("policy authority changed between providers");
+        throw new Error("policy requirements changed between providers");
       },
     ];
 
@@ -954,19 +953,19 @@ describe("onboard provider helpers", () => {
         },
         { revalidatePolicyRequirements: () => revalidationSteps.shift()?.() },
       ),
-    ).toThrow(/authority changed between providers/);
+    ).toThrow(/policy requirements changed between providers/);
     expect(commands).toEqual([
       "provider get alpha-first",
       "provider create --name alpha-first --type generic --credential FIRST_TOKEN",
     ]);
   });
 
-  it("rechecks policy authority after a provider probe and before its mutation (#9833)", () => {
+  it("rechecks policy requirements after a provider probe and before its mutation (#9833)", () => {
     const commands: string[] = [];
     const revalidationSteps = [
       () => undefined,
       () => {
-        throw new Error("policy authority changed after provider probe");
+        throw new Error("policy requirements changed after provider probe");
       },
     ];
 
@@ -983,7 +982,7 @@ describe("onboard provider helpers", () => {
         },
         { revalidatePolicyRequirements: () => revalidationSteps.shift()?.() },
       ),
-    ).toThrow(/authority changed after provider probe/u);
+    ).toThrow(/policy requirements changed after provider probe/u);
     expect(commands).toEqual(["provider get alpha-discord-bridge"]);
   });
 
@@ -1056,7 +1055,6 @@ describe("onboard provider helpers", () => {
     ]);
   });
 
-
   it("throws instead of exiting when best-effort messaging provider upsert fails", () => {
     const originalExit = process.exit;
     process.exit = ((code?: number | string | null) => {
@@ -1088,7 +1086,7 @@ describe("onboard provider helpers", () => {
     const configureRefreshes = vi
       .spyOn(messagingBridgeProvider, "configureMessagingBridgeRefreshes")
       .mockImplementation(() => {
-        throw new Error("policy authority changed");
+        throw new Error("policy requirements changed");
       });
     try {
       expect(() =>
@@ -1099,7 +1097,7 @@ describe("onboard provider helpers", () => {
         ),
       ).toThrow(
         expect.objectContaining({
-          message: expect.stringMatching(/policy authority changed.*alpha-bridge/isu),
+          message: expect.stringMatching(/policy requirements changed.*alpha-bridge/isu),
           mutatedProviderNames: ["alpha-bridge"],
         }),
       );

@@ -25,7 +25,7 @@ import {
 type TestProviderInferenceOptions = ProviderInferenceStateOptions<Gpu, Agent, Host>;
 
 function refuseExternalPolicy(): never {
-  throw new Error("external policy authority must supply the selected route");
+  throw new Error("live policy requirements changed before the selected route");
 }
 
 function publishedLlamaCppSelection(
@@ -53,13 +53,13 @@ function publishedLlamaCppSelection(
   };
 }
 
-describe("provider inference policy authority", () => {
+describe("provider inference policy requirements", () => {
   it("stops before provider setup when policy requirements are not met (#9833)", async () => {
     const preflightPolicyRequirements = vi.fn(refuseExternalPolicy);
     const { deps, calls } = createDeps({ preflightPolicyRequirements });
 
     await expect(handleProviderInferenceState(baseOptions(deps))).rejects.toThrow(
-      /external policy authority must supply/u,
+      /live policy requirements changed before/u,
     );
 
     expect(preflightPolicyRequirements).toHaveBeenCalledOnce();
@@ -91,7 +91,7 @@ describe("provider inference policy authority", () => {
         resume: true,
         sandboxName: "router-sandbox",
       }),
-    ).rejects.toThrow(/external policy authority must supply/u);
+    ).rejects.toThrow(/live policy requirements changed before/u);
 
     expect(calls.reupsertRoutedProvider).toHaveBeenCalledOnce();
     expect(calls.reserveRoute).not.toHaveBeenCalled();
@@ -131,7 +131,7 @@ describe("provider inference policy authority", () => {
     const { deps, calls } = createDeps({ setupNim, preflightPolicyRequirements });
 
     await expect(handleProviderInferenceState(baseOptions(deps))).rejects.toThrow(
-      /external policy authority must supply/u,
+      /live policy requirements changed before/u,
     );
 
     expect(setupNim).toHaveBeenCalledOnce();
@@ -165,14 +165,14 @@ describe("provider inference policy authority", () => {
         ...baseOptions(deps, session),
         sandboxName: "alpha",
       }),
-    ).rejects.toThrow(/external policy authority must supply/u);
+    ).rejects.toThrow(/live policy requirements changed before/u);
 
     expect(calls.setupInference).toHaveBeenCalledOnce();
     expect(calls.complete).not.toHaveBeenCalledWith("provider_selection", expect.any(Object));
     expect(calls.complete).not.toHaveBeenCalledWith("inference", expect.any(Object));
   });
 
-  it("withholds durable inference success when final policy authority changes (#9833)", async () => {
+  it("withholds durable inference success when final policy requirements changes (#9833)", async () => {
     const preflightPolicyRequirements = vi.fn((requirements: { operation: string }) =>
       requirements.operation === "record successful inference configuration"
         ? refuseExternalPolicy()
@@ -181,14 +181,14 @@ describe("provider inference policy authority", () => {
     const { deps, calls } = createDeps({ preflightPolicyRequirements });
 
     await expect(handleProviderInferenceState(baseOptions(deps))).rejects.toThrow(
-      /external policy authority must supply/u,
+      /live policy requirements changed before/u,
     );
 
     expect(calls.setupInference).toHaveBeenCalledOnce();
     expect(calls.complete).not.toHaveBeenCalledWith("inference", expect.any(Object));
   });
 
-  it("withholds resumed provider reuse output when policy authority changes (#9833)", async () => {
+  it("withholds resumed provider reuse output when policy requirements changes (#9833)", async () => {
     const session = createSession({
       provider: "ollama-local",
       model: "llama3.1",
@@ -196,7 +196,7 @@ describe("provider inference policy authority", () => {
     });
     session.steps.provider_selection.status = "complete";
     const refuseReusePublication = () => {
-      throw new Error("policy authority changed");
+      throw new Error("policy requirements changed");
     };
     const policyChecks = new Map([["record resumed provider selection", refuseReusePublication]]);
     const { deps, calls } = createDeps({
@@ -210,7 +210,7 @@ describe("provider inference policy authority", () => {
         resume: true,
         sandboxName: "my-assistant",
       }),
-    ).rejects.toThrow("policy authority changed");
+    ).rejects.toThrow("policy requirements changed");
 
     expect(calls.skipped).not.toHaveBeenCalled();
     expect(calls.log).not.toHaveBeenCalledWith(expect.stringContaining("Reusing sandbox name"));
@@ -281,7 +281,7 @@ describe("provider inference policy authority", () => {
     const preflightPolicyRequirements = vi.fn(
       (input: { hostLocalInferenceRouteOnly?: boolean }) => {
         expect(input.hostLocalInferenceRouteOnly).toBe(false);
-        throw new Error("external policy authority must supply local-inference");
+        throw new Error("live policy requirements changed before local-inference");
       },
     );
     const { deps, calls } = createDeps({ preflightPolicyRequirements });
@@ -294,7 +294,7 @@ describe("provider inference policy authority", () => {
         resume: true,
         sandboxName: "my-assistant",
       }),
-    ).rejects.toThrow("external policy authority must supply local-inference");
+    ).rejects.toThrow("live policy requirements changed before local-inference");
 
     expect(preflightPolicyRequirements).toHaveBeenCalledOnce();
     expect(calls.resolveHostLocalInferenceStartupSelection).toHaveBeenCalledOnce();

@@ -106,16 +106,7 @@ function hermesPortableStatusReport(
     hostMounts: normalizeSandboxStatusHostMounts(entry?.hostMounts),
     openshellDriver: entry?.openshellDriver ?? "unknown",
     openshellVersion: entry?.openshellVersion ?? "unknown",
-    policies:
-      entry?.policies?.filter((policy): policy is string => typeof policy === "string") ?? [],
-    baselineExclusions: entry?.baselineExclusions?.map((exclusion) => exclusion.key) ?? [],
-    baselineExclusionStates: [],
-    baselineExclusionTransition: entry?.baselineExclusionTransition
-      ? {
-          operation: entry.baselineExclusionTransition.operation,
-          key: entry.baselineExclusionTransition.exclusion.key,
-        }
-      : null,
+    policies: [],
     failureLayer: null,
     terminalRuntimeHealth: null,
     servingProcessHealth: null,

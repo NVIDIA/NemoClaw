@@ -432,7 +432,7 @@ describe("agent setup session boundaries", () => {
     expect(context.recordStepFailed).not.toHaveBeenCalled();
   });
 
-  it("refuses completion when policy authority changes during the gateway wait (#9833)", async () => {
+  it("refuses completion when policy requirements changes during the gateway wait (#9833)", async () => {
     let nowMs = 0;
     const sleepSeconds = vi.fn((seconds: number) => {
       nowMs += seconds * 1000;
@@ -442,7 +442,7 @@ describe("agent setup session boundaries", () => {
       .mockReturnValueOnce("NEMOCLAW_AGENT_BINARY_CHECK:ok")
       .mockReturnValueOnce("");
     const refuseCompletion = () => {
-      throw new Error("policy authority changed");
+      throw new Error("policy requirements changed");
     };
     const policyChecks = new Map([
       ["record completed agent setup for sandbox 'sandbox-x'", refuseCompletion],
@@ -469,7 +469,7 @@ describe("agent setup session boundaries", () => {
         null,
         context,
       ),
-    ).rejects.toThrow("policy authority changed");
+    ).rejects.toThrow("policy requirements changed");
 
     expect(sleepSeconds).toHaveBeenCalledWith(0.25);
     expect(context.recordStepComplete).not.toHaveBeenCalled();

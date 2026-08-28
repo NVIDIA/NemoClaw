@@ -22,7 +22,6 @@ import {
   prepareMcpForRebuild,
   reattachMcpAfterDeleteFailure,
 } from "./rebuild-mcp-phase";
-import { blockRebuildOnPendingBaselineTransition } from "./rebuild-preflight-guards";
 import type {
   RebuildRecreateJournal,
   RebuildRecreateSourcePresence,
@@ -240,8 +239,6 @@ export async function runRebuildDestroyPhase(
   } = input;
   const deleteTarget = resolveRebuildDeleteTarget(sandboxName, input.sandboxEntry);
   const { gatewayName } = deleteTarget;
-
-  if (blockRebuildOnPendingBaselineTransition(input.sandboxEntry, sandboxName, bail)) return null;
 
   // Step 3: Delete sandbox without tearing down gateway or session.
   // sandboxDestroy() cleans up the gateway when it's the last sandbox and

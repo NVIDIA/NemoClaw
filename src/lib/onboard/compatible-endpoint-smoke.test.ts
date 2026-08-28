@@ -149,9 +149,7 @@ import urllib.request
 
 responses = json.loads(${JSON.stringify(JSON.stringify(responses))})
 denial_bytes = ${denialBody}
-direct_error = ${
-  options.directError === undefined ? "None" : JSON.stringify(options.directError)
-}
+direct_error = ${options.directError === undefined ? "None" : JSON.stringify(options.directError)}
 
 class FakeResponse:
     def __init__(self, status, payload):
@@ -242,7 +240,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     );
   });
 
-  it("withholds sandbox-route success output when policy authority changes during proof (#9833)", () => {
+  it("withholds sandbox-route success output when policy requirements changes during proof (#9833)", () => {
     const runOpenshell = vi
       .fn()
       .mockReturnValueOnce({ status: 0, stdout: "provider ready" })
@@ -258,10 +256,10 @@ describe("compatible endpoint sandbox smoke helpers", () => {
         redact: (value) => value,
         messagingChannels: ["telegram"],
         beforeSuccess: () => {
-          throw new Error("policy authority changed");
+          throw new Error("policy requirements changed");
         },
       }),
-    ).toThrow("policy authority changed");
+    ).toThrow("policy requirements changed");
 
     expect(runOpenshell).toHaveBeenCalledTimes(2);
     expect(log.mock.calls.flat().join("\n")).not.toContain(
@@ -347,68 +345,63 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     }
   });
 
-  it.each(
-    providerNeutralCases,
-  )("runs a real provider-neutral $service request inside the $agentName sandbox", ({
-    agentName,
-    service,
-    provider,
-    port,
-    directHealthPath,
-  }) => {
-    const runOpenshell = vi
-      .fn()
-      .mockReturnValueOnce({ status: 0, stdout: "provider ready" })
-      .mockReturnValueOnce({ status: 0, stdout: "INFERENCE_SMOKE_OK PONG" });
+  it.each(providerNeutralCases)(
+    "runs a real provider-neutral $service request inside the $agentName sandbox",
+    ({ agentName, service, provider, port, directHealthPath }) => {
+      const runOpenshell = vi
+        .fn()
+        .mockReturnValueOnce({ status: 0, stdout: "provider ready" })
+        .mockReturnValueOnce({ status: 0, stdout: "INFERENCE_SMOKE_OK PONG" });
 
-    verifyCompatibleEndpointSandboxSmoke({
-      sandboxName: `${agentName}-sandbox`,
-      provider,
-      model: "qwen3.5-9b",
-      endpointUrl: "https://inference.local/v1",
-      runOpenshell,
-      redact: (value) => value,
-      messagingChannels: [],
-      agent: { name: agentName },
-      forceCanonicalRoute: true,
-      hostLocalInferenceProofAuthority: {
-        service,
-        directHostPort: port,
-        directHealthPath,
-        toolCallingRequired: true,
-      },
-    });
+      verifyCompatibleEndpointSandboxSmoke({
+        sandboxName: `${agentName}-sandbox`,
+        provider,
+        model: "qwen3.5-9b",
+        endpointUrl: "https://inference.local/v1",
+        runOpenshell,
+        redact: (value) => value,
+        messagingChannels: [],
+        agent: { name: agentName },
+        forceCanonicalRoute: true,
+        hostLocalInferenceProofAuthority: {
+          service,
+          directHostPort: port,
+          directHealthPath,
+          toolCallingRequired: true,
+        },
+      });
 
-    expect(runOpenshell).toHaveBeenNthCalledWith(
-      1,
-      ["provider", "get", provider],
-      expect.objectContaining({ ignoreError: true }),
-    );
-    const sandboxCommand = runOpenshell.mock.calls[1]?.[0] as string[];
-    expect(sandboxCommand.slice(0, 7)).toEqual([
-      "sandbox",
-      "exec",
-      "-n",
-      `${agentName}-sandbox`,
-      "--",
-      "python3",
-      "-c",
-    ]);
-    expect(sandboxCommand[7]).toContain("opener.open");
-    expect(sandboxCommand[7]).toContain("https://inference.local/v1/chat/completions");
-    expect(sandboxCommand[7]).toContain('"content": "Reply with exactly: PONG"');
-    expect(sandboxCommand[7]).toContain(
-      `host.openshell.internal:${String(port)}/v1/chat/completions`,
-    );
-    expect(sandboxCommand[7]).toContain('direct_method = "POST"');
-    expect(sandboxCommand[7]).toContain("method=direct_method");
-    expect(sandboxCommand[7]).toContain('response_data.get("model") != model');
-    expect(sandboxCommand[7]).toContain('"tool_choice"');
-    expect(sandboxCommand[7]).toContain('direct_denial_error = "policy_denied"');
-    expect(sandboxCommand[7]).toContain('denial.get("error") != direct_denial_error');
-    expect(sandboxCommand[7]).toContain("ProxyHandler({})");
-    expect(sandboxCommand[7]).not.toContain("curl");
-  });
+      expect(runOpenshell).toHaveBeenNthCalledWith(
+        1,
+        ["provider", "get", provider],
+        expect.objectContaining({ ignoreError: true }),
+      );
+      const sandboxCommand = runOpenshell.mock.calls[1]?.[0] as string[];
+      expect(sandboxCommand.slice(0, 7)).toEqual([
+        "sandbox",
+        "exec",
+        "-n",
+        `${agentName}-sandbox`,
+        "--",
+        "python3",
+        "-c",
+      ]);
+      expect(sandboxCommand[7]).toContain("opener.open");
+      expect(sandboxCommand[7]).toContain("https://inference.local/v1/chat/completions");
+      expect(sandboxCommand[7]).toContain('"content": "Reply with exactly: PONG"');
+      expect(sandboxCommand[7]).toContain(
+        `host.openshell.internal:${String(port)}/v1/chat/completions`,
+      );
+      expect(sandboxCommand[7]).toContain('direct_method = "POST"');
+      expect(sandboxCommand[7]).toContain("method=direct_method");
+      expect(sandboxCommand[7]).toContain('response_data.get("model") != model');
+      expect(sandboxCommand[7]).toContain('"tool_choice"');
+      expect(sandboxCommand[7]).toContain('direct_denial_error = "policy_denied"');
+      expect(sandboxCommand[7]).toContain('denial.get("error") != direct_denial_error');
+      expect(sandboxCommand[7]).toContain("ProxyHandler({})");
+      expect(sandboxCommand[7]).not.toContain("curl");
+    },
+  );
 
   it("fails closed when the provider-neutral sandbox request or direct-host deny proof fails", () => {
     const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
@@ -483,27 +476,25 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(script).not.toContain("curl");
   });
 
-  it.each(
-    allAgentProofAuthorities,
-  )("executes exact model, required tool, and policy-deny proof for $agentName", ({
-    authority,
-  }) => {
-    const result = runProviderNeutralScript({ authority });
+  it.each(allAgentProofAuthorities)(
+    "executes exact model, required tool, and policy-deny proof for $agentName",
+    ({ authority }) => {
+      const result = runProviderNeutralScript({ authority });
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
-  });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
+    },
+  );
 
-  it.each(
-    allAgentProofAuthorities,
-  )("accepts exact connection refusal as a direct-host deny proof for $agentName (#9211)", ({
-    authority,
-  }) => {
-    const result = runProviderNeutralScript({ authority, directError: "connection-refused" });
+  it.each(allAgentProofAuthorities)(
+    "accepts exact connection refusal as a direct-host deny proof for $agentName (#9211)",
+    ({ authority }) => {
+      const result = runProviderNeutralScript({ authority, directError: "connection-refused" });
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
-  });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
+    },
+  );
 
   it.each(["dns", "timeout"] as const)(
     "does not accept a %s transport error as a direct-host deny proof (#9211)",
@@ -518,29 +509,31 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     },
   );
 
-  it.each(allAgentProofAuthorities)("rejects a cross-wired response model for $agentName", ({
-    authority,
-  }) => {
-    const result = runProviderNeutralScript({
-      authority,
-      responses: providerNeutralResponses("other-provider/model"),
-    });
+  it.each(allAgentProofAuthorities)(
+    "rejects a cross-wired response model for $agentName",
+    ({ authority }) => {
+      const result = runProviderNeutralScript({
+        authority,
+        responses: providerNeutralResponses("other-provider/model"),
+      });
 
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("returned a different model identity");
-  });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("returned a different model identity");
+    },
+  );
 
-  it.each(allAgentProofAuthorities)("rejects a missing required tool call for $agentName", ({
-    authority,
-  }) => {
-    const result = runProviderNeutralScript({
-      authority,
-      responses: providerNeutralResponses("qwen3.5-9b", false),
-    });
+  it.each(allAgentProofAuthorities)(
+    "rejects a missing required tool call for $agentName",
+    ({ authority }) => {
+      const result = runProviderNeutralScript({
+        authority,
+        responses: providerNeutralResponses("qwen3.5-9b", false),
+      });
 
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("did not return the required tool call");
-  });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("did not return the required tool call");
+    },
+  );
 
   it.each(allAgentProofAuthorities)(
     "accepts semantic empty tool arguments for $agentName",
@@ -851,35 +844,36 @@ printf '%s\n' '{"choices":[{"message":{"content":"PONG"},"finish_reason":"stop"}
     expect(fs.readFileSync(callFile, "utf-8")).toBe("1");
   });
 
-  it.each([
-    6, 7, 28, 52, 55, 56,
-  ])("retries transient curl exit %i before succeeding", (exitCode) => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-curl-retry-"));
-    const model = "nvidia/nemotron-3-ultra";
-    const configPath = writeSmokeConfig(tmpDir, model);
-    const { binDir, callFile } = writeFakeCurl(
-      tmpDir,
-      String.raw`
+  it.each([6, 7, 28, 52, 55, 56])(
+    "retries transient curl exit %i before succeeding",
+    (exitCode) => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-curl-retry-"));
+      const model = "nvidia/nemotron-3-ultra";
+      const configPath = writeSmokeConfig(tmpDir, model);
+      const { binDir, callFile } = writeFakeCurl(
+        tmpDir,
+        String.raw`
 if [ "$count" -eq 1 ]; then
   exit ${exitCode}
 fi
 printf '%s\n' '{"choices":[{"message":{"content":"PONG"},"finish_reason":"stop"}]}'
 `,
-    );
-    const script = buildCompatibleEndpointSandboxSmokeScript(model, {
-      attempts: 3,
-      configPath,
-      retryDelaySeconds: 0,
-    });
+      );
+      const script = buildCompatibleEndpointSandboxSmokeScript(model, {
+        attempts: 3,
+        configPath,
+        retryDelaySeconds: 0,
+      });
 
-    const result = runSmokeScript(script, tmpDir, binDir);
+      const result = runSmokeScript(script, tmpDir, binDir);
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
-    expect(result.stderr).toContain(`curl exit ${exitCode}`);
-    expect(result.stderr).toContain("smoke attempt 1/3 failed; retrying in 0s");
-    expect(fs.readFileSync(callFile, "utf-8")).toBe("2");
-  });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
+      expect(result.stderr).toContain(`curl exit ${exitCode}`);
+      expect(result.stderr).toContain("smoke attempt 1/3 failed; retrying in 0s");
+      expect(fs.readFileSync(callFile, "utf-8")).toBe("2");
+    },
+  );
 
   it("does not retry a permanent curl exit", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-curl-terminal-"));

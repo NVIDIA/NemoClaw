@@ -190,7 +190,9 @@ describe("cross-process onboard lock", () => {
           })();
     });
     try {
-      expect(() => session.clearSession()).toThrow(/state directory changed|session state changed/u);
+      expect(() => session.clearSession()).toThrow(
+        /state directory changed|session state changed/u,
+      );
     } finally {
       unlinkSpy.mockRestore();
     }
@@ -343,9 +345,7 @@ describe("cross-process onboard lock", () => {
           gatewayName: "nemoclaw",
           gatewayPort: 8080,
           lifecycleGeneration: "generation-" + role,
-          verifiedEffectivePolicyIdentity: null,
-          createAttemptNonce: "c".repeat(62),
-          policyCreationReceipt: null,
+          createAttemptNonce: role.repeat(62),
           resources: {
             sharedInferenceProviders: [],
             sandboxScopedProviders: [],
@@ -392,17 +392,6 @@ describe("cross-process onboard lock", () => {
     const fingerprint = "a".repeat(64);
     const createAttemptNonce = "b".repeat(62);
     const lifecycleGeneration = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-    const policyCreationReceipt = {
-      schemaVersion: 1,
-      origin: "sandbox-create",
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-      sandboxName: "alpha",
-      lifecycleGeneration,
-      sandboxIdentityFingerprint: fingerprint,
-      policyHash: "sha256:effective",
-      policyVersion: 4,
-    };
     const writer = spawnSync(
       process.execPath,
       [
@@ -435,9 +424,7 @@ describe("cross-process onboard lock", () => {
           gatewayName: "nemoclaw",
           gatewayPort: 8080,
           lifecycleGeneration,
-          verifiedEffectivePolicyIdentity: { hash: "sha256:effective", activeVersion: 4 },
           createAttemptNonce,
-          policyCreationReceipt,
         }),
       ],
       { env: { ...process.env, HOME: tempHome }, encoding: "utf8" },
@@ -454,9 +441,7 @@ describe("cross-process onboard lock", () => {
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
         lifecycleGeneration,
-        verifiedEffectivePolicyIdentity: { hash: "sha256:effective", activeVersion: 4 },
         createAttemptNonce,
-        policyCreationReceipt,
       }),
     ]);
   });

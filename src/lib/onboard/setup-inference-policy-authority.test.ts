@@ -67,7 +67,7 @@ function createSetupDeps(): SetupInferenceDeps {
   } as unknown as SetupInferenceDeps;
 }
 
-describe("onboard inference policy authority mutation edges", () => {
+describe("onboard inference policy requirements mutation edges", () => {
   it("rejects sandbox-bound setup without an authority revalidation callback (#9833)", async () => {
     const deps = createSetupDeps();
 
@@ -79,7 +79,7 @@ describe("onboard inference policy authority mutation edges", () => {
         "https://endpoint.example/v1",
         "COMPATIBLE_API_KEY",
       ),
-    ).rejects.toThrow("Sandbox inference setup requires policy authority revalidation.");
+    ).rejects.toThrow("Sandbox inference setup requires policy requirement revalidation.");
 
     expect(deps.checkGatewayRouteCompatibility).not.toHaveBeenCalled();
     expect(deps.upsertProvider).not.toHaveBeenCalled();

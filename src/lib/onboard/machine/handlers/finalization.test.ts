@@ -115,14 +115,14 @@ async function runFinalizationHandlers(
 }
 
 describe("finalization handlers", () => {
-  it("refuses finalization before its first mutation when policy authority drifts (#9833)", async () => {
+  it("refuses finalization before its first mutation when policy requirements drifts (#9833)", async () => {
     const revalidatePolicyRequirements = vi.fn(() => {
-      throw new Error("policy authority changed");
+      throw new Error("policy requirements changed");
     });
     const { deps, calls } = createDeps({ revalidatePolicyRequirements });
 
     await expect(handleFinalizationPhase(baseOptions(deps))).rejects.toThrow(
-      "policy authority changed",
+      "policy requirements changed",
     );
 
     expect(calls.setDefaultSandbox).not.toHaveBeenCalled();
@@ -133,7 +133,7 @@ describe("finalization handlers", () => {
 
   it("refuses post-verification before pairing or success publication after drift (#9833)", async () => {
     const revalidatePolicyRequirements = vi.fn(() => {
-      throw new Error("policy authority changed");
+      throw new Error("policy requirements changed");
     });
     const { deps, calls } = createDeps({ revalidatePolicyRequirements });
 
@@ -143,7 +143,7 @@ describe("finalization handlers", () => {
         agent: { name: "openclaw" },
         portableProfileSelected: true,
       }),
-    ).rejects.toThrow("policy authority changed");
+    ).rejects.toThrow("policy requirements changed");
 
     expect(calls.settlePortablePairing).not.toHaveBeenCalled();
     expect(calls.verify).not.toHaveBeenCalled();
@@ -410,7 +410,7 @@ describe("finalization handlers", () => {
   it("withholds dashboard-port persistence when authority drifts after forwarding (#9833)", async () => {
     const persistDashboardPort = vi.fn();
     const refuseDashboardPersistence = () => {
-      throw new Error("policy authority changed");
+      throw new Error("policy requirements changed");
     };
     const policyChecks = new Map([
       ["persist the dashboard port for sandbox 'my-assistant'", refuseDashboardPersistence],
@@ -435,7 +435,7 @@ describe("finalization handlers", () => {
         ...baseOptions(deps),
         agent: { name: "hermes" },
       }),
-    ).rejects.toThrow("policy authority changed");
+    ).rejects.toThrow("policy requirements changed");
 
     expect(ensureAgentDashboardForward).toHaveBeenCalledWith(
       "my-assistant",
@@ -562,7 +562,7 @@ describe("finalization handlers", () => {
 
   it("withholds verified deployment output when authority drifts during the probe (#9833)", async () => {
     const refuseStatusPublication = () => {
-      throw new Error("policy authority changed");
+      throw new Error("policy requirements changed");
     };
     const policyChecks = new Map([
       ["publish deployment status for sandbox 'my-assistant'", refuseStatusPublication],
@@ -573,7 +573,7 @@ describe("finalization handlers", () => {
     const { deps, calls } = createDeps({ revalidatePolicyRequirements });
 
     await expect(runFinalizationHandlers(baseOptions(deps))).rejects.toThrow(
-      "policy authority changed",
+      "policy requirements changed",
     );
 
     expect(calls.verify).toHaveBeenCalledOnce();

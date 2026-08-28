@@ -26,6 +26,7 @@ import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import * as rebuildRoutePreflight from "./rebuild-preflight-guards";
 import * as rebuildShields from "./rebuild-shields";
 import * as rebuildUsageNotice from "./rebuild-usage-notice";
+import * as policyGet from "./policy-get";
 
 function cloneSession(session: Session): Session {
   return JSON.parse(JSON.stringify(session));
@@ -149,7 +150,6 @@ describe("rebuild resume snapshot repair", () => {
         name: "alpha",
         provider: "ollama-local",
         model: "nvidia/nemotron",
-        policies: [],
         agent: null,
         nimContainer: null,
         nemoclawVersion: "0.1.0",
@@ -199,7 +199,6 @@ describe("rebuild resume snapshot repair", () => {
         manifest: {
           backupPath: "/tmp/nemoclaw-rebuild-backup",
           timestamp: "2026-06-01T00:00:00.000Z",
-          policyPresets: [],
         },
       } as never),
       vi
@@ -241,6 +240,10 @@ describe("rebuild resume snapshot repair", () => {
         imageTag: null,
       } as never),
       vi.spyOn(rebuildUsageNotice, "ensureRebuildUsageNoticeAccepted").mockResolvedValue(true),
+      vi.spyOn(policyGet, "getSandboxPolicy").mockReturnValue({
+        raw: "version: 1\nnetwork_policies: {}\n",
+        yaml: "version: 1\nnetwork_policies: {}\n",
+      }),
       vi
         .spyOn(rebuildOnboardDependencies, "onboard")
         .mockImplementation(async (options: unknown) => {

@@ -314,26 +314,6 @@ export function getRebuildSandboxEntryOrBail(
   return sb;
 }
 
-/** Keep the pending baseline-policy transaction guard identical at every rebuild boundary. */
-export function blockRebuildOnPendingBaselineTransition(
-  sandboxEntry: RebuildSandboxEntry,
-  sandboxName: string,
-  bail: RebuildBail,
-): boolean {
-  const transition = sandboxEntry.baselineExclusionTransition;
-  if (!transition) return false;
-
-  const key = transition.exclusion.key;
-  printRebuildPreflightFailure(
-    `baseline policy ${transition.operation} for '${key}' needs repair before rebuild.`,
-    `Re-run: ${CLI_NAME} ${sandboxName} policy ${transition.operation} ${key}`,
-    `Pending baseline policy ${transition.operation} for '${key}' blocks rebuild.`,
-    bail,
-    1,
-  );
-  return true;
-}
-
 export function isSingleAgentRebuildSupported(
   sb: registry.SandboxEntry & { agents?: unknown[] },
   bail: RebuildBail,

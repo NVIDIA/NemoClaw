@@ -308,9 +308,7 @@ async function addSandboxPolicyUnlocked(
       // preset files in place (for example to add `tls: skip` endpoints), so
       // compare the preset content against the live gateway policy and fall
       // through to a normal re-apply when it drifted.
-      const customNames = registry
-        .getCustomPolicies(sandboxName)
-        .map((entry: { name: string }) => entry.name);
+      const customNames = policies.listCustomPresets(sandboxName).map((entry) => entry.name);
       if (customNames.includes(preset.name)) {
         // A custom preset owns this name, so the built-in content is the
         // wrong comparison baseline; re-applying it would clobber the custom
@@ -403,9 +401,7 @@ async function addSandboxPolicyUnlocked(
   }
   const needsOpenClawNpmDisclosure =
     answer === "npm" && (sandboxAgent === null || sandboxAgent === "openclaw");
-  const npmBaselineExcluded =
-    needsOpenClawNpmDisclosure &&
-    registry.getBaselineExclusions(sandboxName).some((entry) => entry.key === "npm_registry");
+  const npmBaselineExcluded = false;
   if (needsOpenClawNpmDisclosure && !npmBaselineExcluded) {
     policies.logOpenClawNpmCompatibilityDisclosure();
   }
@@ -430,7 +426,6 @@ async function addSandboxPolicyUnlocked(
   if (!policies.applyPreset(sandboxName, answer, { suppressDisclosure: true })) {
     process.exit(1);
   }
-  syncSessionPolicyPresetsWithRegistry(sandboxName, answer, "add");
   refreshSandboxPolicyContextFile(sandboxName);
 }
 
@@ -508,9 +503,6 @@ async function applyExternalPreset(
       suppressDisclosure: true,
     });
     if (result !== false) {
-      // Custom presets share the registry slot with built-ins (customPolicies
-      // in policy/index.ts:684), so they need the same session-sync.
-      syncSessionPolicyPresetsWithRegistry(sandboxName, loaded.presetName, "add");
       refreshSandboxPolicyContextFile(sandboxName);
     }
     return result !== false;
@@ -526,73 +518,27 @@ export function listSandboxPolicies(sandboxName: string) {
   const builtin = policies.listPresets({ agent: sandboxEntry?.agent ?? null });
   const custom = policies.listCustomPresets(sandboxName);
   const allPresets = [...builtin, ...custom];
-  const registryPresets = policies.getAppliedPresets(sandboxName);
 
   // getGatewayPresets returns null when gateway is unreachable, or an
   // array of matched preset names when reachable (possibly empty).
   const gatewayPresets = policies.getGatewayPresets(sandboxName);
 
   const provenanceContext = {
-    tierName: sandboxEntry?.policyTier ?? null,
     agentName: sandboxEntry?.agent ?? null,
   };
 
   console.log("");
   console.log(`  Policy presets for sandbox '${sandboxName}':`);
   allPresets.forEach((p: { name: string; description: string }) => {
-    const inRegistry = registryPresets.includes(p.name);
-    const inGateway = gatewayPresets ? gatewayPresets.includes(p.name) : null;
+    const observedInOpenShell = gatewayPresets ? gatewayPresets.includes(p.name) : null;
     console.log(
       formatPolicyListPresetRow({
         preset: p,
         provenanceContext,
-        inRegistry,
-        inGateway,
+        observedInOpenShell,
       }),
     );
   });
-
-  const exclusions = registry.getBaselineExclusions(sandboxName);
-  const exclusionTransition = registry.getBaselineExclusionTransition(sandboxName);
-  if (exclusions.length > 0 || exclusionTransition) {
-    console.log("");
-    console.log("  Baseline exclusions (unsupported egress removed):");
-    const listed = new Map(exclusions.map((exclusion) => [exclusion.key, exclusion]));
-    if (exclusionTransition) {
-      listed.set(exclusionTransition.exclusion.key, exclusionTransition.exclusion);
-    }
-    for (const exclusion of listed.values()) {
-      const isPending = exclusionTransition?.exclusion.key === exclusion.key;
-      // A repair command must remain visible even if the current agent
-      // baseline cannot be loaded. Resolving that baseline is part of the
-      // explicit retry, not a prerequisite for displaying the journal.
-      let currentDigest: string | null | undefined;
-      if (isPending) {
-        currentDigest = null;
-      } else {
-        try {
-          currentDigest = policies.getSandboxBaselineEntryDigest(sandboxName, exclusion.key);
-        } catch {
-          currentDigest = undefined;
-        }
-      }
-      const status = isPending
-        ? `${YW}repair required — interrupted ${exclusionTransition.operation}; rebuild blocked${R}`
-        : currentDigest === undefined
-          ? `${YW}release baseline unreadable — inspection required${R}`
-          : currentDigest === null
-            ? `${YW}baseline entry removed — restore to clear${R}`
-            : currentDigest === exclusion.digest
-              ? "active"
-              : `${YW}baseline changed — re-review required${R}`;
-      console.log(`    - ${exclusion.key} (${status})`);
-      if (isPending) {
-        console.log(
-          `      Re-run: ${CLI_NAME} ${sandboxName} policy ${exclusionTransition.operation} ${exclusion.key}`,
-        );
-      }
-    }
-  }
 
   if (gatewayPresets === null) {
     console.log("");
@@ -606,7 +552,7 @@ export function listSandboxPolicies(sandboxName: string) {
         retryCommand: "policy-list",
       });
     } else {
-      console.log("  ⚠ Could not query gateway — showing local state only.");
+      console.log("  ⚠ Could not query OpenShell — applied policy state is unavailable.");
     }
   }
   console.log("");
@@ -900,7 +846,7 @@ async function applyChannelAddToGatewayAndRegistry(
     console.error(`  ${gatewayStartGuidance(gatewayName)}`);
     process.exit(1);
   }
-  policyChannelDependencies.revalidateChannelProviderPolicyAuthority(sandboxName, gatewayName);
+  policyChannelDependencies.revalidateChannelProviderPolicy(sandboxName, gatewayName);
   try {
     // bestEffort: failures throw (instead of process.exit inside the helper)
     // so a partial add can be torn down below before exiting.
@@ -1672,7 +1618,6 @@ export function applyChannelPresetIfAvailable(
       );
       return false;
     }
-    syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "add");
     refreshSandboxPolicyContextFile(sandboxName);
     return true;
   } catch (err) {
@@ -1747,55 +1692,6 @@ function clearSandboxChannelDurableState(sandboxName: string, channelName: strin
   return true;
 }
 
-// Mirror a registry-side preset add/remove into `session.policyPresets`.
-// Without this, a later `rebuild` re-enters onboard resume, reads the
-// stale session, and narrows the preset back away — see #3437 follow-up.
-// Best-effort: registry has already succeeded; failure paths log and
-// swallow so the caller's flow is never broken by a session I/O error.
-function syncSessionPolicyPresetsWithRegistry(
-  sandboxName: string,
-  presetName: string,
-  action: "add" | "remove",
-): void {
-  let session: ReturnType<typeof onboardSession.loadSession>;
-  try {
-    session = onboardSession.loadSession();
-  } catch {
-    return;
-  }
-  // No session = nothing to sync. Foreign sandbox = leave its intent alone.
-  if (!session) return;
-  if (session.sandboxName !== sandboxName) return;
-
-  const current = Array.isArray(session.policyPresets) ? session.policyPresets : [];
-  const has = current.includes(presetName);
-  // Skip the file write when the desired state already holds.
-  if (action === "add" && has) return;
-  if (action === "remove" && !has) return;
-
-  try {
-    onboardSession.updateSession((s) => {
-      const arr = Array.isArray(s.policyPresets) ? [...s.policyPresets] : [];
-      if (action === "add") {
-        if (!arr.includes(presetName)) arr.push(presetName);
-      } else {
-        const idx = arr.indexOf(presetName);
-        if (idx >= 0) arr.splice(idx, 1);
-      }
-      s.policyPresets = arr;
-      return s;
-    });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(
-      `  ${YW}⚠${R} Could not record '${presetName}' preset ${action} in onboard session: ${msg}`,
-    );
-    console.error(
-      `    Registry is consistent; rerun '${CLI_NAME} ${sandboxName} policy-${action === "add" ? "add" : "remove"} ${presetName}' after rebuild if needed.`,
-    );
-  }
-}
-
 // Mirror of applyChannelPresetIfAvailable. When the channel-named built-in
 // preset is currently applied to the sandbox, un-apply it so `policy-list`
 // no longer reports it active and the L7 proxy stops allow-listing the
@@ -1804,11 +1700,9 @@ function syncSessionPolicyPresetsWithRegistry(
 export function removeChannelPresetIfPresent(sandboxName: string, channelName: string): boolean {
   const builtinPresets = new Set(policies.listPresets().map((p) => p.name));
   if (!builtinPresets.has(channelName)) {
-    syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "remove");
     return true;
   }
   if (!policies.getAppliedPresets(sandboxName).includes(channelName)) {
-    syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "remove");
     return true;
   }
   try {
@@ -1820,7 +1714,6 @@ export function removeChannelPresetIfPresent(sandboxName: string, channelName: s
       );
       return false;
     }
-    syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "remove");
     refreshSandboxPolicyContextFile(sandboxName);
     return true;
   } catch (err) {
@@ -1871,20 +1764,8 @@ async function removeSandboxChannelUnlocked(
   const isQrChannel = channelUsesInSandboxQrPairing(channel);
 
   const registryEntry = registry.getSandbox(sandboxName);
-  let sessionForSandbox: ReturnType<typeof onboardSession.loadSession> = null;
-  try {
-    sessionForSandbox = onboardSession.loadSession();
-  } catch {
-    sessionForSandbox = null;
-  }
-  const sessionPolicyPresets =
-    sessionForSandbox?.sandboxName === sandboxName && Array.isArray(sessionForSandbox.policyPresets)
-      ? sessionForSandbox.policyPresets
-      : [];
   const hasChannelResidue =
     registry.getConfiguredMessagingChannelsFromEntry(registryEntry).includes(canonical) ||
-    (registryEntry?.policies || []).includes(canonical) ||
-    sessionPolicyPresets.includes(canonical) ||
     policies.getAppliedPresets(sandboxName).includes(canonical);
 
   // The public Google Chat endpoint must stop before credentials, providers,
@@ -2099,17 +1980,11 @@ async function removeSandboxPolicyUnlocked(
   const dryRun = Boolean(options.dryRun);
   const skipConfirm = Boolean(options.yes || options.force || isNonInteractive());
 
-  // Remove-able presets = built-in presets + custom presets applied via
-  // --from-file / --from-dir (tracked in registry.customPolicies).
+  // Custom preset names are decoded from their namespaced live OpenShell keys.
   const builtinPresets = policies.listPresets();
   const customPresets = policies.listCustomPresets(sandboxName);
   const allPresets = [...builtinPresets, ...customPresets];
-  // `policy list` reports a preset as active when either the registry or the
-  // gateway holds it, so removal has to accept the same set. A preset the
-  // gateway enforces but the registry never recorded is exactly the state
-  // `policy list` flags as "active on gateway, missing from local state", and
-  // removePreset() reconciles it without needing the registry entry. Null means
-  // the gateway could not be queried, which is not evidence of absence. (#9295)
+  // Active preset names come from the current OpenShell policy.
   const applied = policies.getAppliedPresets(sandboxName);
   const gatewayPresets = policies.getGatewayPresets(sandboxName);
   const removable = gatewayPresets ? [...new Set([...applied, ...gatewayPresets])] : applied;
@@ -2149,19 +2024,7 @@ async function removeSandboxPolicyUnlocked(
   }
   if (!answer) return;
 
-  // Resolve preset content: built-in first, then custom (persisted in
-  // registry). Needed only for the endpoint preview below — removePreset()
-  // itself re-resolves on the library side.
-  let presetContent: string | null = policies.loadPresetForSandbox(sandboxName, answer);
-  if (!presetContent) {
-    const entry = customPresets.find((p: { name: string }) => p.name === answer);
-    if (entry) {
-      const persisted = registry
-        .getCustomPolicies(sandboxName)
-        .find((p: { name: string }) => p.name === answer);
-      presetContent = persisted ? persisted.content : null;
-    }
-  }
+  const presetContent = policies.loadPresetForSandbox(sandboxName, answer);
   if (!presetContent) return;
 
   const endpoints = policies.getPresetEndpoints(presetContent);
@@ -2182,7 +2045,6 @@ async function removeSandboxPolicyUnlocked(
   if (!policies.removePreset(sandboxName, answer)) {
     process.exit(1);
   }
-  syncSessionPolicyPresetsWithRegistry(sandboxName, answer, "remove");
   refreshSandboxPolicyContextFile(sandboxName);
 }
 
@@ -2270,8 +2132,6 @@ async function excludeSandboxBaselineUnlocked(
   }
 
   if (!policies.excludeBaselineEntry(sandboxName, key, digest)) {
-    // A failed cross-system mutation can leave a durable repair journal. Keep
-    // the in-sandbox context aligned before returning the nonzero result.
     refreshSandboxPolicyContextFile(sandboxName);
     process.exit(1);
   }
@@ -2302,14 +2162,6 @@ async function restoreSandboxBaselineUnlocked(
     process.exit(1);
   }
 
-  const isExcluded = registry.getBaselineExclusions(sandboxName).some((entry) => entry.key === key);
-  const pendingTransition = registry.getBaselineExclusionTransition(sandboxName);
-  const isPendingForKey = pendingTransition?.exclusion.key === key;
-  if (!isExcluded && !isPendingForKey) {
-    console.error(`  Baseline entry '${key}' is not excluded for '${sandboxName}'.`);
-    process.exit(1);
-  }
-
   const baseline = policies.resolveSandboxBaselinePolicy(sandboxName);
   if (!baseline) {
     console.error(`  Could not read the baseline policy for sandbox '${sandboxName}'.`);
@@ -2326,7 +2178,7 @@ async function restoreSandboxBaselineUnlocked(
     );
   } else {
     console.log(
-      `  ${YW}⚠${R} The current baseline no longer defines '${key}'; clearing the exclusion record only.`,
+      `  ${YW}⚠${R} The current baseline no longer defines '${key}'; no change is needed.`,
     );
   }
 

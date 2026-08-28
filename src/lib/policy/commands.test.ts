@@ -32,7 +32,7 @@ describe("OpenShell policy command builders", () => {
     ]);
   });
 
-  it("pins policy authority reads to the selected gateway", () => {
+  it("pins policy requirements reads to the selected gateway", () => {
     expect(buildPolicyGetArgs("alpha", "nemoclaw")).toEqual([
       "policy",
       "get",

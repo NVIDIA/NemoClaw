@@ -224,7 +224,6 @@ function makeHermesDiscordEntry(name: string): SandboxEntry {
   return {
     name,
     agent: "hermes",
-    policies: [],
     messaging: {
       schemaVersion: 1,
       plan: {
@@ -353,7 +352,7 @@ beforeEach(() => {
 
   // Lazy legacy-provider seam: no onboarding graph is loaded for this suite.
   upsertMock = vi.spyOn(policyChannelDependencies, "upsertMessagingProviders").mockReturnValue([]);
-  vi.spyOn(policyChannelDependencies, "revalidateChannelProviderPolicyAuthority").mockImplementation(
+  vi.spyOn(policyChannelDependencies, "revalidateChannelProviderPolicy").mockImplementation(
     () => undefined,
   );
 
@@ -609,13 +608,10 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
       key === "DISCORD_BOT_TOKEN" ? DISCORD_TOKEN : null,
     );
     upsertMock.mockImplementationOnce(() => {
-      throw Object.assign(
-        new Error("alpha-discord-bridge does not match the required binding"),
-        {
-          code: "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT",
-          mutatedProviderNames: [],
-        },
-      );
+      throw Object.assign(new Error("alpha-discord-bridge does not match the required binding"), {
+        code: "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT",
+        mutatedProviderNames: [],
+      });
     });
 
     await expect(addSandboxChannel("alpha", { channel: "discord" })).rejects.toThrow(

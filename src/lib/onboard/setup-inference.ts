@@ -592,7 +592,7 @@ export function createSetupInference(
     options: ProviderInferenceSetupOptions = {},
   ): Promise<SetupInferenceResult> {
     if (sandboxName && !options.revalidatePolicyRequirements) {
-      throw new Error("Sandbox inference setup requires policy authority revalidation.");
+      throw new Error("Sandbox inference setup requires policy requirement revalidation.");
     }
     const revalidatePolicyRequirements = (operation: string): void => {
       if (!sandboxName) return;

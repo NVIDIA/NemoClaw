@@ -9,7 +9,7 @@ import { deriveCheckpointFromSession } from "../../../state/onboard-checkpoint-m
 import type { CheckpointProviderBinding } from "../../../state/onboard-checkpoint-types";
 import type { CheckpointSandboxRecreateTransaction } from "../../../state/onboard-checkpoint-types";
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
-import type { BaselineExclusionEntry, SandboxRemovalReceipt } from "../../../state/registry";
+import type { SandboxRemovalReceipt } from "../../../state/registry";
 import {
   advanceSandboxRecreateTransaction,
   fingerprintSandboxRecreateValue,
@@ -198,7 +198,6 @@ export function createDeps(
         inferenceProvider?: string | null;
         extraProviders: readonly string[];
         staleExtraProviders: readonly string[];
-        baselineExclusions?: readonly BaselineExclusionEntry[];
       }) => ({
         sandboxName: input.sandboxName,
         inferenceProvider: input.inferenceProvider ?? null,
@@ -215,8 +214,6 @@ export function createDeps(
             directGpu: false,
             additionalPresets: [],
             policyTier: null,
-            baselineExclusions:
-              input.baselineExclusions?.map((exclusion) => ({ ...exclusion })) ?? [],
           },
         },
         gpuCreateArgs: [],

@@ -1,16 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 
 import { createHermesCredentialEnvReconciliationRuntime } from "../../actions/sandbox/runtime/hermes-lifecycle";
 import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
-import {
-  assertRecordedPolicyAuthority,
-  isPolicyAuthorityRefusalError,
-  PolicyAuthorityRefusalError,
-} from "../../adapters/openshell/policy-authority";
-import type { SandboxPolicyAuthority } from "../../adapters/openshell/policy-authority";
+import { isPolicyObservationError } from "../../adapters/openshell/policy-state";
 import { HERMES_PORTABLE_OPENSHELL_VERSION } from "../../adapters/openshell/resolve-shared";
 import type { AgentDefinition } from "../../agent/defs";
 import type { WebSearchConfig } from "../../inference/web-search";
@@ -19,11 +15,11 @@ import type { BackupResult } from "../../state/sandbox";
 import type { RetainedSandboxRecoveryContext, Session } from "../../state/onboard-session";
 import type { SandboxEntry } from "../../state/registry";
 import type {
-  PendingSandboxPolicyVerification,
+  PendingSandboxCreateVerification,
   QualifiedPendingSandboxCreateReservation,
 } from "../../state/registry";
 import type { HermesAuthMethod } from "../hermes-auth";
-import * as policyAuthorityPreflight from "../policy-authority/preflight";
+import * as policyRequirements from "../policy-requirements";
 import type { PreparedSandboxBuildContext } from "../build-context-stage";
 import type { DcodeSelectionDriftReader } from "../dcode-selection-drift";
 import { assertProviderlessInterceptorEnvironment } from "../entry-options";
@@ -43,19 +39,19 @@ import type {
 } from "../types";
 import * as sandboxCreatePlanMaterialization from "../sandbox-create-plan-materialization";
 import {
-  pendingSandboxPolicyVerificationForBoundary,
+  pendingSandboxCreateVerificationForBoundary,
   revalidateCreatedSandboxPolicyRegistration,
   verifiedSandboxPolicyBoundaryFromPendingCheckpoint,
   verifyCreatedApfInterceptorPolicyRegistration,
   verifyCreatedSandboxPolicyRegistration,
-} from "./policy-creation-receipt";
+} from "./policy-verification";
 import {
   attachProvidersAfterSandboxCreation,
   publishAttachedProvidersBeforeDockerSandboxCreation,
   validateAttachedMessagingProvidersBeforeSandboxCreation,
 } from "./provider-publication";
-export const createOnboardPolicyAuthorityBindings =
-  policyAuthorityPreflight.createOnboardPolicyAuthorityBindings;
+export const createOnboardPolicyRequirementBindings =
+  policyRequirements.createOnboardPolicyRequirementBindings;
 
 function cancelRecoveryIdentity(
   liveExists: boolean,
@@ -245,7 +241,6 @@ interface VerifyCreatedSandboxEffectivePolicyInput {
   readonly effectivePolicySourcePath?: string;
   readonly policySourcePathForRoute: () => string;
   readonly apfInterceptorRequested: boolean;
-  readonly plannedAuthority: Exclude<SandboxPolicyAuthority, "owner-unknown">;
   readonly operation: string;
 }
 
@@ -254,7 +249,7 @@ export function verifyCreatedSandboxEffectivePolicy(
   input: VerifyCreatedSandboxEffectivePolicyInput,
 ): EffectiveVerifiedSandboxPolicyBoundary {
   if (Boolean(input.effectivePolicySourcePath) !== input.hermesPortable) {
-    throw new Error("Hermes portable create policy authority is incomplete.");
+    throw new Error("Hermes portable create policy source is incomplete.");
   }
   if (input.effectivePolicySourcePath && input.route === "compatibility") {
     throw new Error("Hermes portable create selected an unsupported GPU route.");
@@ -272,10 +267,7 @@ export function verifyCreatedSandboxEffectivePolicy(
   };
   const registration = input.apfInterceptorRequested
     ? verifyCreatedApfInterceptorPolicyRegistration(registrationInput)
-    : verifyCreatedSandboxPolicyRegistration({
-        ...registrationInput,
-        plannedAuthority: input.plannedAuthority,
-      });
+    : verifyCreatedSandboxPolicyRegistration(registrationInput);
   return {
     registration,
     sandboxName: input.sandboxName,
@@ -286,20 +278,6 @@ export function verifyCreatedSandboxEffectivePolicy(
     route: input.route,
     policySourcePath,
   };
-}
-
-/** Select the policyless APF create plan only when no active global policy exists. */
-export function resolveSandboxCreatePolicyAuthority(
-  observedAuthority: "nemoclaw-managed" | "externally-managed",
-  apfInterceptorRequested: boolean,
-): "nemoclaw-managed" | "externally-managed" {
-  if (!apfInterceptorRequested) return observedAuthority;
-  if (observedAuthority !== "nemoclaw-managed") {
-    throw new Error(
-      "APF interceptor selection requires the active global policy to be absent before sandbox creation.",
-    );
-  }
-  return "externally-managed";
 }
 
 /** Require the generic deferred-effect gate for explicit APF creation. */
@@ -518,13 +496,13 @@ export async function completeHermesPortableSandboxRegistration(input: {
 type CreatedHermesCredentialEnvReconciliationDeps = {
   readonly reconcileCredentialEnv: (
     plan: SandboxMessagingPlan,
-    revalidatePolicyAuthority: (operation: string) => void,
+    revalidatePolicyRequirements: (operation: string) => void,
   ) => {
     readonly changed: boolean;
   };
   readonly restartGateway: (
     sandboxName: string,
-    revalidatePolicyAuthority: (operation: string) => void,
+    revalidatePolicyRequirements: (operation: string) => void,
   ) => {
     readonly status: number;
     readonly stdout: string;
@@ -539,9 +517,9 @@ type CreatedHermesCredentialEnvReconciliationDeps = {
   ) => unknown | null;
   readonly waitForGateway: (
     sandboxName: string,
-    revalidatePolicyAuthority: (operation: string) => void,
+    revalidatePolicyRequirements: (operation: string) => void,
   ) => boolean;
-  readonly revalidatePolicyAuthority: (operation: string) => void;
+  readonly revalidatePolicyRequirements: (operation: string) => void;
 };
 
 /**
@@ -560,30 +538,30 @@ export function reconcileCreatedHermesCredentialEnvironment(
   return runWithPostCreateRecovery(() => {
     if (input.plan?.agent !== "hermes") return;
 
-    deps.revalidatePolicyAuthority(
+    deps.revalidatePolicyRequirements(
       `reconciling Hermes messaging credentials for sandbox '${input.sandboxName}'`,
     );
     const reconciliation = deps.reconcileCredentialEnv(
       input.plan,
-      deps.revalidatePolicyAuthority,
+      deps.revalidatePolicyRequirements,
     );
-    deps.revalidatePolicyAuthority(
+    deps.revalidatePolicyRequirements(
       `confirming Hermes messaging credential reconciliation for sandbox '${input.sandboxName}'`,
     );
     if (!reconciliation.changed) return;
 
-    const restart = deps.restartGateway(input.sandboxName, deps.revalidatePolicyAuthority);
+    const restart = deps.restartGateway(input.sandboxName, deps.revalidatePolicyRequirements);
     if (!deps.parseRestartCompletion(restart)) {
       throw new Error(
         `Hermes messaging credential reconciliation changed the gateway environment for sandbox '${input.sandboxName}', but the managed gateway restart did not complete.`,
       );
     }
-    if (!deps.waitForGateway(input.sandboxName, deps.revalidatePolicyAuthority)) {
+    if (!deps.waitForGateway(input.sandboxName, deps.revalidatePolicyRequirements)) {
       throw new Error(
         `Hermes messaging credential reconciliation restarted sandbox '${input.sandboxName}', but the managed gateway did not remain healthy.`,
       );
     }
-    deps.revalidatePolicyAuthority(
+    deps.revalidatePolicyRequirements(
       `completing Hermes messaging credential reconciliation for sandbox '${input.sandboxName}'`,
     );
   }, recordRecovery);
@@ -605,7 +583,7 @@ export async function finalizeCreatedSandboxBeforeHermesCredentialReconciliation
  * immediately after OpenShell returns the exact created identity and before provider,
  * credential, service, runtime, registry, or completion effects.
  */
-export async function runSandboxCreateWithPolicyAuthorityChecks<
+export async function runSandboxCreateWithPolicyVerification<
   Created,
   Evidence,
   Result = Created,
@@ -661,7 +639,7 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
   const refuseAfterCreate = (validationError: unknown): never => {
     recoveryAttempted = true;
     const validationDetail =
-      validationError instanceof Error && isPolicyAuthorityRefusalError(validationError)
+      validationError instanceof Error && isPolicyObservationError(validationError)
         ? validationError.message
         : null;
     const identityGuidance = exactIdentity
@@ -764,14 +742,6 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
   return result;
 }
 
-function assertHermesPortablePolicyAuthority(
-  hermesPortableLifecycle: boolean,
-  policyAuthority: string,
-): void {
-  if (!hermesPortableLifecycle || policyAuthority === "nemoclaw-managed") return;
-  throw new Error("Hermes portable sandbox creation requires NemoClaw-managed policy authority.");
-}
-
 export function hasManagedMcpRebuildHandoff(
   createIntent: SandboxCreateIntent | null | undefined,
 ): boolean {
@@ -791,74 +761,6 @@ function hasPreservedManagedMcpRebuildHandoff(
   createIntent: SandboxCreateIntent | null | undefined,
 ): boolean {
   return Boolean(preservedMcpState) && hasManagedMcpRebuildHandoff(createIntent);
-}
-
-export function backfillVerifiedExternalSandboxPolicyAuthority(input: {
-  readonly sandboxName: string;
-  readonly existingEntry: SandboxEntry | null;
-  readonly policyAuthority: "nemoclaw-managed" | "externally-managed";
-  readonly updateSandbox: (
-    sandboxName: string,
-    updates: { policyAuthority: "nemoclaw-managed" | "externally-managed" },
-  ) => boolean;
-}): void {
-  if (
-    !input.existingEntry ||
-    input.existingEntry.policyAuthority ||
-    input.policyAuthority !== "externally-managed"
-  ) {
-    return;
-  }
-  if (input.updateSandbox(input.sandboxName, { policyAuthority: input.policyAuthority })) return;
-  throw new Error(`Could not record policy authority for sandbox '${input.sandboxName}'.`);
-}
-
-type ApplyRecreatePolicyCarryForward = (
-  sandboxName: string,
-  nonInteractive: boolean,
-  note: (message: string) => void,
-  rebuildPolicyPresets?: readonly string[],
-) => void;
-
-/** Carry managed rebuild policy intent only while the recorded authority remains current. */
-export function applyManagedSandboxRebuildPolicyCarryForward(
-  input: {
-    readonly sandboxName: string;
-    readonly policyAuthority: "nemoclaw-managed" | "externally-managed";
-    readonly nonInteractive: boolean;
-    readonly note: (message: string) => void;
-    readonly rebuildPolicyPresets?: readonly string[];
-    readonly revalidatePolicyAuthority: (operation: string) => void;
-  },
-  applyRecreatePolicyCarryForward: ApplyRecreatePolicyCarryForward,
-): void {
-  if (input.policyAuthority !== "nemoclaw-managed") return;
-  input.revalidatePolicyAuthority(
-    `carrying forward managed policy presets for sandbox '${input.sandboxName}'`,
-  );
-  applyRecreatePolicyCarryForward(
-    input.sandboxName,
-    input.nonInteractive,
-    input.note,
-    input.rebuildPolicyPresets,
-  );
-}
-
-/** Reseed an outer rebuild after its owned delete leaves no live source branch. */
-export function applyAbsentSandboxRebuildPolicyCarryForward(
-  input: {
-    readonly sandboxName: string;
-    readonly liveExists: boolean;
-    readonly policyAuthority: "nemoclaw-managed" | "externally-managed";
-    readonly nonInteractive: boolean;
-    readonly note: (message: string) => void;
-    readonly rebuildPolicyPresets?: readonly string[];
-    readonly revalidatePolicyAuthority: (operation: string) => void;
-  },
-  applyRecreatePolicyCarryForward: ApplyRecreatePolicyCarryForward,
-): void {
-  if (input.liveExists || !Array.isArray(input.rebuildPolicyPresets)) return;
-  applyManagedSandboxRebuildPolicyCarryForward(input, applyRecreatePolicyCarryForward);
 }
 
 async function validatePortableManagedWorkloadSelection(input: {
@@ -904,7 +806,7 @@ export function createProviderEffectBoundary(input: {
   readonly activateDeferredProviderEffects:
     | ((revalidatePolicyRequirements: (operation: string) => void) => readonly string[])
     | null;
-  readonly revalidatePolicyAuthorityBeforeCreate: () => void;
+  readonly revalidatePolicyRequirementsBeforeCreate: () => void;
 }): ProviderEffectBoundary {
   const validate = () =>
     validateAttachedMessagingProvidersBeforeSandboxCreation(
@@ -920,7 +822,7 @@ export function createProviderEffectBoundary(input: {
     return {
       validateBeforeCreate: validate,
       publishBeforeCreate: () => {
-        input.revalidatePolicyAuthorityBeforeCreate();
+        input.revalidatePolicyRequirementsBeforeCreate();
         publish();
       },
       runAfterVerifiedCreate: undefined,
@@ -964,7 +866,7 @@ type SandboxProviderCleanupAuthority =
       readonly observeSandbox: () => ReturnType<
         SandboxCreateOrchestrationRuntime["getSandboxRecreateObservation"]
       >;
-      readonly revalidatePolicyAuthority: (operation: string) => void;
+      readonly revalidatePolicyRequirements: (operation: string) => void;
     };
 
 export function runAuthorityBoundProviderCleanup(
@@ -984,7 +886,7 @@ export function runAuthorityBoundProviderCleanup(
               `Cannot clean up providers for sandbox '${input.sandboxName}': a sandbox with that name appeared after absence was verified while ${operation}.`,
             );
           }
-          input.revalidatePolicyAuthority(operation);
+          input.revalidatePolicyRequirements(operation);
         }
       : input.revalidateSandboxIdentity;
   revalidateSandboxIdentity(`cleaning up providers for sandbox '${input.sandboxName}'`);
@@ -1013,8 +915,8 @@ function pendingVerifiedCreateCheckpointForSession(input: {
   readonly entry: SandboxEntry | null;
   readonly session: Session | null;
   readonly request: SandboxCreateIntent["recreateTransaction"];
-}): PendingSandboxPolicyVerification | null {
-  const checkpoint = input.entry?.pendingPolicyVerification;
+}): PendingSandboxCreateVerification | null {
+  const checkpoint = input.entry?.pendingCreateVerification;
   if (
     !checkpoint ||
     input.entry?.pendingRouteReservation !== true ||
@@ -1052,13 +954,13 @@ function pendingVerifiedCreateCheckpointForSession(input: {
 
 function readAcceptedPendingVerifiedCreate(input: {
   readonly acceptedTarget: boolean;
-  readonly openingCheckpoint: PendingSandboxPolicyVerification | null;
+  readonly openingCheckpoint: PendingSandboxCreateVerification | null;
   readonly sandboxName: string;
   readonly readEntry: () => SandboxEntry | null;
-}): PendingSandboxPolicyVerification | null {
+}): PendingSandboxCreateVerification | null {
   const entry = input.acceptedTarget ? input.readEntry() : null;
   const checkpoint =
-    entry?.pendingRouteReservation === true ? (entry.pendingPolicyVerification ?? null) : null;
+    entry?.pendingRouteReservation === true ? (entry.pendingCreateVerification ?? null) : null;
   if (input.openingCheckpoint && !isDeepStrictEqual(checkpoint, input.openingCheckpoint)) {
     throw new Error(
       `Cannot resume sandbox '${input.sandboxName}' because its verified create checkpoint changed during recovery.`,
@@ -1202,7 +1104,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       openshellArgv,
       path,
       planRegisteredExtraProviders,
-      policyPresetCarry,
       preparedDcodeRebuild,
       promptValidatedSandboxName,
       promptYesNoOrDefault,
@@ -1292,7 +1193,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         sandboxGpuConfig: effectiveSandboxGpuConfig,
         resourceProfile,
         hermesToolGateways,
-        baselineExclusions: sandboxRegistration.baselineExclusionsForCreate(sandboxName),
         ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
         ...(createIntent?.policyTier !== undefined ? { policyTier: createIntent.policyTier } : {}),
       },
@@ -1311,7 +1211,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         ...resolvedCreateIntent.policy,
         options: {
           ...resolvedCreateIntent.policy.options,
-          additionalPresets: policyAuthorityPreflight.requiredOnboardPolicyPresets({
+          additionalPresets: policyRequirements.requiredOnboardPolicyPresets({
             additionalPresets: resolvedCreateIntent.policy.options.additionalPresets,
             provider,
             webSearchConfig,
@@ -1497,84 +1397,23 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     });
     const apfInterceptorRequested = createIntent?.apfInterceptorRequested === true;
     let verifiedPolicyGate: EffectiveVerifiedSandboxPolicyBoundary | null = null;
-    let pendingPolicyVerification: PendingSandboxPolicyVerification | null = null;
+    let pendingCreateVerification: PendingSandboxCreateVerification | null = null;
     let admittedCreateReservation: QualifiedPendingSandboxCreateReservation | null = null;
     let verifiedPolicyRegistrationFinalized = false;
-    const policyAuthoritySession = onboardSession.loadSession();
-    const sessionPolicyAuthority = policyAuthoritySession?.policyAuthority ?? null;
-    const currentSessionId = policyAuthoritySession?.sessionId ?? null;
-    const openingPendingPolicyVerification = pendingVerifiedCreateCheckpointForSession({
+    const createCheckpointSession = onboardSession.loadSession();
+    const openingPendingCreateVerification = pendingVerifiedCreateCheckpointForSession({
       sandboxName,
       gatewayName: GATEWAY_NAME,
       liveExists,
       entry: existingEntry,
-      session: policyAuthoritySession,
+      session: createCheckpointSession,
       request: createIntent?.recreateTransaction,
     });
-    const qualifyPolicyAuthority = (
-      sandboxIsLive = liveExists,
-      operation = `prepare sandbox '${sandboxName}'`,
-    ) => {
-      const recordedSandbox = sandboxIsLive ? registry.getSandbox(sandboxName) : existingEntry;
-      return policyAuthorityPreflight.qualifySandboxPolicyAuthority({
-        sandboxName,
-        gatewayName: GATEWAY_NAME,
-        liveExists: sandboxIsLive,
-        recordedAuthorities: [existingEntry?.policyAuthority, sessionPolicyAuthority],
-        recordedSandbox,
-        readRecordedSandbox: registry.getSandbox,
-        currentSessionId,
-        prepareRequiredPolicy: () =>
-          sandboxCreatePlanMaterialization.prepareSandboxCreatePolicy(policyRequirementIntent)
-            .initialSandboxPolicy,
-        operation,
-      });
-    };
-    const initialPolicyAuthority =
-      openingPendingPolicyVerification?.policyAuthority ?? qualifyPolicyAuthority().authority;
-    const resolvedPolicyAuthority = resolveSandboxCreatePolicyAuthority(
-      initialPolicyAuthority,
-      apfInterceptorRequested,
-    );
-    const revalidatePolicyAuthority = (sandboxIsLive: boolean, operation: string): void => {
-      if (
-        sandboxIsLive &&
-        !verifiedPolicyRegistrationFinalized &&
-        (openingPendingPolicyVerification || apfInterceptorRequested)
-      ) {
+    const revalidatePolicyRequirements = (sandboxIsLive: boolean, operation: string): void => {
+      if (sandboxIsLive && !verifiedPolicyRegistrationFinalized && verifiedPolicyGate) {
         revalidateVerifiedPolicyRegistration(requireVerifiedPolicyGate(), operation);
-        return;
       }
-      const inspection = qualifyPolicyAuthority(sandboxIsLive, operation);
-      if (apfInterceptorRequested) {
-        if (sandboxIsLive) {
-          assertRecordedPolicyAuthority("externally-managed", inspection.authority, operation);
-        } else {
-          resolveSandboxCreatePolicyAuthority(inspection.authority, true);
-        }
-        return;
-      }
-      assertRecordedPolicyAuthority(resolvedPolicyAuthority, inspection.authority, operation);
     };
-    assertHermesPortablePolicyAuthority(
-      agentCreateInput.hermesPortableLifecycle,
-      resolvedPolicyAuthority,
-    );
-    runForNewSandboxCreate(Boolean(openingPendingPolicyVerification), () => {
-      backfillVerifiedExternalSandboxPolicyAuthority({
-        sandboxName,
-        existingEntry,
-        policyAuthority: resolvedPolicyAuthority,
-        updateSandbox: registry.updateSandbox,
-      });
-    });
-    onboardSession.updateSession((session) => {
-      session.policyAuthority =
-        resolvedPolicyAuthority === "externally-managed" && !apfInterceptorRequested
-          ? "externally-managed"
-          : null;
-      if (session.policyAuthority === "externally-managed") session.policyPresets = null;
-    });
     const recreateRegistryEntry = readSandboxRecreateRegistryEntry({
       sandboxName,
       recreateTransaction: Boolean(createIntent?.recreateTransaction),
@@ -1598,23 +1437,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           getSandboxRecreateObservation,
           note,
         ),
-      carryForward: () =>
-        applyAbsentSandboxRebuildPolicyCarryForward(
-          {
-            sandboxName,
-            liveExists,
-            policyAuthority: resolvedPolicyAuthority,
-            nonInteractive: isNonInteractive(),
-            note,
-            rebuildPolicyPresets: createIntent?.rebuildPolicyPresets,
-            revalidatePolicyAuthority: (operation) => revalidatePolicyAuthority(false, operation),
-          },
-          policyPresetCarry.applyRecreatePolicyCarryForward,
-        ),
+      carryForward: () => undefined,
     });
     const acceptedTargetPendingCheckpoint = readAcceptedPendingVerifiedCreate({
       acceptedTarget: recreateRuntime.acceptedTarget,
-      openingCheckpoint: openingPendingPolicyVerification,
+      openingCheckpoint: openingPendingCreateVerification,
       sandboxName,
       readEntry: () => registry.getSandbox(sandboxName),
     });
@@ -1636,7 +1463,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         hermesDashboardForwarding,
         updateReusedSandboxMetadata,
         releaseDashboardPort: dashboardPortReservationScope.release,
-        revalidatePolicyRequirements: (operation) => revalidatePolicyAuthority(true, operation),
+        revalidatePolicyRequirements: (operation) => revalidatePolicyRequirements(true, operation),
       }));
     };
     if (recreateRuntime.acceptedTarget && !resumingVerifiedCreate) {
@@ -1676,7 +1503,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           toolDisclosure: effectiveToolDisclosure,
           dcodeAutoApprovalMode: createIntent?.dcodeAutoApprovalMode ?? null,
           observabilityEnabled: createIntent?.observabilityEnabled === true,
-          policyTier: createIntent?.policyTier ?? null,
         },
       });
     let pendingStateRestoreBackupPath: string | null = null,
@@ -1817,13 +1643,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             if (actionableSelectionDrift) {
               note("  [non-interactive] Recreating sandbox due to provider/model drift.");
             } else {
-              revalidatePolicyAuthority(true, `reusing sandbox '${sandboxName}'`);
-              policyPresetCarry.seedReusedSandboxPolicyPresets(sandboxName, isNonInteractive());
+              revalidatePolicyRequirements(true, `reusing sandbox '${sandboxName}'`);
               // Upsert messaging providers even on reuse so credential changes take
               // effect without requiring a full sandbox recreation.
               upsertMessagingProviders(messagingTokenDefs, {
                 revalidatePolicyRequirements: (operation) =>
-                  revalidatePolicyAuthority(true, operation),
+                  revalidatePolicyRequirements(true, operation),
               });
               if (selectionDrift.unknown) {
                 note(
@@ -1868,11 +1693,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             console.log(`  Sandbox '${sandboxName}' already exists.`);
             console.log("  Choosing 'n' will delete the existing sandbox and create a new one.");
             if (await promptYesNoOrDefault("  Reuse existing sandbox?", null, true)) {
-              revalidatePolicyAuthority(true, `reusing sandbox '${sandboxName}'`);
-              policyPresetCarry.seedReusedSandboxPolicyPresets(sandboxName, isNonInteractive());
+              revalidatePolicyRequirements(true, `reusing sandbox '${sandboxName}'`);
               upsertMessagingProviders(messagingTokenDefs, {
                 revalidatePolicyRequirements: (operation) =>
-                  revalidatePolicyAuthority(true, operation),
+                  revalidatePolicyRequirements(true, operation),
               });
               await restoreReusedSandboxDashboard(!selectionDrift.unknown);
               return sandboxName;
@@ -1955,18 +1779,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         baseImageResolutionContext,
         previousEntry?.imageTag,
       );
-      applyManagedSandboxRebuildPolicyCarryForward(
-        {
-          sandboxName,
-          policyAuthority: resolvedPolicyAuthority,
-          nonInteractive: isNonInteractive(),
-          note,
-          rebuildPolicyPresets: createIntent?.rebuildPolicyPresets,
-          revalidatePolicyAuthority: (operation) => revalidatePolicyAuthority(true, operation),
-        },
-        policyPresetCarry.applyRecreatePolicyCarryForward,
-      );
-
       const noRestorePending =
         pendingStateRestore === null && pendingStateRestoreBackupPath === null;
       if (
@@ -1988,16 +1800,16 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       hermesStateVolumeLifecycle = prepareHermesStateVolumeLifecycle(preparedSandboxWorkload);
       note(`  Deleting and recreating sandbox '${sandboxName}'...`);
 
-      revalidatePolicyAuthority(true, `recreating sandbox '${sandboxName}'`);
+      revalidatePolicyRequirements(true, `recreating sandbox '${sandboxName}'`);
       if (recreateRuntime.beginDelete() === "source") {
         runAuthorityBoundProviderCleanup({
           sandboxName,
-          revalidateSandboxIdentity: (operation) => revalidatePolicyAuthority(true, operation),
+          revalidateSandboxIdentity: (operation) => revalidatePolicyRequirements(true, operation),
           runProviderPreDeleteCleanup: runSandboxProviderPreDeleteCleanup,
           runOpenshell,
           redact,
         });
-        revalidatePolicyAuthority(true, `deleting sandbox '${sandboxName}'`);
+        revalidatePolicyRequirements(true, `deleting sandbox '${sandboxName}'`);
         runOpenshell(
           [
             "sandbox",
@@ -2042,11 +1854,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       );
     }
     runForNewSandboxCreate(resumingVerifiedCreate, () => {
-      revalidatePolicyAuthority(false, `creating sandbox '${sandboxName}'`);
+      revalidatePolicyRequirements(false, `creating sandbox '${sandboxName}'`);
       sandboxCreatePlanMaterialization.applyOrdinaryExtraProviderReconciliation(
         agentCreateInput.hermesPortableLifecycle,
         () => {
-          revalidatePolicyAuthority(false, `updating providers for sandbox '${sandboxName}'`);
+          revalidatePolicyRequirements(false, `updating providers for sandbox '${sandboxName}'`);
           applyExtraProviderReconciliation({
             extraProviders: resolvedCreateIntent.extraProviders,
             staleExtraProviders: resolvedCreateIntent.staleExtraProviders ?? [],
@@ -2060,7 +1872,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         () =>
           managedWorkloadOnboard.prepareHermesPortableOnboardSandboxLaunch({
             intent: resolvedCreateIntent,
-            policyAuthority: resolvedPolicyAuthority,
             fromRef:
               preparedSandboxWorkload.source.kind === "legacy-dockerfile"
                 ? preparedSandboxWorkload.source.dockerfilePath
@@ -2121,11 +1932,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             },
             plan: {
               intent: resolvedCreateIntent,
-              policyAuthority: resolvedPolicyAuthority,
+              policylessCreate: apfInterceptorRequested,
               deferSandboxEffectsUntilPolicyVerification:
                 createIntent?.deferSandboxEffectsUntilPolicyVerification === true,
               rebindMessagingTokenDefs: async () => {
-                revalidatePolicyAuthority(
+                revalidatePolicyRequirements(
                   false,
                   `registering credentials for sandbox '${sandboxName}'`,
                 );
@@ -2156,8 +1967,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                     : {
                         observeSandbox: () =>
                           getSandboxRecreateObservation(sandboxName, GATEWAY_NAME),
-                        revalidatePolicyAuthority: (operation: string) =>
-                          revalidatePolicyAuthority(false, operation),
+                        revalidatePolicyRequirements: (operation: string) =>
+                          revalidatePolicyRequirements(false, operation),
                       }),
                 });
               },
@@ -2167,7 +1978,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                   revalidatePolicyRequirements: (operation) =>
                     (
                       options.revalidatePolicyRequirements ??
-                      ((targetOperation) => revalidatePolicyAuthority(false, targetOperation))
+                      ((targetOperation) => revalidatePolicyRequirements(false, targetOperation))
                     )(operation),
                 }),
               getHermesToolGatewayProviderName: (targetSandbox) =>
@@ -2211,7 +2022,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           }),
       );
     const {
-      initialSandboxPolicy,
+      initialSandboxPolicy: materializedInitialSandboxPolicy,
       policyTier: resolvedCreatePolicyTier,
       messagingProviders,
       gpuRoutePlan,
@@ -2223,7 +2034,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       dashboardRemoteBindPrepared,
       legacyBuildContext,
       launch: {
-        createArgv,
+        createArgv: materializedCreateArgv,
         effectiveDashboardPort,
         intendedSandboxStartupCommand,
         managedBootstrapIdentity,
@@ -2233,6 +2044,20 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         sandboxStartupCommand,
       },
     } = preparedOnboardLaunch;
+    const initialSandboxPolicy = createIntent?.rebuildPolicySourcePath
+      ? {
+          policyPath: createIntent.rebuildPolicySourcePath,
+          appliedPresets: [],
+          sourceBytes: fs.readFileSync(createIntent.rebuildPolicySourcePath),
+        }
+      : materializedInitialSandboxPolicy;
+    const createArgv = createIntent?.rebuildPolicySourcePath
+      ? materializedCreateArgv.map((value, index, argv) =>
+          index > 0 && argv[index - 1] === "--policy"
+            ? createIntent.rebuildPolicySourcePath!
+            : value,
+        )
+      : materializedCreateArgv;
     const restoreBackupPath =
       pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;
     onboardSessionBootstrap.verifyReadOnlyHostMountSources(resolvedCreateIntent.hostMounts);
@@ -2287,7 +2112,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       route: import("../docker-gpu-route").SelectedDockerGpuRoute,
     ): string => {
       const policySourcePath =
-        route === "compatibility" ? compatibilityPolicyPath : initialSandboxPolicy.policyPath;
+        createIntent?.rebuildPolicySourcePath ??
+        (route === "compatibility" ? compatibilityPolicyPath : initialSandboxPolicy.policyPath);
       if (!policySourcePath) {
         throw new Error("Sandbox creation has no exact policy source for its selected route.");
       }
@@ -2312,11 +2138,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       }
       return verifiedPolicyGate;
     };
-    const requirePendingPolicyVerification = (): PendingSandboxPolicyVerification => {
-      if (!pendingPolicyVerification) {
+    const requirePendingCreateVerification = (): PendingSandboxCreateVerification => {
+      if (!pendingCreateVerification) {
         throw new Error("Sandbox creation has no durable verified policy checkpoint.");
       }
-      return pendingPolicyVerification;
+      return pendingCreateVerification;
     };
     const requireCreateReservation = (): QualifiedPendingSandboxCreateReservation => {
       if (!admittedCreateReservation) {
@@ -2371,71 +2197,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         registry.getSandbox(sandboxName),
       );
     };
-    /** Rebind only the current reserved GPU create, then CAS-persist its exact live receipt. */
-    const revalidateActiveVerifiedCreateBoundary = (
-      boundary: EffectiveVerifiedSandboxPolicyBoundary,
-      checkpoint: PendingSandboxPolicyVerification,
-      operation: string,
-    ): {
-      readonly boundary: EffectiveVerifiedSandboxPolicyBoundary;
-      readonly checkpoint: PendingSandboxPolicyVerification;
-    } => {
-      if (!isDeepStrictEqual(pendingSandboxPolicyVerificationForBoundary(boundary), checkpoint)) {
-        throw new PolicyAuthorityRefusalError(
-          `Refusing to ${operation}: the verified create policy boundary no longer matches its durable checkpoint.`,
-          "owner-unknown",
-        );
-      }
-      registry.requireCurrentPendingSandboxPolicyVerification(
-        requireCreateReservation(),
-        checkpoint,
-      );
-      revalidateCreatedSandboxIdentity(boundary.lifecycleLiveIdentityFingerprint, operation);
-      const registration =
-        boundary.route !== "none" && boundary.registration.policyAuthority === "nemoclaw-managed"
-          ? verifyCreatedSandboxPolicyRegistration(
-              {
-                sandboxName,
-                gatewayName: GATEWAY_NAME,
-                gatewayPort: GATEWAY_PORT,
-                lifecycleGeneration: createdSandboxLifecycle.generation,
-                lifecycleLiveIdentityFingerprint: boundary.lifecycleLiveIdentityFingerprint,
-                policySourcePath: boundary.policySourcePath,
-                route: boundary.route,
-                operation,
-                plannedAuthority: "nemoclaw-managed",
-              },
-              { sleep: sleepSeconds },
-            )
-          : revalidateCreatedSandboxPolicyRegistration({
-              sandboxName,
-              gatewayName: GATEWAY_NAME,
-              gatewayPort: GATEWAY_PORT,
-              lifecycleGeneration: createdSandboxLifecycle.generation,
-              lifecycleLiveIdentityFingerprint: boundary.lifecycleLiveIdentityFingerprint,
-              policySourcePath: boundary.policySourcePath,
-              route: boundary.route,
-              operation,
-              registration: boundary.registration,
-            });
-      revalidateCreatedSandboxIdentity(boundary.lifecycleLiveIdentityFingerprint, operation);
-      if (isDeepStrictEqual(registration, boundary.registration)) {
-        return { boundary, checkpoint };
-      }
-      const refreshedBoundary = { ...boundary, registration };
-      const refreshedCheckpoint = pendingSandboxPolicyVerificationForBoundary(refreshedBoundary);
-      registry.recordPendingSandboxPolicyVerification(
-        requireCreateReservation(),
-        refreshedCheckpoint,
-        { expected: checkpoint },
-      );
-      revalidateCreatedSandboxIdentity(boundary.lifecycleLiveIdentityFingerprint, operation);
-      registry.requireCurrentPendingSandboxPolicyVerification(
-        requireCreateReservation(),
-        refreshedCheckpoint,
-      );
-      return { boundary: refreshedBoundary, checkpoint: refreshedCheckpoint };
-    };
     const resumeVerifiedCreateInput = (() => {
       const checkpoint = acceptedTargetPendingCheckpoint;
       if (!checkpoint) return null;
@@ -2448,7 +2209,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         policySourcePath,
       };
       admittedCreateReservation = admitCreateReservation();
-      registry.requireCurrentPendingSandboxPolicyVerification(
+      registry.requireCurrentPendingSandboxCreateVerification(
         admittedCreateReservation,
         checkpoint,
       );
@@ -2459,55 +2220,61 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         checkpoint.sandboxIdentityFingerprint,
         `resuming sandbox creation for '${sandboxName}'`,
       );
-      const resumed = revalidateActiveVerifiedCreateBoundary(
-        boundary,
-        checkpoint,
-        `resume sandbox creation for '${sandboxName}'`,
+      revalidateCreatedSandboxPolicyRegistration({
+        sandboxName,
+        gatewayName: GATEWAY_NAME,
+        gatewayPort: GATEWAY_PORT,
+        lifecycleGeneration: createdSandboxLifecycle.generation,
+        lifecycleLiveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
+        policySourcePath,
+        route: checkpoint.route,
+        operation: `resume sandbox creation for '${sandboxName}'`,
+        registration: boundary.registration,
+      });
+      revalidateCreatedSandboxIdentity(
+        checkpoint.sandboxIdentityFingerprint,
+        `resuming sandbox creation for '${sandboxName}'`,
       );
-      pendingPolicyVerification = resumed.checkpoint;
-      verifiedPolicyGate = resumed.boundary;
+      registry.requireCurrentPendingSandboxCreateVerification(
+        admittedCreateReservation,
+        checkpoint,
+      );
+      pendingCreateVerification = checkpoint;
+      verifiedPolicyGate = boundary;
       return {
-        route: resumed.checkpoint.route,
-        liveIdentityFingerprint: resumed.checkpoint.sandboxIdentityFingerprint,
-        createAttemptNonce: resumed.checkpoint.createAttemptNonce,
+        route: checkpoint.route,
+        liveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
+        ...(checkpoint.createAttemptNonce
+          ? { createAttemptNonce: checkpoint.createAttemptNonce }
+          : {}),
       };
     })();
     const revalidateVerifiedPolicyRegistration = (
       boundary: EffectiveVerifiedSandboxPolicyBoundary,
       operation: string,
     ): SandboxEntry => {
-      const activeBoundary = requireVerifiedPolicyGate();
-      if (
-        boundary.sandboxName !== activeBoundary.sandboxName ||
-        boundary.gatewayName !== activeBoundary.gatewayName ||
-        boundary.gatewayPort !== activeBoundary.gatewayPort ||
-        boundary.lifecycleGeneration !== activeBoundary.lifecycleGeneration ||
-        boundary.lifecycleLiveIdentityFingerprint !==
-          activeBoundary.lifecycleLiveIdentityFingerprint ||
-        boundary.route !== activeBoundary.route
-      ) {
-        throw new PolicyAuthorityRefusalError(
-          `Refusing to ${operation}: the verified create policy boundary changed during onboarding.`,
-          "owner-unknown",
-        );
-      }
-      const refreshed = revalidateActiveVerifiedCreateBoundary(
-        activeBoundary,
-        requirePendingPolicyVerification(),
+      revalidateCreatedSandboxIdentity(boundary.lifecycleLiveIdentityFingerprint, operation);
+      revalidateCreatedSandboxPolicyRegistration({
+        sandboxName,
+        gatewayName: GATEWAY_NAME,
+        gatewayPort: GATEWAY_PORT,
+        lifecycleGeneration: createdSandboxLifecycle.generation,
+        lifecycleLiveIdentityFingerprint: boundary.lifecycleLiveIdentityFingerprint,
+        policySourcePath: boundary.policySourcePath,
+        route: boundary.route,
         operation,
-      );
-      pendingPolicyVerification = refreshed.checkpoint;
-      verifiedPolicyGate = refreshed.boundary;
-      return registry.requireCurrentPendingSandboxPolicyVerification(
+        registration: boundary.registration,
+      });
+      revalidateCreatedSandboxIdentity(boundary.lifecycleLiveIdentityFingerprint, operation);
+      return registry.requireCurrentPendingSandboxCreateVerification(
         requireCreateReservation(),
-        requirePendingPolicyVerification(),
+        requirePendingCreateVerification(),
       );
     };
     const retainedSandboxRecoveryContext = (
       boundary: VerifiedSandboxPolicyBoundary | null,
       createAttemptNonceOverride: string | null = null,
     ): RetainedSandboxRecoveryContext => {
-      const checkpoint = boundary ? pendingSandboxPolicyVerificationForBoundary(boundary) : null;
       const createAttemptNonce = boundary?.createAttemptNonce ?? createAttemptNonceOverride;
       if (!createAttemptNonce) {
         throw new Error("Retained sandbox recovery requires exact create-attempt authority.");
@@ -2516,14 +2283,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         gatewayName: GATEWAY_NAME,
         gatewayPort: GATEWAY_PORT,
         lifecycleGeneration: createdSandboxLifecycle.generation,
-        verifiedEffectivePolicyIdentity: checkpoint
-          ? { hash: checkpoint.policyHash, activeVersion: checkpoint.policyVersion }
-          : null,
         createAttemptNonce,
-        policyCreationReceipt:
-          boundary?.registration.policyAuthority === "nemoclaw-managed"
-            ? boundary.registration.policyCreationReceipt
-            : null,
       };
     };
     const recordPostCreateRecovery = (
@@ -2553,10 +2313,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             sandboxName,
             message,
             ...(exactIdentity ? { sandboxIdentityFingerprint: exactIdentity } : {}),
-            recoveryContext: retainedSandboxRecoveryContext(
-              verifiedPolicyGate,
-              createAttemptNonce,
-            ),
+            recoveryContext: retainedSandboxRecoveryContext(verifiedPolicyGate, createAttemptNonce),
           },
           onboardSession.markRetainedSandboxRecovery,
         ),
@@ -2576,17 +2333,17 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         sandboxName,
       });
       if (Boolean(effectivePolicySourcePath) !== Boolean(hermesPortableAuthority)) {
-        throw new Error("Hermes portable create policy authority is incomplete.");
+        throw new Error("Hermes portable create policy source is incomplete.");
       }
       admittedCreateReservation = admitCreateReservation();
-      return runSandboxCreateWithPolicyAuthorityChecks<
+      return runSandboxCreateWithPolicyVerification<
         import("../sandbox-gpu-create-flow").CreatedSandboxIdentity,
         EffectiveVerifiedSandboxPolicyBoundary,
         import("../sandbox-gpu-create-flow").SandboxGpuCreateFlowResult
       >({
         sandboxName,
         revalidate: (sandboxIsLive, operation) =>
-          revalidatePolicyAuthority(resumeVerifiedCreateInput ? true : sandboxIsLive, operation),
+          revalidatePolicyRequirements(resumeVerifiedCreateInput ? true : sandboxIsLive, operation),
         captureCreatedSandboxIdentity: (
           identity: import("../sandbox-gpu-create-flow").CreatedSandboxIdentity,
         ) => identity.liveIdentityFingerprint,
@@ -2620,13 +2377,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               ? verifyCreatedApfInterceptorPolicyRegistration(registrationInput, {
                   sleep: sleepSeconds,
                 })
-              : verifyCreatedSandboxPolicyRegistration(
-                  {
-                    ...registrationInput,
-                    plannedAuthority: resolvedPolicyAuthority,
-                  },
-                  { sleep: sleepSeconds },
-                );
+              : verifyCreatedSandboxPolicyRegistration(registrationInput, {
+                  sleep: sleepSeconds,
+                });
           return {
             registration,
             sandboxName,
@@ -2641,18 +2394,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         },
         persistVerifiedPolicy: (_identity, _exactIdentity, boundary) => {
           requireDurableCreatedSandboxIdentity(boundary.lifecycleLiveIdentityFingerprint);
-          const checkpoint = pendingSandboxPolicyVerificationForBoundary(boundary);
-          registry.recordPendingSandboxPolicyVerification(requireCreateReservation(), checkpoint, {
-            ...(pendingPolicyVerification ? { expected: pendingPolicyVerification } : {}),
+          const checkpoint = pendingSandboxCreateVerificationForBoundary(boundary);
+          registry.recordPendingSandboxCreateVerification(requireCreateReservation(), checkpoint, {
+            ...(pendingCreateVerification ? { expected: pendingCreateVerification } : {}),
           });
-          pendingPolicyVerification = checkpoint;
+          pendingCreateVerification = checkpoint;
           verifiedPolicyGate = boundary;
-          if (apfInterceptorRequested) {
-            onboardSession.updateSession((session) => {
-              session.policyAuthority = "externally-managed";
-              session.policyPresets = null;
-            });
-          }
         },
         revalidateVerifiedPolicy: (_identity, _exactIdentity, boundary, operation) => {
           revalidateVerifiedPolicyRegistration(boundary, operation);
@@ -2799,13 +2546,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         initialSandboxPolicy,
         compatibilityPolicyPath,
         policyTier: resolvedCreatePolicyTier,
-        policyAuthority: resolvedPolicyAuthority,
         getVerifiedPolicyBoundary: requireVerifiedPolicyGate,
         getVerifiedCreateRegistrationAuthority: () => ({
           reservation: requireCreateReservation(),
-          checkpoint: requirePendingPolicyVerification(),
+          checkpoint: requirePendingCreateVerification(),
         }),
-        revalidatePolicyAuthority: (operation) => {
+        revalidatePolicyRequirements: (operation) => {
           revalidateVerifiedPolicyRegistration(requireVerifiedPolicyGate(), operation);
         },
         dashboardRemoteBindPrepared,
@@ -2859,8 +2605,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       preparationDeps: providerPreparationDeps,
       runVerifiedSandboxCreateEffects,
       activateDeferredProviderEffects,
-      revalidatePolicyAuthorityBeforeCreate: () =>
-        revalidatePolicyAuthority(
+      revalidatePolicyRequirementsBeforeCreate: () =>
+        revalidatePolicyRequirements(
           false,
           `publishing providers before creating sandbox gateway '${GATEWAY_NAME}'`,
         ),
@@ -2984,7 +2730,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               },
               createHermesCredentialEnvReconciliationRuntime(
                 (args, options) => runOpenshell([...args], options),
-                (operation) => revalidatePolicyAuthority(true, operation),
+                (operation) => revalidatePolicyRequirements(true, operation),
               ),
               () => recordPostCreateRecovery("onboarding finalization"),
             ),
@@ -3027,7 +2773,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               ),
             dockerInfoFormat,
             runCapture,
-            revalidatePolicyAuthority: (operation) => revalidatePolicyAuthority(true, operation),
+            revalidatePolicyRequirements: (operation) =>
+              revalidatePolicyRequirements(true, operation),
           },
         );
       },

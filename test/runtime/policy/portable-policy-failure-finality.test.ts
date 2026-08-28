@@ -12,7 +12,7 @@ import {
   managedPolicyMetadata,
   managedRegistrationSource,
   SANDBOX_ID,
-} from "../../helpers/managed-policy-receipt-fixture";
+} from "../../helpers/live-policy-fixture";
 
 const repoRoot = path.join(import.meta.dirname, "../../..");
 const policyModulePath = path.join(repoRoot, "src", "lib", "policy", "index.ts");
@@ -354,7 +354,7 @@ describe.each(POLICY_SET_FAILURES)(
       const registry = JSON.parse(
         fs.readFileSync(path.join(run.homeDir, ".nemoclaw", "sandboxes.json"), "utf-8"),
       ) as { sandboxes: Record<string, { policies?: string[] }> };
-      expect(registry.sandboxes[SANDBOX_NAME]?.policies).toEqual([]);
+      expect(registry.sandboxes[SANDBOX_NAME]).not.toHaveProperty("policies");
     });
   },
 );

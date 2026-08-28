@@ -84,7 +84,7 @@ export interface ReusedSandboxDashboardForwarding {
     state: HermesDashboardOnboardState,
     sandboxName: string,
     rollback?: boolean,
-    revalidatePolicyAuthority?: (operation: string) => void,
+    revalidatePolicyRequirements?: (operation: string) => void,
   ): void;
 }
 
@@ -104,7 +104,7 @@ export interface ReusedSandboxDashboardStateInput {
   ensureDashboardForward(
     sandboxName: string,
     chatUiUrl: string,
-    options?: { revalidatePolicyAuthority?: (operation: string) => void },
+    options?: { revalidatePolicyRequirements?: (operation: string) => void },
   ): number;
   hermesDashboardForwarding: ReusedSandboxDashboardForwarding;
   updateSandbox?(sandboxName: string, updates: Partial<SandboxEntry>): unknown;
@@ -117,7 +117,7 @@ export interface ReusedSandboxDashboardStateInput {
     dashboardPort: number,
     selectionVerified: boolean,
     sandboxGpuConfig: SandboxGpuConfig,
-    revalidatePolicyAuthority?: (operation: string) => void,
+    revalidatePolicyRequirements?: (operation: string) => void,
   ): void;
 }
 
@@ -147,7 +147,7 @@ export function applyReusedSandboxDashboardState(
   const dashboardPort = manageDashboard
     ? input.revalidatePolicyRequirements
       ? input.ensureDashboardForward(input.sandboxName, input.chatUiUrl, {
-          revalidatePolicyAuthority: input.revalidatePolicyRequirements,
+          revalidatePolicyRequirements: input.revalidatePolicyRequirements,
         })
       : input.ensureDashboardForward(input.sandboxName, input.chatUiUrl)
     : 0;

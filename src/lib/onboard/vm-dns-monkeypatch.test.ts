@@ -53,17 +53,17 @@ describe("applyOnboardVmDnsMonkeypatch", () => {
       ok: true,
       status: "applied" as const,
     }));
-    const revalidatePolicyAuthority = vi.fn(() => {
-      throw new Error("policy authority changed");
+    const revalidatePolicyRequirements = vi.fn(() => {
+      throw new Error("policy requirements changed");
     });
 
     expect(() =>
       applyOnboardVmDnsMonkeypatch(
         "demo",
         { openshellDriver: "vm" },
-        { apply, log, revalidatePolicyAuthority },
+        { apply, log, revalidatePolicyRequirements },
       ),
-    ).toThrow("policy authority changed");
+    ).toThrow("policy requirements changed");
 
     expect(apply).toHaveBeenCalledOnce();
     expect(log).not.toHaveBeenCalled();

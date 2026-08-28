@@ -27,6 +27,7 @@ import {
   onboardSession,
   openshellRuntime,
   policies,
+  policyGet,
   processRecovery,
   purgeRebuildModule,
   type RebuildFlowSession,
@@ -96,7 +97,6 @@ export type RebuildFlowOverrides = {
   sandboxEntryReads?: Array<Record<string, unknown> | null>;
   sessionSandboxName?: string;
   sandboxInventory?: OpenShellSandboxInventory;
-  backupPolicyPresets?: string[];
   gatewayPresets?: string[];
   verificationUnavailableAfterPresetRemoval?: boolean;
   preDeleteSandboxEntry?: Record<string, unknown>;
@@ -176,6 +176,9 @@ export type RebuildFlowHarness = {
 
 export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): RebuildFlowHarness {
   purgeRebuildModule();
+  vi.spyOn(policyGet, "getSandboxPolicy").mockReturnValue({
+    yaml: "version: 1\nnetwork_policies:\n  host_preserved: {}\n",
+  });
 
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -486,7 +489,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       agentType: overrides.agentName ?? "openclaw",
       backupPath: "/tmp/nemoclaw-rebuild-backup",
       timestamp: "2026-06-01T00:00:00.000Z",
-      policyPresets: overrides.backupPolicyPresets ?? ["npm", "bad", "throw"],
     },
   });
   vi.spyOn(sandboxState, "validateRebuildRecoveryManifest").mockImplementation(

@@ -379,7 +379,6 @@ describe("managed workload onboard orchestration", () => {
         policyPath: "/tmp/nemoclaw-policy.yaml",
       },
       messagingProviders: [],
-      policyTier: null,
       sandboxGpuLogMessage: null,
     }));
 

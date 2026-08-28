@@ -115,7 +115,6 @@ export type RebuildFlowOverrides = {
     stderr?: string;
     error?: Error;
   };
-  backupPolicyPresets?: string[];
   backupPreservedEnv?: PreservedEnvFile[];
   ensureValidatedBraveSearchCredential?: () => Promise<unknown>;
   ensureValidatedWebSearchCredential?: () => Promise<unknown>;

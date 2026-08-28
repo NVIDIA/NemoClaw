@@ -481,7 +481,9 @@ describe("messaging policy credential bindings", () => {
           const selectorsFor = (hostPort: string) =>
             declared.filter((endpoint) => endpoint.hostPort === hostPort).map((e) => e.selector);
           return [...new Set(declared.map((endpoint) => endpoint.hostPort))]
-            .filter((hostPort) => new Set(selectorsFor(hostPort)).size !== selectorsFor(hostPort).length)
+            .filter(
+              (hostPort) => new Set(selectorsFor(hostPort)).size !== selectorsFor(hostPort).length,
+            )
             .map((hostPort) => `${entry.label} ${policyKey} ${hostPort}`);
         });
       })

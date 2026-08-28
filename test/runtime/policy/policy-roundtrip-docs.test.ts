@@ -66,11 +66,11 @@ describe("policy round-trip documentation examples", () => {
   });
 
   it.each(Array.from(SNAPSHOT_RESTORE_DOCS, (value) => [value]))(
-    "defines matching policy states in %s after a restore warning (#8210)",
+    "documents OpenShell policy authority without post-restore replay in %s",
     (docPath) => {
-      expect(readDoc(docPath), docPath).toContain(
-        "recorded in the sandbox registry and active on the gateway, or absent from both",
-      );
+      const text = readDoc(docPath);
+      expect(text, docPath).toContain("current OpenShell policy");
+      expect(text, docPath).not.toContain("recorded policy preset");
     },
   );
 });

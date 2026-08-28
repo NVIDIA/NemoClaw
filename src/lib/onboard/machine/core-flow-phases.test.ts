@@ -114,7 +114,6 @@ function createPhases(
     preferredInferenceApi: "chat",
     gatewayName: "nemoclaw",
     gpuEnabled: false,
-    policies: [],
   });
   const endpointProvenance = {
     getSandboxRegistryEntry,
@@ -294,7 +293,6 @@ function createPhases(
               directGpu: false,
               additionalPresets: [],
               policyTier: null,
-              baselineExclusions: [],
             },
           },
           gpuCreateArgs: [],
@@ -622,9 +620,9 @@ describe("core onboard flow phases", () => {
         assignments: ["SLACK_HOME_CHANNEL=C0123"],
       },
     ];
-    const rebuildPolicyPresets = ["github"];
+    const rebuildPolicySourcePath = "/tmp/current-policy.yaml";
     const { providerInference: providerPhase, sandbox: sandboxPhase } = createPhases({
-      sandboxOptions: { rebuildPreservedEnv, rebuildPolicyPresets },
+      sandboxOptions: { rebuildPreservedEnv, rebuildPolicySourcePath },
       sandboxDeps: { createSandbox },
     });
 
@@ -633,7 +631,7 @@ describe("core onboard flow phases", () => {
 
     expect((createSandbox.mock.calls[0] as unknown[] | undefined)?.[15]).toMatchObject({
       rebuildPreservedEnv,
-      rebuildPolicyPresets,
+      rebuildPolicySourcePath,
     });
   });
 
@@ -1111,7 +1109,6 @@ describe("core onboard flow phases", () => {
           preferredInferenceApi: null,
           gatewayName: "nemoclaw",
           gpuEnabled: false,
-          policies: [],
         }),
       },
     });
@@ -1208,7 +1205,6 @@ describe("core onboard flow phases", () => {
         preferredInferenceApi: "openai-completions",
         gatewayName: "nemoclaw",
         gpuEnabled: false,
-        policies: [],
       }));
       const { providerInference: providerPhase, sandbox: sandboxPhase } = createPhases({
         providerDeps: {

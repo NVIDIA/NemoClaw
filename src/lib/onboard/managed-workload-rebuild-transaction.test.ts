@@ -699,33 +699,6 @@ describe("managed workload rebuild transaction", () => {
     );
   });
 
-  it("publishes a replacement without carrying the previous policy receipt (#9833)", async () => {
-    const lifecycleGeneration = "00000000-0000-4000-8000-000000000001";
-    const sandboxIdentityFingerprint = "a".repeat(64);
-    const harness = transactionHarness("openclaw", "mxc", null, "linux/amd64", {
-      lifecycleGeneration,
-      lifecycleLiveIdentityFingerprint: sandboxIdentityFingerprint,
-      policyAuthority: "nemoclaw-managed",
-      policyCreationReceipt: {
-        schemaVersion: 1,
-        origin: "sandbox-create",
-        gatewayName: "nemoclaw",
-        gatewayPort: 8080,
-        sandboxName: "rebuild-openclaw",
-        lifecycleGeneration,
-        sandboxIdentityFingerprint,
-        policyHash: "policy-old",
-        policyVersion: 1,
-      },
-    });
-
-    const result = await harness.run();
-
-    expect(result.entry.lifecycleGeneration).toBe("generation-new");
-    expect(result.entry).not.toHaveProperty("policyAuthority");
-    expect(result.entry).not.toHaveProperty("policyCreationReceipt");
-  });
-
   it("rolls back a not-ready replacement by exact staged handle", async () => {
     const harness = transactionHarness("hermes", "docker", "readiness");
 

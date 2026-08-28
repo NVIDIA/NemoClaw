@@ -64,7 +64,6 @@ function writeRegistry(home: string): void {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
             agent: "openclaw",
             agentVersion: "test-version",
           },

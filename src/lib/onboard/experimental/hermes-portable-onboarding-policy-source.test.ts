@@ -18,12 +18,12 @@ import {
 } from "../../../../test/helpers/hermes-portable-onboarding-fixture";
 import type { SandboxEntry } from "../../state/registry";
 import {
-  pendingSandboxPolicyVerificationForBoundary,
+  pendingSandboxCreateVerificationForBoundary,
   revalidateCreatedSandboxPolicyRegistration,
   type CreatedSandboxPolicyRegistrationInput,
-} from "../sandbox-create/policy-creation-receipt";
+} from "../sandbox-create/policy-verification";
 import {
-  runSandboxCreateWithPolicyAuthorityChecks,
+  runSandboxCreateWithPolicyVerification,
   verifyCreatedSandboxEffectivePolicy,
   type EffectiveVerifiedSandboxPolicyBoundary,
 } from "../sandbox-create/orchestration";
@@ -80,23 +80,8 @@ function checkpointFor(
   input: ReturnType<typeof createHermesPortableTestInput>,
   liveIdentityFingerprint = HERMES_PORTABLE_TEST_LIVE_IDENTITY,
 ) {
-  const policyCreationReceipt = {
-    schemaVersion: 1 as const,
-    origin: "sandbox-create" as const,
-    gatewayName: input.gatewayName,
-    gatewayPort: GATEWAY_PORT,
-    sandboxName: input.sandboxName,
-    lifecycleGeneration: input.lifecycleGeneration,
-    sandboxIdentityFingerprint: liveIdentityFingerprint,
-    policyHash: "sha256:effective",
-    policyVersion: 4,
-  };
-  return pendingSandboxPolicyVerificationForBoundary({
-    registration: {
-      policyAuthority: "nemoclaw-managed" as const,
-      policyCreationReceipt,
-      observedPolicyAuthority: "owner-unknown" as const,
-    },
+  return pendingSandboxCreateVerificationForBoundary({
+    registration: {},
     sandboxName: input.sandboxName,
     gatewayName: input.gatewayName,
     gatewayPort: GATEWAY_PORT,
@@ -115,7 +100,7 @@ function checkpointEntry(
     gatewayPort: checkpoint.gatewayPort,
     lifecycleGeneration: checkpoint.lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
-    pendingPolicyVerification: checkpoint,
+    pendingCreateVerification: checkpoint,
   };
 }
 
@@ -149,7 +134,7 @@ afterEach(() => {
 });
 
 describe("Hermes portable create policy source", () => {
-  it("carries the receipt-owned source through the generic create gate (#10423)", async () => {
+  it("carries the transaction-scoped source through the generic create gate (#10423)", async () => {
     fs.writeFileSync(
       policyPath,
       `version: 1
@@ -167,20 +152,26 @@ network_policies:
       lifecycleGeneration: LIFECYCLE_GENERATION,
       createPolicySourceBytes: Buffer.from(HERMES_PORTABLE_TEST_POLICY),
     };
-    vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
-      .mockReturnValueOnce(gatewayInfo())
-      .mockReturnValueOnce(metadata())
-      .mockReturnValueOnce(readiness())
-      .mockReturnValueOnce({
-        status: 0,
-        output: HERMES_PORTABLE_TEST_POLICY,
-        stdout: HERMES_PORTABLE_TEST_POLICY,
-        stderr: "",
-      })
-      .mockReturnValueOnce(metadata())
-      .mockReturnValueOnce(gatewayInfo())
-      .mockReturnValueOnce(metadata())
-      .mockReturnValueOnce(metadata());
+    vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell").mockImplementation((args) => {
+      const argv = Array.from(args, String);
+      switch (true) {
+        case argv[0] === "gateway" && argv[1] === "info":
+          return gatewayInfo();
+        case argv[0] === "sandbox" && argv[1] === "list":
+          return readiness();
+        case argv.includes("--output") && argv.includes("json"):
+          return metadata();
+        case argv[0] === "policy" && argv[1] === "get":
+          return {
+            status: 0,
+            output: HERMES_PORTABLE_TEST_POLICY,
+            stdout: HERMES_PORTABLE_TEST_POLICY,
+            stderr: "",
+          };
+        default:
+          throw new Error(`Unexpected OpenShell command: ${argv.join(" ")}`);
+      }
+    });
     const readFile = vi.spyOn(fs, "readFileSync");
     let routeFallbackCalls = 0;
     let verifiedCreateEffectCalls = 0;
@@ -194,7 +185,7 @@ network_policies:
     };
     const persistVerifiedPolicy = (boundary: EffectiveVerifiedSandboxPolicyBoundary) => {
       persistedPolicySources.push(boundary.policySourcePath);
-      const checkpoint = pendingSandboxPolicyVerificationForBoundary(boundary);
+      const checkpoint = pendingSandboxCreateVerificationForBoundary(boundary);
       recordedCheckpointEntry = checkpointEntry(current, checkpoint);
       const { name, ...updates } = recordedCheckpointEntry;
       expect(updateRegistry(name, updates)).toBe(true);
@@ -211,7 +202,7 @@ network_policies:
     ) => {
       createSandboxCalls += 1;
       const readCountBeforeVerification = readFile.mock.calls.length;
-      const result = await runSandboxCreateWithPolicyAuthorityChecks<
+      const result = await runSandboxCreateWithPolicyVerification<
         CreatedPolicyIdentity,
         EffectiveVerifiedSandboxPolicyBoundary,
         { ready: true }
@@ -239,7 +230,6 @@ network_policies:
             effectivePolicySourcePath,
             policySourcePathForRoute: routeFallback,
             apfInterceptorRequested: false,
-            plannedAuthority: "nemoclaw-managed",
             operation: "verify composed Hermes Portable policy",
           }),
         persistVerifiedPolicy: (_identity, _exactIdentity, boundary) => {
@@ -373,7 +363,7 @@ network_policies:
     };
 
     await expect(
-      runSandboxCreateWithPolicyAuthorityChecks<
+      runSandboxCreateWithPolicyVerification<
         CreatedPolicyIdentity,
         EffectiveVerifiedSandboxPolicyBoundary,
         string
@@ -399,7 +389,6 @@ network_policies:
             effectivePolicySourcePath: "/durable.yaml",
             policySourcePathForRoute: routeFallback,
             apfInterceptorRequested: false,
-            plannedAuthority: "nemoclaw-managed",
             operation: "verify incompatible Hermes Portable policy",
           }),
         persistVerifiedPolicy: () => {

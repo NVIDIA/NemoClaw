@@ -73,10 +73,10 @@ function baseOptions(
 }
 
 describe("handleAgentSetupState", () => {
-  it("refuses agent setup before its first effect when policy authority drifts (#9833)", async () => {
+  it("refuses agent setup before its first effect when policy requirements drifts (#9833)", async () => {
     const { deps, calls } = createDeps();
     const revalidatePolicyRequirements = vi.fn(() => {
-      throw new Error("policy authority changed");
+      throw new Error("policy requirements changed");
     });
 
     await expect(
@@ -84,7 +84,7 @@ describe("handleAgentSetupState", () => {
         ...baseOptions(deps, { name: "hermes", displayName: "Hermes" }),
         revalidatePolicyRequirements,
       }),
-    ).rejects.toThrow("policy authority changed");
+    ).rejects.toThrow("policy requirements changed");
 
     expect(calls.handleAgentSetup).not.toHaveBeenCalled();
     expect(calls.ensureDashboard).not.toHaveBeenCalled();
@@ -148,7 +148,7 @@ describe("handleAgentSetupState", () => {
 
   it("stops dashboard forwarding when authority changes during the first forward (#9833)", async () => {
     const refuseDashboardForward = () => {
-      throw new Error("policy authority changed");
+      throw new Error("policy requirements changed");
     };
     const policyChecks = new Map([["start optional dashboard forward", refuseDashboardForward]]);
     const revalidatePolicyRequirements = vi.fn<(operation: string) => void>((operation) =>
@@ -167,7 +167,7 @@ describe("handleAgentSetupState", () => {
         ...baseOptions(deps, { name: "hermes", displayName: "Hermes" }),
         revalidatePolicyRequirements,
       }),
-    ).rejects.toThrow("policy authority changed");
+    ).rejects.toThrow("policy requirements changed");
 
     expect(ensureAgentDashboardForward).toHaveBeenCalledWith(
       "my-assistant",

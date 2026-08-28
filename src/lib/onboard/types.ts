@@ -88,24 +88,12 @@ export interface SandboxCreateIntent {
   readonly recreateJournalTargetIntentFingerprint?: string;
   /** Validated non-secret Hermes environment assignments carried by a rebuild. */
   readonly rebuildPreservedEnv?: readonly import("../state/preserved-env").PreservedEnvFile[];
-  /** Built-in policy presets owned by the outer authoritative rebuild lifecycle. */
-  readonly rebuildPolicyPresets?: readonly string[];
+  /** Bounded live OpenShell policy handoff for one active rebuild. */
+  readonly rebuildPolicySourcePath?: string;
 }
 
-/** Policy authority proved inside one exact post-create sandbox identity gate. */
-export type VerifiedSandboxPolicyRegistration =
-  | {
-      readonly policyAuthority: "nemoclaw-managed";
-      readonly policyCreationReceipt: import("../policy/merge").NemoClawPolicyCreationReceipt;
-      readonly observedPolicyAuthority: "owner-unknown";
-    }
-  | {
-      readonly policyAuthority: "externally-managed";
-      readonly policyCreationReceipt: null;
-      /** Generic evidence seam; the default #10115 verifier produces only global authority. */
-      readonly observedPolicyAuthority: "externally-managed" | "owner-unknown";
-      readonly policyIdentity: import("../policy/merge").OpenShellPolicyIdentity;
-    };
+/** Live OpenShell policy observation captured inside one create transaction. */
+export interface VerifiedSandboxPolicyRegistration {}
 
 /** Exact sandbox and policy result retained from the immediate create gate. */
 export interface VerifiedSandboxPolicyBoundary {
@@ -176,8 +164,8 @@ export type OnboardOptions = {
   managedWorkloadRebuild?: import("./workload/rebuild").ManagedWorkloadRebuildHandoff;
   /** Internal validated non-secret Hermes environment assignments carried by a rebuild. */
   rebuildPreservedEnv?: readonly import("../state/preserved-env").PreservedEnvFile[];
-  /** Internal authoritative policy selection carried across sandbox recreation. */
-  rebuildPolicyPresets?: readonly string[];
+  /** Bounded live OpenShell policy handoff for one active rebuild. */
+  rebuildPolicySourcePath?: string;
   /** Internal hint for resolving the sandbox base image without repeating remote discovery. */
   baseImageResolutionHint?:
     | import("../sandbox-base-image").SandboxBaseImageResolutionMetadata

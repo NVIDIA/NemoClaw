@@ -46,6 +46,7 @@ export const onboardCredentialEnv = requireDist("../../onboard/credential-env.js
 export const onboardSession = requireDist("../../state/onboard-session.js");
 export const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
 export const policies = requireDist("../../policy/index.js");
+export const policyGet = requireDist("./policy-get.js");
 export const portableAgentLifecycle = requireDist(
   "../../onboard/experimental/portable-agent-lifecycle.js",
 );

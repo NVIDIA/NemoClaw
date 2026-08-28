@@ -103,7 +103,7 @@ runner.runCapture = (command) => {
   return "";
 };
 fixtureMocks.mockDockerSandboxLifecycleReleaseFromRunner();
-const sourceEntry = fixtureMocks.managedSandboxPolicyReceiptFixture({
+const sourceEntry = fixtureMocks.sandboxLifecycleFixture({
   name: "my-assistant",
   gpuEnabled: false,
   toolDisclosure: "progressive",
@@ -311,7 +311,7 @@ const mutations = [];
 const sourceEntry = {
   name: "my-assistant",
   agent: "openclaw",
-  gpuEnabled: false, policyAuthority: "nemoclaw-managed",
+  gpuEnabled: false,
   imageTag: "nemoclaw/my-assistant:1",
   toolDisclosure: "progressive",
 };
@@ -450,7 +450,7 @@ runner.runCapture = (command) => {
   }
   return "";
 };
-registry.getSandbox = () => fixtureMocks.managedSandboxPolicyReceiptFixture({
+registry.getSandbox = () => fixtureMocks.sandboxLifecycleFixture({
   name: "my-assistant",
   gpuEnabled: false,
   toolDisclosure: "progressive",

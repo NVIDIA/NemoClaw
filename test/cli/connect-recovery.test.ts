@@ -479,7 +479,6 @@ describe("CLI connect recovery process contracts", () => {
           credentialEnv: null,
           preferredInferenceApi: null,
           nimContainer: null,
-          policyPresets: null,
           metadata: { gatewayName: "nemoclaw" },
           steps: {
             preflight: { status: "complete", startedAt: null, completedAt: null, error: null },

@@ -64,7 +64,7 @@ async function getCompleteMcpRebuildEntries(
       (entry) => entry.addState !== "prepared",
     );
     // This host-visible config preflight must precede
-    // discardSafeIncompleteMcpAdds, which can remove an owned policy for a
+    // discardSafeIncompleteMcpAdds, which can remove the generated live policy key for a
     // providerless preflighted add. That cleanup has no adapter/provider to
     // probe; complete entries get the teardown runtime probe below.
     assertMcpAdapterConfigMutationsAllowed(
@@ -145,10 +145,9 @@ export async function prepareMcpBridgesForRebuild(
     }
     for (const entry of entries) {
       // The same-name replacement journal fingerprints this source row before
-      // MCP teardown. Keep exact generated-policy ownership in that preserved
-      // row while removing only the live policy; inner onboarding excludes the
-      // generated name and post-rebuild restoration reuses this ownership.
-      removeGeneratedPolicy(sandboxName, entry, { preserveRegistryOwnership: true });
+      // MCP teardown removes the live entry from the source sandbox. Rebuild's
+      // OpenShell policy handoff already captured the complete live document.
+      removeGeneratedPolicy(sandboxName, entry);
       removedPolicies.push(entry);
     }
     for (const entry of entries) {
@@ -183,9 +182,7 @@ export async function prepareMcpBridgesForRebuild(
       }
     }
     if (!runtimeRestored) {
-      rollbackFailures.push(
-        ...rollbackScrubbedMcpAdapters(sandboxName, sandbox, scrubbedAdapters),
-      );
+      rollbackFailures.push(...rollbackScrubbedMcpAdapters(sandboxName, sandbox, scrubbedAdapters));
     }
     const detail = error instanceof Error ? error.message : String(error);
     throw new McpBridgeError(
@@ -246,5 +243,8 @@ export async function restoreMcpBridgesAfterRebuild(
   // Persist the recovery contract before touching the gateway. If refresh
   // fails, `mcp restart` remains retryable after the operator fixes the cause.
   setBridgeState(sandboxName, bridges);
-  await restoreExistingMcpBridgeRuntime(sandboxName, entries);
+  // Sandbox creation already received the complete pre-rebuild OpenShell
+  // policy. Restore providers and adapters without regenerating or overwriting
+  // policy entries that an operator may have edited independently.
+  await restoreExistingMcpBridgeRuntime(sandboxName, entries, { applyPolicy: false });
 }

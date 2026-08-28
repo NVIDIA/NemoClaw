@@ -42,7 +42,6 @@ function makeSandboxEntry(gatewayName = "nemoclaw", gatewayPort = 8080): Rebuild
     name: "alpha",
     provider: "ollama-local",
     model: "nvidia/nemotron",
-    policies: [],
     nimContainer: null,
     agent: null,
     nemoclawVersion: "0.1.0",

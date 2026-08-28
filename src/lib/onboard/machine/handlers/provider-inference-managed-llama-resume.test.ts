@@ -86,7 +86,7 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
       },
     );
     const refusal = () => {
-      throw new Error("external policy authority must supply the managed llama.cpp entry");
+      throw new Error("live policy requirements changed before the managed llama.cpp entry");
     };
     const actions = new Map<string, () => void>([
       ["activate the verified managed llama.cpp runtime", refusal],
@@ -106,7 +106,7 @@ describe("handleProviderInferenceState managed llama.cpp resume", () => {
         resume: true,
         sandboxName: "spark-agent",
       }),
-    ).rejects.toThrow(/external policy authority must supply/u);
+    ).rejects.toThrow(/live policy requirements changed before/u);
 
     expect(ensureManagedLlamaCppResumeReady).toHaveBeenCalledOnce();
     expect(calls.recoverProvider).not.toHaveBeenCalled();

@@ -27,7 +27,6 @@ const evidence = {
 } as const;
 const recoveryAuthority = {
   createAttemptNonce: "c".repeat(62),
-  policyCreationReceipt: null,
 } as const;
 
 describe("retained sandbox recovery state", () => {
@@ -40,7 +39,6 @@ describe("retained sandbox recovery state", () => {
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
       lifecycleGeneration: "00000000-0000-4000-8000-000000000001",
-      verifiedEffectivePolicyIdentity: { hash: "sha256:policy-1", activeVersion: 1 },
       ...recoveryAuthority,
       resources: evidence,
       reason: "cancelled_after_sandbox_creation",
@@ -54,7 +52,6 @@ describe("retained sandbox recovery state", () => {
       sandboxName: "retained-sb",
       sandboxIdentityFingerprint: fingerprint,
       identityWasUnavailable: false,
-      verifiedEffectivePolicyIdentity: input.verifiedEffectivePolicyIdentity,
       resources: evidence,
     });
     expect(fs.readFileSync(recovery.RETAINED_SANDBOX_RECOVERY_FILE, "utf8")).not.toContain(
@@ -71,7 +68,6 @@ describe("retained sandbox recovery state", () => {
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
       lifecycleGeneration: null,
-      verifiedEffectivePolicyIdentity: null,
       ...recoveryAuthority,
       resources: {
         sharedInferenceProviders: [],
@@ -96,7 +92,6 @@ describe("retained sandbox recovery state", () => {
       gatewayName: "nemoclaw-18080",
       gatewayPort: 18080,
       lifecycleGeneration: "00000000-0000-4000-8000-000000000001",
-      verifiedEffectivePolicyIdentity: { hash: "sha256:policy-1", activeVersion: 1 },
       ...recoveryAuthority,
       resources: evidence,
       reason: "cancelled_after_sandbox_creation",
@@ -107,7 +102,6 @@ describe("retained sandbox recovery state", () => {
       gatewayName: "nemoclaw-18080",
       gatewayPort: 18080,
       lifecycleGeneration: "00000000-0000-4000-8000-000000000002",
-      verifiedEffectivePolicyIdentity: { hash: "sha256:policy-2", activeVersion: 2 },
       ...recoveryAuthority,
       resources: evidence,
       reason: "retained_after_sandbox_creation_failure",
@@ -154,7 +148,6 @@ describe("retained sandbox recovery state", () => {
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
         lifecycleGeneration: "generation-1",
-        verifiedEffectivePolicyIdentity: null,
         ...recoveryAuthority,
         resources: evidence,
         reason: "retained_after_sandbox_creation_failure",
@@ -190,7 +183,6 @@ describe("retained sandbox recovery state", () => {
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
         lifecycleGeneration: "generation-1",
-        verifiedEffectivePolicyIdentity: null,
         ...recoveryAuthority,
         resources: evidence,
         reason: "retained_after_sandbox_creation_failure",
@@ -231,8 +223,7 @@ describe("retained sandbox recovery state", () => {
           gatewayName: "nemoclaw",
           gatewayPort: 8080,
           lifecycleGeneration: "generation-1",
-          verifiedEffectivePolicyIdentity: null,
-          ...recoveryAuthority,
+          createAttemptNonce: recoveryAuthority.createAttemptNonce,
         },
       ),
     ).toThrow(/state directory changed|lock ownership changed/u);
@@ -255,7 +246,6 @@ describe("retained sandbox recovery state", () => {
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
       lifecycleGeneration: "generation-1",
-      verifiedEffectivePolicyIdentity: null,
       ...recoveryAuthority,
       resources: evidence,
       reason: "cancelled_after_sandbox_creation",
@@ -279,5 +269,4 @@ describe("retained sandbox recovery state", () => {
     ).toBeUndefined();
     expect(recovery.listRetainedSandboxRecoveryRecords()).toEqual([recorded]);
   });
-
 });

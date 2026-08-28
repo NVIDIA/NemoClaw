@@ -352,7 +352,6 @@ describe("connectSandbox flow", () => {
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
       gpuEnabled: false,
-      policies: [],
     });
     const responses = new Map([
       ["sandbox list", { status: 0, output: "alpha Ready" }],
@@ -1133,7 +1132,6 @@ describe("connectSandbox flow", () => {
       agent: "hermes",
       provider: "ollama-local",
       model: "qwen3-vl:4b",
-      policies: [],
       openshellDriver: "docker",
       gatewayName: "nemoclaw",
       lifecycleGeneration: "generation-1",
@@ -1167,7 +1165,6 @@ describe("connectSandbox flow", () => {
       agent: "hermes",
       provider: null,
       model: null,
-      policies: [],
       openshellDriver: "docker",
       gatewayName: "nemoclaw",
       lifecycleGeneration: "generation-1",

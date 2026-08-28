@@ -24,8 +24,6 @@ function manifest(backupPath: string): RebuildManifest {
     dir: "/sandbox",
     backupPath,
     blueprintDigest: "digest",
-    policyPresets: [],
-    customPolicies: [],
   };
 }
 

@@ -49,7 +49,7 @@ describe("OpenClaw sandbox setup", () => {
     }
   });
 
-  it("withholds setup success when policy authority changes during config sync (#9833)", async () => {
+  it("withholds setup success when policy requirements changes during config sync (#9833)", async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-setup-"));
     const scriptFile = path.join(tempDir, "sync.sh");
     fs.writeFileSync(scriptFile, "set -e\n", { mode: 0o600 });
@@ -68,9 +68,9 @@ describe("OpenClaw sandbox setup", () => {
 
       await expect(
         setup("spark-box", "model", "provider", () => {
-          throw new Error("policy authority changed");
+          throw new Error("policy requirements changed");
         }),
-      ).rejects.toThrow("policy authority changed");
+      ).rejects.toThrow("policy requirements changed");
 
       expect(log.mock.calls.flat().join("\n")).not.toContain("gateway launched");
     } finally {

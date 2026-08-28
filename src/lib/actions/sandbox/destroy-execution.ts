@@ -4,7 +4,7 @@
 import { isDeepStrictEqual } from "node:util";
 
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
-import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/policy-authority";
+import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/policy-state";
 import { R, YW } from "../../cli/terminal-style";
 import {
   type PreparedPortableDemoSandboxDestroyAuthority,
@@ -308,9 +308,9 @@ export async function executeSandboxDestroy({
       | { status: "changed"; subject?: string }
       | { status: "ambiguous"; detail: string; subject?: string }
       | { status: "probe-failed"; detail: string; subject?: string };
-    const pendingPolicyVerification = sandbox?.pendingPolicyVerification;
-    const inspectPendingPolicyVerificationContinuity = (): IdentityContinuity => {
-      if (!pendingPolicyVerification) return { status: "match" };
+    const pendingCreateVerification = sandbox?.pendingCreateVerification;
+    const inspectPendingCreateVerificationContinuity = (): IdentityContinuity => {
+      if (!pendingCreateVerification) return { status: "match" };
       if (!getSandbox) {
         return {
           status: "probe-failed",
@@ -318,9 +318,9 @@ export async function executeSandboxDestroy({
           detail: "an exact registry reader is unavailable",
         };
       }
-      const readCurrentCheckpoint = () => getSandbox(sandboxName)?.pendingPolicyVerification;
+      const readCurrentCheckpoint = () => getSandbox(sandboxName)?.pendingCreateVerification;
       try {
-        if (!isDeepStrictEqual(readCurrentCheckpoint(), pendingPolicyVerification)) {
+        if (!isDeepStrictEqual(readCurrentCheckpoint(), pendingCreateVerification)) {
           return { status: "changed", subject: "Pending policy verification authority" };
         }
         const inspectIdentity =
@@ -328,11 +328,11 @@ export async function executeSandboxDestroy({
           inspectOpenShellSandboxIdentityFingerprint;
         const liveFingerprint = inspectIdentity({
           sandboxName,
-          gatewayName: pendingPolicyVerification.gatewayName,
+          gatewayName: pendingCreateVerification.gatewayName,
         });
         if (
-          liveFingerprint !== pendingPolicyVerification.sandboxIdentityFingerprint ||
-          !isDeepStrictEqual(readCurrentCheckpoint(), pendingPolicyVerification)
+          liveFingerprint !== pendingCreateVerification.sandboxIdentityFingerprint ||
+          !isDeepStrictEqual(readCurrentCheckpoint(), pendingCreateVerification)
         ) {
           return {
             status: "changed",
@@ -349,7 +349,7 @@ export async function executeSandboxDestroy({
       }
     };
     const inspectIdentityContinuity = (): IdentityContinuity => {
-      const pendingContinuity = inspectPendingPolicyVerificationContinuity();
+      const pendingContinuity = inspectPendingCreateVerificationContinuity();
       if (pendingContinuity.status !== "match") return pendingContinuity;
       if (portableContainerAuthority) {
         try {
@@ -566,8 +566,8 @@ export async function executeSandboxDestroy({
         ` Managed inference cleanup and workspace wipe or hardening may already have run; inspect those resources before retrying.${detachedDetail}`,
       );
     }
-    const deleteArgs = pendingPolicyVerification
-      ? ["sandbox", "delete", "-g", pendingPolicyVerification.gatewayName, sandboxName]
+    const deleteArgs = pendingCreateVerification
+      ? ["sandbox", "delete", "-g", pendingCreateVerification.gatewayName, sandboxName]
       : ["sandbox", "delete", sandboxName];
     const deleteResult = runOpenshell(deleteArgs, {
       ignoreError: true,

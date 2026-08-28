@@ -17,20 +17,20 @@ function refuseAt(targetOperation: string) {
     [
       targetOperation,
       () => {
-        throw new Error("external policy authority must supply the final sandbox entries");
+        throw new Error("live policy requirements changed before the final sandbox entries");
       },
     ],
   ]);
   return vi.fn((input: { operation: string }) => actions.get(input.operation)?.());
 }
 
-describe("sandbox completion policy authority", () => {
+describe("sandbox completion policy requirements", () => {
   it("rechecks immediately before sandbox creation (#9833)", async () => {
     const preflightPolicyRequirements = refuseAt("create sandbox 'my-assistant'");
     const { deps, calls } = createDeps({ preflightPolicyRequirements });
 
     await expect(handleSandboxState(baseOptions(deps))).rejects.toThrow(
-      /external policy authority must supply/u,
+      /live policy requirements changed before/u,
     );
 
     expect(calls.createSandbox).not.toHaveBeenCalled();
@@ -43,7 +43,7 @@ describe("sandbox completion policy authority", () => {
     const { deps, calls } = createDeps({ preflightPolicyRequirements });
 
     await expect(handleSandboxState(baseOptions(deps))).rejects.toThrow(
-      /external policy authority must supply/u,
+      /live policy requirements changed before/u,
     );
 
     expect(calls.createSandbox).toHaveBeenCalledOnce();
@@ -71,7 +71,7 @@ describe("sandbox completion policy authority", () => {
         resume: true,
         sandboxName: "saved",
       }),
-    ).rejects.toThrow(/external policy authority must supply/u);
+    ).rejects.toThrow(/live policy requirements changed before/u);
 
     expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.completed", {
       state: "sandbox",
@@ -111,7 +111,7 @@ describe("sandbox completion policy authority", () => {
         resume: true,
         sandboxName: "saved",
       }),
-    ).rejects.toThrow(/external policy authority must supply/u);
+    ).rejects.toThrow(/live policy requirements changed before/u);
 
     expect(calls.createSandbox).not.toHaveBeenCalled();
     expect(calls.skipped).not.toHaveBeenCalled();
@@ -141,7 +141,7 @@ describe("sandbox completion policy authority", () => {
       const { deps, calls, getSession } = createDeps({ preflightPolicyRequirements }, session);
 
       await expect(handleSandboxState(baseOptions(deps, session))).rejects.toThrow(
-        /external policy authority must supply/u,
+        /live policy requirements changed before/u,
       );
 
       expect(calls.updateSandbox).toHaveBeenCalledTimes(registryCalls);

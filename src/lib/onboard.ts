@@ -479,7 +479,6 @@ const {
 const {
   skippedStepMessage,
 }: typeof import("./onboard/skipped-step-message") = require("./onboard/skipped-step-message");
-const policyPresetCarry: typeof import("./onboard/policy-preset-persistence") = require("./onboard/policy-preset-persistence");
 const {
   findAvailableDashboardPort,
   preflightDashboardPortRangeAvailability,
@@ -1618,7 +1617,6 @@ const sandboxCreateOrchestrationRuntime = {
   openshellArgv,
   path,
   planRegisteredExtraProviders,
-  policyPresetCarry,
   preparedDcodeRebuild,
   promptValidatedSandboxName,
   promptYesNoOrDefault,
@@ -2661,9 +2659,6 @@ const {
   withSandboxMutationLock: sandboxMutationLock.withSandboxMutationLock,
   waitForSandboxReady,
   waitForSandboxControlPlaneReady: finalizationHandlerDeps.waitForSandboxControlPlaneReady,
-  setPolicyTier: (sandboxName, tierName) =>
-    registry.updateSandbox(sandboxName, { policyTier: tierName }),
-  getRecordedPolicyTier: (sandboxName) => registry.getSandbox(sandboxName)?.policyTier ?? null,
   parsePolicyPresetEnv,
   env: process.env,
 });
@@ -2989,11 +2984,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         requestedGpuPassthrough: opts.gpu === true,
       };
       type InitialOnboardFlowContext = typeof initialFlowContext;
-      const policyAuthorityBindings =
-        sandboxCreateOrchestration.createOnboardPolicyAuthorityBindings(
-          sandboxCreateOrchestrationRuntime,
-          opts.policyTier,
-        );
+      const policyRequirementBindings =
+        sandboxCreateOrchestration.createOnboardPolicyRequirementBindings();
       const [preflightPhase, gatewayPhase]: readonly [
         import("./onboard/machine/sequence-runner").OnboardSequencePhase<InitialOnboardFlowContext>,
         import("./onboard/machine/sequence-runner").OnboardSequencePhase<InitialOnboardFlowContext>,
@@ -3035,7 +3027,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         assertGatewayReadiness: () =>
           onboardPreflightGatewayAuthority.collectGatewayReadiness().then(() => undefined),
         gatewayName: GATEWAY_NAME,
-        bindPolicyAuthority: policyAuthorityBindings.bindPolicyAuthority,
         recreateSandbox: isRecreateSandbox,
         requiresBindMounts: effectiveHostMounts.length > 0,
         gatewayDeps: {
@@ -3127,7 +3118,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           deps: {
             checkGatewayRouteCompatibility,
             preflightGatewayRouteDiscovery,
-            preflightPolicyRequirements: policyAuthorityBindings.preflightPolicyRequirements,
+            preflightPolicyRequirements: policyRequirementBindings.preflightPolicyRequirements,
             getSandboxRecoveryAuthority: providerRecovery.getSandboxRecoveryAuthority,
             withGatewayRouteMutationLock: gatewayRouteMutationLock.withGatewayRouteMutationLock,
             normalizeHermesAuthMethod,
@@ -3263,7 +3254,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             getRegistrySandboxMessagingAuthority:
               messagingChannelSetup.getRegistrySandboxMessagingAuthority,
             providerMatchesGatewayCredential,
-            preflightPolicyRequirements: policyAuthorityBindings.preflightPolicyRequirements,
+            preflightPolicyRequirements: policyRequirementBindings.preflightPolicyRequirements,
             stageSandboxCredentialProviders,
             promptValidatedSandboxName,
             selectResourceProfileForSandbox: () =>
@@ -3325,9 +3316,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         import("./verify-deployment").VerifyDeploymentResult
       >({
         branchState: agent ? "agent_setup" : "openclaw",
-        authoritativePolicyTier:
-          opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : undefined,
-        revalidatePolicyRequirements: policyAuthorityBindings.revalidatePolicyRequirements,
+        revalidatePolicyRequirements: policyRequirementBindings.revalidatePolicyRequirements,
         agentSetupDeps: {
           handleAgentSetup: agentOnboard.handleAgentSetup,
           agentSetupContext: (revalidatePolicyRequirements) => ({
@@ -3380,11 +3369,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           recordStateSkipped,
           startRecordedStep,
           setupPoliciesWithSelection,
-          updateSession: onboardSession.updateSession,
           recordStepComplete,
           toSessionUpdates: (updates) =>
             toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
-          persistAppliedPolicyPresets: policyPresetCarry.persistFinalizedPolicyPresets,
         },
         finalization: {
           stagedLegacyKeys,

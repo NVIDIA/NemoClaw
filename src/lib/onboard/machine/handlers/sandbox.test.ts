@@ -236,28 +236,22 @@ describe("handleSandboxState", () => {
       ...baseOptions(deps),
       agent: { name: "langchain-deepagents-code" },
       authoritativeResumeConfig: true,
-      authoritativePolicyTier: "restricted",
     });
 
-    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
-      policyTier: "restricted",
-    });
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({});
   });
 
-  it("preserves an authoritative null tier in the sandbox create intent", async () => {
+  it("does not persist an authoritative policy tier in sandbox create state", async () => {
     const { deps, calls } = createDeps();
 
     await handleSandboxState({
       ...baseOptions(deps),
       agent: { name: "langchain-deepagents-code" },
       authoritativeResumeConfig: true,
-      authoritativePolicyTier: null,
     });
 
-    expect(calls.resolveCreateIntent).toHaveBeenCalledWith(
-      expect.objectContaining({ policyTier: null }),
-    );
-    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toHaveProperty("policyTier", null);
+    expect(calls.resolveCreateIntent.mock.calls[0]?.[0]).not.toHaveProperty("policyTier");
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).not.toHaveProperty("policyTier");
   });
 
   it("rejects observability for a selected non-DCode agent", async () => {

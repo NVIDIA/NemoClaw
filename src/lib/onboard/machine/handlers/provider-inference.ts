@@ -84,7 +84,7 @@ export interface ProviderInferenceSetupOptions {
   reservationSessionId?: string;
   /** Recheck recorded-route ownership after acquiring route mutation locks. */
   isRecordedProviderRecoveryAuthorized?: () => boolean;
-  /** Recheck the receipt-bound policy requirements at each inference mutation edge. */
+  /** Recheck live OpenShell policy requirements at each inference mutation edge. */
   revalidatePolicyRequirements?: (operation: string) => void;
   /** Operation-scoped provider request selected for this onboarding attempt. */
   hostLocalInference?: HostLocalInferenceStartupSelection;

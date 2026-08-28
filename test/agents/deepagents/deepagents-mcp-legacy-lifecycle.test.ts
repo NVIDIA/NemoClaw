@@ -120,8 +120,13 @@ beforeEach(() => {
       case command === "status --output json":
         return { status: 0, stdout: "ready", stderr: "" };
       case args[0] === "provider" && args[1] === "profile":
-        return mockManagedEndpointlessProviderProfileRun(args) ??
-          { status: 0, stdout: "Imported provider profile", stderr: "" };
+        return (
+          mockManagedEndpointlessProviderProfileRun(args) ?? {
+            status: 0,
+            stdout: "Imported provider profile",
+            stderr: "",
+          }
+        );
       case args[0] === "provider" && args[1] === "get":
         return providerExists
           ? {
@@ -250,17 +255,6 @@ beforeEach(() => {
     agent: "langchain-deepagents-code",
     gatewayName: "nemoclaw",
     mcp: { bridges: { github: entry } },
-  });
-  registry.addCustomPolicy("alpha", {
-    name: entry.policyName,
-    content: bridge.buildMcpBridgePolicyYaml(
-      entry.server,
-      entry.url,
-      entry.adapter,
-      { addresses: ["8.8.8.8"] },
-      entry.providerName,
-    ),
-    sourcePath: "generated:nemoclaw-mcp-bridge",
   });
 });
 

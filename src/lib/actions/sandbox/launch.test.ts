@@ -118,7 +118,6 @@ function sandboxEntry(agentName: string | null): SandboxEntry {
     provider: null,
     model: null,
     gpuEnabled: false,
-    policies: [],
   } as SandboxEntry;
 }
 

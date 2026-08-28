@@ -501,15 +501,15 @@ function providerExistsInGateway(name, _runOpenshell) {
 }
 
 /**
- * Recheck the caller's policy receipt immediately before each OpenShell
- * provider command. Commands in one provider operation can be separated by
+ * Recheck current OpenShell policy requirements before each provider command.
+ * Commands in one provider operation can be separated by
  * probes and recovery work, so one outer check is not sufficient.
  * @param {Function} runOpenshell
  * @param {((operation: string) => void)|undefined} revalidatePolicyRequirements
  * @param {string} operation
  * @returns {Function}
  */
-function policyAuthorityCheckedRunner(runOpenshell, revalidatePolicyRequirements, operation) {
+function policyRequirementsCheckedRunner(runOpenshell, revalidatePolicyRequirements, operation) {
   if (!revalidatePolicyRequirements) return runOpenshell;
   return (...args) => {
     revalidatePolicyRequirements(operation);
@@ -538,7 +538,7 @@ function policyAuthorityCheckedRunner(runOpenshell, revalidatePolicyRequirements
  * @returns {{ ok: boolean, status?: number, message?: string, reason?: string }}
  */
 function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, options = {}) {
-  const runOpenshell = policyAuthorityCheckedRunner(
+  const runOpenshell = policyRequirementsCheckedRunner(
     _runOpenshell,
     options.revalidatePolicyRequirements,
     `inspect or change provider ${JSON.stringify(name)}`,
@@ -720,7 +720,7 @@ function assertCredentialFamilyProviderBindings(tokenDefs, runOpenshell, options
  * @returns {string[]} Provider names that were upserted.
  */
 function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
-  const runMessagingBridgeOpenshell = policyAuthorityCheckedRunner(
+  const runMessagingBridgeOpenshell = policyRequirementsCheckedRunner(
     _runOpenshell,
     options.revalidatePolicyRequirements,
     "inspect or change a messaging bridge provider",

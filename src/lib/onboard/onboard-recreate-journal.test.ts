@@ -39,7 +39,6 @@ const BASE_INTENT: OnboardRecreateTargetIntent = {
   toolDisclosure: "progressive",
   dcodeAutoApprovalMode: null,
   observabilityEnabled: false,
-  policyTier: "restricted",
 };
 
 describe("non-resumed replacement target fingerprint (#7735)", () => {

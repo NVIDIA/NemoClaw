@@ -103,12 +103,12 @@ describe("fresh create identity", () => {
       expectedOutcome: "post-create-registration-recovery-retry" as const,
     },
     {
-      title: "retains recovery state when final checks fail after registration (#9833)",
+      title: "accepts an external policy change after registration (#9833)",
       apfInterceptorRequested: true,
       provider: null,
       model: null,
       agent: null,
-      expectedOutcome: "post-create-finalization-refusal" as const,
+      expectedOutcome: "post-create-policy-change" as const,
     },
     {
       title: "rejects staged messaging intent before any onboarding side effect (#9833)",
@@ -245,9 +245,7 @@ let recoveryJournalReadbackFailuresRemaining = ${JSON.stringify(
             ? 1
             : 0,
       )};
-const postCreateFinalizationRefusal = ${JSON.stringify(
-        expectedOutcome === "post-create-finalization-refusal",
-      )};
+const postCreatePolicyChange = ${JSON.stringify(expectedOutcome === "post-create-policy-change")};
 let cancelPrompt = false;
 const originalGetCredential = credentials.getCredential;
 credentials.getCredential = (...args) => {
@@ -277,7 +275,7 @@ runner.run = (command, opts = {}) => {
 	  const cmd = _n(command);
 	  if (cmd.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:18080";
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) {
-	    if (postCreateFinalizationRefusal && registeredSandbox) {
+	    if (postCreatePolicyChange && registeredSandbox) {
 	      throw new Error("final onboarding policy check failed");
 	    }
 	    return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: effectivePolicy });
@@ -359,7 +357,6 @@ runner.run = (command, opts = {}) => {
 	      toolDisclosure: "progressive",
 	      dcodeAutoApprovalMode: null,
 	      observabilityEnabled: false,
-	      policyTier: null,
 	    },
 	  });
 	}
@@ -375,7 +372,7 @@ runner.run = (command, opts = {}) => {
 	  getSandbox: (name) => retainedRegistryEntry ?? durableGetSandbox(name),
 	  onVerifyCreatedPolicy: (input) => {
 	    if (postCreateAuthorityRefusal) {
-	      throw new Error("external policy authority changed");
+	      throw new Error("external policy requirements changed");
 	    }
 	    effectivePolicy = require(${policyMergePath}).parseOpenShellPolicy(
 	      fs.readFileSync(input.policySourcePath, "utf8"),
@@ -393,8 +390,8 @@ runner.run = (command, opts = {}) => {
 	  removeSandbox: (name) => { registryMutationCalls.push({ operation: "remove", name }); },
 	});
 if (postCreateRunnerRefusal) {
-  const requireCurrentCheckpoint = registry.requireCurrentPendingSandboxPolicyVerification;
-  registry.requireCurrentPendingSandboxPolicyVerification = (...args) => {
+  const requireCurrentCheckpoint = registry.requireCurrentPendingSandboxCreateVerification;
+  registry.requireCurrentPendingSandboxCreateVerification = (...args) => {
     checkpointReadCalls += 1;
     if (checkpointReadCalls === 6) {
       throw new Error("post-verification create runner checkpoint failed");
@@ -514,7 +511,7 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
       postCreateAuthorityRefusal ||
       postCreateRunnerRefusal ||
       postCreateRegistrationRefusal ||
-      postCreateFinalizationRefusal
+      postCreatePolicyChange
         ? onboardModule.onboardSession.loadSession()
         : null,
     retainedRecoveryRecords: retainedRecovery.listRetainedSandboxRecoveryRecords(),
@@ -694,10 +691,6 @@ if (${JSON.stringify(
         assert.equal(record.gatewayPort, 18080);
         assert.equal(record.sandboxIdentityFingerprint, identityFingerprint);
         assert.equal(record.lifecycleGeneration, payload.recoveryRegistryEntry.lifecycleGeneration);
-        assert.deepEqual(record.verifiedEffectivePolicyIdentity, {
-          hash: "fixture-policy",
-          activeVersion: 1,
-        });
       };
       const assertProviderBackedApfRefusal = () => {
         assert.match(
@@ -778,15 +771,15 @@ if (${JSON.stringify(
       };
       const assertManagedProviderCreation = () => {
         assertSuccessfulCreation();
-        assert.equal(payload.registeredSandbox.policyAuthority, "nemoclaw-managed");
-        assert.ok(payload.registeredSandbox.policyCreationReceipt);
+        assert.equal("policyAuthority" in payload.registeredSandbox, false);
+        assert.equal("policyCreationReceipt" in payload.registeredSandbox, false);
         assert.match(payload.createCommand, /--policy \S+/u);
         assert.match(payload.createCommand, /--provider nvidia-prod/u);
       };
       const assertProviderlessApfCreation = () => {
         assertSuccessfulCreation();
-        assert.equal(payload.registeredSandbox.policyAuthority, "externally-managed");
-        assert.equal(payload.registeredSandbox.policyCreationReceipt, undefined);
+        assert.equal("policyAuthority" in payload.registeredSandbox, false);
+        assert.equal("policyCreationReceipt" in payload.registeredSandbox, false);
         assert.doesNotMatch(payload.createCommand, /(?:^|\s)--policy(?:\s|$)/u);
         assert.doesNotMatch(payload.createCommand, /(?:^|\s)--provider(?:\s|$)/u);
         assert.equal(payload.credentialReadCalls, 0);
@@ -825,7 +818,6 @@ if (${JSON.stringify(
         assert.equal(record.gatewayName, "nemoclaw-18080");
         assert.equal(record.gatewayPort, 18080);
         assert.match(record.lifecycleGeneration, /^[0-9a-f-]{36}$/u);
-        assert.equal(record.verifiedEffectivePolicyIdentity, null);
         assert.equal(record.reason, "retained_after_sandbox_creation_failure");
       };
       const assertPostCreateRunnerRefusal = () => {
@@ -932,22 +924,11 @@ if (${JSON.stringify(
           1,
         );
       };
-      const assertPostCreateFinalizationRefusal = () => {
-        assert.equal(payload.sandboxName, null);
-        assert.equal(payload.sandboxCreated, true);
-        assert.equal(payload.deleted, false);
-        assert.equal(payload.registeredSandbox.name, "my-assistant");
-        assert.match(
-          payload.creationError,
-          /OpenShell sandbox policy authority inspection failed/u,
-        );
-        assert.equal(payload.savedSession.status, "recovery_required");
-        assert.equal(payload.savedSession.resumable, false);
-        assert.equal(
-          payload.savedSession.cancellationRecovery.sandboxIdentityFingerprint,
-          identityFingerprint,
-        );
-        assertRecoveryTuple(payload.retainedRecoveryRecords[0]);
+      const assertPostCreatePolicyChange = () => {
+        assertSuccessfulCreation();
+        assert.equal(payload.savedSession.status, "in_progress");
+        assert.notEqual(payload.savedSession.status, "recovery_required");
+        assert.deepEqual(payload.retainedRecoveryRecords, []);
       };
       const assertCancellationRecovery = () => {
         assert.equal(payload.exitCode, 1);
@@ -1077,7 +1058,7 @@ if (${JSON.stringify(
         "post-create-registration-recovery-readback-failure":
           assertPostCreateRegistrationRecoveryReadbackFailure,
         "post-create-registration-recovery-retry": assertPostCreateRegistrationRecoveryRetry,
-        "post-create-finalization-refusal": assertPostCreateFinalizationRefusal,
+        "post-create-policy-change": assertPostCreatePolicyChange,
         "staged-messaging-refusal": assertStagedMessagingRefusal,
         "cancel-after-create-tier": assertCancellationRecovery,
         "cancel-after-create-tier-presets": assertCancellationRecovery,

@@ -113,7 +113,7 @@ export interface HermesPortableOllamaRuntimeAuthority {
   readonly assertCurrent: () => void;
 }
 
-/** Reconstruct the exact schema-5 Podman inference owner without acquiring images. */
+/** Reconstruct the exact schema-7 Podman inference owner without acquiring images. */
 export function createHermesPortableOllamaRuntimeAuthority(options: {
   readonly receipt: HermesPortableConfiguredReceipt;
   readonly stateDir: string;

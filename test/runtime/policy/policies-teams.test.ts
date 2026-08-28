@@ -13,7 +13,7 @@ import {
   managedPolicyMetadata,
   managedRegistrationSource,
   SANDBOX_ID,
-} from "../../helpers/managed-policy-receipt-fixture";
+} from "../../helpers/live-policy-fixture";
 
 const requireForTest = createRequire(import.meta.url);
 const YAML = requireForTest("yaml");
@@ -259,7 +259,7 @@ exit 1
       ]);
       expect(allowedMethods(teamsPolicy, "teams.microsoft.com")).toEqual(["GET"]);
       expect(allowedMethods(teamsPolicy, "*.sharepoint.com")).toEqual(["GET"]);
-      expect(payload.registry.policies).toEqual(["teams"]);
+      expect(payload.registry).not.toHaveProperty("policies");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

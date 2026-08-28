@@ -145,15 +145,15 @@ describe("applyReusedSandboxDashboardState", () => {
       .fn<(operation: string) => void>()
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => {
-        throw new Error("external policy authority must supply the dashboard entry");
+        throw new Error("live policy requirements changed before the dashboard entry");
       });
     const ensureDashboardForward = vi.fn(
       (
         _sandboxName: string,
         _chatUiUrl: string,
-        options?: { revalidatePolicyAuthority?: (operation: string) => void },
+        options?: { revalidatePolicyRequirements?: (operation: string) => void },
       ) => {
-        options?.revalidatePolicyAuthority?.("start the dashboard forward");
+        options?.revalidatePolicyRequirements?.("start the dashboard forward");
         return 18790;
       },
     );
@@ -191,7 +191,7 @@ describe("applyReusedSandboxDashboardState", () => {
         updateReusedSandboxMetadata,
         revalidatePolicyRequirements,
       }),
-    ).rejects.toThrow(/external policy authority must supply/u);
+    ).rejects.toThrow(/live policy requirements changed before/u);
 
     expect(ensureDashboardForward).toHaveBeenCalledOnce();
     expect(env.CHAT_UI_URL).toBeUndefined();
@@ -207,7 +207,7 @@ describe("applyReusedSandboxDashboardState", () => {
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => {
-        throw new Error("external policy authority must supply the dashboard entry");
+        throw new Error("live policy requirements changed before the dashboard entry");
       });
     const ensureForState = vi.fn();
     const updateReusedSandboxMetadata = vi.fn();
@@ -241,7 +241,7 @@ describe("applyReusedSandboxDashboardState", () => {
         updateReusedSandboxMetadata,
         revalidatePolicyRequirements,
       }),
-    ).toThrow(/external policy authority must supply/u);
+    ).toThrow(/live policy requirements changed before/u);
 
     expect(ensureForState).toHaveBeenCalledOnce();
     expect(updateReusedSandboxMetadata).not.toHaveBeenCalled();

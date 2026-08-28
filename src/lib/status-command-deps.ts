@@ -27,11 +27,14 @@ import { resolveGatewayName } from "./onboard/gateway-binding";
 import { classifyHermesPortableRegistry } from "./onboard/experimental/hermes-portable-onboarding";
 import { inspectPortableAgentReceiptAuthorityForClassification } from "./onboard/experimental/hermes-portable-receipt";
 import { defaultPortableDemoStateDir } from "./onboard/experimental/portable-runtime-receipt-readiness";
+import * as policy from "./policy";
 import { summarizeForDebug } from "./state/onboard-session";
 import * as registry from "./state/registry";
 import { getHermesPortableHostAuthorityEntryCount } from "./state/portable-uninstall-retirement";
 import { createSystemDeps, parseSshProcesses } from "./state/sandbox-session";
 import { getServiceStatuses, showStatus as showServiceStatus } from "./tunnel/services";
+
+const INVENTORY_POLICY_PROBE_TIMEOUT_MS = 2_000;
 
 function captureOpenshell(
   rootDir: string,
@@ -272,6 +275,13 @@ export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
 
   return {
     listSandboxes: () => registry.listSandboxes(),
+    getPolicyPresets: (sandboxName) => {
+      try {
+        return policy.getAppliedPresets(sandboxName, INVENTORY_POLICY_PROBE_TIMEOUT_MS);
+      } catch {
+        return [];
+      }
+    },
     getLiveInference: () =>
       getLiveGatewayInference(
         (args, opts) =>

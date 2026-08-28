@@ -19,8 +19,7 @@ import {
   MATCHING_INFERENCE_ROUTE_LISTING,
   MATCHING_RUNTIME_PROVIDER_LISTING,
   providersV2EnabledResult,
-  resultWithBlueprintPolicyAuthority,
-  sandboxIdentityResult,
+  resultWithBlueprintPolicy,
   sequentialCommandResult,
   successResult,
   TEST_SANDBOX_POLICY,
@@ -51,6 +50,7 @@ vi.mock("node:fs", async (importOriginal) => {
     openSync: memory.openSync,
     readFileSync: memory.readFileSync,
     renameSync: memory.renameSync,
+    unlinkSync: memory.unlinkSync,
     writeFileSync: memory.writeFileSync,
     readdirSync: memory.readdirSync,
     realpathSync: memory.realpathSync,
@@ -110,7 +110,7 @@ function responseQueue(
     const fallback = responses.get(command)?.shift() ?? fallbacks.get(command) ?? success;
     return fallback.exitCode === undefined
       ? fallback
-      : resultWithBlueprintPolicyAuthority(args, {
+      : resultWithBlueprintPolicy(args, {
           ...fallback,
           exitCode: fallback.exitCode ?? 1,
         });
@@ -179,7 +179,7 @@ describe("blueprint identity wrapper", () => {
     realpaths.clear();
     vi.clearAllMocks();
     mockExeca.mockImplementation(async (_command: string, args: string[]) =>
-      resultWithBlueprintPolicyAuthority(
+      resultWithBlueprintPolicy(
         args,
         args.join(" ") === "settings get --global --json" ? providersV2Enabled : success,
       ),
@@ -407,145 +407,6 @@ describe("blueprint identity wrapper", () => {
         .map(([, args]) => (Array.isArray(args) ? args.join(" ") : ""))
         .join("\n"),
     ).not.toContain("refresh configure");
-  });
-
-  it("establishes the policy receipt before the first identity mutation", async () => {
-    process.env.OKTA_CLIENT_ID = "client-id";
-    process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
-    process.env.OKTA_CLIENT_SECRET = "client-secret";
-    responseQueue([
-      [
-        "provider get acme-okta-runtime",
-        [
-          failureResult("provider not found"),
-          ...Array.from({ length: 4 }, () => ({
-            exitCode: 0,
-            stdout: matchingProvider,
-            stderr: "",
-          })),
-        ],
-      ],
-    ]);
-
-    await actionApply("default", blueprint({ identity: oktaIdentity() }));
-
-    const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
-    const createIndex = commands.indexOf(
-      "sandbox create -g test-gateway --from openclaw --name test-sandbox --policy /tmp/nemoclaw-test-policy.yaml --forward 18789",
-    );
-    const firstReceiptValidation = commands.indexOf(
-      "sandbox get -g test-gateway test-sandbox",
-      createIndex + 1,
-    );
-    const firstIdentityMutation = commands.indexOf(
-      "provider create --name acme-okta-runtime --type okta-runtime-v1 --runtime-credentials",
-    );
-    expect(createIndex).toBeGreaterThan(-1);
-    expect(firstReceiptValidation).toBeGreaterThan(createIndex);
-    expect(firstIdentityMutation).toBeGreaterThan(firstReceiptValidation);
-  });
-
-  it("stops before identity mutation when the receipt sandbox identity changes", async () => {
-    process.env.OKTA_CLIENT_ID = "client-id";
-    process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
-    process.env.OKTA_CLIENT_SECRET = "client-secret";
-    const identityResult = sequentialCommandResult("sandbox get -g test-gateway test-sandbox", [
-      sandboxIdentityResult("test-sandbox"),
-      sandboxIdentityResult("test-sandbox", "replacement-id"),
-    ]);
-    mockExeca.mockImplementation(
-      async (_command: string, args: string[]) =>
-        identityResult(args) ??
-        resultWithBlueprintPolicyAuthority(
-          args,
-          args.join(" ") === "settings get --global --json" ? providersV2Enabled : success,
-        ),
-    );
-
-    await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
-      /receipt does not match the live sandbox policy/u,
-    );
-    const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
-    expect(commands).not.toContain(
-      "provider create --name acme-okta-runtime --type okta-runtime-v1 --runtime-credentials",
-    );
-    expect(commands).not.toContain("sandbox provider attach test-sandbox acme-okta-runtime");
-  });
-
-  it("validates the policy receipt before inference-provider reuse inspection", async () => {
-    process.env.OKTA_CLIENT_ID = "client-id";
-    process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
-    process.env.OKTA_CLIENT_SECRET = "client-secret";
-    responseQueue([
-      ["provider get test-provider", [failureResult("gateway configuration not found")]],
-    ]);
-
-    await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
-      /Failed to inspect inference provider 'test-provider'.*gateway configuration not found/u,
-    );
-    const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
-    const receiptValidation = commands.indexOf("sandbox get -g test-gateway test-sandbox");
-    const providerInspection = commands.indexOf("provider get test-provider");
-    expect(receiptValidation).toBeGreaterThanOrEqual(0);
-    expect(providerInspection).toBeGreaterThanOrEqual(0);
-    expect(receiptValidation).toBeLessThan(providerInspection);
-    expect(commands).not.toContain(
-      "provider create --name acme-okta-runtime --type okta-runtime-v1 --runtime-credentials",
-    );
-  });
-  it.each([
-    ["not configured", "Gateway inference:\n\n  Not configured\n"],
-    [
-      "OpenShell v0.0.99 ANSI not configured",
-      [
-        "\u001b[1mInference:\u001b[0m",
-        "",
-        "  Not configured",
-        "",
-        "\u001b[1mSystem inference:\u001b[0m",
-        "",
-        "  Not configured",
-        "",
-      ].join("\n"),
-    ],
-    [
-      "configured for a different model",
-      matchingInferenceRoute.replace("Model: test-model", "Model: other-model"),
-    ],
-  ])("sets the requested route when the reused route is %s", async (_label, routeOutput) => {
-    process.env.OKTA_CLIENT_ID = "client-id";
-    process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
-    process.env.OKTA_CLIENT_SECRET = "client-secret";
-    responseQueue([
-      [
-        "sandbox get test-sandbox",
-        [{ exitCode: 0, stdout: "Name: test-sandbox\nPhase: Ready", stderr: "" }],
-      ],
-      [
-        "provider get test-provider",
-        [{ exitCode: 0, stdout: matchingInferenceProvider, stderr: "" }],
-      ],
-      ["inference get", [{ exitCode: 0, stdout: routeOutput, stderr: "" }]],
-      [
-        "provider get acme-okta-runtime",
-        [
-          failureResult("provider not found"),
-          ...Array.from({ length: 4 }, () => ({
-            exitCode: 0,
-            stdout: matchingProvider,
-            stderr: "",
-          })),
-        ],
-      ],
-    ]);
-
-    await actionApply("default", blueprint({ identity: oktaIdentity() }));
-
-    const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
-    expect(commands).toContain("inference set --provider test-provider --model test-model");
-    expect(
-      commands.indexOf("inference set --provider test-provider --model test-model"),
-    ).toBeLessThan(commands.indexOf("sandbox provider attach test-sandbox acme-okta-runtime"));
   });
 
   it("reuses the ANSI-formatted OpenShell v0.0.99 inference route", async () => {
@@ -1036,9 +897,9 @@ describe("blueprint identity wrapper", () => {
       }),
     });
     const policyResult = sequentialCommandResult(POLICY_BOUNDARY_COMMAND, [
-      resultWithBlueprintPolicyAuthority(POLICY_BOUNDARY_COMMAND.split(" "), success),
+      resultWithBlueprintPolicy(POLICY_BOUNDARY_COMMAND.split(" "), success),
       {
-        ...resultWithBlueprintPolicyAuthority(POLICY_BOUNDARY_COMMAND.split(" "), success),
+        ...resultWithBlueprintPolicy(POLICY_BOUNDARY_COMMAND.split(" "), success),
         stdout: JSON.stringify({
           scope: "sandbox",
           sandbox: "test-sandbox",
@@ -1053,7 +914,7 @@ describe("blueprint identity wrapper", () => {
     mockExeca.mockImplementation(async (_command: string, args: string[]) =>
       args.join(" ") === "provider get test-provider"
         ? { exitCode: 0, stdout: matchingInferenceProvider, stderr: "" }
-        : (policyResult(args) ?? resultWithBlueprintPolicyAuthority(args, success)),
+        : (policyResult(args) ?? resultWithBlueprintPolicy(args, success)),
     );
 
     await expect(actionRollback("provider-authority-drift")).rejects.toThrow(
@@ -1076,10 +937,7 @@ describe("blueprint identity wrapper", () => {
         policy_authority: managedPolicyAuthorityReceipt(),
       }),
     });
-    const matchingPolicy = resultWithBlueprintPolicyAuthority(
-      POLICY_BOUNDARY_COMMAND.split(" "),
-      success,
-    );
+    const matchingPolicy = resultWithBlueprintPolicy(POLICY_BOUNDARY_COMMAND.split(" "), success);
     const policyResult = sequentialCommandResult(POLICY_BOUNDARY_COMMAND, [
       matchingPolicy,
       matchingPolicy,
@@ -1098,7 +956,7 @@ describe("blueprint identity wrapper", () => {
     ]);
     mockExeca.mockImplementation(
       async (_command: string, args: string[]) =>
-        policyResult(args) ?? resultWithBlueprintPolicyAuthority(args, success),
+        policyResult(args) ?? resultWithBlueprintPolicy(args, success),
     );
 
     await expect(actionRollback("sandbox-authority-drift")).rejects.toThrow(
@@ -1167,7 +1025,9 @@ describe("blueprint identity wrapper", () => {
       attachment_created: false,
     });
 
-    await expect(actionRollback(plan.run_id)).rejects.toThrow(/mutable sandbox and provider names/u);
+    await expect(actionRollback(plan.run_id)).rejects.toThrow(
+      /mutable sandbox and provider names/u,
+    );
     expect(store.get(`/fakehome/.nemoclaw/state/runs/${plan.run_id}/rolled_back`)).toBeUndefined();
   });
 
@@ -1209,7 +1069,9 @@ describe("blueprint identity wrapper", () => {
       attachment_created: true,
     });
 
-    await expect(actionRollback(plan.run_id)).rejects.toThrow(/mutable sandbox and provider names/u);
+    await expect(actionRollback(plan.run_id)).rejects.toThrow(
+      /mutable sandbox and provider names/u,
+    );
     expect(store.get(`/fakehome/.nemoclaw/state/runs/${plan.run_id}/rolled_back`)).toBeUndefined();
   });
 
