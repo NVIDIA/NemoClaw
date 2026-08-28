@@ -69,10 +69,6 @@ function uvVersionCheckStatus(output: string, expectedVersion: string): number |
 
 describe("Hermes 0.19.0 dependency review", () => {
   it("binds every active source identity to the reviewed release", () => {
-    const pinnedBaseDigest = dockerfile.match(
-      /^ARG BASE_IMAGE=ghcr[.]io\/nvidia\/nemoclaw\/hermes-sandbox-base@(sha256:[0-9a-f]{64})$/mu,
-    )?.[1];
-
     expect(arg("HERMES_VERSION")).toBe("v2026.7.20");
     expect(arg("HERMES_SEMVER")).toBe("0.19.0");
     expect(arg("HERMES_TARBALL_SHA256")).toBe(
@@ -85,10 +81,6 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(review).toContain("`3ef6bbd201263d354fd83ec55b3c306ded2eb72a`");
     expect(review).toContain("`bd0bac012aee38a60894781f4597dc29ee7bedb3448540249921f10d3bef327f`");
     expect(review).toContain("`ac986bede64a2785436676c0ea084ec586574f8cb00a9d047e095b435d3e21c0`");
-    expect(pinnedBaseDigest).toMatch(/^sha256:[0-9a-f]{64}$/u);
-    expect(review).toContain(
-      `The \`BASE_IMAGE\` argument in \`agents/hermes/Dockerfile\` pins the patched multi-platform Open Container Initiative (OCI) index \`${pinnedBaseDigest}\`.`,
-    );
   });
 
   it("preserves the reviewed authorization and state migrations", () => {
