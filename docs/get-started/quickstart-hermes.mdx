@@ -41,6 +41,15 @@ Review the [Prerequisites](prerequisites) before you begin.
     ```bash
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes NEMOCLAW_SANDBOX_NAME=my-hermes bash
     ```
+    If NVIDIA hosted inference credentials are not available yet and no sandbox exists, you can install without onboarding:
+
+    ```bash
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes bash -s -- --defer-onboarding
+    ```
+
+    This option does not create a provider, sandbox, or completed onboarding state.
+    It does not support a local model profile.
+    After credentials are available, run `nemohermes onboard`.
   </Step>
 
   <Step title="Complete Onboarding">
