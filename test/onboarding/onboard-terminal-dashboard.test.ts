@@ -42,6 +42,9 @@ function runTerminalDashboardScenario(scenario: "create" | "reuse") {
   const dockerGpuSandboxCreatePath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "onboard", "docker-gpu-sandbox-create.ts"),
   );
+  const sandboxCreateStreamPath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "sandbox", "create-stream.ts"),
+  );
   const onboardScriptMocksPath = JSON.stringify(
     path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
   );
@@ -59,15 +62,39 @@ const fixtureMocks = require(${onboardScriptMocksPath});
 const agentDefs = require(${agentDefsPath});
 const agentOnboard = require(${agentOnboardPath});
 const dockerGpuSandboxCreate = require(${dockerGpuSandboxCreatePath});
-const childProcess = require("node:child_process");
-const { EventEmitter } = require("node:events");
+const sandboxCreateStream = require(${sandboxCreateStreamPath});
 const scenario = ${JSON.stringify(scenario)};
 const sandboxName = "deepagents-box";
 const commands = [];
 const registerCalls = [];
 const updateCalls = [];
-const keepAlive = setInterval(() => {}, 1000);
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+const managedCredentialByProviderSuffix = new Map([
+  ["-telegram-bridge", "TELEGRAM_BOT_TOKEN"],
+  ["-discord-bridge", "DISCORD_BOT_TOKEN"],
+  ["-wechat-bridge", "WECHAT_BOT_TOKEN"],
+  ["-slack-bridge", "SLACK_BOT_TOKEN"],
+  ["-slack-app", "SLACK_APP_TOKEN"],
+  ["-teams-bridge", "MSTEAMS_APP_PASSWORD"],
+]);
+const managedProviderResult = (normalized) => {
+  const providerName = normalized.split(/\s+/).at(-1);
+  const credential = [...managedCredentialByProviderSuffix].find(([suffix]) =>
+    providerName?.endsWith(suffix),
+  )?.[1];
+  return normalized.includes("provider get") && providerName && credential
+    ? {
+        status: 0,
+        stdout: [
+          "Name: " + providerName,
+          "Type: nemoclaw-mcp-v1",
+          "Credential keys: " + credential,
+          "Config keys: <none>",
+        ].join("\n"),
+        stderr: "",
+      }
+    : null;
+};
 
 dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch = () => ({
   maybeApplyDuringCreate: () => {},
@@ -96,11 +123,18 @@ agentOnboard.createAgentSandbox = () => {
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
-  if (profileResult !== null) return profileResult;
-  return normalized.includes("sandbox get") && normalized.includes(sandboxName)
-    ? { status: 0, stdout: Buffer.from("Name: " + sandboxName + "\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
-    : { status: 0 };
+  const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
+  const providerResult = managedProviderResult(normalized);
+  return profileResult ?? providerResult ??
+    (normalized.includes("sandbox get") && normalized.includes(sandboxName)
+      ? {
+          status: 0,
+          stdout: Buffer.from(
+            "Name: " + sandboxName + "\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\n",
+          ),
+          stderr: Buffer.alloc(0),
+        }
+      : { status: 0 });
 };
 runner.runFile = (file, args = [], opts = {}) => {
   commands.push({ command: _n([file, ...args]), env: opts.env || null });
@@ -129,7 +163,7 @@ runner.runCapture = (command) => {
   }
   if (normalized.includes("sandbox get") && normalized.includes(sandboxName)) {
     return scenario === "reuse"
-      ? [sandboxName, "Id: fixture-created-sandbox"].join(String.fromCharCode(10))
+      ? [sandboxName, "Id: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID].join(String.fromCharCode(10))
       : "";
   }
   if (normalized.includes("sandbox list")) return sandboxName + " Ready";
@@ -169,19 +203,10 @@ const createFixture =
       })
     : null;
 
-childProcess.spawn = (...args) => {
+sandboxCreateStream.streamSandboxCreate = async (command, args, env) => {
   if (scenario === "reuse") throw new Error("unexpected sandbox create");
-  const child = new EventEmitter();
-  child.stdout = new EventEmitter();
-  child.stderr = new EventEmitter();
-  child.unref = () => {};
-  child.kill = () => true;
-  child.pid = 4242;
-  commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
-  process.nextTick(() => {
-    child.stdout.emit("data", Buffer.from("Created sandbox: " + sandboxName + "\n"));
-  });
-  return child;
+  commands.push({ command: _n([command, ...args]), env });
+  return { status: 0, output: "Created sandbox: " + sandboxName, sawProgress: true };
 };
 
 const { createSandbox } = require(${onboardPath});
@@ -212,9 +237,7 @@ const agent = agentDefs.loadAgent("langchain-deepagents-code");
       : createArgs),
   );
   console.log(JSON.stringify({ resultName, commands, registerCalls, updateCalls }));
-  clearInterval(keepAlive);
 })().catch((error) => {
-  clearInterval(keepAlive);
   console.error(error);
   process.exit(1);
 });
@@ -232,7 +255,8 @@ const agent = agentDefs.loadAgent("langchain-deepagents-code");
       NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG: "1",
       OPENSHELL_DRIVERS: scenario === "create" ? "vm" : "docker",
     },
-    timeout: 15000,
+    timeout: 30_000,
+    killSignal: "SIGKILL",
   });
   assert.equal(result.status, 0, result.stderr);
   return parseStdoutJson<{

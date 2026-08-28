@@ -316,10 +316,6 @@ describe("rebuild gateway drift preflight", () => {
       vi.mocked(registry.getSandbox).mockReturnValue(entry as never);
       vi.mocked(registryPersistence.load).mockReturnValue(registrySnapshot as never);
       captureOpenshellSpy
-        .mockReturnValueOnce({
-          status: 1,
-          output: "client error (Connect): Connection refused",
-        })
         .mockReturnValueOnce({ status: 0, output: "beta Ready" })
         .mockReturnValueOnce({ status: 1, output: "Error:   × Not Found: sandbox not found" });
       getNamedGatewayLifecycleStateSpy.mockReturnValue({
@@ -341,6 +337,9 @@ describe("rebuild gateway drift preflight", () => {
         gatewayName,
         recoverableStates: recoveryStates,
       });
+      expect(recoverNamedGatewayRuntimeSpy.mock.invocationCallOrder[0]).toBeLessThan(
+        captureOpenshellSpy.mock.invocationCallOrder[0]!,
+      );
       expect(captureOpenshellSpy).toHaveBeenNthCalledWith(
         1,
         ["sandbox", "list", "-g", gatewayName],
@@ -348,11 +347,6 @@ describe("rebuild gateway drift preflight", () => {
       );
       expect(captureOpenshellSpy).toHaveBeenNthCalledWith(
         2,
-        ["sandbox", "list", "-g", gatewayName],
-        expect.objectContaining({ ignoreError: true }),
-      );
-      expect(captureOpenshellSpy).toHaveBeenNthCalledWith(
-        3,
         ["sandbox", "get", "-g", gatewayName, "alpha"],
         expect.anything(),
       );
@@ -366,7 +360,7 @@ describe("rebuild gateway drift preflight", () => {
     },
   );
 
-  it("fails without a sandbox-list retry after a generic query error", async () => {
+  it("recovers the named gateway before a generic sandbox-list query fails (#10421)", async () => {
     const entry = makeSandboxEntry();
     captureOpenshellSpy.mockReturnValueOnce({
       status: 1,
@@ -377,7 +371,11 @@ describe("rebuild gateway drift preflight", () => {
       "Failed to query running sandboxes from OpenShell.",
     );
 
-    expect(recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
+    expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledOnce();
+    expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw",
+      recoverableStates: recoveryStates,
+    });
     expect(captureOpenshellSpy).toHaveBeenCalledOnce();
     expect(captureOpenshellSpy).toHaveBeenCalledWith(
       ["sandbox", "list", "-g", "nemoclaw"],

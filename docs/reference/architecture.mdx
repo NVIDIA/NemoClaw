@@ -312,7 +312,7 @@ The maintained onboarding path for this agent does not consume the component.
 
 Stock onboarding through the OpenShell Docker driver for OpenClaw, Hermes, and LangChain Deep Agents Code selects an immutable managed image for the installed release and host architecture.
 Before selecting one agent image, NemoClaw validates a complete three-agent cohort with one release, source revision, publication cohort, and compatible startup and capability contracts.
-If registry or catalog availability prevents resolution, the ordinary `prefer-managed` path builds the shipped, reviewed repository Dockerfile instead and never selects an unpinned tag.
+If registry or catalog availability prevents resolution, stock onboarding stops before sandbox creation and does not build a shipped Dockerfile.
 Available catalog evidence that is incomplete, mixed, mutable, wrong-platform, or identity-inconsistent fails closed before sandbox creation.
 An explicit `--from <Dockerfile>` remains a separate complete custom-image path.
 The portable experimental profile retains its existing workload path, and native Podman remains disabled.

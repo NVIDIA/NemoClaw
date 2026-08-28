@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Docs / Staging Site
+name: Docs / Publish Staging and Clean Up PR Previews
 
 on:
   push:
@@ -27,7 +27,6 @@ env:
 
 jobs:
   publish:
-    name: Publish
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: docs-staging
@@ -59,7 +58,6 @@ jobs:
           npx --yes "fern-api@${FERN_VERSION}" generate --docs --instance "$FERN_STAGING_INSTANCE"
 
   delete-preview:
-    name: Delete PR previews
     runs-on: ubuntu-latest
     needs: publish
     timeout-minutes: 5

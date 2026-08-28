@@ -9,10 +9,13 @@ export default async function prepare_nemoclaw_pr_candidate(input: {
   refreshBase?: boolean;
   apply?: boolean;
   body?: {
-    summary: string;
+    outcome: string;
+    reason: string;
     changes: string[];
-    relatedIssue?: { number: Integer; keyword: "Fixes" | "Closes" };
-    typeOfChange: "code" | "code-with-docs" | "docs-prose" | "docs-code-samples";
+    relatedIssues?: {
+      number: Integer;
+      keyword: "Fixes" | "Closes" | "Resolves" | "Refs" | "Relates to" | "Part of";
+    }[];
     tests: {
       result: "added-or-updated" | "existing" | "not-applicable";
       evidence?: string;
@@ -23,7 +26,13 @@ export default async function prepare_nemoclaw_pr_candidate(input: {
     hooks: { passed: boolean; evidence?: string };
     broadGate?: { passed: boolean; evidence: string };
     docs?: { buildPassed?: boolean; styleReviewed?: boolean; newPagesValidated?: boolean };
-    dgxStation?: { testedCommit: string; scenario: string; result: string; evidenceUrl: string };
+    dgxStation?: {
+      testedCommit: string;
+      scenario: string;
+      result: string;
+      evidenceUrl: string;
+      exceptionReason?: string;
+    };
     dco: { commitsVerified: boolean; name: string; email: string };
     noSecrets: boolean;
   };
@@ -68,7 +77,6 @@ export default async function prepare_nemoclaw_pr_candidate(input: {
     notes: string[];
   };
   body: string | null;
-  templateSha: string | null;
   readyToPublish: boolean;
   blockers: { code: string; message: string }[];
   warnings: { code: string; message: string }[];
@@ -89,13 +97,34 @@ export default async function prepare_nemoclaw_pr_candidate(input: {
     warnings = [...preflight.warnings];
   let rendered = null;
   if (input.body) {
+    const sensitiveChanged = preflight.inferred.sensitivePaths.length > 0;
+    if (
+      input.body.sensitivePath?.changed !== undefined &&
+      input.body.sensitivePath.changed !== sensitiveChanged
+    )
+      blockers.push({
+        code: "sensitive-path-mismatch",
+        message: "Caller-sensitive path state does not match candidate inspection.",
+      });
     rendered = await tools.render_nemoclaw_pr_body({
       ...input.body,
+      sensitivePath: {
+        changed: sensitiveChanged,
+        reviewEvidence: input.body.sensitivePath?.reviewEvidence,
+      },
       workdir: input.workdir,
       baseRef: (input.remote ?? "origin") + "/" + (input.baseBranch ?? "main"),
     });
-    blockers.push(...rendered.blockers);
-    warnings.push(...rendered.warnings);
+    blockers.push(...rendered.blockers.map((message) => ({ code: "pr-body-evidence", message })));
+    const docsChanged = preflight.changedFiles.some(
+      (path) =>
+        path.startsWith("docs/") || path === "fern/docs.yml" || path.startsWith("fern/assets/"),
+    );
+    if (docsChanged && input.body.docs?.buildPassed !== true)
+      blockers.push({
+        code: "docs-build-evidence",
+        message: "Documentation changes require a passing npm run docs result.",
+      });
   } else
     warnings.push({
       code: "body-input-required",
@@ -105,7 +134,6 @@ export default async function prepare_nemoclaw_pr_candidate(input: {
     preflight,
     validation,
     body: rendered?.body ?? null,
-    templateSha: rendered?.templateSha ?? null,
     readyToPublish: blockers.length === 0 && Boolean(rendered),
     blockers,
     warnings,

@@ -102,7 +102,6 @@ export function createSandboxCreateIntentResolver<
         ? {
             ...deps.messagingPreflightDeps,
             readMessagingPlanFromEnv: () => null,
-            registerExtraPlaceholderProviders: () => [],
           }
         : deps.messagingPreflightDeps;
     const result = await prepareSandboxMessagingPreflight(

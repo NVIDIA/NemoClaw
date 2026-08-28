@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Release / Latest Tag
+name: Release / Promote Verified Tag to Latest
 
 on:
   push:
@@ -28,7 +28,6 @@ concurrency:
 
 jobs:
   update-latest:
-    name: Promote verified tag and retire release label
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

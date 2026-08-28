@@ -92,6 +92,9 @@ const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry,
 });
 const runner = require(${runnerPath});
 const preflight = require(${preflightPath});
+const policyAuthorityPreflight = require(${JSON.stringify(
+    path.join(repoRoot, "src", "lib", "onboard", "policy-authority", "preflight.ts"),
+  )});
 const credentials = require(${credentialsPath});
 const buildContextStage = require(${buildContextStagePath});
 const dockerfilePatchFlow = require(${dockerfilePatchFlowPath});
@@ -153,7 +156,7 @@ runner.run = (command) => {
   const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
   return normalized.includes("sandbox get") && normalized.includes(sandboxName)
-    ? { status: 0, stdout: Buffer.from(sandboxName + "\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    ? { status: 0, stdout: Buffer.from(sandboxName + "\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
 };
 runner.runFile = (file, args = []) => {
@@ -179,14 +182,19 @@ runner.runCapture = (command) => {
     ].join("\n");
   }
   if (normalized.includes("sandbox get")) {
-    return sandboxCreated ? sandboxName + "\nId: fixture-created-sandbox\n" : "";
+    return sandboxCreated
+      ? sandboxName + "\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\n"
+      : "";
   }
-  if (normalized.includes("sandbox list")) return sandboxName + " Ready";
+  if (normalized.includes("sandbox list")) return sandboxCreated ? sandboxName + " Ready" : "";
   return "";
 };
 registry.getDefault = () => null;
 registry.listExtraProviders = () => [];
 preflight.checkPortAvailable = async () => ({ ok: true });
+policyAuthorityPreflight.qualifySandboxPolicyAuthority = () => ({
+  authority: "nemoclaw-managed",
+});
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
@@ -224,24 +232,29 @@ const { createSandbox } = require(${onboardPath});
   let errorMessage = null;
   try {
     await createSandbox(
-      null,
-      "nvidia/nemotron-3-super-120b-a12b",
-      "nvidia-prod",
-      null,
-      sandboxName,
-      null,
-      null,
-      scenario === "custom-dockerfile" ? "/tmp/custom/Dockerfile" : null,
-      agent,
-      null,
-      null,
-      null,
-      [],
-      null,
-      { sessionId: createFixture.sessionId },
-      null,
-      null,
-      preparedBuildContext,
+      ...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+        [
+          null,
+          "nvidia/nemotron-3-super-120b-a12b",
+          "nvidia-prod",
+          null,
+          sandboxName,
+          null,
+          null,
+          scenario === "custom-dockerfile" ? "/tmp/custom/Dockerfile" : null,
+          agent,
+          null,
+          null,
+          null,
+          [],
+          null,
+          null,
+          null,
+          null,
+          preparedBuildContext,
+        ],
+        createFixture,
+      ),
     );
   } catch (error) {
     errorMessage = error instanceof Error ? error.message : String(error);
@@ -275,7 +288,6 @@ const { createSandbox } = require(${onboardPath});
       HOME: tmpDir,
       NEMOCLAW_HOME: path.join(tmpDir, ".nemoclaw"),
       NEMOCLAW_NON_INTERACTIVE: "1",
-      NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK: "1",
       PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
     },
   });

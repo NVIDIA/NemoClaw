@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Release / Versioned Brev Image
+name: Release / Versioned Brev Image Request
 
 on:
   push:
@@ -17,7 +17,6 @@ concurrency:
 
 jobs:
   attest-daily-image-request:
-    name: Prepare and attest request
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.event.deleted == false && github.run_attempt == 1 }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -55,7 +54,6 @@ jobs:
           subject-path: nemoclaw-daily-image-request.v1.json
 
   dispatch-daily-image:
-    name: Dispatch
     needs: attest-daily-image-request
     if: ${{ success() && github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.event.deleted == false && github.run_attempt == 1 }}
     runs-on: ubuntu-latest

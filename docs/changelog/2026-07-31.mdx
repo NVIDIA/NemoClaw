@@ -33,12 +33,12 @@ It also improves onboarding recovery, lifecycle cleanup, Hermes image builds, ru
 - `nemoclaw status` now reads terminal-runtime out-of-memory counters through a bounded host-side Docker probe, so a recorded kill produces degraded status and rebuild guidance.
   Destroying the final sandbox now stops a packaged OpenShell gateway service and refuses cleanup when the service remains active.
   For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
-- `shields down` now succeeds without changing state when an OpenClaw configuration already has the exact mutable posture.
+- `shields down` now succeeds without changing state when an OpenClaw configuration matches the requested mutable posture.
   Cloudflare Tunnel cleanup verifies that the recorded process still belongs to `cloudflared` before each signal and removes a stale PID file without signaling an unrelated process.
   For more information, refer to [Understand Runtime Changes](/user-guide/openclaw/manage-sandboxes/configure-sandboxes/understand-runtime-changes) and [Run Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/run-sandboxes).
 - Managed Hermes image probes now run through a checked-in Python runner, so OpenShell gateways that use Docker's legacy builder enforce the same image assertions as BuildKit.
   For more information, refer to [Install Hermes Plugins](/user-guide/hermes/manage-sandboxes/install-hermes-plugins).
-- `nemoclaw host probe` schema `1.1.0` now identifies the exact compiled CLI version and immutable source revision for every readiness result.
+- `nemoclaw host probe` schema `1.1.0` now identifies the compiled CLI version and immutable source revision for every readiness result.
   Consumers can reject stale or mismatched readiness producers before they use host evidence.
   For more information, refer to [System Readiness](/user-guide/openclaw/reference/system-readiness).
 - Provider-neutral runtime bundles now enforce provider, workload, ownership, and registry contracts for the existing Docker and Kubernetes paths.
@@ -48,5 +48,5 @@ It also improves onboarding recovery, lifecycle cleanup, Hermes image builds, ru
   It also adds missing recovery, memory-search, and two-DGX Station verification guidance identified by post-tag documentation audits.
   For more information, refer to [Run LangChain Deep Agents Code](/user-guide/deepagents/manage-sandboxes/operate-sandboxes/run-deep-agents-code) and [Engineer Documentation for AI Agents](/user-guide/openclaw/resources/engineer-agentic-documentation).
 - Trusted E2E now binds request proofs to explicit authenticated phases, keeps calibration ancestry durable after evidence-source PR refs disappear, and validates coupled MCP credential evidence.
-  Recovery repetition moved into deterministic integration tests, while the retained live test verifies one exact replacement process and connect-driven recovery.
+  Recovery repetition moved into deterministic integration tests, while the retained live test verifies one replacement process and connect-driven recovery.
   The PR Review Advisor now preserves validated second-opinion lane disagreements and rejects malformed E2E collections.

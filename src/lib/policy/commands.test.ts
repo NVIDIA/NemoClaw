@@ -10,7 +10,6 @@ const {
   buildPolicyGetCommand,
   buildPolicyGetFullCommand,
   buildPolicyGetFullJsonArgs,
-  buildPolicyGetFullJsonCommand,
   buildPolicySetCommand,
 } = require("./commands.js") as typeof import("./commands.js");
 
@@ -29,14 +28,6 @@ describe("OpenShell policy command builders", () => {
       "policy",
       "get",
       "--full",
-      "alpha",
-    ]);
-    expect(buildPolicyGetFullJsonCommand("alpha").slice(1)).toEqual([
-      "policy",
-      "get",
-      "--full",
-      "--output",
-      "json",
       "alpha",
     ]);
   });
