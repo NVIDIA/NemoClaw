@@ -8,6 +8,7 @@ import {
   assertObservedPolicyRequirements,
   assertOpenShellGatewayPortBinding,
   captureSandboxBasePolicy,
+  inspectActiveGlobalPolicy,
   inspectSandboxPolicy,
   isPolicyObservationError,
   policyStateInternals,
@@ -71,6 +72,37 @@ describe("OpenShell policy observation", () => {
       capture("version: 1\nnetwork_policies: {}\n") as never,
     );
     expect(captureSandboxBasePolicy("alpha", "nemoclaw")).toContain("network_policies");
+  });
+
+  it("reads active global policy through the selected gateway", () => {
+    const spy = vi
+      .spyOn(openshellRuntime, "captureResolvedOpenshell")
+      .mockReturnValueOnce(capture("VERSION STATUS\n1 loaded\n") as never)
+      .mockReturnValueOnce(
+        capture(
+          JSON.stringify({
+            scope: "global",
+            status: "loaded",
+            policy_source: "global",
+            hash: "sha256:global",
+            active_version: 2,
+            policy: { version: 1, network_policies: {} },
+          }),
+        ) as never,
+      );
+
+    expect(inspectActiveGlobalPolicy({ gatewayName: "nemoclaw" })).toEqual({
+      state: "active",
+      inspection: {
+        policySource: "global",
+        effectivePolicy: { version: 1, network_policies: {} },
+        policyIdentity: { hash: "sha256:global", activeVersion: 2 },
+      },
+    });
+    expect(spy.mock.calls.map(([args]) => args)).toEqual([
+      ["policy", "list", "-g", "nemoclaw", "--global", "--limit", "1"],
+      ["policy", "get", "-g", "nemoclaw", "--global", "--full", "--output", "json"],
+    ]);
   });
 
   it("validates required entries while allowing unrelated host changes", () => {

@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-const {
+import {
   buildGlobalPolicyGetFullJsonArgs,
   buildGlobalPolicyListArgs,
   buildPolicyGetArgs,
@@ -11,7 +11,7 @@ const {
   buildPolicyGetFullCommand,
   buildPolicyGetFullJsonArgs,
   buildPolicySetCommand,
-} = require("./commands.js") as typeof import("./commands.js");
+} from "./commands";
 
 describe("OpenShell policy command builders", () => {
   it("keeps every sandbox policy operation in an argv-only command", () => {
