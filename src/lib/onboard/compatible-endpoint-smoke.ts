@@ -482,7 +482,7 @@ export function buildCompatibleEndpointSandboxSmokeCommand(model: string): strin
 }
 
 /**
- * Runs through the same Python runtime as the supported agents, proving a real
+ * Runs a Python standard-library request inside the sandbox, proving a real
  * chat response through inference.local and explicit policy denial for the
  * selected direct host-native inference port that would bypass the gateway.
  */
@@ -535,7 +535,7 @@ model = ${modelValue}
 max_tokens_field = ${maxTokensField}
 tool_calling_required = ${toolCallingRequired}
 max_response_bytes = 1048576
-inference_opener = urllib.request.build_opener()
+inference_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 direct_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 def post_inference(payload, label):

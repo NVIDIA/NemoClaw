@@ -124,6 +124,7 @@ function runProviderNeutralScript(options: {
   denialBytes?: readonly number[];
   denialOversized?: boolean;
   directError?: "connection-refused" | "dns" | "timeout";
+  ambientProxyResponses?: unknown[];
 }) {
   const model = options.model ?? "qwen3.5-9b";
   const directAuthority = `host.openshell.internal:${String(options.authority.directHostPort)}`;
@@ -149,14 +150,20 @@ import urllib.error
 import urllib.request
 
 responses = json.loads(${JSON.stringify(JSON.stringify(responses))})
+ambient_proxy_responses = json.loads(${JSON.stringify(
+    JSON.stringify(options.ambientProxyResponses ?? []),
+  )})
+ambient_proxy_enabled = ${options.ambientProxyResponses === undefined ? "False" : "True"}
 denial_bytes = ${denialBody}
 inference_request_tokens = []
 direct_request_count = []
+ambient_proxy_request_count = []
 direct_error = ${options.directError === undefined ? "None" : JSON.stringify(options.directError)}
 
 def emit_request_evidence():
     print("INFERENCE_REQUEST_TOKENS=" + ",".join(str(value) for value in inference_request_tokens))
     print("DIRECT_REQUEST_COUNT=" + str(len(direct_request_count)))
+    print("AMBIENT_PROXY_REQUEST_COUNT=" + str(len(ambient_proxy_request_count)))
 
 atexit.register(emit_request_evidence)
 
@@ -199,10 +206,32 @@ class FakeOpener:
             io.BytesIO(denial_bytes),
         )
 
-urllib.request.build_opener = lambda *handlers: FakeOpener()
+class AmbientProxyOpener:
+    def open(self, request, timeout):
+        ambient_proxy_request_count.append(1)
+        if not ambient_proxy_responses:
+            raise RuntimeError("ambient proxy response queue exhausted")
+        return FakeResponse(200, ambient_proxy_responses.pop(0))
+
+def build_test_opener(*handlers):
+    proxy_disabled = any(
+        isinstance(handler, urllib.request.ProxyHandler) and handler.proxies == {}
+        for handler in handlers
+    )
+    if ambient_proxy_enabled and not proxy_disabled:
+        return AmbientProxyOpener()
+    return FakeOpener()
+
+urllib.request.build_opener = build_test_opener
 `;
   const script = buildProviderNeutralInferenceSandboxSmokeScript(model, options.authority);
-  return spawnSync("python3", ["-c", `${prelude}\n${script}`], { encoding: "utf8" });
+  return spawnSync("python3", ["-c", `${prelude}\n${script}`], {
+    encoding: "utf8",
+    env:
+      options.ambientProxyResponses === undefined
+        ? process.env
+        : { ...process.env, HTTPS_PROXY: "http://ambient-proxy.invalid:8080", NO_PROXY: "" },
+  });
 }
 
 describe("compatible endpoint sandbox smoke helpers", () => {
@@ -528,6 +557,22 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stderr).toContain("REASONING_ONLY at the initial token limit");
     expect(result.stdout).toContain("INFERENCE_REQUEST_TOKENS=512,1024,512");
+    expect(result.stdout).toContain("DIRECT_REQUEST_COUNT=1");
+  });
+
+  it("does not let an ambient proxy satisfy the managed inference proof (#10423)", () => {
+    const authority = allAgentProofAuthorities[0].authority;
+    const directResponses = providerNeutralResponses("qwen3.5-9b");
+    const result = runProviderNeutralScript({
+      authority,
+      responses: directResponses,
+      ambientProxyResponses: providerNeutralResponses("qwen3.5-9b"),
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
+    expect(result.stdout).toContain("AMBIENT_PROXY_REQUEST_COUNT=0");
+    expect(result.stdout).toContain("INFERENCE_REQUEST_TOKENS=512,512");
     expect(result.stdout).toContain("DIRECT_REQUEST_COUNT=1");
   });
 
