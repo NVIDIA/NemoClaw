@@ -7,7 +7,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
-import YAML from "yaml";
 import {
   createShieldsFlowHarness,
   type ShieldsFlowHarnessOptions,
@@ -66,18 +65,6 @@ describe("shields policy transition", () => {
   let runSpy: MockInstance;
   let runCaptureSpy: MockInstance;
   let shields: typeof import("./index.js");
-
-  function writePolicySnapshot(sandboxName: string, fileName: string): string {
-    const stateDir = path.join(homeDir, ".nemoclaw", "state");
-    const snapshotPath = path.join(stateDir, fileName);
-    fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  test: {}\n");
-    fs.writeFileSync(
-      path.join(stateDir, `shields-${sandboxName}.json`),
-      JSON.stringify({ shieldsDown: true, shieldsPolicySnapshotPath: snapshotPath }),
-    );
-    return snapshotPath;
-  }
 
   beforeEach(() => {
     homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-policy-transition-"));
@@ -375,7 +362,6 @@ describe("shields config lock without a shipped config hash", () => {
   const CONFIG_PATH = `${CONFIG_DIR}/config.toml`;
   const HASH_PATH = `${CONFIG_DIR}/.config-hash`;
   const LOCK_COMMAND_KEY = [CONFIG_DIR, CONFIG_PATH].join("\0");
-  const TIMER_PROCESS_KEY = ["number", "4242", "number", "0"].join("\0");
 
   type SandboxEntry = { mode: string; owner: string };
   type SandboxCommandHandler = (args: string[], command: string[]) => string;
@@ -477,26 +463,6 @@ describe("shields config lock without a shipped config hash", () => {
         unsupportedCommand;
       return handler(command);
     };
-  }
-
-  function reportTimerProcessMissing(): never {
-    const error = new Error("timer is gone") as NodeJS.ErrnoException;
-    error.code = "ESRCH";
-    throw error;
-  }
-
-  function reportTimerProcessRunning(): true {
-    return true;
-  }
-
-  const timerProcessHandlers = new Map<string, () => true>([
-    [TIMER_PROCESS_KEY, reportTimerProcessMissing],
-  ]);
-
-  function reportMissingTimerProcess(pid: number, signal?: string | number): true {
-    const key = [typeof pid, String(pid), typeof signal, String(signal)].join("\0");
-    const behavior = timerProcessHandlers.get(key) ?? reportTimerProcessRunning;
-    return behavior();
   }
 
   function makePathImmutable(pathname: string): void {

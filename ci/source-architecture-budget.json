@@ -50,7 +50,7 @@
       "src/lib/inference/local.ts": 22,
       "src/lib/inference/onboard-probes.ts": 21,
       "src/lib/inference/vllm.ts": 21,
-      "src/lib/onboard.ts": 201,
+      "src/lib/onboard.ts": 194,
       "src/lib/onboard/machine/handlers/sandbox.ts": 21,
       "src/lib/policy/index.ts": 23,
       "src/lib/sandbox/config.ts": 22,
@@ -59,7 +59,7 @@
   },
   "allowedCycles": [],
   "maxRootFiles": {
-    "src/lib/onboard": 307,
+    "src/lib/onboard": 306,
     "src/lib/actions": 19,
     "src/lib/actions/sandbox": 182,
     "src/lib/state": 39,

@@ -64,7 +64,6 @@ import {
 import {
   applyMcpHostPolicyEdit,
   buildMcpDnsRebindingProbeScript,
-  captureManagedMcpPolicy,
   expectExitNonZero,
   hostAddressForSandbox,
   isExpectedMcpCurlPolicyDenial,

@@ -25,7 +25,7 @@ import {
   snapshotFile,
   writeJsonFile,
 } from "../fixtures/file-state.ts";
-import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import { listCredentialLeakPaths } from "../fixtures/phases/state-validation.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
@@ -72,7 +72,6 @@ import {
 } from "./rebuild-hermes-old-base-fixture.ts";
 import { buildRebuildHermesOldSandboxDockerfile } from "./rebuild-hermes-old-sandbox.ts";
 import { REBUILD_HERMES_PHASES } from "./rebuild-hermes-phases.ts";
-import { buildHermesRuntimeExecArgs } from "./rebuild-hermes-runtime-exec.ts";
 import { prepareHermesRebuildSwap } from "./rebuild-hermes-swap.ts";
 import { REBUILD_HERMES_STATE } from "./rebuild-hermes-state-fixture.ts";
 import { buildRebuildHermesTimingSummary, describeRunnerClass } from "./rebuild-hermes-timing.ts";

@@ -8,7 +8,6 @@ import {
   getActiveChannelsFromPlan,
   getDisabledChannelsFromPlan,
 } from "../../messaging-plan-session";
-import { messagingChannelsForPolicyPresets } from "../../messaging-policy-presets";
 import type { HostLocalInferenceSandboxProofAuthority } from "../../runtime-provider/host-local-inference-routing";
 import { advanceTo, type OnboardStateTransitionResult } from "../result";
 

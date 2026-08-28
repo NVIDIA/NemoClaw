@@ -14,10 +14,6 @@ type CommandEntry = {
   env?: Record<string, string | undefined> | null;
 };
 
-function writeExecutable(target: string, contents: string) {
-  fs.writeFileSync(target, contents, { mode: 0o755 });
-}
-
 function parseStdoutJson<T>(stdout: string): T {
   const line = stdout
     .trim()

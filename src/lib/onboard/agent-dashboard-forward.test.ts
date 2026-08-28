@@ -3,7 +3,6 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { PolicyObservationError } from "../adapters/openshell/policy-state";
 import { ensureAgentDashboardForward } from "./agent-dashboard-forward";
 
 describe("ensureAgentDashboardForward", () => {

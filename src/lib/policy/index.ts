@@ -14,7 +14,6 @@ import YAML from "yaml";
 import {
   captureSandboxBasePolicy,
   inspectSandboxPolicy,
-  isPolicyObservationError,
   PolicyObservationError,
   type SandboxPolicyInspection,
 } from "../adapters/openshell/policy-state";
@@ -272,12 +271,6 @@ function parsePresetPolicyKeys(presetContent: string | null | undefined): string
   const presetEntries = extractPresetEntries(presetContent);
   if (!presetEntries) return [];
   return Object.keys(parseNetworkPolicies(`network_policies:\n${presetEntries}`) || {});
-}
-
-/** Preserve invalid registered content as indeterminate for ownership decisions. */
-function parsePresetPolicyKeysForOwnership(presetContent: string): string[] | null {
-  const networkPolicies = parseNetworkPolicies(presetContent);
-  return networkPolicies === null ? null : Object.keys(networkPolicies);
 }
 
 const CUSTOM_POLICY_KEY_PREFIX = "nemoclaw_custom__";

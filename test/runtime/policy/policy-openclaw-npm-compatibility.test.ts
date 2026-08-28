@@ -6,7 +6,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   livePolicyMetadata,
@@ -52,16 +52,6 @@ const REVIEWED_NPM_ENTRY = {
   ],
 };
 
-const UNRELATED_POLICY_ENTRY = {
-  name: "unrelated_fixture",
-  endpoints: [{ host: "fixture.example.com", port: 443, access: "full" }],
-  binaries: [{ path: "/usr/bin/fixture" }],
-};
-
-const REVIEWED_NPM_PRESET = YAML.stringify({
-  preset: { name: "npm", description: "independent npm compatibility fixture" },
-  network_policies: { npm_yarn: REVIEWED_NPM_ENTRY },
-});
 const REVIEWED_PERSONAL_ENTRY = YAML.parse(
   fs.readFileSync(
     path.join(REPO_ROOT, "nemoclaw-blueprint/policies/presets/personal-open-internet.yaml"),
@@ -71,14 +61,6 @@ const REVIEWED_PERSONAL_ENTRY = YAML.parse(
 
 function policyWith(networkPolicies: Record<string, unknown>): string {
   return YAML.stringify({ version: 1, network_policies: networkPolicies });
-}
-
-function reviewedBaselinePolicy(): string {
-  return policyWith({ npm_registry: structuredClone(REVIEWED_BASELINE_ENTRY) });
-}
-
-function excludedBaselinePolicy(): string {
-  return policyWith({ unrelated_fixture: structuredClone(UNRELATED_POLICY_ENTRY) });
 }
 
 function compatibilityEntry(npmEntry = REVIEWED_NPM_ENTRY) {

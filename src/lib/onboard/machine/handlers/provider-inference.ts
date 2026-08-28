@@ -1159,7 +1159,6 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let compatibleEndpointReasoningEffort = initial.compatibleEndpointReasoningEffort;
   let nimContainer = initial.nimContainer;
   const webSearchConfig = initial.webSearchConfig;
-  const observabilityEnabled = session?.observabilityEnabled === true;
   let forceProviderSelection = initialForceProviderSelection;
   let allowToolsIncompatible = false;
   let skipHostInferenceSmoke = false;

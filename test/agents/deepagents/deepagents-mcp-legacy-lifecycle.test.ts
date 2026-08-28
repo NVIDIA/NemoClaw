@@ -64,7 +64,6 @@ let providerResourceVersion = 1;
 let attached = true;
 let adapterRegistered = true;
 let adapterRemovalOutcome = "";
-let deepAgentsCapability = false;
 let policyApplyCalls = 0;
 let policyState = "match";
 let adapterCalls: string[] = [];
@@ -109,7 +108,6 @@ beforeEach(() => {
   attached = true;
   adapterRegistered = true;
   adapterRemovalOutcome = "";
-  deepAgentsCapability = false;
   policyApplyCalls = 0;
   policyState = "match";
   adapterCalls = [];
@@ -192,9 +190,7 @@ beforeEach(() => {
       adapterCalls.push(command);
       switch (true) {
         case command === "/usr/local/bin/deepagents-code --nemoclaw-mcp-capability":
-          return deepAgentsCapability
-            ? { status: 0, stdout: "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=2\n", stderr: "" }
-            : { status: 2, stdout: "", stderr: "unknown option" };
+          return { status: 2, stdout: "", stderr: "unknown option" };
         case command.includes("servers.pop(payload['server'])"): {
           const outcome = adapterRemovalOutcome || (adapterRegistered ? "removed" : "absent");
           adapterRegistered = outcome === "unowned" ? adapterRegistered : false;

@@ -5,10 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
-import {
-  addSandboxChannel,
-  removeSandboxChannel,
-} from "../../src/lib/actions/sandbox/policy-channel";
+import { addSandboxChannel } from "../../src/lib/actions/sandbox/policy-channel";
 import { policyChannelDependencies } from "../../src/lib/actions/sandbox/policy-channel-dependencies";
 import * as processRecovery from "../../src/lib/actions/sandbox/process-recovery";
 import * as httpProbe from "../../src/lib/adapters/http/probe";

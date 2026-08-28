@@ -36,16 +36,6 @@ network_policies:
           - allow: { method: POST, path: "/v1/**" }
 `;
 
-function digestOf(key: string, policy = BASE_POLICY): string {
-  const entry = getBaselineEntry(policy, key);
-  expect(entry).not.toBeNull();
-  return digestBaselineEntry(entry!);
-}
-
-function exclusion(key: string, digest: string) {
-  return { version: 1 as const, agent: "hermes", key, digest };
-}
-
 describe("baseline-exclusion digest (#7178)", () => {
   it("is stable across key ordering and whitespace", () => {
     const entry = getBaselineEntry(BASE_POLICY, "nous_research");

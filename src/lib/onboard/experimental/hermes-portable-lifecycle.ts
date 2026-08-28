@@ -3,7 +3,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
-import { isDeepStrictEqual, TextDecoder } from "node:util";
+import { TextDecoder } from "node:util";
 
 import {
   fingerprintOpenShellSandboxId,

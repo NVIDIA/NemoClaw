@@ -171,7 +171,6 @@ function publishLifecycleReceipt(
   const policyPath = path.join(stateDir, "portable-uninstall-policy.yaml");
   fs.writeFileSync(policyPath, POLICY, { mode: 0o600 });
   const transactionId = randomUUID();
-  const policyBytes = fs.readFileSync(policyPath);
   const policy = publishHermesPortableDurablePolicySource({
     sandboxName: SANDBOX_NAME,
     transactionId,

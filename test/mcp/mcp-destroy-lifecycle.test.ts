@@ -6,7 +6,6 @@ import path from "node:path";
 
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { AgentMcpAdapter } from "../../src/lib/agent/defs";
 import type { McpBridgeEntry } from "../../src/lib/state/registry";
 import { findObservedCredentialRevision } from "../helpers/mcp-provider-revision";
 import { mockManagedEndpointlessProviderProfileRun } from "../helpers/onboard-script-mocks.cjs";
@@ -97,7 +96,6 @@ vi.mock("../../src/lib/inference/nim", () => ({
 }));
 
 import * as bridge from "../../src/lib/actions/sandbox/mcp-bridge";
-import { isAgentMcpAdapter } from "../../src/lib/actions/sandbox/mcp-bridge-contracts";
 import { runRebuildDestroyPhase } from "../../src/lib/actions/sandbox/rebuild-destroy-phase";
 import type { RebuildRecreateJournal } from "../../src/lib/actions/sandbox/rebuild-recreate-journal";
 import * as registry from "../../src/lib/state/registry";
@@ -154,32 +152,6 @@ const bridgeEntries: Record<"github" | "slack", McpBridgeEntry> = {
     addedAt: "2026-06-27T00:00:00.000Z",
   },
 };
-function ownedPolicy(
-  server: "github" | "slack",
-  options: {
-    adapter?: AgentMcpAdapter;
-    entry?: McpBridgeEntry;
-    resolvedAddresses?: readonly string[];
-  } = {},
-) {
-  const entry = options.entry ?? bridgeEntries[server];
-  const adapter = options.adapter ?? entry.adapter;
-  expect(isAgentMcpAdapter(adapter), "MCP policy fixture requires an explicit adapter").toBe(true);
-  const resolvedAddresses = options.resolvedAddresses ?? [new URL(entry.url).hostname];
-  return {
-    name: entry.policyName,
-    content: bridge.buildMcpBridgePolicyYaml(
-      entry.server,
-      entry.url,
-      adapter as AgentMcpAdapter,
-      {
-        addresses: [...resolvedAddresses],
-      },
-      entry.providerName ?? "",
-    ),
-    sourcePath: "generated:nemoclaw-mcp-bridge",
-  };
-}
 function restoreEnv(name: string, value: string | undefined): void {
   switch (value) {
     case undefined:

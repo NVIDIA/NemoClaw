@@ -171,7 +171,6 @@ function activeReceipt(homeDir = "/home/test"): HermesPortableConfiguredReceipt 
   const uid = process.getuid!();
   const socketPath = `/run/user/${String(uid)}/podman/podman.sock`;
   const transactionId = randomUUID();
-  const policyBytes = fs.readFileSync(policyPath);
   const policy = publishHermesPortableDurablePolicySource({
     sandboxName: SANDBOX,
     transactionId,

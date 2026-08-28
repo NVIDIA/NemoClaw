@@ -19,7 +19,6 @@ import type {
   QualifiedPendingSandboxCreateReservation,
 } from "../../state/registry";
 import type { HermesAuthMethod } from "../hermes-auth";
-import * as policyRequirements from "../policy-requirements";
 import type { PreparedSandboxBuildContext } from "../build-context-stage";
 import type { DcodeSelectionDriftReader } from "../dcode-selection-drift";
 import { assertProviderlessInterceptorEnvironment } from "../entry-options";
@@ -1132,7 +1131,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       isWsl,
       managedWorkloadOnboard,
       messagingChannelSetup,
-      nim,
       normalizeHermesAuthMethod,
       normalizeHermesToolGatewaySelections,
       note,
@@ -1164,7 +1162,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       sandboxLifecycle,
       sandboxMutationLock,
       sandboxRecreateTransaction,
-      sandboxRegistration,
       sandboxRegistryMetadata,
       sandboxReuse,
       shouldSkipPreRecreateBackup,
@@ -1245,24 +1242,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       },
     );
     const resolvedCreateIntent = preparedCreateIntent.intent;
-    const policyRequirementIntent: typeof resolvedCreateIntent = {
-      ...resolvedCreateIntent,
-      policy: {
-        ...resolvedCreateIntent.policy,
-        options: {
-          ...resolvedCreateIntent.policy.options,
-          additionalPresets: policyRequirements.requiredOnboardPolicyPresets({
-            additionalPresets: resolvedCreateIntent.policy.options.additionalPresets,
-            provider,
-            webSearchConfig,
-            agentName: agent?.name,
-            observabilityEnabled: createIntent?.observabilityEnabled === true,
-            hostLocalInferenceRouteOnly:
-              resolvedCreateIntent.policy.options.hostLocalInferenceRouteOnly,
-          }),
-        },
-      },
-    };
     const messagingCapabilities = preparedCreateIntent.messagingCapabilities;
     const manageDashboard = sandboxGpuCreateFlow.shouldManageHermesPortableDashboard(
       dashboardRuntime.shouldManageDashboardForAgent(agent),
@@ -2075,7 +2054,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       legacyBuildContext,
       launch: {
         createArgv: materializedCreateArgv,
-        effectiveDashboardPort,
         intendedSandboxStartupCommand,
         managedBootstrapIdentity,
         managedStartupRootApplyRequest,

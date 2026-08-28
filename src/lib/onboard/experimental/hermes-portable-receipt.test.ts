@@ -24,7 +24,6 @@ import {
   hermesPortableReceiptRoot,
   inspectPortableAgentReceiptAuthority,
   inspectPortableAgentReceiptAuthorityForPublicationRecovery,
-  readHermesPortableLifecycleReceiptForClassification,
   publishHermesPortableDurablePolicySource,
   publishHermesPortableLifecycleReceipt,
   publishHermesPortableSuccessorReceipt,

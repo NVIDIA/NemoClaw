@@ -7,7 +7,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 
 import { MessagingSetupApplier } from "../../../messaging/applier/setup-applier";
 import { hashCredential } from "../../../security/credential-hash";
-import { decisionSelected } from "../../../state/onboard-checkpoint-decision";
 import { createSession } from "../../../state/onboard-session";
 import {
   recordCheckpointEffectGroup,

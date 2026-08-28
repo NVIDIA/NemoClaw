@@ -77,8 +77,6 @@ const {
 const {
   buildRuntimePolicyWithLiveMcpEntries,
   buildRuntimePermissivePolicy,
-  describeCanonicalPolicyReference,
-  serializeCanonicalPolicy,
 }: typeof import("./permissive-runtime") = require("./permissive-runtime");
 const { cleanupTempDir, secureTempFile } = require("../onboard/temp-files");
 const { verifyShieldsLockState }: typeof import("./verify-lock") = require("./verify-lock");
@@ -2267,12 +2265,6 @@ function isOptionalHashMap(value: unknown): value is { [path: string]: string } 
     if (typeof v !== "string" || !isSha256Hex(v)) return false;
   }
   return true;
-}
-
-function isOptionalBoundShieldsPolicyArtifact(
-  value: unknown,
-): value is BoundShieldsPolicyArtifact | undefined {
-  return value === undefined || isBoundShieldsPolicyArtifact(value);
 }
 
 function isShieldsState(value: unknown): value is ShieldsState {

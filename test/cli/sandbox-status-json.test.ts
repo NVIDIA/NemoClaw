@@ -11,7 +11,6 @@ import {
   inferenceInvocationStubLines,
   runWithEnv,
   testTimeoutOptions,
-  writeHealthyDockerStub,
   writeSandboxRegistry,
 } from "./helpers";
 
