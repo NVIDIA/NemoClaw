@@ -8,7 +8,7 @@
  * invalidState: a production source adds an unclassified `sandbox list` or
  * `sandbox get` command, or adds another binding to a legacy raw-output parser.
  * sourceBoundary: the CLI adapter owns command construction and parsing;
- * capability issues own each temporary production exception.
+ * assigned follow-on capability issues record each deferred production consumer.
  * whyNotSourceFix: TypeScript cannot prevent callers from constructing an
  * equivalent string array for a generic process runner.
  * regressionTest: test/repository/openshell-sandbox-observation-boundary.test.ts.
@@ -55,7 +55,7 @@ const LEGACY_PARSER_MODULE_SUFFIXES = [
 export type OpenShellSandboxObservationDisposition = Readonly<{
   directCommands: number;
   legacyParserSites: number;
-  ownerIssues: readonly number[];
+  trackingIssues: readonly number[];
   disposition: "adapter-boundary" | "follow-up";
   reason: string;
 }>;
@@ -71,259 +71,259 @@ export const OPEN_SHELL_SANDBOX_OBSERVATION_DISPOSITIONS: Readonly<
   "nemoclaw/src/blueprint/runner.ts": {
     directCommands: 1,
     legacyParserSites: 0,
-    ownerIssues: [9813],
+    trackingIssues: [9813],
     disposition: "follow-up",
     reason: "The final Phase 1 sweep owns plugin and blueprint-runner consumers.",
   },
   "src/commands/debug.ts": {
     directCommands: 2,
     legacyParserSites: 1,
-    ownerIssues: [9812],
+    trackingIssues: [9812],
     disposition: "follow-up",
     reason: "PR #10537 migrates liveness; the diagnostics slice owns remaining observation.",
   },
   "src/lib/actions/sandbox/destroy-gateway-cleanup.ts": {
     directCommands: 1,
     legacyParserSites: 0,
-    ownerIssues: [9807],
+    trackingIssues: [9807],
     disposition: "follow-up",
     reason: "The gateway lifecycle slice owns final-destroy gateway cleanup observation.",
   },
   "src/lib/actions/sandbox/destroy-preflight.ts": {
     directCommands: 1,
     legacyParserSites: 0,
-    ownerIssues: [9811],
+    trackingIssues: [9811],
     disposition: "follow-up",
     reason: "The sandbox lifecycle slice owns destructive preflight observation.",
   },
   "src/lib/actions/sandbox/doctor.ts": {
     directCommands: 0,
     legacyParserSites: 1,
-    ownerIssues: [9807],
+    trackingIssues: [9807],
     disposition: "follow-up",
     reason: "The gateway lifecycle slice owns raw lifecycle status classification.",
   },
   "src/lib/actions/sandbox/gateway-state.ts": {
     directCommands: 1,
     legacyParserSites: 1,
-    ownerIssues: [9807, 9811],
+    trackingIssues: [9807, 9811],
     disposition: "follow-up",
     reason: "Gateway lifecycle and sandbox stop ownership still share this compatibility path.",
   },
   "src/lib/actions/sandbox/rebuild-destroy-phase.ts": {
     directCommands: 2,
     legacyParserSites: 0,
-    ownerIssues: [9811],
+    trackingIssues: [9811],
     disposition: "follow-up",
     reason: "The sandbox lifecycle slice owns rebuild destruction observation.",
   },
   "src/lib/actions/sandbox/snapshot.ts": {
     directCommands: 7,
     legacyParserSites: 2,
-    ownerIssues: [9811],
+    trackingIssues: [9811],
     disposition: "follow-up",
     reason: "The sandbox lifecycle slice owns snapshot and restore observation.",
   },
   "src/lib/actions/sandbox/stop.ts": {
     directCommands: 0,
     legacyParserSites: 1,
-    ownerIssues: [9811],
+    trackingIssues: [9811],
     disposition: "follow-up",
     reason: "The sandbox lifecycle slice owns sibling phase observation during stop.",
   },
   "src/lib/actions/sandbox/vm-dns-monkeypatch.ts": {
     directCommands: 1,
     legacyParserSites: 0,
-    ownerIssues: [9811],
+    trackingIssues: [9811],
     disposition: "follow-up",
     reason: "The sandbox lifecycle slice owns VM sandbox inspection before mutation.",
   },
   "src/lib/actions/uninstall/run-plan.ts": {
     directCommands: 1,
     legacyParserSites: 0,
-    ownerIssues: [9811],
+    trackingIssues: [9811],
     disposition: "follow-up",
     reason: "The sandbox lifecycle slice owns absence verification during uninstall.",
   },
   "src/lib/adapters/openshell/client.ts": {
     directCommands: 1,
     legacyParserSites: 0,
-    ownerIssues: [9803],
+    trackingIssues: [9803],
     disposition: "adapter-boundary",
     reason: "The OpenShell CLI adapter owns this compatibility command construction.",
   },
   "src/lib/adapters/openshell/gateway-drift.ts": {
     directCommands: 0,
     legacyParserSites: 1,
-    ownerIssues: [9807],
+    trackingIssues: [9807],
     disposition: "adapter-boundary",
     reason: "The gateway lifecycle adapter owns gateway status compatibility parsing.",
   },
   "src/lib/adapters/openshell/policy-authority.ts": {
     directCommands: 2,
     legacyParserSites: 0,
-    ownerIssues: [9805, 10514],
+    trackingIssues: [9805, 10514],
     disposition: "adapter-boundary",
     reason: "The accepted policy source-of-truth cutover owns these typed policy inspections.",
   },
   "src/lib/adapters/openshell/sandbox-identity.ts": {
     directCommands: 3,
     legacyParserSites: 0,
-    ownerIssues: [9811],
+    trackingIssues: [9811],
     disposition: "adapter-boundary",
     reason: "The sandbox lifecycle adapter owns immutable identity inspection.",
   },
   "src/lib/adapters/openshell/sandbox-observer-cli.ts": {
     directCommands: 0,
     legacyParserSites: 3,
-    ownerIssues: [9803],
+    trackingIssues: [9803],
     disposition: "adapter-boundary",
     reason: "The CLI sandbox observer owns table, ANSI, phase, and error parsing.",
   },
   "src/lib/diagnostics/debug.ts": {
     directCommands: 4,
     legacyParserSites: 0,
-    ownerIssues: [9812],
+    trackingIssues: [9812],
     disposition: "follow-up",
     reason: "The diagnostics slice owns migration or an accepted executable-level exception.",
   },
   "src/lib/domain/sandbox/destroy.ts": {
     directCommands: 0,
     legacyParserSites: 1,
-    ownerIssues: [9807],
+    trackingIssues: [9807],
     disposition: "follow-up",
     reason: "The gateway lifecycle slice owns final-destroy live-sandbox classification.",
   },
   "src/lib/onboard/docker-gpu-patch-diagnostics.ts": {
     directCommands: 2,
     legacyParserSites: 0,
-    ownerIssues: [9812],
+    trackingIssues: [9812],
     disposition: "follow-up",
     reason: "The diagnostics slice owns migration or an accepted executable-level exception.",
   },
   "src/lib/onboard/docker-gpu-patch.ts": {
     directCommands: 2,
     legacyParserSites: 1,
-    ownerIssues: [9811],
+    trackingIssues: [9811],
     disposition: "follow-up",
     reason: "The sandbox lifecycle slice owns Docker GPU phase decisions.",
   },
   "src/lib/onboard/docker-gpu-sandbox-create.ts": {
     directCommands: 1,
     legacyParserSites: 1,
-    ownerIssues: [9811],
+    trackingIssues: [9811],
     disposition: "follow-up",
     reason: "The sandbox lifecycle slice owns create failure observation.",
   },
   "src/lib/onboard/docker-gpu-supervisor-reconnect.ts": {
     directCommands: 2,
     legacyParserSites: 1,
-    ownerIssues: [9811],
+    trackingIssues: [9811],
     disposition: "follow-up",
     reason: "The sandbox lifecycle slice owns supervisor reconnect phase decisions.",
   },
   "src/lib/onboard/experimental/hermes-portable-lifecycle.ts": {
     directCommands: 4,
     legacyParserSites: 0,
-    ownerIssues: [9811],
+    trackingIssues: [9811],
     disposition: "follow-up",
     reason: "The sandbox lifecycle slice owns Hermes portable lifecycle observation.",
   },
   "src/lib/onboard/experimental/hermes-portable-onboarding.ts": {
     directCommands: 6,
     legacyParserSites: 0,
-    ownerIssues: [9811],
+    trackingIssues: [9811],
     disposition: "follow-up",
     reason: "The sandbox lifecycle slice owns Hermes portable onboarding observation.",
   },
   "src/lib/onboard/managed-bootstrap/docker.ts": {
     directCommands: 1,
     legacyParserSites: 0,
-    ownerIssues: [9811],
+    trackingIssues: [9811],
     disposition: "follow-up",
     reason: "The sandbox lifecycle slice owns managed bootstrap deletion observation.",
   },
   "src/lib/onboard/runtime-provider/snapshot.ts": {
     directCommands: 2,
     legacyParserSites: 0,
-    ownerIssues: [9811],
+    trackingIssues: [9811],
     disposition: "follow-up",
     reason: "The sandbox lifecycle slice owns runtime-provider snapshot inspection.",
   },
   "src/lib/onboard.ts": {
     directCommands: 0,
     legacyParserSites: 1,
-    ownerIssues: [9811],
+    trackingIssues: [9811],
     disposition: "follow-up",
     reason: "The sandbox lifecycle slice owns the onboarding legacy parser binding.",
   },
   "src/lib/onboard/sandbox-create-step.ts": {
     directCommands: 1,
     legacyParserSites: 0,
-    ownerIssues: [9811],
+    trackingIssues: [9811],
     disposition: "follow-up",
     reason: "The sandbox lifecycle slice owns create readiness observation.",
   },
   "src/lib/onboard/sandbox-gpu-create-attempt.ts": {
     directCommands: 1,
     legacyParserSites: 1,
-    ownerIssues: [9811],
+    trackingIssues: [9811],
     disposition: "follow-up",
     reason: "The sandbox lifecycle slice owns failed-create presence observation.",
   },
   "src/lib/onboard/sandbox-gpu-create-run-attempt.ts": {
     directCommands: 4,
     legacyParserSites: 2,
-    ownerIssues: [9811],
+    trackingIssues: [9811],
     disposition: "follow-up",
     reason: "The sandbox lifecycle slice owns create, readiness, and cleanup observation.",
   },
   "src/lib/onboard/sandbox-lifecycle.ts": {
     directCommands: 1,
     legacyParserSites: 0,
-    ownerIssues: [9811],
+    trackingIssues: [9811],
     disposition: "follow-up",
     reason: "The sandbox lifecycle slice owns sandbox lookup before start or stop.",
   },
   "src/lib/onboard/sandbox-readiness-tracing.ts": {
     directCommands: 2,
     legacyParserSites: 0,
-    ownerIssues: [9811],
+    trackingIssues: [9811],
     disposition: "follow-up",
     reason: "The sandbox lifecycle slice owns create readiness trace observation.",
   },
   "src/lib/onboard/sandbox-recreate-probe.ts": {
     directCommands: 2,
     legacyParserSites: 0,
-    ownerIssues: [9811],
+    trackingIssues: [9811],
     disposition: "follow-up",
     reason: "The sandbox lifecycle slice owns recreate presence observation.",
   },
   "src/lib/onboard/sandbox-reuse.ts": {
     directCommands: 5,
     legacyParserSites: 0,
-    ownerIssues: [9811],
+    trackingIssues: [9811],
     disposition: "follow-up",
     reason: "The sandbox lifecycle slice owns onboarding reuse and identity observation.",
   },
   "src/lib/runtime-recovery.ts": {
     directCommands: 0,
     legacyParserSites: 6,
-    ownerIssues: [9807, 9811],
+    trackingIssues: [9807, 9811],
     disposition: "follow-up",
     reason: "Gateway and sandbox lifecycle slices own removal of legacy parser projections.",
   },
   "src/lib/shields/index.ts": {
     directCommands: 1,
     legacyParserSites: 1,
-    ownerIssues: [9805, 10514],
+    trackingIssues: [9805, 10514],
     disposition: "follow-up",
     reason: "The policy source-of-truth cutover owns Shields phase observation during mutation.",
   },
   "src/lib/state/gateway.ts": {
     directCommands: 0,
     legacyParserSites: 6,
-    ownerIssues: [9807],
+    trackingIssues: [9807],
     disposition: "follow-up",
     reason: "The gateway lifecycle slice owns the legacy sandbox and gateway classifiers.",
   },
@@ -484,8 +484,8 @@ export function auditOpenShellSandboxObservationSources(
           `legacyParsers=${usage.legacyParserSites}`,
       );
     }
-    if (disposition.ownerIssues.length === 0 || disposition.reason.trim().length === 0) {
-      failures.push(`${filePath}: disposition must name an owner issue and reason`);
+    if (disposition.trackingIssues.length === 0 || disposition.reason.trim().length === 0) {
+      failures.push(`${filePath}: disposition must name a tracking issue and reason`);
     }
   }
 
@@ -499,7 +499,9 @@ export function auditOpenShellSandboxObservationSources(
     throw new Error(
       [
         "OpenShell sandbox observation boundary changed.",
-        "Move the consumer to a typed adapter or update its owned follow-on disposition.",
+        "Move the consumer to a typed adapter.",
+        "Add or update a follow-up disposition only after its linked issue names an assigned " +
+          "implementation owner; this check validates only local ledger fields.",
         ...failures.sort(),
       ].join("\n"),
     );

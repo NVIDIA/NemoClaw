@@ -16,9 +16,9 @@ function disposition(
   return {
     directCommands,
     legacyParserSites,
-    ownerIssues: [9803],
+    trackingIssues: [9803],
     disposition: "follow-up",
-    reason: "The accepted inventory issue owns this synthetic consumer.",
+    reason: "The synthetic follow-up issue records this consumer.",
   };
 }
 
@@ -53,10 +53,10 @@ describe("OpenShell sandbox observation boundary", () => {
 
   it("rejects an unclassified production observation consumer", () => {
     const sources = new Map([["src/new-consumer.ts", `run(["sandbox", "list"]);`]]);
+    const audit = () => auditOpenShellSandboxObservationSources(sources, {});
 
-    expect(() => auditOpenShellSandboxObservationSources(sources, {})).toThrow(
-      /src\/new-consumer\.ts: unclassified observation usage/u,
-    );
+    expect(audit).toThrow(/src\/new-consumer\.ts: unclassified observation usage/u);
+    expect(audit).toThrow(/linked issue names an assigned implementation owner/u);
   });
 
   it("rejects another observation command in a classified consumer", () => {
@@ -83,18 +83,18 @@ describe("OpenShell sandbox observation boundary", () => {
     );
   });
 
-  it("rejects a disposition without an owner issue or reason", () => {
+  it("rejects a disposition without a tracking issue or reason", () => {
     const sources = new Map([["src/unowned-consumer.ts", `run(["sandbox", "list"]);`]]);
     const dispositions = {
       "src/unowned-consumer.ts": {
         ...disposition(1, 0),
-        ownerIssues: [],
+        trackingIssues: [],
         reason: "",
       },
     };
 
     expect(() => auditOpenShellSandboxObservationSources(sources, dispositions)).toThrow(
-      /disposition must name an owner issue and reason/u,
+      /disposition must name a tracking issue and reason/u,
     );
   });
 });
