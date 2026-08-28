@@ -11,9 +11,15 @@ import { canonicalRepoReadPath } from "../../../tools/advisors/repo-read-only-to
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { TERMINOLOGY_TRACE_TOOL } from "../../../tools/pr-review-advisor/terminology.mts";
-import { runSpecialistAdvisor, writeSpecialistSummary } from "../../../tools/pr-review-advisor/run-specialist.mts";
+import {
+  runSpecialistAdvisor,
+  writeSpecialistSummary,
+} from "../../../tools/pr-review-advisor/run-specialist.mts";
 import { writeSpecialistDiff } from "../../../tools/pr-review-advisor/specialist-context.mts";
-import type { RunAdvisorResult, RunReadOnlyAdvisorOptions } from "../../../tools/advisors/session.mts";
+import type {
+  RunAdvisorResult,
+  RunReadOnlyAdvisorOptions,
+} from "../../../tools/advisors/session.mts";
 import {
   ADVISOR_INTERESTS,
   buildSpecialistInvestigateTurn,
@@ -234,6 +240,24 @@ describe("PR review advisor specialist prompts", () => {
     const toolNames = results.map(({ toolName }) => toolName);
     expect(turn.requiredToolNames).toEqual(toolNames);
     expect(turn.requireToolsBeforeText).toEqual(toolNames);
+  });
+
+  it("requires the documentation specialist to detect recurring AI-writing patterns", () => {
+    const prompt = buildSpecialistInvestigateTurn("documentation", context).prompt;
+
+    expect(prompt).toContain("Review every changed passage of explanatory text");
+    expect(prompt).toContain("Long noun stacks");
+    expect(prompt).toContain("implementation detail that delays the reader's task");
+    expect(prompt).toContain("Repeated synonyms for one concept");
+    expect(prompt).toContain("announce the text instead of stating the result");
+    expect(prompt).toContain("add no real condition or difference");
+    expect(prompt).toContain("fixed item count but no task-based reason");
+    expect(prompt).toContain("does not need for the stated task");
+    expect(prompt).toContain("says to remove or replace");
+    expect(prompt).toContain("representative changed lines");
+    expect(prompt).toContain("Preserve literal identifiers");
+    expect(prompt).toContain("Report it as a suggestion unless");
+    expect(prompt).toContain("propose a shorter rewrite");
   });
 
   it("writes the completed specialist analysis as Markdown", () => {

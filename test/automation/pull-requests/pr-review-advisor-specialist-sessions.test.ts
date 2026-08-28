@@ -7,7 +7,11 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { advisorTurnFlowErrors, resolveAdvisorTurnTools } from "../../../tools/advisors/session.mts";
+import {
+  advisorTurnFlowErrors,
+  resolveAdvisorTurnTools,
+} from "../../../tools/advisors/session.mts";
+import { buildChallengeAndRecordTurn } from "../../../tools/pr-review-advisor/challenge-and-record-turn.mts";
 import { buildSynthesisTurn } from "../../../tools/pr-review-advisor/synthesis-turn.mts";
 import { ADVISOR_INTERESTS } from "../../../tools/pr-review-advisor/specialists.mts";
 import {
@@ -91,6 +95,25 @@ describe("specialist Pi session inputs", () => {
         tools,
       ),
     ).toEqual([]);
+  });
+
+  it("keeps trusted writing-guide findings during synthesis", () => {
+    const root = fixture();
+    const prompt = buildSynthesisTurn(validateSpecialistSessionDirectory(root)).prompt;
+
+    expect(prompt).toContain("Treat violations of the trusted writing guide");
+    expect(prompt).toContain("Retain grouped language suggestions");
+    expect(prompt).toContain("representative changed lines");
+    expect(prompt).toContain("propose a shorter rewrite");
+  });
+
+  it("keeps trusted writing-guide findings during final recording", () => {
+    const prompt = buildChallengeAndRecordTurn().prompt;
+
+    expect(prompt).toContain("Preserve grouped trusted writing-guide suggestions");
+    expect(prompt).toContain("representative changed lines");
+    expect(prompt).toContain("Do not discard them as personal style preferences");
+    expect(prompt).toContain("Escalate them only when the wording can change behavior");
   });
 
   it("rejects symlinked sessions", () => {

@@ -8,6 +8,7 @@ import { reviewQualityIssues } from "../../../tools/pr-review-advisor/review-qua
 import {
   buildSystemPrompt,
   readTrustedSecurityRubric,
+  readTrustedWritingGuide,
 } from "../../../tools/pr-review-advisor/trusted-guidance.mts";
 import { ROOT, validResult } from "../../helpers/pr-review-advisor-test-fixtures.ts";
 
@@ -51,6 +52,15 @@ describe("PR review advisor", () => {
     expect(buildSystemPrompt()).toContain(rubric);
   });
 
+  it("embeds writing rules and keeps their findings eligible", () => {
+    const prompt = buildSystemPrompt();
+
+    expect(prompt).toContain(readTrustedWritingGuide());
+    expect(prompt).toContain("Noun stacks that hide the actor or action");
+    expect(prompt).toContain("A concrete violation of the trusted writing guide");
+    expect(prompt).toContain("proposes a shorter rewrite");
+  });
+
   it("reports a missing trusted security rubric", () => {
     vi.spyOn(fs, "readFileSync").mockImplementationOnce(() => {
       throw new Error("missing rubric fixture");
@@ -73,21 +83,22 @@ describe("PR review advisor", () => {
     [
       "a duplicate category name",
       (rubric: string) =>
-        rubric.replace("## Category 2: Input Validation and Data Sanitization", "## Category 2: Secrets and Credentials"),
+        rubric.replace(
+          "## Category 2: Input Validation and Data Sanitization",
+          "## Category 2: Secrets and Credentials",
+        ),
       "category names must be unique",
     ],
     [
       "an empty category section",
       (rubric: string) =>
-        rubric.replace(
-          /### Meaning\n\nKeep credentials[^\n]*\n/u,
-          "### Meaning\n\n",
-        ),
+        rubric.replace(/### Meaning\n\nKeep credentials[^\n]*\n/u, "### Meaning\n\n"),
       "category 1 has empty Meaning",
     ],
     [
       "a different final category",
-      (rubric: string) => rubric.replace("## Category 9: System Security", "## Category 9: Host Security"),
+      (rubric: string) =>
+        rubric.replace("## Category 9: System Security", "## Category 9: Host Security"),
       "category 9 must be System Security",
     ],
     [
@@ -105,5 +116,4 @@ describe("PR review advisor", () => {
 
     expect(() => readTrustedSecurityRubric()).toThrow(message);
   });
-
 });
