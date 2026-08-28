@@ -8,7 +8,10 @@ import { describe, expect, it, vi } from "vitest";
 import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { encodeManagedStartupProfile } from "../managed-startup/profile";
 import { nativeArtifactWorkloadReceiptFixture } from "../workload/native-artifact-test-fixture";
-import type { RuntimeProviderNativeArtifactBootstrapPlan } from "./contract";
+import type {
+  RuntimeProviderNativeArtifactBootstrapPlan,
+  RuntimeProviderNativeArtifactVerifyAndCreateOutcome,
+} from "./contract";
 import { createMxcNativeArtifactBootstrapSurface } from "./mxc-bootstrap";
 import { mxcOpenShellAttachmentFixture } from "./mxc-openshell-attachment-test-fixture";
 import { qualifyMxcOpenShellAttachment } from "./mxc-openshell-attachment";
@@ -74,6 +77,18 @@ function result(stdout: unknown, status = 0): MxcOpenShellLiveCommandResult {
     stdout: typeof stdout === "string" ? stdout : JSON.stringify(stdout),
     stderr: "",
   };
+}
+
+function created(liveRequest: MxcOpenShellCreateRequest) {
+  return {
+    status: "created",
+    authoritySha256: liveRequest.authoritySha256,
+    providerHandle: liveRequest.providerHandle,
+    sandboxName: liveRequest.sandboxName,
+    lifecycleGeneration: liveRequest.lifecycleGeneration,
+    artifactDigest: liveRequest.workload.artifactDigest,
+    executableDigest: liveRequest.workload.executableDigest,
+  } satisfies Extract<RuntimeProviderNativeArtifactVerifyAndCreateOutcome, { status: "created" }>;
 }
 
 function labelArguments(command: MxcOpenShellLiveCommand): Record<string, string> {
@@ -183,8 +198,10 @@ describe("inactive OpenShell MXC live operations", () => {
         .digest("hex"),
     });
     expect(input.command.arguments).toContain(`HOME=${liveRequest.environment.HOME}`);
-    expect(input.command.arguments.some((entry) => entry.startsWith("PATH="))).toBe(false);
-    expect(JSON.stringify(input.command)).not.toContain("NVIDIA_API_KEY");
+    expect(liveRequest.hostEnvironmentReferences.length).toBeGreaterThan(0);
+    liveRequest.hostEnvironmentReferences.forEach((name) => {
+      expect(input.command.arguments.some((entry) => entry.startsWith(`${name}=`))).toBe(false);
+    });
     expect(run).not.toHaveBeenCalled();
   });
 
@@ -250,15 +267,15 @@ describe("inactive OpenShell MXC live operations", () => {
       }),
       recordFailure: readinessFailures,
     });
-    await expect(boundaryFailure.verifyReadiness(liveRequest, {} as never)).rejects.toThrow(
-      /trusted host command failed/u,
-    );
+    await expect(
+      boundaryFailure.verifyReadiness(liveRequest, created(liveRequest)),
+    ).rejects.toThrow(/trusted host command failed/u);
 
     const invalidOutput = operations({
       run: vi.fn(async () => result("not-json")),
       recordFailure: readinessFailures,
     });
-    await expect(invalidOutput.verifyReadiness(liveRequest, {} as never)).rejects.toThrow(
+    await expect(invalidOutput.verifyReadiness(liveRequest, created(liveRequest))).rejects.toThrow(
       /invalid JSON/u,
     );
     expect(readinessFailures.mock.calls.map(([entry]) => entry)).toEqual([
@@ -299,7 +316,7 @@ describe("inactive OpenShell MXC live operations", () => {
     });
 
     await expect(live.verifyAndCreate(liveRequest)).resolves.toEqual({ status: "unknown" });
-    await expect(live.verifyReadiness(liveRequest, {} as never)).rejects.toThrow(
+    await expect(live.verifyReadiness(liveRequest, created(liveRequest))).rejects.toThrow(
       /lifecycle authority drifted/u,
     );
     expect(recordFailure.mock.calls.map(([entry]) => entry)).toEqual([
@@ -322,7 +339,7 @@ describe("inactive OpenShell MXC live operations", () => {
     const live = operations({ verifyAndRunCreate, run, deleteExact, recordFailure });
 
     await expect(live.verifyAndCreate(forged)).rejects.toThrow(/not issued by the MXC provider/u);
-    await expect(live.verifyReadiness(forged, {} as never)).rejects.toThrow(
+    await expect(live.verifyReadiness(forged, created(issued))).rejects.toThrow(
       /not issued by the MXC provider/u,
     );
     await expect(live.recoverCreate(forged)).rejects.toThrow(/not issued by the MXC provider/u);
@@ -341,10 +358,10 @@ describe("inactive OpenShell MXC live operations", () => {
       result(sandbox(liveRequest, "Ready")),
     );
     const live = operations({ verifyAndRunCreate, run });
-    const created = await live.verifyAndCreate(liveRequest);
-    expect(created.status).toBe("created");
+    const createOutcome = await live.verifyAndCreate(liveRequest);
+    expect(createOutcome.status).toBe("created");
 
-    await expect(live.verifyReadiness(liveRequest, created as never)).resolves.toEqual(
+    await expect(live.verifyReadiness(liveRequest, created(liveRequest))).resolves.toEqual(
       expect.objectContaining({
         ready: true,
         executableDigest: liveRequest.workload.executableDigest,
@@ -380,6 +397,25 @@ describe("inactive OpenShell MXC live operations", () => {
         "--selector",
         expect.stringMatching(/^nemoclaw-request-sha256=[a-f0-9]{64}$/u),
       ]),
+    );
+  });
+
+  it("rejects ambiguous label-scoped recovery without deleting either sandbox (#8178)", async () => {
+    const liveRequest = await request();
+    const first = sandbox(liveRequest);
+    const run = vi
+      .fn<MxcOpenShellLiveHostBoundary["run"]>()
+      .mockImplementationOnce(async () => result("", 1))
+      .mockImplementationOnce(async () => result([first, { ...first, id: "sandbox-id-2" }]));
+    const deleteExact = vi.fn<MxcOpenShellLiveHostBoundary["deleteExact"]>();
+    const recordFailure = vi.fn<MxcOpenShellLiveHostBoundary["recordFailure"]>();
+
+    await expect(
+      operations({ run, deleteExact, recordFailure }).recoverCreate(liveRequest),
+    ).rejects.toThrow(/recovery identity is ambiguous/u);
+    expect(deleteExact).not.toHaveBeenCalled();
+    expect(recordFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: "list", errorClass: "identity-drift" }),
     );
   });
 
@@ -476,6 +512,20 @@ describe("inactive OpenShell MXC live operations", () => {
     await expect(
       operations({ verifyAndRunCreate: vi.fn(), run, deleteExact }).recoverCreate(liveRequest),
     ).resolves.toEqual(expect.objectContaining({ status: "retained" }));
+    expect(run).toHaveBeenCalledOnce();
+    expect(deleteExact).not.toHaveBeenCalled();
+  });
+
+  it("retains a request-labeled sandbox from a different workspace (#8178)", async () => {
+    const liveRequest = await request();
+    const deleteExact = vi.fn<MxcOpenShellLiveHostBoundary["deleteExact"]>();
+    const run = vi.fn<MxcOpenShellLiveHostBoundary["run"]>(async () =>
+      result({ ...sandbox(liveRequest), workspace: "other" }),
+    );
+
+    await expect(operations({ run, deleteExact }).recoverCreate(liveRequest)).resolves.toEqual(
+      expect.objectContaining({ status: "retained" }),
+    );
     expect(run).toHaveBeenCalledOnce();
     expect(deleteExact).not.toHaveBeenCalled();
   });
