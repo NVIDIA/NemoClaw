@@ -7,6 +7,7 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { type E2ETargetFixtures, expect } from "../fixtures/e2e-test.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { hermesSlackCredentialScanScript } from "./hermes-slack-credential-transport.ts";
 import { assertHermesSlackApiProof } from "./hermes-slack-proof.ts";
 import {
   runSecondaryCleanup as bestEffortLifecycleCleanup,
@@ -144,24 +145,11 @@ async function hostSlackTokenStdin(options: {
   remoteCommand: string;
   timeoutMs?: number;
 }): Promise<ShellProbeResult> {
-  const script = [
-    "set -euo pipefail",
-    "ssh_config=$(mktemp)",
-    "trap 'rm -f \"$ssh_config\"' EXIT",
-    `${shellQuote(options.host.openshellCommandPath)} sandbox ssh-config ${shellQuote(SANDBOX_NAME)} >"$ssh_config"`,
-    [
-      'printf "%s\\n%s\\n" "$SLACK_BOT_TOKEN" "$SLACK_APP_TOKEN"',
-      "|",
-      "ssh",
-      '-F "$ssh_config"',
-      "-o StrictHostKeyChecking=no",
-      "-o UserKnownHostsFile=/dev/null",
-      "-o ConnectTimeout=10",
-      "-o LogLevel=ERROR",
-      shellQuote(`openshell-${SANDBOX_NAME}.default`),
-      shellQuote(options.remoteCommand),
-    ].join(" "),
-  ].join("\n");
+  const script = hermesSlackCredentialScanScript({
+    openshellCommandPath: options.host.openshellCommandPath,
+    remoteCommand: options.remoteCommand,
+    sandboxName: SANDBOX_NAME,
+  });
 
   return options.host.command("bash", ["-lc", script], {
     artifactName: options.artifactName,

@@ -719,10 +719,12 @@
     {
       "live": "test/e2e/live/hermes-slack-e2e.test.ts",
       "liveSources": [
+        "test/e2e/live/hermes-slack-credential-transport.ts",
         "test/e2e/live/hermes-slack-e2e-helpers.ts",
         "test/e2e/live/hermes-slack-proof.ts"
       ],
       "fast": [
+        "test/e2e/support/hermes-slack-credential-transport.test.ts",
         "test/e2e/support/hermes-slack-proof.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
