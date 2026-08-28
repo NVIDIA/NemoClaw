@@ -1350,7 +1350,7 @@ After a host reboot, the container runtime, OpenShell gateway, and sandbox may n
 
 <Warning title="If the sandbox does not recover">
 
-If the sandbox remains missing after restarting the gateway, run `$$nemoclaw <name> rebuild --yes` while the local registry entry still exists. The rebuild path uses the recorded sandbox metadata and the snapshot flow to preserve supported workspace and agent state. If the sandbox was intentionally deleted and you want a clean setup instead, run `$$nemoclaw <name> destroy` to remove the stale local entry, then run `$$nemoclaw onboard`. Create a snapshot first when the sandbox is reachable enough to back up state. For details, refer to [Create and Restore Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots).
+If the sandbox remains missing after restarting the gateway, its authoritative OpenShell policy and live workspace are unavailable, so `rebuild --yes` cannot recreate it from NemoClaw registry metadata. Run `$$nemoclaw <name> destroy --yes` to remove the stale local entry, then run `$$nemoclaw onboard`. The missing sandbox's state cannot be recovered unless you already have a separate snapshot; restore that snapshot explicitly after onboarding. For details, refer to [Create and Restore Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots).
 
 </Warning>
 
@@ -1569,17 +1569,17 @@ Deep Agents Code does not provide the `recover` command. Use `$$nemoclaw <name> 
 
    On Docker-driver hosts, status also attempts non-destructive recovery when OpenShell reports the sandbox as missing but Docker still has a stopped `openshell.ai/sandbox-name=<name>` container or the latest GPU-backup sibling. A successful recovery prints that the sandbox was recovered from Docker and then shows the refreshed OpenShell state.
 
-1. Rebuild only if the sandbox cannot be restarted or status still cannot recover it while the local registry entry exists:
+1. Rebuild only if the sandbox cannot be restarted but OpenShell still reports the live sandbox and its current policy:
 
    ```bash
    $$nemoclaw <name> rebuild --yes
    ```
 
-   Rebuild recreates the sandbox from recorded metadata and preserves supported workspace and agent state. If the sandbox was intentionally deleted and you want a clean setup, run `$$nemoclaw <name> destroy` to remove the stale local entry, then run `$$nemoclaw onboard`.
+   Rebuild captures the live sandbox policy and workspace before recreation. If the live sandbox is absent, use the clean-replacement sequence below instead.
 
 ### Sandbox is registered locally but missing from the gateway
 
-After a gateway restart, host reboot, or manual OpenShell cleanup, NemoClaw may still have a local registry entry for a sandbox that the live gateway no longer lists. `$$nemoclaw <name> status` and `$$nemoclaw <name> connect` preserve that local registry entry and print recovery guidance instead of deleting it automatically. Run `$$nemoclaw <name> rebuild --yes` when you want NemoClaw to recreate the sandbox from the recorded metadata, or run `$$nemoclaw <name> destroy` when you intentionally want to remove the stale entry.
+After a gateway restart, host reboot, or manual OpenShell cleanup, NemoClaw may still have a local registry entry for a sandbox that the live gateway no longer lists. `$$nemoclaw <name> status` and `$$nemoclaw <name> connect` preserve that local registry entry and print recovery guidance instead of deleting it automatically. First restore the gateway and retry status in case the sandbox returns. If it remains absent, run `$$nemoclaw <name> destroy --yes` to remove the stale entry, then run `$$nemoclaw onboard`. Rebuild cannot recreate the missing sandbox because no authoritative OpenShell policy remains. State is recoverable only from a separate snapshot restored after onboarding.
 
 ### A command reports that the registry file is not valid JSON
 

@@ -412,13 +412,14 @@ Deep Agents Code has no in-sandbox gateway to recover. If status reports a degra
 
 </AgentOnly>
 
-If the registry entry remains but the sandbox container is missing, rebuild from recorded metadata and the latest valid snapshot:
+If the registry entry remains but the sandbox container is missing, rebuild cannot recover the sandbox because its authoritative OpenShell policy and live workspace are gone. Remove the stale local entry and create a clean replacement:
 
 ```bash
-$$nemoclaw headless-agent rebuild --yes
+$$nemoclaw headless-agent destroy --yes
+$$nemoclaw onboard
 ```
 
-Do not destroy the registry entry before this recovery attempt because rebuild needs that metadata. If you intentionally deleted the sandbox and want a new installation, destroy the stale registry entry and run onboarding again. For failure-specific recovery boundaries, refer to [Recover and Rebuild Sandboxes](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
+The missing sandbox's state cannot be recovered unless you have a separate snapshot. After onboarding, restore that snapshot explicitly. For failure-specific recovery boundaries, refer to [Recover and Rebuild Sandboxes](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
 
 <AgentOnly variant="openclaw,hermes">
 

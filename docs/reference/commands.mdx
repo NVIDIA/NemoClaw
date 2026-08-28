@@ -1440,7 +1440,7 @@ Address the reported recovery layer, then run the displayed `$$nemoclaw <sandbox
 If the sandbox's recorded dashboard port is also held by a foreign listener, the header escalates to the `sandbox_dashboard_port_conflict` failure layer with the message `sandbox container is stopped and the dashboard port is held by a foreign listener.` so the operator can recover the port before restarting the sandbox.
 </AgentOnly>
 
-If the sandbox or gateway cannot be verified, the command exits non-zero instead of reporting healthy inference from stale registry state. When a locally registered sandbox is missing from the live gateway, status preserves the registry entry so the suggested `rebuild --yes` recovery can still find the sandbox metadata.
+If the sandbox or gateway cannot be verified, the command exits non-zero instead of reporting healthy inference from stale registry state. When a locally registered sandbox is missing from the live gateway, status preserves the registry entry for inspection and directs the operator to remove that stale entry with `$$nemoclaw <name> destroy --yes` before clean onboarding. Rebuild cannot recreate a missing sandbox because no authoritative OpenShell policy remains.
 
 <AgentOnly variant="openclaw,hermes">
   Gateway and dashboard health checks treat HTTP `401` from device auth as a live service, not as an

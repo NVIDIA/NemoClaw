@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -29,6 +30,25 @@ function createHarness(options: ShieldsFlowHarnessOptions = {}) {
   return createShieldsFlowHarness(requireDist, tmpDir, options);
 }
 
+function writeBoundPolicySnapshot(
+  snapshotPath: string,
+  content = "version: 1\nnetwork_policies:\n  test: {}\n",
+) {
+  fs.writeFileSync(snapshotPath, content, { mode: 0o600 });
+  fs.chmodSync(snapshotPath, 0o600);
+  const metadata = fs.statSync(snapshotPath);
+  return {
+    schemaVersion: 1 as const,
+    path: snapshotPath,
+    sha256: createHash("sha256").update(content).digest("hex"),
+    size: Buffer.byteLength(content),
+    mode: 0o600,
+    uid: metadata.uid,
+    gid: metadata.gid,
+    nlink: 1 as const,
+  };
+}
+
 const timerAuthorityFixtures: ReadonlyArray<readonly [string, (markerPath: string) => void]> = [
   ["missing", () => undefined],
   ["malformed", (markerPath) => fs.writeFileSync(markerPath, "{not-json")],
@@ -46,7 +66,7 @@ function writeExpiredShieldsFixture(
   const timerMarkerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
   const transitionLockPath = path.join(stateDir, `shields-transition-lock-${sandboxName}.json`);
   fs.mkdirSync(stateDir, { recursive: true });
-  fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  test: {}\n");
+  const snapshotPolicy = writeBoundPolicySnapshot(snapshotPath);
   fs.writeFileSync(
     path.join(stateDir, `shields-${sandboxName}.json`),
     JSON.stringify({
@@ -56,6 +76,7 @@ function writeExpiredShieldsFixture(
       shieldsDownReason: reason,
       shieldsDownPolicy: "permissive",
       shieldsPolicySnapshotPath: snapshotPath,
+      shieldsPolicySnapshot: snapshotPolicy,
     }),
   );
   fs.writeFileSync(
@@ -335,7 +356,7 @@ describe("shields command flow", () => {
     const oldSnapshotPath = path.join(stateDir, "policy-snapshot-old-cycle.yaml");
     const alpha = managedMcpPolicy("alpha", "8.8.8.8");
     fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(
+    const snapshotPolicy = writeBoundPolicySnapshot(
       snapshotPath,
       YAML.stringify({
         version: 1,
@@ -360,6 +381,7 @@ describe("shields command flow", () => {
         processToken,
         sandboxName: "openclaw",
         snapshotPath,
+        snapshotPolicy,
       }),
     );
     const harness = createHarness({
@@ -387,7 +409,7 @@ describe("shields command flow", () => {
     const snapshotPath = path.join(stateDir, "policy-snapshot-manual-up.yaml");
     const lockPath = path.join(stateDir, `shields-transition-lock-${sandboxName}.json`);
     fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  test: {}\n");
+    const snapshotPolicy = writeBoundPolicySnapshot(snapshotPath);
     const timerControl = requireDist("./timer-control.js") as typeof import("./timer-control.js");
     vi.spyOn(timerControl, "isProcessAlive").mockReturnValue(true);
     vi.spyOn(timerControl, "readProcessStartIdentity").mockReturnValue("live-timer-start");
@@ -409,6 +431,7 @@ describe("shields command flow", () => {
         shieldsDownReason: "manual-up-token-test",
         shieldsDownPolicy: "permissive",
         shieldsPolicySnapshotPath: snapshotPath,
+        shieldsPolicySnapshot: snapshotPolicy,
       }),
     );
     fs.writeFileSync(
@@ -478,6 +501,9 @@ describe("shields command flow", () => {
         stateDir,
         `shields-transition-${sandboxName}-${processToken}.json`,
       );
+      const snapshotPolicy = JSON.parse(
+        fs.readFileSync(path.join(stateDir, `shields-${sandboxName}.json`), "utf8"),
+      ).shieldsPolicySnapshot;
       fs.writeFileSync(
         transitionPath,
         JSON.stringify({
@@ -488,6 +514,7 @@ describe("shields command flow", () => {
           processToken,
           sandboxName,
           snapshotPath: marker.snapshotPath,
+          snapshotPolicy,
         }),
       );
       vi.spyOn(timerControl, "isProcessAlive").mockReturnValue(true);
@@ -551,7 +578,7 @@ describe("shields command flow", () => {
       stateDir,
       `shields-transition-${sandboxName}-${processToken}.json`,
     );
-    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  test: {}\n");
+    const snapshotPolicy = writeBoundPolicySnapshot(snapshotPath);
     fs.writeFileSync(
       path.join(stateDir, `shields-timer-${sandboxName}.json`),
       JSON.stringify({
@@ -596,6 +623,7 @@ describe("shields command flow", () => {
         processToken,
         sandboxName,
         snapshotPath,
+        snapshotPolicy,
       }),
       { mode: 0o600 },
     );
@@ -758,7 +786,7 @@ describe("shields command flow", () => {
       const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
       const statePath = path.join(stateDir, `shields-${sandboxName}.json`);
       fs.mkdirSync(stateDir, { recursive: true });
-      fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  test: {}\n");
+      const snapshotPolicy = writeBoundPolicySnapshot(snapshotPath);
       fs.writeFileSync(
         statePath,
         JSON.stringify({
@@ -768,6 +796,7 @@ describe("shields command flow", () => {
           shieldsDownReason: "destroy takeover coverage",
           shieldsDownPolicy: "permissive",
           shieldsPolicySnapshotPath: snapshotPath,
+          shieldsPolicySnapshot: snapshotPolicy,
           updatedAt: new Date().toISOString(),
         }),
         { mode: 0o600 },
@@ -979,7 +1008,7 @@ describe("shields command flow", () => {
     const snapshotPath = path.join(stateDir, "stale-policy-snapshot.yaml");
     const lockPath = path.join(stateDir, `shields-transition-lock-${sandboxName}.json`);
     fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  test: {}\n");
+    const snapshotPolicy = writeBoundPolicySnapshot(snapshotPath);
     fs.writeFileSync(
       path.join(stateDir, `shields-${sandboxName}.json`),
       JSON.stringify({ shieldsDown: false, updatedAt: new Date().toISOString() }),
@@ -1107,7 +1136,7 @@ describe("shields command flow", () => {
     const markerPath = path.join(stateDir, "shields-timer-openclaw.json");
     const processToken = "6".repeat(32);
     fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  test: {}\n");
+    const snapshotPolicy = writeBoundPolicySnapshot(snapshotPath);
     fs.writeFileSync(
       path.join(stateDir, "shields-openclaw.json"),
       JSON.stringify({
@@ -1117,6 +1146,7 @@ describe("shields command flow", () => {
         shieldsDownReason: "dead future timer",
         shieldsDownPolicy: "permissive",
         shieldsPolicySnapshotPath: snapshotPath,
+        shieldsPolicySnapshot: snapshotPolicy,
       }),
     );
     fs.writeFileSync(
@@ -1155,7 +1185,7 @@ describe("shields command flow", () => {
       const snapshotPath = path.join(stateDir, `policy-snapshot-${markerState}-timer.yaml`);
       const markerPath = path.join(stateDir, "shields-timer-openclaw.json");
       fs.mkdirSync(stateDir, { recursive: true });
-      fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  test: {}\n");
+      const snapshotPolicy = writeBoundPolicySnapshot(snapshotPath);
       fs.writeFileSync(
         path.join(stateDir, "shields-openclaw.json"),
         JSON.stringify({
@@ -1165,6 +1195,7 @@ describe("shields command flow", () => {
           shieldsDownReason: `${markerState} timer marker`,
           shieldsDownPolicy: "permissive",
           shieldsPolicySnapshotPath: snapshotPath,
+          shieldsPolicySnapshot: snapshotPolicy,
         }),
       );
       writeMarker(markerPath);
@@ -1192,7 +1223,7 @@ describe("shields command flow", () => {
     const startIdentity = timerControl.readProcessStartIdentity(process.pid);
     expect(startIdentity).toBeTypeOf("string");
     fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  test: {}\n");
+    const snapshotPolicy = writeBoundPolicySnapshot(snapshotPath);
     fs.writeFileSync(
       path.join(stateDir, "shields-openclaw.json"),
       JSON.stringify({
@@ -1202,6 +1233,7 @@ describe("shields command flow", () => {
         shieldsDownReason: "wrong timer command",
         shieldsDownPolicy: "permissive",
         shieldsPolicySnapshotPath: snapshotPath,
+        shieldsPolicySnapshot: snapshotPolicy,
       }),
     );
     fs.writeFileSync(

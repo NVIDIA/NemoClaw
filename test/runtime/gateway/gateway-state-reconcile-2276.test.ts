@@ -455,8 +455,8 @@ describe("connect preserves the registry without reconstructing policy in scenar
       );
       assert.match(
         rebuildOut,
-        /No live workspace state to back up/,
-        `rebuild must skip backup on stale recovery (#4497), got:\n${rebuildOut}`,
+        /Rebuild cannot recover its missing OpenShell policy/,
+        `rebuild must explain why stale recovery is unavailable (#4497), got:\n${rebuildOut}`,
       );
       assert.doesNotMatch(
         rebuildOut,
@@ -465,8 +465,8 @@ describe("connect preserves the registry without reconstructing policy in scenar
       );
       assert.match(
         rebuildOut,
-        /live OpenShell policy is unavailable.*will not reconstruct policy from NemoClaw state/s,
-        `rebuild must refuse policy reconstruction (#4497), got:\n${rebuildOut}`,
+        new RegExp(`${SANDBOX_NAME} destroy --yes[\\s\\S]*nemoclaw onboard`),
+        `rebuild must print the supported clean replacement sequence (#4497), got:\n${rebuildOut}`,
       );
       assert.doesNotMatch(
         rebuildOut,

@@ -25,23 +25,10 @@ export interface LiveCreatedSandboxPolicyRequirementsCheck extends LiveCreatedSa
   readonly operation: string;
 }
 
-function readRequiredPolicy(
+/** Verify a created sandbox against the current live OpenShell policy. */
+export function verifyLiveCreatedSandboxPolicyRequirements(
   input: LiveCreatedSandboxPolicyRequirementsCheck,
-  deps: LiveCreatedSandboxPolicyRequirementsDeps,
-) {
-  try {
-    return parseOpenShellPolicy((deps.readFile ?? fs.readFileSync)(input.policySourcePath, "utf8"))
-      .policy;
-  } catch {
-    throw new PolicyObservationError(
-      `Refusing to ${input.operation}: the required sandbox policy could not be read.`,
-    );
-  }
-}
-
-function observeCurrentPolicy(
-  input: LiveCreatedSandboxPolicyRequirementsCheck,
-  deps: LiveCreatedSandboxPolicyRequirementsDeps,
+  deps: LiveCreatedSandboxPolicyRequirementsDeps = {},
 ): void {
   assertOpenShellGatewayPortBinding({
     gatewayName: input.gatewayName,
@@ -51,18 +38,20 @@ function observeCurrentPolicy(
     sandboxName: input.sandboxName,
     gatewayName: input.gatewayName,
   });
+  let requiredPolicy: ReturnType<typeof parseOpenShellPolicy>["policy"];
   try {
-    assertPolicyRequirementContainment(inspection, readRequiredPolicy(input, deps));
+    requiredPolicy = parseOpenShellPolicy(
+      (deps.readFile ?? fs.readFileSync)(input.policySourcePath, "utf8"),
+    ).policy;
+  } catch {
+    throw new PolicyObservationError(
+      `Refusing to ${input.operation}: the required sandbox policy could not be read.`,
+    );
+  }
+  try {
+    assertPolicyRequirementContainment(inspection, requiredPolicy);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new PolicyObservationError(`Refusing to ${input.operation}: ${detail}.`);
   }
-}
-
-/** Verify a created sandbox against the current live OpenShell policy. */
-export function verifyLiveCreatedSandboxPolicyRequirements(
-  input: LiveCreatedSandboxPolicyRequirementsCheck,
-  deps: LiveCreatedSandboxPolicyRequirementsDeps = {},
-): void {
-  observeCurrentPolicy(input, deps);
 }

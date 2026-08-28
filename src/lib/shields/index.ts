@@ -218,6 +218,8 @@ type ShieldsDownTransition = {
   processToken: string;
   sandboxName: string;
   snapshotPath: string;
+  /** Exact restrictive snapshot used by Shields-up, rollback, and timer recovery. */
+  snapshotPolicy: BoundShieldsPolicyArtifact;
   /** Transaction-bound forward document used only to reverse this Shields delta. */
   forwardPolicy?: BoundShieldsPolicyArtifact;
 };
@@ -350,6 +352,7 @@ function isShieldsDownTransition(value: unknown): value is ShieldsDownTransition
     /^[0-9a-f]{32}$/.test(value.processToken) &&
     typeof value.sandboxName === "string" &&
     typeof value.snapshotPath === "string" &&
+    isBoundShieldsPolicyArtifact(value.snapshotPolicy) &&
     (value.forwardPolicy === undefined || isBoundShieldsPolicyArtifact(value.forwardPolicy))
   );
 }
@@ -384,6 +387,7 @@ function sameShieldsDownTransitionAuthority(
     left.processToken === right.processToken &&
     left.sandboxName === right.sandboxName &&
     left.snapshotPath === right.snapshotPath &&
+    sameBoundShieldsPolicyArtifact(left.snapshotPolicy, right.snapshotPolicy) &&
     sameBoundShieldsPolicyArtifact(left.forwardPolicy, right.forwardPolicy)
   );
 }
@@ -509,10 +513,14 @@ function readBoundShieldsPolicyArtifact(
   }
   let fd: number | undefined;
   try {
-    fd = fs.openSync(
-      binding.path,
-      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
-    );
+    try {
+      fd = fs.openSync(
+        binding.path,
+        fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+      );
+    } catch (error) {
+      throw new Error(`${label} has unsafe metadata`, { cause: error });
+    }
     const before = fs.fstatSync(fd);
     if (
       !before.isFile() ||
@@ -1508,6 +1516,7 @@ interface ShieldsState {
   shieldsDownReason?: string | null;
   shieldsDownPolicy?: string | null;
   shieldsPolicySnapshotPath?: string | null;
+  shieldsPolicySnapshot?: BoundShieldsPolicyArtifact | null;
   policyRecoveryConfigLocked?: boolean;
   chattrApplied?: boolean;
   // SHA-256 seal of each locked file, captured by `shields up` after the
@@ -1808,7 +1817,8 @@ function issueShieldsPolicySnapshotRecovery(
   if (
     transition.phase !== "active" ||
     transition.sandboxName !== sandboxName ||
-    transition.snapshotPath !== snapshotPolicy.path
+    transition.snapshotPath !== snapshotPolicy.path ||
+    !sameBoundShieldsPolicyArtifact(transition.snapshotPolicy, snapshotPolicy)
   ) {
     throw new Error("Cannot issue backup recovery outside its active Shields transition");
   }
@@ -2276,6 +2286,9 @@ function isShieldsState(value: unknown): value is ShieldsState {
     isOptionalNullableString(value.shieldsDownReason) &&
     isOptionalNullableString(value.shieldsDownPolicy) &&
     isOptionalNullableString(value.shieldsPolicySnapshotPath) &&
+    (value.shieldsPolicySnapshot === undefined ||
+      value.shieldsPolicySnapshot === null ||
+      isBoundShieldsPolicyArtifact(value.shieldsPolicySnapshot)) &&
     isOptionalBoolean(value.policyRecoveryConfigLocked) &&
     isOptionalBoolean(value.chattrApplied) &&
     isOptionalHashMap(value.fileHashes) &&
@@ -4205,9 +4218,21 @@ function applyShieldsPolicySnapshot(
   const rawLive = runCapture(buildPolicyGetCommand(sandboxName, context.gatewayName));
   const livePolicy = parseCurrentPolicy(rawLive);
   if (!livePolicy) throw new Error("Cannot read the current OpenShell policy for Shields restore");
-  const snapshotPolicy = fs.readFileSync(snapshotPath, "utf-8");
+  const snapshotBinding = transition?.snapshotPolicy ?? state.shieldsPolicySnapshot;
+  if (!snapshotBinding) {
+    throw new Error("Shields recovery has no bound restrictive policy snapshot");
+  }
+  const snapshotPolicy = readBoundShieldsPolicyArtifact(
+    snapshotBinding,
+    snapshotPath,
+    "Restrictive policy snapshot",
+  ).toString("utf-8");
   const forwardPolicy = transition?.forwardPolicy
-    ? fs.readFileSync(transition.forwardPolicy.path, "utf-8")
+    ? readBoundShieldsPolicyArtifact(
+        transition.forwardPolicy,
+        transition.forwardPolicy.path,
+        "Shields-down forward policy",
+      ).toString("utf-8")
     : null;
   const restoredPolicy = restoreShieldsDelta(snapshotPolicy, forwardPolicy, livePolicy);
   const stagedPath = secureTempFile("nemoclaw-shields-restore", ".yaml");
@@ -4310,6 +4335,8 @@ function rollbackShieldsDown(
       shieldsDownTimeout: null,
       shieldsDownReason: null,
       shieldsDownPolicy: null,
+      shieldsPolicySnapshotPath: null,
+      shieldsPolicySnapshot: null,
       chattrApplied: rollbackChattrApplied,
       fileHashes: rollbackFileHashes,
     });
@@ -4500,6 +4527,8 @@ function recoverExpiredAutoRestoreInline(
     shieldsDownTimeout: null,
     shieldsDownReason: null,
     shieldsDownPolicy: null,
+    shieldsPolicySnapshotPath: null,
+    shieldsPolicySnapshot: null,
     ...(activation.fileHashes && typeof activation.chattrApplied === "boolean"
       ? {
           chattrApplied: activation.chattrApplied,
@@ -4780,6 +4809,7 @@ function startFreshShieldsDownTimer(input: {
   timeoutSeconds: number;
   processToken: string;
   snapshotPath: string;
+  snapshotPolicy: BoundShieldsPolicyArtifact;
   target: AgentConfigTarget;
   allowLegacyHermesProtocol: boolean;
   deferAutoRestoreWhileOwnerAlive: boolean;
@@ -4790,6 +4820,7 @@ function startFreshShieldsDownTimer(input: {
     timeoutSeconds,
     processToken,
     snapshotPath,
+    snapshotPolicy,
     target,
     allowLegacyHermesProtocol,
     deferAutoRestoreWhileOwnerAlive,
@@ -4817,6 +4848,7 @@ function startFreshShieldsDownTimer(input: {
       processToken,
       sandboxName,
       snapshotPath,
+      snapshotPolicy,
       forwardPolicy,
     };
     const leaseOwnerPid = deferAutoRestoreWhileOwnerAlive ? transition.ownerPid : null;
@@ -5199,6 +5231,7 @@ function shieldsDownWithoutHostLock(
       timeoutSeconds,
       processToken,
       snapshotPath,
+      snapshotPolicy,
       target,
       allowLegacyHermesProtocol: opts.allowLegacyHermesProtocol === true,
       deferAutoRestoreWhileOwnerAlive: opts.deferAutoRestoreWhileOwnerAlive === true,
@@ -5229,6 +5262,7 @@ function shieldsDownWithoutHostLock(
       shieldsDownReason: reason,
       shieldsDownPolicy: policyName,
       shieldsPolicySnapshotPath: snapshotPath,
+      shieldsPolicySnapshot: snapshotPolicy,
     });
   } catch (error) {
     if (transition) {
@@ -5312,6 +5346,7 @@ function shieldsDownWithoutHostLock(
         shieldsDownReason: null,
         shieldsDownPolicy: null,
         shieldsPolicySnapshotPath: null,
+        shieldsPolicySnapshot: null,
       });
     } catch (stateErr) {
       // Clearing the provisional Shields down record failed, so on disk the
@@ -5824,6 +5859,8 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
     shieldsDownTimeout: null,
     shieldsDownReason: null,
     shieldsDownPolicy: null,
+    shieldsPolicySnapshotPath: null,
+    shieldsPolicySnapshot: null,
     ...(snapshotLockResult
       ? {
           chattrApplied: snapshotLockResult.chattrApplied,

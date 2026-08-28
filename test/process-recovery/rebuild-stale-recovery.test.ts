@@ -57,14 +57,16 @@ describe("stale sandbox rebuild safety (#4497)", () => {
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("The live OpenShell policy is unavailable");
+    ).rejects.toThrow("Cannot rebuild an absent sandbox without its authoritative OpenShell policy");
 
     const output = [...harness.logSpy.mock.calls, ...harness.errorSpy.mock.calls]
       .map((call) => String(call[0]))
       .join("\n");
 
     expect(output).toContain("absent from the live OpenShell gateway");
-    expect(output).toContain("No live workspace state to back up");
+    expect(output).toContain("Rebuild cannot recover its missing OpenShell policy");
+    expect(output).toContain("nemoclaw alpha destroy --yes");
+    expect(output).toContain("nemoclaw onboard");
     expect(output).not.toContain("Creating new sandbox with current image");
     expect(output).not.toContain("rebuilt successfully");
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
@@ -153,7 +155,7 @@ describe("stale sandbox rebuild safety (#4497)", () => {
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("The live OpenShell policy is unavailable");
+    ).rejects.toThrow("Cannot rebuild an absent sandbox without its authoritative OpenShell policy");
 
     const output = [...harness.logSpy.mock.calls, ...harness.errorSpy.mock.calls]
       .map((call) => String(call[0]))
@@ -161,7 +163,8 @@ describe("stale sandbox rebuild safety (#4497)", () => {
 
     expect(output).not.toContain("Cannot back up state");
     expect(output).toContain("absent from the live OpenShell gateway");
-    expect(output).toContain("No live workspace state to back up");
+    expect(output).toContain("Rebuild cannot recover its missing OpenShell policy");
+    expect(output).toContain("nemoclaw alpha destroy --yes");
     expect(output).not.toContain("Backing up sandbox state");
     expect(output).not.toContain("Creating new sandbox with current image");
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
