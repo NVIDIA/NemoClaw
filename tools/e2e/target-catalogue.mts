@@ -1229,7 +1229,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     restoreCli: true,
     exposeCliBin: true,
     owningPaths: [
-      "test/e2e/live/rebuild-openclaw-old-base-context.ts",
+      "test/e2e/live/rebuild-openclaw-legacy-context.ts",
       "src/lib/core/shell-quote.ts",
     ],
     environment: hostedInference,
