@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CaptureOpenshellResult } from "../../src/lib/adapters/openshell/client";
 import {
+  ONBOARD_CREATED_SANDBOX_ID,
   mockCreatedSandboxIdentityList,
   mockStructuredOpenShellCaptureFromRunner,
 } from "./onboard-script-mocks.cjs";
@@ -164,7 +165,7 @@ describe("mockStructuredOpenShellCaptureFromRunner", () => {
         ["sandbox", "get", "-g", "nemoclaw-test", "my-assistant"],
         { includeStreams: true },
       ).stdout,
-    ).toContain("Id: sbx-4f2a91c0d7");
+    ).toContain(`Id: ${ONBOARD_CREATED_SANDBOX_ID}`);
   });
 
   it.each([

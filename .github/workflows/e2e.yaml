@@ -20,7 +20,7 @@ on:
         default: ""
         type: string
       include_staging_brev_launchable:
-        description: "Include Exact staging Brev Launchable in a full E2E run when jobs and targets are empty."
+        description: "Include staging Brev Launchable in a full E2E run when jobs and targets are empty."
         required: false
         default: false
         type: boolean
@@ -2607,7 +2607,7 @@ jobs:
       E2E_JOB: "1"
       INSTANCE_NAME: nclaw-e2e-${{ github.run_id }}-${{ github.run_attempt }}
       E2E_AGENT_RUNTIME: "openclaw"
-      E2E_OBSERVABLE_OUTCOME: "Exact staging image boots and completes the full E2E scenario"
+      E2E_OBSERVABLE_OUTCOME: "The staging image boots and completes the full E2E scenario"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Brev Launchable Docker host; NVIDIA hosted inference"
     steps:
       - name: Checkout trusted Launchable lane
@@ -2673,7 +2673,7 @@ jobs:
       E2E_JOB: "1"
       INSTANCE_NAME: nclaw-identity-${{ github.run_id }}-${{ github.run_attempt }}
       E2E_AGENT_RUNTIME: "none"
-      E2E_OBSERVABLE_OUTCOME: "Exact staging image boots, passes the SSH access probe, and matches the baked runtime identity"
+      E2E_OBSERVABLE_OUTCOME: "The staging image boots, passes the SSH access probe, and matches the baked runtime identity"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Brev Launchable host; no inference endpoint"
     steps:
       - name: Checkout trusted Launchable identity lane
@@ -4276,7 +4276,7 @@ jobs:
           }
 
       - id: bases
-        name: Resolve exact platform base images
+        name: Resolve digest-pinned platform base images
         env:
           DCODE_BASE_CONTRACT: ${{ needs.base-image-publication.outputs.dcode_base_contract }}
           PLATFORM: ${{ matrix.platform }}
@@ -4922,7 +4922,7 @@ jobs:
           platform: linux/amd64
 
       - id: runtime-bases
-        name: Resolve exact amd64 runtime base images
+        name: Resolve digest-pinned amd64 runtime base images
         env:
           DCODE_BASE_REF: ${{ needs.base-image-publication.outputs.dcode_base_ref }}
         shell: bash

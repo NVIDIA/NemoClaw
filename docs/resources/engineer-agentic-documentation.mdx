@@ -44,7 +44,7 @@ A polished site with weak retrieval or verification is not agent-ready.
 A push to `main` that changes a path outside the allowed documentation paths starts `Docs / Author Post-Merge Catch-Up`. The workflow examines the implementation, tests, and documentation from the latest reachable semver tag through the pushed commit.
 
 1. It authors documentation changes in a credential-free OpenShell sandbox.
-2. A separate offline sandbox reviews the exact documentation candidate with a read-only repository checkout.
+2. A separate offline sandbox reviews the documentation candidate with a read-only repository checkout.
 3. For an approved nonempty patch, a publisher with no model credential creates or refreshes one cumulative draft PR with a GitHub-verified commit.
 
 The first nonempty patch creates the managed PR.
@@ -185,7 +185,7 @@ Turn repeatable documentation engineering practices into bounded skills or repos
 |---|---|---|---|
 | Update docs | Product behavior reaches `main` or docs fall behind code. | Commit range, changed files, product scope, current pages. | Each user-visible change maps to a reviewed patch or a no-impact decision. |
 | Refactor information architecture | A section is oversized, duplicated, or hard to navigate. | Heading inventory, ownership map, inbound routes, supported variants. | One owner per topic, migrated routes, readable pages, and no content loss. |
-| Review docs | A post-merge candidate changes a public procedure or reference. | Product implementation, tests, candidate patch, and style policy. | Independent review approves the exact candidate. |
+| Review docs | A post-merge candidate changes a public procedure or reference. | Product implementation, tests, candidate patch, and style policy. | Independent review approves the candidate. |
 | Prepare a release | A release candidate needs its dated entry. | Release scope, target version, and planned date. | The dated release entry and documentation PR land before the release tag. |
 | Publish | A docs change merges or a release tag is created. | Validated source, approved environment, immutable revision. | Staging or public output points to the expected revision. |
 
@@ -309,7 +309,7 @@ _build/agent-variants/<source-directory>/<source-name>.<variant>.generated.mdx
 The `<variant>` value is `openclaw`, `hermes`, `deepagents`, or `pi`.
 The directory and base name before the guide variant suffix must match the canonical source path under `docs/`.
 
-When a source appears in fewer guides than the established OpenClaw, Hermes, and Deep Agents shared set, or in some but not all configured guides that include Pi, its frontmatter declares the exact subset:
+When a source appears in fewer guides than the established OpenClaw, Hermes, and Deep Agents shared set, or in some but not all configured guides that include Pi, its frontmatter declares the subset:
 
 ```yaml
 agent-variants: ["openclaw", "hermes"]
@@ -434,7 +434,7 @@ Targeted documentation regression tests preserve credential-rotation commands, a
 Pair these assertions with product behavior tests because the presence of a command in a page does not establish that the command succeeds.
 
 NemoClaw performs the judgment-based layer after changes reach `main`.
-The authoring agent determines documentation impact, and a separate documentation writer reviews the exact candidate.
+The authoring agent determines documentation impact, and a separate documentation writer reviews the candidate.
 The publisher accepts only a reviewed patch bound to the `main` commit and repository.
 
 <Note>

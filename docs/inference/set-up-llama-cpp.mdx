@@ -22,7 +22,7 @@ Both paths are experimental and use OpenAI Chat Completions through `https://inf
 
 Compared with other local options, Ollama emphasizes a simple local model workflow, while managed vLLM provides host-specific NVIDIA GPU profiles and broader model selection.
 NVIDIA NIM provides NVIDIA-packaged inference containers for validated NIM-capable GPUs.
-Managed llama.cpp instead runs an exact repository-owned GGUF recipe with one request slot and no general launch-flag overrides.
+Managed llama.cpp instead runs a repository-owned GGUF recipe with one request slot and no general launch-flag overrides.
 Refer to [Choose a Local Inference Server](choose-local-inference-server) for the complete comparison.
 
 ## Attach an Existing llama.cpp Server
@@ -41,7 +41,7 @@ Start the server with an explicit served model alias.
 A server that starts without an alias reports its model file path as the model ID.
 NemoClaw rejects a path as a served model alias.
 Enable metrics when available, and use an API-key file instead of placing the key in process arguments when your llama.cpp build supports those options.
-If the server exposes multiple models, identify the exact served alias through `NEMOCLAW_MODEL`.
+If the server exposes multiple models, identify the served alias through `NEMOCLAW_MODEL`.
 
 NemoClaw takes the served model alias from the `/v1/models` entry that it selects.
 It also compares that alias with `model_alias` in `/props` when `/props` returns that field.
@@ -56,7 +56,7 @@ $$nemoclaw onboard
 
 Select **Local llama.cpp** and provide the native API key.
 Interactive attachment succeeds only when the server exposes exactly one native model.
-If the server exposes multiple models, use non-interactive onboarding and set `NEMOCLAW_MODEL` to the exact served alias.
+If the server exposes multiple models, use non-interactive onboarding and set `NEMOCLAW_MODEL` to the served alias.
 
 For non-interactive onboarding, export `NEMOCLAW_LLAMACPP_LOCAL_TOKEN` from your secret manager and run:
 
@@ -114,8 +114,8 @@ It does not write the value to managed llama.cpp state, the receipt, the serving
 Run `unset HF_TOKEN` after onboarding when no other process needs it.
 
 <Warning>
-When the exact artifacts are not already present, onboarding pulls digest-pinned images from external registries and acquires the YAML-declared GGUF file through the standard Hugging Face cache.
-It reuses locally present pinned images and a cached GGUF only after their exact identities verify.
+When the artifacts are not already present, onboarding pulls digest-pinned images from external registries and acquires the YAML-declared GGUF file through the standard Hugging Face cache.
+It reuses locally present pinned images and a cached GGUF only after NemoClaw verifies their identities.
 It creates an owner-only API key, a host-loopback listener on port `8081`, and a Docker internal network.
 Only one managed llama.cpp runtime can exist per Docker authority, regardless of the owning OpenShell gateway or sandbox.
 </Warning>
@@ -147,11 +147,11 @@ Use `llama-cpp.muse-glimmer-30b.spark-single.v1` to select the Meta Muse Glimmer
 
 For non-interactive onboarding or an explicit `install-llama-cpp` provider request, an unset `NEMOCLAW_LLAMACPP_RECIPE` selects the unique highest-priority compatible automatic profile.
 If more than one compatible automatic profile has the highest priority, automatic non-interactive selection stops instead of selecting by catalog order.
-Interactive onboarding lists the tied profiles without a recommendation so you can select an exact recipe.
-For non-interactive onboarding or an explicit provider request, set `NEMOCLAW_LLAMACPP_RECIPE` to an exact recipe ID to select a compatible lower-priority profile or make the selection visible in automation.
+Interactive onboarding lists the tied profiles without a recommendation so you can select a recipe.
+For non-interactive onboarding or an explicit provider request, set `NEMOCLAW_LLAMACPP_RECIPE` to a recipe ID to select a compatible lower-priority profile or make the selection visible in automation.
 An unknown recipe, an incompatible host, or more than one compatible profile for the requested recipe stops onboarding before installation effects.
 Do not set `NEMOCLAW_MODEL` for this path.
-The repository YAML recipe is authoritative for the exact model file, revision, digest, image, launch settings, resource limits, readiness probes, and disabled surfaces.
+The repository YAML recipe is authoritative for the model file, revision, digest, image, launch settings, resource limits, readiness probes, and disabled surfaces.
 NemoClaw does not provide hidden model, port, image, or launch-flag overrides for the managed path.
 
 The shipped NVIDIA Nemotron recipe continues to use the `nemotron-v3-embedded` chat template.
@@ -187,7 +187,7 @@ Onboarding performs these actions:
 
 - Resolves the selected recipe and profile against a fresh host readiness report.
 - Reuses locally present pinned downloader, runtime, and probe images, and pulls only the missing digest-pinned images declared by the recipe.
-- Reuses a verified GGUF from the shared `~/.cache/huggingface/` cache, or acquires the exact file through the existing Hugging Face mechanism when it is absent or invalid.
+- Reuses a verified GGUF from the shared `~/.cache/huggingface/` cache, or acquires the file through the existing Hugging Face mechanism when it is absent or invalid.
 - Verifies the GGUF size and SHA-256 digest before it starts the runtime.
 - Runs the authenticated container as the current non-root user with one NVIDIA GPU and no CPU fallback.
 - Starts a host-owned private bridge on `127.0.0.1:8081` and connects the container to a Docker internal network without a Docker-published port.
@@ -234,7 +234,7 @@ When the bridge reports a valid narrow subnet and a gateway IP address inside th
 - The source subnet.
 - The gateway IP address.
 - The fixed port `8081`.
-- The exact narrow UFW command.
+- The narrow UFW command.
 
 If the bridge topology is missing or invalid, onboarding fails closed without printing topology or a UFW command.
 Inspect the OpenShell Docker bridge configuration before you retry onboarding.
@@ -245,7 +245,7 @@ Confirm that the reported Docker network, source subnet, and gateway IP address 
 The rule allows TCP traffic only from that subnet to port `8081` on that gateway IP address.
 </Warning>
 
-Run the exact command from the onboarding error.
+Run the command from the onboarding error.
 It has this form:
 
 ```bash
@@ -254,7 +254,7 @@ sudo ufw allow from <subnet> to <gateway-ip> port 8081 proto tcp
 
 After you apply the rule, rerun the same onboarding selection.
 
-If onboarding still reports the bridge failure, or when the managed runtime no longer needs the rule, remove the exact rule that you added:
+If onboarding still reports the bridge failure, or when the managed runtime no longer needs the rule, remove the rule that you added:
 
 ```bash
 sudo ufw --force delete allow from <subnet> to <gateway-ip> port 8081 proto tcp
@@ -263,7 +263,7 @@ sudo ufw --force delete allow from <subnet> to <gateway-ip> port 8081 proto tcp
 Use the same subnet and gateway IP address that appeared in the original command.
 
 If onboarding stops, rerun the same provider and recipe selection.
-NemoClaw resumes only the exact persisted Docker authority, image, recipe, model digest, network, and runtime identity.
+NemoClaw resumes only the persisted Docker authority, image, recipe, model digest, network, and runtime identity.
 It reconciles an unfinished create journal before it starts a new runtime.
 Phases before `receipt-prepared` are rolled back and retired, while `receipt-prepared` is finalized.
 
@@ -281,7 +281,7 @@ NemoClaw does not independently upgrade an attached llama.cpp server.
 Upgrade or roll back that server and its model through the operator-owned process, then rerun onboarding so NemoClaw validates the endpoint again.
 
 The managed path does not provide an in-place model, image, recipe upgrade, downgrade, or rollback command.
-The installed runtime remains bound to the exact repository YAML authority recorded during onboarding.
+The installed runtime remains bound to the repository YAML authority recorded during onboarding.
 Do not edit the ownership, receipt, or recipe-digest state to force a migration.
 
 If an updated NemoClaw release changes that authority, resume fails closed and preserves the existing state.
@@ -300,7 +300,7 @@ Although the setup steps above target DGX Spark, this removal and recovery behav
 NemoClaw qualifies the Docker operation authority recorded during managed llama.cpp onboarding.
 It completes this qualification before it requests sandbox deletion or reconciles an already-absent sandbox.
 This authority includes Docker endpoint selection and identity, Docker executable identity, and command environment.
-When cleanup relies on private managed llama.cpp state, NemoClaw proves Docker availability and the exact container and network before OpenShell sandbox deletion.
+When cleanup relies on private managed llama.cpp state, NemoClaw proves Docker availability and the container and network before OpenShell sandbox deletion.
 It retains the identity of that private lifecycle state across sandbox deletion and rejects cleanup if the identity changes.
 If any pre-delete proof fails, NemoClaw reports the error and stops the destroy operation.
 
@@ -352,9 +352,9 @@ Rerun the earlier `destroy` command.
 NemoClaw stores opaque authority identity and binding data, not the original Docker executable or command environment values.
 For any other authority mismatch, do not guess Docker selector values.
 Retry the earlier `destroy` command from the same shell or automation environment that ran onboarding.
-After OpenShell confirms sandbox deletion, the command removes the exact managed llama.cpp container, internal network, API key, and gateway-scoped ownership state.
+After OpenShell confirms sandbox deletion, the command removes the managed llama.cpp container, internal network, API key, and gateway-scoped ownership state.
 It preserves `~/.cache/huggingface/` because other applications can use that cache.
-If exact cleanup fails, NemoClaw preserves the ownership state and any existing sandbox registry entry for a retry.
+If cleanup fails, NemoClaw preserves the ownership state and any existing sandbox registry entry for a retry.
 
 After `destroy` succeeds, run:
 
@@ -365,7 +365,7 @@ $$nemoclaw list
 Confirm that `my-assistant` no longer appears.
 
 For full NemoClaw removal, run `$$nemoclaw uninstall`.
-Full uninstall applies the same exact-ownership checks and preserves the shared Hugging Face cache by default.
+Full uninstall applies the ownership checks and preserves the shared Hugging Face cache by default.
 Pass `--delete-models` only when you accept deletion of all non-credential data in the current user's shared cache after managed model runtimes stop.
 The same flag also deletes every model installed in the host's local Ollama inventory.
 Uninstall preserves the Hugging Face `token` and `stored_tokens` authentication files.
