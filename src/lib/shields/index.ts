@@ -1690,11 +1690,14 @@ function runHermesProviderProtectionTransition(
   // then asynchronously republishes the sandbox lifecycle phase; callers must
   // not issue route or mutation commands during that Provisioning interval.
   waitForHermesRuntimeProviderReleaseReady(sandboxName);
-  // The fenced gateway can prove local health while OpenShell PID 1 is held,
-  // but Hermes performs network MCP discovery before exposing that health.
-  // Restart once after release so configured managed bridges are discovered
-  // with the exact supervisor/network control path live.
-  restartHermesManagedMcpAfterProviderRelease(sandboxName, sandbox);
+  // The locked activation has already proven the exact gateway under the
+  // final immutable config. A second ordinary restart can only attempt a
+  // configuration reconciliation that lockdown forbids. Mutable activation
+  // still restarts once after release so configured managed bridges discover
+  // through the live supervisor/network control path.
+  if (targetPosture === "mutable") {
+    restartHermesManagedMcpAfterProviderRelease(sandboxName, sandbox);
+  }
 }
 
 function verifyHermesProviderMutablePosture(sandboxName: string, target: AgentConfigTarget): void {

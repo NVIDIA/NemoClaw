@@ -800,11 +800,12 @@ describe("legacy Hermes shields compatibility", () => {
     });
 
     it("migrates the current managed Hermes lock leaf and preserves the host seal result", () => {
+      registrySpy.mockReturnValue({ ...sandbox, mcp: { bridges: { fake: {} } } });
       const result = shields.lockAgentConfig(sandbox.name, target, false, false);
 
       expect(transitionSpy).toHaveBeenCalledWith(
         expect.objectContaining({
-          sandbox,
+          sandbox: expect.objectContaining(sandbox),
           sandboxName: sandbox.name,
           configTarget: target,
           target: "locked",
@@ -816,7 +817,7 @@ describe("legacy Hermes shields compatibility", () => {
         "/sandbox/.hermes/.env": "c".repeat(64),
         "/sandbox/.hermes/.config-hash": "c".repeat(64),
       });
-      expect(commands.some((command) => command.includes("begin-shields-transition"))).toBe(false);
+      expect(commands.some((command) => command.includes("nemoclaw-gateway-control"))).toBe(false);
     });
 
     it("treats an already-locked provider lock as recovery plus live verification", () => {
