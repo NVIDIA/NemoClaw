@@ -23,7 +23,6 @@ export type DestroyHarness = {
   captureOpenshellSpy: MockInstance;
   compareAndSwapSessionSpy: MockInstance;
   destroySandbox: DestroySandbox;
-  destroySourcePath: string;
   dockerCaptureSpy: MockInstance;
   dockerRunSpy: MockInstance;
   errorSpy: MockInstance;
@@ -594,7 +593,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     dockerCaptureSpy,
     dockerRunSpy,
     destroySandbox: requireSource(destroyModulePath).destroySandbox,
-    destroySourcePath: requireSource.resolve(destroyModulePath),
     errorSpy,
     events,
     executeSandboxDestroySpy,
