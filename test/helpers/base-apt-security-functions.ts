@@ -77,7 +77,7 @@ export function baseAptSecurityFunctions(architecture: DebianArchitecture): stri
       '  [[ "${10}" == "--connect-timeout" && "${11}" == "15" && "${12}" == "--max-time" && "${13}" == "120" && "${14}" == "-o" ]] || return 64',
       '  case "${16}" in',
       `    */e/expat/libexpat1_2.8.3-1_${architecture}.deb) [[ "\${15##*/}" == "libexpat1.deb" ]] ;;`,
-      `    */libe/libevent/libevent-core-2.1-7t64_2.1.13-stable-1_${architecture}.deb) [[ "\${15##*/}" == "libevent-core-2.1-7t64.deb" ]] ;;`,
+      `    https://snapshot.debian.org/archive/debian/20260703T143212Z/pool/main/libe/libevent/libevent-core-2.1-7t64_2.1.13-stable-1_${architecture}.deb) [[ "\${15##*/}" == "libevent-core-2.1-7t64.deb" ]] ;;`,
       `    */libo/libonig/libonig5_6.9.9-1+b1_${architecture}.deb) [[ "\${15##*/}" == "libonig5.deb" ]] ;;`,
       `    */j/jq/libjq1_1.8.2-1_${architecture}.deb) [[ "\${15##*/}" == "libjq1.deb" ]] ;;`,
       `    */j/jq/jq_1.8.2-1_${architecture}.deb) [[ "\${15##*/}" == "jq.deb" ]] ;;`,
