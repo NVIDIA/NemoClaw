@@ -2185,6 +2185,7 @@ def _run_guard_unserialized(
         return _restore_empty_credentials_startup_access(
             normalized_config, identity, deadline, plan
         )
+    # Verification shares the locked metadata contract but skips every mutation below.
     posture_action: Action = "lock" if action == "verify-lock" else action
     verify_only = action == "verify-lock"
     fail_closed_config_root = action == "lock" and (
