@@ -73,4 +73,8 @@ describe("OpenShell provider command runtime", () => {
       parseCliOpenShellProviderNames("  \u001b[32malpha\u001b[0m  \r\n\r\nbeta\n"),
     ).toEqual(["alpha", "beta"]);
   });
+
+  it("returns no provider names for empty CLI output (#9806)", () => {
+    expect(parseCliOpenShellProviderNames("")).toEqual([]);
+  });
 });
