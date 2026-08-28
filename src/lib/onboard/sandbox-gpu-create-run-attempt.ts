@@ -25,7 +25,6 @@ import { installPortableDemoSandboxLifecycle } from "./experimental/portable-dem
 import { enforceManagedBootstrapRecoveryForSandbox } from "./managed-bootstrap/adapter";
 import type {
   ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff,
-  ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt,
   ManagedBootstrapRuntimeCreateLifecycle,
   ManagedBootstrapRuntimePatch,
   ManagedBootstrapRuntimeSnapshot,
@@ -120,7 +119,6 @@ function createPortableRuntimePatch(
 
 type NativeFallbackCleanupEvidence = Readonly<{
   nativeCleanupHandoff?: ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff;
-  nativeCleanupReceipt?: ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt;
 }>;
 
 async function rollbackNativeGpuFailureForFallback(
@@ -132,15 +130,10 @@ async function rollbackNativeGpuFailureForFallback(
     return {};
   }
   const rollback = await runtimePatch.rollbackManagedStartupAfterCreateFailure({
-    ownerCleanupHandoff: "native-gpu-fallback-after-absent-attachment",
+    ownerCleanupHandoff: "native-gpu-fallback",
   });
   if (rollback?.kind !== "openshell-owner-cleanup-required") return {};
-  const ownerCleanup = managedLifecycle.completeNativeGpuFallbackOwnerCleanup
-    ? await managedLifecycle.completeNativeGpuFallbackOwnerCleanup(rollback)
-    : rollback;
-  return ownerCleanup.kind === "openshell-owner-cleanup-completed"
-    ? { nativeCleanupReceipt: ownerCleanup }
-    : { nativeCleanupHandoff: ownerCleanup };
+  return { nativeCleanupHandoff: rollback };
 }
 
 function normalizedOpenShellCommandOutput(result: OpenShellCommandResult): string {
@@ -393,7 +386,9 @@ export function createSandboxGpuCreateAttemptRunner(
     const createAttemptNonce = deferPostCreateEffects
       ? randomBytes(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH / 2).toString("hex")
       : null;
-    const persistIdentitySettlementRecovery = (): void => {
+    const persistIdentitySettlementRecovery = (
+      sandboxIdentityFingerprint: string | null = null,
+    ): void => {
       if (!createAttemptNonce) {
         throw new Error("Sandbox create-attempt identity was not generated.");
       }
@@ -401,15 +396,18 @@ export function createSandboxGpuCreateAttemptRunner(
       if (!persist) {
         throw new Error("Verified sandbox creation has no durable recovery evidence owner.");
       }
+      const identityEvidence = sandboxIdentityFingerprint
+        ? `Durable sandbox identity fingerprint: ${sandboxIdentityFingerprint}. Sandbox '${input.sandboxName}' did not remain visible through owning gateway '${input.gatewayName}' before policy verification. `
+        : `Sandbox '${input.sandboxName}' reached Ready before OpenShell returned one exact durable create identity. Gateway '${input.gatewayName}'. OpenShell did not return one exact durable sandbox identity for this create attempt. `;
       const message =
         `Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${createAttemptNonce}. ` +
-        `Sandbox '${input.sandboxName}' reached Ready before OpenShell returned one exact durable create identity. ` +
-        `Gateway '${input.gatewayName}'. ` +
-        "OpenShell did not return one exact durable sandbox identity for this create attempt. " +
+        identityEvidence +
         "Do not delete a sandbox by mutable name; preserve it until an OpenShell administrator resolves the create-attempt label to one sandbox.";
       let persisted = false;
       try {
-        persisted = persist(message);
+        persisted = sandboxIdentityFingerprint
+          ? persist(message, sandboxIdentityFingerprint)
+          : persist(message);
       } catch {
         persisted = false;
       }
@@ -418,6 +416,14 @@ export function createSandboxGpuCreateAttemptRunner(
         console.error(
           "  NemoClaw could not save this create-attempt evidence. Preserve the terminal output for an OpenShell administrator.",
         );
+      }
+    };
+    const waitForCreatedSandboxPublication = (sandboxId: string): void => {
+      try {
+        waitForCreatedOpenShellSandboxPublication(sandboxId, input, deps);
+      } catch (error) {
+        persistIdentitySettlementRecovery(fingerprintSandboxRecreateValue(sandboxId));
+        throw error;
       }
     };
     const captureRetainedSandboxRecovery = () => {
@@ -565,6 +571,10 @@ export function createSandboxGpuCreateAttemptRunner(
     let resumedSandboxId: string | null = null;
     let managedIncompleteCreateRecovered = false;
     let createdSandboxVerified = false;
+    const failAfterCreatedSandboxVerification = (message: string, status: number): never => {
+      if (createdSandboxVerified) throw new Error(message);
+      return process.exit(status);
+    };
     if (input.resumeVerifiedCreate) {
       if (route !== input.resumeVerifiedCreate.route) {
         throw new Error("Verified sandbox recovery route changed before continuation.");
@@ -618,6 +628,7 @@ export function createSandboxGpuCreateAttemptRunner(
                 sleep: deps.sleep,
               });
               if (!readiness.ready) {
+                if (createAttemptNonce) persistIdentitySettlementRecovery();
                 throw new Error(
                   sandboxReadinessTracing
                     .formatCreatedSandboxReadinessFailureMessage(
@@ -634,6 +645,7 @@ export function createSandboxGpuCreateAttemptRunner(
                 timeout: SANDBOX_READY_PROBE_TIMEOUT_MS,
               });
               if (!isSandboxReady(list, input.sandboxName)) {
+                if (createAttemptNonce) persistIdentitySettlementRecovery();
                 throw new Error(
                   "Managed bootstrap create completed without an authoritative Ready sandbox.",
                 );
@@ -659,7 +671,7 @@ export function createSandboxGpuCreateAttemptRunner(
                 { cause: error },
               );
             }
-            waitForCreatedOpenShellSandboxPublication(sandboxId, input, deps);
+            waitForCreatedSandboxPublication(sandboxId);
             await verifyCreatedSandboxBeforeEffects(sandboxId, route, input);
             createdSandboxVerified = true;
             if (deferPostCreateEffects) {
@@ -694,6 +706,7 @@ export function createSandboxGpuCreateAttemptRunner(
     if (!deferPostCreateEffects) await runtimePatch.exitOnPatchError();
     if (createResult && createResult.status !== 0) {
       const failure = classifySandboxCreateFailure(createResult.output);
+      let nativeCreateRejectedBeforeProgress = false;
       if (failure.kind === "sandbox_create_incomplete") {
         console.warn("");
         if (managedIncompleteCreateRecovered) {
@@ -721,6 +734,7 @@ export function createSandboxGpuCreateAttemptRunner(
                   sawProgress: createResult.sawProgress,
                 })
           ) {
+            nativeCreateRejectedBeforeProgress = true;
             state.allowUnbuiltCompatibilitySource = input.prebuild.imageRef === null;
             return true;
           }
@@ -737,7 +751,12 @@ export function createSandboxGpuCreateAttemptRunner(
           return false;
         })()
       ) {
-        await runtimePatch.rollbackManagedStartupAfterCreateFailure();
+        let nativeCleanup: NativeFallbackCleanupEvidence = {};
+        if (nativeCreateRejectedBeforeProgress) {
+          await runtimePatch.rollbackManagedStartupAfterCreateFailure();
+        } else {
+          nativeCleanup = await rollbackNativeGpuFailureForFallback(managedLifecycle, runtimePatch);
+        }
         return {
           ok: false,
           route,
@@ -745,6 +764,10 @@ export function createSandboxGpuCreateAttemptRunner(
           error: new Error("Native OpenShell GPU sandbox creation was rejected."),
           fallbackEligible: true,
           ...captureRetainedSandboxRecovery(),
+          ...(nativeCreateRejectedBeforeProgress
+            ? { nativeCreateRejectedBeforeProgress: true as const }
+            : {}),
+          ...nativeCleanup,
         } as const;
       } else {
         await runtimePatch.rollbackManagedStartupAfterCreateFailure();
@@ -787,7 +810,7 @@ export function createSandboxGpuCreateAttemptRunner(
           { cause: error },
         );
       }
-      waitForCreatedOpenShellSandboxPublication(sandboxId, input, deps);
+      waitForCreatedSandboxPublication(sandboxId);
       await verifyCreatedSandboxBeforeEffects(sandboxId, route, input);
       createdSandboxVerified = true;
     }
@@ -810,7 +833,10 @@ export function createSandboxGpuCreateAttemptRunner(
       printCreateFailureDiagnostics(input.sandboxName, {
         backupPath: input.restoreBackupPath,
       });
-      process.exit(createResult?.status === 0 ? 1 : (createResult?.status ?? 1));
+      failAfterCreatedSandboxVerification(
+        `Sandbox '${input.sandboxName}' did not return one exact durable sandbox ID before runtime recreation after verified creation.`,
+        createResult?.status === 0 ? 1 : (createResult?.status ?? 1),
+      );
     }
     if (!portableLifecycle || managedLifecycle) {
       revalidatePostCreateEffect(`apply runtime patch for sandbox '${input.sandboxName}'`);
@@ -869,7 +895,10 @@ export function createSandboxGpuCreateAttemptRunner(
             }))
       ) {
         state.nativeRuntimeSnapshot = runtimeSnapshot;
-        await runtimePatch.rollbackManagedStartupAfterCreateFailure();
+        const nativeCleanup = await rollbackNativeGpuFailureForFallback(
+          managedLifecycle,
+          runtimePatch,
+        );
         return {
           ok: false,
           route,
@@ -879,6 +908,7 @@ export function createSandboxGpuCreateAttemptRunner(
           ),
           fallbackEligible: true,
           ...captureRetainedSandboxRecovery(),
+          ...nativeCleanup,
         } as const;
       }
       await runtimePatch.rollbackManagedStartupAfterCreateFailure();
@@ -900,7 +930,10 @@ export function createSandboxGpuCreateAttemptRunner(
         );
         console.error("  Verify the sandbox identity before manual cleanup.");
       }
-      process.exit(createResult?.status === 0 ? 1 : (createResult?.status ?? 1));
+      failAfterCreatedSandboxVerification(
+        `Sandbox '${input.sandboxName}' did not become ready after verified creation.`,
+        createResult?.status === 0 ? 1 : (createResult?.status ?? 1),
+      );
     }
     if (input.sandboxGpuConfig.sandboxGpuEnabled) {
       revalidatePostCreateEffect(`verify GPU access for sandbox '${input.sandboxName}'`);
@@ -959,7 +992,10 @@ export function createSandboxGpuCreateAttemptRunner(
         console.error(
           "  To explicitly select the compatibility route, clean up the sandbox and retry with NEMOCLAW_DOCKER_GPU_PATCH=1.",
         );
-        process.exit(1);
+        failAfterCreatedSandboxVerification(
+          `Sandbox '${input.sandboxName}' failed GPU proof after verified creation.`,
+          1,
+        );
       }
       if (proof.status === "failed") {
         await runtimePatch.rollbackManagedStartupAfterCreateFailure();

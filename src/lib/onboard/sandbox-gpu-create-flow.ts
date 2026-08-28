@@ -218,7 +218,10 @@ export interface SandboxGpuCreateFlowInput {
   /** Reject every initial or fallback create attempt that carries a caller policy. */
   requirePolicylessCreate?: true;
   /** Durably retain exact create-attempt recovery evidence before identity-bound recovery stops. */
-  persistRetainedSandboxRecovery?: (message: string) => boolean;
+  persistRetainedSandboxRecovery?: (
+    message: string,
+    sandboxIdentityFingerprint?: string,
+  ) => boolean;
   provider: string;
   sandboxGpuConfig: SandboxGpuConfig;
   gpuRoutePlan: import("./docker-gpu-route").DockerGpuRoutePlan;
@@ -452,6 +455,7 @@ export async function runSandboxGpuCreateFlow(
           const prepared = attemptRunner.managedRouting.prepareCompatibilityLaunch({
             createArgs: managedBootstrapCreateArgs(input.prebuild.createArgs, bootstrapIdentity),
             currentRegistryImageRef: registryImageRef,
+            managedImageReference: `${managedBootstrap.image.repository}@${managedBootstrap.image.manifestDigest}`,
             prebuildImageId: input.prebuild.imageId,
             allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
             compatibilityPolicyPath: input.compatibilityPolicyPath,
@@ -567,7 +571,9 @@ export async function runSandboxGpuCreateFlow(
           "Do not delete a sandbox by mutable name; use an identity-bound administrator recovery procedure.";
         let persisted = false;
         try {
-          persisted = persistRetainedSandboxRecovery(message);
+          persisted = evidence.liveIdentityFingerprint
+            ? persistRetainedSandboxRecovery(message, evidence.liveIdentityFingerprint)
+            : persistRetainedSandboxRecovery(message);
         } catch {
           persisted = false;
         }

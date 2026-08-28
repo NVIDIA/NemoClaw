@@ -493,10 +493,8 @@ describe("runSandboxGpuCreateFlow proof authorization", () => {
       "openshell sandbox exec denied by policy",
     );
     expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
-    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
-      ["sandbox", "delete", "alpha"],
-      expect.anything(),
-    );
+    const calls = vi.mocked(deps.runOpenshell).mock.calls;
+    expect(calls.flat()).not.toContain("delete");
   });
 
   it("does not let sandbox-controlled CUDA output authorize compatibility fallback (#6110)", async () => {
@@ -1237,7 +1235,6 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
   it("streams native and compatibility attempts through direct argv without a shell (#6110)", async () => {
     failNativeCreate();
     const input = createInput();
-
     await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
       route: "compatibility",
     });
@@ -1317,7 +1314,7 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
     expect(input.sandboxGpuConfig.sandboxGpuProof).toBeNull();
   });
 
-  it("validates the full compatibility command before deleting native state (#6110)", async () => {
+  it("validates the full compatibility command before proving native state absent (#6110)", async () => {
     const input = createInput();
     input.compatibilityPolicyPath = null;
     failNativeCreate();
@@ -1348,7 +1345,7 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
     const deps = createDeps();
     await expectFlowExit(input, deps);
     expect(deps.openshellArgv).toHaveBeenCalledOnce();
-    expect(deps.runOpenshell).toHaveBeenCalledWith(
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
       expect.anything(),
     );

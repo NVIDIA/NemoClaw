@@ -213,6 +213,10 @@ beforeEach(() => {
   exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
     throw new ExitError(code);
   }) as never);
+  vi.spyOn(
+    policyChannelDependencies,
+    "revalidateChannelProviderPolicyAuthority",
+  ).mockImplementation(() => undefined);
 
   vi.spyOn(registry, "getSandbox").mockImplementation(() => registryEntry);
   vi.spyOn(registry, "listSandboxes").mockImplementation(() => ({
