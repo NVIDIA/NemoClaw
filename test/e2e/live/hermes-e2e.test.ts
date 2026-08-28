@@ -591,6 +591,7 @@ test(
       });
       expect(afterRecoverProcess.exitCode, resultText(afterRecoverProcess)).toBe(0);
       const recoveredGateway = parseGatewayProcess(afterRecoverProcess.stdout);
+      expect(recoveredGateway.owner).toBe("gateway");
       expect(recoveredGateway.pid).not.toBe(afterGateway.pid);
       await assertNoStandaloneRoutingSidecars(
         "phase-4-hermes-routing-topology-after-root-supervised-recover",
@@ -735,6 +736,8 @@ test(
       });
       expect(afterRecoverProcess.exitCode, resultText(afterRecoverProcess)).toBe(0);
       const recoveredGateway = parseGatewayProcess(afterRecoverProcess.stdout);
+      expect(recoveredGateway.owner).toBe("sandbox");
+      expect(recoveredGateway.ppid).toBe(supervisor.pid);
       expect(recoveredGateway.pid).not.toBe(restartedManagedGateway.pid);
       await assertNoStandaloneRoutingSidecars(
         "phase-4-hermes-routing-topology-after-managed-recover",
