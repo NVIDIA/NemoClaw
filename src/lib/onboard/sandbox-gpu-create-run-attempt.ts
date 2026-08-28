@@ -215,6 +215,28 @@ async function verifyCreatedSandboxBeforeEffects(
   });
 }
 
+function resolveCreateAttemptNonce(
+  input: SandboxGpuCreateFlowInput,
+  deferPostCreateEffects: boolean,
+): string | null {
+  const resumedCreateAttemptNonce = input.resumeVerifiedCreate?.createAttemptNonce;
+  if (!input.resumeVerifiedCreate) {
+    return deferPostCreateEffects
+      ? randomBytes(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH / 2).toString("hex")
+      : null;
+  }
+  if (
+    !resumedCreateAttemptNonce ||
+    resumedCreateAttemptNonce.length !== NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH ||
+    !/^[0-9a-f]+$/u.test(resumedCreateAttemptNonce)
+  ) {
+    throw new Error(
+      "Verified sandbox recovery has no durable create-attempt authority; refusing continuation.",
+    );
+  }
+  return resumedCreateAttemptNonce;
+}
+
 function waitForCreatedOpenShellSandboxPublication(
   sandboxId: string,
   input: SandboxGpuCreateFlowInput,
@@ -371,17 +393,6 @@ export function createSandboxGpuCreateAttemptRunner(
     managedRouting?.nativeFallbackHasCleanBaseline ??
     (nativeFallbackBaseline?.ok === true && nativeFallbackBaseline.ids.length === 0);
   const runAttempt = async (route: SelectedDockerGpuRoute) => {
-    const resumedCreateAttemptNonce = input.resumeVerifiedCreate?.createAttemptNonce;
-    if (
-      input.resumeVerifiedCreate &&
-      (!resumedCreateAttemptNonce ||
-        resumedCreateAttemptNonce.length !== NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH ||
-        !/^[0-9a-f]+$/u.test(resumedCreateAttemptNonce))
-    ) {
-      throw new Error(
-        "Verified sandbox recovery has no durable create-attempt authority; refusing continuation.",
-      );
-    }
     const deferPostCreateEffects = input.verifyCreatedSandboxBeforeEffects !== undefined;
     const compatibility = route === "compatibility";
     if (compatibility && input.initialGpuRoute === "native") {
@@ -396,10 +407,7 @@ export function createSandboxGpuCreateAttemptRunner(
     const managedBootstrap = input.managedBootstrap ?? null;
     const unboundAttemptArgv = state.compatibilityArgv ?? input.createArgv;
     if (input.requirePolicylessCreate) assertPolicylessSandboxCreateArgv(unboundAttemptArgv);
-    const createAttemptNonce = resumedCreateAttemptNonce ??
-      (deferPostCreateEffects
-        ? randomBytes(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH / 2).toString("hex")
-        : null);
+    const createAttemptNonce = resolveCreateAttemptNonce(input, deferPostCreateEffects);
     const persistIdentitySettlementRecovery = (
       sandboxIdentityFingerprint: string | null = null,
     ): void => {
@@ -606,7 +614,12 @@ export function createSandboxGpuCreateAttemptRunner(
         );
       }
       resumedSandboxId = identity.sandboxId;
-      await verifyCreatedSandboxBeforeEffects(identity.sandboxId, createAttemptNonce!, route, input);
+      await verifyCreatedSandboxBeforeEffects(
+        identity.sandboxId,
+        createAttemptNonce!,
+        route,
+        input,
+      );
       createdSandboxVerified = true;
       if (deferPostCreateEffects) {
         revalidatePostCreateEffect(`activate managed sandbox network for '${input.sandboxName}'`);
