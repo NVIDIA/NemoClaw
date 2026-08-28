@@ -1221,6 +1221,14 @@ describe("common-egress agent parsing and classification helpers", () => {
         response: "malformed request after ETIMEDOUT",
       }),
     ).toEqual({ passed: false, failureClass: "malformed-input" });
+    expect(
+      classifyHermesAgentAssertion({
+        ...result,
+        exitCode: 0,
+        reply: "The command is waiting for your approval to execute.",
+        response: "The command is waiting for your approval to execute. Please approve it to proceed.",
+      }),
+    ).toEqual({ passed: false, failureClass: "transient-external" });
     expect(classifyHermesAgentAssertion(result)).toEqual({
       passed: false,
       failureClass: "deterministic",

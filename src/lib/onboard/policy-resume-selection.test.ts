@@ -15,6 +15,7 @@ function policies(
     "brave",
     "tavily",
     "slack",
+    "discord",
     "observability-otlp-local",
     "personal-open-internet",
   ].map((name) => ({ name }));
@@ -145,6 +146,57 @@ describe("preparePolicyPresetResumeSelection required preset reconciliation", ()
 
     expect(result.policyPresets).toEqual(["slack"]);
     expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
+  });
+
+  it("removes a stale Hermes Slack preset when no messaging channel is enabled", () => {
+    const result = preparePolicyPresetResumeSelection(
+      { policies: policies({ applied: ["npm", "slack"] }) },
+      "alpha",
+      {
+        recordedPolicyPresets: ["npm", "slack"],
+        enabledChannels: [],
+        agent: "hermes",
+        webSearchConfig: null,
+        webSearchSupported: true,
+      },
+    );
+
+    expect(result.policyPresets).toEqual(["npm"]);
+    expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
+  });
+
+  it("keeps only the enabled Hermes messaging preset during resume", () => {
+    const result = preparePolicyPresetResumeSelection(
+      { policies: policies({ applied: ["npm", "slack", "discord"] }) },
+      "alpha",
+      {
+        recordedPolicyPresets: ["npm", "slack", "discord"],
+        enabledChannels: ["discord"],
+        agent: "hermes",
+        webSearchConfig: null,
+        webSearchSupported: true,
+      },
+    );
+
+    expect(result.policyPresets).toEqual(["npm", "discord"]);
+    expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
+  });
+
+  it("preserves custom ownership of an inactive Hermes messaging preset name", () => {
+    const result = preparePolicyPresetResumeSelection(
+      { policies: policies({ applied: ["npm", "slack"], custom: ["slack"] }) },
+      "alpha",
+      {
+        recordedPolicyPresets: ["npm", "slack"],
+        enabledChannels: [],
+        agent: "hermes",
+        webSearchConfig: null,
+        webSearchSupported: true,
+      },
+    );
+
+    expect(result.policyPresets).toEqual(["npm", "slack"]);
+    expect(result.recordedPolicyPresetsNeedReconcile).toBe(false);
   });
 });
 

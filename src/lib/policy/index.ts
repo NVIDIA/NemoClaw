@@ -112,6 +112,7 @@ type SelectionOptions = {
 type PresetLoadOptions = {
   agent?: string | null;
   sandboxName?: string;
+  credentialBoundMessagingChannels?: readonly string[];
 };
 
 type PresetListOptions = {
@@ -122,6 +123,11 @@ type MergePresetNamesOptions = {
   agent?: string | null;
   sandboxName?: string;
   excludedBaselineKeys?: readonly string[];
+  credentialBoundMessagingChannels?: readonly string[];
+};
+
+type SandboxPresetLoadOptions = {
+  includeMessagingCredentialBindings?: boolean;
 };
 
 type SetupPolicyPresetSupportOptions = {
@@ -181,12 +187,49 @@ function loadCentralPreset(name: string, options: { reportMissing?: boolean } = 
   return name === "local-inference" ? materializeLocalInferencePresetPorts(content) : content;
 }
 
+function messagingChannelIdForPreset(presetName: string): string | null {
+  return (
+    listMessagingPolicyPresetMetadata().find((preset) => preset.presetName === presetName)
+      ?.channelId ?? null
+  );
+}
+
+function stripMessagingCredentialBindings(content: string): string | null {
+  let parsed: PolicyValue;
+  try {
+    parsed = YAML.parse(content);
+  } catch {
+    return null;
+  }
+  if (!isPolicyDocument(parsed)) return null;
+  const networkPolicies = parsed.network_policies;
+  if (!networkPolicies || !isPolicyObject(networkPolicies)) return content;
+
+  let changed = false;
+  for (const policy of Object.values(networkPolicies)) {
+    if (!isPolicyObject(policy) || !Array.isArray(policy.endpoints)) continue;
+    for (const endpoint of policy.endpoints) {
+      if (!isPolicyObject(endpoint) || !Object.hasOwn(endpoint, "credential_binding")) continue;
+      delete endpoint.credential_binding;
+      changed = true;
+    }
+  }
+  return changed ? YAML.stringify(parsed) : content;
+}
+
 function loadPresetForAgent(name: string, options: PresetLoadOptions = {}): string | null {
   const channelPreset = loadMessagingChannelPolicyPreset(name, {
     agent: options.agent,
     sandboxName: options.sandboxName,
   });
-  if (channelPreset) return channelPreset;
+  if (channelPreset) {
+    const credentialBoundChannels = options.credentialBoundMessagingChannels;
+    if (credentialBoundChannels === undefined) return channelPreset;
+    const channelId = messagingChannelIdForPreset(name);
+    return channelId && !credentialBoundChannels.includes(channelId)
+      ? stripMessagingCredentialBindings(channelPreset)
+      : channelPreset;
+  }
   if (isMessagingChannelPolicyPreset(name)) return null;
   return loadCentralPreset(name);
 }
@@ -194,6 +237,16 @@ function loadPresetForAgent(name: string, options: PresetLoadOptions = {}): stri
 function loadPreset(name: string): string | null {
   return loadPresetForAgent(name, { agent: "openclaw" });
 }
+
+function getCredentialBoundMessagingChannelsFromEntry(
+  sandbox: ReturnType<typeof registry.getSandbox>,
+): string[] {
+  const disabledChannels = new Set(registry.getDisabledMessagingChannelsFromEntry(sandbox));
+  return registry
+    .getConfiguredMessagingChannelsFromEntry(sandbox)
+    .filter((channel) => !disabledChannels.has(channel));
+}
+
 // The single sandbox->host bridge hostname OpenShell provisions. An endpoint
 // that pins `allowed_ips` for THIS host is the legitimate host-gateway flow
 // (e.g. web_fetch to host.openshell.internal); `allowed_ips` on any other host
@@ -344,26 +397,46 @@ function isAgentBasePreset(sandboxName: string, presetName: string): boolean {
   return loadAgentPresetContent(sandboxName, presetName, builtinPresetContent ?? "") !== null;
 }
 
-function loadPresetForSandbox(sandboxName: string, presetName: string): string | null {
+function loadPresetForSandbox(
+  sandboxName: string,
+  presetName: string,
+  options: SandboxPresetLoadOptions = {},
+): string | null {
   let sandboxAgent: string | null = null;
+  let configuredMessagingChannels: string[] = [];
   try {
-    sandboxAgent = registry.getSandbox(sandboxName)?.agent ?? null;
+    const sandbox = registry.getSandbox(sandboxName);
+    sandboxAgent = sandbox?.agent ?? null;
+    configuredMessagingChannels = getCredentialBoundMessagingChannelsFromEntry(sandbox);
   } catch {
     sandboxAgent = null;
+    configuredMessagingChannels = [];
   }
 
+  const channelId = messagingChannelIdForPreset(presetName);
+  if (options.includeMessagingCredentialBindings && channelId) {
+    configuredMessagingChannels = [...new Set([...configuredMessagingChannels, channelId])];
+  }
   const channelPresetContent = loadMessagingChannelPolicyPreset(presetName, {
     agent: sandboxAgent,
     sandboxName,
   });
-  if (channelPresetContent) return channelPresetContent;
+  if (channelPresetContent) {
+    return channelId && !configuredMessagingChannels.includes(channelId)
+      ? stripMessagingCredentialBindings(channelPresetContent)
+      : channelPresetContent;
+  }
   if (isMessagingChannelPolicyPreset(presetName)) return null;
 
   const builtinPresetContent = loadCentralPreset(presetName);
   if (!builtinPresetContent) return null;
-  return (
-    loadAgentPresetContent(sandboxName, presetName, builtinPresetContent) || builtinPresetContent
-  );
+  const resolvedPresetContent =
+    loadAgentPresetContent(sandboxName, presetName, builtinPresetContent) || builtinPresetContent;
+  return presetName === "outlook" &&
+    sandboxAgent !== "hermes" &&
+    configuredMessagingChannels.includes("teams")
+    ? reconcileTeamsOutlookLoginCredentialBinding(resolvedPresetContent, sandboxName, true)
+    : resolvedPresetContent;
 }
 
 /**
@@ -804,13 +877,16 @@ function resolvePolicyAuthority(
       "owner-unknown",
     );
   }
-  const { receipt } = managedReceiptBoundary(live, sandboxName, operation);
+  const managed = {
+    live,
+    receipt: managedReceiptBoundary(live, sandboxName, operation).receipt,
+  };
   return {
     authority: "nemoclaw-managed",
     authorityRecordedNow: false,
-    gatewayName: live.gatewayName,
-    inspection: { ...live.inspection, authority: "nemoclaw-managed" },
-    policyCreationReceipt: receipt,
+    gatewayName: managed.live.gatewayName,
+    inspection: { ...managed.live.inspection, authority: "nemoclaw-managed" },
+    policyCreationReceipt: managed.receipt,
   };
 }
 
@@ -833,6 +909,19 @@ export function inspectPolicyMutationAuthority(
   operation: string,
   requestedGatewayName?: string,
   _requireRecordedAuthority = false,
+): PolicyMutationAuthority {
+  return resolvePolicyAuthority(
+    inspectLivePolicyBoundary(sandboxName, operation, requestedGatewayName),
+    sandboxName,
+    operation,
+  );
+}
+
+/** Require the durable policy receipt immediately before a local mutation. */
+function preparePolicyMutationAuthority(
+  sandboxName: string,
+  operation: string,
+  requestedGatewayName?: string,
 ): PolicyMutationAuthority {
   return resolvePolicyAuthority(
     inspectLivePolicyBoundary(sandboxName, operation, requestedGatewayName),
@@ -927,7 +1016,7 @@ function inspectNemoClawManagedPolicy(
   gatewayName?: string,
 ): PolicyMutationAuthority | null {
   try {
-    const context = inspectPolicyMutationAuthority(sandboxName, operation, gatewayName);
+    const context = preparePolicyMutationAuthority(sandboxName, operation, gatewayName);
     assertNemoClawManagedPolicy(context, operation);
     return context;
   } catch (error) {
@@ -1139,7 +1228,7 @@ export function setReceiptBoundPolicyDocument(
     if (options.authority) {
       recheckPolicyMutationAuthority(sandboxName, operation, options.authority);
     }
-    authority = inspectPolicyMutationAuthority(
+    authority = preparePolicyMutationAuthority(
       sandboxName,
       operation,
       options.authority?.gatewayName ?? options.gatewayName,
@@ -1637,6 +1726,101 @@ function policyHasNetworkPolicy(policyContent: string, policyKey: string): boole
   return isPolicyObject(parseNetworkPolicies(policyContent)?.[policyKey]);
 }
 
+const MICROSOFT_LOGIN_HOST = "login.microsoftonline.com";
+const TEAMS_POLICY_KEY = "teams";
+const OUTLOOK_POLICY_KEY = "outlook_graph";
+
+function findMicrosoftLoginEndpoint(policy: PolicyObject, policyKey: string): PolicyObject {
+  const endpoints = policy.endpoints;
+  if (!Array.isArray(endpoints)) {
+    throw new Error(
+      `Cannot reconcile Microsoft login policy metadata: '${policyKey}' endpoints are missing.`,
+    );
+  }
+  const matches = endpoints.filter(
+    (endpoint) =>
+      isPolicyObject(endpoint) && endpoint.host === MICROSOFT_LOGIN_HOST && endpoint.port === 443,
+  );
+  if (matches.length !== 1) {
+    throw new Error(
+      `Cannot reconcile Microsoft login policy metadata: '${policyKey}' must declare exactly one ${MICROSOFT_LOGIN_HOST}:443 endpoint.`,
+    );
+  }
+  return matches[0] as PolicyObject;
+}
+
+/**
+ * OpenShell requires overlapping endpoints to carry identical credential
+ * metadata. Outlook and Teams share Microsoft's OAuth host, so the Outlook
+ * endpoint borrows Teams' bridge binding only for the lifetime of the Teams
+ * policy. Removing Teams restores Outlook's reviewed unbound endpoint.
+ */
+function reconcileTeamsOutlookLoginCredentialBinding(
+  policyContent: string,
+  sandboxName: string | undefined,
+  teamsActiveOverride?: boolean,
+): string {
+  let parsed: PolicyValue;
+  try {
+    parsed = YAML.parse(policyContent);
+  } catch {
+    throw new Error("Cannot reconcile Microsoft login policy metadata: policy YAML is invalid.");
+  }
+  if (!isPolicyDocument(parsed)) {
+    throw new Error(
+      "Cannot reconcile Microsoft login policy metadata: policy must be a YAML mapping.",
+    );
+  }
+
+  const networkPolicies = parsed.network_policies;
+  if (!networkPolicies || !isPolicyObject(networkPolicies)) return policyContent;
+  const outlookPolicy = networkPolicies[OUTLOOK_POLICY_KEY];
+  if (!isPolicyObject(outlookPolicy)) return policyContent;
+
+  const teamsPolicy = networkPolicies[TEAMS_POLICY_KEY];
+  const teamsActive = teamsActiveOverride ?? isPolicyObject(teamsPolicy);
+  const outlookEndpoint = findMicrosoftLoginEndpoint(outlookPolicy, OUTLOOK_POLICY_KEY);
+  const expectedProvider = sandboxName ? `${sandboxName}-teams-bridge` : null;
+  const expectedBinding = expectedProvider ? { provider: expectedProvider } : null;
+  const existingOutlookBinding = outlookEndpoint.credential_binding;
+
+  if (!teamsActive) {
+    if (existingOutlookBinding === undefined) return policyContent;
+    if (!expectedBinding || !isDeepStrictEqual(existingOutlookBinding, expectedBinding)) {
+      throw new Error(
+        "Cannot restore Outlook Microsoft login policy metadata: the existing credential binding is not owned by Teams.",
+      );
+    }
+    delete outlookEndpoint.credential_binding;
+    return YAML.stringify(parsed);
+  }
+
+  if (!expectedBinding) {
+    throw new Error(
+      "Cannot reconcile Microsoft login policy metadata: a sandbox name is required for the Teams credential provider.",
+    );
+  }
+  if (isPolicyObject(teamsPolicy)) {
+    const teamsEndpoint = findMicrosoftLoginEndpoint(teamsPolicy, TEAMS_POLICY_KEY);
+    if (teamsEndpoint.credential_binding === undefined) return policyContent;
+    if (!isDeepStrictEqual(teamsEndpoint.credential_binding, expectedBinding)) {
+      throw new Error(
+        "Cannot reconcile Microsoft login policy metadata: the Teams credential binding does not match its sandbox-owned provider.",
+      );
+    }
+  }
+  if (
+    existingOutlookBinding !== undefined &&
+    !isDeepStrictEqual(existingOutlookBinding, expectedBinding)
+  ) {
+    throw new Error(
+      "Cannot reconcile Microsoft login policy metadata: the Outlook endpoint already has a different credential binding.",
+    );
+  }
+  outlookEndpoint.credential_binding = expectedBinding;
+  return YAML.stringify(parsed);
+}
+
 function logOpenClawNpmCompatibilityDisclosure(logger: (line: string) => void = console.log): void {
   logger("  OpenClaw npm compatibility scope while this preset is active:");
   logger(
@@ -1658,6 +1842,7 @@ function mergePresetNamesIntoPolicy(
     const presetContent = loadPresetForAgent(presetName, {
       agent: options.agent,
       sandboxName: options.sandboxName,
+      credentialBoundMessagingChannels: options.credentialBoundMessagingChannels,
     });
     const presetEntries = extractPresetEntries(presetContent);
     if (!presetEntries) {
@@ -1705,6 +1890,13 @@ function mergePresetNamesIntoPolicy(
       reviewedBaseline.content,
       policyHasNetworkPolicy(currentPolicy, OPENCLAW_NPM_PRESET_KEY),
     ).policy;
+  }
+  if (appliedPresets.some((name) => name === "teams" || name === "outlook")) {
+    policy = reconcileTeamsOutlookLoginCredentialBinding(
+      policy,
+      options.sandboxName,
+      options.credentialBoundMessagingChannels?.includes("teams"),
+    );
   }
   return {
     policy: normalizePersonalOpenInternetPolicy(policy),
@@ -1915,6 +2107,21 @@ function removePreset(
   }
 
   let updated = removePresetFromPolicy(currentPolicy, presetEntries);
+  if (!isCustom && (presetName === "teams" || presetName === "outlook")) {
+    try {
+      const teamsActive =
+        presetName === "teams"
+          ? false
+          : getCredentialBoundMessagingChannelsFromEntry(
+              registry.getSandbox(sandboxName),
+            ).includes("teams");
+      updated = reconcileTeamsOutlookLoginCredentialBinding(updated, sandboxName, teamsActive);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`  Refusing to remove preset '${presetName}': ${message}`);
+      return false;
+    }
+  }
   if (openClawNpmBaseline) {
     try {
       updated = restoreOpenClawNpmCompatibility(currentPolicy, updated, openClawNpmBaseline);
@@ -2755,6 +2962,7 @@ function applyPresetContent(
     skipRegistryUpdate?: boolean;
     suppressDisclosure?: boolean;
     disclosedPresetState?: PresetPolicyState | null;
+    includeMessagingCredentialBindings?: boolean;
   } = {},
 ): boolean {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
@@ -2835,7 +3043,7 @@ function applyPresetContent(
   const operation = `apply policy preset '${presetName}'`;
   let authority: PolicyMutationAuthority;
   try {
-    authority = inspectPolicyMutationAuthority(sandboxName, operation);
+    authority = preparePolicyMutationAuthority(sandboxName, operation);
     if (authority.authority === "externally-managed") {
       assertExternalPolicyRequirements({
         inspection: authority.inspection,
@@ -2893,6 +3101,14 @@ function applyPresetContent(
   let merged: string;
   try {
     merged = mergePresetIntoPolicy(currentPolicy, presetEntries);
+    if (!options.custom && (presetName === "teams" || presetName === "outlook")) {
+      const teamsConfigured =
+        options.includeMessagingCredentialBindings === true ||
+        getCredentialBoundMessagingChannelsFromEntry(registry.getSandbox(sandboxName)).includes(
+          "teams",
+        );
+      merged = reconcileTeamsOutlookLoginCredentialBinding(merged, sandboxName, teamsConfigured);
+    }
   } catch (error) {
     if (!options.nonFatal) throw error;
     const message = error instanceof Error ? error.message : String(error);
@@ -3045,7 +3261,9 @@ function applyPreset(
   presetName: string,
   options: Record<string, unknown> = {},
 ): boolean {
-  const presetContent = loadPresetForSandbox(sandboxName, presetName);
+  const presetContent = loadPresetForSandbox(sandboxName, presetName, {
+    includeMessagingCredentialBindings: options.includeMessagingCredentialBindings === true,
+  });
   if (!presetContent) {
     console.error(`  Cannot load preset: ${presetName}`);
     return false;
@@ -3114,7 +3332,7 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
   const operation = "apply policy presets";
   let authority: PolicyMutationAuthority;
   try {
-    authority = inspectPolicyMutationAuthority(sandboxName, operation);
+    authority = preparePolicyMutationAuthority(sandboxName, operation);
     if (authority.authority === "externally-managed") {
       assertExternalPolicyRequirements({
         inspection: authority.inspection,
@@ -3158,6 +3376,18 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
     const state = classifyPresetEntries(merged, preset.entries);
     presetContents.push({ content: preset.content, name: preset.name, state });
     merged = mergePresetIntoPolicy(merged, preset.entries);
+  }
+  if (uniquePresetNames.some((name) => name === "teams" || name === "outlook")) {
+    try {
+      const teamsConfigured = getCredentialBoundMessagingChannelsFromEntry(
+        registry.getSandbox(sandboxName),
+      ).includes("teams");
+      merged = reconcileTeamsOutlookLoginCredentialBinding(merged, sandboxName, teamsConfigured);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`  Refusing to apply policy presets: ${message}`);
+      return false;
+    }
   }
 
   let npmBaselineWidened = false;
@@ -3598,7 +3828,7 @@ function applyPermissivePolicy(sandboxName: string): void {
   }
 
   const operation = "apply the permissive sandbox policy";
-  const authority = inspectPolicyMutationAuthority(sandboxName, operation);
+  const authority = preparePolicyMutationAuthority(sandboxName, operation);
   assertNemoClawManagedPolicy(authority, operation);
 
   const policyPath = resolvePermissivePolicyPath(sandboxName);
@@ -3677,6 +3907,7 @@ export {
   removeBuiltinPresetAttribution,
   removePreset,
   removePresetFromPolicy,
+  reconcileTeamsOutlookLoginCredentialBinding,
   renderPresetScope,
   replayTrustedPrivatePolicyPinCapability,
   resolveAgentBaselinePolicy,

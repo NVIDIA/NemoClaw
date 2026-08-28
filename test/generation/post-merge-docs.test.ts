@@ -6,19 +6,16 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import YAML from "yaml";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  nextPatchReleaseTag,
-  validatePostMergeDocsWorkflowBoundary,
-} from "../../tools/post-merge-docs/contract.mts";
+import { nextPatchReleaseTag } from "../../tools/post-merge-docs/contract.mts";
 import { publishDocumentation, type Request } from "../../tools/post-merge-docs/publish.mts";
 import { configurePostMergeDocs, executePostMergeDocs } from "../../tools/post-merge-docs/run.mts";
 import type { OpenShellTools } from "../../tools/openshell-agent/runtime.mts";
 
 const directories: string[] = [];
 const repository = "NVIDIA/NemoClaw";
+const repositoryId = "R_kgDOTestRepository";
 const signOff =
   "Signed-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>";
 const rangeStartTag = "v1.0.0";
@@ -27,27 +24,14 @@ const managedTitle = "docs: prepare v1.0.1 documentation";
 const managedBody = `## Release target
 
 This cumulative draft prepares documentation for \`v1.0.1\`.
-It covers merged changes after \`v1.0.0\` through the latest PR commit.
+It covers merged changes after \`v1.0.0\` through the reviewed \`main\` commit recorded as a parent of the latest workflow-created commit.
 The workflow selects \`v1.0.1\` by incrementing the patch component of \`v1.0.0\`.
 
-## During development
+## Managed state
 
-- Each push to \`main\` that changes a path outside the allowed documentation paths starts a cumulative authoring and independent review run.
-- An approved patch creates a verified merge commit and fast-forwards this branch.
-- Keep this PR as a draft while code PRs merge for \`v1.0.1\`. The workflow owns the draft branch.
-- Mark this PR ready for review only at release cutoff. Ready status transfers branch ownership to maintainers, and later workflow runs leave the PR unchanged.
-- The workflow never force-pushes. While the PR is a draft, it stops if a person changes the branch or PR metadata.
+The workflow owns this branch while the PR is a draft. Ready-for-review status transfers branch ownership to maintainers, and later workflow runs leave the PR unchanged.
 
-## Release cutoff
-
-1. Stop merging code PRs intended for \`v1.0.1\`.
-2. Mark this PR ready for review to transfer branch ownership to maintainers.
-3. Add the dated \`## v1.0.1\` changelog entry and final documentation to this PR.
-4. Run \`npm run docs\` and complete the final review.
-5. Merge this PR. Its docs-only merge does not start another catch-up run.
-6. Ask the tag session to show this PR's coverage point, later commits and PRs, checks, reviews, and any open managed docs PR.
-7. Decide whether to proceed, create or update a docs PR for the uncovered range, or stop.
-8. Cut \`v1.0.1\` only after you choose to proceed with the displayed documentation coverage.
+Follow [Post-Merge Documentation Catch-Up](https://github.com/NVIDIA/NemoClaw/blob/main/docs/AUTOMATION.md#post-merge-documentation-catch-up) for development, recovery, validation, and release-cutoff routing.
 
 ## Verification
 
@@ -138,7 +122,10 @@ class FakeGitHub {
   readonly initialParent = "a".repeat(40);
   readonly partialSha = "d".repeat(40);
   readonly commits = new Map<string, Record<string, unknown>>();
+  beforePullCreation = (): void => undefined;
+  beforeRefUpdate = (): void => undefined;
   afterWrite = (): void => undefined;
+  afterPullRead = (): void => undefined;
   projectPullHead = (headSha: string): void => {
     this.openPulls = this.openPulls.map((pull) => ({
       ...pull,
@@ -156,9 +143,13 @@ class FakeGitHub {
   ) {
     return {
       body,
-      base: { ref: "main", repo: { full_name: repository } },
+      base: { ref: "main", repo: { full_name: repository, node_id: repositoryId } },
       draft: true,
-      head: { ref: this.branch, repo: { full_name: repository }, sha: headSha },
+      head: {
+        ref: this.branch,
+        repo: { full_name: repository, node_id: repositoryId },
+        sha: headSha,
+      },
       html_url: `https://github.com/${repository}/pull/42`,
       number: 42,
       state: "open",
@@ -192,6 +183,21 @@ class FakeGitHub {
         : this.pull(managedBody, this.existingSha, managedTitle),
     ];
   }
+  installOrphan(tree = this.value.finalTree) {
+    this.branchRef = {
+      object: { sha: this.existingSha },
+      ref: `refs/heads/${this.branch}`,
+    };
+    this.commits.set(this.existingSha, {
+      author: { email: "41898282+github-actions[bot]@users.noreply.github.com" },
+      message: `docs: catch up after main\n\n${signOff}`,
+      parents: [{ sha: this.value.mainSha }],
+      sha: this.existingSha,
+      tree: { sha: tree },
+      verification: { verified: true },
+    });
+    this.openPulls = [];
+  }
   installPartiallyPublishedLegacy(tree = "f".repeat(40)) {
     this.installActive("e".repeat(40), undefined, true);
     this.commits.set(this.partialSha, {
@@ -220,8 +226,11 @@ class FakeGitHub {
         return this.commits.get(url.slice(url.lastIndexOf("/") + 1));
       case `GET /repos/${repository}/git/ref/heads/main`:
         return { object: { sha: this.liveSha } };
-      case `GET /repos/${repository}/pulls?state=open&base=main&per_page=100&page=1`:
-        return this.openPulls;
+      case `GET /repos/${repository}/pulls?state=open&base=main&per_page=100&page=1`: {
+        const pulls = structuredClone(this.openPulls);
+        this.afterPullRead();
+        return pulls;
+      }
       case `GET /repos/${repository}/git/ref/heads/${this.branch}`:
         return this.branchRef;
       case `POST /repos/${repository}/git/blobs`: {
@@ -254,25 +263,47 @@ class FakeGitHub {
         this.afterWrite();
         return ref;
       }
-      case `PATCH /repos/${repository}/git/refs/heads/${this.branch}`: {
-        expect(body).toEqual({ force: false, sha: this.commitSha });
+      case "POST /graphql": {
+        const graphql = body as {
+          query: string;
+          variables: {
+            input: {
+              clientMutationId: string;
+              refUpdates: Array<{
+                afterOid: string;
+                beforeOid: string;
+                force: boolean;
+                name: string;
+              }>;
+              repositoryId: string;
+            };
+          };
+        };
+        const input = graphql.variables.input;
+        expect(graphql.query).toContain("updateRefs");
+        expect(input).toMatchObject({
+          clientMutationId: this.commitSha,
+          refUpdates: [
+            {
+              afterOid: this.commitSha,
+              force: false,
+              name: `refs/heads/${this.branch}`,
+            },
+          ],
+          repositoryId,
+        });
+        this.beforeRefUpdate();
+        expect(this.branchRef?.object.sha, "conditional branch update rejected").toBe(
+          input.refUpdates[0]?.beforeOid,
+        );
         const ref = { object: { sha: this.commitSha }, ref: `refs/heads/${this.branch}` };
         this.branchRef = ref;
         this.projectPullHead(this.commitSha);
         this.afterWrite();
-        return ref;
-      }
-      case `PATCH /repos/${repository}/pulls/42`: {
-        const metadata = body as { body: string; title: string };
-        this.openPulls = this.openPulls.map((pull) => ({
-          ...pull,
-          body: metadata.body,
-          title: metadata.title,
-        }));
-        this.afterWrite();
-        return this.openPulls[0];
+        return { updateRefs: { clientMutationId: input.clientMutationId } };
       }
       case `POST /repos/${repository}/pulls`: {
+        this.beforePullCreation();
         const metadata = body as { body: string; title: string };
         const pull = this.pull(metadata.body, undefined, metadata.title);
         this.openPulls = [pull];
@@ -299,8 +330,7 @@ function requestCount(api: FakeGitHub, method: string, suffix?: string): number 
   ).length;
 }
 function writeCount(api: FakeGitHub): number {
-  return api.request.mock.calls.filter(([method]) => method === "PATCH" || method === "POST")
-    .length;
+  return api.request.mock.calls.filter(([method]) => method === "POST").length;
 }
 
 const credentials =
@@ -393,19 +423,23 @@ function runnerTools(
     delete: () => (state.deleted = true),
   };
   const commands: Record<string, string> = { bash: "export", node: "agent" };
+  const run: OpenShellTools["run"] = (_command, args, options) => {
+    for (const name of credentials) expect(options.env).not.toHaveProperty(name);
+    const executable = path.basename(args[args.indexOf("--") + 1] ?? "");
+    const stage = commands[executable] ?? args[1];
+    expect(stage).not.toBe(failure);
+    return String(handlers[stage](args) ?? "");
+  };
   const tools: OpenShellTools = {
-    run: (_command, args, options) => {
-      for (const name of credentials) expect(options.env).not.toHaveProperty(name);
-      const executable = path.basename(args[args.indexOf("--") + 1] ?? "");
-      const stage = commands[executable] ?? args[1];
-      expect(stage).not.toBe(failure);
-      return String(handlers[stage](args) ?? "");
-    },
+    run: vi.fn(run),
     start: () => undefined,
     wait: async () => undefined,
   };
-  return { state, tools };
+  return { run, state, tools };
 }
+beforeEach(() => {
+  vi.spyOn(console, "error").mockImplementation(() => undefined);
+});
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
@@ -414,6 +448,9 @@ afterEach(() => {
 });
 
 describe("post-merge documentation publisher", () => {
+  it("increments a canonical release tag", () => {
+    expect(nextPatchReleaseTag("v1.2.3")).toBe("v1.2.4");
+  });
   it.each(["v01.2.3", "v1.02.3", "v1.2.003"])("rejects non-canonical release tag %s", (tag) => {
     expect(() => nextPatchReleaseTag(tag)).toThrow("cannot produce a release target");
   });
@@ -429,14 +466,12 @@ describe("post-merge documentation publisher", () => {
     expect(api.branchRef?.object.sha).toBe(api.commitSha);
     expect(api.openPulls[0]?.title).toBe(managedTitle);
     expect(api.openPulls[0]?.body).toContain(
-      "Its docs-only merge does not start another catch-up run.",
-    );
-    expect(api.openPulls[0]?.body).toMatch(
-      /`v1[.]0[.]0`[\s\S]*never force-pushes[\s\S]*`npm run docs`[\s\S]*`v1[.]0[.]1`/u,
+      "through the reviewed `main` commit recorded as a parent of the latest workflow-created commit",
     );
     expect(api.openPulls[0]?.body).toContain(
-      "Ready status transfers branch ownership to maintainers",
+      "https://github.com/NVIDIA/NemoClaw/blob/main/docs/AUTOMATION.md#post-merge-documentation-catch-up",
     );
+    expect(api.openPulls[0]?.body).not.toContain("## Release cutoff");
   });
   it("creates no writes for an approved empty patch without an active PR", async () => {
     const value = emptyFixture();
@@ -444,11 +479,60 @@ describe("post-merge documentation publisher", () => {
     await publish(value, api);
     expect(writeCount(api)).toBe(0);
   });
+  it("reports the exact orphaned branch when draft PR creation fails", async () => {
+    const value = fixture();
+    const api = new FakeGitHub(value);
+    api.beforePullCreation = () => {
+      throw new Error("pull creation failed");
+    };
+    await expect(publish(value, api)).rejects.toThrow(
+      `managed documentation branch ${api.branch} at ${api.commitSha} remains without a draft PR; PR creation failed: pull creation failed; follow https://github.com/NVIDIA/NemoClaw/blob/main/docs/AUTOMATION.md#recover-an-orphaned-managed-branch`,
+    );
+    expect(api.branchRef?.object.sha).toBe(api.commitSha);
+    expect(api.openPulls).toEqual([]);
+    expect(requestCount(api, "POST", "/pulls")).toBe(1);
+  });
+  it("reports the exact orphaned branch when another managed PR appears", async () => {
+    const value = fixture();
+    const api = new FakeGitHub(value);
+    api.beforePullCreation = () => {
+      const other = api.pull();
+      api.openPulls = [
+        {
+          ...other,
+          head: {
+            ...other.head,
+            ref: `automation/post-merge-docs-${"f".repeat(12)}`,
+          },
+          html_url: `https://github.com/${repository}/pull/43`,
+          number: 43,
+        },
+      ];
+      throw new Error("pull creation failed");
+    };
+    await expect(publish(value, api)).rejects.toThrow(
+      `managed documentation branch ${api.branch} at ${api.commitSha} remains without a draft PR`,
+    );
+    expect(console.error).toHaveBeenCalledWith(
+      `managed documentation branch ${api.branch} at ${api.commitSha} was created; if publication stops before draft PR creation, follow https://github.com/NVIDIA/NemoClaw/blob/main/docs/AUTOMATION.md#recover-an-orphaned-managed-branch`,
+    );
+    expect(api.branchRef?.object.sha).toBe(api.commitSha);
+    expect(api.openPulls[0]?.head.ref).not.toBe(api.branch);
+  });
   it("keeps an active PR pending when the approved patch is empty", async () => {
     const value = emptyFixture();
     const api = new FakeGitHub(value);
     api.installActive();
     await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
+    expect(writeCount(api)).toBe(0);
+  });
+  it("leaves a ready-for-review managed PR unchanged", async () => {
+    const value = fixture();
+    const api = new FakeGitHub(value);
+    api.installActive();
+    api.openPulls[0]!.draft = false;
+    await publish(value, api);
+    expect(api.branchRef?.object.sha).toBe(api.existingSha);
     expect(writeCount(api)).toBe(0);
   });
   it("rejects a patch whose digest was not approved", async () => {
@@ -468,6 +552,19 @@ describe("post-merge documentation publisher", () => {
     fs.writeFileSync(reviewFile, JSON.stringify(review));
     const api = new FakeGitHub(value);
     await expect(publish(value, api, approved)).rejects.toThrow("release target");
+    expect(api.request).not.toHaveBeenCalled();
+  });
+  it("preserves the publisher diagnostic for an invalid review range tag", async () => {
+    const value = emptyFixture();
+    const approved = artifact(value);
+    const reviewFile = path.join(approved, "review.json");
+    const review = JSON.parse(fs.readFileSync(reviewFile, "utf8"));
+    review.rangeStartTag = "v01.0.0";
+    fs.writeFileSync(reviewFile, JSON.stringify(review));
+    const api = new FakeGitHub(value);
+    await expect(publish(value, api, approved)).rejects.toThrow(
+      "review range start tag cannot produce a release target",
+    );
     expect(api.request).not.toHaveBeenCalled();
   });
   it.each(["src/bad.ts", "fern/package.json", "fern/.npmrc", "fern/components/CustomFooter.tsx"])(
@@ -510,7 +607,16 @@ describe("post-merge documentation publisher", () => {
     expect(api.openPulls[0]?.head.sha).toBe(api.commitSha);
     expect(api.openPulls[0]?.body).toBe(managedBody);
     expect(api.openPulls[0]?.title).toBe(managedTitle);
-    expect(requestCount(api, "PATCH", `/git/refs/heads/${api.branch}`)).toBe(1);
+    expect(requestCount(api, "POST", "/graphql")).toBe(1);
+    expect(
+      api.request.mock.calls.find(([method, url]) => method === "POST" && url === "/graphql")?.[2],
+    ).toMatchObject({
+      variables: {
+        input: {
+          refUpdates: [{ beforeOid: api.existingSha }],
+        },
+      },
+    });
     expect(requestCount(api, "POST", "/pulls")).toBe(0);
   });
   it("accepts a confirmed fast-forward before the PR head projection catches up", async () => {
@@ -521,45 +627,58 @@ describe("post-merge documentation publisher", () => {
     await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
     expect(api.branchRef?.object.sha).toBe(api.commitSha);
     expect(api.openPulls[0]?.head.sha).toBe(api.existingSha);
-    expect(requestCount(api, "PATCH", `/git/refs/heads/${api.branch}`)).toBe(1);
+    expect(requestCount(api, "POST", "/graphql")).toBe(1);
   });
-  it("updates exact legacy metadata for the active managed PR", async () => {
+  it("rejects a conditional update when the managed branch moves to an ancestor", async () => {
+    const value = fixture();
+    const api = new FakeGitHub(value);
+    api.installActive();
+    api.beforeRefUpdate = () => {
+      api.branchRef = {
+        object: { sha: api.initialParent },
+        ref: `refs/heads/${api.branch}`,
+      };
+    };
+    await expect(publish(value, api)).rejects.toThrow("conditional branch update rejected");
+    expect(api.branchRef?.object.sha).toBe(api.initialParent);
+    expect(
+      api.request.mock.calls.find(([method, url]) => method === "POST" && url === "/graphql")?.[2],
+    ).toMatchObject({
+      variables: {
+        input: {
+          refUpdates: [{ beforeOid: api.existingSha }],
+        },
+      },
+    });
+  });
+  it("stops without writes for exact previous workflow metadata", async () => {
     const value = fixture();
     const api = new FakeGitHub(value);
     api.installActive("e".repeat(40), undefined, true);
-    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
-    expect(api.openPulls[0]?.title).toBe(managedTitle);
-    expect(api.openPulls[0]?.body).toBe(managedBody);
-    expect(requestCount(api, "PATCH", "/pulls/42")).toBe(1);
+    await expect(publish(value, api)).rejects.toThrow(
+      "managed documentation PR https://github.com/NVIDIA/NemoClaw/pull/42 uses previous workflow metadata; close this legacy draft so a later qualifying push can create a current workflow-owned draft, or mark the PR ready for review to transfer ownership",
+    );
+    expect(writeCount(api)).toBe(0);
   });
-  it("recovers legacy metadata after a previous fast-forward completed", async () => {
+  it("stops without writes for previous metadata after a workflow refresh", async () => {
     const value = fixture();
     const api = new FakeGitHub(value);
     api.installPartiallyPublishedLegacy(value.finalTree);
-    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
-    expect(api.openPulls[0]?.title).toBe(managedTitle);
-    expect(api.openPulls[0]?.body).toBe(managedBody);
-    expect(api.branchRef?.object.sha).toBe(api.partialSha);
-    expect(requestCount(api, "PATCH", "/pulls/42")).toBe(1);
-    expect(requestCount(api, "PATCH", `/git/refs/heads/${api.branch}`)).toBe(0);
+    await expect(publish(value, api)).rejects.toThrow("uses previous workflow metadata");
+    expect(writeCount(api)).toBe(0);
   });
-  it("migrates recovered legacy metadata before the next fast-forward", async () => {
+  it("does not overwrite a concurrent edit to previous workflow metadata", async () => {
     const value = fixture();
     const api = new FakeGitHub(value);
-    api.installPartiallyPublishedLegacy();
-    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
-    expect(api.commitBodies[0]).toMatchObject({
-      parents: [api.partialSha, value.mainSha],
-      tree: value.finalTree,
-    });
-    const metadataUpdate = api.request.mock.calls.findIndex(
-      ([method, url]) => method === "PATCH" && url.endsWith("/pulls/42"),
+    api.installActive("e".repeat(40), undefined, true);
+    api.afterPullRead = () => {
+      api.openPulls[0]!.title = "maintainer title";
+      api.afterPullRead = () => undefined;
+    };
+    await expect(publish(value, api)).rejects.toThrow(
+      "managed documentation PR changed during publication",
     );
-    const refUpdate = api.request.mock.calls.findIndex(
-      ([method, url]) => method === "PATCH" && url.endsWith(`/git/refs/heads/${api.branch}`),
-    );
-    expect(metadataUpdate).toBeGreaterThan(-1);
-    expect(refUpdate).toBeGreaterThan(metadataUpdate);
+    expect(writeCount(api)).toBe(0);
   });
   it("rejects a partially published legacy PR without a verified legacy parent", async () => {
     const value = fixture();
@@ -570,23 +689,14 @@ describe("post-merge documentation publisher", () => {
     await expect(publish(value, api)).rejects.toThrow("not created by the workflow");
     expect(writeCount(api)).toBe(0);
   });
-  it("reconciles a lost legacy metadata update without retrying", async () => {
-    const value = fixture();
-    const api = new FakeGitHub(value);
-    api.installActive("e".repeat(40), undefined, true);
-    api.afterWrite = () => {
-      throw new Error("lost response");
-    };
-    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
-    expect(api.openPulls[0]?.title).toBe(managedTitle);
-    expect(requestCount(api, "PATCH", "/pulls/42")).toBe(1);
-  });
-  it("rejects changed metadata on the active managed PR", async () => {
+  it("names the managed PR and recovery paths when its metadata changes", async () => {
     const value = fixture();
     const api = new FakeGitHub(value);
     api.installActive();
     api.openPulls[0]!.title = "maintainer title";
-    await expect(publish(value, api)).rejects.toThrow("metadata does not match");
+    await expect(publish(value, api)).rejects.toThrow(
+      "managed documentation PR https://github.com/NVIDIA/NemoClaw/pull/42 title or body no longer matches the workflow-owned release target; restore the previous workflow-authored title and body to resume updates on the next qualifying push, or mark the PR ready for review to transfer ownership",
+    );
     expect(writeCount(api)).toBe(0);
   });
   it("does not add a redundant refresh when the active tree already matches", async () => {
@@ -618,6 +728,50 @@ describe("post-merge documentation publisher", () => {
     await expect(publish(value, api)).rejects.toThrow("unmanaged documentation branch");
     expect(writeCount(api)).toBe(0);
   });
+  it("reconciles a verified orphan branch into exactly one draft PR", async () => {
+    const value = fixture();
+    const api = new FakeGitHub(value);
+    api.installOrphan();
+    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
+    expect(api.branchRef?.object.sha).toBe(api.existingSha);
+    expect(api.openPulls).toHaveLength(1);
+    expect(api.openPulls[0]?.head.sha).toBe(api.existingSha);
+    expect(api.commitBodies).toEqual([]);
+    expect(requestCount(api, "POST", "/pulls")).toBe(1);
+    expect(requestCount(api, "POST", "/git/refs")).toBe(0);
+    expect(requestCount(api, "POST", "/graphql")).toBe(0);
+  });
+  it("preserves a concurrently attached draft while recovering an orphan", async () => {
+    const value = fixture();
+    const api = new FakeGitHub(value);
+    api.installOrphan();
+    api.beforePullCreation = () => {
+      api.openPulls = [api.pull(managedBody, api.existingSha, managedTitle)];
+      throw new Error("pull already attached");
+    };
+    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
+    expect(api.branchRef?.object.sha).toBe(api.existingSha);
+    expect(api.openPulls).toHaveLength(1);
+    expect(api.openPulls[0]?.head.sha).toBe(api.existingSha);
+    expect(requestCount(api, "POST", "/pulls")).toBe(1);
+  });
+  it("rejects an orphan branch whose workflow commit has the wrong parent", async () => {
+    const value = fixture();
+    const api = new FakeGitHub(value);
+    api.installOrphan();
+    api.commits.get(api.existingSha)!.parents = [{ sha: api.initialParent }];
+    await expect(publish(value, api)).rejects.toThrow("unmanaged documentation branch");
+    expect(writeCount(api)).toBe(0);
+  });
+  it("rejects an orphan branch whose tree differs from the approved patch", async () => {
+    const value = fixture();
+    const api = new FakeGitHub(value);
+    api.installOrphan("e".repeat(40));
+    await expect(publish(value, api)).rejects.toThrow("unmanaged documentation branch");
+    expect(api.branchRef?.object.sha).toBe(api.existingSha);
+    expect(api.openPulls).toEqual([]);
+    expect(writeCount(api)).toBe(0);
+  });
   it("reconciles exact lost branch and PR responses without retrying", async () => {
     const value = fixture();
     const api = new FakeGitHub(value);
@@ -628,7 +782,7 @@ describe("post-merge documentation publisher", () => {
     expect(requestCount(api, "POST", "/pulls")).toBe(1);
     expect(requestCount(api, "POST", "/git/refs")).toBe(1);
   });
-  it("reconciles a lost fast-forward response without retrying", async () => {
+  it("reconciles an applied conditional update after a lost response", async () => {
     const value = fixture();
     const api = new FakeGitHub(value);
     api.installActive();
@@ -636,7 +790,8 @@ describe("post-merge documentation publisher", () => {
       throw new Error("lost response");
     };
     await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
-    expect(requestCount(api, "PATCH", `/git/refs/heads/${api.branch}`)).toBe(1);
+    expect(api.branchRef?.object.sha).toBe(api.commitSha);
+    expect(requestCount(api, "POST", "/graphql")).toBe(1);
   });
 });
 
@@ -735,6 +890,14 @@ describe("post-merge documentation runner", () => {
     await publish(value, api, approved);
     expect(writeCount(api)).toBe(0);
   });
+  it("preserves the runner diagnostic for an invalid range tag", () => {
+    const input = runnerFixture("review", "v01.2.3");
+    const { state, tools } = runnerTools(input);
+    expect(() => executePostMergeDocs(input.env, tools)).toThrow(
+      "RANGE_START_TAG cannot produce a release target",
+    );
+    expect(state.deleted).toBe(true);
+  });
   it("rejects an independent review denial and deletes the sandbox", () => {
     const input = runnerFixture("review");
     const { state, tools } = runnerTools(input, undefined, "rejected");
@@ -770,72 +933,44 @@ describe("post-merge documentation runner", () => {
       expect(state.deleted).toBe(true);
     },
   );
-});
-
-describe("post-merge documentation workflow boundary", () => {
-  const root = path.resolve(import.meta.dirname, "../..");
-  const workflow = YAML.parse(
-    fs.readFileSync(path.join(root, ".github/workflows/post-merge-docs.yaml"), "utf8"),
-  ) as Record<string, any>;
-  const policy = YAML.parse(
-    fs.readFileSync(path.join(root, "tools/post-merge-docs/review-policy.yaml"), "utf8"),
-  );
-
-  it("separates the model credential from repository writes", () => {
-    expect(validatePostMergeDocsWorkflowBoundary(workflow)).toEqual([]);
+  it("attempts named cleanup and reports its failure when sandbox listing fails", () => {
+    const input = runnerFixture("author");
+    const { run, tools } = runnerTools(input);
+    tools.run = vi
+      .fn<OpenShellTools["run"]>()
+      .mockImplementationOnce(run)
+      .mockImplementationOnce(run)
+      .mockImplementationOnce(run)
+      .mockImplementationOnce(run)
+      .mockImplementationOnce(() => {
+        throw new Error("list failed");
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("delete failed");
+      });
+    expect(() => executePostMergeDocs(input.env, tools)).toThrow(
+      "Failed to delete OpenShell sandbox docs-author: delete failed; sandbox listing also failed: list failed",
+    );
+    expect(vi.mocked(tools.run).mock.calls.some(([, args]) => args[1] === "delete")).toBe(true);
   });
-
-  it.each<(candidate: Record<string, any>) => void>([
-    (candidate) => (candidate.jobs.author.permissions = { contents: "write" }),
-    (candidate) => (candidate.jobs.gate.outputs.automate = "false"),
-    (candidate) =>
-      (candidate.jobs.gate.steps.find((step: Record<string, any>) => step.id === "scan").run =
-        "echo automate=true"),
-    (candidate) => {
-      const scan = candidate.jobs.gate.steps.find(
-        (step: Record<string, any>) => step.id === "scan",
-      );
-      scan.run = scan.run.replace(
-        'test("^automation/post-merge-docs-[0-9a-f]{12}$")',
-        'startswith("automation/post-merge-docs-")',
-      );
-    },
-    (candidate) =>
-      (candidate.jobs.author.if =
-        "${{ github.repository == 'NVIDIA/NemoClaw' && needs.gate.outputs.pending != 'true' }}"),
-    (candidate) =>
-      (candidate.jobs.author.steps.find(
-        (step: Record<string, any>) => step.name === "Validate the documentation candidate",
-      ).run = "npm run docs"),
-    (candidate) =>
-      (candidate.jobs.author.steps.find(
-        (step: Record<string, any>) => step.name === "Upload the independent review report",
-      ).with.path = "${{ github.workspace }}/candidate/docs.patch"),
-    (candidate) =>
-      (candidate.jobs.author.steps.find(
-        (step: Record<string, any>) => step.name === "Upload the independent review report",
-      ).with["retention-days"] = 30),
-    (candidate) => (candidate.jobs.publish.permissions.issues = "write"),
-    (candidate) => (candidate.jobs.gate.secrets = "inherit"),
-    (candidate) =>
-      (candidate.jobs.author.steps.find(
-        (step: Record<string, any>) => step.env?.OPENAI_API_KEY,
-      ).name = "Other step"),
-    (candidate) =>
-      (candidate.jobs.publish.env = {
-        OPENAI_API_KEY: "${{ secrets.POST_MERGE_DOCS_API_KEY }}",
-      }),
-    (candidate) => (candidate.on.push["paths-ignore"] = ["docs/**"]),
-  ])("rejects workflow boundary mutation %#", (mutate) => {
-    const candidate = structuredClone(workflow);
-    mutate(candidate);
-    expect(validatePostMergeDocsWorkflowBoundary(candidate)).not.toEqual([]);
-  });
-
-  it("keeps the independent reviewer's repository read-only and offline", () => {
-    expect(policy.filesystem_policy.read_write).toEqual(["/dev", "/sandbox/output"]);
-    expect(policy.filesystem_policy.read_only).toContain("/sandbox/repo");
-    expect(policy.landlock).toEqual({ compatibility: "hard_requirement" });
-    expect(policy.network_policies).toEqual({});
+  it("preserves the primary failure when named sandbox cleanup also fails", () => {
+    const input = runnerFixture("author");
+    const { run, tools } = runnerTools(input);
+    tools.run = vi
+      .fn<OpenShellTools["run"]>()
+      .mockImplementationOnce(run)
+      .mockImplementationOnce(() => {
+        throw new Error("agent failed");
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("list failed");
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("delete failed");
+      });
+    expect(() => executePostMergeDocs(input.env, tools)).toThrow("agent failed");
+    expect(console.error).toHaveBeenCalledWith(
+      "Failed to delete OpenShell sandbox docs-author: delete failed; sandbox listing also failed: list failed",
+    );
   });
 });
