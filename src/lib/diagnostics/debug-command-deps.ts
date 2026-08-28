@@ -34,9 +34,17 @@ export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
     const { defaultSandbox, sandboxes } = registry.listSandboxes();
     if (!defaultSandbox) {
       const registeredName = sandboxes.find((sandbox) => sandbox.name)?.name;
-      if (registeredName) return registeredName;
       const liveNames = await liveSandboxNames();
-      return liveNames?.values().next().value ?? "default";
+      if (registeredName && liveNames && !liveNames.has(registeredName)) {
+        console.error(
+          `${RD}Warning:${R} sandbox '${registeredName}' exists in the local registry but not in OpenShell.`,
+        );
+        console.error(
+          `  Use ${B}--sandbox NAME${R} to target a specific sandbox, or run ${B}${CLI_NAME} onboard${R} again.\n`,
+        );
+        return null;
+      }
+      return registeredName ?? liveNames?.values().next().value ?? "default";
     }
     if (!sandboxes.find((sandbox) => sandbox.name === defaultSandbox)) {
       console.error(

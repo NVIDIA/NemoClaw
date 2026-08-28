@@ -204,6 +204,32 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
     await expect(deps.getSandboxAvailability("alpha")).resolves.toBe("missing");
   });
 
+  it("rejects a fallback registered sandbox missing from OpenShell", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      defaultSandbox: null,
+      sandboxes: [{ name: "alpha" }],
+    } as never);
+    mocks.captureOpenshellCommand.mockReturnValue({ status: 0, output: "beta\n" });
+
+    await DebugCliCommand.run(["--quick"], rootDir);
+
+    const deps = mocks.runDebugCommandWithOptions.mock.calls[0][1];
+    await expect(deps.getDefaultSandbox()).resolves.toBeNull();
+  });
+
+  it("keeps a fallback registered sandbox when OpenShell observation fails", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      defaultSandbox: null,
+      sandboxes: [{ name: "alpha" }],
+    } as never);
+    mocks.captureOpenshellCommand.mockReturnValue({ status: 1, output: "unavailable" });
+
+    await DebugCliCommand.run(["--quick"], rootDir);
+
+    const deps = mocks.runDebugCommandWithOptions.mock.calls[0][1];
+    await expect(deps.getDefaultSandbox()).resolves.toBe("alpha");
+  });
+
   it("keeps registered debug sandboxes when OpenShell observation fails", async () => {
     mocks.listSandboxes.mockReturnValue({
       defaultSandbox: "alpha",
