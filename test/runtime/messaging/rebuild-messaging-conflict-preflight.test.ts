@@ -178,8 +178,12 @@ function createConflictFixture() {
     `#!/usr/bin/env node
 const a = process.argv.slice(2);
 if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("my-assistant\\n"); process.exit(0); }
-if (a[0]==="sandbox" && a[1]==="get")        { process.stdout.write("Name: " + a.at(-1) + "\\nId: ${SANDBOX_ID}\\nPhase: Ready\\n"); process.exit(0); }
+if (a.includes("sandbox") && a.includes("get"))        { process.stdout.write("Name: " + a.at(-1) + "\\nId: ${SANDBOX_ID}\\nPhase: Ready\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
+if (a[0]==="policy" && a[1]==="list" && a.includes("--global")) {
+  process.stderr.write("No global policy history found\\n");
+  process.exit(0);
+}
 if (a[0]==="policy" && a[1]==="get" && a.includes("--output") && a.includes("json")) {
   process.stdout.write(${JSON.stringify(managedPolicyMetadata("my-assistant"))} + "\\n");
   process.exit(0);

@@ -164,9 +164,14 @@ if (args[0] === "gateway" && args[1] === "select") {
   emit(script.gatewaySelect);
 }
 
-if (args[0] === "sandbox" && args[1] === "get") {
+if (args.includes("sandbox") && args.includes("get")) {
   // Use a separate key so retries after select advance properly.
   emit(cycle("sandboxGet", script.sandboxGet));
+}
+
+if (args[0] === "policy" && args[1] === "list" && args.includes("--global")) {
+  process.stderr.write("No global policy history found\\n");
+  process.exit(0);
 }
 
 if (args[0] === "policy" && args[1] === "get") {

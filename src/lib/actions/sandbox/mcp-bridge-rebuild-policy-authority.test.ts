@@ -179,7 +179,36 @@ describe("MCP rebuild policy authority", () => {
     expect(mocks.detachProvider).not.toHaveBeenCalled();
   });
 
-  it("compensates completed provider and adapter teardown without mutating policy (#9833)", async () => {
+  it("rolls back an adapter scrub when authority changes before policy removal (#9833)", async () => {
+    sandbox.policyAuthority = "nemoclaw-managed";
+    const refusal = new PolicyAuthorityRefusalError("policy authority changed");
+    const validatePolicyAuthority = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(refusal);
+
+    await expect(prepareMcpBridgesForRebuild("alpha", validatePolicyAuthority)).rejects.toEqual(
+      expect.objectContaining({
+        message: refusal.message,
+        name: McpPolicyAuthorityRefusalError.name,
+      }),
+    );
+
+    expect(mocks.restoreRuntime).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      [expect.objectContaining({ server: "github", credentialRevision: "v1" })],
+      expect.objectContaining({
+        lifecyclePhase: "teardown-rollback",
+        teardownPolicyAuthorityRefusal: expect.objectContaining({ message: refusal.message }),
+      }),
+    );
+    expect(mocks.rollbackScrubbedAdapters).not.toHaveBeenCalled();
+    expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+    expect(mocks.detachProvider).not.toHaveBeenCalled();
+  });
+
+  it("reattaches a detached provider when authority changes before the next detach (#9833)", async () => {
     const second = {
       ...entry,
       server: "gitlab",
