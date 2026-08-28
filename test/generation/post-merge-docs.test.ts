@@ -434,6 +434,30 @@ describe("post-merge documentation publisher", () => {
     expect(api.openPulls).toEqual([]);
     expect(requestCount(api, "POST", "/pulls")).toBe(1);
   });
+  it("reports the exact orphaned branch when another managed PR appears", async () => {
+    const value = fixture();
+    const api = new FakeGitHub(value);
+    api.beforePullCreation = () => {
+      const other = api.pull();
+      api.openPulls = [
+        {
+          ...other,
+          head: {
+            ...other.head,
+            ref: `automation/post-merge-docs-${"f".repeat(12)}`,
+          },
+          html_url: `https://github.com/${repository}/pull/43`,
+          number: 43,
+        },
+      ];
+      throw new Error("pull creation failed");
+    };
+    await expect(publish(value, api)).rejects.toThrow(
+      `managed documentation branch ${api.branch} at ${api.commitSha} remains without a draft PR`,
+    );
+    expect(api.branchRef?.object.sha).toBe(api.commitSha);
+    expect(api.openPulls[0]?.head.ref).not.toBe(api.branch);
+  });
   it("keeps an active PR pending when the approved patch is empty", async () => {
     const value = emptyFixture();
     const api = new FakeGitHub(value);

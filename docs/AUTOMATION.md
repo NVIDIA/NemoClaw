@@ -59,14 +59,21 @@ workflow-owned draft, or mark it ready for review to transfer ownership to maint
 If draft PR creation fails after branch creation, the publisher reports the exact branch and commit.
 Recover only that reported branch:
 
-1. Run `git ls-remote --heads origin refs/heads/<branch>` and confirm that its SHA matches the
-   reported commit.
-2. Run `gh pr list --repo NVIDIA/NemoClaw --state open --head <branch> --json number,url,headRefName`
-   and confirm that it returns no PRs.
-3. Replace `<branch>` with the exact reported name and run `git push origin --delete <branch>`.
+1. Cancel and wait for other in-progress `Docs / Author Post-Merge Catch-Up` runs. Do not start
+   another run during recovery.
+2. Set `ORPHAN_BRANCH` and `ORPHAN_COMMIT` to the exact branch and commit from the error.
+3. Recheck for an attached PR and delete the ref only if its SHA still matches:
+
+   ```bash
+   test "$(gh pr list --repo NVIDIA/NemoClaw --state open --head "$ORPHAN_BRANCH" --json number --jq 'length')" -eq 0 &&
+     git push --force-with-lease="refs/heads/$ORPHAN_BRANCH:$ORPHAN_COMMIT" \
+       origin ":refs/heads/$ORPHAN_BRANCH"
+   ```
+
 4. Rerun the failed workflow.
 
-Stop if the SHA differs or a PR uses the branch. Do not delete it.
+The deletion fails if the branch advances. Stop without deleting if the command reports a PR or a
+lease mismatch.
 
 The [post-merge automation guide](../tools/post-merge-docs/README.md) owns its credential boundary.
 

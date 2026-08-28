@@ -461,17 +461,18 @@ export async function publishDocumentation(input: {
       })) as Pull;
     } catch (error) {
       const reconciled = await managed(repository, request);
-      if (reconciled.length !== 1 || reconciled[0]?.head.ref !== branch) {
+      const matching = reconciled.filter((candidate) => candidate.head.ref === branch);
+      if (matching.length !== 1 || reconciled.length !== 1) {
         const orphaned = (await request("GET", refPath)) as {
           object?: { sha?: string };
         } | null;
-        if (!reconciled.length && orphaned?.object?.sha === commitSha)
+        if (!matching.length && orphaned?.object?.sha === commitSha)
           fail(
             `managed documentation branch ${branch} at ${commitSha} remains without a draft PR; follow https://github.com/${repository}/blob/main/docs/AUTOMATION.md#recover-an-orphaned-managed-branch`,
           );
         throw error;
       }
-      pull = reconciled[0];
+      pull = matching[0];
     }
     checkedPull(pull, repository, branch, body, title);
     if (pull.head.sha !== commitSha) fail("documentation PR does not point to the verified commit");
