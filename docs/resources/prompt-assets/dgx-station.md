@@ -39,7 +39,7 @@ Choices:
 If a Station Express model is selected:
 
 - Set `NEMOCLAW_AGENT` to the agent already selected in the starter prompt.
-- For automatic pair selection, run the ordinary installer without `--station-deepseek`. Do not supply a peer unless the user already selected an exact, pretrusted peer; an explicit peer must qualify or setup stops rather than falling back.
+- For automatic pair selection, run the ordinary installer without `--station-deepseek`. Do not supply a peer unless the user already selected a pretrusted peer; an explicit peer must qualify or setup stops rather than falling back.
 - For DeepSeek, pass `--station-deepseek` and no other model-selection override.
 - Do not set `NEMOCLAW_PROVIDER`, `NEMOCLAW_VLLM_MODEL`, `NEMOCLAW_MODEL`, `NEMOCLAW_NON_INTERACTIVE`, `NEMOCLAW_YES`, `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE`, or `NEMOCLAW_NO_EXPRESS`.
 - Leave `NEMOCLAW_SANDBOX_NAME`, `NEMOCLAW_POLICY_TIER`, web-search settings, and messaging settings unset so the installer applies its Express defaults.

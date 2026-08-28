@@ -50,7 +50,7 @@ Set `NEMOCLAW_AGENT=langchain-deepagents-code` for Deep Agents, or use `nemo-dee
 - Check distribution, architecture, product and firmware identity, GPU and memory, NVIDIA driver, Container Toolkit, Docker, Node.js, disk space, existing NemoClaw, Ollama, vLLM, relevant ports, and administrator access.
 - Classify the computer as DGX Spark, DGX Station, NVIDIA GB300, another NVIDIA computer, ordinary macOS/Linux, or unknown.
 - Do not identify DGX Spark from the GPU name alone; combine product, firmware, architecture, and GPU evidence.
-- Classify a system as DGX Station when its firmware identifies a Station GB300 platform, or when its exact OEM model is documented by NVIDIA or the manufacturer as based on DGX Station architecture.
+- Classify a system as DGX Station only when its detected platform matches a supported DGX Station GB300 mapping. Do not load Station instructions for unsupported hardware or release profiles.
 - A confirmed NVIDIA GB300 can independently qualify for expanded local-runtime choices.
 - If uncertain, explain that and let NemoClaw's official preflight make the final platform decision.
 
@@ -62,13 +62,13 @@ Set `NEMOCLAW_AGENT=langchain-deepagents-code` for Deep Agents, or use `nemo-dee
 - Let the real `sudo` program collect the password; never use chat or the API-key form for the computer password.
 - If neither passwordless sudo nor a secure password prompt is available, stop before the affected install or system change.
 - Never pipe a password, store it in a file, generate a password helper, or put it in command arguments.
-- Offer a user-local alternative only when official documentation supports it for that exact operation.
+- Offer a user-local alternative only when official documentation supports it for that operation.
 - Do not silently use user-local Ollama for a system Ollama upgrade when the old system service would remain active.
 
 ## Execution Sandbox
 
 - If the coding agent's execution sandbox blocks a Docker command, use its command-scoped approval flow, if available.
-- Request permission to rerun only that exact command outside the sandbox.
+- Request permission to rerun only that command outside the sandbox.
 - Before requesting approval, explain that Docker daemon access can modify containers, images, and host files.
 - Do not change Docker socket permissions or request broad host access only to bypass the execution sandbox.
 - If the user or managed policy denies approval, stop before the command.
@@ -79,9 +79,9 @@ Set `NEMOCLAW_AGENT=langchain-deepagents-code` for Deep Agents, or use `nemo-dee
 
 After the readiness check, load exactly one matching instruction asset before provider selection:
 
-- Confirmed DGX Spark: [DGX Spark Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/66b532695db0ae38b74725ce7c57e4c91be24b19/docs/resources/prompt-assets/dgx-spark.md).
-- Confirmed DGX Station: [DGX Station installation instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/66b532695db0ae38b74725ce7c57e4c91be24b19/docs/resources/prompt-assets/dgx-station.md).
-- Officially detected Windows WSL: [Windows WSL Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/66b532695db0ae38b74725ce7c57e4c91be24b19/docs/resources/prompt-assets/windows-wsl.md).
+- Confirmed DGX Spark: [DGX Spark Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/6e1a29a1fb0fbbcd25b3fe2d4523ffa71e814010/docs/resources/prompt-assets/dgx-spark.md).
+- Confirmed DGX Station: [DGX Station installation instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/6e1a29a1fb0fbbcd25b3fe2d4523ffa71e814010/docs/resources/prompt-assets/dgx-station.md).
+- Officially detected Windows WSL: [Windows WSL Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/6e1a29a1fb0fbbcd25b3fe2d4523ffa71e814010/docs/resources/prompt-assets/windows-wsl.md).
 
 Read the matching raw Markdown file completely and follow it before continuing.
 Do not load a platform asset for any other computer.
@@ -148,7 +148,7 @@ Ask required model, endpoint, credential, and download questions one at a time.
 
 ## Handle Tokens Securely and Visually
 
-Before collecting secrets, determine the exact environment-variable names and exact command argv, explain them, and ask permission.
+Before collecting secrets, determine every environment-variable name and the complete command argv, explain them, and ask permission.
 Do not generate, rewrite, or redesign the helper or form.
 Use this reviewed pair without modification:
 
@@ -164,7 +164,7 @@ Use this reviewed pair without modification:
 - Use `:secret` for secrets and `:text` only for non-secret values.
 - Use `--execution-profile isolated` for stateless commands.
 - For persistent install or onboarding, use `--execution-profile account-home --cwd <approved-absolute-directory>` and ask permission for both.
-- Pass every `--field NAME:type`, then a literal `--`, an absolute executable path, and the exact approved argv.
+- Pass every `--field NAME:type`, then a literal `--`, an absolute executable path, and the approved argv.
 - Never omit the literal `--`.
 - Never use a relative, alias-only, or PATH-only approved executable.
 - Never put credentials in argv.
@@ -231,7 +231,7 @@ Collect messaging before policy selection so the first image includes channel co
 - WhatsApp uses documented allowed IDs for non-interactive selection, followed by QR pairing after startup.
 - WeChat requires an interactive QR handshake; explain the limitation before installation and never leave an unsupported UI waiting.
 
-Collect messaging secrets through the reviewed helper and exact-URL SSH flow.
+Collect messaging secrets through the reviewed helper and URL-specific SSH flow.
 Do not manually set `NEMOCLAW_MESSAGING_CHANNELS_B64`; let NemoClaw generate it.
 Use `channels add` and rebuild only for channels omitted from initial onboarding or changed later.
 
@@ -240,7 +240,7 @@ Use `channels add` and rebuild only for channels omitted from initial onboarding
 - If a loaded platform asset selects its approved install path, follow its policy requirement and skip the policy-tier question.
 - For installation outside an accepted platform-asset path, ask for Balanced, Restricted, or Open policy.
 - Explain that messaging and web-search selections add required endpoints.
-- Before installation outside an accepted platform-asset path, summarize platform, administrator access, agent, provider, exact model, validation warning, downloads, storage, sandbox, web search, messaging, policy, credential names without their values, and system changes.
+- Before installation outside an accepted platform-asset path, summarize platform, administrator access, agent, provider, model, validation warning, downloads, storage, sandbox, web search, messaging, policy, credential names without their values, and system changes.
 - Ask for final permission before installation outside an accepted platform-asset path.
 - When a platform asset delegates consent to the official installer, let the installer present its notice and final Express confirmation instead of pre-accepting them.
 - For other accepted platform-asset install paths, treat the asset's confirmation as final permission and do not ask again.
@@ -248,7 +248,7 @@ Use `channels add` and rebuild only for channels omitted from initial onboarding
 - Keep credentials in the approved environment and never display them.
 - Verify the command and version, sandbox status, provider, model, `inference.local`, GPU access when applicable, messaging bridges when configured, and dashboard route when available.
 - If `curl | bash` returns no output, verify installation; if absent, ask permission to download and inspect the official installer before retrying.
-- For remote dashboards, use private loopback SSH forwarding, preserve authenticated URLs exactly, and treat them as secrets.
+- For remote dashboards, use private loopback SSH forwarding, preserve authenticated URLs, and treat them as secrets.
 - Ask permission before sending a live channel test or harmless first agent prompt.
 - Declare success only after the sandbox is ready and the agent responds.
 - Summarize what was installed, how to reconnect, what starts after reboot, and anything skipped.

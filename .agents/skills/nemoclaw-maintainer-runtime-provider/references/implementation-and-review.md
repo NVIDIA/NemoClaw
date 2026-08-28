@@ -35,7 +35,7 @@ portable profile are different product paths.
 6. Implement bootstrap, start, started-state verification, stop, and privileged control.
 7. Implement inference service authority and credential redaction where applicable.
 8. Implement fenced state mutation, snapshot, restore, and restart recovery.
-9. Implement side-effect-free cleanup planning, authority revalidation, exact removal, and absence
+9. Implement side-effect-free cleanup planning, authority revalidation, removal, and absence
    confirmation.
 10. Persist the provider identity and prove each later operation resolves the same bundle.
 11. Add registry, provider, architecture, negative-authority, recovery, and cleanup tests.
@@ -63,7 +63,7 @@ snapshot, recovery, and cleanup tests when those surfaces change. Run broader ga
 diff meets the repository criteria for them.
 
 These checks do not establish protected qualification. Use the trusted GitHub Actions workflow and
-the complete supported E2E matrix for the exact commit under review.
+the complete supported E2E matrix for the commit under review.
 
 ## Failure and Security Coverage
 
@@ -91,9 +91,9 @@ A provider PR is not approval-ready until the review can answer each question:
 - Does the provider own its commands, endpoint authority, and resource identity?
 - Can another provider register without a new provider-name branch in generic orchestration?
 - Are portable profile behavior and compatibility unchanged?
-- Do unsupported candidate surfaces state exact reasons?
+- Do unsupported candidate surfaces state reasons?
 - Does activation enter through the qualification-backed composition seam?
-- Does protected evidence bind the exact candidate, base, workflow, job, attempt, and artifact?
+- Does protected evidence bind the candidate, base, workflow, job, attempt, and artifact?
 - Do state mutation, recovery, and cleanup fail closed on authority drift?
 - Do focused checks pass for the commit under review?
 - Does the complete supported E2E matrix pass for that same commit?

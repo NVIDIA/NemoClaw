@@ -74,6 +74,7 @@ import {
 import {
   type InferenceSetSandboxRouteProbe,
   assertInferenceSetCommandAvailable,
+  assertInferenceSetProviderOwnership,
   prepareInferenceSetProviderBinding,
   probeInferenceSetSandboxRoute,
   probeInferenceSetSandboxRouteUntilConverged,
@@ -94,6 +95,8 @@ import {
   isSandboxBridgeProviderBinding,
   prepareInferenceSetRoute,
   type RegistryInferenceMetadata,
+  sandboxCustomCompatibleCredentialEnv,
+  usesLoopbackNoAuthProxyRoute,
 } from "./inference-set-route-containment";
 
 export {
@@ -946,7 +949,15 @@ async function runInferenceSetWithoutHostLock(
   // verify. Only a genuinely-unreachable host stack hard-fails here, before the
   // route is touched.
   let effectiveNoVerify = options.noVerify === true;
-  const probeDirectSandboxBridge = isSandboxBridgeProviderBinding(directProviderBinding);
+  // A loopback endpoint onboarded without authentication is published to the
+  // gateway through the local no-auth proxy on NemoClaw's sandbox bridge, so
+  // the provider's base URL is a `host.openshell.internal` address even though
+  // the registry records the operator's loopback URL. The host-side OpenShell
+  // verifier cannot resolve that address; verify from inside the sandbox
+  // instead, exactly like an explicit bridge route.
+  const loopbackNoAuthProxyRoute = usesLoopbackNoAuthProxyRoute(entry, provider);
+  const probeDirectSandboxBridge =
+    isSandboxBridgeProviderBinding(directProviderBinding) || loopbackNoAuthProxyRoute;
   // Adapter routes and explicit custom routes on NemoClaw's sandbox bridge
   // resolve only from inside the sandbox network. The host-side OpenShell
   // verifier cannot resolve host.openshell.internal, so its result would be a
@@ -1064,6 +1075,7 @@ async function runInferenceSetWithoutHostLock(
         providerName: provider,
         binding: providerBinding,
         captureOpenshell: deps.captureOpenshell,
+        allowCreate: !loopbackNoAuthProxyRoute,
       });
       if (directProviderBinding && providerMutation.action === "update") {
         const bindingMismatches = recordedDirectProviderBindingMismatches({
@@ -1084,6 +1096,19 @@ async function runInferenceSetWithoutHostLock(
         // not replace the provider binding.
         providerMutation = null;
       }
+    } else if (loopbackNoAuthProxyRoute) {
+      // A model-only switch builds no provider binding, so nothing above
+      // inspects the live provider. This route's credential is the local
+      // no-auth proxy token that OpenShell holds and sends on selection, and
+      // its host-side verification is skipped, so confirm the durable binding
+      // is still the one onboarding registered before selecting it.
+      assertInferenceSetProviderOwnership({
+        gatewayName: preparedRoute.gatewayName,
+        providerName: provider,
+        providerType: preMutationInferenceApi === "anthropic-messages" ? "anthropic" : "openai",
+        credentialEnv: sandboxCustomCompatibleCredentialEnv(entry, provider),
+        captureOpenshell: deps.captureOpenshell,
+      });
     }
     if (providerMutation) {
       appliedProvider = providerMutation.action === "create";
