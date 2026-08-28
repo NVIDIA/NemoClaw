@@ -26,6 +26,17 @@ const {
   resolveProviderCredential,
 } = require("../credentials/store");
 const { isWsl } = require("../platform");
+
+/**
+ * Guidance for a WSL2 host whose endpoint verification keeps timing out.
+ *
+ * Exported so the onboarding failure path can print the same wording it is
+ * appended to `message` with. That path prints failure summaries rather than
+ * the raw probe message, which can carry provider response bodies (#10413).
+ */
+export const WSL_SLOW_VERIFICATION_ADVISORY =
+  "WSL2 detected \u2014 network verification may be slower than expected. " +
+  "Run `nemoclaw onboard` with the `--skip-verify` flag if this endpoint is known to be reachable.";
 const httpProbe = require("../adapters/http/probe");
 const authConfigModule = require("../adapters/http/auth-config");
 const openrouter = require("./openrouter");
@@ -1059,14 +1070,16 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
     const baseMessage = failures
       .map((failure) => `${failure.name}: ${failure.message}`)
       .join(" | ");
-    const wslHint =
-      isWsl({ isWsl: options.isWsl }) && retriedAfterTimeout
-        ? " · WSL2 detected \u2014 network verification may be slower than expected. " +
-          "Run `nemoclaw onboard` with the `--skip-verify` flag if this endpoint is known to be reachable."
+    const wslHint = isWsl({ isWsl: options.isWsl }) && retriedAfterTimeout
+        ? " · " + WSL_SLOW_VERIFICATION_ADVISORY
         : "";
     return {
       ok: false,
       message: baseMessage + wslHint,
+      // Callers print failure summaries rather than `message`, because a raw
+      // probe message can carry provider response bodies. Carry the curated
+      // advisory beside it so the guidance survives that boundary (#10413).
+      ...(wslHint ? { advisory: WSL_SLOW_VERIFICATION_ADVISORY } : {}),
       failures,
     };
   } catch (error) {

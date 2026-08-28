@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
+import { WSL_SLOW_VERIFICATION_ADVISORY } from "../inference/onboard-probes";
 import { useOpenAiValidationTestServers } from "../inference/openai-validation-session.test-helpers";
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import { createInferenceSelectionValidationHelpers } from "./inference-selection-validation";
@@ -335,6 +336,90 @@ describe("inference selection validation", () => {
       process.exitCode = originalExitCode;
       error.mockRestore();
       exit.mockRestore();
+    }
+  });
+
+  it("prints transport guidance and the WSL advisory before the non-interactive abort (#10413)", async () => {
+    // A non-interactive run exits before the recovery prompt, which is where
+    // this guidance normally reaches an operator. Without it the terminal ends
+    // at a bare "curl exit 28" and names no next step.
+    const originalExitCode = process.exitCode;
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const promptValidationRecovery = vi.fn(async () => "selection" as const);
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => true,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "nvapi-test-key-12345",
+      probeOpenAiLikeEndpoint: () => ({
+        ok: false,
+        advisory: WSL_SLOW_VERIFICATION_ADVISORY,
+        failures: [
+          {
+            name: "Chat Completions API",
+            curlStatus: 28,
+            message: "curl failed (exit 28)",
+          },
+        ],
+      }),
+      teardownOrphanManagedGatewayOnAbort: () => true,
+      promptValidationRecovery,
+    });
+
+    try {
+      await expect(
+        helpers.validateOpenAiLikeSelection(
+          "NVIDIA Endpoints",
+          "https://integrate.api.nvidia.com/v1",
+          "meta/llama-3.3-70b-instruct",
+          "NVIDIA_INFERENCE_API_KEY",
+        ),
+      ).rejects.toMatchObject(resumableValidationExit);
+      expect(promptValidationRecovery).not.toHaveBeenCalled();
+      expect(error.mock.calls.map((args) => args.join(" "))).toEqual([
+        "  NVIDIA Endpoints endpoint validation failed.",
+        "  Validation probe summary: Chat Completions API: curl exit 28.",
+        "  Validation details were omitted to avoid exposing credentials.",
+        "  Validation timed out before the provider replied. Retry, or check network/proxy health.",
+        `  ${WSL_SLOW_VERIFICATION_ADVISORY}`,
+      ]);
+    } finally {
+      process.exitCode = originalExitCode;
+      error.mockRestore();
+    }
+  });
+
+  it("shows the WSL advisory on the interactive recovery path too (#10413)", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const promptValidationRecovery = vi.fn(async () => "selection" as const);
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "nvapi-test-key-12345",
+      probeOpenAiLikeEndpoint: () => ({
+        ok: false,
+        advisory: WSL_SLOW_VERIFICATION_ADVISORY,
+        failures: [{ name: "Chat Completions API", curlStatus: 28 }],
+      }),
+      promptValidationRecovery,
+    });
+
+    try {
+      await helpers.validateOpenAiLikeSelection(
+        "NVIDIA Endpoints",
+        "https://integrate.api.nvidia.com/v1",
+        "meta/llama-3.3-70b-instruct",
+        "NVIDIA_INFERENCE_API_KEY",
+      );
+      // The prompt owns transport guidance here, so only the advisory is added.
+      expect(error.mock.calls.map((args) => args.join(" "))).toEqual([
+        "  NVIDIA Endpoints endpoint validation failed.",
+        "  Validation probe summary: Chat Completions API: curl exit 28.",
+        "  Validation details were omitted to avoid exposing credentials.",
+        `  ${WSL_SLOW_VERIFICATION_ADVISORY}`,
+      ]);
+      expect(promptValidationRecovery).toHaveBeenCalledOnce();
+    } finally {
+      error.mockRestore();
     }
   });
 
