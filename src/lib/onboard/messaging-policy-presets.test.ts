@@ -38,20 +38,20 @@ describe("messaging policy presets", () => {
     ]);
   });
 
-  // #5967: channels not flagged requiredAtCreate (WhatsApp, WeChat, and
+  // #5967: channels not flagged requiredAtCreate (WhatsApp and
   // Google Chat) still need their egress preset merged so policy finalization
   // persists it and policy-list marks it applied. Discord, Slack, Teams, and
   // Telegram bind credentials, so they are create-time required instead.
   it("merges an enabled channel preset that is not required at create time", () => {
-    expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["wechat"])).toEqual([
+    expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["whatsapp"])).toEqual([
       "npm",
-      "wechat",
+      "whatsapp",
     ]);
-    expect(requiredMessagingChannelPolicyPresets(["wechat"])).toEqual([]);
-    expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["slack", "wechat"])).toEqual([
+    expect(requiredMessagingChannelPolicyPresets(["whatsapp"])).toEqual([]);
+    expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["slack", "whatsapp"])).toEqual([
       "npm",
       "slack",
-      "wechat",
+      "whatsapp",
     ]);
   });
 
@@ -134,11 +134,10 @@ describe("messaging policy presets", () => {
     ).toEqual(["npm"]);
   });
 
-  // #5967 is channel-agnostic: every non-`requiredAtCreate` channel (Telegram,
-  // Teams, WhatsApp, WeChat, Google Chat) must merge and prune exactly like Discord. Cover the
-  // remaining channels explicitly so a future channel-table regression cannot pass
-  // on Slack/Discord alone.
-  it("merges every enabled non-required channel preset (#5967)", () => {
+  // #5967 is channel-agnostic: every enabled channel must merge its preset, and every disabled
+  // channel must prune it. Cover the remaining channels explicitly so a future channel-table
+  // regression cannot pass on Slack and Discord alone.
+  it("merges every enabled channel preset (#5967)", () => {
     expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["telegram"])).toEqual([
       "npm",
       "telegram",
@@ -158,7 +157,7 @@ describe("messaging policy presets", () => {
     ]);
   });
 
-  it("prunes every disabled non-required channel preset (#5967)", () => {
+  it("prunes every disabled channel preset (#5967)", () => {
     expect(pruneDisabledMessagingPolicyPresets(["npm", "whatsapp"], ["whatsapp"])).toEqual(["npm"]);
     expect(pruneDisabledMessagingPolicyPresets(["npm", "wechat"], ["wechat"])).toEqual(["npm"]);
     expect(pruneDisabledMessagingPolicyPresets(["npm", "googlechat"], ["googlechat"])).toEqual([
