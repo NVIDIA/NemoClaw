@@ -81,6 +81,10 @@ const MAX_INSTALLER_INPUT_BYTES = 1024 * 1024;
 // Each release record is one base-trusted qualification unit. The parser
 // selects one record before it accepts candidate release data or emits the
 // manifest and formula identities consumed by the shell checker.
+// The development-channel MUSL selector changes the version-independent
+// operational template. Its exact prospective digests are repeated only for
+// release records that can select that same template; dependent installer
+// hash tests execute the corresponding release and qualification fixtures.
 const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
   {
     brevTemplateSha256: ["c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a"],
@@ -92,6 +96,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     installerTemplateSha256: [
       "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
       "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
+      "ec5d942bf1b1af45ffbdb2c1ceeb8ede25a0169d9f856ad3a83577d81088ee37",
     ],
     manifests: [
       {
@@ -135,6 +140,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     installerTemplateSha256: [
       "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
       "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
+      "ec5d942bf1b1af45ffbdb2c1ceeb8ede25a0169d9f856ad3a83577d81088ee37",
     ],
     manifests: [
       {
@@ -173,6 +179,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     installerTemplateSha256: [
       "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
       "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
+      "ec5d942bf1b1af45ffbdb2c1ceeb8ede25a0169d9f856ad3a83577d81088ee37",
     ],
     manifests: [
       {
@@ -202,6 +209,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     installerTemplateSha256: [
       "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
       "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
+      "ec5d942bf1b1af45ffbdb2c1ceeb8ede25a0169d9f856ad3a83577d81088ee37",
     ],
     manifests: [
       {
@@ -247,6 +255,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       "d3ee11fd805d84c0e0f760831e091c1f16632e61cf9c1af7e7856e0aafc9de54",
       "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
       "741febd02f3a6b18c8aa5e34e42e23a200c8a4b09b41a7c0de045bf65b0a9bdd",
+      "ec5d942bf1b1af45ffbdb2c1ceeb8ede25a0169d9f856ad3a83577d81088ee37",
+      "69e7f5d873765164cfd7aa6bd97ab38d15fb8e6009e9943d8b8b6aa7fd9a100a",
     ],
     manifests: [
       {
@@ -290,6 +300,7 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     installerTemplateSha256: [
       "6226811887cc5c1a721a96fbf062f5ce5f75b09d3a8a1de49ed4dadc3236eb0c",
       "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
+      "ec5d942bf1b1af45ffbdb2c1ceeb8ede25a0169d9f856ad3a83577d81088ee37",
     ],
     manifests: [
       {
@@ -336,8 +347,11 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     // The first template came from the downstream 0.0.106 pin. The second authorizes its
     // fail-before-download strings preflight. The third authorizes repair when an existing formula
     // has an invalid checksum or its release formula is unavailable. The fourth preserves that
-    // template after installer tests moved under test/install. The final four authorize those
-    // same transitions after macOS install selection became method-bound and fail-closed.
+    // template after installer tests moved under test/install. The next four authorize those
+    // same transitions after macOS install selection became method-bound and fail-closed. Per the
+    // intentional two-step trust rollout in check-installer-hash.sh, the final four authorize the
+    // exact tested follow-up templates before the installer can select the MUSL development
+    // sandbox while preserving stable GNU, both before and after that macOS selection change.
     // Homebrew owns the formula source state, so NemoClaw cannot correct it there; the installer
     // verifies the trusted release formula before reuse. installer-homebrew-formula-reuse-trust.test.ts
     // and installer-hash-check.test.ts lock the template and trust transitions. Remove the repair
@@ -351,6 +365,10 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       "1846d9051f4c588d0961d83107066521e436643ec95c13c0be43f298971139f1",
       "77d3abb360880c96a63424c4850ddb2e8db81b126bb7474a3b24fcde7844a3dd",
       "03215130365310e907390ceeb685088db6e75b963adf80c9c939de670381797c",
+      "293f45ea1d54e1531c3a070123c04b47f972f29504bd8902a44ab71acdfe6cca",
+      "ee3db19d06d34a625bff9e0ab021f095ce97eadf5f7a98fc60def62af87577ad",
+      "4b45161017a5936331300e982168160575701632711328cbbb97480eb087fb51",
+      "65d9d9f8867103975d22f60596b1cf7a803a583f53a59df65c84855695a30b6a",
     ],
     manifests: [
       {
