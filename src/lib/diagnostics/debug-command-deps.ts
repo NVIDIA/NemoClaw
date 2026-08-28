@@ -30,9 +30,14 @@ export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
     return new Set(result.value.sandboxes.map((sandbox) => sandbox.name));
   };
 
-  const getDefaultSandbox = async (): Promise<string | null | undefined> => {
+  const getDefaultSandbox = async (): Promise<string | null> => {
     const { defaultSandbox, sandboxes } = registry.listSandboxes();
-    if (!defaultSandbox) return undefined;
+    if (!defaultSandbox) {
+      const registeredName = sandboxes.find((sandbox) => sandbox.name)?.name;
+      if (registeredName) return registeredName;
+      const liveNames = await liveSandboxNames();
+      return liveNames?.values().next().value ?? "default";
+    }
     if (!sandboxes.find((sandbox) => sandbox.name === defaultSandbox)) {
       console.error(
         `${RD}Warning:${R} default sandbox '${defaultSandbox}' is no longer in the registry.`,
@@ -55,16 +60,18 @@ export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
     return defaultSandbox;
   };
 
-  const isSandboxKnown = async (name: string): Promise<boolean> => {
+  const getSandboxAvailability = async (
+    name: string,
+  ): Promise<"available" | "unregistered" | "missing"> => {
     const { sandboxes } = registry.listSandboxes();
-    if (!sandboxes.find((sandbox) => sandbox.name === name)) return false;
+    if (!sandboxes.find((sandbox) => sandbox.name === name)) return "unregistered";
     const liveNames = await liveSandboxNames();
-    return !liveNames || liveNames.has(name);
+    return !liveNames || liveNames.has(name) ? "available" : "missing";
   };
 
   return {
     getDefaultSandbox,
-    isSandboxKnown,
+    getSandboxAvailability,
     runDebug,
   };
 }

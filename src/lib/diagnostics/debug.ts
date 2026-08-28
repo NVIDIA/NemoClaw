@@ -9,7 +9,6 @@ import { join } from "node:path";
 import { dockerExecFileSync } from "../adapters/docker/exec";
 import { openshellSandboxSshHost } from "../adapters/openshell/sandbox-ssh-host";
 import { DASHBOARD_PORT } from "../core/ports";
-import { listSandboxes } from "../state/registry";
 import { createTarball as createDiagnosticsTarball } from "./tarball";
 
 // ---------------------------------------------------------------------------
@@ -230,45 +229,6 @@ function collectDmesg(collectDir: string, opts: DebugOptions = {}): void {
   if (result.status !== 0) {
     console.log("  (command exited with non-zero status)");
   }
-}
-
-// ---------------------------------------------------------------------------
-// Auto-detect sandbox name
-// ---------------------------------------------------------------------------
-
-function detectSandboxName(): string {
-  // First, check the local registry for the default sandbox. This is
-  // the authoritative source — it reflects the user's actual onboard
-  // choices and survives gateway restarts. Falling back to "default"
-  // without checking the registry was the bug in #1728: debug always
-  // targeted a sandbox named "default" even though the user's sandbox
-  // was named something else (e.g. "my-assistant").
-  try {
-    const registry = listSandboxes();
-    if (registry.defaultSandbox) return registry.defaultSandbox;
-    const names = registry.sandboxes.map((s) => s.name).filter(Boolean);
-    if (names.length > 0) return names[0];
-  } catch {
-    /* registry unreadable — fall through to openshell probe */
-  }
-
-  // Fallback: ask the live gateway directly
-  if (!commandExists("openshell")) return "default";
-  try {
-    const output = execFileSync("openshell", ["sandbox", "list"], {
-      encoding: "utf-8",
-      timeout: 10_000,
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    const lines = output.split("\n").filter((l) => l.trim().length > 0);
-    for (const line of lines) {
-      const first = line.trim().split(/\s+/)[0];
-      if (first && first.toLowerCase() !== "name") return first;
-    }
-  } catch {
-    /* ignore */
-  }
-  return "default";
 }
 
 // ---------------------------------------------------------------------------
@@ -542,10 +502,7 @@ export function runDebug(opts: DebugOptions = {}): void {
   // documented precedence (--sandbox > NEMOCLAW_SANDBOX_NAME > NEMOCLAW_SANDBOX
   // > SANDBOX_NAME) before calling here. Reading env again would let
   // whitespace-only values bypass validation, so only trim the option.
-  let sandboxName = opts.sandboxName?.trim() ?? "";
-  if (!sandboxName) {
-    sandboxName = detectSandboxName();
-  }
+  const sandboxName = opts.sandboxName?.trim() || "default";
 
   // Create temp collection directory
   const collectDir = mkdtempSync(join(tmpdir(), "nemoclaw-debug-"));

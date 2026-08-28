@@ -3,9 +3,11 @@
 
 import type { DebugOptions } from "./debug";
 
+export type DebugSandboxAvailability = "available" | "unregistered" | "missing";
+
 export interface RunDebugCommandDeps {
-  getDefaultSandbox: () => Promise<string | null | undefined>;
-  isSandboxKnown: (name: string) => Promise<boolean>;
+  getDefaultSandbox: () => Promise<string | null>;
+  getSandboxAvailability: (name: string) => Promise<DebugSandboxAvailability>;
   runDebug: (options: DebugOptions) => void;
   env?: NodeJS.ProcessEnv;
   errorLine?: (message: string) => void;
@@ -46,11 +48,17 @@ export async function runDebugCommandWithOptions(
 
   const explicit = resolveExplicitName(opts, env);
   if (explicit) {
-    if (!(await deps.isSandboxKnown(explicit.name))) {
+    const availability = await deps.getSandboxAvailability(explicit.name);
+    if (availability !== "available") {
       const sourceLabel =
         explicit.source === "env" && explicit.envVar ? ` (from ${explicit.envVar})` : "";
-      errorLine(`Error: Sandbox '${explicit.name}'${sourceLabel} is not registered.`);
-      errorLine("  Run `nemoclaw list` to see available sandboxes.");
+      if (availability === "unregistered") {
+        errorLine(`Error: Sandbox '${explicit.name}'${sourceLabel} is not registered.`);
+        errorLine("  Run `nemoclaw list` to see available sandboxes.");
+      } else {
+        errorLine(`Error: Sandbox '${explicit.name}'${sourceLabel} exists in the local registry but not in OpenShell.`);
+        errorLine("  Run `nemoclaw onboard` again to recreate or select a sandbox.");
+      }
       exit(1);
       return;
     }

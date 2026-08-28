@@ -201,7 +201,7 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
 
     const deps = mocks.runDebugCommandWithOptions.mock.calls[0][1];
     await expect(deps.getDefaultSandbox()).resolves.toBeNull();
-    await expect(deps.isSandboxKnown("alpha")).resolves.toBe(false);
+    await expect(deps.getSandboxAvailability("alpha")).resolves.toBe("missing");
   });
 
   it("keeps registered debug sandboxes when OpenShell observation fails", async () => {
@@ -215,7 +215,7 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
 
     const deps = mocks.runDebugCommandWithOptions.mock.calls[0][1];
     await expect(deps.getDefaultSandbox()).resolves.toBe("alpha");
-    await expect(deps.isSandboxKnown("alpha")).resolves.toBe(true);
+    await expect(deps.getSandboxAvailability("alpha")).resolves.toBe("available");
   });
 
   it("maps gateway-token flags to the gateway token action", async () => {
