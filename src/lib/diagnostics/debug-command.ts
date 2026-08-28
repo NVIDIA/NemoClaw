@@ -4,7 +4,7 @@
 import type { DebugOptions } from "./debug";
 
 export interface RunDebugCommandDeps {
-  getDefaultSandbox: () => Promise<string | undefined>;
+  getDefaultSandbox: () => Promise<string | null | undefined>;
   isSandboxKnown: (name: string) => Promise<boolean>;
   runDebug: (options: DebugOptions) => void;
   env?: NodeJS.ProcessEnv;
@@ -56,7 +56,9 @@ export async function runDebugCommandWithOptions(
     }
     opts.sandboxName = explicit.name;
   } else {
-    opts.sandboxName = await deps.getDefaultSandbox();
+    const defaultSandbox = await deps.getDefaultSandbox();
+    if (defaultSandbox === null) return;
+    opts.sandboxName = defaultSandbox;
   }
 
   deps.runDebug(opts);

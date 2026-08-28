@@ -30,7 +30,7 @@ export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
     return new Set(result.value.sandboxes.map((sandbox) => sandbox.name));
   };
 
-  const getDefaultSandbox = async (): Promise<string | undefined> => {
+  const getDefaultSandbox = async (): Promise<string | null | undefined> => {
     const { defaultSandbox, sandboxes } = registry.listSandboxes();
     if (!defaultSandbox) return undefined;
     if (!sandboxes.find((sandbox) => sandbox.name === defaultSandbox)) {
@@ -40,7 +40,7 @@ export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
       console.error(
         `  Use ${B}--sandbox NAME${R} to target a specific sandbox, or run ${B}${CLI_NAME} onboard${R} again.\n`,
       );
-      return undefined;
+      return null;
     }
     const liveNames = await liveSandboxNames();
     if (liveNames && !liveNames.has(defaultSandbox)) {
@@ -50,7 +50,7 @@ export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
       console.error(
         `  Use ${B}--sandbox NAME${R} to target a specific sandbox, or run ${B}${CLI_NAME} onboard${R} again.\n`,
       );
-      return undefined;
+      return null;
     }
     return defaultSandbox;
   };

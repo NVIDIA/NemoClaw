@@ -200,7 +200,7 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
     await DebugCliCommand.run(["--quick"], rootDir);
 
     const deps = mocks.runDebugCommandWithOptions.mock.calls[0][1];
-    await expect(deps.getDefaultSandbox()).resolves.toBeUndefined();
+    await expect(deps.getDefaultSandbox()).resolves.toBeNull();
     await expect(deps.isSandboxKnown("alpha")).resolves.toBe(false);
   });
 

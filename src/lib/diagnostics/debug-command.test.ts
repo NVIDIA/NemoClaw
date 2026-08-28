@@ -125,6 +125,22 @@ describe("debug command", () => {
     expect(runDebug).toHaveBeenCalledWith({ sandboxName: "alpha" });
   });
 
+  it("stops before diagnostics when the configured default sandbox is rejected", async () => {
+    const runDebug = vi.fn();
+
+    await runDebugCommandWithOptions(
+      {},
+      {
+        env: {} as NodeJS.ProcessEnv,
+        getDefaultSandbox: async () => null,
+        isSandboxKnown: async () => true,
+        runDebug,
+      },
+    );
+
+    expect(runDebug).not.toHaveBeenCalled();
+  });
+
   it("falls back to getDefaultSandbox when neither flag nor env is set", async () => {
     const runDebug = vi.fn();
     const isSandboxKnown = vi.fn();
