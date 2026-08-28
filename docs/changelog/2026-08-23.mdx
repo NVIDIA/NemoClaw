@@ -18,8 +18,8 @@ It also improves managed local inference, Portable and Hermes onboarding, image 
   For more information, refer to [Deploy NemoClaw to a Headless Server](/user-guide/openclaw/deployment/deploy-to-headless-server) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
   Related change: [PR #9865](https://github.com/NVIDIA/NemoClaw/pull/9865).
 - Sandbox destruction now warns before terminating active SSH sessions, including unattended runs that use `--yes` or `--force`.
-  OpenClaw session tar export now reports a retained in-sandbox staging artifact and its exact manual removal command when cleanup fails, because the artifact can contain pasted secrets.
-  Host-mount diagnostics report the actual failed directory condition, and pending OpenClaw scope upgrades identify the exact device-review path.
+  OpenClaw session tar export now reports a retained in-sandbox staging artifact and its manual removal command when cleanup fails, because the artifact can contain pasted secrets.
+  Host-mount diagnostics report the actual failed directory condition, and pending OpenClaw scope upgrades identify the device-review path.
   For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) and [Understand Sandbox State](/user-guide/openclaw/manage-sandboxes/state-and-backups/understand-sandbox-state).
   Related changes: [PR #9782](https://github.com/NVIDIA/NemoClaw/pull/9782), [PR #9787](https://github.com/NVIDIA/NemoClaw/pull/9787), [PR #9853](https://github.com/NVIDIA/NemoClaw/pull/9853), and [PR #9858](https://github.com/NVIDIA/NemoClaw/pull/9858).
 - Snapshot restore now preserves sealed OpenClaw configuration, and rebuild verifies final OpenClaw configuration integrity before it reports success.
@@ -43,7 +43,7 @@ It also improves managed local inference, Portable and Hermes onboarding, image 
   The inference model-limit documentation now shows each agent only the settings it supports and states that Deep Agents Code has no equivalent model-limit operation.
   For more information, refer to [Configure Model Limits](/user-guide/deepagents/inference/manage-inference/configure-model-limits).
   Related changes: [PR #9785](https://github.com/NVIDIA/NemoClaw/pull/9785) and [PR #9867](https://github.com/NVIDIA/NemoClaw/pull/9867).
-- Pi remains unavailable to ordinary installations while its release candidate gains exact AMD64 and ARM64 image receipts, a protected Docker lifecycle qualification target, and candidate-scoped user documentation.
+- Pi remains unavailable to ordinary installations while its release candidate gains AMD64 and ARM64 image receipts, a protected Docker lifecycle qualification target, and candidate-scoped user documentation.
   The qualification covers public onboarding, interactive launch, headless structured tool use, rebuild, recovery, policy and credential boundaries, and destroy without adding Pi to the supported release cohort.
   For more information, refer to [Quickstart with Pi](/user-guide/pi/get-started/quickstart), [Run and Manage Pi](/user-guide/pi/manage-sandboxes/run-pi), and [Pi Support and Security](/user-guide/pi/reference/pi-support).
 - Ordinary Docker-driver onboarding for stock OpenClaw, Hermes, and LangChain Deep Agents Code requires the release's exact immutable managed-image digest for the host architecture.
@@ -57,7 +57,7 @@ It also improves managed local inference, Portable and Hermes onboarding, image 
   Related change: [PR #10025](https://github.com/NVIDIA/NemoClaw/pull/10025).
 - Static messaging credentials now use validated endpointless OpenShell provider profiles across onboarding and channel lifecycle operations.
   Paused detailed channel status keeps its schema-version-1 `report` envelope, skips the live probe, and returns an informational success.
-  Channel start defers credential-bound policy activation until rebuild attaches the required provider; stopped Hermes Discord retains only its exact validated static provider without starting the channel or recreating credentials.
+  Channel start defers credential-bound policy activation until rebuild attaches the required provider; stopped Hermes Discord retains only its validated static provider without starting the channel or recreating credentials.
   For more information, refer to [Manage Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels/manage-messaging-channels) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
   Related changes: [PR #9913](https://github.com/NVIDIA/NemoClaw/pull/9913), [PR #10021](https://github.com/NVIDIA/NemoClaw/pull/10021), [PR #10026](https://github.com/NVIDIA/NemoClaw/pull/10026), [PR #10047](https://github.com/NVIDIA/NemoClaw/pull/10047), and [PR #10052](https://github.com/NVIDIA/NemoClaw/pull/10052).
 - Deep Agents Code progressive disclosure now derives loaded MCP tools from the pinned executable catalog and rejects duplicate loaded implementations.
@@ -65,7 +65,7 @@ It also improves managed local inference, Portable and Hermes onboarding, image 
   For more information, refer to [Configure Progressive Tool Disclosure](/user-guide/deepagents/configure-agents/progressive-tool-disclosure).
   Related change: [PR #10031](https://github.com/NVIDIA/NemoClaw/pull/10031).
 - Portable lifecycle recovery now reports one credential-free timing line with fixed stage durations, selected actions, attempt counts, result, and failed stage.
-  OpenClaw onboarding produces a missing canonical local CLI write-scope request before final observation, while Portable settlement recognizes the same exact request when it is already pending and avoids creating a duplicate.
+  OpenClaw onboarding produces a missing canonical local CLI write-scope request before final observation, while Portable settlement recognizes the same request when it is already pending and avoids creating a duplicate.
   Both paths approve at most once and require strict same-device settled state before completion.
   For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
   Related changes: [PR #9964](https://github.com/NVIDIA/NemoClaw/pull/9964), [PR #10018](https://github.com/NVIDIA/NemoClaw/pull/10018), and [PR #10022](https://github.com/NVIDIA/NemoClaw/pull/10022).
