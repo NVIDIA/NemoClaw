@@ -75,6 +75,10 @@ type SandboxDestroyExecutionInput = {
   // Docker IDs qualified before destroy preparation.
   expectedContainerIdentities?: readonly SandboxNameLabeledContainer[];
   expectedContainerIdentityFingerprint?: string;
+  retainedRecoveryIdentity?: {
+    readonly fingerprint: string;
+    readonly gatewayName: string;
+  };
   portableContainerAuthority?: PreparedPortableDemoSandboxDestroyAuthority;
   stopInferenceResources: () => void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
@@ -303,6 +307,7 @@ export async function executeSandboxDestroy({
   sandboxName,
   expectedContainerIdentities,
   expectedContainerIdentityFingerprint,
+  retainedRecoveryIdentity,
   portableContainerAuthority,
   stopInferenceResources,
   runtimeProviders = CURRENT_RUNTIME_PROVIDER_BUNDLES,
@@ -375,9 +380,40 @@ export async function executeSandboxDestroy({
         };
       }
     };
+    const inspectRetainedRecoveryContinuity = (): IdentityContinuity => {
+      if (
+        !retainedRecoveryIdentity ||
+        pendingPolicyVerification ||
+        sandboxConfirmedAbsent
+      ) {
+        return { status: "match" };
+      }
+      try {
+        const inspectIdentity =
+          deps.inspectOpenShellSandboxIdentityFingerprint ??
+          inspectOpenShellSandboxIdentityFingerprint;
+        return inspectIdentity({
+          sandboxName,
+          gatewayName: retainedRecoveryIdentity.gatewayName,
+        }) === retainedRecoveryIdentity.fingerprint
+          ? { status: "match" }
+          : {
+              status: "changed",
+              subject: "Retained recovery sandbox identity",
+            };
+      } catch (error) {
+        return {
+          status: "probe-failed",
+          subject: "Retained recovery sandbox identity",
+          detail: redactDestroyError(error),
+        };
+      }
+    };
     const inspectIdentityContinuity = (): IdentityContinuity => {
       const pendingContinuity = inspectPendingPolicyVerificationContinuity();
       if (pendingContinuity.status !== "match") return pendingContinuity;
+      const retainedContinuity = inspectRetainedRecoveryContinuity();
+      if (retainedContinuity.status !== "match") return retainedContinuity;
       if (portableContainerAuthority) {
         try {
           portableContainerAuthority.revalidate();
@@ -614,18 +650,24 @@ export async function executeSandboxDestroy({
     const deleteArgs = pendingPolicyVerification
       ? ["sandbox", "delete", "-g", pendingPolicyVerification.gatewayName, sandboxName]
       : ["sandbox", "delete", sandboxName];
-    const deleteResult = runOpenshell(deleteArgs, {
-      ignoreError: true,
-      killSignal: "SIGKILL",
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: SANDBOX_DESTROY_TIMEOUT_MS,
-    });
+    // A successful preflight absence is already the required OpenShell
+    // lifecycle proof. Do not issue a later mutable-name delete that could
+    // target a same-name replacement created after that observation.
+    const deleteResult: ReturnType<DestroyRunOpenshell> = sandboxConfirmedAbsent
+      ? { status: 0, stdout: "", stderr: "" }
+      : runOpenshell(deleteArgs, {
+          ignoreError: true,
+          killSignal: "SIGKILL",
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: SANDBOX_DESTROY_TIMEOUT_MS,
+        });
     const {
       output: capturedDeleteOutput,
-      alreadyGone,
+      alreadyGone: deleteReportedAlreadyGone,
       gatewayUnreachable,
       timedOut,
     } = getSandboxDeleteOutcome(deleteResult);
+    const alreadyGone = sandboxConfirmedAbsent || deleteReportedAlreadyGone;
     const deleteOutput = timedOut
       ? `OpenShell sandbox delete timed out after ${String(SANDBOX_DESTROY_TIMEOUT_MS / 1000)} seconds. Deletion could not be confirmed.`
       : capturedDeleteOutput;

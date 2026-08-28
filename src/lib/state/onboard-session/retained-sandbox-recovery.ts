@@ -37,7 +37,6 @@ export interface RetainedSandboxRecoveryRecord {
   readonly recordId: string;
   readonly sandboxName: string;
   readonly sandboxIdentityFingerprint: string | null;
-  readonly identityWasUnavailable: boolean;
   readonly gatewayName: string;
   readonly gatewayPort: number;
   readonly lifecycleGeneration: string | null;
@@ -364,7 +363,6 @@ function parseRecord(value: unknown): RetainedSandboxRecoveryRecord | null {
     !validSandboxName(value.sandboxName) ||
     (fingerprint !== null &&
       (typeof fingerprint !== "string" || !FINGERPRINT_PATTERN.test(fingerprint))) ||
-    value.identityWasUnavailable !== (fingerprint === null) ||
     !validSafeEvidence(value.gatewayName) ||
     !validGatewayPort(value.gatewayPort) ||
     (value.lifecycleGeneration !== null && !validSafeEvidence(value.lifecycleGeneration)) ||
@@ -391,7 +389,6 @@ function parseRecord(value: unknown): RetainedSandboxRecoveryRecord | null {
     recordId: value.recordId,
     sandboxName: value.sandboxName,
     sandboxIdentityFingerprint: fingerprint,
-    identityWasUnavailable: fingerprint === null,
     gatewayName: value.gatewayName,
     gatewayPort: value.gatewayPort,
     lifecycleGeneration: value.lifecycleGeneration,
@@ -485,7 +482,6 @@ export function recordRetainedSandboxRecovery(
     recordId: recoveryRecordId(input),
     sandboxName: input.sandboxName,
     sandboxIdentityFingerprint: input.sandboxIdentityFingerprint,
-    identityWasUnavailable: input.sandboxIdentityFingerprint === null,
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
     lifecycleGeneration: input.lifecycleGeneration,
@@ -520,17 +516,35 @@ export function recordRetainedSandboxRecovery(
   return reread;
 }
 
+function retainedSandboxRecoveryAuthorityMatchesState(
+  state: RetainedSandboxRecoveryState,
+  expected: RetainedSandboxRecoveryRecord,
+): boolean {
+  const recorded = state.unresolved.find(
+    (candidate) => candidate.recordId === expected.recordId,
+  );
+  if (!recorded) return false;
+  if (!isDeepStrictEqual(recorded, expected)) {
+    throw new Error("Retained sandbox recovery authority changed before cleanup completed.");
+  }
+  return true;
+}
+
+/** Confirm that the exact cleanup authority is still present and unchanged. */
+export function retainedSandboxRecoveryAuthorityIsCurrent(
+  filePath: string,
+  expected: RetainedSandboxRecoveryRecord,
+): boolean {
+  return retainedSandboxRecoveryAuthorityMatchesState(loadState(filePath), expected);
+}
+
 /** Retire only the unchanged record whose external resources were verified absent. */
 export function resolveRetainedSandboxRecovery(
   filePath: string,
   expected: RetainedSandboxRecoveryRecord,
 ): boolean {
   const current = loadState(filePath);
-  const recorded = current.unresolved.find((candidate) => candidate.recordId === expected.recordId);
-  if (!recorded) return false;
-  if (!isDeepStrictEqual(recorded, expected)) {
-    throw new Error("Retained sandbox recovery authority changed before cleanup completed.");
-  }
+  if (!retainedSandboxRecoveryAuthorityMatchesState(current, expected)) return false;
   writeStateFile(filePath, {
     ...current,
     unresolved: current.unresolved.filter((candidate) => candidate.recordId !== expected.recordId),

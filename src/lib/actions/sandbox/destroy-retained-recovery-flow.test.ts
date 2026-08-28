@@ -17,7 +17,6 @@ function retainedRecoveryRecord(sandboxId = "sb-alpha"): RetainedSandboxRecovery
     recordId: "f".repeat(64),
     sandboxName: "alpha",
     sandboxIdentityFingerprint: createHash("sha256").update(sandboxId).digest("hex"),
-    identityWasUnavailable: false,
     gatewayName: "nemoclaw-19080",
     gatewayPort: 19080,
     lifecycleGeneration: "generation-alpha",
@@ -164,6 +163,43 @@ describe("destroySandbox retained recovery flow", () => {
 
       expect(harness.errorSpy).toHaveBeenCalledWith(
         expect.stringContaining("Docker exposed no container with the retained immutable identity"),
+      );
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.anything(),
+      );
+      expect(harness.resolveRetainedSandboxRecoverySpy).not.toHaveBeenCalled();
+      expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it(
+    "does not delete a same-name OpenShell replacement while retained Docker identities remain (#10547)",
+    { timeout: 30_000 },
+    async () => {
+      const recovery = retainedRecoveryRecord();
+      const containerId = "a".repeat(64);
+      const harness = createDestroyHarness({
+        dockerRunResult: {
+          status: 0,
+          stdout: `${containerId}\topenshell\tdefault\tsb-alpha`,
+        },
+        openShellSandboxIdentityFingerprint: createHash("sha256")
+          .update("sb-replacement")
+          .digest("hex"),
+        registryEntryOverrides: {
+          lifecycleGeneration: recovery.lifecycleGeneration!,
+          lifecycleLiveIdentityFingerprint: recovery.sandboxIdentityFingerprint!,
+        },
+        retainedRecoveryRecords: [recovery],
+      });
+
+      await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+        "process.exit(1)",
+      );
+
+      expect(harness.errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Retained recovery sandbox identity changed"),
       );
       expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
         ["sandbox", "delete", "alpha"],

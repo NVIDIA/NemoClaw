@@ -821,7 +821,6 @@ if (${JSON.stringify(
         const record = payload.retainedRecoveryRecords[0];
         assert.equal(record.sandboxName, "my-assistant");
         assert.equal(record.sandboxIdentityFingerprint, identityFingerprint);
-        assert.equal(record.identityWasUnavailable, false);
         assert.equal(record.gatewayName, "nemoclaw-18080");
         assert.equal(record.gatewayPort, 18080);
         assert.match(record.lifecycleGeneration, /^[0-9a-f-]{36}$/u);
@@ -865,7 +864,6 @@ if (${JSON.stringify(
         assert.equal(payload.retainedRecoveryRecords.length, 1);
         const record = payload.retainedRecoveryRecords[0];
         assert.equal(record.sandboxName, "my-assistant");
-        assert.equal(record.identityWasUnavailable, false);
         assert.equal(record.reason, "retained_after_sandbox_creation_failure");
         assertRecoveryTuple(record);
       };

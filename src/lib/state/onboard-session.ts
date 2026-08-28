@@ -60,8 +60,9 @@ import {
   listRetainedSandboxRecoveryRecords as readRetainedSandboxRecoveryRecords,
   parseNemoClawPolicyCreationReceipt,
   recordRetainedSandboxRecovery as writeRetainedSandboxRecovery,
-  resolveRetainedSandboxRecovery as retireRetainedSandboxRecovery,
+  retainedSandboxRecoveryAuthorityIsCurrent,
   retainedSandboxRecoveryFile,
+  resolveRetainedSandboxRecovery as retireRetainedSandboxRecovery,
   type RecordRetainedSandboxRecoveryInput,
   type RetainedSandboxRecoveryRecord,
   type RetainedSandboxRecoveryReason,
@@ -2084,8 +2085,9 @@ export function retainedSandboxRecoveryMatchesSession(
 /** Clear one recovery-only session after destroy verifies the retained resources absent. */
 export function resolveRetainedSandboxRecovery(record: RetainedSandboxRecoveryRecord): boolean {
   return withOwnedOnboardLock("nemoclaw retained sandbox recovery completion", () => {
-    const retired = retireRetainedSandboxRecovery(RETAINED_SANDBOX_RECOVERY_FILE, record);
-    if (!retired) return false;
+    if (!retainedSandboxRecoveryAuthorityIsCurrent(RETAINED_SANDBOX_RECOVERY_FILE, record)) {
+      return false;
+    }
     const current = loadSession();
     if (current && retainedSandboxRecoveryMatchesSession(record, current)) {
       current.status = "failed";
@@ -2094,7 +2096,11 @@ export function resolveRetainedSandboxRecovery(record: RetainedSandboxRecoveryRe
       current.cancellationRecovery = null;
       saveSession(current);
     }
-    return true;
+    // Release the recovery-only session first. If this write fails, the exact
+    // independent record remains available for a later completion attempt. If
+    // record retirement then fails, that record still blocks only the retained
+    // name while a different explicitly named onboarding run can proceed.
+    return retireRetainedSandboxRecovery(RETAINED_SANDBOX_RECOVERY_FILE, record);
   });
 }
 

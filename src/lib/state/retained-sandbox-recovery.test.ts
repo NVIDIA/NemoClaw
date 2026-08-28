@@ -47,7 +47,6 @@ describe("retained sandbox recovery state", () => {
     expect(recorded).toMatchObject({
       sandboxName: "retained-sb",
       sandboxIdentityFingerprint: fingerprint,
-      identityWasUnavailable: false,
       verifiedEffectivePolicyIdentity: input.verifiedEffectivePolicyIdentity,
     });
     expect(fs.readFileSync(recovery.RETAINED_SANDBOX_RECOVERY_FILE, "utf8")).not.toContain(
@@ -71,7 +70,6 @@ describe("retained sandbox recovery state", () => {
 
     expect(recorded).toMatchObject({
       sandboxIdentityFingerprint: null,
-      identityWasUnavailable: true,
       lifecycleGeneration: null,
     });
   });
@@ -311,7 +309,7 @@ describe("retained sandbox recovery state", () => {
     expect(recovery.listRetainedSandboxRecoveryRecords()).toEqual([]);
   });
 
-  it("keeps the recovery-only session when record retirement cannot be written (#10547)", async () => {
+  it("keeps the exact record when retirement fails after session release (#10547)", async () => {
     const recovery = await import("./onboard-session");
     recovery.markRetainedSandboxRecovery(
       "retained-sb",
@@ -326,12 +324,53 @@ describe("retained sandbox recovery state", () => {
       },
     );
     const [recorded] = recovery.listRetainedSandboxRecoveryRecords();
-    vi.spyOn(fs, "renameSync").mockImplementationOnce(() => {
-      throw new Error("simulated recovery retirement write failure");
-    });
+    const renameSync = fs.renameSync.bind(fs);
+    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) =>
+      String(destination) === recovery.RETAINED_SANDBOX_RECOVERY_FILE
+        ? (() => {
+            throw new Error("simulated recovery retirement write failure");
+          })()
+        : renameSync(source, destination),
+    );
 
     expect(() => recovery.resolveRetainedSandboxRecovery(recorded!)).toThrow(
       /simulated recovery retirement write failure/u,
+    );
+    expect(recovery.loadSession()).toMatchObject({
+      status: "failed",
+      resumable: false,
+      sandboxName: null,
+      cancellationRecovery: null,
+    });
+    expect(recovery.listRetainedSandboxRecoveryRecords()).toEqual([recorded]);
+  });
+
+  it("preserves the exact record when recovery-only session release cannot be written (#10547)", async () => {
+    const recovery = await import("./onboard-session");
+    recovery.markRetainedSandboxRecovery(
+      "retained-sb",
+      "Sandbox creation failed after identity verification.",
+      "b".repeat(64),
+      {
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        lifecycleGeneration: "generation-1",
+        verifiedEffectivePolicyIdentity: null,
+        ...recoveryAuthority,
+      },
+    );
+    const [recorded] = recovery.listRetainedSandboxRecoveryRecords();
+    const renameSync = fs.renameSync.bind(fs);
+    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) =>
+      String(destination) === recovery.SESSION_FILE
+        ? (() => {
+            throw new Error("simulated recovery session release write failure");
+          })()
+        : renameSync(source, destination),
+    );
+
+    expect(() => recovery.resolveRetainedSandboxRecovery(recorded!)).toThrow(
+      /simulated recovery session release write failure/u,
     );
     expect(recovery.loadSession()).toMatchObject({
       status: "recovery_required",

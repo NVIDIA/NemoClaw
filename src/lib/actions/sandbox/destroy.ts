@@ -721,6 +721,14 @@ async function destroySandboxUnlocked(
       ...(retainedSandboxIdentityFingerprint
         ? { expectedContainerIdentityFingerprint: retainedSandboxIdentityFingerprint }
         : {}),
+      ...(retainedRecoveryAuthority && retainedSandboxIdentityFingerprint
+        ? {
+            retainedRecoveryIdentity: {
+              fingerprint: retainedSandboxIdentityFingerprint,
+              gatewayName: retainedRecoveryAuthority.gatewayName,
+            },
+          }
+        : {}),
       ...(portableContainerAuthority ? { portableContainerAuthority } : {}),
       stopInferenceResources: () => stopSandboxInferenceResources(sandboxName, sandbox),
     });
