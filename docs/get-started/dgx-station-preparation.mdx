@@ -28,10 +28,10 @@ An OTA-upgraded host can omit `DGX_OTA_PRETTY_NAME`.
 On that OTA-form path, `DGX_PRETTY_NAME` must equal `NVIDIA DGX GB300WS`.
 The no-OTA DGX OS `7.6.x` profile must omit every `DGX_OTA_*` field.
 NemoClaw rejects partial OTA metadata.
-It requires a numeric `7.6.x` `DGX_SWBUILD_VERSION` and a present `DGX_SWBUILD_DATE`, but does not match the date against an exact build.
+It requires a numeric `7.6.x` `DGX_SWBUILD_VERSION` and a present `DGX_SWBUILD_DATE`, but does not require the date to match a build.
 Full Station Express end-to-end qualification for the no-OTA DGX OS `7.6.x` profile is pending.
 All accepted DGX OS forms remain subject to the runtime checks below.
-NemoClaw also recognizes these exact no-OTA factory profiles for bounded qualification.
+NemoClaw also recognizes these no-OTA factory profiles for bounded qualification.
 Each profile requires `DGX_PLATFORM=DGX Server for GALAXY-GB300`, requires every `DGX_OTA_*` field to be absent, and requires every profile-specific field below:
 
 - April 2026 NVIDIA Colossus BaseOS with `DGX_PRETTY_NAME=NVIDIA DGX Server`, `DGX_SWBUILD_VERSION=7.5.0-GB300ws-GB200ws`, and `DGX_SWBUILD_DATE=2026-04-02-08-20-16`.
@@ -46,10 +46,10 @@ Before a Docker restart or host reboot, stopped containers with a restart policy
 
 If preparation detects an existing vLLM workload, the installer shows the requested model and the model reported by the configured vLLM port when available, then offers two choices:
 
-1. Keep the managed Express recipe. This default leaves the host unchanged and prints the workload stop command and exact Express resume command.
+1. Keep the managed Express recipe. This default leaves the host unchanged and prints the workload stop command and Express resume command.
 2. Leave vLLM running and continue in the same installer run through advanced manual Local vLLM validation and configuration.
 
-For the manual Local vLLM choice, NemoClaw records the exact installer revision until installation succeeds.
+For the manual Local vLLM choice, NemoClaw records the installer revision until installation succeeds.
 If Docker access requires a new login or a later step fails, run the printed command to continue the same choice and revision.
 Without an interactive terminal or a choice, the installer safely selects the first option.
 
@@ -60,8 +60,8 @@ The flag bypasses only the `/etc/dgx-release` allowlist.
 It still requires ARM64 Ubuntu 24.04, recognized GB300 hardware, exactly one healthy GB300 for inference, zero volatile GB300 ECC errors, adequate storage, healthy required system services, no active agent or unrelated Docker workloads, and working Docker, Buildx, NVIDIA Container Toolkit, CDI, and container GPU-visibility probes.
 The override preserves the existing factory driver, packages, and container-runtime configuration; it does not install or repair missing factory components.
 It cannot enable Station Express on another Station generation or hardware platform.
-This override exists for current genuine Station factory images whose `/etc/dgx-release` metadata omits or varies fields used by the exact automatic allowlist.
-Remove the override after those images publish recognized metadata or NemoClaw replaces the exact allowlist with a separately qualified platform-family and runtime-capability check.
+This override exists for current genuine Station factory images whose `/etc/dgx-release` metadata omits or varies fields used by the automatic allowlist.
+Remove the override after those images publish recognized metadata or NemoClaw replaces the allowlist with a separately qualified platform-family and runtime-capability check.
 
 If the installer cannot read the prompt, it stops before host changes.
 Run the override from an interactive terminal:
@@ -77,7 +77,7 @@ The installer records the override in the printed relogin command when Docker-gr
 ## Prepare Generic Ubuntu
 
 On the generic Ubuntu path, accepting express install prepares the host with NVIDIA open driver `610.43.02`, Docker CE `29.6.1` with Buildx, and NVIDIA Container Toolkit `1.19.1`.
-Preparation probes package and runtime state first, reuses exact matches, and installs only missing pinned packages, including the NVIDIA Container Toolkit libraries and `nvidia-ctk` CLI.
+Preparation probes package and runtime state first, reuses components whose versions match the accepted recipe, and installs only missing pinned packages, including the NVIDIA Container Toolkit libraries and `nvidia-ctk` CLI.
 
 NemoClaw accepts an idle PackageKit daemon and quiesces it during repository and package changes.
 NemoClaw still stops before mutation when it finds any of these conditions:
@@ -103,16 +103,16 @@ If registration or a post-change acceptance probe fails, preparation restores th
 After successful registration, the runtime remains configured until the same acceptance probe succeeds through a replacement Docker and NVIDIA runtime integration.
 
 Preparation requires Secure Boot to be disabled, matching headers for the running kernel, at least 20 GiB free on the root filesystem, and no active agent, inference, or Docker workloads.
-It also stops when systemd reports a failed unit unless the unit matches an exact, condition-qualified state reviewed for the active Station profile.
+It also stops when systemd reports a failed unit unless the unit matches a condition-qualified state reviewed for the active Station profile.
 The generic Ubuntu profile permits the pinned OEM `cloud-init` telemetry failure, a network-wait failure while current network health is established, masked `fwupd`, or an SSSD socket on a host without SSSD configuration.
-Stock DGX OS and Colossus BaseOS require exact reviewed systemd, unit-file, configuration-file, and failure-cause fingerprints for `cloud-init`, Fluent Bit, `fwupd`, and SSSD.
+Stock DGX OS and Colossus BaseOS require reviewed systemd, unit-file, configuration-file, and failure-cause fingerprints for `cloud-init`, Fluent Bit, `fwupd`, and SSSD.
 Any other failed unit blocks preparation for administrator review.
 If `openibd.service` is the failed unit, follow [Resolve a Failed OpenIB Service](#resolve-a-failed-openib-service) before you rerun the installer.
 On the `--force-station-install` path, preparation also tolerates the InfiniBand communication manager (`ibacm`) and the realtime audio scheduler (`rtkit-daemon`) as failed units, because neither affects GPU or container capability; the required GPU, container, and preparation-critical service checks still apply.
 It does not install a host CUDA toolkit or Docker Compose.
 If any other existing prerequisite version differs, preparation stops instead of changing it automatically.
 Before host preparation begins, the installer stores the accepted Station Express recipe in owner-only local state.
-If preparation requires a reboot or a new login, run the printed command to restore the exact NemoClaw revision, agent, model, sandbox, policy tier, and gateway, dashboard, and vLLM ports without repeating the Express prompt.
+If preparation requires a reboot or a new login, run the printed command to restore the NemoClaw revision, agent, model, sandbox, policy tier, and gateway, dashboard, and vLLM ports without repeating the Express prompt.
 Recovery receipts created by earlier releases remain compatible.
 After changing pinned packages, the installer exits with status `10`; reboot, sign in, and run that printed command to resume Express setup.
 
@@ -147,7 +147,7 @@ If the host uses RDMA, repair OpenIB/OFED instead, then rerun the installer afte
 
 ## Validate DGX OS and Factory Images
 
-On a qualifying stock DGX OS or exact no-OTA factory image, express install validates the factory stack in place against the local default Docker daemon.
+On a qualifying stock DGX OS or no-OTA factory image, express install validates the factory stack in place against the local default Docker daemon.
 It requires a loaded GB300 driver with zero volatile corrected and uncorrected ECC errors, active Docker and containerd services, working Docker Buildx, `nvidia-ctk`, the `nvidia.com/gpu=all` CDI device, and successful `nvidia-smi` device-visibility probes through both CDI and `--gpus all`.
 The stock DGX OS path does not install or replace host packages, enable or restart services, generate CDI configuration, or rewrite the Docker runtime.
 The AI Developer Tools path preserves those boundaries when `nvidia.com/gpu=all` is already present.
@@ -158,7 +158,7 @@ It stops with service diagnostics if packaged refresh fails or omits the device.
 It never generates CDI directly, rewrites the Docker runtime, or restarts Docker or containerd.
 The qualified May and June 2026 AI Developer Tools factory-image boundary defines this compatibility repair because those images can leave their packaged CDI units disabled.
 NemoClaw maintainers can remove the repair after repeated clean-host qualification confirms that the qualified images consistently advertise `nvidia.com/gpu=all` at boot.
-The Colossus BaseOS path also requires the exact reviewed package fingerprint, preserves the factory kernel, driver, DKMS, Docker, and NVIDIA Container Toolkit packages, and prepares only Docker access and packaged CDI.
+The Colossus BaseOS path also requires the reviewed package fingerprint, preserves the factory kernel, driver, DKMS, Docker, and NVIDIA Container Toolkit packages, and prepares only Docker access and packaged CDI.
 Only the Colossus BaseOS path registers the NVIDIA Docker runtime when the launch probe proves that the runtime is missing, and it restores the prior daemon configuration if registration fails.
 The preparation helper writes a private audit log under `~/station-bootstrap-logs`.
 Aside from the installer's separately disclosed `docker`-group membership grant when the current trusted account needs Docker access, the stock DGX OS path leaves only the digest-pinned visibility-test image in the Docker cache.

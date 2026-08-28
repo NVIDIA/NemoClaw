@@ -70,7 +70,7 @@ runner.run = (command, opts = {}) => {
     return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
   }
   return normalized.includes("sandbox get") && normalized.includes("my-assistant")
-    ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\nPhase: Ready\n"), stderr: Buffer.alloc(0) }
+    ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\nPhase: Ready\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -300,7 +300,7 @@ runner.run = (command, opts = {}) => {
   return sandboxCreated &&
     normalized.includes("sandbox get") &&
     normalized.split(/\s+/).includes("hermes-sandbox")
-    ? { status: 0, stdout: Buffer.from("Name: hermes-sandbox\nId: sbx-4f2a91c0d7\nPhase: Ready\n"), stderr: Buffer.alloc(0) }
+    ? { status: 0, stdout: Buffer.from("Name: hermes-sandbox\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\nPhase: Ready\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
 };
 runner.runFile = (file, args = [], opts = {}) => {
@@ -316,7 +316,7 @@ runner.runCapture = (command) => {
     normalized.includes("sandbox get") &&
     normalized.split(/\s+/).includes("hermes-sandbox")
   ) {
-    return "Name: hermes-sandbox\nId: sbx-4f2a91c0d7\nPhase: Ready\n";
+    return "Name: hermes-sandbox\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\nPhase: Ready\n";
   }
   if (normalized.includes("sandbox list")) return "hermes-sandbox Ready";
   {
@@ -528,7 +528,7 @@ runner.run = (command, opts = {}) => {
     return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
   }
   return normalized.includes("sandbox get") && normalized.includes("my-assistant")
-    ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\nPhase: Ready\n"), stderr: Buffer.alloc(0) }
+    ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\nPhase: Ready\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
 };
 runner.runFile = (file, args = [], opts = {}) => {
@@ -540,7 +540,9 @@ runner.runCapture = (command) => {
   const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command, { sandboxName: "my-assistant" });
   if (createdIdentity !== null) return createdIdentity;
   if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) {
-    return sandboxCreated ? "Name: my-assistant\nId: sbx-4f2a91c0d7\nPhase: Ready\n" : "";
+    return sandboxCreated
+      ? "Name: my-assistant\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\nPhase: Ready\n"
+      : "";
   }
   if (normalized.includes("sandbox list")) return "my-assistant Ready";
   {
@@ -651,7 +653,7 @@ runner.run = (command, opts = {}) => {
     return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
   }
   return normalized.includes("sandbox get") && normalized.includes("my-assistant")
-    ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\nPhase: Ready\n"), stderr: Buffer.alloc(0) }
+    ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\nPhase: Ready\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -765,7 +767,7 @@ runner.run = (command, opts = {}) => {
     return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
   }
   return normalized.includes("sandbox get") && normalized.includes("my-assistant")
-    ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\nPhase: Ready\n"), stderr: Buffer.alloc(0) }
+    ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\nPhase: Ready\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
 };
 runner.runFile = (file, args = [], opts = {}) => {

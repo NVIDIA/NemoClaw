@@ -254,7 +254,9 @@ function createStatefulMessagingProviderRunner({
     ) {
       return {
         status: 0,
-        stdout: Buffer.from(`Name: ${readySandboxName}\nId: sbx-4f2a91c0d7\nPhase: Ready\n`),
+        stdout: Buffer.from(
+          `Name: ${readySandboxName}\nId: ${ONBOARD_CREATED_SANDBOX_ID}\nPhase: Ready\n`,
+        ),
         stderr: Buffer.alloc(0),
       };
     }
@@ -289,6 +291,7 @@ const OPENCLAW_SECURITY_INVENTORY_PROBE = [
 
 const ONBOARD_SANDBOX_OLD_CONTAINER_ID = "a".repeat(64);
 const ONBOARD_SANDBOX_NEW_CONTAINER_ID = "b".repeat(64);
+const { createdSandboxId: ONBOARD_CREATED_SANDBOX_ID } = require("./onboard-fixture-contract.json");
 const ONBOARD_SANDBOX_INSPECT = {
   Id: ONBOARD_SANDBOX_OLD_CONTAINER_ID,
   Image: `sha256:${"c".repeat(64)}`,
@@ -415,7 +418,8 @@ function mockCreatedSandboxIdentityList(command, options = {}) {
     args[2] !== "-g" ||
     args[3] !== gatewayName ||
     args[4] !== "--selector" ||
-    !new RegExp(`^${prefix}[0-9a-f]{62}$`, "u").test(selector) ||
+    !selector.startsWith(prefix) ||
+    !/^[0-9a-f]{62}$/u.test(selector.slice(prefix.length)) ||
     args[6] !== "--output" ||
     args[7] !== "json" ||
     args[8] !== "--limit" ||
@@ -426,7 +430,7 @@ function mockCreatedSandboxIdentityList(command, options = {}) {
   const nonce = selector.slice(prefix.length);
   publishedCreatedGatewayName = gatewayName;
   publishedCreatedSandboxIdentity = {
-    id: options.sandboxId || "sbx-4f2a91c0d7",
+    id: options.sandboxId || ONBOARD_CREATED_SANDBOX_ID,
     name: options.sandboxName || "my-assistant",
     labels: { "ai.nvidia.nemoclaw.create-attempt": nonce },
     resource_version: 1,
@@ -723,7 +727,7 @@ function managedSandboxPolicyReceiptFixture(entry, options = {}) {
   const gatewayName = options.gatewayName || "nemoclaw";
   const gatewayPort = options.gatewayPort || 8080;
   const lifecycleGeneration = options.lifecycleGeneration || "123e4567-e89b-42d3-a456-426614174983";
-  const sandboxId = options.sandboxId || "sbx-4f2a91c0d7";
+  const sandboxId = options.sandboxId || ONBOARD_CREATED_SANDBOX_ID;
   const sandboxIdentityFingerprint = require("node:crypto")
     .createHash("sha256")
     .update(sandboxId)
@@ -1029,7 +1033,7 @@ function mockManagedImageBootstrap() {
     path.resolve(__dirname, "../../src/lib/adapters/openshell/sandbox-identity.ts"),
   );
 
-  sandboxIdentity.resolveOpenShellSandboxId = () => "sbx-4f2a91c0d7";
+  sandboxIdentity.resolveOpenShellSandboxId = () => ONBOARD_CREATED_SANDBOX_ID;
   authorityStore.createDockerManagedBootstrapAuthorityStore = () => ({
     async recordPreparedAuthority(authority) {
       return {
@@ -1178,6 +1182,7 @@ if (process.env.NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG === "1") {
 }
 
 module.exports = {
+  ONBOARD_CREATED_SANDBOX_ID,
   mockEndpointlessProviderProfileRun,
   mockManagedEndpointlessProviderProfileRun,
   createStatefulMessagingProviderRunner,

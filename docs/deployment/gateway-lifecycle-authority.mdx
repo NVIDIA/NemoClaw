@@ -47,7 +47,7 @@ Set `NEMOCLAW_GATEWAY_MANAGEMENT` to the path of a JSON declaration.
 export NEMOCLAW_GATEWAY_MANAGEMENT=/etc/nemoclaw/gateway-management.json
 ```
 
-An externally supervised declaration identifies the exact local endpoint, state directory, systemd unit, and executable.
+An externally supervised declaration identifies the local endpoint, state directory, systemd unit, and executable.
 
 ```json
 {
@@ -80,7 +80,7 @@ The declaration uses the following fields.
 |---|---|
 | `version` | Contract version. Only `1` is supported. |
 | `mode` | `nemoclaw-managed` or `externally-supervised`. |
-| `endpoint` | Exact bare origin for an externally supervised gateway. Use `http` or `https`, host `127.0.0.1` or `[::1]`, and the gateway port that this NemoClaw process uses. Credentials, DNS names such as `localhost`, paths, query strings, and fragments are rejected. |
+| `endpoint` | A bare origin for an externally supervised gateway. Use `http` or `https`, host `127.0.0.1` or `[::1]`, and the gateway port that this NemoClaw process uses. Credentials, DNS names such as `localhost`, paths, query strings, and fragments are rejected. |
 | `stateDir` | Absolute external gateway state directory. Keep it outside NemoClaw-owned state paths such as `~/.local/state/nemoclaw`. While the external gateway process remains, uninstall preserves the selected local gateway state and does not otherwise target the declared external directory. For HTTPS, it contains the client trust bundle. |
 | `supervisor` | Required for `externally-supervised` and rejected for `nemoclaw-managed`. `kind` is `systemd-system` or `systemd-user`. `serviceName` names one `.service` unit, and `execPath` is the absolute gateway executable path. |
 | `requiredCapabilities` | Capabilities onboarding needs. Supported values are `gateway.health`, `sandbox.create`, `sandbox.exec`, and `gpu.passthrough`. |
@@ -116,8 +116,8 @@ An HTTPS endpoint requires the external gateway's mTLS client files under the de
 | `stateDir/tls/client/tls.key` | Client private key used for mTLS. |
 
 All three paths must be readable regular files.
-NemoClaw uses this bundle for the mTLS gRPC health request at the exact declared endpoint path `/openshell.v1.OpenShell/Health`.
-For an HTTP endpoint, NemoClaw sends the readiness request to the exact declared origin.
+NemoClaw uses this bundle for the mTLS gRPC health request at the declared endpoint path `/openshell.v1.OpenShell/Health`.
+For an HTTP endpoint, NemoClaw sends the readiness request to the declared origin.
 
 ## Validate and attach the gateway
 
@@ -126,9 +126,9 @@ NemoClaw requires systemd to confirm that the declared unit is active.
 It checks that exactly one live process holds the configured port.
 The process identity must remain stable while NemoClaw reads `/proc` evidence and confirms the listener a second time.
 The process must belong to the unit's cgroup under the declared systemd manager scope, and its executable must match `execPath`.
-The exact endpoint must answer its health check.
+The endpoint must answer its health check.
 
-After validation, NemoClaw registers the exact endpoint under the canonical gateway name and selects it as the active OpenShell gateway.
+After validation, NemoClaw registers the endpoint under the canonical gateway name and selects it as the active OpenShell gateway.
 Immediately before registration, NemoClaw reloads the authority and rejects any change from the authority bound to the run.
 Port `8080` uses the name `nemoclaw`, and another port uses `nemoclaw-<port>`.
 NemoClaw verifies the named and active registrations before advancing to provider selection.
@@ -191,7 +191,7 @@ The gateway state handler validates and attaches instead of starting, stopping, 
 
 Stop, final-sandbox cleanup, and uninstall reload the declaration before gateway teardown.
 When a valid checkpoint exists, they compare the current authority with that checkpoint.
-The comparison uses the exact gateway name and port.
+The comparison uses the gateway name and port.
 If the authority changed, teardown stops before it scans listeners or changes gateway runtime resources.
 During full uninstall, a recorded package-managed default gateway can resolve as standalone after the service has already been removed.
 That narrow transition is allowed so uninstall can finish removing the remaining selected gateway registration and runtime resources.

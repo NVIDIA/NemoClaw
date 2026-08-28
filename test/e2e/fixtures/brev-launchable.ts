@@ -71,6 +71,7 @@ export class BrevLaunchableFixture {
   private readonly home: string;
   private readonly host: HostCliClient;
   private readonly ownershipFile?: string;
+  private readonly path?: string;
   private readonly secrets: SecretStore;
   private readonly pollMs: number;
 
@@ -81,6 +82,7 @@ export class BrevLaunchableFixture {
     this.home = home;
     this.host = options.host;
     this.ownershipFile = options.ownershipFile ?? process.env.BREV_WORKSPACE_OWNERSHIP_FILE;
+    this.path = process.env.PATH;
     this.secrets = options.secrets;
     this.pollMs = options.pollMs ?? DEFAULT_POLL_MS;
   }
@@ -476,7 +478,7 @@ export class BrevLaunchableFixture {
   ): Promise<ShellProbeResult> {
     return this.host.command("brev", args, {
       ...options,
-      env: { ...(options.env ?? {}), HOME: this.home },
+      env: { PATH: this.path, ...(options.env ?? {}), HOME: this.home },
     });
   }
 }

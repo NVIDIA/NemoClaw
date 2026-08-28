@@ -9,7 +9,6 @@ import {
   assertAgentExecutionSucceeded,
   assertGpuInstallProofs,
   assertNvidiaAvailable,
-  buildLlamaCppCompatibilityTargetEnv,
   CLI,
   chatContent,
   cleanupGpu,
@@ -26,55 +25,9 @@ import {
   readTokenFileChecked,
   restartProxy,
   SANDBOX_NAME,
-  shouldBootstrapLlamaCppGenericGpuTarget,
 } from "./gpu-e2e-helpers.ts";
 
 const TIMEOUT_MS = 75 * 60_000;
-const bootstrapLlamaCppTarget = shouldBootstrapLlamaCppGenericGpuTarget();
-type SkipTest = (reason?: string) => never;
-const skipOllamaForLlamaCppCompatibility: (skip: SkipTest) => void = bootstrapLlamaCppTarget
-  ? (skip) => skip("dedicated llama.cpp target owns this pre-merge GPU run")
-  : () => undefined;
-
-// Manual PR E2E executes trusted main workflow YAML, so the new dedicated job
-// cannot select its candidate test until this change lands. The existing GPU
-// lane invokes that test for this revision only; the landed workflow marker
-// keeps later PRs on the two independent dedicated lanes.
-const llamaCppCompatibilityTest = bootstrapLlamaCppTarget ? test : test.skip;
-
-llamaCppCompatibilityTest(
-  "trusted pre-merge GPU lane exercises the dedicated managed llama.cpp target",
-  {
-    timeout: 85 * 60_000,
-    meta: {
-      e2ePhases: [
-        "prepare the trusted pre-merge GPU bridge",
-        "run the dedicated managed llama.cpp live target",
-      ],
-    },
-  },
-  async ({ host, progress }) => {
-    progress.phase("prepare the trusted pre-merge GPU bridge");
-    progress.phase("run the dedicated managed llama.cpp live target");
-    const result = await host.command(
-      "npx",
-      [
-        "tsx",
-        "tools/e2e/live-vitest-invocation.mts",
-        "run",
-        "--test-path",
-        "test/e2e/live/llama-cpp-generic-gpu.test.ts",
-      ],
-      {
-        artifactName: "llama-cpp-generic-gpu-compatibility-target",
-        cwd: REPO_ROOT,
-        env: buildLlamaCppCompatibilityTargetEnv(process.env),
-        timeoutMs: 84 * 60_000,
-      },
-    );
-    expect(result.exitCode, resultText(result)).toBe(0);
-  },
-);
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -146,245 +99,247 @@ function loadedOllamaModels(raw: string): string[] {
   });
 }
 
-test("GPU Ollama onboard enables CUDA, auth proxy, and sandbox inference", {
-  timeout: TIMEOUT_MS,
-  meta: {
-    e2ePhases: [
-      "prepare clean GPU runtime",
-      "install Ollama and GPU sandbox",
-      "validate CUDA sandbox configuration",
-      "validate Ollama proxy credential boundary",
-      "run sandbox inference.local chat",
-      "restart Ollama and recover agent inference",
-    ],
+test(
+  "GPU Ollama onboard enables CUDA, auth proxy, and sandbox inference",
+  {
+    timeout: TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "prepare clean GPU runtime",
+        "install Ollama and GPU sandbox",
+        "validate CUDA sandbox configuration",
+        "validate Ollama proxy credential boundary",
+        "run sandbox inference.local chat",
+        "restart Ollama and recover agent inference",
+      ],
+    },
   },
-}, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
-  skipOllamaForLlamaCppCompatibility(skip);
-  await artifacts.target.declare({
-    id: "gpu-e2e",
-    boundary:
-      "GPU host + install.sh Ollama provider + OpenShell sandbox + auth proxy + inference.local",
-    credentialBoundary:
-      "The proxy token remains host/OpenShell-owned and is absent from sandbox env and uploaded config evidence.",
-    remoteInstallerBoundary:
-      "The official Ollama installer compatibility path runs before proxy tokens are read; the workflow uses a read-only checkout token and no explicit repository secrets. Replace with a pinned package once the GPU image provides a stable install source.",
-    sandboxName: SANDBOX_NAME,
-    delegatedLegacyContracts: [
-      "uninstall --delete-models remains a separate cleanup lane until it has dedicated Vitest coverage",
-      "The #5468 interactive TUI first-turn smoke remains waived until a TUI fixture exists; this Vitest asserts the baked compaction budget directly",
-    ],
-  });
+  async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+    await artifacts.target.declare({
+      id: "gpu-e2e",
+      boundary:
+        "GPU host + install.sh Ollama provider + OpenShell sandbox + auth proxy + inference.local",
+      credentialBoundary:
+        "The proxy token remains host/OpenShell-owned and is absent from sandbox env and uploaded config evidence.",
+      remoteInstallerBoundary:
+        "The official Ollama installer compatibility path runs before proxy tokens are read; the workflow uses a read-only checkout token and no explicit repository secrets. Replace with a pinned package once the GPU image provides a stable install source.",
+      sandboxName: SANDBOX_NAME,
+      delegatedLegacyContracts: [
+        "uninstall --delete-models remains a separate cleanup lane until it has dedicated Vitest coverage",
+        "The #5468 interactive TUI first-turn smoke remains waived until a TUI fixture exists; this Vitest asserts the baked compaction budget directly",
+      ],
+    });
 
-  const cleanupEnv = env();
-  cleanup.trackDisposable("stop GPU Ollama processes", async () => {
-    const result = await cleanupOllama(host, "cleanup-ollama-processes");
-    expect(result.exitCode, resultText(result)).toBe(0);
-  });
-  cleanup.trackGateway(host, "nemoclaw", {
-    artifactName: "cleanup-gateway-destroy-gpu",
-    env: cleanupEnv,
-    timeoutMs: 60_000,
-  });
-  cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
-    sandbox.cleanupSandbox(SANDBOX_NAME, {
-      artifactName: "cleanup-delete-gpu",
+    const cleanupEnv = env();
+    cleanup.trackDisposable("stop GPU Ollama processes", async () => {
+      const result = await cleanupOllama(host, "cleanup-ollama-processes");
+      expect(result.exitCode, resultText(result)).toBe(0);
+    });
+    cleanup.trackGateway(host, "nemoclaw", {
+      artifactName: "cleanup-gateway-destroy-gpu",
       env: cleanupEnv,
       timeoutMs: 60_000,
-    }),
-  );
-  cleanup.trackSandbox(host, SANDBOX_NAME, {
-    artifactName: "cleanup-destroy-gpu",
-    env: cleanupEnv,
-    timeoutMs: 120_000,
-  });
-  await cleanupGpu(host, sandbox);
+    });
+    cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+      sandbox.cleanupSandbox(SANDBOX_NAME, {
+        artifactName: "cleanup-delete-gpu",
+        env: cleanupEnv,
+        timeoutMs: 60_000,
+      }),
+    );
+    cleanup.trackSandbox(host, SANDBOX_NAME, {
+      artifactName: "cleanup-destroy-gpu",
+      env: cleanupEnv,
+      timeoutMs: 120_000,
+    });
+    await cleanupGpu(host, sandbox);
 
-  const docker = await host.command("docker", ["info"], {
-    artifactName: "docker-info",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
-  });
-  expect(docker.exitCode, resultText(docker)).toBe(0);
-  const nvidia = await host.command("nvidia-smi", [], {
-    artifactName: "nvidia-smi",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
-  });
-  assertNvidiaAvailable(nvidia, skip);
-
-  await ensureOllama(host);
-  const ollamaCleanup = await cleanupOllama(host, "pre-cleanup-ollama");
-  expect(ollamaCleanup.exitCode, resultText(ollamaCleanup)).toBe(0);
-
-  progress.phase("install Ollama and GPU sandbox");
-  const install = await host.command("bash", ["install.sh", "--non-interactive"], {
-    artifactName: "install-gpu-ollama",
-    cwd: REPO_ROOT,
-    env: env(),
-    timeoutMs: 55 * 60_000,
-  });
-  expect(install.exitCode, resultText(install)).toBe(0);
-  await artifacts.writeText("install-gpu-ollama.log", resultText(install));
-
-  progress.phase("validate CUDA sandbox configuration");
-  const config = await sandbox.execShell(
-    SANDBOX_NAME,
-    trustedSandboxShellScript(openClawModelConfigProjectionScript()),
-    { artifactName: "sandbox-openclaw-model-config", env: env(), timeoutMs: 30_000 },
-  );
-  expect(config.exitCode, resultText(config)).toBe(0);
-  await artifacts.writeText("openclaw-model-config.json", config.stdout);
-  assertSmallContextCompactionPolicy(config.stdout);
-
-  const status = await host.command("node", [CLI, SANDBOX_NAME, "status"], {
-    artifactName: "status-gpu-ollama",
-    env: env(),
-    timeoutMs: 120_000,
-  });
-  expect(status.exitCode, resultText(status)).toBe(0);
-  expect(resultText(status)).toContain("Sandbox GPU: enabled");
-  expect(resultText(status)).toMatch(/CUDA verified|CUDA unverified|last CUDA proof failed/i);
-  expect(resultText(status)).not.toMatch(/last CUDA proof failed|CUDA unverified/i);
-
-  const installLog = resultText(install);
-  assertGpuInstallProofs(installLog);
-  expect(installLog).toContain(
-    "Direct sandbox GPU enabled; allowing OpenShell GPU policy enrichment.",
-  );
-  expect(installLog).not.toContain(
-    "Recreating OpenShell Docker sandbox container with NVIDIA GPU access",
-  );
-  expect(installLog).not.toContain("Docker GPU mode selected");
-
-  const sandboxContainers = await host.command(
-    "docker",
-    [
-      "ps",
-      "-a",
-      "--filter",
-      `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
-      "--format",
-      "{{json .}}",
-    ],
-    {
-      artifactName: "gpu-native-route-sandbox-containers",
+    const docker = await host.command("docker", ["info"], {
+      artifactName: "docker-info",
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 30_000,
-    },
-  );
-  expect(sandboxContainers.exitCode, resultText(sandboxContainers)).toBe(0);
-  const sandboxContainerInventory = sandboxContainers.stdout
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map(
-      (line) =>
-        JSON.parse(line) as {
-          Names?: string;
-          State?: string;
-          Status?: string;
-        },
-    );
-  expect(
-    sandboxContainerInventory,
-    `native GPU route must retain exactly one sandbox container; got ${sandboxContainers.stdout}`,
-  ).toHaveLength(1);
-  const retainedSandboxContainer = sandboxContainerInventory[0];
-  expect(retainedSandboxContainer.Names).not.toContain("-nemoclaw-gpu-backup-");
-  expect(retainedSandboxContainer.State).toBe("running");
-  expect(retainedSandboxContainer.Status).toMatch(/\(healthy\)/i);
-
-  const route = await sandbox.openshell(["inference", "get"], {
-    artifactName: "openshell-inference-route",
-    env: env(),
-    timeoutMs: 30_000,
-  });
-  expect(route.exitCode, resultText(route)).toBe(0);
-  expect(resultText(route)).toMatch(/ollama/i);
-
-  progress.phase("validate Ollama proxy credential boundary");
-  const tokenRecord = readTokenFileChecked(ollamaProxyTokenFile());
-  expect(tokenRecord.mode).toBe("600");
-  const token = tokenRecord.token;
-  expect(token).not.toBe("");
-
-  const proxyUnauth = await host.command(
-    "curl",
-    ["-sS", "-o", "/dev/null", "-w", "%{http_code}", `http://127.0.0.1:${PROXY_PORT}/api/tags`],
-    { artifactName: "ollama-proxy-unauthorized", env: env(), timeoutMs: 30_000 },
-  );
-  expect(proxyUnauth.exitCode, resultText(proxyUnauth)).toBe(0);
-  expect(proxyUnauth.stdout).toBe("401");
-
-  const proxyAuth = await host.command(
-    "curl",
-    ["-sS", "-H", `Authorization: Bearer ${token}`, `http://127.0.0.1:${PROXY_PORT}/api/tags`],
-    {
-      artifactName: "ollama-proxy-authorized",
-      env: env(),
-      redactionValues: [token],
+    });
+    expect(docker.exitCode, resultText(docker)).toBe(0);
+    const nvidia = await host.command("nvidia-smi", [], {
+      artifactName: "nvidia-smi",
+      env: buildAvailabilityProbeEnv(),
       timeoutMs: 30_000,
-    },
-  );
-  expect(proxyAuth.exitCode, resultText(proxyAuth)).toBe(0);
-  expect(proxyAuth.stdout).toMatch(/models|name/i);
+    });
+    assertNvidiaAvailable(nvidia, skip);
 
-  const proxyBefore = await proxyStatus(host, token, "proxy-status-before-restart");
-  expect(proxyBefore.exitCode, resultText(proxyBefore)).toBe(0);
-  await restartProxy(host, token);
-  const proxyAfter = await proxyStatus(host, token, "proxy-status-after-restart");
-  expect(proxyAfter.exitCode, resultText(proxyAfter)).toBe(0);
+    await ensureOllama(host);
+    const ollamaCleanup = await cleanupOllama(host, "pre-cleanup-ollama");
+    expect(ollamaCleanup.exitCode, resultText(ollamaCleanup)).toBe(0);
 
-  const sandboxToken = await sandbox.execShell(
-    SANDBOX_NAME,
-    trustedSandboxShellScript("printenv OLLAMA_API_KEY 2>/dev/null || true"),
-    { artifactName: "sandbox-ollama-api-key", env: env(), timeoutMs: 30_000 },
-  );
-  expect(sandboxToken.exitCode, resultText(sandboxToken)).toBe(0);
-  expect(
-    sandboxToken.stdout.trim(),
-    "OpenShell owns proxy authentication; the host proxy token must not enter sandbox env",
-  ).toBe("");
+    progress.phase("install Ollama and GPU sandbox");
+    const install = await host.command("bash", ["install.sh", "--non-interactive"], {
+      artifactName: "install-gpu-ollama",
+      cwd: REPO_ROOT,
+      env: env(),
+      timeoutMs: 55 * 60_000,
+    });
+    expect(install.exitCode, resultText(install)).toBe(0);
+    await artifacts.writeText("install-gpu-ollama.log", resultText(install));
 
-  progress.phase("run sandbox inference.local chat");
-  const model = await detectOllamaModel(host);
-  const chat = await sandbox.execShell(
-    SANDBOX_NAME,
-    trustedSandboxShellScript(
-      `curl -sS --max-time 120 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data '${JSON.stringify(
-        {
-          model,
-          messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
-          // Keep this assertion about routed inference, not the model's reasoning-token budget.
-          reasoning_effort: "none",
-          seed: 0,
-          temperature: 0,
-          max_tokens: 32,
-        },
-      )}'`,
-    ),
-    { artifactName: "sandbox-inference-local-chat", env: env(), timeoutMs: 150_000 },
-  );
-  expect(chat.exitCode, resultText(chat)).toBe(0);
-  expect(chatContent(chat.stdout)).toMatch(/pong/i);
+    progress.phase("validate CUDA sandbox configuration");
+    const config = await sandbox.execShell(
+      SANDBOX_NAME,
+      trustedSandboxShellScript(openClawModelConfigProjectionScript()),
+      { artifactName: "sandbox-openclaw-model-config", env: env(), timeoutMs: 30_000 },
+    );
+    expect(config.exitCode, resultText(config)).toBe(0);
+    await artifacts.writeText("openclaw-model-config.json", config.stdout);
+    assertSmallContextCompactionPolicy(config.stdout);
 
-  const readySandbox = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
-    artifactName: "openshell-sandbox-ready-after-inference",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
-  });
-  expect(readySandbox.exitCode, resultText(readySandbox)).toBe(0);
-  expect(
-    hasExactReadyPhase(readySandbox.stdout),
-    `OpenShell sandbox must be exactly Ready after routed inference; got ${resultText(readySandbox)}`,
-  ).toBe(true);
+    const status = await host.command("node", [CLI, SANDBOX_NAME, "status"], {
+      artifactName: "status-gpu-ollama",
+      env: env(),
+      timeoutMs: 120_000,
+    });
+    expect(status.exitCode, resultText(status)).toBe(0);
+    expect(resultText(status)).toContain("Sandbox GPU: enabled");
+    expect(resultText(status)).toMatch(/CUDA verified|CUDA unverified|last CUDA proof failed/i);
+    expect(resultText(status)).not.toMatch(/last CUDA proof failed|CUDA unverified/i);
 
-  progress.phase("restart Ollama and recover agent inference");
-  const restart = await host.command(
-    "bash",
-    [
-      "-c",
-      `set -euo pipefail
+    const installLog = resultText(install);
+    assertGpuInstallProofs(installLog);
+    expect(installLog).toContain(
+      "Direct sandbox GPU enabled; allowing OpenShell GPU policy enrichment.",
+    );
+    expect(installLog).not.toContain(
+      "Recreating OpenShell Docker sandbox container with NVIDIA GPU access",
+    );
+    expect(installLog).not.toContain("Docker GPU mode selected");
+
+    const sandboxContainers = await host.command(
+      "docker",
+      [
+        "ps",
+        "-a",
+        "--filter",
+        `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
+        "--format",
+        "{{json .}}",
+      ],
+      {
+        artifactName: "gpu-native-route-sandbox-containers",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(sandboxContainers.exitCode, resultText(sandboxContainers)).toBe(0);
+    const sandboxContainerInventory = sandboxContainers.stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map(
+        (line) =>
+          JSON.parse(line) as {
+            Names?: string;
+            State?: string;
+            Status?: string;
+          },
+      );
+    expect(
+      sandboxContainerInventory,
+      `native GPU route must retain exactly one sandbox container; got ${sandboxContainers.stdout}`,
+    ).toHaveLength(1);
+    const retainedSandboxContainer = sandboxContainerInventory[0];
+    expect(retainedSandboxContainer.Names).not.toContain("-nemoclaw-gpu-backup-");
+    expect(retainedSandboxContainer.State).toBe("running");
+    expect(retainedSandboxContainer.Status).toMatch(/\(healthy\)/i);
+
+    const route = await sandbox.openshell(["inference", "get"], {
+      artifactName: "openshell-inference-route",
+      env: env(),
+      timeoutMs: 30_000,
+    });
+    expect(route.exitCode, resultText(route)).toBe(0);
+    expect(resultText(route)).toMatch(/ollama/i);
+
+    progress.phase("validate Ollama proxy credential boundary");
+    const tokenRecord = readTokenFileChecked(ollamaProxyTokenFile());
+    expect(tokenRecord.mode).toBe("600");
+    const token = tokenRecord.token;
+    expect(token).not.toBe("");
+
+    const proxyUnauth = await host.command(
+      "curl",
+      ["-sS", "-o", "/dev/null", "-w", "%{http_code}", `http://127.0.0.1:${PROXY_PORT}/api/tags`],
+      { artifactName: "ollama-proxy-unauthorized", env: env(), timeoutMs: 30_000 },
+    );
+    expect(proxyUnauth.exitCode, resultText(proxyUnauth)).toBe(0);
+    expect(proxyUnauth.stdout).toBe("401");
+
+    const proxyAuth = await host.command(
+      "curl",
+      ["-sS", "-H", `Authorization: Bearer ${token}`, `http://127.0.0.1:${PROXY_PORT}/api/tags`],
+      {
+        artifactName: "ollama-proxy-authorized",
+        env: env(),
+        redactionValues: [token],
+        timeoutMs: 30_000,
+      },
+    );
+    expect(proxyAuth.exitCode, resultText(proxyAuth)).toBe(0);
+    expect(proxyAuth.stdout).toMatch(/models|name/i);
+
+    const proxyBefore = await proxyStatus(host, token, "proxy-status-before-restart");
+    expect(proxyBefore.exitCode, resultText(proxyBefore)).toBe(0);
+    await restartProxy(host, token);
+    const proxyAfter = await proxyStatus(host, token, "proxy-status-after-restart");
+    expect(proxyAfter.exitCode, resultText(proxyAfter)).toBe(0);
+
+    const sandboxToken = await sandbox.execShell(
+      SANDBOX_NAME,
+      trustedSandboxShellScript("printenv OLLAMA_API_KEY 2>/dev/null || true"),
+      { artifactName: "sandbox-ollama-api-key", env: env(), timeoutMs: 30_000 },
+    );
+    expect(sandboxToken.exitCode, resultText(sandboxToken)).toBe(0);
+    expect(
+      sandboxToken.stdout.trim(),
+      "OpenShell owns proxy authentication; the host proxy token must not enter sandbox env",
+    ).toBe("");
+
+    progress.phase("run sandbox inference.local chat");
+    const model = await detectOllamaModel(host);
+    const chat = await sandbox.execShell(
+      SANDBOX_NAME,
+      trustedSandboxShellScript(
+        `curl -sS --max-time 120 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data '${JSON.stringify(
+          {
+            model,
+            messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+            // Keep this assertion about routed inference, not the model's reasoning-token budget.
+            reasoning_effort: "none",
+            seed: 0,
+            temperature: 0,
+            max_tokens: 32,
+          },
+        )}'`,
+      ),
+      { artifactName: "sandbox-inference-local-chat", env: env(), timeoutMs: 150_000 },
+    );
+    expect(chat.exitCode, resultText(chat)).toBe(0);
+    expect(chatContent(chat.stdout)).toMatch(/pong/i);
+
+    const readySandbox = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
+      artifactName: "openshell-sandbox-ready-after-inference",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    });
+    expect(readySandbox.exitCode, resultText(readySandbox)).toBe(0);
+    expect(
+      hasExactReadyPhase(readySandbox.stdout),
+      `OpenShell sandbox must be exactly Ready after routed inference; got ${resultText(readySandbox)}`,
+    ).toBe(true);
+
+    progress.phase("restart Ollama and recover agent inference");
+    const restart = await host.command(
+      "bash",
+      [
+        "-c",
+        `set -euo pipefail
 if sudo -n systemctl restart ollama 2>/dev/null; then
   restart_mode=system
 elif systemctl --user restart ollama 2>/dev/null; then
@@ -407,42 +362,43 @@ for attempt in $(seq 1 60); do
 done
 echo 'Ollama did not become ready after restart' >&2
 exit 1`,
-    ],
-    { artifactName: "ollama-daemon-restart-unloaded", env: env(), timeoutMs: 90_000 },
-  );
-  expect(restart.exitCode, resultText(restart)).toBe(0);
-  const restartLines = restart.stdout.trim().split("\n");
-  expect(restartLines[0]).toMatch(/^restart_mode=(system|user|manual)$/u);
-  expect(loadedOllamaModels(restartLines.slice(1).join("\n"))).toEqual([]);
+      ],
+      { artifactName: "ollama-daemon-restart-unloaded", env: env(), timeoutMs: 90_000 },
+    );
+    expect(restart.exitCode, resultText(restart)).toBe(0);
+    const restartLines = restart.stdout.trim().split("\n");
+    expect(restartLines[0]).toMatch(/^restart_mode=(system|user|manual)$/u);
+    expect(loadedOllamaModels(restartLines.slice(1).join("\n"))).toEqual([]);
 
-  const recovered = await host.nemoclaw(
-    [
-      SANDBOX_NAME,
-      "agent",
-      "--agent",
-      "main",
-      "--json",
-      "--session-id",
-      `e2e-gpu-ollama-restart-${Date.now()}-${process.pid}`,
-      "-m",
-      "Reply with exactly one word: PONG",
-    ],
-    {
-      artifactName: "agent-after-ollama-daemon-restart",
+    const recovered = await host.nemoclaw(
+      [
+        SANDBOX_NAME,
+        "agent",
+        "--agent",
+        "main",
+        "--json",
+        "--session-id",
+        `e2e-gpu-ollama-restart-${Date.now()}-${process.pid}`,
+        "-m",
+        "Reply with exactly one word: PONG",
+      ],
+      {
+        artifactName: "agent-after-ollama-daemon-restart",
+        env: env(),
+        timeoutMs: 12 * 60_000,
+      },
+    );
+    expect(recovered.exitCode, resultText(recovered)).toBe(0);
+    expect(resultText(recovered)).toContain("Checking Ollama model readiness after daemon restart");
+    expect(resultText(recovered)).toContain(`Ollama model '${model}' is loaded and ready.`);
+    assertAgentExecutionSucceeded(recovered.stdout, "inference", model);
+
+    const loaded = await host.command("curl", ["-fsS", "http://127.0.0.1:11434/api/ps"], {
+      artifactName: "ollama-model-loaded-after-recovery",
       env: env(),
-      timeoutMs: 12 * 60_000,
-    },
-  );
-  expect(recovered.exitCode, resultText(recovered)).toBe(0);
-  expect(resultText(recovered)).toContain("Checking Ollama model readiness after daemon restart");
-  expect(resultText(recovered)).toContain(`Ollama model '${model}' is loaded and ready.`);
-  assertAgentExecutionSucceeded(recovered.stdout, "inference", model);
-
-  const loaded = await host.command("curl", ["-fsS", "http://127.0.0.1:11434/api/ps"], {
-    artifactName: "ollama-model-loaded-after-recovery",
-    env: env(),
-    timeoutMs: 30_000,
-  });
-  expect(loaded.exitCode, resultText(loaded)).toBe(0);
-  expect(loadedOllamaModels(loaded.stdout)).toContain(model);
-});
+      timeoutMs: 30_000,
+    });
+    expect(loaded.exitCode, resultText(loaded)).toBe(0);
+    expect(loadedOllamaModels(loaded.stdout)).toContain(model);
+  },
+);

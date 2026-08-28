@@ -4,6 +4,10 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import onboardFixtureContract from "./onboard-fixture-contract.json";
+
+export const ONBOARD_CREATED_SANDBOX_ID = onboardFixtureContract.createdSandboxId;
+
 function writeExecutable(target: string, contents: string): void {
   fs.writeFileSync(target, contents, { mode: 0o755 });
 }
@@ -14,7 +18,7 @@ export function writeOkOpenshell(
 ): void {
   const gatewayPort = options.gatewayPort ?? 8080;
   const sandboxGet = options.readySandboxGet
-    ? 'if [ "${1:-}" = sandbox ] && [ "${2:-}" = get ]; then printf "Sandbox:\\n\\n  Id: sbx-4f2a91c0d7\\n  Name: %s\\n  Phase: Ready\\n" "${!#}"; fi\n'
+    ? `if [ "\${1:-}" = sandbox ] && [ "\${2:-}" = get ]; then printf "Sandbox:\\n\\n  Id: ${ONBOARD_CREATED_SANDBOX_ID}\\n  Name: %s\\n  Phase: Ready\\n" "\${!#}"; fi\n`
     : "";
   writeExecutable(
     path.join(fakeBin, "openshell"),
