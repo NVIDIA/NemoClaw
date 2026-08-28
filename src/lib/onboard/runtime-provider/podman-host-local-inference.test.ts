@@ -46,6 +46,7 @@ function operationAndRuntime(
     engine: harness.engine,
     env: harness.env,
     acceleration: harness.operationAcceleration,
+    probeCleanupTiming: harness.probeCleanupTiming,
     authorityStore: harness.authorityStore,
     routeAuthorityStore: harness.routeAuthorityStore,
     onFailureEvidence: harness.onFailureEvidence,
@@ -353,6 +354,7 @@ describe("Podman host-local inference lifecycle", () => {
       const operation = createPodmanHostLocalInferenceOperation({
         engine: harness.engine,
         env: harness.env,
+        probeCleanupTiming: harness.probeCleanupTiming,
         authorityStore: harness.authorityStore,
         routeAuthorityStore: harness.routeAuthorityStore,
         onFailureEvidence: harness.onFailureEvidence,
@@ -796,6 +798,7 @@ describe("Podman host-local inference lifecycle", () => {
     const runtime = createPodmanHostLocalInferenceRuntime({
       engine: harness.engine,
       env: harness.env,
+      probeCleanupTiming: harness.probeCleanupTiming,
       authorityStore: harness.authorityStore,
       routeAuthorityStore: harness.routeAuthorityStore,
       authority,
@@ -857,6 +860,7 @@ describe("Podman host-local inference lifecycle", () => {
     const runtime = createPodmanHostLocalInferenceRuntime({
       engine: harness.engine,
       env: harness.env,
+      probeCleanupTiming: harness.probeCleanupTiming,
       authorityStore: harness.authorityStore,
       routeAuthorityStore: harness.routeAuthorityStore,
       authority,
