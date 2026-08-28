@@ -116,7 +116,7 @@ export function hasLegacyDgxStationQualificationAuthority(
   sandbox: Pick<RebuildSandboxEntry, "agent" | "fromDockerfile" | "nemoclawVersion">,
 ): boolean {
   if (sandbox.agent !== "hermes" || sandbox.fromDockerfile != null) return false;
-  const match = /^(?:v)?0\.0\.(\d+)(?:-[1-9]\d*-g[0-9a-f]{7,40})?$/i.exec(
+  const match = /^(?:v)?0\.0\.(0|[1-9]\d*)(?:-[1-9]\d*-g[0-9a-f]{7,40})?$/i.exec(
     sandbox.nemoclawVersion ?? "",
   );
   if (!match) return false;

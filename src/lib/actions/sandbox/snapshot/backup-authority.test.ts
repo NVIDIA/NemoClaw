@@ -364,6 +364,10 @@ describe("managed snapshot backup authority", () => {
         spec: { path: "SOUL.md", strategy: "copy" },
       }),
     ).toEqual({ outcome: "backed_up", data: Buffer.from("state") });
+    expect(privilegedCaptureMocks.dockerSpawnSync).toHaveBeenLastCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ maxBuffer: 256 * 1024 * 1024 }),
+    );
     expect(
       captureHermesStateFile("alpha", {
         sandboxName: "alpha",
@@ -440,6 +444,13 @@ describe("managed snapshot backup authority", () => {
       },
     );
     expect(result.success).toBe(true);
+    expect(backup).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        captureStateFile: expect.any(Function),
+        captureStateDirectories: expect.any(Function),
+      }),
+    );
     expect(privilegedCaptureMocks.dockerSpawnSync).not.toHaveBeenCalled();
   });
 

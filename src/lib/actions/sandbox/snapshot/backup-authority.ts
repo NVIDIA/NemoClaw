@@ -52,7 +52,7 @@ const OPENCLAW_CONFIG_DIRECTORY = "/sandbox/.openclaw";
 const OPENCLAW_CONFIG_NAME = "openclaw.json";
 const HERMES_CONFIG_DIRECTORY = "/sandbox/.hermes";
 const HERMES_CAPTURE_TIMEOUT_MS = 120_000;
-const HERMES_CAPTURE_MAX_BUFFER = 17 * 1024 * 1024;
+const HERMES_CAPTURE_MAX_BUFFER = 256 * 1024 * 1024;
 export const OPENCLAW_CONFIG_CAPTURE_SCRIPT = `import os, stat, sys
 maximum = ${MAX_OPENCLAW_CONFIG_BYTES}
 directory = sys.argv[1]
@@ -232,21 +232,46 @@ export function captureOpenClawStateFile(
 
 export const HERMES_STATE_CAPTURE_SCRIPT = `import os, sqlite3, stat, sys, tempfile
 base, relative, strategy = sys.argv[1:]
-if not relative or relative.startswith("/") or ".." in relative.split("/"):
+parts = relative.split("/")
+if not relative or relative.startswith("/") or any(part in ("", ".", "..") for part in parts):
     raise SystemExit(10)
-path = os.path.join(base, relative)
+if strategy not in ("copy", "sqlite_backup"):
+    raise SystemExit(10)
+directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+file_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+def identity(value):
+    return (value.st_dev, value.st_ino, stat.S_IFMT(value.st_mode), value.st_size, value.st_mtime_ns, value.st_ctime_ns, value.st_nlink)
+def directory_identity(value):
+    return (value.st_dev, value.st_ino, stat.S_IFMT(value.st_mode))
+directory_fds = []
+file_fd = None
+target_name = None
 try:
-    before = os.lstat(path)
-except FileNotFoundError:
-    raise SystemExit(2)
-if not stat.S_ISREG(before.st_mode) or stat.S_ISLNK(before.st_mode) or before.st_nlink != 1:
-    raise SystemExit(11)
-if strategy == "sqlite_backup":
-    target = tempfile.NamedTemporaryFile(dir="/tmp", delete=False)
-    target.close()
+    base_fd = os.open(base, directory_flags)
+    directory_fds.append(base_fd)
+    base_before = os.fstat(base_fd)
+    for component in parts[:-1]:
+        next_fd = os.open(component, directory_flags, dir_fd=directory_fds[-1])
+        opened = os.fstat(next_fd)
+        current = os.stat(component, dir_fd=directory_fds[-1], follow_symlinks=False)
+        if not stat.S_ISDIR(opened.st_mode) or directory_identity(opened) != directory_identity(current):
+            os.close(next_fd)
+            raise SystemExit(11)
+        directory_fds.append(next_fd)
     try:
-        source = sqlite3.connect("file:" + path + "?mode=ro", uri=True, timeout=30)
-        destination = sqlite3.connect(target.name, timeout=30)
+        file_fd = os.open(parts[-1], file_flags, dir_fd=directory_fds[-1])
+    except FileNotFoundError:
+        raise SystemExit(2)
+    before = os.fstat(file_fd)
+    current_before = os.stat(parts[-1], dir_fd=directory_fds[-1], follow_symlinks=False)
+    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or identity(before) != identity(current_before):
+        raise SystemExit(11)
+    target = tempfile.NamedTemporaryFile(dir="/tmp", delete=False)
+    target_name = target.name
+    target.close()
+    if strategy == "sqlite_backup":
+        source = sqlite3.connect("file:/proc/self/fd/" + str(file_fd) + "?mode=ro", uri=True, timeout=30)
+        destination = sqlite3.connect(target_name, timeout=30)
         try:
             source.backup(destination)
             if destination.execute("PRAGMA quick_check").fetchone()[0] != "ok":
@@ -254,39 +279,115 @@ if strategy == "sqlite_backup":
         finally:
             destination.close()
             source.close()
-        with open(target.name, "rb", buffering=0) as stream:
-            while chunk := stream.read(64 * 1024):
-                sys.stdout.buffer.write(chunk)
-    finally:
-        os.unlink(target.name)
-else:
-    with open(path, "rb", buffering=0) as stream:
-        while chunk := stream.read(64 * 1024):
+    else:
+        with open(target_name, "wb", buffering=0) as target_stream:
+            while True:
+                chunk = os.read(file_fd, 64 * 1024)
+                if not chunk:
+                    break
+                target_stream.write(chunk)
+    after = os.fstat(file_fd)
+    current_after = os.stat(parts[-1], dir_fd=directory_fds[-1], follow_symlinks=False)
+    if identity(before) != identity(after) or identity(before) != identity(current_after):
+        raise SystemExit(13)
+    for index, component in enumerate(parts[:-1]):
+        opened = os.fstat(directory_fds[index + 1])
+        current = os.stat(component, dir_fd=directory_fds[index], follow_symlinks=False)
+        if directory_identity(opened) != directory_identity(current) or not stat.S_ISDIR(current.st_mode):
+            raise SystemExit(13)
+    base_current = os.stat(base, follow_symlinks=False)
+    if directory_identity(base_before) != directory_identity(base_current) or not stat.S_ISDIR(base_current.st_mode):
+        raise SystemExit(13)
+    with open(target_name, "rb", buffering=0) as stream:
+        while True:
+            chunk = stream.read(64 * 1024)
+            if not chunk:
+                break
             sys.stdout.buffer.write(chunk)
-after = os.lstat(path)
-if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns, before.st_nlink) != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_nlink):
-    raise SystemExit(13)
+finally:
+    if target_name is not None:
+        try:
+            os.unlink(target_name)
+        except FileNotFoundError:
+            pass
+    if file_fd is not None:
+        os.close(file_fd)
+    for descriptor in reversed(directory_fds):
+        os.close(descriptor)
 `;
 
-export const HERMES_DIRECTORY_CAPTURE_SCRIPT = `import os, stat, subprocess, sys
+export const HERMES_DIRECTORY_CAPTURE_SCRIPT = `import os, stat, sys, tarfile
+automatic_flags = getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+directory_flags = os.O_RDONLY | os.O_DIRECTORY | automatic_flags
+file_flags = os.O_RDONLY | automatic_flags | getattr(os, "O_NONBLOCK", 0)
 base, *names = sys.argv[1:]
-def audit(path):
-    entry = os.lstat(path)
-    if stat.S_ISLNK(entry.st_mode) or not stat.S_ISDIR(entry.st_mode):
+def identity(value):
+    return (value.st_dev, value.st_ino, stat.S_IFMT(value.st_mode), value.st_size, value.st_mtime_ns, value.st_ctime_ns, value.st_nlink)
+def directory_identity(value):
+    return (value.st_dev, value.st_ino, stat.S_IFMT(value.st_mode))
+def tar_info(name, value):
+    info = tarfile.TarInfo(name)
+    info.mode = stat.S_IMODE(value.st_mode)
+    info.uid = value.st_uid
+    info.gid = value.st_gid
+    info.mtime = int(value.st_mtime)
+    return info
+def add_entry(archive, parent_fd, name, archive_name):
+    if not name or "/" in name or "\\n" in name or "\\r" in name or name in (".", ".."):
+        raise SystemExit(10)
+    value = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    if stat.S_ISDIR(value.st_mode):
+        descriptor = os.open(name, directory_flags, dir_fd=parent_fd)
+        try:
+            opened = os.fstat(descriptor)
+            if directory_identity(value) != directory_identity(opened):
+                raise SystemExit(13)
+            info = tar_info(archive_name + "/", opened)
+            info.type = tarfile.DIRTYPE
+            info.size = 0
+            archive.addfile(info)
+            for child in sorted(os.listdir(descriptor)):
+                add_entry(archive, descriptor, child, archive_name + "/" + child)
+            after = os.fstat(descriptor)
+            current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+            if directory_identity(opened) != directory_identity(after) or directory_identity(opened) != directory_identity(current):
+                raise SystemExit(13)
+        finally:
+            os.close(descriptor)
+        return
+    if not stat.S_ISREG(value.st_mode) or value.st_nlink != 1:
         raise SystemExit(11)
-    with os.scandir(path) as entries:
-        for child in entries:
-            value = child.stat(follow_symlinks=False)
-            if stat.S_ISLNK(value.st_mode) or not (stat.S_ISREG(value.st_mode) or stat.S_ISDIR(value.st_mode)):
-                raise SystemExit(11)
-            if stat.S_ISDIR(value.st_mode):
-                audit(child.path)
+    descriptor = os.open(name, file_flags, dir_fd=parent_fd)
+    try:
+        opened = os.fstat(descriptor)
+        current_before = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        if identity(value) != identity(opened) or identity(opened) != identity(current_before):
+            raise SystemExit(13)
+        info = tar_info(archive_name, opened)
+        info.type = tarfile.REGTYPE
+        info.size = opened.st_size
+        with os.fdopen(os.dup(descriptor), "rb", closefd=True) as stream:
+            archive.addfile(info, stream)
+        after = os.fstat(descriptor)
+        current_after = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        if identity(opened) != identity(after) or identity(opened) != identity(current_after):
+            raise SystemExit(13)
+    finally:
+        os.close(descriptor)
 for name in names:
     if not name or "/" in name or name in (".", ".."):
         raise SystemExit(10)
-    audit(os.path.join(base, name))
-result = subprocess.run(["/usr/bin/tar", "--hard-dereference", "-cf", "-", "-C", base, "--", *names], stdout=sys.stdout.buffer)
-raise SystemExit(result.returncode)
+base_fd = os.open(base, directory_flags)
+try:
+    base_before = os.fstat(base_fd)
+    with tarfile.open(fileobj=sys.stdout.buffer, mode="w|") as archive:
+        for name in names:
+            add_entry(archive, base_fd, name, name)
+    base_current = os.stat(base, follow_symlinks=False)
+    if directory_identity(base_before) != directory_identity(base_current) or not stat.S_ISDIR(base_current.st_mode):
+        raise SystemExit(13)
+finally:
+    os.close(base_fd)
 `;
 
 export function captureHermesStateFile(

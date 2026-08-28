@@ -203,6 +203,7 @@ describe("legacy DGX Station rebuild authority", () => {
     ["v0.0.97", false],
     ["0.0.97-1-gabcdef0", false],
     ["0.0.83-preview", false],
+    ["v0.0.096", false],
     ["0.0.x", false],
     ["", false],
   ])("accepts only a valid release older than v0.0.97: %s", (nemoclawVersion, expected) => {

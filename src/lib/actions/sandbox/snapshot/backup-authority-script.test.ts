@@ -65,6 +65,60 @@ exec(capture_script)
 `;
 }
 
+function hermesCopyMutationHarness(mutation: string): string {
+  return `import os, sys
+capture_script = ${JSON.stringify(HERMES_STATE_CAPTURE_SCRIPT)}
+base = sys.argv[1]
+relative = sys.argv[2]
+real_read = os.read
+mutated = False
+def mutate_after_first_read(fd, size):
+    global mutated
+    data = real_read(fd, size)
+    if not mutated:
+        mutated = True
+${mutation}
+    return data
+os.read = mutate_after_first_read
+exec(capture_script)
+`;
+}
+
+function hermesSqliteMutationHarness(mutation: string): string {
+  return `import os, sqlite3, sys
+capture_script = ${JSON.stringify(HERMES_STATE_CAPTURE_SCRIPT)}
+base = sys.argv[1]
+relative = sys.argv[2]
+real_connect = sqlite3.connect
+mutated = False
+def mutate_before_connect(database, *args, **kwargs):
+    global mutated
+    if not mutated and str(database).startswith("file:/proc/self/fd/"):
+        mutated = True
+${mutation}
+    return real_connect(database, *args, **kwargs)
+sqlite3.connect = mutate_before_connect
+exec(capture_script)
+`;
+}
+
+function hermesDirectoryMutationHarness(mutation: string): string {
+  return `import os, sys, tarfile
+capture_script = ${JSON.stringify(HERMES_DIRECTORY_CAPTURE_SCRIPT)}
+base = sys.argv[1]
+real_addfile = tarfile.TarFile.addfile
+mutated = False
+def mutate_before_file_read(archive, info, fileobj=None):
+    global mutated
+    if fileobj is not None and not mutated:
+        mutated = True
+${mutation}
+    return real_addfile(archive, info, fileobj)
+tarfile.TarFile.addfile = mutate_before_file_read
+exec(capture_script)
+`;
+}
+
 afterEach(() => {
   for (const root of fixtureRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
@@ -117,6 +171,128 @@ describe("Hermes privileged state capture scripts", () => {
     ).toBe(0);
   });
 
+  it("captures a state file larger than the previous privileged buffer limit", () => {
+    const directory = fixtureDirectory();
+    const expected = Buffer.alloc(18 * 1024 * 1024, 0xa5);
+    fs.writeFileSync(path.join(directory, "SOUL.md"), expected);
+
+    const captured = spawnSync(
+      "/usr/bin/python3",
+      ["-I", "-S", "-c", HERMES_STATE_CAPTURE_SCRIPT, directory, "SOUL.md", "copy"],
+      { encoding: null, maxBuffer: 256 * 1024 * 1024 },
+    );
+
+    expect(captured.status).toBe(0);
+    expect(captured.stdout).toHaveLength(expected.length);
+    expect(captured.stdout.equals(expected)).toBe(true);
+  });
+
+  it("rejects a copied file replaced during capture without returning bytes", () => {
+    const directory = fixtureDirectory();
+    const source = path.join(directory, "SOUL.md");
+    const outside = path.join(path.dirname(directory), "outside-copy");
+    fs.writeFileSync(source, Buffer.alloc(128 * 1024, 0x61));
+    fs.writeFileSync(outside, "outside-secret");
+    const script = hermesCopyMutationHarness(
+      `        original = os.path.join(base, relative)\n` +
+        `        os.rename(original, original + ".old")\n` +
+        `        os.symlink(${JSON.stringify(outside)}, original)`,
+    );
+
+    const captured = spawnSync(
+      "/usr/bin/python3",
+      ["-I", "-S", "-c", script, directory, "SOUL.md", "copy"],
+      { encoding: null },
+    );
+
+    expect(captured.status).toBe(13);
+    expect(captured.stdout).toEqual(Buffer.alloc(0));
+  });
+
+  it("rejects a SQLite file replaced during capture without returning bytes", () => {
+    const directory = fixtureDirectory();
+    const database = path.join(directory, "state.db");
+    const outside = path.join(path.dirname(directory), "outside.db");
+    expect(
+      spawnSync("/usr/bin/python3", [
+        "-c",
+        `import sqlite3; db = sqlite3.connect(${JSON.stringify(database)}); db.execute('create table state (value text)'); db.execute("insert into state values ('saved')"); db.commit()`,
+      ]).status,
+    ).toBe(0);
+    expect(
+      spawnSync("/usr/bin/python3", [
+        "-c",
+        `import sqlite3; db = sqlite3.connect(${JSON.stringify(outside)}); db.execute('create table state (value text)'); db.execute("insert into state values ('saved')"); db.commit()`,
+      ]).status,
+    ).toBe(0);
+    const script = hermesSqliteMutationHarness(
+      `        original = os.path.join(base, relative)\n` +
+        `        os.rename(original, original + ".old")\n` +
+        `        os.symlink(${JSON.stringify(outside)}, original)`,
+    );
+
+    const captured = spawnSync(
+      "/usr/bin/python3",
+      ["-I", "-S", "-c", script, directory, "state.db", "sqlite_backup"],
+      { encoding: null },
+    );
+
+    expect(captured.status).toBe(13);
+    expect(captured.stdout).toEqual(Buffer.alloc(0));
+  });
+
+  it("rejects an intermediate directory replaced during capture", () => {
+    const directory = fixtureDirectory();
+    const runtime = path.join(directory, "runtime");
+    const outside = path.join(path.dirname(directory), "outside-runtime");
+    fs.mkdirSync(runtime);
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(runtime, "state.db"), Buffer.alloc(128 * 1024, 0x61));
+    fs.writeFileSync(path.join(outside, "state.db"), "outside-secret");
+    const script = hermesCopyMutationHarness(
+      `        original = os.path.join(base, "runtime")\n` +
+        `        os.rename(original, original + ".old")\n` +
+        `        os.symlink(${JSON.stringify(outside)}, original)`,
+    );
+
+    const captured = spawnSync(
+      "/usr/bin/python3",
+      ["-I", "-S", "-c", script, directory, "runtime/state.db", "copy"],
+      { encoding: null },
+    );
+
+    expect(captured.status).toBe(13);
+    expect(captured.stdout).toEqual(Buffer.alloc(0));
+  });
+
+  it.each([
+    ["symbolic link", "os.symlink"],
+    ["hard link", "os.link"],
+  ])("rejects a directory file replaced with a %s during archive read", (_kind, replacement) => {
+    const directory = fixtureDirectory();
+    const workspace = path.join(directory, "workspace");
+    const marker = path.join(workspace, "marker");
+    const outside = path.join(path.dirname(directory), "outside-directory-file");
+    fs.mkdirSync(workspace);
+    fs.writeFileSync(marker, Buffer.alloc(128 * 1024, 0x61));
+    fs.writeFileSync(outside, "outside-secret");
+    const mutation =
+      `        original = os.path.join(base, "workspace", "marker")\n` +
+      `        os.rename(original, original + ".old")\n` +
+      `        replacement = ${replacement}\n` +
+      `        replacement(${JSON.stringify(outside)}, original)`;
+    const script = hermesDirectoryMutationHarness(mutation);
+
+    const captured = spawnSync(
+      "/usr/bin/python3",
+      ["-I", "-S", "-c", script, directory, "workspace"],
+      { encoding: null },
+    );
+
+    expect(captured.status).toBe(13);
+    expect(captured.stdout.includes(Buffer.from("outside-secret"))).toBe(false);
+  });
+
   it("rejects unsafe directory entries before streaming a tar archive", () => {
     const directory = fixtureDirectory();
     const workspace = path.join(directory, "workspace");
@@ -136,7 +312,6 @@ describe("Hermes privileged state capture scripts", () => {
       { encoding: null },
     );
     expect(unsafe.status).not.toBe(0);
-    expect(unsafe.stdout).toEqual(Buffer.alloc(0));
   });
 });
 

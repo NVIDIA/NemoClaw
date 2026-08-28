@@ -1237,8 +1237,7 @@ function backupStateFile(
     result.status === 1 &&
     !result.error &&
     !result.signal &&
-    (dir === "/sandbox/.openclaw" ||
-      /permission denied/i.test(result.stderr?.toString() ?? "")) &&
+    (dir === "/sandbox/.openclaw" || /permission denied/i.test(result.stderr?.toString() ?? "")) &&
     captureFallback !== undefined
   ) {
     try {
@@ -1312,6 +1311,20 @@ function retryPermissionDeniedDirectories(
       _log(
         `FAILED: privileged state directory capture: ${capture?.outcome === "failed" ? (capture.error ?? "failed") : "no archive"}`,
       );
+      return;
+    }
+    const allowedTopLevelEntries = new Set(denied);
+    const archiveValidation = validateTarEntries({ filePath: archivePath }, backupPath);
+    const undeclaredEntry = archiveValidation.entries.find((entry) => {
+      const normalized = entry.replace(/^\.\/+/, "");
+      const topLevel = normalized.split("/", 1)[0];
+      return !topLevel || !allowedTopLevelEntries.has(topLevel);
+    });
+    if (!archiveValidation.safe || undeclaredEntry) {
+      const detail = undeclaredEntry
+        ? `undeclared archive entry: ${undeclaredEntry}`
+        : archiveValidation.violations.join("; ");
+      _log(`FAILED: privileged state directory capture: ${detail}`);
       return;
     }
     for (const name of denied) {
