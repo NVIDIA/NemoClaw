@@ -725,6 +725,7 @@
         "test/e2e/live/hermes-slack-proof.ts"
       ],
       "fast": [
+        "test/e2e/support/hermes-slack-cleanup.test.ts",
         "test/e2e/support/hermes-slack-credential-transport.test.ts",
         "test/e2e/support/hermes-slack-proof.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",

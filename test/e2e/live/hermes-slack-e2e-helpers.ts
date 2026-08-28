@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { setTimeout as sleep } from "node:timers/promises";
-import { cleanupWhenOpenShellAvailable } from "../fixtures/cleanup-resources.ts";
+import {
+  cleanupWhenOpenShellAvailable,
+  registerSandboxCleanupUnlessKept,
+} from "../fixtures/cleanup-resources.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { type E2ETargetFixtures, expect } from "../fixtures/e2e-test.ts";
@@ -242,6 +245,65 @@ type HermesSlackE2EFixtures = E2ETargetFixtures & {
   skip: (note?: string) => never;
 };
 
+export function registerHermesSlackCleanup(
+  { cleanup, host, sandbox }: Pick<HermesSlackE2EFixtures, "cleanup" | "host" | "sandbox">,
+  options: {
+    apiKey: string;
+    env: NodeJS.ProcessEnv;
+    keepSandbox: boolean;
+    redactionValues: string[];
+  },
+): void {
+  registerSandboxCleanupUnlessKept(options.keepSandbox, () => {
+    const gatewayCleanupOptions = {
+      artifactName: "cleanup-hermes-slack-openshell-gateway-destroy",
+      env: options.env,
+      redactionValues: options.redactionValues,
+      timeoutMs: 120_000,
+    };
+    cleanup.trackGateway(
+      {
+        cleanupGatewayRegistration: (name: string) =>
+          cleanupWhenOpenShellAvailable(
+            host,
+            {
+              artifactName: "cleanup-hermes-slack-probe-openshell-gateway",
+              env: options.env,
+              redactionValues: options.redactionValues,
+              timeoutMs: 30_000,
+            },
+            () => host.cleanupGatewayRegistration(name, gatewayCleanupOptions),
+          ),
+      },
+      "nemoclaw",
+      gatewayCleanupOptions,
+    );
+    for (const provider of [`${SANDBOX_NAME}-slack-app`, `${SANDBOX_NAME}-slack-bridge`]) {
+      cleanup.trackDisposable(`delete OpenShell provider ${provider}`, () =>
+        cleanupWhenOpenShellAvailable(
+          host,
+          {
+            artifactName: `cleanup-hermes-slack-probe-openshell-provider-${provider}`,
+            env: options.env,
+            redactionValues: options.redactionValues,
+            timeoutMs: 30_000,
+          },
+          () => cleanupHermesSlackProvider({ host, apiKey: options.apiKey, provider }),
+        ),
+      );
+    }
+    trackPreinstallSandboxCleanup(
+      cleanup,
+      host,
+      sandbox,
+      SANDBOX_NAME,
+      options.env,
+      options.redactionValues,
+      "cleanup-hermes-slack",
+    );
+  });
+}
+
 export async function runHermesSlackE2E({
   artifacts,
   cleanup,
@@ -255,51 +317,14 @@ export async function runHermesSlackE2E({
   const env = hermesSlackEnv(apiKey);
   const redactionValues = redactions(apiKey);
 
-  const gatewayCleanupOptions = {
-    artifactName: "cleanup-hermes-slack-openshell-gateway-destroy",
-    env,
-    redactionValues,
-    timeoutMs: 120_000,
-  };
-  cleanup.trackGateway(
+  registerHermesSlackCleanup(
+    { cleanup, host, sandbox },
     {
-      cleanupGatewayRegistration: (name: string) =>
-        cleanupWhenOpenShellAvailable(
-          host,
-          {
-            artifactName: "cleanup-hermes-slack-probe-openshell-gateway",
-            env,
-            redactionValues,
-            timeoutMs: 30_000,
-          },
-          () => host.cleanupGatewayRegistration(name, gatewayCleanupOptions),
-        ),
+      apiKey,
+      env,
+      keepSandbox: process.env.NEMOCLAW_E2E_KEEP_SANDBOX === "1",
+      redactionValues,
     },
-    "nemoclaw",
-    gatewayCleanupOptions,
-  );
-  for (const provider of [`${SANDBOX_NAME}-slack-app`, `${SANDBOX_NAME}-slack-bridge`]) {
-    cleanup.trackDisposable(`delete OpenShell provider ${provider}`, () =>
-      cleanupWhenOpenShellAvailable(
-        host,
-        {
-          artifactName: `cleanup-hermes-slack-probe-openshell-provider-${provider}`,
-          env,
-          redactionValues,
-          timeoutMs: 30_000,
-        },
-        () => cleanupHermesSlackProvider({ host, apiKey, provider }),
-      ),
-    );
-  }
-  trackPreinstallSandboxCleanup(
-    cleanup,
-    host,
-    sandbox,
-    SANDBOX_NAME,
-    env,
-    redactionValues,
-    "cleanup-hermes-slack",
   );
 
   await artifacts.target.declare({
