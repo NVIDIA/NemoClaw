@@ -19,6 +19,7 @@ type AllowRule = {
 type Endpoint = {
   host?: string;
   port?: number;
+  path?: string;
   protocol?: string;
   enforcement?: string;
   access?: string;
@@ -113,6 +114,14 @@ function expectInspectedWebSocket(endpoint: Endpoint): void {
       { method: "WEBSOCKET_TEXT", path: "/**" },
     ]),
   );
+}
+
+function expectDistinctSlackCredentialSelectors(policy: NetworkPolicy): void {
+  const selectors = (policy.endpoints ?? [])
+    .filter((endpoint) => endpoint.host === "slack.com" && endpoint.port === 443)
+    .map((endpoint) => endpoint.path ?? "");
+  expect(selectors).toEqual(["/api/apps.connections.open", ""]);
+  expect(new Set(selectors).size).toBe(selectors.length);
 }
 
 describe("effective built-in policy contracts", () => {
@@ -465,6 +474,7 @@ describe("effective built-in policy contracts", () => {
 
     const discord = requireNetworkPolicy(effective, "discord");
     const slack = requireNetworkPolicy(effective, "slack");
+    expectDistinctSlackCredentialSelectors(slack);
     for (const host of ["gateway.discord.gg", "*.discord.gg"]) {
       expectInspectedWebSocket(requireEndpoint(discord, host));
     }
@@ -516,6 +526,7 @@ describe("effective built-in policy contracts", () => {
     const discord = requireNetworkPolicy(effective, "discord");
     const slack = requireNetworkPolicy(effective, "slack");
     const wechat = requireNetworkPolicy(effective, "wechat_bridge");
+    expectDistinctSlackCredentialSelectors(slack);
 
     for (const policy of [discord, slack, wechat]) {
       expect(binaries(policy)).toEqual(

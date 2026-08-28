@@ -458,16 +458,6 @@ describe("ManifestCompiler", () => {
           spec: "microsoft-teams-apps==2.0.13.4",
         },
       },
-      {
-        channelId: "teams",
-        kind: "package-install",
-        outputId: "hermesAiohttpPackage",
-        required: true,
-        value: {
-          manager: "hermes-uv-pip",
-          spec: "aiohttp==3.14.3",
-        },
-      },
     ]);
     expect(
       plan.channels

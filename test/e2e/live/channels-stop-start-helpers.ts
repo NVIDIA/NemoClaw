@@ -56,6 +56,8 @@ const CHANNELS = [
   "teams",
   "googlechat",
 ] as const;
+const REMOVAL_CHANNELS = ["wechat", "teams", "googlechat"] as const;
+type RemovalChannel = (typeof REMOVAL_CHANNELS)[number];
 const PROVIDERS: Record<string, (sandbox: string) => string[]> = {
   telegram: (sandbox) => [`${sandbox}-telegram-bridge`],
   discord: (sandbox) => [`${sandbox}-discord-bridge`],
@@ -631,46 +633,99 @@ async function runChannelCommand(
   );
 }
 
-async function removeGooglechatAndRebuild(
+async function removeChannelsAndRebuild(
   host: import("../fixtures/clients/host.ts").HostCliClient,
   env: NodeJS.ProcessEnv,
   redactions: string[],
 ): Promise<void> {
-  const remove = await host.command(
-    "node",
-    [
-      process.env.NEMOCLAW_CLI_BIN ?? "bin/nemoclaw.js",
-      SANDBOX_NAME,
-      "channels",
-      "remove",
-      "googlechat",
-    ],
-    {
-      artifactName: `channels-remove-googlechat-${AGENT}`,
-      env,
-      redactionValues: redactions,
-      timeoutMs: 10 * 60_000,
-    },
-  );
-  expectExitZero(remove, "channels remove googlechat");
-  expect(resultText(remove)).toContain("Removed googlechat");
-  expectPlanChannelRemoved("googlechat");
+  for (const channel of REMOVAL_CHANNELS) {
+    const remove = await host.command(
+      "node",
+      [
+        process.env.NEMOCLAW_CLI_BIN ?? "bin/nemoclaw.js",
+        SANDBOX_NAME,
+        "channels",
+        "remove",
+        channel,
+      ],
+      {
+        artifactName: `channels-remove-${channel}-${AGENT}`,
+        env,
+        redactionValues: redactions,
+        timeoutMs: 10 * 60_000,
+      },
+    );
+    expectExitZero(remove, `channels remove ${channel}`);
+    expect(resultText(remove)).toContain(`Removed ${channel}`);
+    expectPlanChannelRemoved(channel);
+  }
 
   const rebuild = await rebuildSandbox(
     host,
     SANDBOX_NAME,
     env,
     redactions,
-    `rebuild-remove-googlechat-${AGENT}`,
+    `rebuild-remove-channels-${AGENT}`,
   );
-  expectExitZero(rebuild, "rebuild after removing Google Chat");
+  expectExitZero(rebuild, "rebuild after removing WeChat, Microsoft Teams, and Google Chat");
   await expectSandboxReady(
     host,
     SANDBOX_NAME,
     env,
     redactions,
-    `sandbox-list-after-googlechat-remove-${AGENT}`,
+    `sandbox-list-after-channel-remove-${AGENT}`,
   );
+}
+
+async function expectHermesChannelConfigRemoved(
+  sandbox: import("../fixtures/clients/sandbox.ts").SandboxClient,
+  channel: RemovalChannel,
+  redactions: string[],
+): Promise<void> {
+  const envKeyPatterns: Record<RemovalChannel, string> = {
+    wechat: "WEIXIN_(TOKEN|ACCOUNT_ID|BASE_URL|ALLOWED_USERS)",
+    teams: "TEAMS_(CLIENT_ID|CLIENT_SECRET|TENANT_ID|ALLOWED_USERS|PORT)",
+    googlechat: "GOOGLE_CHAT_(ACCESS_TOKEN|PROJECT_ID|SUBSCRIPTION_NAME|ALLOWED_USERS)",
+  };
+  const platformKeys: Record<RemovalChannel, string> = {
+    wechat: "weixin",
+    teams: "teams",
+    googlechat: "google_chat",
+  };
+  const script = `
+import json
+import re
+from pathlib import Path
+
+import yaml
+
+env_path = Path("/sandbox/.hermes/.env")
+env_text = env_path.read_text() if env_path.is_file() else ""
+env_present = re.search(
+    r"(?m)^[ \\t]*(?:export[ \\t]+)?(?:${envKeyPatterns[channel]})=",
+    env_text,
+) is not None
+config_path = Path("/sandbox/.hermes/config.yaml")
+config = yaml.safe_load(config_path.read_text()) if config_path.is_file() else {}
+platforms = config.get("platforms", {}) if isinstance(config, dict) else {}
+platform_present = ${JSON.stringify(platformKeys[channel])} in platforms if isinstance(platforms, dict) else False
+state_present = Path(${JSON.stringify(`/sandbox/.hermes/platforms/${channel}`)}).exists()
+print(json.dumps({
+    "envPresent": env_present,
+    "platformPresent": platform_present,
+    "statePresent": state_present,
+}, separators=(",", ":")))
+`.trim();
+  const result = await sandboxSh(sandbox, SANDBOX_NAME, `python3 -c ${shellQuote(script)}`, {
+    artifactName: `config-channel-${AGENT}-${channel}-after-remove`,
+    redactionValues: redactions,
+  });
+  expectExitZero(result, `read Hermes ${channel} after-remove`);
+  expect(JSON.parse(result.stdout.trim()), `Hermes ${channel} config removed`).toEqual({
+    envPresent: false,
+    platformPresent: false,
+    statePresent: false,
+  });
 }
 
 export const CHANNELS_STOP_START_TEST_NAME = `${AGENT} channels stop/start preserves credentials and validates runtime config lifecycle`;
@@ -699,7 +754,7 @@ export async function runChannelsStopStartTarget({
   await artifacts.target.declare({
     id: "channels-stop-start",
     boundary:
-      "messaging onboard + channel lifecycle + Google Chat provider cleanup + revision-scoped outbound credential rewrite + installed Hermes pull/ack",
+      "messaging onboard + channel lifecycle + channel removal cleanup + revision-scoped outbound credential rewrite + installed Hermes pull/ack",
     agent: AGENT,
     sandboxName: SANDBOX_NAME,
     channels: CHANNELS,
@@ -814,31 +869,20 @@ export async function runChannelsStopStartTarget({
     ).toBe("active");
   }
 
-  progress.phase("remove Google Chat and validate provider cleanup");
-  await removeGooglechatAndRebuild(host, env, redactions);
-  expectPlanChannelRemoved("googlechat");
-  await expectChannelProvidersAbsent(host, env, redactions, "googlechat", "after-remove");
-  expect(
-    await policyPresetState(host, env, redactions, "googlechat", "after-remove"),
-    "Google Chat policy inactive after removal",
-  ).toBe("inactive");
-  if (AGENT === "openclaw") {
-    const state = await readOpenClawChannelState(sandbox, "googlechat", "after-remove", redactions);
-    expect(openClawChannelIsInert(state), "OpenClaw Google Chat config removed").toBe(true);
-  } else {
-    // Assert absence directly. The active probe already carries a negative
-    // GOOGLE_CHAT_ACCESS_TOKEN conjunct, so inverting it would report success
-    // for exactly the leftover token line this step must catch.
-    const removed = await sandboxSh(
-      sandbox,
-      SANDBOX_NAME,
-      'if [ ! -r /sandbox/.hermes/.env ] || ! grep -qE "^[[:space:]]*(export[[:space:]]+)?GOOGLE_CHAT_" /sandbox/.hermes/.env; then echo yes; else echo no; fi',
-      {
-        artifactName: `config-channel-${AGENT}-googlechat-after-remove-absent`,
-        redactionValues: redactions,
-      },
-    );
-    expectExitZero(removed, "read Hermes googlechat after-remove");
-    expect(removed.stdout.trim(), "Hermes Google Chat config removed").toBe("yes");
+  progress.phase("remove WeChat, Microsoft Teams, and Google Chat and validate cleanup");
+  await removeChannelsAndRebuild(host, env, redactions);
+  for (const channel of REMOVAL_CHANNELS) {
+    expectPlanChannelRemoved(channel);
+    await expectChannelProvidersAbsent(host, env, redactions, channel, "after-remove");
+    expect(
+      await policyPresetState(host, env, redactions, channel, "after-remove"),
+      `${channel} policy inactive after removal`,
+    ).toBe("inactive");
+    if (AGENT === "openclaw") {
+      const state = await readOpenClawChannelState(sandbox, channel, "after-remove", redactions);
+      expect(openClawChannelIsInert(state), `OpenClaw ${channel} config removed`).toBe(true);
+    } else {
+      await expectHermesChannelConfigRemoved(sandbox, channel, redactions);
+    }
   }
 }
