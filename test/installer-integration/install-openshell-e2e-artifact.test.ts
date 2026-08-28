@@ -36,7 +36,7 @@ function createFixture() {
       "openshell-gateway-checksums-sha256.txt",
     ],
     [
-      "openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz",
+      "openshell-sandbox-x86_64-unknown-linux-musl.tar.gz",
       "openshell-sandbox",
       "openshell-sandbox-checksums-sha256.txt",
     ],
