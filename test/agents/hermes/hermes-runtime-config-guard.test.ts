@@ -620,8 +620,13 @@ with tempfile.TemporaryDirectory() as tmp:
 });
 
 describe("Hermes provider placeholder diagnostics", () => {
-  it("logs only validated environment keys, never runtime-plan message content", () => {
-    const result = runPythonHarness(`${loadGuardModule}
+  it.each([
+    ["wechat", "WECHAT_BOT_TOKEN", "WEIXIN_TOKEN"],
+    ["teams", "MSTEAMS_APP_PASSWORD", "TEAMS_CLIENT_SECRET"],
+  ] as const)(
+    "copies the %s revision-scoped provider placeholder and logs only validated keys (#10079)",
+    (channelId, envKey, targetEnvKey) => {
+      const result = runPythonHarness(`${loadGuardModule}
 import json
 import os
 import tempfile
@@ -630,23 +635,29 @@ with tempfile.TemporaryDirectory() as tmp:
     env_path = os.path.join(tmp, ".env")
     plan_path = os.path.join(tmp, "runtime-plan.json")
     with open(env_path, "w", encoding="utf-8") as handle:
-        handle.write("SLACK_BOT_TOKEN=old-placeholder\\n")
+        handle.write(${JSON.stringify(`${targetEnvKey}=openshell:resolve:env:${envKey}\n`)})
     with open(plan_path, "w", encoding="utf-8") as handle:
         json.dump({
-            "channels": [{"channelId": "slack", "active": True}],
+            "channels": [{"channelId": ${JSON.stringify(channelId)}, "active": True}],
+            "credentialBindings": [{
+                "channelId": ${JSON.stringify(channelId)},
+                "providerEnvKey": ${JSON.stringify(envKey)},
+            }],
             "runtimeSetup": {
                 "envAliases": [{
-                    "channelId": "slack",
-                    "envKey": "SLACK_BOT_TOKEN",
-                    "match": "^openshell:resolve:env:SLACK_BOT_TOKEN$",
-                    "value": "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+                    "channelId": ${JSON.stringify(channelId)},
+                    "envKey": ${JSON.stringify(envKey)},
+                    "targetEnvKey": ${JSON.stringify(targetEnvKey)},
+                    "match": ${JSON.stringify(`^openshell:resolve:env:v[0-9]+_${envKey}$`)},
+                    "value": ${JSON.stringify(`openshell:resolve:env:${envKey}`)},
                     "message": "Authorization: Bearer should-never-be-logged",
                 }],
             },
         }, handle)
 
-    os.environ["SLACK_BOT_TOKEN"] = "openshell:resolve:env:SLACK_BOT_TOKEN"
+    os.environ[${JSON.stringify(envKey)}] = ${JSON.stringify(`openshell:resolve:env:v222_${envKey}`)}
     guard._validate_env_text_with_boundary = lambda *_args: None
+    guard._write_existing = lambda path, text, *_args: open(path, "w", encoding="utf-8").write(text)
     guard.refresh_hashes = lambda *_args: None
     guard.provider_placeholders(
         tmp,
@@ -657,16 +668,30 @@ with tempfile.TemporaryDirectory() as tmp:
     )
     with open(env_path, "r", encoding="utf-8") as handle:
         print(handle.read(), end="")
+    os.environ[${JSON.stringify(envKey)}] = "raw-test-value"
+    raw_replacements, _provider_keys, _loaded = (
+        guard._runtime_plan_replacements_and_provider_keys(plan_path)
+    )
+    print("raw_replacements=" + json.dumps(raw_replacements, sort_keys=True))
+    os.environ[${JSON.stringify(envKey)}] = ${JSON.stringify(`openshell:resolve:env:${envKey}`)}
+    canonical_replacements, _provider_keys, _loaded = (
+        guard._runtime_plan_replacements_and_provider_keys(plan_path)
+    )
+    print("canonical_replacements=" + json.dumps(canonical_replacements, sort_keys=True))
 `);
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toBe("SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN\n");
-    expect(result.stderr).toContain(
-      "[config] Refreshed Hermes provider placeholder for SLACK_BOT_TOKEN",
-    );
-    expect(result.stderr).not.toContain("Authorization");
-    expect(result.stderr).not.toContain("should-never-be-logged");
-  });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain(`${targetEnvKey}=openshell:resolve:env:v222_${envKey}\n`);
+      expect(result.stdout).toContain(`${envKey}=openshell:resolve:env:v222_${envKey}\n`);
+      expect(result.stdout).toContain("raw_replacements={}");
+      expect(result.stdout).toContain("canonical_replacements={}");
+      expect(result.stderr).toContain(
+        `[config] Refreshed Hermes provider placeholder for ${targetEnvKey}`,
+      );
+      expect(result.stderr).not.toContain("Authorization");
+      expect(result.stderr).not.toContain("should-never-be-logged");
+    },
+  );
 });
 
 describe("Hermes shields outer namespace containment", () => {

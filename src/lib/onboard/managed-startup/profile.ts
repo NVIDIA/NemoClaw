@@ -58,6 +58,7 @@ const NON_SECRET_KEY_METADATA_NAMES = new Set([
   "installCacheEnvKey",
   "providerEnvKey",
   "stateKey",
+  "targetEnvKey",
 ]);
 const MESSAGING_CREDENTIAL_PLACEHOLDER_RE =
   /^(?:openshell:resolve:env:|[A-Za-z0-9]+-OPENSHELL-RESOLVE-ENV-)(?:v[0-9]+_)?[A-Z][A-Z0-9_]*$/u;
@@ -65,6 +66,14 @@ const MESSAGING_CREDENTIAL_ENV_ALIASES = new Set(
   listMessagingCredentialEnvAssignments()
     .filter(({ sourceEnvKey, targetEnvKey }) => sourceEnvKey !== targetEnvKey)
     .map(({ agent, sourceEnvKey, targetEnvKey }) => `${agent}\0${sourceEnvKey}\0${targetEnvKey}`),
+);
+const MESSAGING_CREDENTIAL_RUNTIME_ENV_ALIASES = new Set(
+  listMessagingCredentialEnvAssignments()
+    .filter(({ sourceEnvKey, targetEnvKey }) => sourceEnvKey !== targetEnvKey)
+    .map(
+      ({ agent, channelId, sourceEnvKey, targetEnvKey }) =>
+        `${agent}\0${channelId}\0${sourceEnvKey}\0${targetEnvKey}`,
+    ),
 );
 const JSON_ARRAY_INDEX_SEGMENT_RE = /^\[(?:0|[1-9][0-9]*)\]$/u;
 const SECRET_VALUE_PATTERNS: readonly RegExp[] = [
@@ -1091,9 +1100,7 @@ function isMessagingCredentialPlaceholderAssignment(
     placeholderEnvKey !== null &&
     (envKey === placeholderEnvKey ||
       (typeof selectedAgent === "string" &&
-        MESSAGING_CREDENTIAL_ENV_ALIASES.has(
-          `${selectedAgent}\0${placeholderEnvKey}\0${envKey}`,
-        )))
+        MESSAGING_CREDENTIAL_ENV_ALIASES.has(`${selectedAgent}\0${placeholderEnvKey}\0${envKey}`)))
   );
 }
 
@@ -1174,19 +1181,34 @@ function isStockTeamsOpenClawWebhook(
 }
 
 function isCanonicalMessagingRuntimeEnvAlias(
+  selectedAgent: unknown,
   path: readonly string[],
   value: Record<string, unknown>,
 ): boolean {
   if (!isMessagingRuntimeEnvAliasPath(path)) return false;
+  const channelId = ownDataPropertyValue(value, "channelId");
   const envKey = ownDataPropertyValue(value, "envKey");
+  const targetEnvKey = ownDataPropertyValue(value, "targetEnvKey");
   const match = ownDataPropertyValue(value, "match");
   const placeholder = ownDataPropertyValue(value, "value");
+  const expectedMatch =
+    targetEnvKey === undefined
+      ? `^openshell:resolve:env:(v[0-9]+_)?${envKey}$`
+      : `^openshell:resolve:env:v[0-9]+_${envKey}$`;
   return (
     typeof envKey === "string" &&
     CREDENTIAL_ENV_NAME_PATTERN.test(envKey) &&
-    match === `^openshell:resolve:env:(v[0-9]+_)?${envKey}$` &&
+    match === expectedMatch &&
     typeof placeholder === "string" &&
-    messagingCredentialPlaceholderEnvKey(placeholder) === envKey
+    messagingCredentialPlaceholderEnvKey(placeholder) === envKey &&
+    (targetEnvKey === undefined ||
+      (typeof selectedAgent === "string" &&
+        typeof channelId === "string" &&
+        typeof targetEnvKey === "string" &&
+        CREDENTIAL_ENV_NAME_PATTERN.test(targetEnvKey) &&
+        MESSAGING_CREDENTIAL_RUNTIME_ENV_ALIASES.has(
+          `${selectedAgent}\0${channelId}\0${envKey}\0${targetEnvKey}`,
+        )))
   );
 }
 
@@ -1201,7 +1223,7 @@ function isAllowedMessagingRuntimeAliasStringPath(
     path[2] === "runtimeSetup" &&
     path[3] === "envAliases" &&
     allowedAliasIndexes.has(path[4] ?? "") &&
-    (path[5] === "match" || path[5] === "value")
+    (path[5] === "match" || path[5] === "value" || path[5] === "targetEnvKey")
   );
 }
 
@@ -1593,11 +1615,7 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
           allowedBuildStepPlaceholders,
           allowedMessagingCredentialFields,
         ) &&
-        !isMessagingCredentialPlaceholderAssignment(
-          selectedAgent,
-          current.path,
-          current.value,
-        ) &&
+        !isMessagingCredentialPlaceholderAssignment(selectedAgent, current.path, current.value) &&
         (valueLooksLikeSecret(current.value) ||
           containsMessagingCredentialPlaceholder(current.value))
       ) {
@@ -1655,7 +1673,7 @@ function assertPayloadStructureAndCredentialShapes(root: unknown): void {
       if ("toJSON" in current.value) {
         invalid("payload must not define a custom JSON serializer");
       }
-      if (isCanonicalMessagingRuntimeEnvAlias(current.path, current.value)) {
+      if (isCanonicalMessagingRuntimeEnvAlias(selectedAgent, current.path, current.value)) {
         allowedRuntimeAliasIndexes.add(current.path[4] as string);
       }
       const messagingPlanSection = current.path[2];
@@ -2044,10 +2062,7 @@ function validateInference(value: unknown, agent: ManagedStartupAgent): ManagedS
     if (primaryModelRef !== null || compatibility !== null || inputModalities !== null) {
       invalid(`${agent} does not support primaryModelRef, compatibility, or inputModalities`);
     }
-    if (
-      agent === "langchain-deepagents-code" &&
-      !isValidDcodeUpstreamProvider(upstreamProvider)
-    ) {
+    if (agent === "langchain-deepagents-code" && !isValidDcodeUpstreamProvider(upstreamProvider)) {
       invalid(
         "inference.upstreamProvider must start with an ASCII letter or digit and contain 1-64 ASCII letters, digits, dots, underscores, or hyphens for DCode",
       );

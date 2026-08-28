@@ -476,7 +476,6 @@ describe("effective built-in policy contracts", () => {
         request_body_credential_rewrite: true,
       });
     }
-
     const telegram = requireEndpoint(
       requireNetworkPolicy(effective, "telegram_bot"),
       "api.telegram.org",
@@ -522,6 +521,12 @@ describe("effective built-in policy contracts", () => {
         request_body_credential_rewrite: true,
       });
     }
+    expect(requireEndpoint(wechat, "ilinkai.weixin.qq.com").credential_binding).toEqual({
+      provider: "effective-policy-wechat-bridge",
+    });
+    expect(requireEndpoint(wechat, "ilinkai.wechat.com").credential_binding).toEqual({
+      provider: "effective-policy-wechat-bridge",
+    });
 
     const mutationRules = (discord.endpoints ?? [])
       .filter((endpoint) => endpoint.host !== "discord.com")

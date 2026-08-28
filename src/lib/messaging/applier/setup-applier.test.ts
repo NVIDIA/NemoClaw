@@ -503,9 +503,9 @@ describe("MessagingSetupApplier", () => {
           ? {
               status: 0,
               stdout:
-              "Name: demo-telegram-bridge\nType: generic\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n",
-          }
-        : { status: 0 };
+                "Name: demo-telegram-bridge\nType: generic\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n",
+            }
+          : { status: 0 };
     };
 
     expect(() =>
@@ -832,7 +832,11 @@ describe("MessagingSetupApplier", () => {
     // Telegram's only remaining Hermes env line is the allowlist, so without
     // allowed IDs the whole env render collapses and the target never appears
     // in the render plan. The file on disk still has to be cleaned.
-    const plan = await buildOnboardPlan({ TELEGRAM_BOT_TOKEN: "telegram-token" }, ["telegram"], "hermes");
+    const plan = await buildOnboardPlan(
+      { TELEGRAM_BOT_TOKEN: "telegram-token" },
+      ["telegram"],
+      "hermes",
+    );
     const files: Record<string, string> = {
       "/sandbox/.hermes/.env": [
         "TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN",
@@ -935,12 +939,10 @@ describe("MessagingSetupApplier", () => {
         "TELEGRAM_ALLOWED_USERS=1001,1002",
         "NEMOCLAW_DISCORD_GUILD_IDS=guild-1",
         "DISCORD_ALLOWED_USERS=discord-user-1",
-        "WEIXIN_TOKEN=openshell:resolve:env:WECHAT_BOT_TOKEN",
         "WEIXIN_ALLOWED_USERS=wechat-user-1,wechat-user-2",
         "SLACK_ALLOWED_USERS=U100,U200",
         "SLACK_ALLOWED_CHANNELS=C100,C200",
         "WHATSAPP_ALLOWED_USERS=+15550000001,+15550000002",
-        "TEAMS_CLIENT_SECRET=openshell:resolve:env:MSTEAMS_APP_PASSWORD",
         "TEAMS_ALLOWED_USERS=00000000-0000-0000-0000-000000000001",
       ]),
     );
@@ -948,6 +950,8 @@ describe("MessagingSetupApplier", () => {
     // revision-scoped placeholder and the policy binding rejects the canonical
     // form, so Hermes must read the injected value instead.
     expect(renderedEnv).not.toContain("DISCORD_BOT_TOKEN=");
+    expect(renderedEnv).not.toContain("WEIXIN_TOKEN=");
+    expect(renderedEnv).not.toContain("TEAMS_CLIENT_SECRET=");
     expect(renderedEnv).not.toContain("telegram-token");
     expect(renderedEnv).not.toContain("discord-token");
     expect(renderedEnv).not.toContain("wechat-token");

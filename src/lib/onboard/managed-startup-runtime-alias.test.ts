@@ -16,17 +16,20 @@ import {
   validateManagedStartupProfile,
 } from "./managed-startup/profile.ts";
 
-// Runtime env aliases remain part of the managed-startup contract and are still
-// applied by agents/hermes/runtime-config-guard.py, but no shipped channel
-// declares one any more: Slack's was retired once OpenShell 0.0.106 began
-// binding SLACK_* to the policy endpoint, which rejects the Bolt-shaped alias.
-// Keep a literal of the retired alias so the validator stays covered.
+// Keep the retired Slack alias to cover the legacy same-key rewrite shape.
 const slackBotAlias = {
   envKey: "SLACK_BOT_TOKEN",
   match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
   value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-  message:
-    "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
+  message: "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
+} as const;
+
+const wechatTokenAlias = {
+  channelId: "wechat",
+  envKey: "WECHAT_BOT_TOKEN",
+  targetEnvKey: "WEIXIN_TOKEN",
+  match: "^openshell:resolve:env:v[0-9]+_WECHAT_BOT_TOKEN$",
+  value: "openshell:resolve:env:WECHAT_BOT_TOKEN",
 } as const;
 
 function profileWithAliases(aliases: readonly ManagedStartupJsonObject[]): ManagedStartupProfile {
@@ -184,6 +187,12 @@ describe("managed startup runtime aliases", () => {
     expect(() => validateManagedStartupProfile(profileWithAliases([slackBotAlias]))).not.toThrow();
   });
 
+  it("accepts an owned cross-key credential alias (#10079)", () => {
+    expect(() =>
+      validateManagedStartupProfile(profileWithAliases([wechatTokenAlias])),
+    ).not.toThrow();
+  });
+
   it.each([
     ["an invalid environment key", { ...slackBotAlias, envKey: "BAD KEY" }],
     [
@@ -203,6 +212,15 @@ describe("managed startup runtime aliases", () => {
     ],
     ["a raw credential", { ...slackBotAlias, value: `xoxb-${"a".repeat(32)}` }],
   ])("rejects %s (#9397)", (_label, alias) => {
+    expect(() => validateManagedStartupProfile(profileWithAliases([alias]))).toThrow(
+      /credential-shaped string data/,
+    );
+  });
+
+  it.each([
+    ["an unowned target", { ...wechatTokenAlias, targetEnvKey: "AWS_SECRET_KEY" }],
+    ["an alias owned by another channel", { ...wechatTokenAlias, channelId: "slack" }],
+  ])("rejects cross-key credential alias with %s (#10079)", (_label, alias) => {
     expect(() => validateManagedStartupProfile(profileWithAliases([alias]))).toThrow(
       /credential-shaped string data/,
     );

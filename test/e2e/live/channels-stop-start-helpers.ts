@@ -391,7 +391,7 @@ async function hermesChannelIsActive(
     discord:
       'grep -Eq "^DISCORD_ALLOWED_USERS=.+$" /sandbox/.hermes/.env && ! grep -qE "^[[:space:]]*(export[[:space:]]+)?DISCORD_BOT_TOKEN=" /sandbox/.hermes/.env',
     wechat:
-      'grep -Eq "^WEIXIN_TOKEN=openshell:resolve:env:WECHAT_BOT_TOKEN$" /sandbox/.hermes/.env',
+      'grep -Eq "^WEIXIN_TOKEN=openshell:resolve:env:v[0-9]+_WECHAT_BOT_TOKEN$" /sandbox/.hermes/.env',
     // Slack renders no token line: OpenShell binds SLACK_* to the policy
     // endpoint and injects revision-scoped placeholders, and Hermes loads .env
     // with override=True, so a rendered line would shadow them. The allowlist
@@ -403,7 +403,7 @@ async function hermesChannelIsActive(
     whatsapp:
       'grep -Eq "^WHATSAPP_ENABLED=true$" /sandbox/.hermes/.env && grep -Eq "^WHATSAPP_MODE=bot$" /sandbox/.hermes/.env && grep -Eq "^WHATSAPP_DM_POLICY=allowlist$" /sandbox/.hermes/.env && grep -Eq "^WHATSAPP_ALLOWED_USERS=.+$" /sandbox/.hermes/.env',
     teams:
-      'grep -Eq "^TEAMS_CLIENT_SECRET=openshell:resolve:env:MSTEAMS_APP_PASSWORD$" /sandbox/.hermes/.env',
+      'grep -Eq "^TEAMS_CLIENT_SECRET=openshell:resolve:env:v[0-9]+_MSTEAMS_APP_PASSWORD$" /sandbox/.hermes/.env',
     // The access token exists only in the live process environment. A rendered
     // line would shadow the revision-scoped placeholder OpenShell injects.
     googlechat:
