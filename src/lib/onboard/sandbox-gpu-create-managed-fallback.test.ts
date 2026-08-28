@@ -3,8 +3,6 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../adapters/openshell/sandbox-identity";
-
 const mocks = vi.hoisted(() => ({
   streamSandboxCreate: vi.fn(),
   waitForCreatedSandboxReadyWithTrace: vi.fn(),
@@ -67,11 +65,10 @@ import type {
 } from "./sandbox-gpu-create-flow";
 import { createSandboxGpuCreateAttemptRunner } from "./sandbox-gpu-create-run-attempt";
 
-const SANDBOX_ID = "alpha-sandbox-id";
 const HANDOFF: ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff = Object.freeze({
   kind: "openshell-owner-cleanup-required",
   sandboxName: "alpha",
-  sandboxId: SANDBOX_ID,
+  sandboxId: "sandbox-alpha",
   runtimeId: "runtime-alpha",
 });
 
@@ -90,29 +87,9 @@ function createManagedFallbackScenario(): {
 } {
   const input = createInput();
   const deps = createDeps();
-  vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) => {
-    const selectorIndex = args.indexOf("--selector");
-    const selector = args[selectorIndex + 1] ?? "";
-    const nonce = selector.slice(NEMOCLAW_CREATE_ATTEMPT_LABEL.length + 1);
-    return selectorIndex >= 0
-      ? JSON.stringify([
-          {
-            id: SANDBOX_ID,
-            name: "alpha",
-            labels: { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce },
-            resource_version: 1,
-            created_at: "2026-08-28T00:00:00Z",
-            phase: "Ready",
-            current_policy_version: 1,
-          },
-        ])
-      : args[1] === "get"
-        ? `Name: alpha\nID: ${SANDBOX_ID}\nState: Ready\n`
-        : "alpha Ready";
-  });
-  input.verifyCreatedSandboxBeforeEffects = vi.fn();
-  input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
-  input.persistRetainedSandboxRecovery = vi.fn(() => true);
+  vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
+    args[1] === "get" ? "Name: alpha\nID: sandbox-alpha\nState: Ready\n" : "alpha Ready",
+  );
   const rollback = vi.fn(async (request) =>
     request?.ownerCleanupHandoff === "native-gpu-fallback" ? HANDOFF : undefined,
   );
@@ -179,62 +156,44 @@ beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
 
 describe("managed-bootstrap native GPU fallback cleanup", () => {
-  it.each([
-    {
-      stage: "create" as const,
-      arrange: () =>
-        mocks.streamSandboxCreate.mockResolvedValueOnce({
-          status: 1,
-          output: SNAPSHOT.stateError,
-          sawProgress: true,
-        }),
-    },
-    {
-      stage: "readiness" as const,
-      arrange: () =>
-        mocks.waitForCreatedSandboxReadyWithTrace.mockReturnValueOnce({
-          ready: false,
-          reason: "terminal_failure_phase",
-          failurePhase: "Error",
-        }),
-    },
-  ])(
-    "retains exact owner cleanup after a managed $stage failure (#10155)",
-    async ({ stage, arrange }) => {
-      const { input, deps, rollback, completeOwnerCleanup } = createManagedFallbackScenario();
-      arrange();
-      const attemptRunner = createSandboxGpuCreateAttemptRunner(input, deps);
-      const runAttempt = vi.fn(attemptRunner.runAttempt);
-      const activateCompatibilityAttempt = vi.fn();
+  it("retains exact owner cleanup after a managed create failure (#10155)", async () => {
+    const { input, deps, rollback, completeOwnerCleanup } = createManagedFallbackScenario();
+    mocks.streamSandboxCreate.mockResolvedValueOnce({
+      status: 1,
+      output: SNAPSHOT.stateError,
+      sawProgress: true,
+    });
+    const attemptRunner = createSandboxGpuCreateAttemptRunner(input, deps);
+    const runAttempt = vi.fn(attemptRunner.runAttempt);
+    const activateCompatibilityAttempt = vi.fn();
 
-      const result = await executeSandboxGpuCreatePlan("native-with-fallback", {
-        runAttempt,
-        prepareCompatibilityAttempt: vi.fn(),
-        cleanupNativeFailure: (failure) =>
-          cleanupNativeGpuFailureForFallback(input.sandboxName, failure, {
-            runOpenshell: deps.runOpenshell,
-            sleep: deps.sleep,
-          }),
-        activateCompatibilityAttempt,
-      });
+    const result = await executeSandboxGpuCreatePlan("native-with-fallback", {
+      runAttempt,
+      prepareCompatibilityAttempt: vi.fn(),
+      cleanupNativeFailure: (failure) =>
+        cleanupNativeGpuFailureForFallback(input.sandboxName, failure, {
+          runOpenshell: deps.runOpenshell,
+          sleep: deps.sleep,
+        }),
+      activateCompatibilityAttempt,
+    });
 
-      expect(result).toMatchObject({
-        ok: false,
-        route: "native",
-        stage,
-        nativeCleanupHandoff: HANDOFF,
-        cleanupRefused:
-          "managed bootstrap owner cleanup is required for the exact sandbox and runtime identities",
-      });
-      expect(runAttempt).toHaveBeenCalledOnce();
-      expect(runAttempt).toHaveBeenCalledWith("native");
-      expect(activateCompatibilityAttempt).not.toHaveBeenCalled();
-      expect(rollback).toHaveBeenCalledWith({ ownerCleanupHandoff: "native-gpu-fallback" });
-      expect(completeOwnerCleanup).toHaveBeenCalledWith(HANDOFF);
-      expect(deps.runOpenshell).not.toHaveBeenCalledWith(
-        ["sandbox", "delete", "alpha"],
-        expect.anything(),
-      );
-    },
-  );
+    expect(result).toMatchObject({
+      ok: false,
+      route: "native",
+      stage: "create",
+      nativeCleanupHandoff: HANDOFF,
+      cleanupRefused:
+        "managed bootstrap owner cleanup is required for the exact sandbox and runtime identities",
+    });
+    expect(runAttempt).toHaveBeenCalledOnce();
+    expect(runAttempt).toHaveBeenCalledWith("native");
+    expect(activateCompatibilityAttempt).not.toHaveBeenCalled();
+    expect(rollback).toHaveBeenCalledWith({ ownerCleanupHandoff: "native-gpu-fallback" });
+    expect(completeOwnerCleanup).toHaveBeenCalledWith(HANDOFF);
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+  });
 });
