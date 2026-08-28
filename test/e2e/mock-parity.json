@@ -690,14 +690,14 @@
     {
       "live": "test/e2e/live/channels-stop-start.test.ts",
       "liveSources": [
-        "test/e2e/live/channels-stop-start-googlechat-entry.ts",
         "test/e2e/live/channels-stop-start-googlechat-proof.ts",
         "test/e2e/live/channels-stop-start-helpers.ts",
         "test/e2e/live/channels-stop-start-plan-state.ts"
       ],
       "fast": [
+        "test/e2e/support/channels-stop-start-cleanup.test.ts",
         "test/e2e/support/channels-stop-start-config-state.test.ts",
-        "test/e2e/support/channels-stop-start-googlechat-entry.test.ts",
+        "test/e2e/support/channels-stop-start-googlechat.test.ts",
         "test/e2e/support/channels-stop-start-googlechat-proof.test.ts",
         "test/e2e/support/channels-stop-start-plan-state.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
@@ -783,9 +783,7 @@
     },
     {
       "live": "test/e2e/live/brev-workspace-cleanup.test.ts",
-      "fast": [
-        "test/e2e/support/brev-launchable-fixture.test.ts"
-      ]
+      "fast": ["test/e2e/support/brev-launchable-fixture.test.ts"]
     },
     {
       "live": "test/e2e/live/whatsapp-qr-compact.test.ts",
