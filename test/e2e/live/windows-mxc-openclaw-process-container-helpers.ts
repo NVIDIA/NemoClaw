@@ -10,6 +10,15 @@ import path from "node:path";
 
 import { assessWindowsMxcProcessContainerCandidate } from "../../../src/lib/onboard/windows-mxc/host-qualification.ts";
 import {
+  MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
+  type MxcOpenShellAttachmentObservation,
+} from "../../../src/lib/onboard/runtime-provider/mxc-openshell-attachment.ts";
+import {
+  type MxcOpenShellAttachmentObservationRequest,
+  observeMxcOpenShellAttachment,
+} from "../../../src/lib/onboard/runtime-provider/mxc-openshell-observer.ts";
+import { createMxcWindowsOpenShellFileDigestObserver } from "../../../src/lib/onboard/runtime-provider/mxc-windows-file-observer.ts";
+import {
   sha256File,
   sha256WindowsOpenClawArtifactTree,
 } from "../../../tools/e2e/windows-mxc-openclaw-artifact-tree.mts";
@@ -78,6 +87,7 @@ export interface WindowsMxcOpenClawQualificationInputs {
     readonly nodeSha256: string;
     readonly openClawArtifactTreeSha256: string;
     readonly openClawEntrySha256: string;
+    readonly openShellDistributionSha256: string;
     readonly openShellCliSha256: string;
     readonly openShellGatewaySha256: string;
     readonly openShellRelaySha256: string;
@@ -90,11 +100,16 @@ export interface WindowsMxcOpenClawQualificationInputs {
     readonly version: string;
   };
   readonly openShell: {
+    readonly distributionArtifactPath: string;
+    readonly distributionRoot: string;
     readonly cliPath: string;
     readonly gatewayPath: string;
     readonly packageVersion: string;
     readonly relayPath: string;
     readonly revision: string;
+  };
+  readonly mxc: {
+    readonly root: string;
     readonly wxcExecPath: string;
   };
   readonly workDirectory: string;
@@ -139,6 +154,7 @@ export type TrustedOpenClawProcessIdentity = {
 };
 
 type QualificationChecks = {
+  readonly attachmentObserved: boolean;
   readonly artifactIdentity: boolean;
   readonly filesystemControlWrite: boolean;
   readonly filesystemDeniedWrite: boolean;
@@ -166,7 +182,7 @@ export type WindowsMxcOpenClawStartupObservation = {
 };
 
 export interface WindowsMxcOpenClawQualificationReceipt {
-  readonly schemaVersion: 3;
+  readonly schemaVersion: 4;
   readonly classification: "inactive-candidate";
   readonly backend: "process_container";
   readonly configuration: {
@@ -191,7 +207,9 @@ export interface WindowsMxcOpenClawQualificationReceipt {
       readonly version: string;
     };
     readonly openShell: {
+      readonly distributionSha256: string;
       readonly cliSha256: string;
+      readonly gatewayConfigSha256: string | null;
       readonly gatewaySha256: string;
       readonly packageVersion: string;
       readonly relaySha256: string;
@@ -396,7 +414,7 @@ function buildWindowsMxcSetupFailureReceipt(
   localArtifactsRemoved: boolean,
 ): WindowsMxcOpenClawQualificationReceipt {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     classification: "inactive-candidate",
     backend: "process_container",
     configuration: {
@@ -421,7 +439,9 @@ function buildWindowsMxcSetupFailureReceipt(
         version: inputs.openClaw.version,
       },
       openShell: {
+        distributionSha256: inputs.expected.openShellDistributionSha256,
         cliSha256: inputs.expected.openShellCliSha256,
+        gatewayConfigSha256: null,
         gatewaySha256: inputs.expected.openShellGatewaySha256,
         packageVersion: inputs.openShell.packageVersion,
         relaySha256: inputs.expected.openShellRelaySha256,
@@ -430,6 +450,7 @@ function buildWindowsMxcSetupFailureReceipt(
       wxcExecSha256: inputs.expected.wxcExecSha256,
     },
     checks: {
+      attachmentObserved: false,
       artifactIdentity: true,
       filesystemControlWrite: false,
       filesystemDeniedWrite: false,
@@ -504,10 +525,15 @@ function realDirectory(input: string, name: string): string {
   return fs.realpathSync(absolute);
 }
 
-function requireDescendant(file: string, root: string, name: string): void {
+function requireDescendant(
+  file: string,
+  root: string,
+  name: string,
+  rootName = "OpenClaw artifact root",
+): void {
   const relative = path.relative(root, file);
   if (!relative || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-    throw new Error(`${name} must be a child of the OpenClaw artifact root`);
+    throw new Error(`${name} must be a child of the ${rootName}`);
   }
 }
 
@@ -558,6 +584,42 @@ export function parseWindowsMxcOpenClawQualificationEnvironment(
   );
   requireWindowsDriveRoot(workDirectory);
   requireDirectChild(openClawRoot, workDirectory, "OpenClaw artifact root");
+  const openShellDistributionRoot = realDirectory(
+    requiredEnvironment(environment, "NEMOCLAW_WINDOWS_MXC_OPENSHELL_DISTRIBUTION_ROOT"),
+    "OpenShell distribution root",
+  );
+  const openShellDistributionArtifactPath = realRegularFile(
+    requiredEnvironment(environment, "NEMOCLAW_WINDOWS_MXC_OPENSHELL_DISTRIBUTION_ARTIFACT"),
+    "OpenShell distribution artifact",
+  );
+  const openShellCliPath = realRegularFile(
+    requiredEnvironment(environment, "NEMOCLAW_WINDOWS_MXC_OPENSHELL_CLI"),
+    "OpenShell CLI",
+  );
+  const openShellGatewayPath = realRegularFile(
+    requiredEnvironment(environment, "NEMOCLAW_WINDOWS_MXC_OPENSHELL_GATEWAY"),
+    "OpenShell gateway",
+  );
+  const openShellRelayPath = realRegularFile(
+    requiredEnvironment(environment, "NEMOCLAW_WINDOWS_MXC_OPENSHELL_RELAY"),
+    "OpenShell MXC supervisor relay",
+  );
+  for (const [candidate, label] of [
+    [openShellCliPath, "OpenShell CLI"],
+    [openShellGatewayPath, "OpenShell gateway"],
+    [openShellRelayPath, "OpenShell MXC supervisor relay"],
+  ] as const) {
+    requireDescendant(candidate, openShellDistributionRoot, label, "OpenShell distribution root");
+  }
+  const mxcRoot = realDirectory(
+    requiredEnvironment(environment, "NEMOCLAW_WINDOWS_MXC_ROOT"),
+    "MXC root",
+  );
+  const wxcExecPath = realRegularFile(
+    requiredEnvironment(environment, "NEMOCLAW_WINDOWS_MXC_WXC_EXEC"),
+    "wxc-exec",
+  );
+  requireDescendant(wxcExecPath, mxcRoot, "wxc-exec", "MXC root");
 
   return {
     artifactDirectory: realDirectory(
@@ -583,6 +645,11 @@ export function parseWindowsMxcOpenClawQualificationEnvironment(
       openClawEntrySha256: expectedPattern(
         environment,
         "NEMOCLAW_WINDOWS_MXC_OPENCLAW_ENTRY_SHA256",
+        SHA256_PATTERN,
+      ),
+      openShellDistributionSha256: expectedPattern(
+        environment,
+        "NEMOCLAW_WINDOWS_MXC_OPENSHELL_DISTRIBUTION_SHA256",
         SHA256_PATTERN,
       ),
       openShellCliSha256: expectedPattern(
@@ -617,37 +684,101 @@ export function parseWindowsMxcOpenClawQualificationEnvironment(
       ),
     },
     openShell: {
-      cliPath: realRegularFile(
-        requiredEnvironment(environment, "NEMOCLAW_WINDOWS_MXC_OPENSHELL_CLI"),
-        "OpenShell CLI",
-      ),
-      gatewayPath: realRegularFile(
-        requiredEnvironment(environment, "NEMOCLAW_WINDOWS_MXC_OPENSHELL_GATEWAY"),
-        "OpenShell gateway",
-      ),
+      distributionArtifactPath: openShellDistributionArtifactPath,
+      distributionRoot: openShellDistributionRoot,
+      cliPath: openShellCliPath,
+      gatewayPath: openShellGatewayPath,
       packageVersion: expectedPattern(
         environment,
         "NEMOCLAW_WINDOWS_MXC_OPENSHELL_VERSION",
         VERSION_PATTERN,
       ),
-      relayPath: realRegularFile(
-        requiredEnvironment(environment, "NEMOCLAW_WINDOWS_MXC_OPENSHELL_RELAY"),
-        "OpenShell MXC supervisor relay",
-      ),
+      relayPath: openShellRelayPath,
       revision: expectedPattern(
         environment,
         "NEMOCLAW_WINDOWS_MXC_OPENSHELL_REVISION",
         REVISION_PATTERN,
       ),
-      wxcExecPath: realRegularFile(
-        requiredEnvironment(environment, "NEMOCLAW_WINDOWS_MXC_WXC_EXEC"),
-        "OpenShell-supplied wxc-exec",
-      ),
+    },
+    mxc: {
+      root: mxcRoot,
+      wxcExecPath,
     },
   };
 }
 
 export { sha256File };
+
+/**
+ * Project pinned qualification inputs into the inactive attachment observer contract.
+ *
+ * This creates observation input only. It does not mint provider authority, qualify the
+ * distribution, call OpenShell, or authorize MXC selection.
+ */
+export function createWindowsMxcOpenShellAttachmentObservationRequest(
+  inputs: WindowsMxcOpenClawQualificationInputs,
+  gatewayConfigPath: string,
+): MxcOpenShellAttachmentObservationRequest {
+  const observedGatewayConfigPath = realRegularFile(
+    gatewayConfigPath,
+    "OpenShell gateway configuration",
+  );
+  return Object.freeze({
+    contractVersion: MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
+    providerId: "mxc",
+    mode: "attach-existing",
+    observedDistribution: Object.freeze({
+      version: inputs.openShell.packageVersion,
+      revision: inputs.openShell.revision,
+    }),
+    observedGateway: Object.freeze({ driver: "mxc", backend: "process_container" }),
+    installation: Object.freeze({
+      distributionArtifactPath: inputs.openShell.distributionArtifactPath,
+      distributionRoot: inputs.openShell.distributionRoot,
+      mxcRoot: inputs.mxc.root,
+      cliPath: inputs.openShell.cliPath,
+      gatewayPath: inputs.openShell.gatewayPath,
+      wxcExecPath: inputs.mxc.wxcExecPath,
+      gatewayConfigPath: observedGatewayConfigPath,
+    }),
+  });
+}
+
+function assertWindowsMxcOpenShellAttachmentObservation(
+  observation: MxcOpenShellAttachmentObservation,
+  inputs: WindowsMxcOpenClawQualificationInputs,
+): void {
+  const expected = {
+    distributionSha256: inputs.expected.openShellDistributionSha256,
+    cliSha256: inputs.expected.openShellCliSha256,
+    gatewaySha256: inputs.expected.openShellGatewaySha256,
+    wxcExecSha256: inputs.expected.wxcExecSha256,
+  };
+  const observed = {
+    distributionSha256: observation.distribution.sha256,
+    cliSha256: observation.components.cliSha256,
+    gatewaySha256: observation.components.gatewaySha256,
+    wxcExecSha256: observation.components.wxcExecSha256,
+  };
+  for (const [name, value] of Object.entries(observed)) {
+    if (value !== expected[name as keyof typeof expected]) {
+      throw new Error(`${name} does not match the stable attachment observation`);
+    }
+  }
+}
+
+/** Observe pinned attachment inputs without minting provider authority or selecting MXC. */
+async function observeWindowsMxcOpenShellAttachment(
+  inputs: WindowsMxcOpenClawQualificationInputs,
+  gatewayConfigPath: string,
+): Promise<MxcOpenShellAttachmentObservation> {
+  const observation = await observeMxcOpenShellAttachment(
+    createWindowsMxcOpenShellAttachmentObservationRequest(inputs, gatewayConfigPath),
+    createMxcWindowsOpenShellFileDigestObserver(),
+  );
+  assertWindowsMxcOpenShellAttachmentObservation(observation, inputs);
+  return observation;
+}
 
 export function sandboxListContainsExactName(output: string, sandboxName: string): boolean {
   const parsed: unknown = JSON.parse(output);
@@ -1706,10 +1837,11 @@ export function assertExactArtifactIdentities(inputs: WindowsMxcOpenClawQualific
     nodeSha256: sha256File(inputs.openClaw.nodePath),
     openClawArtifactTreeSha256: sha256WindowsOpenClawArtifactTree(inputs.openClaw.root),
     openClawEntrySha256: sha256File(inputs.openClaw.entryPath),
+    openShellDistributionSha256: sha256File(inputs.openShell.distributionArtifactPath),
     openShellCliSha256: sha256File(inputs.openShell.cliPath),
     openShellGatewaySha256: sha256File(inputs.openShell.gatewayPath),
     openShellRelaySha256: sha256File(inputs.openShell.relayPath),
-    wxcExecSha256: sha256File(inputs.openShell.wxcExecPath),
+    wxcExecSha256: sha256File(inputs.mxc.wxcExecPath),
   };
   for (const [name, value] of Object.entries(observed)) {
     if (value !== inputs.expected[name as keyof typeof observed]) {
@@ -1805,9 +1937,13 @@ async function prepareWindowsMxcOpenClawLocalSetup(input: {
           relayPath,
           shareDirectory,
           targetPort: openClawPort,
-          wxcExecPath: input.inputs.openShell.wxcExecPath,
+          wxcExecPath: input.inputs.mxc.wxcExecPath,
         }),
         { encoding: "utf8", mode: 0o600 },
+      );
+      const attachmentObservation = await observeWindowsMxcOpenShellAttachment(
+        input.inputs,
+        gatewayConfigPath,
       );
       fs.writeFileSync(
         policyPath,
@@ -1873,6 +2009,7 @@ async function prepareWindowsMxcOpenClawLocalSetup(input: {
       const forwardStdout = localSetup.trackDescriptor(fs.openSync(forwardLogPath, "w"));
       const forwardStderr = localSetup.trackDescriptor(fs.openSync(forwardErrorPath, "w"));
       return {
+        attachmentObservation,
         clientEnvironment,
         clientHomeDirectory,
         configDirectory,
@@ -1993,6 +2130,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     `windows-mxc-forward-health-readiness-${runId}.json`,
   );
   const {
+    attachmentObservation,
     clientEnvironment,
     clientHomeDirectory,
     configDirectory,
@@ -2058,6 +2196,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     versionExitCode: null,
   };
   let checks: QualificationChecks = {
+    attachmentObserved: true,
     artifactIdentity: true,
     filesystemControlWrite: false,
     filesystemDeniedWrite: false,
@@ -2648,7 +2787,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     sandboxName,
   });
   const receipt: WindowsMxcOpenClawQualificationReceipt = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     classification: "inactive-candidate",
     backend: "process_container",
     configuration: {
@@ -2673,13 +2812,15 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
         version: inputs.openClaw.version,
       },
       openShell: {
-        cliSha256: inputs.expected.openShellCliSha256,
-        gatewaySha256: inputs.expected.openShellGatewaySha256,
-        packageVersion: inputs.openShell.packageVersion,
+        distributionSha256: attachmentObservation.distribution.sha256,
+        cliSha256: attachmentObservation.components.cliSha256,
+        gatewayConfigSha256: attachmentObservation.gateway.configSha256,
+        gatewaySha256: attachmentObservation.components.gatewaySha256,
+        packageVersion: attachmentObservation.distribution.version,
         relaySha256: inputs.expected.openShellRelaySha256,
-        revision: inputs.openShell.revision,
+        revision: attachmentObservation.distribution.revision,
       },
-      wxcExecSha256: inputs.expected.wxcExecSha256,
+      wxcExecSha256: attachmentObservation.components.wxcExecSha256,
     },
     checks,
     startup,
