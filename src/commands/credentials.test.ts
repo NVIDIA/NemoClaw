@@ -27,10 +27,14 @@ vi.mock("../lib/actions/global", () => ({
   forgetExtraProvider: mocks.forgetExtraProvider,
   listManagedMcpCredentialReservations: mocks.listManagedMcpCredentialReservations,
 }));
-vi.mock("../lib/adapters/openshell/provider-command", () => ({
-  OPENSHELL_OPERATION_TIMEOUT_MS: 30_000,
-  runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
-}));
+vi.mock("../lib/adapters/openshell/provider-command", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/adapters/openshell/provider-command")>();
+  return {
+    ...actual,
+    OPENSHELL_OPERATION_TIMEOUT_MS: 30_000,
+    runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
+  };
+});
 vi.mock("../lib/onboard/gateway-teardown-authority", () => ({
   resolveGatewayCredentialMutationAuthority: mocks.resolveGatewayCredentialMutationAuthority,
 }));
