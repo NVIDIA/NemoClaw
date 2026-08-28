@@ -309,7 +309,7 @@ export function assertNoPortableConfigurationCleanupRecovery(configRoot: string)
   );
   if (recovery) {
     throw new Error(
-      "Portable configuration cleanup recovery is incomplete; rerun full uninstall before another Portable lifecycle operation",
+      "Portable configuration cleanup recovery is incomplete; rerun full uninstall before onboarding, sandbox rebuild, or Portable lifecycle uninstall",
     );
   }
 }
