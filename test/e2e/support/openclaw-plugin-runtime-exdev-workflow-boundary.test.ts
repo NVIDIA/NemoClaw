@@ -38,7 +38,6 @@ describe("OpenClaw plugin runtime EXDEV workflow boundary", () => {
       ...job.env,
       E2E_ARTIFACT_DIR: "/tmp/openclaw-plugin-runtime-exdev",
       E2E_DEFAULT_ENABLED: "0",
-      NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "0",
       NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
     };
 
@@ -83,7 +82,6 @@ describe("OpenClaw plugin runtime EXDEV workflow boundary", () => {
         "openclaw-plugin-runtime-exdev must hold only contents: read",
         "openclaw-plugin-runtime-exdev must set E2E_ARTIFACT_DIR=${{ github.workspace }}/e2e-artifacts/live/openclaw-plugin-runtime-exdev",
         "openclaw-plugin-runtime-exdev must remain enabled for scheduled and empty manual runs",
-        "openclaw-plugin-runtime-exdev must set NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD=1 for changed base-image inputs",
         "openclaw-plugin-runtime-exdev must not expose NVIDIA_INFERENCE_API_KEY at job scope",
         "openclaw-plugin-runtime-exdev action 'actions/checkout@v6' must pin a full SHA",
         "openclaw-plugin-runtime-exdev checkout must disable persisted credentials",

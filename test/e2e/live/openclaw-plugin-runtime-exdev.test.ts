@@ -47,6 +47,7 @@ import {
   DELEGATED_CAPABILITY_COMMENT_PREFIX,
   registerTrustedPluginFixtureImageCleanup,
   trustedExdevImageRef,
+  withEnabledLocalBaseImageBuild,
 } from "./openclaw-plugin-runtime-exdev-trusted-prebuild.ts";
 import {
   createOpenShellDriverConfigTestWrapper,
@@ -1309,10 +1310,12 @@ test(
     });
 
     progress.phase("build and onboard plugin v1");
-    const baseImageResolution = pullAndResolveBaseImageDigest({
-      forceRefresh: true,
-      requireOpenshellSandboxAbi: true,
-    });
+    const baseImageResolution = withEnabledLocalBaseImageBuild(() =>
+      pullAndResolveBaseImageDigest({
+        forceRefresh: true,
+        requireOpenshellSandboxAbi: true,
+      }),
+    );
     assert(
       baseImageResolution,
       "current CLI must resolve an OpenShell-compatible sandbox base image",

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -9,9 +9,27 @@ import {
   acceptTrustedPluginFixturePrebuild,
   registerTrustedPluginFixtureImageCleanup,
   trustedExdevImageRef,
+  withEnabledLocalBaseImageBuild,
 } from "../live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts";
 
 const IMAGE_ID = `sha256:${"a".repeat(64)}`;
+
+afterEach(() => vi.unstubAllEnvs());
+
+it("limits the local base-image build setting to one operation", () => {
+  vi.stubEnv("NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD", "0");
+
+  expect(
+    withEnabledLocalBaseImageBuild(() => process.env.NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD),
+  ).toBe("1");
+  expect(process.env.NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD).toBe("0");
+  expect(() =>
+    withEnabledLocalBaseImageBuild(() => {
+      throw new Error("base-image build failed");
+    }),
+  ).toThrow("base-image build failed");
+  expect(process.env.NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD).toBe("0");
+});
 
 function commandResult(exitCode = 0, stderr = ""): ShellProbeResult {
   return {

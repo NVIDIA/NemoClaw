@@ -36,6 +36,17 @@ export type OpenShellTrustedImageWrapper = OpenShellDriverConfigTestWrapper & {
   selectImage(imageRef: string): void;
 };
 
+export function withEnabledLocalBaseImageBuild<T>(operation: () => T): T {
+  const previous = process.env.NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD;
+  process.env.NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD = "1";
+  try {
+    return operation();
+  } finally {
+    if (previous === undefined) delete process.env.NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD;
+    else process.env.NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD = previous;
+  }
+}
+
 export function trustedExdevImageRef(tag: string): string {
   const imageRef = `${LOCAL_SANDBOX_IMAGE_REPO}:${tag}`;
   assert.match(imageRef, TRUSTED_EXDEV_IMAGE_REF_PATTERN);
