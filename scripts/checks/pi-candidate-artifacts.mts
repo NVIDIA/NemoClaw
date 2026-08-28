@@ -140,7 +140,7 @@ const REQUIRED_ARTIFACTS = [
   ...Object.values(PI_QUALIFICATION_RECEIPT_PATHS),
 ] as const;
 
-export type PiArtifactSources = Readonly<{
+type PiArtifactSources = Readonly<{
   candidateAuthority: string;
   dependencyReview: string;
   dockerfile: string;
@@ -336,7 +336,7 @@ function verifyCohortSeparation(workflow: string): string[] {
   return failures;
 }
 
-export function verifyPiQualificationReceipts(sources: PiArtifactSources): string[] {
+function verifyPiQualificationReceipts(sources: PiArtifactSources): string[] {
   const failures: string[] = [];
   const receipts = Object.entries(sources.qualificationReceipts).flatMap(([platform, contents]) => {
     const receiptPlatform = platform as keyof typeof PI_QUALIFICATION_RECEIPT_PATHS;
@@ -629,7 +629,7 @@ function verifyProjectTrustBoundary(manifest: LooseRecord): string[] {
   return failures;
 }
 
-export function verifyPiTrustBoundary(sources: PiArtifactSources): string[] {
+function verifyPiTrustBoundary(sources: PiArtifactSources): string[] {
   const policy = asRecord(parseYaml(sources.policyAdditions));
   const manifest = asRecord(parseYaml(sources.manifest));
   return [
@@ -642,7 +642,7 @@ export function verifyPiTrustBoundary(sources: PiArtifactSources): string[] {
   ];
 }
 
-export function verifyPiCandidateArtifacts(sources: PiArtifactSources): string[] {
+function verifyPiCandidateArtifacts(sources: PiArtifactSources): string[] {
   return [
     ...verifyPinnedIdentity(sources),
     ...verifyCandidateRegistration(sources.managedImageContract),

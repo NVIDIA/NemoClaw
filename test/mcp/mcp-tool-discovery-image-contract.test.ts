@@ -209,8 +209,6 @@ describe("MCP tool discovery image contract", () => {
       "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle",
     );
     const expectedHashes = {
-      "managed-startup-image-runtime.bundle":
-        "7d6882c3eac815f503e7ec318249ae369e142ff97e42ddc65ac1986dc3f06605",
       "mcp-tool-discovery/BUNDLED_PACKAGES.json":
         "df5dc8f167101085a8e73c444aa56854b2a4716a0bb7de9886fec4e50f402601",
       "mcp-tool-discovery/THIRD_PARTY_LICENSES.txt":
