@@ -616,7 +616,6 @@ test(
       expect(beforeGateway.ppid).toBe(supervisor.pid);
 
       const managedEnvBackup = `/tmp/hermes-managed-env-before-${Date.now()}`;
-      let restoreManagedEnv: ShellProbeResult | undefined;
       try {
         const introduceManagedRawSecret = await sandbox.execShell(
           SANDBOX_NAME,
@@ -658,7 +657,7 @@ test(
         expect(afterManagedRefusal.exitCode, resultText(afterManagedRefusal)).toBe(0);
         expect(parseGatewayProcess(afterManagedRefusal.stdout).pid).toBe(beforeGateway.pid);
       } finally {
-        restoreManagedEnv = await sandbox.execShell(
+        const restoreManagedEnv = await sandbox.execShell(
           SANDBOX_NAME,
           trustedSandboxShellScript(
             [
@@ -673,13 +672,8 @@ test(
             timeoutMs: 30_000,
           },
         );
+        expect(restoreManagedEnv.exitCode, resultText(restoreManagedEnv)).toBe(0);
       }
-      expect(
-        restoreManagedEnv?.exitCode,
-        restoreManagedEnv
-          ? resultText(restoreManagedEnv)
-          : "managed environment restoration did not run",
-      ).toBe(0);
 
       const stopApiForward = await sandbox.openshell(["forward", "stop", "8642", SANDBOX_NAME], {
         artifactName: "phase-4-stop-managed-hermes-api-forward",
