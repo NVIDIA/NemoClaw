@@ -17,6 +17,13 @@ Use the built-in uninstall command when the installed CLI is available.
 $$nemoclaw uninstall
 ```
 
+Within each gateway pass, uninstall creates a fresh host-side snapshot for each eligible registered non-portable sandbox before it deletes that pass's OpenShell sandboxes.
+It uses the same state contract as `$$nemoclaw backup-all`, including temporarily starting an eligible stopped Docker sandbox and restoring its previous Shields posture.
+If any current sandbox cannot be backed up, that gateway pass exits nonzero before sandbox deletion.
+During `--all-gateway-ports`, the sweep continues with later ports and reports the aggregate failure.
+`--yes` skips the confirmation prompt but does not skip this backup gate.
+An explicit user-data purge skips eligible fresh backups and attempts to remove both current sandbox state and existing host-side backups.
+
 Full uninstall does not remove a Docker container or image only because its name or image reference contains `openclaw`.
 It preserves resources from a separate OpenClaw installation while continuing to remove NemoClaw and OpenShell Docker resources.
 During full uninstall, NemoClaw stops a Bedrock Runtime adapter when its recorded process ID matches the adapter command line.
@@ -27,17 +34,18 @@ Uninstall preserves an unrelated process that uses the same port.
 
 | Flag | Effect |
 |---|---|
-| `--yes` | Skip the confirmation prompt. |
+| `--yes` | Skip the confirmation prompt. Backups for eligible registered non-portable sandboxes still run before deletion. |
 | `--keep-openshell` | Leave OpenShell binaries, NemoClaw-managed gateway service files, and local gateway state in place, and do not stop the host gateway process. |
 | `--delete-models` | Delete every model reported by the host's local Ollama inventory and all non-credential data in the current user's shared `~/.cache/huggingface/` cache after managed model runtimes stop. Hugging Face authentication files remain. |
-| `--destroy-user-data` | Also remove preserved user data in `rebuild-backups/`, `backups/`, and `sandboxes.json`. Removes installer-managed user-local CLI shims under `~/.local/bin/` only when sibling evidence is unidentified. When a confirmed sibling gateway port remains, those shared shims stay with the shared npm CLI package. |
+| `--destroy-user-data` | Skip eligible fresh sandbox backups and remove preserved user data in `rebuild-backups/`, `backups/`, and `sandboxes.json`. Removes installer-managed user-local CLI shims under `~/.local/bin/` only when sibling evidence is unidentified. When a confirmed sibling gateway port remains, those shared shims stay with the shared npm CLI package. |
 | `--all-gateway-ports` | Uninstall every gateway port on the host instead of only the selected one. |
 | `--gateway <name>` | Optional consistency check; must match the name derived from `NEMOCLAW_GATEWAY_PORT`. |
 
 <AgentOnly variant="hermes">
 <Warning>
 For a non-portable Docker Hermes sandbox that uses the NemoClaw-managed image, uninstall removes its managed state volume even without `--destroy-user-data`.
-Back up required Hermes state first.
+Default uninstall snapshots required Hermes state first.
+When using `--destroy-user-data`, back up required state separately before uninstall.
 NemoClaw removes only a volume with exact ownership labels; inspection or removal failure exits nonzero and preserves registry state for retry.
 </Warning>
 </AgentOnly>
@@ -309,6 +317,10 @@ Do not add `sandbox_namespace` manually to a live gateway configuration because 
 In this section, `<selected-state-root>` is `~/.nemoclaw/` for the default gateway or `~/.nemoclaw/gateways/<port>/` for a non-default gateway.
 For the default gateway, the uninstall command preserves `~/.nemoclaw/rebuild-backups/`, `~/.nemoclaw/backups/`, and `~/.nemoclaw/sandboxes.json` by default.
 A non-default gateway uses the corresponding entries under `~/.nemoclaw/gateways/<port>/`.
+Before deleting a registered non-portable sandbox, the default path writes a fresh snapshot under that gateway's `rebuild-backups/` directory.
+The whole-host sweep applies this gate separately to each selected gateway port.
+If a backup fails or any registered sandbox is skipped, uninstall stops that gateway pass before OpenShell resource cleanup.
+A registry entry confirmed absent from both the selected gateway and Docker is exempt because no sandbox state remains to capture.
 Outside portable cleanup, when uninstall confirms that no sibling gateways remain, it also removes the shared CLI, services, images, providers, configuration, models, and swap.
 During full uninstall, a managed distributed-vLLM receipt makes NemoClaw first revalidate the recorded plan and every cluster node, GPU, container, and SSH peer identity.
 It then removes only the exact receipt-owned containers.
@@ -337,10 +349,12 @@ When the command itself is unavailable, uninstall exits nonzero before OpenShell
 The preserved `rebuild-backups/`, `backups/`, and `sandboxes.json` entries stay unless you pass `--destroy-user-data`.
 That flag does not override gateway-scoped preservation of the managed runtime receipt, copied SSH bindings, or temporary discovery claims.
 
-Interactive runs prompt before they remove the preserved entries, and the default answer keeps them.
-For non-interactive runs using `--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or a non-TTY shell, pass `--destroy-user-data` or set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` to acknowledge data loss and remove the preserved entries.
+Interactive runs prompt before they skip eligible fresh backups and remove the preserved entries, and the default answer keeps them.
+For non-interactive runs, use `--yes` to acknowledge the global confirmation.
+After that acknowledgement, fresh backups for eligible registered non-portable sandboxes remain mandatory unless you pass `--destroy-user-data` or set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` to acknowledge data loss and remove the preserved entries.
+Without `--yes`, a closed standard input or non-TTY shell aborts before backup or cleanup.
 
-`--yes` never purges the preserved host-side entries listed above on its own.
+`--yes` never skips eligible fresh sandbox backups or purges the preserved host-side entries listed above on its own.
 After a successful or already-absent sandbox deletion, preserving other `sandboxes.json` entries does not preserve the selected sandbox entry or its gateway registration.
 Outside portable cleanup, after uninstall confirms that no sibling gateways remain, it also removes the provider registrations and Docker image that the recorded sandboxes depend on.
 
