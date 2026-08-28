@@ -249,12 +249,15 @@ command execution, test outcomes, or registered resource release.
 
 The retired `--emit-matrix` and `--plan-only` paths must not be reintroduced.
 
-When adding or changing a live test, update `test/e2e/mock-parity.json` with
-the fast PR-collected test that covers its mockable contract. If the behavior
-cannot be reproduced without real infrastructure, record a concise
-`liveOnlyReason` instead. The PR and `main` CLI coverage shards enforce this
-changed-file policy alongside the `e2e-support` project without requiring an
-immediate backfill of untouched tests.
+When you add or make a non-comment source change to a live E2E test or a
+`test/e2e/live/` helper, update `test/e2e/mock-parity.json`. List each changed
+helper under `liveSources` for its owning live test. If the entry has mapped
+fast tests, make a non-comment source change to at least one mapped fast test
+in the same PR. Use
+`liveOnlyReason` only when no fast test can reproduce the contract. The PR and
+`main` CLI coverage shards enforce this changed-file policy alongside the
+`e2e-support` project without requiring an immediate backfill of untouched
+tests.
 
 ## Repository Layout
 
