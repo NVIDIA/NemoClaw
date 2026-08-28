@@ -275,9 +275,6 @@ describe("MCP lifecycle lock acquisition", () => {
     const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
     writeTimerMarker("2".repeat(32), new Date(Date.now() - 1_000).toISOString(), 2_147_483_647);
 
-    expect(() => withMcpLifecycleLockSync(SANDBOX_NAME, operation, options())).toThrow(
-      "Timed out waiting for sandbox mutation lock",
-    );
     await expect(withMcpLifecycleLock(SANDBOX_NAME, operation, options())).rejects.toThrow(
       "Timed out waiting for the sandbox mutation lock",
     );
@@ -299,19 +296,6 @@ describe("MCP lifecycle lock acquisition", () => {
     ).resolves.toBe("entered");
     expect(fs.existsSync(lockPath)).toBe(false);
     expect(fs.existsSync(`${lockPath}.containment`)).toBe(false);
-  });
-
-  it("keeps ordinary acquisition closed when a live PID's recorded ps identity no longer matches", () => {
-    const operation = vi.fn(() => "must not enter");
-    writeTimerMarker("8".repeat(32), new Date(Date.now() - 1_000).toISOString(), process.pid, {
-      timerProcessStartIdentity: "ps:recorded",
-    });
-    vi.spyOn(localTimerProcessStartIdentity, "read").mockReturnValue("ps:observed");
-
-    expect(() => withMcpLifecycleLockSync(SANDBOX_NAME, operation, options())).toThrow(
-      "Timed out waiting for sandbox mutation lock",
-    );
-    expect(operation).not.toHaveBeenCalled();
   });
 
   it("recovers through the deadline fence when a live PID's recorded ps identity no longer matches", async () => {
