@@ -514,7 +514,7 @@ export function runDebug(opts: DebugOptions = {}): void {
 
   // Resolve sandbox name. The CLI wrapper (runDebugCommandWithOptions) is the
   // sole supported caller; it already trims, validates, and applies the
-  // documented precedence (--sandbox > NEMOCLAW_SANDBOX_NAME > NEMOCLAW_SANDBOX
+  // command precedence (--sandbox > NEMOCLAW_SANDBOX_NAME > NEMOCLAW_SANDBOX
   // > SANDBOX_NAME) before calling here. Reading env again would let
   // whitespace-only values bypass validation, so only trim the option.
   const sandboxName = opts.sandboxName?.trim() || "default";

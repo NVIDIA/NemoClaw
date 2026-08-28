@@ -20,6 +20,16 @@ const B = useColor ? "\x1b[1m" : "";
 const R = useColor ? "\x1b[0m" : "";
 const RD = useColor ? "\x1b[1;31m" : "";
 
+function resolveDebugGatewayName(
+  sandbox: Parameters<typeof resolveSandboxGatewayName>[0],
+): string | null {
+  try {
+    return resolveSandboxGatewayName(sandbox);
+  } catch {
+    return null;
+  }
+}
+
 export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
   const sandboxObserver = createCliOpenShellSandboxObserver({
     capture: (args, options) => {
@@ -41,7 +51,14 @@ export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
     const { defaultSandbox, sandboxes } = registry.listSandboxes();
     if (!defaultSandbox) {
       const registered = sandboxes.find((sandbox) => sandbox.name);
-      const gatewayName = registered ? resolveSandboxGatewayName(registered) : undefined;
+      const gatewayName = registered ? resolveDebugGatewayName(registered) : undefined;
+      if (registered && gatewayName === null) {
+        console.error(
+          `${RD}Warning:${R} sandbox '${registered.name}' has an invalid registered gateway binding.`,
+        );
+        console.error("  Remove and re-onboard the sandbox to restore a valid gateway binding.\n");
+        return null;
+      }
       const liveNames = await liveSandboxNames(
         gatewayName ? namedOpenShellGateway(gatewayName) : selectedOpenShellGateway(),
       );
@@ -67,7 +84,14 @@ export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
       );
       return null;
     }
-    const gatewayName = resolveSandboxGatewayName(registered);
+    const gatewayName = resolveDebugGatewayName(registered);
+    if (!gatewayName) {
+      console.error(
+        `${RD}Warning:${R} default sandbox '${defaultSandbox}' has an invalid registered gateway binding.`,
+      );
+      console.error("  Remove and re-onboard the sandbox to restore a valid gateway binding.\n");
+      return null;
+    }
     const liveNames = await liveSandboxNames(namedOpenShellGateway(gatewayName));
     if (liveNames && !liveNames.has(defaultSandbox)) {
       console.error(
@@ -85,7 +109,8 @@ export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
     const { sandboxes } = registry.listSandboxes();
     const registered = sandboxes.find((sandbox) => sandbox.name === name);
     if (!registered) return { state: "unregistered" };
-    const gatewayName = resolveSandboxGatewayName(registered);
+    const gatewayName = resolveDebugGatewayName(registered);
+    if (!gatewayName) return { state: "invalid_gateway" };
     const liveNames = await liveSandboxNames(namedOpenShellGateway(gatewayName));
     return !liveNames || liveNames.has(name)
       ? { state: "available", gatewayName }

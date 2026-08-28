@@ -233,6 +233,21 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
     await expect(deps.getDefaultSandbox()).resolves.toEqual({ name: "alpha", gatewayName: "nemoclaw" });
   });
 
+  it("rejects an explicit sandbox with an invalid gateway binding", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      defaultSandbox: "alpha",
+      sandboxes: [{ name: "alpha", gatewayName: "untrusted" }],
+    } as never);
+
+    await DebugCliCommand.run(["--quick"], rootDir);
+
+    const deps = mocks.runDebugCommandWithOptions.mock.calls[0][1];
+    await expect(deps.getSandboxAvailability("alpha")).resolves.toEqual({
+      state: "invalid_gateway",
+    });
+    expect(mocks.captureOpenshellCommand).not.toHaveBeenCalled();
+  });
+
   it("keeps registered debug sandboxes when OpenShell observation fails", async () => {
     mocks.listSandboxes.mockReturnValue({
       defaultSandbox: "alpha",
