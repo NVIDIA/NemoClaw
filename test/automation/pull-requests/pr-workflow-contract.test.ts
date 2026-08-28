@@ -160,7 +160,8 @@ function runWorkflowShellStep(
 type SdkPackageLocatorFixture = Readonly<{
   artifactFailureRunId?: number;
   artifactsByRunId?: Readonly<Record<string, unknown>>;
-  required?: boolean;
+  inspectorOutput?: string;
+  inspectorRequired?: unknown;
   runs: readonly unknown[];
   step: WorkflowStep;
   workflowRunFailure?: boolean;
@@ -179,9 +180,15 @@ function runSdkPackageLocator(fixture: SdkPackageLocatorFixture): Readonly<{
     mkdirSync(inspectorDirectory, { recursive: true });
     mkdirSync(workflowDirectory, { recursive: true });
     mkdirSync(fakeBin);
+    const inspectorDecision =
+      fixture.inspectorOutput ??
+      JSON.stringify({
+        artifactName: "reviewed-sdk.tgz",
+        required: fixture.inspectorRequired ?? true,
+      });
     writeFileSync(
       join(inspectorDirectory, "prepare-ci-npm-install.mts"),
-      `process.stdout.write(JSON.stringify({ required: ${String(fixture.required ?? true)}, artifactName: "reviewed-sdk.tgz" }));\n`,
+      `process.stdout.write(${JSON.stringify(inspectorDecision)});\n`,
     );
     writeFileSync(join(workflowDirectory, "openshell-sdk-package-pr.yaml"), "name: test\n");
     writeFileSync(join(fakeBin, "seq"), "#!/bin/sh\nprintf '1\\n'\n", { mode: 0o755 });
@@ -675,9 +682,9 @@ describe("pull request and main workflow contracts", () => {
     }
   });
 
-  it("skips SDK package lookup when the trusted inspector reports no archive is required", () => {
+  it("skips SDK artifact lookup when the trusted inspector does not require a package", () => {
     const { githubOutput, result } = runSdkPackageLocator({
-      required: false,
+      inspectorRequired: false,
       runs: [],
       step: requiredWorkflowStep(
         prWorkflow.jobs["openshell-sdk-package"],
@@ -687,6 +694,37 @@ describe("pull request and main workflow contracts", () => {
 
     expect(result).toMatchObject({ status: 0, stderr: "" });
     expect(githubOutput).toBe("required=false\n");
+  });
+
+  it("rejects a non-boolean package requirement from the trusted inspector", () => {
+    const { githubOutput, result } = runSdkPackageLocator({
+      inspectorRequired: "false",
+      runs: [],
+      step: requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      ),
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(githubOutput).toBe("");
+  });
+
+  it.each([
+    ["empty output", ""],
+    ["multiple JSON documents", '{"required":false}\n{"required":true}'],
+  ])("rejects %s from the trusted inspector", (_description, inspectorOutput) => {
+    const { githubOutput, result } = runSdkPackageLocator({
+      inspectorOutput,
+      runs: [],
+      step: requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      ),
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(githubOutput).toBe("");
   });
 
   it("explains how to recover when the exact SDK package artifact expired", () => {
