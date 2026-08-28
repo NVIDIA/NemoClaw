@@ -93,6 +93,7 @@ const RESERVED_NETWORK_NAMES = new Set([
 ]);
 const AT_REST_STATES = new Set(["configured", "created", "dead", "exited", "stopped"]);
 const PROBE_TIMEOUT_MS = 30_000;
+const POST_CREATE_PROBE_INSPECT_MAX_ATTEMPTS = 3;
 const INFERENCE_PROBE_TIMEOUT_MS = 150_000;
 const READY_PROBE_TIMEOUT_MS = 240_000;
 const PROBE_CURL_MAX_TIME_SECONDS = 20;
@@ -1216,11 +1217,11 @@ function inspectContainer(engine: ContainerEngine, runtimeId: string): ManagedCo
 function inspectProbeContainer(
   engine: ContainerEngine,
   runtimeId: string,
-  retryTimeoutOnce = false,
+  maxAttempts = 1,
 ): ProbeContainer {
   const args = ["container", "inspect", runtimeId] as const;
   let result = engine.capture(args, PROBE_TIMEOUT_MS);
-  if (retryTimeoutOnce && commandTimedOut(result)) {
+  for (let attempt = 1; attempt < maxAttempts && commandTimedOut(result); attempt += 1) {
     result = engine.capture(args, PROBE_TIMEOUT_MS);
   }
   const output = requireSuccess("probe container inspection", result);
@@ -2046,7 +2047,7 @@ function executeExactProbe(
   let container: ProbeContainer;
   try {
     container = requireProbeIdentity(
-      inspectProbeContainer(engine, runtimeId, true),
+      inspectProbeContainer(engine, runtimeId, POST_CREATE_PROBE_INSPECT_MAX_ATTEMPTS),
       spec,
       runtimeId,
     );

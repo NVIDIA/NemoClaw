@@ -127,6 +127,10 @@ export interface ConfigureMessagingBridgeRefreshesDeps extends MessagingBridgeSe
   readonly redact: (input: string) => string;
   readonly log?: (message?: string) => void;
   readonly profiles?: readonly MessagingBridgeProfile[];
+  /** Injected for tests; defaults to a synchronous wait. */
+  readonly sleep?: (milliseconds: number) => void;
+  /** Injected for tests; defaults to `Date.now`. */
+  readonly now?: () => number;
 }
 
 // Result of gateway-refresh configuration. `ok:false` when a bridge token def is
@@ -586,6 +590,85 @@ function buildRefreshMaterial(
   return { ok: false, reason: `unsupported refresh strategy '${profile.strategy}'` };
 }
 
+// Gateway-side minting is asynchronous: `provider refresh configure` records the
+// material and leaves the credential `configured`, and the refresh worker mints
+// on its next sweep. Onboarding must wait for that mint:
+// - Until it lands, the provider still holds the create-time sentinel.
+// - The sandbox reads the provider environment once, at boot, and every later
+//   agent restart inherits that read.
+// - OpenShell retains old credential generations, so the boot revision still
+//   resolves after the mint - to the sentinel, not to the token.
+// - The agent then authenticates with the sentinel, the channel API rejects it,
+//   and it reads as a channel auth failure rather than an onboarding order bug.
+const BRIDGE_MINT_POLL_ATTEMPTS = 50;
+const BRIDGE_MINT_POLL_INTERVAL_MS = 3_000;
+const BRIDGE_MINT_STATUS_TIMEOUT_MS = 15_000;
+// Attempts alone do not bound the wait: each probe also spends command time.
+const BRIDGE_MINT_DEADLINE_MS = 300_000;
+const BRIDGE_MINT_STATUS_REFRESHED = "refreshed";
+const ANSI_STYLE_PATTERN = /\u001B\[[0-9;]*m/g;
+
+/**
+ * Read the STATUS cell for `credentialKey` out of `openshell provider refresh
+ * status` output.
+ * - Columns are separated by runs of spaces, so a timestamp keeps its one inner
+ *   space.
+ * - Returns "" when the credential has no row.
+ */
+export function refreshStatusForCredential(text: string, credentialKey: string): string {
+  const row = text
+    .split("\n")
+    .map((line) => line.replace(ANSI_STYLE_PATTERN, "").trim())
+    .find((line) => line.includes(credentialKey));
+  const columns = (row ?? "").split(/\s{2,}/).filter(Boolean);
+  const keyIndex = columns.indexOf(credentialKey);
+  // Columns are PROVIDER, CREDENTIAL_KEY, STRATEGY, STATUS, ...
+  return keyIndex < 0 ? "" : (columns[keyIndex + 2] ?? "");
+}
+
+function sleepSync(milliseconds: number): void {
+  // Vitest sets process.env.VITEST, so the poll loop costs no wall-clock in tests.
+  if (process.env.VITEST === "true" || process.env.NEMOCLAW_TEST_NO_SLEEP === "1") return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
+function waitForMintedBridgeCredential(
+  providerName: string,
+  credentialKey: string,
+  deps: ConfigureMessagingBridgeRefreshesDeps,
+): MessagingBridgeRefreshResult {
+  const sleep = deps.sleep ?? sleepSync;
+  const now = deps.now ?? (() => Date.now());
+  // The mint runs on the gateway's own sweep, so this can sit for a minute.
+  (deps.log ?? console.error)(`  Waiting for the gateway to mint ${credentialKey}…`);
+  const deadline = now() + BRIDGE_MINT_DEADLINE_MS;
+  let status = "";
+  for (let attempt = 0; attempt < BRIDGE_MINT_POLL_ATTEMPTS && now() < deadline; attempt += 1) {
+    const result = deps.runOpenshell(
+      ["provider", "refresh", "status", providerName, "--credential-key", credentialKey],
+      // suppressOutput: the runner re-emits piped child output; without it every
+      // poll reprints the whole status table into the onboarding transcript.
+      {
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        suppressOutput: true,
+        timeout: BRIDGE_MINT_STATUS_TIMEOUT_MS,
+      },
+    );
+    // A nonzero probe can still print a stale table; only trust a clean read.
+    status =
+      result.status === 0
+        ? refreshStatusForCredential(bufferOrStringToText(result.stdout), credentialKey)
+        : "";
+    if (status === BRIDGE_MINT_STATUS_REFRESHED) return { ok: true };
+    sleep(BRIDGE_MINT_POLL_INTERVAL_MS);
+  }
+  return {
+    ok: false,
+    reason: `gateway token minting did not complete for '${providerName}' (last status '${status || "unknown"}')`,
+  };
+}
+
 /**
  * Configure gateway-side credential refresh for every active bridge provider:
  * the gateway mints (and rotates) the token from the pasted secret material. Must
@@ -660,7 +743,13 @@ export function configureMessagingBridgeRefreshes(
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
-    if (result.status === 0) continue;
+    if (result.status === 0) {
+      const minted = waitForMintedBridgeCredential(bridge.name, profile.credentialKey, deps);
+      if (minted.ok) continue;
+      warn(`\n  ✗ ${profile.channelId} bridge: ${minted.reason}.`);
+      warn("    Outbound replies for this channel will not authenticate until this is resolved.");
+      return minted;
+    }
 
     // Redact before logging — never echo secret material.
     const diagnostic = compactText(

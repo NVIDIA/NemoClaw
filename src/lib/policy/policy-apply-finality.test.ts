@@ -6,10 +6,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  managedPolicyInspection,
+  managedSandboxEntry,
+  SANDBOX_IDENTITY,
+} from "../../../test/helpers/managed-policy-receipt-fixture";
 
 const {
   addCustomPolicy,
   getSandbox,
+  inspectOpenShellSandboxIdentityFingerprint,
   inspectSandboxPolicyAuthority,
   resolveOpenshell,
   run,
@@ -18,6 +24,7 @@ const {
 } = vi.hoisted(() => ({
   addCustomPolicy: vi.fn(),
   getSandbox: vi.fn(),
+  inspectOpenShellSandboxIdentityFingerprint: vi.fn(),
   inspectSandboxPolicyAuthority: vi.fn(),
   resolveOpenshell: vi.fn(),
   run: vi.fn(),
@@ -27,6 +34,7 @@ const {
 
 vi.mock("../adapters/openshell/policy-authority", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../adapters/openshell/policy-authority")>()),
+  inspectOpenShellSandboxIdentityFingerprint,
   inspectSandboxPolicyAuthority,
 }));
 
@@ -152,23 +160,17 @@ describe("applyPresets finality when openshell rejects the composed policy", () 
     run.mockReset();
     runCapture.mockReset();
     getSandbox.mockReset();
+    inspectOpenShellSandboxIdentityFingerprint.mockReset();
     inspectSandboxPolicyAuthority.mockReset();
     updateSandbox.mockReset();
     addCustomPolicy.mockReset();
     resolveOpenshell.mockReset();
 
     resolveOpenshell.mockReturnValue("/usr/local/bin/openshell");
-    inspectSandboxPolicyAuthority.mockReturnValue({
-      authority: "nemoclaw-managed",
-      effectivePolicy: {},
-    });
+    inspectOpenShellSandboxIdentityFingerprint.mockReturnValue(SANDBOX_IDENTITY);
+    inspectSandboxPolicyAuthority.mockReturnValue(managedPolicyInspection());
     runCapture.mockReturnValue(BASE_POLICY);
-    getSandbox.mockReturnValue({
-      name: SANDBOX,
-      agent: "openclaw",
-      policies: [],
-      policyAuthority: "nemoclaw-managed",
-    });
+    getSandbox.mockReturnValue(managedSandboxEntry(SANDBOX));
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
@@ -235,22 +237,16 @@ describe("single-preset mutations when openshell rejects the composed policy", (
     run.mockReset();
     runCapture.mockReset();
     getSandbox.mockReset();
+    inspectOpenShellSandboxIdentityFingerprint.mockReset();
     inspectSandboxPolicyAuthority.mockReset();
     updateSandbox.mockReset();
     addCustomPolicy.mockReset();
     resolveOpenshell.mockReset();
 
     resolveOpenshell.mockReturnValue("/usr/local/bin/openshell");
-    inspectSandboxPolicyAuthority.mockReturnValue({
-      authority: "nemoclaw-managed",
-      effectivePolicy: {},
-    });
-    getSandbox.mockReturnValue({
-      name: SANDBOX,
-      agent: "openclaw",
-      policies: ["weather"],
-      policyAuthority: "nemoclaw-managed",
-    });
+    inspectOpenShellSandboxIdentityFingerprint.mockReturnValue(SANDBOX_IDENTITY);
+    inspectSandboxPolicyAuthority.mockReturnValue(managedPolicyInspection());
+    getSandbox.mockReturnValue({ ...managedSandboxEntry(SANDBOX), policies: ["weather"] });
     run.mockReturnValue(policySetResult(openshellRejection(REJECTION_MESSAGE)));
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -294,22 +290,16 @@ describe("applyPresets temporary policy material under local I/O failure", () =>
     run.mockReset();
     runCapture.mockReset();
     getSandbox.mockReset();
+    inspectOpenShellSandboxIdentityFingerprint.mockReset();
     inspectSandboxPolicyAuthority.mockReset();
     updateSandbox.mockReset();
     resolveOpenshell.mockReset();
 
     resolveOpenshell.mockReturnValue("/usr/local/bin/openshell");
-    inspectSandboxPolicyAuthority.mockReturnValue({
-      authority: "nemoclaw-managed",
-      effectivePolicy: {},
-    });
+    inspectOpenShellSandboxIdentityFingerprint.mockReturnValue(SANDBOX_IDENTITY);
+    inspectSandboxPolicyAuthority.mockReturnValue(managedPolicyInspection());
     runCapture.mockReturnValue(BASE_POLICY);
-    getSandbox.mockReturnValue({
-      name: SANDBOX,
-      agent: "openclaw",
-      policies: [],
-      policyAuthority: "nemoclaw-managed",
-    });
+    getSandbox.mockReturnValue(managedSandboxEntry(SANDBOX));
     run.mockReturnValue(policySetResult(openshellRejection("refused")));
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});

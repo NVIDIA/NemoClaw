@@ -63,6 +63,8 @@ export type SandboxRecord = {
   preferredInferenceApi?: string | null;
   lifecycleGeneration?: string;
   lifecycleLiveIdentityFingerprint?: string;
+  policyAuthority?: SandboxEntry["policyAuthority"];
+  policyCreationReceipt?: SandboxEntry["policyCreationReceipt"];
   hostLocalInferenceReceipt?: string | null;
   hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
   dashboardPort?: number | null;

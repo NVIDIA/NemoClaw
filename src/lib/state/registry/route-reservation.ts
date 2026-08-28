@@ -5,7 +5,8 @@ import { isDeepStrictEqual } from "node:util";
 
 import { normalizeInferenceSelection, type InferenceSelection } from "../../inference/selection";
 import { isWebSearchProvider } from "../../inference/web-search/provider";
-import type { SandboxEntry } from "./types";
+import { normalizePendingSandboxPolicyVerification } from "./pending-policy-verification";
+import type { PendingSandboxPolicyVerification, SandboxEntry } from "./types";
 
 const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>([
   "credentialEnv",
@@ -16,10 +17,13 @@ const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>([
   "gatewayPort",
   "hostLocalInferenceProvenance",
   "hostLocalInferenceReceipt",
+  "lifecycleGeneration",
+  "lifecycleLiveIdentityFingerprint",
   "model",
   "name",
   "openshellDriver",
   "pendingRouteReservation",
+  "pendingPolicyVerification",
   "preferredInferenceApi",
   "policies",
   "policyPresetsFinalized",
@@ -31,6 +35,40 @@ const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>([
 ]);
 
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/u;
+
+function verifiedCreateCheckpointClass(
+  entry: SandboxEntry,
+): "absent" | "valid" | "malformed" | "sandbox-authority" {
+  let checkpoint;
+  try {
+    checkpoint = normalizePendingSandboxPolicyVerification(entry.pendingPolicyVerification);
+  } catch {
+    return "malformed";
+  }
+  const hasLifecycleAuthority =
+    entry.lifecycleGeneration !== undefined || entry.lifecycleLiveIdentityFingerprint !== undefined;
+  if (!checkpoint) return hasLifecycleAuthority ? "sandbox-authority" : "absent";
+  return entry.name === checkpoint.sandboxName &&
+    entry.gatewayName === checkpoint.gatewayName &&
+    entry.gatewayPort === checkpoint.gatewayPort &&
+    entry.lifecycleGeneration === checkpoint.lifecycleGeneration &&
+    entry.lifecycleLiveIdentityFingerprint === checkpoint.sandboxIdentityFingerprint
+    ? "valid"
+    : "malformed";
+}
+
+function withVerifiedCreateCheckpoint(
+  entry: SandboxEntry,
+  checkpoint: PendingSandboxPolicyVerification,
+): SandboxEntry {
+  return {
+    ...entry,
+    gatewayPort: checkpoint.gatewayPort,
+    lifecycleGeneration: checkpoint.lifecycleGeneration,
+    lifecycleLiveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
+    pendingPolicyVerification: checkpoint,
+  };
+}
 
 function validCarriedRouteMetadata(entry: SandboxEntry): boolean {
   if (
@@ -89,6 +127,12 @@ export interface QualifiedSandboxInferenceRouteReservation {
   readonly entry: SandboxEntry;
 }
 
+/** Exact pending row admitted for one sandbox create transaction. */
+export interface QualifiedPendingSandboxCreateReservation {
+  readonly authority: SandboxInferenceRouteReservationAuthority;
+  readonly entry: SandboxEntry;
+}
+
 export type SandboxInferenceRouteReservationDisposition =
   | { readonly kind: "missing" }
   | { readonly kind: "owned"; readonly reservation: QualifiedSandboxInferenceRouteReservation }
@@ -105,6 +149,42 @@ export function normalizeSandboxInferenceRouteSelection(input: InferenceSelectio
     credentialEnv: normalized.credentialEnv,
     preferredInferenceApi: normalized.preferredInferenceApi,
   };
+}
+
+/** Admit the full pending row used by a create, including preserved rebuild metadata. */
+export function qualifyPendingSandboxCreateReservation(
+  authority: SandboxInferenceRouteReservationAuthority,
+  entry: SandboxEntry | null,
+): QualifiedPendingSandboxCreateReservation {
+  if (
+    !entry ||
+    entry.pendingRouteReservation !== true ||
+    !authority.sessionId ||
+    entry.reservationSessionId !== authority.sessionId ||
+    entry.name !== authority.sandboxName ||
+    entry.gatewayName !== authority.gatewayName ||
+    !isDeepStrictEqual(
+      normalizeSandboxInferenceRouteSelection(normalizeInferenceSelection(entry)),
+      normalizeSandboxInferenceRouteSelection(authority.selection),
+    )
+  ) {
+    throw new Error("The sandbox create route reservation is not owned by this onboarding session");
+  }
+  return { authority: structuredClone(authority), entry: structuredClone(entry) };
+}
+
+/** Compare the complete admitted create reservation before its first checkpoint write. */
+export function isCurrentPendingSandboxCreateReservation(
+  reservation: QualifiedPendingSandboxCreateReservation,
+  entry: SandboxEntry | null,
+): boolean {
+  if (!entry) return false;
+  try {
+    const qualified = qualifyPendingSandboxCreateReservation(reservation.authority, entry);
+    return isDeepStrictEqual(qualified.entry, reservation.entry);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -159,6 +239,16 @@ export function classifySandboxInferenceRouteReservation(
   }
   if (Object.keys(entry).some((key) => !ROUTE_RESERVATION_KEYS.has(key as keyof SandboxEntry))) {
     return { kind: "conflict", detail: "the inference route reservation has sandbox authority" };
+  }
+  const checkpointClass = verifiedCreateCheckpointClass(entry);
+  if (checkpointClass === "sandbox-authority") {
+    return { kind: "conflict", detail: "the inference route reservation has sandbox authority" };
+  }
+  if (checkpointClass === "malformed") {
+    return {
+      kind: "conflict",
+      detail: "the inference route reservation verified create checkpoint is malformed",
+    };
   }
   if (!validCarriedRouteMetadata(entry)) {
     return {
@@ -224,9 +314,26 @@ export function isCurrentSandboxInferenceRouteReservation(
   entry: SandboxEntry | null,
 ): boolean {
   const current = classifySandboxInferenceRouteReservation(reservation.authority, entry);
-  return (
-    current.kind === "owned" && isDeepStrictEqual(current.reservation.entry, reservation.entry)
-  );
+  if (current.kind !== "owned") return false;
+  let checkpoint;
+  let admittedCheckpoint;
+  try {
+    checkpoint = normalizePendingSandboxPolicyVerification(
+      current.reservation.entry.pendingPolicyVerification,
+    );
+    admittedCheckpoint = normalizePendingSandboxPolicyVerification(
+      reservation.entry.pendingPolicyVerification,
+    );
+  } catch {
+    return false;
+  }
+  if (admittedCheckpoint) {
+    return isDeepStrictEqual(current.reservation.entry, reservation.entry);
+  }
+  const expected = checkpoint
+    ? withVerifiedCreateCheckpoint(reservation.entry, checkpoint)
+    : reservation.entry;
+  return isDeepStrictEqual(current.reservation.entry, expected);
 }
 
 /** Require the final registration to preserve the route selected by the reservation. */

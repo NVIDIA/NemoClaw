@@ -302,13 +302,13 @@ bridge.restartMcpBridge("alpha", "example").then(
       providerCalls: string[];
       registeredProviderGets: number;
     };
-    expect(payload.observations).toEqual(["v1", "v3", "v3"]);
+    expect(payload.observations).toEqual(["v1", "v3", "v3", "v3", "v3", "v3"]);
     expect(payload.providerCalls).toEqual([
       "provider update alpha-mcp-example --credential MCP_TOKEN",
       "provider update alpha-mcp-example",
     ]);
     expect(payload.registeredProviderGets).toBe(1);
-    expect(payload.proofScripts).toHaveLength(3);
+    expect(payload.proofScripts).toHaveLength(6);
     expect(payload.proofScripts.join("\n")).not.toMatch(/\/tmp|snapshot/);
   });
 });

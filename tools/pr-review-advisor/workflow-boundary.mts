@@ -21,13 +21,7 @@ const BASE_REF_EXPRESSION =
   "${{ github.event_name == 'pull_request_target' && 'target/base' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/base' || inputs.base_ref) }}";
 const HEAD_REF_EXPRESSION =
   "${{ github.event_name == 'pull_request_target' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}";
-const READ_PERMISSIONS = {
-  actions: "read",
-  checks: "read",
-  contents: "read",
-  issues: "read",
-  "pull-requests": "read",
-};
+const SPECIALIST_PERMISSIONS = { actions: "read" };
 
 type Value = Record<string, any>;
 
@@ -68,8 +62,10 @@ function checkPermissions(
     if (actual[key] !== value) errors.push(name + " job permissions." + key + " must be " + value);
   }
   for (const key of Object.keys(actual)) {
-    if (!Object.hasOwn(expected, key))
-      errors.push(name + " job permissions." + key + " is not allowed");
+    if (!Object.hasOwn(expected, key)) {
+      const expectation = key === "pull-requests" ? " must be read" : " is not allowed";
+      errors.push(name + " job permissions." + key + expectation);
+    }
   }
 }
 
@@ -170,8 +166,12 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   const discovery = object(jobs["discover-specialists"]);
   const specialists = object(jobs["review-specialists"]);
   const publish = object(jobs.publish);
-  checkPermissions(errors, "discover-specialists", discovery, { contents: "read" });
-  checkPermissions(errors, "review-specialists", specialists, READ_PERMISSIONS);
+  checkPermissions(errors, "discover-specialists", discovery, {
+    contents: "read",
+    issues: "read",
+    "pull-requests": "read",
+  });
+  checkPermissions(errors, "review-specialists", specialists, SPECIALIST_PERMISSIONS);
   checkPermissions(errors, "publish", publish, { contents: "read", "pull-requests": "write" });
   if (jobs.review !== undefined) errors.push("workflow must not declare a synthesis job");
   for (const [name, job] of Object.entries(jobs)) {
@@ -182,11 +182,57 @@ export function validatePrReviewAdvisorWorkflowBoundary(
     errors.push("publish job must not receive the advisor model credential");
   if (JSON.stringify(publish).includes("ADVISOR_WORKDIR"))
     errors.push("publish job must not receive the untrusted analysis worktree");
+  const contextCollection = namedStep(discovery, "Collect GitHub review context");
+  if (object(contextCollection?.env).GH_TOKEN !== "${{ github.token }}")
+    errors.push("shared context collection must receive github.token as GH_TOKEN");
+  const specialistTokenWiring = JSON.stringify(specialists);
+  const specialistEnvironments = [specialists, ...jobSteps(specialists)].map((item) =>
+    object(item.env),
+  );
+  if (
+    specialistEnvironments.some(
+      (env) => env.GH_TOKEN !== undefined || env.GITHUB_TOKEN !== undefined,
+    ) ||
+    /\$\{\{[^}]*\b(?:github\.token|secrets\.GITHUB_TOKEN)\b[^}]*\}\}/u.test(
+      specialistTokenWiring,
+    )
+  )
+    errors.push("specialist jobs must not wire a GitHub token into steps");
+  const contextUpload = namedStep(discovery, "Upload GitHub review context");
+  const contextDownload = namedStep(specialists, "Download GitHub review context");
+  if (!String(contextUpload?.uses ?? "").startsWith("actions/upload-artifact@"))
+    errors.push("shared context upload must use actions/upload-artifact");
+  if (!String(contextDownload?.uses ?? "").startsWith("actions/download-artifact@"))
+    errors.push("shared context download must use actions/download-artifact");
+  requireWith(errors, contextUpload, "path", "artifacts/pr-review-advisor-context/github-context.json");
+  requireWith(
+    errors,
+    contextDownload,
+    "path",
+    "${{ runner.temp }}/shared-pr-review-advisor-context",
+  );
+  requireWith(errors, contextUpload, "if-no-files-found", "error");
+  requireWith(errors, contextUpload, "retention-days", 1);
+  requireWith(
+    errors,
+    contextUpload,
+    "name",
+    "pr-review-advisor-context-${{ github.run_id }}-${{ github.run_attempt }}",
+  );
+  requireWith(
+    errors,
+    contextDownload,
+    "name",
+    "pr-review-advisor-context-${{ github.run_id }}-${{ github.run_attempt }}",
+  );
   checkSandboxNames(errors, [["specialist", specialists]]);
   const rows = object(object(specialists.strategy).matrix).advisor;
   if (rows !== SPECIALIST_MATRIX_EXPRESSION)
     errors.push("specialist matrix must use the discovered specialist prompts");
-  if (specialists.needs !== "discover-specialists")
+  const specialistNeeds = Array.isArray(specialists.needs)
+    ? specialists.needs
+    : [specialists.needs];
+  if (!specialistNeeds.includes("discover-specialists"))
     errors.push("specialist matrix must depend on prompt discovery");
   if (specialists["continue-on-error"] !== undefined)
     errors.push("specialist failures must block publication");
@@ -202,6 +248,11 @@ export function validatePrReviewAdvisorWorkflowBoundary(
     errors.push("Prepare advisor sandbox inputs must receive the selected base ref");
   if (prepareEnvironment.HEAD_REF !== HEAD_REF_EXPRESSION)
     errors.push("Prepare advisor sandbox inputs must receive the selected head ref");
+  if (
+    prepareEnvironment.PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH !==
+    "${{ runner.temp }}/shared-pr-review-advisor-context/github-context.json"
+  )
+    errors.push("Prepare advisor sandbox inputs must receive the downloaded GitHub context");
   const specialistUpload = namedStep(specialists, "Upload specialist review");
   if (!String(specialistUpload?.uses ?? "").startsWith("actions/upload-artifact@"))
     errors.push("specialist review step must use actions/upload-artifact");

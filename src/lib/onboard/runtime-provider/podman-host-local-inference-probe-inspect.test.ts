@@ -31,9 +31,9 @@ const probeId = "c".repeat(64);
 const inspectEvent = `podman:container inspect ${probeId}`;
 
 describe("Podman host-local inference post-create probe inspection", () => {
-  it("retries one timeout using the same full probe ID", () => {
+  it("settles two transport timeouts using the same full probe ID", () => {
     const harness = createPodmanHostLocalInferenceTestHarness();
-    harness.state.probePostCreateInspectTimeoutsRemaining = 1;
+    harness.state.probePostCreateInspectTimeoutsRemaining = 2;
 
     const prepared = operationRuntime(harness).startManaged(harness.input, harness.writer);
 
@@ -41,21 +41,21 @@ describe("Podman host-local inference post-create probe inspection", () => {
     expect(waitIndex).toBeGreaterThan(0);
     expect(
       harness.events.slice(0, waitIndex).filter((event) => event === inspectEvent),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
     expect(prepared.receipt.service).toBe("nim");
     expect(harness.probe()).toBeNull();
   });
 
-  it("fails closed after two timeouts without acting on the probe", () => {
+  it("fails closed after the bounded settlement window without acting on the probe", () => {
     const harness = createPodmanHostLocalInferenceTestHarness();
-    harness.state.probePostCreateInspectTimeoutsRemaining = 2;
+    harness.state.probePostCreateInspectTimeoutsRemaining = 3;
     harness.state.probeForbiddenActions = ["wait", "logs", "rm"];
 
     expect(() => operationRuntime(harness).startManaged(harness.input, harness.writer)).toThrow(
       "probe identity is indeterminate after create",
     );
 
-    expect(harness.events.filter((event) => event === inspectEvent)).toHaveLength(2);
+    expect(harness.events.filter((event) => event === inspectEvent)).toHaveLength(3);
     expect(harness.probe()).toMatchObject({ id: probeId });
     expect(harness.written).toHaveLength(0);
   });
@@ -76,14 +76,15 @@ describe("Podman host-local inference post-create probe inspection", () => {
 
   it("does not retry an inspect result with a mismatched container ID", () => {
     const harness = createPodmanHostLocalInferenceTestHarness();
-    harness.state.probeInspectRuntimeIdMismatchAt = 1;
+    harness.state.probePostCreateInspectTimeoutsRemaining = 2;
+    harness.state.probeInspectRuntimeIdMismatchAt = 3;
     harness.state.probeForbiddenActions = ["wait", "logs", "rm"];
 
     expect(() => operationRuntime(harness).startManaged(harness.input, harness.writer)).toThrow(
       "probe identity is indeterminate after create",
     );
 
-    expect(harness.events.filter((event) => event === inspectEvent)).toHaveLength(1);
+    expect(harness.events.filter((event) => event === inspectEvent)).toHaveLength(3);
     expect(harness.probe()).toMatchObject({ id: probeId });
     expect(harness.written).toHaveLength(0);
   });

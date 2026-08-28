@@ -6,8 +6,20 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getSandbox, inspectSandboxPolicyAuthority, runCapture } = vi.hoisted(() => ({
+import {
+  managedPolicyInspection,
+  managedSandboxEntry,
+  SANDBOX_IDENTITY,
+} from "../../helpers/managed-policy-receipt-fixture";
+
+const {
+  getSandbox,
+  inspectOpenShellSandboxIdentityFingerprint,
+  inspectSandboxPolicyAuthority,
+  runCapture,
+} = vi.hoisted(() => ({
   getSandbox: vi.fn(),
+  inspectOpenShellSandboxIdentityFingerprint: vi.fn(),
   inspectSandboxPolicyAuthority: vi.fn(),
   runCapture: vi.fn(),
 }));
@@ -16,6 +28,7 @@ vi.mock("../../../src/lib/adapters/openshell/policy-authority", async (importOri
   ...(await importOriginal<
     typeof import("../../../src/lib/adapters/openshell/policy-authority")
   >()),
+  inspectOpenShellSandboxIdentityFingerprint,
   inspectSandboxPolicyAuthority,
 }));
 
@@ -45,17 +58,11 @@ network_policies:
 
 beforeEach(() => {
   getSandbox.mockReset();
-  getSandbox.mockImplementation((name: string) => ({
-    name,
-    agent: "openclaw",
-    policies: [],
-    policyAuthority: "nemoclaw-managed",
-  }));
+  getSandbox.mockImplementation((name: string) => managedSandboxEntry(name));
   inspectSandboxPolicyAuthority.mockReset();
-  inspectSandboxPolicyAuthority.mockReturnValue({
-    authority: "nemoclaw-managed",
-    effectivePolicy: {},
-  });
+  inspectSandboxPolicyAuthority.mockReturnValue(managedPolicyInspection());
+  inspectOpenShellSandboxIdentityFingerprint.mockReset();
+  inspectOpenShellSandboxIdentityFingerprint.mockReturnValue(SANDBOX_IDENTITY);
   runCapture.mockReset();
 });
 

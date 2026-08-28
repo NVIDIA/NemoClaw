@@ -69,6 +69,7 @@ export interface OnboardCommandOptions {
   resume: boolean;
   fresh: boolean;
   recreateSandbox: boolean;
+  apfInterceptorRequested: boolean | null;
   fromDockerfile: string | null;
   sandboxName: string | null;
   hostMounts?: import("../state/registry/types").SandboxHostMount[];
@@ -485,6 +486,7 @@ export function resolveOnboardOptions(
     resume,
     fresh: resume ? false : withPortableDefault(flags.fresh, experimentalProfile),
     recreateSandbox: flags["recreate-sandbox"] === true,
+    apfInterceptorRequested: flags["apf-interceptor"] === true ? true : null,
     fromDockerfile: resolveFileOption("--from", flags.from, deps, true),
     sandboxName: flags.name ?? null,
     ...(hostMounts.length > 0 ? { hostMounts } : {}),

@@ -594,13 +594,17 @@ export function createSetupInference(
     if (sandboxName && !options.revalidatePolicyRequirements) {
       throw new Error("Sandbox inference setup requires policy authority revalidation.");
     }
+    const revalidatePolicyRequirements = (operation: string): void => {
+      if (!sandboxName) return;
+      options.revalidatePolicyRequirements?.(operation);
+    };
     const gatewayName = options.gatewayName ?? deps.getGatewayName();
-    const revalidatePolicyRequirements = options.revalidatePolicyRequirements ?? (() => {});
     const endpointSource =
       options.endpointSource === undefined ? "onboard" : options.endpointSource;
     const routedProvider = deps.isRoutedInferenceProvider?.(provider) === true;
     const usesBedrockRuntimeAdapter =
       provider === "compatible-anthropic-endpoint" && isBedrockRuntimeEndpoint(endpointUrl);
+    let shouldLogSuccessfulRoute = false;
     const withInferenceMutationLocks = <T>(operation: () => Promise<T> | T): Promise<T> =>
       deps.withGatewayRouteMutationLock(gatewayName, () => {
         if (!routedProvider) return operation();
@@ -1108,6 +1112,7 @@ export function createSetupInference(
             }
           }
           revalidatePolicyRequirements("report successful inference provider setup");
+          shouldLogSuccessfulRoute = true;
           return { ok: true as const };
         } catch (error) {
           if (!hostLocalRoute || !hostLocalSelection) throw error;
@@ -1166,7 +1171,7 @@ export function createSetupInference(
         deps,
         revalidatePolicyRequirements,
       );
-      if ("ok" in result && !usesBedrockRuntimeAdapter && provider !== "openrouter-api") {
+      if (shouldLogSuccessfulRoute && "ok" in result) {
         deps.log(`  ✓ Inference route set: ${provider} / ${model}`);
       }
       return result;

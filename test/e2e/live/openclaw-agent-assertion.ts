@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { existsSync } from "node:fs";
+
 import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
+import { createTempSshConfig } from "../../../src/lib/sandbox/temp-ssh-config.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -9,27 +12,20 @@ import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import {
-  assessPersonalStockToolEvidence,
   buildOpenClawToolEvidenceReducerScript,
   classifyOpenClawAgentAssertion,
-  nvdaPersonalStockReplyMatchesEvidence,
-  parseNvdaPersonalStockReply,
   parseOpenClawAgentText,
-  projectNvdaPersonalStockReplyEvidence,
-  projectPersonalStockToolEvidenceArtifact,
+  projectOpenClawAgentFailureArtifact,
+  projectPersonalPublicFetchToolEvidenceArtifact,
   runOpenClawAgentAssertionRetry,
   text,
-  type NvdaPersonalStockReply,
-  type OpenClawToolTarget,
+  type OpenClawPublicFetchExpectation,
   type OpenClawToolEvidence,
-  type PersonalStockToolEvidenceArtifact,
   validateOpenClawAgentAttemptEvidence,
 } from "./common-egress-agent-helpers.ts";
 
 const AGENT_TURN_TIMEOUT_MS = 3 * 60_000;
 const OPENCLAW_AGENT_ATTEMPTS = 3;
-const MAX_LATEST_STOCK_AGE_MS = 8 * 24 * 60 * 60_000;
-const MAX_SOURCE_CLOCK_SKEW_MS = 36 * 60 * 60_000;
 
 export interface OpenClawAgentAssertionEvidence {
   reply: string;
@@ -42,22 +38,10 @@ export interface OpenClawAgentAssertionOptions {
   label: string;
   prompt: string;
   persistCommandArtifacts?: boolean;
+  publicFetchExpectation?: OpenClawPublicFetchExpectation;
   redactOutputInFailure?: boolean;
-  replyValidator?: (reply: string, evidence?: OpenClawToolEvidence) => boolean;
   sandboxName: string;
   toolEvidenceValidator?: (evidence: OpenClawToolEvidence) => boolean;
-}
-
-export interface PersonalStockAssertionResult {
-  assessment: PersonalStockToolEvidenceArtifact;
-  asOfRecent: true;
-  quote: {
-    as_of: string;
-    price: number;
-    source: OpenClawToolTarget;
-    status: "NVDA_PERSONAL_AGENT_OK";
-    symbol: "NVDA";
-  };
 }
 
 function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -77,16 +61,20 @@ export async function runOpenClawAgentAssertion(
   artifacts: ArtifactSink,
   args: OpenClawAgentAssertionOptions,
 ): Promise<OpenClawAgentAssertionEvidence> {
+  if (args.toolEvidenceValidator && !args.publicFetchExpectation) {
+    throw new Error(`${args.label}: tool evidence validation requires a public fetch expectation`);
+  }
   const sshConfig = await sandbox.openshell(["sandbox", "ssh-config", args.sandboxName], {
     artifactName: `ssh-config-${args.label}`,
     env: commandEnv(),
+    persistArtifacts: false,
     timeoutMs: 30_000,
   });
-  expect(sshConfig.exitCode, text(sshConfig)).toBe(0);
-  const sshConfigPath = await artifacts.writeText(
-    `ssh/${args.label}-${args.sandboxName}.config`,
-    sshConfig.stdout,
-  );
+  expect(
+    sshConfig.exitCode,
+    `OpenShell SSH configuration exited with ${String(sshConfig.exitCode)}`,
+  ).toBe(0);
+  const temporarySshConfig = createTempSshConfig(sshConfig.stdout, "nemoclaw-e2e-ssh-");
 
   let lastFailure = "";
   let successfulEvidence: OpenClawAgentAssertionEvidence | null = null;
@@ -111,7 +99,7 @@ export async function runOpenClawAgentAssertion(
         "ssh",
         [
           "-F",
-          sshConfigPath,
+          temporarySshConfig.file,
           "-o",
           "StrictHostKeyChecking=no",
           "-o",
@@ -133,13 +121,6 @@ export async function runOpenClawAgentAssertion(
       );
       const combined = text(agent);
       const reply = parseOpenClawAgentText(agent.stdout);
-      const stockReplyEvidence = projectNvdaPersonalStockReplyEvidence(reply);
-      if (stockReplyEvidence) {
-        await artifacts.writeJson(`actions/${args.label}-attempt-${attempt}-reply.json`, {
-          schemaVersion: 1,
-          quote: stockReplyEvidence,
-        });
-      }
       lastFailure = args.redactOutputInFailure
         ? `agent output omitted; exit=${agent.exitCode}`
         : `reply='${reply.slice(0, 240)}' exit=${agent.exitCode} stdout='${agent.stdout.slice(
@@ -152,22 +133,34 @@ export async function runOpenClawAgentAssertion(
         reply,
         response: combined,
       });
+      if (!classification.passed && args.persistCommandArtifacts === false) {
+        await artifacts.writeJson(
+          `actions/${args.label}-attempt-${attempt}-agent-failure.json`,
+          projectOpenClawAgentFailureArtifact(attempt, classification, agent),
+        );
+      }
       const validation = await validateOpenClawAgentAttemptEvidence({
         classification,
         label: args.label,
+        recordToolEvidenceReductionFailure: async (failure) => {
+          await artifacts.writeJson(
+            `actions/${args.label}-attempt-${attempt}-reducer-failure.json`,
+            failure,
+          );
+        },
         recordToolEvidence: async (toolEvidence) => {
           await artifacts.writeJson(
             `actions/${args.label}-attempt-${attempt}-reduced.json`,
-            projectPersonalStockToolEvidenceArtifact(toolEvidence),
+            projectPersonalPublicFetchToolEvidenceArtifact(toolEvidence),
           );
         },
-        reduceToolEvidence: async (expectedStock) =>
+        reduceToolEvidence: async () =>
           sandbox.exec(
             args.sandboxName,
             [
               "node",
               "-e",
-              buildOpenClawToolEvidenceReducerScript(expectedStock),
+              buildOpenClawToolEvidenceReducerScript(args.publicFetchExpectation),
               `${sessionRoot}/${sessionId}.jsonl`,
               `${sessionRoot}/${sessionId}.trajectory.jsonl`,
             ],
@@ -178,7 +171,6 @@ export async function runOpenClawAgentAssertion(
             },
           ),
         reply,
-        replyValidator: args.replyValidator,
         toolEvidenceValidator: args.toolEvidenceValidator,
       });
       lastFailure = validation.failure ?? lastFailure;
@@ -197,59 +189,12 @@ export async function runOpenClawAgentAssertion(
       }
       return true;
     },
+  }).finally(() => {
+    temporarySshConfig.cleanup();
+    if (existsSync(temporarySshConfig.dir)) {
+      throw new Error(`${args.label}: failed to remove temporary OpenShell SSH configuration`);
+    }
   });
   if (execution.outcome === "passed" && successfulEvidence) return successfulEvidence;
   throw new Error(`${args.label}: expected ${args.expected}, got ${lastFailure}`);
-}
-
-export const PERSONAL_STOCK_PROMPT = `Find the latest available NVIDIA (NVDA) stock price.
-Choose a small, machine-readable public HTTPS source yourself and use web_fetch as the only target tool.
-If progressive tool disclosure is active, you may use tool_search, tool_describe, and tool_call only to discover and invoke web_fetch.
-Do not invoke any other target tool. Do not use web_search, Brave Search, or Tavily Search.
-Set web_fetch maxChars to no more than 8000.
-Only after web_fetch returns a numeric NVDA price with its source date or timestamp, reply with one JSON object and no Markdown.
-Set status to NVDA_PERSONAL_AGENT_OK, symbol to NVDA, price to a JSON number, source_url to the exact HTTPS URL passed to web_fetch, and as_of to the quote's own market or update timestamp converted to ISO 8601.
-For a Unix-epoch quote field such as regularMarketTime, convert that field to ISO 8601. Never use the current clock, fetch time, or an unrelated date for as_of.`;
-
-export async function runPersonalStockAgentAssertion(
-  host: HostCliClient,
-  sandbox: SandboxClient,
-  artifacts: ArtifactSink,
-  args: { apiKey: string; label: string; sandboxName: string },
-): Promise<PersonalStockAssertionResult> {
-  expect(PERSONAL_STOCK_PROMPT).not.toMatch(/\bhttps?:\/\//iu);
-  const stock = await runOpenClawAgentAssertion(host, sandbox, artifacts, {
-    apiKey: args.apiKey,
-    expected: "NVDA_PERSONAL_AGENT_OK",
-    label: args.label,
-    persistCommandArtifacts: false,
-    prompt: PERSONAL_STOCK_PROMPT,
-    redactOutputInFailure: true,
-    replyValidator: (reply, evidence) =>
-      evidence !== undefined && nvdaPersonalStockReplyMatchesEvidence(reply, evidence),
-    sandboxName: args.sandboxName,
-    toolEvidenceValidator: (evidence) => assessPersonalStockToolEvidence(evidence).matches,
-  });
-  expect(stock.toolEvidence).toBeDefined();
-  const assessmentArtifact = projectPersonalStockToolEvidenceArtifact(stock.toolEvidence!);
-  const quote = parseNvdaPersonalStockReply(stock.reply);
-  expect(quote).not.toBeNull();
-  const quoteTime = Date.parse(quote!.as_of);
-  const now = Date.now();
-  expect(quoteTime).toBeGreaterThanOrEqual(now - MAX_LATEST_STOCK_AGE_MS);
-  expect(quoteTime).toBeLessThanOrEqual(now + MAX_SOURCE_CLOCK_SKEW_MS);
-  const sourceUrl = new URL(quote!.source_url);
-  expect(sourceUrl.protocol).toBe("https:");
-  await artifacts.writeJson(`actions/${args.label}-assessment.json`, assessmentArtifact);
-  return {
-    assessment: assessmentArtifact,
-    asOfRecent: true,
-    quote: {
-      as_of: quote!.as_of,
-      price: quote!.price,
-      source: { hostname: sourceUrl.hostname.toLowerCase(), protocol: "https:" },
-      status: quote!.status,
-      symbol: quote!.symbol,
-    },
-  };
 }
