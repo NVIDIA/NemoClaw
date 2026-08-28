@@ -237,8 +237,10 @@ async function pollSandboxReady(
       return true;
     }
 
-    // Package-managed OpenShell gateways report readiness through
-    // `sandbox list`; legacy Kubernetes gateways may still expose pod state.
+    // Compatibility boundary: new readiness behavior must use `sandbox list`.
+    // Only existing non-Docker legacy gateways may fall back to Kubernetes pod
+    // phase. #9811 removes this probe after every supported gateway reports
+    // readiness through `sandbox list`.
     if (isLinuxDockerDriverGatewayEnabled()) {
       return false;
     }
