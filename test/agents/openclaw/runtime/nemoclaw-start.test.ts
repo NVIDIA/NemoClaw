@@ -2814,13 +2814,12 @@ describe("provider placeholder refresh (#4251)", () => {
 
     expect(run.result.status, run.result.stderr).toBe(0);
     expect(run.result.stderr).not.toContain("slack.default");
-    // The Bolt-compatible alias is never rewritten on disk; it does not match
-    // the canonical "openshell:resolve:env:SLACK_BOT_TOKEN" placeholder key.
+    // The Bolt-compatible alias follows the revision-scoped runtime placeholder.
     expect(run.config.channels.slack.accounts.default.botToken).toBe(
-      "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+      "xoxb-OPENSHELL-RESOLVE-ENV-v42_SLACK_BOT_TOKEN",
     );
     expect(run.config.channels.slack.accounts.default.appToken).toBe(
-      "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+      "xapp-OPENSHELL-RESOLVE-ENV-v42_SLACK_APP_TOKEN",
     );
   });
 

@@ -87,6 +87,7 @@ describe("ordinary OpenClaw pairing target", () => {
 
     expect(resolveOrdinaryOpenClawPairingTarget(SANDBOX_NAME, deps)).toEqual({
       gatewayName: GATEWAY_NAME,
+      openshellDriver: "docker",
       lifecycleGeneration: "generation-1",
       lifecycleLiveIdentityFingerprint: FINGERPRINT,
       stateDirectory: "/sandbox/.openclaw",
@@ -103,9 +104,7 @@ describe("ordinary OpenClaw pairing target", () => {
           agent,
         ),
       ),
-    ).toBe(
-      launchReadinessDigest(buildLaunchReadinessRegistryProjection(openClawEntry(), agent)),
-    );
+    ).toBe(launchReadinessDigest(buildLaunchReadinessRegistryProjection(openClawEntry(), agent)));
   });
 
   it("resolves a custom Dockerfile without inventing a managed agent version", () => {

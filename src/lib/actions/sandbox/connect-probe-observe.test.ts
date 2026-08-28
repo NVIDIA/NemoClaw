@@ -172,7 +172,7 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(harness.dockerStartSpy.mock.invocationCallOrder[0]!).toBeLessThan(
       listInvocations[0]!.order,
     );
-    expect(listInvocations).toHaveLength(3);
+    expect(listInvocations).toHaveLength(4);
     expect(exitSpy).not.toHaveBeenCalled();
   });
 

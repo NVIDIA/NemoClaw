@@ -185,7 +185,6 @@ describe("credential provider registration", () => {
     expect(runOpenshell.mock.calls.map(([args]) => args.join(" "))).toEqual([
       "provider profile -g test-gateway export discord-hermes-static-v1 --output json",
       "provider get -g test-gateway alpha-discord-bridge",
-      "provider get -g test-gateway alpha-discord-bridge",
     ]);
   });
 
