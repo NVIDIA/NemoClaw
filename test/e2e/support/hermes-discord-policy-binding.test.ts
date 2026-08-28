@@ -13,12 +13,43 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { rebindFixtureProviderPolicyEndpoint } from "../fixtures/gateway-providers.ts";
 import { requireSuccessfulPolicyBoundaryBuild } from "../fixtures/hermes-discord-policy-boundary-build.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { HERMES_DISCORD_REST_PROOF_SOURCE } from "../live/hermes-discord-proxy.ts";
+import {
+  HERMES_DISCORD_REST_PROOF_SOURCE,
+  isDiscordExternalAccessDenial,
+  verifyDiscordRestBoundary,
+} from "../live/hermes-discord-proxy.ts";
 
 const HELPER = path.resolve(import.meta.dirname, "../fixtures/hermes-discord-policy-binding.ts");
 const TYPESCRIPT = path.resolve("node_modules/typescript/bin/tsc");
 const POLICY_BOUNDARY_CONFIG = path.resolve("nemoclaw/tsconfig.shared.json");
 const tempDirs: string[] = [];
+
+describe("Discord external boundary classification", () => {
+  it("isolates the exact edge denial from credential-rewrite failures", () => {
+    expect(isDiscordExternalAccessDenial(403, "error code: 1010\n")).toBe(true);
+    expect(isDiscordExternalAccessDenial(403, "unresolved credential placeholder")).toBe(false);
+    expect(isDiscordExternalAccessDenial(401, "error code: 1010")).toBe(false);
+  });
+
+  it("records only exact external unavailability after the local rewrite proof", async () => {
+    const recordUnavailable = vi.fn(async () => undefined);
+    await expect(
+      verifyDiscordRestBoundary(
+        '{"statusCode":403,"body":"error code: 1010\\n"}\n',
+        recordUnavailable,
+      ),
+    ).resolves.toBeUndefined();
+    expect(recordUnavailable).toHaveBeenCalledWith(
+      "Discord edge denied this runner before the API boundary (error 1010)",
+    );
+    await expect(
+      verifyDiscordRestBoundary(
+        '{"statusCode":403,"body":"unresolved credential placeholder"}\n',
+        recordUnavailable,
+      ),
+    ).rejects.toThrow("Unexpected Discord users/@me response");
+  });
+});
 
 function runBinding(policyFile: string, protocol = "websocket") {
   return spawnSync(
@@ -270,9 +301,6 @@ describe("Hermes Discord E2E policy binding", () => {
     const command = vi
       .fn<HostCliClient["command"]>()
       .mockResolvedValueOnce(successfulProbe(YAML.stringify(originalPolicy)))
-      .mockImplementationOnce(async (_command, args = []) => recordAppliedPolicy(args))
-      .mockResolvedValueOnce(successfulProbe())
-      .mockResolvedValueOnce(successfulProbe())
       .mockResolvedValueOnce(successfulProbe(providerName))
       .mockImplementationOnce(async (_command, args = []) => recordAppliedPolicy(args));
     const host = {
@@ -298,21 +326,12 @@ describe("Hermes Discord E2E policy binding", () => {
 
     expect(command.mock.calls.map(([, args]) => args)).toEqual([
       ["policy", "get", "--base", "e2e-hermes-discord"],
-      ["policy", "set", "--policy", expect.any(String), "--wait", "e2e-hermes-discord"],
-      ["sandbox", "provider", "detach", "-g", "nemoclaw", "e2e-hermes-discord", providerName],
-      ["sandbox", "provider", "attach", "-g", "nemoclaw", "e2e-hermes-discord", providerName],
       ["sandbox", "provider", "list", "-g", "nemoclaw", "e2e-hermes-discord"],
       ["policy", "set", "--policy", expect.any(String), "--wait", "e2e-hermes-discord"],
     ]);
-    expect(appliedPolicies).toHaveLength(2);
+    expect(appliedPolicies).toHaveLength(1);
 
-    const unboundEndpoints = appliedPolicies[0]!.network_policies.discord.endpoints;
-    expect(unboundEndpoints[0]).not.toHaveProperty("credential_binding");
-    expect(unboundEndpoints[2]).toHaveProperty("credential_binding", {
-      provider: "another-provider",
-    });
-
-    const reboundEndpoints = appliedPolicies[1]!.network_policies.discord.endpoints;
+    const reboundEndpoints = appliedPolicies[0]!.network_policies.discord.endpoints;
     expect(reboundEndpoints[0]).toHaveProperty("credential_binding", { provider: providerName });
     expect(reboundEndpoints[1]).toHaveProperty("credential_binding", { provider: providerName });
     expect(reboundEndpoints[2]).toHaveProperty("credential_binding", {

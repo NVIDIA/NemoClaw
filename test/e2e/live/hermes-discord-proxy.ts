@@ -5,6 +5,39 @@ export function hermesDiscordHttpProxyWebSocketUrl(host: string, port: number | 
   return `http://${host}:${port}/gateway`;
 }
 
+export function isDiscordExternalAccessDenial(statusCode: number, body: string): boolean {
+  return statusCode === 403 && /^error code:\s*1010\s*$/iu.test(body.trim());
+}
+
+export async function verifyDiscordRestBoundary(
+  stdout: string,
+  recordUnavailable: (reason: string) => Promise<unknown>,
+): Promise<void> {
+  const rows = stdout
+    .split(/\r?\n/u)
+    .filter((line) => line.trim().startsWith("{"))
+    .map(
+      (line) => JSON.parse(line) as { statusCode?: number; body?: string; error?: string },
+    );
+  const result = rows.at(-1) ?? {};
+  switch (result.error ?? "") {
+    case "timeout":
+      await recordUnavailable("Discord API timed out, matching legacy skip behavior");
+      return;
+    case "":
+      if (isDiscordExternalAccessDenial(result.statusCode ?? 0, result.body ?? "")) {
+        await recordUnavailable("Discord edge denied this runner before the API boundary (error 1010)");
+        return;
+      }
+      if ([200, 401].includes(result.statusCode ?? 0)) return;
+      throw new Error(
+        `Unexpected Discord users/@me response (got ${String(result.statusCode)}): ${stdout}`,
+      );
+    default:
+      throw new Error(`Discord API call failed: ${result.error}`);
+  }
+}
+
 export const HERMES_DISCORD_REST_PROOF_SOURCE = String.raw`
 import json
 import os

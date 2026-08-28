@@ -9,10 +9,7 @@ import { resultText } from "./clients/command.ts";
 import type { HostCliClient } from "./clients/host.ts";
 import type { SandboxClient } from "./clients/sandbox.ts";
 import { expect } from "./e2e-test.ts";
-import {
-  bindHermesDiscordPolicyEndpoint,
-  unbindProviderPolicyEndpoints,
-} from "./hermes-discord-policy-binding.ts";
+import { bindHermesDiscordPolicyEndpoint } from "./hermes-discord-policy-binding.ts";
 import type { ShellProbeResult } from "./shell-probe.ts";
 
 const PROVIDER_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
@@ -47,7 +44,7 @@ async function runFixtureOpenShell(
   return result;
 }
 
-/** Refresh one already-attached fixture provider without discarding its existing policy bindings. */
+/** Bind a fixture endpoint without rotating the already-attached provider credential revision. */
 export async function rebindFixtureProviderPolicyEndpoint(
   host: HostCliClient,
   sandboxName: string,
@@ -93,39 +90,8 @@ export async function rebindFixtureProviderPolicyEndpoint(
 
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-rebind-"));
   const boundPolicy = path.join(temporary, "bound-policy.yaml");
-  const unboundPolicy = path.join(temporary, "unbound-policy.yaml");
   try {
     fs.writeFileSync(boundPolicy, policy.stdout, { mode: 0o600 });
-    fs.copyFileSync(boundPolicy, unboundPolicy);
-    fs.chmodSync(unboundPolicy, 0o600);
-    unbindProviderPolicyEndpoints(unboundPolicy, options.providerName);
-    await runFixtureOpenShell(
-      host,
-      ["policy", "set", "--policy", unboundPolicy, "--wait", sandboxName],
-      {
-        artifactName: `${options.artifactName}-policy-unbound`,
-        env: options.env,
-        redactionValues,
-      },
-    );
-    await runFixtureOpenShell(
-      host,
-      ["sandbox", "provider", "detach", "-g", gatewayName, sandboxName, options.providerName],
-      {
-        artifactName: `${options.artifactName}-provider-detach`,
-        env: options.env,
-        redactionValues,
-      },
-    );
-    await runFixtureOpenShell(
-      host,
-      ["sandbox", "provider", "attach", "-g", gatewayName, sandboxName, options.providerName],
-      {
-        artifactName: `${options.artifactName}-provider-attach`,
-        env: options.env,
-        redactionValues,
-      },
-    );
     const attachments = await runFixtureOpenShell(
       host,
       ["sandbox", "provider", "list", "-g", gatewayName, sandboxName],

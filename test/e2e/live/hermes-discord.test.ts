@@ -17,6 +17,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   hermesDiscordHttpProxyWebSocketUrl,
   HERMES_DISCORD_REST_PROOF_SOURCE,
+  verifyDiscordRestBoundary,
 } from "./hermes-discord-proxy.ts";
 import {
   assertDiscordGatewayCapture,
@@ -691,26 +692,9 @@ PY`,
       },
     );
     expectExitZero(discordApi, "Discord REST users/@me probe command");
-    const discordApiRows = discordApi.stdout
-      .split(/\r?\n/)
-      .filter((line) => line.trim().startsWith("{"))
-      .map((line) => JSON.parse(line) as { statusCode?: number; error?: string });
-    const discordApiResult = discordApiRows.at(-1) ?? {};
-    switch (discordApiResult.error ?? "") {
-      case "timeout":
-        await artifacts.writeJson("phase-6-discord-users-me-skip.json", {
-          reason: "Discord API timed out, matching legacy skip behavior",
-        });
-        break;
-      case "":
-        expect(
-          [200, 401].includes(discordApiResult.statusCode ?? 0),
-          `Unexpected Discord users/@me response (got ${discordApiResult.statusCode}): ${discordApi.stdout}`,
-        ).toBe(true);
-        break;
-      default:
-        throw new Error(`Discord API call failed: ${discordApiResult.error}`);
-    }
+    await verifyDiscordRestBoundary(discordApi.stdout, (reason) =>
+      artifacts.writeJson("phase-6-discord-users-me-skip.json", { reason }),
+    );
 
     const bridgeResidue = await sandboxShWithArgs(
       sandbox,
@@ -791,7 +775,7 @@ done`,
         envPlaceholders: true,
         nativePythonDiscordGatewayRewrite: true,
         rawTokenAbsentFromConfigEnvProcessAndFilesystem: true,
-        discordRestBoundaryReachedOrSkippedOnTimeout: true,
+        discordRestBoundaryReachedOrExternallyUnavailable: true,
         noLocalDiscordBridgeResidue: true,
         cleanupVerified: process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1",
       },

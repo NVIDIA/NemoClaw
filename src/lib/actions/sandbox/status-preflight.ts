@@ -9,6 +9,7 @@ import {
 } from "../../onboard/runtime-provider/selection";
 import {
   classifyGatewayFailure,
+  classifyObservedSandboxContainerFailure,
   classifySandboxContainerFailure,
   getLayerHeader,
   type SandboxContainerFailureResult,
@@ -128,8 +129,23 @@ export async function classifySandboxContainerFailureForStatus(
   sb: registry.SandboxEntry | null,
   probe: SandboxContainerFailureProbe = defaultSandboxContainerFailureProbe,
 ): Promise<SandboxContainerFailureResult | null> {
-  if (!sb || !hasLegacyStatusRuntimeObservation(sb)) return null;
-  return probe(sb.name, sb.dashboardPort ?? null);
+  if (!sb) return null;
+  if (hasLegacyStatusRuntimeObservation(sb)) {
+    return probe(sb.name, sb.dashboardPort ?? null);
+  }
+  if (sb.workload?.kind !== "managed-image" || !usesManagedProviderGateway(sb)) return null;
+  const provider = resolveRegisteredRuntimeProvider(sb.openshellDriver);
+  if (provider?.snapshot.supported !== true) return null;
+  try {
+    const observation = provider.snapshot.preflight("backup", sb);
+    return classifyObservedSandboxContainerFailure(
+      sb.name,
+      observation.lifecycleState,
+      sb.dashboardPort,
+    );
+  } catch {
+    return null;
+  }
 }
 
 /**
