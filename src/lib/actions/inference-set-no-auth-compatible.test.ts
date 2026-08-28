@@ -105,7 +105,12 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
         "--no-verify",
       ],
     ]);
-    expect(deps.calls.probeSandboxRoute).toHaveBeenCalled();
+    expect(deps.calls.probeSandboxRoute).toHaveBeenCalledWith({
+      sandboxName: "alpha",
+      provider: "compatible-endpoint",
+      model: "model-b",
+      preferredInferenceApi: "openai-completions",
+    });
     expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
       "alpha",
       expect.objectContaining({
