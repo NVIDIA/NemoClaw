@@ -24,6 +24,8 @@ function createRegistryHarness(initiallyRunning: boolean) {
   let registryCopies = 1;
   let registryPresent = true;
   let startStatus = 0;
+  let startError: Error | undefined;
+  let startLabel: string | undefined;
   let startChangesState = true;
   const engine = {
     capture: vi.fn((args: readonly string[]) => {
@@ -81,7 +83,13 @@ function createRegistryHarness(initiallyRunning: boolean) {
           running = startChangesState ? true : running;
           status = startChangesState ? "running" : status;
           registryIp = startChangesState ? "10.87.0.3" : registryIp;
-          return { status: startStatus, stdout: REGISTRY_ID, stderr: "" };
+          registryLabel = startLabel ?? registryLabel;
+          return {
+            status: startStatus,
+            stdout: REGISTRY_ID,
+            stderr: "",
+            ...(startError ? { error: startError } : {}),
+          };
         case "stop":
           expect(args.at(-1)).toBe(REGISTRY_ID);
           running = false;
@@ -134,6 +142,21 @@ function createRegistryHarness(initiallyRunning: boolean) {
     setStartOutcome: (value: { readonly status: number; readonly changesState: boolean }) => {
       startStatus = value.status;
       startChangesState = value.changesState;
+    },
+    setStartError: (code: string, changesState: boolean) => {
+      startStatus = 1;
+      startError = Object.assign(new Error("spawnSync podman failed"), { code });
+      startChangesState = changesState;
+    },
+    setStartLabel: (value: string) => {
+      startLabel = value;
+    },
+    setStartTimeout: (changesState: boolean) => {
+      startStatus = 1;
+      startError = Object.assign(new Error("spawnSync podman ETIMEDOUT"), {
+        code: "ETIMEDOUT",
+      });
+      startChangesState = changesState;
     },
   };
 }
@@ -234,6 +257,86 @@ describe("Hermes Portable registry recovery", () => {
     ).toThrow("could not start its exact registry authority");
     expect(harness.isRunning()).toBe(false);
     expect(harness.calls).toContainEqual(["stop", "--time", "10", REGISTRY_ID]);
+  });
+
+  it("accepts an exact running registry after the pinned start times out", () => {
+    const harness = createRegistryHarness(false);
+    harness.setStartTimeout(true);
+
+    const prepared = preparePortableRegistryRecovery(
+      harness.engine as never,
+      harness.expectedAuthoritySha256,
+      vi.fn(),
+      vi.fn(),
+    );
+
+    expect(prepared.started).toBe(true);
+    expect(harness.isRunning()).toBe(true);
+    expect(harness.calls).toContainEqual(["start", REGISTRY_ID]);
+    expect(harness.calls.some((args) => args[0] === "stop")).toBe(false);
+  });
+
+  it("keeps a timed-out start terminal when the pinned registry remains stopped", () => {
+    const harness = createRegistryHarness(false);
+    harness.setStartTimeout(false);
+
+    expect(() =>
+      preparePortableRegistryRecovery(
+        harness.engine as never,
+        harness.expectedAuthoritySha256,
+        vi.fn(),
+        vi.fn(),
+      ),
+    ).toThrow("could not start its exact registry authority");
+    expect(harness.isRunning()).toBe(false);
+  });
+
+  it("rejects a timed-out start when the running registry authority changed", () => {
+    const harness = createRegistryHarness(false);
+    harness.setStartTimeout(true);
+    harness.setStartLabel("changed");
+
+    expect(() =>
+      preparePortableRegistryRecovery(
+        harness.engine as never,
+        harness.expectedAuthoritySha256,
+        vi.fn(),
+        vi.fn(),
+      ),
+    ).toThrow();
+    expect(harness.isRunning()).toBe(false);
+  });
+
+  it("rolls back an exact running registry after an ordinary spawn error", () => {
+    const harness = createRegistryHarness(false);
+    harness.setStartError("EIO", true);
+
+    expect(() =>
+      preparePortableRegistryRecovery(
+        harness.engine as never,
+        harness.expectedAuthoritySha256,
+        vi.fn(),
+        vi.fn(),
+      ),
+    ).toThrow("could not start its exact registry authority");
+    expect(harness.isRunning()).toBe(false);
+    expect(harness.calls).toContainEqual(["stop", "--time", "10", REGISTRY_ID]);
+  });
+
+  it("rejects authority drift after accepting a timed-out exact start", () => {
+    const harness = createRegistryHarness(false);
+    harness.setStartTimeout(true);
+    const prepared = preparePortableRegistryRecovery(
+      harness.engine as never,
+      harness.expectedAuthoritySha256,
+      vi.fn(),
+      vi.fn(),
+    );
+    harness.setLabel("changed");
+
+    expect(() => prepared.assertCurrent()).toThrow();
+    expect(() => prepared.rollback()).toThrow();
+    expect(harness.isRunning()).toBe(false);
   });
 
   it("stops the pinned registry before reporting post-start authority drift", () => {

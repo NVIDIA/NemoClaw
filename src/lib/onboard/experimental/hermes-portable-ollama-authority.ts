@@ -413,12 +413,13 @@ export function preparePortableRegistryRecovery(
   inspectExactStoppedRegistry(engine, network, runtimeId, expectedAuthoritySha256);
   assertRecoveryCurrent();
   const started = engine.capture(["start", runtimeId], REGISTRY_MUTATION_TIMEOUT_MS);
+  const startTimedOut =
+    started.error !== undefined && (started.error as NodeJS.ErrnoException).code === "ETIMEDOUT";
   let authority: ReturnType<typeof capturePortableNetworkAuthorityForReference>;
   try {
     authority = capturePortableNetworkAuthorityForReference(engine, runtimeId);
     if (
-      started.error ||
-      started.status !== 0 ||
+      (!startTimedOut && (started.error || started.status !== 0)) ||
       authority.authoritySha256 !== expectedAuthoritySha256
     ) {
       throw new Error("registry start was not acknowledged");
