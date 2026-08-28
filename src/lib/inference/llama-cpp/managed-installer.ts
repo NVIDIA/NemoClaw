@@ -193,7 +193,7 @@ function imagePullFailureDiagnostic(result: ManagedLlamaCppImagePullResult): str
   const evidence =
     layer === "unclassified"
       ? "No recognized failure-layer signature matched."
-      : "Redacted pull output matched this layer's signature.";
+      : "A pull-output signature matched this layer.";
   const status =
     result.status === null ? "Exit status unavailable." : `Exit status: ${String(result.status)}.`;
   return `Failure classification: ${layer}. ${evidence} ${status} Raw pull output is not included.`;

@@ -1080,7 +1080,7 @@ describe("managed llama.cpp installer", () => {
       const evidence =
         layer === "unclassified"
           ? "No recognized failure-layer signature matched."
-          : "Redacted pull output matched this layer's signature.";
+          : "A pull-output signature matched this layer.";
       expect(result).toMatchObject({
         ok: false,
         reason: expect.stringContaining(`Failure classification: ${layer}. ${evidence}`),
