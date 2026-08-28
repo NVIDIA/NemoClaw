@@ -50,7 +50,7 @@ export interface DriveInteractiveCommandOptions {
 // node-pty. The child's own deadline is generous; the Node-side timer
 // below is the enforced hard bound and SIGKILLs the whole process tree.
 const PTY_DRIVER_SCRIPT = `
-import json, os, pty, select, signal, sys, time
+import fcntl, json, os, pty, select, signal, struct, sys, termios, time
 
 # Read from stdin, not argv: the payload embeds every scripted response,
 # including any credential a rule supplies (e.g. an onboard API key), and a
@@ -63,6 +63,10 @@ timeout_s = payload["timeoutSeconds"]
 
 pid, fd = pty.fork()
 if pid == 0:
+    # CI starts this driver without a parent terminal, so pty.fork() cannot
+    # inherit a usable window size. Full-screen TUIs otherwise render at
+    # zero width and wrap every character onto a separate row.
+    fcntl.ioctl(sys.stdout.fileno(), termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
     os.execvp(cmd[0], cmd)
 
 # pty.fork() makes the command the leader of a separate session/process

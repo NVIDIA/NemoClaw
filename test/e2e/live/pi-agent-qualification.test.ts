@@ -271,7 +271,7 @@ async function runInteractiveTask(
 ): Promise<void> {
   const token = "NEMOCLAW_PI_INTERACTIVE_V1_OK";
   const prompt =
-    "Join these four fragments with underscores and reply with only the result: NEMOCLAW, PI, INTERACTIVE, OK. Do not use tools.";
+    "Join these five fragments with underscores and reply with only the result: NEMOCLAW, PI, INTERACTIVE, V1, OK. Do not use tools.";
   const result = await driveInteractiveCommand({
     activityLabel: "command: pi-interactive-qualification",
     cmd: [host.commandPath, SANDBOX_NAME, "exec", "--", "pi", "--no-approve", prompt],
@@ -282,7 +282,7 @@ async function runInteractiveTask(
   });
   await artifacts.writeText("pi-interactive-terminal.txt", result.output);
   expect(result.timedOut).toBe(false);
-  expect(result.firedTriggers).toContain(token);
+  expect(result.firedTriggers).toEqual([token]);
   expect(result.output).toContain(token);
   expect(result.exitCode).toBe(0);
 }
