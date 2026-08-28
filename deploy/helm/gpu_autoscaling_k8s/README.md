@@ -7,7 +7,15 @@
 
 This experimental recipe demonstrates a cost-efficient architecture that runs a single AI agent securely inside a CPU-only OpenShell sandbox while independently autoscaling GPU-backed inference. Because GPU inference is the primary compute and cost bottleneck, Kubernetes HPA dynamically adjusts inference capacity from one to multiple replicas as demand changes, maintaining responsiveness during traffic spikes while releasing idle GPU resources when demand falls.
 
-The recipe provides three sandboxed agent harness options: **OpenClaw** (default), **Hermes**, or **Deep Agents Code**; see [`AGENT-SELECTION.md`](AGENT-SELECTION.md). It also provides three GPU inference runtime options: **Ollama** (default), **vLLM**, or **NVIDIA NIM**, selected with `inference.runtime`; see [Inference runtimes](#inference-runtimes). The recipe supports all nine agent × runtime combinations through the same 1 GPU → 1 pod → local OpenAI-compatible `/v1` server pattern, while metrics-proxy, HPA, and Envoy work consistently across every combination; see [Agent and runtime support](#agent-and-runtime-support) for the full matrix.
+The recipe provides three sandboxed agent harness options: **OpenClaw** (default), **Hermes**, or **Deep Agents Code**; see [`AGENT-SELECTION.md`](AGENT-SELECTION.md). To choose one, set `AGENT_NAME` once and reuse it for image build, create, verify, and run. Do not install two agents in one sandbox.
+
+| Agent | `AGENT_NAME` | After create |
+|-------|--------------|--------------|
+| OpenClaw (default, most exercised) | `openclaw` | `./scripts/run-agent-sandbox.sh` (keep attached) |
+| Hermes | `hermes` | `./scripts/run-agent-sandbox.sh` (keep attached) |
+| Deep Agents Code | `deepagents` | `./scripts/run-agent-prompt.sh "…"` |
+
+It also provides three GPU inference runtime options: **Ollama** (default), **vLLM**, or **NVIDIA NIM**, selected with `inference.runtime` / `INFERENCE_RUNTIME`; see [Inference runtimes](#inference-runtimes). The recipe supports all nine agent × runtime combinations through the same 1 GPU → 1 pod → local OpenAI-compatible `/v1` server pattern, while metrics-proxy, HPA, and Envoy work consistently across every combination; see [Agent and runtime support](#agent-and-runtime-support) for the full matrix.
 
 Kubernetes HPA scales only those GPU inference pods (1 GPU each) using a Pods **`AverageValue`** metric (average across Ready pods). Example HPA metrics: **GPU utilization** (scale out when average per-pod util is **above 40%**) and **LLM latency** (scale out when average per-pod latency is **above 3000 ms**).
 
@@ -18,22 +26,13 @@ Kubernetes HPA scales only those GPU inference pods (1 GPU each) using a Pods **
 | With Envoy LeastRequest (default) | Create a TLS Secret in `nemoclaw-gpu` and configure `ingress.tls`; see [TLS values](#tls-values). | `./scripts/install-hpa.sh` |
 | Without Envoy (metrics-proxy Service only) | No Gateway or TLS Secret. Protect the in-cluster Service with a NetworkPolicy and the inference API key. | `ENABLE_ENVOY_LB=0 ./scripts/install-hpa.sh` |
 
-**New here?** Start with [Quick start](#quick-start). Teardown: [Uninstall](#uninstall).
-
-**Want to just try it end to end?** `./scripts/try-it.sh` runs the whole Quick start below
-in one script, including the synthetic HPA load test (`RUN_LOAD_TEST=1` by default) that
-actually drives GPU scale-up, an Envoy LeastRequest check, and scale-down — edit the
-`AGENT_NAME` / `INFERENCE_RUNTIME` block at its top (or pass them as env vars) and go. It
-does **not** default to an insecure configuration: TLS + OIDC are required unless you
-explicitly export `ALLOW_INSECURE_HTTP=1`, `ALLOW_UNAUTHENTICATED_OPENSHELL=1`, and
-`OPENSHELL_UNAUTHENTICATED_ACK=dedicated-cluster-port-forward-only` to opt into the
-isolated-eval shortcut — fine for a dedicated single-user cluster, never for shared/prod.
+**New here?** Start with [Quick start](#quick-start). Optional one-script path: `./scripts/try-it.sh` (edit `AGENT_NAME` / `INFERENCE_RUNTIME` at the top). Teardown: [Uninstall](#uninstall).
 
 Keep the versions in `versions.env` align with NemoClaw blueprint: NemoClaw `v0.0.104`, OpenShell `0.0.85`, Agent Sandbox `v0.5.0`. NemoClaw blueprint only accepts a specific OpenShell range, and OpenShell’s K8s path pins Agent Sandbox. When upstream NemoClaw moves on: bump all three together in `versions.env`, rebuild/push a new sandbox image tag, re-apply Agent Sandbox if needed, reinstall/restart OpenShell, recreate the sandbox, then re-run verify + HPA checks to `MAX_REPLICAS` (allocatable GPUs).
 
 ## Architecture
 
-Runtime inference path (HPA scales to **N** inference pods, 1 GPU each). Envoy is optional: LeastRequest when enabled; metrics-proxy ClusterIP Service when `ENABLE_ENVOY_LB=0`. Set both `MAX_REPLICAS` and `TARGET_PODS` to your allocatable GPU count (**N**) — not fixed to 4 (or 8 on an 8-GPU node like `dgx02`; see [Validated hardware](#validated-hardware)).
+Runtime inference path (HPA scales to **N** inference pods, 1 GPU each). Envoy is optional: LeastRequest when enabled; metrics-proxy ClusterIP Service when `ENABLE_ENVOY_LB=0`. Set both `MAX_REPLICAS` and `TARGET_PODS` to your allocatable GPU count (**N**). See [Validation](#validation).
 
 Each GPU pod is **2/2 Ready** when healthy: an inference container (`ollama`, `vllm`, or `nim`, whichever `inference.runtime` selects) + container `metrics-proxy` (auth, `/v1` proxy, health, Prometheus `/metrics`). The metrics-proxy is **not** the sandboxed AI agent — that runs only in the CPU OpenShell sandbox (see [`AGENT-SELECTION.md`](AGENT-SELECTION.md) for OpenClaw / Hermes / Deep Agents Code).
 
@@ -70,7 +69,28 @@ These two are the **built-in** HPA modes (`gpu_utilization` | `latency_avg`). Op
 It does **not** include earlier client→Envoy/Service hop time or request-body read time. Each pod exposes a rolling average over recent completions (default window 128; `LLM_LATENCY_WINDOW_SIZE`). After **60s with no new samples** (`LLM_LATENCY_IDLE_EXPIRE_MS` / `metrics.llmLatencyIdleExpireMs`), the gauge resets to **0** so HPA can scale down once load stops. HPA takes the **Pods `AverageValue`** of that gauge across Ready pods.
 
 
-### Validated hardware
+### Validation
+
+Live-tested on DGX **8× H100** on prem, and **4x L40S** on [Brev: AWS Instance](https://brev.nvidia.com).
+
+#### 8× NVIDIA H100
+
+On-prem DGX-class node with the NVIDIA GPU Operator. Covered: chart deploy, optional Envoy LeastRequest, authenticated inference, Kubernetes HPA scale-up when average per-pod **GPU util > 40%** or average per-pod **latency > 3000 ms** (and scale-down after load stops), Envoy distribution across Ready GPU pods, and OpenShell sandbox → `https://inference.local/v1`.
+
+| Item | Value |
+|------|-------|
+| GPUs | **8× NVIDIA H100** (80 GB each) |
+| Scheduling | One node; one inference pod per GPU (both `MAX_REPLICAS` and `TARGET_PODS` default to allocatable **N**) |
+
+```bash
+export MAX_REPLICAS=8   # install-hpa.sh
+export TARGET_PODS=8    # hpa-load-test.sh
+./scripts/install-hpa.sh
+```
+
+`MAX_REPLICAS`/`TARGET_PODS` default to the allocatable GPU count already, so on an 8×H100 node with all GPUs schedulable you can usually omit both and let the scripts detect **N=8** automatically. Any `inference.runtime` (Ollama, vLLM, or NIM — see [Inference runtimes](#inference-runtimes)) works the same way; H100's 80 GB HBM3 comfortably fits every default model in this recipe with headroom to spare.
+
+#### 4× NVIDIA L40S on Brev
 
 Live-tested on [**Brev: AWS Instance**](https://brev.nvidia.com) with a single-node **MicroK8s** cluster:
 
@@ -81,22 +101,9 @@ Live-tested on [**Brev: AWS Instance**](https://brev.nvidia.com) with a single-n
 | Scheduling | One node; one Ollama pod per GPU (both `MAX_REPLICAS` and `TARGET_PODS` default to allocatable **N**) |
 | Model used in validation | `llama3.2:3b` |
 | Sandbox image registry | MicroK8s local registry `localhost:32000` (also any registry nodes can pull) |
+| Load test | `./scripts/hpa-load-test-brev-4xl40s.sh` |
 
 <img width="647" height="463" alt="Reference 4× L40S MicroK8s node used for validation" src="https://github.com/user-attachments/assets/80cb397b-d2e3-4b0d-933e-3b8dd1dfdb80" />
-
-**4× L40S on AWS is an example**, not a hard limit. Set both `MAX_REPLICAS` and `TARGET_PODS` to your allocatable GPU count (**N** — any number you have); install and load-test default to that same N. Covered on the example hardware: chart deploy, optional Envoy LeastRequest, authenticated inference, Kubernetes HPA scale-up when average per-pod **GPU util > 40%** or average per-pod **latency > 3000 ms** (and scale-down after load stops), Envoy distribution across Ready GPU pods, and OpenShell sandbox → `https://inference.local/v1`.
-
-#### DGX 8× H100 
-
-The same pattern is designed to scale to a single 8-GPU DGX-class node with no chart changes — just raise the ceiling. This configuration has not yet been run through the full validation pass above; re-run [Install details](#install-details)'s static checks and the [Test autoscaling](#test-autoscaling-and-load-balancing) steps against your own 8-GPU cluster before relying on it.
-
-```bash
-export MAX_REPLICAS=8   # install-hpa.sh
-export TARGET_PODS=8    # hpa-load-test.sh
-./scripts/install-hpa.sh
-```
-
-`MAX_REPLICAS`/`TARGET_PODS` default to the allocatable GPU count already, so on an 8×H100 node with all GPUs schedulable you can usually omit both and let the scripts detect **N=8** automatically. Any `inference.runtime` (Ollama, vLLM, or NIM — see [Inference runtimes](#inference-runtimes)) works the same way; H100's 80 GB HBM3 comfortably fits every default model in this recipe with headroom to spare.
 
 ## Prerequisites
 
@@ -367,46 +374,6 @@ When finished: [Uninstall](#uninstall).
 
 ## Install details
 
-Installer side effects: by default installs Prometheus when the configured release is missing; when configured to reuse monitoring, it configures the selected Prometheus Adapter with this recipe’s GPU/latency custom-metric rules. It also installs Envoy Gateway when `ENABLE_ENVOY_LB=1`, creates the DCGM ServiceMonitor, and may enable MicroK8s GPU/Metrics add-ons. Review shared-cluster impact before reuse of release names.
-
-Static checks (no cluster):
-
-```bash
-```
-
-### Reuse an existing Prometheus stack
-
-The default remains the Brev-tested behavior: use the configured `kube-prometheus` release
-in `monitoring`, installing it only when that release is absent. To discover and reuse
-exactly one deployed Helm-managed `kube-prometheus-stack` resource across all namespaces
-instead of creating a second stack (two node-exporter DaemonSets conflict on host ports),
-opt in with:
-
-```bash
-export USE_EXISTING_PROMETHEUS=auto
-```
-
-If discovery finds no stack, it falls back to the normal compact `kube-prometheus` release.
-This opt-in is for shared/on-prem clusters; leave it unset on the Brev AWS environment for
-identical monitoring behavior to the validated path.
-
-To require a particular existing release instead of relying on discovery, set:
-
-```bash
-export USE_EXISTING_PROMETHEUS=1
-export MONITORING_NS=prometheus
-export PROM_RELEASE=kube-prometheus-stack
-export ADAPTER_RELEASE=prometheus-adapter
-```
-
-For the cluster above, add the same four exports to the gitignored `local.env`. If discovery
-finds multiple stacks, the installer stops rather than guessing; use these values to select
-one. It verifies the selected Prometheus release, waits for it to be ready, and labels the
-DCGM ServiceMonitor with `release=${PROM_RELEASE}` so that stack selects it. When the named
-adapter already exists, it retains that release's installed chart version and Helm values
-while applying this recipe's GPU and latency custom-metric rules. Review and merge any
-pre-existing `rules.custom` configuration first, because the recipe replaces that list.
-
 ### Aggregated metrics API health
 
 The installer requires both the Metrics Server API and Prometheus Adapter custom-metrics API
@@ -530,26 +497,6 @@ The chart and `metrics-proxy` treat all nine `AGENT_NAME` × `inference.runtime`
 
 - References: [OpenClaw quickstart](https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/get-started/quickstart), [Hermes quickstart](https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/get-started/quickstart), and [Deep Agents Code quickstart](https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/get-started/quickstart).
 - The recipe supports Deep Agents Code + Ollama through the same OpenAI-compatible route, but current NemoClaw guidance does not offer local Ollama for Deep Agents Code. `try-it.sh` allows that pairing with a warning.
-- Static contracts do not replace live GPU validation. Treat combinations not listed under [Validated hardware](#validated-hardware) as experimental until tested on your cluster.
-
-| Order | Agent × runtime | Why include it | Credential setup |
-|---|---|---|---|
-| 1 | OpenClaw + Ollama | Baseline/default path; this is the initial install. | None |
-| 2 | Hermes + vLLM | High-throughput OpenAI-compatible server plus a gateway-style agent. | Normally none; set `VLLM_IMAGE_PULL_SECRET` if `nvcr.io` requires it. |
-| 3 | OpenClaw + NIM | NVIDIA-managed inference path plus the default/exercised agent. | `create-nim-ngc-secrets.sh`, then `NIM_NGC_API_KEY_SECRET` and `NIM_IMAGE_PULL_SECRET`. |
-| 4 | Deep Agents Code + vLLM | Terminal-style agent with a documented local high-throughput runtime. | Same vLLM conditions as row 2. |
-
-For each live row, first install or switch the runtime, then build/create/verify the selected agent sandbox, and finally run one HPA scale-up, Envoy distribution, and scale-down test. Test them one at a time: each HPA run can claim all available GPUs. See [HPA and Envoy check](#6-hpa-and-envoy-check) and [Agent Sandbox, image, OpenShell](#4-agent-sandbox-image-openshell).
-
-The load test uses `HPA_LOAD_PROFILE=auto` by default. `TARGET_PODS` still defaults to the allocatable GPU count: eight GPUs select the 8-pod test rather than hard-coding eight on a 4-GPU cluster. The selected profile is printed at test start and in every generator log.
-
-| Effective profile | Selected by `auto` | Default test target | Per-GPU synthetic load | Purpose |
-|---|---|---:|---:|---|
-| `dgx-8xh100` | Eight target pods and an H100 GPU product label | 8 | 320 (cap 640/pod) | Uses the configured 40% GPU target. Before a chat probe completes, the four generators each send 160 requests to reach the 640-request-per-Pod cap. The test adds one Pod every 10 seconds, holds all eight Ready replicas under load for 60 seconds, then removes one Pod every 30 seconds after a 60-second stabilization window. Cold pods are allowed up to 15 minutes before the test reports an incomplete scale-up. |
-| `brev-4xl40s` | Four target pods and an L40S GPU product label | 4 | 64 | Uses the same one-Pod HPA policy and 40% target during the test, then restores the configured policy. |
-| `portable` | Any other hardware/count | Allocatable GPU count | 64 | Uses the same one-Pod HPA policy and 40% target during the test, then restores the configured policy. Override the load profile explicitly after measuring unfamiliar hardware. |
-
-You can pin `HPA_LOAD_PROFILE=dgx-8xh100` or `HPA_LOAD_PROFILE=brev-4xl40s` in gitignored `local.env`. The profiles use the same load-generator code and OpenAI-compatible request workload; only their concurrency settings differ, so coverage and safety logic remain consistent.
 
 Before creating a load Job, the test waits for a clean HPA baseline of **1 current / 1 desired** Ready replica (up to 240 seconds). This prevents a new test from inheriting replicas or the 60-second scale-down stabilization window from a prior test. It does not force a scale-down, so it cannot disrupt real traffic; wait for existing traffic to drain, then rerun. Set `HPA_BASELINE_WAIT_SEC` only if a longer wait is appropriate for your cluster.
 
