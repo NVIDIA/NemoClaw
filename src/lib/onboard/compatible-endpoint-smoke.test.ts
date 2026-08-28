@@ -119,6 +119,7 @@ function providerNeutralResponses(
 function runProviderNeutralScript(options: {
   authority: ProviderNeutralAuthority;
   model?: string;
+  script?: string;
   responses?: unknown[];
   denial?: unknown;
   denialBytes?: readonly number[];
@@ -238,7 +239,8 @@ def build_test_opener(*handlers):
 urllib.request.build_opener = build_test_opener
 time.sleep = lambda seconds: sleep_delays.append(seconds)
 `;
-  const script = buildProviderNeutralInferenceSandboxSmokeScript(model, options.authority);
+  const script =
+    options.script ?? buildProviderNeutralInferenceSandboxSmokeScript(model, options.authority);
   return spawnSync("python3", ["-c", `${prelude}\n${script}`], {
     encoding: "utf8",
     env:
@@ -354,9 +356,6 @@ describe("compatible endpoint sandbox smoke helpers", () => {
       2,
       expect.any(Array),
       expect.objectContaining({ timeout: 625_000 }),
-    );
-    expect(runOpenshell.mock.calls[1]?.[0].at(-1)).toContain(
-      "REASONING_ONLY at the initial token limit",
     );
   });
 
@@ -552,30 +551,58 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     },
   );
 
-  it("retries one reasoning-length response with a larger content budget before the remaining proofs", () => {
+  it("retries reasoning-only content through the public sandbox verification path", () => {
     const authority = allAgentProofAuthorities[0].authority;
-    const result = runProviderNeutralScript({
-      authority,
-      model: "qwen3-vl:4b",
-      responses: [
-        {
-          model: "qwen3-vl:4b",
-          choices: [
-            {
-              finish_reason: "length",
-              message: { content: "", reasoning_content: "Planning the response." },
-            },
-          ],
-        },
-        { model: "qwen3-vl:4b", choices: [{ message: { content: "PONG" } }] },
-        providerNeutralResponses("qwen3-vl:4b")[1],
-      ],
-    });
+    const model = "qwen3-vl:4b";
+    const responses = [
+      {
+        model,
+        choices: [
+          {
+            finish_reason: "length",
+            message: { content: "", reasoning_content: "Planning the response." },
+          },
+        ],
+      },
+      { model, choices: [{ message: { content: "PONG" } }] },
+      providerNeutralResponses(model)[1],
+    ];
+    let result: ReturnType<typeof runProviderNeutralScript> | undefined;
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "provider ready" })
+      .mockImplementationOnce((args: string[]) => {
+        result = runProviderNeutralScript({
+          authority,
+          model,
+          responses,
+          script: String(args.at(-1)),
+        });
+        return result;
+      });
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stderr).toContain("REASONING_ONLY at the initial token limit");
-    expect(result.stdout).toContain("INFERENCE_REQUEST_TOKENS=512,1024,512");
-    expect(result.stdout).toContain("DIRECT_REQUEST_COUNT=1");
+    try {
+      verifyCompatibleEndpointSandboxSmoke({
+        sandboxName: "managed-inference-sandbox",
+        provider: "ollama-local",
+        model,
+        runOpenshell,
+        redact: (value) => value,
+        forceCanonicalRoute: true,
+        hostLocalInferenceProofAuthority: authority,
+      });
+
+      expect(result?.status, result?.stderr).toBe(0);
+      expect(result?.stderr).toContain("REASONING_ONLY at the initial token limit");
+      expect(result?.stdout).toContain("INFERENCE_REQUEST_TOKENS=512,1024,512");
+      expect(result?.stdout).toContain("DIRECT_REQUEST_COUNT=1");
+      expect(log.mock.calls.flat().join("\n")).toContain(
+        "Provider responds through inference.local inside the sandbox",
+      );
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("routes managed inference through the runtime proxy and bypasses it for direct denial (#10423)", () => {
