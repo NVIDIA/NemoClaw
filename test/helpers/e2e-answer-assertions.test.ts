@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   compactAnswerText,
-  containsConversationalIntegerAnswer,
+  containsAnswer,
   containsInteger42Answer,
   containsIntegerAnswer,
   containsReplyTokenAllowingWhitespace,
@@ -23,48 +23,21 @@ describe("E2E answer assertions", () => {
     expect(containsInteger42Answer("420")).toBe(false);
   });
 
-  it("accepts the expected integer and rejects internal tool output (#10215)", () => {
-    expect(containsConversationalIntegerAnswer("The answer is 5\n6.", 56)).toBe(true);
-    expect(
-      containsConversationalIntegerAnswer(
-        '{"type":"function","function":{"name":"read","parameters":{"value":56}}',
-        56,
-      ),
-    ).toBe(false);
-    expect(
-      containsConversationalIntegerAnswer(
-        '[{"name":"read","parameters":{"value":56}},{"name":"tts"}]',
-        56,
-      ),
-    ).toBe(false);
-    expect(
-      containsConversationalIntegerAnswer(
-        '{"id":"call_1","type":"function","function":{"name":"read","parameters":{"value":56}}}',
-        56,
-      ),
-    ).toBe(false);
-    expect(
-      containsConversationalIntegerAnswer('{"tool":"read","arguments":{"value":56}}', 56),
-    ).toBe(false);
-    expect(
-      containsConversationalIntegerAnswer(
-        '{"tool_calls":[{"function":{"arguments":{"value":56}}}]}',
-        56,
-      ),
-    ).toBe(false);
-    expect(
-      containsConversationalIntegerAnswer(
-        'Tool call: {"name":"read","parameters":{"value":56}}',
-        56,
-      ),
-    ).toBe(false);
-    expect(
-      containsConversationalIntegerAnswer(
-        '~~~json\n{"type":"function","function":{"name":"read","param":{"value":56}}}\n~~~',
-        56,
-      ),
-    ).toBe(false);
-    expect(containsConversationalIntegerAnswer("", 56)).toBe(false);
+  it("accepts the expected conversational answer (#10215)", () => {
+    expect(containsAnswer("The answer is 5\n6.", "56")).toBe(true);
+    expect(containsAnswer("", "56")).toBe(false);
+  });
+
+  it.each([
+    '{"type":"function","function":{"name":"read","parameters":{"value":56}}',
+    '[{"name":"read","parameters":{"value":56}},{"name":"tts"}]',
+    '{"id":"call_1","type":"function","function":{"name":"read","parameters":{"value":56}}}',
+    '{"tool":"read","arguments":{"value":56}}',
+    '{"tool_calls":[{"function":{"arguments":{"value":56}}}]}',
+    'Tool call: {"name":"read","parameters":{"value":56}}',
+    '~~~json\n{"type":"function","function":{"name":"read","param":{"value":56}}}\n~~~',
+  ])("rejects internal tool output: %s (#10215)", (output) => {
+    expect(containsAnswer(output, "56"), output).toBe(false);
   });
 
   it("matches deterministic reply tokens split by streaming whitespace", () => {

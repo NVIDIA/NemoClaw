@@ -177,39 +177,6 @@ function updateJsonScanState(
   };
 }
 
-function collectAssistantText(value: unknown): string[] {
-  if (typeof value === "string" && value.trim()) return [value.trim()];
-  if (!value || typeof value !== "object") return [];
-  if (Array.isArray(value)) return value.flatMap(collectAssistantText);
-  const record = value as Record<string, unknown>;
-  return [
-    "result",
-    "payloads",
-    "payload",
-    "messages",
-    "choices",
-    "message",
-    "delta",
-    "content",
-    "reasoning_content",
-    "response",
-    "data",
-    "output",
-    "outputs",
-    "items",
-    "segments",
-    "text",
-  ].flatMap((key) => (key in record ? collectAssistantText(record[key]) : []));
-}
-
-export function extractOpenClawAgentText(output: string): string {
-  for (let start = output.indexOf("{"); start >= 0; start = output.indexOf("{", start + 1)) {
-    const text = collectAssistantText(parseJsonObjectAt(output, start))[0];
-    if (text) return text;
-  }
-  return "";
-}
-
 function collectOpenClawPayloadText(value: unknown): string[] {
   if (!value || typeof value !== "object" || Array.isArray(value)) return [];
   const record = value as Record<string, unknown>;

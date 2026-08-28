@@ -11,10 +11,10 @@ export function containsIntegerAnswer(text: string, answer: number): boolean {
   return new RegExp(`(^|[^0-9])${escapedAnswer}([^0-9]|$)`).test(compactAnswerText(text));
 }
 
-export function containsConversationalIntegerAnswer(text: string, answer: number): boolean {
+export function containsAnswer(text: string, answer: string): boolean {
   const trimmed = text.trim();
   if (/[{[]/u.test(trimmed)) return false;
-  return containsIntegerAnswer(trimmed, answer);
+  return compactAnswerText(trimmed).includes(compactAnswerText(answer));
 }
 
 export function containsInteger42Answer(text: string): boolean {

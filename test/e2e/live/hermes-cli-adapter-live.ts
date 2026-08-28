@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { containsConversationalIntegerAnswer } from "../../helpers/e2e-answer-assertions.ts";
+import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -68,7 +68,7 @@ export async function assertHermesCliAdapterLiveContract({
     );
     const result = await runHermesCli(args, runArtifact);
     expect(
-      containsConversationalIntegerAnswer(stripAnsi(result.stdout), 56),
+      containsAnswer(stripAnsi(result.stdout), "56"),
       resultText(result),
     ).toBe(true);
     const afterText = await listDefaultSessionsText(afterArtifact);
@@ -87,7 +87,13 @@ export async function assertHermesCliAdapterLiveContract({
   const issue5254Marker = `NEMOCLAW_5254_${Date.now()}`;
   const beforeSeedSessions = await listDefaultSessions("phase-4-issue-5254-sessions-before-seed");
   const seedPrompt = `Remember this exact token: ${issue5254Marker}. Reply with acknowledged.`;
-  await runHermesCli(["-z", seedPrompt], "phase-4-issue-5254-seed-oneshot");
+  const seedResult = await runHermesCli(
+    ["-z", seedPrompt],
+    "phase-4-issue-5254-seed-oneshot",
+  );
+  expect(containsAnswer(stripAnsi(seedResult.stdout), "acknowledged"), resultText(seedResult)).toBe(
+    true,
+  );
   const seedSessionId = onlyNewHermesSessionId(
     beforeSeedSessions,
     await listDefaultSessions("phase-4-issue-5254-sessions-after-seed"),
