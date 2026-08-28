@@ -13,13 +13,13 @@ import {
   cleanupBraveNemoClawSandbox,
   cleanupBraveState,
   commandEnv,
-  extractOpenClawAgentText,
   onboardBrave,
   reuseBraveSandboxWithWebSearchDisabled,
   runBraveAgentWithSecretBoundaryCheck,
   SANDBOX_NAME,
   sandboxShell,
 } from "./brave-search-helpers.ts";
+import { extractOpenClawAgentText } from "./agent-turn-latency-helpers.ts";
 
 const LIVE_TIMEOUT_MS = 35 * 60_000;
 

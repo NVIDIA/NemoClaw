@@ -100,6 +100,7 @@ export function normalizeRebuildWebSearchPolicyPresets(
       webSearchConfig,
       customPresetNames,
       tier,
+      agent: sandboxEntry.agent,
     });
   });
   if (

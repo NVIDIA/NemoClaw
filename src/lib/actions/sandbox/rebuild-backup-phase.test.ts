@@ -61,6 +61,19 @@ describe("rebuild web-search policy normalization", () => {
     ).toEqual(["npm", "brave"]);
   });
 
+  it.each(["hermes", "langchain-deepagents-code"])(
+    "removes OpenClaw-only brave from a Balanced-tier %s rebuild",
+    (agent) => {
+      expect(
+        normalizeRebuildWebSearchPolicyPresets(
+          ["npm", "brave"],
+          { name: "alpha", agent, policyTier: "balanced" },
+          null,
+        ),
+      ).toEqual(["npm"]);
+    },
+  );
+
   it("preserves DCode's standalone Tavily and excludes custom names from built-in replay", () => {
     expect(
       normalizeRebuildWebSearchPolicyPresets(

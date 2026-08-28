@@ -261,6 +261,26 @@ describe("preparePolicyPresetResumeSelection tier-default preservation (#6844)",
     expect(result.policyPresets).toEqual(["npm"]);
     expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
   });
+
+  it.each(["hermes", "langchain-deepagents-code"])(
+    "prunes OpenClaw-only brave from a Balanced-tier %s resume",
+    (agent) => {
+      const result = preparePolicyPresetResumeSelection(
+        { policies: policies({ applied: ["npm", "brave"] }) },
+        "alpha",
+        {
+          recordedPolicyPresets: ["npm", "brave"],
+          agent,
+          webSearchConfig: null,
+          webSearchSupported: true,
+          tierName: "balanced",
+        },
+      );
+
+      expect(result.policyPresets).toEqual(["npm"]);
+      expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
+    },
+  );
 });
 
 describe("preparePolicyPresetResumeSelection observability reconciliation", () => {

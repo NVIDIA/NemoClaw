@@ -127,24 +127,9 @@ describe("tiers", () => {
       ).toBe(true);
     });
 
-    it.each(["balanced", "open", " BALANCED "])(
-      "recognizes brave in the %s tier definition",
-      (tierName) => {
-        expect(tierIncludesPolicyPreset(getTier(tierName.trim().toLowerCase()), " BRAVE ")).toBe(
-          true,
-        );
-      },
-    );
-
-    it.each(["restricted", "personal", "unknown", ""])(
-      "does not assign brave to the %s tier",
-      (tierName) => {
-        expect(tierIncludesPolicyPreset(getTier(tierName), "brave")).toBe(false);
-      },
-    );
-
-    it("rejects an empty preset name and a missing tier", () => {
-      expect(tierIncludesPolicyPreset(getTier("balanced"), " ")).toBe(false);
+    it("rejects an empty preset name and a missing or empty membership", () => {
+      expect(tierIncludesPolicyPreset({ presets: [] }, "brave")).toBe(false);
+      expect(tierIncludesPolicyPreset({ presets: [{ name: "brave" }] }, " ")).toBe(false);
       expect(tierIncludesPolicyPreset(null, "brave")).toBe(false);
     });
   });

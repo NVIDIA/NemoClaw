@@ -120,6 +120,7 @@ export function preparePolicyPresetResumeSelection(
       webSearchConfig: options.webSearchConfig,
       customPresetNames: customPolicyPresetNames,
       tier,
+      agent: options.agent,
     });
   const isInactiveObservability = (name: string) =>
     isInactiveObservabilityPolicyPreset(name, {

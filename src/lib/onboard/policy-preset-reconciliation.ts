@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
-import { filterSetupPolicyPresetNamesForAgent } from "./agent-policy-presets";
+import {
+  filterSetupPolicyPresetNamesForAgent,
+  setupPolicyPresetAppliesToAgent,
+} from "./agent-policy-presets";
 import { mergeRequiredHermesToolGatewayPolicyPresets } from "./hermes-managed-tools";
 import {
   mergeEnabledMessagingChannelPolicyPresets,
@@ -98,12 +101,16 @@ export function isStaleBuiltinWebSearchPolicyPreset(
     webSearchConfig?: WebSearchConfig | null;
     customPresetNames?: ReadonlySet<string> | null;
     tier?: TierPresetMembership | null;
+    agent?: string | null;
   } = {},
 ): boolean {
   if (options.customPresetNames?.has(name)) return false;
   // A preset in the recorded tier is tier egress, not stale provider state.
   // Unknown tiers fail closed because the canonical tier lookup returns false.
-  if (tierIncludesPolicyPreset(options.tier, name)) {
+  if (
+    setupPolicyPresetAppliesToAgent(name, options.agent) &&
+    tierIncludesPolicyPreset(options.tier, name)
+  ) {
     return false;
   }
   if (name === "nous-web") {
@@ -154,6 +161,7 @@ export function createUnavailablePolicyPresetPruner(options: {
             webSearchConfig: options.webSearchConfig,
             customPresetNames: options.customPresetNames,
             tier,
+            agent: options.agent,
           })) &&
         !isInactiveObservabilityPolicyPreset(name, options),
     );
