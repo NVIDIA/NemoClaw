@@ -17,6 +17,7 @@ vi.mock("./runtime", () => ({
 }));
 
 import {
+  parseCliOpenShellProviderNames,
   runOpenshellProviderCommand,
   setProviderCommandRuntimeHooksForTest,
 } from "./provider-command";
@@ -65,5 +66,11 @@ describe("OpenShell provider command runtime", () => {
       }),
     );
     expect(result).toEqual({ status: 0 });
+  });
+
+  it("parses provider names without ANSI or blank lines (#9806)", () => {
+    expect(
+      parseCliOpenShellProviderNames("  \u001b[32malpha\u001b[0m  \r\n\r\nbeta\n"),
+    ).toEqual(["alpha", "beta"]);
   });
 });

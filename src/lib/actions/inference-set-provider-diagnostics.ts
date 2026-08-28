@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CaptureOpenshellOptions, CaptureOpenshellResult } from "../adapters/openshell/client";
-import { parseCliOpenShellProviderNames } from "../adapters/openshell/provider-adapter-cli";
+import { parseCliOpenShellProviderNames } from "../adapters/openshell/provider-command";
 import { classifyGatewayProviderNames } from "../credentials/provider-list";
 import {
   buildOpenshellInferenceSetFailureMessage,

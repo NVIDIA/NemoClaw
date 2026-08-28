@@ -134,6 +134,10 @@ export function formatResetOutcome(
     lines.push(
       "",
       `  '${key}' is still attached to sandbox(es): ${stuck}.`,
+      ...recovery.recoveryFailures.map(
+        (failure) =>
+          `  Could not detach provider '${key}' from sandbox '${failure.sandbox}': ${failure.error.message}`,
+      ),
       `  Detach it with 'openshell sandbox provider detach <sandbox> ${key}'`,
       `  for each, then re-run '${CLI_NAME} credentials reset ${key}'.`,
     );

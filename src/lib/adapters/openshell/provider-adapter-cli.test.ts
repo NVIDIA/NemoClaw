@@ -240,6 +240,27 @@ describe("CLI OpenShell provider adapter", () => {
     ]);
   });
 
+  it("stops attachment parsing before trailing diagnostic prose (#9806)", async () => {
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () =>
+        captured(1, "", "provider is attached to sandbox(es): alpha, beta. Detach them first."),
+    });
+
+    await expect(
+      adapter.deleteProvider({
+        target: selectedOpenShellGateway(),
+        providerName: "search-prod",
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "attached",
+        attachedSandboxes: ["alpha", "beta"],
+      },
+    });
+  });
+
   it("places a named gateway flag before detach arguments (#9806)", async () => {
     const run = vi.fn(() => captured(0));
     const adapter = createCliOpenShellProviderAdapter({ run });

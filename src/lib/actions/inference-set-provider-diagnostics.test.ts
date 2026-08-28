@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { parseCliOpenShellProviderNames } from "../adapters/openshell/provider-adapter-cli";
+import { parseCliOpenShellProviderNames } from "../adapters/openshell/provider-command";
 import { classifyGatewayProviderNames, isBridgeProviderName } from "../credentials/provider-list";
 import { queryRegisteredGatewayProviders } from "./inference-set-provider-diagnostics";
 

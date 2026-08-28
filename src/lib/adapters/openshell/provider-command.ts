@@ -8,6 +8,8 @@ import { OPENSHELL_OPERATION_TIMEOUT_MS, runOpenshell } from "./runtime";
 
 export { OPENSHELL_OPERATION_TIMEOUT_MS };
 
+const ANSI_RE = /\x1b\[[0-9;]*m/gu;
+
 export type ProviderCommandOptions = {
   env?: Record<string, string | undefined>;
   ignoreError?: boolean;
@@ -24,6 +26,16 @@ let runtimeHooks: ProviderCommandRuntimeHooks = {};
 
 export function setProviderCommandRuntimeHooksForTest(hooks: ProviderCommandRuntimeHooks): void {
   runtimeHooks = hooks;
+}
+
+export function parseCliOpenShellProviderNames(output: unknown): string[] {
+  const text =
+    typeof output === "string" || Buffer.isBuffer(output) ? output.toString() : String(output ?? "");
+  return text
+    .replace(ANSI_RE, "")
+    .split(/\r?\n/u)
+    .map((name) => name.trim())
+    .filter(Boolean);
 }
 
 export function runOpenshellProviderCommand(args: string[], opts?: ProviderCommandOptions) {

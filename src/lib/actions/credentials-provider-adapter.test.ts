@@ -233,6 +233,43 @@ describe("credential actions use typed OpenShell provider results", () => {
     });
   });
 
+  it("reports the typed detach failure that blocks provider removal (#9806)", async () => {
+    const deleteProvider = vi
+      .fn<OpenShellProviderAdapter["deleteProvider"]>()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "attached",
+          message: "provider remains attached",
+          attachedSandboxes: ["alpha"],
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { kind: "command", reason: "failed", message: "provider deletion failed" },
+      });
+    const detachProvider = vi.fn<OpenShellProviderAdapter["detachProvider"]>(async () => ({
+      ok: false,
+      error: {
+        kind: "authentication",
+        message: "OpenShell could not authenticate the provider operation.",
+      },
+    }));
+    const adapter = providerAdapter({ deleteProvider, detachProvider });
+
+    const result = await runCredentialsResetAction(
+      { provider: "custom-provider", confirmed: true },
+      { providerAdapter: adapter },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.failureLines).toContain(
+      "  Could not detach provider 'custom-provider' from sandbox 'alpha': OpenShell could not authenticate the provider operation.",
+    );
+    expect(result.failureLines).toContain("  provider deletion failed");
+  });
+
   it.each([
     ["absent", undefined],
     ["empty", []],
