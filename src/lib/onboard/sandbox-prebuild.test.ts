@@ -15,13 +15,15 @@ vi.mock("../adapters/docker/exec", async (importOriginal) => ({
   dockerSpawn: mocks.dockerSpawn,
 }));
 
-import { withStdoutRedirectedToStderr } from "../cli/stdout-guard";
-import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
 import {
   dockerBuildSubprocessEnv,
   mergeIsolatedDockerClientEnv,
-  prebuildSandboxImageIfEligible,
   prepareDockerBuildEnvironment,
+} from "../adapters/docker/client-isolation";
+import { withStdoutRedirectedToStderr } from "../cli/stdout-guard";
+import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
+import {
+  prebuildSandboxImageIfEligible,
   resolveSandboxPrebuildEnabled,
   sandboxLocalImageRef,
 } from "./sandbox-prebuild";

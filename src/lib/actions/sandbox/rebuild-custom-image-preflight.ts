@@ -4,6 +4,10 @@
 import path from "node:path";
 
 import { dockerBuild, dockerRmi } from "../../adapters/docker";
+import {
+  prepareDockerBuildEnvironment,
+  type DockerBuildEnvironmentInput,
+} from "../../adapters/docker/client-isolation";
 import { fingerprintBuildContext } from "../../adapters/fs/build-context-fingerprint";
 import type { AgentDefinition } from "../../agent/defs";
 import { createAgentSandbox } from "../../agent/onboard";
@@ -11,10 +15,6 @@ import type { WebSearchConfig } from "../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { stageCreateSandboxBuildContext } from "../../onboard/build-context-stage";
 import { patchStagedDockerfileMessagingPlan } from "../../onboard/dockerfile-patch";
-import {
-  prepareDockerBuildEnvironment,
-  type DockerBuildEnvironmentInput,
-} from "../../onboard/sandbox-prebuild";
 import {
   applyReasoningEffortEnv,
   REASONING_EFFORT_ENV,

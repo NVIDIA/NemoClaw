@@ -9,11 +9,11 @@ import path from "node:path";
 import {
   createCredentialFreeDockerConfig,
   dockerBuildSubprocessEnv,
-  dockerImageInspectFormat,
   prepareDockerBuildEnvironment,
   type PreparedDockerBuildEnvironment,
-} from "../adapters/docker";
+} from "../adapters/docker/client-isolation";
 import { dockerSpawn } from "../adapters/docker/exec";
+import { dockerImageInspectFormat } from "../adapters/docker/inspect";
 import { redirectInheritedChildStdoutToStderr } from "../cli/stdout-guard";
 import {
   LOCAL_SANDBOX_IMAGE_REPO,
@@ -25,14 +25,6 @@ import {
 } from "../sandbox/build-context";
 import { isPortableExperimentalProfile } from "./docker-driver-platform";
 import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers";
-
-export {
-  dockerBuildSubprocessEnv,
-  mergeIsolatedDockerClientEnv,
-  prepareDockerBuildEnvironment,
-  type DockerBuildEnvironmentInput,
-  type PreparedDockerBuildEnvironment,
-} from "../adapters/docker";
 
 const TRUTHY_FLAG_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSY_FLAG_VALUES = new Set(["0", "false", "no", "off"]);

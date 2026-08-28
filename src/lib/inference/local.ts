@@ -14,7 +14,7 @@ import {
   mergeIsolatedDockerClientEnv,
   prepareDockerBuildEnvironment,
   type PreparedDockerBuildEnvironment,
-} from "../adapters/docker/runtime";
+} from "../adapters/docker";
 import { createBearerAuthConfig } from "../adapters/http/auth-config";
 import { CONTAINER_REACHABILITY_IMAGE } from "../adapters/http/container-curl-probe";
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";

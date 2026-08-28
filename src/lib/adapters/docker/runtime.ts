@@ -8,12 +8,6 @@ import { inferContainerRuntime } from "../../platform";
 import { dockerInfo } from "./info";
 import type { DockerCaptureOptions } from "./run";
 
-export {
-  mergeIsolatedDockerClientEnv,
-  prepareDockerBuildEnvironment,
-  type PreparedDockerBuildEnvironment,
-} from "./client-isolation";
-
 export const DOCKER_INFO_RUNTIME_PROBE_ATTEMPTS = 3;
 export const DOCKER_INFO_RUNTIME_PROBE_RETRY_DELAY_MS = 250;
 export const DOCKER_INFO_RUNTIME_PROBE_TIMEOUT_MS = 5000;
