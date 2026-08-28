@@ -19,7 +19,7 @@ function writeExecutable(target: string, contents: string): void {
   fs.writeFileSync(target, contents, { mode: 0o755 });
 }
 
-function createFixture() {
+function createFixture(architecture: "x86_64" | "aarch64" = "x86_64") {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-dev-assets-"));
   const assetDirectory = path.join(root, "assets");
   const fakeBin = path.join(root, "bin");
@@ -28,15 +28,20 @@ function createFixture() {
   fs.mkdirSync(fakeBin);
   fs.mkdirSync(source);
 
+  const cliArchitecture = architecture === "x86_64" ? "x86_64" : "aarch64";
   const archives = [
-    ["openshell-x86_64-unknown-linux-musl.tar.gz", "openshell", "openshell-checksums-sha256.txt"],
     [
-      "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
+      `openshell-${cliArchitecture}-unknown-linux-musl.tar.gz`,
+      "openshell",
+      "openshell-checksums-sha256.txt",
+    ],
+    [
+      `openshell-gateway-${architecture}-unknown-linux-gnu.tar.gz`,
       "openshell-gateway",
       "openshell-gateway-checksums-sha256.txt",
     ],
     [
-      "openshell-sandbox-x86_64-unknown-linux-musl.tar.gz",
+      `openshell-sandbox-${architecture}-unknown-linux-musl.tar.gz`,
       "openshell-sandbox",
       "openshell-sandbox-checksums-sha256.txt",
     ],
@@ -54,7 +59,7 @@ function createFixture() {
   }
   writeExecutable(
     path.join(fakeBin, "uname"),
-    `#!/usr/bin/env bash\nif [ "\${1:-}" = "-m" ]; then echo x86_64; else echo Linux; fi`,
+    `#!/usr/bin/env bash\nif [ "\${1:-}" = "-m" ]; then echo ${architecture}; else echo Linux; fi`,
   );
   writeExecutable(
     path.join(fakeBin, "openshell"),
@@ -92,6 +97,35 @@ function runInstallStep(fixture: ReturnType<typeof createFixture>) {
   });
 }
 
+function runInstaller(fixture: ReturnType<typeof createFixture>) {
+  writeExecutable(
+    path.join(fixture.fakeBin, "gh"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+asset="$7"
+destination="$9"
+cp -- "$OPENSHELL_DEV_ASSET_DIR/$asset" "$destination/$asset"`,
+  );
+  writeExecutable(
+    path.join(fixture.fakeBin, "curl"),
+    `#!/usr/bin/env bash
+printf 'Network fallback is disabled for retained OpenShell assets.\n' >&2
+exit 1`,
+  );
+  return spawnSync("bash", [INSTALLER], {
+    env: {
+      ...process.env,
+      NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
+      NEMOCLAW_OPENSHELL_CHANNEL: "dev",
+      NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1",
+      OPENSHELL_DEV_ASSET_DIR: fixture.assetDirectory,
+      PATH: `${fixture.fakeBin}:/usr/bin:/bin`,
+      XDG_BIN_HOME: path.join(fixture.root, "local-bin"),
+    },
+    encoding: "utf8",
+  });
+}
+
 describe("OpenShell retained E2E artifact installation", () => {
   it("runs retained assets through the trusted installer without network fallback (#9051)", () => {
     const fixture = createFixture();
@@ -100,6 +134,19 @@ describe("OpenShell retained E2E artifact installation", () => {
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       expect(result.stdout).toContain("Verifying SHA-256 checksum");
       expect(result.stderr).not.toContain("Network fallback is disabled");
+    } finally {
+      fs.rmSync(fixture.root, { force: true, recursive: true });
+    }
+  });
+
+  it("installs the arm64 development MUSL sandbox with release checksum verification", () => {
+    const fixture = createFixture("aarch64");
+    try {
+      const result = runInstaller(fixture);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain("Verifying SHA-256 checksum");
+      expect(result.stderr).not.toContain("Network fallback is disabled");
+      expect(fs.existsSync(path.join(fixture.fakeBin, "openshell-sandbox"))).toBe(true);
     } finally {
       fs.rmSync(fixture.root, { force: true, recursive: true });
     }

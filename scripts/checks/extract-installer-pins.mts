@@ -336,10 +336,8 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     // The first template came from the downstream 0.0.106 pin. The second authorizes its
     // fail-before-download strings preflight. The third authorizes repair when an existing formula
     // has an invalid checksum or its release formula is unavailable. The fourth preserves that
-    // template after installer tests moved under test/install. The fifth authorizes a future
-    // installer template that selects the MUSL sandbox archive published by the development
-    // channel while preserving the stable GNU release pin; the checked-in installer still uses
-    // the fourth template until the dependent behavior change lands.
+    // template after installer tests moved under test/install. The fifth selects the MUSL sandbox
+    // archive published by the development channel while preserving the stable GNU release pin.
     // Homebrew owns the formula source state, so NemoClaw cannot correct it there; the installer
     // verifies the trusted release formula before reuse. installer-homebrew-formula-reuse-trust.test.ts
     // and installer-hash-check.test.ts lock the template and trust transitions. Remove the repair
