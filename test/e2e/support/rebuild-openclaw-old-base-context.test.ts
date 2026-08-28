@@ -12,7 +12,7 @@ import {
   directDockerfileBaseCopySources,
   dockerignoreSecretPatterns,
 } from "../live/rebuild-openclaw-old-base-context.ts";
-import { createLegacyOpenClawDockerWrapper } from "../live/rebuild-openclaw-old-docker-wrapper.ts";
+import { createLegacyOpenClawOpenShellWrapper } from "../live/rebuild-openclaw-old-openshell-wrapper.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 
 const copiedContexts: string[] = [];
@@ -49,13 +49,13 @@ describe("rebuild-openclaw old-base build context", () => {
     expect(stagedSources.every((source) => fs.existsSync(source))).toBe(true);
   });
 
-  it.each([{ fileArgs: ["-f", "DOCKERFILE"] }, { fileArgs: ["--file=DOCKERFILE"] }])(
-    "patches the generated Docker build context for $fileArgs",
-    ({ fileArgs }) => {
+  it.each([{ fromArgs: ["--from", "DOCKERFILE"] }, { fromArgs: ["--from=DOCKERFILE"] }])(
+    "patches the generated sandbox create context for $fromArgs",
+    ({ fromArgs }) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-openclaw-wrapper-"));
       testFiles.push(root);
-      const realDocker = path.join(root, "real-docker");
-      const argvLog = path.join(root, "real-docker-argv.log");
+      const realOpenShell = path.join(root, "real-openshell");
+      const argvLog = path.join(root, "real-openshell-argv.log");
       const buildContext = path.join(root, "context");
       const dockerfile = path.join(buildContext, "Dockerfile");
       const blueprint = path.join(buildContext, "nemoclaw-blueprint", "blueprint.yaml");
@@ -65,32 +65,34 @@ describe("rebuild-openclaw old-base build context", () => {
       fs.chmodSync(dockerfile, 0o444);
       fs.chmodSync(blueprint, 0o444);
       fs.writeFileSync(
-        realDocker,
-        `#!/usr/bin/env bash\nprintf '%s\\n' "$@" >"$FAKE_DOCKER_ARGV_LOG"\n`,
+        realOpenShell,
+        `#!/usr/bin/env bash\nprintf '%s\\n' "$@" >"$FAKE_OPENSHELL_ARGV_LOG"\n`,
         { mode: 0o755 },
       );
-      const wrapper = createLegacyOpenClawDockerWrapper({
+      const wrapper = createLegacyOpenClawOpenShellWrapper({
         root: path.join(root, "wrapper"),
-        realDocker,
+        realOpenShell,
         baseImage: "nemoclaw-old-base:test",
         openClawVersion: "2026.3.11",
       });
 
-      const resolvedFileArgs = fileArgs.map((argument) =>
+      const resolvedFromArgs = fromArgs.map((argument) =>
         argument.replace("DOCKERFILE", dockerfile),
       );
       execFileSync(
         wrapper.executable,
-        ["build", "--tag", "fixture:old", ...resolvedFileArgs, buildContext],
-        { env: { ...process.env, FAKE_DOCKER_ARGV_LOG: argvLog } },
+        ["sandbox", "create", "--name", "fixture", ...resolvedFromArgs, "--", "nemoclaw-start"],
+        { env: { ...process.env, FAKE_OPENSHELL_ARGV_LOG: argvLog } },
       );
 
       expect(fs.readFileSync(argvLog, "utf8").trim().split("\n")).toEqual([
-        "build",
-        "--tag",
-        "fixture:old",
-        ...resolvedFileArgs,
-        buildContext,
+        "sandbox",
+        "create",
+        "--name",
+        "fixture",
+        ...resolvedFromArgs,
+        "--",
+        "nemoclaw-start",
       ]);
       const patchedDockerfile = fs.readFileSync(dockerfile, "utf8");
       expect(patchedDockerfile.match(/^ARG BASE_IMAGE=.*$/gm)).toEqual([
@@ -106,10 +108,30 @@ describe("rebuild-openclaw old-base build context", () => {
         /^\s*min_openclaw_version: "2026\.3\.11"$/m,
       );
       expect(fs.readFileSync(wrapper.logFile, "utf8")).toContain(
-        "patch docker build NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1",
+        "patch sandbox create NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1",
       );
     },
   );
+
+  it("passes OpenShell preflight commands through without patching", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-openclaw-wrapper-"));
+    testFiles.push(root);
+    const realOpenShell = path.join(root, "real-openshell");
+    fs.writeFileSync(realOpenShell, "#!/usr/bin/env bash\nprintf 'openshell 0.0.106\\n'\n", {
+      mode: 0o755,
+    });
+    const wrapper = createLegacyOpenClawOpenShellWrapper({
+      root: path.join(root, "wrapper"),
+      realOpenShell,
+      baseImage: "nemoclaw-old-base:test",
+      openClawVersion: "2026.3.11",
+    });
+
+    const output = execFileSync(wrapper.executable, ["--version"], { encoding: "utf8" });
+
+    expect(output).toBe("openshell 0.0.106\n");
+    expect(fs.existsSync(wrapper.logFile)).toBe(false);
+  });
 
   it("parses direct Dockerfile.base COPY syntax without silently ignoring variants", () => {
     const dockerfilePath = path.join(
