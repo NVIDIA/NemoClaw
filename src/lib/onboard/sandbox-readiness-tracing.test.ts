@@ -82,7 +82,14 @@ describe("createSandboxReadyWaiter", () => {
       error: null,
     });
     expect(listSandboxes).toHaveBeenCalledTimes(7);
-    expect(listSandboxes).toHaveBeenCalledWith({ target: TARGET });
+    const observationTimeouts = listSandboxes.mock.calls.map(([request]) => request.timeoutMs);
+    expect(listSandboxes).toHaveBeenCalledWith(expect.objectContaining({ target: TARGET }));
+    expect(observationTimeouts[0]).toBe(6_000);
+    expect(
+      observationTimeouts.every(
+        (timeoutMs, index) => index === 0 || timeoutMs! < observationTimeouts[index - 1]!,
+      ),
+    ).toBe(true);
     expect(sleep).toHaveBeenCalledTimes(7);
     expect(sleep).toHaveBeenNthCalledWith(1, 0.25);
     expect(sleep.mock.calls.reduce((total, [seconds]) => total + seconds, 0)).toBeCloseTo(6, 2);
@@ -165,9 +172,11 @@ describe("createSandboxReadyWaiter", () => {
         fallbackReadinessProbe,
         isLinuxDockerDriverGatewayEnabled: () => false,
         sleep,
+        now: () => 1_000,
       }),
     ).resolves.toEqual({ ready: false, reason: "observation_failed", error });
     expect(listSandboxes).toHaveBeenCalledOnce();
+    expect(listSandboxes).toHaveBeenCalledWith({ target: TARGET, timeoutMs: 20_000 });
     expect(fallbackReadinessProbe).not.toHaveBeenCalled();
     expect(sleep).not.toHaveBeenCalled();
   });
@@ -298,6 +307,7 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
       observer: { listSandboxes },
       target: TARGET,
       sleep,
+      now: () => 1_000,
     });
 
     expect(readiness).toEqual({
@@ -310,6 +320,7 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
       error.message,
     );
     expect(listSandboxes).toHaveBeenCalledOnce();
+    expect(listSandboxes).toHaveBeenCalledWith({ target: TARGET, timeoutMs: 30_000 });
     expect(sleep).not.toHaveBeenCalled();
   });
 

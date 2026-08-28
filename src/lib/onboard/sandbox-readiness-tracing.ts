@@ -150,6 +150,11 @@ function isTransientObservationError(error: OpenShellSandboxError): boolean {
   return error.kind === "timeout" || (error.kind === "transport" && error.reason === "unreachable");
 }
 
+function remainingObservationTimeoutMs(deadlineMs?: number, now?: () => number): number {
+  if (deadlineMs === undefined || now === undefined) return 1;
+  return Math.max(1, Math.floor(deadlineMs - now()));
+}
+
 async function pollSandboxReady(
   options: SandboxReadyWaitOptions & {
     trace?: (event: string, attributes: Record<string, unknown>) => void;
@@ -182,7 +187,12 @@ async function pollSandboxReady(
   const transient = { error: null as OpenShellSandboxError | null };
   await waitUntilAsync(async () => {
     attempt += 1;
-    const observation = await observeOpenShellSandbox(observer, target, sandboxName);
+    const observation = await observeOpenShellSandbox(
+      observer,
+      target,
+      sandboxName,
+      remainingObservationTimeoutMs(waitOptions.deadlineMs, waitOptions.now),
+    );
     if (!observation.ok) {
       if (isTransientObservationError(observation.error)) {
         transient.error = observation.error;
@@ -389,7 +399,12 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
       let result: CreatedSandboxReadinessResult | null = null;
       await waitUntilAsync(async () => {
         attempt += 1;
-        const observation = await observeOpenShellSandbox(observer, target, sandboxName);
+        const observation = await observeOpenShellSandbox(
+          observer,
+          target,
+          sandboxName,
+          remainingObservationTimeoutMs(readinessDeadlineMs, readinessNow),
+        );
         if (!observation.ok) {
           if (isTransientObservationError(observation.error)) {
             consecutiveReadyPolls = 0;
