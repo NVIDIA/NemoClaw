@@ -9,9 +9,11 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 import {
-  type OpenClawChannelConfigState,
   type HermesRevisionScopedCredentialChannel,
   hermesRevisionScopedCredentialLinePattern,
+} from "../fixtures/hermes-channel-credential-state.ts";
+import {
+  type OpenClawChannelConfigState,
   openClawChannelIsActive,
   openClawChannelIsInert,
   openClawChannelStateProbeScript,

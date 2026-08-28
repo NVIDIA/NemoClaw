@@ -6,9 +6,9 @@ import os from "node:os";
 import path from "node:path";
 
 import { expect } from "../fixtures/e2e-test.ts";
+import { hermesRevisionScopedCredentialLinePattern } from "../fixtures/hermes-channel-credential-state.ts";
 import {
   type OpenClawChannelConfigState,
-  hermesRevisionScopedCredentialLinePattern,
   openClawChannelIsActive,
   openClawChannelIsInert,
   openClawChannelStateProbeScript,
