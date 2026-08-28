@@ -6,11 +6,24 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  managedPolicyInspection,
+  managedSandboxEntry,
+  SANDBOX_IDENTITY,
+} from "../../../test/helpers/managed-policy-receipt-fixture";
 
 const harness = vi.hoisted(() => ({
+  inspectOpenShellSandboxIdentityFingerprint: vi.fn(() => SANDBOX_IDENTITY),
+  inspectSandboxPolicyAuthority: vi.fn(() => managedPolicyInspection()),
   livePolicy: "",
   run: vi.fn(),
   runCapture: vi.fn(),
+}));
+
+vi.mock("../adapters/openshell/policy-authority", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../adapters/openshell/policy-authority")>()),
+  inspectOpenShellSandboxIdentityFingerprint: harness.inspectOpenShellSandboxIdentityFingerprint,
+  inspectSandboxPolicyAuthority: harness.inspectSandboxPolicyAuthority,
 }));
 
 vi.mock("../runner", async (importOriginal) => ({
@@ -46,11 +59,7 @@ describe("baseline exclusion journal integration", () => {
     const registry = await import("../state/registry");
     const baseline = await import("./baseline-exclusion");
     const policy = await import("./index");
-    registry.registerSandbox({
-      name: "alpha",
-      agent: "hermes",
-      gatewayName: "nemoclaw",
-    });
+    registry.registerSandbox(managedSandboxEntry("alpha", "hermes"));
 
     harness.livePolicy = `version: 1
 network_policies:
@@ -83,6 +92,7 @@ network_policies:
       }),
     );
     expect(registry.getBaselineExclusions("alpha")).toEqual([]);
+    expect(registry.getSandbox("alpha")?.policyAuthority).toBe("nemoclaw-managed");
     interruptedCommit.mockRestore();
 
     // Simulate a new CLI process: reload both the registry and policy modules
@@ -95,5 +105,6 @@ network_policies:
     expect(reloadedRegistry.getBaselineExclusions("alpha")).toEqual([
       expect.objectContaining({ key: "nous_research", digest }),
     ]);
+    expect(reloadedRegistry.getSandbox("alpha")?.policyAuthority).toBe("nemoclaw-managed");
   });
 });

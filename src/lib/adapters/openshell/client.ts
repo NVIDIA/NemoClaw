@@ -12,6 +12,10 @@ import {
 
 import { redirectInheritedChildStdoutToStderr } from "../../cli/stdout-guard";
 import { buildSubprocessEnv } from "../../subprocess-env";
+import { processTreeBoundedOpenshellInvocation } from "./process-tree-timeout";
+import { classifyManagedGatewayEndpointBinding } from "../../../../nemoclaw/dist/shared/openshell-gateway-endpoint-boundary.cjs";
+
+export { classifyManagedGatewayEndpointBinding };
 
 export { openshellSandboxSshHost, resolveOpenshellSandboxSshHost } from "./sandbox-ssh-host";
 
@@ -28,6 +32,7 @@ interface OpenshellSpawnOptions {
   env?: NodeJS.ProcessEnv;
   replaceEnv?: boolean;
   timeout?: number;
+  killProcessTreeOnTimeout?: boolean;
   ignoreError?: boolean;
   spawnSyncImpl?: OpenshellSpawnSync;
   errorLine?: (message: string) => void;
@@ -53,6 +58,7 @@ export interface RunOpenshellOptions extends OpenshellSpawnOptions {
 export interface CaptureOpenshellOptions extends OpenshellSpawnOptions {
   includeStderr?: boolean;
   includeStreams?: boolean;
+  killSignal?: SpawnSyncOptions["killSignal"];
   maxBuffer?: number;
 }
 
@@ -87,6 +93,9 @@ const ANSI_RE = /\x1b\[[0-9;]*m/g;
 export function stripAnsi(value = ""): string {
   return String(value).replace(ANSI_RE, "");
 }
+
+export type ManagedGatewayEndpointBinding =
+  import("../../../../nemoclaw/dist/shared/openshell-gateway-endpoint-boundary.cjs").ManagedGatewayEndpointBinding;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -207,14 +216,15 @@ export function runOpenshellCommand(
   opts: RunOpenshellOptions = {},
 ): SpawnSyncReturns<string> {
   const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
-  const result = spawnSyncImpl(binary, args, {
+  const bounded = processTreeBoundedOpenshellInvocation(binary, args, opts);
+  const result = spawnSyncImpl(bounded.binary, bounded.args, {
     cwd: opts.cwd,
     env: openshellSpawnEnv(opts),
     encoding: "utf-8",
     stdio: redirectInheritedChildStdoutToStderr(opts.stdio ?? "inherit"),
     input: opts.input,
     timeout: opts.timeout,
-    killSignal: opts.killSignal,
+    killSignal: bounded.killSignal,
     maxBuffer: opts.maxBuffer,
   });
   if (result.error) {
@@ -236,12 +246,14 @@ export function captureOpenshellCommand(
   opts: CaptureOpenshellOptions = {},
 ): CaptureOpenshellResult {
   const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
-  const result = spawnSyncImpl(binary, args, {
+  const bounded = processTreeBoundedOpenshellInvocation(binary, args, opts);
+  const result = spawnSyncImpl(bounded.binary, bounded.args, {
     cwd: opts.cwd,
     env: openshellSpawnEnv(opts),
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "pipe"],
     timeout: opts.timeout,
+    killSignal: bounded.killSignal,
     maxBuffer: opts.maxBuffer,
   });
   if (result.error) {

@@ -42,6 +42,7 @@ import {
   type TrustedLocalBaseImageOverride,
   versionGte,
 } from "../sandbox-base-image";
+import { sandboxBaseImageHasSecurityInventory } from "../sandbox-base-image/security-inventory";
 import { createDeepAgentsCodeBaseImageResolutionOptions } from "./deep-agents-code-base-image";
 import type { AgentDefinition } from "./defs";
 
@@ -331,10 +332,18 @@ function createAgentBaseImageResolutionOptions(
   const validationOptions =
     agent.name === "hermes"
       ? {
-          validateImage: hermesBaseImageSupportsMcp,
-          validationDescription: "the required MCP Streamable HTTP and ACP runtimes",
+          validateImage: (imageRef: string) =>
+            hermesBaseImageSupportsMcp(imageRef) &&
+            sandboxBaseImageHasSecurityInventory(imageRef),
+          validationDescription:
+            "the required MCP Streamable HTTP and ACP runtimes and the immutable security package inventory",
         }
-      : createDeepAgentsCodeBaseImageResolutionOptions(agent, dockerfilePath);
+      : agent.name === "pi"
+        ? {
+            validateImage: sandboxBaseImageHasSecurityInventory,
+            validationDescription: "the immutable security package inventory",
+          }
+        : createDeepAgentsCodeBaseImageResolutionOptions(agent, dockerfilePath);
   const pinnedRemoteRef = getHermesPinnedRemoteBaseRef(agent) ?? undefined;
   return {
     imageName,

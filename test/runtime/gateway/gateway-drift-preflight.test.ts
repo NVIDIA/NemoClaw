@@ -229,10 +229,15 @@ function prepareCase(name: string): { binDir: string; caseDir: string; home: str
   return { binDir, caseDir, home };
 }
 
-function runCli(caseDir: string, home: string, binDir: string, args: string[]): CommandResult {
-  const result = spawnSync(process.execPath, [CLI_ENTRYPOINT, ...args], {
+function runCli(
+  caseDir: string,
+  home: string,
+  binDir: string,
+  args: string[],
+): Promise<CommandResult> {
+  const result = spawn(process.execPath, [CLI_ENTRYPOINT, ...args], {
     cwd: REPO_ROOT,
-    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
       HOME: home,
@@ -259,24 +264,26 @@ function runCli(caseDir: string, home: string, binDir: string, args: string[]): 
     killSignal: "SIGKILL",
     timeout: commandTimeoutMs,
   });
-  return {
-    caseDir,
-    output: [result.stdout, result.stderr].filter(Boolean).join("\n"),
-    status: result.status,
-    signal: result.signal,
-  };
+  const output: string[] = [];
+  result.stdout.setEncoding("utf8").on("data", (chunk: string) => output.push(chunk));
+  result.stderr.setEncoding("utf8").on("data", (chunk: string) => output.push(chunk));
+  return new Promise((resolve) =>
+    result.on("close", (status, signal) =>
+      resolve({ caseDir, output: output.join("\n"), status, signal }),
+    ),
+  );
 }
 
 function runBackupCase(
   name: string,
   options: { gatewayImage?: string; gatewayRunning?: string } = {},
-): CommandResult {
+): Promise<CommandResult> {
   const { binDir, caseDir, home } = prepareCase(name);
   writeFakeDocker(binDir, options);
   return runCli(caseDir, home, binDir, ["backup-all"]);
 }
 
-function runLiveHostProcessCase(name: string): CommandResult {
+function runLiveHostProcessCase(name: string): Promise<CommandResult> {
   const { binDir, caseDir, home } = prepareCase(name);
   writeFakeDockerNoCluster(binDir);
   const gatewayBin = writeFakeGatewayBinary(binDir, "0.0.43");
@@ -288,7 +295,7 @@ function runLiveHostProcessCase(name: string): CommandResult {
   return runCli(caseDir, home, binDir, ["backup-all"]);
 }
 
-function runMarkerlessHostProcessCase(name: string): CommandResult {
+function runMarkerlessHostProcessCase(name: string): Promise<CommandResult> {
   const { binDir, caseDir, home } = prepareCase(name);
   writeFakeDockerNoCluster(binDir);
   writeFakeGatewayBinary(binDir, "0.0.43");
@@ -332,114 +339,125 @@ function expectSandboxListCalled(result: CommandResult, expected: boolean): void
 }
 
 describe("gateway drift preflight", () => {
-  it("fails closed before unsafe sandbox state mutation when gateway schema or binary drift is detected", {
-    timeout: 180_000,
-  }, () => {
-    try {
-      expect(fs.existsSync(CLI_ENTRYPOINT), "repo CLI entrypoint must exist").toBe(true);
+  it(
+    "fails closed before unsafe sandbox state mutation when gateway schema or binary drift is detected",
+    {
+      timeout: 180_000,
+    },
+    async () => {
+      try {
+        expect(fs.existsSync(CLI_ENTRYPOINT), "repo CLI entrypoint must exist").toBe(true);
 
-      const protobuf = runBackupCase("protobuf-mismatch", {
-        gatewayImage: "ghcr.io/nvidia/openshell/cluster:0.0.37",
-        gatewayRunning: "false",
-      });
-      expect(protobuf.signal, protobuf.output).toBeNull();
-      expect(protobuf.status, protobuf.output).not.toBe(0);
-      expectContains(
-        protobuf,
-        /protobuf|schema mismatch|invalid wire type/i,
-        "protobuf mismatch is surfaced",
-      );
-      expectContains(
-        protobuf,
-        /No sandbox data was changed|Refusing to trust OpenShell sandbox state/i,
-        "fail-closed no-mutation guidance is printed",
-      );
-      expectNotContains(
-        protobuf,
-        /Skipping '?alpha'? \(not running\)/,
-        "running sandbox is not misclassified as stopped",
-      );
-      expectNotContains(
-        protobuf,
-        /Backup complete/i,
-        "backup does not proceed after unsafe state RPC",
-      );
-      expectSandboxListCalled(protobuf, true);
+        const protobufPromise = runBackupCase("protobuf-mismatch", {
+          gatewayImage: "ghcr.io/nvidia/openshell/cluster:0.0.37",
+          gatewayRunning: "false",
+        });
+        const imageDriftPromise = runBackupCase("patched-image-drift", {
+          gatewayImage: "nemoclaw-cluster:0.0.36-fuse-overlayfs-aa8b8487",
+        });
+        const hostBackupPromise = runLiveHostProcessCase("host-process-backup");
+        const noMarkerPromise = runMarkerlessHostProcessCase("host-process-no-marker");
+        const stalePromise = (() => {
+          const { binDir, caseDir, home } = prepareCase("host-process-stale-marker");
+          const oldInstall = path.join(caseDir, "old-install");
+          fs.mkdirSync(oldInstall, { recursive: true });
+          writeFakeDockerNoCluster(binDir);
+          writeFakeGatewayBinary(binDir, "0.0.37");
+          const staleGateway = writeFakeGatewayBinary(oldInstall, "0.0.43");
+          writeHostProcessMarker(home, staleGateway, 999999);
+          return runCli(caseDir, home, binDir, ["backup-all"]);
+        })();
+        const [protobuf, imageDrift, hostBackup, noMarker, stale] = await Promise.all([
+          protobufPromise,
+          imageDriftPromise,
+          hostBackupPromise,
+          noMarkerPromise,
+          stalePromise,
+        ]);
+        expect(protobuf.signal, protobuf.output).toBeNull();
+        expect(protobuf.status, protobuf.output).not.toBe(0);
+        expectContains(
+          protobuf,
+          /protobuf|schema mismatch|invalid wire type/i,
+          "protobuf mismatch is surfaced",
+        );
+        expectContains(
+          protobuf,
+          /No sandbox data was changed|Refusing to trust OpenShell sandbox state/i,
+          "fail-closed no-mutation guidance is printed",
+        );
+        expectNotContains(
+          protobuf,
+          /Skipping '?alpha'? \(not running\)/,
+          "running sandbox is not misclassified as stopped",
+        );
+        expectNotContains(
+          protobuf,
+          /Backup complete/i,
+          "backup does not proceed after unsafe state RPC",
+        );
+        expectSandboxListCalled(protobuf, true);
 
-      const imageDrift = runBackupCase("patched-image-drift", {
-        gatewayImage: "nemoclaw-cluster:0.0.36-fuse-overlayfs-aa8b8487",
-      });
-      expect(imageDrift.status, imageDrift.output).not.toBe(0);
-      expectContains(
-        imageDrift,
-        /schema preflight failed|gateway schema preflight failed|image.*does not match|Running gateway image/i,
-        "gateway image drift preflight is surfaced",
-      );
-      expectContains(imageDrift, /0\.0\.37/, "installed OpenShell version is reported");
-      expectContains(
-        imageDrift,
-        /nemoclaw-cluster:0\.0\.36-fuse-overlayfs-aa8b8487|0\.0\.36/,
-        "patched stale gateway image/version is reported",
-      );
-      expectSandboxListCalled(imageDrift, false);
+        expect(imageDrift.status, imageDrift.output).not.toBe(0);
+        expectContains(
+          imageDrift,
+          /schema preflight failed|gateway schema preflight failed|image.*does not match|Running gateway image/i,
+          "gateway image drift preflight is surfaced",
+        );
+        expectContains(imageDrift, /0\.0\.37/, "installed OpenShell version is reported");
+        expectContains(
+          imageDrift,
+          /nemoclaw-cluster:0\.0\.36-fuse-overlayfs-aa8b8487|0\.0\.36/,
+          "patched stale gateway image/version is reported",
+        );
+        expectSandboxListCalled(imageDrift, false);
 
-      const hostBackup = runLiveHostProcessCase("host-process-backup");
-      expect(hostBackup.status, hostBackup.output).not.toBe(0);
-      expectContains(
-        hostBackup,
-        /schema preflight failed|gateway schema preflight failed|Running gateway binary/i,
-        "host-process gateway drift preflight is surfaced",
-      );
-      expectContains(hostBackup, /0\.0\.37/, "installed OpenShell version is reported");
-      expectContains(
-        hostBackup,
-        /Running gateway binary.*0\.0\.43/,
-        "running host-process gateway binary/version is reported",
-      );
-      expectContains(
-        hostBackup,
-        /No sandbox data was changed|Refusing to trust OpenShell sandbox state/i,
-        "fail-closed no-mutation guidance is printed",
-      );
-      expectNotContains(
-        hostBackup,
-        /Running gateway image/i,
-        "host-process drift does not claim a cluster image",
-      );
-      expectSandboxListCalled(hostBackup, false);
+        expect(hostBackup.status, hostBackup.output).not.toBe(0);
+        expectContains(
+          hostBackup,
+          /schema preflight failed|gateway schema preflight failed|Running gateway binary/i,
+          "host-process gateway drift preflight is surfaced",
+        );
+        expectContains(hostBackup, /0\.0\.37/, "installed OpenShell version is reported");
+        expectContains(
+          hostBackup,
+          /Running gateway binary.*0\.0\.43/,
+          "running host-process gateway binary/version is reported",
+        );
+        expectContains(
+          hostBackup,
+          /No sandbox data was changed|Refusing to trust OpenShell sandbox state/i,
+          "fail-closed no-mutation guidance is printed",
+        );
+        expectNotContains(
+          hostBackup,
+          /Running gateway image/i,
+          "host-process drift does not claim a cluster image",
+        );
+        expectSandboxListCalled(hostBackup, false);
 
-      const noMarker = runMarkerlessHostProcessCase("host-process-no-marker");
-      expect(noMarker.status, noMarker.output).not.toBe(0);
-      expectContains(
-        noMarker,
-        /schema preflight failed|gateway schema preflight failed|Running gateway binary/i,
-        "host-process gateway drift is detected via fallback resolver without runtime marker",
-      );
-      expectContains(
-        noMarker,
-        /Running gateway binary.*0\.0\.43/,
-        "fallback-resolved gateway binary/version is reported",
-      );
-      expectSandboxListCalled(noMarker, false);
+        expect(noMarker.status, noMarker.output).not.toBe(0);
+        expectContains(
+          noMarker,
+          /schema preflight failed|gateway schema preflight failed|Running gateway binary/i,
+          "configured host-process gateway binary drift is detected without a runtime marker",
+        );
+        expectContains(
+          noMarker,
+          /Running gateway binary.*0\.0\.43/,
+          "configured gateway binary version is reported without a runtime marker",
+        );
+        expectSandboxListCalled(noMarker, false);
 
-      const stale = (() => {
-        const { binDir, caseDir, home } = prepareCase("host-process-stale-marker");
-        const oldInstall = path.join(caseDir, "old-install");
-        fs.mkdirSync(oldInstall, { recursive: true });
-        writeFakeDockerNoCluster(binDir);
-        writeFakeGatewayBinary(binDir, "0.0.37");
-        const staleGateway = writeFakeGatewayBinary(oldInstall, "0.0.43");
-        writeHostProcessMarker(home, staleGateway, 999999);
-        return runCli(caseDir, home, binDir, ["backup-all"]);
-      })();
-      expectNotContains(
-        stale,
-        /Running gateway binary.*0\.0\.43/,
-        "stale marker binary is not used to fabricate drift",
-      );
-      expectSandboxListCalled(stale, true);
-    } finally {
-      releaseGatewayDriftFixtures();
-    }
-  });
+        expectNotContains(
+          stale,
+          /Running gateway binary.*0\.0\.43/,
+          "stale marker binary is not used to fabricate drift",
+        );
+        expectSandboxListCalled(stale, true);
+      } finally {
+        releaseGatewayDriftFixtures();
+      }
+    },
+  );
 });

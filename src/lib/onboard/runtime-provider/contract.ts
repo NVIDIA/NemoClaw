@@ -8,6 +8,7 @@ import type {
   ManagedBootstrapRuntimeOnboardRouting,
   ManagedBootstrapRuntimeOnboardRoutingInput,
 } from "../managed-bootstrap/runtime-create";
+import type { NativeArtifactWorkloadReceiptV1 } from "../workload/native-artifact";
 import type { ManagedImageSelectionPolicy } from "../workload/source";
 import type {
   HostLocalInferenceOperation,
@@ -20,6 +21,8 @@ export const RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION = 1 as const;
 export const RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION = 1 as const;
 export const RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION = 2 as const;
 export const RUNTIME_PROVIDER_STATE_MUTATION_PLAN_SCHEMA_VERSION = 2 as const;
+export const RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION = 4 as const;
+export const RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_PLAN_SCHEMA_VERSION = 1 as const;
 
 export type RuntimeProviderGatewayLauncher = "nemoclaw" | "openshell";
 export type RuntimeProviderLifecycleAction = "start" | "stop";
@@ -85,6 +88,123 @@ export interface RuntimeProviderNormalizedCapabilities {
   readonly workloadImageCleanup: boolean;
   readonly readOnlyHostMounts: RuntimeProviderReadOnlyHostMountCapability;
 }
+
+export interface RuntimeProviderNativeArtifactBootstrapInput {
+  readonly providerId: string;
+  readonly sandboxName: string;
+  readonly lifecycleGeneration: string;
+  readonly driveRoot: string;
+  readonly artifactRoot: string;
+  readonly workload: NativeArtifactWorkloadReceiptV1;
+}
+
+export interface RuntimeProviderNativeArtifactBootstrapPlan {
+  readonly schemaVersion: typeof RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_PLAN_SCHEMA_VERSION;
+  readonly providerId: string;
+  readonly sandboxName: string;
+  readonly lifecycleGeneration: string;
+  readonly authoritySha256: string;
+  /** Provider-owned idempotency and recovery authority assigned before resource mutation. */
+  readonly providerHandle: string;
+  readonly driveRoot: string;
+  readonly artifactRoot: string;
+  readonly shareDirectory: string;
+  readonly homeDirectory: string;
+  readonly stateDirectory: string;
+  readonly temporaryDirectory: string;
+  readonly executablePath: string;
+  readonly workingDirectory: string;
+  readonly environment: {
+    readonly HOME: string;
+    readonly OPENCLAW_CONFIG_PATH: string;
+    readonly OPENCLAW_HOME: string;
+    readonly OPENCLAW_STATE_DIR: string;
+    readonly TEMP: string;
+    readonly TMP: string;
+    readonly USERPROFILE: string;
+  };
+  readonly workload: NativeArtifactWorkloadReceiptV1;
+}
+
+export type RuntimeProviderNativeArtifactVerifyAndCreateOutcome =
+  | {
+      readonly status: "created";
+      readonly authoritySha256: string;
+      readonly providerHandle: string;
+      readonly sandboxName: string;
+      readonly lifecycleGeneration: string;
+      readonly artifactDigest: string;
+      readonly executableDigest: string;
+    }
+  | {
+      readonly status: "not-created";
+      readonly reason: "artifact-verification-failed" | "create-rejected";
+    }
+  | {
+      readonly status: "unknown";
+    };
+
+export interface RuntimeProviderNativeArtifactReadinessEvidence {
+  readonly authoritySha256: string;
+  readonly providerHandle: string;
+  readonly sandboxName: string;
+  readonly lifecycleGeneration: string;
+  readonly artifactDigest: string;
+  readonly executableDigest: string;
+  readonly ready: boolean;
+}
+
+export type RuntimeProviderNativeArtifactRecoveryOutcome =
+  | { readonly status: "absent" }
+  | {
+      readonly status: "removed" | "retained";
+      readonly authoritySha256: string;
+      readonly providerHandle: string;
+      readonly sandboxName: string;
+      readonly lifecycleGeneration: string;
+    };
+
+export interface RuntimeProviderNativeArtifactBootstrapOperations {
+  /**
+   * Verify artifact and executable digests, then create while holding the same stable filesystem
+   * object authority. The provider must not re-resolve plan paths after verification.
+   */
+  verifyAndCreate(
+    plan: RuntimeProviderNativeArtifactBootstrapPlan,
+  ): Promise<RuntimeProviderNativeArtifactVerifyAndCreateOutcome>;
+  verifyReadiness(
+    plan: RuntimeProviderNativeArtifactBootstrapPlan,
+    created: Extract<RuntimeProviderNativeArtifactVerifyAndCreateOutcome, { status: "created" }>,
+  ): Promise<RuntimeProviderNativeArtifactReadinessEvidence>;
+  /** Reconcile and remove only the resource bound to the plan's provider handle. */
+  recoverCreate(
+    plan: RuntimeProviderNativeArtifactBootstrapPlan,
+  ): Promise<RuntimeProviderNativeArtifactRecoveryOutcome>;
+}
+
+export type RuntimeProviderNativeArtifactBootstrapResult = Readonly<{
+  readonly outcome: "ready" | "not-created" | "retained";
+  readonly reason:
+    | null
+    | "artifact-verification-failed"
+    | "create-rejected"
+    | "create-outcome-unknown"
+    | "create-authority-mismatch"
+    | "readiness-not-proven"
+    | "recovered"
+    | "recovery-not-proven";
+  readonly authoritySha256: string;
+  readonly providerHandle: string;
+  readonly sandboxName: string;
+  readonly lifecycleGeneration: string;
+  readonly resourceState: "active" | "absent" | "possibly-retained";
+  readonly cleanup: {
+    readonly attempted: boolean;
+    readonly resourceRemovalAuthorized: boolean;
+    readonly removed: boolean;
+  };
+  readonly recoveryRequired: boolean;
+}>;
 
 export type RuntimeProviderManagedImageSupport = {
   readonly exactDigestReferences: boolean;
@@ -434,18 +554,34 @@ export type RuntimeProviderStateMutationSurface =
     }>
   | RuntimeProviderUnsupportedSurface;
 
+export type RuntimeProviderManagedImageBootstrapSurface = RuntimeProviderSupportedSurface<{
+  readonly bootstrapKind: "managed-image";
+  createAuthorityStore(input: {
+    readonly stateRoot: string;
+  }): import("../managed-bootstrap/adapter").ManagedBootstrapAuthorityStore;
+  createLifecycle(
+    input: ManagedBootstrapRuntimeCreateLifecycleInput,
+  ): ManagedBootstrapRuntimeCreateLifecycle;
+  createOnboardRouting(
+    input: ManagedBootstrapRuntimeOnboardRoutingInput,
+  ): ManagedBootstrapRuntimeOnboardRouting;
+}>;
+
+export type RuntimeProviderNativeArtifactBootstrapSurface = RuntimeProviderSupportedSurface<{
+  readonly bootstrapKind: "native-artifact";
+  readonly contractVersion: typeof RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION;
+  /** Run only with the provider-owned operations bound when the bundle is constructed. */
+  run(
+    input: RuntimeProviderNativeArtifactBootstrapInput,
+  ): Promise<RuntimeProviderNativeArtifactBootstrapResult>;
+  recover(
+    input: RuntimeProviderNativeArtifactBootstrapInput,
+  ): Promise<RuntimeProviderNativeArtifactBootstrapResult>;
+}>;
+
 export type RuntimeProviderBootstrapSurface =
-  | RuntimeProviderSupportedSurface<{
-      createAuthorityStore(input: {
-        readonly stateRoot: string;
-      }): import("../managed-bootstrap/adapter").ManagedBootstrapAuthorityStore;
-      createLifecycle(
-        input: ManagedBootstrapRuntimeCreateLifecycleInput,
-      ): ManagedBootstrapRuntimeCreateLifecycle;
-      createOnboardRouting(
-        input: ManagedBootstrapRuntimeOnboardRoutingInput,
-      ): ManagedBootstrapRuntimeOnboardRouting;
-    }>
+  | RuntimeProviderManagedImageBootstrapSurface
+  | RuntimeProviderNativeArtifactBootstrapSurface
   | RuntimeProviderUnsupportedSurface;
 
 export type RuntimeProviderSnapshotSurface =

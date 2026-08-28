@@ -51,10 +51,6 @@ vi.mock("./state/onboard-session.js", () => ({
   loadSession: vi.fn(),
 }));
 
-vi.mock("./runtime-recovery.js", () => ({
-  parseLiveSandboxEntries: vi.fn(),
-}));
-
 vi.mock("./runner.js", async () => {
   const actual = await vi.importActual<typeof import("./runner.js")>("./runner.js");
   return { ROOT: actual.ROOT, validateName: actual.validateName };
@@ -67,7 +63,6 @@ import {
   recoverNamedGatewayRuntime,
 } from "./gateway-runtime-action.js";
 import { recoverRegistryEntries } from "./registry-recovery-action.js";
-import { parseLiveSandboxEntries } from "./runtime-recovery.js";
 import { loadSession } from "./state/onboard-session.js";
 
 const gammaEntry = (policies: string[]): SandboxEntry => ({
@@ -103,8 +98,7 @@ function resetSeededRecoveryMocks(): void {
     .mockReturnValue({ state: "missing_named" } as never);
   vi.mocked(captureOpenshell)
     .mockReset()
-    .mockReturnValue({ output: "live sandboxes", status: 0 } as never);
-  vi.mocked(parseLiveSandboxEntries).mockReset().mockReturnValue([]);
+    .mockReturnValue({ output: "No sandboxes found.", status: 0 } as never);
 }
 
 describe("recoverRegistryEntries seeded recovery paths", () => {
@@ -114,10 +108,10 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
     mockRegistryState.sandboxes.gamma = gammaEntry(["npm"]);
     mockRegistryState.defaultSandbox = "gamma";
     vi.mocked(loadSession).mockReturnValue(completedSession("alpha", ["pypi"]));
-    vi.mocked(parseLiveSandboxEntries).mockReturnValue([
-      { name: "alpha", phase: "Ready" },
-      { name: "beta", phase: "Ready" },
-    ]);
+    vi.mocked(captureOpenshell).mockReturnValue({
+      output: "alpha Ready\nbeta Ready",
+      status: 0,
+    } as never);
 
     const result = await recoverRegistryEntries();
 
@@ -141,7 +135,7 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
     };
     mockRegistryState.defaultSandbox = "gamma";
     vi.mocked(loadSession).mockReturnValue(completedSession("alpha", []));
-    vi.mocked(parseLiveSandboxEntries).mockReturnValue([{ name: "alpha", phase: "Ready" }]);
+    vi.mocked(captureOpenshell).mockReturnValue({ output: "alpha Ready", status: 0 } as never);
 
     const result = await recoverRegistryEntries();
 
@@ -174,7 +168,7 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
         sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
       },
     } as never);
-    vi.mocked(parseLiveSandboxEntries).mockReturnValue([{ name: "alpha", phase: "Ready" }]);
+    vi.mocked(captureOpenshell).mockReturnValue({ output: "alpha Ready", status: 0 } as never);
 
     await recoverRegistryEntries({ requestedSandboxName: "missing-sandbox" });
 
@@ -191,10 +185,10 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
     mockRegistryState.sandboxes.gamma = gammaEntry([]);
     mockRegistryState.defaultSandbox = "gamma";
     vi.mocked(loadSession).mockReturnValue(completedSession("Alpha", []));
-    vi.mocked(parseLiveSandboxEntries).mockReturnValue([
-      { name: "alpha", phase: "Ready" },
-      { name: "Bad_Name", phase: "Ready" },
-    ]);
+    vi.mocked(captureOpenshell).mockReturnValue({
+      output: "alpha Ready\nBad_Name Ready",
+      status: 0,
+    } as never);
 
     const result = await recoverRegistryEntries();
 
@@ -220,7 +214,10 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
       },
     } as never);
     vi.mocked(getNamedGatewayLifecycleState).mockReturnValue({ state: "healthy_named" } as never);
-    vi.mocked(parseLiveSandboxEntries).mockReturnValue([{ name: "dcode-station", phase: "Ready" }]);
+    vi.mocked(captureOpenshell).mockReturnValue({
+      output: "dcode-station Ready",
+      status: 0,
+    } as never);
 
     const result = await recoverRegistryEntries();
 
@@ -240,7 +237,7 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
   });
 
   it("persists a requested live sandbox and makes it the default", async () => {
-    vi.mocked(parseLiveSandboxEntries).mockReturnValue([{ name: "alpha", phase: "Ready" }]);
+    vi.mocked(captureOpenshell).mockReturnValue({ output: "alpha Ready", status: 0 } as never);
 
     const result = await recoverRegistryEntries({ requestedSandboxName: "alpha" });
 
@@ -253,7 +250,7 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
   });
 
   it("keeps a missing requested sandbox absent while recovering other live entries", async () => {
-    vi.mocked(parseLiveSandboxEntries).mockReturnValue([{ name: "alpha", phase: "Ready" }]);
+    vi.mocked(captureOpenshell).mockReturnValue({ output: "alpha Ready", status: 0 } as never);
 
     const result = await recoverRegistryEntries({ requestedSandboxName: "beta" });
 
@@ -267,9 +264,10 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
   it("blocks route mutation after seeded recovery persists a live row without route metadata (#6315)", async () => {
     mockRegistryState.sandboxes.gamma = gammaEntry([]);
     mockRegistryState.defaultSandbox = "gamma";
-    vi.mocked(parseLiveSandboxEntries).mockReturnValue([
-      { name: "recovered-live", phase: "Ready" },
-    ]);
+    vi.mocked(captureOpenshell).mockReturnValue({
+      output: "recovered-live Ready",
+      status: 0,
+    } as never);
 
     await recoverRegistryEntries({ requestedSandboxName: "missing-sandbox" });
     expect(mockRegistryState.sandboxes["recovered-live"]).toMatchObject({
@@ -313,12 +311,9 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
     vi.mocked(captureOpenshell).mockImplementation(
       (args: string[]) =>
         ({
-          output: args.includes("-g") ? "scoped-list" : "host-wide-list",
+          output: args.includes("-g") ? "No sandboxes found." : "hermes-station Ready",
           status: 0,
         }) as never,
-    );
-    vi.mocked(parseLiveSandboxEntries).mockImplementation((output?: string) =>
-      output === "scoped-list" ? [] : [{ name: "hermes-station", phase: "Ready" }],
     );
     mockRegistryState.sandboxes.gamma = gammaEntry([]);
     mockRegistryState.defaultSandbox = "gamma";
@@ -341,14 +336,9 @@ describe("recoverRegistryEntries seeded recovery paths", () => {
     vi.mocked(captureOpenshell).mockImplementation(
       (args: string[]) =>
         ({
-          output: args.includes("-g") ? "scoped-list" : "host-wide-list",
+          output: args.includes("-g") ? "target-sandbox Ready" : "sibling-sandbox Ready",
           status: 0,
         }) as never,
-    );
-    vi.mocked(parseLiveSandboxEntries).mockImplementation((output?: string) =>
-      output === "scoped-list"
-        ? [{ name: "target-sandbox", phase: "Ready" }]
-        : [{ name: "sibling-sandbox", phase: "Ready" }],
     );
 
     const result = await recoverRegistryEntries();

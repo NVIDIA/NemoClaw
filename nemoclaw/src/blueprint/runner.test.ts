@@ -14,10 +14,13 @@ import {
 } from "./runner-mock-fixtures.js";
 import {
   blueprintWithPolicyAdditions,
-  failureResult,
+  createMutableSandboxPolicyResult,
   minimalBlueprint,
   resultForCommandFailure,
+  resultWithBlueprintPolicyAuthority,
   routedBlueprint,
+  TEST_SANDBOX_POLICY,
+  TEST_SANDBOX_POLICY_PATH,
 } from "./runner-test-fixtures.js";
 
 // ── In-memory filesystem ────────────────────────────────────────
@@ -28,7 +31,8 @@ vi.mock("node:os", () => ({
   homedir: () => FAKE_HOME,
 }));
 
-vi.mock("node:crypto", () => ({
+vi.mock("node:crypto", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:crypto")>()),
   randomUUID: () => FIXED_RUN_UUID,
 }));
 
@@ -38,8 +42,12 @@ vi.mock("node:fs", async (importOriginal) => {
   return {
     ...original,
     existsSync: memory.existsSync,
+    closeSync: memory.closeSync,
+    fsyncSync: memory.fsyncSync,
     mkdirSync: memory.mkdirSync,
-    readFileSync: memory.readFileSync,
+    openSync: memory.openSync,
+    readFileSync: vi.fn(memory.readFileSync),
+    renameSync: memory.renameSync,
     writeFileSync: memory.writeFileSync,
     readdirSync: memory.readdirSync,
   };
@@ -63,6 +71,8 @@ const mockedValidateEndpoint = vi.mocked(validateEndpointUrl);
 
 const { emitRunId, loadBlueprint, actionPlan, actionApply, actionStatus, actionRollback, main } =
   await import("./runner.js");
+const { readFileSync } = await import("node:fs");
+const mockedReadFileSync = vi.mocked(readFileSync);
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -80,15 +90,14 @@ function seedBlueprintFile(bp?: Record<string, unknown>): void {
 
 function mockCurrentPolicy(stdout: string): void {
   mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
-    if (
-      args[0] === "policy" &&
-      args[1] === "get" &&
-      args[2] === "--base" &&
-      args[3] === "test-sandbox"
-    ) {
+    if (args.join(" ") === "policy get -g test-gateway --base test-sandbox") {
       return { exitCode: 0, stdout, stderr: "" };
     }
-    return { exitCode: 0, stdout: "", stderr: "" };
+    return resultWithBlueprintPolicyAuthority(args, {
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+    });
   });
 }
 
@@ -97,6 +106,8 @@ function mockCurrentPolicy(stdout: string): void {
 describe("runner", () => {
   beforeEach(() => {
     store.clear();
+    addFile(TEST_SANDBOX_POLICY_PATH, TEST_SANDBOX_POLICY);
+    vi.stubEnv("OPENSHELL_SANDBOX_POLICY", TEST_SANDBOX_POLICY_PATH);
     stdoutCapture.reset();
     vi.clearAllMocks();
     delete process.env.NEMOCLAW_BLUEPRINT_PATH;
@@ -104,6 +115,7 @@ describe("runner", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   describe("emitRunId", () => {
@@ -409,17 +421,15 @@ describe("runner", () => {
       expect(plan.dry_run).toBe(false);
     });
 
-    it.each(
-      [
-          "credential_env",
-          "credential_default",
-          "SECRET_KEY",
-          "default-secret-value",
-          "real-secret-value",
-          "future-token-value",
-          "future-authorization",
-        ],
-    )(
+    it.each([
+      "credential_env",
+      "credential_default",
+      "SECRET_KEY",
+      "default-secret-value",
+      "real-secret-value",
+      "future-token-value",
+      "future-authorization",
+    ])(
       "does not expose credential field names or secret values in public plan output [%s]",
       async (leaked) => {
         captureStdout();
@@ -535,8 +545,13 @@ describe("runner", () => {
   describe("actionApply", () => {
     beforeEach(() => {
       captureStdout();
-      // Default: all subprocess calls succeed
-      mockExeca.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+        resultWithBlueprintPolicyAuthority(args, {
+          exitCode: 0,
+          stdout: "",
+          stderr: "",
+        }),
+      );
     });
 
     it("creates sandbox with correct arguments", async () => {
@@ -544,8 +559,80 @@ describe("runner", () => {
 
       expect(mockExeca).toHaveBeenCalledWith(
         "openshell",
-        ["sandbox", "create", "--from", "openclaw", "--name", "test-sandbox", "--forward", "18789"],
+        [
+          "sandbox",
+          "create",
+          "-g",
+          "test-gateway",
+          "--from",
+          "openclaw",
+          "--name",
+          "test-sandbox",
+          "--policy",
+          TEST_SANDBOX_POLICY_PATH,
+          "--forward",
+          "18789",
+        ],
         expect.objectContaining({ reject: false }),
+      );
+    });
+
+    it("binds policy-authorized OpenShell operations to the selected gateway configuration", async () => {
+      vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://ambient-gateway.invalid");
+      vi.stubEnv("OPENSHELL_GATEWAY_INSECURE", "true");
+      const commandResult = createMutableSandboxPolicyResult(() => {
+        const merged = [...store.entries()].find(([path]) => path.endsWith("merged-policy.yaml"));
+        return YAML.parse(merged?.[1].content ?? TEST_SANDBOX_POLICY);
+      });
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+        args.join(" ") === "policy get -g test-gateway --base test-sandbox"
+          ? {
+              exitCode: 0,
+              stdout: ["Version: 1", "Hash: sha256:test", "---", TEST_SANDBOX_POLICY].join("\n"),
+              stderr: "",
+            }
+          : commandResult(args),
+      );
+
+      await actionApply(
+        "default",
+        blueprintWithPolicyAdditions({
+          nim_service: {
+            name: "nim_service",
+            endpoints: [{ host: "integrate.api.nvidia.com", port: 443, access: "full" }],
+          },
+        }),
+      );
+
+      const boundOptions = expect.objectContaining({
+        extendEnv: false,
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: "test-gateway",
+        }),
+      });
+      expect(mockExeca).toHaveBeenCalledWith(
+        "openshell",
+        ["policy", "get", "-g", "test-gateway", "--base", "test-sandbox"],
+        boundOptions,
+      );
+      expect(mockExeca).toHaveBeenCalledWith(
+        "openshell",
+        expect.arrayContaining(["policy", "set"]),
+        boundOptions,
+      );
+      expect(mockExeca).not.toHaveBeenCalledWith(
+        "openshell",
+        expect.anything(),
+        expect.objectContaining({
+          env: expect.objectContaining({ OPENSHELL_GATEWAY_ENDPOINT: expect.anything() }),
+        }),
+      );
+      expect(mockExeca).not.toHaveBeenCalledWith(
+        "openshell",
+        expect.anything(),
+        expect.objectContaining({
+          env: expect.objectContaining({ OPENSHELL_GATEWAY_INSECURE: expect.anything() }),
+        }),
       );
     });
 
@@ -600,113 +687,36 @@ describe("runner", () => {
       expect(stdoutText()).toContain("Apply complete");
     });
 
-    it("compensates an owned inference provider when inference set fails (#6703)", async () => {
-      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
-        resultForCommandFailure(args, ["inference", "set"], "inference route rejected"),
-      );
-
-      await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
-        /Failed to set inference route .*model 'gpt-4'.*inference route rejected/i,
-      );
-
-      expect(hasPlanJson()).toBe(true);
-      expect(mockExeca).toHaveBeenCalledWith(
-        "openshell",
-        ["provider", "delete", "my-provider"],
-        expect.objectContaining({ reject: false }),
-      );
-      expect(stdoutText()).not.toContain("Apply complete");
-      expect(stdoutText()).not.toContain("PROGRESS:100");
-    });
-
-    it("applies blueprint policy additions by merging into the base policy", async () => {
-      const bp = minimalBlueprint({
-        components: {
-          inference: {
-            profiles: {
-              default: {
-                provider_type: "openai",
-                provider_name: "my-provider",
-                endpoint: "https://api.example.com/v1",
-                model: "gpt-4",
-                credential_env: "MY_API_KEY",
-              },
-            },
-          },
-          sandbox: {
-            image: "openclaw",
-            name: "test-sandbox",
-            forward_ports: [18789],
-          },
-          policy: {
-            additions: {
-              nim_service: {
-                name: "nim_service",
-                endpoints: [
-                  {
-                    host: "integrate.api.nvidia.com",
-                    port: 443,
-                    access: "full",
-                  },
-                ],
-              },
-            },
-          },
-        },
-      });
+    it("preserves an owned inference provider when name-only cleanup is unsafe (#9833)", async () => {
       mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
-        if (
-          args[0] === "policy" &&
-          args[1] === "get" &&
-          args[2] === "--base" &&
-          args[3] === "test-sandbox"
-        ) {
+        if (args.join(" ") === "provider get my-provider") {
           return {
             exitCode: 0,
             stdout: [
-              "Version: 1",
-              "Hash: sha256:test",
-              "---",
-              "version: 1",
-              "network_policies:",
-              "  existing_service:",
-              "    mode: allow",
-              "    endpoints:",
-              "      - https://api.example.com",
+              "Name: my-provider",
+              "Type: openai",
+              "Credential keys: <none>",
+              "Config keys: OPENAI_BASE_URL",
               "",
             ].join("\n"),
             stderr: "",
           };
         }
-        return { exitCode: 0, stdout: "", stderr: "" };
+        return resultForCommandFailure(args, ["inference", "set"], "inference route rejected");
       });
 
-      await actionApply("default", bp);
+      await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
+        /Failed to set inference route .*inference route rejected.*automatic cleanup was refused/iu,
+      );
 
-      expect(mockExeca).toHaveBeenCalledWith(
+      expect(hasPlanJson()).toBe(true);
+      expect(mockExeca).not.toHaveBeenCalledWith(
         "openshell",
-        [
-          "policy",
-          "set",
-          "--policy",
-          expect.stringContaining("merged-policy.yaml"),
-          "--wait",
-          "test-sandbox",
-        ],
-        expect.objectContaining({ reject: false }),
+        ["provider", "delete", "my-provider"],
+        expect.anything(),
       );
-
-      const mergedPolicyKey = [...store.keys()].find(
-        (k) => k.endsWith("/merged-policy.yaml") || k.endsWith("\\merged-policy.yaml"),
-      );
-      if (!mergedPolicyKey) throw new Error("merged policy file not written");
-      const mergedEntry = store.get(mergedPolicyKey);
-      if (!mergedEntry?.content) throw new Error("merged policy file is empty");
-      const merged = YAML.parse(mergedEntry.content) as {
-        network_policies?: Record<string, unknown>;
-      };
-      expect(merged.network_policies).toHaveProperty("existing_service");
-      expect(merged.network_policies).toHaveProperty("nim_service");
+      expect(stdoutText()).not.toContain("Apply complete");
+      expect(stdoutText()).not.toContain("PROGRESS:100");
     });
 
     it("fails closed when the live policy cannot be parsed", async () => {
@@ -790,25 +800,29 @@ describe("runner", () => {
       expect(policySetCalls).toEqual([]);
     });
 
-    it("skips policy commands when policy additions are empty", async () => {
+    it("skips policy mutation when policy additions are empty", async () => {
       await actionApply("default", minimalBlueprint());
       const policyCalls = mockExeca.mock.calls.filter(
         (c) => Array.isArray(c[1]) && c[1][0] === "policy",
       );
-      expect(policyCalls).toEqual([]);
+      expect(policyCalls.some((call) => call[1][1] === "set")).toBe(false);
     });
 
-    it("reuses sandbox when 'already exists' error", async () => {
-      mockExeca.mockResolvedValueOnce(failureResult("already exists"));
-      // Subsequent calls succeed
-      mockExeca.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+    it("refuses to claim policy ownership when sandbox already exists", async () => {
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+        resultForCommandFailure(args, ["sandbox", "create"], "already exists"),
+      );
 
-      await actionApply("default", minimalBlueprint());
-      expect(stdoutText()).toContain("already exists, reusing");
+      await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
+        /already exists.*cannot establish NemoClaw policy ownership/u,
+      );
+      expect(stdoutText()).not.toContain("Apply complete");
     });
 
     it("throws when sandbox creation fails with other error", async () => {
-      mockExeca.mockResolvedValueOnce(failureResult("disk full"));
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+        resultForCommandFailure(args, ["sandbox", "create"], "disk full"),
+      );
 
       await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
         /Failed to create sandbox.*disk full/,
@@ -898,6 +912,7 @@ describe("runner", () => {
           "inference",
           "inference_provider_created_by_apply",
           "policy_additions",
+          "policy_authority",
           "profile",
           "run_id",
           "sandbox_created_by_apply",
@@ -1276,16 +1291,46 @@ describe("runner", () => {
       addDir(`${RUNS_DIR}/nc-run-1`);
 
       actionStatus("nc-run-1");
-      expect(stdoutText()).toContain('"status":"unknown"');
+      expect(capturedJsonOutput()).toMatchObject({
+        run_id: "nc-run-1",
+        status: "unknown",
+        receipt_error_kind: "missing",
+        recovery: expect.stringContaining("Do not reconstruct plan.json"),
+      });
     });
 
-    it("prints unknown status when plan.json is corrupt", () => {
+    it("reports recovery details when plan.json is corrupt", () => {
       addDir(`${RUNS_DIR}/nc-run-1`);
       addFile(`${RUNS_DIR}/nc-run-1/plan.json`, "{not valid json");
 
       actionStatus("nc-run-1");
 
-      expect(capturedJsonOutput()).toEqual({ run_id: "nc-run-1", status: "unknown" });
+      expect(capturedJsonOutput()).toEqual({
+        run_id: "nc-run-1",
+        status: "unknown",
+        receipt_error_kind: "corrupt",
+        receipt_error: expect.stringContaining("JSON"),
+        run_directory: `${RUNS_DIR}/nc-run-1`,
+        recovery: expect.stringContaining("trusted copy produced by this exact run"),
+      });
+      expect(stdoutText()).not.toContain("Restore a complete plan.json");
+    });
+
+    it("distinguishes an inaccessible plan receipt from a missing receipt", () => {
+      addDir(`${RUNS_DIR}/nc-run-1`);
+      addFile(`${RUNS_DIR}/nc-run-1/plan.json`, JSON.stringify({ run_id: "nc-run-1" }));
+      mockedReadFileSync.mockImplementationOnce(() => {
+        throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+      });
+
+      actionStatus("nc-run-1");
+
+      expect(capturedJsonOutput()).toMatchObject({
+        run_id: "nc-run-1",
+        status: "unknown",
+        receipt_error_kind: "inaccessible",
+        recovery: expect.stringContaining("stop and ask a NemoClaw maintainer"),
+      });
     });
 
     // ── Path traversal rejection ──────────────────────────────────
@@ -1377,7 +1422,13 @@ describe("runner", () => {
   describe("main (CLI)", () => {
     beforeEach(() => {
       captureStdout();
-      mockExeca.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+        resultWithBlueprintPolicyAuthority(args, {
+          exitCode: 0,
+          stdout: "",
+          stderr: "",
+        }),
+      );
       seedBlueprintFile();
     });
 

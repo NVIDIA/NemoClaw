@@ -625,7 +625,14 @@ describe("finalizePreparedRebuildImageMessagingPlan", () => {
       const imagePlan = JSON.parse(Buffer.from(encodedPlan ?? "", "base64").toString("utf8")) as {
         agentRender: Array<{ renderId?: string; lines?: string[] }>;
       };
-      expect(imagePlan.agentRender[0]).toMatchObject({
+      // Locate by render id rather than by position: whether a channel
+      // contributes an env render at all depends on its inputs, so the index of
+      // the preserved-home-channels entry is not a contract.
+      expect(
+        imagePlan.agentRender.find(
+          (render) => render.renderId === "hermes-preserved-home-channels",
+        ),
+      ).toMatchObject({
         renderId: "hermes-preserved-home-channels",
         lines: ["SLACK_HOME_CHANNEL=C0123", "SLACK_HOME_CHANNEL_THREAD_ID=123.456"],
       });

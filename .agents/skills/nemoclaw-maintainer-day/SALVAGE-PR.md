@@ -1,112 +1,50 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Salvage PR Workflow
+# Salvage a Pull Request
 
-Select a PR that needs a small fix. Make only the change needed to unblock it.
+Repair one narrow blocker when the PR shows the intended behavior. Defer the repair when intent or design is not clear. Stop when the repair exceeds accepted scope.
 
-**Default to maintainer work.** Rebase, resolve conflicts, add missing tests, and push when the task permits these actions.
-Do not wait for the contributor unless the diff does not show the intended behavior.
+## Decide
 
-## Step 1: Gather Context
+| Condition | Action |
+|---|---|
+| Mechanical conflict, missing test, failed check, or narrow correctness defect | Repair it now when the task permits local changes and a push. |
+| Intent is not clear, or the repair needs a design decision | Ask the contributor or user. |
+| The repair crosses accepted scope or multiple systems | Stop and report the required owner or decision. |
+
+## Verify scope and write authority
+
+Read the complete diff, review feedback, linked issues, and relevant changes on `main`. Confirm the PR objective before you edit.
 
 ```bash
 gh pr view <number> --repo NVIDIA/NemoClaw \
-  --json number,title,url,body,baseRefName,headRefName,author,files,commits,comments,reviews,statusCheckRollup,mergeStateStatus,reviewDecision
-
+  --json number,title,url,body,baseRefName,headRefName,author,files,commits,comments,reviews,statusCheckRollup,mergeStateStatus,reviewDecision,headRepositoryOwner,headRepository,maintainerCanModify
 gh pr diff <number> --repo NVIDIA/NemoClaw
 ```
 
-Also read maintainer comments, CodeRabbit comments, linked issues, and recent `main` changes in affected files.
-Understand the PR objective before you change code.
+Follow [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) for access errors. Resolve only mechanical conflicts here. Ask the user when resolution can change behavior or contributor intent.
 
-## Step 2: Assess Fit
+Check out the PR or create an isolated worktree. Bind it to the recorded source repository, branch, and latest PR commit. Fetch the remote state, then reproduce the blocker before editing.
 
-**Maintainer does it now:** Rebase and resolve conflicts. Add missing tests for risky code.
-Fix one or two failing checks or small correctness problems.
+## Repair and validate
 
-**Defer to the contributor when:** The fix requires a design decision that the diff does not answer.
-Also defer when intent is unclear or the fix crosses multiple subsystems.
+Apply the implementation and validation rules in `nemoclaw-contributor-implement-issue` to the accepted repair scope. Keep maintainer write authority and PR publication in this workflow.
 
-## Step 3: Check Out and Reproduce
+Remove unrelated changes only when the PR objective does not require them. Do not reformat unrelated code.
 
-```bash
-gh pr checkout <number>
-git fetch origin --prune
-```
+## Push the permitted branch
 
-Reproduce the problem locally. Run the most focused applicable command first.
+Push only after validation passes. Never force-push.
 
-## Step 4: Review PR Scope Before Fixing
+- For a PR branch in `NVIDIA/NemoClaw`, push the local branch to its recorded `headRefName` on `origin`.
+- For a fork PR, push to the fork only when `maintainerCanModify` is true.
+- Do not push a fork PR to `origin`.
 
-Review all changed files before you fix the blocker.
-Identify configuration, refactor, or tool-setting changes that do not support the PR objective.
-Restore those files from `main` when the PR does not need them.
+Immediately before the push, verify the worktree commit, source repository, and PR branch again. Stop if an identity changed.
 
-## Step 5: Fix Narrowly
+## Follow up
 
-Make only the change needed to clear the blocker. Do not reformat unrelated code.
+After the push, follow [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md). When its cycle completes, apply [Merge Gate](MERGE-GATE.md) for the approval decision.
 
-If the PR changes risky code, include missing tests in the fix.
-See [RISKY-AREAS.md](RISKY-AREAS.md) and [TEST-GAPS.md](TEST-GAPS.md).
-
-## Step 6: Conflicts
-
-Resolve a conflict only when the resolution does not change behavior.
-Stop and report a conflict that can change behavior.
-
-## Step 7: Validate
-
-```bash
-npm test                          # root integration tests
-cd nemoclaw && npm test           # plugin tests
-npm run typecheck:cli             # CLI type check
-npm run check                     # broad repo-wide pre-commit and coverage baseline
-```
-
-Use only commands matching the changed area.
-
-## Step 8: Push
-
-Push only if the fix is small, improves mergeability, passes validation, and you can push.
-Never force-push.
-
-If Git or GitHub access prevents the push, follow [Stop for Git and GitHub Access Errors](../_shared/git-github-hard-stop.md).
-Resolve merge conflicts and dirty-worktree problems in this workflow.
-
-Check the PR's head repository before you push:
-
-```bash
-gh pr view <number> --repo NVIDIA/NemoClaw --json headRepositoryOwner,headRepository,headRefName,maintainerCanModify
-```
-
-If `headRepository.nameWithOwner` is `NVIDIA/NemoClaw`, push to the PR branch on `origin`:
-
-```bash
-git push origin <local-branch>:<headRefName>
-```
-
-For a fork PR, push only when `maintainerCanModify` is true:
-
-```bash
-git push git@github.com:<owner>/<repo>.git <local-branch>:<headRefName>
-```
-
-For a fork PR, do not push to `origin`.
-If `maintainerCanModify` is false, do not push.
-
-## Step 9: Monitor After Push
-
-After a maintainer push, follow [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md).
-Fix valid correctness, security, and test-coverage findings within the PR scope.
-Ask the user about ambiguous or design-changing feedback.
-
-## Step 10: Route to Merge Gate
-
-After CI and review finish, follow [MERGE-GATE.md](MERGE-GATE.md) if the PR is ready.
-
-## Notes
-
-- Reduce the backlog without accepting unresolved risk.
-- Never hide unresolved reviewer concerns.
-- Use full GitHub links.
+Report the PR URL, repaired blocker, validation evidence, push result, and remaining gate.
