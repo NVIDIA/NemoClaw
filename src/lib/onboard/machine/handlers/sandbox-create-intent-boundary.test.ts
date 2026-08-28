@@ -25,30 +25,6 @@ const resourceProfiles: [string, { cpu: string; memory: string } | null][] = [
 ];
 
 describe("sandbox create intent machine boundary", () => {
-  it("checks final policy requirements before credential provider registration (#9833)", async () => {
-    const preflightPolicyRequirements = vi.fn(() => {
-      throw new Error("live policy requirements changed before the selected route");
-    });
-    const { deps, calls } = createDeps({ preflightPolicyRequirements });
-    calls.setupMessaging.mockResolvedValue(["telegram"]);
-
-    await expect(handleSandboxState(baseOptions(deps))).rejects.toThrow(
-      /live policy requirements changed before/u,
-    );
-
-    expect(preflightPolicyRequirements).toHaveBeenCalledWith(
-      expect.objectContaining({
-        provider: "provider",
-        selectedMessagingChannels: ["telegram"],
-        observabilityEnabled: false,
-      }),
-    );
-    expect(calls.stageCredentialProviders).not.toHaveBeenCalled();
-    expect(calls.resolveCreateIntent).not.toHaveBeenCalled();
-    expect(calls.createSandbox).not.toHaveBeenCalled();
-    expect(calls.updateSandbox).not.toHaveBeenCalled();
-  });
-
   it("rejects deterministic create conflicts before resume recreation mutates state (#6226)", async () => {
     const session = createSession({ sandboxName: "saved" });
     session.steps.sandbox.status = "complete";
@@ -437,7 +413,6 @@ describe("sandbox create intent machine boundary", () => {
       requiredBindings: [
         { name: "tm-brave-search", type: "brave", credentialEnv: "BRAVE_API_KEY" },
       ],
-      revalidatePolicyRequirements: expect.any(Function),
     });
     expect(stageSandboxCredentialProviders.mock.invocationCallOrder[0]).toBeGreaterThan(
       setupMessagingChannels.mock.invocationCallOrder[0] ?? Number.NEGATIVE_INFINITY,
@@ -457,7 +432,6 @@ describe("sandbox create intent machine boundary", () => {
           credentialEnv: "TELEGRAM_BOT_TOKEN",
         },
       ],
-      revalidatePolicyRequirements: expect.any(Function),
     });
     expect(stageSandboxCredentialProviders.mock.invocationCallOrder[1]).toBeGreaterThan(
       setupMessagingChannels.mock.invocationCallOrder[0] ?? Number.NEGATIVE_INFINITY,

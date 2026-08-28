@@ -22,7 +22,7 @@ type FixtureProviderDependencies = {
     run: FixtureRunner,
     options?: {
       readonly replaceExisting?: boolean;
-      readonly revalidatePolicyRequirements?: (operation: string) => void;
+      readonly verifyLivePolicyRequirements?: (operation: string) => void;
     },
   ): string[];
 };
@@ -256,7 +256,7 @@ describe("channels stop/start Google Chat live composition", () => {
         status: args[1] === "get" ? 1 : 0,
       }));
       const run = runMock as unknown as FixtureRunner;
-      const revalidatePolicyRequirements = vi.fn();
+      const verifyLivePolicyRequirements = vi.fn();
 
       const restore = installGooglechatCredentialFixture(sandboxName, agent, {
         ensureProfiles,
@@ -275,12 +275,12 @@ describe("channels stop/start Google Chat live composition", () => {
           },
         ],
         run,
-        { revalidatePolicyRequirements },
+        { verifyLivePolicyRequirements },
       );
 
       expect(providerNames).toEqual([delegatedName, `${sandboxName}-googlechat-bridge`]);
       expect(originalUpsert).toHaveBeenCalledWith([delegatedTokenDef], run, {
-        revalidatePolicyRequirements,
+        verifyLivePolicyRequirements,
       });
       expect(ensureProfiles).toHaveBeenCalledOnce();
       const profileDependencies = ensureProfiles.mock.calls[0]?.[1] as {
@@ -291,7 +291,7 @@ describe("channels stop/start Google Chat live composition", () => {
       expect(profileDependencies.root).toBe("/repo");
       expect(profileDependencies.runOpenshell).not.toBe(run);
       expect(profileDependencies.redact(GOOGLECHAT_E2E_ACCESS_TOKEN)).toBe("[redacted]");
-      expect(revalidatePolicyRequirements).toHaveBeenCalledTimes(2);
+      expect(verifyLivePolicyRequirements).toHaveBeenCalledTimes(2);
 
       const createCall = runMock.mock.calls.find(([args]) => args[1] === "create");
       expect(createCall?.[0]).toEqual([

@@ -124,17 +124,17 @@ export interface OnboardDashboardHelpers {
     agent: { forwardPort?: number | null; forward_ports?: number[] | null },
     options?: {
       beforeForwardPort?: (port: number) => Promise<void> | void;
-      revalidatePolicyRequirements?: (operation: string) => void;
+      verifyLivePolicyRequirements?: (operation: string) => void;
     },
   ): Promise<number>;
   ensureFinalizationDashboardForward(
     sandboxName: string,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    verifyLivePolicyRequirements?: (operation: string) => void,
   ): number;
   ensureFinalizationAgentDashboardForward(
     sandboxName: string,
     agent: { name: string; forwardPort?: number | null; forward_ports?: number[] | null } | null,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    verifyLivePolicyRequirements?: (operation: string) => void,
     portReservation?: {
       releaseBeforeForward(agentName: string, port: number): Promise<void> | void;
     },
@@ -143,7 +143,7 @@ export interface OnboardDashboardHelpers {
     sandboxName: string,
     port: number,
     label: string,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    verifyLivePolicyRequirements?: (operation: string) => void,
   ): boolean;
   fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null;
   fetchAgentWebAuthTokenFromSandbox(sandboxName: string, agent: AgentDefinition): string | null;
@@ -335,7 +335,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     chatUiUrl ||= `http://127.0.0.1:${CONTROL_UI_PORT}`;
     const { rollbackSandboxOnFailure, preservedPorts, allowPortReallocation } =
       normalizeDashboardForwardOptions(options);
-    const { revalidatePolicyRequirements } = options;
+    const { verifyLivePolicyRequirements } = options;
     const messagingForward = resolveMessagingHostForwardForSandbox(sandboxName);
     if (messagingForward) preservedPorts.add(String(messagingForward.port));
     const preferredPort = Number(getDashboardForwardPort(chatUiUrl));
@@ -344,7 +344,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         runOpenshell: deps.runOpenshell,
         runCaptureOpenshell: deps.runCaptureOpenshell,
         sandboxName,
-        revalidatePolicyRequirements,
+        verifyLivePolicyRequirements,
       });
     const stopForwardForSandbox = makeStopForwardForSandbox();
     let existingForwards = deps.runCaptureOpenshell(["forward", "list"], { ignoreError: true });
@@ -418,7 +418,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     );
     const { ok: fwdOk, diagnostic: fwdDiagnostic } = runDetachedForwardStartWithRetries(
       (stdio) => {
-        revalidatePolicyRequirements?.(
+        verifyLivePolicyRequirements?.(
           `start dashboard forward ${String(actualPort)} for sandbox '${sandboxName}'`,
         );
         return startDashboardForward(stdio);
@@ -466,7 +466,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       ensureMessagingHostForwardForSandbox({
         sandboxName,
         ensureForward: (name, port, label) =>
-          ensureFixedAgentForward(deps, name, port, label, revalidatePolicyRequirements),
+          ensureFixedAgentForward(deps, name, port, label, verifyLivePolicyRequirements),
         note: deps.note,
         rollbackOnFailure: {
           runOpenshell: deps.runOpenshell,
@@ -474,7 +474,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
             buildOrphanedSandboxRollbackMessage(name, error, options.gatewayName),
           cliName: deps.cliName,
           forwardPortsToStop: [actualPort],
-          beforeMutation: revalidatePolicyRequirements,
+          beforeMutation: verifyLivePolicyRequirements,
         },
       });
     }
@@ -496,7 +496,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
    */
   function ensureFinalizationDashboardForward(
     sandboxName: string,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    verifyLivePolicyRequirements?: (operation: string) => void,
   ): number {
     const envUrl = process.env.CHAT_UI_URL;
     const persistedPort = envUrl
@@ -508,12 +508,12 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     try {
       const actualPort = ensureDashboardForward(sandboxName, requestedUrl, {
         ...(persistedPort === null ? {} : { allowPortReallocation: false }),
-        ...(revalidatePolicyRequirements ? { revalidatePolicyRequirements } : {}),
+        ...(verifyLivePolicyRequirements ? { verifyLivePolicyRequirements } : {}),
         onForwardStarted: (port) => {
           startedPort = port;
         },
       });
-      revalidatePolicyRequirements?.(`publish the dashboard URL for sandbox '${sandboxName}'`);
+      verifyLivePolicyRequirements?.(`publish the dashboard URL for sandbox '${sandboxName}'`);
       process.env.CHAT_UI_URL = replaceUrlPort(
         requestedUrl || `http://127.0.0.1:${String(actualPort)}`,
         actualPort,
@@ -541,7 +541,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     agent: { forwardPort?: number | null; forward_ports?: number[] | null },
     options: {
       beforeForwardPort?: (port: number) => Promise<void> | void;
-      revalidatePolicyRequirements?: (operation: string) => void;
+      verifyLivePolicyRequirements?: (operation: string) => void;
     } = {},
   ): Promise<number> {
     const chatUiUrl = process.env.CHAT_UI_URL;
@@ -552,7 +552,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       chatUiUrl,
       controlUiPort: chatUiUrl ? Number(getDashboardForwardPort(chatUiUrl)) : undefined,
       beforeForwardPort: options.beforeForwardPort,
-      revalidatePolicyRequirements: options.revalidatePolicyRequirements,
+      verifyLivePolicyRequirements: options.verifyLivePolicyRequirements,
       compensateDashboardForward: (port) => {
         bestEffortForwardStopForSandbox(
           deps.runOpenshell,
@@ -567,28 +567,28 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   function ensureFinalizationAgentDashboardForward(
     sandboxName: string,
     agent: { name: string; forwardPort?: number | null; forward_ports?: number[] | null } | null,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    verifyLivePolicyRequirements?: (operation: string) => void,
     portReservation?: {
       releaseBeforeForward(agentName: string, port: number): Promise<void> | void;
     },
   ): Promise<number> | number {
     return agent
       ? ensureAgentDashboardForward(sandboxName, agent, {
-          revalidatePolicyRequirements,
+          verifyLivePolicyRequirements,
           beforeForwardPort: portReservation
             ? (port) => portReservation.releaseBeforeForward(agent.name, port)
             : undefined,
         })
-      : ensureFinalizationDashboardForward(sandboxName, revalidatePolicyRequirements);
+      : ensureFinalizationDashboardForward(sandboxName, verifyLivePolicyRequirements);
   }
 
   function ensureAgentFixedForward(
     sandboxName: string,
     port: number,
     label: string,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    verifyLivePolicyRequirements?: (operation: string) => void,
   ): boolean {
-    return ensureFixedAgentForward(deps, sandboxName, port, label, revalidatePolicyRequirements);
+    return ensureFixedAgentForward(deps, sandboxName, port, label, verifyLivePolicyRequirements);
   }
 
   /**

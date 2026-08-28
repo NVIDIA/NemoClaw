@@ -5,8 +5,8 @@ import { isDeepStrictEqual } from "node:util";
 
 import { normalizeInferenceSelection, type InferenceSelection } from "../../inference/selection";
 import { isWebSearchProvider } from "../../inference/web-search/provider";
-import { normalizePendingSandboxCreateVerification } from "./pending-create-verification";
-import type { PendingSandboxCreateVerification, SandboxEntry } from "./types";
+import { normalizePendingSandboxCreateIdentity } from "./pending-create-identity";
+import type { PendingSandboxCreateIdentity, SandboxEntry } from "./types";
 
 const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>([
   "credentialEnv",
@@ -23,7 +23,7 @@ const ROUTE_RESERVATION_KEYS = new Set<keyof SandboxEntry>([
   "name",
   "openshellDriver",
   "pendingRouteReservation",
-  "pendingCreateVerification",
+  "pendingCreateIdentity",
   "preferredInferenceApi",
   "provider",
   "reservationSessionId",
@@ -38,7 +38,7 @@ function verifiedCreateCheckpointClass(
 ): "absent" | "valid" | "malformed" | "sandbox-authority" {
   let checkpoint;
   try {
-    checkpoint = normalizePendingSandboxCreateVerification(entry.pendingCreateVerification);
+    checkpoint = normalizePendingSandboxCreateIdentity(entry.pendingCreateIdentity);
   } catch {
     return "malformed";
   }
@@ -56,14 +56,14 @@ function verifiedCreateCheckpointClass(
 
 function withVerifiedCreateCheckpoint(
   entry: SandboxEntry,
-  checkpoint: PendingSandboxCreateVerification,
+  checkpoint: PendingSandboxCreateIdentity,
 ): SandboxEntry {
   return {
     ...entry,
     gatewayPort: checkpoint.gatewayPort,
     lifecycleGeneration: checkpoint.lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
-    pendingCreateVerification: checkpoint,
+    pendingCreateIdentity: checkpoint,
   };
 }
 
@@ -290,11 +290,11 @@ export function isCurrentSandboxInferenceRouteReservation(
   let checkpoint;
   let admittedCheckpoint;
   try {
-    checkpoint = normalizePendingSandboxCreateVerification(
-      current.reservation.entry.pendingCreateVerification,
+    checkpoint = normalizePendingSandboxCreateIdentity(
+      current.reservation.entry.pendingCreateIdentity,
     );
-    admittedCheckpoint = normalizePendingSandboxCreateVerification(
-      reservation.entry.pendingCreateVerification,
+    admittedCheckpoint = normalizePendingSandboxCreateIdentity(
+      reservation.entry.pendingCreateIdentity,
     );
   } catch {
     return false;

@@ -165,7 +165,7 @@ describe("dedicated local model profile onboarder", () => {
     const installEffect = vi.fn();
     const handleVllmSelection = vi.fn(async () => "selected" as const);
     const observedRoutes: Array<Record<string, unknown>> = [];
-    selection.revalidatePolicyRequirements = (operation) => {
+    selection.verifyLivePolicyRequirements = (operation) => {
       observedRoutes.push({
         operation,
         provider: selection.provider,

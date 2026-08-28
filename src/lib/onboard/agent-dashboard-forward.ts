@@ -23,7 +23,7 @@ export type EnsureDashboardForward = (
   options?: {
     preserveSandboxPorts?: Array<number | string>;
     allowPortReallocation?: boolean;
-    revalidatePolicyRequirements?: (operation: string) => void;
+    verifyLivePolicyRequirements?: (operation: string) => void;
     onForwardStarted?: (port: number) => void;
   },
 ) => number;
@@ -43,7 +43,7 @@ export async function ensureAgentDashboardForward(options: {
   hermesApiPort?: number | null;
   preserveForwardPorts?: readonly (number | null | undefined)[];
   beforeForwardPort?: (port: number) => Promise<void> | void;
-  revalidatePolicyRequirements?: (operation: string) => void;
+  verifyLivePolicyRequirements?: (operation: string) => void;
   compensateDashboardForward?: (port: number) => void;
   warn?: (message: string) => void;
 }): Promise<number> {
@@ -56,7 +56,7 @@ export async function ensureAgentDashboardForward(options: {
     hermesApiPort,
     preserveForwardPorts = [],
     beforeForwardPort,
-    revalidatePolicyRequirements,
+    verifyLivePolicyRequirements,
     compensateDashboardForward,
     warn = (message: string) => console.warn(message),
   } = options;
@@ -69,7 +69,7 @@ export async function ensureAgentDashboardForward(options: {
     if (!startedForwardPorts.includes(port)) startedForwardPorts.push(port);
   };
   const startedForwardCallback =
-    revalidatePolicyRequirements && compensateDashboardForward ? recordStartedForward : undefined;
+    verifyLivePolicyRequirements && compensateDashboardForward ? recordStartedForward : undefined;
   const restoreChatUiUrl = (): void => {
     if (previousChatUiUrl === undefined) delete process.env.CHAT_UI_URL;
     else process.env.CHAT_UI_URL = previousChatUiUrl;
@@ -112,10 +112,10 @@ export async function ensureAgentDashboardForward(options: {
     const actualAgentDashboardPort = ensureDashboardForward(sandboxName, requestedDashboardUrl, {
       preserveSandboxPorts: preservePorts,
       ...(startedForwardCallback ? { onForwardStarted: startedForwardCallback } : {}),
-      ...(revalidatePolicyRequirements ? { revalidatePolicyRequirements } : {}),
+      ...(verifyLivePolicyRequirements ? { verifyLivePolicyRequirements } : {}),
     });
     if (!usesFixedApiPort) {
-      revalidatePolicyRequirements?.(`publish the dashboard URL for sandbox '${sandboxName}'`);
+      verifyLivePolicyRequirements?.(`publish the dashboard URL for sandbox '${sandboxName}'`);
       process.env.CHAT_UI_URL = replaceUrlPort(requestedDashboardUrl, actualAgentDashboardPort);
     }
 
@@ -132,7 +132,7 @@ export async function ensureAgentDashboardForward(options: {
           preserveSandboxPorts: portsToPreserve,
           allowPortReallocation: false,
           ...(startedForwardCallback ? { onForwardStarted: startedForwardCallback } : {}),
-          ...(revalidatePolicyRequirements ? { revalidatePolicyRequirements } : {}),
+          ...(verifyLivePolicyRequirements ? { verifyLivePolicyRequirements } : {}),
         });
       } catch (err) {
         if (isPolicyObservationError(err)) throw err;
@@ -144,7 +144,7 @@ export async function ensureAgentDashboardForward(options: {
       }
     }
 
-    revalidatePolicyRequirements?.(
+    verifyLivePolicyRequirements?.(
       `report successful dashboard forwarding for sandbox '${sandboxName}'`,
     );
     return actualAgentDashboardPort;

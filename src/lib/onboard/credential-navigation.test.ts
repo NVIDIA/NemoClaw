@@ -89,7 +89,7 @@ describe("credential prompt navigation helpers", () => {
         envName: "NEMOCLAW_TEST_POLICY_CREDENTIAL",
         label: "Policy credential",
         exitOnboardFromPrompt: () => process.exit(1),
-        revalidatePolicyRequirements: () => {
+        verifyLivePolicyRequirements: () => {
           throw new Error("live policy requirements changed before the selected route");
         },
       }),
@@ -116,7 +116,7 @@ describe("credential prompt navigation helpers", () => {
         preferredInferenceApi: null,
         nimContainer: null,
         allowToolsIncompatible: false,
-        revalidatePolicyRequirements: () => {
+        verifyLivePolicyRequirements: () => {
           throw new Error("live policy requirements changed before the selected route");
         },
       } satisfies SetupNimSelectionState;

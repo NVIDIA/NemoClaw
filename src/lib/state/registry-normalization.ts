@@ -3,9 +3,9 @@
 
 import { isObjectRecord } from "../core/json-types";
 import type { SandboxEntry } from "./registry/types";
-import { normalizePendingSandboxCreateVerification } from "./registry/pending-create-verification";
+import { normalizePendingSandboxCreateIdentity } from "./registry/pending-create-identity";
 
-export { normalizePendingSandboxCreateVerification };
+export { normalizePendingSandboxCreateIdentity };
 
 const POLICY_SHADOW_FIELDS = [
   "baselineExclusions",
@@ -22,9 +22,9 @@ const POLICY_SHADOW_FIELDS = [
 export function normalizeSandboxPolicyAttribution(entry: SandboxEntry): SandboxEntry {
   const result = { ...entry } as SandboxEntry & Record<string, unknown>;
   for (const field of POLICY_SHADOW_FIELDS) delete result[field];
-  if (result.pendingCreateVerification !== undefined) {
-    result.pendingCreateVerification = normalizePendingSandboxCreateVerification(
-      result.pendingCreateVerification,
+  if (result.pendingCreateIdentity !== undefined) {
+    result.pendingCreateIdentity = normalizePendingSandboxCreateIdentity(
+      result.pendingCreateIdentity,
     );
   }
   return result;

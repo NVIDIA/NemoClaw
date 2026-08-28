@@ -99,7 +99,7 @@ describe("host-local route-only policy selection", () => {
     const policyChecks = new Map([
       ["apply policy presets to sandbox 'alpha'", refusePresetMutation],
     ]);
-    const revalidatePolicyRequirements = vi.fn((operation: string) =>
+    const verifyLivePolicyRequirements = vi.fn((operation: string) =>
       policyChecks.get(operation)?.(),
     );
 
@@ -108,7 +108,7 @@ describe("host-local route-only policy selection", () => {
         selectedPresets: null,
         provider: null,
         excludedPresets: ["local-inference"],
-        revalidatePolicyRequirements,
+        verifyLivePolicyRequirements,
       }),
     ).rejects.toThrow("policy requirements changed");
 
@@ -135,18 +135,18 @@ describe("host-local route-only policy selection", () => {
 
   it("refuses resumed preset synchronization when authority changes (#9833)", async () => {
     const { deps, syncPresetSelection } = createHarness();
-    const revalidatePolicyRequirements = vi.fn(() => {
+    const verifyLivePolicyRequirements = vi.fn(() => {
       throw new Error("policy requirements changed");
     });
 
     await expect(
       setupPoliciesWithSelection(deps, "alpha", {
         selectedPresets: ["npm"],
-        revalidatePolicyRequirements,
+        verifyLivePolicyRequirements,
       }),
     ).rejects.toThrow("policy requirements changed");
 
-    expect(revalidatePolicyRequirements).toHaveBeenCalledWith(
+    expect(verifyLivePolicyRequirements).toHaveBeenCalledWith(
       "reapply selected policy presets to sandbox 'alpha'",
     );
     expect(syncPresetSelection).not.toHaveBeenCalled();

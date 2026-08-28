@@ -65,7 +65,7 @@ describe("created Hermes credential environment reconciliation", () => {
     reconcileCreatedHermesCredentialEnvironment(
       { sandboxName: "alpha", plan },
       {
-        revalidatePolicyRequirements: (operation) => events.push(`policy:${operation}`),
+        verifyLivePolicyRequirements: (operation) => events.push(`policy:${operation}`),
         reconcileCredentialEnv: () => {
           events.push("reconcile");
           return { changed: true };
@@ -104,7 +104,7 @@ describe("created Hermes credential environment reconciliation", () => {
     reconcileCreatedHermesCredentialEnvironment(
       { sandboxName: "alpha", plan },
       {
-        revalidatePolicyRequirements: vi.fn(),
+        verifyLivePolicyRequirements: vi.fn(),
         reconcileCredentialEnv: () => ({ changed: false }),
         restartGateway,
         parseRestartCompletion: vi.fn(),
@@ -121,7 +121,7 @@ describe("created Hermes credential environment reconciliation", () => {
     const expectedIdentity = "identity-a";
     let liveIdentity = expectedIdentity;
     const mutations: string[] = [];
-    const revalidatePolicyRequirements = vi.fn(() => {
+    const verifyLivePolicyRequirements = vi.fn(() => {
       liveIdentity === expectedIdentity ||
         (() => {
           throw new Error("sandbox identity changed");
@@ -133,7 +133,7 @@ describe("created Hermes credential environment reconciliation", () => {
       reconcileCreatedHermesCredentialEnvironment(
         { sandboxName: "alpha", plan },
         {
-          revalidatePolicyRequirements,
+          verifyLivePolicyRequirements,
           reconcileCredentialEnv: ((_plan: never, revalidate?: (operation: string) => void) => {
             revalidate?.("mutating credential environment");
             mutations.push(liveIdentity);
@@ -155,7 +155,7 @@ describe("created Hermes credential environment reconciliation", () => {
       reconcileCreatedHermesCredentialEnvironment(
         { sandboxName: "alpha", plan },
         {
-          revalidatePolicyRequirements: vi.fn(),
+          verifyLivePolicyRequirements: vi.fn(),
           reconcileCredentialEnv: () => ({ changed: true }),
           restartGateway: () => ({ status: 1, stdout: "", stderr: "failed" }),
           parseRestartCompletion: () => null,
@@ -476,7 +476,7 @@ describe("deferred provider effect authority", () => {
 
   it("refuses provider cleanup when a sandbox appears after verified absence (#9833)", () => {
     let observationCount = 0;
-    const revalidatePolicyRequirements = vi.fn();
+    const verifyLivePolicyRequirements = vi.fn();
     const runOpenshell = vi.fn(() => ({
       pid: 1,
       output: [null, "", ""],
@@ -493,19 +493,19 @@ describe("deferred provider effect authority", () => {
           observationCount++ === 0
             ? { state: "missing", liveIdentityFingerprint: null }
             : { state: "ready", liveIdentityFingerprint: "f".repeat(64) },
-        revalidatePolicyRequirements,
+        verifyLivePolicyRequirements,
         runProviderPreDeleteCleanup: runSandboxProviderPreDeleteCleanup,
         runOpenshell,
         redact: (value) => value,
         tolerateMissingSandbox: true,
       }),
     ).toThrow(/appeared after absence was verified/u);
-    expect(revalidatePolicyRequirements).toHaveBeenCalledOnce();
+    expect(verifyLivePolicyRequirements).toHaveBeenCalledOnce();
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 
   it("refuses every deferred provider attachment before a same-name replacement can receive credentials (#9833)", async () => {
-    const revalidatePolicyRequirements = vi.fn();
+    const verifyLivePolicyRequirements = vi.fn();
     const runOpenshell = vi.fn(() => ({ status: 0 }));
     const boundary = createProviderEffectBoundary({
       deferred: true,
@@ -529,21 +529,20 @@ describe("deferred provider effect authority", () => {
         revalidate("cleaning up providers for sandbox 'alpha'");
         return ["first", "second"];
       },
-      revalidatePolicyRequirementsBeforeCreate: vi.fn(),
+      verifyLivePolicyRequirementsBeforeCreate: vi.fn(),
     });
     const runAfterVerifiedCreate = boundary.runAfterVerifiedCreate;
     expect(runAfterVerifiedCreate).toBeTypeOf("function");
 
     await expect(
       runAfterVerifiedCreate?.({
-        registration: {},
         sandboxName: "alpha",
         gatewayName: "nemoclaw",
         gatewayPort: 18790,
         lifecycleGeneration: "generation-1",
         lifecycleLiveIdentityFingerprint: "a".repeat(64),
         route: "direct" as never,
-        revalidatePolicyRequirements,
+        verifyLivePolicyRequirements,
       }),
     ).rejects.toThrow("OpenShell cannot attach providers to the immutable identity");
 
@@ -551,7 +550,7 @@ describe("deferred provider effect authority", () => {
       expect.arrayContaining(["sandbox", "provider", "attach"]),
       expect.anything(),
     );
-    expect(revalidatePolicyRequirements).toHaveBeenCalledWith(
+    expect(verifyLivePolicyRequirements).toHaveBeenCalledWith(
       "attaching deferred providers to sandbox 'alpha'",
     );
   });
@@ -704,16 +703,16 @@ describe("Hermes portable registration adapter", () => {
 
 describe("sandbox create policy requirements checks", () => {
   const exactIdentity = "a".repeat(64);
-  const verifiedPolicyBoundary = () => ({
-    verifyCreatedPolicy: vi.fn(() => "verified"),
-    persistVerifiedPolicy: vi.fn(),
-    revalidateVerifiedPolicy: vi.fn(),
+  const verifiedCreateBoundary = () => ({
+    verifyCreatedPolicyRequirements: vi.fn(() => "verified"),
+    persistCreateIdentity: vi.fn(),
+    verifyCurrentPolicyRequirements: vi.fn(),
   });
   const exactIdentityBoundary = () => ({
     captureCreatedSandboxIdentity: vi.fn(() => exactIdentity),
     persistCreatedSandboxIdentity: vi.fn(),
     revalidateCreatedSandboxIdentity: vi.fn(),
-    ...verifiedPolicyBoundary(),
+    ...verifiedCreateBoundary(),
   });
 
   it("refuses sandbox creation before mutation when the final check fails (#9833)", async () => {
@@ -749,12 +748,12 @@ describe("sandbox create policy requirements checks", () => {
       },
       persistCreatedSandboxIdentity: () => events.push("persist-identity"),
       revalidateCreatedSandboxIdentity: () => events.push("identity-check"),
-      verifyCreatedPolicy: () => {
+      verifyCreatedPolicyRequirements: () => {
         events.push("policy-check");
         return "verified";
       },
-      persistVerifiedPolicy: () => events.push("persist-checkpoint"),
-      revalidateVerifiedPolicy: () => events.push("revalidate-checkpoint"),
+      persistCreateIdentity: () => events.push("persist-checkpoint"),
+      verifyCurrentPolicyRequirements: () => events.push("revalidate-checkpoint"),
       cleanupTemporarySources: vi.fn(),
     });
     events.push("register");
@@ -789,7 +788,7 @@ describe("sandbox create policy requirements checks", () => {
         return "created";
       },
       ...exactIdentityBoundary(),
-      revalidateVerifiedPolicy: () => {
+      verifyCurrentPolicyRequirements: () => {
         events.push("ready-check");
         throw new Error("external policy requirements changed");
       },
@@ -830,7 +829,7 @@ describe("sandbox create policy requirements checks", () => {
           return "created";
         },
         ...exactIdentityBoundary(),
-        revalidateVerifiedPolicy: () => {
+        verifyCurrentPolicyRequirements: () => {
           throw new Error("external policy requirements changed");
         },
         persistRetainedSandboxRecovery,
@@ -846,7 +845,7 @@ describe("sandbox create policy requirements checks", () => {
     );
   });
 
-  it("retains verified policy evidence when checkpoint persistence fails (#9833)", async () => {
+  it("retains the exact create identity when checkpoint persistence fails (#9833)", async () => {
     const verifiedEvidence = { policyHash: "sha256:policy-4", policyVersion: 4 } as const;
     const persistRetainedSandboxRecovery = vi.fn(() => true);
 
@@ -859,8 +858,8 @@ describe("sandbox create policy requirements checks", () => {
           return "created";
         },
         ...exactIdentityBoundary(),
-        verifyCreatedPolicy: () => verifiedEvidence,
-        persistVerifiedPolicy: () => {
+        verifyCreatedPolicyRequirements: () => verifiedEvidence,
+        persistCreateIdentity: () => {
           throw new Error("checkpoint write failed");
         },
         persistRetainedSandboxRecovery,
@@ -973,8 +972,8 @@ describe("sandbox create policy requirements checks", () => {
       captureCreatedSandboxIdentity: () => exactIdentity,
       persistCreatedSandboxIdentity: vi.fn(),
       revalidateCreatedSandboxIdentity,
-      ...verifiedPolicyBoundary(),
-      revalidateVerifiedPolicy: () => {
+      ...verifiedCreateBoundary(),
+      verifyCurrentPolicyRequirements: () => {
         sandboxIdentity = "replacement";
         throw new Error("sandbox identity changed");
       },
@@ -1002,7 +1001,7 @@ describe("sandbox create policy requirements checks", () => {
     expect(revalidateCreatedSandboxIdentity).toHaveBeenNthCalledWith(
       2,
       exactIdentity,
-      "recording verified policy for sandbox 'alpha'",
+      "recording pending create identity for sandbox 'alpha'",
     );
     expect(sandboxIdentity).toBe("replacement");
   });
@@ -1029,7 +1028,7 @@ describe("sandbox create policy requirements checks", () => {
       },
       runVerifiedSandboxCreateEffects: null,
       activateDeferredProviderEffects: () => ["credential-provider"],
-      revalidatePolicyRequirementsBeforeCreate: vi.fn(),
+      verifyLivePolicyRequirementsBeforeCreate: vi.fn(),
     });
     const error = await runSandboxCreateWithPolicyVerification({
       sandboxName: "alpha",
@@ -1039,19 +1038,18 @@ describe("sandbox create policy requirements checks", () => {
         return "created";
       },
       ...exactIdentityBoundary(),
-      persistVerifiedPolicy: () => {
+      persistCreateIdentity: () => {
         checkpoint.state = "verified-create";
       },
       runVerifiedCreateEffects: async () => {
         await providerBoundary.runAfterVerifiedCreate?.({
-          registration: {},
           sandboxName: "alpha",
           gatewayName: "nemoclaw",
           gatewayPort: 8080,
           lifecycleGeneration: "00000000-0000-4000-8000-000000000001",
           lifecycleLiveIdentityFingerprint: exactIdentity,
           route: "none",
-          revalidatePolicyRequirements: vi.fn(),
+          verifyLivePolicyRequirements: vi.fn(),
         });
       },
       cleanupTemporarySources: vi.fn(),
@@ -1073,7 +1071,7 @@ describe("sandbox create policy requirements checks", () => {
         return "created";
       },
       ...exactIdentityBoundary(),
-      revalidateVerifiedPolicy: () => {
+      verifyCurrentPolicyRequirements: () => {
         throw new Error("external policy requirements changed");
       },
       cleanupTemporarySources: () => {
@@ -1110,12 +1108,12 @@ describe("sandbox create policy requirements checks", () => {
       },
       persistCreatedSandboxIdentity: () => events.push("persist-identity"),
       revalidateCreatedSandboxIdentity: () => events.push("identity"),
-      verifyCreatedPolicy: () => {
+      verifyCreatedPolicyRequirements: () => {
         events.push("policy");
         return "verified";
       },
-      persistVerifiedPolicy: () => events.push("checkpoint"),
-      revalidateVerifiedPolicy: () => events.push("checkpoint-revalidate"),
+      persistCreateIdentity: () => events.push("checkpoint"),
+      verifyCurrentPolicyRequirements: () => events.push("checkpoint-revalidate"),
       cleanupTemporarySources: vi.fn(),
     });
 
@@ -1137,7 +1135,7 @@ describe("sandbox create policy requirements checks", () => {
   });
 
   it("withholds checkpoint and effects when post-create policy verification fails (#9833)", async () => {
-    const persistVerifiedPolicy = vi.fn();
+    const persistCreateIdentity = vi.fn();
     const runVerifiedCreateEffects = vi.fn();
 
     const error = await runSandboxCreateWithPolicyVerification({
@@ -1150,23 +1148,23 @@ describe("sandbox create policy requirements checks", () => {
       captureCreatedSandboxIdentity: () => exactIdentity,
       persistCreatedSandboxIdentity: vi.fn(),
       revalidateCreatedSandboxIdentity: vi.fn(),
-      verifyCreatedPolicy: () => {
+      verifyCreatedPolicyRequirements: () => {
         throw new PolicyObservationError("policy verification failed");
       },
-      persistVerifiedPolicy,
-      revalidateVerifiedPolicy: vi.fn(),
+      persistCreateIdentity,
+      verifyCurrentPolicyRequirements: vi.fn(),
       runVerifiedCreateEffects,
       cleanupTemporarySources: vi.fn(),
     }).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(AggregateError);
     expect((error as AggregateError).message).toContain("policy verification failed");
-    expect(persistVerifiedPolicy).not.toHaveBeenCalled();
+    expect(persistCreateIdentity).not.toHaveBeenCalled();
     expect(runVerifiedCreateEffects).not.toHaveBeenCalled();
   });
 
   it("withholds effects when durable checkpoint persistence fails (#9833)", async () => {
-    const revalidateVerifiedPolicy = vi.fn();
+    const verifyCurrentPolicyRequirements = vi.fn();
     const runVerifiedCreateEffects = vi.fn();
 
     await expect(
@@ -1180,22 +1178,22 @@ describe("sandbox create policy requirements checks", () => {
         captureCreatedSandboxIdentity: () => exactIdentity,
         persistCreatedSandboxIdentity: vi.fn(),
         revalidateCreatedSandboxIdentity: vi.fn(),
-        verifyCreatedPolicy: () => "verified",
-        persistVerifiedPolicy: () => {
+        verifyCreatedPolicyRequirements: () => "verified",
+        persistCreateIdentity: () => {
           throw new Error("checkpoint persistence failed");
         },
-        revalidateVerifiedPolicy,
+        verifyCurrentPolicyRequirements,
         runVerifiedCreateEffects,
         cleanupTemporarySources: vi.fn(),
       }),
     ).rejects.toThrow("automatic sandbox cleanup was not safe");
 
-    expect(revalidateVerifiedPolicy).not.toHaveBeenCalled();
+    expect(verifyCurrentPolicyRequirements).not.toHaveBeenCalled();
     expect(runVerifiedCreateEffects).not.toHaveBeenCalled();
   });
 
   it("retains the checkpoint and withholds effects when its reread fails (#9833)", async () => {
-    const persistVerifiedPolicy = vi.fn();
+    const persistCreateIdentity = vi.fn();
     const runVerifiedCreateEffects = vi.fn();
 
     await expect(
@@ -1209,9 +1207,9 @@ describe("sandbox create policy requirements checks", () => {
         captureCreatedSandboxIdentity: () => exactIdentity,
         persistCreatedSandboxIdentity: vi.fn(),
         revalidateCreatedSandboxIdentity: vi.fn(),
-        verifyCreatedPolicy: () => "verified",
-        persistVerifiedPolicy,
-        revalidateVerifiedPolicy: () => {
+        verifyCreatedPolicyRequirements: () => "verified",
+        persistCreateIdentity,
+        verifyCurrentPolicyRequirements: () => {
           throw new Error("durable checkpoint missing");
         },
         runVerifiedCreateEffects,
@@ -1219,12 +1217,12 @@ describe("sandbox create policy requirements checks", () => {
       }),
     ).rejects.toThrow("automatic sandbox cleanup was not safe");
 
-    expect(persistVerifiedPolicy).toHaveBeenCalledOnce();
+    expect(persistCreateIdentity).toHaveBeenCalledOnce();
     expect(runVerifiedCreateEffects).not.toHaveBeenCalled();
   });
 
   it("retains the durable checkpoint when a deferred effect fails (#9833)", async () => {
-    const persistVerifiedPolicy = vi.fn();
+    const persistCreateIdentity = vi.fn();
 
     await expect(
       runSandboxCreateWithPolicyVerification({
@@ -1237,9 +1235,9 @@ describe("sandbox create policy requirements checks", () => {
         captureCreatedSandboxIdentity: () => exactIdentity,
         persistCreatedSandboxIdentity: vi.fn(),
         revalidateCreatedSandboxIdentity: vi.fn(),
-        verifyCreatedPolicy: () => "verified",
-        persistVerifiedPolicy,
-        revalidateVerifiedPolicy: vi.fn(),
+        verifyCreatedPolicyRequirements: () => "verified",
+        persistCreateIdentity,
+        verifyCurrentPolicyRequirements: vi.fn(),
         runVerifiedCreateEffects: async () => {
           throw new Error("provider effect failed");
         },
@@ -1247,7 +1245,7 @@ describe("sandbox create policy requirements checks", () => {
       }),
     ).rejects.toThrow("automatic sandbox cleanup was not safe");
 
-    expect(persistVerifiedPolicy).toHaveBeenCalledOnce();
+    expect(persistCreateIdentity).toHaveBeenCalledOnce();
   });
 
   it("refuses continuation when identity changes during effective-policy verification (#9833)", async () => {
@@ -1276,7 +1274,7 @@ describe("sandbox create policy requirements checks", () => {
         captureCreatedSandboxIdentity: () => exactIdentity,
         persistCreatedSandboxIdentity: vi.fn(),
         revalidateCreatedSandboxIdentity,
-        ...verifiedPolicyBoundary(),
+        ...verifiedCreateBoundary(),
         persistRetainedSandboxRecovery,
         cleanupTemporarySources: vi.fn(),
       }),
@@ -1293,8 +1291,8 @@ describe("sandbox create policy requirements checks", () => {
 
   it("stops before policy verification when the exact identity cannot be persisted (#9833)", async () => {
     const revalidateCreatedSandboxIdentity = vi.fn();
-    const verifyCreatedPolicy = vi.fn();
-    const persistVerifiedPolicy = vi.fn();
+    const verifyCreatedPolicyRequirements = vi.fn();
+    const persistCreateIdentity = vi.fn();
     const runVerifiedCreateEffects = vi.fn();
 
     await expect(
@@ -1310,17 +1308,17 @@ describe("sandbox create policy requirements checks", () => {
           throw new Error("durable identity journal unavailable");
         },
         revalidateCreatedSandboxIdentity,
-        verifyCreatedPolicy,
-        persistVerifiedPolicy,
-        revalidateVerifiedPolicy: vi.fn(),
+        verifyCreatedPolicyRequirements,
+        persistCreateIdentity,
+        verifyCurrentPolicyRequirements: vi.fn(),
         runVerifiedCreateEffects,
         cleanupTemporarySources: vi.fn(),
       }),
     ).rejects.toThrow("automatic sandbox cleanup was not safe");
 
     expect(revalidateCreatedSandboxIdentity).not.toHaveBeenCalled();
-    expect(verifyCreatedPolicy).not.toHaveBeenCalled();
-    expect(persistVerifiedPolicy).not.toHaveBeenCalled();
+    expect(verifyCreatedPolicyRequirements).not.toHaveBeenCalled();
+    expect(persistCreateIdentity).not.toHaveBeenCalled();
     expect(runVerifiedCreateEffects).not.toHaveBeenCalled();
   });
 

@@ -455,7 +455,7 @@ describe("managed llama.cpp installer", () => {
     harness.images.add(selected.recipe.spec.runtime.image);
     harness.images.add(selected.recipe.spec.readiness.probeImage);
     const lifecycle = dormantManagedLifecycle();
-    const revalidatePolicyRequirements = vi
+    const verifyLivePolicyRequirements = vi
       .fn<(operation: string) => void>()
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => {
@@ -472,15 +472,15 @@ describe("managed llama.cpp installer", () => {
         verifyGguf: vi.fn(async () => verifiedArtifact(selected, homeDir)),
         checkPort: vi.fn(async () => ({ ok: true })),
         log: vi.fn(),
-        revalidatePolicyRequirements,
+        verifyLivePolicyRequirements,
       }),
     ).rejects.toBeInstanceOf(PolicyObservationError);
 
-    expect(revalidatePolicyRequirements).toHaveBeenNthCalledWith(
+    expect(verifyLivePolicyRequirements).toHaveBeenNthCalledWith(
       1,
       "reserve the managed llama.cpp runtime",
     );
-    expect(revalidatePolicyRequirements).toHaveBeenNthCalledWith(
+    expect(verifyLivePolicyRequirements).toHaveBeenNthCalledWith(
       2,
       "activate the managed llama.cpp runtime",
     );
@@ -510,7 +510,7 @@ describe("managed llama.cpp installer", () => {
     harness.images.add(selected.recipe.spec.runtime.image);
     harness.images.add(selected.recipe.spec.readiness.probeImage);
     const lifecycle = dormantManagedLifecycle();
-    const revalidatePolicyRequirements = vi
+    const verifyLivePolicyRequirements = vi
       .fn<(operation: string) => void>()
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => {
@@ -525,15 +525,15 @@ describe("managed llama.cpp installer", () => {
         runtimeProvider: managedRuntimeProvider(harness.engine, () => lifecycle),
         verifyGguf: vi.fn(async () => verifiedArtifact(selected, homeDir)),
         checkPort: vi.fn(async () => ({ ok: true })),
-        revalidatePolicyRequirements,
+        verifyLivePolicyRequirements,
       }),
     ).rejects.toBeInstanceOf(PolicyObservationError);
 
-    expect(revalidatePolicyRequirements).toHaveBeenNthCalledWith(
+    expect(verifyLivePolicyRequirements).toHaveBeenNthCalledWith(
       1,
       "inspect the managed llama.cpp runtime",
     );
-    expect(revalidatePolicyRequirements).toHaveBeenNthCalledWith(
+    expect(verifyLivePolicyRequirements).toHaveBeenNthCalledWith(
       2,
       "recover the managed llama.cpp runtime",
     );

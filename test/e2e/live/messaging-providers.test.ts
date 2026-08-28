@@ -265,6 +265,30 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       "M-WA3: WhatsApp policy preset applied before rebuild",
     );
 
+    const hostPolicyEdit = await runHost(
+      host,
+      "openshell",
+      [
+        "policy",
+        "update",
+        SANDBOX_NAME,
+        "--add-endpoint",
+        "host-edit-messaging.example.com:443:read-only:rest:enforce",
+        "--rule-name",
+        "messaging_host_edit_e2e",
+        "--binary",
+        "/usr/bin/curl",
+        "--wait",
+      ],
+      {
+        artifactName: "host-policy-edit-before-messaging-rebuild",
+        env: state.env,
+        redactionValues,
+        timeoutMs: 60_000,
+      },
+    );
+    expectExitZero(hostPolicyEdit, "M-WA3a: direct OpenShell policy edit before rebuild");
+
     const whatsappRebuild = await runHost(
       host,
       "node",
@@ -309,6 +333,10 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
         policyTextHasHost(whatsappPolicyPostText, "raw.githubusercontent.com") &&
         /\/usr\/local\/bin\/node|\/usr\/bin\/node/.test(whatsappPolicyPostText),
       "M-WA5: WhatsApp policy preset survived rebuild with Node binary scope",
+    );
+    check(
+      whatsappPolicyPostText.includes("messaging_host_edit_e2e"),
+      "M-WA5a: unrelated host policy edit survived messaging rebuild",
     );
 
     progress.phase("inspect providers placeholders and credential isolation");

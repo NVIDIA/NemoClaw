@@ -390,8 +390,8 @@ runner.run = (command, opts = {}) => {
 	  removeSandbox: (name) => { registryMutationCalls.push({ operation: "remove", name }); },
 	});
 if (postCreateRunnerRefusal) {
-  const requireCurrentCheckpoint = registry.requireCurrentPendingSandboxCreateVerification;
-  registry.requireCurrentPendingSandboxCreateVerification = (...args) => {
+  const requireCurrentCheckpoint = registry.requireCurrentPendingSandboxCreateIdentity;
+  registry.requireCurrentPendingSandboxCreateIdentity = (...args) => {
     checkpointReadCalls += 1;
     if (checkpointReadCalls === 6) {
       throw new Error("post-verification create runner checkpoint failed");

@@ -52,6 +52,7 @@ describe("live OpenShell policy mutations", () => {
     mocks.inspectSandboxPolicy.mockImplementation(() => ({
       policySource: "sandbox",
       effectivePolicy: YAML.parse(livePolicy),
+      policy: YAML.parse(livePolicy),
       policyIdentity: { hash: "sha256:live", activeVersion: 1 },
     }));
     mocks.captureSandboxBasePolicy.mockImplementation(() => livePolicy);
@@ -84,6 +85,39 @@ describe("live OpenShell policy mutations", () => {
 
     expect(removePreset(sandboxName, "weather", { nonFatal: true })).toBe(true);
     expect(YAML.parse(livePolicy).network_policies).toEqual({ host_approval: hostEntry });
+  });
+
+  it("does not overwrite a host edit that races a prepared full-policy update", () => {
+    let observations = 0;
+    mocks.inspectSandboxPolicy.mockImplementation(() => {
+      observations += 1;
+      livePolicy =
+        observations === 2
+          ? YAML.stringify({
+              version: 1,
+              network_policies: {
+                host_approval: hostEntry,
+                concurrent_host_edit: {
+                  endpoints: [{ host: "concurrent.example.com", port: 443 }],
+                },
+              },
+            })
+          : livePolicy;
+      const policy = YAML.parse(livePolicy);
+      return {
+        policySource: "sandbox",
+        effectivePolicy: policy,
+        policy,
+        policyIdentity: {
+          hash: `sha256:live-${String(observations)}`,
+          activeVersion: observations,
+        },
+      };
+    });
+
+    expect(applyPresetContent(sandboxName, "weather", preset, { nonFatal: true })).toBe(false);
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(YAML.parse(livePolicy).network_policies).toHaveProperty("concurrent_host_edit");
   });
 
   it("derives custom preset identity from namespaced OpenShell keys", () => {

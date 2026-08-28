@@ -733,7 +733,15 @@ export function recheckPolicyMutationContext(
   operation: string,
   previous: PolicyMutationContext,
 ): PolicyMutationContext {
-  return inspectPolicyMutationContext(sandboxName, operation, previous.gatewayName);
+  const current = inspectPolicyMutationContext(sandboxName, operation, previous.gatewayName);
+  if (
+    !isDeepStrictEqual(current.inspection.effectivePolicy, previous.inspection.effectivePolicy)
+  ) {
+    throw new PolicyObservationError(
+      `Refusing to ${operation}: the current OpenShell policy changed while NemoClaw prepared the requested update. Rerun the command against the current policy.`,
+    );
+  }
+  return current;
 }
 
 /** Reject a final OpenShell policy refusal without exposing raw diagnostics. */
@@ -902,14 +910,9 @@ export function setPolicyDocument(
   const operation = options.operation ?? "set the sandbox policy";
   let context: PolicyMutationContext;
   try {
-    if (options.context) {
-      recheckPolicyMutationContext(sandboxName, operation, options.context);
-    }
-    context = preparePolicyMutationContext(
-      sandboxName,
-      operation,
-      options.context?.gatewayName ?? options.gatewayName,
-    );
+    context = options.context
+      ? recheckPolicyMutationContext(sandboxName, operation, options.context)
+      : preparePolicyMutationContext(sandboxName, operation, options.gatewayName);
   } catch (error) {
     console.error(`  ${policyObservationError(error)}`);
     if (options.nonFatal) return false;
@@ -1766,13 +1769,11 @@ function removePreset(
   if (
     !setPolicyDocument(sandboxName, updated, {
       nonFatal: options.nonFatal,
-      gatewayName: context.gatewayName,
+      context,
     })
   ) {
     return false;
   }
-  if (!recheckLivePolicyForMutation(sandboxName, operation, context)) return false;
-
   console.log(`  Removed preset: ${presetName}`);
   return true;
 }
@@ -1781,9 +1782,18 @@ function removePreset(
 function pushPolicyYaml(
   sandboxName: string,
   updatedPolicy: string,
-  options: { nonFatal?: boolean; gatewayName?: string } = {},
+  options: { nonFatal?: boolean; gatewayName?: string; expectedPolicy?: string } = {},
 ): boolean {
   if (!assertOpenshellResolvable(options)) return false;
+  if (options.expectedPolicy !== undefined) {
+    const currentPolicy = readCurrentSandboxPolicy(sandboxName, options.gatewayName);
+    if (!currentPolicy || !policyDocumentsMatch(currentPolicy, options.expectedPolicy)) {
+      console.error(
+        `  The current OpenShell policy changed while NemoClaw prepared the requested update. Rerun the command; no policy changes were made.`,
+      );
+      return false;
+    }
+  }
   return setPolicyDocument(sandboxName, updatedPolicy, options);
 }
 
@@ -1883,7 +1893,14 @@ function excludeBaselineEntry(
       return false;
     }
     const { policy, removed } = removeBaselineEntryFromPolicy(currentPolicy, key);
-    return removed && pushPolicyYaml(sandboxName, policy, { ...options, gatewayName });
+    return (
+      removed &&
+      pushPolicyYaml(sandboxName, policy, {
+        ...options,
+        gatewayName,
+        expectedPolicy: currentPolicy,
+      })
+    );
   });
 }
 
@@ -1927,7 +1944,11 @@ function restoreBaselineEntry(
       return false;
     }
     const updated = mergeBaselineEntryIntoPolicy(currentPolicy, key, entry);
-    return pushPolicyYaml(sandboxName, updated, { ...options, gatewayName });
+    return pushPolicyYaml(sandboxName, updated, {
+      ...options,
+      gatewayName,
+      expectedPolicy: currentPolicy,
+    });
   });
 }
 
@@ -2258,12 +2279,11 @@ function applyPresetContent(
     if (
       !setPolicyDocument(sandboxName, merged, {
         nonFatal: options.nonFatal,
-        gatewayName: context.gatewayName,
+        context,
       })
     ) {
       return false;
     }
-    if (!recheckLivePolicyForMutation(sandboxName, operation, context)) return false;
   }
 
   if (policyChanged) console.log(`  Applied preset: ${presetName}`);
@@ -2439,9 +2459,8 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
     // and outer cleanup have finished.
     if (!recheckLivePolicyForMutation(sandboxName, operation, context)) return false;
     setPolicyDocument(sandboxName, merged, {
-      gatewayName: context.gatewayName,
+      context,
     });
-    if (!recheckLivePolicyForMutation(sandboxName, operation, context)) return false;
   }
 
   if (policyChanged) {
@@ -2779,7 +2798,7 @@ function applyPermissivePolicy(sandboxName: string): void {
   assertOpenshellResolvable();
   recheckPolicyMutationContext(sandboxName, operation, context);
   setPolicyDocument(sandboxName, materializedPolicy, {
-    gatewayName: context.gatewayName,
+    context,
   });
   console.log("  Applied permissive policy.");
 }

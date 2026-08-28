@@ -82,7 +82,7 @@ export type SandboxCreatePlan = {
   sandboxGpuLogMessage: string | null;
   /** One-shot provider activation owned by the post-create verification boundary. */
   activateDeferredProviderEffects:
-    | ((revalidatePolicyRequirements: (operation: string) => void) => readonly string[])
+    | ((verifyLivePolicyRequirements: (operation: string) => void) => readonly string[])
     | null;
 };
 
@@ -356,15 +356,15 @@ export function materializeSandboxCreatePlan({
   }
 
   const activateProviderEffects = (
-    revalidatePolicyRequirements?: (operation: string) => void,
+    verifyLivePolicyRequirements?: (operation: string) => void,
   ): readonly string[] => {
-    runProviderPreDeleteCleanup(revalidatePolicyRequirements);
+    runProviderPreDeleteCleanup(verifyLivePolicyRequirements);
     const activatedMessagingProviders = filterMessagingProvidersForSandboxCreate(
       [
         ...upsertMessagingProviders(enabledMessagingTokenDefs, {
           replaceExisting: true,
           allowedSandboxes: [intent.sandboxName],
-          ...(revalidatePolicyRequirements ? { revalidatePolicyRequirements } : {}),
+          ...(verifyLivePolicyRequirements ? { verifyLivePolicyRequirements } : {}),
         }),
         ...intent.reusableMessagingProviders,
       ],

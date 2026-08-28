@@ -58,7 +58,7 @@ describe("ensureAgentFixedForward", () => {
 
   it("rechecks policy requirements before each fixed-forward start (#9833)", () => {
     const deps = makeDeps(() => "");
-    const revalidatePolicyRequirements = vi
+    const verifyLivePolicyRequirements = vi
       .fn<(operation: string) => void>()
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => {
@@ -75,7 +75,7 @@ describe("ensureAgentFixedForward", () => {
         "my-sandbox",
         18789,
         "messaging webhook",
-        revalidatePolicyRequirements,
+        verifyLivePolicyRequirements,
       ),
     ).toThrow("policy requirements changed");
 
@@ -83,6 +83,6 @@ describe("ensureAgentFixedForward", () => {
       ["forward", "stop", "18789", "my-sandbox"],
       expect.anything(),
     );
-    expect(revalidatePolicyRequirements).toHaveBeenCalledTimes(2);
+    expect(verifyLivePolicyRequirements).toHaveBeenCalledTimes(2);
   });
 });

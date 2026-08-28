@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import {
-  managedPolicyMetadata,
+  livePolicyMetadata,
   managedRegistrationSource,
   SANDBOX_ID,
 } from "../../helpers/live-policy-fixture";
@@ -54,7 +54,7 @@ if [ "$1 $2" = "sandbox get" ]; then
 fi
 if [ "$1 $2" = "policy get" ]; then
   if [[ " $* " == *" --output json "* ]]; then
-    printf '%s\n' ${JSON.stringify(managedPolicyMetadata("hermes-sandbox"))}
+    printf '%s\n' ${JSON.stringify(livePolicyMetadata("hermes-sandbox"))}
     exit 0
   fi
   if [ -f ${JSON.stringify(policyOut)} ]; then

@@ -196,7 +196,7 @@ describe("inference selection validation", () => {
           undefined,
           {
             capabilityCache,
-            revalidatePolicyRequirements: () => {
+            verifyLivePolicyRequirements: () => {
               throw new Error("policy requirements changed");
             },
           },

@@ -12,7 +12,7 @@ import type { SandboxMcpState } from "../registry-mcp";
 import type { SandboxMessagingState } from "../registry-messaging";
 
 /** Bounded identity checkpoint for one incomplete sandbox create. */
-export interface PendingSandboxCreateVerification {
+export interface PendingSandboxCreateIdentity {
   readonly schemaVersion: 1;
   readonly state: "verified-create";
   readonly gatewayName: string;
@@ -90,7 +90,7 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   openshellDriver?: string | null;
   openshellVersion?: string | null;
   /** Verified create boundary retained until final registration publishes atomically. */
-  pendingCreateVerification?: PendingSandboxCreateVerification;
+  pendingCreateIdentity?: PendingSandboxCreateIdentity;
   webSearchEnabled?: boolean;
   /** Selected disclosure preference; model compatibility safeguards may downgrade runtime behavior. */
   toolDisclosure?: ToolDisclosure;

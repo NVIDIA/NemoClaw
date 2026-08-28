@@ -303,19 +303,6 @@ export interface SandboxStateOptions<
       sandboxName: string,
     ): import("../../../messaging/plan-authority").RegistryMessagingAuthority;
     providerMatchesGatewayCredential(name: string, type: string, credentialEnv: string): boolean;
-    preflightPolicyRequirements(input: {
-      gatewayName: string;
-      sandboxName: string | null;
-      agent: Agent;
-      selectedMessagingChannels: readonly string[];
-      hermesToolGateways: readonly string[];
-      gpuPassthrough: boolean;
-      provider: string | null;
-      hostLocalInferenceRouteOnly?: boolean;
-      webSearchConfig: WebSearchConfig | null;
-      observabilityEnabled: boolean;
-      operation: string;
-    }): void;
     stageSandboxCredentialProviders(input: {
       sandboxName: string;
       enabledChannels: readonly string[];
@@ -323,7 +310,7 @@ export interface SandboxStateOptions<
       agent: Agent;
       requiredBindings: readonly CheckpointProviderBinding[];
       replaceExisting?: boolean;
-      revalidatePolicyRequirements?(operation: string): void;
+      verifyLivePolicyRequirements?(operation: string): void;
     }): Promise<readonly CheckpointProviderBinding[]>;
     promptValidatedSandboxName(agent: Agent): Promise<string>;
     selectResourceProfileForSandbox(): Promise<ResourceProfile | null>;
@@ -1211,15 +1198,6 @@ class SandboxStateFlow<
         this.deps,
         state.session?.messagingPlan ?? null,
       );
-      if (state.sandboxName) {
-        this.revalidatePolicyRequirements(
-          state.sandboxName,
-          messaging.selectedChannels,
-          state.webSearchConfig,
-          state.session,
-          `record reused sandbox state for '${state.sandboxName}'`,
-        );
-      }
       if (messaging.changed) {
         this.deps.updateSession((current) => {
           current.messagingPlan = messaging.plan;
@@ -1229,28 +1207,10 @@ class SandboxStateFlow<
       }
       this.backfillReusedSandboxFidelity(state);
       this.deps.skippedStepMessage("sandbox", state.sandboxName, "reuse");
-      if (state.sandboxName) {
-        this.revalidatePolicyRequirements(
-          state.sandboxName,
-          messaging.selectedChannels,
-          state.webSearchConfig,
-          state.session,
-          `record reused sandbox completion for '${state.sandboxName}'`,
-        );
-      }
       const skippedSession = await this.deps.recordStateSkipped("sandbox", {
         reason: "resume",
         sandboxName: state.sandboxName,
       });
-      if (state.sandboxName) {
-        this.revalidatePolicyRequirements(
-          state.sandboxName,
-          messaging.selectedChannels,
-          state.webSearchConfig,
-          state.session,
-          `record reused sandbox receipts for '${state.sandboxName}'`,
-        );
-      }
       const recordedSession = this.backfillReusedSandboxCheckpointReceipts(
         skippedSession,
         state.sandboxName,
@@ -1528,32 +1488,6 @@ class SandboxStateFlow<
     return { ...state, session };
   }
 
-  private revalidatePolicyRequirements(
-    sandboxName: string,
-    selectedMessagingChannels: readonly string[],
-    webSearchConfig: WebSearchConfig | null,
-    session: Session | null,
-    operation: string,
-  ): void {
-    this.deps.preflightPolicyRequirements({
-      gatewayName: this.options.gatewayName,
-      sandboxName,
-      agent: this.options.agent,
-      selectedMessagingChannels,
-      hermesToolGateways: effectiveHermesToolGatewaysForWebSearch(
-        this.options.agent as { name?: string } | null,
-        webSearchConfig as unknown as SharedWebSearchConfig | null,
-        this.options.hermesToolGateways,
-      ),
-      gpuPassthrough: session?.gpuPassthrough === true,
-      provider: this.options.provider,
-      hostLocalInferenceRouteOnly: this.options.hostLocalInferenceRouteOnly === true,
-      webSearchConfig,
-      observabilityEnabled: session?.observabilityEnabled === true,
-      operation,
-    });
-  }
-
   private async registerCompletedCredentialProviders(
     sandboxName: string,
     enabledChannels: readonly string[],
@@ -1603,17 +1537,7 @@ class SandboxStateFlow<
     const registeredProviders = await this.deps.withGatewayRouteMutationLock(
       this.options.gatewayName,
       async () => {
-        const revalidatePolicyRequirements =
-          verifiedPolicyRevalidation ??
-          ((operation: string) =>
-            this.revalidatePolicyRequirements(
-              sandboxName,
-              selectedMessagingChannels,
-              webSearchConfig,
-              session,
-              operation,
-            ));
-        revalidatePolicyRequirements(
+        verifiedPolicyRevalidation?.(
           `register credential providers for sandbox ${JSON.stringify(sandboxName)}`,
         );
         const staged = await this.deps.stageSandboxCredentialProviders({
@@ -1623,7 +1547,9 @@ class SandboxStateFlow<
           agent: this.options.agent,
           requiredBindings,
           ...(replaceExisting ? { replaceExisting: true } : {}),
-          revalidatePolicyRequirements,
+          ...(verifiedPolicyRevalidation
+            ? { verifyLivePolicyRequirements: verifiedPolicyRevalidation }
+            : {}),
         });
         const stagedProviderNames = new Set<string>();
         for (const binding of staged) {
@@ -2126,7 +2052,7 @@ class SandboxStateFlow<
     deferSandboxEffectsUntilPolicyVerification: boolean,
     activateVerifiedCredentialProviders?: (
       state: SandboxStepState<WebSearchConfig>,
-      revalidatePolicyRequirements: (operation: string) => void,
+      verifyLivePolicyRequirements: (operation: string) => void,
     ) => Promise<SandboxStepState<WebSearchConfig>>,
   ): Promise<SandboxStepState<WebSearchConfig>> {
     const resourceSelection = await this.resolveResourceProfile(initialState);
@@ -2137,14 +2063,6 @@ class SandboxStateFlow<
       state.webSearchConfig as unknown as SharedWebSearchConfig | null,
       this.options.hermesToolGateways,
     );
-    const revalidatePolicyRequirements = (operation: string) =>
-      this.revalidatePolicyRequirements(
-        requestedSandboxName,
-        state.selectedMessagingChannels,
-        state.webSearchConfig,
-        state.session,
-        operation,
-      );
     const extraProviderPlan = this.deps.planRegisteredExtraProviders(this.options.gatewayName);
     const createAndRecord = async (): Promise<SandboxStepState<WebSearchConfig>> => {
       this.assertRegistryMessagingPlanUnchanged(
@@ -2199,7 +2117,6 @@ class SandboxStateFlow<
 
       let sandboxName: string;
       try {
-        revalidatePolicyRequirements(`create sandbox '${requestedSandboxName}'`);
         if (this.options.fresh && !deferSandboxEffectsUntilPolicyVerification) {
           this.deps.stopStaleDashboardListenersForSandbox(
             this.deps.listRegistrySandboxes().sandboxes,
@@ -2257,7 +2174,7 @@ class SandboxStateFlow<
                       }
                       state = await activateVerifiedCredentialProviders(
                         state,
-                        verifiedContext.revalidatePolicyRequirements,
+                        verifiedContext.verifyLivePolicyRequirements,
                       );
                     },
                   ]
@@ -2268,7 +2185,6 @@ class SandboxStateFlow<
         await this.recordSandboxRecreateRepairFailure(transaction, repairMetadata, error);
         throw error;
       }
-      revalidatePolicyRequirements("complete the created sandbox");
       let recordedTransaction: CheckpointSandboxRecreateTransaction | null;
       try {
         recordedTransaction = this.reloadSandboxRecreateTransaction(transaction);
@@ -2278,7 +2194,6 @@ class SandboxStateFlow<
         await this.recordSandboxRecreateRepairFailure(transaction, repairMetadata, error);
         throw error;
       }
-      revalidatePolicyRequirements("complete sandbox repair");
       this.recordSandboxRecreateRegistryCommit(recordedTransaction);
       // createSandbox() owns the build fingerprint. In particular, reusing an
       // image must not stamp it with the current version and hide build drift.
@@ -2288,7 +2203,6 @@ class SandboxStateFlow<
         ...agentRegistryFields
       } = this.deps.getSandboxAgentRegistryFields(this.options.agent, !this.options.fromDockerfile);
       // Preserve the validated route and credential env-var name, never a credential value.
-      revalidatePolicyRequirements("register the created sandbox");
       this.deps.updateSandboxRegistry(sandboxName, {
         ...(providerlessApf
           ? {}
@@ -2305,7 +2219,6 @@ class SandboxStateFlow<
       });
       // Finalization marks the default so a cancelled onboarding cannot leave a
       // partially configured sandbox selected as the default.
-      revalidatePolicyRequirements("complete the sandbox onboarding session");
       await this.deps.recordStepComplete(
         "sandbox",
         this.deps.toSessionUpdates({
@@ -2319,7 +2232,6 @@ class SandboxStateFlow<
           hermesToolGateways: effectiveHermesToolGateways,
         }),
       );
-      revalidatePolicyRequirements("record the final sandbox creation receipt");
       const recordedSession = this.recordSandboxCreateEffects(
         transaction,
         sandboxName,

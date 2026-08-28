@@ -277,7 +277,7 @@ export function applyOpenShellVmDnsMonkeypatch(
     env?: NodeJS.ProcessEnv;
     homeDir?: string;
     platform?: NodeJS.Platform;
-    revalidatePolicyRequirements?: (operation: string) => void;
+    verifyLivePolicyRequirements?: (operation: string) => void;
     stateDir?: string;
   } = {},
 ): VmDnsMonkeypatchResult {
@@ -308,9 +308,9 @@ export function applyOpenShellVmDnsMonkeypatch(
   let changed = false;
   let rootfsContext: string | undefined;
   let policyObservationError: unknown;
-  const revalidatePolicyRequirements = (operation: string): void => {
+  const verifyLivePolicyRequirements = (operation: string): void => {
     try {
-      deps.revalidatePolicyRequirements?.(operation);
+      deps.verifyLivePolicyRequirements?.(operation);
     } catch (error) {
       policyObservationError = error;
       throw error;
@@ -363,13 +363,13 @@ export function applyOpenShellVmDnsMonkeypatch(
     const currentResolver = readTextFileIfPresent(resolvConf.path) ?? "";
     const desiredResolver = normalizeResolver(currentResolver);
     if (currentResolver !== desiredResolver) {
-      revalidatePolicyRequirements(`write VM resolver for sandbox '${sandboxName}'`);
+      verifyLivePolicyRequirements(`write VM resolver for sandbox '${sandboxName}'`);
       fs.writeFileSync(resolvConf.path, desiredResolver);
       changed = true;
     }
 
     if (initPatch.changed && initPatch.content !== undefined) {
-      revalidatePolicyRequirements(`write VM init script for sandbox '${sandboxName}'`);
+      verifyLivePolicyRequirements(`write VM init script for sandbox '${sandboxName}'`);
       fs.writeFileSync(initScript.path, initPatch.content);
       changed = true;
     }
@@ -383,7 +383,7 @@ export function applyOpenShellVmDnsMonkeypatch(
       );
     }
 
-    revalidatePolicyRequirements(`report successful VM DNS repair for sandbox '${sandboxName}'`);
+    verifyLivePolicyRequirements(`report successful VM DNS repair for sandbox '${sandboxName}'`);
 
     return {
       attempted: true,

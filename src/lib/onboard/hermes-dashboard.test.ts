@@ -210,7 +210,7 @@ describe("onboard Hermes dashboard helpers", () => {
 
   it("stops Hermes dashboard forwarding when authority changes between retries (#9833)", () => {
     const starts: string[] = [];
-    const revalidatePolicyRequirements = vi
+    const verifyLivePolicyRequirements = vi
       .fn<(operation: string) => void>()
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => {
@@ -244,17 +244,17 @@ describe("onboard Hermes dashboard helpers", () => {
       },
     });
 
-    expect(() => ensure("my-hermes", false, revalidatePolicyRequirements)).toThrow(
+    expect(() => ensure("my-hermes", false, verifyLivePolicyRequirements)).toThrow(
       "policy requirements changed",
     );
 
     expect(starts).toEqual(["attempt 1"]);
-    expect(revalidatePolicyRequirements).toHaveBeenCalledTimes(2);
+    expect(verifyLivePolicyRequirements).toHaveBeenCalledTimes(2);
   });
 
   it("stops Hermes dashboard rollback when authority changes between commands (#9833)", () => {
     const runOpenshell = vi.fn();
-    const revalidatePolicyRequirements = vi
+    const verifyLivePolicyRequirements = vi
       .fn<(operation: string) => void>()
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => {
@@ -274,7 +274,7 @@ describe("onboard Hermes dashboard helpers", () => {
     const state = forwarding.resolveStateForPort(18789);
 
     expect(() =>
-      forwarding.ensureForState(state, "my-hermes", true, revalidatePolicyRequirements),
+      forwarding.ensureForState(state, "my-hermes", true, verifyLivePolicyRequirements),
     ).toThrow("policy requirements changed");
 
     expect(runOpenshell).toHaveBeenCalledTimes(1);

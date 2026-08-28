@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import {
-  managedPolicyMetadata,
+  livePolicyMetadata,
   managedRegistrationSource,
   SANDBOX_ID,
 } from "../../helpers/live-policy-fixture";
@@ -109,7 +109,7 @@ function buildOpenshellStub(
   appliedPolicyPath: string,
 ): string {
   const policyMetadata = {
-    ...JSON.parse(managedPolicyMetadata(SANDBOX_NAME)),
+    ...JSON.parse(livePolicyMetadata(SANDBOX_NAME)),
     policy: YAML.parse(basePolicy),
   };
   return `#!/bin/sh

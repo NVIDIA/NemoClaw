@@ -199,6 +199,7 @@
     {
       "live": "test/e2e/live/network-policy.test.ts",
       "fast": [
+        "src/lib/actions/sandbox/policy-channel-add-drift.test.ts",
         "test/onboarding/validate-blueprint.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -311,6 +312,8 @@
     {
       "live": "test/e2e/live/channels-add-remove.test.ts",
       "fast": [
+        "test/channels/channels-add-preset.test.ts",
+        "test/channels/channels-remove-full-teardown.test.ts",
         "test/e2e/support/channels-add-remove-helpers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -445,6 +448,7 @@
     {
       "live": "test/e2e/live/mcp-bridge.test.ts",
       "fast": [
+        "src/lib/actions/sandbox/mcp-bridge-policy.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/mcp-bridge-tool-discovery.test.ts"
@@ -460,6 +464,7 @@
     {
       "live": "test/e2e/live/messaging-providers.test.ts",
       "fast": [
+        "test/onboarding/onboard-messaging.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -533,6 +538,7 @@
     {
       "live": "test/e2e/live/rebuild-hermes.test.ts",
       "fast": [
+        "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/rebuild-hermes-env.test.ts",
@@ -545,6 +551,7 @@
     {
       "live": "test/e2e/live/rebuild-openclaw.test.ts",
       "fast": [
+        "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -566,6 +573,7 @@
     {
       "live": "test/e2e/live/shields-config.test.ts",
       "fast": [
+        "src/lib/shields/policy-delta.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/shields-failed-startup.test.ts"
@@ -627,6 +635,7 @@
     {
       "live": "test/e2e/live/channels-stop-start.test.ts",
       "fast": [
+        "test/channels/channels-add-bridge-lifecycle.test.ts",
         "test/e2e/support/channels-stop-start-config-state.test.ts",
         "test/e2e/support/channels-stop-start-googlechat-entry.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",

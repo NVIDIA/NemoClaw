@@ -212,7 +212,6 @@ describe("handleSandboxState provider effect replay", () => {
       webSearchConfig: null,
       agent: null,
       requiredBindings: slackProviderBindings,
-      revalidatePolicyRequirements: expect.any(Function),
     });
     expect(calls.createSandbox).toHaveBeenCalledTimes(1);
     expect(result.session?.checkpoint?.bindings).toEqual({
@@ -300,7 +299,6 @@ describe("handleSandboxState provider effect replay", () => {
       webSearchConfig: { fetchEnabled: true, provider: "tavily" },
       agent: null,
       requiredBindings: [tavilyBinding],
-      revalidatePolicyRequirements: expect.any(Function),
     });
     expect(calls.createSandbox).toHaveBeenCalledTimes(1);
     expect(result.session?.checkpoint?.bindings).toEqual({

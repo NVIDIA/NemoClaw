@@ -327,11 +327,11 @@ describe("sandbox registry normalization", () => {
         alpha: {
           name: "alpha",
           pendingRouteReservation: true,
-          pendingCreateVerification: checkpoint,
+          pendingCreateIdentity: checkpoint,
         },
       },
     });
-    expect(registry.getSandbox("alpha")?.pendingCreateVerification).toEqual({
+    expect(registry.getSandbox("alpha")?.pendingCreateIdentity).toEqual({
       schemaVersion: 1,
       state: "verified-create",
       gatewayName: "nemoclaw",

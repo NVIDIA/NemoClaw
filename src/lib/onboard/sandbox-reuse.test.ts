@@ -141,7 +141,7 @@ describe("applyReusedSandboxDashboardState", () => {
   });
 
   it("passes the receipt check into dashboard forwarding after release (#9833)", async () => {
-    const revalidatePolicyRequirements = vi
+    const verifyLivePolicyRequirements = vi
       .fn<(operation: string) => void>()
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => {
@@ -151,9 +151,9 @@ describe("applyReusedSandboxDashboardState", () => {
       (
         _sandboxName: string,
         _chatUiUrl: string,
-        options?: { revalidatePolicyRequirements?: (operation: string) => void },
+        options?: { verifyLivePolicyRequirements?: (operation: string) => void },
       ) => {
-        options?.revalidatePolicyRequirements?.("start the dashboard forward");
+        options?.verifyLivePolicyRequirements?.("start the dashboard forward");
         return 18790;
       },
     );
@@ -189,7 +189,7 @@ describe("applyReusedSandboxDashboardState", () => {
         },
         updateSandbox,
         updateReusedSandboxMetadata,
-        revalidatePolicyRequirements,
+        verifyLivePolicyRequirements,
       }),
     ).rejects.toThrow(/live policy requirements changed before/u);
 
@@ -201,7 +201,7 @@ describe("applyReusedSandboxDashboardState", () => {
   });
 
   it("rechecks after Hermes forwarding before reuse metadata (#9833)", () => {
-    const revalidatePolicyRequirements = vi
+    const verifyLivePolicyRequirements = vi
       .fn<(operation: string) => void>()
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => undefined)
@@ -239,7 +239,7 @@ describe("applyReusedSandboxDashboardState", () => {
         },
         updateSandbox,
         updateReusedSandboxMetadata,
-        revalidatePolicyRequirements,
+        verifyLivePolicyRequirements,
       }),
     ).toThrow(/live policy requirements changed before/u);
 

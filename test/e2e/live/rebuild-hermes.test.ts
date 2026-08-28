@@ -55,6 +55,10 @@ import {
 } from "./rebuild-hermes-env.ts";
 import { ensureRebuildHermesHostTools, hermesApiTokenDigest } from "./rebuild-hermes-host-tools.ts";
 import {
+  applyRebuildHermesHostPolicyEdit,
+  assertRebuildHermesHostPolicyEditSurvives,
+} from "./rebuild-hermes-host-policy.ts";
+import {
   cleanupTrackedRebuildHermesImage,
   type RebuildHermesRegistryImageState,
   rebuildHermesRegistryImageState,
@@ -596,6 +600,7 @@ test(
         "OpenShell provider create/update and sandbox create/exec/list",
         "curated local ~/.nemoclaw registry and onboard-session rebuild metadata",
         "real nemoclaw <sandbox> rebuild --yes --verbose without host inference credentials",
+        "a direct OpenShell policy edit survives the rebuild transaction",
         "Hermes messaging placeholders plus script-backed cron restore and dispatch gating",
         "backup credential leak scan under ~/.nemoclaw/rebuild-backups",
       ],
@@ -1124,6 +1129,14 @@ test(
       redactionValues,
     );
     await artifacts.writeJson("phase-5-inference-route-before-rebuild.json", routeBeforeRebuild);
+    await applyRebuildHermesHostPolicyEdit({
+      host,
+      openshellBin: activeOpenshellBin,
+      sandboxName: SANDBOX_NAME,
+      env: testEnv(apiKey),
+      redactionValues,
+      timeoutMs: OPENSHELL_TIMEOUT_MS,
+    });
     progress.phase("rebuild the Hermes sandbox");
     const rebuildEnv = testEnv(
       undefined,
@@ -1281,6 +1294,15 @@ test(
     );
     expectExitZero(restoredKanbanDatabase, "verify restored Hermes kanban database");
     expect(resultText(restoredKanbanDatabase)).toContain(KANBAN_TASK_TITLE);
+
+    await assertRebuildHermesHostPolicyEditSurvives({
+      host,
+      openshellBin: activeOpenshellBin,
+      sandboxName: SANDBOX_NAME,
+      env: testEnv(apiKey),
+      redactionValues,
+      timeoutMs: OPENSHELL_TIMEOUT_MS,
+    });
 
     const restoredKanban = await host.command(
       "docker",

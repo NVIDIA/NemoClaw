@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { PendingSandboxCreateVerification } from "./types";
+import type { PendingSandboxCreateIdentity } from "./types";
 
 const SHA256_DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 const KEYS = new Set([
@@ -28,9 +28,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** Normalize the bounded identity checkpoint for one incomplete create. */
-export function normalizePendingSandboxCreateVerification(
+export function normalizePendingSandboxCreateIdentity(
   value: unknown,
-): PendingSandboxCreateVerification | undefined {
+): PendingSandboxCreateIdentity | undefined {
   if (value === undefined) return undefined;
   if (
     !isRecord(value) ||

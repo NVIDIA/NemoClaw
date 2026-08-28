@@ -423,6 +423,7 @@ test(
         "post-add rebuild reuses the gateway-stored inference credential when COMPATIBLE_API_KEY is absent",
         "post-add rebuild applies the Telegram policy preset and renders openclaw.json channel state",
         "channels remove telegram removes provider, policy, registry plan, and rendered channel state after rebuild",
+        "an unrelated direct OpenShell policy edit survives channel add, remove, and both rebuilds",
         "post-remove rebuild does not use stale Telegram host env inputs that would stage a fresh channel add",
       ],
     });
@@ -485,6 +486,27 @@ test(
       pluginPresent: true,
     });
     await expectPolicyPreset(host, "telegram", "not-applied", "phase-2-policy-list-baseline");
+
+    const hostPolicyEdit = await sandbox.openshell(
+      [
+        "policy",
+        "update",
+        SANDBOX_NAME,
+        "--add-endpoint",
+        "host-edit-channels.example.com:443:read-only:rest:enforce",
+        "--rule-name",
+        "channels_host_edit_e2e",
+        "--binary",
+        "/usr/bin/curl",
+        "--wait",
+      ],
+      {
+        artifactName: "phase-2-host-policy-edit-before-channel-add",
+        env: baseEnv(),
+        timeoutMs: COMMAND_TIMEOUT_MS,
+      },
+    );
+    assertExitZero(hostPolicyEdit, "direct OpenShell policy edit before channel add");
 
     progress.phase("add Telegram and rebuild sandbox");
     const add = await host.nemoclaw([SANDBOX_NAME, "channels", "add", "telegram"], {
@@ -597,6 +619,16 @@ test(
     });
     await expectProvider(host, "absent", "phase-6-provider-get-after-remove");
     await expectPolicyPreset(host, "telegram", "not-applied", "phase-6-policy-list-after-remove");
+    const policyAfterChannelLifecycle = await sandbox.openshell(
+      ["policy", "get", "--full", SANDBOX_NAME],
+      {
+        artifactName: "phase-6-policy-after-channel-lifecycle",
+        env: baseEnv(),
+        timeoutMs: COMMAND_TIMEOUT_MS,
+      },
+    );
+    assertExitZero(policyAfterChannelLifecycle, "read policy after channel lifecycle");
+    expect(policyAfterChannelLifecycle.stdout).toContain("channels_host_edit_e2e");
     expectHostTelegramPlan("removed", "after remove+rebuild");
   },
 );

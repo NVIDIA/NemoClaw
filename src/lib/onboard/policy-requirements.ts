@@ -34,14 +34,3 @@ export function requiredOnboardPolicyPresets(input: {
   }
   return [...required];
 }
-
-/** Pre-create hooks cannot inspect a policy until OpenShell has created it. */
-export function createOnboardPolicyRequirementBindings(): {
-  readonly preflightPolicyRequirements: (_requirements: unknown) => void;
-  readonly revalidatePolicyRequirements: (_context: unknown, _operation: string) => void;
-} {
-  return {
-    preflightPolicyRequirements() {},
-    revalidatePolicyRequirements() {},
-  };
-}

@@ -97,13 +97,13 @@ export type MaterializeSandboxCreatePlanInput = {
   deferSandboxEffectsUntilPolicyVerification?: boolean;
   managedStateMount?: ManagedHermesStateVolumeMount | null;
   messagingTokenDefs: MessagingTokenDef[];
-  runProviderPreDeleteCleanup(revalidatePolicyRequirements?: (operation: string) => void): void;
+  runProviderPreDeleteCleanup(verifyLivePolicyRequirements?: (operation: string) => void): void;
   upsertMessagingProviders(
     tokenDefs: MessagingTokenDef[],
     options: {
       replaceExisting: true;
       allowedSandboxes: readonly [string];
-      revalidatePolicyRequirements?(operation: string): void;
+      verifyLivePolicyRequirements?(operation: string): void;
     },
   ): string[];
   getHermesToolGatewayProviderName(sandboxName: string): string;

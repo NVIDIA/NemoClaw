@@ -565,6 +565,7 @@ test(
         "default config starts mutable with unified .openclaw layout",
         "documented nemoclaw exec doctor path preserves 2770/660 and gateway writes",
         "fresh mutable-default shields down preserves the mutable config posture",
+        "host policy edits survive interactive and timer Shields restoration",
         "shields up locks config/workspace and config get redacts secrets",
         "start restores a stopped OpenClaw sandbox while shields are up",
         "empty sealed credentials allow traversal but deny sandbox identity access",
@@ -775,6 +776,27 @@ test(
       owner: "sandbox:sandbox",
     });
 
+    const interactiveHostPolicyEdit = await sandbox.openshell(
+      [
+        "policy",
+        "update",
+        SANDBOX_NAME,
+        "--add-endpoint",
+        "interactive-host-edit.example.com:443:read-only:rest:enforce",
+        "--rule-name",
+        "interactive_host_edit_e2e",
+        "--binary",
+        "/usr/bin/curl",
+        "--wait",
+      ],
+      {
+        artifactName: "phase-2c-interactive-host-policy-edit",
+        env: commandEnv(),
+        timeoutMs: COMMAND_TIMEOUT_MS,
+      },
+    );
+    expect(interactiveHostPolicyEdit.exitCode, resultText(interactiveHostPolicyEdit)).toBe(0);
+
     const layoutProbe = await sandboxShell(
       sandbox,
       [
@@ -794,6 +816,18 @@ test(
     });
     expect(shieldsUp.exitCode, resultText(shieldsUp)).toBe(0);
     expect(resultText(shieldsUp)).toContain("Lockdown active");
+    const policyAfterInteractiveRestore = await sandbox.openshell(
+      ["policy", "get", "--full", SANDBOX_NAME],
+      {
+        artifactName: "phase-3-policy-after-interactive-restore",
+        env: commandEnv(),
+        timeoutMs: COMMAND_TIMEOUT_MS,
+      },
+    );
+    expect(policyAfterInteractiveRestore.exitCode, resultText(policyAfterInteractiveRestore)).toBe(
+      0,
+    );
+    expect(policyAfterInteractiveRestore.stdout).toContain("interactive_host_edit_e2e");
     // Keep fixture teardown out of an artificial mutable window if a later
     // assertion aborts before the explicit final restore below.
     cleanup.trackDisposable(`restore shields for ${SANDBOX_NAME} before destroy`, async () => {
@@ -1073,6 +1107,26 @@ test(
       { artifactName: "phase-9-shields-down-timer" },
     );
     expect(timerDown.exitCode, resultText(timerDown)).toBe(0);
+    const timerHostPolicyEdit = await sandbox.openshell(
+      [
+        "policy",
+        "update",
+        SANDBOX_NAME,
+        "--add-endpoint",
+        "timer-host-edit.example.com:443:read-only:rest:enforce",
+        "--rule-name",
+        "timer_host_edit_e2e",
+        "--binary",
+        "/usr/bin/curl",
+        "--wait",
+      ],
+      {
+        artifactName: "phase-9-timer-host-policy-edit",
+        env: commandEnv(),
+        timeoutMs: COMMAND_TIMEOUT_MS,
+      },
+    );
+    expect(timerHostPolicyEdit.exitCode, resultText(timerHostPolicyEdit)).toBe(0);
     const timerMarker = readTimerMarker(SANDBOX_NAME);
     process.kill(timerMarker.pid, "SIGKILL");
     const statusTimer = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
@@ -1121,6 +1175,17 @@ test(
       [CONFIG_PATH]: expect.any(String),
       [CONFIG_HASH_PATH]: expect.any(String),
     });
+    const policyAfterTimerRestore = await sandbox.openshell(
+      ["policy", "get", "--full", SANDBOX_NAME],
+      {
+        artifactName: "phase-9-policy-after-timer-restore",
+        env: commandEnv(),
+        timeoutMs: COMMAND_TIMEOUT_MS,
+      },
+    );
+    expect(policyAfterTimerRestore.exitCode, resultText(policyAfterTimerRestore)).toBe(0);
+    expect(policyAfterTimerRestore.stdout).toContain("interactive_host_edit_e2e");
+    expect(policyAfterTimerRestore.stdout).toContain("timer_host_edit_e2e");
     expect(readAuditEntries()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

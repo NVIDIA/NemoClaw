@@ -265,13 +265,13 @@ describe("Portable OpenClaw pairing settlement", () => {
   });
 
   it("does not repair a legacy registry row when authority changes while acquiring the lifecycle lock (#9833)", async () => {
-    let revalidatePolicyRequirements = () => undefined;
+    let verifyLivePolicyRequirements = () => undefined;
     const updateSandbox = vi.fn(() => true);
     const scope = settlementDeps({
       getSandbox: vi.fn(() => ({ ...ENTRY, agent: null })),
       updateSandbox,
       withSandboxLock: vi.fn(async (_name, operation) => {
-        revalidatePolicyRequirements = () => {
+        verifyLivePolicyRequirements = () => {
           throw new Error("policy requirements changed");
         };
         return operation();
@@ -283,7 +283,7 @@ describe("Portable OpenClaw pairing settlement", () => {
         "alpha",
         {
           portableRequired: true,
-          revalidatePolicyRequirements: () => revalidatePolicyRequirements(),
+          verifyLivePolicyRequirements: () => verifyLivePolicyRequirements(),
         },
         scope.deps,
       ),
@@ -577,10 +577,10 @@ describe("Portable OpenClaw pairing settlement", () => {
   });
 
   it("does not produce or approve a request when authority changes during initial observation (#9833)", async () => {
-    let revalidatePolicyRequirements = () => undefined;
+    let verifyLivePolicyRequirements = () => undefined;
     const scope = settlementDeps();
     scope.observePairing.mockImplementationOnce(() => {
-      revalidatePolicyRequirements = () => {
+      verifyLivePolicyRequirements = () => {
         throw new Error("policy requirements changed");
       };
       return {
@@ -593,7 +593,7 @@ describe("Portable OpenClaw pairing settlement", () => {
       settlePortableOpenClawPairing(
         "alpha",
         {
-          revalidatePolicyRequirements: () => revalidatePolicyRequirements(),
+          verifyLivePolicyRequirements: () => verifyLivePolicyRequirements(),
         },
         scope.deps,
       ),
@@ -605,10 +605,10 @@ describe("Portable OpenClaw pairing settlement", () => {
   });
 
   it("does not approve a request when authority changes during request production (#9833)", async () => {
-    let revalidatePolicyRequirements = () => undefined;
+    let verifyLivePolicyRequirements = () => undefined;
     const scope = settlementDeps({
       runPortablePairingProducer: vi.fn(() => {
-        revalidatePolicyRequirements = () => {
+        verifyLivePolicyRequirements = () => {
           throw new Error("policy requirements changed");
         };
       }),
@@ -622,7 +622,7 @@ describe("Portable OpenClaw pairing settlement", () => {
       settlePortableOpenClawPairing(
         "alpha",
         {
-          revalidatePolicyRequirements: () => revalidatePolicyRequirements(),
+          verifyLivePolicyRequirements: () => verifyLivePolicyRequirements(),
         },
         scope.deps,
       ),
@@ -634,10 +634,10 @@ describe("Portable OpenClaw pairing settlement", () => {
   });
 
   it("does not publish settled pairing when authority changes during initial observation (#9833)", async () => {
-    let revalidatePolicyRequirements = () => undefined;
+    let verifyLivePolicyRequirements = () => undefined;
     const scope = settlementDeps();
     scope.observePairing.mockImplementationOnce(() => {
-      revalidatePolicyRequirements = () => {
+      verifyLivePolicyRequirements = () => {
         throw new Error("policy requirements changed");
       };
       return {
@@ -650,7 +650,7 @@ describe("Portable OpenClaw pairing settlement", () => {
       settlePortableOpenClawPairing(
         "alpha",
         {
-          revalidatePolicyRequirements: () => revalidatePolicyRequirements(),
+          verifyLivePolicyRequirements: () => verifyLivePolicyRequirements(),
         },
         scope.deps,
       ),
@@ -662,7 +662,7 @@ describe("Portable OpenClaw pairing settlement", () => {
   });
 
   it("does not publish settled pairing when authority changes during final observation (#9833)", async () => {
-    let revalidatePolicyRequirements = () => undefined;
+    let verifyLivePolicyRequirements = () => undefined;
     const scope = settlementDeps();
     scope.observeFinalPairing.mockReturnValueOnce({
       state: "settled",
@@ -674,7 +674,7 @@ describe("Portable OpenClaw pairing settlement", () => {
         deviceIdentitySha256: "b".repeat(64),
       })
       .mockImplementationOnce(() => {
-        revalidatePolicyRequirements = () => {
+        verifyLivePolicyRequirements = () => {
           throw new Error("policy requirements changed");
         };
         return {
@@ -687,7 +687,7 @@ describe("Portable OpenClaw pairing settlement", () => {
       settlePortableOpenClawPairing(
         "alpha",
         {
-          revalidatePolicyRequirements: () => revalidatePolicyRequirements(),
+          verifyLivePolicyRequirements: () => verifyLivePolicyRequirements(),
         },
         scope.deps,
       ),

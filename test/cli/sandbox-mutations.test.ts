@@ -6,7 +6,7 @@ import path from "node:path";
 
 import { describe, expect, test as it } from "../helpers/owned-test-resources";
 import {
-  managedPolicyMetadata,
+  livePolicyMetadata,
   managedSandboxEntry,
   SANDBOX_ID,
 } from "../helpers/live-policy-fixture";
@@ -34,7 +34,7 @@ function writePolicyMutationOpenshellStub(home: string): string {
       "fi",
       'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then',
       '  if [[ " $* " == *" --output json "* ]]; then',
-      `    printf '%s\\n' ${JSON.stringify(managedPolicyMetadata("alpha"))}`,
+      `    printf '%s\\n' ${JSON.stringify(livePolicyMetadata("alpha"))}`,
       "    exit 0",
       "  fi",
       `  cat ${JSON.stringify(appliedPolicy)}`,

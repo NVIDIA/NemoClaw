@@ -13,7 +13,6 @@ export interface AgentSetupStateOptions<Agent> {
   session: Session | null;
   hermesAuthMethod: string | null;
   hermesToolGateways: string[];
-  revalidatePolicyRequirements?: (operation: string) => void;
   deps: {
     handleAgentSetup(
       sandboxName: string,
@@ -24,12 +23,8 @@ export interface AgentSetupStateOptions<Agent> {
       session: Session | null,
       context: unknown,
     ): Promise<void>;
-    agentSetupContext(revalidatePolicyRequirements?: (operation: string) => void): unknown;
-    ensureAgentDashboardForward(
-      sandboxName: string,
-      agent: Agent,
-      revalidatePolicyRequirements?: (operation: string) => void,
-    ): Promise<number> | number;
+    agentSetupContext(): unknown;
+    ensureAgentDashboardForward(sandboxName: string, agent: Agent): Promise<number> | number;
     persistDashboardPort(sandboxName: string, dashboardPort: number): void;
     recordStepSkipped(stepName: string): Promise<Session>;
     isOpenclawReady(sandboxName: string): boolean;
@@ -42,12 +37,7 @@ export interface AgentSetupStateOptions<Agent> {
       stepName: string,
       updates: { sandboxName: string; provider: string; model: string },
     ): Promise<void>;
-    setupOpenclaw(
-      sandboxName: string,
-      model: string,
-      provider: string,
-      revalidatePolicyRequirements?: (operation: string) => void,
-    ): Promise<void>;
+    setupOpenclaw(sandboxName: string, model: string, provider: string): Promise<void>;
     syncNemoClawConfigInSandbox(sandboxName: string, provider: string, model: string): void;
     recordStepComplete(stepName: string, updates: SessionUpdates): Promise<Session>;
     toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
@@ -68,11 +58,9 @@ export async function handleAgentSetupState<Agent>({
   session,
   hermesAuthMethod,
   hermesToolGateways,
-  revalidatePolicyRequirements,
   deps,
 }: AgentSetupStateOptions<Agent>): Promise<AgentSetupStateResult> {
   if (agent) {
-    revalidatePolicyRequirements?.(`configure the selected agent in sandbox '${sandboxName}'`);
     await deps.handleAgentSetup(
       sandboxName,
       model,
@@ -80,26 +68,17 @@ export async function handleAgentSetupState<Agent>({
       agent,
       resume,
       session,
-      deps.agentSetupContext(revalidatePolicyRequirements),
+      deps.agentSetupContext(),
     );
     // ensureAgentDashboardForward returns the port the dashboard forward was
     // actually established on, which may be bumped when the default is already
     // taken by another sandbox. Persist it to the registry so `dashboard-url`
     // reports the live port instead of the default. Discarding the return here
     // regressed multi-sandbox onboarding in the machine handler path (#8214).
-    revalidatePolicyRequirements?.(`configure the agent dashboard for sandbox '${sandboxName}'`);
-    const dashboardPort = await deps.ensureAgentDashboardForward(
-      sandboxName,
-      agent,
-      revalidatePolicyRequirements,
-    );
+    const dashboardPort = await deps.ensureAgentDashboardForward(sandboxName, agent);
     if (dashboardPort > 0) {
-      revalidatePolicyRequirements?.(
-        `record the agent dashboard port for sandbox '${sandboxName}'`,
-      );
       deps.persistDashboardPort(sandboxName, dashboardPort);
     }
-    revalidatePolicyRequirements?.(`record agent setup for sandbox '${sandboxName}'`);
     session = await deps.recordStepSkipped("openclaw");
     return { session, stateResult: advanceTo("policies", { metadata: { state: "agent_setup" } }) };
   }
@@ -107,27 +86,20 @@ export async function handleAgentSetupState<Agent>({
   const resumeOpenclaw = resume && sandboxName && deps.isOpenclawReady(sandboxName);
   if (resumeOpenclaw) {
     deps.skippedStepMessage("openclaw", sandboxName);
-    revalidatePolicyRequirements?.(`synchronize OpenClaw in sandbox '${sandboxName}'`);
     deps.syncNemoClawConfigInSandbox(sandboxName, provider, model);
-    revalidatePolicyRequirements?.(`record resumed OpenClaw setup for sandbox '${sandboxName}'`);
     await deps.recordStateSkipped("openclaw", { reason: "resume", sandboxName });
-    revalidatePolicyRequirements?.(`complete resumed OpenClaw setup for sandbox '${sandboxName}'`);
     await deps.recordStepComplete(
       "openclaw",
       deps.toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
     );
   } else {
-    revalidatePolicyRequirements?.(`start OpenClaw setup for sandbox '${sandboxName}'`);
     await deps.startRecordedStep("openclaw", { sandboxName, provider, model });
-    revalidatePolicyRequirements?.(`configure OpenClaw in sandbox '${sandboxName}'`);
-    await deps.setupOpenclaw(sandboxName, model, provider, revalidatePolicyRequirements);
-    revalidatePolicyRequirements?.(`complete OpenClaw setup for sandbox '${sandboxName}'`);
+    await deps.setupOpenclaw(sandboxName, model, provider);
     await deps.recordStepComplete(
       "openclaw",
       deps.toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
     );
   }
-  revalidatePolicyRequirements?.(`record agent setup for sandbox '${sandboxName}'`);
   session = await deps.recordStepSkipped("agent_setup");
   return { session, stateResult: advanceTo("policies", { metadata: { state: "openclaw" } }) };
 }

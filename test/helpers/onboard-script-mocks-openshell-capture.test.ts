@@ -138,7 +138,7 @@ describe("mockStructuredOpenShellCaptureFromRunner", () => {
     }
   });
 
-  it("synthesizes exact gateway-scoped JSON authority queries (#9833)", () => {
+  it("synthesizes exact gateway-scoped OpenShell reads (#9833)", () => {
     expect(
       client.captureOpenshellCommand("/opt/openshell", ["gateway", "info", "-g", "nemoclaw-test"], {
         includeStreams: true,

@@ -9,7 +9,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  managedPolicyMetadata,
+  livePolicyMetadata,
   managedSandboxEntry,
   parseResultPayload,
   SANDBOX_ID,
@@ -150,7 +150,7 @@ if [ "$1 $2" = "sandbox get" ]; then
   exit 0
 fi
 if [ "$1 $2" = "policy get" ] && [[ " $* " == *" --output json "* ]]; then
-  printf '%s\n' ${JSON.stringify(managedPolicyMetadata(sandboxName))}
+  printf '%s\n' ${JSON.stringify(livePolicyMetadata(sandboxName))}
   exit 0
 fi
 printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}

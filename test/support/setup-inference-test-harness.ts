@@ -384,7 +384,7 @@ export function createDirectSetupInferenceHarnessFactory(
       withOllamaModelOwnershipLock: (operation) => operation(),
       ...options.overrides,
     });
-    const revalidatePolicyRequirements = vi.fn();
+    const verifyLivePolicyRequirements = vi.fn();
     const setupInference: SetupInference = (
       sandboxName,
       model,
@@ -405,8 +405,8 @@ export function createDirectSetupInferenceHarnessFactory(
         hermesToolGateways,
         {
           ...inferenceOptions,
-          revalidatePolicyRequirements:
-            inferenceOptions.revalidatePolicyRequirements ?? revalidatePolicyRequirements,
+          verifyLivePolicyRequirements:
+            inferenceOptions.verifyLivePolicyRequirements ?? verifyLivePolicyRequirements,
         },
       );
     return {
@@ -415,7 +415,7 @@ export function createDirectSetupInferenceHarnessFactory(
       logs,
       runOpenshell,
       setupInference,
-      revalidatePolicyRequirements,
+      verifyLivePolicyRequirements,
       unloadOllamaModels,
       updateSandbox,
       verifyInferenceRoute,

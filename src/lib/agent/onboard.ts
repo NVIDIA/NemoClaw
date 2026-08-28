@@ -62,7 +62,7 @@ export interface OnboardContext {
   recordStepComplete: (stepName: string, updates: LooseObject) => Promise<unknown>;
   recordStepFailed: (stepName: string, message: string | null) => Promise<unknown>;
   skippedStepMessage: (stepName: string, sandboxName: string) => void;
-  revalidatePolicyRequirements?: (operation: string) => void;
+  verifyLivePolicyRequirements?: (operation: string) => void;
   now?: () => number;
   sleepSeconds?: (seconds: number) => void;
 }
@@ -248,9 +248,9 @@ async function failAgentSetup(
   message: string,
   recordStepFailed: OnboardContext["recordStepFailed"],
   details: string[] = [],
-  revalidatePolicyRequirements?: OnboardContext["revalidatePolicyRequirements"],
+  verifyLivePolicyRequirements?: OnboardContext["verifyLivePolicyRequirements"],
 ): Promise<never> {
-  revalidatePolicyRequirements?.(`record failed agent setup for sandbox '${sandboxName}'`);
+  verifyLivePolicyRequirements?.(`record failed agent setup for sandbox '${sandboxName}'`);
   await recordStepFailed(
     "agent_setup",
     details.length > 0 ? `${message}\n${details.join("\n")}` : message,
@@ -319,7 +319,7 @@ export async function handleAgentSetup(
     recordStepComplete,
     recordStepFailed,
     skippedStepMessage,
-    revalidatePolicyRequirements,
+    verifyLivePolicyRequirements,
   } = ctx;
 
   const runSmokeCapture =
@@ -328,7 +328,7 @@ export async function handleAgentSetup(
       : runCaptureOpenshell;
 
   const syncNemoClawConfig = (): void => {
-    revalidatePolicyRequirements?.(`synchronize agent configuration in sandbox '${sandboxName}'`);
+    verifyLivePolicyRequirements?.(`synchronize agent configuration in sandbox '${sandboxName}'`);
     runSandboxConfigSync(sandboxName, {
       getSelectionConfig: () => {
         const cfg = getProviderSelectionConfig(provider, model);
@@ -356,7 +356,7 @@ export async function handleAgentSetup(
         if (smokeResult.ok) {
           await enforceTerminalAgentVersion(sandboxName, agent, runCaptureOpenshell, {
             beforeFailure: () => {
-              revalidatePolicyRequirements?.(
+              verifyLivePolicyRequirements?.(
                 `start failed agent setup recording for sandbox '${sandboxName}'`,
               );
               return startRecordedStep("agent_setup", { sandboxName, provider, model });
@@ -368,10 +368,10 @@ export async function handleAgentSetup(
                 message,
                 recordStepFailed,
                 [],
-                revalidatePolicyRequirements,
+                verifyLivePolicyRequirements,
               ),
           });
-          revalidatePolicyRequirements?.(
+          verifyLivePolicyRequirements?.(
             `record resumed agent setup for sandbox '${sandboxName}'`,
           );
           skippedStepMessage("agent_setup", sandboxName);
@@ -402,7 +402,7 @@ export async function handleAgentSetup(
         // to the Dockerfile's zero-byte placeholder. Mirrors the OpenClaw
         // path in src/lib/onboard.ts. Fixes #3999 for non-OpenClaw agents.
         syncNemoClawConfig();
-        revalidatePolicyRequirements?.(
+        verifyLivePolicyRequirements?.(
           `record resumed agent setup for sandbox '${sandboxName}'`,
         );
         skippedStepMessage("agent_setup", sandboxName);
@@ -412,7 +412,7 @@ export async function handleAgentSetup(
     }
   }
 
-  revalidatePolicyRequirements?.(`start agent setup for sandbox '${sandboxName}'`);
+  verifyLivePolicyRequirements?.(`start agent setup for sandbox '${sandboxName}'`);
   await startRecordedStep("agent_setup", { sandboxName, provider, model });
   step(7, 8, `Setting up ${agent.displayName} inside sandbox`);
 
@@ -424,7 +424,7 @@ export async function handleAgentSetup(
       describeAgentBinaryFailure(sandboxName, agent, binaryAvailability),
       recordStepFailed,
       [],
-      revalidatePolicyRequirements,
+      verifyLivePolicyRequirements,
     );
   }
 
@@ -439,7 +439,7 @@ export async function handleAgentSetup(
         `${agent.displayName} terminal smoke command failed: ${smokeResult.command}`,
         recordStepFailed,
         smokeResult.output ? [String(redact(smokeResult.output)).slice(0, 500)] : [],
-        revalidatePolicyRequirements,
+        verifyLivePolicyRequirements,
       );
     }
     await enforceTerminalAgentVersion(sandboxName, agent, runCaptureOpenshell, {
@@ -450,10 +450,10 @@ export async function handleAgentSetup(
           message,
           recordStepFailed,
           [],
-          revalidatePolicyRequirements,
+          verifyLivePolicyRequirements,
         ),
     });
-    revalidatePolicyRequirements?.(`record completed agent setup for sandbox '${sandboxName}'`);
+    verifyLivePolicyRequirements?.(`record completed agent setup for sandbox '${sandboxName}'`);
     console.log(`  \u2713 ${agent.displayName} terminal runtime is ready`);
     await recordStepComplete("agent_setup", { sandboxName, provider, model });
     return;
@@ -485,7 +485,7 @@ export async function handleAgentSetup(
       },
     });
     if (healthy) {
-      revalidatePolicyRequirements?.(`record completed agent setup for sandbox '${sandboxName}'`);
+      verifyLivePolicyRequirements?.(`record completed agent setup for sandbox '${sandboxName}'`);
       console.log(`  \u2713 ${agent.displayName} gateway is healthy`);
     } else {
       const diagnostics =
@@ -498,11 +498,11 @@ export async function handleAgentSetup(
         `${agent.displayName} gateway did not respond within ${timeoutSecs}s`,
         recordStepFailed,
         diagnostics,
-        revalidatePolicyRequirements,
+        verifyLivePolicyRequirements,
       );
     }
   } else {
-    revalidatePolicyRequirements?.(`record completed agent setup for sandbox '${sandboxName}'`);
+    verifyLivePolicyRequirements?.(`record completed agent setup for sandbox '${sandboxName}'`);
     console.log(`  \u2713 ${agent.displayName} configured inside sandbox`);
   }
 

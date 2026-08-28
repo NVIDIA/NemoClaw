@@ -53,7 +53,7 @@ describe("applyOnboardVmDnsMonkeypatch", () => {
       ok: true,
       status: "applied" as const,
     }));
-    const revalidatePolicyRequirements = vi.fn(() => {
+    const verifyLivePolicyRequirements = vi.fn(() => {
       throw new Error("policy requirements changed");
     });
 
@@ -61,7 +61,7 @@ describe("applyOnboardVmDnsMonkeypatch", () => {
       applyOnboardVmDnsMonkeypatch(
         "demo",
         { openshellDriver: "vm" },
-        { apply, log, revalidatePolicyRequirements },
+        { apply, log, verifyLivePolicyRequirements },
       ),
     ).toThrow("policy requirements changed");
 

@@ -215,7 +215,7 @@ describe("createSetupNimOllamaHandlers", () => {
 
   it("stops before local Ollama install effects when policy requirements changes (#9833)", async () => {
     const selection = makeState();
-    selection.revalidatePolicyRequirements = () => {
+    selection.verifyLivePolicyRequirements = () => {
       throw new Error("live policy requirements changed before local inference");
     };
     const install = vi.fn(() => ({ ok: true }));
@@ -292,7 +292,7 @@ describe("createSetupNimOllamaHandlers", () => {
 
   it("stops before Windows Ollama install effects when policy requirements changes (#9833)", async () => {
     const selection = makeState();
-    selection.revalidatePolicyRequirements = () => {
+    selection.verifyLivePolicyRequirements = () => {
       throw new Error("live policy requirements changed before local inference");
     };
     const install = vi.fn(async () => ({ ok: true, path: "C:/Ollama/ollama.exe" }));

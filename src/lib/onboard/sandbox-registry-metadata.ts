@@ -37,7 +37,7 @@ export interface SandboxRegistryMetadataHelpers {
     dashboardPort: number,
     selectionVerified?: boolean,
     sandboxGpuConfig?: SandboxGpuConfig | null,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    verifyLivePolicyRequirements?: (operation: string) => void,
   ): void;
 }
 
@@ -110,12 +110,12 @@ export function createSandboxRegistryMetadataHelpers(
     dashboardPort: number,
     selectionVerified = true,
     sandboxGpuConfig: SandboxGpuConfig | null = null,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    verifyLivePolicyRequirements?: (operation: string) => void,
   ): void {
     const existingEntry = registry.getSandbox(sandboxName);
     const agentFields = getSandboxAgentRegistryFields(agent, false);
     const selectionUpdates = selectionVerified ? { model, provider } : {};
-    revalidatePolicyRequirements?.(`record reused sandbox metadata for '${sandboxName}'`);
+    verifyLivePolicyRequirements?.(`record reused sandbox metadata for '${sandboxName}'`);
     registry.updateSandbox(sandboxName, {
       ...selectionUpdates,
       dashboardPort,
@@ -123,7 +123,7 @@ export function createSandboxRegistryMetadataHelpers(
       agentVersion: existingEntry?.agentVersion ?? null,
       ...(sandboxGpuConfig ? getSandboxRuntimeRegistryFields(sandboxGpuConfig) : {}),
     });
-    revalidatePolicyRequirements?.(`make reused sandbox '${sandboxName}' the default`);
+    verifyLivePolicyRequirements?.(`make reused sandbox '${sandboxName}' the default`);
     registry.setDefault(sandboxName);
   }
 

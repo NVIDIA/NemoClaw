@@ -43,7 +43,6 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
   webSearchSupported: boolean;
   hermesToolGateways: string[];
   agent: Agent;
-  revalidatePolicyRequirements?: (operation: string) => void;
   deps: {
     loadSession(): Session | null;
     getActiveSandbox(sandboxName: string): ActiveSandboxPolicyState | null | undefined;
@@ -109,7 +108,6 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
         webSearchSupported: boolean;
         hermesToolGateways: string[];
         onSelection: (policyPresets: string[]) => void;
-        revalidatePolicyRequirements?: (operation: string) => void;
       },
     ): Promise<string[]>;
     recordStepComplete(stepName: string, updates: SessionUpdates): Promise<Session>;
@@ -140,7 +138,6 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   webSearchSupported,
   hermesToolGateways,
   agent,
-  revalidatePolicyRequirements,
   deps,
 }: PoliciesStateOptions<Agent, WebSearchConfig>): Promise<PoliciesStateResult> {
   const latestSession = deps.loadSession();
@@ -184,10 +181,6 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       ...(hostLocalInferenceRouteOnly
         ? { hostLocalInferenceProofAuthority: hostLocalInferenceSandboxProofAuthority ?? undefined }
         : {}),
-      beforeSuccess: () =>
-        revalidatePolicyRequirements?.(
-          `publish verified inference route for sandbox '${sandboxName}'`,
-        ),
     });
   if (!hostLocalInferenceRouteOnly) verifySandboxInferenceRoute();
 
@@ -217,12 +210,10 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   let session: Session | null;
   if (resumePolicies) {
     if (hostLocalInferenceRouteOnly) verifySandboxInferenceRoute();
-    revalidatePolicyRequirements?.(`record resumed policy setup for sandbox '${sandboxName}'`);
     deps.skippedStepMessage("policies", livePolicyPresetsForSupport.join(", "));
     await deps.recordStateSkipped("policies", {
       reason: "resume",
     });
-    revalidatePolicyRequirements?.(`complete resumed policy setup for sandbox '${sandboxName}'`);
     session = await deps.recordStepComplete(
       "policies",
       deps.toSessionUpdates({
@@ -232,13 +223,11 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       }),
     );
   } else {
-    revalidatePolicyRequirements?.(`start policy setup for sandbox '${sandboxName}'`);
     await deps.startRecordedStep("policies", {
       sandboxName,
       provider,
       model,
     });
-    revalidatePolicyRequirements?.(`apply policy presets to sandbox '${sandboxName}'`);
     appliedPolicyPresets = await deps.setupPoliciesWithSelection(sandboxName, {
       selectedPresets: resume ? livePolicyPresetsForSupport : null,
       enabledChannels: policyMessagingChannels,
@@ -255,11 +244,9 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       tierName: null,
       webSearchSupported,
       hermesToolGateways,
-      revalidatePolicyRequirements,
       onSelection: () => undefined,
     });
     if (hostLocalInferenceRouteOnly) verifySandboxInferenceRoute();
-    revalidatePolicyRequirements?.(`complete policy setup for sandbox '${sandboxName}'`);
     session = await deps.recordStepComplete(
       "policies",
       deps.toSessionUpdates({

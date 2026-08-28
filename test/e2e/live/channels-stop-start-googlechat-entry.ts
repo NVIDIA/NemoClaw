@@ -23,7 +23,7 @@ type MessagingBridgeProviderModule =
 type StatePathsModule = typeof import("../../../src/lib/state/paths.ts");
 type ProviderUpsertOptions = {
   readonly replaceExisting?: boolean;
-  readonly revalidatePolicyRequirements?: (operation: string) => void;
+  readonly verifyLivePolicyRequirements?: (operation: string) => void;
 };
 type ProviderDependencies = {
   upsertMessagingProviders(
@@ -128,7 +128,7 @@ export function installGooglechatCredentialFixture(
       delegatedTokenDefs.length === 0 ? [] : original(delegatedTokenDefs, providerRun, options);
     const baseRun = providerRun ?? run;
     const revalidate = () =>
-      options.revalidatePolicyRequirements?.(
+      options.verifyLivePolicyRequirements?.(
         `manage Google Chat live fixture provider '${expectedName}'`,
       );
     const effectiveRun: typeof runOpenshell = (args, runOptions) => {

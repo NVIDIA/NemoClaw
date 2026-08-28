@@ -92,12 +92,8 @@ export interface SandboxCreateIntent {
   readonly rebuildPolicySourcePath?: string;
 }
 
-/** Live OpenShell policy observation captured inside one create transaction. */
-export interface VerifiedSandboxPolicyRegistration {}
-
-/** Exact sandbox and policy result retained from the immediate create gate. */
-export interface VerifiedSandboxPolicyBoundary {
-  readonly registration: VerifiedSandboxPolicyRegistration;
+/** Exact sandbox identity retained from the immediate create boundary. */
+export interface VerifiedSandboxCreateBoundary {
   readonly sandboxName: string;
   readonly gatewayName: string;
   readonly gatewayPort: number;
@@ -107,12 +103,12 @@ export interface VerifiedSandboxPolicyBoundary {
   readonly route: import("./docker-gpu-route").SelectedDockerGpuRoute;
 }
 
-/** Exact context made available only after effective-policy verification. */
-export interface VerifiedSandboxCreateEffectsContext extends VerifiedSandboxPolicyBoundary {
-  readonly revalidatePolicyRequirements: (operation: string) => void;
+/** Exact context made available after OpenShell confirms the create requirements. */
+export interface VerifiedSandboxCreateEffectsContext extends VerifiedSandboxCreateBoundary {
+  readonly verifyLivePolicyRequirements: (operation: string) => void;
 }
 
-/** Ephemeral effects that may run only inside the exact post-create policy gate. */
+/** Ephemeral effects that may run only after OpenShell confirms the create requirements. */
 export type VerifiedSandboxCreateEffects = (
   context: VerifiedSandboxCreateEffectsContext,
 ) => Promise<void>;

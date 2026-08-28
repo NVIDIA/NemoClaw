@@ -114,7 +114,7 @@ const {
       replaceExisting?: boolean;
       allowedSandboxes?: readonly string[];
       requireExactBinding?: boolean;
-      revalidatePolicyRequirements?(operation: string): void;
+      verifyLivePolicyRequirements?(operation: string): void;
     },
   ) => { ok: boolean; status?: number; message?: string; reason?: string };
   upsertMessagingProviders: (
@@ -129,7 +129,7 @@ const {
       allowedSandboxes?: readonly string[];
       bestEffort?: boolean;
       replaceExisting?: boolean;
-      revalidatePolicyRequirements?(operation: string): void;
+      verifyLivePolicyRequirements?(operation: string): void;
       requireExactBindings?: boolean;
     },
   ) => string[];
@@ -951,7 +951,7 @@ describe("onboard provider helpers", () => {
             ? { status: 1, stdout: "", stderr: "" }
             : { status: 0, stdout: "", stderr: "" };
         },
-        { revalidatePolicyRequirements: () => revalidationSteps.shift()?.() },
+        { verifyLivePolicyRequirements: () => revalidationSteps.shift()?.() },
       ),
     ).toThrow(/policy requirements changed between providers/);
     expect(commands).toEqual([
@@ -980,7 +980,7 @@ describe("onboard provider helpers", () => {
           commands.push(command.join(" "));
           return { status: 1, stdout: "", stderr: "not found" };
         },
-        { revalidatePolicyRequirements: () => revalidationSteps.shift()?.() },
+        { verifyLivePolicyRequirements: () => revalidationSteps.shift()?.() },
       ),
     ).toThrow(/policy requirements changed after provider probe/u);
     expect(commands).toEqual(["provider get alpha-discord-bridge"]);

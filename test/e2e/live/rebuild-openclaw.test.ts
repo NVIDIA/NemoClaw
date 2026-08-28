@@ -675,6 +675,26 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
     expect(prePolicy.stdout).toMatch(/pypi|pypi\.org/i);
     expect(prePolicy.stdout).toMatch(/telegram/i);
     expect(prePolicy.stdout).toContain("api.telegram.org");
+    const hostPolicyEdit = await sandbox.openshell(
+      [
+        "policy",
+        "update",
+        SANDBOX_NAME,
+        "--add-endpoint",
+        "host-edit-rebuild-openclaw.example.com:443:read-only:rest:enforce",
+        "--rule-name",
+        "host_edit_rebuild_openclaw_e2e",
+        "--binary",
+        "/usr/bin/curl",
+        "--wait",
+      ],
+      {
+        artifactName: "phase-4-host-policy-edit-before-rebuild",
+        env: dockerContextEnv(),
+        timeoutMs: OPENSHELL_TIMEOUT_MS,
+      },
+    );
+    expectExitZero(hostPolicyEdit, "apply host policy edit before rebuild");
     const prePolicyList = await host.command(
       "node",
       [CLI_ENTRYPOINT, SANDBOX_NAME, "policy-list"],
@@ -803,6 +823,7 @@ print(json.dumps({'tokenPresent': bool(token), 'tokenRotated': token != old, 'ru
     expect(postPolicy.stdout).toMatch(/pypi|pypi\.org/i);
     expect(postPolicy.stdout).toMatch(/telegram/i);
     expect(postPolicy.stdout).toContain("api.telegram.org");
+    expect(postPolicy.stdout).toContain("host_edit_rebuild_openclaw_e2e");
 
     const postPolicyList = await host.command(
       "node",

@@ -1190,7 +1190,7 @@ export async function runHermesPortableOnboardingTransaction<T>(
             detail: "the inference route reservation changed after admission",
           };
         }
-        if (entry?.pendingCreateVerification !== undefined) {
+        if (entry?.pendingCreateIdentity !== undefined) {
           if (committedRegistryEntry || !deps.revalidatePendingCreateRegistry) {
             return {
               kind: "conflict",

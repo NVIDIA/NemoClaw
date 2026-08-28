@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { type MockInstance, vi } from "vitest";
 import type { SandboxEntry } from "../../src/lib/state/registry";
-import { managedPolicyMutationContext } from "./shields-flow-harness";
+import { livePolicyMutationContext } from "./shields-flow-harness";
 
 const INDEX_MODULE = "./index.js";
 export const HERMES_PROVIDER_CAPABILITY_PATH =
@@ -286,9 +286,9 @@ export function createHermesShieldsProviderConsumerHarness(
         String(file),
         String(name),
       ]),
-    vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(managedPolicyMutationContext),
-    vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(managedPolicyMutationContext),
-    vi.spyOn(policy, "recheckPolicyMutationContext").mockReturnValue(managedPolicyMutationContext),
+    vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
+    vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
+    vi.spyOn(policy, "recheckPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
     vi.spyOn(policy, "verifyAppliedPolicyDocument").mockImplementation(() => undefined),
     registrySpy,
     vi

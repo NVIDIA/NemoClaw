@@ -20,9 +20,9 @@ const AUTHORITY_ID = `mxc-endpoint:${"a".repeat(64)}`;
 const BINDING_SHA256 = "d".repeat(64);
 const MODEL = "qwen3.5-9b";
 const SANDBOX_FINGERPRINT = "a".repeat(64);
-type PendingCreateVerification = NonNullable<SandboxEntry["pendingCreateVerification"]>;
+type PendingCreateVerification = NonNullable<SandboxEntry["pendingCreateIdentity"]>;
 
-function pendingCreateVerification(
+function pendingCreateIdentity(
   overrides: Partial<PendingCreateVerification> = {},
 ): PendingCreateVerification {
   return {
@@ -273,7 +273,7 @@ describe("sandbox destroy host-local inference transaction", () => {
   ])("preserves a pending create when its sandbox identity %s", async (_case, inspect) => {
     const runtimeProvider = provider();
     const entry = sandbox("alpha", receipt(), {
-      pendingCreateVerification: pendingCreateVerification(),
+      pendingCreateIdentity: pendingCreateIdentity(),
     });
 
     const { result, runOpenshell, stopInferenceResources } = await runDestroy(runtimeProvider, {
@@ -293,7 +293,7 @@ describe("sandbox destroy host-local inference transaction", () => {
   it("re-reads a matching pending checkpoint and gateway-scopes its delete", async () => {
     const runtimeProvider = provider();
     const entry = sandbox("alpha", receipt(), {
-      pendingCreateVerification: pendingCreateVerification(),
+      pendingCreateIdentity: pendingCreateIdentity(),
     });
     const inspect = vi.fn(() => SANDBOX_FINGERPRINT);
 
@@ -314,14 +314,14 @@ describe("sandbox destroy host-local inference transaction", () => {
   it("preserves a pending create when its checkpoint changes during identity inspection", async () => {
     const runtimeProvider = provider();
     const entry = sandbox("alpha", receipt(), {
-      pendingCreateVerification: pendingCreateVerification(),
+      pendingCreateIdentity: pendingCreateIdentity(),
     });
     const getSandbox = vi
       .fn()
       .mockReturnValueOnce(entry)
       .mockReturnValueOnce({
         ...entry,
-        pendingCreateVerification: pendingCreateVerification({ route: "compatibility" }),
+        pendingCreateIdentity: pendingCreateIdentity({ route: "compatibility" }),
       });
     const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
     const stopInferenceResources = vi.fn();

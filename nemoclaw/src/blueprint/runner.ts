@@ -894,30 +894,9 @@ async function runRuntimeIdentityCommand(
   };
 }
 
-function isRuntimeIdentityMutationCommand(args: readonly string[]): boolean {
-  const command = args.slice(1).join(" ");
-  return (
-    command.startsWith("provider profile import ") ||
-    command.startsWith("provider create ") ||
-    command.startsWith("provider delete ") ||
-    command.startsWith("provider refresh configure ") ||
-    command.startsWith("provider refresh rotate ") ||
-    command.startsWith("sandbox provider attach ") ||
-    command.startsWith("sandbox provider detach ")
-  );
-}
-
-function runtimeIdentityCommandDeps(
-  gateway: string,
-  validateBeforeMutation?: () => Promise<unknown>,
-): RuntimeIdentityCommandDeps {
+function runtimeIdentityCommandDeps(gateway: string): RuntimeIdentityCommandDeps {
   return {
-    run: async (args, options) => {
-      if (validateBeforeMutation && isRuntimeIdentityMutationCommand(args)) {
-        await validateBeforeMutation();
-      }
-      return runRuntimeIdentityCommand(args, options, gateway);
-    },
+    run: (args, options) => runRuntimeIdentityCommand(args, options, gateway),
     formatError: boundedCommandError,
   };
 }
@@ -926,10 +905,9 @@ function runtimeIdentityDeps(
   persistReceipt: (receipt: RuntimeIdentityReceipt) => void,
   gateway: string,
   profilePolicy?: RuntimeIdentityProfilePolicy,
-  validateBeforeMutation?: () => Promise<unknown>,
 ): RuntimeIdentityDeps {
   return {
-    ...runtimeIdentityCommandDeps(gateway, validateBeforeMutation),
+    ...runtimeIdentityCommandDeps(gateway),
     validateEndpointUrl,
     persistReceipt,
     blueprintPath: process.env.NEMOCLAW_BLUEPRINT_PATH ?? ".",
@@ -1456,7 +1434,6 @@ export async function actionApply(
     },
     policyGateway.name,
     options?.runtimeIdentityProfilePolicy,
-    requireLivePolicy,
   );
 
   try {
@@ -1551,7 +1528,6 @@ export async function actionApply(
             activeRoute.timeoutSeconds === inferenceCfg.timeout_secs);
       }
       progress(30, "Configuring runtime identity");
-      await requireLivePolicy();
       runtimeIdentityReceipt = await prepareRuntimeIdentity(runtimeIdentityConfig, identityDeps);
       persistRunPlan();
     }
@@ -1559,7 +1535,6 @@ export async function actionApply(
     // Keep runtime credentials unattached until OpenShell accepts the
     // sandbox's requested inference route.
     progress(50, "Configuring inference provider");
-    await requireLivePolicy();
     if (reuseExistingInferenceProvider) {
       log(`Provider '${providerName}' already exists, reusing.`);
     } else {
@@ -1582,8 +1557,6 @@ export async function actionApply(
       if (endpoint) {
         providerArgs.push("--config", `OPENAI_BASE_URL=${endpoint}`);
       }
-
-      await requireLivePolicy();
       const providerResult = await execa(providerArgs[0], providerArgs.slice(1), {
         reject: false,
         stdout: "pipe",
@@ -1635,7 +1608,6 @@ export async function actionApply(
     }
 
     progress(70, "Setting inference route");
-    await requireLivePolicy();
     if (reuseExistingInferenceRoute) {
       log(`Inference route '${providerName} / ${model}' is already active, reusing.`);
     } else {
@@ -1651,7 +1623,6 @@ export async function actionApply(
       if (inferenceCfg.timeout_secs !== undefined) {
         inferenceArgs.push("--timeout", String(inferenceCfg.timeout_secs));
       }
-      await requireLivePolicy();
       const inferenceResult = await runCmd(inferenceArgs, {
         gateway: policyGateway.name,
         reject: false,
@@ -1666,7 +1637,6 @@ export async function actionApply(
     }
 
     if (runtimeIdentityReceipt) {
-      await requireLivePolicy();
       const attachmentCreated = await attachRuntimeIdentity(
         runtimeIdentityReceipt,
         sandboxName,
@@ -1686,7 +1656,6 @@ export async function actionApply(
 
     if (Object.keys(policyAdditions).length > 0) {
       progress(78, "Applying policy additions");
-      await requireLivePolicy();
       await applyBlueprintPolicyAdditions(policyGateway, sandboxName, policyAdditions, stateDir);
     }
 

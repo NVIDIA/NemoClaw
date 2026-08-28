@@ -20,7 +20,7 @@ import { runHermesPortableOnboardingTransaction } from "../../src/lib/onboard/ex
 import { getHermesPortableSandboxRuntimeRegistryFields } from "../../src/lib/onboard/sandbox-registry-metadata";
 import { resolveSandboxGpuConfig } from "../../src/lib/onboard/sandbox-gpu-mode";
 import { completeHermesPortableSandboxRegistration } from "../../src/lib/onboard/sandbox-create/orchestration";
-import { pendingSandboxCreateVerificationForBoundary } from "../../src/lib/onboard/sandbox-create/policy-verification";
+import { pendingSandboxCreateIdentityForBoundary } from "../../src/lib/onboard/sandbox-create/identity-boundary";
 import { materializeHermesPortableCreatePlan } from "../../src/lib/onboard/sandbox-create-plan-materialization";
 import { resolveSandboxCreateIntent } from "../../src/lib/onboard/sandbox-create-intent";
 import { createPortableOnboardEnvironmentScope } from "../../src/lib/onboard/session-bootstrap";
@@ -277,8 +277,7 @@ describe("Hermes portable installer admission", testTimeoutOptions(60_000), () =
         startup: { agent: loadAgent("hermes"), sandboxName, startupArgv },
         inferenceRouteReservation: { sessionId: session.sessionId, selection },
       };
-      const checkpoint = pendingSandboxCreateVerificationForBoundary({
-        registration: {},
+      const checkpoint = pendingSandboxCreateIdentityForBoundary({
         sandboxName,
         gatewayName,
         gatewayPort: 8080,
@@ -294,11 +293,11 @@ describe("Hermes portable installer admission", testTimeoutOptions(60_000), () =
           expect(buildContextPath).toContain(path.join(stateDir, "hermes-portable-build-context"));
           expect(argv[argv.indexOf("--from") + 1]).toBe(path.join(buildContextPath, "Dockerfile"));
           expect(argv[argv.indexOf("--policy") + 1]).not.toBe(basePolicyPath);
-          registry.recordPendingSandboxCreateVerification(createReservation, checkpoint);
+          registry.recordPendingSandboxCreateIdentity(createReservation, checkpoint);
           return { ready: true };
         },
         revalidatePendingCreateRegistry: () =>
-          registry.requireCurrentPendingSandboxCreateVerification(createReservation, checkpoint),
+          registry.requireCurrentPendingSandboxCreateIdentity(createReservation, checkpoint),
         registerSandbox: async (
           _created,
           receipt,
@@ -308,7 +307,7 @@ describe("Hermes portable installer admission", testTimeoutOptions(60_000), () =
         ) => {
           expect(revalidate()).toBe(liveIdentityFingerprint);
           expect(reservation.authority).toEqual(createReservation.authority);
-          registry.requireCurrentPendingSandboxCreateVerification(createReservation, checkpoint);
+          registry.requireCurrentPendingSandboxCreateIdentity(createReservation, checkpoint);
           return completeHermesPortableSandboxRegistration({
             sandboxName,
             completeRegistration: async () => {

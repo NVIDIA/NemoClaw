@@ -126,7 +126,7 @@ const setupInference = createSetupInference({
     [],
     {
       preferredInferenceApi: "openai-completions",
-      revalidatePolicyRequirements: () => {},
+      verifyLivePolicyRequirements: () => {},
     },
   );
   console.log(JSON.stringify({ outcome: "resolved", calls }));

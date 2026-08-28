@@ -67,7 +67,7 @@ describe("APF sandbox create selection", () => {
 
     const sessionUpdatesBeforeVerifiedEffects = calls.updateSession.mock.calls.length;
     await (activateVerifiedEffects as unknown as (context: unknown) => Promise<void>)({
-      revalidatePolicyRequirements: () => undefined,
+      verifyLivePolicyRequirements: () => undefined,
     });
     expect(calls.updateSession.mock.calls.length).toBeGreaterThan(
       sessionUpdatesBeforeVerifiedEffects,

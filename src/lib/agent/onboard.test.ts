@@ -307,7 +307,7 @@ describe("agent setup session boundaries", () => {
   function createAgentSetupContext(
     runCaptureOpenshell: OnboardContext["runCaptureOpenshell"] = vi.fn(() => ""),
     timing: Pick<OnboardContext, "now" | "sleepSeconds"> = {},
-    policyRequirements: Pick<OnboardContext, "revalidatePolicyRequirements"> = {},
+    policyRequirements: Pick<OnboardContext, "verifyLivePolicyRequirements"> = {},
   ) {
     return {
       context: {
@@ -447,13 +447,13 @@ describe("agent setup session boundaries", () => {
     const policyChecks = new Map([
       ["record completed agent setup for sandbox 'sandbox-x'", refuseCompletion],
     ]);
-    const revalidatePolicyRequirements = vi.fn((operation: string) =>
+    const verifyLivePolicyRequirements = vi.fn((operation: string) =>
       policyChecks.get(operation)?.(),
     );
     const { context } = createAgentSetupContext(
       runCaptureOpenshell,
       { now: () => nowMs, sleepSeconds },
-      { revalidatePolicyRequirements },
+      { verifyLivePolicyRequirements },
     );
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
 

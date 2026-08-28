@@ -783,7 +783,7 @@ describe("credential provider registration", () => {
       registration.stageSandboxCredentialProviders(
         {
           ...sandboxInput(requiredBindings([tokenDef])),
-          revalidatePolicyRequirements: () => {
+          verifyLivePolicyRequirements: () => {
             throw new Error("authority changed");
           },
         },
@@ -810,7 +810,7 @@ describe("credential provider registration", () => {
       { name: "alpha-first", envKey: "FIRST_TOKEN", token: "first-secret" },
       { name: "alpha-second", envKey: "SECOND_TOKEN", token: "second-secret" },
     ];
-    const revalidatePolicyRequirements = vi.fn((operation: string) =>
+    const verifyLivePolicyRequirements = vi.fn((operation: string) =>
       operation === 'inspect or change provider "alpha-second"'
         ? refuseAuthorityChange()
         : undefined,
@@ -820,7 +820,7 @@ describe("credential provider registration", () => {
       registration.stageSandboxCredentialProviders(
         {
           ...sandboxInput(requiredBindings(tokenDefs)),
-          revalidatePolicyRequirements,
+          verifyLivePolicyRequirements,
         },
         async () => ({ messagingTokenDefs: tokenDefs }),
       ),
@@ -847,7 +847,7 @@ describe("credential provider registration", () => {
     const deps = registrationDeps(runOpenshell, session);
     deps.stagedLegacyValues = new Map([["DISCORD_BOT_TOKEN", DISCORD_SECRET]]);
     const registration = createCredentialProviderRegistration(deps);
-    const revalidatePolicyRequirements = vi
+    const verifyLivePolicyRequirements = vi
       .fn<(operation: string) => void>()
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => undefined)
@@ -862,7 +862,7 @@ describe("credential provider registration", () => {
             token: DISCORD_SECRET,
           },
         ],
-        { revalidatePolicyRequirements },
+        { verifyLivePolicyRequirements },
       ),
     ).toThrow("authority changed");
 

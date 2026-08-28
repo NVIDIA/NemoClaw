@@ -222,8 +222,6 @@ function createPhases(
       }) as (code: number) => never,
       deleteEnv: vi.fn(),
       ...overrides.providerDeps,
-      preflightPolicyRequirements:
-        overrides.providerDeps?.preflightPolicyRequirements ?? (() => undefined),
     },
   });
   const sandbox = createSandboxOnboardFlowPhase<CoreContext>({
@@ -319,8 +317,6 @@ function createPhases(
         throw new Error(`exit ${code}`);
       }) as (code: number) => never,
       ...overrides.sandboxDeps,
-      preflightPolicyRequirements:
-        overrides.sandboxDeps?.preflightPolicyRequirements ?? (() => undefined),
       checkGatewayRouteCompatibility:
         overrides.sandboxDeps?.checkGatewayRouteCompatibility ?? (() => ({ ok: true })),
       withGatewayRouteMutationLock:
@@ -648,7 +644,7 @@ describe("core onboard flow phases", () => {
       };
       const runVerifiedEffects = args[16] as
         | ((context: {
-            revalidatePolicyRequirements: (operation: string) => void;
+            verifyLivePolicyRequirements: (operation: string) => void;
           }) => Promise<void>)
         | undefined;
       expect(createIntent).toMatchObject({
@@ -1148,7 +1144,6 @@ describe("core onboard flow phases", () => {
         allowToolsIncompatible: false,
         endpointSource: null,
         reservationSessionId: session.sessionId,
-        revalidatePolicyRequirements: expect.any(Function),
       },
     );
     expect(result.context.hermesToolGateways).toEqual(["nous-web"]);

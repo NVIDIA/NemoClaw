@@ -19,14 +19,14 @@ export interface StageSandboxCredentialProvidersInput<Agent> {
   agent: Agent;
   requiredBindings: readonly CheckpointProviderBinding[];
   replaceExisting?: boolean;
-  revalidatePolicyRequirements?(operation: string): void;
+  verifyLivePolicyRequirements?(operation: string): void;
 }
 
 export interface MessagingProviderRegistrationOptions {
   replaceExisting?: boolean;
   bestEffort?: boolean;
   allowedSandboxes?: readonly string[];
-  revalidatePolicyRequirements?(operation: string): void;
+  verifyLivePolicyRequirements?(operation: string): void;
 }
 
 type PreparedCredentialProviders = {
@@ -52,7 +52,7 @@ function recordMigratedLegacyMessagingCredentials(
   tokenDefs: readonly MessagingTokenDef[],
   registeredProviderNames: readonly string[],
   deps: CredentialProviderRegistrationDeps,
-  revalidatePolicyRequirements?: (operation: string) => void,
+  verifyLivePolicyRequirements?: (operation: string) => void,
 ): void {
   const registeredProviders = new Set(registeredProviderNames);
   const migrations: Array<{ envKey: string; migrated: boolean }> = [];
@@ -63,7 +63,7 @@ function recordMigratedLegacyMessagingCredentials(
     migrations.push({ envKey: def.envKey, migrated: def.token === stagedValue });
   }
   if (migrations.length === 0) return;
-  revalidatePolicyRequirements?.("record migrated messaging provider credentials");
+  verifyLivePolicyRequirements?.("record migrated messaging provider credentials");
   for (const migration of migrations) {
     if (migration.migrated) deps.migratedLegacyKeys.add(migration.envKey);
     else deps.migratedLegacyKeys.delete(migration.envKey);
@@ -160,7 +160,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     if (result.ok && credentialEnv) {
       const stagedValue = deps.stagedLegacyValues.get(credentialEnv);
       if (stagedValue !== undefined) {
-        options.revalidatePolicyRequirements?.(
+        options.verifyLivePolicyRequirements?.(
           `record migrated credential for provider ${JSON.stringify(name)}`,
         );
         const upsertedValue = env[credentialEnv] ?? deps.getCredential(credentialEnv);
@@ -189,7 +189,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       tokenDefs,
       upserted,
       deps,
-      options.revalidatePolicyRequirements,
+      options.verifyLivePolicyRequirements,
     );
     return upserted;
   }
@@ -249,7 +249,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     prepareCredentialProviders: PrepareCredentialProviders<Agent>,
   ): Promise<readonly CheckpointProviderBinding[]> {
     const messaging = await prepareCredentialProviders(input);
-    input.revalidatePolicyRequirements?.("stage sandbox credential providers after planning");
+    input.verifyLivePolicyRequirements?.("stage sandbox credential providers after planning");
     const plannedBindings = validatePlannedCredentialProviderBindings(
       messaging.messagingTokenDefs,
       input.requiredBindings,
@@ -266,7 +266,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       runOpenshell,
       input.replaceExisting === true,
     );
-    input.revalidatePolicyRequirements?.("clear staged credential provider receipts");
+    input.verifyLivePolicyRequirements?.("clear staged credential provider receipts");
     setStagedCredentialProviderReceipts(
       tokenDefs.map((tokenDef) => tokenDef.name),
       false,
@@ -277,11 +277,11 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       {
         replaceExisting: input.replaceExisting === true,
         allowedSandboxes: input.replaceExisting === true ? [input.sandboxName] : undefined,
-        revalidatePolicyRequirements: input.revalidatePolicyRequirements,
+        verifyLivePolicyRequirements: input.verifyLivePolicyRequirements,
       },
       runOpenshell,
     );
-    input.revalidatePolicyRequirements?.("record staged credential provider receipts");
+    input.verifyLivePolicyRequirements?.("record staged credential provider receipts");
     setStagedCredentialProviderReceipts(registered, true, deps);
     return registered.map((name) => {
       const binding = plannedBindings.get(name);

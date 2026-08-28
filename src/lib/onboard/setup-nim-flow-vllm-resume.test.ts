@@ -99,7 +99,7 @@ describe("createSetupNim vLLM resume", () => {
         handleVllmSelection,
       }),
     );
-    const revalidatePolicyRequirements = vi.fn(() => {
+    const verifyLivePolicyRequirements = vi.fn(() => {
       throw new Error("live policy requirements changed before local inference");
     });
 
@@ -114,11 +114,11 @@ describe("createSetupNim vLLM resume", () => {
         undefined,
         undefined,
         undefined,
-        revalidatePolicyRequirements,
+        verifyLivePolicyRequirements,
       ),
     ).rejects.toThrow(/live policy requirements changed before/u);
 
-    expect(revalidatePolicyRequirements).toHaveBeenCalledWith(
+    expect(verifyLivePolicyRequirements).toHaveBeenCalledWith(
       expect.objectContaining({
         provider: "vllm-local",
         model: "nvidia/resumed-model",

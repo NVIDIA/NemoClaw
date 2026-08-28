@@ -20,7 +20,6 @@ import {
   MATCHING_RUNTIME_PROVIDER_LISTING,
   providersV2EnabledResult,
   resultWithBlueprintPolicy,
-  sequentialCommandResult,
   successResult,
   TEST_SANDBOX_POLICY,
   TEST_SANDBOX_POLICY_PATH,
@@ -75,18 +74,6 @@ const matchingInferenceRoute = MATCHING_INFERENCE_ROUTE_LISTING;
 
 const success = successResult();
 const providersV2Enabled = providersV2EnabledResult();
-const POLICY_BOUNDARY_COMMAND = "policy get -g test-gateway --full --output json test-sandbox";
-
-function expectPolicyBoundaryImmediatelyBefore(
-  commands: readonly string[],
-  mutation: string | ((command: string) => boolean),
-): void {
-  const index = commands.findIndex((command) =>
-    typeof mutation === "string" ? command === mutation : mutation(command),
-  );
-  expect(index).toBeGreaterThan(0);
-  expect(commands[index - 1]).toBe(POLICY_BOUNDARY_COMMAND);
-}
 
 function responseQueue(
   overrides: Array<[string, Array<{ exitCode?: number; stdout: string; stderr: string }>]>,
@@ -145,29 +132,6 @@ function oktaIdentity(profilePath = "provider-profiles/okta-runtime-v1.yaml") {
     client_id_env: "OKTA_CLIENT_ID",
     refresh_token_env: "OKTA_REFRESH_TOKEN",
     client_secret_env: "OKTA_CLIENT_SECRET",
-  };
-}
-
-function managedPolicyAuthorityReceipt(sandboxName = "test-sandbox") {
-  return {
-    authority: "nemoclaw-managed",
-    gateway: "test-gateway",
-    gateway_host: "127.0.0.1",
-    gateway_port: 8080,
-    scope: "sandbox",
-    sandbox_name: sandboxName,
-    policy_creation_receipt: {
-      schemaVersion: 1,
-      origin: "sandbox-create",
-      gatewayName: "test-gateway",
-      gatewayPort: 8080,
-      sandboxName,
-      lifecycleGeneration: FIXED_RUN_UUID,
-      sandboxIdentityFingerprint:
-        "52aad66e236c4a522e5a9b5adb8234b8bbf780d3e4120ccffb0c3dd35ad63aab",
-      policyHash: "sha256:test-policy",
-      policyVersion: 1,
-    },
   };
 }
 
@@ -358,32 +322,6 @@ describe("blueprint identity wrapper", () => {
       commands.indexOf(
         "provider refresh rotate acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN",
       ),
-    );
-    expectPolicyBoundaryImmediatelyBefore(commands, (command) =>
-      command.startsWith("provider profile import --file "),
-    );
-    expectPolicyBoundaryImmediatelyBefore(
-      commands,
-      "provider create --name acme-okta-runtime --type okta-runtime-v1 --runtime-credentials",
-    );
-    expectPolicyBoundaryImmediatelyBefore(commands, (command) =>
-      command.startsWith("provider refresh configure "),
-    );
-    expectPolicyBoundaryImmediatelyBefore(
-      commands,
-      "provider create --name test-provider --type openai --config OPENAI_BASE_URL=https://api.example.com/v1",
-    );
-    expectPolicyBoundaryImmediatelyBefore(
-      commands,
-      "inference set --provider test-provider --model test-model",
-    );
-    expectPolicyBoundaryImmediatelyBefore(
-      commands,
-      "sandbox provider attach test-sandbox acme-okta-runtime",
-    );
-    expectPolicyBoundaryImmediatelyBefore(
-      commands,
-      "provider refresh rotate acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN",
     );
   });
 
@@ -881,7 +819,6 @@ describe("blueprint identity wrapper", () => {
       content: JSON.stringify({
         sandbox_name: "owned-sandbox",
         sandbox_created_by_apply: true,
-        policy_authority: managedPolicyAuthorityReceipt("owned-sandbox"),
       }),
     });
     responseQueue([
@@ -904,7 +841,6 @@ describe("blueprint identity wrapper", () => {
         sandbox_name: "test-sandbox",
         inference_provider_created_by_apply: true,
         inference: { provider_name: "test-provider", provider_type: "openai" },
-        policy_authority: managedPolicyAuthorityReceipt(),
       }),
     });
     responseQueue([
@@ -922,7 +858,7 @@ describe("blueprint identity wrapper", () => {
     expect(store.get(`${stateDir}/rolled_back`)).toBeUndefined();
   });
 
-  it("preserves rollback resources without using a separate policy read to authorize deletion (#9833)", async () => {
+  it("preserves rollback resources when the plan has no exact resource identity (#9833)", async () => {
     const stateDir = "/fakehome/.nemoclaw/state/runs/provider-authority-drift";
     store.set(stateDir, { type: "dir" });
     store.set(`${stateDir}/plan.json`, {
@@ -931,28 +867,12 @@ describe("blueprint identity wrapper", () => {
         sandbox_name: "test-sandbox",
         inference_provider_created_by_apply: true,
         inference: { provider_name: "test-provider", provider_type: "openai" },
-        policy_authority: managedPolicyAuthorityReceipt(),
       }),
     });
-    const policyResult = sequentialCommandResult(POLICY_BOUNDARY_COMMAND, [
-      resultWithBlueprintPolicy(POLICY_BOUNDARY_COMMAND.split(" "), success),
-      {
-        ...resultWithBlueprintPolicy(POLICY_BOUNDARY_COMMAND.split(" "), success),
-        stdout: JSON.stringify({
-          scope: "sandbox",
-          sandbox: "test-sandbox",
-          status: "effective",
-          policy_source: "sandbox",
-          hash: "sha256:replacement-policy",
-          active_version: 2,
-          policy: { version: 1, network_policies: {} },
-        }),
-      },
-    ]);
     mockExeca.mockImplementation(async (_command: string, args: string[]) =>
       args.join(" ") === "provider get test-provider"
         ? { exitCode: 0, stdout: matchingInferenceProvider, stderr: "" }
-        : (policyResult(args) ?? resultWithBlueprintPolicy(args, success)),
+        : resultWithBlueprintPolicy(args, success),
     );
 
     await expect(actionRollback("provider-authority-drift")).rejects.toThrow(
@@ -972,31 +892,8 @@ describe("blueprint identity wrapper", () => {
       content: JSON.stringify({
         sandbox_name: "test-sandbox",
         sandbox_created_by_apply: true,
-        policy_authority: managedPolicyAuthorityReceipt(),
       }),
     });
-    const matchingPolicy = resultWithBlueprintPolicy(POLICY_BOUNDARY_COMMAND.split(" "), success);
-    const policyResult = sequentialCommandResult(POLICY_BOUNDARY_COMMAND, [
-      matchingPolicy,
-      matchingPolicy,
-      {
-        ...matchingPolicy,
-        stdout: JSON.stringify({
-          scope: "sandbox",
-          sandbox: "test-sandbox",
-          status: "effective",
-          policy_source: "sandbox",
-          hash: "sha256:replacement-policy",
-          active_version: 2,
-          policy: { version: 1, network_policies: {} },
-        }),
-      },
-    ]);
-    mockExeca.mockImplementation(
-      async (_command: string, args: string[]) =>
-        policyResult(args) ?? resultWithBlueprintPolicy(args, success),
-    );
-
     await expect(actionRollback("sandbox-authority-drift")).rejects.toThrow(
       /mutable sandbox and provider names/u,
     );
@@ -1132,7 +1029,6 @@ describe("blueprint identity wrapper", () => {
         inference_provider_created_by_apply: true,
         inference: { provider_name: "test-provider", provider_type: "openai" },
         identity: receipt,
-        policy_authority: managedPolicyAuthorityReceipt(),
       }),
     });
     responseQueue([

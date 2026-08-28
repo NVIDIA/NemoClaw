@@ -20,7 +20,7 @@ import {
 } from "./created-sandbox-finalization";
 import { getDcodeSelectionDrift } from "./dcode-selection-drift";
 import type { HermesPortableConfiguredReceipt } from "./experimental/hermes-portable-receipt";
-import { pendingSandboxCreateVerificationForBoundary } from "./sandbox-create/policy-verification";
+import { pendingSandboxCreateIdentityForBoundary } from "./sandbox-create/identity-boundary";
 import type { SandboxGpuCreateFlowResult } from "./sandbox-gpu-create-flow";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import type { CreatedSandboxRegistrationInput } from "./sandbox-registration";
@@ -85,7 +85,7 @@ describe("new sandbox cancellation recovery", () => {
           markCancellationRecovery,
           dockerInfoFormat: () => "",
           runCapture: () => "",
-          revalidatePolicyRequirements: vi.fn(),
+          verifyLivePolicyRequirements: vi.fn(),
           applyVmDnsMonkeypatch: vi.fn(),
         },
       ),
@@ -379,8 +379,7 @@ describe("created DCode sandbox finalization", () => {
   it("passes the fresh create endpoint through the production completion constructor (#9555)", async () => {
     const endpointUrl = "https://openrouter.ai/api/v1";
     const model = "nvidia/nemotron-3-ultra-550b-a55b";
-    const verifiedPolicyBoundary = {
-      registration: {},
+    const verifiedCreateBoundary = {
       sandboxName: "dcode",
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
@@ -390,7 +389,7 @@ describe("created DCode sandbox finalization", () => {
     };
     const verifiedCreate = {
       reservation: {} as never,
-      checkpoint: pendingSandboxCreateVerificationForBoundary(verifiedPolicyBoundary),
+      checkpoint: pendingSandboxCreateIdentityForBoundary(verifiedCreateBoundary),
     } as NonNullable<CreatedSandboxRegistrationInput["verifiedCreate"]>;
     const runCaptureOpenshell = vi.fn(() =>
       [
@@ -454,9 +453,9 @@ describe("created DCode sandbox finalization", () => {
         },
         compatibilityPolicyPath: null,
         dashboardRemoteBindPrepared: false,
-        getVerifiedPolicyBoundary: () => verifiedPolicyBoundary,
+        getVerifiedCreateBoundary: () => verifiedCreateBoundary,
         getVerifiedCreateRegistrationAuthority: () => verifiedCreate,
-        revalidatePolicyRequirements: vi.fn(),
+        verifyLivePolicyRequirements: vi.fn(),
       },
       null,
       "build-1",
@@ -1010,8 +1009,7 @@ describe("created sandbox completion actions", () => {
         order.push("registry");
         return input as unknown as SandboxEntry;
       });
-      const verifiedPolicyBoundary = {
-        registration: {},
+      const verifiedCreateBoundary = {
         sandboxName: "hermes",
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
@@ -1040,7 +1038,7 @@ describe("created sandbox completion actions", () => {
       } satisfies QualifiedSandboxInferenceRouteReservation;
       const verifiedCreate = {
         reservation: inferenceRouteReservation,
-        checkpoint: pendingSandboxCreateVerificationForBoundary(verifiedPolicyBoundary),
+        checkpoint: pendingSandboxCreateIdentityForBoundary(verifiedCreateBoundary),
       } as NonNullable<CreatedSandboxRegistrationInput["verifiedCreate"]>;
       const completion = createCreatedSandboxCompletionActions(
         {
@@ -1087,7 +1085,7 @@ describe("created sandbox completion actions", () => {
           policy: {
             initialPolicyPath: "/private/initial-policy.yaml",
             compatibilityPolicyPath: "/private/compatibility-policy.yaml",
-            getVerifiedPolicyBoundary: () => verifiedPolicyBoundary,
+            getVerifiedCreateBoundary: () => verifiedCreateBoundary,
             getVerifiedCreateRegistrationAuthority: () => verifiedCreate,
           },
           gpu: {

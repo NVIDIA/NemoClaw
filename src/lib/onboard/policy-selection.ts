@@ -120,7 +120,7 @@ export type SetupPolicySelectionOptions = {
   disabledChannels?: string[] | null;
   /** Process-local exclusions imposed by a narrower runtime route authority. */
   excludedPresets?: readonly string[];
-  revalidatePolicyRequirements?: (operation: string) => void;
+  verifyLivePolicyRequirements?: (operation: string) => void;
 };
 
 export type SetupPolicySelectionDeps = {
@@ -485,7 +485,7 @@ async function setupPoliciesWithSelectionInner(
     refuseInPlacePersonalRemoval(personalAlreadyActive, resumeSelection);
     requireSandboxReady(deps, sandboxName, "before");
     deps.note(`  [resume] Reapplying policy presets: ${resumeSelection.join(", ")}`);
-    options.revalidatePolicyRequirements?.(
+    options.verifyLivePolicyRequirements?.(
       `reapply selected policy presets to sandbox '${sandboxName}'`,
     );
     deps.syncPresetSelection(sandboxName, currentAppliedPresets, resumeSelection);
@@ -558,7 +558,7 @@ async function setupPoliciesWithSelectionInner(
             ? "  [non-interactive] Applying the Personal tier requirement while skipping optional policy presets."
             : "  [non-interactive] Removing excluded or unavailable policy presets.",
         );
-        options.revalidatePolicyRequirements?.(
+        options.verifyLivePolicyRequirements?.(
           `apply retained policy presets to sandbox '${sandboxName}'`,
         );
         deps.syncPresetSelection(sandboxName, currentAppliedPresets, retainedPresets);
@@ -644,7 +644,7 @@ async function setupPoliciesWithSelectionInner(
     refuseInPlacePersonalRemoval(personalAlreadyActive, chosen);
     requireSandboxReady(deps, sandboxName, "before");
     deps.note(`  [non-interactive] Applying policy presets: ${chosen.join(", ")}`);
-    options.revalidatePolicyRequirements?.(
+    options.verifyLivePolicyRequirements?.(
       `apply non-interactive policy presets to sandbox '${sandboxName}'`,
     );
     deps.syncPresetSelection(sandboxName, currentAppliedPresets, chosen);
@@ -695,7 +695,7 @@ async function setupPoliciesWithSelectionInner(
   for (const preset of resolvedPresets) {
     if (interactiveChoiceNames.has(preset.name)) accessByName[preset.name] = preset.access;
   }
-  options.revalidatePolicyRequirements?.(`apply policy presets to sandbox '${sandboxName}'`);
+  options.verifyLivePolicyRequirements?.(`apply policy presets to sandbox '${sandboxName}'`);
   deps.syncPresetSelection(sandboxName, currentAppliedPresets, interactiveChoice, accessByName);
   requireSandboxReady(deps, sandboxName, "after");
   if (onSelection) onSelection(interactiveChoice);

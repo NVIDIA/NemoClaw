@@ -51,7 +51,7 @@ export function managedRegistrationSource(name: string, agent = "openclaw"): str
   return `registry.registerSandbox(${JSON.stringify(managedSandboxEntry(name, agent))});`;
 }
 
-export function managedPolicyMetadata(sandboxName: string): string {
+export function livePolicyMetadata(sandboxName: string): string {
   return JSON.stringify({
     scope: "sandbox",
     sandbox: sandboxName,

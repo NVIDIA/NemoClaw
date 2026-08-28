@@ -68,7 +68,7 @@ function prepareVerifiedCreate(
     sandboxIdentityFingerprint: SANDBOX_IDENTITY_FINGERPRINT,
     route: "none" as const,
   };
-  registry.recordPendingSandboxCreateVerification(reservation, checkpoint);
+  registry.recordPendingSandboxCreateIdentity(reservation, checkpoint);
   return {
     checkpoint,
     registration: {

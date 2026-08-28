@@ -24,7 +24,7 @@ type EnsureForward = (
   sandboxName: string,
   port: number,
   label: string,
-  revalidatePolicyRequirements?: RevalidatePolicyRequirements,
+  verifyLivePolicyRequirements?: RevalidatePolicyRequirements,
 ) => boolean;
 
 export function resolveHermesDashboardOnboardState({
@@ -145,21 +145,21 @@ export function ensureHermesDashboardForwardIfEnabled({
   sandboxName,
   ensureForward,
   note,
-  revalidatePolicyRequirements,
+  verifyLivePolicyRequirements,
 }: {
   state: HermesDashboardOnboardState;
   sandboxName: string;
   ensureForward: EnsureForward;
   note: (message: string) => void;
-  revalidatePolicyRequirements?: RevalidatePolicyRequirements;
+  verifyLivePolicyRequirements?: RevalidatePolicyRequirements;
 }): boolean {
   if (!state.enabled || !state.config) return true;
   if (
-    !ensureForward(sandboxName, state.config.port, "Hermes dashboard", revalidatePolicyRequirements)
+    !ensureForward(sandboxName, state.config.port, "Hermes dashboard", verifyLivePolicyRequirements)
   ) {
     return false;
   }
-  revalidatePolicyRequirements?.(`report Hermes dashboard forward for sandbox '${sandboxName}'`);
+  verifyLivePolicyRequirements?.(`report Hermes dashboard forward for sandbox '${sandboxName}'`);
   note(`  ✓ Hermes dashboard forwarded at http://127.0.0.1:${state.config.port}/`);
   return true;
 }
@@ -181,30 +181,30 @@ export function createHermesDashboardForwardEnsurer({
   note: (message: string) => void;
   rollbackSandbox: (
     sandboxName: string,
-    revalidatePolicyRequirements?: RevalidatePolicyRequirements,
+    verifyLivePolicyRequirements?: RevalidatePolicyRequirements,
   ) => void;
   fail: (message: string) => never;
 }): (
   sandboxName: string,
   rollback?: boolean,
-  revalidatePolicyRequirements?: RevalidatePolicyRequirements,
+  verifyLivePolicyRequirements?: RevalidatePolicyRequirements,
 ) => void {
   return (
     sandboxName: string,
     rollback = false,
-    revalidatePolicyRequirements?: RevalidatePolicyRequirements,
+    verifyLivePolicyRequirements?: RevalidatePolicyRequirements,
   ): void => {
     const ok = ensureHermesDashboardForwardIfEnabled({
       state,
       sandboxName,
       ensureForward,
       note,
-      revalidatePolicyRequirements,
+      verifyLivePolicyRequirements,
     });
     if (ok) return;
     if (rollback) {
-      if (revalidatePolicyRequirements) {
-        rollbackSandbox(sandboxName, revalidatePolicyRequirements);
+      if (verifyLivePolicyRequirements) {
+        rollbackSandbox(sandboxName, verifyLivePolicyRequirements);
       } else {
         rollbackSandbox(sandboxName);
       }
@@ -243,7 +243,7 @@ export function createHermesDashboardOnboardForwarding({
     state: HermesDashboardOnboardState,
     sandboxName: string,
     rollback = false,
-    revalidatePolicyRequirements?: RevalidatePolicyRequirements,
+    verifyLivePolicyRequirements?: RevalidatePolicyRequirements,
   ) =>
     createHermesDashboardForwardEnsurer({
       state,
@@ -266,7 +266,7 @@ export function createHermesDashboardOnboardForwarding({
         }
       },
       fail: failWithMessage,
-    })(sandboxName, rollback, revalidatePolicyRequirements);
+    })(sandboxName, rollback, verifyLivePolicyRequirements);
 
   return { resolveStateForPort, ensureForState };
 }

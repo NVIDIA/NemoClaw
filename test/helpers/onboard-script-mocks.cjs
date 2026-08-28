@@ -488,17 +488,17 @@ function installVerifiedSandboxCreateFixture(registry, options) {
       entry: structuredClone(reservationEntry),
     };
   };
-  const recordPendingSandboxCreateVerification = (reservation, checkpoint) => {
+  const recordPendingSandboxCreateIdentity = (reservation, checkpoint) => {
     pendingCheckpoint = structuredClone(checkpoint);
     pendingEntry = {
       ...structuredClone(reservation.entry),
       lifecycleGeneration: checkpoint.lifecycleGeneration,
       lifecycleLiveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
-      pendingCreateVerification: structuredClone(checkpoint),
+      pendingCreateIdentity: structuredClone(checkpoint),
     };
     return structuredClone(pendingEntry);
   };
-  const requireCurrentPendingSandboxCreateVerification = (reservation, checkpoint) => {
+  const requireCurrentPendingSandboxCreateIdentity = (reservation, checkpoint) => {
     if (
       reservation.authority.sessionId !== sessionId ||
       pendingCheckpoint === null ||
@@ -513,8 +513,8 @@ function installVerifiedSandboxCreateFixture(registry, options) {
   const registryFixture = {
     ...registry,
     qualifyPendingSandboxCreateReservation,
-    recordPendingSandboxCreateVerification,
-    requireCurrentPendingSandboxCreateVerification,
+    recordPendingSandboxCreateIdentity,
+    requireCurrentPendingSandboxCreateIdentity,
     getSandbox: (name) =>
       name === sandboxName
         ? structuredClone(publishedEntry || pendingEntry || sourceEntry)
@@ -559,38 +559,37 @@ function installVerifiedSandboxCreateFixture(registry, options) {
     require.cache[registryPath].exports = registry;
   }
 
-  const receiptPath = require.resolve(
-    path.resolve(__dirname, "../../src/lib/onboard/sandbox-create/policy-verification.ts"),
+  const policyRequirementsPath = require.resolve(
+    path.resolve(__dirname, "../../src/lib/onboard/sandbox-create/live-policy-requirements.ts"),
   );
-  const receipt = require(receiptPath);
-  const apfPolicyRegistration = (input) => {
+  const policyRequirements = require(policyRequirementsPath);
+  const verifyApfPolicyRequirements = (input) => {
     if (options.apfInterceptorRequested !== true) {
       throw new Error("integration fixture received unexpected APF policy verification");
     }
     options.onVerifyCreatedPolicy?.(input);
-    return {};
   };
-  Object.defineProperties(receipt, {
-    verifyCreatedApfInterceptorPolicyRegistration: {
+  Object.defineProperties(policyRequirements, {
+    verifyCreatedApfInterceptorPolicyRequirements: {
       configurable: true,
       enumerable: true,
       writable: true,
-      value: apfPolicyRegistration,
+      value: verifyApfPolicyRequirements,
     },
-    verifyCreatedSandboxPolicyRegistration: {
+    verifyCreatedSandboxPolicyRequirements: {
       configurable: true,
       enumerable: true,
       writable: true,
-      value: () => ({}),
+      value: () => undefined,
     },
-    revalidateCreatedSandboxPolicyRegistration: {
+    verifyCurrentCreatedSandboxPolicyRequirements: {
       configurable: true,
       enumerable: true,
       writable: true,
-      value: (input) => input.registration,
+      value: () => undefined,
     },
   });
-  require.cache[receiptPath].exports = receipt;
+  require.cache[policyRequirementsPath].exports = policyRequirements;
   const prepareCreateIntent = () => {
     const onboardSession = require(
       path.resolve(__dirname, "../../src/lib/state/onboard-session.ts"),
@@ -606,7 +605,7 @@ function installVerifiedSandboxCreateFixture(registry, options) {
         : registryFixture.getSandbox(sandboxName);
     const recoverPendingCreate =
       currentEntry?.pendingRouteReservation === true &&
-      currentEntry.pendingCreateVerification !== undefined;
+      currentEntry.pendingCreateIdentity !== undefined;
     let transaction =
       currentTransaction && (currentTransaction.phase !== "created" || recoverPendingCreate)
         ? currentTransaction

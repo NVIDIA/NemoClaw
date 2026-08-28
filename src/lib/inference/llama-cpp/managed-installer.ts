@@ -64,7 +64,7 @@ export interface ManagedLlamaCppInstallOptions {
   readonly acquireGguf?: typeof acquireVerifiedLlamaCppGguf;
   readonly verifyGguf?: typeof verifyLlamaCppGgufCacheEntry;
   readonly checkPort?: typeof checkPortAvailable;
-  readonly revalidatePolicyRequirements?: (operation: string) => void;
+  readonly verifyLivePolicyRequirements?: (operation: string) => void;
   readonly log?: (message: string) => void;
 }
 
@@ -84,7 +84,7 @@ export interface ManagedLlamaCppResumeOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly verifyGguf?: typeof verifyLlamaCppGgufCacheEntry;
   readonly checkPort?: typeof checkPortAvailable;
-  readonly revalidatePolicyRequirements?: (operation: string) => void;
+  readonly verifyLivePolicyRequirements?: (operation: string) => void;
 }
 
 export interface ManagedLlamaCppExactInspectionOptions {
@@ -590,7 +590,7 @@ export async function installManagedLlamaCpp(
       { env },
     );
     engine = operation.engine;
-    options.revalidatePolicyRequirements?.("reserve the managed llama.cpp runtime");
+    options.verifyLivePolicyRequirements?.("reserve the managed llama.cpp runtime");
     const reservation = claimManagedLlamaCppOwner(paths, {
       schemaVersion: 1,
       sandboxName: options.sandboxName,
@@ -677,7 +677,7 @@ export async function installManagedLlamaCpp(
     if (artifact === null) {
       throw new Error("Managed llama.cpp could not verify its exact GGUF artifact.");
     }
-    options.revalidatePolicyRequirements?.("activate the managed llama.cpp runtime");
+    options.verifyLivePolicyRequirements?.("activate the managed llama.cpp runtime");
     loadOrCreateManagedLlamaCppApiKey(paths);
     const lifecycle = lifecycleFor({
       selection,
@@ -698,7 +698,7 @@ export async function installManagedLlamaCpp(
 
     let receipt = loadManagedLlamaCppReceipt(paths);
     if (receipt !== null) {
-      options.revalidatePolicyRequirements?.("resume the managed llama.cpp runtime");
+      options.verifyLivePolicyRequirements?.("resume the managed llama.cpp runtime");
       receipt = lifecycle.resume(receipt);
     } else {
       const port = await checkPort(hostPort);
@@ -707,11 +707,11 @@ export async function installManagedLlamaCpp(
           `Managed llama.cpp port ${String(hostPort)} is unavailable: ${port.reason}`,
         );
       }
-      options.revalidatePolicyRequirements?.("start the managed llama.cpp runtime");
+      options.verifyLivePolicyRequirements?.("start the managed llama.cpp runtime");
       const transactionId = randomBytes(32).toString("hex");
       receipt = lifecycle.start(createManagedLlamaCppReceiptWriter(paths, transactionId));
     }
-    options.revalidatePolicyRequirements?.(
+    options.verifyLivePolicyRequirements?.(
       "report successful managed llama.cpp runtime activation",
     );
     const apiKey = loadOrCreateManagedLlamaCppApiKey(paths);
@@ -764,7 +764,7 @@ export async function resumeManagedLlamaCppRuntime(
     "llama-cpp",
     { env },
   );
-  options.revalidatePolicyRequirements?.("inspect the managed llama.cpp runtime");
+  options.verifyLivePolicyRequirements?.("inspect the managed llama.cpp runtime");
   const engine = operation.engine;
   const verify = options.verifyGguf ?? verifyLlamaCppGgufCacheEntry;
   const checkPort = options.checkPort ?? checkPortAvailable;
@@ -801,7 +801,7 @@ export async function resumeManagedLlamaCppRuntime(
     artifact,
     operation,
   });
-  options.revalidatePolicyRequirements?.("recover the managed llama.cpp runtime");
+  options.verifyLivePolicyRequirements?.("recover the managed llama.cpp runtime");
   if (pending.length === 1) {
     const recovery = lifecycle.recoverUnfinished(
       createManagedLlamaCppReceiptWriter(paths, pending[0]!.transactionId),
@@ -816,15 +816,15 @@ export async function resumeManagedLlamaCppRuntime(
     if (!port.ok) {
       throw new Error(`Managed llama.cpp port ${String(hostPort)} is unavailable: ${port.reason}`);
     }
-    options.revalidatePolicyRequirements?.("start the managed llama.cpp runtime");
+    options.verifyLivePolicyRequirements?.("start the managed llama.cpp runtime");
     loadOrCreateManagedLlamaCppApiKey(paths);
     const transactionId = randomBytes(32).toString("hex");
     lifecycle.start(createManagedLlamaCppReceiptWriter(paths, transactionId));
   } else {
-    options.revalidatePolicyRequirements?.("resume the managed llama.cpp runtime");
+    options.verifyLivePolicyRequirements?.("resume the managed llama.cpp runtime");
     lifecycle.resume(receipt);
   }
-  options.revalidatePolicyRequirements?.("report successful managed llama.cpp runtime recovery");
+  options.verifyLivePolicyRequirements?.("report successful managed llama.cpp runtime recovery");
   const apiKey = loadManagedLlamaCppApiKey(paths);
   if (apiKey === null) throw new Error("Managed llama.cpp API-key authority is missing.");
   env[LLAMA_CPP_CREDENTIAL_ENV] = apiKey;

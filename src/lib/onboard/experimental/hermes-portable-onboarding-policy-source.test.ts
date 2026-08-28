@@ -18,14 +18,16 @@ import {
 } from "../../../../test/helpers/hermes-portable-onboarding-fixture";
 import type { SandboxEntry } from "../../state/registry";
 import {
-  pendingSandboxCreateVerificationForBoundary,
-  revalidateCreatedSandboxPolicyRegistration,
-  type CreatedSandboxPolicyRegistrationInput,
-} from "../sandbox-create/policy-verification";
+  pendingSandboxCreateIdentityForBoundary,
+} from "../sandbox-create/identity-boundary";
+import {
+  verifyCurrentCreatedSandboxPolicyRequirements,
+  type CreatedSandboxPolicyRequirementsCheck,
+} from "../sandbox-create/live-policy-requirements";
 import {
   runSandboxCreateWithPolicyVerification,
-  verifyCreatedSandboxEffectivePolicy,
-  type EffectiveVerifiedSandboxPolicyBoundary,
+  verifyCreatedSandboxEffectivePolicyRequirements,
+  type EffectiveVerifiedSandboxCreateBoundary,
 } from "../sandbox-create/orchestration";
 import {
   runHermesPortableOnboardCreate,
@@ -80,8 +82,7 @@ function checkpointFor(
   input: ReturnType<typeof createHermesPortableTestInput>,
   liveIdentityFingerprint = HERMES_PORTABLE_TEST_LIVE_IDENTITY,
 ) {
-  return pendingSandboxCreateVerificationForBoundary({
-    registration: {},
+  return pendingSandboxCreateIdentityForBoundary({
     sandboxName: input.sandboxName,
     gatewayName: input.gatewayName,
     gatewayPort: GATEWAY_PORT,
@@ -100,16 +101,13 @@ function checkpointEntry(
     gatewayPort: checkpoint.gatewayPort,
     lifecycleGeneration: checkpoint.lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
-    pendingCreateVerification: checkpoint,
+    pendingCreateIdentity: checkpoint,
   };
 }
 
-function policyRegistrationInput(boundary: EffectiveVerifiedSandboxPolicyBoundary): Omit<
-  CreatedSandboxPolicyRegistrationInput,
-  "plannedAuthority"
-> & {
-  readonly registration: EffectiveVerifiedSandboxPolicyBoundary["registration"];
-} {
+function policyRequirementsInput(
+  boundary: EffectiveVerifiedSandboxCreateBoundary,
+): CreatedSandboxPolicyRequirementsCheck {
   return {
     sandboxName: boundary.sandboxName,
     gatewayName: boundary.gatewayName,
@@ -119,7 +117,6 @@ function policyRegistrationInput(boundary: EffectiveVerifiedSandboxPolicyBoundar
     policySourcePath: boundary.policySourcePath,
     route: boundary.route,
     operation: "continue composed Hermes Portable onboarding",
-    registration: boundary.registration,
   };
 }
 
@@ -183,9 +180,9 @@ network_policies:
       routeFallbackCalls += 1;
       return policyPath;
     };
-    const persistVerifiedPolicy = (boundary: EffectiveVerifiedSandboxPolicyBoundary) => {
+    const persistCreateIdentity = (boundary: EffectiveVerifiedSandboxCreateBoundary) => {
       persistedPolicySources.push(boundary.policySourcePath);
-      const checkpoint = pendingSandboxCreateVerificationForBoundary(boundary);
+      const checkpoint = pendingSandboxCreateIdentityForBoundary(boundary);
       recordedCheckpointEntry = checkpointEntry(current, checkpoint);
       const { name, ...updates } = recordedCheckpointEntry;
       expect(updateRegistry(name, updates)).toBe(true);
@@ -204,7 +201,7 @@ network_policies:
       const readCountBeforeVerification = readFile.mock.calls.length;
       const result = await runSandboxCreateWithPolicyVerification<
         CreatedPolicyIdentity,
-        EffectiveVerifiedSandboxPolicyBoundary,
+        EffectiveVerifiedSandboxCreateBoundary,
         { ready: true }
       >({
         sandboxName: "alpha",
@@ -218,8 +215,8 @@ network_policies:
         captureCreatedSandboxIdentity: () => HERMES_PORTABLE_TEST_LIVE_IDENTITY,
         persistCreatedSandboxIdentity: vi.fn(),
         revalidateCreatedSandboxIdentity: vi.fn(),
-        verifyCreatedPolicy: (identity) =>
-          verifyCreatedSandboxEffectivePolicy({
+        verifyCreatedPolicyRequirements: (identity) =>
+          verifyCreatedSandboxEffectivePolicyRequirements({
             sandboxName: "alpha",
             gatewayName: "nemoclaw",
             gatewayPort: GATEWAY_PORT,
@@ -232,12 +229,12 @@ network_policies:
             apfInterceptorRequested: false,
             operation: "verify composed Hermes Portable policy",
           }),
-        persistVerifiedPolicy: (_identity, _exactIdentity, boundary) => {
-          persistVerifiedPolicy(boundary);
+        persistCreateIdentity: (_identity, _exactIdentity, boundary) => {
+          persistCreateIdentity(boundary);
         },
-        revalidateVerifiedPolicy: (_identity, _exactIdentity, boundary) => {
+        verifyCurrentPolicyRequirements: (_identity, _exactIdentity, boundary) => {
           expect(boundary.policySourcePath).toBe(effectivePolicySourcePath);
-          revalidateCreatedSandboxPolicyRegistration(policyRegistrationInput(boundary));
+          verifyCurrentCreatedSandboxPolicyRequirements(policyRequirementsInput(boundary));
         },
         runVerifiedCreateEffects,
         cleanupTemporarySources: vi.fn(),
@@ -354,7 +351,7 @@ network_policies:
   });
 
   it("rejects a compatibility result before policy persistence or effects (#10423)", async () => {
-    let persistVerifiedPolicyCalls = 0;
+    let persistCreateIdentityCalls = 0;
     let verifiedCreateEffectCalls = 0;
     let routeFallbackCalls = 0;
     const routeFallback = () => {
@@ -365,7 +362,7 @@ network_policies:
     await expect(
       runSandboxCreateWithPolicyVerification<
         CreatedPolicyIdentity,
-        EffectiveVerifiedSandboxPolicyBoundary,
+        EffectiveVerifiedSandboxCreateBoundary,
         string
       >({
         sandboxName: "alpha",
@@ -377,8 +374,8 @@ network_policies:
         captureCreatedSandboxIdentity: () => HERMES_PORTABLE_TEST_LIVE_IDENTITY,
         persistCreatedSandboxIdentity: vi.fn(),
         revalidateCreatedSandboxIdentity: vi.fn(),
-        verifyCreatedPolicy: (identity) =>
-          verifyCreatedSandboxEffectivePolicy({
+        verifyCreatedPolicyRequirements: (identity) =>
+          verifyCreatedSandboxEffectivePolicyRequirements({
             sandboxName: "alpha",
             gatewayName: "nemoclaw",
             gatewayPort: GATEWAY_PORT,
@@ -391,10 +388,10 @@ network_policies:
             apfInterceptorRequested: false,
             operation: "verify incompatible Hermes Portable policy",
           }),
-        persistVerifiedPolicy: () => {
-          persistVerifiedPolicyCalls += 1;
+        persistCreateIdentity: () => {
+          persistCreateIdentityCalls += 1;
         },
-        revalidateVerifiedPolicy: vi.fn(),
+        verifyCurrentPolicyRequirements: vi.fn(),
         runVerifiedCreateEffects: async () => {
           verifiedCreateEffectCalls += 1;
         },
@@ -402,7 +399,7 @@ network_policies:
       }),
     ).rejects.toThrow("automatic sandbox cleanup was not safe");
     expect(routeFallbackCalls).toBe(0);
-    expect(persistVerifiedPolicyCalls).toBe(0);
+    expect(persistCreateIdentityCalls).toBe(0);
     expect(verifiedCreateEffectCalls).toBe(0);
   });
 });

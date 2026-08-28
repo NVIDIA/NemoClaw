@@ -426,14 +426,14 @@ if (mode === "resume" && scenario === "foreign-reservation") {
   registry.save(data);
 }
 if (mode === "resume" && scenario === "changed-checkpoint") {
-  const requireCurrent = registry.requireCurrentPendingSandboxCreateVerification;
+  const requireCurrent = registry.requireCurrentPendingSandboxCreateIdentity;
   let reads = 0;
-  registry.requireCurrentPendingSandboxCreateVerification = (reservation, checkpoint) => {
+  registry.requireCurrentPendingSandboxCreateIdentity = (reservation, checkpoint) => {
     const current = requireCurrent(reservation, checkpoint);
     reads += 1;
     if (reads === 1) {
       const data = registry.load();
-      const changed = data.sandboxes["my-assistant"].pendingCreateVerification;
+      const changed = data.sandboxes["my-assistant"].pendingCreateIdentity;
       changed.route = changed.route === "native" ? "none" : "native";
       registry.save(data);
     }
@@ -576,14 +576,14 @@ createArgs[16] = async () => {
         error: string;
         registryEntry: {
           pendingRouteReservation?: boolean;
-          pendingCreateVerification?: unknown;
+          pendingCreateIdentity?: unknown;
           lifecycleLiveIdentityFingerprint?: string;
         };
         journal: { phase: string; targetLiveIdentityFingerprint?: string };
       }>(first.stdout);
       assert.match(retained.error, /automatic sandbox cleanup was not safe/u);
       assert.equal(retained.registryEntry.pendingRouteReservation, true);
-      assert.ok(retained.registryEntry.pendingCreateVerification);
+      assert.ok(retained.registryEntry.pendingCreateIdentity);
       assert.match(
         retained.registryEntry.lifecycleLiveIdentityFingerprint ?? "",
         /^[0-9a-f]{64}$/u,
@@ -604,7 +604,7 @@ createArgs[16] = async () => {
         error: string | null;
         registryEntry: {
           pendingRouteReservation?: boolean;
-          pendingCreateVerification?: unknown;
+          pendingCreateIdentity?: unknown;
         };
       }>(second.stdout);
       const createEvents = fs
@@ -624,7 +624,7 @@ createArgs[16] = async () => {
       );
       assert.equal(recovered.sandboxName, resumes ? "my-assistant" : null);
       assert.equal(recovered.registryEntry.pendingRouteReservation, resumes ? undefined : true);
-      assert.equal(Boolean(recovered.registryEntry.pendingCreateVerification), !resumes);
+      assert.equal(Boolean(recovered.registryEntry.pendingCreateIdentity), !resumes);
       assert.deepEqual(effectEvents, resumes ? ["seed", "resume"] : ["seed"]);
     },
   );

@@ -9,7 +9,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  managedPolicyMetadata,
+  livePolicyMetadata,
   managedRegistrationSource,
   managedSandboxEntry,
   parseResultPayload,
@@ -192,7 +192,7 @@ if [ "$1 $2" = "sandbox get" ]; then
 fi
 if [ "$1 $2" = "policy get" ]; then
   if [[ " $* " == *" --output json "* ]]; then
-    printf '%s\n' ${JSON.stringify(managedPolicyMetadata("test-sandbox"))}
+    printf '%s\n' ${JSON.stringify(livePolicyMetadata("test-sandbox"))}
     exit 0
   fi
   if [ -f ${JSON.stringify(policyOut)} ]; then
@@ -276,7 +276,7 @@ if [ "$1 $2" = "sandbox get" ]; then
 fi
 if [ "$1 $2" = "policy get" ]; then
   if [[ " $* " == *" --output json "* ]]; then
-    printf '%s\n' ${JSON.stringify(managedPolicyMetadata("hermes-sandbox"))}
+    printf '%s\n' ${JSON.stringify(livePolicyMetadata("hermes-sandbox"))}
     exit 0
   fi
   if [ -f ${JSON.stringify(policyOut)} ]; then
@@ -368,7 +368,7 @@ if [ "$1 $2" = "sandbox get" ]; then
 fi
 if [ "$1 $2" = "policy get" ]; then
   if [[ " $* " == *" --output json "* ]]; then
-    printf '%s\n' ${JSON.stringify(managedPolicyMetadata("hermes-sandbox"))}
+    printf '%s\n' ${JSON.stringify(livePolicyMetadata("hermes-sandbox"))}
     exit 0
   fi
   if [ -f ${JSON.stringify(policyOut)} ]; then

@@ -1043,6 +1043,20 @@ printf '\n'
     expect(text(curlAfterApproval)).toMatch(/CURL_STATUS_401/);
     expect(text(curlAfterApproval)).toMatch(/Unauthorized|unauthorized/);
 
+    const githubAdd = await applyPreset(host, "github");
+    expect(githubAdd.exitCode, text(githubAdd)).toBe(0);
+    const policyAfterNemoclawMutation = await sandbox.openshell(
+      ["policy", "get", "--full", SANDBOX_NAME],
+      {
+        artifactName: "tc-net-08-policy-after-nemoclaw-mutation",
+        env: baseEnv(),
+        timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+      },
+    );
+    expect(policyAfterNemoclawMutation.exitCode, text(policyAfterNemoclawMutation)).toBe(0);
+    expect(policyAfterNemoclawMutation.stdout).toContain("api.atlassian.com");
+    expect(policyAfterNemoclawMutation.stdout).toMatch(/github|api\.github\.com/i);
+
     progress.phase("switch to permissive policy and record the contract");
     const permissiveApply = await sandbox.openshell(
       ["policy", "set", "--policy", PERMISSIVE_POLICY, "--wait", SANDBOX_NAME],
@@ -1072,6 +1086,7 @@ printf '\n'
         livePolicyAdd: true,
         dryRunNoSideEffect: true,
         jiraPerBinaryPolicy: true,
+        hostEditSurvivesNemoclawMutation: true,
         hotReloadNoRestart: true,
         inferenceExemption: true,
         ssrfValidation: true,

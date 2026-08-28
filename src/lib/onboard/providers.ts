@@ -505,14 +505,14 @@ function providerExistsInGateway(name, _runOpenshell) {
  * Commands in one provider operation can be separated by
  * probes and recovery work, so one outer check is not sufficient.
  * @param {Function} runOpenshell
- * @param {((operation: string) => void)|undefined} revalidatePolicyRequirements
+ * @param {((operation: string) => void)|undefined} verifyLivePolicyRequirements
  * @param {string} operation
  * @returns {Function}
  */
-function policyRequirementsCheckedRunner(runOpenshell, revalidatePolicyRequirements, operation) {
-  if (!revalidatePolicyRequirements) return runOpenshell;
+function policyRequirementsCheckedRunner(runOpenshell, verifyLivePolicyRequirements, operation) {
+  if (!verifyLivePolicyRequirements) return runOpenshell;
   return (...args) => {
-    revalidatePolicyRequirements(operation);
+    verifyLivePolicyRequirements(operation);
     return runOpenshell(...args);
   };
 }
@@ -534,13 +534,13 @@ function policyRequirementsCheckedRunner(runOpenshell, revalidatePolicyRequireme
  * @param {string|null} baseUrl - Optional base URL for the provider endpoint.
  * @param {Record<string, string>} env - Environment variables for the openshell command.
  * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
- * @param {{replaceExisting?: boolean, knownExists?: boolean, allowedSandboxes?: readonly string[], requireExactBinding?: boolean, allowExtendedCredentialKeys?: boolean, credentialEnvs?: string[], revalidatePolicyRequirements?: (operation: string) => void}} options - Optional replacement controls.
+ * @param {{replaceExisting?: boolean, knownExists?: boolean, allowedSandboxes?: readonly string[], requireExactBinding?: boolean, allowExtendedCredentialKeys?: boolean, credentialEnvs?: string[], verifyLivePolicyRequirements?: (operation: string) => void}} options - Optional replacement controls.
  * @returns {{ ok: boolean, status?: number, message?: string, reason?: string }}
  */
 function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, options = {}) {
   const runOpenshell = policyRequirementsCheckedRunner(
     _runOpenshell,
-    options.revalidatePolicyRequirements,
+    options.verifyLivePolicyRequirements,
     `inspect or change provider ${JSON.stringify(name)}`,
   );
   const exists = options.knownExists ?? providerExistsInGateway(name, runOpenshell);
@@ -716,13 +716,13 @@ function assertCredentialFamilyProviderBindings(tokenDefs, runOpenshell, options
  * of terminating the CLI.
  * @param {Array<{name: string, envKey: string, token: string|null, providerType?: string, additionalCredentials?: Array<{envKey: string, token: string|null}>}>} tokenDefs
  * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
- * @param {{replaceExisting?: boolean, bestEffort?: boolean, allowedSandboxes?: readonly string[], requireExactBindings?: boolean, revalidatePolicyRequirements?: (operation: string) => void}} options - Forwarded to every upsertProvider call.
+ * @param {{replaceExisting?: boolean, bestEffort?: boolean, allowedSandboxes?: readonly string[], requireExactBindings?: boolean, verifyLivePolicyRequirements?: (operation: string) => void}} options - Forwarded to every upsertProvider call.
  * @returns {string[]} Provider names that were upserted.
  */
 function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   const runMessagingBridgeOpenshell = policyRequirementsCheckedRunner(
     _runOpenshell,
-    options.revalidatePolicyRequirements,
+    options.verifyLivePolicyRequirements,
     "inspect or change a messaging bridge provider",
   );
   assertCredentialFamilyProviderBindings(tokenDefs, runMessagingBridgeOpenshell, options);
@@ -830,7 +830,7 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
           replaceExisting: Boolean(options.replaceExisting),
           knownExists,
           allowedSandboxes: options.allowedSandboxes,
-          revalidatePolicyRequirements: options.revalidatePolicyRequirements,
+          verifyLivePolicyRequirements: options.verifyLivePolicyRequirements,
           requireExactBinding: Boolean(
             requiresFamilyBinding || (options.requireExactBindings && providerType),
           ),

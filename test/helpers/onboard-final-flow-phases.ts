@@ -65,10 +65,6 @@ export type RecorderOverrides = {
     Agent | null,
     WebSearchConfig
   >["deps"]["setupPoliciesWithSelection"];
-  revalidatePolicyRequirements?: (
-    context: OnboardFlowContext<Agent | null>,
-    operation: string,
-  ) => void;
 };
 
 function cloneSession(session: Session): Session {
@@ -195,7 +191,6 @@ export function createPhases(
     VerifyDeploymentResult
   >({
     branchState,
-    revalidatePolicyRequirements: recorders.revalidatePolicyRequirements,
     agentSetupDeps: {
       handleAgentSetup: vi.fn(async () => {
         order.push("agent-setup");

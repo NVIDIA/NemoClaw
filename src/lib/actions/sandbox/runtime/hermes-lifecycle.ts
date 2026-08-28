@@ -9,7 +9,7 @@ import * as processRecovery from "../process-recovery";
 
 export function createHermesCredentialEnvReconciliationRuntime(
   runOpenshell: MessagingOpenShellRunner,
-  revalidatePolicyRequirements: (operation: string) => void,
+  verifyLivePolicyRequirements: (operation: string) => void,
 ) {
   return {
     reconcileCredentialEnv: (plan: SandboxMessagingPlan, revalidate: (operation: string) => void) =>
@@ -38,7 +38,7 @@ export function createHermesCredentialEnvReconciliationRuntime(
       revalidate(`confirming Hermes gateway health for sandbox '${sandboxName}'`);
       return healthy;
     },
-    revalidatePolicyRequirements,
+    verifyLivePolicyRequirements,
   };
 }
 

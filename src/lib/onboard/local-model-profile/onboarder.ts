@@ -116,14 +116,14 @@ export function createLocalModelProfileOnboarder(deps: LocalModelProfileOnboarde
         ? {
             checkpointInstallIntent: (modelId: string) => {
               seedVllmInstallRoute(modelId);
-              state.revalidatePolicyRequirements?.("record managed vLLM install intent");
+              state.verifyLivePolicyRequirements?.("record managed vLLM install intent");
               checkpointInstallIntent(modelId);
             },
           }
         : {}),
       beforeInstall: (modelId) => {
         seedVllmInstallRoute(modelId);
-        state.revalidatePolicyRequirements?.("install managed vLLM runtime");
+        state.verifyLivePolicyRequirements?.("install managed vLLM runtime");
       },
     });
     if (!result.ok) return "retry-selection";

@@ -13,7 +13,7 @@ import type { SandboxEntry } from "../../src/lib/state/registry";
 
 const shieldsModulePath = "./index.js";
 
-export const managedPolicyMutationContext = {
+export const livePolicyMutationContext = {
   gatewayName: "nemoclaw",
   inspection: {
     policySource: "sandbox" as const,
@@ -22,13 +22,13 @@ export const managedPolicyMutationContext = {
   },
 };
 
-export function bindManagedPolicyMutationContext(
+export function bindLivePolicyMutationContext(
   policy: typeof import("../../src/lib/policy"),
 ): MockInstance[] {
   return [
-    vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(managedPolicyMutationContext),
-    vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(managedPolicyMutationContext),
-    vi.spyOn(policy, "recheckPolicyMutationContext").mockReturnValue(managedPolicyMutationContext),
+    vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
+    vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
+    vi.spyOn(policy, "recheckPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
     vi.spyOn(policy, "verifyAppliedPolicyDocument").mockImplementation(() => undefined),
   ];
 }
