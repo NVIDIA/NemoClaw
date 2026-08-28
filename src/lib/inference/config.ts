@@ -168,7 +168,7 @@ export function getProviderSelectionConfig(
     case ORCAROUTER_PROVIDER_NAME:
       return {
         ...base,
-        model: model || DEFAULT_CLOUD_MODEL,
+        model: model || "orcarouter/auto",
         credentialEnv: ORCAROUTER_CREDENTIAL_ENV,
         providerLabel: "OrcaRouter",
       };

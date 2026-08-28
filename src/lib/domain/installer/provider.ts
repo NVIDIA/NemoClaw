@@ -24,6 +24,8 @@ export const INSTALLER_PROVIDER_ALIASES: Readonly<Record<string, InstallerProvid
   nim: "nim-local",
   "open-router": "openrouter",
   openrouterai: "openrouter",
+  "orca-router": "orcarouter",
+  orcarouterai: "orcarouter",
 };
 
 const PROVIDERS_BY_LOWERCASE = new Map<string, InstallerProvider>(

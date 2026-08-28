@@ -59,6 +59,7 @@ describe("normalizeInferenceSetProvider — facet 1 provider-name drift (#6321)"
     expect(normalizeInferenceSetProvider("open-router")).toBe("openrouter-api");
     expect(normalizeInferenceSetProvider("orcarouter")).toBe("orcarouter-api");
     expect(normalizeInferenceSetProvider("orca-router")).toBe("orcarouter-api");
+    expect(normalizeInferenceSetProvider("orcarouterai")).toBe("orcarouter-api");
     expect(normalizeInferenceSetProvider("custom")).toBe("compatible-endpoint");
     expect(normalizeInferenceSetProvider("ollama")).toBe("ollama-local");
   });

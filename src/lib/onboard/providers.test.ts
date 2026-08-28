@@ -211,6 +211,25 @@ describe("onboard provider helpers", () => {
     ).toContain("OPENAI_BASE_URL=https://openrouter.ai/api/v1");
   });
 
+  it("registers OrcaRouter with an OpenAI-compatible provider profile and aliases", () => {
+    const provider = REMOTE_PROVIDER_CONFIG.orcarouter;
+
+    expect(provider).toMatchObject({
+      providerName: "orcarouter-api",
+      providerType: "openai",
+      credentialEnv: "ORCAROUTER_API_KEY",
+    });
+    expect(NON_INTERACTIVE_PROVIDER_KEYS.has("orcarouter")).toBe(true);
+    expect(NON_INTERACTIVE_PROVIDER_ALIASES["orca-router"]).toBe("orcarouter");
+    expect(NON_INTERACTIVE_PROVIDER_ALIASES.orcarouterai).toBe("orcarouter");
+    withProviderEnv({ NEMOCLAW_PROVIDER: "orca-router" }, () => {
+      expect(getNonInteractiveProvider(false)).toBe("orcarouter");
+    });
+    withProviderEnv({ NEMOCLAW_PROVIDER: "orcarouterai" }, () => {
+      expect(getNonInteractiveProvider(false)).toBe("orcarouter");
+    });
+  });
+
   it("keeps the discovery profile Anthropic before agent-specific surface selection (#6289)", () => {
     const provider = REMOTE_PROVIDER_CONFIG.anthropicCompatible;
 

@@ -114,6 +114,8 @@ const NON_INTERACTIVE_PROVIDER_ALIASES = {
   vllm: "vllm",
   "open-router": "openrouter",
   openrouterai: "openrouter",
+  "orca-router": "orcarouter",
+  orcarouterai: "orcarouter",
   anthropiccompatible: "anthropicCompatible",
   hermes: "hermesProvider",
   "hermes-provider": "hermesProvider",

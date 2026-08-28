@@ -929,7 +929,8 @@ usage() {
   printf "    --yes-i-accept-third-party-software Accept the third-party software notice without prompting\n"
   printf "    --defer-onboarding   Install Hermes without onboarding when NVIDIA inference credentials are absent\n"
   printf "                          Use only with NEMOCLAW_AGENT=hermes, no registered sandboxes, no local model profile,\n"
-  printf "                          and the build, cloud, or routed NVIDIA hosted provider\n"
+  printf "                          and a remote provider key (build, cloud, routed, openrouter, orcarouter, openai, anthropic,\n"
+  printf "                          anthropicCompatible, gemini, hermes-provider, ollama, llama-cpp, custom, nim-local, vllm)\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
   printf "    --station-deepseek   Use DeepSeek V4 Flash for DGX Station express install (interactive terminal required)\n"
   printf "    --force-station-install Bypass only the DGX release-metadata allowlist for Station GB300 express install\n"
@@ -941,7 +942,8 @@ usage() {
   printf "    NEMOCLAW_NON_INTERACTIVE=1    Same as --non-interactive\n"
   printf "    NEMOCLAW_DEFER_ONBOARDING=1   Same as --defer-onboarding\n"
   printf "                                  Use only with NEMOCLAW_AGENT=hermes, no registered sandboxes, no local model profile,\n"
-  printf "                                  and the build, cloud, or routed NVIDIA hosted provider\n"
+  printf "                                  and a remote provider key (build, cloud, routed, openrouter, orcarouter, openai, anthropic,\n"
+  printf "                                  anthropicCompatible, gemini, hermes-provider, ollama, llama-cpp, custom, nim-local, vllm)\n"
   printf "    NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt Allow sudo prompts during non-interactive onboarding\n"
   printf "    NEMOCLAW_FRESH=1              Same as --fresh\n"
   printf "    NEMOCLAW_NO_EXPRESS=1         Skip the Express prompt on detected platforms\n"
@@ -3809,7 +3811,7 @@ should_defer_hermes_onboarding() {
   # src/lib/onboard/providers.ts. These values select a route; they are not
   # inference credentials.
   case "$provider_key" in
-    "" | inference | cloud | nim | vllm | open-router | openrouterai | anthropiccompatible | hermes | hermes-provider | hermesprovider | nous | nous-portal | build | openrouter | orcarouter | openai | anthropic | gemini | ollama | llama-cpp | install-llama-cpp | custom | nim-local | routed | install-vllm | install-ollama | install-windows-ollama | start-windows-ollama) ;;
+    "" | inference | cloud | nim | vllm | open-router | openrouterai | anthropiccompatible | hermes | hermes-provider | hermesprovider | nous | nous-portal | build | openrouter | orcarouter | orca-router | orcarouterai | openai | anthropic | gemini | ollama | llama-cpp | install-llama-cpp | custom | nim-local | routed | install-vllm | install-ollama | install-windows-ollama | start-windows-ollama) ;;
     *) return 1 ;;
   esac
 }

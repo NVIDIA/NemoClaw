@@ -333,7 +333,6 @@ export function shouldSkipResponsesProbe(provider: string): boolean {
     provider === "nvidia-nim" ||
     provider === "gemini-api" ||
     provider === "openrouter-api" ||
-    provider === "orcarouter-api" ||
     provider === "llama-cpp-local"
   );
 }

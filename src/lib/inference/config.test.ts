@@ -251,11 +251,11 @@ describe("inference selection config", () => {
       provider: "openrouter-api",
       providerLabel: "OpenRouter",
     });
-    expect(getProviderSelectionConfig("orcarouter-api", "moonshotai/kimi-k2.6")).toEqual({
+    expect(getProviderSelectionConfig("orcarouter-api", "kimi/kimi-k2.6")).toEqual({
       endpointType: "custom",
       endpointUrl: INFERENCE_ROUTE_URL,
       ncpPartner: null,
-      model: "moonshotai/kimi-k2.6",
+      model: "kimi/kimi-k2.6",
       profile: DEFAULT_ROUTE_PROFILE,
       credentialEnv: "ORCAROUTER_API_KEY",
       provider: "orcarouter-api",
@@ -348,7 +348,7 @@ describe("inference selection config", () => {
   it("falls back to provider defaults when model is omitted", () => {
     expect(getProviderSelectionConfig("openai-api")?.model).toBe("gpt-5.4");
     expect(getProviderSelectionConfig("openrouter-api")?.model).toBe(DEFAULT_CLOUD_MODEL);
-    expect(getProviderSelectionConfig("orcarouter-api")?.model).toBe(DEFAULT_CLOUD_MODEL);
+    expect(getProviderSelectionConfig("orcarouter-api")?.model).toBe("orcarouter/auto");
     expect(getProviderSelectionConfig("anthropic-prod")?.model).toBe("claude-sonnet-4-6");
     expect(getProviderSelectionConfig("gemini-api")?.model).toBe("gemini-3.6-flash");
     expect(getProviderSelectionConfig("compatible-endpoint")?.model).toBe("custom-model");
@@ -455,9 +455,9 @@ describe("getSandboxInferenceConfig", () => {
   });
 
   it("maps OrcaRouter to the managed inference provider with store disabled", () => {
-    expect(getSandboxInferenceConfig("moonshotai/kimi-k2.6", "orcarouter-api")).toEqual({
+    expect(getSandboxInferenceConfig("kimi/kimi-k2.6", "orcarouter-api")).toEqual({
       providerKey: MANAGED_PROVIDER_ID,
-      primaryModelRef: `${MANAGED_PROVIDER_ID}/moonshotai/kimi-k2.6`,
+      primaryModelRef: `${MANAGED_PROVIDER_ID}/kimi/kimi-k2.6`,
       inferenceBaseUrl: INFERENCE_ROUTE_URL,
       inferenceApi: "openai-completions",
       inferenceCompat: {
