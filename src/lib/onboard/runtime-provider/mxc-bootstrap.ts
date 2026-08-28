@@ -4,6 +4,7 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { parseNativeArtifactWorkloadReceiptV1 } from "../workload/native-artifact";
 import {
@@ -185,6 +186,38 @@ function preparePlan(
   const providerHandle = `mxc-native-artifact-v1:${sha256Json(operationIdentity)}`;
   const authority = { ...operationIdentity, providerHandle };
   return frozen({ ...authority, authoritySha256: sha256Json(authority) });
+}
+
+/**
+ * Rebuild and validate one provider-owned bootstrap plan before it crosses a control-plane
+ * boundary. The returned value is a fresh frozen plan; caller aliases are never retained.
+ */
+export function validateMxcNativeArtifactBootstrapPlan(
+  value: unknown,
+): RuntimeProviderNativeArtifactBootstrapPlan {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)
+  ) {
+    throw new MxcNativeArtifactBootstrapError("bootstrap plan must be a plain object");
+  }
+  const candidate = value as Record<string, unknown>;
+  const expected = preparePlan({
+    providerId: candidate.providerId as string,
+    sandboxName: candidate.sandboxName as string,
+    lifecycleGeneration: candidate.lifecycleGeneration as string,
+    driveRoot: candidate.driveRoot as string,
+    artifactRoot: candidate.artifactRoot as string,
+    workload: candidate.workload as RuntimeProviderNativeArtifactBootstrapInput["workload"],
+  });
+  if (!isDeepStrictEqual(candidate, expected)) {
+    throw new MxcNativeArtifactBootstrapError(
+      "bootstrap plan does not match its provider-owned authority",
+    );
+  }
+  return expected;
 }
 
 function result(
