@@ -18,7 +18,7 @@ Create a sandboxed OpenClaw agent, then send it a first prompt.
 
 Copy this starter prompt into Cursor, Claude Code, Codex, Copilot, or another local coding agent when you want it to guide the installation.
 The prompt points the agent to [Use NemoClaw Docs with Your Coding Agents](../resources/agent-skills), this quickstart, the Markdown docs, and the optional `nemoclaw-user-guide` skill.
-It asks the agent to collect your choices before it starts interactive commands and to use the checked-in local credential helper and form only after you approve the exact command that receives credentials.
+It asks the agent to collect your choices before it starts interactive commands and to use the checked-in local credential helper and form only after you approve the command that receives credentials.
 
 <Markdown src="/../docs/_build/StarterPrompt.generated.mdx" />
 
@@ -177,7 +177,7 @@ Use these details when your first-run path needs more control.
     On macOS, start Docker Desktop or Colima first.
 
     When a coding agent reports that its execution sandbox blocked Docker, use its command-scoped approval flow, if available.
-    Approve only the exact Docker-dependent command that the coding agent requests to rerun outside the sandbox.
+    Approve only the Docker-dependent command that the coding agent requests to rerun outside the sandbox.
     Do not change Docker socket permissions or grant broad host access only to bypass the restriction.
     If your organization blocks command-scoped approval, stop the coding-agent setup and contact the administrator who manages coding-agent permissions.
 
@@ -265,7 +265,7 @@ Use these details when your first-run path needs more control.
 
     After you apply the configuration, routine editing ends.
     If inference setup fails and offers a `back` recovery action, you can return to provider and model selection and then review the updated configuration again.
-    NemoClaw registers inference, prompts for optional web search and messaging channels, prepares the managed startup profile, starts the sandbox from the exact managed image, sets up OpenClaw, and applies the selected network policy tier and presets.
+    NemoClaw registers inference, prompts for optional web search and messaging channels, prepares the managed startup profile, starts the sandbox from the managed image, sets up OpenClaw, and applies the selected network policy tier and presets.
 
     <Note>
     Onboarding includes a managed `NEMOCLAW_DISABLE_DEVICE_AUTH=1` compatibility setting in the startup profile so the dashboard is usable during setup.
@@ -279,7 +279,7 @@ Use these details when your first-run path needs more control.
     After the host upgrade, it runs `nemoclaw upgrade-sandboxes --auto`; successful recovery rebuilds stale sandboxes, restores validated backups for registered sandboxes that are not Ready, and skips generic onboarding rather than creating an additional sandbox or requesting a new provider credential.
     If the recovery pass exits 0 but a recorded sandbox is not found on its own recorded gateway, such as after `nemoclaw uninstall` removed the gateway and Docker image while preserving `sandboxes.json`, the installer finishes with `Installation completed with warnings` and remediation guidance instead of claiming the sandbox was recovered.
     For pre-fingerprint OpenClaw and Hermes registry entries, confirm that every listed sandbox used a NemoClaw-managed image before recovery onto the current managed image.
-    In non-interactive runs, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to the exact JSON array of printed names only after you verify every named sandbox used a managed image.
+    In non-interactive runs, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to the JSON array of printed names only after you verify every named sandbox used a managed image.
     Legacy managed-image confirmation never overrides recorded custom-image evidence.
     A custom OpenClaw sandbox can be recovered only when the selected validated backup independently carries complete authoritative image-plugin provenance.
     If a backup is skipped or fails, or automatic rebuild fails or is blocked, the installer exits nonzero before generic onboarding begins.
@@ -452,7 +452,7 @@ Use these details when your first-run path needs more control.
     When that port is occupied, NemoClaw uses the next free dashboard port, such as `18790`, and includes the port in the URL.
     For a new sandbox, NemoClaw reserves the selected loopback port through sandbox preparation and creation.
     If another listener claims the port before NemoClaw binds the reservation, NemoClaw selects another port before changing sandbox resources.
-    If OpenShell returns the exact `sandbox is not ready` response, NemoClaw waits 5 seconds and retries the dashboard forward up to 12 times.
+    If OpenShell returns the `sandbox is not ready` response, NemoClaw waits 5 seconds and retries the dashboard forward up to 12 times.
     The readiness-specific delays total at most 1 minute and preserve the existing sandbox and selected port.
     NemoClaw releases the reservation immediately before OpenShell starts the dashboard forward.
     If forwarding then fails, onboarding removes the new sandbox and tells you to resolve the reported error before retrying.

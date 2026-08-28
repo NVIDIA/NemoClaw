@@ -734,7 +734,6 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     exposeCliBin: true,
     environment: {
       ...nonInteractive,
-      E2E_LLAMA_CPP_DEDICATED_LANE: "1",
       NEMOCLAW_MODEL: "qwen3.5:9b",
       NEMOCLAW_PROVIDER: "ollama",
       NEMOCLAW_OLLAMA_PULL_TIMEOUT: "2400",

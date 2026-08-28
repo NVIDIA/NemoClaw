@@ -127,7 +127,13 @@ runner.run = (command, opts = {}) => {
   const providerResult = managedProviderResult(normalized);
   return profileResult ?? providerResult ??
     (normalized.includes("sandbox get") && normalized.includes(sandboxName)
-      ? { status: 0, stdout: Buffer.from("Name: " + sandboxName + "\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+      ? {
+          status: 0,
+          stdout: Buffer.from(
+            "Name: " + sandboxName + "\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\n",
+          ),
+          stderr: Buffer.alloc(0),
+        }
       : { status: 0 });
 };
 runner.runFile = (file, args = [], opts = {}) => {
@@ -157,7 +163,7 @@ runner.runCapture = (command) => {
   }
   if (normalized.includes("sandbox get") && normalized.includes(sandboxName)) {
     return scenario === "reuse"
-      ? [sandboxName, "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10))
+      ? [sandboxName, "Id: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID].join(String.fromCharCode(10))
       : "";
   }
   if (normalized.includes("sandbox list")) return sandboxName + " Ready";
@@ -249,7 +255,8 @@ const agent = agentDefs.loadAgent("langchain-deepagents-code");
       NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG: "1",
       OPENSHELL_DRIVERS: scenario === "create" ? "vm" : "docker",
     },
-    timeout: 15000,
+    timeout: 30_000,
+    killSignal: "SIGKILL",
   });
   assert.equal(result.status, 0, result.stderr);
   return parseStdoutJson<{
