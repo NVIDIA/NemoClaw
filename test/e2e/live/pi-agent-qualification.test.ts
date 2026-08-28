@@ -36,7 +36,6 @@ import {
   parsePiRuntimePackageEvidence,
   qualificationPlatform,
   qualifyPiReadTask,
-  readOptionalUtf8File,
   readPiQualificationReceipt,
 } from "./pi-agent-qualification-events.ts";
 
@@ -434,7 +433,7 @@ test(
       },
     );
     expect(logs.exitCode, resultText(logs)).toBe(0);
-    const trace = readOptionalUtf8File(guard.tracePath);
+    const trace = fs.readFileSync(guard.tracePath, "utf8");
     expect(trace.trim(), "Docker build guard trace").not.toBe("");
     assertNoDockerfileBuild(trace);
     await artifacts.writeText("docker-argv.log", trace);

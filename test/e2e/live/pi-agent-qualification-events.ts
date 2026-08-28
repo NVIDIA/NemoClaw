@@ -99,15 +99,6 @@ export function parsePiRuntimePackageEvidence(contents: string): PiRuntimePackag
   return { integrity: runtimePackage.integrity, version: runtimePackage.version };
 }
 
-export function readOptionalUtf8File(file: string): string {
-  try {
-    return fs.readFileSync(file, "utf8");
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return "";
-    throw error;
-  }
-}
-
 export function parsePiJsonEvents(stdout: string): JsonRecord[] {
   return stdout
     .split(/\r?\n/u)
