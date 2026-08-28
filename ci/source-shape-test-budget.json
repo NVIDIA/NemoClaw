@@ -167,6 +167,41 @@
       "category": "security"
     },
     {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "keeps package access out of pull request controlled execution",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "derives the package and archive identity from the base-controlled decision",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "does not grant package access to pull request jobs",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "limits main package reads to dependency-install jobs",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "provides the package token only to trusted main dependency installation",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "passes only the base-packaged SDK archive to pull request dependency jobs",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "passes the verified SDK archive to %s",
+      "category": "security"
+    },
+    {
       "file": "test/automation/releases/release-daily-brev-image.test.ts",
       "test": "attests one daily request before the isolated dispatch job (#9799)",
       "category": "security"
@@ -174,6 +209,16 @@
     {
       "file": "test/automation/releases/release-lkg-brev-image.test.ts",
       "test": "keeps the LKG credential on the production-only dispatch step (#9798)",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/releases/reviewed-npm-audit-workflow.test.ts",
+      "test": "rejects the removed plural source-registry package shape",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/releases/reviewed-npm-audit-workflow.test.ts",
+      "test": "rejects malformed reviewed source package specifications",
       "category": "security"
     },
     {
