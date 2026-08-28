@@ -645,6 +645,20 @@ network_policies: {}
     });
   });
 
+  it("applies the WeChat bridge policy at sandbox creation", () => {
+    const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
+
+    const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, ["wechat"]);
+
+    expect(prepared.policyPath).not.toBe(basePolicyPath);
+    expect(prepared.appliedPresets).toEqual(["wechat"]);
+    expect(getNetworkPolicyNames(fs.readFileSync(prepared.policyPath, "utf-8"))).toEqual(
+      new Set(["base", "wechat_bridge"]),
+    );
+    expect(prepared.cleanup?.()).toBe(true);
+    expect(fs.existsSync(prepared.policyPath)).toBe(false);
+  });
+
   it("records an existing create-time preset without writing a temp policy", () => {
     const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  slack: {}\n");
 
