@@ -474,15 +474,17 @@ async function recover(
  * - An onboarding session that never reached a runtime.
  * - A missing onboarding session.
  * - A missing state directory.
- * - A portable configuration directory abandoned by an earlier run.
+ * - A portable configuration directory abandoned by an earlier run whose only
+ *   entry is `containers.conf`.
  *
  * Ordinary uninstall then removes the state directory and the portable
- * configuration directory when they exist. That answer still refuses an unknown
- * portable uninstall artifact. It still requires mode 0700 on the state
- * directory and on the receipt directory, because only the leftover check reads
- * a directory whose mode NemoClaw never set. Every read refuses a directory
- * whose entries it cannot list, through a symlink, an owner other than the
- * current user, or an entry count above the cap.
+ * configuration directory for those states. Other configuration entries stop
+ * uninstall before cleanup. That answer still refuses an unknown portable
+ * uninstall artifact. It still requires mode 0700 on the state directory and on
+ * the receipt directory, because only the leftover check reads a directory whose
+ * mode NemoClaw never set. Every read refuses a directory whose entries it cannot
+ * list, through a symlink, an owner other than the current user, or an entry
+ * count above the cap.
  */
 export function hasPortableUninstallAuthority(
   boundary: PortableOnboardRetirementBoundary,
