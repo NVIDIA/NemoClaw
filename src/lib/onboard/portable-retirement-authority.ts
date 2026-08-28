@@ -15,6 +15,7 @@ import {
 } from "../state/onboard-session";
 import { assertHermesPortableUninstallCompleteForOnboarding } from "../state/hermes-portable-uninstall/journal";
 import {
+  assertNoPortableConfigurationCleanupRecovery,
   inspectPortableOnboardSupersession,
   inspectPortableRetirementRecovery,
   PORTABLE_RETIREMENT_STATE_ENTRIES,
@@ -421,6 +422,7 @@ async function recover(
   boundary: PortableOnboardRetirementBoundary,
   deps: PortableRetirementAuthorityDeps,
 ): Promise<void> {
+  assertNoPortableConfigurationCleanupRecovery(path.join(boundary.homeDir, ".config/nemoclaw"));
   readPortableAuthorityDirectory(boundary.stateDir, false);
   let recovery: PortableRetirementRecovery | null;
   try {

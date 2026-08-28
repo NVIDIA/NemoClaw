@@ -97,6 +97,7 @@ import {
 } from "./plan";
 import {
   HERMES_PORTABLE_UNINSTALL_JOURNAL_FILE,
+  assertNoPortableConfigurationCleanupRecovery,
   finalizeAbandonedPortableConfigurationRemoval,
   hasPortableRuntimeCleanup,
   PORTABLE_RETIREMENT_STATE_ENTRIES,
@@ -3253,6 +3254,7 @@ function executePlan(
           }
         } else runtime.log("Keeping OpenShell configuration used by the default gateway service.");
         if (portableRuntimeCleanup) {
+          assertNoPortableConfigurationCleanupRecovery(paths.nemoclawConfigDir);
           const portableConfigDir = path.join(paths.nemoclawConfigDir, "portable");
           const portableConfigEntries = ["containers.conf", ...portableRetirementEntries.config];
           if (

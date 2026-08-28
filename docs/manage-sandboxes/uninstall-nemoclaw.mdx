@@ -217,6 +217,9 @@ An unexpected entry or a mismatch in file type, ownership, link count, or cleanu
 Uninstall preserves the remaining configuration and recovery state for a rerun.
 Ordinary cleanup records durable progress under `~/.config/nemoclaw/` with a `.portable-cleanup-v1-pending-*`, `.portable-cleanup-v1-bound-*`, or `.portable-cleanup-v1-removed-*` directory.
 Rerunning full uninstall resumes that recorded phase.
+While any `.portable-cleanup-v1-*` recovery remains, NemoClaw stops onboarding and sandbox rebuild before either operation starts.
+Portable lifecycle uninstall also stops rather than recursively removing the recovery.
+Rerun full uninstall to resume or finalize ordinary cleanup before you run another Portable lifecycle operation.
 If an unrelated replacement `portable/` directory appears after the original directory is bound to recovery, uninstall preserves the replacement.
 Removal requires a policy-verified absolute `python3` interpreter.
 NemoClaw verifies its canonical path, file type, ownership, permissions, and read and execute access.

@@ -9,7 +9,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { withSuccessfulPreUninstallBackup } from "../../../../test/support/uninstall-managed-gateway-test-support";
 
 import { createSession } from "../../state/onboard-session";
-import { hasPortableRuntimeCleanup } from "./portable-runtime-cleanup";
+import {
+  hasPortableRuntimeCleanup,
+  setPortableConfigurationPythonUnavailableForTest,
+} from "./portable-runtime-cleanup";
 import {
   type RunResult,
   runUninstallPlanProduction as runUninstallPlanBase,
@@ -219,6 +222,7 @@ function completedOpenClawAuthority(
 }
 
 afterEach(() => {
+  setPortableConfigurationPythonUnavailableForTest(false);
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   for (const directory of restoredDirectories.splice(0)) fs.chmodSync(directory, 0o700);
@@ -462,6 +466,36 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     expect(result.exitCode).toBe(0);
     expect(fs.existsSync(`${attackerPython}.used`)).toBe(false);
     expect(fs.existsSync(directory)).toBe(false);
+    expect(host.runPortableCleanup).not.toHaveBeenCalled();
+  });
+
+  it("preserves bound recovery when no policy-verified python3 interpreter is available (#10545)", async () => {
+    const host = scope("nemoclaw-uninstall-completed-python-missing-");
+    completedOpenClawAuthority(host, "default");
+    const directory = abandonedPortableConfig(host, 0o700);
+    restoredDirectories.pop();
+    const configRoot = path.dirname(directory);
+    const laterConfiguration = path.join(configRoot, "ordinary.conf");
+    fs.writeFileSync(laterConfiguration, "ordinary\n", { mode: 0o600 });
+    setPortableConfigurationPythonUnavailableForTest(true);
+
+    const result = await uninstall(host);
+
+    const recovery = fs
+      .readdirSync(configRoot)
+      .find((entry) => entry.startsWith(".portable-cleanup-v1-bound-"));
+    expect(result.exitCode).toBe(1);
+    expect(recovery).toBeDefined();
+    expect(fs.existsSync(directory)).toBe(false);
+    expect(fs.existsSync(path.join(configRoot, recovery!, "portable", "containers.conf"))).toBe(
+      true,
+    );
+    expect(fs.existsSync(laterConfiguration)).toBe(true);
+    expect(
+      host.rmSync.mock.calls
+        .map(([target]) => path.resolve(String(target)))
+        .filter((target) => target.startsWith(`${configRoot}${path.sep}`)),
+    ).toEqual([]);
     expect(host.runPortableCleanup).not.toHaveBeenCalled();
   });
 

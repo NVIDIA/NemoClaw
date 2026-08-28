@@ -8,11 +8,14 @@ import path from "node:path";
 import { TextDecoder } from "node:util";
 import { isDeepStrictEqual } from "node:util";
 
+import { resolveTrustedSnapshotSanitizerPythonPath } from "../../../../nemoclaw/dist/shared/snapshot-sanitizer-boundary.cjs";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import { hasPortableUninstallAuthority } from "../../onboard/portable-retirement-authority";
 import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
 import {
+  assertNoPortableConfigurationCleanupRecovery,
   inspectPortableRetirementRecovery,
+  PORTABLE_CONFIGURATION_CLEANUP_RECOVERY_PREFIX,
   PORTABLE_RETIREMENT_STATE_ENTRIES,
   preparePortableRetirement,
   publishAndRetirePortableEvidence,
@@ -24,7 +27,11 @@ import {
   type PortableRetirementRecovery,
 } from "../../state/portable-uninstall-retirement";
 
-export { PORTABLE_RETIREMENT_STATE_ENTRIES, withPortableHostFence };
+export {
+  assertNoPortableConfigurationCleanupRecovery,
+  PORTABLE_RETIREMENT_STATE_ENTRIES,
+  withPortableHostFence,
+};
 import { withProcessBoundRegistryLockAt } from "../../state/registry/lock";
 import {
   readGatewayRegistryFile,
@@ -63,15 +70,9 @@ const PORTABLE_SELECTOR_NAMES = [
   "CONTAINER_SSHKEY",
 ] as const;
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
-const PORTABLE_CONFIGURATION_RECOVERY_PREFIX = ".portable-cleanup-v1-";
 const PORTABLE_CONFIGURATION_RECOVERY_PATTERN =
   /^\.portable-cleanup-v1-(pending|bound|removed)-([0-9]+)-([0-9]+)-([0-9]+)-([A-Za-z0-9]{6})$/u;
-const PORTABLE_CONFIGURATION_PYTHON_LOCATIONS = [
-  "/usr/bin/python3",
-  "/usr/local/bin/python3",
-  "/opt/homebrew/bin/python3",
-  "/opt/local/bin/python3",
-] as const;
+let portableConfigurationPythonUnavailableForTest = false;
 
 type PortableConfigurationRecoveryPhase = "pending" | "bound" | "removed";
 
@@ -184,42 +185,18 @@ function sameDirectoryObject(left: fs.BigIntStats, right: fs.BigIntStats): boole
   );
 }
 
-function trustedPortableConfigurationPython(candidate: string): string | null {
-  if (!path.isAbsolute(candidate)) return null;
-  try {
-    const canonical = fs.realpathSync(candidate);
-    const currentUid = process.getuid?.();
-    if (currentUid === undefined) return null;
-    let inspected = canonical;
-    while (true) {
-      const metadata = fs.statSync(inspected);
-      if ((metadata.mode & 0o022) !== 0) return null;
-      if (metadata.uid !== 0 && metadata.uid !== currentUid) return null;
-      const parent = path.dirname(inspected);
-      if (parent === inspected) break;
-      inspected = parent;
-    }
-    const executable = fs.statSync(canonical);
-    if (!executable.isFile()) return null;
-    fs.accessSync(canonical, fs.constants.R_OK | fs.constants.X_OK);
-    return canonical;
-  } catch {
-    return null;
+/** @visibleForTesting Force the prerequisite failure without depending on the host installation. */
+export function setPortableConfigurationPythonUnavailableForTest(unavailable: boolean): void {
+  if (process.env.VITEST !== "true") {
+    throw new Error("Portable configuration Python failure is only configurable under Vitest");
   }
+  portableConfigurationPythonUnavailableForTest = unavailable;
 }
 
-function resolvePortableConfigurationPython(): string | null {
-  const candidates: string[] = [...PORTABLE_CONFIGURATION_PYTHON_LOCATIONS];
-  try {
-    candidates.push(path.join(path.dirname(fs.realpathSync(process.execPath)), "python3"));
-  } catch {
-    // Fixed system locations remain authoritative when Node.js cannot be canonicalized.
-  }
-  for (const candidate of new Set(candidates)) {
-    const trusted = trustedPortableConfigurationPython(candidate);
-    if (trusted) return trusted;
-  }
-  return null;
+function portableConfigurationPython(): string | null {
+  return process.env.VITEST === "true" && portableConfigurationPythonUnavailableForTest
+    ? null
+    : resolveTrustedSnapshotSanitizerPythonPath();
 }
 
 function assertPortableConfigurationFile(directory: string): void {
@@ -297,7 +274,7 @@ function recoveryEntry(
   identity: Pick<fs.BigIntStats, "dev" | "ino" | "uid">,
   suffix: string,
 ): string {
-  return `${PORTABLE_CONFIGURATION_RECOVERY_PREFIX}${phase}-${String(identity.dev)}-${String(identity.ino)}-${String(identity.uid)}-${suffix}`;
+  return `${PORTABLE_CONFIGURATION_CLEANUP_RECOVERY_PREFIX}${phase}-${String(identity.dev)}-${String(identity.ino)}-${String(identity.uid)}-${suffix}`;
 }
 
 function inspectPortableConfigurationRecovery(
@@ -311,7 +288,7 @@ function inspectPortableConfigurationRecovery(
     throw error;
   }
   const candidates = entries.filter((entry) =>
-    entry.startsWith(PORTABLE_CONFIGURATION_RECOVERY_PREFIX),
+    entry.startsWith(PORTABLE_CONFIGURATION_CLEANUP_RECOVERY_PREFIX),
   );
   if (candidates.length === 0) return null;
   if (candidates.length !== 1)
@@ -359,7 +336,7 @@ function runPortableConfigurationDeleteHelper(
   heldDescriptor: number,
   entry?: string,
 ): boolean {
-  const python = resolvePortableConfigurationPython();
+  const python = portableConfigurationPython();
   if (!python) return false;
   const result = spawnSync(
     python,
@@ -727,6 +704,7 @@ function currentReceipts(stateDir: string): PortableDemoLifecycleReceiptRecord[]
 /** Detect portable uninstall from strict durable receipts, never ambient selectors or names. */
 export function hasPortableRuntimeCleanup(stateDir: string): boolean {
   const homeDir = path.dirname(stateDir);
+  const configRoot = path.join(homeDir, ".config/nemoclaw");
   const registryFile = path.join(stateDir, "sandboxes.json");
   if (
     inspectHermesPortableUninstallSandboxNames({
@@ -736,9 +714,10 @@ export function hasPortableRuntimeCleanup(stateDir: string): boolean {
       stateDir,
     })
   ) {
+    assertNoPortableConfigurationCleanupRecovery(configRoot);
     return true;
   }
-  return hasPortableUninstallAuthority(
+  const portable = hasPortableUninstallAuthority(
     {
       homeDir,
       registryFile,
@@ -753,6 +732,8 @@ export function hasPortableRuntimeCleanup(stateDir: string): boolean {
       },
     },
   );
+  if (portable) assertNoPortableConfigurationCleanupRecovery(configRoot);
+  return portable;
 }
 
 export function portableRetirementPreservationEntries(stateDir: string): {
