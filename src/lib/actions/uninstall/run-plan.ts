@@ -1769,7 +1769,7 @@ function canRemoveScopedOpenShellResources(
     const reason = packageManagedServiceGatewayProcessOwnershipFailure(stateDir, runtime);
     if (reason === null) return true;
     runtime.warn(
-      `Refusing scoped gateway cleanup because the package-managed OpenShell gateway service identity cannot be proven: ${reason}.`,
+      `Refusing ${scopedToSelectedGateway ? "scoped gateway cleanup" : "gateway cleanup"} because the package-managed OpenShell gateway service identity cannot be proven: ${reason}.`,
     );
     return false;
   }
@@ -1789,7 +1789,7 @@ function canRemoveScopedOpenShellResources(
   );
   if (reason === null) return true;
   runtime.warn(
-    `Refusing scoped gateway cleanup because the selected process identity cannot be proven: ${reason}.`,
+    `Refusing ${scopedToSelectedGateway ? "scoped gateway cleanup" : "gateway cleanup"} because the selected process identity cannot be proven: ${reason}.`,
   );
   return false;
 }
@@ -2955,6 +2955,29 @@ function executeOpenShellResourceCleanup(
   return true;
 }
 
+function canBeginOpenShellCleanup(
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  scopedToSelectedGateway: boolean,
+  sandboxNames: readonly string[],
+  teardownAuthority: GatewayOwner,
+  portableRuntimeCleanup: boolean,
+): boolean {
+  if (portableRuntimeCleanup) return true;
+  const requireLiveManagedProcess =
+    !selectedGatewayStateDirIsWithinDefaultRoot(paths) &&
+    (!scopedToSelectedGateway || sandboxNames.length === 0);
+  return canRemoveScopedOpenShellResources(
+    paths,
+    options,
+    runtime,
+    scopedToSelectedGateway,
+    teardownAuthority,
+    requireLiveManagedProcess,
+  );
+}
+
 function executePlan(
   plan: UninstallPlan,
   paths: UninstallPaths,
@@ -2972,12 +2995,14 @@ function executePlan(
 ): { ok: boolean } {
   const externallySupervised = isExternallySupervised(teardownAuthority);
   if (
-    !canRemoveScopedOpenShellResources(
+    !canBeginOpenShellCleanup(
       paths,
       options,
       runtime,
       scopedToSelectedGateway,
+      sandboxNames,
       teardownAuthority,
+      portableRuntimeCleanup,
     )
   ) {
     return { ok: false };

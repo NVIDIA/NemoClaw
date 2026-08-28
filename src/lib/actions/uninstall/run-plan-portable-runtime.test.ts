@@ -432,13 +432,17 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
     expect(fs.existsSync(journalEvidence)).toBe(true);
   });
 
-  it("uses exact receipt names without Docker or an all-sandbox mutation (#9189)", () => {
+  it("uses exact receipt names with external gateway state and no all-sandbox mutation (#10544)", () => {
     const order: string[] = [];
     const logs: string[] = [];
     const registeredSandboxes = new Set(["alpha", "unrelated"]);
     const { homeDir, sharedPaths: sharedOpenShellPaths } = sharedOpenShellFixture(
       "nemoclaw-portable-success-",
     );
+    const gatewayStateDir = path.join(homeDir, "external-gateway-state");
+    const gatewayStateMarker = path.join(gatewayStateDir, "keep");
+    fs.mkdirSync(gatewayStateDir, { mode: 0o700 });
+    fs.writeFileSync(gatewayStateMarker, "gateway\n", { mode: 0o600 });
     const removed: string[] = [];
     const runHandlers = new Map<string, () => RunResult>([
       ["pgrep", notFound],
@@ -495,7 +499,10 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
       {
         commandExists: (command) =>
           ["openshell", "pgrep", "lsof", "docker", "npm"].includes(command),
-        env: { HOME: homeDir } as NodeJS.ProcessEnv,
+        env: {
+          HOME: homeDir,
+          NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: gatewayStateDir,
+        } as NodeJS.ProcessEnv,
         existsSync: (target) => sharedOpenShellPaths.has(String(target)),
         hasPortableRuntimeCleanup: () => true,
         isTty: false,
@@ -515,6 +522,7 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
     expect(runDocker).not.toHaveBeenCalled();
     expect(kill).not.toHaveBeenCalled();
     expect(removed).toEqual([]);
+    expect(fs.readFileSync(gatewayStateMarker, "utf8")).toBe("gateway\n");
     expect(run.mock.calls.every(([command]) => ["openshell", "npm"].includes(command))).toBe(true);
     expect(run).toHaveBeenCalledWith(
       "openshell",

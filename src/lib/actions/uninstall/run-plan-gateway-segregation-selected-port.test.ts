@@ -186,11 +186,37 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
   });
 
   it.each([
-    { liveGatewayNames: ["nemoclaw", "nemoclaw-9123"], mode: "gateway-scoped", siblingKept: true },
-    { liveGatewayNames: ["nemoclaw-9123"], mode: "full", siblingKept: false },
+    {
+      expectedExit: 0,
+      liveGatewayNames: ["nemoclaw", "nemoclaw-9123"],
+      processProven: true,
+      scenario: "removes configured gateway state during gateway-scoped cleanup",
+      siblingKept: true,
+    },
+    {
+      expectedExit: 0,
+      liveGatewayNames: ["nemoclaw-9123"],
+      processProven: true,
+      scenario: "removes configured gateway state during full cleanup",
+      siblingKept: false,
+    },
+    {
+      expectedExit: 1,
+      liveGatewayNames: ["nemoclaw-9123", "nemoclaw"],
+      processProven: false,
+      scenario: "preserves configured gateway state during unproven gateway-scoped cleanup",
+      siblingKept: true,
+    },
+    {
+      expectedExit: 1,
+      liveGatewayNames: ["nemoclaw-9123"],
+      processProven: false,
+      scenario: "preserves configured gateway state during unproven full cleanup",
+      siblingKept: true,
+    },
   ])(
-    "removes configured gateway state during $mode cleanup without a sandbox",
-    async ({ liveGatewayNames, siblingKept }) => {
+    "$scenario without a registered sandbox (#10544)",
+    async ({ expectedExit, liveGatewayNames, processProven, siblingKept }) => {
       const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-custom-state-"));
       const port = 9123;
       try {
@@ -212,6 +238,8 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
         fs.mkdirSync(siblingGatewayState, { mode: 0o700, recursive: true });
         fs.writeFileSync(path.join(siblingGatewayState, "keep"), "sibling\n");
         writeScopedGatewayState(tmpHome, port, customGatewayState);
+        const openshellCalls: string[][] = [];
+        const errors = vi.fn();
 
         const result = runPortUninstall(
           {
@@ -228,23 +256,37 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
               NEMOCLAW_GATEWAY_PORT: String(port),
               NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: customGatewayState,
             } as NodeJS.ProcessEnv,
-            error: vi.fn(),
+            error: errors,
             existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
             hasPortableRuntimeCleanup: () => false,
             isTty: false,
             log: vi.fn(),
+            readProcessEnvironment: processProven ? undefined : () => null,
             rmSync: fs.rmSync,
-            run: (_command, args) =>
-              args[0] === "gateway" && args[1] === "list"
+            run: (_command, args) => {
+              openshellCalls.push(args);
+              return args[0] === "gateway" && args[1] === "list"
                 ? ok(JSON.stringify(liveGatewayNames.map((name) => ({ name }))))
-                : ok(),
+                : ok();
+            },
             runDocker: () => ok(""),
           },
         );
 
-        expect(result.exitCode).toBe(0);
-        expect(fs.existsSync(customGatewayState)).toBe(false);
-        expect(fs.existsSync(selectedStateRoot)).toBe(false);
+        expect(result.exitCode).toBe(expectedExit);
+        const registrationCall = ["gateway", "remove", `nemoclaw-${String(port)}`];
+        expect(
+          openshellCalls.some((args) => JSON.stringify(args) === JSON.stringify(registrationCall)),
+        ).toBe(processProven);
+        expect(
+          errors.mock.calls
+            .flat()
+            .some((message) =>
+              String(message).includes("selected process identity cannot be proven"),
+            ),
+        ).toBe(!processProven);
+        expect(fs.existsSync(customGatewayState)).toBe(!processProven);
+        expect(fs.existsSync(selectedStateRoot)).toBe(!processProven);
         expect(fs.existsSync(siblingGatewayState)).toBe(siblingKept);
       } finally {
         fs.rmSync(tmpHome, { recursive: true, force: true });
