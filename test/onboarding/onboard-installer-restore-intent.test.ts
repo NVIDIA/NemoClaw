@@ -52,7 +52,7 @@ describe("createSandbox installer restore intent", () => {
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      writeOkOpenshell(fakeBin, { readySandboxGet: true });
+      writeOkOpenshell(fakeBin);
 
       const script = String.raw`
 const runner = require(${runnerPath});
@@ -66,34 +66,30 @@ const { EventEmitter } = require("node:events");
 
 const PRE_UPGRADE_BACKUP = "/tmp/fake-pre-upgrade-backup";
 const events = [];
-let sandboxDeleted = false;
-let sandboxRecreated = false;
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
+  sandboxName: "my-assistant",
+  lifecycleState: "created",
+  phase: "NotReady",
+});
+createdSandbox.installRuntimeObservation();
 runner.run = (command) => {
   const cmd = _n(command);
   events.push({ kind: "run", cmd });
   const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
-  if (cmd.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
-  if (cmd.includes("sandbox delete")) sandboxDeleted = true;
-  if (cmd.includes("sandbox list")) {
-    return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
+  if (cmd.includes("sandbox delete")) {
+    createdSandbox.delete();
+    return { status: 0 };
   }
-  return cmd.includes("sandbox get") && cmd.includes("my-assistant")
-    ? { status: 0, stdout: Buffer.from("my-assistant\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\n"), stderr: Buffer.alloc(0) }
-    : { status: 0 };
+  const sandboxResult = createdSandbox.run(command);
+  return sandboxResult ?? { status: 0 };
 };
 runner.runCapture = (command) => {
   const cmd = _n(command);
   if (cmd.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:8080";
   if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
-  if (sandboxRecreated) {
-    const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command, { sandboxName: "my-assistant" });
-    if (createdIdentity !== null) return createdIdentity;
-  }
-  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return sandboxDeleted && !sandboxRecreated ? "" : ["my-assistant", "Id: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID].join(String.fromCharCode(10));
-  if (cmd.includes("sandbox list")) {
-    return sandboxRecreated ? "my-assistant Ready" : sandboxDeleted ? "" : "my-assistant NotReady";
-  }
+  const sandboxCapture = createdSandbox.capture(command);
+  if (sandboxCapture !== null) return sandboxCapture;
   if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   {
     const mockedCapture = fixtureMocks.mockOnboardRunCapture(command, {
@@ -146,13 +142,17 @@ const preflight = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "on
 preflight.checkPortAvailable = async () => ({ ok: true });
 
 childProcess.spawn = (...args) => {
-  sandboxRecreated = true;
+  const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
+  if (command.includes("sandbox create")) {
+    createdSandbox.recreate(args.flat());
+    createdSandbox.setPhase("Ready");
+  }
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.unref = () => {};
   child.pid = 4245;
-  events.push({ kind: "spawn", cmd: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]) });
+  events.push({ kind: "spawn", cmd: command });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -424,7 +424,7 @@ const { createSandbox } = require(${onboardPath});
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      writeOkOpenshell(fakeBin, { readySandboxGet: true });
+      writeOkOpenshell(fakeBin);
 
       const script = String.raw`
 const runner = require(${runnerPath});
@@ -434,6 +434,11 @@ const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "")
 const registry = require(${registryPath});
 const sandboxState = require(${sandboxStatePath});
 const childProcess = require("node:child_process");
+const existingSandbox = fixtureMocks.createCreatedSandboxFixture({
+  lifecycleState: "created",
+  phase: "NotReady",
+});
+existingSandbox.installRuntimeObservation();
 
 runner.run = (command) => {
   if (_n(command).includes("sandbox delete")) {
@@ -445,8 +450,8 @@ runner.runCapture = (command) => {
   const normalized = _n(command);
   if (normalized.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:8080";
   if (normalized.includes("policy get") && normalized.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
-  if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) return ["my-assistant", "Id: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID].join(String.fromCharCode(10));
-  if (normalized.includes("sandbox list")) return "my-assistant NotReady";
+  const sandboxCapture = existingSandbox.capture(command);
+  if (sandboxCapture !== null) return sandboxCapture;
   // Keep dashboard allocation inside this restore-intent fixture; host port
   // occupancy is unrelated to the not-ready decision under test.
   if (normalized.includes("forward list")) {
@@ -458,7 +463,7 @@ registry.getSandbox = () => fixtureMocks.managedSandboxPolicyReceiptFixture({
   name: "my-assistant",
   gpuEnabled: false,
   toolDisclosure: "progressive",
-});
+}, { sandboxId: existingSandbox.state.sandboxId });
 sandboxState.getLatestBackup = () => {
   throw new Error("unexpected getLatestBackup without installer restore intent");
 };

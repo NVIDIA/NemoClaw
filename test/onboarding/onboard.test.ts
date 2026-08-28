@@ -678,7 +678,7 @@ startGateway(null).catch((error) => {
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin, { readySandboxGet: true });
+    writeOkOpenshell(fakeBin);
 
     const script = String.raw`
 	const runner = require(${runnerPath});
@@ -689,22 +689,25 @@ startGateway(null).catch((error) => {
 const { EventEmitter } = require("node:events");
 
 const commands = [];
+const existingSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
+existingSandbox.installRuntimeObservation();
+const sandboxCommand = (command) => Array.isArray(command) ? command : _n(command).split(/\s+/u);
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
 	  const profileResult = fixtureMocks.mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
-  return { status: 0 };
+  return existingSandbox.run(sandboxCommand(command)) ?? { status: 0 };
 };
 runner.runCapture = (command) => {
-	  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return ["my-assistant", "Id: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID].join(String.fromCharCode(10));
-  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  const sandboxResult = existingSandbox.run(sandboxCommand(command));
+  if (sandboxResult !== null) return sandboxResult.status === 0 ? sandboxResult.stdout.toString() : "";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
 	registry.getSandbox = () => fixtureMocks.managedSandboxPolicyReceiptFixture({
 	  name: "my-assistant",
 	  toolDisclosure: "progressive",
-	});
+	}, { sandboxId: existingSandbox.state.sandboxId });
 
 childProcess.spawn = (...args) => {
   const child = new EventEmitter();

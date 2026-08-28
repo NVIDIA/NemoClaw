@@ -36,7 +36,7 @@ function runPreparedContextScenario(scenario: PreparedContextScenario): Prepared
 
   fs.mkdirSync(fakeBin, { recursive: true });
   fs.mkdirSync(preparedBuildCtx, { recursive: true });
-  writeOkOpenshell(fakeBin, { readySandboxGet: true });
+  writeOkOpenshell(fakeBin);
   fs.writeFileSync(
     path.join(preparedBuildCtx, "Dockerfile"),
     ["FROM scratch", `ARG NEMOCLAW_BUILD_ID=${buildId}`, 'CMD ["/bin/true"]', ""].join("\n"),
@@ -82,6 +82,8 @@ const scenario = ${JSON.stringify(scenario)};
 const buildCtx = ${JSON.stringify(preparedBuildCtx)};
 const buildId = ${JSON.stringify(buildId)};
 const sandboxName = "prepared-dcode";
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ sandboxName });
+createdSandbox.installRuntimeObservation();
 const commands = [];
 const registerCalls = [];
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
@@ -109,7 +111,6 @@ let cleanupCalls = 0;
 let patchCalls = 0;
 let patchSleepUsesSeconds = null;
 let stageCalls = 0;
-let sandboxCreated = false;
 
 dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch = (options) => {
   patchSleepUsesSeconds = options.deps.sleep === wait.sleepSeconds;
@@ -155,9 +156,8 @@ runner.run = (command) => {
   commands.push(normalized);
   const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
-  return normalized.includes("sandbox get") && normalized.includes(sandboxName)
-    ? { status: 0, stdout: Buffer.from(sandboxName + "\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\n"), stderr: Buffer.alloc(0) }
-    : { status: 0 };
+  const sandboxResult = createdSandbox.run(command);
+  return sandboxResult ?? { status: 0 };
 };
 runner.runFile = (file, args = []) => {
   commands.push(normalize([file, ...args]));
@@ -165,8 +165,8 @@ runner.runFile = (file, args = []) => {
 };
 runner.runCapture = (command) => {
   const normalized = normalize(command);
-  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command, { sandboxName });
-  if (createdIdentity !== null) return createdIdentity;
+  const sandboxCapture = createdSandbox.capture(command);
+  if (sandboxCapture !== null) return sandboxCapture;
   if (
     normalized.includes(
       "sandbox exec --name " +
@@ -181,12 +181,6 @@ runner.runCapture = (command) => {
       "Endpoint: https://inference.local/v1",
     ].join("\n");
   }
-  if (normalized.includes("sandbox get")) {
-    return sandboxCreated
-      ? sandboxName + "\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\n"
-      : "";
-  }
-  if (normalized.includes("sandbox list")) return sandboxCreated ? sandboxName + " Ready" : "";
   return "";
 };
 registry.getDefault = () => null;
@@ -198,6 +192,7 @@ policyAuthorityPreflight.qualifySandboxPolicyAuthority = () => ({
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
+  createdSandbox.create(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -205,7 +200,6 @@ childProcess.spawn = (...args) => {
   child.pid = 6195;
   commands.push(normalize([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]));
   process.nextTick(() => {
-    sandboxCreated = true;
     child.stdout.emit("data", Buffer.from("Created sandbox: " + sandboxName + "\n"));
     child.emit("close", 0);
   });
