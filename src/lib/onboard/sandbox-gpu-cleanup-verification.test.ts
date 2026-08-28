@@ -152,39 +152,6 @@ describe("cleanupNativeGpuAttemptForFallback", () => {
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 
-  it("accepts only an exact managed owner-cleanup completion receipt", () => {
-    const runOpenshell = vi.fn();
-    const failure = {
-      ok: false as const,
-      route: "native" as const,
-      stage: "gpu-proof" as const,
-      error: new Error("native GPU attachment absent"),
-      fallbackEligible: true,
-      nativeCleanupReceipt: {
-        kind: "openshell-owner-cleanup-completed" as const,
-        sandboxName: "alpha",
-        sandboxId: "sandbox-id-alpha",
-        runtimeId: "runtime-id-alpha",
-      },
-    };
-
-    expect(cleanupNativeGpuFailureForFallback("alpha", failure, { runOpenshell })).toEqual({
-      safe: true,
-      reason: null,
-      deleteStatus: null,
-      sandboxPresent: false,
-      containerIds: [],
-    });
-    expect(cleanupNativeGpuFailureForFallback("renamed", failure, { runOpenshell })).toEqual({
-      safe: false,
-      reason: "managed bootstrap owner cleanup receipt does not match the requested sandbox",
-      deleteStatus: null,
-      sandboxPresent: null,
-      containerIds: ["runtime-id-alpha"],
-    });
-    expect(runOpenshell).not.toHaveBeenCalled();
-  });
-
   it("uses the documented fail-closed cleanup limits by default", () => {
     const { result, runOpenshell, sleep } = scenario({
       list: { status: 0, stdout: "alpha Ready" },

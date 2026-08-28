@@ -8,10 +8,7 @@ import {
   initialDockerGpuRoute,
   type SelectedDockerGpuRoute,
 } from "./docker-gpu-route";
-import type {
-  ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff,
-  ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt,
-} from "./managed-bootstrap/runtime-create";
+import type { ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff } from "./managed-bootstrap/runtime-create";
 import {
   type OpenShellDockerSandboxContainerQuery,
   queryOpenShellDockerSandboxContainers,
@@ -43,7 +40,6 @@ export type SandboxGpuCreateAttemptFailure = {
   /** Strict native `--gpu` parser rejection observed before build or create progress. */
   nativeCreateRejectedBeforeProgress?: true;
   nativeCleanupHandoff?: ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff;
-  nativeCleanupReceipt?: ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt;
 };
 
 export type SandboxGpuCreateAttemptResult<T> =
@@ -264,10 +260,7 @@ export function verifyRejectedNativeGpuAttemptAbsentForFallback(
   });
 }
 
-/**
- * Keep owner-managed runtimes out of the generic mutable-name cleanup path.
- * Only the lifecycle's exact owner-cleanup receipt may authorize the retry.
- */
+/** Keep owner-managed runtimes out of the generic mutable-name cleanup path. */
 export function cleanupNativeGpuFailureForFallback(
   sandboxName: string,
   failure: SandboxGpuCreateAttemptFailure,
@@ -275,25 +268,6 @@ export function cleanupNativeGpuFailureForFallback(
 ): NativeGpuFallbackCleanupResult {
   if (failure.nativeCreateRejectedBeforeProgress) {
     return verifyRejectedNativeGpuAttemptAbsentForFallback(sandboxName, deps);
-  }
-  if (failure.nativeCleanupReceipt) {
-    const receipt = failure.nativeCleanupReceipt;
-    if (receipt.sandboxName === sandboxName) {
-      return {
-        safe: true,
-        reason: null,
-        deleteStatus: null,
-        sandboxPresent: false,
-        containerIds: [],
-      };
-    }
-    return {
-      safe: false,
-      reason: "managed bootstrap owner cleanup receipt does not match the requested sandbox",
-      deleteStatus: null,
-      sandboxPresent: null,
-      containerIds: [receipt.runtimeId],
-    };
   }
   if (failure.nativeCleanupHandoff) {
     return {

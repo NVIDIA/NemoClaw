@@ -55,13 +55,6 @@ export type ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff = Extract<
   { readonly kind: "openshell-owner-cleanup-required" }
 >;
 
-export type ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt = Readonly<{
-  kind: "openshell-owner-cleanup-completed";
-  sandboxName: string;
-  sandboxId: string;
-  runtimeId: string;
-}>;
-
 /** Provider-neutral lifecycle surface consumed by sandbox-create coordinators. */
 export interface ManagedBootstrapRuntimePatch {
   maybeApplyDuringCreate(): void | Promise<void>;
