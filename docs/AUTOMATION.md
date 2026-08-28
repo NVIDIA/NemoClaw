@@ -50,6 +50,9 @@ fails. Restore the previous workflow-authored title and body from the PR edit hi
 cumulative updates on the next qualifying push. To take ownership instead, mark the PR ready for
 review; later workflow runs leave it unchanged. When a person changes the managed branch, mark the
 PR ready for review before continuing the change because automation does not overwrite that branch.
+The publisher also leaves a draft with previous workflow metadata unchanged. It reports the PR URL
+and stops without writing. Close that legacy draft so a later qualifying push can create a current
+workflow-owned draft, or mark it ready for review to transfer ownership to maintainers.
 The [post-merge automation guide](../tools/post-merge-docs/README.md) owns its credential boundary.
 
 At release cutoff, follow the canonical maintainer

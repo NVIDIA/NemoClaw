@@ -126,6 +126,7 @@ class FakeGitHub {
   readonly partialSha = "d".repeat(40);
   readonly commits = new Map<string, Record<string, unknown>>();
   afterWrite = (): void => undefined;
+  afterPullRead = (): void => undefined;
   projectPullHead = (headSha: string): void => {
     this.openPulls = this.openPulls.map((pull) => ({
       ...pull,
@@ -207,8 +208,11 @@ class FakeGitHub {
         return this.commits.get(url.slice(url.lastIndexOf("/") + 1));
       case `GET /repos/${repository}/git/ref/heads/main`:
         return { object: { sha: this.liveSha } };
-      case `GET /repos/${repository}/pulls?state=open&base=main&per_page=100&page=1`:
-        return this.openPulls;
+      case `GET /repos/${repository}/pulls?state=open&base=main&per_page=100&page=1`: {
+        const pulls = structuredClone(this.openPulls);
+        this.afterPullRead();
+        return pulls;
+      }
       case `GET /repos/${repository}/git/ref/heads/${this.branch}`:
         return this.branchRef;
       case `POST /repos/${repository}/git/blobs`: {
@@ -248,16 +252,6 @@ class FakeGitHub {
         this.projectPullHead(this.commitSha);
         this.afterWrite();
         return ref;
-      }
-      case `PATCH /repos/${repository}/pulls/42`: {
-        const metadata = body as { body: string; title: string };
-        this.openPulls = this.openPulls.map((pull) => ({
-          ...pull,
-          body: metadata.body,
-          title: metadata.title,
-        }));
-        this.afterWrite();
-        return this.openPulls[0];
       }
       case `POST /repos/${repository}/pulls`: {
         const metadata = body as { body: string; title: string };
@@ -508,43 +502,34 @@ describe("post-merge documentation publisher", () => {
     expect(api.openPulls[0]?.head.sha).toBe(api.existingSha);
     expect(requestCount(api, "PATCH", `/git/refs/heads/${api.branch}`)).toBe(1);
   });
-  it("updates exact legacy metadata for the active managed PR", async () => {
+  it("stops without writes for exact previous workflow metadata", async () => {
     const value = fixture();
     const api = new FakeGitHub(value);
     api.installActive("e".repeat(40), undefined, true);
-    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
-    expect(api.openPulls[0]?.title).toBe(managedTitle);
-    expect(api.openPulls[0]?.body).toBe(managedBody);
-    expect(requestCount(api, "PATCH", "/pulls/42")).toBe(1);
+    await expect(publish(value, api)).rejects.toThrow(
+      "managed documentation PR https://github.com/NVIDIA/NemoClaw/pull/42 uses previous workflow metadata; close this legacy draft so a later qualifying push can create a current workflow-owned draft, or mark the PR ready for review to transfer ownership",
+    );
+    expect(writeCount(api)).toBe(0);
   });
-  it("recovers legacy metadata after a previous fast-forward completed", async () => {
+  it("stops without writes for previous metadata after a workflow refresh", async () => {
     const value = fixture();
     const api = new FakeGitHub(value);
     api.installPartiallyPublishedLegacy(value.finalTree);
-    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
-    expect(api.openPulls[0]?.title).toBe(managedTitle);
-    expect(api.openPulls[0]?.body).toBe(managedBody);
-    expect(api.branchRef?.object.sha).toBe(api.partialSha);
-    expect(requestCount(api, "PATCH", "/pulls/42")).toBe(1);
-    expect(requestCount(api, "PATCH", `/git/refs/heads/${api.branch}`)).toBe(0);
+    await expect(publish(value, api)).rejects.toThrow("uses previous workflow metadata");
+    expect(writeCount(api)).toBe(0);
   });
-  it("migrates recovered legacy metadata before the next fast-forward", async () => {
+  it("does not overwrite a concurrent edit to previous workflow metadata", async () => {
     const value = fixture();
     const api = new FakeGitHub(value);
-    api.installPartiallyPublishedLegacy();
-    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
-    expect(api.commitBodies[0]).toMatchObject({
-      parents: [api.partialSha, value.mainSha],
-      tree: value.finalTree,
-    });
-    const metadataUpdate = api.request.mock.calls.findIndex(
-      ([method, url]) => method === "PATCH" && url.endsWith("/pulls/42"),
+    api.installActive("e".repeat(40), undefined, true);
+    api.afterPullRead = () => {
+      api.openPulls[0]!.title = "maintainer title";
+      api.afterPullRead = () => undefined;
+    };
+    await expect(publish(value, api)).rejects.toThrow(
+      "managed documentation PR changed during publication",
     );
-    const refUpdate = api.request.mock.calls.findIndex(
-      ([method, url]) => method === "PATCH" && url.endsWith(`/git/refs/heads/${api.branch}`),
-    );
-    expect(metadataUpdate).toBeGreaterThan(-1);
-    expect(refUpdate).toBeGreaterThan(metadataUpdate);
+    expect(writeCount(api)).toBe(0);
   });
   it("rejects a partially published legacy PR without a verified legacy parent", async () => {
     const value = fixture();
@@ -554,17 +539,6 @@ describe("post-merge documentation publisher", () => {
     previous.verification = { verified: false };
     await expect(publish(value, api)).rejects.toThrow("not created by the workflow");
     expect(writeCount(api)).toBe(0);
-  });
-  it("reconciles a lost legacy metadata update without retrying", async () => {
-    const value = fixture();
-    const api = new FakeGitHub(value);
-    api.installActive("e".repeat(40), undefined, true);
-    api.afterWrite = () => {
-      throw new Error("lost response");
-    };
-    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
-    expect(api.openPulls[0]?.title).toBe(managedTitle);
-    expect(requestCount(api, "PATCH", "/pulls/42")).toBe(1);
   });
   it("names the managed PR and recovery paths when its metadata changes", async () => {
     const value = fixture();
