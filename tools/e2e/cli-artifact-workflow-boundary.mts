@@ -391,7 +391,9 @@ function validateConsumer(
     }
   }
   let expectedNeeds: string | string[] = CLI_ARTIFACT_PRODUCER_JOB;
-  if (jobName === "mcp-bridge-dev") {
+  if (jobName === "external-gateway-health") {
+    expectedNeeds = [CLI_ARTIFACT_PRODUCER_JOB, "package-openshell-sdk"];
+  } else if (jobName === "mcp-bridge-dev") {
     expectedNeeds = ["base-image-publication", CLI_ARTIFACT_PRODUCER_JOB, "openshell-dev-artifact"];
   } else if (
     [

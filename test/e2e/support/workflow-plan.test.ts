@@ -121,6 +121,7 @@ describe("E2E workflow plan", () => {
     ]);
     expect(plan.explicitOnlyJobs).toEqual([
       "staging-brev-launchable-identity",
+      "external-gateway-health",
       "llama-cpp-dgx-spark-qualification",
     ]);
     expect(releaseRequiredWorkflowJobs()).toContain("live");
