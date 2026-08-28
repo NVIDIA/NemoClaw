@@ -727,9 +727,7 @@ export function recheckPolicyMutationContext(
   previous: PolicyMutationContext,
 ): PolicyMutationContext {
   const current = inspectPolicyMutationContext(sandboxName, operation, previous.gatewayName);
-  if (
-    !isDeepStrictEqual(current.inspection.effectivePolicy, previous.inspection.effectivePolicy)
-  ) {
+  if (!isDeepStrictEqual(current.inspection.effectivePolicy, previous.inspection.effectivePolicy)) {
     throw new PolicyObservationError(
       `Refusing to ${operation}: the current OpenShell policy changed while NemoClaw prepared the requested update. Rerun the command against the current policy.`,
     );
@@ -840,24 +838,17 @@ function submitComposedPolicy(
  * reaches the console.
  *
  * A `rejected` verdict is final: OpenShell understood the document and refused
- * it, so resubmitting only replays a policy it already declined. An `ambiguous`
- * result proves nothing about gateway state, so the operator must read the
- * policy back before deciding anything.
+ * it, so resubmitting only replays a policy it already declined. Ambiguous
+ * results are resolved through live readback before this formatter is used.
  */
 function policySetFailure(
   sandboxName: string,
-  outcome: Exclude<PolicySetOutcome, { kind: "applied" }>,
+  outcome: Extract<PolicySetOutcome, { kind: "rejected" }>,
 ): Error {
-  if (outcome.kind === "rejected") {
-    return new Error(
-      `OpenShell rejected the policy for sandbox '${sandboxName}' (exit ${outcome.status}): ` +
-        `${redact(outcome.message)}. The policy was not applied and re-applying it will be ` +
-        `rejected again; change the preset selection instead.`,
-    );
-  }
   return new Error(
-    `Could not confirm the policy update for sandbox '${sandboxName}': ${redact(outcome.detail)}. ` +
-      `The gateway may or may not have applied it; read the current policy back before retrying.`,
+    `OpenShell rejected the policy for sandbox '${sandboxName}' (exit ${outcome.status}): ` +
+      `${redact(outcome.message)}. The policy was not applied and re-applying it will be ` +
+      `rejected again; change the preset selection instead.`,
   );
 }
 
@@ -866,18 +857,33 @@ export function verifyAppliedPolicyDocument(
   desiredPolicyDocument: string,
   previous: PolicyMutationContext,
 ): void {
-  let observedBasePolicy: string;
-  try {
-    observedBasePolicy = captureSandboxBasePolicy(sandboxName, previous.gatewayName);
-  } catch {
+  const readback = inspectPolicyDocumentReadback(sandboxName, desiredPolicyDocument, previous);
+  if (readback === "unavailable") {
     throw new PolicyObservationError(
       `NemoClaw applied the sandbox policy for '${sandboxName}', but could not verify the resulting base policy. The policy update is incomplete.`,
     );
   }
-  if (!policyDocumentsMatch(observedBasePolicy, desiredPolicyDocument)) {
+  if (readback === "different") {
     throw new PolicyObservationError(
       `NemoClaw applied the sandbox policy for '${sandboxName}', but the resulting base policy did not match the requested policy. The policy update is incomplete.`,
     );
+  }
+}
+
+function inspectPolicyDocumentReadback(
+  sandboxName: string,
+  desiredPolicyDocument: string,
+  previous: PolicyMutationContext,
+): "matched" | "different" | "unavailable" {
+  try {
+    return policyDocumentsMatch(
+      captureSandboxBasePolicy(sandboxName, previous.gatewayName),
+      desiredPolicyDocument,
+    )
+      ? "matched"
+      : "different";
+  } catch {
+    return "unavailable";
   }
 }
 
@@ -926,6 +932,21 @@ export function setPolicyDocument(
       if (options.nonFatal) return false;
       process.exit(1);
     }
+  }
+
+  if (outcome.kind === "ambiguous") {
+    const readback = inspectPolicyDocumentReadback(sandboxName, policyDocument, context);
+    if (readback === "matched") return true;
+    const observedResult =
+      readback === "different"
+        ? "The current live policy differs from the requested document"
+        : "The current live policy could not be read";
+    console.error(
+      `  Could not confirm the policy update for sandbox '${sandboxName}': ${redact(outcome.detail)}. ` +
+        `${observedResult}; the update remains unconfirmed.`,
+    );
+    if (options.nonFatal) return false;
+    process.exit(status || 1);
   }
 
   console.error(`  ${policySetFailure(sandboxName, outcome).message}`);
@@ -1765,7 +1786,9 @@ function readCurrentSandboxPolicy(sandboxName: string, gatewayName?: string): st
   try {
     const selectedGateway =
       gatewayName ?? resolveSandboxGatewayName(registry.getSandbox(sandboxName));
-    return parseCurrentPolicyOrEmpty(captureSandboxBasePolicy(sandboxName, selectedGateway)) || null;
+    return (
+      parseCurrentPolicyOrEmpty(captureSandboxBasePolicy(sandboxName, selectedGateway)) || null
+    );
   } catch {
     return null;
   }
@@ -1912,11 +1935,14 @@ function restoreBaselineEntry(
       return false;
     }
     const updated = mergeBaselineEntryIntoPolicy(currentPolicy, key, entry);
-    return assertOpenshellResolvable(options) && setPolicyDocument(sandboxName, updated, {
-      ...options,
-      context,
-      operation,
-    });
+    return (
+      assertOpenshellResolvable(options) &&
+      setPolicyDocument(sandboxName, updated, {
+        ...options,
+        context,
+        operation,
+      })
+    );
   });
 }
 

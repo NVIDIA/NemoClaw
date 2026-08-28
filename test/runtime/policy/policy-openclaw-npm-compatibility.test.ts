@@ -319,7 +319,7 @@ process.stdout.write("\\n__RESULT__" + JSON.stringify({
     expect(payload.afterRemove.network_policies.npm_yarn).toBeUndefined();
     expect(payload.afterRemove.network_policies.npm_registry).toEqual(REVIEWED_BASELINE_ENTRY);
     expect(payload.registry).not.toHaveProperty("policies");
-    expect(calls.filter((call) => call.startsWith("policy get "))).toHaveLength(5);
+    expect(calls.filter((call) => call.startsWith("policy get "))).toHaveLength(6);
     expect(calls.filter((call) => call.startsWith("policy set "))).toHaveLength(2);
   });
 

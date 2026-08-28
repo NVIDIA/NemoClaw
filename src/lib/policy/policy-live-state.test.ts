@@ -43,6 +43,7 @@ import {
   inspectPolicyMutationContext,
   removePreset,
   restoreBaselineEntry,
+  setPolicyDocument,
 } from "./index";
 
 const sandboxName = "live-policy";
@@ -128,6 +129,47 @@ describe("live OpenShell policy mutations", () => {
     expect(applyPresetContent(sandboxName, "weather", preset, { nonFatal: true })).toBe(false);
     expect(mocks.run).not.toHaveBeenCalled();
     expect(YAML.parse(livePolicy).network_policies).toHaveProperty("concurrent_host_edit");
+  });
+
+  it("accepts an ambiguous write only when live readback matches", () => {
+    const desiredPolicy = YAML.stringify({
+      version: 1,
+      network_policies: { host_approval: hostEntry, confirmed_after_reset: {} },
+    });
+    mocks.run.mockImplementation((command: readonly string[]) => {
+      const policyIndex = command.indexOf("--policy");
+      livePolicy = fs.readFileSync(command[policyIndex + 1] as string, "utf8");
+      return { status: 3, stderr: "openshell: response stream reset" };
+    });
+
+    expect(setPolicyDocument(sandboxName, desiredPolicy, { nonFatal: true })).toBe(true);
+    expect(mocks.captureSandboxBasePolicy).toHaveBeenCalledWith(sandboxName, "nemoclaw");
+  });
+
+  it("rejects an ambiguous write when live readback differs", () => {
+    const desiredPolicy = YAML.stringify({
+      version: 1,
+      network_policies: { requested_but_absent: {} },
+    });
+    mocks.run.mockReturnValue({ status: 3, stderr: "openshell: response stream reset" });
+
+    expect(setPolicyDocument(sandboxName, desiredPolicy, { nonFatal: true })).toBe(false);
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("The current live policy differs from the requested document"),
+    );
+  });
+
+  it("rejects an ambiguous write when live readback is unavailable", () => {
+    const desiredPolicy = YAML.stringify({ version: 1, network_policies: {} });
+    mocks.run.mockReturnValue({ status: 3, stderr: "openshell: response stream reset" });
+    mocks.captureSandboxBasePolicy.mockImplementation(() => {
+      throw new PolicyObservationError("OpenShell policy read timed out");
+    });
+
+    expect(setPolicyDocument(sandboxName, desiredPolicy, { nonFatal: true })).toBe(false);
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("The current live policy could not be read"),
+    );
   });
 
   it("removes one baseline entry from the bounded live policy", () => {

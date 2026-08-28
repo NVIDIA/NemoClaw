@@ -213,7 +213,9 @@ describe("applyPresets finality when openshell rejects the composed policy", () 
 
     const error = applyWeatherPreset();
 
-    expect((error as Error).message).toContain("read the current policy back before retrying");
+    expect((error as Error).message).toContain(
+      "The current live policy differs from the requested document",
+    );
     expect(updateSandbox).not.toHaveBeenCalled();
   });
 });

@@ -80,7 +80,7 @@ if [ "$1 $2" = "policy set" ]; then
     printf 'Policy version 2 submitted\nPolicy version 2 loaded\n'
     exit 0
   fi
-  printf 'message: fixture rejection\n' >&2
+  printf "Error: code: 'Failed precondition', message: 'fixture rejection'\n" >&2
   exit "${policySetStatus}"
 fi
 exit 1

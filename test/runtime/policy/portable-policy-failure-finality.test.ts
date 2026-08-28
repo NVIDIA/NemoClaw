@@ -311,7 +311,7 @@ const POLICY_SET_FAILURES: ReadonlyArray<PolicySetFailureScenario> = [
     policySetExitCode: UNPARSEABLE_FAILURE_EXIT_CODE,
     policySetStderr: TRANSPORT_RESET_STDERR,
     expectedOperatorMessage: `Could not confirm the policy update for sandbox '${SANDBOX_NAME}'`,
-    expectedGuidance: "read the current policy back before retrying",
+    expectedGuidance: "The current live policy differs from the requested document",
   },
 ];
 
@@ -423,7 +423,7 @@ const SINGLE_PRESET_MUTATIONS: ReadonlyArray<SinglePresetMutationScenario> = [
     basePolicy: BASE_POLICY_WITHOUT_PRESET,
     policySet: { exitCode: UNPARSEABLE_FAILURE_EXIT_CODE, stderr: UNPARSEABLE_FAILURE_STDERR },
     expectedOperatorMessage: `Could not confirm the policy update for sandbox '${SANDBOX_NAME}'`,
-    expectedGuidance: "read the current policy back before retrying",
+    expectedGuidance: "The current live policy differs from the requested document",
     expectedExitCode: UNPARSEABLE_FAILURE_EXIT_CODE,
   },
 ];
