@@ -266,6 +266,19 @@ discovery command locally to inspect the generated test matrix:
 npx tsx tools/e2e/credential-free-tests.mts
 ```
 
+### External gateway health
+
+`external-gateway-health` is an explicit-only retained job for the external
+OpenShell target work in issue #9872. The trusted workflow downloads and
+verifies the exact OpenShell SDK archive with package-read permission. The
+candidate job receives the archive but no package credential. It calls a local
+OpenShell 0.0.106 gateway over HTTPS with an explicit CA. The target does not
+read an authentication file or make an authenticated gateway call.
+
+Use `jobs=external-gateway-health` for the manual pull request E2E run. The
+target records the expected release, reported release, public health status,
+and transport. It also stops the gateway and removes its temporary state.
+
 ## Catalogue Targets
 
 `tools/e2e/target-catalogue.mts` declares live E2E targets that share one execution shape.
@@ -617,6 +630,8 @@ The current-checkout fixture locally prebuilds its repository-controlled v1
 and v2 Dockerfiles with BuildKit, then hands only those local image references
 to OpenShell. User-supplied `--from` Dockerfiles retain the gateway-builder
 trust boundary and are never host-prebuilt by this fixture.
+When a PR changes a base-image input, the current-checkout fixture enables that
+base-image build after the workflow removes Docker Hub credentials.
 
 The runtime target for `openclaw-plugin-runtime-exdev` is 16–17 minutes.
 Push-run timing for the reduced lifecycle has not yet been measured.
