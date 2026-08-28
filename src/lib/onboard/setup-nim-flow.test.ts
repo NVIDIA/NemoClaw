@@ -201,6 +201,37 @@ describe("createSetupNim", () => {
     });
   });
 
+  it("records a newly selected Bedrock Runtime endpoint as onboard provenance", async () => {
+    const endpointUrl = "https://bedrock-runtime.us-east-1.amazonaws.com";
+    const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
+      async (_args, state) => {
+        state.model = "anthropic.claude-3-5-sonnet-20240620-v1:0";
+        state.provider = "compatible-anthropic-endpoint";
+        state.endpointUrl = endpointUrl;
+        state.credentialEnv = "ANTHROPIC_COMPATIBLE_API_KEY";
+        state.preferredInferenceApi = "openai-completions";
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "anthropicCompatible",
+        handleRemoteProviderSelection,
+      }),
+    );
+
+    const result = await setupNim(null);
+
+    expect(result).toMatchObject({
+      provider: "compatible-anthropic-endpoint",
+      endpointUrl,
+      endpointSource: "onboard",
+    });
+    expect(result.endpointPinnedAddresses).toBeUndefined();
+    expect(result.endpointTrustedPrivateCapability).toBeUndefined();
+  });
+
   it("re-enters provider selection when a handler requests a retry (#6245)", async () => {
     vi.stubEnv("NEMOCLAW_PROVIDER", "");
     const prompt = vi.fn(async () => "");

@@ -30,8 +30,6 @@ import {
 import { createDockerManagedBootstrapAdapter } from "./docker";
 import { createDockerManagedBootstrapAuthorityStore } from "./docker-authority-store";
 import type {
-  ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff,
-  ManagedBootstrapNativeGpuFallbackOwnerCleanupOutcome,
   ManagedBootstrapRuntimeCompatibilityLaunchInput,
   ManagedBootstrapRuntimeCreateLaunchResult,
   ManagedBootstrapRuntimeCreateLifecycle,
@@ -42,27 +40,6 @@ import { createManagedBootstrapTerminalFinalizer } from "./runtime-create";
 
 const MANAGED_BOOTSTRAP_IMAGE_INSPECT_TIMEOUT_MS = 30_000;
 const MANAGED_BOOTSTRAP_IMAGE_PULL_MAX_TIMEOUT_MS = 30 * 60 * 1000;
-
-type CompleteOwnerCleanupInput = Readonly<{
-  providerId: string;
-  bootstrapIdentity: string;
-  handoff: ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff;
-  runOpenshell: NonNullable<
-    ManagedBootstrapRuntimeCreateLifecycleInput["dependencies"]["runOpenshell"]
-  >;
-  recoverUnfinished: ManagedBootstrapRuntimeCreateLifecycle["recoverUnfinished"];
-}>;
-
-/**
- * Retain the owner-cleanup handoff until OpenShell exposes deletion bound to a
- * durable sandbox ID. A preceding ID lookup cannot authorize the current
- * name-only delete because a same-name replacement can race between calls.
- */
-export function completeDockerManagedNativeGpuFallbackOwnerCleanup(
-  input: CompleteOwnerCleanupInput,
-): Promise<ManagedBootstrapNativeGpuFallbackOwnerCleanupOutcome> {
-  return Promise.resolve(input.handoff);
-}
 
 function dockerReplacementOptions(
   mode: DockerGpuPatchMode,
@@ -227,18 +204,6 @@ function createDockerLifecycle(
           }
         : null;
     },
-    async completeNativeGpuFallbackOwnerCleanup(handoff) {
-      if (handoff.sandboxName !== input.sandboxName || !input.dependencies.runOpenshell) {
-        return handoff;
-      }
-      return completeDockerManagedNativeGpuFallbackOwnerCleanup({
-        providerId,
-        bootstrapIdentity: input.bootstrapIdentity,
-        handoff,
-        runOpenshell: input.dependencies.runOpenshell,
-        recoverUnfinished: () => recoverManagedBootstrapTransactions(adapter),
-      });
-    },
     async recoverUnfinished() {
       return recoverManagedBootstrapTransactions(adapter);
     },
@@ -358,7 +323,7 @@ function createDockerOnboardRouting(input: ManagedBootstrapRuntimeOnboardRouting
         runtime?.imageId ??
         (compatibility.prebuildImageId && isImmutableDockerImageId(compatibility.prebuildImageId)
           ? compatibility.prebuildImageId.toLowerCase()
-          : null);
+          : compatibility.managedImageReference);
       let registryImageRef = compatibility.currentRegistryImageRef;
       if (
         !registryImageRef &&
