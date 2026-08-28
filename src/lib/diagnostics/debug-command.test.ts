@@ -64,6 +64,32 @@ describe("debug command", () => {
     expect(errorLines.join("\n")).toContain("nemoclaw list");
   });
 
+  it("reports safe recovery for an invalid sandbox gateway binding", async () => {
+    const runDebug = vi.fn();
+    const errorLine = vi.fn();
+    const exit = vi.fn(() => {
+      throw new Error("exit");
+    }) as unknown as (code: number) => never;
+
+    await expect(
+      runDebugCommandWithOptions(
+        { sandboxName: "alpha" },
+        {
+          getDefaultSandbox: async () => ({ name: "default", gatewayName: "nemoclaw" }),
+          getSandboxAvailability: async () => ({ state: "invalid_gateway" }),
+          runDebug,
+          errorLine,
+          exit,
+        },
+      ),
+    ).rejects.toThrow("exit");
+
+    expect(errorLine).toHaveBeenCalledWith(
+      "  Restore gatewayName and gatewayPort from a trusted backup. Otherwise, back up and remove the sandbox before onboarding it again. Do not copy a gateway binding from another sandbox.",
+    );
+    expect(runDebug).not.toHaveBeenCalled();
+  });
+
   it("identifies an explicit registered sandbox missing from OpenShell", async () => {
     const runDebug = vi.fn();
     const errorLines: string[] = [];

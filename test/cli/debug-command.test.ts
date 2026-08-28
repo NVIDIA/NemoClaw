@@ -121,6 +121,25 @@ describe("CLI debug command", () => {
     },
   );
 
+  it(
+    "debug scopes OpenShell commands to the registered non-default gateway",
+    testTimeoutOptions(30_000),
+    ({ resources }) => {
+      const argsLog = path.join(resources.home("nemoclaw-cli-debug-gateway-log-").home, "openshell-args.log");
+      const env = createDebugCommandTestEnv(resources, "nemoclaw-cli-debug-gateway-", {
+        gatewayPort: 18080,
+        openshellArgsLog: argsLog,
+      });
+
+      const r = runWithEnv("debug --quick", env, 30000);
+
+      expect(r.code).toBe(0);
+      const invocations = fs.readFileSync(argsLog, "utf-8");
+      expect(invocations).toContain("sandbox list -g nemoclaw-18080");
+      expect(invocations).toContain("sandbox ssh-config -g nemoclaw-18080");
+    },
+  );
+
   it("debug --sandbox NAME rejects an unregistered name and exits non-zero", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-debug-unknown-"));
     writeSandboxRegistry(home);

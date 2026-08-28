@@ -52,76 +52,6 @@ export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
     return new Set(result.value.sandboxes.map((sandbox) => sandbox.name));
   };
 
-  const getDefaultSandbox: RunDebugCommandDeps["getDefaultSandbox"] = async () => {
-    const { defaultSandbox, sandboxes } = registry.listSandboxes();
-    if (!defaultSandbox) {
-      const registered = sandboxes.find((sandbox) => sandbox.name);
-      const gatewayName = registered ? resolveDebugGatewayName(registered) : undefined;
-      if (registered && gatewayName === null) {
-        console.error(
-          `${RD}Warning:${R} sandbox '${registered.name}' has an invalid registered gateway binding.`,
-        );
-        console.error("  Remove and re-onboard the sandbox to restore a valid gateway binding.\n");
-        return null;
-      }
-      const liveNames = await liveSandboxNames(
-        gatewayName ? namedOpenShellGateway(gatewayName) : selectedOpenShellGateway(),
-      );
-      if (liveNames === "denied") {
-        console.error(`${RD}Warning:${R} OpenShell rejected the sandbox observation.`);
-        console.error("  Verify OpenShell authentication and gateway identity, then retry.\n");
-        return null;
-      }
-      if (registered && liveNames && !liveNames.has(registered.name)) {
-        console.error(
-          `${RD}Warning:${R} sandbox '${registered.name}' exists in the local registry but not in OpenShell.`,
-        );
-        console.error(
-          `  Use ${B}--sandbox NAME${R} to target a specific sandbox, or run ${B}${CLI_NAME} onboard${R} again.\n`,
-        );
-        return null;
-      }
-      if (registered && gatewayName) return { name: registered.name, gatewayName };
-      return { name: liveNames?.values().next().value ?? "default" };
-    }
-    const registered = sandboxes.find((sandbox) => sandbox.name === defaultSandbox);
-    if (!registered) {
-      console.error(
-        `${RD}Warning:${R} default sandbox '${defaultSandbox}' is no longer in the registry.`,
-      );
-      console.error(
-        `  Use ${B}--sandbox NAME${R} to target a specific sandbox, or run ${B}${CLI_NAME} onboard${R} again.\n`,
-      );
-      return null;
-    }
-    const gatewayName = resolveDebugGatewayName(registered);
-    if (!gatewayName) {
-      console.error(
-        `${RD}Warning:${R} default sandbox '${defaultSandbox}' has an invalid registered gateway binding.`,
-      );
-      console.error("  Remove and re-onboard the sandbox to restore a valid gateway binding.\n");
-      return null;
-    }
-    const liveNames = await liveSandboxNames(namedOpenShellGateway(gatewayName));
-    if (liveNames === "denied") {
-      console.error(
-        `${RD}Warning:${R} OpenShell rejected observation of sandbox '${defaultSandbox}'.`,
-      );
-      console.error("  Verify OpenShell authentication and gateway identity, then retry.\n");
-      return null;
-    }
-    if (liveNames && !liveNames.has(defaultSandbox)) {
-      console.error(
-        `${RD}Warning:${R} default sandbox '${defaultSandbox}' exists in the local registry but not in OpenShell.`,
-      );
-      console.error(
-        `  Use ${B}--sandbox NAME${R} to target a specific sandbox, or run ${B}${CLI_NAME} onboard${R} again.\n`,
-      );
-      return null;
-    }
-    return { name: defaultSandbox, gatewayName };
-  };
-
   const getSandboxAvailability: RunDebugCommandDeps["getSandboxAvailability"] = async (name) => {
     const { sandboxes } = registry.listSandboxes();
     const registered = sandboxes.find((sandbox) => sandbox.name === name);
@@ -133,6 +63,53 @@ export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
     return !liveNames || liveNames.has(name)
       ? { state: "available", gatewayName }
       : { state: "missing" };
+  };
+
+  const getDefaultSandbox: RunDebugCommandDeps["getDefaultSandbox"] = async () => {
+    const { defaultSandbox, sandboxes } = registry.listSandboxes();
+    const selectedName = defaultSandbox ?? sandboxes.find((sandbox) => sandbox.name)?.name;
+    if (!selectedName) {
+      const liveNames = await liveSandboxNames(selectedOpenShellGateway());
+      if (liveNames === "denied") {
+        console.error(`${RD}Warning:${R} OpenShell rejected the sandbox observation.`);
+        console.error("  Verify OpenShell authentication and gateway identity, then retry.\n");
+        return null;
+      }
+      return { name: liveNames?.values().next().value ?? "default" };
+    }
+
+    const availability = await getSandboxAvailability(selectedName);
+    if (availability.state === "available") {
+      return { name: selectedName, gatewayName: availability.gatewayName };
+    }
+
+    const label = defaultSandbox ? "default sandbox" : "sandbox";
+    if (availability.state === "unregistered") {
+      console.error(`${RD}Warning:${R} ${label} '${selectedName}' is no longer in the registry.`);
+      console.error(
+        `  Use ${B}--sandbox NAME${R} to target a specific sandbox, or run ${B}${CLI_NAME} onboard${R} again.\n`,
+      );
+    } else if (availability.state === "invalid_gateway") {
+      console.error(
+        `${RD}Warning:${R} ${label} '${selectedName}' has an invalid registered gateway binding.`,
+      );
+      console.error(
+        "  Restore gatewayName and gatewayPort from a trusted backup. Otherwise, back up and remove the sandbox before onboarding it again. Do not copy a gateway binding from another sandbox.\n",
+      );
+    } else if (availability.state === "observation_denied") {
+      console.error(
+        `${RD}Warning:${R} OpenShell rejected observation of sandbox '${selectedName}'.`,
+      );
+      console.error("  Verify OpenShell authentication and gateway identity, then retry.\n");
+    } else {
+      console.error(
+        `${RD}Warning:${R} ${label} '${selectedName}' exists in the local registry but not in OpenShell.`,
+      );
+      console.error(
+        `  Use ${B}--sandbox NAME${R} to target a specific sandbox, or run ${B}${CLI_NAME} onboard${R} again.\n`,
+      );
+    }
+    return null;
   };
 
   return {

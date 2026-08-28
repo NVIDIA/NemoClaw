@@ -65,7 +65,9 @@ export async function runDebugCommandWithOptions(
         errorLine("  Verify OpenShell authentication and gateway identity, then retry.");
       } else if (availability.state === "invalid_gateway") {
         errorLine(`Error: Sandbox '${explicit.name}'${sourceLabel} has an invalid registered gateway binding.`);
-        errorLine("  Remove and re-onboard the sandbox to restore a valid gateway binding.");
+        errorLine(
+          "  Restore gatewayName and gatewayPort from a trusted backup. Otherwise, back up and remove the sandbox before onboarding it again. Do not copy a gateway binding from another sandbox.",
+        );
       } else {
         errorLine(`Error: Sandbox '${explicit.name}'${sourceLabel} exists in the local registry but not in OpenShell.`);
         errorLine("  Run `nemoclaw onboard` again to recreate or select a sandbox.");
