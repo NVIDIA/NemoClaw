@@ -82,9 +82,20 @@ export function buildValidationProbeTimingProfile(
     CALIBRATED_MAX_TIME_MIN_SECONDS,
     CALIBRATED_MAX_TIME_MAX_SECONDS,
   );
+  // Calibration samples a cheap endpoint (`GET /models`) and scales that one
+  // observation up for the far heavier chat-completions POST. On WSL2 the
+  // virtualized network stack makes that scaling optimistic: the sample can
+  // return in milliseconds while the POST needs tens of seconds. Keep the
+  // floor the uncalibrated branch applies, so calibration can raise a slow
+  // host's budget but never lower it below what WSL2 already needs (#10413).
+  const wslFloor = isWsl(opts);
   return {
-    connectTimeoutSeconds,
-    maxTimeSeconds,
+    connectTimeoutSeconds: wslFloor
+      ? Math.max(connectTimeoutSeconds, WSL_VALIDATION_TIMING.connectTimeoutSeconds)
+      : connectTimeoutSeconds,
+    maxTimeSeconds: wslFloor
+      ? Math.max(maxTimeSeconds, WSL_VALIDATION_TIMING.maxTimeSeconds)
+      : maxTimeSeconds,
     observedMs: Math.max(0, Math.round(opts.calibration.durationMs)),
     source: "calibrated",
   };

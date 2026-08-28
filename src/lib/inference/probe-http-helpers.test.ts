@@ -18,14 +18,16 @@ afterEach(() => {
 describe("validation probe curl timing helpers", () => {
   it("derives a tighter fast-network profile from calibration latency", () => {
     expect(
-      buildValidationProbeTimingProfile({ calibration: { ok: true, durationMs: 180 } }),
+      buildValidationProbeTimingProfile({ isWsl: false, calibration: { ok: true, durationMs: 180 } }),
     ).toEqual({
       connectTimeoutSeconds: 5,
       maxTimeSeconds: 15,
       observedMs: 180,
       source: "calibrated",
     });
-    expect(getValidationProbeCurlArgs({ calibration: { ok: true, durationMs: 180 } })).toEqual([
+    expect(
+      getValidationProbeCurlArgs({ isWsl: false, calibration: { ok: true, durationMs: 180 } }),
+    ).toEqual([
       "--connect-timeout",
       "5",
       "--max-time",
@@ -35,7 +37,36 @@ describe("validation probe curl timing helpers", () => {
 
   it("derives a slower non-WSL profile from calibration latency", () => {
     expect(
-      buildValidationProbeTimingProfile({ calibration: { ok: true, durationMs: 6_400 } }),
+      buildValidationProbeTimingProfile({ isWsl: false, calibration: { ok: true, durationMs: 6_400 } }),
+    ).toEqual({
+      connectTimeoutSeconds: 28,
+      maxTimeSeconds: 42,
+      observedMs: 6400,
+      source: "calibrated",
+    });
+  });
+
+  it("keeps the WSL floor when calibration samples a fast endpoint (#10413)", () => {
+    // Calibration times a cheap `GET /models` and scales that one sample up for
+    // the far heavier chat-completions POST. On WSL2 the sample can return in
+    // milliseconds while the POST needs tens of seconds, so the calibrated
+    // budget must not fall below the floor the uncalibrated branch applies.
+    expect(
+      buildValidationProbeTimingProfile({ isWsl: true, calibration: { ok: true, durationMs: 180 } }),
+    ).toEqual({
+      connectTimeoutSeconds: 20,
+      maxTimeSeconds: 30,
+      observedMs: 180,
+      source: "calibrated",
+    });
+  });
+
+  it("lets calibration raise the budget above the WSL floor (#10413)", () => {
+    expect(
+      buildValidationProbeTimingProfile({
+        isWsl: true,
+        calibration: { ok: true, durationMs: 6_400 },
+      }),
     ).toEqual({
       connectTimeoutSeconds: 28,
       maxTimeSeconds: 42,
