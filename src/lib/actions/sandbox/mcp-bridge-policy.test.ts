@@ -58,7 +58,7 @@ describe("generated MCP policy", () => {
         const expected = (YAML.parse(content) as typeof livePolicy).network_policies;
         return Object.keys(expected).every((key) => key in livePolicy.network_policies)
           ? "match"
-          : "missing";
+          : "absent";
       },
     );
 
@@ -90,7 +90,7 @@ describe("generated MCP policy", () => {
     };
     vi.spyOn(policies, "removePreset").mockImplementation(
       (_sandboxName, _presetName, options) => {
-        const removal = (YAML.parse(options.presetContent ?? "") as typeof livePolicy)
+        const removal = (YAML.parse(options?.presetContent ?? "") as typeof livePolicy)
           .network_policies;
         expect(removal).toHaveProperty("mcp_bridge_github");
         delete livePolicy.network_policies.mcp_bridge_github;

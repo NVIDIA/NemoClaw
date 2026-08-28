@@ -100,7 +100,7 @@ describe("rebuild backup safety", () => {
     backupPath: "/tmp/custom-openclaw-backup",
     reconcileOpenClawImagePluginProvenance: true,
     openclawImagePluginInstalls: [],
-  } as never;
+  } as Record<string, unknown>;
 
   function customOpenClawInput(overrides: Record<string, unknown> = {}): RebuildBackupPhaseInput {
     return {
