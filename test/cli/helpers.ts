@@ -508,14 +508,14 @@ export function createCloudflaredServiceDir(prefix: string): {
 export function createDebugCommandTestEnv(
   resources: OwnedTestResources,
   prefix: string,
-  options: { extraSandboxNames?: string[] } = {},
+  options: { extraSandboxNames?: string[]; gatewayPort?: number; openshellArgsLog?: string } = {},
 ): Record<string, string> {
   const { home, bin: localBin } = resources.home(prefix);
   const sandboxName = `${prefix}${process.pid.toString(36)}-${Date.now().toString(36)}`;
   fs.mkdirSync(localBin, { recursive: true });
   // Register the env-sourced sandbox plus any extra names supplied via the
   // --sandbox flag so the validation gate accepts them.
-  writeSandboxRegistry(home, sandboxName);
+  writeSandboxRegistry(home, sandboxName, options.gatewayPort ? { gatewayPort: options.gatewayPort } : {});
   if (options.extraSandboxNames && options.extraSandboxNames.length > 0) {
     const registryPath = path.join(home, ".nemoclaw", "sandboxes.json");
     const current = JSON.parse(fs.readFileSync(registryPath, "utf-8")) as {
@@ -539,6 +539,9 @@ export function createDebugCommandTestEnv(
     path.join(localBin, "openshell"),
     [
       "#!/bin/sh",
+      ...(options.openshellArgsLog
+        ? [`printf '%s\n' "$*" >> ${JSON.stringify(options.openshellArgsLog)}`]
+        : []),
       'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
       ...listLines.map((line) => `  echo ${JSON.stringify(line)}`),
       "  exit 0",
