@@ -183,6 +183,21 @@ class FakeGitHub {
         : this.pull(managedBody, this.existingSha, managedTitle),
     ];
   }
+  installOrphan(tree = this.value.finalTree) {
+    this.branchRef = {
+      object: { sha: this.existingSha },
+      ref: `refs/heads/${this.branch}`,
+    };
+    this.commits.set(this.existingSha, {
+      author: { email: "41898282+github-actions[bot]@users.noreply.github.com" },
+      message: `docs: catch up after main\n\n${signOff}`,
+      parents: [{ sha: this.value.mainSha }],
+      sha: this.existingSha,
+      tree: { sha: tree },
+      verification: { verified: true },
+    });
+    this.openPulls = [];
+  }
   installPartiallyPublishedLegacy(tree = "f".repeat(40)) {
     this.installActive("e".repeat(40), undefined, true);
     this.commits.set(this.partialSha, {
@@ -709,6 +724,41 @@ describe("post-merge documentation publisher", () => {
     const value = fixture();
     const api = new FakeGitHub(value);
     api.branchRef = { object: { sha: api.existingSha } };
+    await expect(publish(value, api)).rejects.toThrow("unmanaged documentation branch");
+    expect(writeCount(api)).toBe(0);
+  });
+  it("reconciles a verified orphan branch into exactly one draft PR", async () => {
+    const value = fixture();
+    const api = new FakeGitHub(value);
+    api.installOrphan();
+    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
+    expect(api.branchRef?.object.sha).toBe(api.existingSha);
+    expect(api.openPulls).toHaveLength(1);
+    expect(api.openPulls[0]?.head.sha).toBe(api.existingSha);
+    expect(api.commitBodies).toEqual([]);
+    expect(requestCount(api, "POST", "/pulls")).toBe(1);
+    expect(requestCount(api, "POST", "/git/refs")).toBe(0);
+    expect(requestCount(api, "POST", "/graphql")).toBe(0);
+  });
+  it("preserves a concurrently attached draft while recovering an orphan", async () => {
+    const value = fixture();
+    const api = new FakeGitHub(value);
+    api.installOrphan();
+    api.beforePullCreation = () => {
+      api.openPulls = [api.pull(managedBody, api.existingSha, managedTitle)];
+      throw new Error("pull already attached");
+    };
+    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
+    expect(api.branchRef?.object.sha).toBe(api.existingSha);
+    expect(api.openPulls).toHaveLength(1);
+    expect(api.openPulls[0]?.head.sha).toBe(api.existingSha);
+    expect(requestCount(api, "POST", "/pulls")).toBe(1);
+  });
+  it("rejects an orphan branch whose workflow commit has the wrong parent", async () => {
+    const value = fixture();
+    const api = new FakeGitHub(value);
+    api.installOrphan();
+    api.commits.get(api.existingSha)!.parents = [{ sha: api.initialParent }];
     await expect(publish(value, api)).rejects.toThrow("unmanaged documentation branch");
     expect(writeCount(api)).toBe(0);
   });

@@ -329,6 +329,24 @@ async function managedCommit(
     fail("managed documentation branch contains a commit not created by the workflow");
   return commit;
 }
+async function recoverableOrphan(
+  repository: string,
+  mainSha: string,
+  ref: { object?: { sha?: string } } | null,
+  request: Request,
+): Promise<string | undefined> {
+  if (ref === null) return undefined;
+  const commitSha = sha(ref.object?.sha ?? "", "existing documentation branch SHA");
+  let commit: Commit;
+  try {
+    commit = await managedCommit(repository, commitSha, request);
+  } catch {
+    return fail("an unmanaged documentation branch already exists for this main commit");
+  }
+  if (commit.parents?.length !== 1 || commit.parents[0]?.sha !== mainSha)
+    fail("an unmanaged documentation branch already exists for this main commit");
+  return commitSha;
+}
 async function createCommit(input: {
   changes: Change[];
   finalTree: string;
@@ -403,6 +421,45 @@ async function updateRef(
   if (result.updateRefs?.clientMutationId !== clientMutationId)
     fail("GitHub did not confirm the conditional documentation branch update");
 }
+async function createPull(input: {
+  body: string;
+  branch: string;
+  commitSha: string;
+  repository: string;
+  request: Request;
+  title: string;
+}): Promise<Pull> {
+  const refPath = `/repos/${input.repository}/git/ref/heads/${input.branch}`;
+  let pull: Pull;
+  try {
+    pull = (await input.request("POST", `/repos/${input.repository}/pulls`, {
+      base: "main",
+      body: input.body,
+      draft: true,
+      head: input.branch,
+      title: input.title,
+    })) as Pull;
+  } catch (error) {
+    const reconciled = await managed(input.repository, input.request);
+    const matching = reconciled.filter((candidate) => candidate.head.ref === input.branch);
+    if (matching.length !== 1 || reconciled.length !== 1) {
+      const orphaned = (await input.request("GET", refPath)) as {
+        object?: { sha?: string };
+      } | null;
+      if (!matching.length && orphaned?.object?.sha === input.commitSha)
+        fail(
+          `${managedBranchIdentity(input.branch, input.commitSha)} remains without a draft PR; PR creation failed: ${failureDiagnostic(error)}; follow ${orphanRecoveryUrl(input.repository)}`,
+        );
+      throw error;
+    }
+    pull = matching[0]!;
+  }
+  checkedPull(pull, input.repository, input.branch, input.body, input.title);
+  if (!pull.draft) fail("GitHub did not create a draft documentation PR");
+  if (pull.head.sha !== input.commitSha)
+    fail("documentation PR does not point to the verified commit");
+  return pull;
+}
 
 export async function publishDocumentation(input: {
   artifactDirectory: string;
@@ -430,6 +487,9 @@ export async function publishDocumentation(input: {
     const branch = active?.head.ref ?? `${PREFIX}${mainSha.slice(0, 12)}`;
     const refPath = `/repos/${repository}/git/ref/heads/${branch}`;
     const ref = (await request("GET", refPath)) as { object?: { sha?: string } } | null;
+    const orphanSha = active
+      ? undefined
+      : await recoverableOrphan(repository, mainSha, ref, request);
     if (active) {
       if (ref?.object?.sha !== active.head.sha)
         fail("managed documentation PR and branch point to different commits");
@@ -438,8 +498,17 @@ export async function publishDocumentation(input: {
       if (!prepared.changes.length || current.tree?.sha === prepared.finalTree) {
         fail(`Documentation remains pending in ${active.html_url}`);
       }
-    } else if (ref !== null) {
-      fail("an unmanaged documentation branch already exists for this main commit");
+    } else if (orphanSha) {
+      requireSamePull(undefined, await checkpoint(repository, mainSha, request));
+      const pull = await createPull({
+        body,
+        branch,
+        commitSha: orphanSha,
+        repository,
+        request,
+        title,
+      });
+      fail(`Documentation remains pending in ${pull.html_url}`);
     }
 
     const commitSha = await createCommit({
@@ -474,33 +543,7 @@ export async function publishDocumentation(input: {
       `${managedBranchIdentity(branch, commitSha)} was created; if publication stops before draft PR creation, follow ${orphanRecoveryUrl(repository)}`,
     );
     requireSamePull(undefined, await checkpoint(repository, mainSha, request));
-    let pull: Pull;
-    try {
-      pull = (await request("POST", `/repos/${repository}/pulls`, {
-        base: "main",
-        body,
-        draft: true,
-        head: branch,
-        title,
-      })) as Pull;
-    } catch (error) {
-      const reconciled = await managed(repository, request);
-      const matching = reconciled.filter((candidate) => candidate.head.ref === branch);
-      if (matching.length !== 1 || reconciled.length !== 1) {
-        const orphaned = (await request("GET", refPath)) as {
-          object?: { sha?: string };
-        } | null;
-        if (!matching.length && orphaned?.object?.sha === commitSha)
-          fail(
-            `${managedBranchIdentity(branch, commitSha)} remains without a draft PR; PR creation failed: ${failureDiagnostic(error)}; follow ${orphanRecoveryUrl(repository)}`,
-          );
-        throw error;
-      }
-      pull = matching[0];
-    }
-    checkedPull(pull, repository, branch, body, title);
-    if (!pull.draft) fail("GitHub did not create a draft documentation PR");
-    if (pull.head.sha !== commitSha) fail("documentation PR does not point to the verified commit");
+    const pull = await createPull({ body, branch, commitSha, repository, request, title });
     fail(`Documentation remains pending in ${pull.html_url}`);
   } finally {
     fs.rmSync(temporary, { force: true, recursive: true });

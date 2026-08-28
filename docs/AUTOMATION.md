@@ -58,35 +58,15 @@ workflow-owned draft, or mark it ready for review to transfer ownership to maint
 
 If draft PR creation fails after branch creation, the publisher reports the exact branch and commit.
 It also logs that pair immediately after branch creation so a cancelled or timed-out run retains the
-recovery identity. Recover only that branch:
+recovery identity. Recover without deleting the branch:
 
 1. Cancel and wait for other in-progress `Docs / Author Post-Merge Catch-Up` runs. Do not start
    another run during recovery.
-2. Set `ORPHAN_BRANCH` and `ORPHAN_COMMIT` to the exact branch and commit from the error or branch
-   creation log. If cancellation occurred before that log appeared, copy the cancelled run's
-   triggering `main` commit and read the deterministic branch tip:
-
-   ```bash
-   TRIGGER_MAIN=<cancelled-run-main-commit>
-   [[ "$TRIGGER_MAIN" =~ ^[0-9a-f]{40}$ ]]
-   ORPHAN_BRANCH="automation/post-merge-docs-${TRIGGER_MAIN:0:12}"
-   ORPHAN_COMMIT="$(gh api "/repos/NVIDIA/NemoClaw/git/ref/heads/$ORPHAN_BRANCH" --jq .object.sha)"
-   [[ "$ORPHAN_COMMIT" =~ ^[0-9a-f]{40}$ ]]
-   ```
-
-   Stop if GitHub reports that the branch does not exist.
-3. Recheck for an attached PR and delete the ref only if its SHA still matches:
-
-   ```bash
-   test "$(gh pr list --repo NVIDIA/NemoClaw --state open --head "$ORPHAN_BRANCH" --json number --jq 'length')" -eq 0 &&
-     git push --force-with-lease="refs/heads/$ORPHAN_BRANCH:$ORPHAN_COMMIT" \
-       origin ":refs/heads/$ORPHAN_BRANCH"
-   ```
-
-4. Rerun the failed workflow.
-
-The deletion fails if the branch advances. Stop without deleting if the command reports a PR or a
-lease mismatch.
+2. Rerun the failed or cancelled workflow for the same triggering `main` commit. The publisher
+   validates the deterministic branch, its verified workflow-created commit, and its parent before
+   it creates or reconciles the draft PR.
+3. Confirm that exactly one draft PR is attached to the reported branch. Stop if the publisher
+   reports an unmanaged branch or changed commit; do not delete or overwrite it.
 
 The [post-merge automation guide](../tools/post-merge-docs/README.md) owns its credential boundary.
 
