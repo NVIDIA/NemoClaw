@@ -354,11 +354,11 @@ export function fixture(options: DockerFixtureOptions = {}) {
     (args: readonly string[], commandOptions?: Record<string, unknown>) => {
       switch (args[0]) {
         case "create": {
-          if (args.includes("--mount") && args.includes("--cap-drop")) return ok();
+          const name = String(args[args.indexOf("--name") + 1] ?? "");
+          if (name.startsWith("nemoclaw-managed-startup-receipt-seed-")) return ok();
           events.push("create:replacement");
           const source =
             original ?? failFixture("original disappeared before replacement creation");
-          const name = String(args[args.indexOf("--name") + 1] ?? "");
           const entrypoint = String(args[args.indexOf("--entrypoint") + 1] ?? "");
           const imageIndex = args.indexOf(IMAGE);
           const dockerOptions = args.slice(0, imageIndex);

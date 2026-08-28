@@ -85,13 +85,14 @@ describe("Docker daemon receipt transfer", () => {
     expect(fs.existsSync(path.dirname(receipt.hostPath))).toBe(false);
   });
 
-  it("rejects non-normalized and root receipt destinations", () => {
+  it("rejects non-normalized destinations and mounts over the filesystem root", () => {
     const receipt = { hostPath: "/tmp/receipt", volumeName: "receipt-volume" };
 
     expect(() => dockerDaemonReceiptMount(receipt, "../receipt")).toThrow(
       /normalized absolute path/u,
     );
-    expect(() => dockerDaemonReceiptMount(receipt, "/")).toThrow(/no directory name/u);
+    expect(() => dockerDaemonReceiptMount(receipt, "/receipt")).toThrow(/filesystem root/u);
+    expect(() => dockerDaemonReceiptMount(receipt, "/")).toThrow(/filesystem root/u);
   });
 
   it("retains the host receipt when daemon volume creation fails", () => {

@@ -47,6 +47,9 @@ function receiptDirectory(destination: string): string {
   if (!destination.startsWith("/") || path.posix.normalize(destination) !== destination) {
     throw new Error("Managed-startup receipt destination is not a normalized absolute path.");
   }
+  if (path.posix.dirname(destination) === "/") {
+    throw new Error("Managed-startup receipt destination cannot mount over the filesystem root.");
+  }
   const directory = path.posix.basename(destination);
   if (directory.length === 0 || directory === "." || directory === "/") {
     throw new Error("Managed-startup receipt destination has no directory name.");
