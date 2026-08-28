@@ -39,15 +39,7 @@ The ACP decision in this change is limited to installing Hermes' existing `acp` 
 `hermes acp --check` is an import-readiness check; it does not validate protocol sessions, editor compatibility, workspace or current-working-directory mapping, file and terminal permissions, or transport and authorization behavior.
 Those integration behaviors require separate product acceptance and end-to-end evidence before NemoClaw can describe them as supported.
 
-The `BASE_IMAGE` argument in `agents/hermes/Dockerfile` pins the patched multi-platform Open Container Initiative (OCI) index `sha256:d30f58b0374c7d281df07c126cc257baaf63eb051264a575b96099ec037d5e5d`.
-GitHub Actions workflow `.github/workflows/base-image.yaml` run `33139220833`, attempt 1, built and published that base image from source commit `324a886fd05b01f6756bae0371ea503c651fbd11`.
-It supersedes index `sha256:212de47e723e9fec1e697d4eec1db82af2d0fb7802aade4fa5dfc3f05274d3c5`, which workflow run `32413658315`, attempt 1, published from source commit `a42a7717c8e2d13c0c16465f8d06b6aab1e86cb3`.
-That superseded index had replaced index `sha256:ffafa4dd1d8d5a802ae4fc4005b51e1accfa5e782e47de736a0d8d8bf2c83837`, which workflow run `31717470863`, attempt 1, published from source commit `d243ea62509bae7832a23fe8636e947303c19c60`.
-That earlier index had replaced index `sha256:4295138eb70f938189430f8dc7b3cd5db0aa762234e64e398a6a5ef60803126c`, which workflow run `31636995117`, attempt 1, published from source commit `7c721ae4d60fd54e11f4d0c7d0482ccd6ac8cded`.
-That superseded index had replaced index `sha256:3d54b928baef9df403227e846f73079d13ca8424a27cd5268ca97bac3f030b27`, which workflow run `31031662054`, attempt 1, published from source commit `a7a7f3e470a75c404d316d2054445e16bb63b48c`.
-Both platform base-image jobs completed successfully.
-The native package step ran the exact `dpkg` assertions for `vim-common=2:9.2.0858-1`, `vim-tiny=2:9.2.0858-1`, `libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2`, and `libssl3t64=3.5.7-1~deb13u2` on both platforms.
-The same workflow run built and validated the complete Hermes managed image on `linux/amd64` and `linux/arm64` before promoting the managed-image cohort.
+The selected base image, platform manifests, attestations, producer identity, package assertions, and replacement chain are recorded in [Patched Base Image Provenance](#patched-base-image-provenance).
 The required live end-to-end (E2E) checks remain an approval gate.
 
 ## Reviewed identities
