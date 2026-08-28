@@ -7,6 +7,7 @@ import {
   type ManagedSupervisorRelaunchDeps,
   relaunchManagedSupervisorSession,
 } from "./supervisor-relaunch";
+import * as backupAuthority from "./snapshot/backup-authority";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -168,6 +169,41 @@ describe("relaunchManagedSupervisorSession", () => {
         runOpenshell: deps.runOpenshell,
       },
     );
+  });
+
+  it("uses managed backup authority for default supervisor recovery", () => {
+    const managedBackup = vi
+      .spyOn(backupAuthority, "backupSandboxStateWithManagedAuthority")
+      .mockReturnValue({
+        success: true,
+        manifest: { backupPath: "/tmp/rebuild-backups/alpha/managed-recovery" },
+        backedUpDirs: ["memories"],
+        failedDirs: [],
+        backedUpFiles: [],
+        failedFiles: [],
+      } as never);
+    const getSandbox = vi.fn(() => ({
+      name: "alpha",
+      agent: "hermes",
+      dashboardPort: 18789,
+      openshellDriver: "docker",
+    })) as never;
+    const deps = baseDeps({
+      backupState: undefined,
+      getSandbox,
+      getSessionAgent: vi.fn(
+        () =>
+          ({
+            name: "hermes",
+            displayName: "Hermes",
+            forwardPort: 18789,
+          }) as never,
+      ),
+    });
+
+    expect(relaunchManagedSupervisorSession("alpha", { quiet: true, deps })).not.toBeNull();
+    expect(managedBackup).toHaveBeenCalledWith("alpha", {}, { getSandbox });
+    expect(deps.recreate).toHaveBeenCalledOnce();
   });
 
   it("retries only transport-level state backup failures after a container restart", () => {

@@ -21,6 +21,7 @@ import { redact, redactFull } from "../../security/redact";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
 import { resolveSandboxDashboardPort } from "./forward-recovery";
+import { backupSandboxStateWithManagedAuthority } from "./snapshot/backup-authority";
 
 /**
  * Compatibility boundary for OpenShell 0.0.71's Docker driver: legacy
@@ -146,7 +147,9 @@ export function relaunchManagedSupervisorSession(
   const inspect = deps.inspectContainer ?? inspectContainer;
   const confirmMissingSupervisor = deps.confirmMissingSupervisor;
   const restartRestoredManagedGateway = deps.restartRestoredManagedGateway;
-  const backupState = deps.backupState ?? sandboxState.backupSandboxState;
+  const backupState =
+    deps.backupState ??
+    ((name: string) => backupSandboxStateWithManagedAuthority(name, {}, { getSandbox }));
   const restoreState = deps.restoreState ?? sandboxState.restoreSandboxState;
   const removeBackup = deps.removeBackup ?? sandboxState.removeSandboxStateBackup;
   const recreate = deps.recreate ?? recreateOpenShellDockerSandboxWithStartupCommand;
