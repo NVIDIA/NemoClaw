@@ -456,7 +456,14 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(sandboxState, "validateRebuildRecoveryManifest").mockImplementation(
     (...args: unknown[]) => {
       const manifest = args[2] as Record<string, unknown>;
-      const result = overrides.recoveryManifestValidation?.(manifest) ?? { ok: true, manifest };
+      const persistedPath = path.join(String(manifest.backupPath), "rebuild-manifest.json");
+      const persistedManifest = fs.existsSync(persistedPath)
+        ? (JSON.parse(fs.readFileSync(persistedPath, "utf8")) as Record<string, unknown>)
+        : manifest;
+      const result = overrides.recoveryManifestValidation?.(manifest) ?? {
+        ok: true,
+        manifest: persistedManifest,
+      };
       if (result.ok) {
         latestValidatedRecoveryManifest = result.manifest;
         registerHarnessRebuildBackup(
@@ -469,7 +476,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(sandboxState, "getLatestBackup").mockImplementation(() => {
     const manifest =
       overrides.preDeleteLatestManifest === undefined
-        ? latestValidatedRecoveryManifest
+        ? (latestValidatedRecoveryManifest ?? listHarnessRebuildBackups().at(-1) ?? null)
         : overrides.preDeleteLatestManifest;
     if (manifest) {
       registerHarnessRebuildBackup(manifest as ReturnType<typeof sandboxState.listBackups>[number]);

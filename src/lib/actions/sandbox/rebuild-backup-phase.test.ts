@@ -100,7 +100,7 @@ describe("rebuild backup safety", () => {
     backupPath: "/tmp/custom-openclaw-backup",
     reconcileOpenClawImagePluginProvenance: true,
     openclawImagePluginInstalls: [],
-  } as never;
+  } as Record<string, unknown>;
 
   function customOpenClawInput(overrides: Record<string, unknown> = {}): RebuildBackupPhaseInput {
     return {
@@ -137,13 +137,16 @@ describe("rebuild backup safety", () => {
 
   it("uses a marked prepared manifest while still capturing live OpenShell policy", () => {
     const backup = vi.fn();
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-recovery-"));
+    temporaryDirectories.push(backupPath);
+    const preparedManifest = { ...completeMarkedManifest, backupPath } as never;
     const result = runRebuildBackupPhase(
-      customOpenClawInput({ preparedRecoveryManifest: completeMarkedManifest }),
+      customOpenClawInput({ preparedRecoveryManifest: preparedManifest }),
       backup,
     );
 
-    expect(result?.backupManifest).toBe(completeMarkedManifest);
-    expect(result?.policySourcePath).toMatch(/policy\.yaml$/u);
+    expect(result?.backupManifest).toEqual(preparedManifest);
+    expect(result?.policySourcePath).toMatch(/rebuild-policy-handoff\.[a-f0-9]{64}\.yaml$/u);
     expect(backup).not.toHaveBeenCalled();
   });
 

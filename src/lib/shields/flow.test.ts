@@ -49,6 +49,33 @@ function writeBoundPolicySnapshot(
   };
 }
 
+function writeActivePolicyTransition(
+  stateDir: string,
+  sandboxName: string,
+  processToken: string,
+  snapshotPath: string,
+  snapshotPolicy: ReturnType<typeof writeBoundPolicySnapshot>,
+): void {
+  const forwardPolicy = writeBoundPolicySnapshot(
+    path.join(stateDir, `policy-forward-${processToken.slice(0, 8)}.yaml`),
+  );
+  fs.writeFileSync(
+    path.join(stateDir, `shields-transition-${sandboxName}-${processToken}.json`),
+    JSON.stringify({
+      version: 1,
+      phase: "active",
+      ownerPid: 2_147_483_647,
+      ownerStartIdentity: "test-timer-owner",
+      processToken,
+      sandboxName,
+      snapshotPath,
+      snapshotPolicy,
+      forwardPolicy,
+    }),
+    { mode: 0o600 },
+  );
+}
+
 const timerAuthorityFixtures: ReadonlyArray<readonly [string, (markerPath: string) => void]> = [
   ["missing", () => undefined],
   ["malformed", (markerPath) => fs.writeFileSync(markerPath, "{not-json")],
@@ -349,7 +376,7 @@ describe("shields command flow", () => {
     expect(harness.policySetBodies).toHaveLength(0);
   });
 
-  it("uses token-bound transition ownership when the forward owner dies before state commit (#7952)", () => {
+  it("refuses recovery without a forward-policy artifact and preserves later host edits", () => {
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     const processToken = "8".repeat(32);
     const snapshotPath = path.join(stateDir, "policy-snapshot-new-cycle.yaml");
@@ -387,19 +414,23 @@ describe("shields command flow", () => {
     const harness = createHarness({
       livePolicyYaml: YAML.stringify({
         version: 1,
-        network_policies: { mcp_bridge_alpha: alpha.networkPolicy },
+        network_policies: {
+          mcp_bridge_alpha: alpha.networkPolicy,
+          later_host_edit: { endpoints: [{ host: "host.example.test", port: 443 }] },
+        },
       }),
       sandboxEntry: managedMcpSandbox([alpha]),
     });
 
-    const result = harness.applyShieldsPolicySnapshot("openclaw", snapshotPath, {
-      transitionProcessToken: processToken,
-    });
-
-    expect(result.status).toBe(0);
-    expect(YAML.parse(harness.policySetBodies.at(-1)!).network_policies.mcp_bridge_alpha).toEqual(
-      alpha.networkPolicy,
-    );
+    expect(() =>
+      harness.applyShieldsPolicySnapshot("openclaw", snapshotPath, {
+        transitionProcessToken: processToken,
+      }),
+    ).toThrow(/no bound forward-policy artifact/);
+    expect(harness.policySetBodies).toHaveLength(0);
+    expect(
+      fs.existsSync(path.join(stateDir, `shields-transition-openclaw-${processToken}.json`)),
+    ).toBe(true);
   });
 
   it("binds manual shields-up to the active auto-restore timer generation", () => {
@@ -407,9 +438,11 @@ describe("shields command flow", () => {
     const sandboxName = "openclaw";
     const processToken = "9".repeat(32);
     const snapshotPath = path.join(stateDir, "policy-snapshot-manual-up.yaml");
+    const forwardPath = path.join(stateDir, "policy-forward-manual-up.yaml");
     const lockPath = path.join(stateDir, `shields-transition-lock-${sandboxName}.json`);
     fs.mkdirSync(stateDir, { recursive: true });
     const snapshotPolicy = writeBoundPolicySnapshot(snapshotPath);
+    const forwardPolicy = writeBoundPolicySnapshot(forwardPath);
     const timerControl = requireDist("./timer-control.js") as typeof import("./timer-control.js");
     vi.spyOn(timerControl, "isProcessAlive").mockReturnValue(true);
     vi.spyOn(timerControl, "readProcessStartIdentity").mockReturnValue("live-timer-start");
@@ -446,6 +479,20 @@ describe("shields command flow", () => {
       }),
     );
     writeShieldsTimerAuthorizationProof(requireDist, sandboxName);
+    fs.writeFileSync(
+      path.join(stateDir, `shields-transition-${sandboxName}-${processToken}.json`),
+      JSON.stringify({
+        version: 1,
+        phase: "active",
+        ownerPid: process.pid,
+        ownerStartIdentity: currentProcessStartIdentity,
+        processToken,
+        sandboxName,
+        snapshotPath,
+        snapshotPolicy,
+        forwardPolicy,
+      }),
+    );
 
     let observedOwner: Record<string, unknown> | null = null;
     const harness = createHarness({
@@ -504,6 +551,9 @@ describe("shields command flow", () => {
       const snapshotPolicy = JSON.parse(
         fs.readFileSync(path.join(stateDir, `shields-${sandboxName}.json`), "utf8"),
       ).shieldsPolicySnapshot;
+      const forwardPolicy = writeBoundPolicySnapshot(
+        path.join(stateDir, "policy-forward-lifecycle-owner.yaml"),
+      );
       fs.writeFileSync(
         transitionPath,
         JSON.stringify({
@@ -515,6 +565,7 @@ describe("shields command flow", () => {
           sandboxName,
           snapshotPath: marker.snapshotPath,
           snapshotPolicy,
+          forwardPolicy,
         }),
       );
       vi.spyOn(timerControl, "isProcessAlive").mockReturnValue(true);
@@ -574,11 +625,13 @@ describe("shields command flow", () => {
     const sandboxName = "openclaw";
     const processToken = "a".repeat(32);
     const snapshotPath = path.join(stateDir, "policy-snapshot-race.yaml");
+    const forwardPath = path.join(stateDir, "policy-forward-race.yaml");
     const transitionPath = path.join(
       stateDir,
       `shields-transition-${sandboxName}-${processToken}.json`,
     );
     const snapshotPolicy = writeBoundPolicySnapshot(snapshotPath);
+    const forwardPolicy = writeBoundPolicySnapshot(forwardPath);
     fs.writeFileSync(
       path.join(stateDir, `shields-timer-${sandboxName}.json`),
       JSON.stringify({
@@ -624,6 +677,7 @@ describe("shields command flow", () => {
         sandboxName,
         snapshotPath,
         snapshotPolicy,
+        forwardPolicy,
       }),
       { mode: 0o600 },
     );
@@ -787,6 +841,13 @@ describe("shields command flow", () => {
       const statePath = path.join(stateDir, `shields-${sandboxName}.json`);
       fs.mkdirSync(stateDir, { recursive: true });
       const snapshotPolicy = writeBoundPolicySnapshot(snapshotPath);
+      writeActivePolicyTransition(
+        stateDir,
+        sandboxName,
+        processToken,
+        snapshotPath,
+        snapshotPolicy,
+      );
       fs.writeFileSync(
         statePath,
         JSON.stringify({
@@ -1008,7 +1069,7 @@ describe("shields command flow", () => {
     const snapshotPath = path.join(stateDir, "stale-policy-snapshot.yaml");
     const lockPath = path.join(stateDir, `shields-transition-lock-${sandboxName}.json`);
     fs.mkdirSync(stateDir, { recursive: true });
-    const snapshotPolicy = writeBoundPolicySnapshot(snapshotPath);
+    writeBoundPolicySnapshot(snapshotPath);
     fs.writeFileSync(
       path.join(stateDir, `shields-${sandboxName}.json`),
       JSON.stringify({ shieldsDown: false, updatedAt: new Date().toISOString() }),
@@ -1137,6 +1198,13 @@ describe("shields command flow", () => {
     const processToken = "6".repeat(32);
     fs.mkdirSync(stateDir, { recursive: true });
     const snapshotPolicy = writeBoundPolicySnapshot(snapshotPath);
+    writeActivePolicyTransition(
+      stateDir,
+      "openclaw",
+      processToken,
+      snapshotPath,
+      snapshotPolicy,
+    );
     fs.writeFileSync(
       path.join(stateDir, "shields-openclaw.json"),
       JSON.stringify({
@@ -1178,7 +1246,7 @@ describe("shields command flow", () => {
   });
 
   it.each(timerAuthorityFixtures)(
-    "restores lockdown when DOWN timer authority is %s",
+    "keeps lockdown recovery pending when DOWN timer authority is %s and no forward policy is bound",
     (markerState, writeMarker) => {
       const harness = createHarness({ confirmOpenClawInodeFlags: true });
       const stateDir = path.join(tmpDir, ".nemoclaw", "state");
@@ -1204,11 +1272,11 @@ describe("shields command flow", () => {
 
       expect(
         JSON.parse(fs.readFileSync(path.join(stateDir, "shields-openclaw.json"), "utf-8")),
-      ).toMatchObject({ shieldsDown: false, shieldsDownAt: null });
-      expect(fs.existsSync(markerPath)).toBe(false);
-      expect(harness.runSpy).toHaveBeenCalledWith(
+      ).toMatchObject({ shieldsDown: true });
+      expect(fs.existsSync(markerPath)).toBe(markerState === "malformed");
+      expect(harness.runSpy).not.toHaveBeenCalledWith(
         ["openshell", "policy", "set", "-g", "nemoclaw"],
-        expect.objectContaining({ ignoreError: true }),
+        expect.anything(),
       );
     },
   );
@@ -1224,6 +1292,13 @@ describe("shields command flow", () => {
     expect(startIdentity).toBeTypeOf("string");
     fs.mkdirSync(stateDir, { recursive: true });
     const snapshotPolicy = writeBoundPolicySnapshot(snapshotPath);
+    writeActivePolicyTransition(
+      stateDir,
+      "openclaw",
+      processToken,
+      snapshotPath,
+      snapshotPolicy,
+    );
     fs.writeFileSync(
       path.join(stateDir, "shields-openclaw.json"),
       JSON.stringify({

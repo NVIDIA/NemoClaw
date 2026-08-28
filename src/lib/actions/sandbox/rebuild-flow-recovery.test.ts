@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -8,6 +9,7 @@ import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-a
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
+  policyGet,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
 import { fingerprintSandboxLiveIdentity } from "../../onboard/sandbox-recreate-transaction";
 import {
@@ -226,6 +228,56 @@ describe("rebuildSandbox flow: recovery", () => {
     ).rejects.toThrow("Recreate failed");
     return interrupted.session.checkpoint;
   }
+
+  it("retains the exact policy handoff across a failed recreate and consumes it on retry", async () => {
+    const policyDocument = "version: 1\nnetwork_policies:\n  host_preserved: {}\n";
+    const interrupted = createRebuildFlowHarness({
+      captureOpenshell: sandboxGetProbes([SOURCE_PROBE, null]),
+      onboard: () => {
+        throw new Error("replacement create failed");
+      },
+    });
+    policyGet.getSandboxPolicy.mockReset().mockReturnValue({ yaml: policyDocument });
+
+    await expect(
+      interrupted.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Recreate failed");
+
+    const persistedManifest = JSON.parse(
+      fs.readFileSync(path.join(interrupted.backupPath, "rebuild-manifest.json"), "utf8"),
+    ) as { rebuildPolicyHandoff: { file: string } } & Record<string, unknown>;
+    const handoffPath = path.join(
+      interrupted.backupPath,
+      persistedManifest.rebuildPolicyHandoff.file,
+    );
+    expect(fs.readFileSync(handoffPath, "utf8")).toBe(policyDocument);
+    expect(fs.existsSync(path.join(interrupted.backupPath, ".nemoclaw-rebuild-recovery.json"))).toBe(
+      true,
+    );
+    let recreatedPolicy = "";
+    const restarted = createRebuildFlowHarness({
+      staleRecovery: true,
+      captureOpenshell: sandboxGetProbes([null]),
+      onboard: (_session, options) => {
+        recreatedPolicy = fs.readFileSync(String(options.rebuildPolicySourcePath), "utf8");
+      },
+    });
+    restarted.session.checkpoint = interrupted.session.checkpoint;
+    policyGet.getSandboxPolicy.mockReset().mockReturnValue({ yaml: "" });
+
+    await expect(
+      restarted.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest: persistedManifest as never,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(recreatedPolicy).toBe(policyDocument);
+    expect(fs.existsSync(handoffPath)).toBe(false);
+    expect(fs.existsSync(path.join(interrupted.backupPath, ".nemoclaw-rebuild-recovery.json"))).toBe(
+      false,
+    );
+  });
 
   function restartFromJournaledSource(probes: readonly (string | null)[], checkpoint: unknown) {
     const restarted = createRebuildFlowHarness({
@@ -528,7 +580,7 @@ describe("rebuildSandbox flow: recovery", () => {
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("OpenClaw config integrity verification failed after rebuild");
+    ).rejects.toThrow("State restore remained incomplete after rebuilding 'alpha'");
 
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(output).toContain("rebuilt but some post-restore steps were incomplete");

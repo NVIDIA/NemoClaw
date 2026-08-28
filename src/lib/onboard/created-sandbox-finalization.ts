@@ -585,7 +585,7 @@ type OnboardGatewayBinding = {
 };
 type OnboardPreparedPolicy = Pick<
   managedWorkloadOnboard.PreparedOnboardSandboxWorkloadLaunch,
-  "initialSandboxPolicy" | "policyTier" | "dashboardRemoteBindPrepared"
+  "initialSandboxPolicy" | "dashboardRemoteBindPrepared"
 > & {
   readonly compatibilityPolicyPath: string | null;
   readonly getVerifiedCreateBoundary: () => VerifiedSandboxCreateBoundary;

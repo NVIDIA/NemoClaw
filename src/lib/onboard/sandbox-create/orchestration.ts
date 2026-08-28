@@ -2016,7 +2016,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       );
     const {
       initialSandboxPolicy: materializedInitialSandboxPolicy,
-      policyTier: resolvedCreatePolicyTier,
       messagingProviders,
       gpuRoutePlan,
       compatibilityPolicyPath,
@@ -2522,7 +2521,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       {
         initialSandboxPolicy,
         compatibilityPolicyPath,
-        policyTier: resolvedCreatePolicyTier,
         getVerifiedCreateBoundary: requireVerifiedCreateBoundary,
         getVerifiedCreateRegistrationAuthority: () => ({
           reservation: requireCreateReservation(),

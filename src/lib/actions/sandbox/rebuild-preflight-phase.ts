@@ -10,7 +10,7 @@ import {
   type HermesCronRestorePlan,
   validateHermesCronRestoreBackup,
 } from "../../state/rebuild/hermes-cron-restore-backup";
-import type { RebuildManifest } from "../../state/sandbox";
+import { readRebuildPolicyHandoff, type RebuildManifest } from "../../state/sandbox";
 import { assertMcpDestroyNotPending } from "./mcp-bridge-state";
 import {
   preflightRebuildCredentials,
@@ -272,7 +272,16 @@ export async function runRebuildPreflightPhase(
       baseImagePreflight = preparedTarget.baseImagePreflight;
       preparedImage = preparedTarget.preparedImage;
 
-      const liveState = await resolveRebuildLiveState(sandboxName, expectedSandboxEntry, log, bail);
+      const liveState = await resolveRebuildLiveState(
+        sandboxName,
+        expectedSandboxEntry,
+        log,
+        bail,
+        {
+          authoritativeRecoveryPolicyAvailable:
+            recoveryManifest !== null && readRebuildPolicyHandoff(recoveryManifest) !== null,
+        },
+      );
       if (!liveState) return null;
       if (isDcodeRebuildAgent(rebuildAgent)) {
         const recoveryRecreate = liveState.staleRecovery || recoveryManifest !== null;

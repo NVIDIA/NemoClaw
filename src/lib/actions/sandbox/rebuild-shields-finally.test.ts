@@ -4,6 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const phaseMocks = vi.hoisted(() => ({
+  clearPolicyHandoff: vi.fn(),
   cleanupPolicySource: vi.fn(),
   runBackup: vi.fn(),
   runDestroy: vi.fn(),
@@ -11,11 +12,17 @@ const phaseMocks = vi.hoisted(() => ({
   runRecreate: vi.fn(),
   runShields: vi.fn(),
   openRecreateJournal: vi.fn(),
+  recordRecoveryBackup: vi.fn(),
 }));
 
 vi.mock("../../onboard/temp-files", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../onboard/temp-files")>()),
   cleanupTempDir: phaseMocks.cleanupPolicySource,
+}));
+
+vi.mock("../../state/sandbox", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/sandbox")>()),
+  clearRebuildPolicyHandoff: phaseMocks.clearPolicyHandoff,
 }));
 
 const gatewayAuthority = {
@@ -32,9 +39,11 @@ const gatewayAuthority = {
 vi.mock("./rebuild-recreate-journal", () => ({
   fingerprintRebuildRecreateTargetIntent: () => "intent-1",
   openRebuildRecreateJournal: phaseMocks.openRecreateJournal,
+  recordRebuildRecoveryBackup: phaseMocks.recordRecoveryBackup,
 }));
 
-vi.mock("./rebuild-backup-phase", () => ({
+vi.mock("./rebuild-backup-phase", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./rebuild-backup-phase")>()),
   runRebuildBackupPhase: phaseMocks.runBackup,
 }));
 
@@ -70,6 +79,7 @@ describe("rebuild shields relock guard", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    phaseMocks.clearPolicyHandoff.mockReturnValue(true);
     rebuildWindow.relocked = false;
     phaseMocks.runPreflight.mockResolvedValue({
       sandboxEntry: { name: "alpha" },
@@ -122,8 +132,12 @@ describe("rebuild shields relock guard", () => {
   });
 
   it("does not relock shields when sandbox deletion remains ambiguous (#7062)", async () => {
+    const backupManifest = {
+      backupPath: "/tmp/nemoclaw-rebuild-backup",
+      rebuildPolicyHandoff: { file: "policy.yaml", sha256: "a".repeat(64) },
+    };
     phaseMocks.runBackup.mockReturnValue({
-      backupManifest: null,
+      backupManifest,
       backupWasForceSkipped: false,
       policySourcePath,
     });
@@ -139,10 +153,9 @@ describe("rebuild shields relock guard", () => {
     );
 
     expect(phaseMocks.runDestroy).toHaveBeenCalledOnce();
-    expect(phaseMocks.cleanupPolicySource).toHaveBeenCalledExactlyOnceWith(
-      policySourcePath,
-      "nemoclaw-rebuild-policy",
-    );
+    expect(phaseMocks.recordRecoveryBackup).toHaveBeenCalledOnce();
+    expect(phaseMocks.clearPolicyHandoff).not.toHaveBeenCalled();
+    expect(phaseMocks.cleanupPolicySource).not.toHaveBeenCalled();
     expect(relockShields).not.toHaveBeenCalled();
     expect(rebuildWindow.relocked).toBe(false);
   });

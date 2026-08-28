@@ -6,7 +6,13 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { __test, type RebuildManifest } from "./sandbox.js";
+import {
+  __test,
+  clearRebuildPolicyHandoff,
+  readRebuildPolicyHandoff,
+  type RebuildManifest,
+  writeRebuildPolicyHandoff,
+} from "./sandbox.js";
 
 const tempDirs: string[] = [];
 
@@ -76,5 +82,30 @@ describe("rebuild manifest publication", () => {
         }),
       }),
     ).toThrow("write failed");
+  });
+});
+
+describe("bounded rebuild policy handoff", () => {
+  it("binds exact content, rejects tampering, and retires manifest authority before cleanup", () => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-handoff-"));
+    tempDirs.push(backupPath);
+    const published = manifest(backupPath);
+    __test.writeManifest(backupPath, published);
+
+    const policy = "version: 1\nnetwork_policies:\n  host_preserved: {}\n";
+    const withHandoff = writeRebuildPolicyHandoff(published, policy);
+    const handoffPath = path.join(backupPath, withHandoff.rebuildPolicyHandoff!.file);
+    expect(readRebuildPolicyHandoff(withHandoff)).toBe(policy);
+    expect(fs.statSync(handoffPath).mode & 0o777).toBe(0o600);
+
+    fs.writeFileSync(handoffPath, `${policy}  raced: {}\n`);
+    expect(readRebuildPolicyHandoff(withHandoff)).toBeNull();
+    fs.writeFileSync(handoffPath, policy);
+
+    expect(clearRebuildPolicyHandoff(withHandoff)).toBe(true);
+    expect(fs.existsSync(handoffPath)).toBe(false);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(backupPath, "rebuild-manifest.json"), "utf8")),
+    ).not.toHaveProperty("rebuildPolicyHandoff");
   });
 });
