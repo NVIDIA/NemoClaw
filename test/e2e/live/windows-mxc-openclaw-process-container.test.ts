@@ -16,7 +16,7 @@ function expectQualificationReceipt(
   expectedConfiguration: WindowsMxcOpenClawQualificationReceipt["configuration"],
   expectedCleanup: WindowsMxcOpenClawQualificationReceipt["cleanup"],
 ): void {
-  expect(receipt.schemaVersion).toBe(3);
+  expect(receipt.schemaVersion).toBe(4);
   expect(receipt.verdict).toBe("pass");
   expect(receipt.configuration).toEqual(expectedConfiguration);
   expect(receipt.checks.forwardAuthenticatedHealth).toBe(true);

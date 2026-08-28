@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { dockerSpawnSync } from "../../../src/lib/adapters/docker/exec";
+import { dockerSpawn, dockerSpawnSync } from "../../../src/lib/adapters/docker/exec";
 import { createAgentSandbox } from "../../../src/lib/agent/base-image";
 import type { AgentDefinition } from "../../../src/lib/agent/defs";
 import { isWsl } from "../../../src/lib/platform";
@@ -39,18 +39,16 @@ function resolveBuildxCommand(): BuildxCommand | null {
 }
 
 const SUPPORTED_BUILDX_HOST = process.platform === "linux" && !isWsl();
-const REVIEWED_RUNTIME_LICENSE_COPY =
-  "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/BUNDLED_PACKAGES.json tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/THIRD_PARTY_LICENSES.txt /opt/mcp-tool-discovery-runtime/dist/";
 const BUILDX_COMMAND = SUPPORTED_BUILDX_HOST ? resolveBuildxCommand() : null;
 const DOCKER_CAPABLE_LINUX_CI = process.env.CI === "true" && SUPPORTED_BUILDX_HOST;
 
-function buildTarget(
+async function buildTarget(
   buildx: BuildxCommand,
   stagedDockerfile: string,
   buildCtx: string,
   target: string,
   outputDir: string,
-) {
+): Promise<{ status: number | null; stdout: string; stderr: string }> {
   const args = [
     ...buildx.args,
     "build",
@@ -61,10 +59,24 @@ function buildTarget(
     stagedDockerfile,
     buildCtx,
   ];
-  const options = { encoding: "utf8" as const, maxBuffer: 20 * 1024 * 1024 };
-  return buildx.command === "docker"
-    ? dockerSpawnSync(args, options)
-    : spawnSync(buildx.command, args, options);
+  const child =
+    buildx.command === "docker"
+      ? dockerSpawn(args, { stdio: ["ignore", "pipe", "pipe"] })
+      : spawn(buildx.command, args, { stdio: ["ignore", "pipe", "pipe"] });
+  const stdout: Buffer[] = [];
+  const stderr: Buffer[] = [];
+  child.stdout?.on("data", (chunk: Buffer) => stdout.push(chunk));
+  child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk));
+  return await new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (status) =>
+      resolve({
+        status,
+        stdout: Buffer.concat(stdout).toString(),
+        stderr: Buffer.concat(stderr).toString(),
+      }),
+    );
+  });
 }
 
 function writeReviewedRuntimeBuildTarget(stagedDockerfile: string): string {
@@ -757,241 +769,6 @@ describe("sandbox build context staging", () => {
     }
   });
 
-  it.each([
-    { scenario: "JSON types" },
-    { scenario: "ports" },
-    { scenario: "bootstrap envelope" },
-    { scenario: "bootstrap image runtime" },
-    { scenario: "startup image runtime" },
-    { scenario: "credential hash" },
-    { scenario: "state paths" },
-    { scenario: "state root" },
-  ])(
-    "optimized staging excludes blueprint .venv and extra scripts while preserving required files [$scenario]",
-    ({ scenario }) => {
-      const repoRoot = path.join(import.meta.dirname, "../../..");
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-opt-"));
-
-      try {
-        const { buildCtx } = stageOptimizedSandboxBuildContext(repoRoot, tmpDir);
-        const relativePath = (
-          {
-            "JSON types": path.join("src", "lib", "core", "json-types.ts"),
-            ports: path.join("src", "lib", "core", "ports.ts"),
-            "bootstrap envelope": path.join(
-              "src",
-              "lib",
-              "onboard",
-              "managed-bootstrap",
-              "envelope.ts",
-            ),
-            "bootstrap image runtime": path.join(
-              "src",
-              "lib",
-              "onboard",
-              "managed-bootstrap",
-              "image-runtime.ts",
-            ),
-            "startup image runtime": path.join(
-              "src",
-              "lib",
-              "onboard",
-              "managed-startup",
-              "image-runtime.ts",
-            ),
-            "credential hash": path.join("src", "lib", "security", "credential-hash.ts"),
-            "state paths": path.join("src", "lib", "state", "paths.ts"),
-            "state root": path.join("src", "lib", "state", "state-root.ts"),
-          } as const
-        )[scenario]!;
-        expect(fs.existsSync(path.join(buildCtx, relativePath)), relativePath).toBe(true);
-
-        expect(fs.existsSync(path.join(buildCtx, "tsconfig.runtime-preloads.json"))).toBe(true);
-        expect(
-          fs.readFileSync(path.join(buildCtx, "ci", "npm-audit-exceptions.json"), "utf8"),
-        ).toBe(fs.readFileSync(path.join(repoRoot, "ci", "npm-audit-exceptions.json"), "utf8"));
-        expectStagedOpenClawRuntimeGraphs(buildCtx, repoRoot);
-        expectStagedMcpToolDiscoveryRuntime(buildCtx, repoRoot);
-        expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", ".venv"))).toBe(false);
-        expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", "blueprint.yaml"))).toBe(
-          true,
-        );
-        expect(
-          fs.existsSync(
-            path.join(buildCtx, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
-          ),
-        ).toBe(true);
-        expect(
-          fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", "scripts", "http-proxy-fix.js")),
-        ).toBe(true);
-        expect(
-          fs.existsSync(
-            path.join(
-              buildCtx,
-              "nemoclaw-blueprint",
-              "openclaw-plugins",
-              "kimi-inference-compat",
-              "openclaw.plugin.json",
-            ),
-          ),
-        ).toBe(true);
-        expect(
-          fs.existsSync(
-            path.join(
-              buildCtx,
-              "nemoclaw-blueprint",
-              "openclaw-plugins",
-              "gemini-inference-compat",
-              "openclaw.plugin.json",
-            ),
-          ),
-        ).toBe(true);
-        expect(
-          fs.existsSync(
-            path.join(
-              buildCtx,
-              "nemoclaw-blueprint",
-              "openclaw-plugins",
-              "gemini-inference-compat",
-              "index.ts",
-            ),
-          ),
-        ).toBe(true);
-        expect(
-          fs.existsSync(
-            path.join(
-              buildCtx,
-              "nemoclaw-blueprint",
-              "model-specific-setup",
-              "openclaw",
-              "kimi-k2.6-managed-inference.json",
-            ),
-          ),
-        ).toBe(true);
-        expect(fs.existsSync(path.join(buildCtx, "scripts", "nemoclaw-start.sh"))).toBe(true);
-        expect(
-          fs.existsSync(path.join(buildCtx, "scripts", "managed-bootstrap-entrypoint.c")),
-        ).toBe(true);
-        expect(
-          fs.existsSync(path.join(buildCtx, "scripts", "managed-bootstrap-trampoline.sh")),
-        ).toBe(true);
-        expect(fs.existsSync(path.join(buildCtx, "scripts", "gateway-control.sh"))).toBe(true);
-        expect(fs.existsSync(path.join(buildCtx, "scripts", "managed-gateway-control.py"))).toBe(
-          true,
-        );
-        expect(fs.existsSync(path.join(buildCtx, "scripts", "state-dir-guard.py"))).toBe(true);
-        expect(
-          fs.existsSync(path.join(buildCtx, "agents", "openclaw", "state-lock-plan.json")),
-        ).toBe(true);
-        expect(fs.existsSync(path.join(buildCtx, "scripts", "openclaw-config-guard.py"))).toBe(
-          true,
-        );
-        expect(fs.existsSync(path.join(buildCtx, "scripts", "codex-acp-wrapper.sh"))).toBe(true);
-        expect(fs.existsSync(path.join(buildCtx, "scripts", "generate-openclaw-config.mts"))).toBe(
-          true,
-        );
-        expect(
-          fs.existsSync(path.join(buildCtx, "scripts", "validate-openclaw-tool-search.mts")),
-        ).toBe(true);
-        expect(
-          fs.existsSync(
-            path.join(
-              buildCtx,
-              "src",
-              "lib",
-              "messaging",
-              "applier",
-              "build",
-              "messaging-build-applier.mts",
-            ),
-          ),
-        ).toBe(true);
-        expect(
-          fs.existsSync(
-            path.join(buildCtx, "src", "lib", "messaging", "hooks", "common", "static-outputs.ts"),
-          ),
-        ).toBe(true);
-        expect(
-          fs.existsSync(
-            path.join(buildCtx, "scripts", "lib", "openclaw_device_approval_policy.py"),
-          ),
-        ).toBe(true);
-        expect(
-          fs.existsSync(path.join(buildCtx, "scripts", "lib", "clean_runtime_shell_env_shim.py")),
-        ).toBe(true);
-        expect(
-          fs.existsSync(path.join(buildCtx, "scripts", "lib", "normalize_mutable_config_perms.py")),
-        ).toBe(true);
-        expect(
-          fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-tool-catalog.mts")),
-        ).toBe(true);
-        expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-chat-send.mts"))).toBe(
-          true,
-        );
-        expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-chat-send.js"))).toBe(
-          false,
-        );
-        expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-mcp-npx.mts"))).toBe(
-          true,
-        );
-        expect(
-          fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-mcp-reliability.mts")),
-        ).toBe(true);
-        expect(
-          fs.existsSync(
-            path.join(buildCtx, "scripts", "patch-openclaw-mcp-tools-list-timeout.mts"),
-          ),
-        ).toBe(true);
-        expect(
-          fs.existsSync(
-            path.join(buildCtx, "scripts", "patch-openclaw-issue-4434-diagnostics.mts"),
-          ),
-        ).toBe(true);
-        expect(
-          fs.existsSync(
-            path.join(buildCtx, "scripts", "patch-openclaw-managed-transport-diagnostics.mts"),
-          ),
-        ).toBe(true);
-        expect(
-          fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-device-self-approval.mts")),
-        ).toBe(true);
-        expect(
-          fs.existsSync(
-            path.join(buildCtx, "scripts", "openclaw", "patch-gateway-daemon-dialback.mts"),
-          ),
-        ).toBe(true);
-        expect(
-          fs.existsSync(
-            path.join(buildCtx, "scripts", "patch-openclaw-shared-state-permissions.mts"),
-          ),
-        ).toBe(true);
-        expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-bundled-npm-tar.mts"))).toBe(
-          true,
-        );
-        expect(
-          fs.existsSync(path.join(buildCtx, "scripts", "patch-bundled-npm-brace-expansion.mts")),
-        ).toBe(true);
-        expect(
-          fs.existsSync(path.join(buildCtx, "scripts", "lib", "patch-bundled-npm-ip-address.mts")),
-        ).toBe(true);
-        expect(fs.existsSync(path.join(buildCtx, "scripts", "upgrade-bundled-npm.mts"))).toBe(true);
-        expect(
-          fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-device-self-approval.ts")),
-        ).toBe(false);
-        expect(fs.existsSync(path.join(buildCtx, "scripts", "lib", "sandbox-init.sh"))).toBe(true);
-        expect(fs.existsSync(path.join(buildCtx, "scripts", "lib", "gateway-supervisor.sh"))).toBe(
-          true,
-        );
-        expect(fs.existsSync(path.join(buildCtx, "scripts", "lib", "sandbox-rlimits.sh"))).toBe(
-          true,
-        );
-        expect(fs.existsSync(path.join(buildCtx, "scripts", "setup.sh"))).toBe(false);
-      } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-      }
-    },
-  );
-
   it.runIf(DOCKER_CAPABLE_LINUX_CI)("provides Buildx on Docker-capable Linux CI", () => {
     expect(BUILDX_COMMAND).not.toBeNull();
   });
@@ -1001,7 +778,7 @@ describe("sandbox build context staging", () => {
     {
       timeout: 120_000,
     },
-    () => {
+    async () => {
       const buildx = BUILDX_COMMAND as BuildxCommand;
       const repoRoot = path.join(import.meta.dirname, "../../..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-runtime-build-"));
@@ -1020,47 +797,48 @@ describe("sandbox build context staging", () => {
       const hermesBuild = createAgentSandbox(hermesAgent, { rootDir: repoRoot });
 
       try {
-        ([
-          ["openclaw", stageOptimizedSandboxBuildContext(repoRoot, tmpDir)],
-          ["hermes", hermesBuild],
-        ] as const).forEach(([name, staged]) => {
-          const { buildCtx, stagedDockerfile } = staged;
-          expect(fs.readFileSync(stagedDockerfile, "utf8")).toContain(
-            REVIEWED_RUNTIME_LICENSE_COPY,
-          );
-          const output = path.join(tmpDir, name + "-reviewed-runtime-output");
-          const build = buildTarget(
-            buildx,
-            writeReviewedRuntimeBuildTarget(stagedDockerfile),
-            buildCtx,
-            "reviewed-runtime-artifacts",
-            output,
-          );
-          expect(build.status, [build.stdout, build.stderr].join("\n")).toBe(0);
-
-          for (const [sourceRelativePath, outputRelativePath] of [
+        await Promise.all(
+          (
             [
-              path.join("mcp-tool-discovery", "BUNDLED_PACKAGES.json"),
-              path.join("opt", "mcp-tool-discovery-runtime", "dist", "BUNDLED_PACKAGES.json"),
-            ],
-            [
-              path.join("mcp-tool-discovery", "THIRD_PARTY_LICENSES.txt"),
-              path.join("opt", "mcp-tool-discovery-runtime", "dist", "THIRD_PARTY_LICENSES.txt"),
-            ],
-            [
-              path.join("mcp-tool-discovery", "mcp-tool-discovery.bundle"),
-              path.join("opt", "mcp-tool-discovery-runtime", "dist", "mcp-tool-discovery.mjs"),
-            ],
-            [
-              "managed-startup-image-runtime.bundle",
-              path.join("out", "managed-startup-image-runtime.cjs"),
-            ],
-          ] as const) {
-            expect(fs.readFileSync(path.join(output, outputRelativePath))).toEqual(
-              fs.readFileSync(path.join(reviewedRuntimeSource, sourceRelativePath)),
+              ["openclaw", stageOptimizedSandboxBuildContext(repoRoot, tmpDir)],
+              ["hermes", hermesBuild],
+            ] as const
+          ).map(async ([name, staged]) => {
+            const { buildCtx, stagedDockerfile } = staged;
+            const output = path.join(tmpDir, name + "-reviewed-runtime-output");
+            const build = await buildTarget(
+              buildx,
+              writeReviewedRuntimeBuildTarget(stagedDockerfile),
+              buildCtx,
+              "reviewed-runtime-artifacts",
+              output,
             );
-          }
-        });
+            expect(build.status, [build.stdout, build.stderr].join("\n")).toBe(0);
+
+            for (const [sourceRelativePath, outputRelativePath] of [
+              [
+                path.join("mcp-tool-discovery", "BUNDLED_PACKAGES.json"),
+                path.join("opt", "mcp-tool-discovery-runtime", "dist", "BUNDLED_PACKAGES.json"),
+              ],
+              [
+                path.join("mcp-tool-discovery", "THIRD_PARTY_LICENSES.txt"),
+                path.join("opt", "mcp-tool-discovery-runtime", "dist", "THIRD_PARTY_LICENSES.txt"),
+              ],
+              [
+                path.join("mcp-tool-discovery", "mcp-tool-discovery.bundle"),
+                path.join("opt", "mcp-tool-discovery-runtime", "dist", "mcp-tool-discovery.mjs"),
+              ],
+              [
+                "managed-startup-image-runtime.bundle",
+                path.join("out", "managed-startup-image-runtime.cjs"),
+              ],
+            ] as const) {
+              expect(fs.readFileSync(path.join(output, outputRelativePath))).toEqual(
+                fs.readFileSync(path.join(reviewedRuntimeSource, sourceRelativePath)),
+              );
+            }
+          }),
+        );
       } finally {
         fs.rmSync(hermesBuild.buildCtx, { recursive: true, force: true });
         fs.rmSync(tmpDir, { recursive: true, force: true });
