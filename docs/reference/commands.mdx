@@ -1422,6 +1422,16 @@ If Ollama does not become healthy within 30 seconds, the command identifies the 
 The command does not take over a system service or an unrelated user-managed Ollama daemon.
 </AgentOnly>
 
+<AgentOnly variant="hermes">
+For an active Portable Hermes lifecycle, only `connect --probe-only` can resume the exact published receipt-owned Ollama runtime when that runtime is stopped.
+It revalidates the lifecycle receipt, sandbox registry, provider, inference route, and private publication authority before it resumes the runtime.
+It verifies an already-running runtime without starting another one.
+After authenticated Hermes health and inference verification succeed, it restores any missing recorded host forwards.
+Interactive `connect` and `launch` verify the recorded inference route but do not resume the runtime or change its state.
+If probe-only recovery fails after it starts the runtime, NemoClaw restores the recorded stopped state or exits nonzero when it cannot prove that restoration.
+Run `nemohermes <sandbox-name> doctor` to inspect Portable lifecycle authority before you retry.
+</AgentOnly>
+
 Before reading or changing the live OpenShell gateway inference route, `connect` verifies the shared provider and sandbox metadata.
 When the live route differs and the metadata is compatible, `connect` warns and re-points the route to the target sandbox's recorded provider and model.
 Refer to [Use Shared Gateway Routes](../inference/manage-inference/use-shared-gateway-routes) for provider-global identity, route drift, and hard-error recovery.
@@ -1449,17 +1459,6 @@ It rechecks the sandbox on its recorded OpenShell gateway after the readiness wa
 If an old runtime epoch might exist and cannot be durably rotated, the command exits nonzero before complete preflight or recovery and gives redacted repair guidance.
 A securely absent runtime authority and receipt let ordinary `launch` run the complete preflight without optimization if new authority creation fails, but on Linux `connect --probe-only` still exits nonzero because it could not publish launch-readiness evidence.
 A runtime failure and, on Linux, a failure to publish evidence for an otherwise healthy runtime also exit nonzero with different diagnostics.
-
-<AgentOnly variant="hermes">
-
-For an active Portable Hermes receipt, `connect --probe-only` can resume the exact published Ollama runtime when it is stopped.
-It verifies an already-running runtime without starting it.
-The recovery uses the active receipt, registry row, published runtime receipt, and committed gateway state.
-It does not select another runtime or provider, or change the registry row or gateway provider generation.
-If recovery or the final route verification fails after a start, NemoClaw restores the exact runtime to its prior stopped state before it reports the failure.
-Interactive `connect` and `launch` verify the published runtime but do not resume it.
-
-</AgentOnly>
 
 Infrastructure must run the command as the same final numeric user that later runs `launch`.
 Run it only after the final durable home and state volume is mounted and after policy and network provisioning is complete.
