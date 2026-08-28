@@ -14,6 +14,34 @@ type LegacySession = Omit<ReturnType<typeof createSession>, "machine"> & {
   machine?: unknown;
 };
 
+const VERIFIED_RECOVERY_RECEIPT = {
+  schemaVersion: 1 as const,
+  origin: "sandbox-create" as const,
+  gatewayName: "nemoclaw",
+  gatewayPort: 8080,
+  sandboxName: "retained-sb",
+  lifecycleGeneration: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  sandboxIdentityFingerprint: "a".repeat(64),
+  policyHash: "sha256:effective",
+  policyVersion: 4,
+};
+
+const VERIFIED_RECOVERY = {
+  reason: "retained_after_sandbox_creation_failure" as const,
+  sandboxName: VERIFIED_RECOVERY_RECEIPT.sandboxName,
+  sandboxIdentityFingerprint: VERIFIED_RECOVERY_RECEIPT.sandboxIdentityFingerprint,
+  gatewayName: VERIFIED_RECOVERY_RECEIPT.gatewayName,
+  gatewayPort: VERIFIED_RECOVERY_RECEIPT.gatewayPort,
+  lifecycleGeneration: VERIFIED_RECOVERY_RECEIPT.lifecycleGeneration,
+  verifiedEffectivePolicyIdentity: {
+    hash: VERIFIED_RECOVERY_RECEIPT.policyHash,
+    activeVersion: VERIFIED_RECOVERY_RECEIPT.policyVersion,
+  },
+  createAttemptNonce: "c".repeat(62),
+  policyCreationReceipt: VERIFIED_RECOVERY_RECEIPT,
+  recordedAt: "2026-08-27T00:00:00.000Z",
+};
+
 function requireNormalizedSession(legacy: LegacySession) {
   const normalized = normalizeSession(legacy as Parameters<typeof normalizeSession>[0]);
   expect(normalized).not.toBeNull();
@@ -26,6 +54,12 @@ describe("onboard session normalization", () => {
       reason: "cancelled_after_sandbox_creation" as const,
       sandboxName: "retained-sb",
       sandboxIdentityFingerprint: "a".repeat(64),
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleGeneration: "generation-1",
+      verifiedEffectivePolicyIdentity: null,
+      createAttemptNonce: "c".repeat(62),
+      policyCreationReceipt: null,
       recordedAt: "2026-08-27T00:00:00.000Z",
     };
     const normalized = normalizeSession({
@@ -42,6 +76,57 @@ describe("onboard session normalization", () => {
       cancellationRecovery,
     });
     expect(summarizeForDebug(normalized)?.cancellationRecovery).toEqual(cancellationRecovery);
+  });
+
+  it("fails closed when saved recovery authority is incomplete (#9833)", () => {
+    const incompleteRecovery = {
+      reason: "retained_after_sandbox_creation_failure" as const,
+      sandboxName: "retained-sb",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      recordedAt: "2026-08-27T00:00:00.000Z",
+    };
+
+    expect(() =>
+      normalizeSession({
+        ...createSession({ sandboxName: "retained-sb" }),
+        resumable: false,
+        status: "recovery_required",
+        cancellationRecovery: incompleteRecovery,
+      } as unknown as Parameters<typeof normalizeSession>[0]),
+    ).toThrow(/saved recovery authority is incomplete/u);
+  });
+
+  it("preserves a policy receipt bound to the saved recovery authority (#9833)", () => {
+    expect(
+      normalizeSession({
+        ...createSession({ sandboxName: VERIFIED_RECOVERY.sandboxName }),
+        resumable: false,
+        status: "recovery_required",
+        cancellationRecovery: VERIFIED_RECOVERY,
+      })?.cancellationRecovery?.policyCreationReceipt,
+    ).toEqual(VERIFIED_RECOVERY_RECEIPT);
+  });
+
+  it.each([
+    ["gateway name", { gatewayName: "replacement-gateway" }],
+    ["gateway port", { gatewayPort: 8081 }],
+    ["sandbox name", { sandboxName: "replacement-sandbox" }],
+    ["lifecycle generation", { lifecycleGeneration: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" }],
+    ["identity fingerprint", { sandboxIdentityFingerprint: "b".repeat(64) }],
+    ["policy hash", { policyHash: "sha256:replacement" }],
+    ["policy version", { policyVersion: 5 }],
+  ])("fails closed when the recovery receipt has a mismatched %s (#9833)", (_field, mismatch) => {
+    expect(() =>
+      normalizeSession({
+        ...createSession({ sandboxName: VERIFIED_RECOVERY.sandboxName }),
+        resumable: false,
+        status: "recovery_required",
+        cancellationRecovery: {
+          ...VERIFIED_RECOVERY,
+          policyCreationReceipt: { ...VERIFIED_RECOVERY_RECEIPT, ...mismatch },
+        },
+      }),
+    ).toThrow(/saved recovery authority is incomplete/u);
   });
 
   it("keeps APF create intent and defaults legacy sessions to false (#9833)", () => {

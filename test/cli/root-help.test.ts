@@ -86,7 +86,9 @@ describe("root help", () => {
     renderRootHelp();
 
     const output = log.mock.calls.map(([line]) => String(line)).join("\n");
-    expect(output).toMatch(/Uninstall flags:[\s\S]*--destroy-user-data/);
+    expect(output).toMatch(
+      /--destroy-user-data[^\n]*remove managed CLI shims only when no sibling gateway is confirmed/,
+    );
     expect(output).not.toMatch(/--keep-user-data/);
     expect(output).not.toMatch(/--keep-backups/);
   });
