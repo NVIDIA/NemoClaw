@@ -106,6 +106,23 @@ describe("built-in messaging channel metadata", () => {
     ).toEqual([]);
   });
 
+  it("ignores stale runtime aliases for unsupported agents (#10079)", () => {
+    const wechatManifest = listBuiltInMessagingChannelManifests().find(
+      (manifest) => manifest.id === "wechat",
+    );
+    expect(wechatManifest).toBeDefined();
+    const staleManifest: ChannelManifest = {
+      ...wechatManifest!,
+      supportedAgents: ["openclaw"],
+    };
+
+    expect(
+      listMessagingCredentialEnvAssignments({ manifests: [staleManifest] }).filter(
+        ({ agent }) => agent === "hermes",
+      ),
+    ).toEqual([]);
+  });
+
   it("resolves config env keys from manifests and compatibility aliases from metadata", () => {
     expect(listMessagingConfigEnvKeys()).toEqual([
       "TELEGRAM_ALLOWED_IDS",

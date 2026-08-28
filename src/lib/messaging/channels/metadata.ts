@@ -135,6 +135,7 @@ export function listMessagingCredentialEnvAssignments(
     });
     const runtimeAssignments = (["openclaw", "hermes"] as const).flatMap((agent) => {
       if (options.agent && agent !== options.agent) return [];
+      if (!manifest.supportedAgents.includes(agent)) return [];
       return (manifest.runtime?.[agent]?.envAliases ?? []).flatMap((alias) => {
         if (!alias.targetEnvKey) return [];
         const credential = manifest.credentials.find(
