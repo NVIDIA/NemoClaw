@@ -11,12 +11,8 @@ import {
 import type {
   RuntimeProviderBundle,
   RuntimeProviderBundleRegistry,
+  RuntimeProviderContainerEngineOperation,
 } from "../runtime-provider/contract";
-import {
-  requireRuntimeProviderBundle,
-  runtimeProviderContainerEngineIdentity,
-  runtimeProviderSupportsContainerEngineOperation,
-} from "../runtime-provider/registry";
 import {
   prepareManagedStateVolumes,
   removeManagedStateVolumes,
@@ -72,20 +68,38 @@ function hermesStateRoots(sandboxName: string) {
   });
 }
 
+function selectedRuntimeProvider(
+  runtimeProviderId: string | null | undefined,
+  providers?: RuntimeProviderBundleRegistry,
+  runtimeProvider?: RuntimeProviderBundle,
+): RuntimeProviderBundle | undefined {
+  if (runtimeProvider) return runtimeProvider;
+  const providerId = runtimeProviderId?.trim().toLowerCase();
+  return providerId && providers ? providers[providerId] : undefined;
+}
+
+function supportsContainerEngineOperation(
+  provider: RuntimeProviderBundle | undefined,
+  operation: RuntimeProviderContainerEngineOperation,
+): boolean {
+  return (
+    provider?.containerEngine.supported === true &&
+    provider.containerEngine.identities.some((identity) => identity.operation === operation)
+  );
+}
+
 export function requiresManagedHermesStateVolume(
   context: ManagedHermesStateVolumeContext,
   providers?: RuntimeProviderBundleRegistry,
   runtimeProvider?: RuntimeProviderBundle,
 ): boolean {
-  const hasLifecycleAuthority = runtimeProvider
-    ? runtimeProviderContainerEngineIdentity(runtimeProvider, "sandbox-lifecycle") !== null
-    : providers
-      ? runtimeProviderSupportsContainerEngineOperation(
-          context.runtimeProviderId,
-          providers,
+  const hasLifecycleAuthority =
+    !providers && !runtimeProvider
+      ? true
+      : supportsContainerEngineOperation(
+          selectedRuntimeProvider(context.runtimeProviderId, providers, runtimeProvider),
           "sandbox-lifecycle",
-        )
-      : true;
+        );
   return (
     context.agentName === "hermes" &&
     hasLifecycleAuthority &&
@@ -98,10 +112,7 @@ function genericDeps(
   runtimeProviderId: string | null | undefined,
 ): ManagedStateVolumeDeps {
   const runtimeProvider =
-    deps.runtimeProvider ??
-    (deps.runtimeProviders
-      ? requireRuntimeProviderBundle(runtimeProviderId, deps.runtimeProviders)
-      : undefined);
+    deps.runtimeProvider ?? selectedRuntimeProvider(runtimeProviderId, deps.runtimeProviders);
   return {
     ...(deps.runDocker && !runtimeProvider ? { runContainerEngine: deps.runDocker } : {}),
     ...(runtimeProvider ? { runtimeProvider } : {}),
