@@ -58,20 +58,36 @@ export function createGpuFlowInput(): SandboxGpuCreateFlowInput {
   };
 }
 
-export function createGpuFlowDeps(): SandboxGpuCreateFlowDeps {
-  const runCaptureOpenshell = vi.fn(
-    (_args: string[], _options?: Record<string, unknown>) => "alpha Ready",
-  );
+export function createGpuFlowDeps(
+  expectedGatewayName = "nemoclaw",
+  requireTargetedSandboxProbes = false,
+): SandboxGpuCreateFlowDeps {
+  const assertSandboxProbeTarget = (args: readonly string[]) => {
+    if (!requireTargetedSandboxProbes) return;
+    if (args[0] !== "sandbox" || !["exec", "get", "list"].includes(args[1] ?? "")) return;
+    const gatewayFlag = args.indexOf("-g");
+    expect(gatewayFlag).toBeGreaterThan(1);
+    expect(args[gatewayFlag + 1]).toBe(expectedGatewayName);
+  };
+  const runCaptureOpenshell = vi.fn((args: string[], _options?: Record<string, unknown>) => {
+    assertSandboxProbeTarget(args);
+    if (args[0] === "sandbox" && args[1] === "get") {
+      return "Name: alpha\nId: alpha-sandbox-id\nState: Ready\n";
+    }
+    if (args[0] === "sandbox" && args[1] === "list") return "alpha Ready";
+    return "";
+  });
   return {
-    runOpenshell: vi.fn((args: string[]) =>
-      args[0] === "sandbox" && args[1] === "get"
+    runOpenshell: vi.fn((args: string[]) => {
+      assertSandboxProbeTarget(args);
+      return args[0] === "sandbox" && args[1] === "get"
         ? {
             status: 0,
             stdout: "Name: alpha\nId: alpha-sandbox-id\nState: Ready\n",
             stderr: "",
           }
-        : { status: 0, stdout: "", stderr: "" },
-    ),
+        : { status: 0, stdout: "", stderr: "" };
+    }),
     runCaptureOpenshell,
     sandboxObserver: createCliOpenShellSandboxObserver({
       capture: (args, options) => {

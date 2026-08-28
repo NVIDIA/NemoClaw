@@ -146,6 +146,10 @@ export async function observeOpenShellSandbox(
     : { ok: true, value: { state: "missing" } };
 }
 
+function isTransientObservationError(error: OpenShellSandboxError): boolean {
+  return error.kind === "timeout" || (error.kind === "transport" && error.reason === "unreachable");
+}
+
 async function pollSandboxReady(
   options: SandboxReadyWaitOptions & {
     trace?: (event: string, attributes: Record<string, unknown>) => void;
@@ -175,10 +179,20 @@ async function pollSandboxReady(
     return { ready: false, reason: "timeout", error: null };
   }
   let result: SandboxReadyWaitResult | null = null;
+  const transient = { error: null as OpenShellSandboxError | null };
   await waitUntilAsync(async () => {
     attempt += 1;
     const observation = await observeOpenShellSandbox(observer, target, sandboxName);
     if (!observation.ok) {
+      if (isTransientObservationError(observation.error)) {
+        transient.error = observation.error;
+        options.trace?.("observation_retry", {
+          attempt,
+          error_kind: observation.error.kind,
+          error_reason: "reason" in observation.error ? observation.error.reason : null,
+        });
+        return false;
+      }
       result = { ready: false, reason: "observation_failed", error: observation.error };
       options.trace?.("observation_failed", {
         attempt,
@@ -187,6 +201,7 @@ async function pollSandboxReady(
       });
       return true;
     }
+    transient.error = null;
     if (observation.value.state === "present" && observation.value.sandbox.readiness === "ready") {
       options.trace?.("ready", { attempt, source: "sandbox_list" });
       result = { ready: true, reason: "ready", error: null };
@@ -200,6 +215,15 @@ async function pollSandboxReady(
     }
     const fallback = await fallbackReadinessProbe?.({ target, sandboxName });
     if (fallback && !fallback.ok) {
+      if (isTransientObservationError(fallback.error)) {
+        transient.error = fallback.error;
+        options.trace?.("observation_retry", {
+          attempt,
+          error_kind: fallback.error.kind,
+          error_reason: "reason" in fallback.error ? fallback.error.reason : null,
+        });
+        return false;
+      }
       result = { ready: false, reason: "observation_failed", error: fallback.error };
       options.trace?.("observation_failed", {
         attempt,
@@ -216,6 +240,15 @@ async function pollSandboxReady(
     return false;
   }, waitOptions);
   if (result) return result;
+  if (transient.error) {
+    options.trace?.("observation_failed", {
+      attempts: attempt,
+      error_kind: transient.error.kind,
+      error_reason: "reason" in transient.error ? transient.error.reason : null,
+      note: "readiness_deadline_exhausted",
+    });
+    return { ready: false, reason: "observation_failed", error: transient.error };
+  }
   options.trace?.("not_ready", { attempts: attempt, deadline_ms: budgetMs });
   return { ready: false, reason: "timeout", error: null };
 }
@@ -351,12 +384,25 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
       let consecutiveReadyPolls = 0;
       let consecutiveFailurePolls = 0;
       let lastFailurePhase: string | null = null;
+      const transient = { error: null as OpenShellSandboxError | null };
       let attempt = 0;
       let result: CreatedSandboxReadinessResult | null = null;
       await waitUntilAsync(async () => {
         attempt += 1;
         const observation = await observeOpenShellSandbox(observer, target, sandboxName);
         if (!observation.ok) {
+          if (isTransientObservationError(observation.error)) {
+            consecutiveReadyPolls = 0;
+            consecutiveFailurePolls = 0;
+            lastFailurePhase = null;
+            transient.error = observation.error;
+            addTraceEvent("observation_retry", {
+              attempt,
+              error_kind: observation.error.kind,
+              error_reason: "reason" in observation.error ? observation.error.reason : null,
+            });
+            return false;
+          }
           addTraceEvent("observation_failed", {
             attempt,
             error_kind: observation.error.kind,
@@ -370,6 +416,7 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
           };
           return true;
         }
+        transient.error = null;
         const sandbox = observation.value.state === "present" ? observation.value.sandbox : null;
         if (sandbox?.readiness === "ready") {
           const identity = options.checkReadyIdentity?.(getRemainingMs) ?? "ready";
@@ -458,6 +505,20 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
         return false;
       }, waitOptions);
       if (result) return result;
+      if (transient.error) {
+        addTraceEvent("observation_failed", {
+          attempts: attempt,
+          error_kind: transient.error.kind,
+          error_reason: "reason" in transient.error ? transient.error.reason : null,
+          note: "readiness_deadline_exhausted",
+        });
+        return {
+          ready: false,
+          reason: "observation_failed",
+          failurePhase: null,
+          error: transient.error,
+        };
+      }
       // If the sandbox is still in Error on the final poll, surface the terminal
       // phase instead of a generic timeout. This happens when the configured
       // debounce window is larger than the readiness timeout allows (e.g. a low

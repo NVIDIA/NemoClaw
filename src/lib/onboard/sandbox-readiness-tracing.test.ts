@@ -6,8 +6,14 @@ import { describe, expect, it, vi } from "vitest";
 import {
   namedOpenShellGateway,
   type OpenShellSandboxObserver,
-  type OpenShellSandboxReadiness,
 } from "../adapters/openshell/sandbox-observer";
+import {
+  pendingSandboxFrame,
+  readySandboxFrame,
+  replaySandboxObservations,
+  terminalSandboxFrame,
+  type SandboxObservationFrame,
+} from "./__test-helpers__/sandbox-observer-replay";
 import {
   createCliSandboxReadyWaiter,
   createSandboxReadyWaiter,
@@ -21,30 +27,9 @@ import {
 
 const NAME = "my-sandbox";
 const TARGET = namedOpenShellGateway("nemoclaw");
-const READY_PHASES = new Set(["Ready", "Running"]);
-const TERMINAL_PHASES = new Set(["Error", "Failed", "CrashLoopBackOff"]);
 
-function readinessForPhase(phase: string): OpenShellSandboxReadiness {
-  return READY_PHASES.has(phase)
-    ? "ready"
-    : TERMINAL_PHASES.has(phase)
-      ? "terminal"
-      : "not_ready";
-}
-
-function replay(phases: readonly (string | null)[]) {
-  let i = 0;
-  const listSandboxes = vi.fn<OpenShellSandboxObserver["listSandboxes"]>(async () => {
-    const phase = phases[Math.min(i++, phases.length - 1)] ?? null;
-    return {
-      ok: true,
-      value: {
-        sandboxes: phase ? [{ name: NAME, phase, readiness: readinessForPhase(phase) }] : [],
-      },
-    };
-  });
-  const sleep = vi.fn();
-  return { observer: { listSandboxes }, listSandboxes, sleep, polls: () => i };
+function replay(frames: readonly SandboxObservationFrame[]) {
+  return replaySandboxObservations(NAME, frames);
 }
 
 describe("createSandboxReadyWaiter", () => {
@@ -82,7 +67,7 @@ describe("createSandboxReadyWaiter", () => {
   });
 
   it("uses the legacy Docker-driver poll settings as an adaptive deadline budget", async () => {
-    const { observer, listSandboxes } = replay(["Provisioning"]);
+    const { observer, listSandboxes } = replay([pendingSandboxFrame("Provisioning")]);
     const sleep = vi.fn();
     const waitForSandboxReady = createSandboxReadyWaiter({
       observer,
@@ -105,7 +90,7 @@ describe("createSandboxReadyWaiter", () => {
   });
 
   it("uses the same deadline for the legacy Kubernetes pod fallback", async () => {
-    const { observer, listSandboxes } = replay(["Provisioning"]);
+    const { observer, listSandboxes } = replay([pendingSandboxFrame("Provisioning")]);
     const fallbackReadinessProbe = vi.fn(async () => ({
       ok: true as const,
       value: "not_ready" as const,
@@ -135,7 +120,7 @@ describe("createSandboxReadyWaiter", () => {
   });
 
   it("keeps the traced waiter within its deadline without an extra final delay", async () => {
-    const { observer } = replay(["Provisioning"]);
+    const { observer } = replay([pendingSandboxFrame("Provisioning")]);
     const fallbackReadinessProbe = vi.fn(async () => ({
       ok: true as const,
       value: "not_ready" as const,
@@ -186,11 +171,43 @@ describe("createSandboxReadyWaiter", () => {
     expect(fallbackReadinessProbe).not.toHaveBeenCalled();
     expect(sleep).not.toHaveBeenCalled();
   });
+
+  it("retries an unreachable gateway observation before accepting Ready (#9803)", async () => {
+    const listSandboxes = vi
+      .fn<OpenShellSandboxObserver["listSandboxes"]>()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: {
+          kind: "transport",
+          reason: "unreachable",
+          message: "OpenShell could not reach the selected gateway.",
+        },
+      })
+      .mockResolvedValue({
+        ok: true,
+        value: { sandboxes: [{ name: NAME, phase: "Ready", readiness: "ready" }] },
+      });
+    const sleep = vi.fn();
+
+    await expect(
+      waitForSandboxReadyWithTrace({
+        sandboxName: NAME,
+        attempts: 2,
+        delaySeconds: 1,
+        observer: { listSandboxes },
+        target: TARGET,
+        isLinuxDockerDriverGatewayEnabled: () => true,
+        sleep,
+      }),
+    ).resolves.toEqual({ ready: true, reason: "ready", error: null });
+    expect(listSandboxes).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledOnce();
+  });
 });
 
 describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
   it("waits for the exact recreated sandbox to become executable before accepting stable Ready (#9050)", async () => {
-    const { observer, listSandboxes, sleep } = replay(["Ready"]);
+    const { observer, listSandboxes, sleep } = replay([readySandboxFrame()]);
     const checkReadyIdentity = vi.fn().mockReturnValueOnce("not_ready").mockReturnValue("ready");
 
     await expect(
@@ -210,7 +227,7 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
   });
 
   it("stops when the recreated sandbox identity changes (#9050)", async () => {
-    const { observer, listSandboxes, sleep } = replay(["Ready"]);
+    const { observer, listSandboxes, sleep } = replay([readySandboxFrame()]);
 
     await expect(
       waitForCreatedSandboxReadyWithTrace({
@@ -227,7 +244,7 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
   });
 
   it("stops after an unknown durable-identity probe failure (#9050)", async () => {
-    const { observer, listSandboxes, sleep } = replay(["Ready"]);
+    const { observer, listSandboxes, sleep } = replay([readySandboxFrame()]);
 
     const readiness = await waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
@@ -250,7 +267,7 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
   });
 
   it("does not probe when the readiness deadline is zero (#3768)", async () => {
-    const { observer, listSandboxes, sleep } = replay(["Ready"]);
+    const { observer, listSandboxes, sleep } = replay([readySandboxFrame()]);
 
     await expect(
       waitForCreatedSandboxReadyWithTrace({
@@ -296,8 +313,37 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
+  it("retries a timed-out observation before accepting created-sandbox Ready (#9803)", async () => {
+    const listSandboxes = vi
+      .fn<OpenShellSandboxObserver["listSandboxes"]>()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { kind: "timeout", message: "OpenShell sandbox observation timed out." },
+      })
+      .mockResolvedValue({
+        ok: true,
+        value: { sandboxes: [{ name: NAME, phase: "Ready", readiness: "ready" }] },
+      });
+    const sleep = vi.fn();
+
+    await expect(
+      waitForCreatedSandboxReadyWithTrace({
+        sandboxName: NAME,
+        timeoutSecs: 30,
+        observer: { listSandboxes },
+        target: TARGET,
+        sleep,
+      }),
+    ).resolves.toEqual({ ready: true, reason: "ready", failurePhase: null });
+    expect(listSandboxes).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledOnce();
+  });
+
   it("fast-fails on the first Error poll when the debounce is opted out (K=1)", async () => {
-    const { observer, listSandboxes, sleep } = replay(["Provisioning", "Error"]);
+    const { observer, listSandboxes, sleep } = replay([
+      pendingSandboxFrame("Provisioning"),
+      terminalSandboxFrame("Error"),
+    ]);
 
     const ready = await waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
@@ -324,7 +370,12 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
     // DGX Spark repro: the gateway re-registers the just-created sandbox and
     // `sandbox list` briefly reports Error before flipping to Ready. The
     // default debounce must tolerate the transient rather than fast-failing.
-    const { observer, listSandboxes, sleep } = replay(["Provisioning", "Error", "Error", "Ready"]);
+    const { observer, listSandboxes, sleep } = replay([
+      pendingSandboxFrame("Provisioning"),
+      terminalSandboxFrame("Error"),
+      terminalSandboxFrame("Error"),
+      readySandboxFrame(),
+    ]);
 
     const ready = await waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
@@ -340,7 +391,12 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
 
   it("resets the debounce counter when a non-Error poll interrupts the Error streak", async () => {
     // Flapping Error must not accumulate toward the terminal threshold.
-    const { observer, sleep } = replay(["Error", "Provisioning", "Error", "Ready"]);
+    const { observer, sleep } = replay([
+      terminalSandboxFrame("Error"),
+      pendingSandboxFrame("Provisioning"),
+      terminalSandboxFrame("Error"),
+      readySandboxFrame(),
+    ]);
 
     const ready = await waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
@@ -356,7 +412,7 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
   });
 
   it("still fails terminally after sustained Error exceeds the debounce window (#6043)", async () => {
-    const { observer, listSandboxes, sleep } = replay(["Error"]);
+    const { observer, listSandboxes, sleep } = replay([terminalSandboxFrame("Error")]);
 
     const ready = await waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
@@ -382,7 +438,7 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
     // Small readiness timeout (1 poll) with the default debounce (30): a stuck
     // Error can never reach the debounce threshold, but it must still surface
     // the terminal phase rather than a phase-less timeout (#6043 review PRA-1).
-    const { observer, sleep } = replay(["Error"]);
+    const { observer, sleep } = replay([terminalSandboxFrame("Error")]);
 
     const ready = await waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
@@ -402,7 +458,10 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
   it.each(["Failed", "CrashLoopBackOff"])(
     "fast-fails immediately on genuinely terminal phase %s even with a large debounce",
     async (phase) => {
-      const { observer, listSandboxes, sleep } = replay(["Provisioning", phase]);
+      const { observer, listSandboxes, sleep } = replay([
+        pendingSandboxFrame("Provisioning"),
+        terminalSandboxFrame(phase),
+      ]);
 
       const ready = await waitForCreatedSandboxReadyWithTrace({
         sandboxName: NAME,
@@ -426,7 +485,7 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
   );
 
   it("rounds a fractional debounce override (2.6 -> 3), matching envInt semantics", async () => {
-    const { observer, listSandboxes, sleep } = replay(["Error"]);
+    const { observer, listSandboxes, sleep } = replay([terminalSandboxFrame("Error")]);
 
     const ready = await waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
@@ -451,7 +510,12 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
   it("ignores a non-finite debounce override and falls back to the env/default", async () => {
     // NaN is not finite, so the override is dropped and the default (30) is
     // used: a 4-poll transient Error still recovers to Ready.
-    const { observer } = replay(["Error", "Error", "Error", "Ready"]);
+    const { observer } = replay([
+      terminalSandboxFrame("Error"),
+      terminalSandboxFrame("Error"),
+      terminalSandboxFrame("Error"),
+      readySandboxFrame(),
+    ]);
 
     const ready = await waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
@@ -604,7 +668,13 @@ describe("getSandboxReadyErrorDebouncePolls env contract", () => {
 describe("DGX Spark fresh-onboard readiness replay (#6043)", () => {
   // The CLI-adapter test owns the captured table layout that produced these
   // phases. This action test owns the debounce decision for typed observations.
-  const reporterPhaseSequence = ["Provisioning", "Error", "Error", "Error", "Ready"] as const;
+  const reporterPhaseSequence = [
+    pendingSandboxFrame("Provisioning"),
+    terminalSandboxFrame("Error"),
+    terminalSandboxFrame("Error"),
+    terminalSandboxFrame("Error"),
+    readySandboxFrame(),
+  ] as const;
 
   it("regressed pre-fix: fast-fail (K=1) surfaces the reporter failure phase", async () => {
     const { observer, sleep } = replay(reporterPhaseSequence);
@@ -662,7 +732,7 @@ describe("DGX Spark fresh-onboard readiness replay (#6043)", () => {
   // waitForCreatedSandboxReadyWithTrace can be deleted.
   it.skip("upstream_openshell_sandbox_list_error_transient_fixed", () => {
     // Replace `reporterPhaseSequence` with phases from a fixed OpenShell trace.
-    const hasTransientError = reporterPhaseSequence.includes("Error");
+    const hasTransientError = reporterPhaseSequence.some((frame) => frame?.phase === "Error");
     expect(hasTransientError).toBe(false);
   });
 });
