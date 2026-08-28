@@ -48,10 +48,21 @@ printf 'p%s\nn%s\n' "$4" '${
 
   const script =
     options.trustedIdentity === false || options.trustedExecutable === false
-      ? `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
+      ? `trap 'kill "$gateway_pid" 2>/dev/null || true' EXIT
+source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
 HOME="${home}"
 NEMOCLAW_GATEWAY_PORT=20369
-if trusted_macos_openshell_gateway_process "$$" 20369; then exit 9; fi`
+NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="${runtimeDir}"
+"${gatewayBin}" 60 &
+gateway_pid=$!
+sleep 0.1
+printf '%s\n' "$gateway_pid" >"${runtimeDir}/openshell-gateway.pid"
+if (stop_legacy_openshell_gateway_process); then exit 9; fi
+kill -0 "$gateway_pid"
+test -e "${runtimeDir}/openshell-gateway.pid"
+kill "$gateway_pid"
+wait "$gateway_pid" 2>/dev/null || true
+trap - EXIT`
       : `trap 'kill "$gateway_pid" 2>/dev/null || true' EXIT
 source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
 HOME="${home}"
@@ -232,14 +243,14 @@ describe("install.sh macOS OpenShell upgrade recovery", () => {
 
   it("stops only the active trusted OpenShell Homebrew user service (#10369)", () => {
     const { result, launchctlLog } = runDarwinGatewayServiceStop();
+    const serviceDomain = `gui/${process.getuid?.()}/homebrew.mxcl.openshell`;
 
     expect(result.status, result.stdout + result.stderr).toBe(0);
-    expect(
-      launchctlLog
-        .trim()
-        .split(/\r?\n/)
-        .map((line) => line.split(" ")[0]),
-    ).toEqual(["print", "bootout", "print"]);
+    expect(launchctlLog.trim().split(/\r?\n/)).toEqual([
+      `print ${serviceDomain}`,
+      `bootout ${serviceDomain}`,
+      `print ${serviceDomain}`,
+    ]);
   });
 
   it("refuses to stop a Homebrew user service with an unexpected label (#10369)", () => {
