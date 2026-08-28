@@ -92,17 +92,6 @@ export function mergeRequiredSetupPolicyPresets(
   );
 }
 
-export function isStaleBuiltinBravePolicyPreset(
-  name: string,
-  options: {
-    webSearchConfig?: WebSearchConfig | null;
-    customPresetNames?: ReadonlySet<string> | null;
-    tierName?: string | null;
-  } = {},
-): boolean {
-  return isStaleBuiltinWebSearchPolicyPreset(name, options);
-}
-
 export function isStaleBuiltinWebSearchPolicyPreset(
   name: string,
   options: {

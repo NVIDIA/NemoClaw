@@ -51,7 +51,6 @@ import {
 import { withPolicyApplicationTrace } from "./tracing";
 
 export {
-  isStaleBuiltinBravePolicyPreset,
   isStaleBuiltinWebSearchPolicyPreset,
   mergeRequiredSetupPolicyPresets,
 } from "./policy-preset-reconciliation";
