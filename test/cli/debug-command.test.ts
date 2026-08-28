@@ -171,7 +171,7 @@ describe("CLI debug command", () => {
       );
       expect(r.code).not.toBe(0);
       expect(r.out).toContain("stale-box");
-      expect(r.out).toContain("not registered");
+      expect(r.out).toContain("local registry but not in OpenShell");
       expect(fs.existsSync(tarball)).toBe(false);
     },
   );
