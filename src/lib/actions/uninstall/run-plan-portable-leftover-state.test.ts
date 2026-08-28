@@ -399,7 +399,7 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     expect(host.runPortableCleanup).not.toHaveBeenCalled();
   });
 
-  it("retries identity-bound Portable removal after later configuration cleanup fails (#10545)", async () => {
+  it("finalizes removed-phase recovery without deleting replacement Portable configuration after a later cleanup failure (#10545)", async () => {
     const host = scope("nemoclaw-uninstall-completed-cleanup-retry-");
     completedOpenClawAuthority(host, "default");
     const directory = abandonedPortableConfig(host, 0o700);
@@ -441,7 +441,7 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     expect(host.runPortableCleanup).not.toHaveBeenCalled();
   });
 
-  it("ignores a PATH-preceding Python helper during identity-bound cleanup (#10545)", async () => {
+  it("does not execute python3 from PATH during identity-bound cleanup (#10545)", async () => {
     const host = scope("nemoclaw-uninstall-completed-python-path-");
     completedOpenClawAuthority(host, "default");
     const directory = abandonedPortableConfig(host, 0o700);
