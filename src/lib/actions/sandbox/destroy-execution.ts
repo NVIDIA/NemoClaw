@@ -35,10 +35,10 @@ import {
   classifyDestroyContainerIdentity,
   isSameDestroyContainerIdentityProof,
   observeDestroyContainerIdentity,
-  removeExactDestroyContainerIdentities,
   type DestroyContainerIdentityProof,
   type SandboxNameLabeledContainer,
 } from "./destroy-presence";
+import { removeExactOpenShellDockerSandboxContainers } from "../../onboard/openshell-docker-sandbox-containers";
 import { type DestroyRunOpenshell, SANDBOX_DESTROY_TIMEOUT_MS } from "./destroy-gateway";
 import {
   finalizeMcpBridgesAfterSandboxDelete,
@@ -675,9 +675,9 @@ export async function executeSandboxDestroy({
         if (portableContainerAuthority) {
           portableContainerAuthority.verifyAbsent();
         } else if (expectedContainerIdentities !== undefined) {
-          removeExactDestroyContainerIdentities(
+          removeExactOpenShellDockerSandboxContainers(
             sandboxName,
-            expectedContainerIdentities,
+            expectedContainerIdentities.map(({ id }) => id),
             console.log,
           );
         }

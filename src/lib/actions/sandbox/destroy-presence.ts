@@ -7,7 +7,6 @@ import {
   OPENSHELL_SANDBOX_ID_LABEL,
   OPENSHELL_SANDBOX_NAME_LABEL,
   OPENSHELL_SANDBOX_WORKSPACE_LABEL,
-  removeExactOpenShellDockerSandboxContainers,
 } from "../../onboard/openshell-docker-sandbox-containers";
 import { fingerprintOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
 import { sanitizeReadinessText } from "../../readiness/sanitize";
@@ -76,19 +75,6 @@ export function observeDestroyContainerIdentity(
   sandboxName: string,
 ): DockerSandboxIdentityObservation {
   return observeDockerSandboxIdentities(sandboxName);
-}
-
-/** Retire the exact container set qualified from one retained recovery fingerprint. */
-export function removeExactDestroyContainerIdentities(
-  sandboxName: string,
-  expectedIdentities: readonly SandboxNameLabeledContainer[],
-  log: (message: string) => void,
-): void {
-  removeExactOpenShellDockerSandboxContainers(
-    sandboxName,
-    expectedIdentities.map((identity) => identity.id),
-    log,
-  );
 }
 
 /**
