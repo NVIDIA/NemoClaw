@@ -121,7 +121,7 @@ describe("gateway lifecycle late binding", () => {
         gatewayBinding.managedGatewayStateRootOwnershipFailure({
           gatewayName: name,
           gatewayPort: port,
-          stateDir: process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR ?? "",
+          stateDir,
         }),
       ).toBeNull();
       return { OPENSHELL_SERVER_PORT: String(port) };
@@ -191,7 +191,7 @@ describe("gateway lifecycle late binding", () => {
     expect(
       fs.existsSync(path.join(stateDir, gatewayBinding.MANAGED_GATEWAY_STATE_ROOT_MARKER)),
     ).toBe(false);
-    vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", stateDir);
+    vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", `  ${stateDir}  `);
     try {
       await start.startDockerDriverGateway();
 

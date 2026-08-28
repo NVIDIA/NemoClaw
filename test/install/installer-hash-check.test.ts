@@ -550,7 +550,7 @@ ${manifests}
       manifestDigest: "${SYNTHETIC_SUPERVISOR_MANIFEST_DIGEST}",
       required: false,
       runtimeTemplateSha256: [
-        "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
+        "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
       ],
     },
     version: "9.9.9",

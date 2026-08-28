@@ -297,6 +297,100 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
     },
   );
 
+  it.each([
+    {
+      expectedExit: 0,
+      gatewayRemoved: true,
+      portFree: true,
+      scenario: "removes stopped marked gateway state when its port is free",
+      stateKept: false,
+    },
+    {
+      expectedExit: 1,
+      gatewayRemoved: false,
+      portFree: false,
+      scenario: "preserves stopped marked gateway state when its port is occupied",
+      stateKept: true,
+    },
+  ])("$scenario (#10544)", async ({ expectedExit, gatewayRemoved, portFree, stateKept }) => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-stopped-state-"));
+    const port = 9123;
+    try {
+      vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(port));
+      vi.resetModules();
+      const runPortUninstall = (await import("./run-plan")).runUninstallPlan;
+      const customGatewayState = path.join(tmpHome, "stopped-gateway-state");
+      ensureManagedGatewayStateRoot({
+        gatewayName: `nemoclaw-${String(port)}`,
+        gatewayPort: port,
+        stateDir: customGatewayState,
+      });
+      writeScopedGatewayState(tmpHome, port, customGatewayState);
+      const calls: string[][] = [];
+      const logs: string[] = [];
+
+      const result = runPortUninstall(
+        {
+          assumeYes: true,
+          deleteModels: false,
+          destroyUserData: true,
+          gatewayName: `nemoclaw-${String(port)}`,
+          keepOpenShell: false,
+        },
+        {
+          commandExists: (command) => ["openshell", "pgrep"].includes(command),
+          env: {
+            HOME: tmpHome,
+            NEMOCLAW_GATEWAY_PORT: String(port),
+            NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: customGatewayState,
+          },
+          existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
+          getTrustedActiveOpenShellGatewayUserServiceIdentity: () => null,
+          hasPortableRuntimeCleanup: () => false,
+          isPortFree: () => portFree,
+          isTty: false,
+          log: (message) => logs.push(message),
+          resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
+            endpoint: null,
+            gatewayName,
+            gatewayPort,
+            mode: "nemoclaw-managed",
+            requiredCapabilities: [],
+            source: "standalone",
+            stateDir: null,
+            supervisor: null,
+          }),
+          rmSync: fs.rmSync,
+          run: (command, args) => {
+            calls.push([command, ...args]);
+            return command === "pgrep" || command === "ps"
+              ? { ...ok(), status: 1 }
+              : command === "openshell" && args[0] === "gateway" && args[1] === "list"
+                ? ok(JSON.stringify([{ name: `nemoclaw-${String(port)}` }]))
+                : ok();
+          },
+          runDocker: () => ok(),
+        },
+      );
+
+      expect(result.exitCode).toBe(expectedExit);
+      expect(fs.existsSync(customGatewayState)).toBe(stateKept);
+      expect(
+        calls.some(
+          ([command, ...args]) =>
+            command === "openshell" &&
+            JSON.stringify(args) ===
+              JSON.stringify(["gateway", "remove", `nemoclaw-${String(port)}`]),
+        ),
+      ).toBe(gatewayRemoved);
+      expect(logs.join("\n").includes("continuing cleanup from its port-bound managed state")).toBe(
+        gatewayRemoved,
+      );
+    } finally {
+      fs.rmSync(tmpHome, { force: true, recursive: true });
+    }
+  });
+
   it("removes a marker-only configured reservation without OpenShell gateway cleanup", async () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-reservation-"));
     const port = 9123;

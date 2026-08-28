@@ -65,6 +65,7 @@ import {
   hasStateScopedSandboxNamespace,
   isHostPortFree,
   processUsesStateScopedSandboxNamespace,
+  scopedHostGatewayProcessAbsenceFailure,
   scopedHostGatewayProcessOwnershipFailure,
   type StopHostGatewayOptions,
   stopHostGatewayProcesses,
@@ -1694,6 +1695,46 @@ function packageManagedServiceGatewayProcessOwnershipFailure(
   return null;
 }
 
+function canRecoverStoppedConfiguredGateway(
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+): boolean {
+  const stateDir = paths.selectedGatewayLocalStateDir;
+  const gatewayName = options.gatewayName || resolveGatewayName(GATEWAY_PORT);
+  if (
+    managedGatewayStateRootOwnershipFailure({
+      gatewayName,
+      gatewayPort: GATEWAY_PORT,
+      stateDir,
+    }) !== null
+  ) {
+    return false;
+  }
+  const absenceFailure = scopedHostGatewayProcessAbsenceFailure(
+    {
+      commandExists: runtime.commandExists,
+      env: runtime.env,
+      isPortFree: runtime.isPortFree ?? isHostPortFree,
+      kill: runtime.kill,
+      readProcessEnvironment: runtime.readProcessEnvironment,
+      run: runtime.run,
+      warn: runtime.warn,
+    },
+    {
+      gatewayBin: runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN,
+      openShellGatewayName: gatewayName,
+      openShellGatewayPort: GATEWAY_PORT,
+      stateDir,
+    },
+  );
+  if (absenceFailure !== null) return false;
+  runtime.log(
+    "The configured gateway is stopped; continuing cleanup from its port-bound managed state.",
+  );
+  return true;
+}
+
 function canRemoveScopedOpenShellResources(
   paths: UninstallPaths,
   options: UninstallRunOptions,
@@ -1790,7 +1831,7 @@ function canRemoveScopedOpenShellResources(
   if (!requireLiveManagedProcess) return true;
   if (teardownAuthority.source === "packaged-service") {
     const reason = packageManagedServiceGatewayProcessOwnershipFailure(stateDir, runtime);
-    if (reason === null) return true;
+    if (reason === null || canRecoverStoppedConfiguredGateway(paths, options, runtime)) return true;
     runtime.warn(
       `Refusing ${scopedToSelectedGateway ? "scoped gateway cleanup" : "gateway cleanup"} because the package-managed OpenShell gateway service identity cannot be proven: ${reason}.`,
     );
@@ -1810,7 +1851,7 @@ function canRemoveScopedOpenShellResources(
       stateDir,
     },
   );
-  if (reason === null) return true;
+  if (reason === null || canRecoverStoppedConfiguredGateway(paths, options, runtime)) return true;
   runtime.warn(
     `Refusing ${scopedToSelectedGateway ? "scoped gateway cleanup" : "gateway cleanup"} because the selected process identity cannot be proven: ${reason}.`,
   );
@@ -3041,31 +3082,16 @@ function isUnusedConfiguredGatewayReservation(
   return true;
 }
 
-function isRemovableConfiguredGatewayReservation(
-  paths: UninstallPaths,
-  options: UninstallRunOptions,
-  runtime: UninstallRuntime,
-  teardownAuthority: GatewayOwner,
-  portableRuntimeCleanup: boolean,
-): boolean {
-  return (
-    isUnusedConfiguredGatewayReservation(
-      paths,
-      options,
-      runtime,
-      teardownAuthority,
-      portableRuntimeCleanup,
-    ) && (runtime.isPortFree ?? isHostPortFree)(GATEWAY_PORT)
-  );
-}
+type OpenShellCleanupDisposition = "normal" | "reservation-removed" | "blocked";
 
-function reportOccupiedConfiguredGatewayReservation(
+function prepareOpenShellCleanup(
   paths: UninstallPaths,
   options: UninstallRunOptions,
   runtime: UninstallRuntime,
+  scopedToSelectedGateway: boolean,
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
-): boolean {
+): OpenShellCleanupDisposition {
   if (
     !isUnusedConfiguredGatewayReservation(
       paths,
@@ -3073,118 +3099,34 @@ function reportOccupiedConfiguredGatewayReservation(
       runtime,
       teardownAuthority,
       portableRuntimeCleanup,
-    ) ||
-    (runtime.isPortFree ?? isHostPortFree)(GATEWAY_PORT)
-  ) {
-    return false;
-  }
-  runtime.warn(
-    `No gateway resources were created, but gateway port ${String(GATEWAY_PORT)} has a listener. The unused configured gateway state reservation was preserved; inspect and stop the listener, then rerun uninstall after the port is free.`,
-  );
-  return true;
-}
-
-function removeConfiguredGatewayReservationIfSafe(
-  paths: UninstallPaths,
-  options: UninstallRunOptions,
-  runtime: UninstallRuntime,
-  teardownAuthority: GatewayOwner,
-  portableRuntimeCleanup: boolean,
-): boolean {
-  if (
-    !isRemovableConfiguredGatewayReservation(
+    )
+  )
+    return canBeginOpenShellCleanup(
       paths,
       options,
       runtime,
+      scopedToSelectedGateway,
       teardownAuthority,
       portableRuntimeCleanup,
-    ) ||
-    !removePath(paths.selectedGatewayLocalStateDir, runtime)
-  ) {
-    return false;
+    )
+      ? "normal"
+      : "blocked";
+  if (!(runtime.isPortFree ?? isHostPortFree)(GATEWAY_PORT)) {
+    runtime.warn(
+      `No gateway resources were created, but gateway port ${String(GATEWAY_PORT)} has a listener. The unused configured gateway state reservation was preserved; inspect and stop the listener, then rerun uninstall after the port is free.`,
+    );
+    return "blocked";
+  }
+  if (!removePath(paths.selectedGatewayLocalStateDir, runtime)) {
+    runtime.warn(
+      "The configured gateway state reservation changed during validation; preserving current state for retry.",
+    );
+    return "blocked";
   }
   runtime.log(
     "Removed the unused configured gateway state reservation; no gateway resources were created.",
   );
-  return true;
-}
-
-function canBeginOpenShellCleanupAfterReservation(
-  reservationRemoved: boolean,
-  paths: UninstallPaths,
-  options: UninstallRunOptions,
-  runtime: UninstallRuntime,
-  scopedToSelectedGateway: boolean,
-  teardownAuthority: GatewayOwner,
-  portableRuntimeCleanup: boolean,
-): boolean {
-  if (reservationRemoved) return true;
-  if (
-    reportOccupiedConfiguredGatewayReservation(
-      paths,
-      options,
-      runtime,
-      teardownAuthority,
-      portableRuntimeCleanup,
-    )
-  ) {
-    return false;
-  }
-  return canBeginOpenShellCleanup(
-    paths,
-    options,
-    runtime,
-    scopedToSelectedGateway,
-    teardownAuthority,
-    portableRuntimeCleanup,
-  );
-}
-
-function removeManagedDefaultGatewayUserServiceAfterReservation(
-  reservationRemoved: boolean,
-  runtime: UninstallRuntime,
-  options: UninstallRunOptions,
-  externallySupervised: boolean,
-): boolean {
-  return (
-    reservationRemoved ||
-    removeManagedDefaultGatewayUserService(runtime, options, externallySupervised)
-  );
-}
-
-function stopHostGatewayProcessesAfterReservation(
-  reservationRemoved: boolean,
-  runtime: UninstallRuntime,
-  options: StopHostGatewayOptions,
-): void {
-  if (reservationRemoved) return;
-  stopHostGatewayProcessesForUninstall(runtime, options);
-}
-
-function executeOpenShellResourceCleanupAfterReservation(
-  reservationRemoved: boolean,
-  paths: UninstallPaths,
-  options: UninstallRunOptions,
-  runtime: UninstallRuntime,
-  scopedToSelectedGateway: boolean,
-  sandboxNames: readonly string[],
-  managedHermesStateVolumes: readonly ManagedHermesStateVolumeContext[],
-  teardownAuthority: GatewayOwner,
-): boolean {
-  if (reservationRemoved) {
-    runtime.log("No OpenShell gateway resources were created; skipped gateway cleanup.");
-    return true;
-  }
-  return executeOpenShellResourceCleanup(
-    paths,
-    options,
-    runtime,
-    scopedToSelectedGateway,
-    sandboxNames,
-    managedHermesStateVolumes,
-    teardownAuthority,
-    false,
-  );
+  return "reservation-removed";
 }
 
 function executePlan(
@@ -3203,26 +3145,15 @@ function executePlan(
   portableRetirementEntries: ReturnType<typeof portableRetirementPreservationEntries>,
 ): { ok: boolean } {
   const externallySupervised = isExternallySupervised(teardownAuthority);
-  const removedConfiguredGatewayReservation = removeConfiguredGatewayReservationIfSafe(
+  const openShellCleanup = prepareOpenShellCleanup(
     paths,
     options,
     runtime,
+    scopedToSelectedGateway,
     teardownAuthority,
     portableRuntimeCleanup,
   );
-  if (
-    !canBeginOpenShellCleanupAfterReservation(
-      removedConfiguredGatewayReservation,
-      paths,
-      options,
-      runtime,
-      scopedToSelectedGateway,
-      teardownAuthority,
-      portableRuntimeCleanup,
-    )
-  ) {
-    return { ok: false };
-  }
+  if (openShellCleanup === "blocked") return { ok: false };
   let ok = true;
   const failedManagedLlamaStateDirs: string[] = [];
   const branding = runtimeBranding(runtime);
@@ -3286,12 +3217,8 @@ function executePlan(
       if (
         !scopedToSelectedGateway &&
         !portableRuntimeCleanup &&
-        !removeManagedDefaultGatewayUserServiceAfterReservation(
-          removedConfiguredGatewayReservation,
-          runtime,
-          options,
-          externallySupervised,
-        )
+        openShellCleanup !== "reservation-removed" &&
+        !removeManagedDefaultGatewayUserService(runtime, options, externallySupervised)
       ) {
         ok = false;
       }
@@ -3315,9 +3242,8 @@ function executePlan(
             commandExists: runtime.commandExists,
           });
           stopOrphanedOpenShell(runtime);
-          if (!externallySupervised) {
-            stopHostGatewayProcessesAfterReservation(
-              removedConfiguredGatewayReservation,
+          if (!externallySupervised && openShellCleanup !== "reservation-removed") {
+            stopHostGatewayProcessesForUninstall(
               runtime,
               GATEWAY_PORT === DEFAULT_GATEWAY_PORT
                 ? { logNoProcesses: true }
@@ -3351,9 +3277,10 @@ function executePlan(
       stopModelRouter(paths, runtime, !scopedToSelectedGateway);
       stopBedrockRuntimeAdapterForUninstall(paths, runtime, scopedToSelectedGateway);
     } else if (step.name === "OpenShell resources") {
-      if (
-        !executeOpenShellResourceCleanupAfterReservation(
-          removedConfiguredGatewayReservation,
+      if (openShellCleanup === "reservation-removed") {
+        runtime.log("No OpenShell gateway resources were created; skipped gateway cleanup.");
+      } else if (
+        !executeOpenShellResourceCleanup(
           paths,
           options,
           runtime,
@@ -3361,6 +3288,7 @@ function executePlan(
           sandboxNames,
           managedHermesStateVolumes,
           teardownAuthority,
+          false,
         )
       ) {
         return { ok: false };
@@ -3401,8 +3329,9 @@ function executePlan(
         } else {
           removeDockerImages(runtime);
         }
-        for (const action of step.actions)
+        step.actions.forEach((action) => {
           if (action.kind === "delete-docker-volume") removeDockerVolume(action.name, runtime);
+        });
       }
     } else if (step.name === "Model stores") {
       if (
@@ -3427,8 +3356,9 @@ function executePlan(
         } else if (runtime.platform === "darwin") {
           reportRetainedMacOsOpenShell(runtime);
         } else {
-          for (const target of paths.openshellInstallPaths)
-            removeFileWithOptionalSudo(target, runtime);
+          paths.openshellInstallPaths.forEach((target) =>
+            removeFileWithOptionalSudo(target, runtime),
+          );
         }
       } else {
         runtime.log("Sibling gateways remain; kept shared runtime files and OpenShell binaries.");
