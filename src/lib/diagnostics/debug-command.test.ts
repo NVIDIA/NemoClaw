@@ -153,16 +153,24 @@ describe("debug command", () => {
   it("stops before diagnostics when the configured default sandbox is rejected", async () => {
     const runDebug = vi.fn();
 
-    await runDebugCommandWithOptions(
-      {},
-      {
-        env: {} as NodeJS.ProcessEnv,
-        getDefaultSandbox: async () => null,
-        getSandboxAvailability: async () => "available",
-        runDebug,
-      },
-    );
+    const exit = vi.fn(() => {
+      throw new Error("exit");
+    }) as unknown as (code: number) => never;
 
+    await expect(
+      runDebugCommandWithOptions(
+        {},
+        {
+          env: {} as NodeJS.ProcessEnv,
+          getDefaultSandbox: async () => null,
+          getSandboxAvailability: async () => "available",
+          runDebug,
+          exit,
+        },
+      ),
+    ).rejects.toThrow("exit");
+
+    expect(exit).toHaveBeenCalledWith(1);
     expect(runDebug).not.toHaveBeenCalled();
   });
 

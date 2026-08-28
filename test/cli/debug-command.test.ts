@@ -191,7 +191,7 @@ describe("CLI debug command", () => {
       { mode: 0o600 },
     );
     const r = runWithEnv("debug --quick 2>&1", { HOME: home }, 30000);
-    expect(r.code).toBe(0);
+    expect(r.code).not.toBe(0);
     expect(r.out).toContain("Warning");
     expect(r.out).toContain("ghost");
     expect(r.out).toContain("--sandbox NAME");

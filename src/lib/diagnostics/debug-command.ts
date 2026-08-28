@@ -65,7 +65,10 @@ export async function runDebugCommandWithOptions(
     opts.sandboxName = explicit.name;
   } else {
     const defaultSandbox = await deps.getDefaultSandbox();
-    if (defaultSandbox === null) return;
+    if (defaultSandbox === null) {
+      exit(1);
+      return;
+    }
     opts.sandboxName = defaultSandbox;
   }
 
