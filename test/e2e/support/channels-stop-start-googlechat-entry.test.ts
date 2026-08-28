@@ -7,7 +7,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   addAndRebuildGooglechatForChannelsStopStartLiveE2e,
-  addGooglechatForChannelsStopStartLiveE2e,
   GOOGLECHAT_E2E_ACCESS_TOKEN,
   installGooglechatCredentialFixture,
   rebuildGooglechatForChannelsStopStartLiveE2e,
@@ -39,7 +38,7 @@ describe("channels stop/start Google Chat live composition", () => {
         "-e",
         [
           'import("./test/e2e/live/channels-stop-start-googlechat-entry.ts")',
-          "  .then((module) => console.log(typeof module.addGooglechatForChannelsStopStartLiveE2e))",
+          "  .then((module) => console.log(typeof module.addAndRebuildGooglechatForChannelsStopStartLiveE2e))",
           "  .catch((error) => { console.error(error); process.exitCode = 1; });",
         ].join("\n"),
       ],
@@ -57,16 +56,17 @@ describe("channels stop/start Google Chat live composition", () => {
 
   it("grants a process-local audience capability to the exact live sandbox", async () => {
     const addSandboxChannel = vi.fn(async () => {});
+    const rebuildSandbox = vi.fn(async () => {});
     const restore = vi.fn();
     const installCredentialFixture = vi.fn(() => restore);
 
-    await addGooglechatForChannelsStopStartLiveE2e(
+    await addAndRebuildGooglechatForChannelsStopStartLiveE2e(
       {
         sandboxName: "e2e-oc-ch-cycle",
         agent: "openclaw",
         audience: "  https://e2e-fake.trycloudflare.com/googlechat  ",
       },
-      { addSandboxChannel, installCredentialFixture },
+      { addSandboxChannel, installCredentialFixture, rebuildSandbox },
     );
 
     expect(installCredentialFixture).toHaveBeenCalledWith("e2e-oc-ch-cycle", "openclaw");
@@ -79,21 +79,23 @@ describe("channels stop/start Google Chat live composition", () => {
         },
       },
     );
+    expect(rebuildSandbox).toHaveBeenCalledWith("e2e-oc-ch-cycle", ["--yes"]);
     expect(restore).toHaveBeenCalledOnce();
   });
 
   it("adds Hermes Google Chat without the OpenClaw audience capability", async () => {
     const addSandboxChannel = vi.fn(async () => {});
+    const rebuildSandbox = vi.fn(async () => {});
     const restore = vi.fn();
     const installCredentialFixture = vi.fn(() => restore);
 
-    await addGooglechatForChannelsStopStartLiveE2e(
+    await addAndRebuildGooglechatForChannelsStopStartLiveE2e(
       {
         sandboxName: "e2e-hm-ch-cycle",
         agent: "hermes",
         audience: "https://e2e-fake.trycloudflare.com/googlechat",
       },
-      { addSandboxChannel, installCredentialFixture },
+      { addSandboxChannel, installCredentialFixture, rebuildSandbox },
     );
 
     expect(installCredentialFixture).toHaveBeenCalledWith("e2e-hm-ch-cycle", "hermes");
@@ -102,6 +104,7 @@ describe("channels stop/start Google Chat live composition", () => {
       { channel: "googlechat" },
       {},
     );
+    expect(rebuildSandbox).toHaveBeenCalledWith("e2e-hm-ch-cycle", ["--yes"]);
     expect(restore).toHaveBeenCalledOnce();
   });
 
@@ -110,7 +113,7 @@ describe("channels stop/start Google Chat live composition", () => {
     const installCredentialFixture = vi.fn(() => vi.fn());
 
     await expect(
-      addGooglechatForChannelsStopStartLiveE2e(
+      addAndRebuildGooglechatForChannelsStopStartLiveE2e(
         {
           sandboxName: "production-openclaw",
           agent: "openclaw",
@@ -128,7 +131,7 @@ describe("channels stop/start Google Chat live composition", () => {
     const installCredentialFixture = vi.fn(() => vi.fn());
 
     await expect(
-      addGooglechatForChannelsStopStartLiveE2e(
+      addAndRebuildGooglechatForChannelsStopStartLiveE2e(
         {
           sandboxName: "e2e-oc-ch-cycle",
           agent: "openclaw",
@@ -148,13 +151,17 @@ describe("channels stop/start Google Chat live composition", () => {
     const restore = vi.fn();
 
     await expect(
-      addGooglechatForChannelsStopStartLiveE2e(
+      addAndRebuildGooglechatForChannelsStopStartLiveE2e(
         {
           sandboxName: "e2e-hm-ch-cycle",
           agent: "hermes",
           audience: "https://e2e-fake.trycloudflare.com/googlechat",
         },
-        { addSandboxChannel, installCredentialFixture: () => restore },
+        {
+          addSandboxChannel,
+          installCredentialFixture: () => restore,
+          rebuildSandbox: async () => {},
+        },
       ),
     ).rejects.toThrow("planned add failed");
     expect(restore).toHaveBeenCalledOnce();

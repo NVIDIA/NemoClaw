@@ -219,24 +219,6 @@ async function addGooglechatWithInstalledFixture(
   );
 }
 
-/**
- * The sole composition root that grants non-interactive Google Chat audience
- * enrollment. Production CLI composition does not receive this capability.
- */
-export async function addGooglechatForChannelsStopStartLiveE2e(
-  input: GooglechatLiveE2eComposition,
-  dependencies: GooglechatLiveE2eDependencies = DEFAULT_DEPENDENCIES,
-): Promise<void> {
-  const audience = requireLiveAudience(input);
-
-  const restore = dependencies.installCredentialFixture(input.sandboxName, input.agent);
-  try {
-    await addGooglechatWithInstalledFixture(input, audience, dependencies);
-  } finally {
-    restore();
-  }
-}
-
 /** Keep the fake OAuth mint installed across both provider registrations. */
 export async function addAndRebuildGooglechatForChannelsStopStartLiveE2e(
   input: GooglechatLiveE2eComposition,
