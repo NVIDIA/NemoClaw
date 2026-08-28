@@ -138,10 +138,8 @@ function realStageSandboxCredentialProviders(
   const registration = createCredentialProviderRegistration({
     root: "/repo",
     runOpenshell: runOpenshell as unknown as CredentialProviderRegistrationDeps["runOpenshell"],
-    redact: (input) => input,
     getGatewayName: () => "nemoclaw",
     getCredential: () => null,
-    normalizeCredentialValue: (value) => (typeof value === "string" ? value.trim() : ""),
     updateSession: (mutator) => (mutator(registrationSession) ?? registrationSession) as Session,
     stagedLegacyValues: new Map(),
     migratedLegacyKeys: new Set(),
@@ -1334,6 +1332,18 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
       getSandboxReuseState: () => "ready",
       recordStateSkipped,
       updateSession: resumeUpdateSession,
+      getSandboxRegistryEntry: () => ({
+        name: "my-assistant",
+        agent: null,
+        provider: "provider",
+        model: "model",
+        endpointUrl: null,
+        preferredInferenceApi: "openai-completions",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        pendingRouteReservation: true,
+        reservationSessionId: persistedSession.sessionId,
+      }),
     });
 
     await handleSandboxState({
