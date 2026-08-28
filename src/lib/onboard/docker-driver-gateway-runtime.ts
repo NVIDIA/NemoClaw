@@ -170,11 +170,10 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     typeof deps.gatewayPort === "function" ? deps.gatewayPort() : deps.gatewayPort;
 
   function getDockerDriverGatewayStateDir(): string {
-    return gatewayBinding.resolveGatewayStateDirForPort({
-      configured: process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
-      home: os.homedir(),
-      port: currentGatewayPort(),
-    });
+    const configured = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
+    if (configured && configured.trim()) return path.resolve(configured.trim());
+    const dir = gatewayBinding.resolveGatewayStateDirName(currentGatewayPort());
+    return path.join(os.homedir(), ".local", "state", "nemoclaw", dir);
   }
 
   function getDockerDriverGatewayPidFile(): string {

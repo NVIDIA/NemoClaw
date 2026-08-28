@@ -105,6 +105,7 @@ describe("gateway lifecycle late binding", () => {
       startPackageManagedDockerDriverGatewayWithEnvOverride: managedStart,
     } as unknown as typeof import("../docker-driver-gateway-env");
     const ensureManagedGatewayStateRoot = vi.fn();
+    const resolveGatewayStateDirForPort = vi.fn(() => "/tmp/gateway");
     const start = createDockerDriverGatewayStart({
       SUPPORTED_OPENSHELL_FALLBACK_VERSION: "0.0.0",
       checkGatewayPortAvailable: async () => ({ ok: true }),
@@ -122,6 +123,7 @@ describe("gateway lifecycle late binding", () => {
       gatewayBinding: {
         ensureManagedGatewayStateRoot,
         resolveGatewayCompatContainerName: (value: number) => `gateway-${value}`,
+        resolveGatewayStateDirForPort,
       } as unknown as typeof import("../gateway-binding"),
       gatewayName: () => name,
       gatewayPort: () => port,
@@ -167,5 +169,10 @@ describe("gateway lifecycle late binding", () => {
       { gatewayName: "resumed", gatewayPort: 9777, stateDir: "/tmp/gateway" },
       expect.objectContaining({ isLegacyManagedState: expect.any(Function) }),
     );
+    expect(resolveGatewayStateDirForPort).toHaveBeenCalledWith({
+      configured: "/tmp/gateway",
+      home: expect.any(String),
+      port: 9777,
+    });
   });
 });

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { trackChildExit } from "../child-exit-tracker";
 import * as dockerDriverGatewayCutover from "../docker-driver-gateway-cutover";
@@ -78,7 +79,11 @@ export function createDockerDriverGatewayStart(
     const gatewayBin = deps.resolveOpenShellGatewayBinary();
     const openshellVersionOutput = deps.runCaptureOpenshell(["--version"], { ignoreError: true });
     const gatewayEnv = deps.getDockerDriverGatewayEnv(openshellVersionOutput);
-    const stateDir = deps.getDockerDriverGatewayStateDir();
+    const stateDir = deps.gatewayBinding.resolveGatewayStateDirForPort({
+      configured: process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+      home: os.homedir(),
+      port: deps.gatewayPort(),
+    });
     if (process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim()) {
       deps.gatewayBinding.ensureManagedGatewayStateRoot(
         {
@@ -223,7 +228,7 @@ export function createDockerDriverGatewayStart(
     if (childPid <= 0) throw new Error("OpenShell gateway process did not return a pid");
     deps.rememberDockerDriverGatewayPid(childPid);
     dockerDriverGatewayRuntimeMarker.writeDockerDriverGatewayRuntimeMarkerForStateDir(
-      deps.getDockerDriverGatewayStateDir(),
+      stateDir,
       {
         pid: childPid,
         desiredEnv: driftGatewayEnv,
