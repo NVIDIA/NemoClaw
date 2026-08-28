@@ -19,7 +19,6 @@ import {
   type RuntimeProviderWorkloadCleanupResult,
   requireRuntimeProviderDestructiveCleanupAuthority,
 } from "./runtime-provider/access";
-import { getSandboxReadyErrorDebouncePolls } from "./sandbox-readiness-tracing";
 import type { SandboxCreateIntent } from "./types";
 
 const ORDERED_PHASES: readonly CheckpointSandboxRecreatePhase[] = [
@@ -238,6 +237,10 @@ export interface CreatedSandboxLifecycleTarget {
   readonly gatewayName: string;
 }
 
+export interface CreatedSandboxLifecycleRevalidationOptions {
+  readonly allowNotReadyWithMatchingIdentity?: boolean;
+}
+
 type ObserveCreatedSandbox = (
   sandboxName: string,
   gatewayName: string,
@@ -255,24 +258,17 @@ function requireLifecycleGeneration(sandboxName: string, lifecycleGeneration: st
   }
 }
 
-const REVALIDATE_READY_RETRY_SECONDS = 1;
-
-/**
- * Supplying these opts in makes the re-check ride out the transient Error
- * phase. This module owns no clock, so a caller that wants a bounded wait
- * passes one; callers that omit the options observe exactly once, which is the
- * behaviour every caller had before the debounce existed.
- */
-export interface RevalidateCreatedSandboxOptions {
-  /**
-   * Consecutive `not_ready` observations tolerated before the re-check treats
-   * the phase as terminal. Defaults to the shared
-   * {@link getSandboxReadyErrorDebouncePolls} value, so one operator control
-   * (`NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE`) governs the same transient
-   * everywhere. Pass 1 to restore the original read-once behaviour.
-   */
-  readonly errorPhaseDebouncePolls?: number;
-  readonly sleep: (seconds: number) => void;
+function requireValidLiveIdentity(
+  target: CreatedSandboxLifecycleTarget,
+  observation: SandboxRecreateObservation,
+): string {
+  const fingerprint = observation.liveIdentityFingerprint;
+  if (!fingerprint || !/^[0-9a-f]{64}$/u.test(fingerprint)) {
+    throw new Error(
+      `Cannot register sandbox '${target.sandboxName}': its owning gateway did not report a valid live identity.`,
+    );
+  }
+  return fingerprint;
 }
 
 function requireReadyIdentity(
@@ -286,13 +282,23 @@ function requireReadyIdentity(
       `Cannot register sandbox '${target.sandboxName}': its owning gateway did not report it Ready (observed ${observation.state}).`,
     );
   }
-  const fingerprint = observation.liveIdentityFingerprint;
-  if (!fingerprint || !/^[0-9a-f]{64}$/u.test(fingerprint)) {
+  return requireValidLiveIdentity(target, observation);
+}
+
+function requireObservedIdentity(
+  target: CreatedSandboxLifecycleTarget,
+  observation: SandboxRecreateObservation,
+  allowNotReadyWithMatchingIdentity: boolean,
+): string {
+  if (
+    observation.state !== "ready" &&
+    !(allowNotReadyWithMatchingIdentity && observation.state === "not_ready")
+  ) {
     throw new Error(
-      `Cannot register sandbox '${target.sandboxName}': its owning gateway did not report a valid live identity.`,
+      `Cannot register sandbox '${target.sandboxName}': its owning gateway did not report it Ready (observed ${observation.state}).`,
     );
   }
-  return fingerprint;
+  return requireValidLiveIdentity(target, observation);
 }
 
 /** Pin the Ready sandbox identity observed from its owning gateway after creation. */
@@ -344,55 +350,19 @@ export function selectCreatedSandboxLifecycleRegistration(
   };
 }
 
-/*
- * This re-observation runs immediately after managed bootstrap destroys the
- * renamed original `<sandbox>-nemoclaw-bootstrap-<hash>` container. While the
- * OpenShell gateway re-registers the swapped container, `openshell sandbox
- * list` reports the sandbox in the transient "Error" phase for one to three
- * seconds and then recovers on its own. That transient is the known upstream
- * defect tracked on NemoClaw #6043 and already tolerated by the create and
- * readiness path (sandbox-readiness-tracing.ts) and the Docker GPU
- * supervisor-reconnect path (docker-gpu-supervisor-reconnect.ts).
- *
- * Reading it once and failing turned every such transient into a terminal
- * onboard failure: measured on `jetson-nvmap-gpu`, the throw landed in the same
- * second as the destroy on three consecutive runs while the container itself
- * stayed healthy, and the gateway returned to Ready one to two seconds later.
- *
- * Only `not_ready` is retried, matching the sibling debounces. An explicit
- * `missing` observation still fails immediately, so a sandbox that is genuinely
- * gone is never waited out.
- */
-function observeReadyIdentityWithDebounce(
-  target: CreatedSandboxLifecycleTarget,
-  observe: ObserveCreatedSandbox,
-  options: RevalidateCreatedSandboxOptions | undefined,
-): string {
-  const sleep = options?.sleep;
-  if (!sleep) {
-    return requireReadyIdentity(target, observe(target.sandboxName, target.gatewayName));
-  }
-  const attempts = Math.max(
-    1,
-    options?.errorPhaseDebouncePolls ?? getSandboxReadyErrorDebouncePolls(),
-  );
-  let lastObservation = observe(target.sandboxName, target.gatewayName);
-  for (let attempt = 1; attempt < attempts && lastObservation.state === "not_ready"; attempt += 1) {
-    sleep(REVALIDATE_READY_RETRY_SECONDS);
-    lastObservation = observe(target.sandboxName, target.gatewayName);
-  }
-  return requireReadyIdentity(target, lastObservation);
-}
-
 /** Re-observe the owner-scoped identity immediately before registry publication. */
 export function revalidateCreatedSandboxLifecycleRegistration(
   target: CreatedSandboxLifecycleTarget,
   registration: CreatedSandboxLifecycleRegistration,
   observe: ObserveCreatedSandbox,
-  options?: RevalidateCreatedSandboxOptions,
+  options: CreatedSandboxLifecycleRevalidationOptions = {},
 ): CreatedSandboxLifecycleRegistration {
   requireLifecycleGeneration(target.sandboxName, registration.lifecycleGeneration);
-  const liveIdentityFingerprint = observeReadyIdentityWithDebounce(target, observe, options);
+  const liveIdentityFingerprint = requireObservedIdentity(
+    target,
+    observe(target.sandboxName, target.gatewayName),
+    options.allowNotReadyWithMatchingIdentity === true,
+  );
   if (liveIdentityFingerprint !== registration.lifecycleLiveIdentityFingerprint) {
     throw new Error(
       `Cannot register sandbox '${target.sandboxName}': its live identity changed before registry publication.`,
@@ -409,6 +379,7 @@ export interface CreatedSandboxLifecycle {
   ): CreatedSandboxLifecycleRegistration;
   revalidate(
     registration: CreatedSandboxLifecycleRegistration,
+    options?: CreatedSandboxLifecycleRevalidationOptions,
   ): CreatedSandboxLifecycleRegistration;
 }
 
@@ -438,8 +409,13 @@ export function createCreatedSandboxLifecycle(
       });
       return captured;
     },
-    revalidate: (registration) => {
-      const verified = revalidateCreatedSandboxLifecycleRegistration(target, registration, observe);
+    revalidate: (registration, options) => {
+      const verified = revalidateCreatedSandboxLifecycleRegistration(
+        target,
+        registration,
+        observe,
+        options,
+      );
       runtime.recordCreated({
         state: "ready",
         liveIdentityFingerprint: verified.lifecycleLiveIdentityFingerprint,

@@ -1266,71 +1266,51 @@ describe("created sandbox lifecycle registration", () => {
     );
   });
 
-  it("rides out the transient Error phase that follows the bootstrap container destroy", () => {
+  it("accepts the same durable identity during managed bootstrap re-registration", () => {
     const fixture = creatingLifecycleFixture();
     fixture.setObservation({ state: "ready", liveIdentityFingerprint: TARGET_ID });
     const registration = fixture.lifecycle.capture({ lifecycleGeneration: TARGET_GENERATION });
 
-    // The gateway reports not_ready for a beat while it re-registers the swapped
-    // container, then recovers on its own. Reading once turned that into a
-    // terminal onboard failure on jetson-nvmap-gpu.
-    let polls = 0;
-    const slept: number[] = [];
-    const observe = () => {
-      polls += 1;
-      return polls < 3
-        ? { state: "not_ready" as const, liveIdentityFingerprint: null }
-        : { state: "ready" as const, liveIdentityFingerprint: TARGET_ID };
-    };
+    const observe = vi.fn(() => ({
+      state: "not_ready" as const,
+      liveIdentityFingerprint: TARGET_ID,
+    }));
 
     expect(
       revalidateCreatedSandboxLifecycleRegistration(LIFECYCLE_TARGET, registration, observe, {
-        sleep: (seconds) => slept.push(seconds),
+        allowNotReadyWithMatchingIdentity: true,
       }),
     ).toEqual(registration);
-    expect(polls).toBe(3);
-    expect(slept).toEqual([1, 1]);
+    expect(observe).toHaveBeenCalledOnce();
   });
 
-  it("still fails when the gateway never returns to Ready", () => {
+  it.each([
+    ["missing", { state: "missing" as const, liveIdentityFingerprint: null }, /observed missing/u],
+    [
+      "identity-less",
+      { state: "not_ready" as const, liveIdentityFingerprint: null },
+      /valid live identity/u,
+    ],
+    [
+      "changed-identity",
+      { state: "not_ready" as const, liveIdentityFingerprint: FOREIGN_ID },
+      /identity changed/u,
+    ],
+  ])("rejects the %s managed bootstrap re-registration state", (_label, observation, expected) => {
     const fixture = creatingLifecycleFixture();
     fixture.setObservation({ state: "ready", liveIdentityFingerprint: TARGET_ID });
     const registration = fixture.lifecycle.capture({ lifecycleGeneration: TARGET_GENERATION });
 
-    let polls = 0;
-    const observe = () => {
-      polls += 1;
-      return { state: "not_ready" as const, liveIdentityFingerprint: null };
-    };
-
     expect(() =>
-      revalidateCreatedSandboxLifecycleRegistration(LIFECYCLE_TARGET, registration, observe, {
-        errorPhaseDebouncePolls: 4,
-        sleep: () => {},
-      }),
-    ).toThrow(/observed not_ready/u);
-    expect(polls).toBe(4);
-  });
-
-  it("does not wait out a sandbox its gateway reports missing", () => {
-    const fixture = creatingLifecycleFixture();
-    fixture.setObservation({ state: "ready", liveIdentityFingerprint: TARGET_ID });
-    const registration = fixture.lifecycle.capture({ lifecycleGeneration: TARGET_GENERATION });
-
-    let polls = 0;
-    const observe = () => {
-      polls += 1;
-      return { state: "missing" as const, liveIdentityFingerprint: null };
-    };
-
-    expect(() =>
-      revalidateCreatedSandboxLifecycleRegistration(LIFECYCLE_TARGET, registration, observe, {
-        sleep: () => {
-          throw new Error("missing must not be waited out");
+      revalidateCreatedSandboxLifecycleRegistration(
+        LIFECYCLE_TARGET,
+        registration,
+        () => observation,
+        {
+          allowNotReadyWithMatchingIdentity: true,
         },
-      }),
-    ).toThrow(/observed missing/u);
-    expect(polls).toBe(1);
+      ),
+    ).toThrow(expected);
   });
 
   it("retains the captured identity when registry revalidation observes drift (#9833)", () => {
@@ -1393,6 +1373,11 @@ describe("created sandbox lifecycle registration", () => {
   it.each([
     ["missing", { state: "missing" as const, liveIdentityFingerprint: null }, /Ready/u],
     ["not Ready", { state: "not_ready" as const, liveIdentityFingerprint: null }, /Ready/u],
+    [
+      "not Ready with the expected identity",
+      { state: "not_ready" as const, liveIdentityFingerprint: TARGET_ID },
+      /Ready/u,
+    ],
     [
       "missing identity",
       { state: "ready" as const, liveIdentityFingerprint: null },
