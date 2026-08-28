@@ -3,6 +3,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../adapters/openshell/sandbox-identity";
+
 const mocks = vi.hoisted(() => ({
   streamSandboxCreate: vi.fn(),
   waitForCreatedSandboxReadyWithTrace: vi.fn(),
@@ -65,10 +67,11 @@ import type {
 } from "./sandbox-gpu-create-flow";
 import { createSandboxGpuCreateAttemptRunner } from "./sandbox-gpu-create-run-attempt";
 
+const SANDBOX_ID = "alpha-sandbox-id";
 const HANDOFF: ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff = Object.freeze({
   kind: "openshell-owner-cleanup-required",
   sandboxName: "alpha",
-  sandboxId: "sandbox-alpha",
+  sandboxId: SANDBOX_ID,
   runtimeId: "runtime-alpha",
 });
 
@@ -87,9 +90,29 @@ function createManagedFallbackScenario(): {
 } {
   const input = createInput();
   const deps = createDeps();
-  vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
-    args[1] === "get" ? "Name: alpha\nID: sandbox-alpha\nState: Ready\n" : "alpha Ready",
-  );
+  vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) => {
+    const selectorIndex = args.indexOf("--selector");
+    const selector = args[selectorIndex + 1] ?? "";
+    const nonce = selector.slice(NEMOCLAW_CREATE_ATTEMPT_LABEL.length + 1);
+    return selectorIndex >= 0
+      ? JSON.stringify([
+          {
+            id: SANDBOX_ID,
+            name: "alpha",
+            labels: { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce },
+            resource_version: 1,
+            created_at: "2026-08-28T00:00:00Z",
+            phase: "Ready",
+            current_policy_version: 1,
+          },
+        ])
+      : args[1] === "get"
+        ? `Name: alpha\nID: ${SANDBOX_ID}\nState: Ready\n`
+        : "alpha Ready";
+  });
+  input.verifyCreatedSandboxBeforeEffects = vi.fn();
+  input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+  input.persistRetainedSandboxRecovery = vi.fn(() => true);
   const rollback = vi.fn(async (request) =>
     request?.ownerCleanupHandoff === "native-gpu-fallback" ? HANDOFF : undefined,
   );

@@ -1236,7 +1236,6 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
     failNativeCreate();
     const input = createInput();
     const deps = createDeps();
-
     await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
       route: "compatibility",
     });
