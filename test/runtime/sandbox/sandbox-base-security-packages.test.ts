@@ -5,13 +5,19 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY } from "../../../src/lib/sandbox-base-image/security-inventory";
+import {
+  OPENCLAW_SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY,
+  SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY,
+} from "../../../src/lib/sandbox-base-image/security-inventory";
 import {
   BASE_APT_SECURITY_HASHES,
   baseAptSecurityFunctions,
 } from "../../helpers/base-apt-security-functions";
 import { dockerRunCommandBetween, runLoggedDockerShell } from "../../helpers/dockerfile-run-shell";
-import { stageFixedParser, useRealPatchedParser } from "../../helpers/python-parser-security-fixture";
+import {
+  stageFixedParser,
+  useRealPatchedParser,
+} from "../../helpers/python-parser-security-fixture";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const SECURITY_IMAGES = [
@@ -23,6 +29,7 @@ const SECURITY_IMAGES = [
     additionalStartMarker:
       "RUN apt-get update \\\n    && apt-get install -y --no-install-recommends \\\n        /tmp/nemoclaw-native-security/perl-base.deb",
     endMarker: "# setpriv runtime contract",
+    expectedInventory: OPENCLAW_SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY,
   },
   {
     name: "Hermes",
@@ -31,6 +38,7 @@ const SECURITY_IMAGES = [
     startMarker: "# Install the reviewed libexpat, jq, and Vim packages",
     additionalStartMarker: null,
     endMarker: "COPY scripts/lib/reviewed-npm-archive.mts",
+    expectedInventory: SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY,
   },
   {
     name: "Deep Agents Code",
@@ -39,6 +47,7 @@ const SECURITY_IMAGES = [
     startMarker: "# Install the reviewed libexpat, jq, and Vim packages",
     additionalStartMarker: null,
     endMarker: "# Node remains available",
+    expectedInventory: SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY,
   },
   {
     name: "Pi",
@@ -47,6 +56,7 @@ const SECURITY_IMAGES = [
     startMarker: "# Install the reviewed libexpat, jq, and Vim packages",
     additionalStartMarker: null,
     endMarker: "# Pi runs on Node.js",
+    expectedInventory: SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY,
   },
 ] as const;
 const ARCHITECTURES = ["amd64", "arm64"] as const;
@@ -63,9 +73,14 @@ const EXPECTED_SECURITY_PACKAGE_INVENTORY = [
   "perl-base=5.44.0-1nemoclaw1",
   "perl=5.44.0-1nemoclaw1",
 ] as const;
+const EXPECTED_OPENCLAW_SECURITY_PACKAGE_INVENTORY = [
+  ...EXPECTED_SECURITY_PACKAGE_INVENTORY,
+  "libevent-core-2.1-7t64=2.1.13-stable-1",
+] as const;
 const SECURITY_CASES = SECURITY_IMAGES.flatMap((image) =>
   ARCHITECTURES.map((architecture) => [image.name, architecture, image] as const),
 );
+const OPENCLAW_SECURITY_CASES = SECURITY_CASES.filter(([name]) => name === "OpenClaw");
 
 function sandboxSecurityCommand(
   image: (typeof SECURITY_IMAGES)[number],
@@ -116,8 +131,11 @@ function sandboxSecurityCommand(
   return { command, inventory, debianSecurityDebs, nativeSecurityDebs, pythonShim };
 }
 
-function securityInventory(architecture: (typeof ARCHITECTURES)[number]): string {
-  return `${[`architecture=${architecture}`, ...EXPECTED_SECURITY_PACKAGE_INVENTORY].join("\n")}\n`;
+function securityInventory(
+  architecture: (typeof ARCHITECTURES)[number],
+  packageInventory: readonly string[],
+): string {
+  return `${[`architecture=${architecture}`, ...packageInventory].join("\n")}\n`;
 }
 
 function baseAptSecurityFunctionsWithVimPatchRange(
@@ -129,6 +147,18 @@ function baseAptSecurityFunctionsWithVimPatchRange(
   );
 }
 
+function baseAptSecurityFunctionsWithLibeventVersion(
+  architecture: (typeof ARCHITECTURES)[number],
+  version: string,
+): string[] {
+  return baseAptSecurityFunctions(architecture).map((definition) =>
+    definition.replace(
+      'libevent-core-2.1-7t64) printf "2.1.13-stable-1"',
+      `libevent-core-2.1-7t64) printf "${version}"`,
+    ),
+  );
+}
+
 function completedImageSecurityCommand(
   image: (typeof SECURITY_IMAGES)[number],
   tmp: string,
@@ -136,7 +166,9 @@ function completedImageSecurityCommand(
 ): { command: string; inventory: string; pythonShim: string } {
   const inventory = path.join(tmp, "security-packages.txt");
   const { fixedParser, pythonShim } = stageFixedParser(tmp);
-  fs.writeFileSync(inventory, securityInventory(architecture), { mode: 0o444 });
+  fs.writeFileSync(inventory, securityInventory(architecture, image.expectedInventory), {
+    mode: 0o444,
+  });
   const dockerfile = fs.readFileSync(image.finalDockerfile, "utf-8");
   const command = dockerRunCommandBetween(
     dockerfile,
@@ -151,214 +183,347 @@ function completedImageSecurityCommand(
 describe("sandbox base security packages", () => {
   it("keeps runtime validation aligned with the independent image inventory", () => {
     expect(SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY).toEqual(EXPECTED_SECURITY_PACKAGE_INVENTORY);
-  });
-
-  it.each(
-    SECURITY_CASES,
-  )("executes the exact security package contract for %s on %s", (_name, architecture, image) => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-security-"));
-    const prepared = sandboxSecurityCommand(image, tmp);
-
-    try {
-      const { calls, result } = runLoggedDockerShell(
-        prepared.command,
-        tmp,
-        [
-          "perl_base_installed=0",
-          "perl_installed=0",
-          'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; [[ "$*" != *"/perl-base.deb"* ]] || perl_base_installed=1; [[ "$*" != *"/perl.deb"* ]] || perl_installed=1; }',
-          'install() { [[ "$#" -eq 8 && "$1" == "-d" && "$2" == "-o" && "$3" == "root" && "$4" == "-g" && "$5" == "root" && "$6" == "-m" && "$7" == "0755" ]] || return 64; mkdir -p "$8"; }',
-          'chown() { [[ "$#" -eq 2 && "$1" == "root:root" ]] || return 64; }',
-          ...useRealPatchedParser(baseAptSecurityFunctions(architecture), prepared.pythonShim),
-        ],
-        { timeoutMs: 15_000 },
-      );
-      expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
-      expect(calls).toContain("dpkg-install");
-      expect(calls).toContain(
-        `download https://snapshot.debian.org/archive/debian/20260811T082421Z/pool/main/e/expat/libexpat1_2.8.3-1_${architecture}.deb`,
-      );
-      expect(calls).toContain(
-        "download https://snapshot.debian.org/archive/debian/20260727T143429Z/pool/main/v/vim/vim-common_9.2.0858-1_all.deb",
-      );
-      expect(calls).toContain(
-        `download https://snapshot.debian.org/archive/debian/20260727T143429Z/pool/main/v/vim/vim-tiny_9.2.0858-1_${architecture}.deb`,
-      );
-      expect(fs.readFileSync(prepared.inventory, "utf-8")).toBe(securityInventory(architecture));
-      expect(fs.statSync(prepared.inventory).mode & 0o777).toBe(0o444);
-      expect(
-        calls
-          .split("\n")
-          .filter((line) => line.startsWith("download "))
-          .map((line) => line.slice(line.lastIndexOf("/") + 1)),
-      ).toEqual([
-        `libexpat1_2.8.3-1_${architecture}.deb`,
-        `libonig5_6.9.9-1+b1_${architecture}.deb`,
-        `libjq1_1.8.2-1_${architecture}.deb`,
-        `jq_1.8.2-1_${architecture}.deb`,
-        "vim-common_9.2.0858-1_all.deb",
-        `vim-tiny_9.2.0858-1_${architecture}.deb`,
-      ]);
-      expect(prepared.debianSecurityDebs).not.toBe(prepared.nativeSecurityDebs);
-      expect(fs.existsSync(prepared.debianSecurityDebs)).toBe(false);
-      expect(fs.existsSync(prepared.nativeSecurityDebs)).toBe(false);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it.each(
-    SECURITY_CASES,
-  )("installs dos2unix from the runtime apt layer for %s on %s (#8691)", (_name, architecture, image) => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-dos2unix-"));
-    const prepared = sandboxSecurityCommand(image, tmp);
-
-    try {
-      const { calls, result } = runLoggedDockerShell(
-        prepared.command,
-        tmp,
-        [
-          "perl_base_installed=0",
-          "perl_installed=0",
-          'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; [[ "$*" != *"/perl-base.deb"* ]] || perl_base_installed=1; [[ "$*" != *"/perl.deb"* ]] || perl_installed=1; }',
-          'install() { [[ "$#" -eq 8 && "$1" == "-d" && "$2" == "-o" && "$3" == "root" && "$4" == "-g" && "$5" == "root" && "$6" == "-m" && "$7" == "0755" ]] || return 64; mkdir -p "$8"; }',
-          'chown() { [[ "$#" -eq 2 && "$1" == "root:root" ]] || return 64; }',
-          ...useRealPatchedParser(baseAptSecurityFunctions(architecture), prepared.pythonShim),
-        ],
-        { timeoutMs: 15_000 },
-      );
-
-      expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
-      expect(
-        calls
-          .split("\n")
-          .filter((line) => line.startsWith("apt-get install"))
-          .flatMap((line) => line.split(" "))
-          .filter((argument) => argument.startsWith("dos2unix")),
-      ).toEqual(["dos2unix=7.5.2-1*"]);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it.each(
-    SECURITY_CASES,
-  )("executes the completed-image package contract for %s on %s", (_name, architecture, image) => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-final-security-"));
-    const prepared = completedImageSecurityCommand(image, tmp, architecture);
-
-    try {
-      const { result } = runLoggedDockerShell(
-        prepared.command,
-        tmp,
-        [
-          "perl_base_installed=1",
-          "perl_installed=1",
-          [
-            "stat() {",
-            `  [[ "$#" -eq 3 && "$1" == "-c" && "$2" == "%u:%g:%a" && "$3" == ${JSON.stringify(prepared.inventory)} ]] || return 64`,
-            '  printf "0:0:444\\n"',
-            "}",
-          ].join("\n"),
-          ...useRealPatchedParser(baseAptSecurityFunctions(architecture), prepared.pythonShim),
-        ],
-        { timeoutMs: 15_000 },
-      );
-      expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it.each(
-    SECURITY_CASES,
-  )("rejects a stale Vim patch range in the base image for %s on %s", (_name, architecture, image) => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-vim-patch-range-"));
-    const prepared = sandboxSecurityCommand(image, tmp);
-
-    try {
-      const { result } = runLoggedDockerShell(
-        prepared.command,
-        tmp,
-        [
-          "perl_base_installed=0",
-          "perl_installed=0",
-          'apt-get() { [[ "$*" != *"/perl-base.deb"* ]] || perl_base_installed=1; [[ "$*" != *"/perl.deb"* ]] || perl_installed=1; }',
-          'install() { [[ "$#" -eq 8 && "$1" == "-d" && "$2" == "-o" && "$3" == "root" && "$4" == "-g" && "$5" == "root" && "$6" == "-m" && "$7" == "0755" ]] || return 64; mkdir -p "$8"; }',
-          'chown() { [[ "$#" -eq 2 && "$1" == "root:root" ]] || return 64; }',
-          ...useRealPatchedParser(
-            baseAptSecurityFunctionsWithVimPatchRange(architecture, "1-857"),
-            prepared.pythonShim,
-          ),
-        ],
-        { timeoutMs: 15_000 },
-      );
-      expect(result.status).not.toBe(0);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it.each(
-    SECURITY_CASES,
-  )("rejects a stale Vim patch range in the completed image for %s on %s", (_name, architecture, image) => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-final-vim-patch-range-"));
-    const prepared = completedImageSecurityCommand(image, tmp, architecture);
-
-    try {
-      const { result } = runLoggedDockerShell(
-        prepared.command,
-        tmp,
-        [
-          "perl_base_installed=1",
-          "perl_installed=1",
-          [
-            "stat() {",
-            `  [[ "$#" -eq 3 && "$1" == "-c" && "$2" == "%u:%g:%a" && "$3" == ${JSON.stringify(prepared.inventory)} ]] || return 64`,
-            '  printf "0:0:444\\n"',
-            "}",
-          ].join("\n"),
-          ...useRealPatchedParser(
-            baseAptSecurityFunctionsWithVimPatchRange(architecture, "1-857"),
-            prepared.pythonShim,
-          ),
-        ],
-        { timeoutMs: 15_000 },
-      );
-      expect(result.status).not.toBe(0);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it.each(
-    SECURITY_CASES,
-  )("rejects changed Vim package content before installing packages for %s on %s", (_name, architecture, image) => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-vim-checksum-"));
-    const prepared = sandboxSecurityCommand(image, tmp, false);
-    const command = prepared.command.replace(
-      BASE_APT_SECURITY_HASHES[architecture].vimTiny,
-      "0".repeat(64),
+    expect(OPENCLAW_SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY).toEqual(
+      EXPECTED_OPENCLAW_SECURITY_PACKAGE_INVENTORY,
     );
-
-    try {
-      const { calls, result } = runLoggedDockerShell(
-        command,
-        tmp,
-        [
-          'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
-          ...useRealPatchedParser(baseAptSecurityFunctions(architecture), prepared.pythonShim),
-        ],
-        { timeoutMs: 15_000 },
-      );
-      expect(result.status).not.toBe(0);
-      expect(calls).not.toContain("dpkg-install");
-      expect(fs.existsSync(prepared.debianSecurityDebs)).toBe(true);
-      expect(fs.existsSync(prepared.nativeSecurityDebs)).toBe(true);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
   });
+
+  it.each(SECURITY_CASES)(
+    "executes the exact security package contract for %s on %s",
+    (_name, architecture, image) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-security-"));
+      const prepared = sandboxSecurityCommand(image, tmp);
+
+      try {
+        const { calls, result } = runLoggedDockerShell(
+          prepared.command,
+          tmp,
+          [
+            "perl_base_installed=0",
+            "perl_installed=0",
+            'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; [[ "$*" != *"/perl-base.deb"* ]] || perl_base_installed=1; [[ "$*" != *"/perl.deb"* ]] || perl_installed=1; }',
+            'install() { [[ "$#" -eq 8 && "$1" == "-d" && "$2" == "-o" && "$3" == "root" && "$4" == "-g" && "$5" == "root" && "$6" == "-m" && "$7" == "0755" ]] || return 64; mkdir -p "$8"; }',
+            'chown() { [[ "$#" -eq 2 && "$1" == "root:root" ]] || return 64; }',
+            ...useRealPatchedParser(baseAptSecurityFunctions(architecture), prepared.pythonShim),
+          ],
+          { timeoutMs: 15_000 },
+        );
+        expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
+        expect(calls).toContain("dpkg-install");
+        expect(calls).toContain(
+          `download https://snapshot.debian.org/archive/debian/20260811T082421Z/pool/main/e/expat/libexpat1_2.8.3-1_${architecture}.deb`,
+        );
+        expect(calls).toContain(
+          "download https://snapshot.debian.org/archive/debian/20260727T143429Z/pool/main/v/vim/vim-common_9.2.0858-1_all.deb",
+        );
+        expect(calls).toContain(
+          `download https://snapshot.debian.org/archive/debian/20260727T143429Z/pool/main/v/vim/vim-tiny_9.2.0858-1_${architecture}.deb`,
+        );
+        expect(fs.readFileSync(prepared.inventory, "utf-8")).toBe(
+          securityInventory(architecture, image.expectedInventory),
+        );
+        expect(fs.statSync(prepared.inventory).mode & 0o777).toBe(0o444);
+        expect(
+          calls
+            .split("\n")
+            .filter((line) => line.startsWith("download "))
+            .map((line) => line.slice(line.lastIndexOf("/") + 1)),
+        ).toEqual([
+          `libexpat1_2.8.3-1_${architecture}.deb`,
+          ...(image.name === "OpenClaw"
+            ? [`libevent-core-2.1-7t64_2.1.13-stable-1_${architecture}.deb`]
+            : []),
+          `libonig5_6.9.9-1+b1_${architecture}.deb`,
+          `libjq1_1.8.2-1_${architecture}.deb`,
+          `jq_1.8.2-1_${architecture}.deb`,
+          "vim-common_9.2.0858-1_all.deb",
+          `vim-tiny_9.2.0858-1_${architecture}.deb`,
+        ]);
+        expect(prepared.debianSecurityDebs).not.toBe(prepared.nativeSecurityDebs);
+        expect(fs.existsSync(prepared.debianSecurityDebs)).toBe(false);
+        expect(fs.existsSync(prepared.nativeSecurityDebs)).toBe(false);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(SECURITY_CASES)(
+    "installs dos2unix from the runtime apt layer for %s on %s (#8691)",
+    (_name, architecture, image) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-dos2unix-"));
+      const prepared = sandboxSecurityCommand(image, tmp);
+
+      try {
+        const { calls, result } = runLoggedDockerShell(
+          prepared.command,
+          tmp,
+          [
+            "perl_base_installed=0",
+            "perl_installed=0",
+            'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; [[ "$*" != *"/perl-base.deb"* ]] || perl_base_installed=1; [[ "$*" != *"/perl.deb"* ]] || perl_installed=1; }',
+            'install() { [[ "$#" -eq 8 && "$1" == "-d" && "$2" == "-o" && "$3" == "root" && "$4" == "-g" && "$5" == "root" && "$6" == "-m" && "$7" == "0755" ]] || return 64; mkdir -p "$8"; }',
+            'chown() { [[ "$#" -eq 2 && "$1" == "root:root" ]] || return 64; }',
+            ...useRealPatchedParser(baseAptSecurityFunctions(architecture), prepared.pythonShim),
+          ],
+          { timeoutMs: 15_000 },
+        );
+
+        expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
+        expect(
+          calls
+            .split("\n")
+            .filter((line) => line.startsWith("apt-get install"))
+            .flatMap((line) => line.split(" "))
+            .filter((argument) => argument.startsWith("dos2unix")),
+        ).toEqual(["dos2unix=7.5.2-1*"]);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(SECURITY_CASES)(
+    "executes the completed-image package contract for %s on %s",
+    (_name, architecture, image) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-final-security-"));
+      const prepared = completedImageSecurityCommand(image, tmp, architecture);
+
+      try {
+        const { result } = runLoggedDockerShell(
+          prepared.command,
+          tmp,
+          [
+            "perl_base_installed=1",
+            "perl_installed=1",
+            [
+              "stat() {",
+              `  [[ "$#" -eq 3 && "$1" == "-c" && "$2" == "%u:%g:%a" && "$3" == ${JSON.stringify(prepared.inventory)} ]] || return 64`,
+              '  printf "0:0:444\\n"',
+              "}",
+            ].join("\n"),
+            ...useRealPatchedParser(baseAptSecurityFunctions(architecture), prepared.pythonShim),
+          ],
+          { timeoutMs: 15_000 },
+        );
+        expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(SECURITY_CASES)(
+    "rejects a stale Vim patch range in the base image for %s on %s",
+    (_name, architecture, image) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-vim-patch-range-"));
+      const prepared = sandboxSecurityCommand(image, tmp);
+
+      try {
+        const { result } = runLoggedDockerShell(
+          prepared.command,
+          tmp,
+          [
+            "perl_base_installed=0",
+            "perl_installed=0",
+            'apt-get() { [[ "$*" != *"/perl-base.deb"* ]] || perl_base_installed=1; [[ "$*" != *"/perl.deb"* ]] || perl_installed=1; }',
+            'install() { [[ "$#" -eq 8 && "$1" == "-d" && "$2" == "-o" && "$3" == "root" && "$4" == "-g" && "$5" == "root" && "$6" == "-m" && "$7" == "0755" ]] || return 64; mkdir -p "$8"; }',
+            'chown() { [[ "$#" -eq 2 && "$1" == "root:root" ]] || return 64; }',
+            ...useRealPatchedParser(
+              baseAptSecurityFunctionsWithVimPatchRange(architecture, "1-857"),
+              prepared.pythonShim,
+            ),
+          ],
+          { timeoutMs: 15_000 },
+        );
+        expect(result.status).not.toBe(0);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(SECURITY_CASES)(
+    "rejects a stale Vim patch range in the completed image for %s on %s",
+    (_name, architecture, image) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-final-vim-patch-range-"));
+      const prepared = completedImageSecurityCommand(image, tmp, architecture);
+
+      try {
+        const { result } = runLoggedDockerShell(
+          prepared.command,
+          tmp,
+          [
+            "perl_base_installed=1",
+            "perl_installed=1",
+            [
+              "stat() {",
+              `  [[ "$#" -eq 3 && "$1" == "-c" && "$2" == "%u:%g:%a" && "$3" == ${JSON.stringify(prepared.inventory)} ]] || return 64`,
+              '  printf "0:0:444\\n"',
+              "}",
+            ].join("\n"),
+            ...useRealPatchedParser(
+              baseAptSecurityFunctionsWithVimPatchRange(architecture, "1-857"),
+              prepared.pythonShim,
+            ),
+          ],
+          { timeoutMs: 15_000 },
+        );
+        expect(result.status).not.toBe(0);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(OPENCLAW_SECURITY_CASES)(
+    "rejects a stale libevent package in the OpenClaw base image on %s",
+    (_name, architecture, image) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-libevent-version-"));
+      const prepared = sandboxSecurityCommand(image, tmp);
+
+      try {
+        const { result } = runLoggedDockerShell(
+          prepared.command,
+          tmp,
+          [
+            "perl_base_installed=0",
+            "perl_installed=0",
+            'apt-get() { [[ "$*" != *"/perl-base.deb"* ]] || perl_base_installed=1; [[ "$*" != *"/perl.deb"* ]] || perl_installed=1; }',
+            'install() { [[ "$#" -eq 8 && "$1" == "-d" && "$2" == "-o" && "$3" == "root" && "$4" == "-g" && "$5" == "root" && "$6" == "-m" && "$7" == "0755" ]] || return 64; mkdir -p "$8"; }',
+            'chown() { [[ "$#" -eq 2 && "$1" == "root:root" ]] || return 64; }',
+            ...useRealPatchedParser(
+              baseAptSecurityFunctionsWithLibeventVersion(architecture, "2.1.12-stable-10+b1"),
+              prepared.pythonShim,
+            ),
+          ],
+          { timeoutMs: 15_000 },
+        );
+        expect(result.status).not.toBe(0);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(OPENCLAW_SECURITY_CASES)(
+    "rejects a stale libevent package in the completed OpenClaw image on %s",
+    (_name, architecture, image) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-final-libevent-version-"));
+      const prepared = completedImageSecurityCommand(image, tmp, architecture);
+
+      try {
+        const { result } = runLoggedDockerShell(
+          prepared.command,
+          tmp,
+          [
+            "perl_base_installed=1",
+            "perl_installed=1",
+            [
+              "stat() {",
+              `  [[ "$#" -eq 3 && "$1" == "-c" && "$2" == "%u:%g:%a" && "$3" == ${JSON.stringify(prepared.inventory)} ]] || return 64`,
+              '  printf "0:0:444\\n"',
+              "}",
+            ].join("\n"),
+            ...useRealPatchedParser(
+              baseAptSecurityFunctionsWithLibeventVersion(architecture, "2.1.12-stable-10+b1"),
+              prepared.pythonShim,
+            ),
+          ],
+          { timeoutMs: 15_000 },
+        );
+        expect(result.status).not.toBe(0);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(SECURITY_CASES)(
+    "rejects changed Vim package content before installing packages for %s on %s",
+    (_name, architecture, image) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-vim-checksum-"));
+      const prepared = sandboxSecurityCommand(image, tmp, false);
+      const command = prepared.command.replace(
+        BASE_APT_SECURITY_HASHES[architecture].vimTiny,
+        "0".repeat(64),
+      );
+
+      try {
+        const { calls, result } = runLoggedDockerShell(
+          command,
+          tmp,
+          [
+            'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
+            ...useRealPatchedParser(baseAptSecurityFunctions(architecture), prepared.pythonShim),
+          ],
+          { timeoutMs: 15_000 },
+        );
+        expect(result.status).not.toBe(0);
+        expect(calls).not.toContain("dpkg-install");
+        expect(fs.existsSync(prepared.debianSecurityDebs)).toBe(true);
+        expect(fs.existsSync(prepared.nativeSecurityDebs)).toBe(true);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(OPENCLAW_SECURITY_CASES)(
+    "rejects changed libevent package content before installation on %s",
+    (_name, architecture, image) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-libevent-checksum-"));
+      const prepared = sandboxSecurityCommand(image, tmp, false);
+      const command = prepared.command.replace(
+        BASE_APT_SECURITY_HASHES[architecture].libeventCore,
+        "0".repeat(64),
+      );
+
+      try {
+        const { calls, result } = runLoggedDockerShell(
+          command,
+          tmp,
+          [
+            'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
+            ...useRealPatchedParser(baseAptSecurityFunctions(architecture), prepared.pythonShim),
+          ],
+          { timeoutMs: 15_000 },
+        );
+        expect(result.status).not.toBe(0);
+        expect(calls).not.toContain("dpkg-install");
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(OPENCLAW_SECURITY_CASES)(
+    "rejects a duplicate checksum record that omits libevent before installation on %s",
+    (_name, architecture, image) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-libevent-checksum-set-"));
+      const prepared = sandboxSecurityCommand(image, tmp, false);
+      const command = prepared.command.replace(
+        '"$libevent_core_sha256" "$security_deb_dir/libevent-core-2.1-7t64.deb"',
+        '"$libexpat_sha256" "$security_deb_dir/libexpat1.deb"',
+      );
+
+      try {
+        const { calls, result } = runLoggedDockerShell(
+          command,
+          tmp,
+          [
+            'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
+            ...useRealPatchedParser(baseAptSecurityFunctions(architecture), prepared.pythonShim),
+          ],
+          { timeoutMs: 15_000 },
+        );
+        expect(result.status).not.toBe(0);
+        expect(calls).not.toContain("dpkg-install");
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.each(SECURITY_IMAGES)("rejects unsupported package architecture for $name", (image) => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-unsupported-arch-"));
