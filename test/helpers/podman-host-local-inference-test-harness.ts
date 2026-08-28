@@ -82,7 +82,7 @@ export interface PodmanHostLocalInferenceHarnessOptions {
   readonly omitDiscoveredDevices?: boolean;
   readonly gpuIdentities?: readonly string[];
   readonly authorityId?: string;
-  readonly service?: "nim" | "vllm";
+  readonly service?: "ollama" | "nim" | "vllm";
   readonly probeImageRef?: string;
 }
 
@@ -192,8 +192,8 @@ function inspectPayload(container: TestContainer): string {
           String(args[index + 1]) === "OLLAMA_CONTEXT_LENGTH"
             ? "OLLAMA_CONTEXT_LENGTH=64000"
             : String(args[index + 1]).includes("=")
-            ? String(args[index + 1])
-            : `${String(args[index + 1])}=injected-test-value`,
+              ? String(args[index + 1])
+              : `${String(args[index + 1])}=injected-test-value`,
         ]
       : [],
   );
@@ -1022,9 +1022,7 @@ export function createPodmanHostLocalInferenceTestHarness(
           `${input.networkGatewayIp}:${String(input.hostPort)}:${String(input.containerPort)}`,
           ...gpuDevices.flatMap((device) => ["--device", device]),
           ...[...(input.environment ?? [])].flatMap((name) => ["--env", name]),
-          ...(input.ollamaContextLength === undefined
-            ? []
-            : ["--env", "OLLAMA_CONTEXT_LENGTH"]),
+          ...(input.ollamaContextLength === undefined ? [] : ["--env", "OLLAMA_CONTEXT_LENGTH"]),
           "--shm-size",
           "64m",
           "--ipc",

@@ -344,6 +344,10 @@ export interface HostLocalInferenceRuntime {
     receipt: HostLocalInferenceReceipt,
     writer: HostLocalInferenceReceiptWriter,
   ): HostLocalInferencePreparedStartup;
+  /** Reinspect a failed published resume using only exact rollback-safe authority. */
+  inspectPublishedRecoveryRestoration?(
+    receipt: HostLocalInferenceReceipt,
+  ): HostLocalManagedInferenceInspection;
   inspectManaged(receipt: HostLocalInferenceReceipt): HostLocalManagedInferenceInspection;
   stopManaged(receipt: HostLocalInferenceReceipt): HostLocalManagedInferenceInspection;
   /**

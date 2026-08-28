@@ -96,6 +96,7 @@ function createHarness(initiallyRunning = false, registryInitiallyRunning = fals
     services: ["ollama"],
     resumeManaged: vi.fn(),
     inspectManaged: vi.fn(() => ({ running, receipt })),
+    inspectPublishedRecoveryRestoration: vi.fn(() => ({ running, receipt })),
     preserveForRebuild: vi.fn(() => {
       events.push("provider-validate");
       return receipt;
@@ -319,6 +320,7 @@ describe("Hermes Portable Ollama inference recovery", () => {
     const harness = createHarness();
     const assertCurrent = vi
       .fn()
+      .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => {
         throw new Error("published authority changed");
