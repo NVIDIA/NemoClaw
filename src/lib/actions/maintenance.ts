@@ -61,6 +61,13 @@ export function rebuildBackupsDirectory(home: string, gatewayPort: number): stri
   return path.join(nemoclawStateRoot(home, gatewayPort), "rebuild-backups");
 }
 
+export interface BackupAllOptions {
+  purpose?: "pre-uninstall" | "pre-upgrade";
+  requireAll?: boolean;
+  sandboxNames?: readonly string[];
+  skipUnreachable?: boolean;
+}
+
 async function withHermesPortableMaintenanceAdmission<T>(
   commandId: "backup-all" | "gc",
   operation: () => Promise<T>,
@@ -278,13 +285,20 @@ async function backupSandboxWithinShieldsWindow(
 }
 
 export async function backupAll(): Promise<void> {
-  return withHermesPortableMaintenanceAdmission("backup-all", backupAllWithoutPortableAuthority);
+  return withHermesPortableMaintenanceAdmission("backup-all", backupAllUnderPortableHostFence);
 }
 
-async function backupAllWithoutPortableAuthority(): Promise<void> {
+export async function backupAllUnderPortableHostFence(
+  options: BackupAllOptions = {},
+): Promise<void> {
+  const selectedNames = options.sandboxNames ? new Set(options.sandboxNames) : null;
   const sandboxes = registry
     .listSandboxes()
-    .sandboxes.filter((sandbox) => registry.isPublishedSandboxRegistration(sandbox));
+    .sandboxes.filter(
+      (sandbox) =>
+        registry.isPublishedSandboxRegistration(sandbox) &&
+        (selectedNames === null || selectedNames.has(sandbox.name)),
+    );
   if (sandboxes.length === 0) {
     console.log("  No sandboxes registered. Nothing to back up.");
     return;
@@ -342,8 +356,10 @@ async function backupAllWithoutPortableAuthority(): Promise<void> {
     }).map((sandbox) => sandbox.name),
   );
 
-  const skipUnreachable = shouldSkipUnreachableSandboxBackup(process.env);
-  const requireAll = process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS === "1";
+  const purpose = options.purpose ?? "pre-upgrade";
+  const skipUnreachable =
+    options.skipUnreachable ?? shouldSkipUnreachableSandboxBackup(process.env);
+  const requireAll = options.requireAll ?? process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS === "1";
   let backed = 0;
   let failed = 0;
   let skipped = 0;
@@ -463,7 +479,14 @@ async function backupAllWithoutPortableAuthority(): Promise<void> {
     }
   }
   console.log("");
-  console.log(`  Pre-upgrade backup: ${backed} backed up, ${failed} failed, ${skipped} skipped`);
+  const purposeLabel = purpose === "pre-uninstall" ? "Pre-uninstall" : "Pre-upgrade";
+  console.log(
+    `  ${purposeLabel} backup: ${backed} backed up, ${failed} failed, ${skipped} skipped`,
+  );
+  const strictRetry =
+    purpose === "pre-uninstall"
+      ? "rerun the original uninstall command"
+      : `run '${CLI_NAME} backup-all' again`;
   if (backed > 0) {
     console.log(`  Backups stored in: ${rebuildBackupsDirectory(resolveHome(), GATEWAY_PORT)}`);
   }
@@ -479,7 +502,7 @@ async function backupAllWithoutPortableAuthority(): Promise<void> {
       );
       if (requireAll) {
         console.error(
-          `  Strict pre-upgrade backup cannot skip these sandboxes. Restore their gateway health, then run '${CLI_NAME} backup-all' again.`,
+          `  Strict ${purpose} backup cannot skip these sandboxes. Restore their gateway health, then ${strictRetry}.`,
         );
       } else {
         console.error(
@@ -494,11 +517,15 @@ async function backupAllWithoutPortableAuthority(): Promise<void> {
   if (requireAll && skipped > 0) {
     console.error("");
     console.error(
-      `  Strict pre-upgrade backup requires every registered sandbox to be backed up; ${skipped} sandbox(es) were skipped.`,
+      `  Strict ${purpose} backup requires every registered sandbox to be backed up; ${skipped} sandbox(es) were skipped.`,
     );
     if (notRunningSkipped > 0) {
       console.error(
-        `  ${notRunningSkipped} skipped sandbox(es) were not running. Start each sandbox/container, then rerun the installer or '${CLI_NAME} backup-all'.`,
+        `  ${notRunningSkipped} skipped sandbox(es) were not running. Start each sandbox/container, then ${
+          purpose === "pre-uninstall"
+            ? "rerun the original uninstall command"
+            : `rerun the installer or '${CLI_NAME} backup-all'`
+        }.`,
       );
     }
     console.error("  Resolve each skipped sandbox using its reason above and retry.");

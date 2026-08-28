@@ -207,6 +207,7 @@ function probeExactOpenShellSandboxId(
 
 async function verifyCreatedSandboxBeforeEffects(
   sandboxId: string,
+  createAttemptNonce: string,
   route: SelectedDockerGpuRoute,
   input: SandboxGpuCreateFlowInput,
 ): Promise<void> {
@@ -214,8 +215,31 @@ async function verifyCreatedSandboxBeforeEffects(
   await input.verifyCreatedSandboxBeforeEffects({
     sandboxId,
     liveIdentityFingerprint: fingerprintSandboxRecreateValue(sandboxId),
+    createAttemptNonce,
     route,
   });
+}
+
+function resolveCreateAttemptNonce(
+  input: SandboxGpuCreateFlowInput,
+  deferPostCreateEffects: boolean,
+): string | null {
+  const resumedCreateAttemptNonce = input.resumeVerifiedCreate?.createAttemptNonce;
+  if (!input.resumeVerifiedCreate) {
+    return deferPostCreateEffects
+      ? randomBytes(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH / 2).toString("hex")
+      : null;
+  }
+  if (
+    !resumedCreateAttemptNonce ||
+    resumedCreateAttemptNonce.length !== NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH ||
+    !/^[0-9a-f]+$/u.test(resumedCreateAttemptNonce)
+  ) {
+    throw new Error(
+      "Verified sandbox recovery has no durable create-attempt authority; refusing continuation.",
+    );
+  }
+  return resumedCreateAttemptNonce;
 }
 
 function waitForCreatedOpenShellSandboxPublication(
@@ -419,9 +443,7 @@ export function createSandboxGpuCreateAttemptRunner(
     const managedBootstrap = input.managedBootstrap ?? null;
     const unboundAttemptArgv = state.compatibilityArgv ?? input.createArgv;
     if (input.requirePolicylessCreate) assertPolicylessSandboxCreateArgv(unboundAttemptArgv);
-    const createAttemptNonce = deferPostCreateEffects
-      ? randomBytes(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH / 2).toString("hex")
-      : null;
+    const createAttemptNonce = resolveCreateAttemptNonce(input, deferPostCreateEffects);
     const persistIdentitySettlementRecovery = (
       sandboxIdentityFingerprint: string | null = null,
     ): void => {
@@ -442,8 +464,8 @@ export function createSandboxGpuCreateAttemptRunner(
       let persisted = false;
       try {
         persisted = sandboxIdentityFingerprint
-          ? persist(message, sandboxIdentityFingerprint)
-          : persist(message);
+          ? persist(message, sandboxIdentityFingerprint, createAttemptNonce)
+          : persist(message, undefined, createAttemptNonce);
       } catch {
         persisted = false;
       }
@@ -629,7 +651,12 @@ export function createSandboxGpuCreateAttemptRunner(
         );
       }
       resumedSandboxId = identity.sandboxId;
-      await verifyCreatedSandboxBeforeEffects(identity.sandboxId, route, input);
+      await verifyCreatedSandboxBeforeEffects(
+        identity.sandboxId,
+        createAttemptNonce!,
+        route,
+        input,
+      );
       createdSandboxVerified = true;
       if (deferPostCreateEffects) {
         revalidatePostCreateEffect(`activate managed sandbox network for '${input.sandboxName}'`);
@@ -708,7 +735,7 @@ export function createSandboxGpuCreateAttemptRunner(
               );
             }
             waitForCreatedSandboxPublication(sandboxId);
-            await verifyCreatedSandboxBeforeEffects(sandboxId, route, input);
+            await verifyCreatedSandboxBeforeEffects(sandboxId, createAttemptNonce!, route, input);
             createdSandboxVerified = true;
             if (deferPostCreateEffects) {
               revalidatePostCreateEffect(
@@ -847,7 +874,7 @@ export function createSandboxGpuCreateAttemptRunner(
         );
       }
       waitForCreatedSandboxPublication(sandboxId);
-      await verifyCreatedSandboxBeforeEffects(sandboxId, route, input);
+      await verifyCreatedSandboxBeforeEffects(sandboxId, createAttemptNonce!, route, input);
       createdSandboxVerified = true;
     }
     if (deferPostCreateEffects) {
