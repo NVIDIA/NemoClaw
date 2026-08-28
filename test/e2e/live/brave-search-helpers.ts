@@ -194,6 +194,26 @@ export async function onboardBrave(
   return onboard;
 }
 
+export async function reuseBraveSandboxWithWebSearchDisabled(
+  host: HostCliClient,
+  inferenceKey: string,
+): Promise<ShellProbeResult> {
+  return await host.command(
+    "node",
+    [CLI_ENTRYPOINT, "onboard", "--fresh", "--non-interactive", "--yes-i-accept-third-party-software"],
+    {
+      artifactName: "phase-5-reonboard-brave-disabled-reuse",
+      cwd: REPO_ROOT,
+      env: commandEnv({
+        NEMOCLAW_RECREATE_SANDBOX: "0",
+        NVIDIA_INFERENCE_API_KEY: inferenceKey,
+      }),
+      redactionValues: [inferenceKey],
+      timeoutMs: 20 * 60_000,
+    },
+  );
+}
+
 export function assertBraveConfig(configText: string): string {
   const parsedConfig = JSON.parse(configText) as {
     tools?: { web?: { search?: { enabled?: unknown; provider?: unknown; apiKey?: unknown } } };

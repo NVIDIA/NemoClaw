@@ -4,6 +4,7 @@
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import {
   assertBraveConfig,
   assertBraveResponse,
@@ -14,6 +15,7 @@ import {
   commandEnv,
   extractOpenClawAgentText,
   onboardBrave,
+  reuseBraveSandboxWithWebSearchDisabled,
   runBraveAgentWithSecretBoundaryCheck,
   SANDBOX_NAME,
   sandboxShell,
@@ -21,7 +23,7 @@ import {
 
 const LIVE_TIMEOUT_MS = 35 * 60_000;
 
-test("Brave search preset wires policy/config, hides the real key, and performs real searches (#2687)", {
+test("Brave search preset wires policy/config, performs real searches, and survives disabled-search reuse (#2687, #10404)", {
   timeout: LIVE_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -31,6 +33,8 @@ test("Brave search preset wires policy/config, hides the real key, and performs 
       "run Brave-backed OpenClaw search",
       "assert sandbox shell cannot read the real Brave key",
       "query Brave API through credential resolver",
+      "re-onboard the existing sandbox with web search disabled",
+      "verify reused runtime identity and retained Brave egress",
     ],
   },
 }, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
@@ -50,6 +54,9 @@ test("Brave search preset wires policy/config, hides the real key, and performs 
       "OpenClaw agent can perform a Brave-backed web search",
       "BRAVE_API_KEY is absent or a placeholder in the live agent and sandbox shell environments",
       "curl from inside the sandbox can query Brave using the placeholder token header",
+      "re-onboard reuse with web search disabled exits zero and keeps the sandbox ready",
+      "the reused OpenClaw config records web search as disabled",
+      "the reused Balanced-tier policy retains api.search.brave.com and can reach it",
     ],
   });
 
@@ -121,4 +128,49 @@ test("Brave search preset wires policy/config, hides the real key, and performs 
     { artifactName: "phase-4b-direct-brave-curl", timeoutMs: 60_000, redactionValues },
   );
   assertBraveResponse(resultText(curl));
+
+  progress.phase("re-onboard the existing sandbox with web search disabled");
+  const reuse = await reuseBraveSandboxWithWebSearchDisabled(host, inferenceKey);
+  expect(reuse.exitCode, resultText(reuse)).toBe(0);
+  expect(resultText(reuse)).toMatch(/exists and is ready.*reusing it/iu);
+
+  progress.phase("verify reused runtime identity and retained Brave egress");
+  const status = await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "status"], {
+    artifactName: "phase-6-reused-runtime-status",
+    cwd: REPO_ROOT,
+    env: commandEnv({ NEMOCLAW_RECREATE_SANDBOX: "0" }),
+    timeoutMs: 60_000,
+  });
+  expect(status.exitCode, resultText(status)).toBe(0);
+
+  const reusedConfig = await sandbox.exec(
+    SANDBOX_NAME,
+    ["cat", "/sandbox/.openclaw/openclaw.json"],
+    {
+      artifactName: "phase-6-reused-openclaw-config",
+      env: commandEnv({ NEMOCLAW_RECREATE_SANDBOX: "0" }),
+      timeoutMs: 60_000,
+    },
+  );
+  expect(reusedConfig.exitCode, resultText(reusedConfig)).toBe(0);
+  const parsedReusedConfig = JSON.parse(reusedConfig.stdout) as {
+    tools?: { web?: { search?: { enabled?: unknown } } };
+  };
+  expect(parsedReusedConfig.tools?.web?.search?.enabled, reusedConfig.stdout).toBe(false);
+
+  const reusedPolicy = await sandbox.openshell(["policy", "get", "--full", SANDBOX_NAME], {
+    artifactName: "phase-6-reused-brave-policy",
+    env: commandEnv({ NEMOCLAW_RECREATE_SANDBOX: "0" }),
+    timeoutMs: 60_000,
+  });
+  expect(reusedPolicy.exitCode, resultText(reusedPolicy)).toBe(0);
+  expect(resultText(reusedPolicy)).toContain("api.search.brave.com");
+
+  const reachable = await sandboxShell(
+    sandbox,
+    "curl -sS -o /dev/null --max-time 20 -w 'HTTP_STATUS:%{http_code}\\n' 'https://api.search.brave.com/res/v1/web/search'",
+    { artifactName: "phase-6-reused-brave-egress", timeoutMs: 60_000 },
+  );
+  expect(reachable.exitCode, resultText(reachable)).toBe(0);
+  expect(resultText(reachable)).toMatch(/HTTP_STATUS:(?!000)[0-9]{3}/u);
 });
