@@ -70,7 +70,7 @@ describe("detachSandboxProviders", () => {
     expect(result.failures).toEqual([]);
   });
 
-  it("stops before detaching from a same-name replacement (#9833)", () => {
+  it("detects a same-name replacement after one detach and stops later detaches (#9833)", () => {
     const calls: string[][] = [];
     const expectedIdentity = "identity-a";
     let liveIdentity = expectedIdentity;

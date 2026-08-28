@@ -149,6 +149,9 @@ export function detachSandboxProviders(
   const failures: Array<{ name: string; output: string }> = [];
   for (const suffix of SANDBOX_PROVIDER_SUFFIXES) {
     const name = `${sandboxName}-${suffix}`;
+    // OpenShell resolves provider detach by mutable sandbox name. These checks detect
+    // replacement and stop later detaches; they do not make this command an atomic,
+    // identity-bound mutation. Operators must not mutate the sandbox concurrently.
     deps.revalidateSandboxIdentity?.(
       `detaching provider '${name}' from sandbox '${sandboxName}'`,
     );
