@@ -1216,11 +1216,7 @@ function mockManagedImageBootstrap() {
   const authorityStore = require(
     path.resolve(__dirname, "../../src/lib/onboard/managed-bootstrap/docker-authority-store.ts"),
   );
-  const sandboxIdentity = require(
-    path.resolve(__dirname, "../../src/lib/adapters/openshell/sandbox-identity.ts"),
-  );
 
-  sandboxIdentity.resolveOpenShellSandboxId = () => ONBOARD_READY_SANDBOX_ID;
   authorityStore.createDockerManagedBootstrapAuthorityStore = () => ({
     async recordPreparedAuthority(authority) {
       return {
