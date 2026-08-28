@@ -157,6 +157,14 @@ export function validateOpenClawPluginRuntimeExdevWorkflow(
     for (const [name, value] of Object.entries(expectedEnv)) {
       if (env[name] !== value) errors.push(`${jobName} must set ${name}=${value}`);
     }
+    if (
+      jobName === "openclaw-plugin-runtime-exdev" &&
+      env.NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD !== "1"
+    ) {
+      errors.push(
+        `${jobName} must set NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD=1 for changed base-image inputs`,
+      );
+    }
     if (Object.hasOwn(env, "E2E_DEFAULT_ENABLED")) {
       errors.push(`${jobName} must remain enabled for scheduled and empty manual runs`);
     }
