@@ -27,27 +27,14 @@ const managedTitle = "docs: prepare v1.0.1 documentation";
 const managedBody = `## Release target
 
 This cumulative draft prepares documentation for \`v1.0.1\`.
-It covers merged changes after \`v1.0.0\` through the latest PR commit.
+It covers merged changes after \`v1.0.0\` through the reviewed \`main\` commit recorded as a parent of the latest workflow-created commit.
 The workflow selects \`v1.0.1\` by incrementing the patch component of \`v1.0.0\`.
 
-## During development
+## Managed state
 
-- Each push to \`main\` that changes a path outside the allowed documentation paths starts a cumulative authoring and independent review run.
-- An approved patch creates a verified merge commit and fast-forwards this branch.
-- Keep this PR as a draft while code PRs merge for \`v1.0.1\`. The workflow owns the draft branch.
-- Mark this PR ready for review only at release cutoff. Ready status transfers branch ownership to maintainers, and later workflow runs leave the PR unchanged.
-- The workflow never force-pushes. While the PR is a draft, it stops if a person changes the branch or PR metadata.
+The workflow owns this branch while the PR is a draft. Ready-for-review status transfers branch ownership to maintainers, and later workflow runs leave the PR unchanged.
 
-## Release cutoff
-
-1. Stop merging code PRs intended for \`v1.0.1\`.
-2. Mark this PR ready for review to transfer branch ownership to maintainers.
-3. Add the dated \`## v1.0.1\` changelog entry and final documentation to this PR.
-4. Run \`npm run docs\` and complete the final review.
-5. Merge this PR. Its docs-only merge does not start another catch-up run.
-6. Ask the tag session to show this PR's coverage point, later commits and PRs, checks, reviews, and any open managed docs PR.
-7. Decide whether to proceed, create or update a docs PR for the uncovered range, or stop.
-8. Cut \`v1.0.1\` only after you choose to proceed with the displayed documentation coverage.
+Follow [Post-Merge Documentation Catch-Up](https://github.com/NVIDIA/NemoClaw/blob/main/docs/AUTOMATION.md#post-merge-documentation-catch-up) for development, recovery, validation, and release-cutoff routing.
 
 ## Verification
 
@@ -429,14 +416,12 @@ describe("post-merge documentation publisher", () => {
     expect(api.branchRef?.object.sha).toBe(api.commitSha);
     expect(api.openPulls[0]?.title).toBe(managedTitle);
     expect(api.openPulls[0]?.body).toContain(
-      "Its docs-only merge does not start another catch-up run.",
-    );
-    expect(api.openPulls[0]?.body).toMatch(
-      /`v1[.]0[.]0`[\s\S]*never force-pushes[\s\S]*`npm run docs`[\s\S]*`v1[.]0[.]1`/u,
+      "through the reviewed `main` commit recorded as a parent of the latest workflow-created commit",
     );
     expect(api.openPulls[0]?.body).toContain(
-      "Ready status transfers branch ownership to maintainers",
+      "https://github.com/NVIDIA/NemoClaw/blob/main/docs/AUTOMATION.md#post-merge-documentation-catch-up",
     );
+    expect(api.openPulls[0]?.body).not.toContain("## Release cutoff");
   });
   it("creates no writes for an approved empty patch without an active PR", async () => {
     const value = emptyFixture();

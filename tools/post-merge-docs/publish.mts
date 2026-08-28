@@ -229,31 +229,18 @@ function requireSamePull(expected: Pull | undefined, observed: Pull | undefined)
 function pullTitle(target: string): string {
   return `docs: prepare ${target} documentation`;
 }
-function pullBody(rangeStart: string, target: string): string {
+function pullBody(repository: string, rangeStart: string, target: string): string {
   return `## Release target
 
 This cumulative draft prepares documentation for \`${target}\`.
-It covers merged changes after \`${rangeStart}\` through the latest PR commit.
+It covers merged changes after \`${rangeStart}\` through the reviewed \`main\` commit recorded as a parent of the latest workflow-created commit.
 The workflow selects \`${target}\` by incrementing the patch component of \`${rangeStart}\`.
 
-## During development
+## Managed state
 
-- Each push to \`main\` that changes a path outside the allowed documentation paths starts a cumulative authoring and independent review run.
-- An approved patch creates a verified merge commit and fast-forwards this branch.
-- Keep this PR as a draft while code PRs merge for \`${target}\`. The workflow owns the draft branch.
-- Mark this PR ready for review only at release cutoff. Ready status transfers branch ownership to maintainers, and later workflow runs leave the PR unchanged.
-- The workflow never force-pushes. While the PR is a draft, it stops if a person changes the branch or PR metadata.
+The workflow owns this branch while the PR is a draft. Ready-for-review status transfers branch ownership to maintainers, and later workflow runs leave the PR unchanged.
 
-## Release cutoff
-
-1. Stop merging code PRs intended for \`${target}\`.
-2. Mark this PR ready for review to transfer branch ownership to maintainers.
-3. Add the dated \`## ${target}\` changelog entry and final documentation to this PR.
-4. Run \`npm run docs\` and complete the final review.
-5. Merge this PR. Its docs-only merge does not start another catch-up run.
-6. Ask the tag session to show this PR's coverage point, later commits and PRs, checks, reviews, and any open managed docs PR.
-7. Decide whether to proceed, create or update a docs PR for the uncovered range, or stop.
-8. Cut \`${target}\` only after you choose to proceed with the displayed documentation coverage.
+Follow [Post-Merge Documentation Catch-Up](https://github.com/${repository}/blob/main/docs/AUTOMATION.md#post-merge-documentation-catch-up) for development, recovery, validation, and release-cutoff routing.
 
 ## Verification
 
@@ -295,7 +282,7 @@ async function pullMetadataMode(
   target: string,
   request: Request,
 ): Promise<"current" | "legacy"> {
-  if (pull.title === pullTitle(target) && pull.body === pullBody(rangeStart, target))
+  if (pull.title === pullTitle(target) && pull.body === pullBody(repository, rangeStart, target))
     return "current";
   const coverageSha = await legacyCoverageSha(repository, commit, request);
   if (
@@ -395,7 +382,7 @@ async function updatePullMetadata(
   target: string,
   request: Request,
 ): Promise<Pull> {
-  const body = pullBody(rangeStart, target);
+  const body = pullBody(repository, rangeStart, target);
   const title = pullTitle(target);
   let updated: Pull;
   try {
@@ -426,7 +413,7 @@ export async function publishDocumentation(input: {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository)) fail("GITHUB_REPOSITORY is invalid");
   const approval = approvedPatch(input.artifactDirectory, repository, mainSha);
   const { patch, rangeStartTag, targetReleaseTag: target } = approval;
-  const body = pullBody(rangeStartTag, target);
+  const body = pullBody(repository, rangeStartTag, target);
   const title = pullTitle(target);
   let active = await checkpoint(repository, mainSha, request);
   const temporary = fs.mkdtempSync(path.join(tmpdir(), "nemoclaw-docs-publish-"));

@@ -11,11 +11,9 @@ This file owns contributor-facing contracts for generated documentation, routes,
 
 The native Fern changelog under `docs/changelog/` is the release history.
 One source directory is shared by every configured user-guide variant.
-The end-of-day flow merges the planned release entry.
-A docs-only merge does not start another catch-up run. The tag skill shows the latest cumulative
-docs PR, its automated coverage point, later commits and PRs, review and check state, changed paths,
-and open managed docs PRs. The maintainer then decides whether to proceed, request another docs PR,
-or stop tagging.
+The end-of-day flow merges the planned release entry. Follow
+[Post-Merge Documentation Catch-Up](#post-merge-documentation-catch-up) for the release-cutoff
+procedure and documentation coverage decision.
 
 For each release:
 
@@ -35,8 +33,8 @@ Follow [documentation validation](CONTRIBUTING.md#validate-the-change) after add
 
 When an independently reviewed cumulative patch changes documentation, the workflow creates or
 refreshes one draft documentation PR for merged changes after the latest release tag. The PR title
-names the next patch tag. Its body names both tags and explains the development and release-cutoff
-procedures.
+names the next patch tag. Its body names both tags, identifies the reviewed `main` boundary, states
+the current branch owner, and links to this procedure.
 
 Later pushes to `main` refresh the same cumulative patch when they change a path outside `docs/**`,
 `fern/docs.yml`, and `fern/assets/**`.
@@ -53,6 +51,10 @@ cumulative updates on the next qualifying push. To take ownership instead, mark 
 review; later workflow runs leave it unchanged. When a person changes the managed branch, mark the
 PR ready for review before continuing the change because automation does not overwrite that branch.
 The [post-merge automation guide](../tools/post-merge-docs/README.md) owns its credential boundary.
+
+At release cutoff, follow the canonical maintainer
+[release-train policy](https://github.com/NVIDIA/NemoClaw/blob/main/.agents/skills/nemoclaw-maintainer-policies/references/release-train.md#release-prep-docs).
+That policy owns the documentation coverage evidence, maintainer decision, and tag procedure.
 
 ## Local Fern Tooling
 

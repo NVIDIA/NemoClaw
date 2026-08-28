@@ -27,7 +27,7 @@ Update it and `docs/resources/agent-skills.mdx` only when documentation routing 
 Canonical documentation describes supported NemoClaw behavior. A documentation PR cannot create a
 new supported integration, workflow, image, third-party stack, or product surface. Confirm new
 surfaces through the root [product scope gate](../AGENTS.md#product-scope-gate). Route independent
-solutions through [Community Solutions](resources/community-contributions.mdx).
+solutions through [Community Solutions](resources/community-contributions).
 
 ## Find the Owning Page
 
