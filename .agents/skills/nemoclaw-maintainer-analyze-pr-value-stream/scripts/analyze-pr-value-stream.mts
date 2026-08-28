@@ -6,7 +6,7 @@ import { chmod, mkdir as fsMkdir, mkdtemp, readFile, rm, stat, writeFile } from 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const execFileAsync = promisify(execFile);
 const MAX_GH_OUTPUT = 10_000_000;
@@ -161,7 +161,7 @@ async function runGithubCli(input: GithubCliInput): Promise<{ stdout: string }> 
   }
 }
 
-type RequiredCheck = { name: string; appId: number | null };
+type RequiredCheck = { name: string; appId: number | null; legacy: boolean };
 
 async function readRequiredChecks(input: {
   workdir: string;
@@ -185,14 +185,14 @@ async function readRequiredChecks(input: {
     );
     const contexts = (Array.isArray(payload?.contexts) ? payload.contexts : [])
       .filter((name: unknown): name is string => typeof name === "string")
-      .map((name: string) => ({ name, appId: null }));
+      .map((name: string) => ({ name, appId: null, legacy: true }));
     const checks = (Array.isArray(payload?.checks) ? payload.checks : [])
       .filter(
         (check: any) =>
           typeof check?.context === "string" &&
           (check?.app_id === null || Number.isSafeInteger(check?.app_id)),
       )
-      .map((check: any) => ({ name: check.context, appId: check.app_id }));
+      .map((check: any) => ({ name: check.context, appId: check.app_id, legacy: false }));
     return {
       protectionReadable: true,
       requirements: [...contexts, ...checks].slice(0, input.limit),
@@ -419,35 +419,19 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
       });
       if (!Buffer.isBuffer(extracted.stdout) || extracted.stdout.length !== expanded) return null;
       await writeFile(path.join(blobDirectory, entryName), extracted.stdout, { mode: 0o600 });
-      const common = (
-        await execFileAsync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
-          cwd: input.workdir,
-          encoding: "utf8",
-          maxBuffer: 100_000,
-          timeout: 30_000,
-        })
-      ).stdout.trim();
-      const primary = common.endsWith(path.sep + ".git") ? path.dirname(common) : input.workdir;
-      let owner = input.workdir;
-      let vitest = path.join(owner, "node_modules", ".bin", "vitest");
-      try {
-        await stat(vitest);
-      } catch {
-        owner = primary;
-        vitest = path.join(owner, "node_modules", ".bin", "vitest");
-        await stat(vitest);
-      }
+      const trustedRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
+      const vitest = path.join(trustedRoot, "node_modules", "vitest", "vitest.mjs");
+      await stat(vitest);
       try {
         await execFileAsync(
-          vitest,
-          ["--merge-reports=" + blobDirectory, "--reporter=" + reporterPath],
+          process.execPath,
+          [vitest, "--merge-reports=" + blobDirectory, "--reporter=" + reporterPath],
           {
-            cwd: owner,
+            cwd: temporaryDirectory,
             encoding: "utf8",
             maxBuffer: 1_000_000,
             timeout: 120_000,
             env: {
-              ...process.env,
               DSH_TEST_SUMMARY: summaryPath,
               DSH_TOP_TESTS: String(topTestsPerShard),
             },
@@ -732,6 +716,20 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
     if (page === maxCheckPages)
       throw new Error("check run history exceeded maxCheckPages; increase the bounded limit");
   }
+  const statusesResult = await runGithubCli({
+    workdir: input.workdir,
+    args: [
+      "api",
+      "repos/" + repository + "/commits/" + pull.headRefOid + "/status",
+      "--jq",
+      "[.statuses[] | {id,context,state,created_at,updated_at,target_url}]",
+    ],
+  });
+  const legacyStatuses = JSON.parse(statusesResult.stdout);
+  if (!Array.isArray(legacyStatuses))
+    throw new Error("GitHub commit status response was not an array");
+  if (legacyStatuses.length > 100)
+    throw new Error("commit status history exceeded the complete bounded contract");
   const configured = await readRequiredChecks({
     workdir: input.workdir,
     repo: repository,
@@ -758,15 +756,33 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
   if (requirements.length > 0) {
     successful = [];
     for (const requirement of requirements) {
-      const latest = checks
-        .filter(
-          (check: any) =>
-            check?.name === requirement.name &&
-            (requirement.appId === null ||
-              requirement.appId === -1 ||
-              check?.app?.id === requirement.appId),
-        )
-        .sort((a: any, b: any) => Date.parse(b?.created_at) - Date.parse(a?.created_at))[0];
+      const candidates = requirement.legacy
+        ? [
+            ...checks.filter((check: any) => check?.name === requirement.name),
+            ...legacyStatuses
+              .filter((status: any) => status?.context === requirement.name)
+              .map((status: any) => ({
+                name: status.context,
+                status: "completed",
+                conclusion:
+                  String(status.state ?? "").toLowerCase() === "success" ? "success" : status.state,
+                created_at: status.created_at,
+                started_at: status.created_at,
+                completed_at: status.updated_at,
+                html_url: status.target_url,
+                app: { id: null, slug: "commit-status" },
+              })),
+          ]
+        : checks.filter(
+            (check: any) =>
+              check?.name === requirement.name &&
+              (requirement.appId === null ||
+                requirement.appId === -1 ||
+                check?.app?.id === requirement.appId),
+          );
+      const latest = candidates.sort(
+        (a: any, b: any) => Date.parse(b?.created_at) - Date.parse(a?.created_at),
+      )[0];
       if (latest === undefined || !eligible(latest)) requiredChecksComplete = false;
       else successful.push(latest);
     }
