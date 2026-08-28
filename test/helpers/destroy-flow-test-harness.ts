@@ -18,6 +18,7 @@ const requireSource = createRequire(
 const destroyModulePath = "./destroy.js";
 
 export type DestroyHarness = {
+  destroyCommand: typeof import("../../src/commands/sandbox/destroy").default;
   assertHermesPortableCommandUnavailableSpy: MockInstance;
   cleanupGatewaySpy: MockInstance;
   captureOpenshellSpy: MockInstance;
@@ -86,6 +87,7 @@ type DestroyHarnessOptions = {
   finalizeMcpBridgeError?: string;
   finalizeMcpError?: string;
   imageTag?: string | null;
+  invokedCliName?: string;
   hostLocalInferenceReceipt?: string | null;
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
   liveListOutput?: string;
@@ -165,6 +167,11 @@ export function traceDestroyBoundaryCalls(
 }
 
 export function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarness {
+  if (options.invokedCliName) {
+    process.env.NEMOCLAW_INVOKED_AS = options.invokedCliName;
+    delete require.cache[requireSource.resolve("../../cli/branding.js")];
+    delete require.cache[requireSource.resolve("./destroy-execution.js")];
+  }
   resetDestroyModuleCache();
   const events: string[] = [];
   const lifecycleLockEvents: string[] = [];
@@ -201,6 +208,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   ) as typeof import("../../src/lib/state/mcp-lifecycle-lock");
   const registry = requireSource("../../state/registry.js");
   const destroyExecution = requireSource("./destroy-execution.js");
+  const destroyCommand = requireSource("../../../commands/sandbox/destroy.js").default;
   const destroyPreflight = requireSource("./destroy-preflight.js");
   const sandboxSession = requireSource("../../state/sandbox-session.js");
   const shields = requireSource("../../shields/index.js");
@@ -592,6 +600,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   logSpy.mockClear();
 
   return {
+    destroyCommand,
     assertHermesPortableCommandUnavailableSpy,
     cleanupGatewaySpy,
     captureOpenshellSpy,

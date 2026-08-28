@@ -112,47 +112,10 @@ export function expectActiveTimerDestroyOrder(harness: DestroyHarness): void {
   expect(harness.events.indexOf("delete")).toBeLessThan(harness.events.indexOf("timer-cleanup"));
 }
 
-export async function expectSkipUnrestorableHardeningWhenDockerEmpty(
-  exitSpy: MockInstance,
-): Promise<void> {
-  const harness = createDestroyHarness({
-    activeTimer: true,
-    sandboxPresent: true,
-    dockerRunResult: { status: 0, stdout: "", stderr: "" },
-    openshellDriver: "docker",
-    shieldsUpError: new Error("inline auto-restore would commit containment"),
-  });
-  await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
-  expect(harness.events).not.toContain("wipe");
-  expect(harness.events).not.toContain("harden");
-  expect(harness.events.indexOf("delete")).toBeLessThan(harness.events.indexOf("timer-cleanup"));
-  expect(harness.killTimerSpy).toHaveBeenCalledOnce();
-  expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
-  expect(exitSpy).not.toHaveBeenCalled();
-}
-
-export async function expectHardenWhenOpenshellAbsentWithLiveDocker(
-  exitSpy: MockInstance,
-): Promise<void> {
-  const harness = createDestroyHarness({
-    activeTimer: true,
-    sandboxPresent: false,
-    dockerRunResult: {
-      status: 0,
-      stdout: "aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha\n",
-      stderr: "",
-    },
-    openshellDriver: "docker",
-    shieldsUpError: new Error("must still harden a live Docker identity"),
-  });
-  await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
-  expect(harness.events).toContain("wipe");
-  expect(harness.events).toContain("harden");
-  expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
-  expect(exitSpy).not.toHaveBeenCalled();
-}
-
-export function expectFailedHardeningStillDeletes(harness: DestroyHarness): void {
+export function expectFailedHardeningStillDeletes(
+  harness: DestroyHarness,
+  cliName = "nemoclaw",
+): void {
   expect(harness.events).toEqual(
     expect.arrayContaining(["wipe", "harden", "delete", "timer-cleanup"]),
   );
@@ -172,7 +135,7 @@ export function expectFailedHardeningStillDeletes(harness: DestroyHarness): void
     "Waiting for a verified live sandbox mutation owner does not consume that budget",
   );
   expect(warnOutput).toContain("durable containment blocks sandbox mutations");
-  expect(warnOutput).toContain("nemoclaw alpha shields status");
+  expect(warnOutput).toContain(`${cliName} alpha shields status`);
   expect(warnOutput).toContain("exact-generation recovery guidance");
 }
 
@@ -190,12 +153,12 @@ export function expectFailedHardeningRefusesForcedCleanup(harness: DestroyHarnes
   expect(errorOutput).not.toContain("re-run with --force to remove the local sandbox record");
   expect(errorOutput).toContain("seven-attempt auto-restore recovery can continue");
   expect(errorOutput).toContain("durable containment blocks sandbox mutations");
-  expectShieldsRecoveryOrder(errorOutput);
+  expectShieldsRecoveryOrder(errorOutput, process.env.NEMOCLAW_INVOKED_AS ?? "nemoclaw");
 }
 
-export function expectShieldsRecoveryOrder(errorOutput: string): void {
-  const gatewayStatusIndex = errorOutput.indexOf("nemoclaw alpha status");
-  const shieldsStatusIndex = errorOutput.indexOf("nemoclaw alpha shields status");
+export function expectShieldsRecoveryOrder(errorOutput: string, cliName = "nemoclaw"): void {
+  const gatewayStatusIndex = errorOutput.indexOf(`${cliName} alpha status`);
+  const shieldsStatusIndex = errorOutput.indexOf(`${cliName} alpha shields status`);
   const retryDestroyIndex = errorOutput.indexOf("Retry destroy only after recovery permits it");
   expect(gatewayStatusIndex).toBeGreaterThanOrEqual(0);
   expect(shieldsStatusIndex).toBeGreaterThan(gatewayStatusIndex);

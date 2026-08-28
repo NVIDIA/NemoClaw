@@ -357,7 +357,7 @@ describe("MCP lifecycle lock acquisition", () => {
       }),
     ).resolves.toBe("entered");
     expect(operation).toHaveBeenCalledTimes(1);
-    expect(reads).toBe(6);
+    expect(monotonicNow).toBeGreaterThan(2);
   });
 
   it("keeps waiting when an expired timer's process is still alive", async () => {

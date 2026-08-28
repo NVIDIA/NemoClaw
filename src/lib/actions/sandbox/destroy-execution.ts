@@ -61,6 +61,7 @@ export { preparePortableDemoSandboxDestroyAuthority };
 
 type SandboxDestroyExecutionInput = {
   cleanupShieldsArtifacts: (sandboxName: string) => void;
+  cliName?: string;
   force: boolean;
   getSandbox?: (sandboxName: string) => SandboxEntry | null;
   listSandboxes?: () => { sandboxes: SandboxEntry[] };
@@ -149,6 +150,7 @@ async function prepareMcpDestroy(
 function wipeAndHardenLiveSandbox(
   sandboxName: string,
   sandboxRuntimeConfirmedAbsent: boolean,
+  cliName: string,
   deps: NonNullable<SandboxDestroyExecutionInput["deps"]> = {},
 ): HardenedDeleteState {
   if (sandboxRuntimeConfirmedAbsent) return { hardenedForDelete: false, hardeningFailed: false };
@@ -214,7 +216,7 @@ function wipeAndHardenLiveSandbox(
         "If sandbox deletion fails, the auto-restore timer retries the transition to lockdown within its seven-attempt recovery budget. " +
         "Waiting for a verified live sandbox mutation owner does not consume that budget. " +
         "If the budget is exhausted, durable containment blocks sandbox mutations. " +
-        `Run \`nemoclaw ${sandboxName} shields status\` for exact-generation recovery guidance.`,
+        `Run \`${cliName} ${sandboxName} shields status\` for exact-generation recovery guidance.`,
     );
     return { hardenedForDelete: false, hardeningFailed: true, timerProcessToken };
   }
@@ -289,6 +291,7 @@ async function finalizeMcpDestroy(
 
 export async function executeSandboxDestroy({
   cleanupShieldsArtifacts,
+  cliName = "nemoclaw",
   force,
   getSandbox,
   listSandboxes,
@@ -517,7 +520,12 @@ export async function executeSandboxDestroy({
       (expectedContainerIdentity === undefined && sandboxConfirmedAbsent);
     let hardened: HardenedDeleteState;
     try {
-      hardened = wipeAndHardenLiveSandbox(sandboxName, sandboxRuntimeConfirmedAbsent, deps);
+      hardened = wipeAndHardenLiveSandbox(
+        sandboxName,
+        sandboxRuntimeConfirmedAbsent,
+        cliName,
+        deps,
+      );
     } catch (error) {
       const mcpRecoveryFailure = await restoreMcpForAbort(notHardened);
       const workspaceTimedOut = error instanceof SandboxWorkspaceCleanupTimeoutError;
