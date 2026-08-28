@@ -117,9 +117,20 @@ function closeRegularFileProof(proof: RegularFileProof): void {
   proof.file.close();
 }
 
+function asGatewayStateConflict<T>(operation: () => T): T {
+  try {
+    return operation();
+  } catch (error) {
+    if (error instanceof GatewayStateConflictError) throw error;
+    throw new GatewayStateConflictError(error instanceof Error ? error.message : String(error));
+  }
+}
+
 function assertExistingConfigProof(proof: ExistingConfigProof): void {
-  assertStateDirectoryIdentity(proof.stateDir, proof.stateDirIdentity);
-  assertRegularFileProof(proof);
+  asGatewayStateConflict(() => {
+    assertStateDirectoryIdentity(proof.stateDir, proof.stateDirIdentity);
+    assertRegularFileProof(proof);
+  });
 }
 
 function closeLegacyJwtBundleProof(proof: LegacyJwtBundleProof): void {
@@ -127,11 +138,13 @@ function closeLegacyJwtBundleProof(proof: LegacyJwtBundleProof): void {
 }
 
 function assertLegacyJwtBundleProof(proof: LegacyJwtBundleProof): void {
-  const currentDirectory = fs.lstatSync(proof.jwtDir);
-  if (!sameFileIdentity(fileIdentity(currentDirectory), proof.directoryIdentity)) {
-    throw new Error(`Legacy gateway JWT directory changed during validation: ${proof.jwtDir}`);
-  }
-  for (const file of proof.files) assertRegularFileProof(file);
+  asGatewayStateConflict(() => {
+    const currentDirectory = fs.lstatSync(proof.jwtDir);
+    if (!sameFileIdentity(fileIdentity(currentDirectory), proof.directoryIdentity)) {
+      throw new Error(`Legacy gateway JWT directory changed during validation: ${proof.jwtDir}`);
+    }
+    for (const file of proof.files) assertRegularFileProof(file);
+  });
 }
 
 function openOwnedLegacyJwtBundle(stateDir: string, ownerUid: number): LegacyJwtBundleProof {
@@ -595,7 +608,7 @@ function existingGatewayIdentityFromConfig(
       const identity: LegacyGatewayIdentity = {
         configProof,
         gatewayId: legacyGatewayId,
-        jwtProof: openOwnedLegacyJwtBundle(stateDir, state.uid),
+        jwtProof: asGatewayStateConflict(() => openOwnedLegacyJwtBundle(stateDir, state.uid)),
         kind: "legacy",
         sandboxNamespace: "default",
       };

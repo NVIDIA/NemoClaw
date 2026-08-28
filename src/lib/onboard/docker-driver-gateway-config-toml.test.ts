@@ -295,11 +295,43 @@ describe("docker-driver-gateway config TOML", () => {
 
       expect(() =>
         prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox"),
+      ).toThrow(GatewayStateConflictError);
+      expect(() =>
+        prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox"),
       ).toThrow(/Legacy gateway JWT bundle is incomplete/);
       expect(fs.readFileSync(configPath, "utf-8")).toBe(configBefore);
       expect(fs.readFileSync(bundle.signingKeyPath, "utf-8")).toBe(signingKeyBefore);
       expect(fs.existsSync(bundle.publicKeyPath)).toBe(false);
     } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a changed gateway config proof as a state conflict", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-proof-change-"));
+    try {
+      const { configPath, env } = writePreScopedGatewayConfig(stateDir);
+      const configBefore = fs.readFileSync(configPath, "utf-8");
+      const originalLstatSync = fs.lstatSync.bind(fs);
+      let configProofChecks = 0;
+      vi.spyOn(fs, "lstatSync").mockImplementation((target, options) =>
+        String(target) === configPath && ++configProofChecks === 4
+          ? (fs.unlinkSync(configPath), originalLstatSync(target, options as never))
+          : originalLstatSync(target, options as never),
+      );
+
+      let error: unknown;
+      try {
+        prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox");
+      } catch (cause) {
+        error = cause;
+      }
+      expect(error).toBeInstanceOf(GatewayStateConflictError);
+      expect((error as Error).message).toContain("ENOENT");
+      expect(fs.existsSync(configPath)).toBe(false);
+      expect(configBefore).toContain('network_name = "openshell-docker"');
+    } finally {
+      vi.restoreAllMocks();
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
   });
