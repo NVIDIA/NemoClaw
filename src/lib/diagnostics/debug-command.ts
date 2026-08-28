@@ -6,7 +6,7 @@ import type { DebugOptions } from "./debug";
 export type DebugSandboxSelection = Readonly<{ name: string; gatewayName?: string }>;
 export type DebugSandboxAvailability =
   | Readonly<{ state: "available"; gatewayName: string }>
-  | Readonly<{ state: "unregistered" | "missing" | "invalid_gateway" }>;
+  | Readonly<{ state: "unregistered" | "missing" | "invalid_gateway" | "observation_denied" }>;
 
 export interface RunDebugCommandDeps {
   getDefaultSandbox: () => Promise<DebugSandboxSelection | null>;
@@ -58,6 +58,11 @@ export async function runDebugCommandWithOptions(
       if (availability.state === "unregistered") {
         errorLine(`Error: Sandbox '${explicit.name}'${sourceLabel} is not registered.`);
         errorLine("  Run `nemoclaw list` to see available sandboxes.");
+      } else if (availability.state === "observation_denied") {
+        errorLine(
+          `Error: OpenShell rejected observation of sandbox '${explicit.name}'${sourceLabel}.`,
+        );
+        errorLine("  Verify OpenShell authentication and gateway identity, then retry.");
       } else if (availability.state === "invalid_gateway") {
         errorLine(`Error: Sandbox '${explicit.name}'${sourceLabel} has an invalid registered gateway binding.`);
         errorLine("  Remove and re-onboard the sandbox to restore a valid gateway binding.");

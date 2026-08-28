@@ -41,9 +41,14 @@ export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
 
   const liveSandboxNames = async (
     target: OpenShellGatewayTarget,
-  ): Promise<ReadonlySet<string> | undefined> => {
+  ): Promise<ReadonlySet<string> | "denied" | undefined> => {
     const result = await sandboxObserver.listSandboxes({ target });
-    if (!result.ok) return undefined;
+    if (!result.ok) {
+      const denied =
+        result.error.kind === "authentication" ||
+        (result.error.kind === "transport" && result.error.reason === "identity_mismatch");
+      return denied ? "denied" : undefined;
+    }
     return new Set(result.value.sandboxes.map((sandbox) => sandbox.name));
   };
 
@@ -62,6 +67,10 @@ export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
       const liveNames = await liveSandboxNames(
         gatewayName ? namedOpenShellGateway(gatewayName) : selectedOpenShellGateway(),
       );
+      if (liveNames === "denied") {
+        console.error(`${RD}Warning:${R} OpenShell rejected the sandbox observation.`);
+        return null;
+      }
       if (registered && liveNames && !liveNames.has(registered.name)) {
         console.error(
           `${RD}Warning:${R} sandbox '${registered.name}' exists in the local registry but not in OpenShell.`,
@@ -93,6 +102,12 @@ export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
       return null;
     }
     const liveNames = await liveSandboxNames(namedOpenShellGateway(gatewayName));
+    if (liveNames === "denied") {
+      console.error(
+        `${RD}Warning:${R} OpenShell rejected observation of sandbox '${defaultSandbox}'.`,
+      );
+      return null;
+    }
     if (liveNames && !liveNames.has(defaultSandbox)) {
       console.error(
         `${RD}Warning:${R} default sandbox '${defaultSandbox}' exists in the local registry but not in OpenShell.`,
@@ -112,6 +127,7 @@ export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
     const gatewayName = resolveDebugGatewayName(registered);
     if (!gatewayName) return { state: "invalid_gateway" };
     const liveNames = await liveSandboxNames(namedOpenShellGateway(gatewayName));
+    if (liveNames === "denied") return { state: "observation_denied" };
     return !liveNames || liveNames.has(name)
       ? { state: "available", gatewayName }
       : { state: "missing" };
