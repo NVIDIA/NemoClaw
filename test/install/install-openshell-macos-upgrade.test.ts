@@ -249,7 +249,7 @@ exit 2
     [
       "-c",
       `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
-spin() { return 0; }
+spin() { [ "\${_NEMOCLAW_OPENSHELL_INSTALL_METHOD:-}" = "homebrew" ]; }
 install_nemoclaw_openshell_gateway_user_service() { return 0; }
 maybe_install_openshell_during_install force
 printf 'openshell=%s\ngateway=%s\npath=%s\n' "$NEMOCLAW_OPENSHELL_BIN" "$NEMOCLAW_OPENSHELL_GATEWAY_BIN" "$(command -v openshell)"`,
@@ -264,6 +264,54 @@ printf 'openshell=%s\ngateway=%s\npath=%s\n' "$NEMOCLAW_OPENSHELL_BIN" "$NEMOCLA
     },
   );
   return { gatewayBin, openshellBin, result, staleOpenshellBin };
+}
+
+function runVerifiedStandaloneInstallSelection(
+  options: { ambiguousMethod?: boolean; missingGateway?: boolean } = {},
+) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-standalone-install-selection-"));
+  const home = path.join(tmp, "home");
+  const bin = path.join(tmp, "bin");
+  const localBin = path.join(home, ".local", "bin");
+  const openshellBin = path.join(localBin, "openshell");
+  const gatewayBin = path.join(localBin, "openshell-gateway");
+  const brewBin = path.join(bin, "brew");
+  fs.mkdirSync(bin, { recursive: true });
+  fs.mkdirSync(localBin, { recursive: true });
+  writeExecutable(openshellBin, "#!/usr/bin/env bash\nexit 0\n");
+  writeExecutable(
+    options.missingGateway ? `${gatewayBin}.missing` : gatewayBin,
+    "#!/usr/bin/env bash\nexit 0\n",
+  );
+  writeExecutable(path.join(bin, "uname"), "#!/usr/bin/env bash\nprintf 'Darwin\\n'\n");
+
+  const changeInstallMethod = options.ambiguousMethod
+    ? `printf '#!/usr/bin/env bash\\nexit 0\\n' >'${brewBin}'
+chmod +x '${brewBin}'`
+    : ":";
+  const result = spawnSync(
+    "bash",
+    [
+      "-c",
+      `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
+spin() {
+  [ "\${_NEMOCLAW_OPENSHELL_INSTALL_METHOD:-}" = "standalone" ] || return 1
+  ${changeInstallMethod}
+}
+install_nemoclaw_openshell_gateway_user_service() { return 0; }
+maybe_install_openshell_during_install force
+printf 'openshell=%s\ngateway=%s\npath=%s\n' "$NEMOCLAW_OPENSHELL_BIN" "$NEMOCLAW_OPENSHELL_GATEWAY_BIN" "$(command -v openshell)"`,
+    ],
+    {
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: home,
+        PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    },
+  );
+  return { gatewayBin, openshellBin, result };
 }
 
 function runDarwinGatewayServiceStop(
@@ -576,6 +624,30 @@ describe("install.sh macOS OpenShell upgrade recovery", () => {
     expect(result.stdout).toContain(`openshell=${openshellBin}`);
     expect(result.stdout).toContain(`gateway=${gatewayBin}`);
     expect(result.stdout).toContain(`path=${openshellBin}`);
+  });
+
+  it("selects both verified standalone binaries on macOS without Homebrew (#10369)", () => {
+    const { gatewayBin, openshellBin, result } = runVerifiedStandaloneInstallSelection();
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.stdout).toContain(`openshell=${openshellBin}`);
+    expect(result.stdout).toContain(`gateway=${gatewayBin}`);
+    expect(result.stdout).toContain(`path=${openshellBin}`);
+    expect(result.stdout).toContain("without reboot persistence");
+  });
+
+  it("stops after a verified standalone install when the gateway binary is missing (#10369)", () => {
+    const { result } = runVerifiedStandaloneInstallSelection({ missingGateway: true });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("verified standalone OpenShell installation");
+  });
+
+  it("stops when the macOS OpenShell installation method changes during install (#10369)", () => {
+    const { result } = runVerifiedStandaloneInstallSelection({ ambiguousMethod: true });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("installation method changed while installation was running");
   });
 
   it("stops after a verified Homebrew install when brew cannot resolve its prefix (#10386)", () => {

@@ -1465,9 +1465,28 @@ prefer_homebrew_openshell() {
   export PATH="${brew_prefix%/}/bin:$PATH"
 }
 
+observed_macos_openshell_install_method() {
+  if command -v brew >/dev/null 2>&1; then
+    printf '%s\n' "homebrew"
+  else
+    printf '%s\n' "standalone"
+  fi
+}
+
 prefer_user_local_openshell() {
   local local_bin="${XDG_BIN_HOME:-${HOME}/.local/bin}"
   local openshell_bin="${local_bin}/openshell"
+  local gateway_bin="${local_bin}/openshell-gateway"
+  if [[ "${1:-}" == "verified-install" ]]; then
+    [[ "$local_bin" == /* ]] || return 1
+    [[ -x "$openshell_bin" && -x "$gateway_bin" ]] || return 1
+    export NEMOCLAW_OPENSHELL_BIN="$openshell_bin"
+    export NEMOCLAW_OPENSHELL_GATEWAY_BIN="$gateway_bin"
+    if [[ ":$PATH:" != *":$local_bin:"* ]]; then
+      export PATH="$local_bin:$PATH"
+    fi
+    return 0
+  fi
   if [[ -x "$openshell_bin" ]]; then
     export NEMOCLAW_OPENSHELL_BIN="$openshell_bin"
     if [[ ":$PATH:" != *":$local_bin:"* ]]; then
@@ -1972,16 +1991,18 @@ NODE
 maybe_install_openshell_during_install() {
   local mode="${1:-force}"
   local explicit_openshell_bin="${NEMOCLAW_OPENSHELL_BIN:-}"
+  local platform macos_install_method="" observed_install_method=""
+  platform="$(uname -s)" || return 1
   if truthy_env "${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}"; then
     info "Deferring OpenShell CLI installation until after pre-upgrade backup."
     return 0
   fi
   if [[ "$mode" == "if-missing" ]] && command_exists openshell; then
-    if [[ "$(uname -s)" == "Darwin" ]] && command -v brew >/dev/null 2>&1 \
+    if [[ "$platform" == "Darwin" ]] && command -v brew >/dev/null 2>&1 \
       && ! macos_openshell_homebrew_gateway_service_installed; then
       info "OpenShell CLI exists but the macOS Homebrew gateway service is missing."
     else
-      if [[ "$(uname -s)" == "Darwin" ]] && ! command -v brew >/dev/null 2>&1; then
+      if [[ "$platform" == "Darwin" ]] && ! command -v brew >/dev/null 2>&1; then
         warn "Homebrew is not installed; using the standalone OpenShell gateway without reboot persistence."
       fi
       prefer_homebrew_openshell || prefer_user_local_openshell
@@ -1994,15 +2015,33 @@ maybe_install_openshell_during_install() {
       return 0
     fi
   fi
-  if ! spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"; then
+  if [[ "$platform" == "Darwin" ]]; then
+    macos_install_method="$(observed_macos_openshell_install_method)" || return 1
+  fi
+  if ! _NEMOCLAW_OPENSHELL_INSTALL_METHOD="$macos_install_method" \
+    spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"; then
     return 1
   fi
-  # install-openshell.sh returned success only after verifying and installing the
-  # pinned formula, so selecting its Homebrew binaries does not need to re-read
-  # the now-untrusted tap formula.
-  if [[ "$(uname -s)" == "Darwin" ]]; then
-    prefer_homebrew_openshell verified-install \
-      || error "The verified Homebrew OpenShell installation did not provide executable CLI and gateway binaries. The installer stopped before gateway recovery."
+  if [[ "$platform" == "Darwin" ]]; then
+    observed_install_method="$(observed_macos_openshell_install_method)" || return 1
+    [[ "$observed_install_method" == "$macos_install_method" ]] \
+      || error "The macOS OpenShell installation method changed while installation was running. The installer stopped before selecting OpenShell binaries or recovering the gateway."
+    case "$macos_install_method" in
+      homebrew)
+        # install-openshell.sh returned success only after verifying and installing
+        # the pinned formula, so this does not re-read the untrusted tap formula.
+        prefer_homebrew_openshell verified-install \
+          || error "The verified Homebrew OpenShell installation did not provide executable CLI and gateway binaries. The installer stopped before gateway recovery."
+        ;;
+      standalone)
+        prefer_user_local_openshell verified-install \
+          || error "The verified standalone OpenShell installation did not provide trusted executable user-local CLI and gateway binaries. The installer stopped before gateway recovery."
+        warn "Homebrew is not installed; using the verified standalone OpenShell gateway without reboot persistence."
+        ;;
+      *)
+        error "The macOS OpenShell installation method could not be verified. The installer stopped before selecting OpenShell binaries or recovering the gateway."
+        ;;
+    esac
   else
     prefer_user_local_openshell
   fi
