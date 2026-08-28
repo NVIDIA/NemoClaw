@@ -184,7 +184,7 @@ const IMAGE_PULL_LAYER_CAUSES: Readonly<Record<ManagedLlamaCppImagePullFailureLa
   "daemon behavior": "the container daemon failed the pull",
   "invalid dependency": "the pinned image does not resolve for this platform",
   "registry availability": "the registry was unavailable",
-  "runner network": "the runner could not reach the registry",
+  "runner network": "the host could not reach the registry",
   storage: "container storage failed",
   unclassified: "the pull failed without a recognized layer signature",
 };
