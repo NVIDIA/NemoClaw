@@ -123,7 +123,7 @@ const {
   restoreStateDirLockPosture,
   restoreStateDirStartupAccess,
   stateLockPlanCompatibilityIssues,
-  verifyStateDirLockPosture,
+  verifyLockedStateDirPosture,
 }: typeof import("./state-dir-lock") = require("./state-dir-lock");
 const {
   OPENCLAW_CONFIG_DIR,
@@ -6625,11 +6625,11 @@ function verifyHermesProviderMutableStatus(
     };
 
     assertTimedAuthority();
-    const stateIssues = verifyStateDirLockPosture(
+    const stateIssues = preflightStateDirLock(
       stateDirLockExec(sandboxName),
       target.configDir,
-      false,
       requireStateLockPlan(target),
+      target.stateLockPlanInImage,
     );
     if (stateIssues.length > 0) {
       throw new Error(`Config not unlocked: ${stateIssues.join(", ")}`);
@@ -6721,10 +6721,9 @@ function shieldsStatusWithoutHostLock(
           inspectHermesShieldsProtocol(sandboxName, target) === "provider-state-mutation-v2"
         ) {
           driftIssues.push(
-            ...verifyStateDirLockPosture(
+            ...verifyLockedStateDirPosture(
               stateDirLockExec(sandboxName),
               target.configDir,
-              true,
               requireStateLockPlan(target),
             ).map((issue) => `state lock posture: ${issue}`),
           );

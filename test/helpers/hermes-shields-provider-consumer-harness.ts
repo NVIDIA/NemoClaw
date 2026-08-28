@@ -84,7 +84,8 @@ export type HermesShieldsProviderConsumerHarness = {
   supportSpy: MockInstance;
   transitionSpy: MockInstance;
   verifyLockSpy: MockInstance;
-  verifyStateDirLockPostureSpy: MockInstance;
+  preflightStateDirLockSpy: MockInstance;
+  verifyLockedStateDirPostureSpy: MockInstance;
   cleanup: () => void;
 };
 
@@ -272,8 +273,11 @@ export function createHermesShieldsProviderConsumerHarness(
   const verifyLockSpy = vi
     .spyOn(verifyLock, "verifyShieldsLockState")
     .mockReturnValue({ issues: [] });
-  const verifyStateDirLockPostureSpy = vi
-    .spyOn(stateDirLock, "verifyStateDirLockPosture")
+  const preflightStateDirLockSpy = vi
+    .spyOn(stateDirLock, "preflightStateDirLock")
+    .mockReturnValue([]);
+  const verifyLockedStateDirPostureSpy = vi
+    .spyOn(stateDirLock, "verifyLockedStateDirPosture")
     .mockReturnValue([]);
   const runSpy = vi.spyOn(runner, "run").mockReturnValue({ status: 0 });
   // #10104: default to an empty `sandbox list` capture (no matching row, so
@@ -309,7 +313,8 @@ export function createHermesShieldsProviderConsumerHarness(
         Buffer.from(dockerExec.dockerExecFileSync(command as string[])),
       ),
     verifyLockSpy,
-    verifyStateDirLockPostureSpy,
+    preflightStateDirLockSpy,
+    verifyLockedStateDirPostureSpy,
     vi.spyOn(console, "log").mockImplementation(() => undefined),
     vi.spyOn(console, "error").mockImplementation(() => undefined),
     vi.spyOn(console, "warn").mockImplementation(() => undefined),
@@ -393,6 +398,7 @@ export function createHermesShieldsProviderConsumerHarness(
     supportSpy,
     transitionSpy,
     verifyLockSpy,
-    verifyStateDirLockPostureSpy,
+    preflightStateDirLockSpy,
+    verifyLockedStateDirPostureSpy,
   };
 }

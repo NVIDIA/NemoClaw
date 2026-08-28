@@ -173,14 +173,13 @@ def verify(action, root_mode, file_mode):
         return {"ok": result.ok, "unchanged": before == after, "codes": [issue.code for issue in result.issues]}
 
 print(json.dumps({
-    "mutable": verify("verify-unlock", 0o2770, 0o660),
-    "mutable_drift": verify("verify-unlock", 0o2770, 0o640),
     "locked": verify("verify-lock", 0o755, 0o640),
+    "locked_drift": verify("verify-lock", 0o2770, 0o660),
 }))
 `;
 
 describe("state directory guard verification", () => {
-  it("verifies complete recursive postures without changing metadata", () => {
+  it("verifies the complete recursive locked posture without changing metadata", () => {
     const result = spawnSync("python3", ["-I", "-c", VERIFY_READ_ONLY_ACTIONS, GUARD_PATH], {
       encoding: "utf-8",
     });
@@ -190,9 +189,8 @@ describe("state directory guard verification", () => {
       string,
       { ok: boolean; unchanged: boolean; codes: string[] }
     >;
-    expect(outcomes.mutable).toEqual({ ok: true, unchanged: true, codes: [] });
     expect(outcomes.locked).toEqual({ ok: true, unchanged: true, codes: [] });
-    expect(outcomes.mutable_drift).toMatchObject({
+    expect(outcomes.locked_drift).toMatchObject({
       ok: false,
       unchanged: true,
       codes: expect.arrayContaining(["verification-mode-mismatch"]),

@@ -35,7 +35,7 @@ const PLAN_ARRAY_FIELDS = [
 ] as const;
 const PLAN_FIELDS = new Set(["$comment", "version", ...PLAN_ARRAY_FIELDS]);
 
-type GuardAction = "preflight" | "lock" | "unlock" | "verify-lock" | "verify-unlock" | "startup";
+type GuardAction = "preflight" | "lock" | "unlock" | "verify-lock" | "startup";
 
 type GuardIssue = {
   type: "issue";
@@ -187,7 +187,6 @@ function parseGuardOutput(action: GuardAction, result: PrivilegedExecResult): st
         record.action === "lock" ||
         record.action === "unlock" ||
         record.action === "verify-lock" ||
-        record.action === "verify-unlock" ||
         record.action === "startup") &&
       (record.status === "ok" || record.status === "failed") &&
       typeof record.issueCount === "number" &&
@@ -345,19 +344,13 @@ export function preflightStateDirLock(
   return runStateDirGuard(privileged, "preflight", configDir, plan, stateLockPlanInImage);
 }
 
-/** Read and verify one complete recursive posture without changing filesystem state. */
-export function verifyStateDirLockPosture(
+/** Read and verify the complete recursive locked posture without changing filesystem state. */
+export function verifyLockedStateDirPosture(
   privileged: PrivilegedExec,
   configDir: string,
-  locked: boolean,
   plan: AgentStateLockPlan,
 ): string[] {
-  return runHostStateDirGuard(
-    privileged,
-    locked ? "verify-lock" : "verify-unlock",
-    configDir,
-    plan,
-  );
+  return runHostStateDirGuard(privileged, "verify-lock", configDir, plan);
 }
 
 // Apply and independently verify the complete recursive state-dir posture.

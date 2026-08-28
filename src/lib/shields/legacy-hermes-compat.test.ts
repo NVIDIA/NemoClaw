@@ -732,7 +732,8 @@ describe("legacy Hermes shields compatibility", () => {
     let dockerExecSpy: MockInstance;
     let registrySpy: MockInstance;
     let verifyLockSpy: MockInstance;
-    let verifyStateDirLockPostureSpy: MockInstance;
+    let preflightStateDirLockSpy: MockInstance;
+    let verifyLockedStateDirPostureSpy: MockInstance;
     let routeSpy: MockInstance;
     let auditSpy: MockInstance;
     let runCaptureSpy: MockInstance;
@@ -757,7 +758,8 @@ describe("legacy Hermes shields compatibility", () => {
         supportSpy,
         transitionSpy,
         verifyLockSpy,
-        verifyStateDirLockPostureSpy,
+        preflightStateDirLockSpy,
+        verifyLockedStateDirPostureSpy,
       } = harness);
     });
 
@@ -1181,7 +1183,7 @@ describe("legacy Hermes shields compatibility", () => {
           updatedAt: new Date().toISOString(),
         }),
       );
-      verifyStateDirLockPostureSpy.mockReturnValue([
+      verifyLockedStateDirPostureSpy.mockReturnValue([
         "recursive state lock plan drift under skills/pairing",
       ]);
       const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
@@ -1197,10 +1199,9 @@ describe("legacy Hermes shields compatibility", () => {
       expect(errors).toContain("UP (DRIFTED");
       expect(logs).not.toContain("UP (lockdown active)");
       expect(transitionSpy).not.toHaveBeenCalled();
-      expect(verifyStateDirLockPostureSpy).toHaveBeenCalledWith(
+      expect(verifyLockedStateDirPostureSpy).toHaveBeenCalledWith(
         expect.anything(),
         target.configDir,
-        true,
         expect.objectContaining({
           readOnlyRoots: expect.arrayContaining(["skills"]),
           confidentialRoots: expect.arrayContaining(["pairing"]),
@@ -1235,7 +1236,7 @@ describe("legacy Hermes shields compatibility", () => {
     });
 
     it("does not report clean mutable-default when provider verification finds nested skills or pairing drift", () => {
-      verifyStateDirLockPostureSpy.mockReturnValue([
+      preflightStateDirLockSpy.mockReturnValue([
         "recursive mutable state drift under skills/pairing",
       ]);
       const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
@@ -1251,18 +1252,17 @@ describe("legacy Hermes shields compatibility", () => {
       expect(errors).toContain("NOT CONFIGURED (DRIFTED");
       expect(logs).not.toContain("NOT CONFIGURED (default mutable state)");
       expect(transitionSpy).not.toHaveBeenCalled();
-      expect(verifyStateDirLockPostureSpy).toHaveBeenCalledWith(
+      expect(preflightStateDirLockSpy).toHaveBeenCalledWith(
         expect.anything(),
         target.configDir,
-        false,
         expect.objectContaining({
           readOnlyRoots: expect.arrayContaining(["skills"]),
           confidentialRoots: expect.arrayContaining(["pairing"]),
         }),
+        true,
       );
     });
     it("keeps read-only provider status independent of sandbox lifecycle phase (#10104)", () => {
-      lifecycleGateSpy.mockReturnValue(false);
       runCaptureSpy.mockReturnValue(`${sandbox.name}  Provisioning\n`);
       expect(() => shields.shieldsStatus(sandbox.name)).not.toThrow();
       expect(transitionSpy).not.toHaveBeenCalled();
@@ -1270,7 +1270,7 @@ describe("legacy Hermes shields compatibility", () => {
         expect.arrayContaining(["sandbox", "list"]),
         expect.anything(),
       );
-      expect(verifyStateDirLockPostureSpy).toHaveBeenCalled();
+      expect(preflightStateDirLockSpy).toHaveBeenCalled();
     });
 
     it("does not report clean timed DOWN on recursive drift or timer loss during verification", () => {
@@ -1328,8 +1328,7 @@ describe("legacy Hermes shields compatibility", () => {
           forwardPolicy,
         }),
       );
-      lifecycleGateSpy.mockReturnValue(false);
-      verifyStateDirLockPostureSpy.mockReturnValue([
+      preflightStateDirLockSpy.mockReturnValue([
         "recursive timed state drift under skills/pairing",
       ]);
       const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
@@ -1352,7 +1351,7 @@ describe("legacy Hermes shields compatibility", () => {
       transitionSpy.mockClear();
       vi.mocked(console.error).mockClear();
       vi.mocked(console.log).mockClear();
-      verifyStateDirLockPostureSpy.mockImplementation(() => {
+      preflightStateDirLockSpy.mockImplementation(() => {
         fs.rmSync(timerControl.timerAuthorizationProofPath(sandbox.name, processToken));
         return [];
       });
