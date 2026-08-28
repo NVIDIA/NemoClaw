@@ -88,7 +88,8 @@ Module._resolveFilename = function resolveLazySourceFilename(request, parent, is
 };
 Module._extensions[".ts"] = lazySourceRequire;
 
-const ONBOARD_READY_SANDBOX_ID = "sbx-4f2a91c0d7";
+const { createdSandboxId: ONBOARD_CREATED_SANDBOX_ID } = require("./onboard-fixture-contract.json");
+const ONBOARD_READY_SANDBOX_ID = ONBOARD_CREATED_SANDBOX_ID;
 
 function normalizeCommand(command) {
   return (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
@@ -639,6 +640,49 @@ function createCreatedSandboxFixture(options = {}) {
       return Object.freeze({ ...state });
     },
   });
+}
+
+let publishedCreatedSandboxIdentity = null;
+let publishedCreatedGatewayName = "nemoclaw";
+
+function clearMockCreatedSandboxIdentity() {
+  publishedCreatedSandboxIdentity = null;
+}
+
+function mockCreatedSandboxIdentityList(command, options = {}) {
+  const args = exactOpenShellArgs(command);
+  if (!args) return null;
+  const prefix = "ai.nvidia.nemoclaw.create-attempt=";
+  const selector = args[5] || "";
+  const gatewayName = options.gatewayName || publishedCreatedGatewayName;
+  if (
+    args.length !== 10 ||
+    args[0] !== "sandbox" ||
+    args[1] !== "list" ||
+    args[2] !== "-g" ||
+    args[3] !== gatewayName ||
+    args[4] !== "--selector" ||
+    !selector.startsWith(prefix) ||
+    !/^[0-9a-f]{62}$/u.test(selector.slice(prefix.length)) ||
+    args[6] !== "--output" ||
+    args[7] !== "json" ||
+    args[8] !== "--limit" ||
+    args[9] !== "2"
+  ) {
+    return null;
+  }
+  const nonce = selector.slice(prefix.length);
+  publishedCreatedGatewayName = gatewayName;
+  publishedCreatedSandboxIdentity = {
+    id: options.sandboxId || ONBOARD_CREATED_SANDBOX_ID,
+    name: options.sandboxName || "my-assistant",
+    labels: { "ai.nvidia.nemoclaw.create-attempt": nonce },
+    resource_version: 1,
+    created_at: "2026-08-25T00:00:00Z",
+    phase: "Ready",
+    current_policy_version: 1,
+  };
+  return JSON.stringify([publishedCreatedSandboxIdentity]);
 }
 
 function installVerifiedSandboxCreateFixture(registry, options) {
@@ -1369,6 +1413,7 @@ if (process.env.NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG === "1") {
 }
 
 module.exports = {
+  ONBOARD_CREATED_SANDBOX_ID,
   mockEndpointlessProviderProfileRun,
   mockManagedEndpointlessProviderProfileRun,
   createStatefulMessagingProviderRunner,
@@ -1376,6 +1421,8 @@ module.exports = {
   mockDockerSandboxLifecycleReleaseFromRunner,
   mockFreshOpenClawPluginDiscovery,
   createCreatedSandboxFixture,
+  clearMockCreatedSandboxIdentity,
+  mockCreatedSandboxIdentityList,
   mockStructuredOpenShellCaptureFromRunner,
   installVerifiedSandboxCreateFixture,
   managedSandboxPolicyReceiptFixture,

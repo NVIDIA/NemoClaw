@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CaptureOpenshellResult } from "../../src/lib/adapters/openshell/client";
 import {
   createCreatedSandboxFixture,
+  ONBOARD_CREATED_SANDBOX_ID,
+  mockCreatedSandboxIdentityList,
   mockStructuredOpenShellCaptureFromRunner,
 } from "./onboard-script-mocks.cjs";
 
@@ -177,6 +179,9 @@ describe("mockStructuredOpenShellCaptureFromRunner", () => {
         { includeStreams: true },
       ).stdout,
     ).toContain(`Id: ${createdSandbox.state.sandboxId}`);
+    expect(mockCreatedSandboxIdentityList(exactCreateQuery, { gatewayName: "nemoclaw-test" })).toContain(
+      `"id":"${ONBOARD_CREATED_SANDBOX_ID}"`,
+    );
   });
 
   it.each([
