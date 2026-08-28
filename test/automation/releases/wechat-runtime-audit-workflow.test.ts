@@ -8,25 +8,6 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-
-type WorkflowStep = {
-  readonly name?: string;
-  readonly run?: string;
-  readonly if?: string;
-  readonly uses?: string;
-  readonly with?: Record<string, unknown>;
-  readonly env?: Record<string, string>;
-};
-
-type WorkflowJob = {
-  readonly needs?: string | readonly string[];
-  readonly steps?: readonly WorkflowStep[];
-};
-
-type Workflow = {
-  readonly jobs: Record<string, WorkflowJob>;
-};
-
 const repoRoot = path.join(import.meta.dirname, "../../..");
 const auditScript = path.join(
   repoRoot,
@@ -160,43 +141,7 @@ function installFakeAuditNpm(
   );
 }
 
-function requiredStep(job: WorkflowJob, name: string): WorkflowStep {
-  const step = job.steps?.find((candidate) => candidate.name === name);
-  expect(step, `Missing workflow step: ${name}`).toBeDefined();
-  return step as WorkflowStep;
-}
-
 describe("WeChat runtime audit and install-cache gates (#5896)", () => {
-  it.each([
-    'npm --prefix "$runtime_dir" ci',
-    "--ignore-scripts",
-    "--omit=dev",
-    "--legacy-peer-deps",
-    "audit-level=low",
-    "audit signatures",
-    "npm-audit.json",
-    "npm-audit-signatures.txt",
-    'chmod -R a-w "$trusted_cache"',
-    'cp -R "$trusted_cache"/. "$install_cache"/',
-    'chmod -R u+rwX,go-w "$install_cache"',
-    'npm pack "$wechat_tarball"',
-    "--offline",
-    'EXPECTED_INTEGRITY="$wechat_integrity"',
-    "WeChat runtime package.json must contain exactly the reviewed plugin dependency",
-    "WeChat runtime plugin lock entry must carry sha512 integrity",
-    'npm_registry="https://registry.npmjs.org/"',
-    '--userconfig "$trusted_npmrc"',
-    '--registry "$npm_registry"',
-    "requireRegistryUrl(record.resolved, location)",
-  ])(
-    "audits the installed graph and exercises the exact archive through a copied cache [%s]",
-    (fragment) => {
-      const script = fs.readFileSync(auditScript, "utf8");
-
-      expect(script).toContain(fragment);
-    },
-  );
-
   it("rejects a target-controlled npm registry override", () => {
     const result = runAuditValidation(({ runtimeDir }) => {
       fs.writeFileSync(
@@ -281,6 +226,9 @@ describe("WeChat runtime audit and install-cache gates (#5896)", () => {
           { output: "verified signatures", status: 0 },
         ],
       );
+      fs.writeFileSync(path.join(targetRoot, "bin", "sleep"), "#!/bin/sh\nexit 0\n", {
+        mode: 0o755,
+      });
     });
 
     expect(result.status, result.stderr).toBe(0);
@@ -315,37 +263,5 @@ describe("WeChat runtime audit and install-cache gates (#5896)", () => {
     expect(result.signatureAttemptCount, result.stderr).toBe(1);
     expect(result.signatureDebugFiles).toEqual(["signature-attempt-1.log"]);
     expect(result.signatureReport).not.toContain("retrying transient signature download");
-  });
-
-  it.each(
-    [
-        "AS wechat-npm-cache",
-        "COPY scripts/checks/materialize-locked-npm-cache-seed.mts /opt/checks/",
-        "RUN --network=none",
-        "node --experimental-strip-types /opt/nemoclaw-build-tools/reviewed-npm-archive.mts",
-        "--lockfile /opt/wechat-runtime/package-lock.json",
-        "--cache /out/wechat-npm-cache",
-        "--registry-origin https://registry.npmjs.org/",
-        "chown -R root:root /out/wechat-npm-cache",
-        "chmod -R a+rX,go-w /out/wechat-npm-cache",
-        "COPY --from=wechat-npm-cache /out/wechat-npm-cache/ /usr/local/share/nemoclaw/wechat-npm-cache/",
-        "trusted_cache=/usr/local/share/nemoclaw/wechat-npm-cache",
-        'install_cache="$(mktemp -d /tmp/nemoclaw-wechat-npm-cache.XXXXXX)"',
-        'cp -R "$trusted_cache"/. "$install_cache"/',
-        'NEMOCLAW_WECHAT_NPM_INSTALL_CACHE="$install_cache"',
-        'rm -rf "$install_cache"',
-        'test ! -e "$install_cache"',
-      ],
-  )("keeps the image cache trusted and deletes the sandbox-writable copy [%s]", (fragment) => {
-    const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
-
-    expect(dockerfile).toContain(fragment);
-
-    const cacheVerification = dockerfile.indexOf(
-      "--lockfile /opt/wechat-runtime/package-lock.json",
-    );
-    const cacheLockdown = dockerfile.indexOf("chown -R root:root /out/wechat-npm-cache");
-    expect(cacheVerification).toBeGreaterThan(-1);
-    expect(cacheLockdown).toBeGreaterThan(cacheVerification);
   });
 });

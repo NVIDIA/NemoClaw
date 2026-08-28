@@ -2,18 +2,143 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isObjectRecord } from "../core/json-types";
+import {
+  parseNemoClawPolicyCreationReceipt,
+  type NemoClawPolicyCreationReceipt,
+} from "../policy/merge";
 import { normalizeTrustedPrivatePolicyPinReceipt } from "../policy/trusted-private-endpoints";
 import type {
   BaselineExclusionEntry,
   BaselineExclusionTransition,
   CustomPolicyEntry,
+  RecordedSandboxPolicyAuthority,
   SandboxEntry,
-} from "./registry";
+} from "./registry/types";
+import { normalizePendingSandboxPolicyVerification } from "./registry/pending-policy-verification";
+
+export { normalizePendingSandboxPolicyVerification };
 
 const BASELINE_TRANSITION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const BASELINE_TRANSITION_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const SHA256_DIGEST_PATTERN = /^[a-f0-9]{64}$/;
+const RESERVATION_SESSION_CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/u;
+
+/** Keep legacy absence unknown and reject every unrecognized authority value. */
+export function normalizeSandboxPolicyAuthority(
+  value: unknown,
+): RecordedSandboxPolicyAuthority | undefined {
+  if (value === undefined) return undefined;
+  if (value === "nemoclaw-managed" || value === "externally-managed") return value;
+  throw new Error(
+    "Sandbox registry contains an invalid policy authority; repair the registry before continuing",
+  );
+}
+
+/** Clone one complete policy-creation receipt and reject every partial form. */
+export function cloneSandboxPolicyCreationReceipt(
+  value: unknown,
+): NemoClawPolicyCreationReceipt | undefined {
+  if (value === undefined) return undefined;
+  try {
+    return parseNemoClawPolicyCreationReceipt(value);
+  } catch {
+    throw new Error(
+      "Sandbox registry contains an invalid policy creation receipt; repair the registry before continuing",
+    );
+  }
+}
+
+/** Remove policy attribution that an external authority owns and normalize managed state. */
+export function normalizeSandboxPolicyAttribution(entry: SandboxEntry): SandboxEntry {
+  const requestedPolicyAuthority = normalizeSandboxPolicyAuthority(entry.policyAuthority);
+  const parsedPolicyCreationReceipt = cloneSandboxPolicyCreationReceipt(
+    entry.policyCreationReceipt,
+  );
+  if (
+    parsedPolicyCreationReceipt &&
+    (parsedPolicyCreationReceipt.sandboxName !== entry.name ||
+      parsedPolicyCreationReceipt.gatewayName !== entry.gatewayName ||
+      parsedPolicyCreationReceipt.gatewayPort !== entry.gatewayPort ||
+      parsedPolicyCreationReceipt.lifecycleGeneration !== entry.lifecycleGeneration ||
+      parsedPolicyCreationReceipt.sandboxIdentityFingerprint !==
+        entry.lifecycleLiveIdentityFingerprint)
+  ) {
+    throw new Error(
+      "Sandbox registry policy creation receipt does not match its gateway and sandbox identity",
+    );
+  }
+  const hasManagedReceipt =
+    requestedPolicyAuthority === "nemoclaw-managed" && parsedPolicyCreationReceipt !== undefined;
+  const policyAuthority =
+    requestedPolicyAuthority === "nemoclaw-managed" && !hasManagedReceipt
+      ? undefined
+      : requestedPolicyAuthority;
+  const policyCreationReceipt = hasManagedReceipt ? parsedPolicyCreationReceipt : undefined;
+  const pendingPolicyVerification = normalizePendingSandboxPolicyVerification(
+    entry.pendingPolicyVerification,
+  );
+  if (
+    pendingPolicyVerification &&
+    (entry.pendingRouteReservation !== true ||
+      typeof entry.reservationSessionId !== "string" ||
+      entry.reservationSessionId.length === 0 ||
+      entry.reservationSessionId.length > 256 ||
+      RESERVATION_SESSION_CONTROL_CHARACTER.test(entry.reservationSessionId) ||
+      requestedPolicyAuthority !== undefined ||
+      parsedPolicyCreationReceipt !== undefined ||
+      pendingPolicyVerification.sandboxName !== entry.name ||
+      pendingPolicyVerification.gatewayName !== entry.gatewayName ||
+      pendingPolicyVerification.gatewayPort !== entry.gatewayPort ||
+      pendingPolicyVerification.lifecycleGeneration !== entry.lifecycleGeneration ||
+      pendingPolicyVerification.sandboxIdentityFingerprint !==
+        entry.lifecycleLiveIdentityFingerprint)
+  ) {
+    throw new Error(
+      "Sandbox registry pending policy verification does not match its route reservation",
+    );
+  }
+  const {
+    policies: _policies,
+    customPolicies: _customPolicies,
+    baselineExclusions: _baselineExclusions,
+    baselineExclusionTransition: _baselineExclusionTransition,
+    policyPresetsFinalized: _policyPresetsFinalized,
+    policyTier: _policyTier,
+    policyAuthority: _policyAuthority,
+    policyCreationReceipt: _policyCreationReceipt,
+    pendingPolicyVerification: _pendingPolicyVerification,
+    ...rest
+  } = entry;
+  if (policyAuthority === "externally-managed") {
+    return {
+      ...rest,
+      policies: [],
+      policyAuthority,
+      ...(pendingPolicyVerification ? { pendingPolicyVerification } : {}),
+    };
+  }
+
+  const baselineExclusions = normalizeBaselineExclusions(entry.baselineExclusions);
+  const baselineExclusionTransition = normalizeBaselineExclusionTransition(
+    entry.baselineExclusionTransition,
+  );
+  const customPolicies = normalizeCustomPolicyEntries(entry.customPolicies);
+  return {
+    ...rest,
+    ...(entry.policies !== undefined ? { policies: entry.policies } : {}),
+    ...(customPolicies ? { customPolicies } : {}),
+    ...(baselineExclusions ? { baselineExclusions } : {}),
+    ...(baselineExclusionTransition ? { baselineExclusionTransition } : {}),
+    ...(entry.policyPresetsFinalized !== undefined
+      ? { policyPresetsFinalized: entry.policyPresetsFinalized }
+      : {}),
+    ...(entry.policyTier !== undefined ? { policyTier: entry.policyTier } : {}),
+    ...(policyAuthority !== undefined ? { policyAuthority } : {}),
+    ...(policyCreationReceipt ? { policyCreationReceipt } : {}),
+    ...(pendingPolicyVerification ? { pendingPolicyVerification } : {}),
+  };
+}
 
 /** Normalize persisted custom policy content and its generated-pin authority. */
 export function normalizeCustomPolicyEntries(value: unknown): CustomPolicyEntry[] | undefined {

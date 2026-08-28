@@ -20,6 +20,18 @@ export type McpAttachedCredentialRevision = Exclude<
   "absent" | "canonical"
 >;
 
+export function mcpAdapterCredentialRevisionUnavailableError(server: string): McpBridgeError {
+  return new McpBridgeError(
+    `OpenShell did not expose a revision-scoped credential while reconciling MCP adapter '${server}'.`,
+  );
+}
+
+export function mcpAdapterCredentialRevisionUnstableError(server: string): McpBridgeError {
+  return new McpBridgeError(
+    `OpenShell credential revision did not stabilize while reconciling MCP adapter '${server}'.`,
+  );
+}
+
 type McpCredentialRevisionAttempt =
   | { kind: "observation"; observation: McpCredentialRevisionObservation }
   | { kind: "transport-unavailable" }
@@ -165,6 +177,7 @@ export function waitForAttachedMcpCredential(
   );
   let refreshedAfterObservedAbsence = false;
   let lastAttempt: McpCredentialRevisionAttempt = { kind: "transport-unavailable" };
+  let candidateRevision: McpAttachedCredentialRevision | undefined;
   let attachedRevision: McpAttachedCredentialRevision | undefined;
   const ready = waitForMcpBridgeCondition(
     () => {
@@ -194,8 +207,20 @@ export function waitForAttachedMcpCredential(
         observation !== "absent" &&
         observation !== "canonical" &&
         (options.previousRevision === undefined || observation !== options.previousRevision);
-      if (attached) attachedRevision = observation;
-      return attached;
+      if (!attached) {
+        candidateRevision = undefined;
+        return false;
+      }
+      if (candidateRevision !== observation) {
+        candidateRevision = observation;
+        return false;
+      }
+      // OpenShell can briefly project the revision that preceded a post-policy
+      // provider refresh. Require the same revision from two consecutive fresh
+      // execs so the adapter cannot be committed with a placeholder that is
+      // already being replaced by the provider sidecar.
+      attachedRevision = observation;
+      return true;
     },
     Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 30,
     1_000,

@@ -69,6 +69,12 @@ export type LegacyKeepaliveFixtureOptions = {
   timeoutSecs?: number;
 };
 
+export type LegacyKeepaliveHandoffReceipt = {
+  readonly oldContainerId: string;
+  readonly newContainerId: string;
+  readonly startupCommand: "sleep infinity";
+};
+
 export type LegacyKeepaliveFixtureDeps = {
   recreate: StartupCommandRecreate;
   dockerCapture: DockerCapture;
@@ -90,6 +96,54 @@ const defaultDeps: LegacyKeepaliveFixtureDeps = {
 
 function requireFixtureInput(condition: boolean, message: string): asserts condition {
   if (!condition) throw new Error(message);
+}
+
+function isLegacyKeepaliveHandoffReceiptCandidate(
+  value: unknown,
+): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    ["oldContainerId", "newContainerId", "startupCommand"].some((key) =>
+      Object.hasOwn(value, key),
+    )
+  );
+}
+
+/** Read one final machine receipt without treating recreation progress as JSON. */
+export function parseLegacyKeepaliveHandoffReceipt(
+  output: string,
+): LegacyKeepaliveHandoffReceipt {
+  const lines = output
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const receiptCandidates = lines.flatMap((line, index) => {
+    try {
+      const value: unknown = JSON.parse(line);
+      return isLegacyKeepaliveHandoffReceiptCandidate(value) ? [{ index, value }] : [];
+    } catch {
+      return [];
+    }
+  });
+  requireFixtureInput(
+    receiptCandidates.length === 1 && receiptCandidates[0]?.index === lines.length - 1,
+    "legacy keepalive fixture must emit exactly one final JSON handoff receipt",
+  );
+  const receipt = receiptCandidates[0].value;
+  requireFixtureInput(
+    DOCKER_CONTAINER_ID_PATTERN.test(String(receipt.oldContainerId ?? "")) &&
+      DOCKER_CONTAINER_ID_PATTERN.test(String(receipt.newContainerId ?? "")) &&
+      receipt.oldContainerId !== receipt.newContainerId &&
+      receipt.startupCommand === LEGACY_KEEPALIVE_COMMAND.join(" "),
+    "legacy keepalive fixture handoff receipt is invalid",
+  );
+  return {
+    oldContainerId: String(receipt.oldContainerId),
+    newContainerId: String(receipt.newContainerId),
+    startupCommand: "sleep infinity",
+  };
 }
 
 function hasExactTokens(value: unknown, expected: readonly string[]): boolean {

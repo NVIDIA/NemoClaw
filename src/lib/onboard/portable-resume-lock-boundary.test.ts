@@ -526,13 +526,14 @@ describe("portable resume command lock boundary", () => {
       return directory;
     }) as typeof fs.mkdtempSync);
     const harnessModule = await import("../../../test/helpers/rebuild-flow-generic-harness");
-    const { rebuildOnboardDependencies } =
+    const { onboardSession: rebuildOnboardSession, rebuildOnboardDependencies } =
       await import("../../../test/helpers/rebuild-flow-harness");
     const actualOnboard = rebuildOnboardDependencies.onboard.bind(rebuildOnboardDependencies) as (
       options: import("./types").OnboardOptions,
     ) => Promise<void>;
     const { retirement } = boundaryModules;
     let innerObserved = false;
+    let innerError = "";
     const harness = harnessModule.createRebuildFlowHarness({
       onboard: async (_session, options) => {
         const lockPath = retirement.portableHostFencePath(tempHome);
@@ -545,16 +546,19 @@ describe("portable resume command lock boundary", () => {
         try {
           await actualOnboard(options);
         } catch (error) {
+          innerError = String(error);
           innerObserved = String(error).includes("retirement record");
           expect(fs.lstatSync(lockPath, { bigint: true }).ino).toBe(outerInode);
           throw error;
         }
       },
     });
+    vi.mocked(rebuildOnboardSession.acquireOnboardLock).mockRestore();
+    vi.mocked(rebuildOnboardSession.releaseOnboardLock).mockRestore();
 
     try {
       await harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }).catch(() => {});
-      expect(innerObserved).toBe(true);
+      expect(innerObserved, innerError).toBe(true);
       expect(fs.existsSync(retirement.portableHostFencePath(tempHome))).toBe(false);
     } finally {
       mkdtemp.mockRestore();
