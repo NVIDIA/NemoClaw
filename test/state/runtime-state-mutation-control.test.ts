@@ -90,6 +90,8 @@ describe("runtime state mutation controller", () => {
   it("terminates every other writer and preserves only exact stopped processes (#7744)", () => {
     expect(harnessResult.writer_signals).toEqual([[42, 15]]);
     expect(harnessResult.writer_scans_remaining).toBe(0);
+    expect(harnessResult.reused_writer_signalled).toBe(false);
+    expect(harnessResult.reused_writer_signals).toEqual([]);
     expect(harnessResult.unstoppable_writer).toBe("writer-exclusion-timeout");
     expect(harnessResult.unknown_writer).toBe("unreadable-writer-process");
   });

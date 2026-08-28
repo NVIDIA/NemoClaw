@@ -2573,28 +2573,33 @@ def _discover_fence(expected_mount_namespace: str) -> FenceProof:
     )
 
 
-def _signal_exact_process(process: ProcessIdentity, requested_signal: int) -> None:
+def _signal_exact_process(process: ProcessIdentity, requested_signal: int) -> bool:
     _assert_private_procfs()
     if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
         _fail("pidfd-unavailable")
     try:
         pidfd = os.pidfd_open(process.pid, 0)
     except ProcessLookupError:
-        return
+        return False
     except OSError:
         _fail("pidfd-unavailable")
     try:
         current = _capture_process(process.pid)
         if current is None:
-            return
+            return False
         if current.identity_key() != process.identity_key():
-            _fail("writer-pid-reused")
+            # The pidfd and /proc entry now bind a replacement process. Signal
+            # neither identity; the bounded exclusion loop rescans and treats
+            # the replacement as a new writer. Exact fenced references still
+            # fail closed in _recapture_reference before reaching this helper.
+            return False
         try:
             signal.pidfd_send_signal(pidfd, requested_signal)
         except ProcessLookupError:
-            return
+            return False
         except OSError:
             _fail("writer-signal-failed")
+        return True
     finally:
         os.close(pidfd)
 
@@ -2696,8 +2701,8 @@ def _exclude_writers(
         for writer in unexpected:
             identity = (writer.pid, writer.start_identity, requested)
             if identity not in signalled:
-                _signal_exact_process(writer, requested)
-                signalled.add(identity)
+                if _signal_exact_process(writer, requested):
+                    signalled.add(identity)
         time.sleep(POLL_SECONDS)
 
 

@@ -618,6 +618,22 @@ control.KILL_SECONDS = 5
 real_exclude_writers((1000, 1001), (control._process_reference(stopped_start),))
 results["writer_signals"] = writer_signals
 results["writer_scans_remaining"] = len(scans)
+original_pidfd_open = getattr(os, "pidfd_open", None)
+original_pidfd_signal = getattr(signal, "pidfd_send_signal", None)
+pidfd_signals = []
+os.pidfd_open = lambda _pid, _flags: os.open(os.devnull, os.O_RDONLY)
+signal.pidfd_send_signal = lambda _pidfd, requested: pidfd_signals.append(requested)
+control._capture_process = lambda _pid: process(42, "S", 1, "333", 1000, (b"replacement",), 242)
+results["reused_writer_signalled"] = real_signal_exact_process(intruder, signal.SIGTERM)
+results["reused_writer_signals"] = pidfd_signals
+if original_pidfd_open is None:
+    del os.pidfd_open
+else:
+    os.pidfd_open = original_pidfd_open
+if original_pidfd_signal is None:
+    del signal.pidfd_send_signal
+else:
+    signal.pidfd_send_signal = original_pidfd_signal
 control._capture_writer_processes = lambda _uids: (intruder,)
 control.TERM_SECONDS = 0
 control.KILL_SECONDS = 0
