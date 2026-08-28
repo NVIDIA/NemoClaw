@@ -1170,13 +1170,12 @@ It does not use `NEMOCLAW_DOCKER_GPU_PATCH` compatibility routing, so do not set
 
 Set `NEMOCLAW_DOCKER_GPU_PATCH=fallback` to explicitly authorize one native attempt followed by one compatibility retry.
 NemoClaw permits the retry only after it confirms either a trusted host-side GPU routing failure or an explicit driver proof plus exact-container host configuration showing that no GPU was attached.
-When OpenShell rejects the native GPU flag before creation progress, NemoClaw saves redacted diagnostics and proves that the sandbox and its labeled Docker containers are absent without deleting the sandbox by name.
-It retries only after that absence proof succeeds.
-When a native route or readiness failure requires managed cleanup with exact identities, NemoClaw stops instead of deleting a sandbox by its mutable name or retrying.
+If OpenShell rejects the native `--gpu` option before creation progress, NemoClaw does not delete the sandbox by name.
+It saves redacted diagnostics and proves that the sandbox and its labeled containers are absent before retrying.
+For another eligible failure, NemoClaw retries only after cleanup proves that the sandbox and its labeled containers are absent.
+If absence or cleanup cannot be proven safe, onboarding stops and prints cleanup guidance instead.
 Sandbox-reported CUDA output alone never authorizes the broader compatibility envelope, even when the operator enabled fallback.
 That case fails closed and points to the explicit `NEMOCLAW_DOCKER_GPU_PATCH=1` compatibility-only control.
-NemoClaw verifies absence through two stable checks of the OpenShell sandbox list and labeled Docker containers.
-If absence cannot be proven safe, onboarding stops and prints cleanup guidance instead.
 On Docker Desktop WSL and Jetson/Tegra, automatic GPU onboarding uses the compatibility path directly.
 On ordinary native Linux, the compatibility path uses an available NVIDIA CDI spec before falling back to Docker `--gpus all` or the NVIDIA runtime.
 On Docker Desktop WSL, the compatibility path skips CDI and tries Docker `--gpus all` before the NVIDIA runtime.

@@ -3475,22 +3475,27 @@ Containers with explicit DNS settings or host networking keep their existing DNS
 Ordinary Linux GPU onboarding uses native OpenShell GPU injection and stops on failure by default.
 Unset, `auto`, and `0` all preserve this native-only confinement boundary.
 `NEMOCLAW_DOCKER_GPU_PATCH=fallback` is the explicit operator authorization for one bounded retry.
-With that control set, if sandbox creation rejects the native GPU flag before progress, NemoClaw captures redacted diagnostics and verifies that the sandbox and its labeled Docker containers are absent without deleting the sandbox by name.
-It retries exactly once through the compatibility path only after that proof succeeds.
-If a native route or readiness failure requires managed cleanup with exact identities, NemoClaw stops instead of deleting a sandbox by its mutable name or retrying.
+With that control set, NemoClaw retries exactly once through the compatibility path after one of these conditions:
+
+- Sandbox creation rejects the native `--gpu` flag before progress. NemoClaw captures redacted diagnostics and proves that the sandbox and its labeled containers are absent. It does not delete the sandbox by name.
+- The exact OpenShell-managed container labeled for the sandbox records a host runtime GPU-injection error.
+- An explicit `nvidia-smi` driver proof fails while that container's immutable host configuration confirms that no GPU was attached.
+
+For the host runtime and driver-proof conditions, NemoClaw retries only after cleanup proves that the sandbox and its labeled containers are absent.
+If the managed runtime requires provider-owned cleanup, NemoClaw stops before the compatibility retry.
 Free-form build/list text and sandbox-reported CUDA output never independently authorize the broader retry.
 Without corroborating host evidence, onboarding fails closed even when `fallback` is set and directs the operator to clean up and explicitly select compatibility with `NEMOCLAW_DOCKER_GPU_PATCH=1` if desired.
 Before the authorized retry, NemoClaw warns that the legacy GPU compatibility envelope recreates the OpenShell-managed Docker container and may relax container confinement compared with native injection.
 Specifically, compatibility recreation adds `SYS_PTRACE`, adds `apparmor=unconfined` when the original container has no AppArmor option, and uses a compatibility policy that makes `/proc` writable for the NVIDIA runtime's process-name initialization.
 These broader settings are why onboarding warns before the swap and retains a native-only opt-out.
-NemoClaw verifies absence with two stable checks: the sandbox is absent from the gateway list, and no OpenShell-managed Docker containers labeled for that sandbox remain.
+NemoClaw verifies cleanup with two stable checks (that sandbox is absent from the gateway list and no OpenShell-managed Docker containers labeled for that sandbox remain) before retrying through the compatibility path.
 Cleanup is polled at most five times, one second apart, and both conditions must pass twice consecutively; otherwise onboarding stops before the retry.
 These fail-closed safety limits are the internal constants `STABLE_ABSENCE_CHECKS` (2), `MAX_CLEANUP_ATTEMPTS` (5), and `CLEANUP_POLL_INTERVAL_MS` (1,000 ms); they are not configurable through environment variables.
 The first observation is immediate, so the default bound performs at most four one-second sleeps plus the five gateway/container queries.
 The bounds are intentionally fixed.
 Allowing environment input to weaken or extend the cleanup proof would make a security gate deployment-dependent.
 On a host that cannot prove absence within the bound, onboarding fails closed; select compatibility from the outset with `NEMOCLAW_DOCKER_GPU_PATCH=1` instead of weakening the handoff proof.
-If absence or container cleanup cannot be proven safe, onboarding stops before the retry and prints manual cleanup guidance.
+If deletion or container cleanup cannot be proven safe, onboarding stops before the retry and prints manual cleanup guidance.
 Image build, upload, TLS, provider, policy, dashboard, and inference failures stay on their existing error paths and do not trigger the GPU compatibility fallback.
 Set `NEMOCLAW_DOCKER_GPU_PATCH=1` to use only the compatibility path for diagnostics or older host compatibility.
 Other legacy nonzero values keep that behavior through the `v0.0.x` release line and will be removed in `v0.1.0`.
