@@ -51,7 +51,8 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/repository/github-actions-workflow-names.test.ts"),
   },
   {
-    pattern: /(?:^|\/)test\/helpers\/onboard-script-mocks\.cjs$/,
+    pattern:
+      /(?:^|\/)test\/helpers\/(?:onboard-fixture-contract\.json|onboard-script-mocks\.cjs)$/,
     testsToRun: runTests(
       "test/helpers/onboard-created-sandbox-fixture.test.ts",
       "test/onboarding/onboard-custom-dockerfile.test.ts",
@@ -65,6 +66,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
       "test/onboarding/onboard-reservation-recreate.test.ts",
       "test/onboarding/onboard-sandbox-build.test.ts",
       "test/onboarding/onboard-sandbox-recreation.test.ts",
+      "test/onboarding/onboard-script-mocks-contract.test.ts",
       "test/onboarding/onboard-terminal-dashboard.test.ts",
       "test/onboarding/onboard.test.ts",
       "test/security/shellquote-sandbox.test.ts",

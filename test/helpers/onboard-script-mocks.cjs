@@ -88,7 +88,7 @@ Module._resolveFilename = function resolveLazySourceFilename(request, parent, is
 };
 Module._extensions[".ts"] = lazySourceRequire;
 
-const ONBOARD_READY_SANDBOX_ID = "sbx-4f2a91c0d7";
+const { createdSandboxId: ONBOARD_READY_SANDBOX_ID } = require("./onboard-fixture-contract.json");
 
 function normalizeCommand(command) {
   return (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");

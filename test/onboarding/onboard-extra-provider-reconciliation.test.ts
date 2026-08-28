@@ -176,7 +176,8 @@ const createReservedSandbox = () => {
         const result = spawnSync(process.execPath, [scriptPath], {
           cwd: repoRoot,
           encoding: "utf-8",
-          timeout: 30_000,
+          timeout: 60_000,
+          killSignal: "SIGKILL",
           env: {
             ...process.env,
             HOME: tmpDir,

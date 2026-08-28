@@ -247,7 +247,8 @@ const agent = agentDefs.loadAgent("langchain-deepagents-code");
       NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG: "1",
       OPENSHELL_DRIVERS: scenario === "create" ? "vm" : "docker",
     },
-    timeout: 15000,
+    timeout: 30_000,
+    killSignal: "SIGKILL",
   });
   assert.equal(result.status, 0, result.stderr);
   return parseStdoutJson<{

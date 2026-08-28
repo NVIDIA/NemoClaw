@@ -14,6 +14,7 @@ const repoRoot = path.join(import.meta.dirname, "../..");
 const onboardScriptMocksPath = JSON.stringify(
   path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
 );
+const ONBOARD_SUBPROCESS_TIMEOUT_MS = 30_000;
 const createdTmpDirs: string[] = [];
 
 function makeTmpDir(prefix: string): string {
@@ -217,7 +218,8 @@ const MARKER_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852
         cwd: repoRoot,
         encoding: "utf-8",
         env,
-        timeout: 30_000,
+        timeout: ONBOARD_SUBPROCESS_TIMEOUT_MS,
+        killSignal: "SIGKILL",
       });
 
       assert.equal(result.status, 0, result.stderr || result.error?.message);
@@ -374,6 +376,8 @@ const { createSandbox } = require(${onboardPath});
       const result = spawnSync(process.execPath, [scriptPath], {
         cwd: repoRoot,
         encoding: "utf-8",
+        timeout: ONBOARD_SUBPROCESS_TIMEOUT_MS,
+        killSignal: "SIGKILL",
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -495,6 +499,8 @@ const { createSandbox } = require(${onboardPath});
         cwd: repoRoot,
         encoding: "utf-8",
         env,
+        timeout: ONBOARD_SUBPROCESS_TIMEOUT_MS,
+        killSignal: "SIGKILL",
       });
 
       assert.notEqual(
