@@ -667,7 +667,6 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
       `NemoClaw left sandbox '${input.sandboxName}' in place after policy authority validation failed. ` +
       `${identityGuidance} NemoClaw did not run OpenShell's mutable-name deletion command because the name may now identify a replacement sandbox. ` +
       "Do not delete the sandbox by mutable sandbox name. Ask the OpenShell administrator to inspect the surviving sandbox and use an identity-bound recovery or removal procedure.";
-    const compensationErrors: unknown[] = [];
     if (input.persistRetainedSandboxRecovery) {
       try {
         persistRetainedSandboxRecoveryWithRetry(input.retainedSandboxRecoveryRetryOwner, () =>

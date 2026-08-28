@@ -223,6 +223,7 @@ describe("managed Hermes state volume recreation", () => {
 describe("managed Hermes state volume failed-create cleanup", () => {
   const exactIdentityBoundary = {
     captureCreatedSandboxIdentity: vi.fn(() => "a".repeat(64)),
+    persistCreatedSandboxIdentity: vi.fn(),
     revalidateCreatedSandboxIdentity: vi.fn(),
     verifyCreatedPolicy: vi.fn(() => "verified"),
     persistVerifiedPolicy: vi.fn(),
