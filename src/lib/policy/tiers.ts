@@ -35,10 +35,6 @@ export interface TierDefinition {
   presets: TierPreset[];
 }
 
-export type TierPresetMembership = Readonly<{
-  presets: readonly Readonly<{ name: string }>[];
-}>;
-
 interface TierDocument {
   tiers: TierDefinition[];
 }
@@ -140,18 +136,6 @@ function getTier(name: string): TierDefinition | null {
   return listTiers().find((tier) => tier.name === name) ?? null;
 }
 
-/** Return whether a preset belongs to an already-resolved canonical tier definition. */
-function tierIncludesPolicyPreset(
-  tier: TierPresetMembership | null | undefined,
-  presetName: string,
-): boolean {
-  const normalizedPresetName = presetName.trim().toLowerCase();
-  if (!tier || !normalizedPresetName) return false;
-  return tier.presets.some(
-    (preset) => preset.name.trim().toLowerCase() === normalizedPresetName,
-  );
-}
-
 /**
  * Resolve the final preset list for a tier, applying any per-preset access
  * overrides supplied by the user.
@@ -189,4 +173,4 @@ function resolveTierPresets(
   return presets;
 }
 
-export { getTier, listTiers, resolveTierPresets, tierIncludesPolicyPreset, TIERS_FILE };
+export { getTier, listTiers, resolveTierPresets, TIERS_FILE };

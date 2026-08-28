@@ -17,7 +17,7 @@ import {
   mergeRequiredObservabilityPolicyPresets,
 } from "./observability-policy-presets";
 import { mergeRequiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-presets";
-import { getTier, tierIncludesPolicyPreset, type TierPresetMembership } from "../policy/tiers";
+import { getTier, type TierDefinition } from "../policy/tiers";
 import {
   ensureRequiredTierPolicyPresets,
   filterSuppressedAgentRequiredPresets,
@@ -100,16 +100,18 @@ export function isStaleBuiltinWebSearchPolicyPreset(
   options: {
     webSearchConfig?: WebSearchConfig | null;
     customPresetNames?: ReadonlySet<string> | null;
-    tier?: TierPresetMembership | null;
+    tier?: TierDefinition | null;
     agent?: string | null;
   } = {},
 ): boolean {
   if (options.customPresetNames?.has(name)) return false;
   // A preset in the recorded tier is tier egress, not stale provider state.
-  // Unknown tiers fail closed because the canonical tier lookup returns false.
+  // Unknown tiers fail closed because the canonical tier lookup returns no match.
   if (
     setupPolicyPresetAppliesToAgent(name, options.agent) &&
-    tierIncludesPolicyPreset(options.tier, name)
+    options.tier?.presets.some(
+      (preset) => preset.name.trim().toLowerCase() === name.trim().toLowerCase(),
+    )
   ) {
     return false;
   }
