@@ -33,7 +33,6 @@ import { driveInteractiveCommand } from "./onboard-interactive-pty.ts";
 import {
   parsePiJsonEvents,
   parsePiInferenceEvidence,
-  parsePiRuntimePackageEvidence,
   qualificationPlatform,
   qualifyPiReadTask,
   readPiQualificationReceipt,
@@ -446,9 +445,6 @@ test(
       timeoutMs: 30_000,
     });
     expect(openshellVersion.exitCode, resultText(openshellVersion)).toBe(0);
-    const runtimePackage = parsePiRuntimePackageEvidence(
-      fs.readFileSync(path.join(REPO_ROOT, "agents/pi/pi-runtime/package-lock.json"), "utf8"),
-    );
     const destroy = await host.nemoclaw(
       [SANDBOX_NAME, "destroy", "--yes", "--no-cleanup-gateway"],
       {
@@ -485,9 +481,6 @@ test(
         imageSourceParity: true,
       },
       runtime: {
-        package: "@earendil-works/pi-coding-agent",
-        version: runtimePackage.version,
-        integrity: runtimePackage.integrity,
         platform,
         computeRuntime: "docker",
         openShellVersion: resultText(openshellVersion).trim(),

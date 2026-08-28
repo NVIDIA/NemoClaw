@@ -34,11 +34,6 @@ export interface PiInferenceEvidence {
   readonly route: string;
 }
 
-export interface PiRuntimePackageEvidence {
-  readonly integrity: string;
-  readonly version: string;
-}
-
 function record(value: unknown, label: string): JsonRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be an object`);
@@ -79,24 +74,6 @@ export function parsePiInferenceEvidence(
     model,
     route: openshell.baseUrl,
   };
-}
-
-export function parsePiRuntimePackageEvidence(contents: string): PiRuntimePackageEvidence {
-  const packageLock = record(JSON.parse(contents) as unknown, "Pi runtime package lock");
-  const packages = record(packageLock.packages, "Pi runtime package lock entries");
-  const runtimePackage = record(
-    packages["node_modules/@earendil-works/pi-coding-agent"],
-    "Pi runtime package lock entry",
-  );
-  if (
-    typeof runtimePackage.version !== "string" ||
-    runtimePackage.version.length === 0 ||
-    typeof runtimePackage.integrity !== "string" ||
-    runtimePackage.integrity.length === 0
-  ) {
-    throw new Error("Pi runtime package lock entry is missing version or integrity evidence");
-  }
-  return { integrity: runtimePackage.integrity, version: runtimePackage.version };
 }
 
 export function parsePiJsonEvents(stdout: string): JsonRecord[] {
