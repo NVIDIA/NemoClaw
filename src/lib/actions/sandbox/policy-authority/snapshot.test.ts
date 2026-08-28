@@ -23,6 +23,7 @@ describe("snapshot policy authority qualification", () => {
     const inspection = {
       authority: "externally-managed" as const,
       effectivePolicy: { network_policies: {} },
+      policyIdentity: { hash: "external-policy", activeVersion: 1 },
     };
 
     expect(() =>
@@ -34,11 +35,10 @@ describe("snapshot policy authority qualification", () => {
           requiredPolicies: [{ network_policies: { required_api: {} } }],
           sourceEntry,
           sourceLive: true,
-          verifyGlobalCreatePolicy: true,
+          verifyGlobalCreatePolicy: false,
         },
         {
           inspectSandboxPolicyAuthority: vi.fn(() => inspection),
-          inspectGlobalPolicyAuthority: vi.fn(() => inspection),
         },
       ),
     ).toThrow(/missing entries "required_api"/);

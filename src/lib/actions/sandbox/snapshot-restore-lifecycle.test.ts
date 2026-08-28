@@ -660,7 +660,11 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     refusePolicyAuthorityInspectionOnCall(
       f.inspectSandboxPolicyAuthorityMock,
       8,
-      { authority: "nemoclaw-managed", effectivePolicy: {} },
+      {
+        authority: "nemoclaw-managed",
+        effectivePolicy: {},
+        policyIdentity: { hash: "managed-policy", activeVersion: 1 },
+      },
       "clone authority changed during supervisor wait",
     );
     const { runSandboxSnapshot } = await import("./snapshot");
