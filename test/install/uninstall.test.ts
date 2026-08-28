@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
@@ -27,6 +28,10 @@ const UNINSTALL_SCRIPT = path.join(import.meta.dirname, "../..", "uninstall.sh")
 describe("uninstall CLI flags", () => {
   function writeFakeTools(fakeBin: string) {
     fs.mkdirSync(fakeBin);
+    const sandboxConfigDir = path.join(path.dirname(fakeBin), "sandbox", ".openclaw");
+    const eventLog = path.join(path.dirname(fakeBin), "uninstall-events");
+    fs.mkdirSync(path.join(sandboxConfigDir, "workspace"), { recursive: true });
+    fs.writeFileSync(path.join(sandboxConfigDir, "workspace", "USER.md"), "preserve me\n");
     for (const cmd of ["npm", "docker", "ollama", "pgrep"]) {
       fs.writeFileSync(path.join(fakeBin, cmd), "#!/usr/bin/env bash\nexit 0\n", {
         mode: 0o755,
@@ -37,8 +42,34 @@ describe("uninstall CLI flags", () => {
       `#!/usr/bin/env bash
 case "$*" in
   "gateway list -o json") printf '[{"name":"nemoclaw"}]\\n' ;;
+  "gateway info -g nemoclaw") printf 'Gateway: nemoclaw\\n' ;;
+  "sandbox list"|"sandbox list -g nemoclaw") printf 'ordinary-authority Ready\\n' ;;
+  "sandbox ssh-config ordinary-authority") printf 'Host openshell-ordinary-authority.default\\n  HostName 127.0.0.1\\n  User sandbox\\n  Port 2222\\n' ;;
+  "sandbox delete "*)
+    printf 'delete\\n' >> ${JSON.stringify(eventLog)}
+    rm -rf ${JSON.stringify(path.dirname(sandboxConfigDir))}
+    ;;
+  "status") printf 'Status: Connected\\nGateway: nemoclaw\\n' ;;
 esac
 exit 0
+`,
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(fakeBin, "ssh"),
+      `#!/usr/bin/env bash
+remote="\${!#}"
+case "$remote" in
+  *"-printf"*) exit 0 ;;
+  *"tar --hard-dereference"*)
+    /usr/bin/tar -cf - -C ${JSON.stringify(sandboxConfigDir)} -- workspace
+    status=$?
+    case "$status" in 0) printf 'backup-complete\\n' >> ${JSON.stringify(eventLog)} ;; esac
+    exit "$status"
+    ;;
+  *"src="*) exit 2 ;;
+  *) printf 'workspace\\n' ;;
+esac
 `,
       { mode: 0o755 },
     );
@@ -372,15 +403,29 @@ esac
     expect(output).not.toMatch(/NemoClaw Uninstaller/);
   });
 
-  it("skips the confirmation prompt and completes successfully for --yes", () => {
+  it("backs up never-rebuilt workspace state before --yes removes the sandbox", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-yes-"));
     writeFakeTools(path.join(tmp, "bin"));
-    seedCompletedDefaultAuthority(tmp);
+    const stateDir = seedCompletedDefaultAuthority(tmp);
+    const workspaceFile = path.join(tmp, "sandbox", ".openclaw", "workspace", "USER.md");
+    const workspaceDigest = createHash("sha256")
+      .update(fs.readFileSync(workspaceFile))
+      .digest("hex");
     try {
       const result = runUninstall(tmp, ["--yes"]);
       const output = `${result.stdout}${result.stderr}`;
+      const backupRoot = path.join(stateDir, "rebuild-backups", "ordinary-authority");
+      const snapshot = fs.readdirSync(backupRoot).at(0);
+      const backupFile = path.join(backupRoot, String(snapshot), "workspace", "USER.md");
+      const events = fs.readFileSync(path.join(tmp, "uninstall-events"), "utf8").trim().split("\n");
 
       expect(result.status, output).toBe(0);
+      expect(createHash("sha256").update(fs.readFileSync(backupFile)).digest("hex")).toBe(
+        workspaceDigest,
+      );
+      expect(output).toContain("Pre-uninstall backup: 1 backed up, 0 failed, 0 skipped");
+      expect(events).toEqual(["backup-complete", "delete"]);
+      expect(fs.existsSync(path.join(tmp, "sandbox"))).toBe(false);
       expect(output).toMatch(/NemoClaw/);
       expect(output).toMatch(/Claws retracted/);
     } finally {
@@ -418,7 +463,9 @@ esac
       const output = `${result.stdout}${result.stderr}`;
 
       expect(result.status, output).toBe(0);
-      expect(output).toMatch(/--destroy-user-data set; purging user data under ~\/\.nemoclaw\//);
+      expect(output).toMatch(
+        /--destroy-user-data set; skipping fresh sandbox backups and purging user data under ~\/\.nemoclaw\//,
+      );
       expect(fs.existsSync(stateDir)).toBe(false);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -530,6 +577,10 @@ exit 0
 printf '%s\\n' "$*" >> '${openshellCalls}'
 case "$*" in
   "gateway list -o json") printf '[{"name":"nemoclaw"},{"name":"nemoclaw-9124"}]\\n' ;;
+  "gateway info -g nemoclaw") printf 'Gateway: nemoclaw\\n' ;;
+  "sandbox list") printf 'ordinary-authority Ready\\n' ;;
+  "sandbox ssh-config ordinary-authority") printf 'Host openshell-ordinary-authority.default\\n  HostName 127.0.0.1\\n  User sandbox\\n  Port 2222\\n' ;;
+  "status") printf 'Status: Connected\\nGateway: nemoclaw\\n' ;;
 esac
 exit 0
 `,
