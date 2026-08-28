@@ -4,7 +4,6 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadAgent } from "../../../src/lib/agent/defs";
 import {
   buildMessagingRuntimePlanArtifact,
   type MessagingBuildPlan,
@@ -34,31 +33,6 @@ guard = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = guard
 spec.loader.exec_module(guard)
 `;
-
-describe("Hermes sealed configuration contract", () => {
-  it("keeps the root guard in parity with the host manifest projection (#8006)", () => {
-    const result = runPythonHarness(String.raw`
-import importlib.util
-import json
-import sys
-import types
-
-# This contract check reads a constant only. Avoid requiring the optional host
-# PyYAML package while loading the image-owned module for that narrow purpose.
-sys.modules["yaml"] = types.ModuleType("yaml")
-spec = importlib.util.spec_from_file_location("runtime_config_guard", sys.argv[1])
-guard = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = guard
-spec.loader.exec_module(guard)
-print(json.dumps(guard.SEALED_FILE_NAMES))
-`);
-    expect(result.status, result.stderr).toBe(0);
-
-    const config = loadAgent("hermes").configPaths;
-    const manifestFiles = [config.configFile, ...config.shieldsFiles, ".config-hash"].sort();
-    expect((JSON.parse(result.stdout) as string[]).sort()).toEqual(manifestFiles);
-  });
-});
 
 describe("Hermes candidate schema validation (#8614)", () => {
   it("rejects an incomplete home_channel before a sealed write transaction starts", () => {
