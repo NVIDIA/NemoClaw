@@ -106,6 +106,7 @@ describe("gateway lifecycle late binding", () => {
     } as unknown as typeof import("../docker-driver-gateway-env");
     const ensureManagedGatewayStateRoot = vi.fn();
     const resolveGatewayStateDirForPort = vi.fn(() => "/tmp/gateway");
+    const getDockerDriverGatewayEnv = vi.fn(() => ({ OPENSHELL_SERVER_PORT: String(port) }));
     const start = createDockerDriverGatewayStart({
       SUPPORTED_OPENSHELL_FALLBACK_VERSION: "0.0.0",
       checkGatewayPortAvailable: async () => ({ ok: true }),
@@ -128,7 +129,7 @@ describe("gateway lifecycle late binding", () => {
       gatewayName: () => name,
       gatewayPort: () => port,
       getDockerDriverGatewayEndpoint: () => "https://127.0.0.1",
-      getDockerDriverGatewayEnv: () => ({ OPENSHELL_SERVER_PORT: String(port) }),
+      getDockerDriverGatewayEnv,
       getDockerDriverGatewayPid: () => null,
       getDockerDriverGatewayPortListenerScan: () => ({
         complete: true,
@@ -174,5 +175,8 @@ describe("gateway lifecycle late binding", () => {
       home: expect.any(String),
       port: 9777,
     });
+    expect(ensureManagedGatewayStateRoot.mock.invocationCallOrder[0]).toBeLessThan(
+      getDockerDriverGatewayEnv.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
   });
 });

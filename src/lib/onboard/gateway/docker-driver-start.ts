@@ -76,9 +76,6 @@ export function createDockerDriverGatewayStart(
   } = {}): Promise<void> {
     const verifyReachability =
       deps.verifySandboxBridgeGatewayReachableOrExit ?? verifySandboxBridgeGatewayReachableOrExit;
-    const gatewayBin = deps.resolveOpenShellGatewayBinary();
-    const openshellVersionOutput = deps.runCaptureOpenshell(["--version"], { ignoreError: true });
-    const gatewayEnv = deps.getDockerDriverGatewayEnv(openshellVersionOutput);
     const stateDir = deps.gatewayBinding.resolveGatewayStateDirForPort({
       configured: process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
       home: os.homedir(),
@@ -97,6 +94,9 @@ export function createDockerDriverGatewayStart(
         },
       );
     }
+    const gatewayBin = deps.resolveOpenShellGatewayBinary();
+    const openshellVersionOutput = deps.runCaptureOpenshell(["--version"], { ignoreError: true });
+    const gatewayEnv = deps.getDockerDriverGatewayEnv(openshellVersionOutput);
     const runtimeIdentity = gatewayBin
       ? dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity({
           gatewayBin,
