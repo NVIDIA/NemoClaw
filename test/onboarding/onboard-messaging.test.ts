@@ -68,7 +68,7 @@ describe("onboard messaging", () => {
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      writeOkOpenshell(fakeBin, { readySandboxGet: true });
+      writeOkOpenshell(fakeBin);
 
       const script = String.raw`
 const runner = require(${runnerPath});
@@ -81,7 +81,7 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
 const commands = [];
-const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ sandboxName: "my-assistant" });
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ sandboxName: "my-assistant" }); createdSandbox.installRuntimeObservation();
 runner.run = fixtureMocks.createStatefulMessagingProviderRunner({ commands, createdSandbox });
 runner.runCapture = (command) => {
   const sandboxCapture = createdSandbox.capture(command);
@@ -332,7 +332,7 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
           customDockerfilePath,
           "FROM scratch\nARG NEMOCLAW_MESSAGING_PLAN_B64=\nARG NEMOCLAW_TOOL_DISCLOSURE=progressive\nENV NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}\n",
         );
-        writeOkOpenshell(fakeBin, { readySandboxGet: true });
+        writeOkOpenshell(fakeBin);
 
         const script = String.raw`
 const runner = require(${runnerPath});
@@ -361,7 +361,7 @@ const nonSlackMessagingEnvKeys = [
 
 const commands = [];
 let registeredSandbox = null;
-const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ sandboxName: "my-assistant" });
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ sandboxName: "my-assistant" }); createdSandbox.installRuntimeObservation();
 runner.run = fixtureMocks.createStatefulMessagingProviderRunner({ commands, createdSandbox });
 runner.runCapture = (command) => {
   const sandboxCapture = createdSandbox.capture(command);
@@ -515,14 +515,14 @@ const { createSandbox } = require(${onboardPath});
       const expectedProviders = Object.keys(providerCredentialKeys).sort();
       const rawGatewayCredential = "gateway-only-provider-secret";
       fs.mkdirSync(fakeBin, { recursive: true });
-      writeOkOpenshell(fakeBin, { readySandboxGet: true });
+      writeOkOpenshell(fakeBin);
       const script = String.raw`
 const runner = require(${runnerPath}), registry = require(${registryPath}), preflight = require(${preflightPath}), credentials = require(${credentialsPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const childProcess = require("node:child_process"), { EventEmitter } = require("node:events");
 const commands = [], credentialKeys = ${JSON.stringify(providerCredentialKeys)}; let registered = null;
-const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ sandboxName: "my-assistant" });
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ sandboxName: "my-assistant" }); createdSandbox.installRuntimeObservation();
 const providers = Object.keys(credentialKeys), revisions = new Map(providers.map((name) => [name, 1])), providerGetCounts = new Map();
 const rawGatewayCredential = ${JSON.stringify(rawGatewayCredential)}, gatewaySecrets = new Map(providers.map((name) => [name, rawGatewayCredential]));
 registry.registerSandbox({ name: "my-assistant", messaging: { schemaVersion: 1, plan: ${messagingPlanLiteral(["slack", "telegram", "whatsapp"])} } });
@@ -686,7 +686,7 @@ const { createSandbox } = require(${onboardPath});
       const messagingPlanB64 = encodeMessagingPlanForChannels(["telegram"], ["telegram"]);
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      writeOkOpenshell(fakeBin, { readySandboxGet: true });
+      writeOkOpenshell(fakeBin);
 
       const script = String.raw`
 const runner = require(${runnerPath});
@@ -703,7 +703,7 @@ const commands = []; let dockerfileContent;
 const registerCalls = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxName: "my-assistant",
-});
+}); createdSandbox.installRuntimeObservation();
 registry.registerSandbox({
   name: "my-assistant",
   messaging: { schemaVersion: 1, plan: ${messagingPlanLiteral(["telegram"], ["telegram"])} },
@@ -856,7 +856,7 @@ const { createSandbox } = require(${onboardPath});
         const messagingPlanB64 = encodeMessagingPlanForChannels(["whatsapp"]);
 
         fs.mkdirSync(fakeBin, { recursive: true });
-        writeOkOpenshell(fakeBin, { readySandboxGet: true });
+        writeOkOpenshell(fakeBin);
 
         const script = String.raw`
 const runner = require(${runnerPath});
@@ -871,7 +871,7 @@ const fs = require("node:fs");
 
 const commands = []; let dockerfileContent;
 const registerCalls = [];
-const createdSandbox = fixtureMocks.createCreatedSandboxFixture();
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture(); createdSandbox.installRuntimeObservation();
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
@@ -1021,7 +1021,7 @@ const { createSandbox } = require(${onboardPath});
         const messagingPlanB64 = encodeMessagingPlanForChannels(["whatsapp"], ["whatsapp"]);
 
         fs.mkdirSync(fakeBin, { recursive: true });
-        writeOkOpenshell(fakeBin, { readySandboxGet: true });
+        writeOkOpenshell(fakeBin);
 
         const script = String.raw`
 const runner = require(${runnerPath});
@@ -1041,7 +1041,7 @@ registry.registerSandbox({
 
 const commands = []; let dockerfileContent;
 const registerCalls = [];
-const createdSandbox = fixtureMocks.createCreatedSandboxFixture();
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture(); createdSandbox.installRuntimeObservation();
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
@@ -1259,7 +1259,7 @@ const { createSandbox } = require(${onboardPath});
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      writeOkOpenshell(fakeBin, { readySandboxGet: true });
+      writeOkOpenshell(fakeBin);
 
       const script = String.raw`
 const runner = require(${runnerPath});
@@ -1268,7 +1268,7 @@ const registry = require(${registryPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
 
 const commands = [];
-const existingSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
+const existingSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" }); existingSandbox.installRuntimeObservation();
 const messagingProviderRunner = require(${onboardScriptMocksPath}).createStatefulMessagingProviderRunner({
   commands,
   createdSandbox: existingSandbox,
@@ -1367,7 +1367,7 @@ const { createSandbox } = require(${onboardPath});
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      writeOkOpenshell(fakeBin, { readySandboxGet: true });
+      writeOkOpenshell(fakeBin);
 
       const script = String.raw`
 const runner = require(${runnerPath});
@@ -1380,7 +1380,7 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const commands = [];
-const createdSandbox = fixtureMocks.createCreatedSandboxFixture();
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture(); createdSandbox.installRuntimeObservation();
 runner.run = require(${onboardScriptMocksPath}).createStatefulMessagingProviderRunner({
   commands,
   createdSandbox,
@@ -1508,7 +1508,7 @@ const { createSandbox } = require(${onboardPath});
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      writeOkOpenshell(fakeBin, { readySandboxGet: true });
+      writeOkOpenshell(fakeBin);
 
       const script = String.raw`
 const runner = require(${runnerPath});
@@ -1521,7 +1521,7 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const commands = [];
-const createdSandbox = fixtureMocks.createCreatedSandboxFixture();
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture(); createdSandbox.installRuntimeObservation();
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
   return createdSandbox.run(command) ?? { status: 0 };

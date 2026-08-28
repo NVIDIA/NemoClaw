@@ -50,7 +50,7 @@ function runTerminalDashboardScenario(scenario: "create" | "reuse") {
   );
 
   fs.mkdirSync(fakeBin, { recursive: true });
-  writeOkOpenshell(fakeBin, { readySandboxGet: true });
+  writeOkOpenshell(fakeBin);
 
   const script = String.raw`
 const fs = require("node:fs");
@@ -69,6 +69,7 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxName,
   lifecycleState: scenario === "reuse" ? "created" : "absent",
 });
+createdSandbox.installRuntimeObservation();
 const commands = [];
 const registerCalls = [];
 const updateCalls = [];

@@ -51,7 +51,7 @@ describe("createSandbox installer restore intent", () => {
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      writeOkOpenshell(fakeBin, { readySandboxGet: true });
+      writeOkOpenshell(fakeBin);
 
       const script = String.raw`
 const runner = require(${runnerPath});
@@ -70,6 +70,7 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   lifecycleState: "created",
   phase: "NotReady",
 });
+createdSandbox.installRuntimeObservation();
 runner.run = (command) => {
   const cmd = _n(command);
   events.push({ kind: "run", cmd });
@@ -419,7 +420,7 @@ const { createSandbox } = require(${onboardPath});
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      writeOkOpenshell(fakeBin, { readySandboxGet: true });
+      writeOkOpenshell(fakeBin);
 
       const script = String.raw`
 const runner = require(${runnerPath});
@@ -433,6 +434,7 @@ const existingSandbox = fixtureMocks.createCreatedSandboxFixture({
   lifecycleState: "created",
   phase: "NotReady",
 });
+existingSandbox.installRuntimeObservation();
 
 runner.run = (command) => {
   if (_n(command).includes("sandbox delete")) {

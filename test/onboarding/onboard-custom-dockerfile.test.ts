@@ -185,7 +185,7 @@ describe("onboard custom Dockerfile", () => {
       fs.writeFileSync(path.join(customBuildDir, "credentials.json"), "{}");
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      writeOkOpenshell(fakeBin, { readySandboxGet: true });
+      writeOkOpenshell(fakeBin);
 
       const customDockerfilePath = JSON.stringify(path.join(customBuildDir, "Dockerfile"));
 
@@ -195,6 +195,7 @@ const fixtureMocks = require(${onboardScriptMocksPath});
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxName: "my-assistant",
 });
+createdSandbox.installRuntimeObservation();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});

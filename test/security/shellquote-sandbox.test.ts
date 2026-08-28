@@ -71,7 +71,7 @@ describe("sandboxName command hardening in onboard.js", () => {
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin, { readySandboxGet: true });
+    writeOkOpenshell(fakeBin);
     fs.writeFileSync(
       scriptPath,
       String.raw`
@@ -90,6 +90,7 @@ process.env.NEMOCLAW_OPENSHELL_BIN = ${JSON.stringify(path.join(fakeBin, "opensh
 const commands = [];
 const asText = (command) => Array.isArray(command) ? command.join(" ") : String(command);
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture();
+createdSandbox.installRuntimeObservation();
 runner.run = (command, opts = {}) => {
   const text = asText(command);
   commands.push({ type: "run", command: text, env: opts.env || null });

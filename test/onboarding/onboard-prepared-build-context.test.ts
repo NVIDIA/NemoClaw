@@ -36,7 +36,7 @@ function runPreparedContextScenario(scenario: PreparedContextScenario): Prepared
 
   fs.mkdirSync(fakeBin, { recursive: true });
   fs.mkdirSync(preparedBuildCtx, { recursive: true });
-  writeOkOpenshell(fakeBin, { readySandboxGet: true });
+  writeOkOpenshell(fakeBin);
   fs.writeFileSync(
     path.join(preparedBuildCtx, "Dockerfile"),
     ["FROM scratch", `ARG NEMOCLAW_BUILD_ID=${buildId}`, 'CMD ["/bin/true"]', ""].join("\n"),
@@ -83,6 +83,7 @@ const buildCtx = ${JSON.stringify(preparedBuildCtx)};
 const buildId = ${JSON.stringify(buildId)};
 const sandboxName = "prepared-dcode";
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({ sandboxName });
+createdSandbox.installRuntimeObservation();
 const commands = [];
 const registerCalls = [];
 const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {

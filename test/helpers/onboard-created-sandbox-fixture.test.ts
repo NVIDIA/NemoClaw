@@ -16,6 +16,7 @@ type CreatedSandboxFixture = {
   readonly capture: (command: string[]) => string | null;
   readonly create: (command: string[]) => void;
   readonly delete: () => void;
+  readonly installRuntimeObservation: () => () => void;
   readonly recreate: (command: string[]) => void;
   readonly setPhase: (phase: string) => void;
   readonly run: (command: string[]) => { status: number; stdout: Buffer; stderr: Buffer } | null;
@@ -135,6 +136,36 @@ describe("created sandbox fixture", () => {
         fixture.capture(["openshell", "sandbox", "get", "-g", "gateway-alpha", "alpha"]) ?? "",
       ),
     ).toBe(replacementSandboxId);
+  });
+
+  it("routes direct runtime observations through the fixture lifecycle (#10463)", () => {
+    const fixture = createCreatedSandboxFixture({
+      sandboxName: "alpha",
+      sandboxId: "sandbox-alpha",
+      gatewayName: "gateway-alpha",
+    });
+    const openshellRuntime = requireCjs("../../src/lib/adapters/openshell/runtime.ts") as {
+      captureResolvedOpenshell: (args: string[]) => {
+        status: number;
+        stdout: string;
+      };
+    };
+    const restore = fixture.installRuntimeObservation();
+    const getSandbox = () =>
+      openshellRuntime.captureResolvedOpenshell(["sandbox", "get", "-g", "gateway-alpha", "alpha"]);
+
+    try {
+      fixture.create(createCommand());
+      expect(parseOpenShellSandboxId(getSandbox().stdout)).toBe(fixture.state.sandboxId);
+
+      fixture.delete();
+      expect(getSandbox().status).toBe(1);
+
+      fixture.recreate(createCommand("b".repeat(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH)));
+      expect(parseOpenShellSandboxId(getSandbox().stdout)).toBe(fixture.state.sandboxId);
+    } finally {
+      restore();
+    }
   });
 
   it("keeps a replacement ID valid for a maximum-length input (#10463)", () => {

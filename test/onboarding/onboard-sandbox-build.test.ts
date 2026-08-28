@@ -45,7 +45,7 @@ describe("onboard helpers", () => {
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      writeOkOpenshell(fakeBin, { readySandboxGet: true });
+      writeOkOpenshell(fakeBin);
 
       const script = String.raw`
 const runner = require(${runnerPath});
@@ -53,6 +53,7 @@ const fixtureMocks = require(${onboardScriptMocksPath});
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxName: "my-assistant",
 });
+createdSandbox.installRuntimeObservation();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
@@ -216,7 +217,7 @@ const { createSandbox } = require(${onboardPath});
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin, { readySandboxGet: true });
+    writeOkOpenshell(fakeBin);
 
     const script = String.raw`
 const fs = require("node:fs");
@@ -227,6 +228,7 @@ const fixtureMocks = require(${onboardScriptMocksPath});
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxName: "hermes-sandbox",
 });
+createdSandbox.installRuntimeObservation();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
@@ -442,7 +444,7 @@ const { createSandbox } = require(${onboardPath});
     const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin, { readySandboxGet: true });
+    writeOkOpenshell(fakeBin);
 
     const script = String.raw`
 const fs = require("node:fs");
@@ -464,6 +466,7 @@ platform.isWsl = () => false;
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxName: "my-assistant",
 });
+createdSandbox.installRuntimeObservation();
 
 const commands = [];
 const logs = [];
@@ -609,7 +612,7 @@ const { createSandbox } = require(${onboardPath});
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin, { readySandboxGet: true });
+    writeOkOpenshell(fakeBin);
 
     const script = String.raw`
 const runner = require(${runnerPath});
@@ -625,6 +628,7 @@ const commands = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxName: "my-assistant",
 });
+createdSandbox.installRuntimeObservation();
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
@@ -721,7 +725,7 @@ const { createSandbox } = require(${onboardPath});
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin, { readySandboxGet: true });
+    writeOkOpenshell(fakeBin);
 
     const script = String.raw`
 const runner = require(${runnerPath});
@@ -737,6 +741,7 @@ const commands = [];
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxName: "my-assistant",
 });
+createdSandbox.installRuntimeObservation();
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });

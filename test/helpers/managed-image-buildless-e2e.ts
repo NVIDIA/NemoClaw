@@ -75,6 +75,7 @@ interface ChildPayload {
     agent?: string | null;
     dashboardPort?: number | null;
     imageTag?: string | null;
+    lifecycleLiveIdentityFingerprint?: string | null;
     name?: string;
     workload?: {
       schemaVersion?: number;
@@ -93,6 +94,7 @@ interface ChildPayload {
     };
   }>;
   runnerCommands: string[];
+  sandboxId: string;
   spawnCalls: SpawnCall[];
 }
 
@@ -197,6 +199,7 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxId: "fixture-managed-sandbox",
   lifecycleState: recreate ? "created" : "absent",
 });
+createdSandbox.installRuntimeObservation();
 
 const coreVersion = require(${source("src/lib/core/version.ts")});
 replace(coreVersion, "getVersion", () => catalogRelease);
@@ -626,6 +629,7 @@ const { createSandbox } = require(${source("src/lib/onboard.ts")});
     managedBootstrapCalls,
     registerCalls,
     runnerCommands,
+    sandboxId: createdSandbox.state.sandboxId,
     spawnCalls,
   }));
 })().catch((error) => {
@@ -645,9 +649,6 @@ function writeRuntimeStubs(fakeBin: string, dockerLog: string): void {
       "fi",
       'if [ "${1:-}" = "policy" ] && [ "${2:-}" = "list" ] && [[ " $* " = *" --global "* ]]; then',
       '  printf "%s\\n" "No global policy history found" >&2',
-      "fi",
-      'if [ "${1:-}" = "sandbox" ] && [ "${2:-}" = "get" ]; then',
-      '  printf "Sandbox:\\n\\n  Id: fixture-managed-sandbox\\n  Name: %s\\n  Phase: Ready\\n" "${!#}"',
       "fi",
       "exit 0",
       "",
@@ -879,6 +880,9 @@ function assertManagedLaunch(
     )}`,
   ).toBeDefined();
   expect(registration?.agent).toBe(agent);
+  expect(registration?.lifecycleLiveIdentityFingerprint).toBe(
+    createHash("sha256").update(result.payload.sandboxId).digest("hex"),
+  );
   if (agent === "langchain-deepagents-code") {
     expect(registration?.dashboardPort).toBe(0);
   }

@@ -63,6 +63,14 @@ describe("fresh create identity", () => {
       expectedOutcome: "providerless-apf" as const,
     },
     {
+      title: "rejects mismatched selector and get identities before later effects (#10463)",
+      apfInterceptorRequested: true,
+      provider: null,
+      model: null,
+      agent: null,
+      expectedOutcome: "identity-mismatch-refusal" as const,
+    },
+    {
       title: "surfaces retained sandbox recovery through the public error message (#9833)",
       apfInterceptorRequested: true,
       provider: null,
@@ -212,11 +220,14 @@ const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxId: "sbx-fresh-create",
   gatewayName: "nemoclaw-18080",
 });
+const mismatchedSandboxId = createdSandbox.state.sandboxId + "-mismatch";
 let sandboxListCalls = 0;
 let dockerPsCalls = 0;
 let registeredSandbox = null;
 let effectivePolicy = {};
 let credentialReadCalls = 0;
+let identityMismatchGetCalls = 0;
+let policyVerificationCalls = 0;
 let routeReservationCalls = 0;
 const keepAlive = setInterval(() => {}, 1000);
 const apfInterceptorRequested = ${JSON.stringify(apfInterceptorRequested)};
@@ -231,6 +242,9 @@ const cancellationSelector = ${JSON.stringify(
       )};
 const cancelAfterCreate = cancellationSelector !== null;
 const recoveryReentry = process.env.NEMOCLAW_RECOVERY_REENTRY || "";
+const identityMismatchRefusal = ${JSON.stringify(
+        expectedOutcome === "identity-mismatch-refusal",
+      )};
 const stagedMessagingRefusal = ${JSON.stringify(expectedOutcome === "staged-messaging-refusal")};
 const postCreateAuthorityRefusal = ${JSON.stringify(
         expectedOutcome === "post-create-authority-refusal",
@@ -293,7 +307,17 @@ runner.run = (command, opts = {}) => {
     createdSandbox.setPhase(sandboxListCalls >= 2 ? "Ready" : "Pending");
   }
 	  const sandboxCapture = createdSandbox.capture(command);
-	  if (sandboxCapture !== null) return sandboxCapture;
+	  if (sandboxCapture !== null) {
+    if (
+      identityMismatchRefusal &&
+      cmd.includes("sandbox get") &&
+      sandboxCapture.includes("Id: " + createdSandbox.state.sandboxId)
+    ) {
+      identityMismatchGetCalls += 1;
+      return sandboxCapture.replace(createdSandbox.state.sandboxId, mismatchedSandboxId);
+    }
+    return sandboxCapture;
+  }
   if (cmd.startsWith("docker ps -a --no-trunc ")) {
     dockerPsCalls += 1;
     if (dockerPsCalls === 1) return "a".repeat(64);
@@ -371,6 +395,7 @@ runner.run = (command, opts = {}) => {
 	  apfInterceptorRequested,
 	  getSandbox: (name) => retainedRegistryEntry ?? durableGetSandbox(name),
 	  onVerifyCreatedPolicy: (input) => {
+	    policyVerificationCalls += 1;
 	    if (postCreateAuthorityRefusal) {
 	      throw new Error("external policy authority changed");
 	    }
@@ -503,6 +528,9 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
     lifecycleObservationCommands,
     registeredSandbox,
     credentialReadCalls,
+    identityMismatchGetCalls,
+    mismatchedSandboxId,
+    policyVerificationCalls,
     routeReservationCalls,
     checkpointReadCalls,
     registryMutationCalls,
@@ -791,6 +819,27 @@ if (${JSON.stringify(
         assert.equal(payload.credentialReadCalls, 0);
         assert.deepEqual(providerExposureCommands, []);
       };
+      const assertIdentityMismatchRefusal = () => {
+        assert.equal(payload.sandboxName, null);
+        assert.equal(payload.sandboxCreated, true);
+        assert.equal(payload.deleted, false);
+        assert.match(payload.creationError, /automatic sandbox cleanup was not safe/u);
+        assert.notEqual(payload.mismatchedSandboxId, payload.sandboxId);
+        assert.ok(payload.identityMismatchGetCalls >= 1);
+        assert.equal(payload.policyVerificationCalls, 0);
+        assert.equal(payload.registeredSandbox, null);
+        assert.equal(payload.credentialReadCalls, 0);
+        assert.deepEqual(payload.registryMutationCalls, [
+          { operation: "update", name: "my-assistant" },
+        ]);
+        assert.deepEqual(providerEffectCommands, []);
+        assert.equal(
+          payload.commandNames.some((command: string) =>
+            /(?:^|\s)policy (?:set|apply)(?:\s|$)/u.test(command),
+          ),
+          false,
+        );
+      };
       const assertPostCreateAuthorityRefusal = () => {
         assert.equal(payload.sandboxName, null);
         assert.equal(payload.sandboxCreated, true);
@@ -1070,6 +1119,7 @@ if (${JSON.stringify(
         "unsupported-agent-refusal": assertUnsupportedAgentRefusal,
         "resolved-agent-refusal": assertUnsupportedAgentRefusal,
         "providerless-apf": assertProviderlessApfCreation,
+        "identity-mismatch-refusal": assertIdentityMismatchRefusal,
         "post-create-authority-refusal": assertPostCreateAuthorityRefusal,
         "post-create-runner-refusal": assertPostCreateRunnerRefusal,
         "post-create-registration-refusal": assertPostCreateRegistrationRefusal,

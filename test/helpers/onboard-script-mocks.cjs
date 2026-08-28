@@ -88,9 +88,7 @@ Module._resolveFilename = function resolveLazySourceFilename(request, parent, is
 };
 Module._extensions[".ts"] = lazySourceRequire;
 
-function onboardReadySandboxId() {
-  return require("./onboard-openshell-fixture.ts").ONBOARD_READY_SANDBOX_ID;
-}
+const ONBOARD_READY_SANDBOX_ID = "sbx-4f2a91c0d7";
 
 function normalizeCommand(command) {
   return (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
@@ -394,7 +392,7 @@ function createCreatedSandboxFixture(options = {}) {
   );
   const initialSandboxId = hasOwn(options, "sandboxId")
     ? options.sandboxId
-    : onboardReadySandboxId();
+    : ONBOARD_READY_SANDBOX_ID;
   const initialLifecycleState = hasOwn(options, "lifecycleState")
     ? options.lifecycleState
     : "absent";
@@ -603,11 +601,37 @@ function createCreatedSandboxFixture(options = {}) {
     assertState();
   };
 
+  const installRuntimeObservation = () => {
+    const openshellRuntime = require(
+      path.resolve(__dirname, "../../src/lib/adapters/openshell/runtime.ts"),
+    );
+    const previousCapture = openshellRuntime.captureResolvedOpenshell;
+    const fixtureCapture = (args, options = {}) => {
+      const result = run(["openshell", ...args]);
+      if (result === null) return previousCapture(args, options);
+      const stdout = result.stdout.toString();
+      const stderr = result.stderr.toString();
+      return {
+        status: result.status,
+        output: options.includeStderr ? `${stdout}${stderr}` : stdout,
+        stdout,
+        stderr,
+      };
+    };
+    openshellRuntime.captureResolvedOpenshell = fixtureCapture;
+    return () => {
+      if (openshellRuntime.captureResolvedOpenshell === fixtureCapture) {
+        openshellRuntime.captureResolvedOpenshell = previousCapture;
+      }
+    };
+  };
+
   assertState();
   return Object.freeze({
     capture,
     create,
     delete: deleteSandbox,
+    installRuntimeObservation,
     recreate,
     run,
     setPhase,
@@ -902,7 +926,7 @@ function managedSandboxPolicyReceiptFixture(entry, options = {}) {
   const gatewayName = options.gatewayName || "nemoclaw";
   const gatewayPort = options.gatewayPort || 8080;
   const lifecycleGeneration = options.lifecycleGeneration || "123e4567-e89b-42d3-a456-426614174983";
-  const sandboxId = options.sandboxId || onboardReadySandboxId();
+  const sandboxId = options.sandboxId || ONBOARD_READY_SANDBOX_ID;
   const sandboxIdentityFingerprint = require("node:crypto")
     .createHash("sha256")
     .update(sandboxId)
@@ -1196,7 +1220,7 @@ function mockManagedImageBootstrap() {
     path.resolve(__dirname, "../../src/lib/adapters/openshell/sandbox-identity.ts"),
   );
 
-  sandboxIdentity.resolveOpenShellSandboxId = () => onboardReadySandboxId();
+  sandboxIdentity.resolveOpenShellSandboxId = () => ONBOARD_READY_SANDBOX_ID;
   authorityStore.createDockerManagedBootstrapAuthorityStore = () => ({
     async recordPreparedAuthority(authority) {
       return {

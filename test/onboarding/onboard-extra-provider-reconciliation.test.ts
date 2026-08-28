@@ -43,7 +43,7 @@ describe("onboard extra-provider reconciliation", () => {
         );
 
         fs.mkdirSync(fakeBin, { recursive: true });
-        writeOkOpenshell(fakeBin, { readySandboxGet: true });
+        writeOkOpenshell(fakeBin);
 
         const script = String.raw`
 const registry = require(${registryPath});
@@ -143,6 +143,7 @@ const createReservedSandbox = () => {
   createdSandbox = fixtureMocks.createCreatedSandboxFixture({
     sandboxName: "my-assistant",
   });
+  createdSandbox.installRuntimeObservation();
   return createSandbox(
     ...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
       [null, "gpt-5.4", "nvidia-prod", null, null, null, null, null, null, null, null, null, []],
