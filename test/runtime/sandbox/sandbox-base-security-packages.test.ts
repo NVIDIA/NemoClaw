@@ -497,6 +497,34 @@ describe("sandbox base security packages", () => {
     },
   );
 
+  it.each(OPENCLAW_SECURITY_CASES)(
+    "rejects a duplicate checksum record that omits libevent before installation on %s",
+    (_name, architecture, image) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-libevent-checksum-set-"));
+      const prepared = sandboxSecurityCommand(image, tmp, false);
+      const command = prepared.command.replace(
+        '"$libevent_core_sha256" "$security_deb_dir/libevent-core-2.1-7t64.deb"',
+        '"$libexpat_sha256" "$security_deb_dir/libexpat1.deb"',
+      );
+
+      try {
+        const { calls, result } = runLoggedDockerShell(
+          command,
+          tmp,
+          [
+            'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
+            ...useRealPatchedParser(baseAptSecurityFunctions(architecture), prepared.pythonShim),
+          ],
+          { timeoutMs: 15_000 },
+        );
+        expect(result.status).not.toBe(0);
+        expect(calls).not.toContain("dpkg-install");
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
+
   it.each(SECURITY_IMAGES)("rejects unsupported package architecture for $name", (image) => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-unsupported-arch-"));
     const prepared = sandboxSecurityCommand(image, tmp, false);
