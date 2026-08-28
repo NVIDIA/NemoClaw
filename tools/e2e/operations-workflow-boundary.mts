@@ -605,14 +605,9 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     outputs: {
       dcode_base_contract: "${{ steps.validate_dcode_base.outputs.contract }}",
       dcode_base_ref: "${{ steps.validate_dcode_base.outputs.base_ref }}",
-      managed_image_artifact_provenance:
-        "${{ steps.download_managed_cohort.outputs.provenance }}",
-      managed_image_cohort: "${{ steps.validate_managed_cohort.outputs.cohort }}",
       managed_image_receipt: "${{ steps.validate_managed_cohort.outputs.receipt }}",
       managed_image_revision:
         "${{ steps.validate_managed_cohort.outputs.revision }}",
-      managed_image_run_attempt: "${{ steps.validate_managed_cohort.outputs.run_attempt }}",
-      managed_image_run_id: "${{ steps.validate_managed_cohort.outputs.run_id }}",
       workload_source: "${{ steps.select_pr_source.outputs.workload_source || 'managed-image' }}",
     },
     permissions: {
