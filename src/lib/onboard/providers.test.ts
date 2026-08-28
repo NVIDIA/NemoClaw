@@ -732,13 +732,14 @@ describe("onboard provider helpers", () => {
 
     expect(providers).toEqual(["alpha-discord-bridge"]);
     expect(calls.map(({ command }) => command.join(" "))).toEqual([
+      "provider get alpha-discord-bridge",
       "provider profile export nemoclaw-mcp-v1 --output json",
       expect.stringMatching(/^provider profile import --file .*nemoclaw-mcp-v1\.yaml$/),
       "provider get alpha-discord-bridge",
       "provider create --name alpha-discord-bridge --type nemoclaw-mcp-v1 --credential DISCORD_BOT_TOKEN",
       "provider get alpha-discord-bridge",
     ]);
-    expect(calls[3]?.env).toEqual({ DISCORD_BOT_TOKEN: credential });
+    expect(calls[4]?.env).toEqual({ DISCORD_BOT_TOKEN: credential });
     expect(calls.flatMap(({ command }) => command)).not.toContain(credential);
   });
 
@@ -771,12 +772,21 @@ describe("onboard provider helpers", () => {
         (command) => {
           const joined = command.join(" ");
           commands.push(joined);
-          return profileResults[command[2] ?? ""] ?? { status: 0, stdout: "", stderr: "" };
+          return command[1] === "get"
+            ? {
+                status: 0,
+                stdout:
+                  "Name: alpha-discord-bridge\nType: nemoclaw-mcp-v1\nCredential keys: DISCORD_BOT_TOKEN\nConfig keys: <none>\n",
+              }
+            : (profileResults[command[2] ?? ""] ?? { status: 0, stdout: "", stderr: "" });
         },
         { bestEffort: true },
       ),
     ).toThrow(/does not match NemoClaw's endpointless messaging credential contract/u);
-    expect(commands).toEqual(["provider profile export nemoclaw-mcp-v1 --output json"]);
+    expect(commands).toEqual([
+      "provider get alpha-discord-bridge",
+      "provider profile export nemoclaw-mcp-v1 --output json",
+    ]);
   });
 
   it.each([
@@ -884,6 +894,7 @@ describe("onboard provider helpers", () => {
 
     expect(providers).toEqual([name]);
     expect(commands).toEqual([
+      `provider get ${name}`,
       "provider profile export nemoclaw-mcp-v1 --output json",
       `provider get ${name}`,
       `provider delete ${name}`,
@@ -913,6 +924,7 @@ describe("onboard provider helpers", () => {
     // still attached to a live sandbox, so reuse paths must use `update`.
     expect(providers).toEqual(["alpha-brave-search"]);
     expect(commands).toEqual([
+      expect.stringContaining("nemoclaw-blueprint/provider-profiles/brave.yaml"),
       "provider get alpha-brave-search",
       "provider update alpha-brave-search --credential BRAVE_API_KEY",
     ]);
@@ -1232,6 +1244,7 @@ describe("onboard provider helpers", () => {
 
     expect(providers).toEqual(["alpha-brave-search"]);
     expect(commands).toEqual([
+      expect.stringContaining("nemoclaw-blueprint/provider-profiles/brave.yaml"),
       "provider get alpha-brave-search",
       "provider delete alpha-brave-search",
       "provider create --name alpha-brave-search --type brave --credential BRAVE_API_KEY",

@@ -5,7 +5,7 @@ import { type WebSearchConfig, webSearchProviderForConfig } from "../../inferenc
 import type { SandboxMessagingPlan } from "../../messaging";
 import {
   mergeRebuildMessagingPolicyPresets,
-  pruneInactiveHermesMessagingPolicyPresets,
+  pruneInactiveMessagingPolicyPresets,
 } from "../../onboard/messaging-policy-presets";
 import {
   isDcodeAgent,
@@ -55,9 +55,7 @@ export function excludePolicyPresetsByName(
   excludedNames: readonly (string | undefined)[],
 ): string[] {
   const excluded = new Set(
-    excludedNames.filter(
-      (name): name is string => typeof name === "string" && name.length > 0,
-    ),
+    excludedNames.filter((name): name is string => typeof name === "string" && name.length > 0),
   );
   return presets.filter((name) => !excluded.has(name));
 }
@@ -232,10 +230,9 @@ export function runRebuildBackupPhase(
     disabledChannels,
   );
   const activeMessagingPolicyPresets = input.messagingPlan
-    ? pruneInactiveHermesMessagingPolicyPresets(
+    ? pruneInactiveMessagingPolicyPresets(
         mergedPolicyPresets,
         enabledChannelIds,
-        input.sandboxEntry.agent,
         new Set(
           (input.sandboxEntry.customPolicies ?? []).map((policy) =>
             policy.name.trim().toLowerCase(),

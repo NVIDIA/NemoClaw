@@ -25,7 +25,6 @@ import { installPortableDemoSandboxLifecycle } from "./experimental/portable-dem
 import { enforceManagedBootstrapRecoveryForSandbox } from "./managed-bootstrap/adapter";
 import type {
   ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff,
-  ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt,
   ManagedBootstrapRuntimeCreateLifecycle,
   ManagedBootstrapRuntimePatch,
   ManagedBootstrapRuntimeSnapshot,
@@ -120,7 +119,6 @@ function createPortableRuntimePatch(
 
 type NativeFallbackCleanupEvidence = Readonly<{
   nativeCleanupHandoff?: ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff;
-  nativeCleanupReceipt?: ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt;
 }>;
 
 async function rollbackNativeGpuFailureForFallback(
@@ -132,15 +130,10 @@ async function rollbackNativeGpuFailureForFallback(
     return {};
   }
   const rollback = await runtimePatch.rollbackManagedStartupAfterCreateFailure({
-    ownerCleanupHandoff: "native-gpu-fallback-after-absent-attachment",
+    ownerCleanupHandoff: "native-gpu-fallback",
   });
   if (rollback?.kind !== "openshell-owner-cleanup-required") return {};
-  const ownerCleanup = managedLifecycle.completeNativeGpuFallbackOwnerCleanup
-    ? await managedLifecycle.completeNativeGpuFallbackOwnerCleanup(rollback)
-    : rollback;
-  return ownerCleanup.kind === "openshell-owner-cleanup-completed"
-    ? { nativeCleanupReceipt: ownerCleanup }
-    : { nativeCleanupHandoff: ownerCleanup };
+  return { nativeCleanupHandoff: rollback };
 }
 
 function normalizedOpenShellCommandOutput(result: OpenShellCommandResult): string {
@@ -713,6 +706,7 @@ export function createSandboxGpuCreateAttemptRunner(
     if (!deferPostCreateEffects) await runtimePatch.exitOnPatchError();
     if (createResult && createResult.status !== 0) {
       const failure = classifySandboxCreateFailure(createResult.output);
+      let nativeCreateRejectedBeforeProgress = false;
       if (failure.kind === "sandbox_create_incomplete") {
         console.warn("");
         if (managedIncompleteCreateRecovered) {
@@ -740,6 +734,7 @@ export function createSandboxGpuCreateAttemptRunner(
                   sawProgress: createResult.sawProgress,
                 })
           ) {
+            nativeCreateRejectedBeforeProgress = true;
             state.allowUnbuiltCompatibilitySource = input.prebuild.imageRef === null;
             return true;
           }
@@ -756,7 +751,12 @@ export function createSandboxGpuCreateAttemptRunner(
           return false;
         })()
       ) {
-        await runtimePatch.rollbackManagedStartupAfterCreateFailure();
+        let nativeCleanup: NativeFallbackCleanupEvidence = {};
+        if (nativeCreateRejectedBeforeProgress) {
+          await runtimePatch.rollbackManagedStartupAfterCreateFailure();
+        } else {
+          nativeCleanup = await rollbackNativeGpuFailureForFallback(managedLifecycle, runtimePatch);
+        }
         return {
           ok: false,
           route,
@@ -764,6 +764,10 @@ export function createSandboxGpuCreateAttemptRunner(
           error: new Error("Native OpenShell GPU sandbox creation was rejected."),
           fallbackEligible: true,
           ...captureRetainedSandboxRecovery(),
+          ...(nativeCreateRejectedBeforeProgress
+            ? { nativeCreateRejectedBeforeProgress: true as const }
+            : {}),
+          ...nativeCleanup,
         } as const;
       } else {
         await runtimePatch.rollbackManagedStartupAfterCreateFailure();
@@ -891,7 +895,10 @@ export function createSandboxGpuCreateAttemptRunner(
             }))
       ) {
         state.nativeRuntimeSnapshot = runtimeSnapshot;
-        await runtimePatch.rollbackManagedStartupAfterCreateFailure();
+        const nativeCleanup = await rollbackNativeGpuFailureForFallback(
+          managedLifecycle,
+          runtimePatch,
+        );
         return {
           ok: false,
           route,
@@ -901,6 +908,7 @@ export function createSandboxGpuCreateAttemptRunner(
           ),
           fallbackEligible: true,
           ...captureRetainedSandboxRecovery(),
+          ...nativeCleanup,
         } as const;
       }
       await runtimePatch.rollbackManagedStartupAfterCreateFailure();

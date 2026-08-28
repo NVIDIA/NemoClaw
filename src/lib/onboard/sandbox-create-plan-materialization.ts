@@ -3,7 +3,7 @@
 
 import type { InitialSandboxPolicy } from "./initial-policy";
 import type { SandboxPolicyAuthority } from "../adapters/openshell/policy-authority";
-import type { MessagingTokenDef } from "./messaging-prep";
+import { hasConfiguredMessagingCredential, type MessagingTokenDef } from "./messaging-prep";
 import { filterMessagingProvidersForSandboxCreate } from "./sandbox-create-intent";
 import type {
   MaterializeSandboxCreatePlanInput,
@@ -221,7 +221,7 @@ export function validateSandboxCreateIntentBindings(
         `Cannot materialize sandbox create intent; missing credential binding '${request.envKey}' for provider '${request.name}'.`,
       );
     }
-    if (Boolean(tokenDef.token) !== request.credentialConfigured) {
+    if (hasConfiguredMessagingCredential(tokenDef) !== request.credentialConfigured) {
       throw new Error(
         `Cannot materialize sandbox create intent; credential availability changed for provider '${request.name}'.`,
       );
@@ -342,7 +342,7 @@ export function materializeSandboxCreatePlan({
   };
   const plannedMessagingProviders = filterMessagingProvidersForSandboxCreate(
     [
-      ...enabledMessagingTokenDefs.filter(({ token }) => Boolean(token)).map(({ name }) => name),
+      ...enabledMessagingTokenDefs.filter(hasConfiguredMessagingCredential).map(({ name }) => name),
       ...intent.reusableMessagingProviders,
     ],
     intent.messagingProviderRequests,

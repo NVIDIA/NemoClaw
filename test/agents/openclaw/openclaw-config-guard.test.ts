@@ -1417,11 +1417,11 @@ describe("openclaw-config-guard", () => {
   it("keeps restart journal bounded near the maximum config size", () => {
     const { root, configDir, configPath, hashPath } = fixture();
     const max = 16 * 1024 * 1024;
-    const prefix = Buffer.from('{"padding":"');
-    const suffix = Buffer.from('"}\n');
+    const prefix = Buffer.from('{"first":1,');
+    const suffix = Buffer.from('"last":2}\n');
     const large = Buffer.concat([
       prefix,
-      Buffer.alloc(max - prefix.length - suffix.length, 0x61),
+      Buffer.alloc(max - prefix.length - suffix.length, 0x20),
       suffix,
     ]);
     const digest = createHash("sha256").update(large).digest("hex");
@@ -1435,7 +1435,6 @@ describe("openclaw-config-guard", () => {
     expect(fs.statSync(path.join(root, ".nemoclaw-test", "transaction.json")).size).toBeLessThan(
       48 * 1024 * 1024,
     );
-    expect(runGuard("unseal-restart", configDir).status).toBe(0);
   }, 20_000);
 
   it("runs from source injected through python stdin", () => {

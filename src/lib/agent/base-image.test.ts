@@ -145,6 +145,39 @@ describe("agent base image provisioning", () => {
     }
   });
 
+  it("accepts a Pi base only when its immutable security inventory is current", () => {
+    const pi = makeAgent({
+      name: "pi",
+      displayName: "Pi",
+      dockerfileBasePath: "/test/root/agents/pi/Dockerfile.base",
+    });
+    withMockedDocker(({ ensureAgentBaseImage, dockerCaptureMock, resolveSandboxBaseImageMock }) => {
+      ensureAgentBaseImage(pi);
+      const options = resolveSandboxBaseImageMock.mock.calls[0]?.[0] as {
+        validateImage?: (imageRef: string) => boolean;
+        validationDescription?: string;
+      };
+
+      dockerCaptureMock.mockReturnValueOnce("");
+      expect(options.validateImage?.("pi-base:stale")).toBe(false);
+
+      dockerCaptureMock.mockReturnValueOnce("nemoclaw-security-inventory-ok");
+      expect(options.validateImage?.("pi-base:current")).toBe(true);
+      expect(options.validationDescription).toBe("the immutable security package inventory");
+      expect(dockerCaptureMock.mock.calls[1]?.[0]).toEqual(
+        expect.arrayContaining([
+          "--network",
+          "none",
+          "--cap-drop",
+          "ALL",
+          "--read-only",
+          "pi-base:current",
+          expect.stringContaining("nemoclaw-security-inventory-ok"),
+        ]),
+      );
+    });
+  });
+
   it(
     "reuses a compatible resolved agent base image during normal onboarding",
     () => {
@@ -187,7 +220,8 @@ describe("agent base image provisioning", () => {
               forceRefresh: true,
               rootDir: root,
               validateImage: expect.any(Function),
-              validationDescription: "the required MCP Streamable HTTP and ACP runtimes",
+              validationDescription:
+                "the required MCP Streamable HTTP and ACP runtimes and the immutable security package inventory",
             }),
           );
           expect(dockerImageInspectMock).not.toHaveBeenCalled();
@@ -232,7 +266,9 @@ describe("agent base image provisioning", () => {
         dockerCaptureMock.mockImplementation((args: string[]) =>
           args.includes("/usr/bin/ldd")
             ? "ldd (Debian GLIBC 2.41-12) 2.41"
-            : "nemoclaw-hermes-mcp-runtime-ok",
+            : args.includes("/opt/hermes/.venv/bin/python")
+              ? "nemoclaw-hermes-mcp-runtime-ok"
+              : "nemoclaw-security-inventory-ok",
         );
         dockerImageInspectFormatMock.mockImplementation((format: string, imageRef: string) =>
           format === "{{json .}}"
@@ -300,7 +336,9 @@ describe("agent base image provisioning", () => {
         dockerCaptureMock.mockImplementation((args: string[]) =>
           args.includes("/usr/bin/ldd")
             ? "ldd (Debian GLIBC 2.41-12) 2.41"
-            : "nemoclaw-hermes-mcp-runtime-ok",
+            : args.includes("/opt/hermes/.venv/bin/python")
+              ? "nemoclaw-hermes-mcp-runtime-ok"
+              : "nemoclaw-security-inventory-ok",
         );
         dockerImageInspectFormatMock.mockImplementation((format: string) =>
           format === "{{json .}}"
@@ -598,7 +636,8 @@ describe("agent base image provisioning", () => {
               NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "0",
             }),
             validateImage: expect.any(Function),
-            validationDescription: "the required MCP Streamable HTTP and ACP runtimes",
+            validationDescription:
+                "the required MCP Streamable HTTP and ACP runtimes and the immutable security package inventory",
             trustedLocalOverride: { ref: result.imageTag, provenance },
           }),
         );
