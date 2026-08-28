@@ -25,6 +25,7 @@ function createRegistryHarness(initiallyRunning: boolean) {
   let registryPresent = true;
   let startStatus = 0;
   let startError: Error | undefined;
+  let beforeStart = () => undefined;
   let startLabel: string | undefined;
   let startChangesState = true;
   const engine = {
@@ -80,6 +81,7 @@ function createRegistryHarness(initiallyRunning: boolean) {
         }
         case "start":
           expect(args[1]).toBe(REGISTRY_ID);
+          beforeStart();
           running = startChangesState ? true : running;
           status = startChangesState ? "running" : status;
           registryIp = startChangesState ? "10.87.0.3" : registryIp;
@@ -150,6 +152,11 @@ function createRegistryHarness(initiallyRunning: boolean) {
     },
     setStartLabel: (value: string) => {
       startLabel = value;
+    },
+    setStartThrows: () => {
+      beforeStart = () => {
+        throw new Error("registry capture failed");
+      };
     },
     setStartTimeout: (changesState: boolean) => {
       startStatus = 1;
@@ -243,20 +250,20 @@ describe("Hermes Portable registry recovery", () => {
     expect(harness.calls.some((args) => args[0] === "start")).toBe(false);
   });
 
-  it("restores the exact stopped state when start reports failure after mutation", () => {
+  it("accepts a nonzero start result after proving the exact registry running", () => {
     const harness = createRegistryHarness(false);
     harness.setStartOutcome({ status: 125, changesState: true });
 
-    expect(() =>
-      preparePortableRegistryRecovery(
-        harness.engine as never,
-        harness.expectedAuthoritySha256,
-        vi.fn(),
-        vi.fn(),
-      ),
-    ).toThrow("could not start its exact registry authority");
-    expect(harness.isRunning()).toBe(false);
-    expect(harness.calls).toContainEqual(["stop", "--time", "10", REGISTRY_ID]);
+    const prepared = preparePortableRegistryRecovery(
+      harness.engine as never,
+      harness.expectedAuthoritySha256,
+      vi.fn(),
+      vi.fn(),
+    );
+
+    expect(prepared.started).toBe(true);
+    expect(harness.isRunning()).toBe(true);
+    expect(harness.calls.some((args) => args[0] === "stop")).toBe(false);
   });
 
   it("accepts an exact running registry after the pinned start times out", () => {
@@ -307,9 +314,35 @@ describe("Hermes Portable registry recovery", () => {
     expect(harness.isRunning()).toBe(false);
   });
 
-  it("rolls back an exact running registry after an ordinary spawn error", () => {
+  it("accepts an ordinary command error after proving the exact registry running", () => {
     const harness = createRegistryHarness(false);
     harness.setStartError("EIO", true);
+
+    const prepared = preparePortableRegistryRecovery(
+      harness.engine as never,
+      harness.expectedAuthoritySha256,
+      vi.fn(),
+      vi.fn(),
+    );
+
+    expect(prepared.started).toBe(true);
+    expect(harness.isRunning()).toBe(true);
+    expect(harness.calls.some((args) => args[0] === "stop")).toBe(false);
+  });
+
+  it.each([
+    {
+      label: "nonzero result",
+      configure: (harness: RegistryHarness) =>
+        harness.setStartOutcome({ status: 125, changesState: false }),
+    },
+    {
+      label: "ordinary command error",
+      configure: (harness: RegistryHarness) => harness.setStartError("EIO", false),
+    },
+  ])("rejects a $label when the exact registry remains stopped", ({ configure }) => {
+    const harness = createRegistryHarness(false);
+    configure(harness);
 
     expect(() =>
       preparePortableRegistryRecovery(
@@ -319,6 +352,37 @@ describe("Hermes Portable registry recovery", () => {
         vi.fn(),
       ),
     ).toThrow("could not start its exact registry authority");
+    expect(harness.isRunning()).toBe(false);
+  });
+
+  it("rejects a thrown start capture before inspecting a postcondition", () => {
+    const harness = createRegistryHarness(false);
+    harness.setStartThrows();
+
+    expect(() =>
+      preparePortableRegistryRecovery(
+        harness.engine as never,
+        harness.expectedAuthoritySha256,
+        vi.fn(),
+        vi.fn(),
+      ),
+    ).toThrow("registry capture failed");
+    expect(harness.isRunning()).toBe(false);
+  });
+
+  it("rolls back an exact running registry when an ordinary error has authority drift", () => {
+    const harness = createRegistryHarness(false);
+    harness.setStartError("EIO", true);
+    harness.setStartLabel("changed");
+
+    expect(() =>
+      preparePortableRegistryRecovery(
+        harness.engine as never,
+        harness.expectedAuthoritySha256,
+        vi.fn(),
+        vi.fn(),
+      ),
+    ).toThrow();
     expect(harness.isRunning()).toBe(false);
     expect(harness.calls).toContainEqual(["stop", "--time", "10", REGISTRY_ID]);
   });
