@@ -266,52 +266,6 @@ export type EffectiveVerifiedSandboxCreateBoundary = VerifiedSandboxCreateBounda
   readonly policySourcePath: string;
 };
 
-interface VerifyCreatedSandboxEffectivePolicyRequirementsInput {
-  readonly sandboxName: string;
-  readonly gatewayName: string;
-  readonly gatewayPort: number;
-  readonly lifecycleGeneration: string;
-  readonly lifecycleLiveIdentityFingerprint: string;
-  readonly route: import("../docker-gpu-route").SelectedDockerGpuRoute;
-  readonly hermesPortable: boolean;
-  readonly effectivePolicySourcePath?: string;
-  readonly policySourcePathForRoute: () => string;
-  readonly operation: string;
-}
-
-/** Bind post-create verification to the exact policy source used by this create. */
-export function verifyCreatedSandboxEffectivePolicyRequirements(
-  input: VerifyCreatedSandboxEffectivePolicyRequirementsInput,
-): EffectiveVerifiedSandboxCreateBoundary {
-  if (Boolean(input.effectivePolicySourcePath) !== input.hermesPortable) {
-    throw new Error("Hermes portable create policy source is incomplete.");
-  }
-  if (input.effectivePolicySourcePath && input.route === "compatibility") {
-    throw new Error("Hermes portable create selected an unsupported GPU route.");
-  }
-  const policySourcePath = input.effectivePolicySourcePath ?? input.policySourcePathForRoute();
-  const registrationInput = {
-    sandboxName: input.sandboxName,
-    gatewayName: input.gatewayName,
-    gatewayPort: input.gatewayPort,
-    lifecycleGeneration: input.lifecycleGeneration,
-    lifecycleLiveIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
-    policySourcePath,
-    route: input.route,
-    operation: input.operation,
-  };
-  verifyLiveCreatedSandboxPolicyRequirements(registrationInput);
-  return {
-    sandboxName: input.sandboxName,
-    gatewayName: input.gatewayName,
-    gatewayPort: input.gatewayPort,
-    lifecycleGeneration: input.lifecycleGeneration,
-    lifecycleLiveIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
-    route: input.route,
-    policySourcePath,
-  };
-}
-
 /** Require the generic deferred-effect gate for explicit APF creation. */
 export function assertApfCreateIntent(
   createIntent: Pick<

@@ -1676,18 +1676,7 @@ function removePreset(
   const context = inspectLivePolicyForMutation(sandboxName, operation);
   if (!context) return false;
 
-  // Get current policy YAML from sandbox
-  let rawPolicy = "";
-  try {
-    // Mutations start from round-trippable --base, never provider-composed --full.
-    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), {
-      env: { OPENSHELL_GATEWAY: context.gatewayName },
-    });
-  } catch {
-    /* ignored */
-  }
-
-  const currentPolicy = parseCurrentPolicyOrEmpty(rawPolicy);
+  const currentPolicy = readCurrentSandboxPolicy(sandboxName, context.gatewayName);
   if (!currentPolicy) {
     console.error(`  Could not read current policy for sandbox '${sandboxName}'.`);
     return false;
@@ -1771,36 +1760,15 @@ function removePreset(
   return true;
 }
 
-/** Push a policy YAML body to a sandbox's live gateway via a private temp file. */
-function pushPolicyYaml(
-  sandboxName: string,
-  updatedPolicy: string,
-  options: { nonFatal?: boolean; gatewayName?: string; expectedPolicy?: string } = {},
-): boolean {
-  if (!assertOpenshellResolvable(options)) return false;
-  if (options.expectedPolicy !== undefined) {
-    const currentPolicy = readCurrentSandboxPolicy(sandboxName, options.gatewayName);
-    if (!currentPolicy || !policyDocumentsMatch(currentPolicy, options.expectedPolicy)) {
-      console.error(
-        `  The current OpenShell policy changed while NemoClaw prepared the requested update. Rerun the command; no policy changes were made.`,
-      );
-      return false;
-    }
-  }
-  return setPolicyDocument(sandboxName, updatedPolicy, options);
-}
-
 /** Round-trippable live policy body from `--base`, or null when unreadable. */
 function readCurrentSandboxPolicy(sandboxName: string, gatewayName?: string): string | null {
-  let rawPolicy = "";
   try {
-    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), {
-      ...(gatewayName ? { env: { OPENSHELL_GATEWAY: gatewayName } } : {}),
-    });
+    const selectedGateway =
+      gatewayName ?? resolveSandboxGatewayName(registry.getSandbox(sandboxName));
+    return parseCurrentPolicyOrEmpty(captureSandboxBasePolicy(sandboxName, selectedGateway)) || null;
   } catch {
-    /* ignored */
+    return null;
   }
-  return parseCurrentPolicyOrEmpty(rawPolicy) || null;
 }
 
 /** Resolve and validate one agent's reviewed baseline policy source. */
@@ -1872,6 +1840,9 @@ function excludeBaselineEntry(
   options: { nonFatal?: boolean } = {},
 ): boolean {
   return withRecordedSandboxGateway(sandboxName, (gatewayName) => {
+    const operation = `exclude baseline policy entry '${key}'`;
+    const context = inspectLivePolicyForMutation(sandboxName, operation, gatewayName);
+    if (!context) return false;
     const currentPolicy = readCurrentSandboxPolicy(sandboxName, gatewayName);
     if (!currentPolicy) {
       console.error(`  Could not read current policy for sandbox '${sandboxName}'.`);
@@ -1888,10 +1859,11 @@ function excludeBaselineEntry(
     const { policy, removed } = removeBaselineEntryFromPolicy(currentPolicy, key);
     return (
       removed &&
-      pushPolicyYaml(sandboxName, policy, {
+      assertOpenshellResolvable(options) &&
+      setPolicyDocument(sandboxName, policy, {
         ...options,
-        gatewayName,
-        expectedPolicy: currentPolicy,
+        context,
+        operation,
       })
     );
   });
@@ -1923,6 +1895,9 @@ function restoreBaselineEntry(
       return false;
     }
     if (!entry) return true;
+    const operation = `restore baseline policy entry '${key}'`;
+    const context = inspectLivePolicyForMutation(sandboxName, operation, gatewayName);
+    if (!context) return false;
     const currentPolicy = readCurrentSandboxPolicy(sandboxName, gatewayName);
     if (!currentPolicy) {
       console.error(`  Could not read current policy for sandbox '${sandboxName}'.`);
@@ -1937,10 +1912,10 @@ function restoreBaselineEntry(
       return false;
     }
     const updated = mergeBaselineEntryIntoPolicy(currentPolicy, key, entry);
-    return pushPolicyYaml(sandboxName, updated, {
+    return assertOpenshellResolvable(options) && setPolicyDocument(sandboxName, updated, {
       ...options,
-      gatewayName,
-      expectedPolicy: currentPolicy,
+      context,
+      operation,
     });
   });
 }
@@ -2156,18 +2131,7 @@ function applyPresetContent(
     return reportPolicyObservationFailure(error);
   }
 
-  // Get current policy YAML from sandbox
-  let rawPolicy: string | null = null;
-  try {
-    // Mutations start from round-trippable --base, never provider-composed --full.
-    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), {
-      env: { OPENSHELL_GATEWAY: context.gatewayName },
-    });
-  } catch {
-    /* Refused below. */
-  }
-
-  const currentPolicy = parseCurrentPolicyOrEmpty(rawPolicy);
+  const currentPolicy = readCurrentSandboxPolicy(sandboxName, context.gatewayName);
   // A live mutation requires a usable policy; empty is an invalid read, not a
   // fresh sandbox whose unknown policy may be replaced with a scaffold.
   if (!currentPolicy) {
@@ -2359,17 +2323,7 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
     return reportPolicyObservationFailure(error);
   }
 
-  let rawPolicy: string | null = null;
-  try {
-    // Mutations start from round-trippable --base, never provider-composed --full.
-    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), {
-      env: { OPENSHELL_GATEWAY: context.gatewayName },
-    });
-  } catch {
-    /* Refused below. */
-  }
-
-  let merged = parseCurrentPolicyOrEmpty(rawPolicy);
+  let merged = readCurrentSandboxPolicy(sandboxName, context.gatewayName);
   // Keep the batch entrypoint on the same fail-closed source boundary as
   // applyPresetContent: an unusable successful read is still a failed read.
   if (!merged) {
@@ -2681,7 +2635,7 @@ function getPresetContentGatewayState(
   policyKey?: string,
 ): "match" | "absent" | "drift" | null {
   return inspectPresetContentGatewayState({
-    readPolicy: () => runCapture(buildPolicyGetCommand(sandboxName)),
+    readPolicy: () => readCurrentSandboxPolicy(sandboxName) ?? "",
     parseCurrentPolicy: parseCurrentPolicyOrEmpty,
     extractPresetEntries,
     presetContent,

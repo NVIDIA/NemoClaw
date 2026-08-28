@@ -5,6 +5,9 @@ import fs from "node:fs";
 import YAML from "yaml";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { PolicyObservationError } from "../adapters/openshell/policy-state";
+import { digestBaselineEntry } from "./baseline-exclusion";
+
 const mocks = vi.hoisted(() => ({
   captureSandboxBasePolicy: vi.fn(),
   getSandbox: vi.fn(),
@@ -33,7 +36,14 @@ vi.mock("../state/registry", async (importOriginal) => ({
   getSandbox: mocks.getSandbox,
 }));
 
-import { applyPresetContent, inspectPolicyMutationContext, removePreset } from "./index";
+import {
+  applyPresetContent,
+  applyPresets,
+  excludeBaselineEntry,
+  inspectPolicyMutationContext,
+  removePreset,
+  restoreBaselineEntry,
+} from "./index";
 
 const sandboxName = "live-policy";
 const preset = `preset:\n  name: weather\n  description: Weather\nnetwork_policies:\n  weather:\n    endpoints:\n      - host: wttr.in\n        port: 443\n`;
@@ -118,6 +128,96 @@ describe("live OpenShell policy mutations", () => {
     expect(applyPresetContent(sandboxName, "weather", preset, { nonFatal: true })).toBe(false);
     expect(mocks.run).not.toHaveBeenCalled();
     expect(YAML.parse(livePolicy).network_policies).toHaveProperty("concurrent_host_edit");
+  });
+
+  it("removes one baseline entry from the bounded live policy", () => {
+    const baselineEntry = {
+      name: "npm_registry",
+      endpoints: [{ host: "registry.npmjs.org", port: 443 }],
+    };
+    livePolicy = YAML.stringify({
+      version: 1,
+      network_policies: { host_approval: hostEntry, npm_registry: baselineEntry },
+    });
+
+    expect(
+      excludeBaselineEntry(sandboxName, "npm_registry", digestBaselineEntry(baselineEntry), {
+        nonFatal: true,
+      }),
+    ).toBe(true);
+    expect(YAML.parse(livePolicy).network_policies).toEqual({ host_approval: hostEntry });
+  });
+
+  it("does not let baseline exclude or restore overwrite a concurrent host edit", () => {
+    const baselineEntry = {
+      name: "npm_registry",
+      endpoints: [{ host: "registry.npmjs.org", port: 443 }],
+    };
+    const concurrentEntry = {
+      endpoints: [{ host: "concurrent.example.com", port: 443 }],
+    };
+    const installRace = () => {
+      let observations = 0;
+      const observe = () => {
+        observations += 1;
+        const policy = YAML.parse(livePolicy);
+        return {
+          policySource: "sandbox",
+          effectivePolicy: policy,
+          policy,
+          policyIdentity: {
+            hash: `sha256:baseline-${String(observations)}`,
+            activeVersion: observations,
+          },
+        };
+      };
+      const observeConcurrentEdit = () => {
+        const document = YAML.parse(livePolicy);
+        document.network_policies.concurrent_host_edit = concurrentEntry;
+        livePolicy = YAML.stringify(document);
+        return observe();
+      };
+      mocks.inspectSandboxPolicy
+        .mockReset()
+        .mockImplementationOnce(observe)
+        .mockImplementationOnce(observeConcurrentEdit)
+        .mockImplementation(observe);
+    };
+
+    livePolicy = YAML.stringify({
+      version: 1,
+      network_policies: { host_approval: hostEntry, npm_registry: baselineEntry },
+    });
+    installRace();
+    expect(
+      excludeBaselineEntry(sandboxName, "npm_registry", digestBaselineEntry(baselineEntry), {
+        nonFatal: true,
+      }),
+    ).toBe(false);
+    expect(YAML.parse(livePolicy).network_policies).toHaveProperty("concurrent_host_edit");
+
+    mocks.run.mockClear();
+    livePolicy = YAML.stringify({
+      version: 1,
+      network_policies: { host_approval: hostEntry },
+    });
+    installRace();
+    expect(restoreBaselineEntry(sandboxName, "npm_registry", { nonFatal: true })).toBe(false);
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(YAML.parse(livePolicy).network_policies).toHaveProperty("concurrent_host_edit");
+  });
+
+  it("makes no mutation when the bounded base-policy adapter refuses the read", () => {
+    mocks.captureSandboxBasePolicy.mockImplementation(() => {
+      throw new PolicyObservationError("OpenShell policy read timed out");
+    });
+
+    expect(applyPresetContent(sandboxName, "weather", preset, { nonFatal: true })).toBe(false);
+    expect(removePreset(sandboxName, "weather", { nonFatal: true, presetContent: preset })).toBe(
+      false,
+    );
+    expect(applyPresets(sandboxName, ["npm"])).toBe(false);
+    expect(mocks.run).not.toHaveBeenCalled();
   });
 
   it("derives custom preset identity from namespaced OpenShell keys", () => {

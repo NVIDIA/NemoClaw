@@ -37,6 +37,7 @@ import {
   rebuildFlowHelpers,
   rebuildOnboardDependencies,
   rebuildPreparedImageContext,
+  rebuildRecoveryBackup,
   rebuildRoutePreflight,
   rebuildShields,
   rebuildUsageNotice,
@@ -58,11 +59,18 @@ export {
   originalSandboxName,
   policyGet,
   portableAgentLifecycle,
+  rebuildRecoveryBackup,
   snapshotEnv,
   tempFiles,
 } from "./rebuild-flow-harness";
 
 export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): RebuildFlowHarness {
+  vi.spyOn(rebuildRecoveryBackup, "recordRebuildRecoveryBackup").mockImplementation(
+    () => undefined,
+  );
+  vi.spyOn(rebuildRecoveryBackup, "clearRebuildRecoveryBackup").mockImplementation(
+    () => undefined,
+  );
   purgeRebuildModule();
 
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);

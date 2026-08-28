@@ -67,14 +67,10 @@ export const MUTATION_READS: readonly AuditedPolicyReadFile[] = [
   },
   {
     relativePath: "src/lib/policy/index.ts",
-    expectedReads: [
-      ignoredBase("removePreset"),
-      ignoredBase("readCurrentSandboxPolicy"),
-      ignoredBase("applyPresetContent"),
-      ignoredBase("applyPresets"),
-      ignoredFull("getGatewayPresets/readPolicy"),
-      preservingBase("getPresetContentGatewayState/readPolicy"),
-    ],
+    // Every round-trippable base-policy read is owned by the bounded
+    // captureSandboxBasePolicy adapter. This remaining --full read is a
+    // diagnostic preset inventory and never feeds a mutation.
+    expectedReads: [ignoredFull("getGatewayPresets/readPolicy")],
   },
   {
     relativePath: "nemoclaw/src/blueprint/runner.ts",

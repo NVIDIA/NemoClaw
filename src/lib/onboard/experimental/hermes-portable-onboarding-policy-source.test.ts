@@ -26,7 +26,6 @@ import {
 } from "../sandbox-create/live-policy-requirements";
 import {
   runSandboxCreateWithPolicyVerification,
-  verifyCreatedSandboxEffectivePolicyRequirements,
   type EffectiveVerifiedSandboxCreateBoundary,
 } from "../sandbox-create/orchestration";
 import {
@@ -167,16 +166,11 @@ network_policies:
       }
     });
     const readFile = vi.spyOn(fs, "readFileSync");
-    let routeFallbackCalls = 0;
     let verifiedCreateEffectCalls = 0;
     let createSandboxCalls = 0;
     let recordedCheckpointEntry: SandboxEntry | null = null;
     let updateRegistry: (name: string, updates: Partial<SandboxEntry>) => boolean;
     const persistedPolicySources: string[] = [];
-    const routeFallback = () => {
-      routeFallbackCalls += 1;
-      return policyPath;
-    };
     const persistCreateIdentity = (boundary: EffectiveVerifiedSandboxCreateBoundary) => {
       persistedPolicySources.push(boundary.policySourcePath);
       const checkpoint = pendingSandboxCreateIdentityForBoundary(boundary);
@@ -212,19 +206,24 @@ network_policies:
         captureCreatedSandboxIdentity: () => HERMES_PORTABLE_TEST_LIVE_IDENTITY,
         persistCreatedSandboxIdentity: vi.fn(),
         revalidateCreatedSandboxIdentity: vi.fn(),
-        verifyCreatedPolicyRequirements: (identity) =>
-          verifyCreatedSandboxEffectivePolicyRequirements({
+        verifyCreatedPolicyRequirements: (identity) => {
+          verifyLiveCreatedSandboxPolicyRequirements({
+            sandboxName: "alpha",
+            gatewayName: "nemoclaw",
+            gatewayPort: GATEWAY_PORT,
+            policySourcePath: effectivePolicySourcePath,
+            operation: "verify composed Hermes Portable policy",
+          });
+          return {
             sandboxName: "alpha",
             gatewayName: "nemoclaw",
             gatewayPort: GATEWAY_PORT,
             lifecycleGeneration: current.lifecycleGeneration,
             lifecycleLiveIdentityFingerprint: HERMES_PORTABLE_TEST_LIVE_IDENTITY,
             route: identity.route,
-            hermesPortable: true,
-            effectivePolicySourcePath,
-            policySourcePathForRoute: routeFallback,
-            operation: "verify composed Hermes Portable policy",
-          }),
+            policySourcePath: effectivePolicySourcePath,
+          };
+        },
         persistCreateIdentity: (_identity, _exactIdentity, boundary) => {
           persistCreateIdentity(boundary);
         },
@@ -269,7 +268,6 @@ network_policies:
 
     expect(completed.active.receipt.phase).toBe("active");
     expect(persistedPolicySources).toEqual([expect.stringMatching(/policy\..+\.yaml$/u)]);
-    expect(routeFallbackCalls).toBe(0);
     expect(verifiedCreateEffectCalls).toBe(1);
     expect(createSandboxCalls).toBe(1);
   });
@@ -349,11 +347,6 @@ network_policies:
   it("rejects a compatibility result before policy persistence or effects (#10423)", async () => {
     let persistCreateIdentityCalls = 0;
     let verifiedCreateEffectCalls = 0;
-    let routeFallbackCalls = 0;
-    const routeFallback = () => {
-      routeFallbackCalls += 1;
-      return policyPath;
-    };
 
     await expect(
       runSandboxCreateWithPolicyVerification<
@@ -370,19 +363,10 @@ network_policies:
         captureCreatedSandboxIdentity: () => HERMES_PORTABLE_TEST_LIVE_IDENTITY,
         persistCreatedSandboxIdentity: vi.fn(),
         revalidateCreatedSandboxIdentity: vi.fn(),
-        verifyCreatedPolicyRequirements: (identity) =>
-          verifyCreatedSandboxEffectivePolicyRequirements({
-            sandboxName: "alpha",
-            gatewayName: "nemoclaw",
-            gatewayPort: GATEWAY_PORT,
-            lifecycleGeneration: "generation-1",
-            lifecycleLiveIdentityFingerprint: HERMES_PORTABLE_TEST_LIVE_IDENTITY,
-            route: identity.route,
-            hermesPortable: true,
-            effectivePolicySourcePath: "/durable.yaml",
-            policySourcePathForRoute: routeFallback,
-            operation: "verify incompatible Hermes Portable policy",
-          }),
+        verifyCreatedPolicyRequirements: (identity) => {
+          expect(identity.route).toBe("compatibility");
+          throw new Error("Hermes portable create selected an unsupported GPU route.");
+        },
         persistCreateIdentity: () => {
           persistCreateIdentityCalls += 1;
         },
@@ -393,7 +377,6 @@ network_policies:
         cleanupTemporarySources: vi.fn(),
       }),
     ).rejects.toThrow("automatic sandbox cleanup was not safe");
-    expect(routeFallbackCalls).toBe(0);
     expect(persistCreateIdentityCalls).toBe(0);
     expect(verifiedCreateEffectCalls).toBe(0);
   });

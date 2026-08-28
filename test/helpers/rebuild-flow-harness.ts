@@ -58,6 +58,7 @@ export const rebuildInference = requireDist("./inference-invocation-probe.js");
 export const rebuildManagedImage = requireDist("./rebuild-managed-image-preflight.js");
 export const rebuildMessagingConflict = requireDist("./rebuild-messaging-conflict-preflight.js");
 export const rebuildPreparedImageContext = requireDist("./rebuild-prepared-image-context.js");
+export const rebuildRecoveryBackup = requireDist("./rebuild-recreate-journal.js");
 export const rebuildRoutePreflight = requireDist("./rebuild-preflight-guards.js");
 export const rebuildShields = requireDist("./rebuild-shields.js");
 export const rebuildUsageNotice = requireDist("./rebuild-usage-notice.js");

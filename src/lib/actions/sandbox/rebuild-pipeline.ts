@@ -51,8 +51,11 @@ import {
 } from "./rebuild-prepared-recovery";
 import { inspectRebuildGatewayProviderRegistration } from "./rebuild-provider-preflight";
 import {
+  clearRebuildRecoveryBackup,
+  findRebuildRecoveryBackup,
   fingerprintRebuildRecreateTargetIntent,
   openRebuildRecreateJournal,
+  recordRebuildRecoveryBackup,
 } from "./rebuild-recreate-journal";
 import { runRebuildRecreatePhase } from "./rebuild-recreate-phase";
 import { createRebuildRegistryRollback } from "./rebuild-registry-rollback";
@@ -313,11 +316,32 @@ async function rebuildSandboxUnlocked(
         onAuthorityRefusal: (lines) => bail(lines.join("\n")),
       });
       recreateOptions.rebuildGatewayAuthority = recreateJournal.gatewayAuthority;
+      const rebuildRecoveryIdentity = {
+        sandboxName,
+        agentName: rebuildAgent,
+        transactionId: recreateJournal.id,
+      };
+      if (!recreateJournal.acceptedTarget && backup.backupManifest) {
+        recordRebuildRecoveryBackup({
+          ...rebuildRecoveryIdentity,
+          backupManifest: backup.backupManifest,
+        });
+      }
 
       // An earlier run of this rebuild already registered and proved the
       // replacement. Retire its journal and stop before the destroy phase so a
       // restart converges to that sandbox instead of deleting it.
       if (recreateJournal.acceptedTarget) {
+        const recoveryBackup = findRebuildRecoveryBackup(rebuildRecoveryIdentity);
+        if (!recoveryBackup) {
+          console.error("");
+          console.error(
+            "  The accepted replacement still requires state restoration, but its transaction-bound backup is unavailable.",
+          );
+          return bail(
+            "Replacement state restoration is incomplete; the replacement journal was retained.",
+          );
+        }
         // The accepted replacement belongs to an earlier run. Its persisted
         // gate is independent of the current backup's cron plan, so probe every
         // Hermes target before retiring the replacement journal.
@@ -352,14 +376,39 @@ async function rebuildSandboxUnlocked(
             );
           }
         }
+        const restored = runRebuildRestorePhase({
+          sandboxName,
+          targetAgentType: rebuildAgent || "openclaw",
+          targetImageIsCustom: Boolean(fromDockerfile),
+          backupManifest: recoveryBackup,
+          log,
+        });
+        await runRebuildPostRestorePhase({
+          sandboxName,
+          sandboxEntry,
+          targetAgentName: rebuildAgent || "openclaw",
+          messagingPlan,
+          backupManifest: recoveryBackup,
+          mcpEntries: Object.values(sandboxEntry.mcp?.bridges ?? {}),
+          restoreSucceeded: restored.restoreSucceeded,
+          backupWasForceSkipped: false,
+          staleRecovery: false,
+          recoveryRecreate: true,
+          preparedBackupRecovery: true,
+          staleSandboxWasLocked,
+          versionCheck,
+          relockShieldsIfNeeded,
+          log,
+          bail,
+        });
+        clearRebuildRecoveryBackup({
+          ...rebuildRecoveryIdentity,
+          backupManifest: recoveryBackup,
+        });
         recreateJournal.completeAcceptedTarget();
-        log(`Recovered journaled replacement ${recreateJournal.id} for '${sandboxName}'`);
-        console.log(
-          `  Sandbox '${sandboxName}' already holds the replacement from the interrupted rebuild.`,
+        log(
+          `Recovered and restored journaled replacement ${recreateJournal.id} for '${sandboxName}'`,
         );
-        if (backup.backupManifest) {
-          console.log(`  State backup is preserved at: ${backup.backupManifest.backupPath}`);
-        }
         return;
       }
 
@@ -523,6 +572,12 @@ async function rebuildSandboxUnlocked(
         log,
         bail,
       });
+      if (backup.backupManifest) {
+        clearRebuildRecoveryBackup({
+          ...rebuildRecoveryIdentity,
+          backupManifest: backup.backupManifest,
+        });
+      }
     } finally {
       if (rebuildPolicySourcePath) {
         const retainedPolicySourcePath = rebuildPolicySourcePath;
