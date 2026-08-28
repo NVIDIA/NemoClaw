@@ -495,7 +495,7 @@ export function buildProviderNeutralInferenceSandboxSmokeScript(
       ? "/api/tags"
       : authority?.service === "nim"
         ? "/v1/health/ready"
-        : authority?.service === "vllm"
+        : authority?.service === "vllm" || authority?.service === "llama-cpp"
           ? "/health"
           : null;
   if (
