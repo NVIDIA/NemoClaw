@@ -176,16 +176,6 @@ export function removeExactOpenShellDockerSandboxContainers(
   }
 }
 
-/** Remove only the Docker container whose immutable ID passed the caller's authority check. */
-export function removeExactOpenShellDockerSandboxContainer(
-  sandboxName: string,
-  expectedContainerId: string,
-  log: (message: string) => void,
-  deps: StaleDockerOrphanCleanupDeps = {},
-): void {
-  removeExactOpenShellDockerSandboxContainers(sandboxName, [expectedContainerId], log, deps);
-}
-
 /**
  * Remove one exact Docker-owned orphan when a registry row outlives its OpenShell sandbox.
  * Docker labels are the remaining authority in this invalid state; see the focused #8720 tests.

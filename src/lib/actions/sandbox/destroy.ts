@@ -56,7 +56,6 @@ import { shouldCleanupGatewayAfterConfirmedFinalDestroy } from "./destroy-gatewa
 import {
   assertUnambiguousDestroyContainerIdentity,
   classifyDestroySandboxPresence,
-  getDestroyContainerIdentities,
   isSameDestroyContainerIdentityProof,
 } from "./destroy-presence";
 import {
@@ -583,9 +582,7 @@ async function destroySandboxUnlocked(
   if (initialIdentity === false) {
     requestSandboxDestroyExit(1);
   }
-  const initialContainerIdentities = initialIdentity
-    ? getDestroyContainerIdentities(initialIdentity)
-    : undefined;
+  const initialContainerIdentities = initialIdentity?.identities;
 
   let preparedManagedLlamaCppCleanup: ReturnType<
     typeof prepareManagedLlamaCppRuntimeCleanupForSandbox

@@ -4,7 +4,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   queryOpenShellDockerSandboxRuntimeSnapshot,
-  removeExactOpenShellDockerSandboxContainer,
   removeExactOpenShellDockerSandboxContainers,
 } from "./openshell-docker-sandbox-containers";
 
@@ -14,7 +13,7 @@ const EMPTY_RUNTIME_FIELDS = [IMAGE_ID, BOOKKEEPING_IMAGE_REF, "", null, [], "ru
 const ACTIVATED_CONTAINER_ID = "b".repeat(64);
 const ROLLBACK_CONTAINER_ID = "c".repeat(64);
 
-describe("removeExactOpenShellDockerSandboxContainer", () => {
+describe("removeExactOpenShellDockerSandboxContainers", () => {
   it("fails when Docker cannot confirm the exact container is absent after removal (#9073)", () => {
     const expectedContainerId = "a".repeat(64);
     const queryContainers = vi
@@ -24,10 +23,12 @@ describe("removeExactOpenShellDockerSandboxContainer", () => {
     const forceRemove = vi.fn(() => ({ status: 0 }));
 
     expect(() =>
-      removeExactOpenShellDockerSandboxContainer("alpha", expectedContainerId, vi.fn(), {
-        queryContainers,
-        forceRemove,
-      }),
+      removeExactOpenShellDockerSandboxContainers(
+        "alpha",
+        [expectedContainerId],
+        vi.fn(),
+        { queryContainers, forceRemove },
+      ),
     ).toThrow("could not confirm exact Docker container removal");
 
     expect(forceRemove).toHaveBeenCalledWith(expectedContainerId);

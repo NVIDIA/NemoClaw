@@ -316,9 +316,7 @@ export async function executeSandboxDestroy({
       | { status: "probe-failed"; detail: string; subject?: string };
     const pendingPolicyVerification = sandbox?.pendingPolicyVerification;
     const expectedContainerProof: DestroyContainerIdentityProof =
-      expectedContainerIdentities === undefined
-        ? { identity: undefined }
-        : { identities: expectedContainerIdentities };
+      expectedContainerIdentities === undefined ? {} : { identities: expectedContainerIdentities };
     const proofFromVerdict = (
       verdict: ReturnType<typeof classifyDestroyContainerIdentity>,
     ): DestroyContainerIdentityProof | null => {

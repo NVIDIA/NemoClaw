@@ -58,18 +58,12 @@ export type AssertUnambiguousDestroyIdentityDeps = {
   error?: (message: string) => void;
 };
 
-export type DestroyContainerIdentityProof =
-  | { identity: SandboxNameLabeledContainer | null | undefined }
-  | { identities: readonly SandboxNameLabeledContainer[] };
-
-/** Normalize the legacy single-container proof and recovery set proof. */
-export function getDestroyContainerIdentities(
-  proof: DestroyContainerIdentityProof,
-): readonly SandboxNameLabeledContainer[] | undefined {
-  if ("identities" in proof) return proof.identities;
-  if (proof.identity === undefined) return undefined;
-  return proof.identity === null ? [] : [proof.identity];
-}
+export type DestroyContainerIdentityProof = {
+  // `undefined` delegates identity gating to the runtime provider. An empty
+  // array records confirmed Docker absence; other arrays contain the exact
+  // immutable Docker identities qualified for this destroy operation.
+  identities?: readonly SandboxNameLabeledContainer[];
+};
 
 function observeDockerSandboxIdentities(sandboxName: string): DockerSandboxIdentityObservation {
   return inspectDockerSandboxIdentities(`${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`, {
@@ -197,21 +191,6 @@ export function classifyDestroyContainerIdentity(
   return { status: "clear", identity };
 }
 
-/** Require the same immutable container row, including the already-absent state. */
-export function isSameDestroyContainerIdentity(
-  expected: SandboxNameLabeledContainer | null,
-  verdict: DestroyContainerIdentityVerdict,
-): boolean {
-  if (verdict.status !== "clear") return false;
-  if (expected === null || verdict.identity === null) return expected === verdict.identity;
-  return (
-    expected.id === verdict.identity.id &&
-    expected.managedBy === verdict.identity.managedBy &&
-    expected.workspace === verdict.identity.workspace &&
-    expected.sandboxId === verdict.identity.sandboxId
-  );
-}
-
 /** Human-readable lines describing an ambiguous-identity refusal. */
 export function formatAmbiguousDestroyIdentity(
   verdict: Extract<DestroyContainerIdentityVerdict, { status: "ambiguous" }>,
@@ -259,7 +238,7 @@ export function assertUnambiguousDestroyContainerIdentity(
         retainedSandboxIdentityFingerprint,
       ));
   const error = deps.error ?? ((message: string) => console.error(`  ${message}`));
-  if (deps.providerId !== "docker") return { identity: undefined };
+  if (deps.providerId !== "docker") return {};
 
   const verdict = deps.retainedSandboxIdentityFingerprint
     ? classify(sandboxName, deps.retainedSandboxIdentityFingerprint)
@@ -278,9 +257,14 @@ export function assertUnambiguousDestroyContainerIdentity(
     );
     return false;
   }
-  return verdict.status === "recovery"
-    ? { identities: verdict.identities }
-    : { identity: verdict.identity };
+  return {
+    identities:
+      verdict.status === "recovery"
+        ? verdict.identities
+        : verdict.identity === null
+          ? []
+          : [verdict.identity],
+  };
 }
 
 /** Compare provider-owned identity proofs across two destroy checkpoints. */
@@ -288,18 +272,21 @@ export function isSameDestroyContainerIdentityProof(
   expected: DestroyContainerIdentityProof,
   actual: DestroyContainerIdentityProof,
 ): boolean {
-  const expectedIdentities = getDestroyContainerIdentities(expected);
-  const actualIdentities = getDestroyContainerIdentities(actual);
+  const expectedIdentities = expected.identities;
+  const actualIdentities = actual.identities;
   if (expectedIdentities === undefined || actualIdentities === undefined) {
     return expectedIdentities === actualIdentities;
   }
   if (expectedIdentities.length !== actualIdentities.length) return false;
   return expectedIdentities.every((identity, index) => {
     const candidate = actualIdentities[index];
-    return candidate !== undefined && isSameDestroyContainerIdentity(identity, {
-      status: "clear",
-      identity: candidate,
-    });
+    return (
+      candidate !== undefined &&
+      identity.id === candidate.id &&
+      identity.managedBy === candidate.managedBy &&
+      identity.workspace === candidate.workspace &&
+      identity.sandboxId === candidate.sandboxId
+    );
   });
 }
 
