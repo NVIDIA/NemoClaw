@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { R, YW } from "../../cli/terminal-style";
+import { isDeepStrictEqual } from "node:util";
+
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
+import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/policy-authority";
+import { R, YW } from "../../cli/terminal-style";
 import {
   type PreparedPortableDemoSandboxDestroyAuthority,
   preparePortableDemoSandboxDestroyAuthority,
@@ -74,6 +77,7 @@ type SandboxDestroyExecutionInput = {
   runtimeProviders?: RuntimeProviderBundleRegistry;
   deps?: {
     hostLocalInferenceLifecycleOptions?: HostLocalInferenceLifecycleOptions;
+    inspectOpenShellSandboxIdentityFingerprint?: typeof inspectOpenShellSandboxIdentityFingerprint;
     readTimerMarker?: typeof readTimerMarker;
     wipeSandboxState?: typeof wipeSandboxState;
   };
@@ -301,10 +305,52 @@ export async function executeSandboxDestroy({
   return withTimerBoundShieldsMutationLockAsync(sandboxName, "destroy sandbox", async () => {
     type IdentityContinuity =
       | { status: "match" }
-      | { status: "changed" }
-      | { status: "ambiguous"; detail: string }
-      | { status: "probe-failed"; detail: string };
+      | { status: "changed"; subject?: string }
+      | { status: "ambiguous"; detail: string; subject?: string }
+      | { status: "probe-failed"; detail: string; subject?: string };
+    const pendingPolicyVerification = sandbox?.pendingPolicyVerification;
+    const inspectPendingPolicyVerificationContinuity = (): IdentityContinuity => {
+      if (!pendingPolicyVerification) return { status: "match" };
+      if (!getSandbox) {
+        return {
+          status: "probe-failed",
+          subject: "Pending policy verification sandbox identity",
+          detail: "an exact registry reader is unavailable",
+        };
+      }
+      const readCurrentCheckpoint = () => getSandbox(sandboxName)?.pendingPolicyVerification;
+      try {
+        if (!isDeepStrictEqual(readCurrentCheckpoint(), pendingPolicyVerification)) {
+          return { status: "changed", subject: "Pending policy verification authority" };
+        }
+        const inspectIdentity =
+          deps.inspectOpenShellSandboxIdentityFingerprint ??
+          inspectOpenShellSandboxIdentityFingerprint;
+        const liveFingerprint = inspectIdentity({
+          sandboxName,
+          gatewayName: pendingPolicyVerification.gatewayName,
+        });
+        if (
+          liveFingerprint !== pendingPolicyVerification.sandboxIdentityFingerprint ||
+          !isDeepStrictEqual(readCurrentCheckpoint(), pendingPolicyVerification)
+        ) {
+          return {
+            status: "changed",
+            subject: "Pending policy verification sandbox identity",
+          };
+        }
+        return { status: "match" };
+      } catch (error) {
+        return {
+          status: "probe-failed",
+          subject: "Pending policy verification sandbox identity",
+          detail: redactDestroyError(error),
+        };
+      }
+    };
     const inspectIdentityContinuity = (): IdentityContinuity => {
+      const pendingContinuity = inspectPendingPolicyVerificationContinuity();
+      if (pendingContinuity.status !== "match") return pendingContinuity;
       if (portableContainerAuthority) {
         try {
           portableContainerAuthority.revalidate();
@@ -334,21 +380,24 @@ export async function executeSandboxDestroy({
       continuity: Exclude<IdentityContinuity, { status: "match" }>,
       mcpRecoveryFailure?: string,
       earlierCleanupDetail = "",
-    ): SandboxDestroyExecutionResult => ({
-      ok: false,
-      deleteOutput:
-        continuity.status === "probe-failed"
-          ? `Container identity could not be inspected ${phase}: ${continuity.detail}. No sandbox delete was attempted.${earlierCleanupDetail}`
-          : continuity.status === "ambiguous"
-            ? `Container identity became ambiguous ${phase}: ${continuity.detail}. No sandbox delete was attempted.${earlierCleanupDetail}`
-            : `Container identity changed ${phase}; no sandbox delete was attempted.${earlierCleanupDetail}`,
-      exitCode: 1,
-      gatewayUnreachable: false,
-      hostLocalInferenceOwnershipRequiresGateway: false,
-      mcpOwnershipRequiresGateway: false,
-      mcpRecoveryFailure,
-      shieldsRelockRequiresGateway: false,
-    });
+    ): SandboxDestroyExecutionResult => {
+      const subject = continuity.subject ?? "Container identity";
+      return {
+        ok: false,
+        deleteOutput:
+          continuity.status === "probe-failed"
+            ? `${subject} could not be inspected ${phase}: ${continuity.detail}. No sandbox delete was attempted.${earlierCleanupDetail}`
+            : continuity.status === "ambiguous"
+              ? `${subject} became ambiguous ${phase}: ${continuity.detail}. No sandbox delete was attempted.${earlierCleanupDetail}`
+              : `${subject} changed ${phase}; no sandbox delete was attempted.${earlierCleanupDetail}`,
+        exitCode: 1,
+        gatewayUnreachable: false,
+        hostLocalInferenceOwnershipRequiresGateway: false,
+        mcpOwnershipRequiresGateway: false,
+        mcpRecoveryFailure,
+        shieldsRelockRequiresGateway: false,
+      };
+    };
     const initialContinuity = inspectIdentityContinuity();
     if (initialContinuity.status !== "match") {
       return identityRefusalResult("before destroy preparation", initialContinuity);
@@ -517,7 +566,10 @@ export async function executeSandboxDestroy({
         ` Managed inference cleanup and workspace wipe or hardening may already have run; inspect those resources before retrying.${detachedDetail}`,
       );
     }
-    const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], {
+    const deleteArgs = pendingPolicyVerification
+      ? ["sandbox", "delete", "-g", pendingPolicyVerification.gatewayName, sandboxName]
+      : ["sandbox", "delete", sandboxName];
+    const deleteResult = runOpenshell(deleteArgs, {
       ignoreError: true,
       killSignal: "SIGKILL",
       stdio: ["ignore", "pipe", "pipe"],

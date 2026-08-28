@@ -149,31 +149,92 @@ info "4b. Verify blueprint runner apply smoke test"
 # response is intentionally rejected by the runner.
 FAKE_OPENSHELL_BIN=$(mktemp -d)
 APPLY_OUTPUT=$(mktemp)
+APPLY_CALLS="$FAKE_OPENSHELL_BIN/calls"
 cleanup_apply_fixture() {
   rm -rf "$FAKE_OPENSHELL_BIN"
-  rm -f "$APPLY_OUTPUT"
+  rm -f "$APPLY_OUTPUT" "$APPLY_CALLS"
 }
 trap cleanup_apply_fixture EXIT
 cat >"$FAKE_OPENSHELL_BIN/openshell" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-case "${1:-} ${2:-} ${3:-}" in
-  "policy get --base")
+if [ "${1:-}" = "status" ]; then
+  printf '%s\n' 'Gateway Status' '  Status: Connected' '  Gateway: fixture-gateway'
+  exit 0
+fi
+if [ "${1:-} ${2:-}" = "gateway info" ]; then
+  printf '%s\n' 'Gateway endpoint: http://127.0.0.1:8080'
+  exit 0
+fi
+if [ "${1:-} ${2:-}" = "sandbox get" ]; then
+  sandbox="${@: -1}"
+  printf 'Name: %s\nId: fixture-sandbox-id\nPhase: Ready\n' "$sandbox"
+  exit 0
+fi
+if [ "${1:-} ${2:-}" = "policy list" ]; then
+  printf '%s\n' 'No global policy history found' >&2
+  exit 0
+fi
+if [ "${1:-} ${2:-}" = "policy set" ]; then
+  if [ "$#" -ne 8 ] || [ "${5:-}" != "--policy" ] || [ -z "${6:-}" ]; then
+    echo "unexpected policy write: expected policy set -g fixture-gateway --policy <file> --wait <sandbox>" >&2
+    exit 64
+  fi
+  cp "$6" "${BASH_SOURCE[0]%/*}/effective-policy.yaml"
+  exit 0
+fi
+if [ "${1:-} ${2:-}" = "policy get" ]; then
+  printf '%s\n' "$*" >>"${BASH_SOURCE[0]%/*}/calls"
+fi
+if [ "${1:-} ${2:-}" = "policy get" ] && [[ " $* " == *" --output json "* ]]; then
+  sandbox="${@: -1}"
+  policy_file=/opt/nemoclaw-blueprint/policies/openclaw-sandbox.yaml
+  policy_hash=sha256:fixture-policy
+  policy_version=1
+  if [ -f "${BASH_SOURCE[0]%/*}/effective-policy.yaml" ]; then
+    policy_file="${BASH_SOURCE[0]%/*}/effective-policy.yaml"
+    policy_hash=sha256:fixture-mutated-policy
+    policy_version=2
+  fi
+  node -e '
+    const fs = require("node:fs");
+    const YAML = require("/opt/nemoclaw/node_modules/yaml");
+    const policy = YAML.parse(fs.readFileSync(process.argv[2], "utf8"));
+    process.stdout.write(JSON.stringify({
+      scope: "sandbox",
+      sandbox: process.argv[1],
+      status: "effective",
+      policy_source: "sandbox",
+      hash: process.argv[3],
+      active_version: Number(process.argv[4]),
+      policy,
+    }) + "\n");
+  ' "$sandbox" "$policy_file" "$policy_hash" "$policy_version"
+  exit 0
+fi
+case "$*" in
+  "policy get -g fixture-gateway --base "*)
+    if [ "$#" -ne 6 ] || [ -z "${6:-}" ]; then
+      echo "unexpected policy read: expected policy get -g fixture-gateway --base <sandbox>" >&2
+      exit 64
+    fi
     printf '%s\n' 'Policy for sandbox fixture' '---'
     cat /opt/nemoclaw-blueprint/policies/openclaw-sandbox.yaml
     ;;
   "policy get "*)
-    echo "unexpected policy read: expected policy get --base" >&2
+    echo "unexpected policy read: expected policy get -g fixture-gateway --base <sandbox>" >&2
     exit 64
     ;;
 esac
 SH
 chmod 0755 "$FAKE_OPENSHELL_BIN/openshell"
-PATH="$FAKE_OPENSHELL_BIN:$PATH" NEMOCLAW_BLUEPRINT_PATH=/opt/nemoclaw-blueprint node --input-type=module -e "
+PATH="$FAKE_OPENSHELL_BIN:$PATH" \
+  NEMOCLAW_BLUEPRINT_PATH=/opt/nemoclaw-blueprint \
+  OPENSHELL_SANDBOX_POLICY=/opt/nemoclaw-blueprint/policies/openclaw-sandbox.yaml \
+  node --input-type=module -e "
   const { main } = await import('/opt/nemoclaw/dist/blueprint/runner.js');
   await main(['apply', '--profile', 'ncp']);
 " 2>&1 | tee "$APPLY_OUTPUT"
-rm -rf "$FAKE_OPENSHELL_BIN"
 if grep -q "RUN_ID:" "$APPLY_OUTPUT"; then
   pass "Apply generates run ID"
 else
@@ -194,6 +255,11 @@ if grep -q "PROGRESS:100:Apply complete" "$APPLY_OUTPUT"; then
 else
   fail "Apply did not complete"
 fi
+if grep -Eq '^policy get -g fixture-gateway --base [^ ]+$' "$APPLY_CALLS"; then
+  pass "Apply reads base policy through the active gateway"
+else
+  fail "Apply did not use the gateway-pinned base-policy read"
+fi
 # Verify run state was persisted to disk
 RUN_ID=$(grep -o 'nc-[0-9]*-[0-9]*-[a-f0-9]*' "$APPLY_OUTPUT" | head -1)
 if [ -f "$HOME/.nemoclaw/state/runs/$RUN_ID/plan.json" ]; then
@@ -201,7 +267,7 @@ if [ -f "$HOME/.nemoclaw/state/runs/$RUN_ID/plan.json" ]; then
 else
   fail "Apply did not persist run state (plan.json missing for $RUN_ID)"
 fi
-rm -f "$APPLY_OUTPUT"
+cleanup_apply_fixture
 trap - EXIT
 
 # -------------------------------------------------------

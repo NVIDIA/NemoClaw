@@ -25,6 +25,7 @@ import {
 } from "./managed-image/contract";
 import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
 import {
+  installedManagedImageCatalogRevision,
   liveE2eManagedImageCatalog,
   prepareSandboxWorkloadSource,
   SandboxWorkloadPreparationError,
@@ -86,6 +87,82 @@ function input(agentName: string) {
 }
 
 describe("sandbox workload preparation", () => {
+  it("pins an untagged installed build to its exact source revision", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-untagged-build-"));
+    fs.writeFileSync(path.join(fixtureRoot, "package.json"), JSON.stringify({ version: "0.1.0" }));
+    fs.writeFileSync(path.join(fixtureRoot, ".source-revision"), REVISION);
+    try {
+      expect(installedManagedImageCatalogRevision({}, fixtureRoot)).toBe(REVISION);
+    } finally {
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects a truncated installed source revision (#8379)", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-truncated-build-"));
+    fs.writeFileSync(path.join(fixtureRoot, "package.json"), JSON.stringify({ version: "0.1.0" }));
+    fs.writeFileSync(path.join(fixtureRoot, ".source-revision"), "a".repeat(39));
+    try {
+      expect(() => installedManagedImageCatalogRevision({}, fixtureRoot)).toThrow(
+        "Could not resolve the immutable NemoClaw source revision.",
+      );
+    } finally {
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("keeps a matching tagged install on its release catalog", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-release-build-"));
+    fs.writeFileSync(path.join(fixtureRoot, "package.json"), JSON.stringify({ version: "0.0.97" }));
+    fs.writeFileSync(path.join(fixtureRoot, ".source-revision"), REVISION);
+    fs.writeFileSync(path.join(fixtureRoot, ".version"), "0.0.97\n");
+    try {
+      expect(installedManagedImageCatalogRevision({}, fixtureRoot)).toBeNull();
+    } finally {
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("honors an exact install ref only when it matches the installed build", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exact-build-"));
+    fs.writeFileSync(path.join(fixtureRoot, "package.json"), JSON.stringify({ version: "0.0.97" }));
+    fs.writeFileSync(path.join(fixtureRoot, ".source-revision"), REVISION);
+    fs.writeFileSync(path.join(fixtureRoot, ".version"), "0.0.97\n");
+    try {
+      expect(
+        installedManagedImageCatalogRevision({ NEMOCLAW_INSTALL_REF: REVISION }, fixtureRoot),
+      ).toBe(REVISION);
+      expect(() =>
+        installedManagedImageCatalogRevision({ NEMOCLAW_INSTALL_REF: "a".repeat(40) }, fixtureRoot),
+      ).toThrow("the exact install ref does not match the installed build identity");
+      expect(() =>
+        installedManagedImageCatalogRevision({ NEMOCLAW_INSTALL_REF: "a".repeat(39) }, fixtureRoot),
+      ).toThrow("is not a supported lowercase 40-character source revision");
+      expect(() =>
+        installedManagedImageCatalogRevision(
+          { NEMOCLAW_INSTALL_REF: REVISION.toUpperCase() },
+          fixtureRoot,
+        ),
+      ).toThrow("is not a supported lowercase 40-character source revision");
+    } finally {
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("does not treat a mutable install ref as revision authority", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mutable-build-"));
+    fs.writeFileSync(path.join(fixtureRoot, "package.json"), JSON.stringify({ version: "0.0.97" }));
+    fs.writeFileSync(path.join(fixtureRoot, ".source-revision"), REVISION);
+    fs.writeFileSync(path.join(fixtureRoot, ".version"), "0.0.97\n");
+    try {
+      expect(
+        installedManagedImageCatalogRevision({ NEMOCLAW_INSTALL_REF: "main" }, fixtureRoot),
+      ).toBeNull();
+    } finally {
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
   it("selects an exact embedded catalog only for live PR E2E (#9464)", () => {
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-e2e-catalog-"));
     const catalogPath = path.join(fixtureRoot, "catalog.json");
@@ -216,7 +293,7 @@ describe("sandbox workload preparation", () => {
           catalogPath,
           expectedCatalogRevision: "b".repeat(40),
         }),
-      ).rejects.toThrow("does not match the live E2E candidate revision");
+      ).rejects.toThrow("does not match the trusted catalog revision");
     } finally {
       fs.rmSync(fixtureRoot, { force: true, recursive: true });
     }
@@ -242,6 +319,28 @@ describe("sandbox workload preparation", () => {
     } finally {
       fs.rmSync(fixtureRoot, { force: true, recursive: true });
     }
+  });
+
+  it("rejects a registry catalog that does not match its trusted revision", async () => {
+    await expect(
+      prepareSandboxWorkloadSource(
+        {
+          ...input("hermes"),
+          version: "0.1.0",
+          catalogRevision: "b".repeat(40),
+        },
+        { resolveCatalog: async () => CATALOG },
+      ),
+    ).rejects.toThrow("does not match the trusted catalog revision");
+  });
+
+  it("rejects a cross-release catalog without an exact trusted revision", async () => {
+    await expect(
+      prepareSandboxWorkloadSource(
+        { ...input("langchain-deepagents-code"), version: "0.1.0" },
+        { resolveCatalog: async () => CATALOG },
+      ),
+    ).rejects.toThrow("belongs to 'v0.0.97', not 'v0.1.0'");
   });
 
   it("loads an exact local all-agent catalog without using the registry resolver (#7744)", async () => {

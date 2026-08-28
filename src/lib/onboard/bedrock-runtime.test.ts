@@ -145,6 +145,8 @@ describe("Bedrock Runtime onboarding helper", () => {
       "COMPATIBLE_ANTHROPIC_API_KEY",
       "Other Anthropic-compatible endpoint API key",
       null,
+      null,
+      undefined,
     );
     expect(result).toEqual({
       action: "selected",
@@ -178,6 +180,8 @@ describe("Bedrock Runtime onboarding helper", () => {
       "COMPATIBLE_ANTHROPIC_API_KEY",
       "Other Anthropic-compatible endpoint API key",
       null,
+      null,
+      undefined,
     );
     expect(promptInputModel).not.toHaveBeenCalled();
     expect(result).toEqual({ action: "retry-selection" });

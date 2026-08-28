@@ -52,6 +52,14 @@ export type DirectSetupHarnessOptions = {
   overrides?: Partial<SetupInferenceDeps>;
 };
 
+const OPENAI_ENDPOINTLESS_PROFILE = JSON.stringify({
+  id: "openai",
+  credentials: [],
+  endpoints: [],
+  binaries: [],
+  inference_capable: true,
+});
+
 type DirectCommandRoute = {
   name: string;
   matches(command: string): boolean;
@@ -280,10 +288,26 @@ export function createDirectSetupInferenceHarnessFactory(
         env: runOptions.env,
         ignoreError: runOptions.ignoreError,
       });
-      return directRunResult(options.runOpenshell?.(args, runOptions, commands));
+      const routed = options.runOpenshell?.(args, runOptions, commands);
+      if (routed !== undefined) return directRunResult(routed);
+      if (
+        args[0] === "provider" &&
+        args[1] === "profile" &&
+        args.includes("export") &&
+        args.includes("openai")
+      ) {
+        return directRunResult({ status: 0, stdout: OPENAI_ENDPOINTLESS_PROFILE });
+      }
+      return directRunResult();
     };
-    const setupInference = createSetupInference({
+    const setupInferenceWithoutPolicyAuthority = createSetupInference({
       checkGatewayRouteCompatibility: () => ({ ok: true }),
+      withGatewayRouteMutationLock: async <T>(
+        _gatewayName: string,
+        operation: () => Promise<T> | T,
+      ) => await operation(),
+      withSandboxMutationLock: async <T>(_sandboxName: string, operation: () => Promise<T> | T) =>
+        await operation(),
       step: () => {},
       getGatewayName: () => "nemoclaw",
       runOpenshell,
@@ -360,12 +384,38 @@ export function createDirectSetupInferenceHarnessFactory(
       withOllamaModelOwnershipLock: (operation) => operation(),
       ...options.overrides,
     });
+    const revalidatePolicyRequirements = vi.fn();
+    const setupInference: SetupInference = (
+      sandboxName,
+      model,
+      provider,
+      endpointUrl,
+      credentialEnv,
+      hermesAuthMethod,
+      hermesToolGateways,
+      inferenceOptions = {},
+    ) =>
+      setupInferenceWithoutPolicyAuthority(
+        sandboxName,
+        model,
+        provider,
+        endpointUrl,
+        credentialEnv,
+        hermesAuthMethod,
+        hermesToolGateways,
+        {
+          ...inferenceOptions,
+          revalidatePolicyRequirements:
+            inferenceOptions.revalidatePolicyRequirements ?? revalidatePolicyRequirements,
+        },
+      );
     return {
       commands,
       errors,
       logs,
       runOpenshell,
       setupInference,
+      revalidatePolicyRequirements,
       unloadOllamaModels,
       updateSandbox,
       verifyInferenceRoute,

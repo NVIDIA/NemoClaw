@@ -70,6 +70,17 @@ function crashedCheckpoint(overrides: Partial<OnboardCheckpoint> = {}): OnboardC
 type StubbedRunOpenshellResult = { status: number; stdout: string; stderr: string };
 
 const OK_RESULT: StubbedRunOpenshellResult = { status: 0, stdout: "", stderr: "" };
+const EXACT_MESSAGING_PROFILE: StubbedRunOpenshellResult = {
+  status: 0,
+  stdout: JSON.stringify({
+    id: "nemoclaw-mcp-v1",
+    credentials: [],
+    endpoints: [],
+    binaries: [],
+    inference_capable: false,
+  }),
+  stderr: "",
+};
 
 function fakeGatewayRunOpenshell() {
   const createdProviders = new Map<string, { type: string; credentialEnv: string }>();
@@ -105,6 +116,7 @@ function fakeGatewayRunOpenshell() {
   };
 
   const handlersByAction: Record<string, (args: string[]) => StubbedRunOpenshellResult> = {
+    profile: () => EXACT_MESSAGING_PROFILE,
     get: handleGet,
     create: handleCreate,
     update: () => OK_RESULT,
@@ -126,10 +138,8 @@ function realStageSandboxCredentialProviders(
   const registration = createCredentialProviderRegistration({
     root: "/repo",
     runOpenshell: runOpenshell as unknown as CredentialProviderRegistrationDeps["runOpenshell"],
-    redact: (input) => input,
     getGatewayName: () => "nemoclaw",
     getCredential: () => null,
-    normalizeCredentialValue: (value) => (typeof value === "string" ? value.trim() : ""),
     updateSession: (mutator) => (mutator(registrationSession) ?? registrationSession) as Session,
     stagedLegacyValues: new Map(),
     migratedLegacyKeys: new Set(),
@@ -228,9 +238,10 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
 
     expect(calls.createSandbox).not.toHaveBeenCalled();
     expect(calls.stopStale).not.toHaveBeenCalled();
-    expect(calls.updateSandbox).toHaveBeenCalledWith("my-assistant", {
-      pendingRouteReservation: undefined,
-    });
+    expect(calls.finalizeRouteReservation).toHaveBeenCalledExactlyOnceWith(
+      "my-assistant",
+      session.sessionId,
+    );
     expect(calls.recordSkip).toHaveBeenCalled();
   });
 
@@ -1321,6 +1332,18 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
       getSandboxReuseState: () => "ready",
       recordStateSkipped,
       updateSession: resumeUpdateSession,
+      getSandboxRegistryEntry: () => ({
+        name: "my-assistant",
+        agent: null,
+        provider: "provider",
+        model: "model",
+        endpointUrl: null,
+        preferredInferenceApi: "openai-completions",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        pendingRouteReservation: true,
+        reservationSessionId: persistedSession.sessionId,
+      }),
     });
 
     await handleSandboxState({
@@ -1332,9 +1355,10 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
 
     expect(resumedRun.calls.createSandbox).not.toHaveBeenCalled();
     expect(recordStateSkipped).toHaveBeenCalledTimes(1);
-    expect(resumedRun.calls.updateSandbox).toHaveBeenCalledWith("my-assistant", {
-      pendingRouteReservation: undefined,
-    });
+    expect(resumedRun.calls.finalizeRouteReservation).toHaveBeenCalledExactlyOnceWith(
+      "my-assistant",
+      persistedSession.sessionId,
+    );
     expect(
       resumedRun.calls.updateSandbox.mock.calls.some(([, updates]) =>
         Object.prototype.hasOwnProperty.call(updates, "provider"),

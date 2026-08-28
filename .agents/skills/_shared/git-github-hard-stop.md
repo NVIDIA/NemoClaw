@@ -20,7 +20,6 @@ Ask the user to correct the access problem.
 
 Do not try to bypass an access error. Do not:
 
-- switch remote protocols or remotes
 - edit credentials, tokens, or SSH config
 - generate new tokens or SSH keys
 - rewrite remotes to bypass permissions
