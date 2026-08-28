@@ -101,7 +101,7 @@ dockerfile.write_text(dockerfile_source, encoding="utf-8")
 blueprint_source = blueprint.read_text(encoding="utf-8")
 blueprint_source = replace_one(
     blueprint_source,
-    r"^(\s*)min_openclaw_version:\s*.*$",
+    r"^min_openclaw_version:.*$",
     f'min_openclaw_version: "{version}"',
     "blueprint min_openclaw_version",
 )

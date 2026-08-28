@@ -474,6 +474,7 @@ test(
         env: cliEnv(apiKey, {
           NEMOCLAW_RECREATE_SANDBOX: "1",
           NEMOCLAW_SANDBOX_BASE_IMAGE_REF: OLD_BASE_TAG,
+          NEMOCLAW_SANDBOX_PREBUILD: "1",
           PATH: `${oldDockerWrapper.directory}:${process.env.PATH ?? "/usr/bin:/bin"}`,
         }),
         redactionValues: [apiKey],
