@@ -38,6 +38,7 @@ import {
   rebuildManagedImage,
   rebuildMessagingConflict,
   rebuildOnboardDependencies,
+  rebuildRecoveryBackup,
   rebuildRoutePreflight,
   rebuildShields,
   registry,
@@ -175,6 +176,12 @@ export type RebuildFlowHarness = {
 };
 
 export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): RebuildFlowHarness {
+  vi.spyOn(rebuildRecoveryBackup, "recordRebuildRecoveryBackup").mockImplementation(
+    () => undefined,
+  );
+  vi.spyOn(rebuildRecoveryBackup, "clearRebuildRecoveryBackup").mockImplementation(
+    () => undefined,
+  );
   purgeRebuildModule();
   vi.spyOn(policyGet, "getSandboxPolicy").mockReturnValue({
     yaml: "version: 1\nnetwork_policies:\n  host_preserved: {}\n",

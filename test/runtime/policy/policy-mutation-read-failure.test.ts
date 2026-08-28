@@ -92,7 +92,7 @@ describe("OpenShell policy mutation read failures", () => {
 
       expect(apply()).toBe(false);
       const calls = fs.readFileSync(callsPath, "utf-8").trim().split("\n");
-      expect(calls).toEqual(["policy get --base alpha"]);
+      expect(calls).toEqual(["policy get -g nemoclaw --base alpha"]);
       expect(calls.some((call) => call.startsWith("policy set "))).toBe(false);
       expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("refusing to apply"));
     });
@@ -124,7 +124,7 @@ describe("OpenShell policy mutation read failures", () => {
 
         expect(apply()).toBe(false);
         const calls = fs.readFileSync(callsPath, "utf-8").trim().split("\n");
-        expect(calls).toEqual(["policy get --base alpha"]);
+        expect(calls).toEqual(["policy get -g nemoclaw --base alpha"]);
         expect(calls.some((call) => call.startsWith("policy set "))).toBe(false);
         expect(
           mkdtempSpy.mock.calls.filter(([prefix]) => String(prefix).startsWith(policyTempPrefix)),
@@ -158,7 +158,7 @@ describe("OpenShell policy mutation read failures", () => {
 
         expect(apply()).toBe(false);
         const calls = fs.readFileSync(callsPath, "utf-8").trim().split("\n");
-        expect(calls).toEqual(["policy get --base alpha"]);
+        expect(calls).toEqual(["policy get -g nemoclaw --base alpha"]);
         expect(calls.some((call) => call.startsWith("policy set "))).toBe(false);
         expect(
           mkdtempSpy.mock.calls.filter(([prefix]) => String(prefix).startsWith(policyTempPrefix)),
@@ -192,7 +192,7 @@ describe("OpenShell policy mutation read failures", () => {
 
         expect(apply()).toBe(false);
         const calls = fs.readFileSync(callsPath, "utf-8").trim().split("\n");
-        expect(calls).toEqual(["policy get --base alpha"]);
+        expect(calls).toEqual(["policy get -g nemoclaw --base alpha"]);
         expect(calls.some((call) => call.startsWith("policy set "))).toBe(false);
         expect(
           mkdtempSpy.mock.calls.filter(([prefix]) => String(prefix).startsWith(policyTempPrefix)),
