@@ -161,15 +161,14 @@ async function runGithubCli(input: GithubCliInput): Promise<{ stdout: string }> 
   }
 }
 
-async function summarizeRequiredChecks(input: {
+type RequiredCheck = { name: string; appId: number | null };
+
+async function readRequiredChecks(input: {
   workdir: string;
   repo: string;
   number: number;
   limit: number;
-}): Promise<{
-  summary: { protectionReadable: boolean };
-  items: { matches: { name: string }[] }[];
-}> {
+}): Promise<{ protectionReadable: boolean; requirements: RequiredCheck[] }> {
   try {
     const pr = JSON.parse(
       (
@@ -184,18 +183,22 @@ async function summarizeRequiredChecks(input: {
     const payload = JSON.parse(
       (await runGithubCli({ workdir: input.workdir, args: ["api", endpoint] })).stdout,
     );
-    const names = [
-      ...(Array.isArray(payload?.contexts) ? payload.contexts : []),
-      ...(Array.isArray(payload?.checks) ? payload.checks.map((check: any) => check?.context) : []),
-    ]
-      .filter((name): name is string => typeof name === "string")
-      .slice(0, input.limit);
+    const contexts = (Array.isArray(payload?.contexts) ? payload.contexts : [])
+      .filter((name: unknown): name is string => typeof name === "string")
+      .map((name: string) => ({ name, appId: null }));
+    const checks = (Array.isArray(payload?.checks) ? payload.checks : [])
+      .filter(
+        (check: any) =>
+          typeof check?.context === "string" &&
+          (check?.app_id === null || Number.isSafeInteger(check?.app_id)),
+      )
+      .map((check: any) => ({ name: check.context, appId: check.app_id }));
     return {
-      summary: { protectionReadable: true },
-      items: names.map((name) => ({ matches: [{ name }] })),
+      protectionReadable: true,
+      requirements: [...contexts, ...checks].slice(0, input.limit),
     };
   } catch {
-    return { summary: { protectionReadable: false }, items: [] };
+    return { protectionReadable: false, requirements: [] };
   }
 }
 
@@ -719,7 +722,7 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
           "/check-runs?per_page=100&page=" +
           page,
         "--jq",
-        "[.check_runs[] | {id,name,status,conclusion,created_at,started_at,completed_at,html_url,app:{slug:.app.slug}}]",
+        "[.check_runs[] | {id,name,status,conclusion,created_at,started_at,completed_at,html_url,app:{id:.app.id,slug:.app.slug}}]",
       ],
     });
     const pageChecks = JSON.parse(result.stdout);
@@ -729,26 +732,17 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
     if (page === maxCheckPages)
       throw new Error("check run history exceeded maxCheckPages; increase the bounded limit");
   }
-  let requiredNames = new Set<string>();
-  let readinessBasis = "all successful exact-head check runs observed before merge";
-  try {
-    const configured = await summarizeRequiredChecks({
-      workdir: input.workdir,
-      repo: repository,
-      number: input.number,
-      limit: 100,
-    });
-    if (configured.summary.protectionReadable && configured.items.length > 0) {
-      requiredNames = new Set(
-        configured.items.flatMap((item: any) => item.matches.map((match: any) => match.name)),
-      );
-      if (requiredNames.size > 0)
-        readinessBasis = "required checks reported by current base-branch protection";
-    }
-  } catch {
-    readinessBasis =
-      "all successful exact-head check runs observed before merge; required-check configuration was unavailable";
-  }
+  const configured = await readRequiredChecks({
+    workdir: input.workdir,
+    repo: repository,
+    number: input.number,
+    limit: 100,
+  });
+  const requirements = configured.requirements;
+  const readinessBasis =
+    configured.protectionReadable && requirements.length > 0
+      ? "required checks reported by current base-branch protection"
+      : "all successful exact-head check runs observed before merge";
   const terminalLimit = merged ?? Date.now();
   const eligible = (check: any): boolean => {
     const completed = Date.parse(check?.completed_at);
@@ -761,11 +755,15 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
   };
   let successful: any[];
   let requiredChecksComplete = true;
-  if (requiredNames.size > 0) {
+  if (requirements.length > 0) {
     successful = [];
-    for (const name of requiredNames) {
+    for (const requirement of requirements) {
       const latest = checks
-        .filter((check: any) => check?.name === name)
+        .filter(
+          (check: any) =>
+            check?.name === requirement.name &&
+            (requirement.appId === null || check?.app?.id === requirement.appId),
+        )
         .sort((a: any, b: any) => Date.parse(b?.created_at) - Date.parse(a?.created_at))[0];
       if (latest === undefined || !eligible(latest)) requiredChecksComplete = false;
       else successful.push(latest);
@@ -816,18 +814,20 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
         ? "within-target"
         : "over-target";
   const checkRows = successful.map((check: any) => {
+    const created = parseTime(check.created_at, "check createdAt");
     const started = parseTime(check.started_at, "check startedAt");
     const completed = parseTime(check.completed_at, "check completedAt");
     return {
       name: String(check.name).slice(0, 200),
       workflow: String(check.app?.slug ?? "").slice(0, 100),
+      created,
       started,
       completed,
       duration: seconds(started, completed),
     };
   });
   const firstCheckCreated =
-    checkRows.length > 0 ? Math.min(...checkRows.map((row: any) => row.started)) : null;
+    checkRows.length > 0 ? Math.min(...checkRows.map((row: any) => row.created)) : null;
   const longestQueue =
     waterfall
       .flatMap((run: any) => run.jobs)
@@ -900,7 +900,7 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
     );
   if (automationSettled === null)
     caveats.push(
-      requiredNames.size > 0
+      requirements.length > 0
         ? "Automation is not settled because at least one configured required check is absent, pending, or unsuccessful on the exact head."
         : "No selected successful exact-head check completed in the measured window.",
     );
