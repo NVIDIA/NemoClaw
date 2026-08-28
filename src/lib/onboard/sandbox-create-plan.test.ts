@@ -73,7 +73,11 @@ const channels = [
 
 const discordProviderName = "sandbox-discord-bridge";
 
-function resolveDiscordCreateIntent(input: { selected: boolean; reusable?: boolean }) {
+function resolveDiscordCreateIntent(input: {
+  selected: boolean;
+  reusable?: boolean;
+  policyTier?: "balanced" | "restricted";
+}) {
   const messagingTokenDefs: MessagingTokenDef[] = [
     {
       name: discordProviderName,
@@ -101,6 +105,7 @@ function resolveDiscordCreateIntent(input: { selected: boolean; reusable?: boole
     gpuRoutePlan: "none",
     sandboxGpuLogMessage: null,
     agentName: "openclaw",
+    policyTier: input.policyTier ?? null,
   });
   return { intent, messagingTokenDefs };
 }
@@ -220,6 +225,28 @@ describe("resolveSandboxCreatePolicyTier", () => {
     vi.stubEnv("NEMOCLAW_POLICY_TIER", "personal");
 
     expect(resolveSandboxCreatePolicyTier()).toBe("personal");
+  });
+
+  it("ends policy-tier transport after initial policy composition", () => {
+    const resolved = resolveDiscordCreateIntent({ selected: false, policyTier: "balanced" });
+    const preparePolicy = vi.fn(() => ({
+      policyPath: "/tmp/policy.yaml",
+      appliedPresets: ["openclaw-diagnostics-otel-local"],
+    }));
+
+    const plan = materializeDiscordCreatePlan(resolved, {
+      prepareInitialSandboxCreatePolicy: preparePolicy,
+    });
+
+    expect(preparePolicy).toHaveBeenCalledWith(
+      expect.any(String),
+      [],
+      expect.objectContaining({ policyTier: "balanced" }),
+    );
+    expect(plan.initialSandboxPolicy.appliedPresets).toContain(
+      "openclaw-diagnostics-otel-local",
+    );
+    expect(plan).not.toHaveProperty("policyTier");
   });
 });
 

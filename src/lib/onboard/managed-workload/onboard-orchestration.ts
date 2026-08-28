@@ -388,7 +388,6 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
 
 export interface PreparedOnboardSandboxWorkloadLaunch {
   readonly initialSandboxPolicy: InitialSandboxPolicy;
-  readonly policyTier: string | null;
   readonly messagingProviders: string[];
   readonly gpuRoutePlan: SandboxCreateIntent["gpuRoutePlan"];
   readonly compatibilityPolicyPath: string | null;
@@ -520,7 +519,6 @@ export async function prepareOnboardSandboxWorkloadLaunch(
 
   return {
     initialSandboxPolicy: createPlan.initialSandboxPolicy,
-    policyTier: createPlan.policyTier,
     messagingProviders: createPlan.messagingProviders,
     gpuRoutePlan: createPlan.gpuRoutePlan,
     compatibilityPolicyPath: createPlan.compatibilityPolicyPath,

@@ -258,9 +258,13 @@ const { createSandbox } = require(${onboardPath});
         "should delete existing sandbox when --recreate-sandbox is set",
       );
       assert.ok(
-        payload.commands.some((entry: CommandEntry) => entry.command.includes("sandbox create")) &&
-          !("policyTier" in (payload.registeredSandbox ?? {})),
-        "should create a sandbox without persisting tier state",
+        payload.commands.some((entry: CommandEntry) => entry.command.includes("sandbox create")),
+        "should create a replacement sandbox",
+      );
+      assert.ok(payload.registeredSandbox, "should register the replacement sandbox");
+      assert.ok(
+        !("policyTier" in payload.registeredSandbox),
+        "the registry must not persist a policy tier",
       );
       assert.ok(
         !payload.commands.some((entry: CommandEntry) =>

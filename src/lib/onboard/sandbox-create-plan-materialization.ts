@@ -73,8 +73,6 @@ function buildSandboxDriverConfig(
 export type SandboxCreatePlan = {
   activeMessagingChannels: string[];
   initialSandboxPolicy: InitialSandboxPolicy;
-  /** Tier resolved before create, persisted with the registry entry for safe resume. */
-  policyTier: string | null;
   createArgs: string[];
   messagingProviders: string[];
   gpuRoutePlan: SandboxCreateIntent["gpuRoutePlan"];
@@ -396,7 +394,6 @@ export function materializeSandboxCreatePlan({
   return {
     activeMessagingChannels: [...intent.policy.activeMessagingChannels],
     initialSandboxPolicy,
-    policyTier: intent.policy.options.policyTier,
     createArgs,
     messagingProviders: plannedMessagingProviders,
     gpuRoutePlan: intent.gpuRoutePlan,
@@ -458,7 +455,6 @@ export function materializeHermesPortableCreatePlan(input: {
   return {
     activeMessagingChannels: [],
     initialSandboxPolicy,
-    policyTier: intent.policy.options.policyTier,
     createArgs,
     messagingProviders: [],
     gpuRoutePlan: intent.gpuRoutePlan,
