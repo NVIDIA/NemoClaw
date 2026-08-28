@@ -1106,11 +1106,13 @@ describe("managed llama.cpp installer", () => {
         reason: expect.stringContaining(`Failure classification: ${layer}. ${evidence}`),
       });
       const failure = result as Extract<typeof result, { readonly ok: false }>;
-      expect(failure.reason).toContain(`Redacted pull diagnostic: ${expectedDiagnostic}`);
+      expect(failure.reason).toContain(
+        `Pull diagnostic (recognized credential patterns redacted): ${expectedDiagnostic}`,
+      );
     },
   );
 
-  it("reports a bounded redacted pull diagnostic without streaming sensitive output (#10558)", async () => {
+  it("reports a bounded pull diagnostic with recognized credentials removed (#10558)", async () => {
     const selected = selection();
     const homeDir = temporaryHome();
     const harness = engineHarness();
@@ -1139,14 +1141,20 @@ describe("managed llama.cpp installer", () => {
 
     const failure = result as Extract<typeof result, { readonly ok: false }>;
     expect(failure.reason).toContain("Failure classification: authentication.");
-    expect(failure.reason).toContain("Redacted pull diagnostic: [truncated]");
+    expect(failure.reason).toContain(
+      "Review the diagnostic before sharing because unrecognized credential formats can remain.",
+    );
+    expect(failure.reason).toContain(
+      "Pull diagnostic (recognized credential patterns redacted): [truncated]",
+    );
     expect(failure.reason).toContain("stdout cause unauthorized");
     expect(failure.reason).toContain("stderr cause token=<REDACTED>");
     expect(failure.reason).toContain("error cause Authorization: Bearer <REDACTED>");
     expect(failure.reason).not.toContain(secret);
     expect(failure.reason).not.toContain("forged title");
     expect(failure.reason).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]|\p{Cf}/u);
-    const diagnostic = failure.reason.split("Redacted pull diagnostic: ")[1] ?? "";
+    const diagnostic =
+      failure.reason.split("Pull diagnostic (recognized credential patterns redacted): ")[1] ?? "";
     expect(Buffer.byteLength(diagnostic, "utf8")).toBeLessThanOrEqual(512);
     expect(log.mock.calls.flat().join("\n")).not.toContain(secret);
     expect(log.mock.calls.flat().join("\n")).not.toContain("unauthorized");

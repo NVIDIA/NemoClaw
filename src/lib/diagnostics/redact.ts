@@ -3,7 +3,7 @@
 
 import { redactFullWithUrls } from "../security/redact";
 
-/** Fully redact credential-shaped content from a diagnostic string. */
+/** Redact recognized credential-shaped content and URL credentials from a diagnostic string. */
 export function redactDiagnosticText(text: string): string {
   return redactFullWithUrls(text);
 }

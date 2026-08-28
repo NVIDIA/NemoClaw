@@ -244,7 +244,7 @@ function imagePullFailureDiagnostic(result: ManagedLlamaCppImagePullResult): str
       : "A pull-output signature matched this layer.";
   const status =
     result.status === null ? "Exit status unavailable." : `Exit status: ${String(result.status)}.`;
-  return `Failure classification: ${layer}. ${evidence} ${status} Redacted pull diagnostic: ${imagePullDiagnosticExcerpt(sources)}`;
+  return `Failure classification: ${layer}. ${evidence} ${status} Review the diagnostic before sharing because unrecognized credential formats can remain. Pull diagnostic (recognized credential patterns redacted): ${imagePullDiagnosticExcerpt(sources)}`;
 }
 
 function requireSuccess(label: string, result: ReturnType<ContainerEngine["capture"]>): string {
