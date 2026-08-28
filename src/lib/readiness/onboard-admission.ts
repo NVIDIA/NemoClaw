@@ -51,6 +51,8 @@ export interface OnboardReadinessAdmissionOptions {
   allowPortableHostPreparation?: boolean;
   /** Explicit managed-vLLM intent may exercise the Deferred N1x validation path. */
   allowDeferredN1xManagedVllm?: boolean;
+  /** A verified legacy Hermes rebuild may preserve its pre-v0.0.97 Station admission. */
+  allowLegacyDgxStationQualification?: boolean;
 }
 
 export type OnboardReadinessAdmissionDecision =
@@ -126,6 +128,13 @@ function canWaiveFinding(
     options.allowDeferredN1xManagedVllm &&
     finding.id === ONBOARD_READINESS_FINDING_IDS.n1xValidationPending &&
     capabilityState(capabilities, "host.platform.n1x") === "present"
+  ) {
+    return true;
+  }
+  if (
+    options.allowLegacyDgxStationQualification &&
+    finding.id === "host.platform.dgx_station_unqualified" &&
+    capabilityState(capabilities, "host.platform.dgx_station") === "absent"
   ) {
     return true;
   }

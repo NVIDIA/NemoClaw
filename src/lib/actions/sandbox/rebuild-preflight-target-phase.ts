@@ -49,6 +49,7 @@ import {
 } from "./rebuild-preflight-guards";
 import { disposePreparedBuildContext } from "./rebuild-prepared-image-context";
 import {
+  hasLegacyDgxStationQualificationAuthority,
   hydrateMessagingConfigForRebuild,
   preflightAuthoritativeOnboardRuntime,
   preflightRebuildTargetRuntime,
@@ -198,6 +199,9 @@ export async function prepareRebuildTargetPreflights(args: {
     bail,
   );
   if (!recreateOptions) return null;
+  if (hasLegacyDgxStationQualificationAuthority(sandboxEntry)) {
+    recreateOptions.allowLegacyDgxStationQualification = true;
+  }
   let managedWorkloadRebuildCatalog: Awaited<
     ReturnType<typeof prepareManagedWorkloadRebuildHandoff>
   > = null;

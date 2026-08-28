@@ -107,6 +107,40 @@ describe("onboarding readiness admission (#7411)", () => {
     ).toEqual({ admitted: true, waivedFindingIds: [] });
   });
 
+  it("waives only the recorded legacy DGX Station finding during rebuild", () => {
+    const stationCapabilities = [
+      ...withCapabilityState(
+        requiredCapabilities(),
+        ONBOARD_REQUIRED_CAPABILITY_IDS.platformSupported,
+        "absent",
+      ),
+      capability("host.platform.dgx_station", "absent"),
+    ];
+    const stationFinding = finding("host.platform.dgx_station_unqualified");
+
+    expect(
+      evaluateOnboardReadinessAdmission(
+        report({ capabilities: stationCapabilities, findings: [stationFinding] }),
+        { ...DEFAULT_OPTIONS, allowLegacyDgxStationQualification: true },
+      ),
+    ).toEqual({ admitted: true, waivedFindingIds: [stationFinding.id] });
+    expect(
+      evaluateOnboardReadinessAdmission(
+        report({ capabilities: stationCapabilities, findings: [stationFinding] }),
+        DEFAULT_OPTIONS,
+      ),
+    ).toMatchObject({ admitted: false, findingIds: [stationFinding.id] });
+    expect(
+      evaluateOnboardReadinessAdmission(
+        report({
+          capabilities: stationCapabilities,
+          findings: [stationFinding, finding("host.example.blocked")],
+        }),
+        { ...DEFAULT_OPTIONS, allowLegacyDgxStationQualification: true },
+      ),
+    ).toMatchObject({ admitted: false, findingIds: ["host.example.blocked"] });
+  });
+
   it("fails on every unwaived blocking or fatal finding and retains report order", () => {
     const decision = evaluateOnboardReadinessAdmission(
       report({
@@ -235,13 +269,11 @@ describe("onboarding readiness admission (#7411)", () => {
     });
   });
 
-  it.each(
-    [
-        ONBOARD_REQUIRED_CAPABILITY_IDS.dockerRuntimeSupported,
-        ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageCompatible,
-        ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageRemediationAvailable,
-      ],
-  )(
+  it.each([
+    ONBOARD_REQUIRED_CAPABILITY_IDS.dockerRuntimeSupported,
+    ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageCompatible,
+    ONBOARD_REQUIRED_CAPABILITY_IDS.dockerStorageRemediationAvailable,
+  ])(
     "admits only the pre-mutation facts that portable host preparation can replace [case %#]",
     (id) => {
       let capabilities = withCapabilityState(

@@ -38,6 +38,8 @@ interface SnapshotBackupAuthorityDependencies {
   readonly confirmHostLocalInference: typeof confirmHostLocalInferenceAuthority;
   readonly backup: typeof sandboxState.backupSandboxState;
   readonly captureOpenClawStateFile: typeof captureOpenClawStateFile;
+  readonly captureHermesStateFile: typeof captureHermesStateFile;
+  readonly captureHermesStateDirectories: typeof captureHermesStateDirectories;
 }
 
 const MAX_OPENCLAW_CONFIG_BYTES = 16 * 1024 * 1024;
@@ -48,6 +50,9 @@ const OPENCLAW_CONFIG_CAPTURE_PROTOCOL_MAX_BYTES = 128;
 const OPENCLAW_CONFIG_CAPTURE_DIAGNOSTIC_MAX_BYTES = 1024;
 const OPENCLAW_CONFIG_DIRECTORY = "/sandbox/.openclaw";
 const OPENCLAW_CONFIG_NAME = "openclaw.json";
+const HERMES_CONFIG_DIRECTORY = "/sandbox/.hermes";
+const HERMES_CAPTURE_TIMEOUT_MS = 120_000;
+const HERMES_CAPTURE_MAX_BUFFER = 17 * 1024 * 1024;
 export const OPENCLAW_CONFIG_CAPTURE_SCRIPT = `import os, stat, sys
 maximum = ${MAX_OPENCLAW_CONFIG_BYTES}
 directory = sys.argv[1]
@@ -225,6 +230,166 @@ export function captureOpenClawStateFile(
   }
 }
 
+export const HERMES_STATE_CAPTURE_SCRIPT = `import os, sqlite3, stat, sys, tempfile
+base, relative, strategy = sys.argv[1:]
+if not relative or relative.startswith("/") or ".." in relative.split("/"):
+    raise SystemExit(10)
+path = os.path.join(base, relative)
+try:
+    before = os.lstat(path)
+except FileNotFoundError:
+    raise SystemExit(2)
+if not stat.S_ISREG(before.st_mode) or stat.S_ISLNK(before.st_mode) or before.st_nlink != 1:
+    raise SystemExit(11)
+if strategy == "sqlite_backup":
+    target = tempfile.NamedTemporaryFile(dir="/tmp", delete=False)
+    target.close()
+    try:
+        source = sqlite3.connect("file:" + path + "?mode=ro", uri=True, timeout=30)
+        destination = sqlite3.connect(target.name, timeout=30)
+        try:
+            source.backup(destination)
+            if destination.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                raise SystemExit(12)
+        finally:
+            destination.close()
+            source.close()
+        with open(target.name, "rb", buffering=0) as stream:
+            while chunk := stream.read(64 * 1024):
+                sys.stdout.buffer.write(chunk)
+    finally:
+        os.unlink(target.name)
+else:
+    with open(path, "rb", buffering=0) as stream:
+        while chunk := stream.read(64 * 1024):
+            sys.stdout.buffer.write(chunk)
+after = os.lstat(path)
+if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns, before.st_nlink) != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_nlink):
+    raise SystemExit(13)
+`;
+
+export const HERMES_DIRECTORY_CAPTURE_SCRIPT = `import os, stat, subprocess, sys
+base, *names = sys.argv[1:]
+def audit(path):
+    entry = os.lstat(path)
+    if stat.S_ISLNK(entry.st_mode) or not stat.S_ISDIR(entry.st_mode):
+        raise SystemExit(11)
+    with os.scandir(path) as entries:
+        for child in entries:
+            value = child.stat(follow_symlinks=False)
+            if stat.S_ISLNK(value.st_mode) or not (stat.S_ISREG(value.st_mode) or stat.S_ISDIR(value.st_mode)):
+                raise SystemExit(11)
+            if stat.S_ISDIR(value.st_mode):
+                audit(child.path)
+for name in names:
+    if not name or "/" in name or name in (".", ".."):
+        raise SystemExit(10)
+    audit(os.path.join(base, name))
+result = subprocess.run(["/usr/bin/tar", "--hard-dereference", "-cf", "-", "-C", base, "--", *names], stdout=sys.stdout.buffer)
+raise SystemExit(result.returncode)
+`;
+
+export function captureHermesStateFile(
+  sandboxName: string,
+  request: sandboxState.StateFileCaptureRequest,
+): sandboxState.StateFileCaptureResult | null {
+  if (
+    request.sandboxName !== sandboxName ||
+    !sandboxState.isDeclaredAgentStateFile("hermes", request.dir, request.spec)
+  )
+    return null;
+  try {
+    return withPrivilegedSandboxExecutionLease(sandboxName, "Hermes state snapshot capture", () => {
+      const result = dockerSpawnSync(
+        privilegedSandboxExecArgv(
+          sandboxName,
+          [
+            "/usr/bin/python3",
+            "-I",
+            "-S",
+            "-c",
+            HERMES_STATE_CAPTURE_SCRIPT,
+            HERMES_CONFIG_DIRECTORY,
+            request.spec.path,
+            request.spec.strategy,
+          ],
+          false,
+          true,
+        ),
+        {
+          encoding: null,
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: HERMES_CAPTURE_TIMEOUT_MS,
+          maxBuffer: HERMES_CAPTURE_MAX_BUFFER,
+        },
+      );
+      if (result.status === 2 && !result.error && result.signal === null)
+        return { outcome: "missing" };
+      if (result.status !== 0 || result.error || result.signal || !Buffer.isBuffer(result.stdout)) {
+        return {
+          outcome: "failed",
+          error: `privileged Hermes state capture failed: ${result.error?.message ?? (result.signal ? `signal ${result.signal}` : `exit ${String(result.status)}`)}`,
+        };
+      }
+      return { outcome: "backed_up", data: result.stdout };
+    });
+  } catch (error) {
+    return { outcome: "failed", error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+export function captureHermesStateDirectories(
+  sandboxName: string,
+  request: sandboxState.StateDirectoryCaptureRequest,
+  archiveFd: number,
+): sandboxState.StateDirectoryCaptureResult | null {
+  if (
+    request.sandboxName !== sandboxName ||
+    !sandboxState.areDeclaredAgentStateDirectories("hermes", request.dir, request.dirs)
+  ) {
+    return null;
+  }
+  try {
+    return withPrivilegedSandboxExecutionLease(
+      sandboxName,
+      "Hermes state directory snapshot capture",
+      () => {
+        const result = dockerSpawnSync(
+          privilegedSandboxExecArgv(
+            sandboxName,
+            [
+              "/usr/bin/python3",
+              "-I",
+              "-S",
+              "-c",
+              HERMES_DIRECTORY_CAPTURE_SCRIPT,
+              HERMES_CONFIG_DIRECTORY,
+              ...request.dirs,
+            ],
+            false,
+            true,
+          ),
+          {
+            encoding: null,
+            stdio: ["ignore", archiveFd, "pipe"],
+            timeout: HERMES_CAPTURE_TIMEOUT_MS,
+            maxBuffer: 1024 * 1024,
+          },
+        );
+        if (result.status !== 0 || result.error || result.signal) {
+          return {
+            outcome: "failed",
+            error: `privileged Hermes directory capture failed: ${result.error?.message ?? (result.signal ? `signal ${result.signal}` : `exit ${String(result.status)}`)}`,
+          };
+        }
+        return { outcome: "backed_up" };
+      },
+    );
+  } catch (error) {
+    return { outcome: "failed", error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 const defaultDependencies: Omit<SnapshotBackupAuthorityDependencies, "getSandbox"> = {
   requireProvider: (sandbox) =>
     requireRuntimeProviderBundleForSandbox(sandbox, CURRENT_RUNTIME_PROVIDER_BUNDLES),
@@ -235,6 +400,8 @@ const defaultDependencies: Omit<SnapshotBackupAuthorityDependencies, "getSandbox
   // the module export without this adapter retaining an import-time reference.
   backup: (...args) => sandboxState.backupSandboxState(...args),
   captureOpenClawStateFile,
+  captureHermesStateFile,
+  captureHermesStateDirectories,
 };
 
 function failure(error: unknown): sandboxState.BackupResult {
@@ -252,9 +419,14 @@ function failure(error: unknown): sandboxState.BackupResult {
 function backupStateOnly(
   dependencies: SnapshotBackupAuthorityDependencies,
   sandboxName: string,
-  options: Pick<sandboxState.BackupOptions, "name" | "captureStateFile">,
+  options: Pick<
+    sandboxState.BackupOptions,
+    "name" | "captureStateFile" | "captureStateDirectories"
+  >,
 ): sandboxState.BackupResult {
-  return options.name === undefined && options.captureStateFile === undefined
+  return options.name === undefined &&
+    options.captureStateFile === undefined &&
+    options.captureStateDirectories === undefined
     ? dependencies.backup(sandboxName)
     : dependencies.backup(sandboxName, options);
 }
@@ -394,14 +566,24 @@ export function backupSandboxStateWithManagedAuthority(
   const entry = dependencies.getSandbox(sandboxName);
   if (!entry) return backupStateOnly(dependencies, sandboxName, options);
 
-  const stateFileOptions: Pick<sandboxState.BackupOptions, "captureStateFile"> =
+  const stateCaptureOptions: Pick<
+    sandboxState.BackupOptions,
+    "captureStateFile" | "captureStateDirectories"
+  > =
     !entry.agent || entry.agent === "openclaw"
       ? {
           captureStateFile: (request) =>
             dependencies.captureOpenClawStateFile(sandboxName, request),
         }
-      : {};
-  const backupOptions = { ...options, ...stateFileOptions };
+      : entry.agent === "hermes"
+        ? {
+            captureStateFile: (request) =>
+              dependencies.captureHermesStateFile(sandboxName, request),
+            captureStateDirectories: (request, archiveFd) =>
+              dependencies.captureHermesStateDirectories(sandboxName, request, archiveFd),
+          }
+        : {};
+  const backupOptions = { ...options, ...stateCaptureOptions };
 
   let authority: SnapshotBackupAuthority | null;
   try {

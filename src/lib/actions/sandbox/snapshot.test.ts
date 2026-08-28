@@ -513,9 +513,14 @@ describe("runSandboxSnapshot", () => {
         ([args]) => args[0] === "sandbox" && args[1] === "exec",
       ),
     ).toBe(false);
-    expect(f.backupSandboxStateMock).toHaveBeenCalledWith("alpha", {
-      name: null,
-    });
+    expect(f.backupSandboxStateMock).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        name: null,
+        captureStateFile: expect.any(Function),
+        captureStateDirectories: expect.any(Function),
+      }),
+    );
     expect(consoleLog.mock.calls.flat().join("\n")).toContain("Snapshot v3 created");
   });
 

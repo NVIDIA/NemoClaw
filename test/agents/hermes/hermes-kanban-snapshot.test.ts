@@ -165,6 +165,28 @@ it("fails the SQLite state backup when the online backup command fails (#7095)",
   }
 });
 
+it("classifies an unreadable Hermes SQLite file before opening the database (#10375)", () => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sqlite-backup-denied-"));
+  try {
+    const sourceDir = path.join(fixture, "state");
+    const sourceFile = path.join(sourceDir, "kanban.db");
+    fs.mkdirSync(sourceDir, { recursive: true });
+    fs.writeFileSync(sourceFile, "source database\n", { mode: 0o000 });
+
+    const command = sandboxState.buildStateFileBackupCommand(sourceDir, {
+      path: "kanban.db",
+      strategy: "sqlite_backup",
+    });
+    const result = spawnSync("sh", ["-c", command], { encoding: "utf8" });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`permission denied: ${sourceFile}`);
+    expect(result.stdout).toBe("");
+  } finally {
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
 it("preserves only the Hermes default-board database across rebuilds (#7095)", () => {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-kanban-state-"));
   const oldPath = process.env.PATH;

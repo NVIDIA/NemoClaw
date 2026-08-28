@@ -39,7 +39,12 @@ export type AuthoritativeGatewayOptions = Pick<
 
 export type AuthoritativeRebuildPreflightOptions = Pick<
   OnboardOptions,
-  "sandboxGpu" | "sandboxGpuDevice" | "noGpu" | "controlUiPort" | "allowDeferredN1xManagedVllm"
+  | "sandboxGpu"
+  | "sandboxGpuDevice"
+  | "noGpu"
+  | "controlUiPort"
+  | "allowDeferredN1xManagedVllm"
+  | "allowLegacyDgxStationQualification"
 > & {
   authoritativeResumeConfig: true;
   /** Internal prepared-backup recovery defers route repair to authoritative onboard. */
@@ -56,12 +61,14 @@ export function authoritativeRebuildRuntimePreflightOptions(
   opts: AuthoritativeRebuildPreflightOptions,
 ): Pick<OnboardOptions, "sandboxGpu" | "sandboxGpuDevice" | "noGpu"> & {
   allowDeferredN1xManagedVllm: boolean;
+  allowLegacyDgxStationQualification: boolean;
 } {
   return {
     sandboxGpu: opts.sandboxGpu,
     sandboxGpuDevice: opts.sandboxGpuDevice,
     noGpu: opts.noGpu,
     allowDeferredN1xManagedVllm: opts.allowDeferredN1xManagedVllm === true,
+    allowLegacyDgxStationQualification: opts.allowLegacyDgxStationQualification === true,
   };
 }
 

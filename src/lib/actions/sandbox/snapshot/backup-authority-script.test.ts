@@ -8,7 +8,11 @@ import { spawnSync } from "node:child_process";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { OPENCLAW_CONFIG_CAPTURE_SCRIPT } from "./backup-authority";
+import {
+  HERMES_DIRECTORY_CAPTURE_SCRIPT,
+  HERMES_STATE_CAPTURE_SCRIPT,
+  OPENCLAW_CONFIG_CAPTURE_SCRIPT,
+} from "./backup-authority";
 
 const CONFIG_NAME = "openclaw.json";
 const MAX_CONFIG_BYTES = 16 * 1024 * 1024;
@@ -65,6 +69,75 @@ afterEach(() => {
   for (const root of fixtureRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+describe("Hermes privileged state capture scripts", () => {
+  it("captures a regular file while rejecting unsafe file metadata", () => {
+    const directory = fixtureDirectory();
+    fs.writeFileSync(path.join(directory, "SOUL.md"), "soul");
+    const copied = spawnSync(
+      "/usr/bin/python3",
+      ["-I", "-S", "-c", HERMES_STATE_CAPTURE_SCRIPT, directory, "SOUL.md", "copy"],
+      { encoding: null },
+    );
+    expect(copied.status).toBe(0);
+    expect(copied.stdout).toEqual(Buffer.from("soul"));
+    fs.symlinkSync(path.join(directory, "SOUL.md"), path.join(directory, "unsafe"));
+    const unsafe = spawnSync(
+      "/usr/bin/python3",
+      ["-I", "-S", "-c", HERMES_STATE_CAPTURE_SCRIPT, directory, "unsafe", "copy"],
+      { encoding: null },
+    );
+    expect(unsafe.status).not.toBe(0);
+    expect(unsafe.stdout).toEqual(Buffer.alloc(0));
+  });
+
+  it("uses SQLite backup with a valid database", () => {
+    const directory = fixtureDirectory();
+    const database = path.join(directory, "state.db");
+    expect(
+      spawnSync("/usr/bin/python3", [
+        "-c",
+        `import sqlite3; db = sqlite3.connect(${JSON.stringify(database)}); db.execute('create table state (value text)'); db.execute(\"insert into state values ('saved')\"); db.commit()`,
+      ]).status,
+    ).toBe(0);
+    const captured = spawnSync(
+      "/usr/bin/python3",
+      ["-I", "-S", "-c", HERMES_STATE_CAPTURE_SCRIPT, directory, "state.db", "sqlite_backup"],
+      { encoding: null },
+    );
+    expect(captured.status).toBe(0);
+    const restored = path.join(directory, "restored.db");
+    fs.writeFileSync(restored, captured.stdout);
+    expect(
+      spawnSync("/usr/bin/python3", [
+        "-c",
+        `import sqlite3; assert sqlite3.connect(${JSON.stringify(restored)}).execute('select value from state').fetchone() == ('saved',)`,
+      ]).status,
+    ).toBe(0);
+  });
+
+  it("rejects unsafe directory entries before streaming a tar archive", () => {
+    const directory = fixtureDirectory();
+    const workspace = path.join(directory, "workspace");
+    fs.mkdirSync(workspace);
+    fs.writeFileSync(path.join(workspace, "marker"), "state");
+    const captured = spawnSync(
+      "/usr/bin/python3",
+      ["-I", "-S", "-c", HERMES_DIRECTORY_CAPTURE_SCRIPT, directory, "workspace"],
+      { encoding: null },
+    );
+    expect(captured.status).toBe(0);
+    expect(spawnSync("tar", ["-tf", "-"], { input: captured.stdout }).status).toBe(0);
+    fs.symlinkSync(path.join(workspace, "marker"), path.join(workspace, "unsafe"));
+    const unsafe = spawnSync(
+      "/usr/bin/python3",
+      ["-I", "-S", "-c", HERMES_DIRECTORY_CAPTURE_SCRIPT, directory, "workspace"],
+      { encoding: null },
+    );
+    expect(unsafe.status).not.toBe(0);
+    expect(unsafe.stdout).toEqual(Buffer.alloc(0));
+  });
 });
 
 describe("OpenClaw privileged config capture script", () => {

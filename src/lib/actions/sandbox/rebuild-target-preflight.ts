@@ -7,11 +7,9 @@
  * staging remain independently reviewable.
  */
 export { printRebuildPreflightFailure } from "./rebuild-preflight-error";
+export { prepareRebuildTargetConfig, type RebuildTargetConfig } from "./rebuild-target-config";
 export {
-  prepareRebuildTargetConfig,
-  type RebuildTargetConfig,
-} from "./rebuild-target-config";
-export {
+  hasLegacyDgxStationQualificationAuthority,
   preflightAuthoritativeOnboardRuntime,
   preflightRebuildTargetRuntime,
 } from "./rebuild-target-runtime";

@@ -57,6 +57,7 @@ import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 import type { RebuildTargetConfig } from "./rebuild-target-config";
 import {
+  hasLegacyDgxStationQualificationAuthority,
   preflightAuthoritativeOnboardRuntime,
   preflightRebuildTargetRuntime,
 } from "./rebuild-target-runtime";
@@ -195,6 +196,43 @@ describe("preflightRebuildTargetRuntime GPU route", () => {
   });
 });
 
+describe("legacy DGX Station rebuild authority", () => {
+  it.each([
+    ["v0.0.83", true],
+    ["0.0.96-12-gabcdef0", true],
+    ["v0.0.97", false],
+    ["0.0.97-1-gabcdef0", false],
+    ["0.0.83-preview", false],
+    ["0.0.x", false],
+    ["", false],
+  ])("accepts only a valid release older than v0.0.97: %s", (nemoclawVersion, expected) => {
+    expect(
+      hasLegacyDgxStationQualificationAuthority({
+        agent: "hermes",
+        fromDockerfile: null,
+        nemoclawVersion,
+      }),
+    ).toBe(expected);
+  });
+
+  it("rejects unrelated sandbox state", () => {
+    expect(
+      hasLegacyDgxStationQualificationAuthority({
+        agent: "openclaw",
+        fromDockerfile: null,
+        nemoclawVersion: "v0.0.83",
+      }),
+    ).toBe(false);
+    expect(
+      hasLegacyDgxStationQualificationAuthority({
+        agent: "hermes",
+        fromDockerfile: "/tmp/Dockerfile",
+        nemoclawVersion: "v0.0.83",
+      }),
+    ).toBe(false);
+  });
+});
+
 describe("authoritative rebuild readiness", () => {
   it("passes recorded managed-vLLM intent to the pre-delete readiness gate (#9292)", async () => {
     const authority = { checkpoint: "gateway-authority" };
@@ -202,6 +240,7 @@ describe("authoritative rebuild readiness", () => {
     const recreateOptions = {
       ...RECREATE_OPTIONS,
       allowDeferredN1xManagedVllm: true,
+      allowLegacyDgxStationQualification: true,
     } as RebuildRecreateOnboardOpts;
     const bail = vi.fn((message: string): never => {
       throw new Error(message);
@@ -219,6 +258,7 @@ describe("authoritative rebuild readiness", () => {
     expect(mocks.preflightAuthoritativeRebuildTarget).toHaveBeenCalledWith(
       expect.objectContaining({
         allowDeferredN1xManagedVllm: true,
+        allowLegacyDgxStationQualification: true,
         provider: "vllm-local",
         model: "test-model",
         sandboxName: "alpha",

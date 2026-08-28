@@ -54,6 +54,7 @@ export interface InitialOnboardFlowPhaseOptions<
   gpuRequested: boolean;
   noGpu: boolean;
   allowDeferredN1xManagedVllm?: boolean;
+  allowLegacyDgxStationQualification?: boolean;
   env: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   recordedGpuPassthroughBeforePreflight: boolean;
@@ -150,6 +151,7 @@ export function createInitialOnboardFlowPhases<
         gpuRequested: options.gpuRequested,
         noGpu: options.noGpu,
         allowDeferredN1xManagedVllm: options.allowDeferredN1xManagedVllm,
+        allowLegacyDgxStationQualification: options.allowLegacyDgxStationQualification,
         env: options.env,
         deps: {
           ...options.preflightDeps,

@@ -182,6 +182,59 @@ describe("prepareRebuildTargetPreflights", () => {
     expect(mocks.resolveContextWindowForModel).toHaveBeenCalledWith("ollama-local", "qwen3.5:9b");
   });
 
+  it("passes legacy Station authority from the source registry row into rebuild readiness (#10370)", async () => {
+    const resumeConfig = {
+      provider: "ollama-local",
+      model: "llama3.2:1b",
+      preferredInferenceApi: "openai-completions",
+      endpointUrl: null,
+      compatibleEndpointReasoning: null,
+      compatibleEndpointReasoningEffort: null,
+      registryInferenceRoute: null,
+    };
+    mocks.prepareRebuildTargetConfig.mockReturnValue({
+      agentDefinition: {},
+      resumeConfig,
+      durableConfig: {
+        toolDisclosure: "progressive",
+        dcodeAutoApprovalMode: "disabled",
+        webSearchConfig: null,
+      },
+      credentialEnv: null,
+      fromDockerfile: false,
+      hermesToolGateways: [],
+    });
+    mocks.prepareRebuildRecreateOptions.mockReturnValue({
+      controlUiPort: 18_789,
+      targetGatewayName: "nemoclaw",
+      toolDisclosure: "progressive",
+      dcodeAutoApprovalMode: "disabled",
+      observabilityEnabled: false,
+    });
+
+    await prepareRebuildTargetPreflights({
+      sandboxName: "legacy-hermes",
+      sandboxEntry: {
+        name: "legacy-hermes",
+        agent: "hermes",
+        nemoclawVersion: "v0.0.83",
+        fromDockerfile: null,
+        gatewayName: "nemoclaw",
+        openshellDriver: "docker",
+        provider: resumeConfig.provider,
+        model: resumeConfig.model,
+      } as never,
+      rebuildAgent: "hermes",
+      autoYes: true,
+      log: vi.fn(),
+      bail: mocks.bail as never,
+    });
+
+    expect(mocks.preflightAuthoritativeOnboardRuntime.mock.calls[0]?.[2]).toEqual(
+      expect.objectContaining({ allowLegacyDgxStationQualification: true }),
+    );
+  });
+
   it("passes exact legacy N1x intent into authoritative readiness (#9292)", async () => {
     const readinessOptions = await prepareN1xTarget("onboard");
 

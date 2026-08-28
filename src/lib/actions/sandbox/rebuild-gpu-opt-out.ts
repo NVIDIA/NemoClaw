@@ -129,6 +129,8 @@ export type RebuildRecreateOnboardOpts = {
   providerRecoveryReceipt?: ProviderRecoveryReceipt;
   /** Recorded managed-vLLM intent admitted only by the N1x readiness exception. */
   allowDeferredN1xManagedVllm?: true;
+  /** Internal legacy Hermes rebuild authority for the pre-v0.0.97 Station admission rule. */
+  allowLegacyDgxStationQualification?: true;
   /** Target-scoped authority admitted by the authoritative rebuild preflight. */
   rebuildGatewayAuthority?: CheckpointGatewayAuthority;
   preparedImageRebuild?: PreparedImageRebuildHandoff;
