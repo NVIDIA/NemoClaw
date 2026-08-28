@@ -35,6 +35,7 @@ const { ensureWebSearchProviderProfiles } = require("./brave-provider-profile");
 
 const MESSAGING_PROVIDER_BINDING_CONFLICT = "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT";
 const MESSAGING_PROVIDER_MUTATION_FAILURE = "NEMOCLAW_MESSAGING_PROVIDER_MUTATION_FAILURE";
+const POLICY_AUTHORITY_REFUSAL = "NEMOCLAW_POLICY_AUTHORITY_REFUSAL";
 
 class MessagingProviderMutationError extends Error {
   constructor(error, mutatedProviderNames, createdProviderNames) {
@@ -73,7 +74,9 @@ function attachMutatedProviderNames(error, names, createdNames = []) {
   if (names.length === 0) return error;
   const original = error instanceof Error ? error : new Error(String(error));
   const failure =
-    isMessagingProviderBindingConflict(original) || isMessagingProviderMutationFailure(original)
+    isMessagingProviderBindingConflict(original) ||
+    isMessagingProviderMutationFailure(original) ||
+    original.code === POLICY_AUTHORITY_REFUSAL
       ? original
       : new MessagingProviderMutationError(original, [], []);
   const existing = Array.isArray(failure.mutatedProviderNames) ? failure.mutatedProviderNames : [];

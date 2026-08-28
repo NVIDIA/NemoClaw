@@ -157,7 +157,7 @@ The historical fixtures retain these version boundaries:
 | Fixture | Required boundary |
 | --- | --- |
 | `openshell-gateway-upgrade` | Retain the historical installer commit and SHA-256 digest, sandbox image digest, and reviewed OpenClaw npm URL and SHA-512 integrity. Install the historical package before testing the candidate upgrade path. |
-| `rebuild-openclaw` | Retain the reviewed old-base build in the target. Build and create the old sandbox before testing the candidate rebuild path. |
+| `rebuild-openclaw` | Retain the reviewed historical OpenClaw runtime build in the target. Resolve the current trusted sandbox base, create the legacy runtime through real onboarding, and verify it before testing the candidate rebuild path. |
 
 These targets may restore the shared artifact for the candidate CLI.
 They must not replace a historical installer, package, image, or version boundary with that artifact.

@@ -200,12 +200,16 @@ const requiredFeatures = "request-body-credential-rewrite websocket-credential-r
 if (a[0] === "-V" || a[0] === "--version") { process.stdout.write("openshell 0.0.106\\n"); process.exit(0); }
 if (a[0] === "sandbox" && a[1] === "list") { process.stdout.write("${sandboxName} Ready\\n"); process.exit(0); }
 if (a[0] === "sandbox" && a[1] === "ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
-if (a[0] === "sandbox" && a[1] === "get") {
+if (a.includes("sandbox") && a.includes("get")) {
   if (fs.existsSync(${JSON.stringify(deleteMarker)})) {
     process.stderr.write("sandbox ${sandboxName} not found\\n");
     process.exit(1);
   }
   process.stdout.write("Sandbox: ${sandboxName}\\nId: ${SANDBOX_ID}\\nPhase: Ready\\n");
+  process.exit(0);
+}
+if (a[0] === "policy" && a[1] === "list" && a.includes("--global")) {
+  process.stderr.write("No global policy history found\\n");
   process.exit(0);
 }
 if (a[0] === "policy" && a[1] === "get" && a.includes("--output") && a.includes("json")) {

@@ -14,13 +14,13 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { readJsonFile, readJsonFileOr, restoreFile, snapshotFile } from "../fixtures/file-state.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { createOldBaseBuildContext } from "./rebuild-openclaw-old-base-context.ts";
-import { createLegacyOpenClawOpenShellWrapper } from "./rebuild-openclaw-old-openshell-wrapper.ts";
+import { createLegacyOpenClawSandboxContext } from "./rebuild-openclaw-legacy-context.ts";
 
-// The contract stays intentionally local to this live test: build an older
-// OpenClaw base image, recreate the sandbox from it through NemoClaw, seed
-// workspace/policy/gateway-token state, run the real `nemoclaw rebuild`, and
-// verify the rebuilt sandbox preserved state while rotating secrets.
+// The contract stays intentionally local to this live test: use NemoClaw's
+// current trusted base-image resolver to build a reviewed historical OpenClaw
+// runtime, seed workspace/policy/gateway-token state, run the real
+// `nemoclaw rebuild`, and verify the rebuilt sandbox preserved state while
+// rotating secrets.
 //
 // Simplicity boundary: no new registry, fixture family, or migration ledger.
 
@@ -48,10 +48,8 @@ const POLICY_PRESETS = ["npm", "pypi", "telegram"] as const;
 
 const MARKER_CONTENT = `REBUILD_OC_E2E_${Date.now()}`;
 const PRE_REBUILD_GATEWAY_TOKEN = `nemoclaw-e2e-old-gateway-token-${MARKER_CONTENT}`;
-const OLD_BASE_TAG = `nemoclaw-old-base:${SANDBOX_NAME.toLowerCase().replace(/[^a-z0-9_.-]+/g, "-")}`;
 
 const ONBOARD_TIMEOUT_MS = 20 * 60_000;
-const DOCKER_BUILD_TIMEOUT_MS = 35 * 60_000;
 const REBUILD_TIMEOUT_MS = 30 * 60_000;
 const OPENSHELL_TIMEOUT_MS = 2 * 60_000;
 
@@ -139,19 +137,6 @@ async function cleanupRebuiltNemoClawSandbox(host: HostCliClient, apiKey: string
     result,
     /Sandbox '.+' does not exist|Run 'nemoclaw onboard' to create one|sandbox .* not found|no such sandbox/iu,
     `cleanup rebuilt sandbox ${SANDBOX_NAME}`,
-  );
-}
-
-async function cleanupOldOpenClawBaseImage(host: HostCliClient): Promise<void> {
-  const result = await host.command("docker", ["rmi", OLD_BASE_TAG], {
-    artifactName: "cleanup-docker-rmi-old-base",
-    env: dockerContextEnv(),
-    timeoutMs: OPENSHELL_TIMEOUT_MS,
-  });
-  assertCleanupSucceededOrAbsent(
-    result,
-    /No such image|image .* not found/iu,
-    `cleanup old OpenClaw base image ${OLD_BASE_TAG}`,
   );
 }
 
@@ -273,15 +258,13 @@ function backupCredentialLeakPaths(backupDir: string, oldGatewayToken: string): 
 test(
   "rebuild-openclaw: old OpenClaw sandbox rebuild preserves state and rotates gateway token",
   {
-    timeout: REBUILD_TIMEOUT_MS + 2 * DOCKER_BUILD_TIMEOUT_MS + ONBOARD_TIMEOUT_MS,
+    timeout: REBUILD_TIMEOUT_MS + 2 * ONBOARD_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "confirm Docker and prepare OpenClaw rebuild resources",
         "onboard the current OpenClaw sandbox",
-        "build the old OpenClaw base image",
-        "create the old OpenClaw sandbox",
+        "create the legacy OpenClaw runtime on the current trusted base",
         "seed persistent state policy and registry metadata",
-        "restore the current OpenClaw base image",
         "rebuild the OpenClaw sandbox",
         "validate upgraded state policy inference and backup hygiene",
       ],
@@ -312,11 +295,10 @@ test(
       oldOpenClawVersion: OLD_OPENCLAW_VERSION,
       sandboxName: SANDBOX_NAME,
       markerFile: MARKER_FILE,
-      oldBaseTag: OLD_BASE_TAG,
       preservedBoundaries: [
-        "docker build Dockerfile.base with old OPENCLAW_VERSION",
-        "test-only OpenShell wrapper patches only the generated sandbox create context",
-        "real OpenShell CLI and driver binaries remain authoritative",
+        "current trusted base image resolved and pinned by real NemoClaw onboard",
+        "test-only --from context lowers only the OpenClaw runtime and is restored before rebuild",
+        "real NemoClaw and OpenShell binaries remain authoritative",
         "openshell sandbox create/exec/policy",
         "real nemoclaw onboard and rebuild CLI",
         "workspace marker, registry/session files, backup manifest, config hash",
@@ -343,11 +325,6 @@ test(
       ["gateway", "destroy", "-g", "nemoclaw"],
       "pre-cleanup-openshell-gateway-destroy",
     );
-    await host.command("docker", ["rmi", OLD_BASE_TAG], {
-      artifactName: "pre-cleanup-docker-rmi-old-base",
-      env: dockerContextEnv(),
-      timeoutMs: OPENSHELL_TIMEOUT_MS,
-    });
 
     const registrySnapshot = snapshotFile(REGISTRY_FILE);
     const sessionSnapshot = snapshotFile(SESSION_FILE);
@@ -357,9 +334,6 @@ test(
       restoreFile(SESSION_FILE, sessionSnapshot);
       fs.rmSync(sandboxBackupRoot, { recursive: true, force: true });
     });
-    cleanup.trackDisposable(`remove old OpenClaw base image ${OLD_BASE_TAG}`, () =>
-      cleanupOldOpenClawBaseImage(host),
-    );
     cleanup.trackGateway(host, "nemoclaw", {
       artifactName: "cleanup-openshell-gateway-destroy",
       env: dockerContextEnv(),
@@ -417,106 +391,29 @@ test(
       "phase-1-delete-current-sandbox",
     );
 
-    // Phase 2: build the old base image with a temporary build context that
-    // lowers only the blueprint minimum-version gate consumed by Dockerfile.base.
-    // The trusted checkout stays read-only.
-    progress.phase("build the old OpenClaw base image");
-    const oldBaseBuildContext = createOldBaseBuildContext();
-    try {
-      const buildOldBase = await host.command(
-        "docker",
-        [
-          "build",
-          "--build-arg",
-          `OPENCLAW_VERSION=${OLD_OPENCLAW_VERSION}`,
-          "--build-arg",
-          "NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1",
-          "-f",
-          path.join(REPO_ROOT, "Dockerfile.base"),
-          "-t",
-          OLD_BASE_TAG,
-          oldBaseBuildContext,
-        ],
-        {
-          artifactName: "phase-2-docker-build-old-openclaw-base",
-          env: dockerContextEnv(),
-          timeoutMs: DOCKER_BUILD_TIMEOUT_MS,
-        },
-      );
-      expectExitZero(buildOldBase, `docker build old OpenClaw ${OLD_OPENCLAW_VERSION}`);
-    } finally {
-      fs.rmSync(oldBaseBuildContext, { recursive: true, force: true });
-    }
-
-    // Phase 3: recreate the sandbox through NemoClaw so the old runtime keeps
-    // an exact policy-creation receipt bound to its new immutable sandbox ID.
-    // Direct OpenShell creation cannot truthfully establish NemoClaw ownership.
-    progress.phase("create the old OpenClaw sandbox");
-    const realOpenShellComponentsResult = await host.command(
-      "bash",
-      [
-        "-lc",
-        'for name in openshell openshell-gateway openshell-sandbox; do command -v "$name"; done',
-      ],
-      {
-        artifactName: "phase-3-real-openshell-components",
-        env: dockerContextEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-    expectExitZero(realOpenShellComponentsResult, "resolve real OpenShell component paths");
-    const realOpenShellComponents = realOpenShellComponentsResult.stdout
-      .split(/\r?\n/)
-      .map((value) => value.trim())
-      .filter(Boolean);
-    expect(realOpenShellComponents).toHaveLength(3);
-    const [realOpenShell, realOpenShellGateway, realOpenShellSandbox] = realOpenShellComponents;
-    expect(
-      path.isAbsolute(realOpenShell),
-      `OpenShell CLI path must be absolute: ${realOpenShell}`,
-    ).toBe(true);
-    expect(
-      path.isAbsolute(realOpenShellGateway),
-      `OpenShell gateway path must be absolute: ${realOpenShellGateway}`,
-    ).toBe(true);
-    expect(
-      path.isAbsolute(realOpenShellSandbox),
-      `OpenShell sandbox path must be absolute: ${realOpenShellSandbox}`,
-    ).toBe(true);
-    const oldOpenShellWrapper = createLegacyOpenClawOpenShellWrapper({
-      root: artifacts.pathFor("phase-3-old-openshell-wrapper"),
-      realOpenShell,
-      baseImage: OLD_BASE_TAG,
+    // Phase 2: recreate the sandbox through NemoClaw so its current trusted
+    // base-image resolver remains authoritative while the explicit E2E fixture
+    // installs the reviewed historical OpenClaw runtime. Direct OpenShell
+    // creation cannot truthfully establish NemoClaw policy ownership.
+    progress.phase("create the legacy OpenClaw runtime on the current trusted base");
+    const legacyContext = createLegacyOpenClawSandboxContext({
+      rootDir: REPO_ROOT,
       openClawVersion: OLD_OPENCLAW_VERSION,
     });
+    cleanup.trackDisposable("remove legacy OpenClaw sandbox context", () =>
+      legacyContext.cleanup(),
+    );
     const createOldSandbox = await host.command(
       "node",
-      [CLI_ENTRYPOINT, "onboard", "--non-interactive"],
+      [CLI_ENTRYPOINT, "onboard", "--non-interactive", "--from", legacyContext.dockerfile],
       {
         artifactName: "phase-3-onboard-old-openclaw-sandbox",
-        env: cliEnv(apiKey, {
-          NEMOCLAW_RECREATE_SANDBOX: "1",
-          NEMOCLAW_SANDBOX_BASE_IMAGE_REF: OLD_BASE_TAG,
-          NEMOCLAW_OPENSHELL_GATEWAY_BIN: realOpenShellGateway,
-          NEMOCLAW_OPENSHELL_SANDBOX_BIN: realOpenShellSandbox,
-          PATH: `${oldOpenShellWrapper.directory}:${process.env.PATH ?? "/usr/bin:/bin"}`,
-        }),
+        env: cliEnv(apiKey, { NEMOCLAW_RECREATE_SANDBOX: "1" }),
         redactionValues: [apiKey],
         timeoutMs: ONBOARD_TIMEOUT_MS,
       },
     );
     expectExitZero(createOldSandbox, "nemoclaw onboard old OpenClaw sandbox");
-    const oldOpenShellWrapperLog = fs.readFileSync(oldOpenShellWrapper.logFile, "utf8");
-    expect(oldOpenShellWrapperLog).toContain(`patch sandbox create BASE_IMAGE=${OLD_BASE_TAG}`);
-    expect(oldOpenShellWrapperLog).toContain(
-      `patch sandbox create OPENCLAW_VERSION=${OLD_OPENCLAW_VERSION}`,
-    );
-    expect(oldOpenShellWrapperLog).toContain(
-      "patch sandbox create NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1",
-    );
-    expect(oldOpenShellWrapperLog).toContain(
-      `patch sandbox create min_openclaw_version=${OLD_OPENCLAW_VERSION}`,
-    );
     await waitForSandboxReady(sandbox);
 
     const oldVersion = await sandbox.exec(SANDBOX_NAME, ["openclaw", "--version"], {
@@ -526,6 +423,12 @@ test(
     });
     expectExitZero(oldVersion, "old openclaw --version");
     expect(resultText(oldVersion)).toContain(OLD_OPENCLAW_VERSION);
+    expect(registrySandbox().fromDockerfile).toBe(legacyContext.dockerfile);
+
+    // Rebuild reuses the recorded --from path. Restore the current trusted
+    // recipe at that exact path so the next lifecycle creates the upgrade,
+    // while the existing sandbox remains on the verified historical runtime.
+    legacyContext.restoreCurrent();
 
     // Phase 4: seed workspace state and an existing gateway token while keeping
     // the registry and resume-session state written by the old-image onboard.
@@ -663,27 +566,7 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
     expectExitZero(prePolicyList, "nemoclaw policy-list before rebuild");
     expect(prePolicyList.stdout).toMatch(/●\s+telegram/i);
 
-    // Phase 5: restore the current base image tag that rebuild consumes.
-    progress.phase("restore the current OpenClaw base image");
-    const buildCurrentBase = await host.command(
-      "docker",
-      [
-        "build",
-        "-f",
-        path.join(REPO_ROOT, "Dockerfile.base"),
-        "-t",
-        "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
-        REPO_ROOT,
-      ],
-      {
-        artifactName: "phase-5-docker-build-current-base",
-        env: dockerContextEnv(),
-        timeoutMs: DOCKER_BUILD_TIMEOUT_MS,
-      },
-    );
-    expectExitZero(buildCurrentBase, "docker build current base image");
-
-    // Phase 6: run the real rebuild CLI.
+    // Phase 5: run the real rebuild CLI.
     progress.phase("rebuild the OpenClaw sandbox");
     const rebuild = await host.command(
       "node",
