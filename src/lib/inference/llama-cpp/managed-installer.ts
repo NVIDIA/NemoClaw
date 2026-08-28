@@ -157,6 +157,11 @@ const IMAGE_PULL_LAYER_PATTERNS: ReadonlyArray<{
     pattern: /(?:no space left on device|disk quota exceeded|insufficient disk space)/iu,
   },
   {
+    layer: "daemon behavior",
+    pattern:
+      /(?:cannot connect to the (?:docker|container) daemon|daemon is not running|error during connect|docker pull failed to start)/iu,
+  },
+  {
     layer: "runner network",
     pattern:
       /(?:dial tcp|no such host|temporary failure in name resolution|network is unreachable|connection (?:refused|reset)|tls handshake timeout|i\/o timeout|context deadline exceeded|client\.timeout|certificate signed by unknown authority)/iu,
@@ -170,11 +175,6 @@ const IMAGE_PULL_LAYER_PATTERNS: ReadonlyArray<{
     layer: "registry availability",
     pattern:
       /(?:too many requests|rate limit|service unavailable|bad gateway|gateway timeout|status(?: code)?:? 5\d\d|unexpected status.*5\d\d)/iu,
-  },
-  {
-    layer: "daemon behavior",
-    pattern:
-      /(?:cannot connect to the (?:docker|container) daemon|daemon is not running|error during connect|docker pull failed to start)/iu,
   },
 ];
 

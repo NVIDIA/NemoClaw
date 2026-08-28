@@ -1056,7 +1056,10 @@ describe("managed llama.cpp installer", () => {
     ["runner network", { status: 1, stderr: "dial tcp: temporary failure in name resolution" }],
     ["invalid dependency", { status: 1, stderr: "manifest unknown: manifest not found" }],
     ["registry availability", { status: 1, stderr: "registry returned 503 Service Unavailable" }],
-    ["daemon behavior", { status: 1, error: new Error("Cannot connect to the Docker daemon") }],
+    [
+      "daemon behavior",
+      { status: 1, error: new Error("error during connect: dial tcp: connection refused") },
+    ],
     ["unclassified", { status: 7, stderr: "opaque pull failure" }],
   ])(
     "classifies a failed image pull from diagnostic signatures as %s (#10558)",
