@@ -209,6 +209,13 @@
       "fast": ["test/e2e/support/openshell-gateway-auth-source-contract-helpers.test.ts"]
     },
     {
+      "live": "test/e2e/live/external-gateway-health.test.ts",
+      "fast": [
+        "test/e2e/support/external-gateway-health-workflow-boundary.test.ts",
+        "test/install/reviewed-npm-archive.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/openshell-credential-generation-window.test.ts",
       "fast": [
         "test/credentials/openshell-credential-generation-window.test.ts",

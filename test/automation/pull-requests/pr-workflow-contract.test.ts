@@ -22,6 +22,13 @@ type CiWorkflow = {
   jobs: Record<string, WorkflowJob & { if?: string; needs?: string | string[] }>;
 };
 
+type SdkPackageWorkflow = Readonly<{
+  concurrency?: Readonly<Record<string, unknown>>;
+  jobs: Readonly<Record<string, WorkflowJob>>;
+  on?: Readonly<Record<string, unknown>>;
+  permissions?: Readonly<Record<string, string>>;
+}>;
+
 type InstallerHashAction = CompositeAction & {
   inputs?: Record<string, { required?: boolean }>;
 };
@@ -82,6 +89,14 @@ const trustedActionDirs = [
 
 const cliShardCount = "12";
 const cliShardTimeoutMinutes = 30;
+const dependencyInstallJobs = [
+  "build-typecheck",
+  "cli-tests",
+  "installer-integration",
+  "cli-test-shards",
+  "plugin-tests",
+  "static-checks",
+] as const;
 
 function stepRuns(jobOrAction: WorkflowJob | CompositeAction): string[] {
   const steps = "runs" in jobOrAction ? jobOrAction.runs.steps : (jobOrAction.steps ?? []);
@@ -139,6 +154,105 @@ function runWorkflowShellStep(
     status: result.status,
     stdout: String(result.stdout),
     stderr: String(result.stderr),
+  };
+}
+
+type SdkPackageLocatorFixture = Readonly<{
+  artifactFailureRunId?: number;
+  artifactsByRunId?: Readonly<Record<string, unknown>>;
+  runs: readonly unknown[];
+  step: WorkflowStep;
+  workflowRunFailure?: boolean;
+}>;
+
+function runSdkPackageLocator(fixture: SdkPackageLocatorFixture): Readonly<{
+  githubOutput: string;
+  result: ReturnType<typeof runWorkflowShellStep>;
+}> {
+  const tempRoot = mkdtempSync(join(tmpdir(), "nemoclaw-sdk-package-locator-"));
+  try {
+    const trustedRoot = join(tempRoot, ".trusted-sdk-package-decision");
+    const inspectorDirectory = join(trustedRoot, "scripts/checks");
+    const workflowDirectory = join(trustedRoot, ".github/workflows");
+    const fakeBin = join(tempRoot, "bin");
+    mkdirSync(inspectorDirectory, { recursive: true });
+    mkdirSync(workflowDirectory, { recursive: true });
+    mkdirSync(fakeBin);
+    writeFileSync(
+      join(inspectorDirectory, "prepare-ci-npm-install.mts"),
+      'process.stdout.write(JSON.stringify({ required: true, artifactName: "reviewed-sdk.tgz" }));\n',
+    );
+    writeFileSync(join(workflowDirectory, "openshell-sdk-package-pr.yaml"), "name: test\n");
+    writeFileSync(join(fakeBin, "seq"), "#!/bin/sh\nprintf '1\\n'\n", { mode: 0o755 });
+    writeFileSync(join(fakeBin, "sleep"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    writeFileSync(
+      join(fakeBin, "gh"),
+      [
+        "#!/usr/bin/env node",
+        'const request = process.argv.slice(2).join(" ");',
+        'if (request.includes("actions/workflows/openshell-sdk-package-pr.yaml/runs")) {',
+        '  if (process.env.FAKE_WORKFLOW_RUN_FAILURE === "true") {',
+        '    process.stderr.write("untrusted API failure detail\\n");',
+        "    process.exit(1);",
+        "  }",
+        "  process.stdout.write(JSON.stringify({ workflow_runs: JSON.parse(process.env.FAKE_WORKFLOW_RUNS) }));",
+        "  process.exit(0);",
+        "}",
+        "const artifactMatch = request.match(/actions\\/runs\\/(\\d+)\\/artifacts/);",
+        "if (!artifactMatch) process.exit(64);",
+        "const runId = Number(artifactMatch[1]);",
+        "if (runId === Number(process.env.FAKE_ARTIFACT_FAILURE_RUN_ID)) {",
+        '  process.stderr.write("untrusted artifact API failure detail\\n");',
+        "  process.exit(1);",
+        "}",
+        "const listings = JSON.parse(process.env.FAKE_ARTIFACTS_BY_RUN_ID);",
+        "process.stdout.write(JSON.stringify(listings[String(runId)] ?? { artifacts: [] }));",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const outputPath = join(tempRoot, "github-output");
+    const result = runWorkflowShellStep(
+      fixture.step,
+      {
+        BASE_SHA: "base-sha",
+        FAKE_ARTIFACTS_BY_RUN_ID: JSON.stringify(fixture.artifactsByRunId ?? {}),
+        FAKE_ARTIFACT_FAILURE_RUN_ID: String(fixture.artifactFailureRunId ?? 0),
+        FAKE_WORKFLOW_RUNS: JSON.stringify(fixture.runs),
+        FAKE_WORKFLOW_RUN_FAILURE: String(fixture.workflowRunFailure ?? false),
+        GH_TOKEN: "test-token",
+        GITHUB_OUTPUT: outputPath,
+        GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+        GITHUB_WORKSPACE: tempRoot,
+        HEAD_REPOSITORY: "NVIDIA/NemoClaw",
+        HEAD_SHA: "head-sha",
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+        PR_NUMBER: "10368",
+      },
+      tempRoot,
+    );
+    return {
+      githubOutput: existsSync(outputPath) ? readFileSync(outputPath, "utf8") : "",
+      result,
+    };
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+}
+
+function sdkPackageWorkflowRun(
+  id: number,
+  status: string,
+  conclusion: string | null,
+  createdAt: string,
+): Readonly<Record<string, unknown>> {
+  return {
+    conclusion,
+    created_at: createdAt,
+    event: "pull_request_target",
+    html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${id}`,
+    id,
+    pull_requests: [{ base: { sha: "base-sha" }, head: { sha: "head-sha" }, number: 10368 }],
+    status,
   };
 }
 
@@ -325,6 +439,10 @@ describe("pull request and main workflow contracts", () => {
   const mainWorkflow = readYaml<CiWorkflow>(".github/workflows/main.yaml");
   const dcoWorkflow = readYaml<CiWorkflow>(".github/workflows/dco-check.yaml");
   const installerHashWorkflow = readYaml<CiWorkflow>(".github/workflows/installer-hash-check.yaml");
+  const sdkPackageWorkflow = readYaml<SdkPackageWorkflow>(
+    ".github/workflows/openshell-sdk-package-pr.yaml",
+  );
+  const sdkPackageJob = sdkPackageWorkflow.jobs["package-openshell-sdk"];
 
   const installerHashAction = readYaml<InstallerHashAction>(
     ".github/actions/ci-installer-hash-check/action.yaml",
@@ -354,6 +472,393 @@ describe("pull request and main workflow contracts", () => {
     ["main", mainWorkflow],
   ] as const)("keeps the %s CLI coverage shard budget aligned", (_workflowName, workflow) => {
     expect(workflow.jobs["cli-test-shards"]?.["timeout-minutes"]).toBe(cliShardTimeoutMinutes);
+  });
+
+  // source-shape-contract: security -- Pull request jobs must never receive the GitHub Packages credential
+  it("does not grant package access to pull request jobs", () => {
+    expect(prWorkflow.permissions).toEqual({ contents: "read" });
+    expect(
+      Object.entries(prWorkflow.jobs).filter(([, job]) => job.permissions?.packages !== undefined),
+    ).toEqual([]);
+  });
+
+  // source-shape-contract: security -- Trusted main jobs may read packages only where the reviewed installer consumes the token
+  it("limits main package reads to dependency-install jobs", () => {
+    expect(mainWorkflow.permissions).toEqual({ contents: "read" });
+    expect(
+      Object.entries(mainWorkflow.jobs)
+        .filter(([, job]) => job.permissions?.packages !== undefined)
+        .map(([jobName, job]) => [jobName, job.permissions?.packages] as const)
+        .sort(([left], [right]) => left.localeCompare(right)),
+    ).toEqual([
+      ["build-typecheck", "read"],
+      ["cli-test-shards", "read"],
+      ["cli-tests", "read"],
+      ["installer-integration", "read"],
+      ["plugin-tests", "read"],
+      ["static-checks", "read"],
+    ]);
+  });
+
+  // source-shape-contract: security -- The shared action must pass a package token only on trusted main pushes
+  it("provides the package token only to trusted main dependency installation", () => {
+    const actions = [
+      sharedActions.staticChecks,
+      sharedActions.buildTypecheck,
+      sharedActions.cliCoverageMerge,
+      sharedActions.installerIntegration,
+      sharedActions.cliCoverageShard,
+      sharedActions.pluginCoverage,
+    ];
+    expect(
+      actions.map((action) => requiredStep(action, "Setup Node.js").with?.["registry-url"]),
+    ).toEqual(actions.map(() => undefined));
+    expect(actions.map((action) => requiredStep(action, "Setup Node.js").with?.scope)).toEqual(
+      actions.map(() => undefined),
+    );
+    expect(actions.map((action) => requiredStep(action, "Install dependencies").env)).toEqual(
+      actions.map(() => ({
+        NODE_AUTH_TOKEN: "${{ github.event_name == 'push' && github.token || '' }}",
+      })),
+    );
+    expect(actions.map((action) => requiredStep(action, "Install dependencies").run)).toEqual(
+      actions.map(() => 'bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"'),
+    );
+  });
+
+  // source-shape-contract: security -- The PR workflow must select an exact base-controlled package run before publishing its archive internally
+  it("passes only the base-packaged SDK archive to pull request dependency jobs", () => {
+    const packageJob = prWorkflow.jobs["openshell-sdk-package"];
+    expect(packageJob["timeout-minutes"]).toBe(10);
+    expect(packageJob.permissions).toEqual({ actions: "read", contents: "read" });
+    expect(packageJob.outputs).toEqual({ required: "${{ steps.locate.outputs.required }}" });
+    expect(requiredWorkflowStep(packageJob, "Checkout base package decision").with).toMatchObject({
+      ref: "${{ github.event.pull_request.base.sha }}",
+      path: ".trusted-sdk-package-decision",
+    });
+    const locate = requiredWorkflowStep(packageJob, "Locate exact base-controlled SDK package run");
+    expect(locate.env?.HEAD_REPOSITORY).toBe(
+      "${{ github.event.pull_request.head.repo.full_name }}",
+    );
+    expect(locate.run).toContain(
+      "trusted_inspector=.trusted-sdk-package-decision/scripts/checks/prepare-ci-npm-install.mts",
+    );
+    expect(locate.run).toContain('if [ ! -f "$trusted_inspector" ]');
+    expect(locate.run).toContain('if [ -f "$trusted_workflow" ]');
+    expect(locate.run).toContain(
+      'all(type == "string" and startswith("https://registry.npmjs.org/"))',
+    );
+    expect(locate.run).toContain("requires two valid public-registry npm lockfiles");
+    expect(locate.run).toContain("actions/workflows/openshell-sdk-package-pr.yaml/runs");
+    expect(locate.run).toContain("for attempt in $(seq 1 84)");
+    expect(locate.run).toContain("sleep 5");
+    expect(locate.run).toContain(".head.sha == $head and .base.sha == $base");
+    expect(locate.run).toContain("required=false");
+    expect(locate.run).toContain('[ "$HEAD_REPOSITORY" != "$GITHUB_REPOSITORY" ]');
+    expect(locate.run).toContain("available only to same-repository pull requests");
+    expect(locate.run).not.toContain("@nvidia/openshell-sdk@0.0.106");
+    expect(locate.run).not.toContain("nvidia-openshell-sdk-0.0.106.tgz");
+  });
+
+  // The one-time bootstrap may proceed only while both lockfiles use the public registry.
+  it("allows the package workflow bootstrap without a private registry lock", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "nemoclaw-sdk-package-bootstrap-"));
+    try {
+      mkdirSync(join(tempRoot, "nemoclaw"), { recursive: true });
+      const lock = JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "node_modules/example": {
+            resolved: "https://registry.npmjs.org/example/-/example-1.0.0.tgz",
+          },
+        },
+      });
+      writeFileSync(join(tempRoot, "package-lock.json"), lock);
+      writeFileSync(join(tempRoot, "nemoclaw/package-lock.json"), lock);
+      const outputPath = join(tempRoot, "github-output");
+      const locate = requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      );
+
+      const result = runWorkflowShellStep(
+        locate,
+        {
+          GITHUB_OUTPUT: outputPath,
+          GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+          GITHUB_WORKSPACE: tempRoot,
+          HEAD_REPOSITORY: "NVIDIA/NemoClaw",
+        },
+        tempRoot,
+      );
+
+      expect(result).toMatchObject({ status: 0, stderr: "" });
+      expect(readFileSync(outputPath, "utf8")).toBe("required=false\n");
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  // A private registry lock cannot bypass a base that lacks the trusted package workflow.
+  it("rejects a private registry lock during the package workflow bootstrap", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "nemoclaw-sdk-package-bootstrap-"));
+    try {
+      mkdirSync(join(tempRoot, "nemoclaw"), { recursive: true });
+      writeFileSync(
+        join(tempRoot, "package-lock.json"),
+        JSON.stringify({ lockfileVersion: 3, packages: {} }),
+      );
+      writeFileSync(
+        join(tempRoot, "nemoclaw/package-lock.json"),
+        JSON.stringify({
+          lockfileVersion: 3,
+          packages: {
+            "node_modules/private": {
+              resolved: "https://npm.pkg.github.com/download/private/package/1.0.0/archive",
+            },
+          },
+        }),
+      );
+      const locate = requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      );
+
+      const result = runWorkflowShellStep(
+        locate,
+        {
+          GITHUB_OUTPUT: join(tempRoot, "github-output"),
+          GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+          GITHUB_WORKSPACE: tempRoot,
+          HEAD_REPOSITORY: "NVIDIA/NemoClaw",
+        },
+        tempRoot,
+      );
+
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("requires two valid public-registry npm lockfiles");
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a malformed lockfile during the package workflow bootstrap", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "nemoclaw-sdk-package-bootstrap-"));
+    try {
+      mkdirSync(join(tempRoot, "nemoclaw"), { recursive: true });
+      writeFileSync(
+        join(tempRoot, "package-lock.json"),
+        JSON.stringify({ lockfileVersion: 3, packages: {} }),
+      );
+      writeFileSync(join(tempRoot, "nemoclaw/package-lock.json"), "not JSON");
+      const locate = requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      );
+
+      const result = runWorkflowShellStep(
+        locate,
+        {
+          GITHUB_OUTPUT: join(tempRoot, "github-output"),
+          GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+          GITHUB_WORKSPACE: tempRoot,
+          HEAD_REPOSITORY: "NVIDIA/NemoClaw",
+        },
+        tempRoot,
+      );
+
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("requires two valid public-registry npm lockfiles");
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("explains how to recover when the exact SDK package artifact expired", () => {
+    const { githubOutput, result } = runSdkPackageLocator({
+      artifactsByRunId: {
+        "321": { artifacts: [{ expired: true, name: "openshell-sdk-head-sha" }] },
+      },
+      runs: [sdkPackageWorkflowRun(321, "completed", "success", "2026-08-27T00:00:00Z")],
+      step: requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      ),
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("reviewed SDK archive");
+    expect(result.stdout).toContain("https://github.com/NVIDIA/NemoClaw/actions/runs/321");
+    expect(result.stdout).toContain("Rerun Security / Package OpenShell SDK for PR");
+    expect(result.stdout).toContain(
+      "Then rerun the failed openshell-sdk-package job in CI / Pull Request",
+    );
+    expect(githubOutput).not.toContain("run_id=");
+  });
+
+  it("uses an older exact SDK package run after a newer run is cancelled", () => {
+    const { githubOutput, result } = runSdkPackageLocator({
+      artifactsByRunId: {
+        "320": { artifacts: [{ expired: false, name: "openshell-sdk-head-sha" }] },
+      },
+      runs: [
+        sdkPackageWorkflowRun(321, "completed", "cancelled", "2026-08-27T01:00:00Z"),
+        sdkPackageWorkflowRun(320, "completed", "success", "2026-08-27T00:00:00Z"),
+      ],
+      step: requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      ),
+    });
+
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(githubOutput).toContain("run_id=320\n");
+  });
+
+  it("explains how to retry an SDK artifact-listing failure", () => {
+    const { githubOutput, result } = runSdkPackageLocator({
+      artifactFailureRunId: 321,
+      runs: [sdkPackageWorkflowRun(321, "completed", "success", "2026-08-27T00:00:00Z")],
+      step: requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      ),
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("After GitHub Actions access returns");
+    expect(result.stdout).toContain(
+      "rerun the failed openshell-sdk-package job in CI / Pull Request",
+    );
+    expect(result.stdout).not.toContain("Rerun Security / Package OpenShell SDK for PR");
+    expect(result.stderr).not.toContain("untrusted artifact API failure detail");
+    expect(githubOutput).not.toContain("run_id=");
+  });
+
+  it("explains how to retry an SDK workflow-run-listing failure", () => {
+    const { githubOutput, result } = runSdkPackageLocator({
+      runs: [],
+      step: requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      ),
+      workflowRunFailure: true,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("Could not inspect reviewed SDK package workflow runs");
+    expect(result.stdout).toContain("After GitHub Actions access returns");
+    expect(result.stdout).toContain(
+      "rerun the failed openshell-sdk-package job in CI / Pull Request",
+    );
+    expect(result.stderr).not.toContain("untrusted API failure detail");
+    expect(githubOutput).not.toContain("run_id=");
+  });
+
+  it("explains how to recover when the SDK package wait expires", () => {
+    const { githubOutput, result } = runSdkPackageLocator({
+      runs: [sdkPackageWorkflowRun(321, "in_progress", null, "2026-08-27T00:00:00Z")],
+      step: requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      ),
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("this latest PR commit");
+    expect(result.stdout).toContain("within seven minutes");
+    expect(result.stdout).toContain(
+      "Last matching run: https://github.com/NVIDIA/NemoClaw/actions/runs/321 (in_progress)",
+    );
+    expect(result.stdout).toContain("Rerun Security / Package OpenShell SDK for PR");
+    expect(result.stdout).toContain(
+      "Then rerun the failed openshell-sdk-package job in CI / Pull Request",
+    );
+    expect(result.stdout).not.toContain("exact-head");
+    expect(githubOutput).not.toContain("run_id=");
+  });
+
+  // source-shape-contract: security -- Every PR dependency consumer must receive the verified archive without package access
+  it.each(dependencyInstallJobs)("passes the verified SDK archive to %s", (jobName) => {
+    const job = prWorkflow.jobs[jobName];
+    expect(job.needs).toEqual(expect.arrayContaining(["changes", "openshell-sdk-package"]));
+    expect(job.permissions?.packages).toBeUndefined();
+    const download = requiredWorkflowStep(job, "Download verified OpenShell SDK archive");
+    expect(download.uses).toBe(
+      "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+    );
+    expect(download.if).toBe("needs.openshell-sdk-package.outputs.required == 'true'");
+    expect(download.with).toMatchObject({
+      name: "openshell-sdk-package",
+      path: "${{ runner.temp }}/openshell-sdk",
+    });
+  });
+
+  // source-shape-contract: security -- The package credential must remain in a base-loaded workflow that uploads only the verified SDK archive
+  it("keeps package access out of pull request controlled execution", () => {
+    expect(sdkPackageWorkflow.on).toEqual({
+      pull_request_target: { types: ["opened", "synchronize", "reopened", "edited"] },
+    });
+    expect(sdkPackageWorkflow.concurrency).toEqual({
+      group:
+        "openshell-sdk-package-${{ github.event.pull_request.number }}-${{ github.event.action != 'edited' || github.event.changes.base != null }}",
+      "cancel-in-progress": true,
+    });
+    expect(sdkPackageWorkflow.permissions).toEqual({ contents: "read" });
+    expect(sdkPackageJob.permissions).toEqual({ contents: "read", packages: "read" });
+    expect(sdkPackageJob.if).toBe(
+      "${{ github.event.pull_request.head.repo.full_name == github.repository && (github.event.action != 'edited' || github.event.changes.base != null) }}",
+    );
+    expect(sdkPackageJob["timeout-minutes"]).toBe(5);
+
+    const checkout = requiredWorkflowStep(
+      sdkPackageJob,
+      "Checkout base-controlled package verifier",
+    );
+    expect(checkout.uses).toBe(trustedCheckoutAction);
+    expect(checkout.with).toMatchObject({
+      ref: "${{ github.event.pull_request.base.sha }}",
+      "persist-credentials": false,
+    });
+    expect(String(checkout.with?.["sparse-checkout"])).not.toContain("pull_request.head");
+
+    const fetch = requiredWorkflowStep(
+      sdkPackageJob,
+      "Download and verify exact OpenShell SDK package",
+    );
+    expect(fetch.env).toEqual({
+      NEMOCLAW_OPEN_SHELL_SDK_OUTPUT_DIRECTORY: "${{ runner.temp }}/openshell-sdk",
+      NODE_AUTH_TOKEN: "${{ github.token }}",
+    });
+    expect(fetch.run).toContain(
+      "node --experimental-strip-types scripts/checks/package-openshell-sdk-for-pr.mts",
+    );
+    expect(fetch.run).toContain("artifact_path=");
+    expect(
+      (sdkPackageJob.steps ?? [])
+        .filter((candidate) => candidate.name !== fetch.name)
+        .map((candidate) => candidate.env?.NODE_AUTH_TOKEN),
+    ).toEqual(
+      (sdkPackageJob.steps ?? [])
+        .filter((candidate) => candidate.name !== fetch.name)
+        .map(() => undefined),
+    );
+
+    const upload = requiredWorkflowStep(sdkPackageJob, "Upload verified OpenShell SDK archive");
+    expect(upload.uses).toBe("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
+    expect(upload.with).toMatchObject({
+      name: "openshell-sdk-${{ github.event.pull_request.head.sha }}",
+      path: "${{ steps.package.outputs.artifact_path }}",
+      "if-no-files-found": "error",
+      "retention-days": 1,
+    });
+  });
+
+  // source-shape-contract: security -- The credential-bearing workflow must derive one package identity from reviewed base data instead of duplicating package coordinates
+  it("derives the package and archive identity from the base-controlled decision", () => {
+    const serialized = JSON.stringify(sdkPackageWorkflow);
+    expect(serialized).not.toContain("@nvidia/openshell-sdk@0.0.106");
+    expect(serialized).not.toContain("nvidia-openshell-sdk-0.0.106.tgz");
   });
 
   // source-shape-contract: security -- PR base SHA action execution prevents pull-request code from authorizing installer hashes
@@ -613,6 +1118,7 @@ describe("pull request and main workflow contracts", () => {
       CODE_CHANGED: "true",
       DOCS_ONLY_RESULT: "skipped",
       INSTALLER_INTEGRATION_RESULT: "success",
+      OPEN_SHELL_SDK_PACKAGE_RESULT: "success",
       PLUGIN_TESTS_RESULT: "success",
       REVIEWED_NPM_AUDIT_RESULT: "success",
       STATIC_RESULT: "success",
@@ -650,6 +1156,7 @@ describe("pull request and main workflow contracts", () => {
       CODE_CHANGED: "false",
       DOCS_ONLY_RESULT: "success",
       INSTALLER_INTEGRATION_RESULT: "skipped",
+      OPEN_SHELL_SDK_PACKAGE_RESULT: "skipped",
       PLUGIN_TESTS_RESULT: "skipped",
       REVIEWED_NPM_AUDIT_RESULT: "skipped",
       STATIC_RESULT: "skipped",
