@@ -8,6 +8,12 @@ import { inferContainerRuntime } from "../../platform";
 import { dockerInfo } from "./info";
 import type { DockerCaptureOptions } from "./run";
 
+export {
+  mergeIsolatedDockerClientEnv,
+  prepareDockerBuildEnvironment,
+  type PreparedDockerBuildEnvironment,
+} from "./client-isolation";
+
 export const DOCKER_INFO_RUNTIME_PROBE_ATTEMPTS = 3;
 export const DOCKER_INFO_RUNTIME_PROBE_RETRY_DELAY_MS = 250;
 export const DOCKER_INFO_RUNTIME_PROBE_TIMEOUT_MS = 5000;
@@ -28,15 +34,12 @@ export function detectContainerRuntimeFromDockerInfo(
   const timeout = Math.max(1, Math.floor(opts.timeoutMs ?? DOCKER_INFO_RUNTIME_PROBE_TIMEOUT_MS));
   const probe = opts.dockerInfoImpl ?? dockerInfo;
 
-  return retryUntil(
-    () => inferContainerRuntime(probe({ ignoreError: true, timeout })),
-    {
-      accept: (runtime) => runtime !== "unknown",
-      retryDelaysMs: Array.from(
-        { length: attempts - 1 },
-        () => DOCKER_INFO_RUNTIME_PROBE_RETRY_DELAY_MS,
-      ),
-      sleep: opts.sleep ?? sleepMs,
-    },
-  );
+  return retryUntil(() => inferContainerRuntime(probe({ ignoreError: true, timeout })), {
+    accept: (runtime) => runtime !== "unknown",
+    retryDelaysMs: Array.from(
+      { length: attempts - 1 },
+      () => DOCKER_INFO_RUNTIME_PROBE_RETRY_DELAY_MS,
+    ),
+    sleep: opts.sleep ?? sleepMs,
+  });
 }

@@ -4,6 +4,10 @@
 import { randomBytes } from "node:crypto";
 
 import {
+  mergeIsolatedDockerClientEnv,
+  prepareDockerBuildEnvironment,
+} from "../adapters/docker/client-isolation";
+import {
   NEMOCLAW_CREATE_ATTEMPT_LABEL,
   NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH,
   parseOpenShellSandboxId,
@@ -42,10 +46,6 @@ import type {
 } from "./sandbox-gpu-create-flow";
 import { fingerprintSandboxRecreateValue } from "./sandbox-recreate-transaction";
 import * as sandboxGpuPreflight from "./sandbox-gpu-preflight";
-import {
-  mergeIsolatedDockerClientEnv,
-  prepareDockerBuildEnvironment,
-} from "./docker-client-isolation";
 import { SANDBOX_RECREATE_PROBE_TIMEOUT_MS } from "./sandbox-recreate-probe";
 import type { CreatedSandboxReadyIdentityCheck } from "./sandbox-readiness-tracing";
 import * as sandboxReadinessTracing from "./sandbox-readiness-tracing";

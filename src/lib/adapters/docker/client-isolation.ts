@@ -6,13 +6,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { DOCKER_DESKTOP_CREDENTIAL_STORE_NAMES } from "../../domain/docker-host";
+import { isWsl } from "../../platform";
+import { buildSubprocessEnv } from "../../subprocess-env";
 import {
   dockerDesktopCredentialHelperResponds,
   readDockerCredentialStore,
-} from "../adapters/docker/credential-store";
-import { DOCKER_DESKTOP_CREDENTIAL_STORE_NAMES } from "../domain/docker-host";
-import { isWsl } from "../platform";
-import { buildSubprocessEnv } from "../subprocess-env";
+} from "./credential-store";
+import { dockerSpawnSync } from "./exec";
 
 const DOCKER_ENV_NAMES = [
   "CONTAINERS_CONF",
@@ -114,7 +115,7 @@ function dockerDesktopCredentialHelperRespondsFromBuild(
 
 function dockerContextIsDefaultFromBuild(env: NodeJS.ProcessEnv): boolean {
   if (env.DOCKER_HOST) return true;
-  const result = spawnSync("docker", ["context", "show"], {
+  const result = dockerSpawnSync(["context", "show"], {
     encoding: "utf-8",
     env: dockerBuildSubprocessEnv(env),
     shell: false,

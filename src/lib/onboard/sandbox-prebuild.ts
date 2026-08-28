@@ -6,7 +6,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { dockerImageInspectFormat } from "../adapters/docker";
+import {
+  createCredentialFreeDockerConfig,
+  dockerBuildSubprocessEnv,
+  dockerImageInspectFormat,
+  prepareDockerBuildEnvironment,
+  type PreparedDockerBuildEnvironment,
+} from "../adapters/docker";
 import { dockerSpawn } from "../adapters/docker/exec";
 import { redirectInheritedChildStdoutToStderr } from "../cli/stdout-guard";
 import {
@@ -17,12 +23,6 @@ import {
   SANDBOX_BUILD_CONTEXT_PREFIX,
   type SandboxBuildContextOrigin,
 } from "../sandbox/build-context";
-import {
-  createCredentialFreeDockerConfig,
-  dockerBuildSubprocessEnv,
-  prepareDockerBuildEnvironment,
-  type PreparedDockerBuildEnvironment,
-} from "./docker-client-isolation";
 import { isPortableExperimentalProfile } from "./docker-driver-platform";
 import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers";
 
@@ -32,7 +32,7 @@ export {
   prepareDockerBuildEnvironment,
   type DockerBuildEnvironmentInput,
   type PreparedDockerBuildEnvironment,
-} from "./docker-client-isolation";
+} from "../adapters/docker";
 
 const TRUTHY_FLAG_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSY_FLAG_VALUES = new Set(["0", "false", "no", "off"]);

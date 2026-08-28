@@ -9,7 +9,12 @@
 import fs from "node:fs";
 import os from "node:os";
 import nodePath from "node:path";
-import { detectContainerRuntimeFromDockerInfo } from "../adapters/docker/runtime";
+import {
+  detectContainerRuntimeFromDockerInfo,
+  mergeIsolatedDockerClientEnv,
+  prepareDockerBuildEnvironment,
+  type PreparedDockerBuildEnvironment,
+} from "../adapters/docker/runtime";
 import { createBearerAuthConfig } from "../adapters/http/auth-config";
 import { CONTAINER_REACHABILITY_IMAGE } from "../adapters/http/container-curl-probe";
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
@@ -20,11 +25,6 @@ import { OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
 
 import { retryUntil } from "../core/retry";
 import { sleepSeconds } from "../core/wait";
-import {
-  mergeIsolatedDockerClientEnv,
-  prepareDockerBuildEnvironment,
-  type PreparedDockerBuildEnvironment,
-} from "../onboard/docker-client-isolation";
 import { containerCanReachHostLoopback, isWsl, type WslDetectionOptions } from "../platform";
 import { type CaptureResult, runCapture, runCaptureEx, shellQuote } from "../runner";
 import { buildSubprocessEnv } from "../subprocess-env";

@@ -33,10 +33,11 @@ const sandboxCreateMocks = vi.hoisted(() => ({
   isDockerDesktopWslRuntime: vi.fn(),
 }));
 const dockerClientIsolationMocks = vi.hoisted(() => ({
-  prepare: vi.fn<typeof import("../docker-client-isolation").prepareDockerBuildEnvironment>(),
+  prepare:
+    vi.fn<typeof import("../../adapters/docker/client-isolation").prepareDockerBuildEnvironment>(),
   original: undefined as
     | undefined
-    | typeof import("../docker-client-isolation").prepareDockerBuildEnvironment,
+    | typeof import("../../adapters/docker/client-isolation").prepareDockerBuildEnvironment,
 }));
 
 vi.mock("../../adapters/docker/inspect", async (importOriginal) => ({
@@ -61,8 +62,8 @@ vi.mock("../docker-gpu-sandbox-create", async (importOriginal) => ({
   isDockerDesktopWslRuntime: sandboxCreateMocks.isDockerDesktopWslRuntime,
 }));
 
-vi.mock("../docker-client-isolation", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../docker-client-isolation")>();
+vi.mock("../../adapters/docker/client-isolation", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../adapters/docker/client-isolation")>();
   dockerClientIsolationMocks.original = original.prepareDockerBuildEnvironment;
   return { ...original, prepareDockerBuildEnvironment: dockerClientIsolationMocks.prepare };
 });

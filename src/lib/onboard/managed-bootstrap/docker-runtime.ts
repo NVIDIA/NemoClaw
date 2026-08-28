@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { dockerImageInspect } from "../../adapters/docker/inspect";
-import { dockerPullWithProgressWatchdog } from "../../adapters/docker/pull";
-import { dockerRun as defaultDockerRun } from "../../adapters/docker/run";
 import {
   mergeIsolatedDockerClientEnv,
   prepareDockerBuildEnvironment,
   type PreparedDockerBuildEnvironment,
-} from "../docker-client-isolation";
+} from "../../adapters/docker/client-isolation";
+import { dockerRun as defaultDockerRun } from "../../adapters/docker/command";
+import { dockerImageInspect } from "../../adapters/docker/inspect";
+import { dockerPullWithProgressWatchdog } from "../../adapters/docker/pull";
 import { hasZeroDockerExitStatus } from "../docker-command-result";
 import { createDockerGpuDiagnosticRedactor } from "../docker-gpu-diagnostic-redaction";
 import { detectTegraDeviceGroupGids } from "../docker-gpu-jetson-groups";
