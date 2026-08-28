@@ -93,7 +93,7 @@ test ! -e "${runtimeDir}/openshell-gateway.pid"`;
   });
 }
 
-function runDarwinGatewayPidFile(contents: string, symlink = false) {
+function runDarwinGatewayPidFile(contents: string, symlink = false, listenerPid = "") {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-darwin-gateway-pid-file-"));
   const home = path.join(tmp, "home");
   const bin = path.join(tmp, "bin");
@@ -102,6 +102,17 @@ function runDarwinGatewayPidFile(contents: string, symlink = false) {
   fs.mkdirSync(bin, { recursive: true });
   fs.mkdirSync(runtimeDir, { recursive: true });
   writeExecutable(path.join(bin, "uname"), "#!/usr/bin/env bash\nprintf 'Darwin\\n'\n");
+  writeExecutable(
+    path.join(bin, "lsof"),
+    `#!/usr/bin/env bash
+if [ "\${1:-}" = "-nP" ] && [ "\${2:-}" = "-iTCP:8080" ] && [ "\${3:-}" = "-sTCP:LISTEN" ] && [ "\${4:-}" = "-t" ]; then
+  [ -n '${listenerPid}' ] || exit 1
+  printf '%s\\n' '${listenerPid}'
+  exit 0
+fi
+exit 1
+`,
+  );
   const writePidFile = symlink
     ? () => {
         const target = path.join(tmp, "pid-target");
@@ -133,7 +144,11 @@ stop_legacy_openshell_gateway_process`,
 }
 
 function runDarwinGatewayServiceStop(
-  options: { trustedLabel?: boolean; trustedProgram?: boolean } = {},
+  options: {
+    trustedActiveProgram?: boolean;
+    trustedLabel?: boolean;
+    trustedProgram?: boolean;
+  } = {},
 ) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-darwin-gateway-service-stop-"));
   const home = path.join(tmp, "home");
@@ -179,7 +194,14 @@ esac
     `#!/usr/bin/env bash
 printf '%s\n' "$*" >>'${launchctlLog}'
 case "\${1:-}" in
-  print) [ -f '${active}' ] ;;
+  print)
+    [ -f '${active}' ] || exit 1
+    printf 'program = %s\\n' '${
+      options.trustedActiveProgram === false
+        ? path.join(tmp, "active-foreign-gateway")
+        : serviceProgram
+    }'
+    ;;
   bootout) rm -f '${active}' ;;
 esac
 `,
@@ -209,7 +231,99 @@ stop_macos_openshell_gateway_user_service`,
   };
 }
 
+function runDarwinRetirementFallback() {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-darwin-retirement-fallback-"));
+  const home = path.join(tmp, "home");
+  const bin = path.join(tmp, "bin");
+  const stateDir = path.join(tmp, "state");
+  const runtimeDir = path.join(tmp, "runtime");
+  const gatewayBin = path.join(home, ".local", "bin", "openshell-gateway");
+  const openshellLog = path.join(tmp, "openshell.log");
+  fs.mkdirSync(path.dirname(gatewayBin), { recursive: true });
+  fs.mkdirSync(bin, { recursive: true });
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.mkdirSync(runtimeDir, { recursive: true });
+  fs.writeFileSync(path.join(stateDir, "sandboxes.json"), "{}\n");
+  writeExecutable(gatewayBin, "#!/usr/bin/env bash\nexec sleep 60\n");
+  writeExecutable(path.join(bin, "uname"), "#!/usr/bin/env bash\nprintf 'Darwin\\n'\n");
+  writeExecutable(
+    path.join(bin, "openshell"),
+    `#!/usr/bin/env bash
+printf '%s\\n' "$*" >>'${openshellLog}'
+[ "\${1:-}" = "gateway" ] && [ "\${2:-}" = "remove" ]
+`,
+  );
+  writeExecutable(
+    path.join(bin, "ps"),
+    `#!/usr/bin/env bash
+managed_pid="$(cat '${runtimeDir}/openshell-gateway.pid')" || exit 1
+[ "\${2:-}" = "$managed_pid" ] || exit 1
+printf '%s\\n' 'openshell-gateway[nemoclaw=nemoclaw-20369;port=20369]'
+`,
+  );
+  writeExecutable(
+    path.join(bin, "lsof"),
+    `#!/usr/bin/env bash
+managed_pid="$(cat '${runtimeDir}/openshell-gateway.pid')" || exit 1
+[ "\${3:-}" = "$managed_pid" ] || exit 1
+printf 'p%s\\nn%s\\n' "$managed_pid" '${gatewayBin}'
+`,
+  );
+
+  const result = spawnSync(
+    "bash",
+    [
+      "-c",
+      `trap 'kill "$gateway_pid" 2>/dev/null || true' EXIT
+source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
+nemoclaw_state_dir() { printf '%s\\n' '${stateDir}'; }
+nemoclaw_gateway_name() { printf '%s\\n' 'nemoclaw-20369'; }
+registered_sandbox_count() { printf '1\\n'; }
+require_openshell_compatible_sandbox_names() { :; }
+confirm_legacy_managed_image_recovery() { :; }
+run_preupgrade_backup() { :; }
+installed_openshell_version() { printf '0.0.85\\n'; }
+legacy_openshell_gateway_upgrade_needed() { return 1; }
+resolve_current_openshell_version_range() { printf '0.0.106 0.0.106\\n'; }
+version_gte() { return 1; }
+stop_nemoclaw_openshell_gateway_user_service() { return 1; }
+HOME="${home}"
+NEMOCLAW_GATEWAY_PORT=20369
+NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="${runtimeDir}"
+"${gatewayBin}" 60 &
+gateway_pid=$!
+sleep 0.1
+printf '%s\\n' "$gateway_pid" >"${runtimeDir}/openshell-gateway.pid"
+preinstall_backup_and_retire_legacy_gateway
+wait "$gateway_pid" 2>/dev/null || true
+if kill -0 "$gateway_pid" 2>/dev/null; then exit 9; fi
+test ! -e "${runtimeDir}/openshell-gateway.pid"
+test "$_OPENSHELL_INSTALL_REQUIRED_BEFORE_RECOVERY" = true
+test "$NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE" = 1
+grep -F 'gateway destroy -g nemoclaw-20369' '${openshellLog}' >/dev/null
+grep -F 'gateway remove nemoclaw-20369' '${openshellLog}' >/dev/null`,
+    ],
+    {
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: home,
+        XDG_BIN_HOME: "",
+        PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`,
+      },
+    },
+  );
+  return { result, openshellLog };
+}
+
 describe("install.sh macOS OpenShell upgrade recovery", () => {
+  it("retires the trusted PID-file gateway through the complete fallback chain (#10369)", () => {
+    const { result, openshellLog } = runDarwinRetirementFallback();
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(fs.readFileSync(openshellLog, "utf-8")).toContain("gateway remove nemoclaw-20369");
+  });
+
   it("stops only the gateway process with matching owned state and process identity (#10369)", () => {
     const result = runDarwinGatewayProcessStop();
 
@@ -228,11 +342,20 @@ describe("install.sh macOS OpenShell upgrade recovery", () => {
     expect(result.status, result.stdout + result.stderr).toBe(0);
   });
 
-  it("clears a stale owned macOS gateway PID file without signaling (#10369)", () => {
+  it("clears a stale owned macOS gateway PID file only when the port has no listener (#10369)", () => {
     const { result, pidFile } = runDarwinGatewayPidFile("999999999\n");
 
     expect(result.status, result.stdout + result.stderr).toBe(0);
     expect(fs.existsSync(pidFile)).toBe(false);
+  });
+
+  it("preserves registration recovery when a stale PID file has an active listener (#10369)", () => {
+    const { result, pidFile } = runDarwinGatewayPidFile("999999999\n", false, "4242");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("gateway port 8080 still has listener PID(s): 4242");
+    expect(result.stderr).toContain("sandbox backups were preserved");
+    expect(fs.existsSync(pidFile)).toBe(true);
   });
 
   it("rejects malformed or symlinked macOS gateway PID files (#10369)", () => {
@@ -271,6 +394,16 @@ describe("install.sh macOS OpenShell upgrade recovery", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("macOS user service with an untrusted executable");
     expect(launchctlLog).toBe("");
+  });
+
+  it("refuses to stop a trusted plist when the active launchd job has a foreign executable (#10369)", () => {
+    const { result, launchctlLog } = runDarwinGatewayServiceStop({ trustedActiveProgram: false });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("active macOS user service with an untrusted executable");
+    expect(launchctlLog.trim().split(/\r?\n/)).toEqual([
+      `print gui/${process.getuid?.()}/homebrew.mxcl.openshell`,
+    ]);
   });
 
   it("selects Homebrew binaries after a verified formula install (#10386)", () => {

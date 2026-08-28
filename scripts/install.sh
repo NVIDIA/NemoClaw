@@ -3230,7 +3230,7 @@ stop_legacy_openshell_gateway_process() {
     *) return 1 ;;
   esac
 
-  local gateway_port runtime_dir pid_file pid gateway_exe attempt
+  local gateway_port runtime_dir pid_file pid gateway_exe listener_pids attempt
   gateway_port="$(resolve_nemoclaw_gateway_port)" || return 2
   if [ -n "${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR:-}" ]; then
     runtime_dir="${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR}"
@@ -3249,6 +3249,13 @@ stop_legacy_openshell_gateway_process() {
   [[ "$pid" =~ ^[1-9][0-9]*$ ]] \
     || error "Refusing to retire the legacy OpenShell gateway from an invalid PID file: ${pid_file}"
   if ! kill -0 "$pid" 2>/dev/null; then
+    if [ "$platform" = "Darwin" ]; then
+      command_exists lsof \
+        || error "Could not verify that gateway port ${gateway_port} is free after finding a stale PID file: ${pid_file}"
+      listener_pids="$(lsof -nP -iTCP:"${gateway_port}" -sTCP:LISTEN -t 2>/dev/null || true)"
+      [ -z "$listener_pids" ] \
+        || error "Refusing to retire the legacy OpenShell gateway from stale PID file ${pid_file}: gateway port ${gateway_port} still has listener PID(s): $(printf '%s' "$listener_pids" | tr '\n' ' '). Stop the listener or restore the correct owned PID file, then retry; sandbox backups were preserved."
+    fi
     rm -f "$pid_file"
     return 0
   fi
@@ -3285,7 +3292,7 @@ stop_macos_openshell_gateway_user_service() {
   [ "$(uname -s)" = "Darwin" ] || return 1
 
   local gateway_port service_label service_path service_domain service_program
-  local brew_prefix expected_program
+  local brew_prefix expected_program active_service active_program
   gateway_port="$(resolve_nemoclaw_gateway_port)" || return 1
   [ "$gateway_port" -eq 8080 ] || return 1
   command_exists brew || return 1
@@ -3309,7 +3316,10 @@ stop_macos_openshell_gateway_user_service() {
     || error "Refusing to retire an OpenShell gateway from a macOS user service with an untrusted executable: ${service_program:-<empty>}"
 
   service_domain="gui/$(id -u)/${service_label}"
-  launchctl print "$service_domain" >/dev/null 2>&1 || return 1
+  active_service="$(launchctl print "$service_domain" 2>/dev/null)" || return 1
+  active_program="$(printf '%s\n' "$active_service" | sed -n 's/^[[:space:]]*program = //p' | head -1)"
+  [ "$active_program" = "$expected_program" ] \
+    || error "Refusing to retire an OpenShell gateway from an active macOS user service with an untrusted executable: ${active_program:-<empty>}"
   launchctl bootout "$service_domain" >/dev/null 2>&1 \
     || error "Could not stop the trusted OpenShell Homebrew gateway user service. Run 'launchctl print ${service_domain}' for details."
   launchctl print "$service_domain" >/dev/null 2>&1 \
