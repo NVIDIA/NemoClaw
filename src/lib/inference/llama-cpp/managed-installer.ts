@@ -60,7 +60,6 @@ export interface ManagedLlamaCppInstallOptions {
   readonly gatewayPort?: number;
   readonly homeDir?: string;
   readonly env?: NodeJS.ProcessEnv;
-  readonly pullImage?: ManagedLlamaCppImagePull;
   readonly acquireGguf?: typeof acquireVerifiedLlamaCppGguf;
   readonly verifyGguf?: typeof verifyLlamaCppGgufCacheEntry;
   readonly checkPort?: typeof checkPortAvailable;
@@ -117,22 +116,6 @@ interface DockerNetworkInspection {
   readonly kind: "absent" | "owned";
   readonly id?: string;
 }
-
-interface ManagedLlamaCppImagePullResult {
-  readonly status: number | null;
-  readonly error?: Error;
-  readonly stderr?: string;
-  readonly stdout?: string;
-}
-
-type ManagedLlamaCppImagePull = (
-  image: string,
-  options: {
-    readonly env: Record<string, string>;
-    readonly maxTimeoutMs: number;
-    readonly logLine: (line: string) => void;
-  },
-) => Promise<ManagedLlamaCppImagePullResult>;
 
 type ManagedLlamaCppImagePullFailureLayer =
   | "authentication"
@@ -197,15 +180,13 @@ function classifyImagePullFailure(diagnostic: string): {
   );
 }
 
-function imagePullFailureDiagnostic(result: ManagedLlamaCppImagePullResult): string {
+function imagePullFailureDiagnostic(result: ReturnType<ContainerEngine["capture"]>): string {
   const sources = [result.stdout, result.stderr, result.error?.message].filter(
     (value): value is string => typeof value === "string" && value.trim().length > 0,
   );
   const diagnostic = sources.join("\n");
   const classification = classifyImagePullFailure(diagnostic);
-  const status =
-    result.status === null ? "Exit status unavailable." : `Exit status: ${String(result.status)}.`;
-  return `Failure classification: ${classification.layer}. Diagnostic code: ${classification.code}. ${status} Raw pull output suppressed.`;
+  return `Failure classification: ${classification.layer}. Diagnostic code: ${classification.code}. Exit status: ${String(result.status)}. Raw pull output suppressed.`;
 }
 
 function requireSuccess(label: string, result: ReturnType<ContainerEngine["capture"]>): string {
@@ -415,8 +396,6 @@ function launchContract(
 async function pullExactImages(
   images: readonly string[],
   engine: ContainerEngine,
-  pull: ManagedLlamaCppImagePull | undefined,
-  dockerEnv: Record<string, string>,
   log: (message: string) => void,
 ): Promise<void> {
   for (const image of new Set(images)) {
@@ -430,14 +409,8 @@ async function pullExactImages(
       throw new Error(`Managed llama.cpp could not prove local image availability for ${image}.`);
     }
     log(`  Pulling pinned managed-inference image ${image}`);
-    const result = pull
-      ? await pull(image, {
-          env: dockerEnv,
-          maxTimeoutMs: IMAGE_PULL_TIMEOUT_MS,
-          logLine: () => undefined,
-        })
-      : engine.capture(["pull", image], IMAGE_PULL_TIMEOUT_MS);
-    if (result.status !== 0 || ("error" in result && result.error !== undefined)) {
+    const result = engine.capture(["pull", image], IMAGE_PULL_TIMEOUT_MS);
+    if (result.status !== 0 || result.error !== undefined) {
       throw new Error(
         `Pinned managed-inference image pull failed for ${image}. ${imagePullFailureDiagnostic(result)}`,
       );
@@ -649,7 +622,6 @@ export async function installManagedLlamaCpp(
   const env = options.env ?? process.env;
   const homeDir = fs.realpathSync(options.homeDir ?? os.homedir());
   const paths = managedLlamaCppStatePaths(homeDir, options.gatewayPort);
-  const pull = options.pullImage;
   const acquire = options.acquireGguf ?? acquireVerifiedLlamaCppGguf;
   const verify = options.verifyGguf ?? verifyLlamaCppGgufCacheEntry;
   const checkPort = options.checkPort ?? checkPortAvailable;
@@ -728,8 +700,6 @@ export async function installManagedLlamaCpp(
         recipe.spec.readiness.probeImage,
       ],
       engine,
-      pull,
-      dockerEnv,
       log,
     );
     if (acquireModel) {

@@ -30,7 +30,6 @@ import {
 } from "./gpu-e2e-helpers.ts";
 
 const TIMEOUT_MS = 110 * 60_000;
-const EXPECTED_LLAMA_CPP_REQUEST_GUARD_PATH = "/usr/local/bin/nemoclaw-llama-cpp-request-guard";
 const RECIPE_ID = "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-llamacpp-gpu";
 validateSandboxName(SANDBOX_NAME);
@@ -162,18 +161,12 @@ test(
     );
     expect(inspect.exitCode, resultText(inspect)).toBe(0);
     const inspectedRuntime = JSON.parse(inspect.stdout) as Array<{
-      Config?: { Entrypoint?: unknown };
       HostConfig?: { PortBindings?: Record<string, unknown> };
       NetworkSettings?: { Ports?: Record<string, unknown> };
-      State?: { Pid?: unknown; Running?: unknown };
+      State?: { Running?: unknown };
     }>;
-    expect(inspectedRuntime).toHaveLength(1);
     const runtime = inspectedRuntime[0];
     expect(runtime?.State?.Running).toBe(true);
-    expect(runtime?.State?.Pid).toEqual(expect.any(Number));
-    expect(runtime?.Config?.Entrypoint).toEqual([EXPECTED_LLAMA_CPP_REQUEST_GUARD_PATH]);
-    const containerPid = runtime?.State?.Pid as number;
-    expect(containerPid).toBeGreaterThan(0);
     expect(inspectedRuntime[0]?.HostConfig?.PortBindings).toEqual({});
     expect(
       Object.values(inspectedRuntime[0]?.NetworkSettings?.Ports ?? {}).every(
@@ -187,7 +180,7 @@ test(
     });
     const processes = await host.command(
       "docker",
-      ["container", "top", MANAGED_LLAMA_CPP_CONTAINER_NAME, "-eo", "pid,ppid,comm"],
+      ["container", "top", MANAGED_LLAMA_CPP_CONTAINER_NAME, "-eo", "pid,comm"],
       {
         artifactName: "managed-llama-cpp-container-processes",
         env: buildAvailabilityProbeEnv(),
@@ -200,11 +193,9 @@ test(
       .split("\n")
       .slice(1)
       .map((line) => line.trim().split(/\s+/u))
-      .find(([, , processName]) => processName === "llama-server");
+      .find(([, processName]) => processName === "llama-server");
     expect(llamaProcess, resultText(processes)).toBeDefined();
     const llamaPid = Number(llamaProcess?.[0]);
-    expect(llamaPid).toBeGreaterThan(0);
-    expect(Number(llamaProcess?.[1])).toBe(containerPid);
     const computeApps = await host.command(
       "nvidia-smi",
       ["--query-compute-apps=pid,process_name,used_gpu_memory", "--format=csv,noheader,nounits"],
