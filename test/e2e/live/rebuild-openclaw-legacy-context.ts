@@ -35,12 +35,12 @@ function writePreservingMode(filePath: string, contents: string, mode: number): 
 
 /**
  * Stage the complete trusted OpenClaw Docker build context, then lower only
- * the inputs needed to create the historical sandbox exercised by this E2E.
- * The caller restores the current trusted recipe before invoking rebuild.
+ * the runtime inputs needed to create the historical sandbox exercised by this
+ * E2E. The base image remains under the real onboard resolver's authority. The
+ * caller restores the current trusted recipe before invoking rebuild.
  */
 export function createLegacyOpenClawSandboxContext(options: {
   rootDir: string;
-  baseImage: string;
   openClawVersion: string;
 }): LegacyOpenClawSandboxContext {
   const staged = stageOptimizedSandboxBuildContext(options.rootDir);
@@ -54,12 +54,6 @@ export function createLegacyOpenClawSandboxContext(options: {
   try {
     let legacyDockerfile = replaceExactlyOne(
       currentDockerfile,
-      /^ARG BASE_IMAGE=.*$/gm,
-      `ARG BASE_IMAGE=${options.baseImage}`,
-      "Dockerfile BASE_IMAGE default",
-    );
-    legacyDockerfile = replaceExactlyOne(
-      legacyDockerfile,
       /^ARG OPENCLAW_VERSION=.*$/gm,
       `ARG OPENCLAW_VERSION=${options.openClawVersion}`,
       "Dockerfile OPENCLAW_VERSION default",
