@@ -434,6 +434,7 @@ function sanitizeRuntimeSetup(
     envAliases: sanitizeRuntimeSetupEntries(setup?.envAliases, [
       "channelId",
       "envKey",
+      "targetEnvKey",
       "match",
       "value",
       "message",

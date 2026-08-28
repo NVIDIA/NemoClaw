@@ -5,6 +5,10 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadAgent } from "../../../src/lib/agent/defs";
+import {
+  buildMessagingRuntimePlanArtifact,
+  type MessagingBuildPlan,
+} from "../../../src/lib/messaging/applier/build/messaging-build-applier.mts";
 
 const RUNTIME_CONFIG_GUARD = path.join(
   import.meta.dirname,
@@ -620,6 +624,91 @@ with tempfile.TemporaryDirectory() as tmp:
 });
 
 describe("Hermes provider placeholder diagnostics", () => {
+  it("carries image-artifact credential aliases into Hermes-native env keys (#10079)", () => {
+    const plan = {
+      schemaVersion: 1,
+      sandboxName: "test-sandbox",
+      agent: "hermes",
+      channels: [
+        { channelId: "wechat", active: true, disabled: false },
+        { channelId: "teams", active: true, disabled: false },
+      ],
+      disabledChannels: [],
+      credentialBindings: [
+        { channelId: "wechat", providerEnvKey: "WECHAT_BOT_TOKEN" },
+        { channelId: "teams", providerEnvKey: "MSTEAMS_APP_PASSWORD" },
+      ],
+      agentRender: [],
+      buildSteps: [],
+      runtimeSetup: {
+        nodePreloads: [],
+        envAliases: [
+          {
+            channelId: "wechat",
+            envKey: "WECHAT_BOT_TOKEN",
+            targetEnvKey: "WEIXIN_TOKEN",
+            match: "^openshell:resolve:env:v[0-9]+_WECHAT_BOT_TOKEN$",
+            value: "openshell:resolve:env:WECHAT_BOT_TOKEN",
+          },
+          {
+            channelId: "teams",
+            envKey: "MSTEAMS_APP_PASSWORD",
+            targetEnvKey: "TEAMS_CLIENT_SECRET",
+            match: "^openshell:resolve:env:v[0-9]+_MSTEAMS_APP_PASSWORD$",
+            value: "openshell:resolve:env:MSTEAMS_APP_PASSWORD",
+          },
+        ],
+        secretScans: [],
+      },
+    } satisfies MessagingBuildPlan;
+    const runtimeArtifact = buildMessagingRuntimePlanArtifact(plan);
+    expect(runtimeArtifact).toBeTruthy();
+
+    const result = runPythonHarness(`${loadGuardModule}
+import json
+import os
+import tempfile
+
+with tempfile.TemporaryDirectory() as tmp:
+    env_path = os.path.join(tmp, ".env")
+    plan_path = os.path.join(tmp, "runtime-plan.json")
+    with open(env_path, "w", encoding="utf-8") as handle:
+        handle.write("WEIXIN_TOKEN=openshell:resolve:env:WECHAT_BOT_TOKEN\\n")
+        handle.write("TEAMS_CLIENT_SECRET=openshell:resolve:env:MSTEAMS_APP_PASSWORD\\n")
+    with open(plan_path, "w", encoding="utf-8") as handle:
+        json.dump(json.loads(${JSON.stringify(JSON.stringify(runtimeArtifact))}), handle)
+
+    os.environ["WECHAT_BOT_TOKEN"] = "openshell:resolve:env:v222_WECHAT_BOT_TOKEN"
+    os.environ["MSTEAMS_APP_PASSWORD"] = "openshell:resolve:env:v333_MSTEAMS_APP_PASSWORD"
+    guard._validate_env_text_with_boundary = lambda *_args: None
+    guard._write_existing = lambda path, text, *_args: open(path, "w", encoding="utf-8").write(text)
+    guard.refresh_hashes = lambda *_args: None
+    guard.provider_placeholders(
+        tmp,
+        os.path.join(tmp, ".config-hash"),
+        "compat",
+        plan_path,
+        "unused-boundary-validator",
+    )
+    with open(env_path, "r", encoding="utf-8") as handle:
+        print(handle.read(), end="")
+`);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain(
+      "WEIXIN_TOKEN=openshell:resolve:env:v222_WECHAT_BOT_TOKEN\n",
+    );
+    expect(result.stdout).toContain(
+      "TEAMS_CLIENT_SECRET=openshell:resolve:env:v333_MSTEAMS_APP_PASSWORD\n",
+    );
+    expect(result.stderr).toContain(
+      "[config] Refreshed Hermes provider placeholder for WEIXIN_TOKEN",
+    );
+    expect(result.stderr).toContain(
+      "[config] Refreshed Hermes provider placeholder for TEAMS_CLIENT_SECRET",
+    );
+  });
+
   it.each([
     ["wechat", "WECHAT_BOT_TOKEN", "WEIXIN_TOKEN"],
     ["teams", "MSTEAMS_APP_PASSWORD", "TEAMS_CLIENT_SECRET"],
