@@ -120,6 +120,71 @@ kubectl get nodes -l nvidia.com/gpu.present=true
 kubectl get pods -n "${DCGM_NAMESPACE:-gpu-operator-resources}" -l app=nvidia-dcgm-exporter
 ```
 
+### Existing monitoring stack and one 8-GPU node
+
+Set these variables when this recipe reuses an existing Prometheus stack and
+the inference Deployment is pinned to one 8-GPU node such as `dgx01`:
+
+| Variable | Purpose | dgx01 value |
+| --- | --- | --- |
+| `MONITORING_NS` | Namespace containing the existing Prometheus release. | `prometheus` |
+| `PROM_RELEASE` | Existing Prometheus Helm release. | `kube-prometheus-stack` |
+| `ADAPTER_RELEASE` | Existing Prometheus Adapter Helm release. | `prometheus-adapter` |
+| `DCGM_NAMESPACE` | Namespace containing the `nvidia-dcgm-exporter` Service and Pods. | `gpu-operator` |
+| `MAX_REPLICAS` | HPA upper bound. This does not derive from a Deployment node selector. | `8` |
+| `ALLOW_INSECURE_HTTP` | Explicit acknowledgement for cleartext HTTP in an isolated test cluster. | `1` only when TLS is not configured |
+
+Do not omit `MAX_REPLICAS` in a multi-node cluster: the installer otherwise
+uses total allocatable GPUs across the cluster. A Pod selector that pins
+inference to `dgx01` does not by itself limit the HPA to that node's eight
+GPUs.
+
+For the standard NVIDIA GPU Operator layout on this DGX cluster, DCGM runs in
+`gpu-operator`, not the recipe default `gpu-operator-resources`. Verify the
+namespace before installing:
+
+```bash
+DCGM_NAMESPACE=gpu-operator
+kubectl get pods -n "${DCGM_NAMESPACE}" -l app=nvidia-dcgm-exporter
+```
+
+Install or reconcile the existing `nemoclaw-gpu` release without creating a
+second Prometheus stack:
+
+```bash
+MONITORING_NS=prometheus \
+PROM_RELEASE=kube-prometheus-stack \
+ADAPTER_RELEASE=prometheus-adapter \
+DCGM_NAMESPACE=gpu-operator \
+MAX_REPLICAS=8 \
+HPA_METRIC=gpu_utilization \
+ALLOW_INSECURE_HTTP=1 \
+./scripts/install-hpa.sh
+```
+
+`ALLOW_INSECURE_HTTP=1` is only for an isolated evaluation cluster. For an
+HTTPS deployment, configure `ingress.tls` and omit that acknowledgement.
+
+### dgx01 8x H100 load test
+
+For the local dgx01 evaluation, `scripts/hpa-load-test.sh` defaults to the
+`dgx-8xh100` profile with an eight-replica target. It uses eight generator
+Pods, 256-token responses, and an increased per-Pod in-flight budget so each
+new H100 replica receives sustained work after it becomes Ready. The test
+keeps the 40% GPU target, adds at most one Pod every 10 seconds, holds at the
+maximum for 60 seconds, and removes at most one Pod every 30 seconds after
+the 60-second scale-down stabilization window.
+
+For an isolated cleartext test cluster, run:
+
+```bash
+ALLOW_INSECURE_HTTP=1 ./scripts/hpa-load-test.sh
+```
+
+Set `MAX_REPLICAS`, `TARGET_PODS`, `HPA_LOAD_PROFILE`, `JOB_PARALLELISM`,
+`MAX_TOKENS`, or `LOAD_MULTIPLIER` only when deliberately overriding the
+dgx01 defaults.
+
 Do not paste kubeconfig, registry credentials, OIDC secrets, or inference API keys into issues or PRs.
 
 ## Quick start
@@ -132,9 +197,11 @@ unless noted. Deeper options: [Install details](#install-details), [OpenShell de
 ```bash
 git clone https://github.com/NVIDIA/NemoClaw.git
 cd NemoClaw/deploy/helm/gpu_autoscaling_k8s
-source versions.env
-uv tool install "openshell==${OPENSHELL_VERSION}"
-openshell --version
+    source versions.env
+    uv tool install "openshell==${OPENSHELL_VERSION}"
+    # If a new shell cannot find `openshell`, add uv's default tool directory:
+    export PATH="${HOME}/.local/bin:${PATH}"
+    openshell --version
 ```
 
 ### 2. Confirm GPUs and DCGM
@@ -211,15 +278,25 @@ source versions.env
 kubectl apply -f \
   "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml"
 
-export AGENT_NAME=openclaw   # or hermes | deepagents
+    # Required: select the agent-specific image and sandbox configuration.
+    # Valid values: openclaw, hermes, or deepagents.
+    export AGENT_NAME=openclaw
 
 # MicroK8s local registry (validated path) — see [MicroK8s local registry](#microk8s-local-registry)
 microk8s enable registry   # if not already on
 export AGENT_SANDBOX_IMAGE=localhost:32000/nemoclaw-${AGENT_NAME}-k8s:${NEMOCLAW_VERSION}
 # Or any registry nodes can pull: export AGENT_SANDBOX_IMAGE=registry.example.com/team/nemoclaw-${AGENT_NAME}-k8s:v0.0.104
-./scripts/build-agent-sandbox-image.sh
+    ./scripts/build-agent-sandbox-image.sh
 
-export OPENSHELL_OIDC_ISSUER=https://idp.example.com/realms/openshell
+Use the same `AGENT_NAME` when you create, verify, and run the sandbox. The lifecycle scripts stop with a clear error when it is unset or invalid.
+
+Choose one agent for each sandbox. `openclaw`, `hermes`, and `deepagents` are
+separate agent images; do not install all three into one sandbox. To evaluate
+another agent, build its image and create a separate sandbox with a different
+name. The GPU autoscaling Helm chart is agent-neutral: `install-hpa.sh` and
+`hpa-load-test.sh` do not require an agent sandbox.
+
+    export OPENSHELL_OIDC_ISSUER=https://idp.example.com/realms/openshell
 export OPENSHELL_OIDC_AUDIENCE=openshell-cli
 ./scripts/install-openshell-k8s.sh
 ```
@@ -295,12 +372,6 @@ Installer side effects: by default installs Prometheus when the configured relea
 Static checks (no cluster):
 
 ```bash
-./scripts/test-render-contract.sh
-./scripts/test-script-security-contract.sh
-./scripts/test-dcgm-servicemonitor-contract.sh
-node ./scripts/test-inference-auth-contract.mjs
-node ./scripts/test-metrics-proxy-metrics-contract.mjs
-./scripts/test-nemoclaw-k8s-contract.sh
 ```
 
 ### Reuse an existing Prometheus stack
@@ -356,6 +427,8 @@ one API server at a time. The certificate path and renewal procedure are distrib
 cluster-specific; the recipe does not manage control-plane certificates.
 
 ### TLS values
+
+TLS overlays and `local.env` are only needed when Envoy serves HTTPS. For an isolated evaluation cluster, `ALLOW_INSECURE_HTTP=1` allows cleartext HTTP and does not require a TLS overlay or `local.env`; pass that acknowledgement explicitly to each chart script invocation.
 
 When Envoy is enabled (`ENABLE_ENVOY_LB=1`, the default), **every** `helm upgrade` from the recipe scripts needs a values overlay that sets `ingress.tls`. Chart `values.yaml` alone is not enough.
 
@@ -459,10 +532,6 @@ The chart and `metrics-proxy` treat all nine `AGENT_NAME` × `inference.runtime`
 - The recipe supports Deep Agents Code + Ollama through the same OpenAI-compatible route, but current NemoClaw guidance does not offer local Ollama for Deep Agents Code. `try-it.sh` allows that pairing with a warning.
 - Static contracts do not replace live GPU validation. Treat combinations not listed under [Validated hardware](#validated-hardware) as experimental until tested on your cluster.
 
-#### Recommended validation matrix
-
-`./scripts/test-agent-runtime-matrix-contract.sh` renders and checks all nine agent × runtime combinations without a cluster, GPU, or real credential. For live testing, run the following sequentially after the baseline is healthy; each row covers a distinct documented path, and together they cover every agent harness and runtime without spending time on the currently undocumented Deep Agents Code + Ollama pairing.
-
 | Order | Agent × runtime | Why include it | Credential setup |
 |---|---|---|---|
 | 1 | OpenClaw + Ollama | Baseline/default path; this is the initial install. | None |
@@ -476,21 +545,21 @@ The load test uses `HPA_LOAD_PROFILE=auto` by default. `TARGET_PODS` still defau
 
 | Effective profile | Selected by `auto` | Default test target | Per-GPU synthetic load | Purpose |
 |---|---|---:|---:|---|
-| `dgx-8xh100` | Eight target pods and an H100 GPU product label | 8 | 200 (cap 640/pod) | Uses a temporary 30% GPU target (the configured 40% target is restored on exit) so a just-created H100 pod's short DCGM `0%` label-mapping window does not block further scale-up. It may add 2 pods/10s and remove 2 pods/15s after 20s stabilization. Cold pods are allowed up to 15 minutes before the test reports an incomplete scale-up. |
-| `brev-4xl40s` | Four target pods and an L40S GPU product label | 4 | 64 | Preserves the Brev AWS 4×L40S-tested behavior. |
-| `portable` | Any other hardware/count | Allocatable GPU count | 64 | Conservative fallback; override explicitly after measuring your hardware. |
+| `dgx-8xh100` | Eight target pods and an H100 GPU product label | 8 | 320 (cap 640/pod) | Uses the configured 40% GPU target. Before a chat probe completes, the four generators each send 160 requests to reach the 640-request-per-Pod cap. The test adds one Pod every 10 seconds, holds all eight Ready replicas under load for 60 seconds, then removes one Pod every 30 seconds after a 60-second stabilization window. Cold pods are allowed up to 15 minutes before the test reports an incomplete scale-up. |
+| `brev-4xl40s` | Four target pods and an L40S GPU product label | 4 | 64 | Uses the same one-Pod HPA policy and 40% target during the test, then restores the configured policy. |
+| `portable` | Any other hardware/count | Allocatable GPU count | 64 | Uses the same one-Pod HPA policy and 40% target during the test, then restores the configured policy. Override the load profile explicitly after measuring unfamiliar hardware. |
 
 You can pin `HPA_LOAD_PROFILE=dgx-8xh100` or `HPA_LOAD_PROFILE=brev-4xl40s` in gitignored `local.env`. The profiles use the same load-generator code and OpenAI-compatible request workload; only their concurrency settings differ, so coverage and safety logic remain consistent.
 
 Before creating a load Job, the test waits for a clean HPA baseline of **1 current / 1 desired** Ready replica (up to 240 seconds). This prevents a new test from inheriting replicas or the 60-second scale-down stabilization window from a prior test. It does not force a scale-down, so it cannot disrupt real traffic; wait for existing traffic to drain, then rerun. Set `HPA_BASELINE_WAIT_SEC` only if a longer wait is appropriate for your cluster.
 
-Use the named wrappers when you want the hardware/count to be explicit:
+Use the generic script with an explicit profile when you want the hardware and count to be explicit:
 
 ```bash
 # Prioritized on-prem DGX test: exactly 8 GPU replicas with H100 load settings.
 export MAX_REPLICAS=8
 ./scripts/install-hpa.sh
-./scripts/hpa-load-test-dgx-8xh100.sh
+TARGET_PODS=8 HPA_LOAD_PROFILE=dgx-8xh100 ./scripts/hpa-load-test.sh
 
 # Existing Brev AWS behavior: exactly 4 GPU replicas with the original L40S settings.
 export MAX_REPLICAS=4
@@ -498,7 +567,7 @@ export MAX_REPLICAS=4
 ./scripts/hpa-load-test-brev-4xl40s.sh
 ```
 
-The wrappers reject a conflicting `TARGET_PODS` value. The DGX wrapper temporarily uses the faster policy shown above only for its test, then restores the policy from `HPA_VALUES`; it does not change the Brev/portable behavior. To test another capacity, use the generic `hpa-load-test.sh`, whose default remains the allocatable GPU count.
+Every load-test profile temporarily uses the one-Pod 40% policy shown above, then restores the policy from `HPA_VALUES`. The generic `hpa-load-test.sh` defaults to the allocatable GPU count. Set `TARGET_PODS` and `HPA_LOAD_PROFILE` when you need an explicit hardware profile.
 
 #### Switching runtimes
 
@@ -618,6 +687,8 @@ kubectl get --raw \
 **Example 2 — latency_avg (milliseconds).** Scale out when average per-pod chat latency is **above 3000 ms** (`HPA_TARGET_LATENCY_MS=3000`; `3000` = 3 s).
 
 Latency is the metrics-proxy **proxy duration** for `/v1/chat/completions`: from just before the in-pod inference `fetch` until the full upstream response has been written to the client (includes streaming). It excludes client→Gateway/Service network time. Each pod reports a rolling average of recent requests; after **60s idle** the gauge resets to 0 so HPA can scale down. HPA averages that gauge across Ready pods. `./scripts/get-hpa.sh` / `hpa-watch.sh` print plain millisecond numbers (for example `46514/3000` means 46514 ms current / 3000 ms target).
+
+`hpa-load-test.sh` sends its smoke request before it checks `latency_avg`, then waits up to 180 seconds for Prometheus and the adapter to publish the resulting metric. Set `LATENCY_METRIC_WAIT_SEC` when your scrape interval needs a longer wait.
 
 ```bash
 # 3000 ms (3 seconds) average latency target
