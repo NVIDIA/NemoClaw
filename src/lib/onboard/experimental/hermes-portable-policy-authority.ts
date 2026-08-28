@@ -10,7 +10,7 @@ import { mergePresetNamesIntoPolicy } from "../../policy";
 import { parseOpenShellPolicy } from "../../policy/merge";
 import type { SandboxEntry } from "../../state/registry/types";
 import { ensureRequiredTierPolicyPresets } from "../policy-tier-suppression";
-import { isOpenShellNativeGpuBaselineEnrichment } from "../sandbox-gpu-route-policy";
+import { isOpenShellGpuBaselineEnrichment } from "../sandbox-gpu-route-policy";
 
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
 const MAX_POLICY_BYTES = 256 * 1024;
@@ -248,10 +248,7 @@ export function proveHermesPortableLivePolicy(input: {
   );
   const baseDigest = semanticDigest(base);
   const fullDigest = semanticDigest(full);
-  if (
-    baseDigest !== intendedSemanticSha256 &&
-    !isOpenShellNativeGpuBaselineEnrichment(intended, base)
-  ) {
+  if (baseDigest !== intendedSemanticSha256 && !isOpenShellGpuBaselineEnrichment(intended, base)) {
     fail("scoped base policy disagrees with create input");
   }
   if (fullDigest !== baseDigest) {
@@ -265,6 +262,6 @@ export function proveHermesPortableLivePolicy(input: {
 }
 
 export const hermesPortablePolicyAuthorityInternals = {
-  isOpenShellNativeGpuBaselineEnrichment,
+  isOpenShellGpuBaselineEnrichment,
   semanticDigest,
 };

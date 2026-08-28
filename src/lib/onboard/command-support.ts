@@ -109,7 +109,7 @@ export function buildOnboardFlags(options: { includeEvents?: boolean } = {}): Re
     "recreate-sandbox": Flags.boolean({ description: "Delete and recreate an existing sandbox" }),
     "apf-interceptor": Flags.boolean({
       description:
-        "Create without a caller policy and require a contained sandbox-scoped policy without claiming its provenance",
+        "Create a providerless sandbox without a caller policy and require a contained sandbox-scoped policy without claiming its provenance",
       exclusive: ["resume", "recreate-sandbox"],
     }),
     gpu: Flags.boolean({

@@ -286,7 +286,7 @@ function requireCompleteManagedImageCatalog(
   }
   if (expectedRevision !== null && cohortRevision !== expectedRevision) {
     throw new SandboxWorkloadPreparationError(
-      "managed image catalog source revision does not match the live E2E candidate revision",
+      "managed image catalog source revision does not match the trusted catalog revision",
     );
   }
   return { release: cohortRelease!, revision: cohortRevision! };
@@ -373,6 +373,22 @@ export async function prepareSandboxWorkloadSource(
     );
   }
 
+  const trustedCatalogRevision = input.expectedCatalogRevision ?? input.catalogRevision ?? null;
+  if (
+    input.expectedCatalogRevision &&
+    input.catalogRevision &&
+    input.expectedCatalogRevision !== input.catalogRevision
+  ) {
+    throw new SandboxWorkloadPreparationError(
+      "managed image catalog has conflicting trusted revision authorities",
+    );
+  }
+  if (trustedCatalogRevision !== null && !/^[0-9a-f]{40}$/u.test(trustedCatalogRevision)) {
+    throw new SandboxWorkloadPreparationError(
+      "managed image catalog trusted revision must be a lowercase 40-character SHA",
+    );
+  }
+
   let release: string;
   try {
     release = normalizeManagedImageRelease(input.version);
@@ -420,9 +436,6 @@ export async function prepareSandboxWorkloadSource(
       acceptedCandidateContract,
     );
   } else {
-    const trustedCatalogRevision = input.catalogPath
-      ? (input.expectedCatalogRevision ?? null)
-      : (input.catalogRevision ?? null);
     const catalogIdentity = requireCompleteManagedImageCatalog(
       catalog,
       release,

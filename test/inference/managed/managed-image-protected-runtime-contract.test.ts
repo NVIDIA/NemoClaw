@@ -38,6 +38,9 @@ import { resolveOnboardManagedBootstrapLaunch } from "../../../src/lib/onboard/m
 
 const IMAGE = `localhost:5000/nemoclaw-managed-protected/openclaw@sha256:${"a".repeat(64)}`;
 const VALID_SANDBOX = "managed-openclaw";
+const MANAGED_IMAGE_ONBOARD = resolveManagedImageOnboardModule(
+  await import("../../../src/lib/onboard.ts"),
+);
 
 const SUCCESS_WITHOUT_OUTPUT: ManagedImageCommandResult = {
   status: 0,
@@ -161,10 +164,8 @@ describe("protected managed-image runtime contract", () => {
     "startGatewayForRecovery",
   ] as const)(
     "loads every OpenShell operation required before protected image launch [%s] (#7744)",
-    async (operation) => {
-      const onboard = resolveManagedImageOnboardModule(await import("../../../src/lib/onboard.ts"));
-
-      expect(onboard[operation], operation).toBeTypeOf("function");
+    (operation) => {
+      expect(MANAGED_IMAGE_ONBOARD[operation], operation).toBeTypeOf("function");
     },
   );
 

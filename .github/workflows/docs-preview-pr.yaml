@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Docs / PR Preview
+name: Docs / Validate and Preview PR Docs
 
 on:
   pull_request:
@@ -30,7 +30,6 @@ env:
 
 jobs:
   preview:
-    name: Validate and publish preview
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

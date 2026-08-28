@@ -4,7 +4,6 @@
 import { describe, expect, it } from "vitest";
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { createBuiltInRenderTemplateResolver } from "../messaging/channels/index.ts";
-import { slackManifest } from "../messaging/channels/slack/manifest.ts";
 import { teamsManifest } from "../messaging/channels/teams/manifest.ts";
 import { wechatManifest } from "../messaging/channels/wechat/manifest.ts";
 import { buildWechatSeedOpenClawAccountOutputs } from "../messaging/channels/wechat/hooks/seed-openclaw-account.ts";
@@ -17,7 +16,18 @@ import {
   validateManagedStartupProfile,
 } from "./managed-startup/profile.ts";
 
-const [slackBotAlias] = slackManifest.runtime.hermes.envAliases;
+// Runtime env aliases remain part of the managed-startup contract and are still
+// applied by agents/hermes/runtime-config-guard.py, but no shipped channel
+// declares one any more: Slack's was retired once OpenShell 0.0.106 began
+// binding SLACK_* to the policy endpoint, which rejects the Bolt-shaped alias.
+// Keep a literal of the retired alias so the validator stays covered.
+const slackBotAlias = {
+  envKey: "SLACK_BOT_TOKEN",
+  match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
+  value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+  message:
+    "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
+} as const;
 
 function profileWithAliases(aliases: readonly ManagedStartupJsonObject[]): ManagedStartupProfile {
   const profile = managedStartupE2eProfile("hermes");
@@ -170,10 +180,8 @@ function withWechatAccountToken(
 }
 
 describe("managed startup runtime aliases", () => {
-  it("accepts the stock Slack runtime aliases (#9397)", () => {
-    expect(() =>
-      validateManagedStartupProfile(profileWithAliases(slackManifest.runtime.hermes.envAliases)),
-    ).not.toThrow();
+  it("accepts a well-formed runtime alias (#9397)", () => {
+    expect(() => validateManagedStartupProfile(profileWithAliases([slackBotAlias]))).not.toThrow();
   });
 
   it.each([

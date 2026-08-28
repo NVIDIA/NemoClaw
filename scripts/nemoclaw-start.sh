@@ -2655,10 +2655,55 @@ import subprocess
 import sys
 import time
 
+LAST_SANITIZED_STATUS = None
+STATUS_PATH = '/tmp/nemoclaw-auto-pair-status.json'
+
+
+def publish_status(state):
+    global LAST_SANITIZED_STATUS
+    if state == LAST_SANITIZED_STATUS:
+        return
+    LAST_SANITIZED_STATUS = state
+    status = json.dumps({
+        'schemaVersion': 1,
+        'state': state,
+    }, separators=(',', ':'))
+    print('[auto-pair-status] ' + status, flush=True)
+    status_fd = None
+    try:
+        status_fd = os.open(
+            STATUS_PATH,
+            os.O_WRONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK,
+        )
+        metadata = os.fstat(status_fd)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or metadata.st_uid != os.geteuid()
+            or metadata.st_gid != os.getegid()
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+        ):
+            raise OSError('unsafe watcher status metadata')
+        os.ftruncate(status_fd, 0)
+        remaining = status.encode('utf-8')
+        while remaining:
+            written = os.write(status_fd, remaining)
+            if written <= 0:
+                raise OSError('watcher status write made no progress')
+            remaining = remaining[written:]
+    except Exception:
+        pass
+    finally:
+        if status_fd is not None:
+            os.close(status_fd)
+
+
 print('[auto-pair] watcher started', flush=True)
+publish_status('running')
 
 
 def report_unhandled_watcher_exception(exc_type, _exc_value, _traceback):
+    publish_status('stopped')
     print(f'[auto-pair] stage=watcher-execution failed error={exc_type.__name__}', flush=True)
 
 
@@ -2707,8 +2752,7 @@ def _env_seconds(name, default):
 # the gateway. Late `openclaw agent` runs (NemoClaw#4263) request additional
 # scopes that the gateway holds as pending until something approves them; an
 # exited watcher leaves those upgrades stuck and the agent falls back to
-# embedded mode. Defaults: 8h total, 30s slow-mode cadence.
-FAST_DEADLINE = time.time() + _env_seconds('NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS', 600)
+# embedded mode. Defaults: 8h total, 5s slow-mode cadence.
 DEADLINE = time.time() + _env_seconds('NEMOCLAW_AUTO_PAIR_DEADLINE_SECS', 28800)
 # After convergence the watcher polls at SLOW_INTERVAL. A late allowlisted
 # scope upgrade — e.g. `openclaw tui` or `openclaw agent` invoked after the
@@ -2724,42 +2768,18 @@ DEADLINE = time.time() + _env_seconds('NEMOCLAW_AUTO_PAIR_DEADLINE_SECS', 28800)
 # failures both clear before the OpenClaw client gives up. The counter is
 # only bumped on the rising edge for each requestId (tracked in
 # FAST_REENTRY_BUMPED_REQUEST_IDS and garbage-collected against the live
-# pending list), so a sticky failing request cannot pin the watcher in fast
-# polling. This is a polling-cadence fix only — non-allowlisted scopes such
+# pending list). After canonical settlement, a sticky failing request cannot
+# repeatedly rearm fast reentry. Before settlement, the watcher stays at the
+# 1s cadence by design. This is a polling-cadence fix only. Non-allowlisted scopes such
 # as `operator.admin` are still rejected by the device approval policy, and
 # requests that need them must be approved through a separate operator path.
 SLOW_INTERVAL = _env_seconds('NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS', 5)
-# SOURCE_OF_TRUTH_REVIEW (auto-pair slow-mode cadence default 30s → 5s):
-#
-#   * Source boundary: the single SLOW_INTERVAL global above is the only
-#     steady-state inter-poll wait for the in-sandbox auto-pair watcher
-#     after browser pairing converges. The watcher's faster pre-converge
-#     cadence (1s) is unaffected.
-#   * Invalid state at the old default: a late
-#     `openclaw tui` / `openclaw agent` allowlisted scope upgrade lands
-#     inside a 30s window and waits up to one full SLOW_INTERVAL before
-#     the watcher polls. Two sibling sandboxes onboarded back-to-back
-#     each hit this window and both fall back to embedded mode (#5343).
-#   * Source-fix constraint: the 5s default is a bounded 6x increase in
-#     steady-state `openclaw devices list --json` calls per sandbox — at
-#     most one extra call per 5s vs. per 30s, which the gateway connect
-#     handler tolerates easily; the bounded fast-reentry counter above
-#     keeps cascading upgrades from exceeding this cadence.
-#   * Migration: operators who relied on the old cadence (load-sensitive
-#     gateways, large multi-sandbox deployments) can restore it by
-#     exporting NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS=30 in the sandbox
-#     environment; the PR body calls this out under "Changes" too.
-#   * Regression test: test/agents/openclaw/runtime/nemoclaw-start.test.ts's late-CLI fixture
-#     covers the new default deterministically; #5343 Phase 5 covers it
-#     end to end.
-#   * Removal condition: when OpenClaw signals scope-upgrade requests via
-#     a push channel rather than a poll, the cadence becomes irrelevant
-#     and the variable retires.
+# Fast reentry temporarily restores 1s polling after a fresh allowlisted
+# request; canonical settlement and approval policy remain unchanged.
 FAST_REENTRY_POLLS = int(_env_seconds('NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS', 5))
 FAST_REENTRY_INTERVAL = _env_seconds('NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS', 1)
 FAST_REENTRY_REMAINING = 0
 FAST_REENTRY_BUMPED_REQUEST_IDS = set()
-QUIET_POLLS = 0
 APPROVED = 0
 SLOW_MODE = False
 HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
@@ -2799,6 +2819,36 @@ def _identity_public_key(identity):
     if len(der) < 32:
         return ''
     return base64.urlsafe_b64encode(der[-32:]).decode('ascii').rstrip('=')
+
+
+def _local_device_identity():
+    state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
+    identity = _read_json_object(os.path.join(state_dir, 'identity', 'device.json'))
+    device_id = str(identity.get('deviceId', '') or '').strip()
+    public_key = _identity_public_key(identity)
+    public_key_raw = base64.urlsafe_b64decode(public_key + '=' * (-len(public_key) % 4))
+    if (
+        not device_id
+        or len(public_key_raw) != 32
+        or hashlib.sha256(public_key_raw).hexdigest() != device_id
+    ):
+        raise RuntimeError('local device identity is invalid')
+    return device_id, public_key
+
+
+def is_local_cli_request(request):
+    if not isinstance(request, dict):
+        return False
+    try:
+        device_id, public_key = _local_device_identity()
+    except (OSError, ValueError, RuntimeError, binascii.Error):
+        return False
+    return (
+        request.get('deviceId') == device_id
+        and request.get('publicKey') == public_key
+        and request.get('clientId') == 'cli'
+        and request.get('clientMode') == 'cli'
+    )
 
 
 def initial_cli_request_is_allowlisted(request_id):
@@ -2981,19 +3031,72 @@ def brief_child_error(out, err):
     return (lines[-1] if lines else '')[:400]
 
 
-def report_request_observed(request_id):
+def report_request_observed(request_id, publish_sanitized=True):
     if request_id in OBSERVED_REQUEST_IDS:
         return
     OBSERVED_REQUEST_IDS.add(request_id)
+    if publish_sanitized:
+        publish_status('request-observed')
     print(f'[auto-pair] stage=request-creation observed request={request_id}')
 
 
-def report_request_validation(request_id, accepted, reason):
+def report_request_validation(request_id, accepted, reason, publish_sanitized=True):
     if request_id in VALIDATED_REQUEST_IDS:
         return
     VALIDATED_REQUEST_IDS.add(request_id)
     outcome = 'accepted' if accepted else 'rejected'
+    if not accepted and publish_sanitized:
+        publish_status('request-rejected')
     print(f'[auto-pair] stage=validation {outcome} request={request_id} reason={reason}')
+
+
+def exact_string_set(value, expected):
+    return (
+        isinstance(value, list)
+        and len(value) == len(expected)
+        and all(isinstance(item, str) for item in value)
+        and set(value) == expected
+    )
+
+
+def canonical_cli_baseline_settled(paired, pending):
+    try:
+        local_device_id, local_public_key = _local_device_identity()
+    except (OSError, ValueError, RuntimeError, binascii.Error):
+        return False
+    candidates = [
+        device for device in paired
+        if isinstance(device, dict)
+        and device.get('deviceId') == local_device_id
+        and device.get('publicKey') == local_public_key
+        and device.get('clientId') == 'cli'
+        and device.get('clientMode') == 'cli'
+        and device.get('role') == 'operator'
+        and exact_string_set(device.get('roles'), {'operator'})
+        and exact_string_set(device.get('scopes'), {'operator.pairing', 'operator.write'})
+        and exact_string_set(device.get('approvedScopes'), {'operator.pairing', 'operator.write'})
+    ]
+    if len(candidates) != 1:
+        return False
+    device = candidates[0]
+    device_id = str(device.get('deviceId', '') or '').strip()
+    tokens = device.get('tokens')
+    operator = tokens.get('operator') if isinstance(tokens, dict) and set(tokens) == {'operator'} else None
+    if (
+        not device_id
+        or not isinstance(operator, dict)
+        or operator.get('role') != 'operator'
+        or operator.get('revokedAtMs') is not None
+        or not exact_string_set(
+            operator.get('scopes'),
+            {'operator.pairing', 'operator.read', 'operator.write'},
+        )
+    ):
+        return False
+    return not any(
+        isinstance(request, dict) and str(request.get('deviceId', '') or '').strip() == device_id
+        for request in pending
+    )
 
 
 def list_failure_reason(rc, out, err):
@@ -3066,16 +3169,6 @@ def sleep_for_next_poll(default_seconds, productive=True):
 
 
 while time.time() < DEADLINE:
-    # Fast-to-slow transition is checked at the TOP of every iteration — before
-    # any list/approve-failure `continue` below — so a permanently failing gated
-    # list/approve (or a sticky pending request) cannot hold the watcher in 1s
-    # polling for the full DEADLINE window; after FAST_DEADLINE it drops to
-    # SLOW_INTERVAL. Preventing that long-timeline re-creation of the
-    # NemoClaw#2484 connect-handler pile-up is exactly the point.
-    # (PR #6330 review, cv item 2.)
-    if not SLOW_MODE and time.time() >= FAST_DEADLINE:
-        SLOW_MODE = True
-        print(f'[auto-pair] fast-mode deadline reached; switching to slow-mode approvals={APPROVED}')
     rc, out, err = run(
         OPENCLAW,
         'devices',
@@ -3114,11 +3207,13 @@ while time.time() < DEADLINE:
             if arc == 0:
                 HANDLED.add(initial_request_id)
                 APPROVED += 1
+                publish_status('approval-completed')
                 print(f'[auto-pair] approved initial CLI pairing request={initial_request_id}')
                 FAST_REENTRY_REMAINING = max(FAST_REENTRY_REMAINING, FAST_REENTRY_POLLS)
                 sleep_for_next_poll(FAST_REENTRY_INTERVAL)
                 continue
             approval_failure_reason = 'timeout' if arc == 124 else 'command-failed'
+            publish_status('approval-timeout' if arc == 124 else 'approval-failed')
             print(f'[auto-pair] stage=approval failed reason={approval_failure_reason}')
             failure = brief_child_error(aout, aerr)
             if arc != 124 and failure:
@@ -3156,8 +3251,6 @@ while time.time() < DEADLINE:
     if not PAIRING_BOOTSTRAPPED and has_cli_pairing:
         PAIRING_BOOTSTRAPPED = True
         print('[auto-pair] loopback CLI pairing bootstrap completed')
-    has_browser = any((d.get('clientId') == 'openclaw-control-ui') or (d.get('clientMode') == 'webchat') for d in paired if isinstance(d, dict))
-
     normalized_pending = []
     saw_malformed_request_id = False
     for device in pending:
@@ -3178,36 +3271,45 @@ while time.time() < DEADLINE:
     FAST_REENTRY_BUMPED_REQUEST_IDS.intersection_update(pending_request_ids)
 
     if not normalized_pending and not paired and APPROVED == 0 and not REQUEST_CREATION_WAITING_REPORTED:
+        publish_status('request-not-produced')
         print('[auto-pair] stage=request-creation waiting reason=no-request')
         REQUEST_CREATION_WAITING_REPORTED = True
 
     if normalized_pending:
-        QUIET_POLLS = 0
         attempted_request_ids = set()
         for request_id, device in normalized_pending:
             if request_id in HANDLED:
                 continue
-            report_request_observed(request_id)
+            tracks_canonical_cli = is_local_cli_request(device)
+            report_request_observed(request_id, tracks_canonical_cli)
             decision = approval_request_decision(device)
             client_id = decision['client_id']
             client_mode = decision['client_mode']
             if decision['reason'] == 'unknown-client':
                 HANDLED.add(request_id)
-                report_request_validation(request_id, False, 'unknown-client')
+                report_request_validation(
+                    request_id, False, 'unknown-client', tracks_canonical_cli,
+                )
                 print(f'[auto-pair] rejected unknown client={client_id} mode={client_mode}')
                 continue
             if decision['reason'] == 'malformed-scopes':
                 HANDLED.add(request_id)
-                report_request_validation(request_id, False, 'malformed-scopes')
+                report_request_validation(
+                    request_id, False, 'malformed-scopes', tracks_canonical_cli,
+                )
                 print(f'[auto-pair] rejected malformed scopes client={client_id} mode={client_mode}')
                 continue
             if decision['reason'] == 'disallowed-scopes':
                 HANDLED.add(request_id)
                 scopes = decision['scopes']
-                report_request_validation(request_id, False, 'disallowed-scopes')
+                report_request_validation(
+                    request_id, False, 'disallowed-scopes', tracks_canonical_cli,
+                )
                 print(f'[auto-pair] rejected disallowed scopes={sorted(scopes)} client={client_id} mode={client_mode}')
                 continue
-            report_request_validation(request_id, True, 'allowlisted-request')
+            report_request_validation(
+                request_id, True, 'allowlisted-request', tracks_canonical_cli,
+            )
             attempted_request_ids.add(request_id)
             print(f'[auto-pair] stage=approval attempting request={request_id}')
             arc, aout, aerr = run(
@@ -3219,24 +3321,27 @@ while time.time() < DEADLINE:
             # retryable too; only intentionally rejected unknown clients
             # and confirmed successful approvals are marked handled.
             if arc == 124:
+                if tracks_canonical_cli:
+                    publish_status('approval-timeout')
                 print('[auto-pair] stage=approval failed reason=timeout')
                 continue
             if arc == 0:
                 HANDLED.add(request_id)
                 APPROVED += 1
+                if tracks_canonical_cli:
+                    publish_status('approval-completed')
                 print(f'[auto-pair] approved request={request_id} client={client_id} mode={client_mode}')
             else:
+                if tracks_canonical_cli:
+                    publish_status('approval-failed')
                 print('[auto-pair] stage=approval failed reason=command-failed')
                 failure = brief_child_error(aout, aerr)
                 if failure:
                     print(f'[auto-pair] approve failed request={request_id}: {failure}')
-        # Fast-reentry is armed on the rising edge per requestId — once for
-        # each freshly-observed allowlisted attempt. A sticky pending request
-        # that fails approval repeatedly therefore stops bumping the counter
-        # after the first attempt, so it cannot keep the watcher in fast
-        # polling for the rest of DEADLINE; the next slow-cadence poll
-        # decides whether to retry. Cascading approvals from new ids still
-        # bump as they appear, which is the case the override targets.
+        # Fast reentry is armed once for each freshly observed allowlisted
+        # request. After canonical settlement, a sticky failure cannot
+        # repeatedly rearm the temporary 1s cadence. Cascading approvals from
+        # new request IDs still trigger the bounded override.
         new_attempted_ids = attempted_request_ids - FAST_REENTRY_BUMPED_REQUEST_IDS
         # Bump in fast mode too: the cadence override is a no-op there
         # (min(FAST_REENTRY_INTERVAL=1, default=1) = 1) but the requestId
@@ -3251,46 +3356,28 @@ while time.time() < DEADLINE:
         sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1)
         continue
 
-    QUIET_POLLS += 1
-    # Convergence conditions, checked in order of strength:
-    #   1. Browser device paired — original control-UI workflow
-    #   2. Any paired device — covers dangerouslyDisableDeviceAuth setups
-    #      where the gateway auto-pairs CLI clients directly without the
-    #      watcher running `openclaw devices approve` (so APPROVED stays
-    #      0 forever in those configurations)
-    #   3. We approved at least one device explicitly
-    # On convergence the watcher used to exit. That left late CLI scope
-    # upgrades pending forever (NemoClaw#4263). Now we transition to a slow
-    # polling cadence (default 30s) so late allowlisted scope upgrades for
-    # already-paired clients still get approved without saturating the
-    # gateway connect handler (NemoClaw#2484: WS handshake-timeout). The
-    # fast-deadline transition is now evaluated above (before the pending
-    # branch) so a stuck pending request cannot defer it.
-    if not SLOW_MODE and QUIET_POLLS >= 4:
-        if has_browser:
-            SLOW_MODE = True
-            print(f'[auto-pair] browser pairing converged; entering slow-mode approvals={APPROVED}')
-        elif paired:
-            SLOW_MODE = True
-            print(f'[auto-pair] devices paired ({len(paired)}); entering slow-mode approvals={APPROVED}')
-        elif APPROVED > 0:
-            SLOW_MODE = True
-            print(f'[auto-pair] non-browser pairing converged; entering slow-mode approvals={APPROVED}')
+    # Fresh onboarding relies on this watcher as the only scope-upgrade
+    # approver. Keep the one-second cadence until the canonical CLI record has
+    # the exact baseline scopes and no same-device pending request. Browser
+    # pairing, an unrelated paired device, or elapsed time cannot establish
+    # this transition.
+    if not SLOW_MODE and canonical_cli_baseline_settled(paired, pending):
+        SLOW_MODE = True
+        publish_status('canonical-settled')
+        print(f'[auto-pair] canonical CLI baseline settled; entering slow-mode approvals={APPROVED}')
 
-    # Back off polling: 1s in fast mode while waiting for first pairing,
-    # 5s in fast mode once anything is paired/approved, and SLOW_INTERVAL
-    # (default 5s) after convergence. Slow-mode keepalive lets late CLI
+    # Poll every 1s until canonical CLI settlement, then use SLOW_INTERVAL
+    # (default 5s). Slow-mode keepalive lets late CLI
     # scope upgrades get approved through the rest of DEADLINE without
     # hammering the gateway. The bounded fast-reentry counter (bumped above
     # when an allowlisted upgrade was attempted) overrides whichever tier
     # is selected here so the next few polls catch cascading upgrades.
     if SLOW_MODE:
         sleep_for_next_poll(SLOW_INTERVAL)
-    elif APPROVED > 0 or paired:
-        sleep_for_next_poll(5)
     else:
         sleep_for_next_poll(1)
 else:
+    publish_status('stopped')
     print(f'[auto-pair] watcher deadline reached approvals={APPROVED}')
 PYAUTOPAIR
   AUTO_PAIR_PID=$!
@@ -3305,9 +3392,13 @@ prepare_auto_pair_log() {
   if [ "$(id -u)" -eq 0 ]; then
     # PID 1 opens the redirection after CAP_DAC_OVERRIDE is gone, then passes
     # the already-open descriptor to the stepped-down watcher.
-    _nemoclaw_safe_create_tmp_file /tmp/auto-pair.log 600 root:root
+    _nemoclaw_safe_create_tmp_file /tmp/auto-pair.log 600 root:root || return 1
+    # The watcher owns this credential-free diagnostic channel. The host reads
+    # it through OpenShell as the same sandbox policy user.
+    _nemoclaw_safe_create_tmp_file /tmp/nemoclaw-auto-pair-status.json 600 sandbox:sandbox || return 1
   else
-    _nemoclaw_safe_create_tmp_file /tmp/auto-pair.log 600
+    _nemoclaw_safe_create_tmp_file /tmp/auto-pair.log 600 || return 1
+    _nemoclaw_safe_create_tmp_file /tmp/nemoclaw-auto-pair-status.json 600 || return 1
   fi
 }
 

@@ -6,12 +6,13 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterAll, describe, expect, it, vi } from "vitest";
+import { withSuccessfulPreUninstallBackup } from "../../../../test/support/uninstall-managed-gateway-test-support";
 
 import {
   type RunResult,
   type UninstallRunDeps,
   type UninstallRunOptions,
-  runUninstallPlan as runUninstallPlanBase,
+  runUninstallPlanProduction as runUninstallPlanBase,
 } from "./run-plan";
 
 const STATIC_TEST_HOME = fs.mkdtempSync(
@@ -31,19 +32,22 @@ function notFound(): RunResult {
 }
 
 function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
-  return runUninstallPlanBase(options, {
-    resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
-      gatewayName,
-      gatewayPort,
-      mode: "nemoclaw-managed",
-      source: gatewayPort === 8080 ? "packaged-service" : "standalone",
-      endpoint: null,
-      stateDir: null,
-      supervisor: null,
-      requiredCapabilities: [],
+  return runUninstallPlanBase(
+    options,
+    withSuccessfulPreUninstallBackup({
+      resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
+        gatewayName,
+        gatewayPort,
+        mode: "nemoclaw-managed",
+        source: gatewayPort === 8080 ? "packaged-service" : "standalone",
+        endpoint: null,
+        stateDir: null,
+        supervisor: null,
+        requiredCapabilities: [],
+      }),
+      ...deps,
     }),
-    ...deps,
-  });
+  );
 }
 
 function okWithKnownGatewayList(command: string, args: readonly string[]): RunResult {
@@ -91,14 +95,14 @@ function preserveCaseDeps(
 }
 
 describe("uninstall messaging for a preserved-but-orphaned sandbox registry (#6520)", () => {
-  it("uses the 'already removed' wording for provider and sandbox delete no-ops", () => {
+  it("uses the 'already removed' wording for provider and sandbox delete no-ops", async () => {
     // Same defect family as the gateway wording fix (#3456 sub-bug 4): when
     // `openshell provider delete <name>` or `openshell sandbox delete --all`
     // no-ops (target already gone), `Deleted provider 'X' skipped` reads as if
     // the deletion both happened and was skipped.
     const warnings: string[] = [];
     const logs: string[] = [];
-    const result = runUninstallPlan(
+    const result = await runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: (command) => command !== "docker" && command !== "pgrep",
@@ -128,7 +132,7 @@ describe("uninstall messaging for a preserved-but-orphaned sandbox registry (#65
     expect(combined).not.toContain("Deleted all OpenShell sandboxes skipped");
   });
 
-  it("warns that preserved sandboxes.json cannot be auto-recovered after uninstall removes its dependencies", () => {
+  it("warns that preserved sandboxes.json cannot be auto-recovered after uninstall removes its dependencies", async () => {
     // Uninstall keeps sandboxes.json but removes the gateway, provider
     // registrations, and Docker image its recorded sandboxes depend on. Say
     // so at the moment the preserve choice is made, with a remediation path,
@@ -137,7 +141,7 @@ describe("uninstall messaging for a preserved-but-orphaned sandbox registry (#65
     try {
       const logs: string[] = [];
       const warnings: string[] = [];
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         preserveCaseDeps(tmpHome, logs, warnings),
       );
@@ -152,7 +156,7 @@ describe("uninstall messaging for a preserved-but-orphaned sandbox registry (#65
     }
   });
 
-  it("warns on the interactive keep path when the purge prompt is declined", () => {
+  it("warns on the interactive keep path when the purge prompt is declined", async () => {
     const { tmpHome } = setupStateDir();
     try {
       const logs: string[] = [];
@@ -160,7 +164,7 @@ describe("uninstall messaging for a preserved-but-orphaned sandbox registry (#65
       // First reply confirms the uninstall itself; the empty second reply
       // declines the purge prompt, keeping user data.
       const replies = ["yes", ""];
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: false, deleteModels: false, keepOpenShell: true },
         {
           ...preserveCaseDeps(tmpHome, logs, warnings),
@@ -177,12 +181,12 @@ describe("uninstall messaging for a preserved-but-orphaned sandbox registry (#65
     }
   });
 
-  it("does not warn about unrecoverable sandboxes when user data is purged", () => {
+  it("does not warn about unrecoverable sandboxes when user data is purged", async () => {
     const { tmpHome } = setupStateDir();
     try {
       const logs: string[] = [];
       const warnings: string[] = [];
-      const result = runUninstallPlan(
+      const result = await runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         preserveCaseDeps(tmpHome, logs, warnings, {
           envOverrides: { NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "1" },

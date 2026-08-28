@@ -9,6 +9,7 @@ import {
   assertMatchingPolicyAuthority,
   assertNemoClawPolicyCreationReceiptMatches,
   assertPolicyRequirementContainment,
+  classifyOpenShellGlobalPolicyHistory,
   parseActiveGlobalPolicyAuthorityMetadata,
   parseNemoClawPolicyCreationReceipt,
   parseOpenShellPolicy,
@@ -143,6 +144,18 @@ describe("sandbox policy authority boundary", () => {
     });
   });
 
+  it.each([
+    ["an active revision", "VERSION STATUS\n1 loaded\n", "", "present"],
+    ["OpenShell 0.0.106 fresh history", "", "No global policy history found\n", "absent"],
+    ["empty output", "", "", "invalid"],
+    ["an unexpected diagnostic", "", "gateway warning", "invalid"],
+  ] as const)(
+    "classifies %s without treating ambiguous output as absence",
+    (_name, stdout, stderr, state) => {
+      expect(classifyOpenShellGlobalPolicyHistory(stdout, stderr)).toBe(state);
+    },
+  );
+
   it("treats a superseded global revision as absent without requiring an identity (#9833)", () => {
     expect(
       parseActiveGlobalPolicyAuthorityMetadata(
@@ -195,7 +208,7 @@ describe("sandbox policy authority boundary", () => {
         hash: "",
         policy,
       }),
-      /invalid sandbox policy identity metadata/u,
+      /invalid global policy authority metadata/u,
     ],
     [
       "malformed policy identity",
@@ -207,7 +220,7 @@ describe("sandbox policy authority boundary", () => {
         hash: "sha256:global",
         policy,
       }),
-      /invalid sandbox policy identity metadata/u,
+      /invalid global policy authority metadata/u,
     ],
   ])("rejects %s for global policy authority inspection (#9833)", (_name, raw, expected) => {
     expect(() => parseActiveGlobalPolicyAuthorityMetadata(raw)).toThrow(expected);
@@ -270,6 +283,19 @@ describe("sandbox policy authority boundary", () => {
         network_policies: [] as never,
       }),
     ).toThrow(/required network policy input is invalid/u);
+  });
+
+  it("rejects a non-plain policy value that resembles an empty mapping (#9833)", () => {
+    expect(() =>
+      assertExternalPolicyRequirementContainment(
+        {
+          authority: "externally-managed",
+          effectivePolicy: { network_policies: { required: new Date(0) } },
+          policyIdentity: { activeVersion: 7, hash: "sha256:effective" },
+        },
+        { network_policies: { required: {} } },
+      ),
+    ).toThrow(/drifted entries "required"/u);
   });
 
   it("requires recorded entries in a NemoClaw-managed policy", () => {

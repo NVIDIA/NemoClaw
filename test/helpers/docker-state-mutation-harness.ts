@@ -17,7 +17,10 @@ import {
 import { RUNTIME_PROVIDER_STATE_MUTATION_PLAN_SCHEMA_VERSION } from "../../src/lib/onboard/runtime-provider/contract";
 import { createDockerOperationAuthority } from "../../src/lib/onboard/runtime-provider/docker-operation-authority";
 import { createContainerStateMutationOwner } from "../../src/lib/onboard/runtime-provider/container-state-mutation";
-import { createDockerStateMutationOwner } from "../../src/lib/onboard/runtime-provider/docker-state-mutation";
+import {
+  createDockerStateMutationOwner,
+  DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS,
+} from "../../src/lib/onboard/runtime-provider/docker-state-mutation";
 import { createFilePersistedEngineAuthorityStore } from "../../src/lib/onboard/runtime-provider/persisted-engine-authority";
 import {
   createFilePersistedEngineLifecycleStore,
@@ -341,9 +344,11 @@ function createContainerStateMutationHarness(
               const helperTimeout =
                 action === "acquire" || action === "assert"
                   ? 30_000
-                  : action === "activate" || action === "release"
-                    ? 5 * 60_000
-                    : 15 * 60_000;
+                  : action === "activate"
+                    ? DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS
+                    : action === "release"
+                      ? 5 * 60_000
+                      : 15 * 60_000;
               let helperResult = capture(
                 "docker",
                 [

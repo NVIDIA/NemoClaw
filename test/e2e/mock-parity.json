@@ -186,12 +186,14 @@
       "live": "test/e2e/live/gateway-guard-recovery.test.ts",
       "fast": [
         "src/lib/actions/sandbox/supervisor-relaunch.test.ts",
+        "src/lib/onboard/docker-gpu-patch-finalize.test.ts",
         "src/lib/onboard/docker-startup-command-patch.test.ts",
         "src/lib/sandbox/privileged-exec.test.ts",
         "test/inference/managed/managed-gateway-control.test.ts",
         "test/agents/openclaw/runtime/nemoclaw-start-guard-recovery.test.ts",
         "test/e2e/support/gateway-guard-legacy-keepalive-fixture.test.ts",
-        "test/process-recovery/process-recovery-supervisor-relaunch.test.ts"
+        "test/process-recovery/process-recovery-supervisor-relaunch.test.ts",
+        "test/onboarding/docker-final-handoff-lifecycle.test.ts"
       ]
     },
     {
@@ -205,6 +207,13 @@
     {
       "live": "test/e2e/live/openshell-gateway-auth-source-contract.test.ts",
       "fast": ["test/e2e/support/openshell-gateway-auth-source-contract-helpers.test.ts"]
+    },
+    {
+      "live": "test/e2e/live/external-gateway-health.test.ts",
+      "fast": [
+        "test/e2e/support/external-gateway-health-workflow-boundary.test.ts",
+        "test/install/reviewed-npm-archive.test.ts"
+      ]
     },
     {
       "live": "test/e2e/live/openshell-credential-generation-window.test.ts",

@@ -169,6 +169,18 @@ function validateJobIdentity(
   );
   requireEqual(
     errors,
+    env.E2E_MANAGED_IMAGE_REVISION,
+    "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}",
+    `${jobName} must receive the selected managed-image cohort revision`,
+  );
+  requireEqual(
+    errors,
+    env.E2E_MANAGED_IMAGE_COHORT_RECEIPT,
+    "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}",
+    `${jobName} must receive the complete selected managed-image cohort receipt`,
+  );
+  requireEqual(
+    errors,
     job["timeout-minutes"],
     90,
     `${jobName} must bound each shard to 90 minutes`,
@@ -178,7 +190,9 @@ function validateJobIdentity(
     errors,
     JSON.stringify(jobNeeds(job)),
     JSON.stringify(
-      jobName === "mcp-bridge-dev" ? ["generate-matrix", DEV_ARTIFACT_JOB] : ["generate-matrix"],
+      jobName === "mcp-bridge-dev"
+        ? ["base-image-publication", "generate-matrix", DEV_ARTIFACT_JOB]
+        : ["base-image-publication", "generate-matrix"],
     ),
     `${jobName} must depend on its reviewed artifact producers`,
   );
@@ -841,8 +855,8 @@ function validateCredentialWindowJob(
   requireEqual(
     errors,
     JSON.stringify(jobNeeds(job)),
-    JSON.stringify(["generate-matrix"]),
-    `${CREDENTIAL_WINDOW_JOB} must depend only on matrix generation so it can run in parallel`,
+    JSON.stringify(["base-image-publication", "generate-matrix"]),
+    `${CREDENTIAL_WINDOW_JOB} must depend on publication and matrix generation`,
   );
   requireEqual(
     errors,
@@ -865,6 +879,10 @@ function validateCredentialWindowJob(
 
   const env = asRecord(job.env);
   const expectedEnv = {
+    E2E_MANAGED_IMAGE_REVISION:
+      "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}",
+    E2E_MANAGED_IMAGE_COHORT_RECEIPT:
+      "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}",
     E2E_JOB: "1",
     E2E_TARGET_ID: CREDENTIAL_WINDOW_JOB,
     E2E_AGENT_RUNTIME: "openclaw",

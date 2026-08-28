@@ -635,6 +635,13 @@ describe("connectSandbox flow", () => {
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
+    expect(harness.requalifyPortableAgentAuthoritySpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ readRegistry: expect.any(Function) }),
+    );
+    expect(harness.requalifyPortableAgentAuthoritySpy.mock.invocationCallOrder[0]!).toBeLessThan(
+      harness.inspectLaunchReadinessSpy.mock.invocationCallOrder[0]!,
+    );
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
     expect(harness.ensureLiveSandboxSpy).not.toHaveBeenCalled();
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
@@ -1008,6 +1015,7 @@ describe("connectSandbox flow", () => {
         Array.isArray(args) ? args[0] === "inference" && args[1] === "set" : false,
       ),
     ).toBe(false);
+    expect(harness.recoverHermesPortableOllamaInferenceSpy).toHaveBeenCalledOnce();
     expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalled();
   });
 
@@ -1152,6 +1160,7 @@ describe("connectSandbox flow", () => {
     expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
     expect(harness.dockerStartSpy).not.toHaveBeenCalled();
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+    expect(harness.recoverHermesPortableOllamaInferenceSpy).toHaveBeenCalledOnce();
   });
 
   it("rejects accepted probe evidence when schema-5 authority disappears (#9203)", async () => {
@@ -1221,6 +1230,7 @@ describe("connectSandbox flow", () => {
     expect(harness.preflightVllmSpy).not.toHaveBeenCalled();
     expect(harness.readSandboxConfigSpy).not.toHaveBeenCalled();
     expect(harness.writeSandboxConfigSpy).not.toHaveBeenCalled();
+    expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
     expect(sandboxVersion.checkAgentVersion).not.toHaveBeenCalled();
     expect(brokerSpy).not.toHaveBeenCalled();
     const connectCall = harness.runSandboxExecChildSpy.mock.calls.find(

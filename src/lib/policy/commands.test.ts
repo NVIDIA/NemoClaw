@@ -3,16 +3,15 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
+const {
   buildGlobalPolicyGetFullJsonArgs,
   buildGlobalPolicyListArgs,
   buildPolicyGetArgs,
   buildPolicyGetCommand,
   buildPolicyGetFullCommand,
   buildPolicyGetFullJsonArgs,
-  buildPolicyGetFullJsonCommand,
   buildPolicySetCommand,
-} from "./commands";
+} = require("./commands.js") as typeof import("./commands.js");
 
 describe("OpenShell policy command builders", () => {
   it("keeps every sandbox policy operation in an argv-only command", () => {
@@ -29,14 +28,6 @@ describe("OpenShell policy command builders", () => {
       "policy",
       "get",
       "--full",
-      "alpha",
-    ]);
-    expect(buildPolicyGetFullJsonCommand("alpha").slice(1)).toEqual([
-      "policy",
-      "get",
-      "--full",
-      "--output",
-      "json",
       "alpha",
     ]);
   });
