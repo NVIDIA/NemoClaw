@@ -10,7 +10,7 @@ This file owns contributor-facing contracts for generated documentation, routes,
 ## Updating the Changelog
 
 The native Fern changelog under `docs/changelog/` is the release history.
-One source directory is shared across the OpenClaw, Hermes, and Deep Agents user-guide variants.
+One source directory is shared by every configured user-guide variant.
 The end-of-day flow merges the planned release entry.
 A docs-only merge does not start another catch-up run. The tag skill shows the latest cumulative
 docs PR, its automated coverage point, later commits and PRs, review and check state, changed paths,
@@ -25,7 +25,7 @@ For each release:
 - Include the summary and detailed bullets in the dated file; do not create separate variant-specific Release Notes pages.
 - Use literal CLI names instead of the `$$nemoclaw` variant placeholder because native changelog files do not pass through agent-variant generation.
 - Use root-absolute published routes for internal links in dated entries.
-  Generic links should target the OpenClaw route under `/user-guide/openclaw/`; agent-specific links should target the corresponding Hermes or Deep Agents route.
+  Generic links should target the OpenClaw route under `/user-guide/openclaw/`; agent-specific links should target the corresponding Hermes, Deep Agents, or Pi route.
 - Use MDX comment syntax (`{/* ... */}`) for the SPDX header; HTML comments do not parse in Fern changelog entries.
 - Keep every dated entry directly under `docs/changelog/`; Fern does not support subdirectories there.
 
@@ -47,6 +47,11 @@ It leaves a ready-for-review PR unchanged.
 The publisher uses fast-forward-only updates.
 It stops when a person changes the branch or PR metadata.
 It never force-pushes.
+When a person changes the title or body of a managed draft PR, the publisher reports the PR URL and
+fails. Restore the previous workflow-authored title and body from the PR edit history to resume
+cumulative updates on the next qualifying push. To take ownership instead, mark the PR ready for
+review; later workflow runs leave it unchanged. When a person changes the managed branch, mark the
+PR ready for review before continuing the change because automation does not overwrite that branch.
 The [post-merge automation guide](../tools/post-merge-docs/README.md) owns its credential boundary.
 
 ## Local Fern Tooling

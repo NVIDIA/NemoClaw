@@ -17,12 +17,16 @@ Use these internal sources for the current installation and registration instruc
 
 ## Inspect the Environment
 
-1. Check for DORI MCP tools.
-   - If the current agent exposes `dori_handle` or `dori_route`, do not reconfigure the host.
-   - When `dori_collections` is available, verify the collection against the
+1. Check for a complete DORI MCP setup tool set.
+   - The tool set is complete only when the current agent exposes `dori_handle` or `dori_route`,
+     plus `dori_collections` and `dori_refresh`.
+   - If a routing tool is available but either collection tool is unavailable, report the partial
+     tool set. Do not invoke an unavailable tool, use the CLI, or reconfigure the host. Follow
+     [Handle Failed or Partial Setup](#handle-failed-or-partial-setup).
+   - With the complete tool set, do not reconfigure the host. Verify the collection against the
      [canonical Skill Library source](AGENTS.md#verify-the-skill-library-source).
    - If the Skill Library is missing, identify it as the only missing component and continue to [Confirm Changes](#confirm-changes).
-2. When DORI MCP tools are unavailable, inspect the command-line interface (CLI).
+2. When no DORI routing tool is available, inspect the command-line interface (CLI).
    - Run `command -v dori`.
    - If the CLI exists, run `dori collections list --json`.
    - Treat the Skill Library as installed only when it matches the
@@ -62,7 +66,7 @@ If the user declines, use the [documentation style contract](STYLE.md).
 
 ## Install Missing Components
 
-When DORI MCP is unavailable and `dori` is missing, require an existing `uv` command.
+When no DORI routing tool is available and `dori` is missing, require an existing `uv` command.
 
 - If `uv` is missing, stop and direct the user to the [internal DORI installation guide](https://gitlab-master.nvidia.com/tech-docs/dori/-/blob/main/docs/get-started/install.md).
   Do not download or execute an installer script.
@@ -73,14 +77,14 @@ When DORI MCP is unavailable and `dori` is missing, require an existing `uv` com
     --index-url https://gitlab-master.nvidia.com/api/v4/projects/226768/packages/pypi/simple
   ```
 
-When DORI MCP is unavailable and the Skill Library is missing, run:
+When no DORI routing tool is available and the Skill Library is missing, run:
 
 ```bash
 DORI_GITLAB_HOST=gitlab-master.nvidia.com \
   dori install gitlab:tech-docs/skill-library --all --yes
 ```
 
-When DORI MCP is available but the Skill Library is missing:
+When the complete DORI MCP setup tool set is available but the Skill Library is missing:
 
 1. Run `dori_collections(action="install", source="https://gitlab-master.nvidia.com/tech-docs/skill-library")`.
 2. Run `dori_refresh`.
@@ -90,7 +94,7 @@ Do not depend on a shell-visible CLI or reconfigure the host on the DORI MCP pat
 
 ## Configure and Validate the Host
 
-Complete this section only when DORI MCP is unavailable.
+Complete this section only when no DORI routing tool is available.
 After the CLI becomes available, run `dori setup auto --dry-run` if it did not run during inspection.
 If auto-detection conflicts with the explicit host, use the explicit host.
 If no explicit host exists and auto-detection is uncertain, ask which host is running.
@@ -104,14 +108,14 @@ Then perform the following checks:
 Follow the activation action that DORI reports.
 The action can require an application restart, a new session, a window reload, or enabling the MCP server.
 
-Until the current agent exposes DORI tools, continue the original task with the [documentation style contract](STYLE.md).
+Until the current agent exposes the complete DORI MCP setup tool set, continue the original task with the [documentation style contract](STYLE.md).
 
-## Handle a Failed Change
+## Handle Failed or Partial Setup
 
-If the DORI installation, Skill Library installation or verification, host setup or validation, or
-health check fails:
+If the DORI MCP setup tool set is partial, or if the DORI installation, Skill Library installation
+or verification, host setup or validation, or health check fails:
 
-1. Report the failed operation and its error without exposing credentials.
+1. Report the unavailable tools or the failed operation and its error without exposing credentials.
 2. Stop setup. Make no additional DORI or host-configuration changes, and do not retry in the same
    task.
 3. Direct the user to the

@@ -581,12 +581,14 @@ describe("post-merge documentation publisher", () => {
     expect(api.openPulls[0]?.title).toBe(managedTitle);
     expect(requestCount(api, "PATCH", "/pulls/42")).toBe(1);
   });
-  it("rejects changed metadata on the active managed PR", async () => {
+  it("names the managed PR and recovery paths when its metadata changes", async () => {
     const value = fixture();
     const api = new FakeGitHub(value);
     api.installActive();
     api.openPulls[0]!.title = "maintainer title";
-    await expect(publish(value, api)).rejects.toThrow("metadata does not match");
+    await expect(publish(value, api)).rejects.toThrow(
+      "managed documentation PR https://github.com/NVIDIA/NemoClaw/pull/42 title or body no longer matches the workflow-owned release target; restore the previous workflow-authored title and body to resume updates on the next qualifying push, or mark the PR ready for review to transfer ownership",
+    );
     expect(writeCount(api)).toBe(0);
   });
   it("does not add a redundant refresh when the active tree already matches", async () => {

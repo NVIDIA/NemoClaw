@@ -304,7 +304,9 @@ async function pullMetadataMode(
     pull.body === legacyPullBody(coverageSha)
   )
     return "legacy";
-  return fail("managed documentation PR metadata does not match the reviewed release target");
+  return fail(
+    `managed documentation PR ${pull.html_url} title or body no longer matches the workflow-owned release target; restore the previous workflow-authored title and body to resume updates on the next qualifying push, or mark the PR ready for review to transfer ownership`,
+  );
 }
 async function managedCommit(
   repository: string,
