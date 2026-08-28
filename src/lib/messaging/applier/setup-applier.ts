@@ -7,8 +7,8 @@ import type { ChannelHookPhase, SandboxMessagingPlan } from "../manifest";
 import { parseSandboxMessagingPlan } from "../plan-validation";
 import {
   applyAgentConfigAtOpenShell as applyAgentConfigPlanAtOpenShell,
-  applyCredentialProjectionAtOpenShell as applyCredentialProjectionPlanAtOpenShell,
   listHookRequests as listPlanHookRequests,
+  reconcileCredentialEnvAtOpenShell as reconcileCredentialEnvPlanAtOpenShell,
 } from "./agent-config";
 import {
   applyHealthChecks as applyPlanHealthChecks,
@@ -152,12 +152,11 @@ export class MessagingSetupApplier {
     return applyAgentConfigPlanAtOpenShell(plan, options);
   }
 
-  static applyCredentialProjectionAtOpenShell(
+  static reconcileCredentialEnvAtOpenShell(
     plan: SandboxMessagingPlan,
-    placeholders: ReadonlyMap<string, string>,
     options: { readonly runOpenshell: MessagingOpenShellRunner },
-  ): { readonly appliedTargets: readonly string[] } {
-    return applyCredentialProjectionPlanAtOpenShell(plan, placeholders, options);
+  ): { readonly changed: boolean; readonly target?: string } {
+    return reconcileCredentialEnvPlanAtOpenShell(plan, options);
   }
 
   static applyCredentialsAtOpenShell(

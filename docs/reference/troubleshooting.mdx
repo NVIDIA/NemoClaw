@@ -1737,6 +1737,7 @@ $$nemoclaw <name> status
 
 When `recover` repairs a stopped built-in gateway, NemoClaw repeats the recovery action only for these exact transient results:
 
+- Status `1` with blank stdout and exactly one stderr line: `SUPERVISOR_NOT_RUNNING`, `SUPERVISOR_DISCOVERY_PENDING`, `PRIVILEGED_CONTROL_UNAVAILABLE`, or `GATEWAY_HEALTH_TIMEOUT`.
 - Status `1` with blank stdout and exactly one stderr line, `SUPERVISOR_BUSY`.
 - Status `137` with blank stdout and stderr.
 - Status `1` with blank stdout and exactly one stderr line, `Error response from daemon: Container <id> is restarting, wait until the container is running`.
@@ -1744,13 +1745,20 @@ When `recover` repairs a stopped built-in gateway, NemoClaw repeats the recovery
 For the Docker result, `<id>` must be a 64-character lowercase hexadecimal ID that matches the selected registry-owned container.
 Recovery makes at most 11 controller attempts in total.
 It stops after 3 of those attempts return `SUPERVISOR_BUSY`.
-Managed settle confirmation treats exact `SUPERVISOR_BUSY` as inconclusive within its configured window.
+The managed controller emits `SUPERVISOR_DISCOVERY_PENDING` only when an incomplete process-table scan during startup cannot yet prove either one exact supervisor or clean supervisor absence.
+That result does not authorize container recreation or accept a supervisor identity; a later controller request must perform the full identity proof again.
+Managed settle confirmation treats exact `SUPERVISOR_BUSY` and `SUPERVISOR_DISCOVERY_PENDING` results as inconclusive within its configured window.
 Status `137` and the Docker restart result remain terminal during that confirmation.
-The managed supervisor startup waiter accepts the two container-transition results within its separate 11-attempt bound.
+The managed supervisor startup waiter accepts the four exact startup results, `SUPERVISOR_BUSY`, and the two container-transition results within its separate 11-attempt bound.
 Unbound container IDs, reformatted Docker errors, status `137` with nonblank output, and other diagnostic results stop immediately.
 NemoClaw treats `SUPERVISOR_UNAVAILABLE` as terminal because it can report unreadable or untrusted supervisor state, ambiguous discovery, or a process-identity change.
-`SUPERVISOR_NOT_RUNNING` is a separate result that requires two zero-supervisor scans with a stable PID 1 and does not enter that retry loop.
-On a supported local Docker-driver sandbox with the legacy keepalive startup, it can authorize a container-identity-pinned recreation that commits only after managed health and settle checks pass.
+`SUPERVISOR_NOT_RUNNING` is a separate result that requires two zero-supervisor scans with a stable PID 1.
+It enters the bounded startup retry first; only an exact missing-supervisor result that remains after the bound can authorize a container-identity-pinned recreation on a supported local Docker-driver sandbox with the legacy keepalive startup.
+That recreation commits only after managed health and settle checks pass.
+At the final commit handoff, NemoClaw asks OpenShell to stop the sandbox before it mutates either exact container.
+After OpenShell acknowledges that stop, NemoClaw stops the exact replacement, removes the rollback container, and asks OpenShell to start the sandbox through its authoritative lifecycle path.
+This preserves OpenShell's stopped/starting event fence while stale Docker removal snapshots settle; raw Docker stop/start events cannot strand the lifecycle row in `Error` or `Deleting`.
+If the authoritative stop fails, NemoClaw leaves both containers intact. If the start or final `Ready`/exec/exact-container proof fails after rollback-container removal, NemoClaw reports that automatic rollback is unavailable.
 To bypass that trusted recreation while troubleshooting, run `NEMOCLAW_DISABLE_SUPERVISOR_RELAUNCH=1 $$nemoclaw <name> recover`; NemoClaw leaves the container unchanged and returns rebuild or re-onboard guidance.
 If recovery stops after 3 `SUPERVISOR_BUSY` results, or if `gateway restart` reports `SUPERVISOR_BUSY`, wait for the active request to finish and retry the command.
 If recovery exhausts the transition bound after status `137` or the Docker restart result, wait for the container to finish restarting and retry the command.

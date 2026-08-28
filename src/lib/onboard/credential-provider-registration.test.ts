@@ -64,10 +64,8 @@ function registrationDeps(
   return {
     root: "/repo",
     runOpenshell: runOpenshellMock as unknown as CredentialProviderRegistrationDeps["runOpenshell"],
-    redact: (input) => input,
     getGatewayName: () => "test-gateway",
     getCredential: () => null,
-    normalizeCredentialValue: (value) => (typeof value === "string" ? value.trim() : ""),
     updateSession,
     stagedLegacyValues: new Map(),
     migratedLegacyKeys: new Set(),

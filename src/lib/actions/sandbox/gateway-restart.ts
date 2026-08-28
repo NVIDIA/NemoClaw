@@ -206,6 +206,12 @@ export function classifyGatewayRestartFailure(result: GatewayRestartCommandResul
       detail: detail || "the in-sandbox gateway supervisor is not running",
     };
   }
+  if (output.includes("SUPERVISOR_DISCOVERY_PENDING")) {
+    return {
+      layer: "supervisor unavailable",
+      detail: detail || "the managed gateway supervisor is still starting",
+    };
+  }
   if (output.includes("SUPERVISOR_UNAVAILABLE") && output.includes("NEMOCLAW_CONTROL_STAGE=")) {
     return {
       layer: "supervisor unavailable",

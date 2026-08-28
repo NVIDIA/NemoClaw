@@ -391,8 +391,18 @@ function validateConsumer(
   }
   let expectedNeeds: string | string[] = CLI_ARTIFACT_PRODUCER_JOB;
   if (jobName === "mcp-bridge-dev") {
-    expectedNeeds = [CLI_ARTIFACT_PRODUCER_JOB, "openshell-dev-artifact"];
-  } else if (jobName === "live") {
+    expectedNeeds = ["base-image-publication", CLI_ARTIFACT_PRODUCER_JOB, "openshell-dev-artifact"];
+  } else if (
+    [
+      "live",
+      "mcp-bridge",
+      "openshell-credential-generation-window",
+      "hermes-e2e",
+      "hermes-gpu-startup",
+      "cloud-onboard",
+      "messaging-providers",
+    ].includes(jobName)
+  ) {
     expectedNeeds = ["base-image-publication", CLI_ARTIFACT_PRODUCER_JOB];
   } else if (jobName === "cloud-onboard") {
     expectedNeeds = ["base-image-publication", CLI_ARTIFACT_PRODUCER_JOB];

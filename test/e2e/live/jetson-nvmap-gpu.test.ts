@@ -288,7 +288,9 @@ fi`,
 
     // #3508 failed after Jetson onboarding silently fell back to building
     // Dockerfile.base locally. Prove this buildless path instead registered
-    // the dispatched, immutable published linux/arm64 managed image.
+    // the dispatched, immutable published linux/arm64 managed image. The v2
+    // Jetson dispatch contract carries the exact revision, so bind its remote
+    // durable receipt to the immutable image's cohort label here.
     expect(resultText(install)).not.toContain(
       "Building OpenClaw sandbox base image locally because no compatible published base image was found.",
     );
@@ -298,11 +300,14 @@ fi`,
       "u",
     );
     expect(managedImage.imageTag).toMatch(expectedReference);
+    const sourceCohort = managedImage.workload.sourceCohort;
+    expect(sourceCohort).toMatch(/^ghrun-[1-9][0-9]*-[1-9][0-9]*$/u);
     expect(managedImage.workload).toMatchObject({
       kind: "managed-image",
       platform: "linux/arm64",
       reference: managedImage.imageTag,
       shared: true,
+      sourceCohort,
       sourceRevision: MANAGED_IMAGE_SOURCE_REVISION,
     });
     const managedImageLabels = await host.command(
@@ -319,6 +324,7 @@ fi`,
     expect(labels).toMatchObject({
       "io.nvidia.nemoclaw.agent": "openclaw",
       "io.nvidia.nemoclaw.managed-image.capabilities": "1",
+      "io.nvidia.nemoclaw.managed-image.cohort": sourceCohort,
       "io.nvidia.nemoclaw.managed-image.contract": "1",
       "io.nvidia.nemoclaw.managed-image.platform": "linux/arm64",
       "io.nvidia.nemoclaw.managed-image.startup-profile": "1",

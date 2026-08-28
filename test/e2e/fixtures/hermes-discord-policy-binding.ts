@@ -25,7 +25,7 @@ export function bindHermesDiscordPolicyEndpoint(
   providerName: string,
   host: string,
   port: number,
-  protocol?: string,
+  protocol: string,
 ): void {
   const source = fs.readFileSync(policyFile, "utf8");
   const policy = parseOpenShellPolicy(source).policy;
@@ -39,11 +39,7 @@ export function bindHermesDiscordPolicyEndpoint(
       return false;
     }
     const value = candidate as { host?: unknown; port?: unknown; protocol?: unknown };
-    return (
-      value.host === host &&
-      value.port === port &&
-      (protocol === undefined || value.protocol === protocol)
-    );
+    return value.host === host && value.port === port && value.protocol === protocol;
   }) as Record<string, unknown> | undefined;
   if (!endpoint) throw new Error("fake Discord endpoint is missing from the base policy");
 
@@ -83,12 +79,14 @@ function main(): void {
   const args = process.argv.slice(2);
   const unbind = args[0] === "--unbind-provider";
   const [policyFile, providerName, host, rawPort, protocol] = args.slice(unbind ? 1 : 0);
-  if (!policyFile || !providerName || (!unbind && (!host || !rawPort))) {
-    throw new Error("usage: hermes-discord-policy-binding <policy-file> <provider> <host> <port>");
+  if (!policyFile || !providerName || (!unbind && (!host || !rawPort || !protocol))) {
+    throw new Error(
+      "usage: hermes-discord-policy-binding <policy-file> <provider> <host> <port> <protocol>",
+    );
   }
   unbind
     ? unbindProviderPolicyEndpoints(policyFile, providerName)
-    : bindHermesDiscordPolicyEndpoint(policyFile, providerName, host!, Number(rawPort), protocol);
+    : bindHermesDiscordPolicyEndpoint(policyFile, providerName, host!, Number(rawPort), protocol!);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();

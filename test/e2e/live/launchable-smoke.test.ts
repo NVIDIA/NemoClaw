@@ -17,6 +17,7 @@ import {
   HOSTED_INFERENCE_PROVIDER_NAME,
   requireHostedInferenceConfig,
 } from "../fixtures/hosted-inference.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
@@ -48,11 +49,6 @@ type ChatCompletion = {
       reasoning?: unknown;
     };
   }>;
-};
-
-type AgentJsonDoc = {
-  payloads?: Array<{ text?: unknown }>;
-  result?: { payloads?: Array<{ text?: unknown }> };
 };
 
 function runEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -89,41 +85,6 @@ function parseChatContent(raw: string): string {
   const message = response.choices?.[0]?.message;
   const content = message?.content ?? message?.reasoning_content ?? message?.reasoning ?? "";
   return typeof content === "string" ? content.trim() : "";
-}
-
-function parseAgentJsonDocs(raw: string): AgentJsonDoc[] {
-  try {
-    const parsed = JSON.parse(raw) as AgentJsonDoc | AgentJsonDoc[];
-    return Array.isArray(parsed) ? parsed : [parsed];
-  } catch {
-    // Fall through to a raw decoder-style scan. `openclaw agent --json` has
-    // emitted both single JSON documents and log-prefixed streams across
-    // versions, so match the legacy helper's permissive extraction shape.
-  }
-
-  const docs: AgentJsonDoc[] = [];
-  for (let index = 0; index < raw.length; index += 1) {
-    if (raw[index] !== "{") continue;
-    for (let end = index + 1; end <= raw.length; end += 1) {
-      try {
-        const parsed = JSON.parse(raw.slice(index, end)) as AgentJsonDoc | AgentJsonDoc[];
-        docs.push(...(Array.isArray(parsed) ? parsed : [parsed]));
-        index = end - 1;
-        break;
-      } catch {
-        // Keep extending the candidate slice until it becomes valid JSON.
-      }
-    }
-  }
-  return docs;
-}
-
-function parseAgentText(raw: string): string {
-  return parseAgentJsonDocs(raw)
-    .flatMap((doc) => doc.payloads ?? doc.result?.payloads ?? [])
-    .map((payload) => payload.text)
-    .filter((text): text is string => typeof text === "string")
-    .join("\n");
 }
 
 async function preseedBootstrapClone(
@@ -502,7 +463,7 @@ test(
     agent.exitCode,
     `openclaw agent failed; rc=${agent.exitCode}; stdout='${agent.stdout.slice(0, 300)}'; stderr='${agent.stderr.slice(0, 300)}'`,
   ).toBe(0);
-  const agentReply = parseAgentText(agent.stdout);
+  const agentReply = parseOpenClawAgentText(agent.stdout);
   expect(
     containsInteger42Answer(agentReply),
     `expected agent reply to contain 42; rc=${agent.exitCode}; reply='${agentReply.slice(0, 200)}'; stdout='${agent.stdout.slice(0, 300)}'; stderr='${agent.stderr.slice(0, 300)}'`,

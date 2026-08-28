@@ -848,6 +848,8 @@ describe("Podman managed-bootstrap runtime surface", () => {
       routing.prepareCompatibilityLaunch({
         createArgs: [],
         currentRegistryImageRef: null,
+        managedImageReference:
+          "nvcr.io/nvidia/nemoclaw/hermes@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         prebuildImageId: null,
         allowUnbuiltSource: false,
         compatibilityPolicyPath: "/unused/policy.yaml",

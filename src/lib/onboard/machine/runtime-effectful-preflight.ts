@@ -44,6 +44,13 @@ export interface RuntimeEffectfulPreflightDependencies {
   validatePortableSandboxGpuPreflight?: typeof validateSandboxGpuPreflight;
 }
 
+export function bindConfiguredRuntimeProviderHealth(
+  isNonInteractive: () => boolean,
+): (host: HostAssessment, sandboxGpuConfig: SandboxGpuConfig) => void {
+  return (host, sandboxGpuConfig) =>
+    assertConfiguredRuntimeProviderHealthy(host, sandboxGpuConfig, isNonInteractive());
+}
+
 function printProbeDetails(details: string | undefined, output: typeof console.warn): void {
   if (!details) return;
   for (const line of details.split("\n").slice(-4)) {

@@ -21,6 +21,7 @@ import type { SandboxEntry } from "../state/registry";
 import {
   HERMES_RUNTIME_STATE_MUTATION_CAPABILITY,
   HERMES_RUNTIME_STATE_MUTATION_CAPABILITY_METADATA,
+  hermesRuntimeProviderPhaseBlocksMutation,
   runHermesRuntimeProviderStateMutation,
   supportsHermesRuntimeProviderStateMutation,
 } from "./hermes-runtime-state-mutation";
@@ -176,6 +177,11 @@ function run(
 }
 
 describe("Hermes runtime-provider state mutation consumer", () => {
+  it("allows a retained mutation to recover while OpenShell is Provisioning", () => {
+    expect(hermesRuntimeProviderPhaseBlocksMutation("Provisioning", true)).toBe(false);
+    expect(hermesRuntimeProviderPhaseBlocksMutation("Provisioning", false)).toBe(true);
+  });
+
   it(
     "resolves the current Docker provider when the caller does not inject a registry",
     () => {
@@ -533,6 +539,79 @@ describe("Hermes runtime-provider state mutation consumer", () => {
       ),
     ).toThrow(failure);
     expect(calls).toEqual(["assert", "publish", "assert", "activate"]);
+  });
+
+  it("recovers the exact retained locked fence after the first activation fails", () => {
+    const calls: string[] = [];
+    const firstFailure = new Error("first locked activation failed");
+    const recoveredFence = { ...fence, phase: "published" as const };
+    let recoverCount = 0;
+    const activations = [
+      () => {
+        throw firstFailure;
+      },
+      () => proof,
+    ];
+    const result = run(
+      providers({
+        recover: () => {
+          calls.push("recover");
+          recoverCount += 1;
+          return recoverCount === 1 ? null : recoveredFence;
+        },
+        acquire: () => {
+          calls.push("acquire");
+          return fence;
+        },
+        assertFenced: () => calls.push("assert"),
+        publish: () => calls.push("publish"),
+        activate: () => {
+          calls.push("activate");
+          return (activations.shift() ?? (() => proof))();
+        },
+        rollback: () => calls.push("rollback"),
+        release: () => calls.push("release"),
+      }),
+    );
+
+    expect(result).toEqual({ fence: recoveredFence, proof });
+    expect(calls).toEqual([
+      "recover",
+      "acquire",
+      "assert",
+      "publish",
+      "assert",
+      "activate",
+      "recover",
+      "assert",
+      "activate",
+      "release",
+    ]);
+    expect(calls).not.toContain("rollback");
+  });
+
+  it("refuses activation recovery when the retained fence authority changes", () => {
+    const primary = new Error("first locked activation failed");
+    let recoverCount = 0;
+    expect(() =>
+      run(
+        providers({
+          recover: () => {
+            recoverCount += 1;
+            return recoverCount === 1
+              ? null
+              : {
+                  ...fence,
+                  phase: "published",
+                  runtimeStateSha256: "d".repeat(64),
+                };
+          },
+          activate: () => {
+            throw primary;
+          },
+        }),
+      ),
+    ).toThrow(/first locked activation failed.*different state-mutation fence/iu);
   });
 
   it("recovers an acquire transport failure and rolls back the exact discovered fence", () => {

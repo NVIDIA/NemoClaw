@@ -26,9 +26,7 @@ export {
 // process-recovery.ts both import onboarding helpers.
 type ProcessRecoveryDeps = Pick<
   typeof import("../../actions/sandbox/process-recovery"),
-  | "checkAndRecoverSandboxProcesses"
-  | "restartSandboxGateway"
-  | "waitForRecreatedSandboxOpenShellReady"
+  "checkAndRecoverSandboxProcesses" | "waitForRecreatedSandboxOpenShellReady"
 >;
 type SandboxLifecycleLock = typeof import("../../state/mcp-lifecycle-lock").withMcpLifecycleLock;
 type GatewayRouteLock =
@@ -376,24 +374,6 @@ export const finalizationHandlerDeps = {
     const processRecovery = finalizationHandlerRuntime.loadProcessRecovery();
     processRecovery.checkAndRecoverSandboxProcesses(name, options);
   },
-  withManagedMessagingCredentialLocks<T>(
-    name: string,
-    gatewayName: string,
-    operation: () => Promise<T>,
-  ): Promise<T> {
-    return finalizationHandlerRuntime
-      .loadSandboxLifecycleLock()
-      .withMcpLifecycleLock(name, () =>
-        finalizationHandlerRuntime
-          .loadGatewayRouteLock()
-          .withGatewayRouteMutationLock(gatewayName, operation),
-      );
-  },
-  restartManagedGateway(name: string): ReturnType<ProcessRecoveryDeps["restartSandboxGateway"]> {
-    return finalizationHandlerRuntime.loadProcessRecovery().restartSandboxGateway(name, {
-      quiet: true,
-    });
-  },
   settleOrdinaryOpenClawPairing(
     name: string,
     revalidatePolicyRequirements?: (operation: string) => void,
@@ -411,29 +391,6 @@ export const finalizationHandlerDeps = {
         name
       ]?.agent;
       return typeof value === "string" ? value : null;
-    } catch {
-      return null;
-    }
-  },
-  readManagedMessagingRuntimeIdentity(name: string) {
-    try {
-      const entry = finalizationHandlerRuntime.loadRegistryPersistence().load().sandboxes[name];
-      if (
-        typeof entry?.gatewayName !== "string" ||
-        typeof entry.lifecycleGeneration !== "string" ||
-        typeof entry.openshellDriver !== "string" ||
-        (entry.lifecycleLiveIdentityFingerprint !== undefined &&
-          entry.lifecycleLiveIdentityFingerprint !== null &&
-          typeof entry.lifecycleLiveIdentityFingerprint !== "string")
-      ) {
-        return null;
-      }
-      return {
-        gatewayName: entry.gatewayName,
-        lifecycleGeneration: entry.lifecycleGeneration,
-        lifecycleLiveIdentityFingerprint: entry.lifecycleLiveIdentityFingerprint ?? null,
-        openshellDriver: entry.openshellDriver,
-      };
     } catch {
       return null;
     }

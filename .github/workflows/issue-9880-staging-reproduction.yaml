@@ -31,12 +31,14 @@ jobs:
             test/e2e/
             test/helpers/
             tools/e2e/
+            src/
             package.json
             package-lock.json
             vitest.config.ts
             nemoclaw/vitest.project.ts
             ci/cli-test-timing-hints.json
             tsconfig.json
+            tsconfig.src.json
             oxlint.config.ts
             oxfmt.config.ts
           sparse-checkout-cone-mode: false

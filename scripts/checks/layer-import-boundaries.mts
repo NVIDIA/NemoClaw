@@ -60,12 +60,7 @@ const MANAGED_STATE_ROOT_PROVIDER_MODULES = [
   "src/lib/onboard/managed-bootstrap/docker.ts",
   "src/lib/onboard/managed-bootstrap/podman-runtime.ts",
 ] as const;
-const MANAGED_AGENT_IDS = new Set([
-  "openclaw",
-  "hermes",
-  "langchain-deepagents-code",
-  "pi",
-]);
+const MANAGED_AGENT_IDS = new Set(["openclaw", "hermes", "langchain-deepagents-code", "pi"]);
 
 function toRepoPath(absPath: string): string {
   return path.relative(REPO_ROOT, absPath).split(path.sep).join("/");
@@ -97,10 +92,10 @@ function* walk(dir: string): Generator<string> {
   }
 }
 
-function sourceFileFor(absPath: string): ts.SourceFile {
+function sourceFileFor(absPath: string, source: string): ts.SourceFile {
   return ts.createSourceFile(
     absPath,
-    readFileSync(absPath, "utf8"),
+    source,
     ts.ScriptTarget.Latest,
     true,
     absPath.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
@@ -112,8 +107,7 @@ function position(sourceFile: ts.SourceFile, node: ts.Node): { line: number; col
   return { line: pos.line + 1, column: pos.character + 1 };
 }
 
-function collectImportRefs(absPath: string): ImportRef[] {
-  const sourceFile = sourceFileFor(absPath);
+function collectImportRefs(sourceFile: ts.SourceFile): ImportRef[] {
   const refs: ImportRef[] = [];
 
   function add(specifier: string, node: ts.Node): void {
@@ -153,17 +147,61 @@ function collectImportRefs(absPath: string): ImportRef[] {
   return refs;
 }
 
+function collectPreprocessedImportRefs(source: string): ImportRef[] {
+  let line = 1;
+  let lineStart = 0;
+  let searchStart = 0;
+  return ts.preProcessFile(source, true, true).importedFiles.map((ref) => {
+    let newline = source.indexOf("\n", searchStart);
+    while (newline >= 0 && newline < ref.pos) {
+      line += 1;
+      lineStart = newline + 1;
+      searchStart = lineStart;
+      newline = source.indexOf("\n", searchStart);
+    }
+    return {
+      specifier: ref.fileName,
+      line,
+      column: ref.pos - lineStart + 1,
+    };
+  });
+}
+
 function resolveInternalImport(fromAbsPath: string, specifier: string): string | null {
   if (!specifier.startsWith(".")) return null;
   const base = path.resolve(path.dirname(fromAbsPath), specifier);
   const extensions = [".ts", ".tsx", ".mts", ".cts"];
-  const candidates = [
-    ...extensions.map((extension) => `${base}${extension}`),
-    ...extensions.map((extension) => path.join(base, `index${extension}`)),
-    base,
-  ];
+  const extension = path.extname(base);
+  const replacementExtensions =
+    extension === ".js"
+      ? [".ts", ".tsx"]
+      : extension === ".mjs"
+        ? [".mts"]
+        : extension === ".cjs"
+          ? [".cts"]
+          : [];
+  const candidates = extension
+    ? [
+        base,
+        ...replacementExtensions.map(
+          (replacement) => base.slice(0, -extension.length) + replacement,
+        ),
+      ]
+    : [
+        ...extensions.map((candidate) => `${base}${candidate}`),
+        ...extensions.map((candidate) => path.join(base, `index${candidate}`)),
+      ];
   const found = candidates.find((candidate) => existsSync(candidate));
-  if (!found) return toRepoPath(`${base}.ts`);
+  if (!found) {
+    const replacement = replacementExtensions[0];
+    return toRepoPath(
+      replacement
+        ? base.slice(0, -extension.length) + replacement
+        : extension
+          ? base
+          : `${base}.ts`,
+    );
+  }
   try {
     return toRepoPath(realpathSync(found));
   } catch {
@@ -216,8 +254,13 @@ function addViolation(
   violations.push({ file, line, column, rule, detail });
 }
 
-function checkDomainFile(absPath: string, repoPath: string, violations: Violation[]): void {
-  const imports = collectImportRefs(absPath);
+function checkDomainFile(
+  absPath: string,
+  repoPath: string,
+  sourceFile: ts.SourceFile,
+  imports: readonly ImportRef[],
+  violations: Violation[],
+): void {
   for (const ref of imports) {
     if (ref.specifier === "@oclif/core") {
       addViolation(
@@ -256,8 +299,6 @@ function checkDomainFile(absPath: string, repoPath: string, violations: Violatio
       );
     }
   }
-
-  const sourceFile = sourceFileFor(absPath);
   function visit(node: ts.Node): void {
     if (
       ts.isPropertyAccessExpression(node) &&
@@ -280,8 +321,12 @@ function checkDomainFile(absPath: string, repoPath: string, violations: Violatio
   visit(sourceFile);
 }
 
-function checkActionFile(absPath: string, repoPath: string, violations: Violation[]): void {
-  for (const ref of collectImportRefs(absPath)) {
+function checkActionFile(
+  repoPath: string,
+  imports: readonly ImportRef[],
+  violations: Violation[],
+): void {
+  for (const ref of imports) {
     if (ref.specifier === "@oclif/core") {
       addViolation(
         violations,
@@ -295,8 +340,13 @@ function checkActionFile(absPath: string, repoPath: string, violations: Violatio
   }
 }
 
-function checkAdapterFile(absPath: string, repoPath: string, violations: Violation[]): void {
-  for (const ref of collectImportRefs(absPath)) {
+function checkAdapterFile(
+  absPath: string,
+  repoPath: string,
+  imports: readonly ImportRef[],
+  violations: Violation[],
+): void {
+  for (const ref of imports) {
     const target = importTargetsForbiddenLayer(absPath, ref, ["src/commands/"], true);
     if (target) {
       addViolation(
@@ -311,8 +361,13 @@ function checkAdapterFile(absPath: string, repoPath: string, violations: Violati
   }
 }
 
-function checkNoBinLibShimImport(absPath: string, repoPath: string, violations: Violation[]): void {
-  for (const ref of collectImportRefs(absPath)) {
+function checkNoBinLibShimImport(
+  absPath: string,
+  repoPath: string,
+  imports: readonly ImportRef[],
+  violations: Violation[],
+): void {
+  for (const ref of imports) {
     const target = resolveInternalImport(absPath, ref.specifier);
     if (target?.startsWith("bin/lib/") && !target.endsWith(".json")) {
       addViolation(
@@ -330,6 +385,7 @@ function checkNoBinLibShimImport(absPath: string, repoPath: string, violations: 
 function checkMessagingManifestFile(
   absPath: string,
   repoPath: string,
+  imports: readonly ImportRef[],
   violations: Violation[],
 ): void {
   const forbiddenFragments = [
@@ -344,7 +400,7 @@ function checkMessagingManifestFile(
     "lib/actions",
   ];
 
-  for (const ref of collectImportRefs(absPath)) {
+  for (const ref of imports) {
     if (ref.specifier === "fs" || ref.specifier.startsWith("fs/")) {
       addViolation(
         violations,
@@ -372,8 +428,12 @@ function checkMessagingManifestFile(
   }
 }
 
-function checkCommandFile(absPath: string, repoPath: string, violations: Violation[]): void {
-  const sourceFile = sourceFileFor(absPath);
+function checkCommandFile(
+  absPath: string,
+  repoPath: string,
+  sourceFile: ts.SourceFile,
+  violations: Violation[],
+): void {
   const identifierBases = new Set<string>();
   const namespaceBases = new Map<string, ReadonlySet<string>>();
 
@@ -443,14 +503,28 @@ export function findLayerImportBoundaryViolations(root = SRC_ROOT): Violation[] 
   const violations: Violation[] = [];
   for (const absPath of walk(root)) {
     const repoPath = toRepoPath(absPath);
-    checkNoBinLibShimImport(absPath, repoPath, violations);
-    if (isDomainFile(repoPath)) checkDomainFile(absPath, repoPath, violations);
-    if (isActionFile(repoPath)) checkActionFile(absPath, repoPath, violations);
-    if (isAdapterFile(repoPath)) checkAdapterFile(absPath, repoPath, violations);
-    if (isMessagingManifestFile(repoPath)) {
-      checkMessagingManifestFile(absPath, repoPath, violations);
+    const domainFile = isDomainFile(repoPath);
+    const actionFile = isActionFile(repoPath);
+    const adapterFile = isAdapterFile(repoPath);
+    const messagingManifestFile = isMessagingManifestFile(repoPath);
+    const commandFile = isCommandFile(repoPath);
+    const source = readFileSync(absPath, "utf8");
+    if (!domainFile && !actionFile && !adapterFile && !messagingManifestFile && !commandFile) {
+      checkNoBinLibShimImport(absPath, repoPath, collectPreprocessedImportRefs(source), violations);
+      continue;
     }
-    if (isCommandFile(repoPath)) checkCommandFile(absPath, repoPath, violations);
+    const sourceFile = sourceFileFor(absPath, source);
+    const imports = collectImportRefs(sourceFile);
+    checkNoBinLibShimImport(absPath, repoPath, imports, violations);
+    if (domainFile) {
+      checkDomainFile(absPath, repoPath, sourceFile, imports, violations);
+    }
+    if (actionFile) checkActionFile(repoPath, imports, violations);
+    if (adapterFile) checkAdapterFile(absPath, repoPath, imports, violations);
+    if (messagingManifestFile) {
+      checkMessagingManifestFile(absPath, repoPath, imports, violations);
+    }
+    if (commandFile) checkCommandFile(absPath, repoPath, sourceFile, violations);
   }
   return violations;
 }
@@ -468,7 +542,8 @@ export function findManagedRuntimeBoundaryViolations(): Violation[] {
     kind === ts.SyntaxKind.ExclamationEqualsEqualsToken;
 
   for (const repoPath of PROVIDER_NEUTRAL_MANAGED_RUNTIME_MODULES) {
-    const sourceFile = sourceFileFor(path.join(REPO_ROOT, repoPath));
+    const absPath = path.join(REPO_ROOT, repoPath);
+    const sourceFile = sourceFileFor(absPath, readFileSync(absPath, "utf8"));
     const isProviderIdentity = (node: ts.Node): boolean => {
       const expression = node.getText(sourceFile);
       // OPENSHELL_DRIVERS is the upstream gateway driver's configuration,
@@ -537,12 +612,12 @@ export function findManagedRuntimeBoundaryViolations(): Violation[] {
   const managedBootstrapFiles = [
     ...walk(path.join(SRC_ROOT, "lib/onboard/managed-bootstrap")),
   ].filter((absPath) => !path.basename(absPath).includes("test-fixture"));
-  const podmanProviderFiles = [
-    ...walk(path.join(SRC_ROOT, "lib/onboard/runtime-provider")),
-  ].filter((absPath) => path.basename(absPath).startsWith("podman"));
+  const podmanProviderFiles = [...walk(path.join(SRC_ROOT, "lib/onboard/runtime-provider"))].filter(
+    (absPath) => path.basename(absPath).startsWith("podman"),
+  );
   for (const absPath of [...managedBootstrapFiles, ...podmanProviderFiles]) {
     const repoPath = toRepoPath(absPath);
-    const sourceFile = sourceFileFor(absPath);
+    const sourceFile = sourceFileFor(absPath, readFileSync(absPath, "utf8"));
     const report = (node: ts.Node, detail: string): void => {
       const pos = position(sourceFile, node);
       addViolation(
@@ -554,7 +629,7 @@ export function findManagedRuntimeBoundaryViolations(): Violation[] {
         detail,
       );
     };
-    for (const ref of collectImportRefs(absPath)) {
+    for (const ref of collectImportRefs(sourceFile)) {
       const target = resolveInternalImport(absPath, ref.specifier);
       if (
         podmanProviderFiles.includes(absPath) &&
@@ -582,8 +657,10 @@ export function findManagedRuntimeBoundaryViolations(): Violation[] {
 
   for (const repoPath of MANAGED_STATE_ROOT_PROVIDER_MODULES) {
     const absPath = path.join(REPO_ROOT, repoPath);
-    const ownsGenericStateRootPreparation = collectImportRefs(absPath).some(
-      (ref) => resolveInternalImport(absPath, ref.specifier) ===
+    const sourceFile = sourceFileFor(absPath, readFileSync(absPath, "utf8"));
+    const ownsGenericStateRootPreparation = collectImportRefs(sourceFile).some(
+      (ref) =>
+        resolveInternalImport(absPath, ref.specifier) ===
         "src/lib/onboard/managed-bootstrap/state-root-authority.ts",
     );
     if (!ownsGenericStateRootPreparation) {

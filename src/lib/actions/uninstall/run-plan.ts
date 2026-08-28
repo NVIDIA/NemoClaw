@@ -77,6 +77,7 @@ import {
   type ManagedHermesStateVolumeRuntime,
   type ManagedHermesStateVolumeContext,
   removeManagedHermesStateVolumes,
+  requiresManagedHermesStateVolume,
   stopHermesForwardWatchers,
 } from "./hermes-uninstall-cleanup";
 import {
@@ -2861,6 +2862,16 @@ function executeOpenShellResourceCleanup(
     )
   ) {
     return false;
+  }
+  if (
+    !portableRuntimeCleanup &&
+    !externallySupervised &&
+    !scopedToSelectedGateway &&
+    managedHermesStateVolumes.some((context) => requiresManagedHermesStateVolume(context)) &&
+    dockerIsAvailable(runtime)
+  ) {
+    // An unreachable gateway can leave a stopped sandbox container attached to the state volume.
+    removeDockerContainers(runtime);
   }
   if (
     !portableRuntimeCleanup &&

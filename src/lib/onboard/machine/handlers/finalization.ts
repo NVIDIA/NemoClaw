@@ -5,9 +5,7 @@ import { CLI_NAME } from "../../../cli/branding";
 import { type DashboardRuntimeAgent, shouldManageDashboardForAgent } from "../../dashboard-runtime";
 import type { WebSearchVerifyProvider } from "../../web-search-verify";
 import type { PortableOpenClawPairingSettlementResult } from "../../../actions/sandbox/launch-readiness";
-import type { SandboxMessagingPlan } from "../../../messaging";
 import type { OrdinaryOpenClawPairingSettlementResult } from "../finalization-deps";
-import type { ManagedMessagingCredentialConvergenceResult } from "../messaging-credential-convergence";
 import {
   advanceTo,
   completeOnboardMachine,
@@ -29,7 +27,6 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   migratedLegacyKeys: ReadonlySet<string>;
   webSearchEnabled: boolean;
   webSearchProvider: WebSearchVerifyProvider | null;
-  messagingPlan?: SandboxMessagingPlan | null;
   portableProfileSelected?: boolean;
   recreateJournalHandoff?: boolean;
   deps: {
@@ -51,28 +48,6 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
     ): NonNullable<OnboardStateCompleteResult["updates"]>;
     removeLegacyCredentialsFile(): void;
     cleanupStaleHostFiles(): void;
-    convergeManagedMessagingCredentials?(
-      sandboxName: string,
-      openshellDriver: string | null,
-      gatewayName: string,
-      plan: SandboxMessagingPlan,
-      restartManagedGateway: (sandboxName: string) => {
-        readonly ok: boolean;
-        readonly detail?: string;
-      },
-    ): Promise<ManagedMessagingCredentialConvergenceResult>;
-    readManagedMessagingRuntimeIdentity?(
-      sandboxName: string,
-    ): ManagedMessagingRuntimeIdentity | null;
-    restartManagedGateway?(sandboxName: string): {
-      readonly ok: boolean;
-      readonly detail?: string;
-    };
-    withManagedMessagingCredentialLocks?<T>(
-      sandboxName: string,
-      gatewayName: string,
-      operation: () => Promise<T>,
-    ): Promise<T>;
     checkAndRecoverSandboxProcesses(sandboxName: string, options: { quiet: boolean }): void;
     settleOrdinaryOpenClawPairing(
       sandboxName: string,
@@ -151,26 +126,6 @@ type TerminalReadyAgent = {
 
 type PortableAgentDisposition = "invalid" | "ordinary" | "strict-openclaw";
 
-type ManagedMessagingRuntimeIdentity = {
-  readonly gatewayName: string;
-  readonly lifecycleGeneration: string;
-  readonly lifecycleLiveIdentityFingerprint: string | null;
-  readonly openshellDriver: string;
-};
-
-function sameManagedMessagingRuntimeIdentity(
-  left: ManagedMessagingRuntimeIdentity,
-  right: ManagedMessagingRuntimeIdentity | null,
-): right is ManagedMessagingRuntimeIdentity {
-  return (
-    right !== null &&
-    left.gatewayName === right.gatewayName &&
-    left.lifecycleGeneration === right.lifecycleGeneration &&
-    left.lifecycleLiveIdentityFingerprint === right.lifecycleLiveIdentityFingerprint &&
-    left.openshellDriver === right.openshellDriver
-  );
-}
-
 function portableAgentDisposition(
   sandboxName: string,
   agent: unknown,
@@ -231,7 +186,6 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   agent,
   portableProfileSelected,
   recreateJournalHandoff,
-  messagingPlan,
   stagedLegacyKeys,
   migratedLegacyKeys,
   deps,
@@ -257,38 +211,6 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   // now safe to register this sandbox as the default (#4614).
   revalidate(`set sandbox '${sandboxName}' as the default`);
   deps.setDefaultSandbox(sandboxName);
-
-  if (portableProfileSelected !== true && portableAgent === "ordinary" && messagingPlan) {
-    if (
-      !deps.convergeManagedMessagingCredentials ||
-      !deps.readManagedMessagingRuntimeIdentity ||
-      !deps.restartManagedGateway ||
-      !deps.withManagedMessagingCredentialLocks
-    ) {
-      throw new Error("Managed messaging credential finalization boundary is incomplete.");
-    }
-    const initial = deps.readManagedMessagingRuntimeIdentity(sandboxName);
-    if (!initial) {
-      throw new Error("Managed messaging credential runtime identity is unavailable.");
-    }
-    await deps.withManagedMessagingCredentialLocks(sandboxName, initial.gatewayName, async () => {
-      const before = deps.readManagedMessagingRuntimeIdentity!(sandboxName);
-      if (!sameManagedMessagingRuntimeIdentity(initial, before)) {
-        throw new Error("Managed messaging credential runtime identity changed before locking.");
-      }
-      await deps.convergeManagedMessagingCredentials!(
-        sandboxName,
-        before.openshellDriver,
-        before.gatewayName,
-        messagingPlan,
-        deps.restartManagedGateway!,
-      );
-      const after = deps.readManagedMessagingRuntimeIdentity!(sandboxName);
-      if (!sameManagedMessagingRuntimeIdentity(before, after)) {
-        throw new Error("Managed messaging credential runtime identity changed during activation.");
-      }
-    });
-  }
 
   const allStagedMigrated =
     stagedLegacyKeys.length > 0 && stagedLegacyKeys.every((key) => migratedLegacyKeys.has(key));

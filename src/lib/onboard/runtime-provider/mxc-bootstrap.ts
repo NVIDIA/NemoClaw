@@ -19,6 +19,7 @@ import {
 const MXC_PROVIDER_ID = "mxc";
 const SANDBOX_NAME_PATTERN = /^[a-z][a-z0-9-]{0,62}$/u;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
+const PROVIDER_HANDLE_PATTERN = /^mxc-native-artifact-v1:[a-f0-9]{64}$/u;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
 const MAX_PATH_BYTES = 4096;
 
@@ -89,9 +90,7 @@ function providerOwnedShareDirectory(
   return path.win32.join(driveRoot, `nemoclaw-${sandboxName}-${generationSha256.slice(0, 12)}`);
 }
 
-function planAuthoritySha256(
-  input: Omit<RuntimeProviderNativeArtifactBootstrapPlan, "authoritySha256">,
-): string {
+function sha256Json(input: object): string {
   return createHash("sha256").update(JSON.stringify(input), "utf8").digest("hex");
 }
 
@@ -159,7 +158,7 @@ function preparePlan(
     workload.launch.workingDirectory === "."
       ? artifactRoot
       : path.win32.join(artifactRoot, workload.launch.workingDirectory.replaceAll("/", "\\"));
-  const authority = {
+  const operationIdentity = {
     schemaVersion: RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_PLAN_SCHEMA_VERSION,
     providerId: MXC_PROVIDER_ID,
     sandboxName: input.sandboxName,
@@ -183,7 +182,9 @@ function preparePlan(
     },
     workload,
   } as const;
-  return frozen({ ...authority, authoritySha256: planAuthoritySha256(authority) });
+  const providerHandle = `mxc-native-artifact-v1:${sha256Json(operationIdentity)}`;
+  const authority = { ...operationIdentity, providerHandle };
+  return frozen({ ...authority, authoritySha256: sha256Json(authority) });
 }
 
 function result(
@@ -191,14 +192,82 @@ function result(
   outcome: RuntimeProviderNativeArtifactBootstrapResult["outcome"],
   reason: RuntimeProviderNativeArtifactBootstrapResult["reason"],
   resourceState: RuntimeProviderNativeArtifactBootstrapResult["resourceState"],
+  cleanup: RuntimeProviderNativeArtifactBootstrapResult["cleanup"] = {
+    attempted: false,
+    resourceRemovalAuthorized: false,
+    removed: false,
+  },
+  recoveryRequired = resourceState === "possibly-retained",
 ): RuntimeProviderNativeArtifactBootstrapResult {
   return frozen({
     outcome,
     reason,
     authoritySha256: plan.authoritySha256,
+    providerHandle: plan.providerHandle,
+    sandboxName: plan.sandboxName,
+    lifecycleGeneration: plan.lifecycleGeneration,
     resourceState,
-    cleanup: { attempted: false, resourceRemovalAuthorized: false },
+    cleanup,
+    recoveryRequired,
   });
+}
+
+function recoveryIdentityMatches(
+  plan: RuntimeProviderNativeArtifactBootstrapPlan,
+  recovery: Exclude<
+    Awaited<ReturnType<RuntimeProviderNativeArtifactBootstrapOperations["recoverCreate"]>>,
+    { status: "absent" }
+  >,
+): boolean {
+  return (
+    recovery.authoritySha256 === plan.authoritySha256 &&
+    recovery.providerHandle === plan.providerHandle &&
+    recovery.sandboxName === plan.sandboxName &&
+    recovery.lifecycleGeneration === plan.lifecycleGeneration
+  );
+}
+
+async function recoverMxcNativeArtifactBootstrap(
+  plan: RuntimeProviderNativeArtifactBootstrapPlan,
+  operations: RuntimeProviderNativeArtifactBootstrapOperations,
+): Promise<RuntimeProviderNativeArtifactBootstrapResult> {
+  try {
+    const recovery = await operations.recoverCreate(plan);
+    if (recovery?.status === "absent") {
+      return result(
+        plan,
+        "not-created",
+        "recovered",
+        "absent",
+        { attempted: true, resourceRemovalAuthorized: true, removed: true },
+        false,
+      );
+    }
+    if (
+      (recovery?.status === "removed" || recovery?.status === "retained") &&
+      recoveryIdentityMatches(plan, recovery)
+    ) {
+      const removed = recovery.status === "removed";
+      return result(
+        plan,
+        removed ? "not-created" : "retained",
+        removed ? "recovered" : "recovery-not-proven",
+        removed ? "absent" : "possibly-retained",
+        { attempted: true, resourceRemovalAuthorized: true, removed },
+        !removed,
+      );
+    }
+  } catch {
+    // Return bounded recovery state because provider errors may contain credentials.
+  }
+  return result(
+    plan,
+    "retained",
+    "recovery-not-proven",
+    "possibly-retained",
+    { attempted: true, resourceRemovalAuthorized: false, removed: false },
+    true,
+  );
 }
 
 async function runMxcNativeArtifactBootstrap(
@@ -207,10 +276,11 @@ async function runMxcNativeArtifactBootstrap(
 ): Promise<RuntimeProviderNativeArtifactBootstrapResult> {
   if (
     typeof operations?.verifyAndCreate !== "function" ||
-    typeof operations.verifyReadiness !== "function"
+    typeof operations.verifyReadiness !== "function" ||
+    typeof operations.recoverCreate !== "function"
   ) {
     throw new MxcNativeArtifactBootstrapError(
-      "atomic artifact verification and create plus readiness operations are required before bootstrap",
+      "atomic artifact verification and create, readiness, and recovery operations are required before bootstrap",
     );
   }
   const plan = preparePlan(input);
@@ -223,45 +293,63 @@ async function runMxcNativeArtifactBootstrap(
       return result(plan, "not-created", created.reason, "absent");
     }
     if (created?.status === "unknown") {
-      return result(plan, "retained", "create-outcome-unknown", "possibly-retained");
+      return recoverMxcNativeArtifactBootstrap(plan, operations);
     }
     if (created?.status !== "created") {
-      return result(plan, "retained", "create-outcome-unknown", "possibly-retained");
+      return recoverMxcNativeArtifactBootstrap(plan, operations);
     }
     if (
       !SHA256_PATTERN.test(created.authoritySha256) ||
+      !PROVIDER_HANDLE_PATTERN.test(created.providerHandle) ||
       created.authoritySha256 !== plan.authoritySha256 ||
+      created.providerHandle !== plan.providerHandle ||
+      created.sandboxName !== plan.sandboxName ||
+      created.lifecycleGeneration !== plan.lifecycleGeneration ||
       created.artifactDigest !== plan.workload.artifact.digest ||
       created.executableDigest !== plan.workload.launch.executable.digest
     ) {
-      return result(plan, "retained", "create-authority-mismatch", "possibly-retained");
+      return result(plan, "retained", "recovery-not-proven", "possibly-retained");
+    }
+    try {
+      const readiness = await operations.verifyReadiness(plan, created);
+      if (
+        readiness?.authoritySha256 !== plan.authoritySha256 ||
+        readiness.providerHandle !== plan.providerHandle ||
+        readiness.sandboxName !== plan.sandboxName ||
+        readiness.lifecycleGeneration !== plan.lifecycleGeneration ||
+        readiness.artifactDigest !== plan.workload.artifact.digest ||
+        readiness.executableDigest !== plan.workload.launch.executable.digest ||
+        readiness.ready !== true
+      ) {
+        return recoverMxcNativeArtifactBootstrap(plan, operations);
+      }
+    } catch {
+      return recoverMxcNativeArtifactBootstrap(plan, operations);
     }
   } catch {
-    return result(plan, "retained", "create-outcome-unknown", "possibly-retained");
-  }
-  try {
-    const readiness = await operations.verifyReadiness(plan);
-    if (
-      readiness?.authoritySha256 !== plan.authoritySha256 ||
-      readiness.lifecycleGeneration !== plan.lifecycleGeneration ||
-      readiness.artifactDigest !== plan.workload.artifact.digest ||
-      readiness.executableDigest !== plan.workload.launch.executable.digest ||
-      readiness.ready !== true
-    ) {
-      return result(plan, "retained", "readiness-not-proven", "possibly-retained");
-    }
-  } catch {
-    return result(plan, "retained", "readiness-not-proven", "possibly-retained");
+    return recoverMxcNativeArtifactBootstrap(plan, operations);
   }
   return result(plan, "ready", null, "active");
 }
 
-export function createMxcNativeArtifactBootstrapSurface(): RuntimeProviderNativeArtifactBootstrapSurface {
+export function createMxcNativeArtifactBootstrapSurface(
+  operations: RuntimeProviderNativeArtifactBootstrapOperations,
+): RuntimeProviderNativeArtifactBootstrapSurface {
+  if (
+    typeof operations?.verifyAndCreate !== "function" ||
+    typeof operations.verifyReadiness !== "function" ||
+    typeof operations.recoverCreate !== "function"
+  ) {
+    throw new MxcNativeArtifactBootstrapError(
+      "provider-owned atomic artifact verification and create, readiness, and recovery operations are required",
+    );
+  }
   return {
     providerId: MXC_PROVIDER_ID,
     supported: true,
     bootstrapKind: "native-artifact",
     contractVersion: RUNTIME_PROVIDER_NATIVE_ARTIFACT_BOOTSTRAP_CONTRACT_VERSION,
-    run: runMxcNativeArtifactBootstrap,
+    run: (input) => runMxcNativeArtifactBootstrap(input, operations),
+    recover: (input) => recoverMxcNativeArtifactBootstrap(preparePlan(input), operations),
   };
 }

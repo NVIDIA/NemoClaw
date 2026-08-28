@@ -147,9 +147,9 @@ export async function assertHermesGpuStartupProof({
   expect(plainStatus).not.toMatch(/last CUDA proof failed|CUDA unverified/i);
 
   const openshellState = await sandbox.openshell(["sandbox", "get", sandboxName], {
-      artifactName: "phase-4-openshell-sandbox-ready-gpu-startup",
-      env,
-      timeoutMs: 30_000,
+    artifactName: "phase-4-openshell-sandbox-ready-gpu-startup",
+    env,
+    timeoutMs: 30_000,
   });
   expect(openshellState.exitCode, resultText(openshellState)).toBe(0);
   expect(stripAnsi(resultText(openshellState))).toMatch(/Phase:\s*Ready/i);
@@ -262,7 +262,6 @@ raise SystemExit(1)`,
   );
   expect(extraPlaceholderEnv.exitCode, resultText(extraPlaceholderEnv)).toBe(0);
   expect(extraPlaceholderEnv.stdout.trim()).toBe(expectedExtraPlaceholderAssignment);
-
   const guardWithoutStartupOwner = await sandbox.execShell(
     sandboxName,
     trustedSandboxShellScript(

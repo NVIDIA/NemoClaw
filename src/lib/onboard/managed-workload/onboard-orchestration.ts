@@ -40,6 +40,7 @@ import type { MessagingTokenDef } from "../messaging-prep";
 import { resolveSandboxBuildContext, resolveSandboxBuildPatch } from "../prepared-dcode-rebuild";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  normalizeRuntimeProviderIdentity,
   type RuntimeProviderBundle,
   resolveRuntimeProviderBundle,
 } from "../runtime-provider/access";
@@ -62,6 +63,7 @@ import {
 import { getSandboxReadyTimeoutSecs } from "../sandbox-gpu-create";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
 import {
+  installedManagedImageCatalogRevision,
   liveE2eManagedImageCatalog,
   liveE2eManagedImageRevision,
   type PreparedSandboxWorkloadSource,
@@ -72,10 +74,7 @@ import {
   prepareSandboxWorkloadSourceFromRebuildHandoff,
 } from "../workload/rebuild";
 import { resolveSandboxWorkloadRuntimeCapabilities } from "../workload/runtime";
-import {
-  prepareManagedStateVolumes,
-  type ManagedStateVolumeDeps,
-} from "./managed-state-volumes";
+import { prepareManagedStateVolumes, type ManagedStateVolumeDeps } from "./managed-state-volumes";
 
 type ManagedProfileInput = Omit<
   ManagedStartupOnboardProfileInput,
@@ -87,7 +86,10 @@ type BootstrapProvider = RuntimeProviderBundle & {
   readonly bootstrap: RuntimeProviderManagedImageBootstrapSurface;
 };
 
+export { normalizeRuntimeProviderIdentity };
+
 export type ManagedStateVolumeOnboardLifecycle = {
+  readonly roots: readonly import("../managed-startup/state-roots").ManagedStartupStateRoot[];
   materializeSandboxCreatePlan(
     input: MaterializeSandboxCreatePlanInput,
     materialize: (input: MaterializeSandboxCreatePlanInput) => SandboxCreatePlan,
@@ -116,6 +118,7 @@ export function createManagedStateVolumeOnboardLifecycle(
     throw new Error("Managed state volumes require provider-owned mount projection.");
   }
   return {
+    roots: input.roots,
     materializeSandboxCreatePlan(input, materialize) {
       return materialize({
         ...input,
@@ -144,8 +147,8 @@ export interface CreateManagedWorkloadOnboardRuntimeInput {
   readonly legacyDockerfilePath: string;
   readonly customDockerfilePath: string | null;
   readonly rootDir: string;
-  readonly model: string;
-  readonly provider: string;
+  readonly model: string | null;
+  readonly provider: string | null;
   readonly preferredInferenceApi: string | null;
   readonly endpointUrl: string | null;
   readonly startupProfile: ManagedProfileInput;
@@ -256,11 +259,18 @@ export function createManagedWorkloadOnboardRuntime(
   let preparedProfile: BuiltManagedStartupOnboardProfile | null = null;
 
   const ensurePreparedWorkload = async (): Promise<PreparedSandboxWorkloadSource> => {
-    const catalogRevision = liveE2eManagedImageRevision(input.startupProfile.environment);
+    const liveCatalogRevision = input.stockManagedRuntime
+      ? liveE2eManagedImageRevision(input.startupProfile.environment)
+      : null;
     const liveCatalog = liveE2eManagedImageCatalog(input.startupProfile.environment);
-    if (catalogRevision && liveCatalog) {
+    if (liveCatalogRevision && liveCatalog) {
       throw new Error("live E2E managed-image revision and catalog authority conflict");
     }
+    const catalogRevision =
+      liveCatalogRevision ??
+      (liveCatalog || input.tempManagedRuntimeCatalog || input.managedWorkloadRebuild
+        ? null
+        : installedManagedImageCatalogRevision(input.startupProfile.environment, input.rootDir));
     preparedWorkloadPromise ??= input.managedWorkloadRebuild
       ? Promise.resolve(
           prepareSandboxWorkloadSourceFromRebuildHandoff(
@@ -305,25 +315,27 @@ export function createManagedWorkloadOnboardRuntime(
       return input.managedWorkloadRebuild.replacementProfile;
     }
     if (preparedProfile) return preparedProfile;
+    const selectedModel = input.model?.trim() || "unconfigured";
+    const selectedProvider = input.provider?.trim() || null;
     const inferenceApi =
       input.agentName === "langchain-deepagents-code"
         ? "openai-completions"
         : dependencies.resolveAgentInferenceApi(
             input.agentName,
-            input.provider,
+            selectedProvider,
             input.preferredInferenceApi,
           );
     const inference: SandboxInferenceConfig = dependencies.getSandboxInferenceConfig(
-      input.model,
-      input.provider,
+      selectedModel,
+      selectedProvider,
       inferenceApi,
     );
     preparedProfile = buildManagedStartupOnboardProfile({
       agentName: input.agentName,
       inference: {
         routeProvider: inference.providerKey,
-        upstreamProvider: input.provider.trim() ? input.provider : inference.providerKey,
-        model: input.model,
+        upstreamProvider: selectedProvider ?? inference.providerKey,
+        model: selectedModel,
         routedBaseUrl: inference.inferenceBaseUrl,
         upstreamEndpointUrl:
           input.agentName === "langchain-deepagents-code" ? input.endpointUrl : null,
@@ -508,11 +520,15 @@ export async function prepareOnboardSandboxWorkloadLaunch(
   } else {
     const buildContext = requireLegacyBuildContext(legacyBuildContext);
     input.dependencies.prepareSandboxBuildPatchConfig({ configuredMessagingChannels });
+    const patchInput = input.legacy.resolvePatchInput();
     const patch = await (input.dependencies.resolveSandboxBuildPatch ?? resolveSandboxBuildPatch)({
       // Build-context staging resolves managed-agent base-image provenance.
       // Read the patch input only after that boundary so the final image gets
       // the exact metadata produced by the same staging operation.
-      ...input.legacy.resolvePatchInput(),
+      ...patchInput,
+      // An explicit path to the checked-in agent Dockerfile is staged through
+      // the trusted agent builder. Preserve that classification at patch time.
+      fromDockerfile: buildContext.origin === "generated" ? null : patchInput.fromDockerfile,
       selectedGpuRoute: initialGpuRoute,
       stagedDockerfile: buildContext.stagedDockerfile,
     });

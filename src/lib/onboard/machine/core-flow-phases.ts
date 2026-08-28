@@ -7,6 +7,7 @@ import {
 } from "../../inference/selection";
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../dcode-auto-approval";
+import { assertProviderlessInterceptorEnvironment } from "../entry-options";
 import type {
   createProviderRecoveryReceiptLedger,
   ProviderRecoveryReceipt,
@@ -19,6 +20,7 @@ import {
 import { createProviderInferencePhase, createSandboxPhase } from "./flow-phases/provider-sandbox";
 import { UnexpectedOnboardFlowSliceStateError } from "./flow-slice-error";
 import { runCoreOnboardFlowSequence } from "./flow-slices";
+import { advanceTo } from "./result";
 import {
   handleProviderInferenceState,
   type ProviderInferenceStateOptions,
@@ -52,9 +54,11 @@ export interface ProviderInferenceOnboardFlowPhaseOptions<
   gatewayName: string;
   forceProviderSelection: boolean;
   forceInferenceSetup?: boolean;
+  apfInterceptorRequested?: boolean;
   authoritativeResumeConfig?: boolean;
   providerRecoveryReceipt?: ProviderRecoveryReceipt | null;
   providerRecoveryReceiptLedger?: ReturnType<typeof createProviderRecoveryReceiptLedger>;
+  inspectSandboxForCreate: import("../sandbox-lifecycle").SandboxLifecycleHelpers["inspectSandboxForCreate"];
   endpointProvenance: EndpointProvenanceOptions;
   env: NodeJS.ProcessEnv;
   constants: ProviderInferenceStateOptions<Context["gpu"], Context["agent"], Host>["constants"];
@@ -105,6 +109,47 @@ interface EndpointProvenance {
   onboardEndpointUrl: string | null;
 }
 
+export function isCoreFlowCompleteBeforeFinalization(result: {
+  readonly context: Pick<OnboardFlowContext, "providerlessApf" | "sandboxName">;
+  readonly session: { readonly machine: { readonly state: string } };
+}): boolean {
+  return (
+    result.context.providerlessApf === true &&
+    result.session.machine.state === "complete" &&
+    Boolean(result.context.sandboxName)
+  );
+}
+
+function hasProviderBackedApfIntent(context: OnboardFlowContext): boolean {
+  const requestedAgentName = (context.agent as { readonly name?: unknown } | null)?.name;
+  const requestsNondefaultAgent =
+    typeof requestedAgentName === "string" &&
+    requestedAgentName.trim().toLowerCase() !== "openclaw";
+  const routeValues = [
+    context.provider,
+    context.model,
+    context.endpointUrl,
+    context.onboardEndpointUrl,
+    context.credentialEnv,
+    context.preferredInferenceApi,
+    context.compatibleEndpointReasoning,
+    context.compatibleEndpointReasoningEffort,
+    context.nimContainer,
+  ];
+  return (
+    requestsNondefaultAgent ||
+    routeValues.some((value) => typeof value === "string" && value.trim().length > 0) ||
+    context.endpointSource != null ||
+    context.selectedMessagingChannels.length > 0 ||
+    context.hermesToolGateways.length > 0 ||
+    context.webSearchConfig !== null ||
+    Boolean(context.session?.messagingPlan) ||
+    context.hostLocalInferenceRouteOnly === true ||
+    context.hostLocalInferenceSandboxProofAuthority != null ||
+    context.session?.servingProfileProvenance != null
+  );
+}
+
 function endpointProvenanceForPhase(
   context: Pick<OnboardFlowContext, "fresh" | "sandboxName" | "provider" | "endpointUrl">,
   options: EndpointProvenanceOptions,
@@ -143,6 +188,64 @@ export function createProviderInferenceOnboardFlowPhase<
   Host = unknown,
 >(options: ProviderInferenceOnboardFlowPhaseOptions<Context, Host>): OnboardSequencePhase<Context> {
   return createProviderInferencePhase<Context>(async (context) => {
+    if (
+      options.apfInterceptorRequested === true ||
+      context.session?.apfInterceptorRequested === true
+    ) {
+      assertProviderlessInterceptorEnvironment(true, options.env);
+      if (hasProviderBackedApfIntent(context)) {
+        throw new Error(
+          "Interceptor onboarding supports providerless sandbox creation only. No sandbox or provider was created.",
+        );
+      }
+      const sandboxName =
+        context.sandboxName ?? (await options.deps.promptValidatedSandboxName(context.agent));
+      const reservationSessionId = context.session?.sessionId;
+      if (!reservationSessionId) {
+        throw new Error(
+          "APF interceptor onboarding requires a durable session before providerless sandbox creation.",
+        );
+      }
+      const observed = options.inspectSandboxForCreate(sandboxName);
+      if (observed.existingEntry || observed.liveExists) {
+        throw new Error(
+          `APF interceptor selection cannot adopt existing sandbox '${sandboxName}'. Choose a new sandbox name.`,
+        );
+      }
+      await options.deps.checkpointSandboxIdentity(sandboxName, context.agent);
+      const reserved = await options.deps.withGatewayRouteMutationLock(options.gatewayName, () =>
+        options.deps.reserveSandboxInferenceRoute(
+          sandboxName,
+          {
+            provider: null,
+            model: null,
+            endpointUrl: null,
+            endpointSource: null,
+            credentialEnv: null,
+            preferredInferenceApi: null,
+            gatewayName: options.gatewayName,
+            reservationSessionId,
+          },
+          { requireAbsent: true },
+        ),
+      );
+      if (!reserved) {
+        throw new Error(
+          `APF interceptor onboarding could not reserve sandbox '${sandboxName}' for verified providerless creation.`,
+        );
+      }
+      return {
+        context: { ...context, sandboxName, providerlessApf: true },
+        result: [
+          advanceTo("inference", {
+            metadata: { state: "provider_selection", providerlessApf: true },
+          }),
+          advanceTo("sandbox", {
+            metadata: { state: "inference", providerlessApf: true },
+          }),
+        ],
+      };
+    }
     const endpointProvenance = endpointProvenanceForPhase(context, options.endpointProvenance);
     const providerInferenceResult = await handleProviderInferenceState({
       gatewayName: options.gatewayName,
@@ -232,7 +335,7 @@ export function createSandboxOnboardFlowPhase<
       apfInterceptorRequested: options.apfInterceptorRequested === true,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
       authoritativePolicyTier: options.authoritativePolicyTier,
-      deferSandboxEffectsUntilPolicyVerification: true,
+      deferSandboxEffectsUntilPolicyVerification: options.apfInterceptorRequested === true,
 
       recreateJournalTargetIntentFingerprint: options.recreateJournalTargetIntentFingerprint,
       endpointSource: endpointProvenance.endpointSource,
@@ -245,8 +348,8 @@ export function createSandboxOnboardFlowPhase<
       recreateSandbox: options.recreateSandbox,
       session: context.session,
       sandboxName: context.sandboxName,
-      model: context.model,
-      provider: context.provider,
+      model: context.model ?? "",
+      provider: context.provider ?? "",
       endpointUrl: context.endpointUrl,
       compatibleEndpointReasoning: context.compatibleEndpointReasoning,
       credentialEnv: context.credentialEnv,

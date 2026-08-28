@@ -662,7 +662,7 @@ describe("confirmRecoveredSandboxGatewayManaged scope", () => {
     ).toBe(false);
   });
 
-  it("keeps unavailable supervisor results terminal while lease contention stays transient", () => {
+  it("keeps unavailable results terminal while exact transient results stay inconclusive", () => {
     const confirm = (stderr: string) =>
       confirmRecoveredSandboxGatewayManaged("my-sandbox", {
         getSandboxImpl: () => openClawEntry,
@@ -672,6 +672,8 @@ describe("confirmRecoveredSandboxGatewayManaged scope", () => {
 
     expect(confirm("SUPERVISOR_UNAVAILABLE")).toBe(false);
     expect(confirm("SUPERVISOR_BUSY")).toBeNull();
+    expect(confirm("SUPERVISOR_DISCOVERY_PENDING")).toBeNull();
+    expect(confirm("SUPERVISOR_DISCOVERY_PENDING\nunexpected diagnostic")).toBe(false);
   });
 });
 

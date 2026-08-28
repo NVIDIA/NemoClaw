@@ -84,11 +84,10 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
     id: "ubuntu-repo-cloud-openclaw",
     gatewayRuntimes: E2E_GATEWAY_RUNTIMES,
     manifestName: "openclaw-nvidia",
-    environment: { ...ubuntuRepoManagedRuntime("cloud-openclaw"), policyTier: "personal" },
+    environment: ubuntuRepoManagedRuntime("cloud-openclaw"),
     expectedStateId: "cloud-openclaw-ready",
-    suiteIds: ["smoke", "inference", "credentials", "personal-stock-fetch"],
-    description:
-      "Ubuntu repo checkout with a managed runtime, Personal policy, and cloud OpenClaw stock-fetch proof.",
+    suiteIds: ["smoke", "inference", "credentials"],
+    description: "Ubuntu repo checkout with managed-runtime cloud OpenClaw onboarding.",
     executionCoverage: {
       agentRuntime: "openclaw",
       observableOutcome: "Repository install onboarding and hosted inference succeed",

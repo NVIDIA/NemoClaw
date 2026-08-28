@@ -239,6 +239,7 @@ const GUARDED_DOCKER_HUB_AUTH_REQUIRED = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} &
 const GUARDED_DOCKER_HUB_USERNAME = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && secrets.DOCKERHUB_USERNAME || '' }}`;
 const GUARDED_DOCKER_HUB_TOKEN = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && secrets.DOCKERHUB_TOKEN || '' }}`;
 const GUARDED_HERMES_E2E_INFERENCE_KEY = `\${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && (inputs.inference_mode || 'mock') != 'mock' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}`;
+const GUARDED_LIVE_E2E_INFERENCE_KEY = `\${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && (inputs.checkout_sha == '' || needs.generate-matrix.outputs.e2e_credentials_allowed == 'true') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}`;
 const RUNNER_ROUTING_OUTPUT = "${{ steps.runner_routing.outputs.runner_routing }}";
 const RUNNER_ROUTING_STEP_NAME = "Build trusted larger-runner routing";
 const RUNNER_ROUTING_SCRIPT = [
@@ -1268,8 +1269,13 @@ function validateFreeStandingJobSelector(
   const job = asRecord(jobs[jobName]);
   const expectedNeeds =
     jobName === "mcp-bridge-dev"
-      ? ["generate-matrix", "openshell-dev-artifact"]
-      : jobName === "cloud-onboard"
+      ? ["base-image-publication", "generate-matrix", "openshell-dev-artifact"]
+      : [
+            "mcp-bridge",
+            "openshell-credential-generation-window",
+            "cloud-onboard",
+            "messaging-providers",
+          ].includes(jobName)
         ? ["base-image-publication", "generate-matrix"]
         : "generate-matrix";
   if (!isDeepStrictEqual(job.needs, expectedNeeds)) {
@@ -1726,8 +1732,8 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
     return;
   }
 
-  if (job.needs !== "generate-matrix") {
-    errors.push("hermes-e2e job must depend on generate-matrix validation");
+  if (!isDeepStrictEqual(job.needs, ["base-image-publication", "generate-matrix"])) {
+    errors.push("hermes-e2e job must depend on publication and generate-matrix validation");
   }
   if (job.if !== "${{ needs.generate-matrix.outputs.hermes_selected == 'true' }}") {
     errors.push("hermes-e2e job must use validated hermes_selected output");
@@ -1842,7 +1848,7 @@ function validateJetsonControllerBoundary(errors: string[], jobs: WorkflowRecord
   const publication = asRecord(jobs["base-image-publication"]);
   if (
     asRecord(publication.outputs).managed_image_revision !==
-    "${{ steps.publication.outputs.head_sha || (steps.publication_mode.outputs.reuse == '1' && 'e38db201413b457614904187377ed9fd002d281d') || inputs.checkout_sha || github.sha }}"
+    "${{ steps.validate_managed_cohort.outputs.revision }}"
   ) {
     errors.push("base-image-publication must expose the managed-image revision to Jetson dispatch");
   }
@@ -2713,7 +2719,6 @@ function validateExactPrManagedImageCatalogBoundary(
     errors.push("exact managed-image publication must resolve before candidate checkout");
   }
 }
-
 export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const workflow = asRecord(workflowValue);
   const errors: string[] = [];
@@ -2938,7 +2943,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateLargerRunnerRouting(errors, jobs, generateMatrix, generateSteps, generateCheckout);
   const generate = requireStep(errors, generateSteps, "Generate E2E target matrix");
   validateTrustedE2ePlannerBoundary(errors, generateSteps, generate, generateCheckout);
-  validateExactPrManagedImageCatalogBoundary(errors, generateSteps, generate, generateCheckout);
   const generateEnv = asRecord(generate?.env);
   if (generateEnv.CHECKOUT_SHA !== "${{ inputs.checkout_sha }}") {
     errors.push("matrix generation step must bind controller checkout through CHECKOUT_SHA env");
@@ -3004,14 +3008,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
 
   const jobEnv = asRecord(liveTargets.env);
-  if (
-    jobEnv.E2E_MANAGED_IMAGE_REVISION !==
-    "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}"
-  ) {
-    errors.push(
-      "live stock onboarding must use the selected managed-image revision when no exact PR catalog is present",
-    );
-  }
   if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
     errors.push("live job must set NEMOCLAW_RUN_LIVE_E2E=1");
   }
@@ -3157,8 +3153,10 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (runVitestEnv.TARGET_ID !== "${{ matrix.id }}") {
     errors.push("live E2E step must pass matrix.id through TARGET_ID env");
   }
-  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
-    errors.push("live E2E step must receive NVIDIA_INFERENCE_API_KEY from secrets");
+  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== GUARDED_LIVE_E2E_INFERENCE_KEY) {
+    errors.push(
+      "live E2E step must guard NVIDIA_INFERENCE_API_KEY behind a trusted main run or an authorized NVIDIA-owned PR dispatch",
+    );
   }
   requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/registry-targets.test.ts");

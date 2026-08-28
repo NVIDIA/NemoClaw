@@ -51,8 +51,9 @@ Review the [Prerequisites](prerequisites) before you begin.
     Press Enter to accept the suggested `my-assistant` sandbox name.
     For a first run, skip optional web search and messaging setup, then accept the suggested network policy tier.
     With the OpenShell Docker driver, stock OpenClaw onboarding normally uses the release's exact managed-image digest.
-    If registry or catalog availability prevents resolution, it builds the shipped repository Dockerfile instead; it never selects an unpinned `:latest` image.
+    If registry or catalog availability prevents resolution, stock onboarding stops before sandbox creation and does not build a shipped Dockerfile.
     Invalid or inconsistent catalog evidence fails closed before sandbox creation.
+    An explicit `nemoclaw onboard --from <Dockerfile>` remains a separate custom-image path.
 
     <Note>
       The installer can display `Run express install with these settings? [Y/n]:` before the agent-selection prompt on DGX Spark, qualifying DGX Station, or Windows Subsystem for Linux (WSL) hosts.

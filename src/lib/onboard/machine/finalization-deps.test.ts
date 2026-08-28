@@ -730,7 +730,6 @@ describe("finalizationHandlerDeps.waitForSandboxControlPlaneReady", () => {
     );
     vi.spyOn(finalizationHandlerRuntime, "loadProcessRecovery").mockReturnValue({
       checkAndRecoverSandboxProcesses: vi.fn(),
-      restartSandboxGateway: vi.fn(),
       waitForRecreatedSandboxOpenShellReady,
     });
 
@@ -797,31 +796,5 @@ describe("finalizationHandlerDeps.readRegistryAgent", () => {
     });
 
     expect(finalizationHandlerDeps.readRegistryAgent("alpha")).toBeNull();
-  });
-});
-
-describe("finalizationHandlerDeps managed messaging authority", () => {
-  afterEach(() => vi.restoreAllMocks());
-
-  it("reads the exact persisted runtime identity", () => {
-    vi.spyOn(finalizationHandlerRuntime, "loadRegistryPersistence").mockReturnValue({
-      load: () => ({
-        sandboxes: {
-          alpha: {
-            gatewayName: "nemoclaw",
-            lifecycleGeneration: "generation-1",
-            lifecycleLiveIdentityFingerprint: "a".repeat(64),
-            openshellDriver: "podman",
-          },
-        },
-      }),
-    } as never);
-
-    expect(finalizationHandlerDeps.readManagedMessagingRuntimeIdentity("alpha")).toEqual({
-      gatewayName: "nemoclaw",
-      lifecycleGeneration: "generation-1",
-      lifecycleLiveIdentityFingerprint: "a".repeat(64),
-      openshellDriver: "podman",
-    });
   });
 });

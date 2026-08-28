@@ -250,6 +250,20 @@ describe("incomplete-onboard --resume backstop (#6003)", () => {
     expect(runExitHandler(1)).not.toContain("--resume");
   });
 
+  it("preserves recovery-only cancellation through the later exit backstop (#9833)", () => {
+    const fingerprint = "a".repeat(64);
+    session.saveSession(
+      session.createSession({ lastStepStarted: "sandbox", sandboxName: "retained-sb" }),
+    );
+    session.markCancellationRecovery("retained-sb", fingerprint);
+    const beforeExit = requireLoadedSession();
+
+    const output = runExitHandler(1);
+
+    expect(output).not.toContain("--resume");
+    expect(requireLoadedSession()).toEqual(beforeExit);
+  });
+
   it("stays silent when cancel cleanup clears the session before a signal is re-raised", async () => {
     const signalListeners = new Map<"SIGINT" | "SIGTERM", () => void>();
     const kill = vi.fn();

@@ -115,6 +115,7 @@ export function assertDiscordGatewayCapture(captureFile: string, expectedToken: 
 export type FakeDockerApi = {
   kind: string;
   port: string;
+  alternatePort?: string;
   dir: string;
   captureFile: string;
   container: string;
@@ -349,11 +350,13 @@ export async function runHost(
     artifactName: string;
     env: NodeJS.ProcessEnv;
     redactionValues: string[];
+    cwd?: string;
     timeoutMs?: number;
   },
 ): Promise<ShellProbeResult> {
   return host.command(command, args, {
     artifactName: options.artifactName,
+    cwd: options.cwd,
     env: options.env,
     redactionValues: options.redactionValues,
     timeoutMs: options.timeoutMs ?? PROBE_TIMEOUT_MS,
@@ -654,6 +657,9 @@ export async function startFakeDockerApi(
     "-e",
     `${options.captureFileEnv}=/tmp/fake/capture.jsonl`,
   ];
+  if (options.kind === "slack") {
+    runtimeArgs.splice(7, 0, "-p", "0:8081", "-e", "FAKE_SLACK_API_WEBSOCKET_PORT=8081");
+  }
   for (const [key, value] of Object.entries(options.expectedEnv)) {
     runtimeArgs.push("-e", `${key}=${value}`);
   }
@@ -693,17 +699,28 @@ export async function startFakeDockerApi(
 
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (fs.existsSync(portFile) && fs.statSync(portFile).size > 0) {
-      const port = await runtimeProvider.command(["port", container, "8080/tcp"], {
+      const restPort = await runtimeProvider.command(["port", container, "8080/tcp"], {
         artifactName: `port-fake-${options.kind}-api`,
         env: options.env,
         redactionValues: options.redactionValues,
         timeoutMs: 30_000,
       });
-      const published = port.stdout.trim().split(":").at(-1)?.trim();
-      if (published) {
+      const publishedRestPort = restPort.stdout.trim().split(":").at(-1)?.trim() ?? "";
+      let publishedWebsocketPort = "";
+      if (options.kind === "slack") {
+        const websocketPort = await runtimeProvider.command(["port", container, "8081/tcp"], {
+          artifactName: "port-fake-slack-websocket-api",
+          env: options.env,
+          redactionValues: options.redactionValues,
+          timeoutMs: 30_000,
+        });
+        publishedWebsocketPort = websocketPort.stdout.trim().split(":").at(-1)?.trim() ?? "";
+      }
+      if (publishedRestPort && (options.kind !== "slack" || publishedWebsocketPort)) {
         return {
           kind: options.kind,
-          port: published,
+          port: publishedRestPort,
+          ...(options.kind === "slack" ? { alternatePort: publishedWebsocketPort } : {}),
           dir,
           captureFile,
           container,

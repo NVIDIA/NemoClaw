@@ -27,30 +27,12 @@ type VerificationResult = { ok: boolean };
 function createDeps(
   overrides: Partial<FinalizationStateOptions<Agent, VerifyChain, VerificationResult>["deps"]> = {},
 ) {
-  const messagingCredentialLockCalls = vi.fn();
-  const withMessagingCredentialLocks = async <T>(
-    sandboxName: string,
-    gatewayName: string,
-    operation: () => Promise<T>,
-  ): Promise<T> => {
-    messagingCredentialLockCalls(sandboxName, gatewayName, operation);
-    return await operation();
-  };
   const calls = {
     setDefaultSandbox: vi.fn(),
     ensureAgentDashboard: vi.fn(() => 18789),
     persistDashboardPort: vi.fn(),
     removeLegacy: vi.fn(),
     cleanupHost: vi.fn(),
-    convergeMessagingCredentials: vi.fn(async () => ({ kind: "skipped" as const })),
-    readMessagingRuntimeIdentity: vi.fn(() => ({
-      gatewayName: "nemoclaw",
-      lifecycleGeneration: "generation-1",
-      lifecycleLiveIdentityFingerprint: "a".repeat(64),
-      openshellDriver: "docker",
-    })),
-    restartManagedGateway: vi.fn(() => ({ ok: true as const })),
-    messagingCredentialLockCalls,
     recoverProcesses: vi.fn(),
     settleOrdinaryPairing: vi.fn(async () => ({ kind: "settled" as const })),
     ordinaryPairingIncompleteMessage: vi.fn(
@@ -81,10 +63,6 @@ function createDeps(
       toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
       removeLegacyCredentialsFile: calls.removeLegacy,
       cleanupStaleHostFiles: calls.cleanupHost,
-      convergeManagedMessagingCredentials: calls.convergeMessagingCredentials,
-      readManagedMessagingRuntimeIdentity: calls.readMessagingRuntimeIdentity,
-      restartManagedGateway: calls.restartManagedGateway,
-      withManagedMessagingCredentialLocks: withMessagingCredentialLocks,
       checkAndRecoverSandboxProcesses: calls.recoverProcesses,
       settleOrdinaryOpenClawPairing: calls.settleOrdinaryPairing,
       ordinaryOpenClawPairingIncompleteMessage: calls.ordinaryPairingIncompleteMessage,
@@ -121,7 +99,6 @@ function baseOptions(
     migratedLegacyKeys: new Set(),
     webSearchEnabled: false,
     webSearchProvider: null,
-    messagingPlan: null,
     deps,
   };
 }
@@ -190,74 +167,6 @@ describe("finalization handlers", () => {
     expect(calls.dashboard).not.toHaveBeenCalled();
   });
 
-  it("converges durable messaging intent after policy finalization on the ordinary path", async () => {
-    const { deps, calls } = createDeps();
-    const messagingPlan = { sandboxName: "my-assistant" } as never;
-
-    await handleFinalizationPhase({ ...baseOptions(deps), messagingPlan });
-
-    expect(calls.convergeMessagingCredentials).toHaveBeenCalledExactlyOnceWith(
-      "my-assistant",
-      "docker",
-      "nemoclaw",
-      messagingPlan,
-      calls.restartManagedGateway,
-    );
-    expect(calls.convergeMessagingCredentials.mock.invocationCallOrder[0]).toBeLessThan(
-      calls.cleanupHost.mock.invocationCallOrder[0],
-    );
-  });
-
-  it("restarts once after an exact messaging projection changes runtime config", async () => {
-    const { deps, calls } = createDeps({
-      convergeManagedMessagingCredentials: vi.fn(
-        async (sandboxName, _driver, _gatewayName, _plan, restart) => {
-          restart(sandboxName);
-          return {
-            kind: "converged" as const,
-            updatedProviders: ["alpha-telegram-bridge"],
-            projectedTargets: ["/sandbox/.openclaw/openclaw.json"],
-            restartRequired: true,
-          };
-        },
-      ),
-    });
-
-    await handleFinalizationPhase({
-      ...baseOptions(deps),
-      messagingPlan: { sandboxName: "my-assistant" } as never,
-    });
-
-    expect(calls.restartManagedGateway).toHaveBeenCalledExactlyOnceWith("my-assistant");
-    expect(calls.messagingCredentialLockCalls).toHaveBeenCalledWith(
-      "my-assistant",
-      "nemoclaw",
-      expect.any(Function),
-    );
-  });
-
-  it("rejects a sandbox generation change during credential activation", async () => {
-    const generation = (suffix: string) => ({
-      gatewayName: "nemoclaw",
-      lifecycleGeneration: `generation-${suffix}`,
-      lifecycleLiveIdentityFingerprint: suffix.repeat(64),
-      openshellDriver: "podman",
-    });
-    const readManagedMessagingRuntimeIdentity = vi
-      .fn()
-      .mockReturnValueOnce(generation("a"))
-      .mockReturnValueOnce(generation("a"))
-      .mockReturnValueOnce(generation("b"));
-    const { deps } = createDeps({ readManagedMessagingRuntimeIdentity });
-
-    await expect(
-      handleFinalizationPhase({
-        ...baseOptions(deps),
-        messagingPlan: { sandboxName: "my-assistant" } as never,
-      }),
-    ).rejects.toThrow("runtime identity changed during activation");
-  });
-
   it("completes the session, verifies deployment, and prints the dashboard", async () => {
     const { deps, calls } = createDeps();
 
@@ -302,7 +211,6 @@ describe("finalization handlers", () => {
     const options = {
       ...baseOptions(deps),
       agent: { name: "openclaw" },
-      messagingPlan: { sandboxName: "my-assistant" } as never,
       portableProfileSelected: true,
     };
 
@@ -313,7 +221,6 @@ describe("finalization handlers", () => {
     expect(calls.settlePortablePairing).toHaveBeenCalledExactlyOnceWith("my-assistant", {
       portableRequired: true,
     });
-    expect(calls.convergeMessagingCredentials).not.toHaveBeenCalled();
   });
 
   it("uses strict Portable settlement for the default-null OpenClaw resume state (#9200)", async () => {
@@ -394,7 +301,6 @@ describe("finalization handlers", () => {
     const options = {
       ...baseOptions(deps),
       agent: { name: "hermes" },
-      messagingPlan: { sandboxName: "my-assistant" } as never,
       portableProfileSelected: true,
     };
 
@@ -403,7 +309,6 @@ describe("finalization handlers", () => {
     expect(result.stateResult.type).toBe("complete");
     expect(calls.settleOrdinaryPairing).not.toHaveBeenCalled();
     expect(calls.settlePortablePairing).not.toHaveBeenCalled();
-    expect(calls.convergeMessagingCredentials).not.toHaveBeenCalled();
   });
 
   it("rejects a Portable non-OpenClaw session and registry mismatch before pairing writes (#9207)", async () => {

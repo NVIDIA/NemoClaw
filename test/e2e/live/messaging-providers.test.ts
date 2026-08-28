@@ -12,7 +12,8 @@
 import fs from "node:fs";
 
 import { testTimeoutOptions } from "../../helpers/timeouts";
-import { test } from "../fixtures/e2e-test.ts";
+import { expect, test } from "../fixtures/e2e-test.ts";
+import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import {
   accountBool,
   accountString,
@@ -38,8 +39,8 @@ import {
   REBUILD_TIMEOUT_MS,
   rawTokenSurfaceProbe,
   readOpenClawConfig,
-  runDiscordGatewayClient,
   runHost,
+  runDiscordGatewayClient,
   runSandboxShell,
   runSecondaryCleanup,
   runSlackApiRequest,
@@ -163,6 +164,11 @@ test(
       return;
     }
     expectExitZero(install, "M0: install.sh completed");
+    assertStockManagedImageReceipt({
+      environment: state.env,
+      expectedAgent: "openclaw",
+      sandboxName: SANDBOX_NAME,
+    });
 
     const openshellVersion = await runHost(host, "openshell", ["--version"], {
       artifactName: "openshell-version-messaging-providers",
@@ -326,8 +332,9 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       "M-W1: WeChat provider exists in gateway",
     );
     check(
-      providerListText.includes(`${SANDBOX_NAME}-extra-telegram-bot-token-agent-a`),
-      "X1: provider registered for TELEGRAM_BOT_TOKEN_AGENT_A",
+      !providerListText.includes(`${SANDBOX_NAME}-extra-telegram-bot-token-agent-a`) &&
+        !providerListText.includes(`${SANDBOX_NAME}-extra-telegram-bot-token-agent-b`),
+      "X1: Telegram extension keys do not create standalone providers",
     );
     check(
       !providerListText.includes(`${SANDBOX_NAME}-extra-telegram-bot-token-agent-missing`),
@@ -336,6 +343,27 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     check(
       !providerListText.includes(`${SANDBOX_NAME}-extra-github-token`),
       "X3: GITHUB_TOKEN refused by parser; no provider row registered",
+    );
+    const telegramProvider = await runHost(
+      host,
+      "openshell",
+      ["provider", "get", `${SANDBOX_NAME}-telegram-bridge`],
+      {
+        artifactName: "telegram-provider-messaging-providers",
+        env: state.env,
+        redactionValues,
+        timeoutMs: 60_000,
+      },
+    );
+    const telegramProviderText = outputText(telegramProvider);
+    expectExitZero(telegramProvider, "X1a: inspect canonical Telegram provider");
+    check(
+      telegramProviderText.includes("TELEGRAM_BOT_TOKEN") &&
+        telegramProviderText.includes("TELEGRAM_BOT_TOKEN_AGENT_A") &&
+        telegramProviderText.includes("TELEGRAM_BOT_TOKEN_AGENT_B") &&
+        !telegramProviderText.includes("TELEGRAM_BOT_TOKEN_AGENT_MISSING") &&
+        !telegramProviderText.includes("GITHUB_TOKEN"),
+      "X1a/X2/X3a: canonical Telegram provider owns only the requested credential keys",
     );
 
     const envDump = await sandboxOutput(
@@ -356,8 +384,11 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     const placeholderChecks: Array<[string, string, string]> = [
       ["M3", "TELEGRAM_BOT_TOKEN", state.tokens.telegram],
       ["M4", "DISCORD_BOT_TOKEN", state.tokens.discord],
+      ["M-S3", "SLACK_BOT_TOKEN", state.tokens.slackBot],
+      ["M-S4", "SLACK_APP_TOKEN", state.tokens.slackApp],
       ["M-W3", "WECHAT_BOT_TOKEN", state.tokens.wechat],
     ];
+    const credentialPlaceholders = new Map<string, string>();
     for (const [assertionId, key, token] of placeholderChecks) {
       const value = await sandboxOutput(
         sandbox,
@@ -380,6 +411,7 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
           value.startsWith("openshell:resolve:env:"),
           `${assertionId}: ${key} uses OpenShell resolve placeholder`,
         );
+        credentialPlaceholders.set(key, value);
       }
     }
 
@@ -421,12 +453,12 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       redactionValues,
     );
     check(
-      extraA === "",
-      "X4a: TELEGRAM_BOT_TOKEN_AGENT_A remains outside the sandbox environment",
+      /^openshell:resolve:env:v[0-9]+_TELEGRAM_BOT_TOKEN_AGENT_A$/u.test(extraA),
+      "X4a: TELEGRAM_BOT_TOKEN_AGENT_A is a revision-scoped resolve placeholder",
     );
     check(
-      extraB === "",
-      "X4b: TELEGRAM_BOT_TOKEN_AGENT_B remains outside the sandbox environment",
+      /^openshell:resolve:env:v[0-9]+_TELEGRAM_BOT_TOKEN_AGENT_B$/u.test(extraB),
+      "X4b: TELEGRAM_BOT_TOKEN_AGENT_B is a revision-scoped resolve placeholder",
     );
 
     const startLog = await sandboxOutput(
@@ -445,10 +477,10 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     const config = await readOpenClawConfig(sandbox, redactionValues);
     (
       [
-      ["M6a", "telegram", "telegram"],
-      ["M6b", "discord", "discord"],
-      ["M6c", "slack", "slack"],
-      ["M6d", "whatsapp", "whatsapp"],
+        ["M6a", "telegram", "telegram"],
+        ["M6b", "discord", "discord"],
+        ["M6c", "slack", "slack"],
+        ["M6d", "whatsapp", "whatsapp"],
       ] as const
     ).forEach(([assertionId, channel, plugin]) => {
       check(channelEnabled(config, channel), `${assertionId}: channels.${channel}.enabled is true`);
@@ -464,12 +496,6 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     const whatsappAccount = channelAccount(config, "whatsapp");
     const wechatAccount = channelAccount(config, "openclaw-weixin", state.wechatAccount);
 
-    const telegramBotToken = accountString(telegramAccount, "botToken");
-    check(telegramBotToken.length > 0, "M6: Telegram botToken present in openclaw.json");
-    check(
-      telegramBotToken !== state.tokens.telegram,
-      "M7: Telegram botToken is not the host token",
-    );
     check(
       !Object.prototype.hasOwnProperty.call(discordAccount, "token"),
       "M8: Discord token is omitted from openclaw.json",
@@ -503,6 +529,13 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       accountString(slackAccount, "groupPolicy") === "allowlist",
       "M11g: Slack groupPolicy is allowlist",
     );
+    const slackBotPlaceholder = credentialPlaceholders.get("SLACK_BOT_TOKEN") ?? "";
+    const slackAppPlaceholder = credentialPlaceholders.get("SLACK_APP_TOKEN") ?? "";
+    check(
+      /^openshell:resolve:env:v[0-9]+_SLACK_BOT_TOKEN$/u.test(slackBotPlaceholder) &&
+        /^openshell:resolve:env:v[0-9]+_SLACK_APP_TOKEN$/u.test(slackAppPlaceholder),
+      "M11j: Slack environment uses revision-scoped OpenShell credential placeholders",
+    );
     const slackChannels = slackAccount.channels;
     const slackWildcard =
       slackChannels && typeof slackChannels === "object"
@@ -523,8 +556,8 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     check(
       Boolean(
         whatsappHealth &&
-          typeof whatsappHealth === "object" &&
-          (whatsappHealth as Record<string, unknown>).enabled === false,
+        typeof whatsappHealth === "object" &&
+        (whatsappHealth as Record<string, unknown>).enabled === false,
       ),
       "M-WA8a: WhatsApp health monitor is disabled for unpaired QR session",
     );
@@ -583,9 +616,9 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     };
     (
       [
-      ["M6e", "telegram", "default"],
-      ["M6f", "discord", "default"],
-      ["M6g", "slack", "default"],
+        ["M6e", "telegram", "default"],
+        ["M6f", "discord", "default"],
+        ["M6g", "slack", "default"],
       ] as const
     ).forEach(([assertionId, channel, accountId]) => {
       const entry = parsedRuntime.chat?.[channel];
@@ -866,12 +899,12 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       sandbox,
       fakeSlackBot.port,
       "/api/auth.test",
-      { envKey: "SLACK_BOT_TOKEN", aliasPrefix: "xoxb" },
+      `Bearer ${slackBotPlaceholder}`,
       redactionValues,
     );
     check(
       /^200\b/.test(slackAuth) && /invalid_auth|not_authed|ok":true/.test(slackAuth),
-      `M-S15: Slack auth.test exercised alias rewrite (${slackAuth.slice(0, 200)})`,
+      `M-S15: Slack auth.test exercised revision-scoped placeholder rewrite (${slackAuth.slice(0, 200)})`,
     );
     const slackAuthCapture = lastJsonLine(
       fakeSlackBot.captureFile,
@@ -886,17 +919,6 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       "M-S15a: fake Slack saw host-side bot token without raw capture leakage",
     );
 
-    const slackCanonical = await runSlackApiRequest(
-      sandbox,
-      fakeSlackBot.port,
-      "/api/auth.test",
-      { envKey: "SLACK_BOT_TOKEN" },
-      redactionValues,
-    );
-    check(
-      /^200\b/.test(slackCanonical) && /invalid_auth|not_authed|ok":true/.test(slackCanonical),
-      "M-S15b: L7 proxy substitutes canonical SLACK_BOT_TOKEN placeholder",
-    );
     const slackUnset = await runSlackApiRequest(
       sandbox,
       fakeSlackBot.port,
@@ -914,13 +936,13 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       sandbox,
       fakeSlackApp.port,
       "/api/apps.connections.open",
-      { envKey: "SLACK_APP_TOKEN", aliasPrefix: "xapp" },
+      `Bearer ${slackAppPlaceholder}`,
       redactionValues,
     );
     check(
       /^200\b/.test(slackApp) &&
         /invalid_auth|not_authed|not_allowed_token_type|ok":true/.test(slackApp),
-      "M-S16: Slack Socket Mode HTTPS leg exercised xapp alias rewrite",
+      "M-S16: Slack Socket Mode HTTPS leg exercised revision-scoped placeholder rewrite",
     );
     const slackAppCapture = lastJsonLine(
       fakeSlackApp.captureFile,
@@ -1085,7 +1107,6 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
         !gatewayCaptureText.includes("openshell:resolve:env:"),
       "M13f: fake Gateway proved placeholder-to-token rewrite without logging the raw token",
     );
-
     const gatewayPort = await sandboxOutput(
       sandbox,
       `node -e '

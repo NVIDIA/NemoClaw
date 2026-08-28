@@ -38,6 +38,7 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 import { listTargets } from "../registry/registry.ts";
 import { buildLiveTargetMatrix } from "../registry/run.ts";
 import { liveTargetSupport } from "../registry/runtime-support.ts";
+import { expectedWorkflowPlanCiOutput } from "./workflow-plan-test-assertions.ts";
 
 const PLANNER_CLI = path.join(REPO_ROOT, "tools", "e2e", "workflow-plan.mts");
 const PLANNER_CLI_PREFIX = ["--import", "tsx", PLANNER_CLI];
@@ -52,26 +53,6 @@ function retiredControllerSelectorIds(): string[] {
   const retiredIds = RETIRED_CONTROLLER_SELECTOR_IDS.filter((id) => !allowedJobs.has(id));
   expect(retiredIds).toEqual([...RETIRED_CONTROLLER_SELECTOR_IDS]);
   return retiredIds;
-}
-
-function expectedCiOutput(plan: ReturnType<typeof buildE2eWorkflowPlan>): string {
-  return [
-    `matrix=${JSON.stringify(plan.matrix)}`,
-    `test_matrix=${JSON.stringify(plan.testMatrix)}`,
-    `catalogue_standard_matrix=${JSON.stringify(plan.catalogueMatrices.standard)}`,
-    `catalogue_nvidia_api_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-api"])}`,
-    `catalogue_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["nvidia-inference"])}`,
-    `catalogue_github_read_matrix=${JSON.stringify(plan.catalogueMatrices["github-read"])}`,
-    `catalogue_brave_nvidia_inference_matrix=${JSON.stringify(plan.catalogueMatrices["brave-nvidia-inference"])}`,
-    `gateway_runtimes=${JSON.stringify(plan.gatewayRuntimes)}`,
-    `runtime_providers_by_job=${JSON.stringify(plan.runtimeProvidersByJob)}`,
-    `selected_jobs=${JSON.stringify(plan.selectedJobs)}`,
-    `selected_workflow_jobs=${JSON.stringify(selectedWorkflowJobs(plan))}`,
-    `hermes_selected=${plan.hermesSelected}`,
-    `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
-    `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,
-    "",
-  ].join("\n");
 }
 
 function prCandidatePlan(
@@ -664,7 +645,7 @@ describe("E2E workflow plan", () => {
         },
       );
 
-      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
+      expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
       expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
     } finally {
       rmSync(directory, { force: true, recursive: true });
@@ -689,7 +670,7 @@ describe("E2E workflow plan", () => {
         },
       );
 
-      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
+      expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
       expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
     } finally {
       rmSync(directory, { force: true, recursive: true });
@@ -811,16 +792,31 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
-  it.each([
-    "test/e2e/live/openclaw-agent-assertion.ts",
-    "test/e2e/live/personal-egress-live-proof.ts",
-  ])("selects both Personal stock proof owners when a shared helper changes: %s", (changedFile) => {
-    const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
-
-    expect(plan.matrix.map((row) => row.id)).toContain("ubuntu-repo-cloud-openclaw");
-    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
-      "common-egress-agent-openclaw-personal-stock-price",
+  it("selects only the catalogue Personal public-fetch owner for an assertion change", () => {
+    const plan = buildE2eWorkflowPlan(
+      {},
+      { changedFiles: ["test/e2e/live/openclaw-agent-assertion.ts"] },
     );
+
+    expect(plan.matrix.map((row) => row.id)).not.toContain("ubuntu-repo-cloud-openclaw");
+    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
+      "common-egress-agent-openclaw-personal-public-fetch",
+    );
+  });
+
+  it("maps the trusted main Personal stock selector to the candidate public-fetch target", () => {
+    const legacyId = "common-egress-agent-openclaw-personal-stock-price";
+    const canonicalId = "common-egress-agent-openclaw-personal-public-fetch";
+    const target = catalogueTarget(legacyId);
+    const plan = buildE2eWorkflowPlan({ targets: legacyId });
+
+    expect(target).toMatchObject({
+      id: canonicalId,
+      selector: "^common-egress.+C4.+$",
+      shard: "openclaw-personal-public-fetch",
+      testFile: "test/e2e/live/common-egress-agent.test.ts",
+    });
+    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toEqual([canonicalId]);
   });
 
   it("selects the Jetson test when no other E2E job owns a changed file (#8142)", () => {
@@ -980,7 +976,7 @@ describe("E2E workflow plan", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
+      expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
       expect(readFileSync(summary, "utf8")).toBe(
         renderE2eWorkflowPlanSummary(plan, { includeCoverageAudit: false }),
       );
@@ -1013,7 +1009,7 @@ describe("E2E workflow plan", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
+      expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
       expect(readFileSync(summary, "utf8")).toBe(
         renderE2eWorkflowPlanSummary(plan, { includeCoverageAudit: false }),
       );
@@ -1062,7 +1058,7 @@ describe("E2E workflow plan", () => {
         });
 
         expect(result.status, result.stderr).toBe(0);
-        expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
+        expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
         expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
       } finally {
         rmSync(directory, { force: true, recursive: true });
@@ -1131,7 +1127,7 @@ describe("E2E workflow plan", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
+      expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
       expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
     } finally {
       rmSync(directory, { force: true, recursive: true });
@@ -1267,7 +1263,7 @@ describe("E2E workflow plan", () => {
         },
       );
 
-      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
+      expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
       expect(readFileSync(summary, "utf8")).toBe(
         renderE2eWorkflowPlanSummary(plan, { includeCoverageAudit: false }),
       );
@@ -1458,7 +1454,7 @@ describe("E2E workflow plan", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
+      expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
       expect(readFileSync(summary, "utf8")).toBe(
         renderE2eWorkflowPlanSummary(plan, { includeCoverageAudit: false }),
       );
@@ -1489,7 +1485,7 @@ describe("E2E workflow plan", () => {
       });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(output, "utf8")).toBe(expectedCiOutput(plan));
+      expect(readFileSync(output, "utf8")).toBe(expectedWorkflowPlanCiOutput(plan));
       expect(readFileSync(summary, "utf8")).toBe(
         renderE2eWorkflowPlanSummary(plan, { includeCoverageAudit: false }),
       );
