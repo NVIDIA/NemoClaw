@@ -8,6 +8,7 @@ import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
 import {
   assertRecordedPolicyAuthority,
   isPolicyAuthorityRefusalError,
+  PolicyAuthorityRefusalError,
 } from "../../adapters/openshell/policy-authority";
 import type { SandboxPolicyAuthority } from "../../adapters/openshell/policy-authority";
 import { HERMES_PORTABLE_OPENSHELL_VERSION } from "../../adapters/openshell/resolve-shared";
@@ -2300,6 +2301,71 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         registry.getSandbox(sandboxName),
       );
     };
+    /** Rebind only the current reserved GPU create, then CAS-persist its exact live receipt. */
+    const revalidateActiveVerifiedCreateBoundary = (
+      boundary: EffectiveVerifiedSandboxPolicyBoundary,
+      checkpoint: PendingSandboxPolicyVerification,
+      operation: string,
+    ): {
+      readonly boundary: EffectiveVerifiedSandboxPolicyBoundary;
+      readonly checkpoint: PendingSandboxPolicyVerification;
+    } => {
+      if (!isDeepStrictEqual(pendingSandboxPolicyVerificationForBoundary(boundary), checkpoint)) {
+        throw new PolicyAuthorityRefusalError(
+          `Refusing to ${operation}: the verified create policy boundary no longer matches its durable checkpoint.`,
+          "owner-unknown",
+        );
+      }
+      registry.requireCurrentPendingSandboxPolicyVerification(
+        requireCreateReservation(),
+        checkpoint,
+      );
+      revalidateCreatedSandboxIdentity(boundary.lifecycleLiveIdentityFingerprint, operation);
+      const registration =
+        boundary.route !== "none" && boundary.registration.policyAuthority === "nemoclaw-managed"
+          ? verifyCreatedSandboxPolicyRegistration(
+              {
+                sandboxName,
+                gatewayName: GATEWAY_NAME,
+                gatewayPort: GATEWAY_PORT,
+                lifecycleGeneration: createdSandboxLifecycle.generation,
+                lifecycleLiveIdentityFingerprint: boundary.lifecycleLiveIdentityFingerprint,
+                policySourcePath: boundary.policySourcePath,
+                route: boundary.route,
+                operation,
+                plannedAuthority: "nemoclaw-managed",
+              },
+              { sleep: sleepSeconds },
+            )
+          : revalidateCreatedSandboxPolicyRegistration({
+              sandboxName,
+              gatewayName: GATEWAY_NAME,
+              gatewayPort: GATEWAY_PORT,
+              lifecycleGeneration: createdSandboxLifecycle.generation,
+              lifecycleLiveIdentityFingerprint: boundary.lifecycleLiveIdentityFingerprint,
+              policySourcePath: boundary.policySourcePath,
+              route: boundary.route,
+              operation,
+              registration: boundary.registration,
+            });
+      revalidateCreatedSandboxIdentity(boundary.lifecycleLiveIdentityFingerprint, operation);
+      if (isDeepStrictEqual(registration, boundary.registration)) {
+        return { boundary, checkpoint };
+      }
+      const refreshedBoundary = { ...boundary, registration };
+      const refreshedCheckpoint = pendingSandboxPolicyVerificationForBoundary(refreshedBoundary);
+      registry.recordPendingSandboxPolicyVerification(
+        requireCreateReservation(),
+        refreshedCheckpoint,
+        { expected: checkpoint },
+      );
+      revalidateCreatedSandboxIdentity(boundary.lifecycleLiveIdentityFingerprint, operation);
+      registry.requireCurrentPendingSandboxPolicyVerification(
+        requireCreateReservation(),
+        refreshedCheckpoint,
+      );
+      return { boundary: refreshedBoundary, checkpoint: refreshedCheckpoint };
+    };
     const resumeVerifiedCreateInput = (() => {
       const checkpoint = acceptedTargetPendingCheckpoint;
       if (!checkpoint) return null;
@@ -2323,49 +2389,44 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         checkpoint.sandboxIdentityFingerprint,
         `resuming sandbox creation for '${sandboxName}'`,
       );
-      revalidateCreatedSandboxPolicyRegistration({
-        sandboxName,
-        gatewayName: GATEWAY_NAME,
-        gatewayPort: GATEWAY_PORT,
-        lifecycleGeneration: createdSandboxLifecycle.generation,
-        lifecycleLiveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
-        policySourcePath,
-        route: checkpoint.route,
-        operation: `resume sandbox creation for '${sandboxName}'`,
-        registration: boundary.registration,
-      });
-      revalidateCreatedSandboxIdentity(
-        checkpoint.sandboxIdentityFingerprint,
-        `resuming sandbox creation for '${sandboxName}'`,
-      );
-      registry.requireCurrentPendingSandboxPolicyVerification(
-        admittedCreateReservation,
+      const resumed = revalidateActiveVerifiedCreateBoundary(
+        boundary,
         checkpoint,
+        `resume sandbox creation for '${sandboxName}'`,
       );
-      pendingPolicyVerification = checkpoint;
-      verifiedPolicyGate = boundary;
+      pendingPolicyVerification = resumed.checkpoint;
+      verifiedPolicyGate = resumed.boundary;
       return {
-        route: checkpoint.route,
-        liveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
+        route: resumed.checkpoint.route,
+        liveIdentityFingerprint: resumed.checkpoint.sandboxIdentityFingerprint,
       };
     })();
     const revalidateVerifiedPolicyRegistration = (
       boundary: EffectiveVerifiedSandboxPolicyBoundary,
       operation: string,
     ): SandboxEntry => {
-      revalidateCreatedSandboxIdentity(boundary.lifecycleLiveIdentityFingerprint, operation);
-      revalidateCreatedSandboxPolicyRegistration({
-        sandboxName,
-        gatewayName: GATEWAY_NAME,
-        gatewayPort: GATEWAY_PORT,
-        lifecycleGeneration: createdSandboxLifecycle.generation,
-        lifecycleLiveIdentityFingerprint: boundary.lifecycleLiveIdentityFingerprint,
-        policySourcePath: boundary.policySourcePath,
-        route: boundary.route,
+      const activeBoundary = requireVerifiedPolicyGate();
+      if (
+        boundary.sandboxName !== activeBoundary.sandboxName ||
+        boundary.gatewayName !== activeBoundary.gatewayName ||
+        boundary.gatewayPort !== activeBoundary.gatewayPort ||
+        boundary.lifecycleGeneration !== activeBoundary.lifecycleGeneration ||
+        boundary.lifecycleLiveIdentityFingerprint !==
+          activeBoundary.lifecycleLiveIdentityFingerprint ||
+        boundary.route !== activeBoundary.route
+      ) {
+        throw new PolicyAuthorityRefusalError(
+          `Refusing to ${operation}: the verified create policy boundary changed during onboarding.`,
+          "owner-unknown",
+        );
+      }
+      const refreshed = revalidateActiveVerifiedCreateBoundary(
+        activeBoundary,
+        requirePendingPolicyVerification(),
         operation,
-        registration: boundary.registration,
-      });
-      revalidateCreatedSandboxIdentity(boundary.lifecycleLiveIdentityFingerprint, operation);
+      );
+      pendingPolicyVerification = refreshed.checkpoint;
+      verifiedPolicyGate = refreshed.boundary;
       return registry.requireCurrentPendingSandboxPolicyVerification(
         requireCreateReservation(),
         requirePendingPolicyVerification(),
