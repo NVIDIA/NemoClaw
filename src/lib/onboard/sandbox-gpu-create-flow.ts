@@ -214,6 +214,7 @@ export interface SandboxGpuCreateFlowInput {
   resumeVerifiedCreate?: {
     readonly route: SelectedDockerGpuRoute;
     readonly liveIdentityFingerprint: string;
+    readonly createAttemptNonce?: string;
   };
   /** Reject every initial or fallback create attempt that carries a caller policy. */
   requirePolicylessCreate?: true;
@@ -221,6 +222,7 @@ export interface SandboxGpuCreateFlowInput {
   persistRetainedSandboxRecovery?: (
     message: string,
     sandboxIdentityFingerprint?: string,
+    createAttemptNonce?: string,
   ) => boolean;
   provider: string;
   sandboxGpuConfig: SandboxGpuConfig;
@@ -272,6 +274,7 @@ export interface SandboxGpuCreateFlowInput {
 export interface CreatedSandboxIdentity {
   readonly sandboxId: string;
   readonly liveIdentityFingerprint: string;
+  readonly createAttemptNonce: string;
   readonly route: SelectedDockerGpuRoute;
 }
 
@@ -572,8 +575,12 @@ export async function runSandboxGpuCreateFlow(
         let persisted = false;
         try {
           persisted = evidence.liveIdentityFingerprint
-            ? persistRetainedSandboxRecovery(message, evidence.liveIdentityFingerprint)
-            : persistRetainedSandboxRecovery(message);
+            ? persistRetainedSandboxRecovery(
+                message,
+                evidence.liveIdentityFingerprint,
+                evidence.createAttemptNonce,
+              )
+            : persistRetainedSandboxRecovery(message, undefined, evidence.createAttemptNonce);
         } catch {
           persisted = false;
         }

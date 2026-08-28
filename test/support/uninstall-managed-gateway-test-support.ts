@@ -98,3 +98,11 @@ export function withProvenManagedGatewayProcess(deps: UninstallRunDeps): Uninsta
     },
   };
 }
+
+export function withSuccessfulPreUninstallBackup(deps: UninstallRunDeps): UninstallRunDeps {
+  return {
+    backupAllBeforeUninstall: async () => undefined,
+    withSandboxMutationLock: async (_sandboxName, operation) => await operation(),
+    ...deps,
+  };
+}
