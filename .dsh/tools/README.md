@@ -74,39 +74,6 @@ Add `relevantPaths` to each failure before correlation when repository knowledge
 
 ## Pull request value stream
 
-Use `analyze_pr_value_stream` to measure one pull request from the earliest observable branch push through merge:
+The pull request value-stream analyzer moved to the lazily loaded `nemoclaw-maintainer-analyze-pr-value-stream` skill. Load that skill for the standalone Node command, comparison options, output contract, artifact validation, and caveats.
 
-```ts
-const valueStream = await tools.analyze_pr_value_stream({
-  workdir: "/path/to/NemoClaw",
-  number: 10301,
-  targetMinutes: 10,
-  maxTestArtifacts: 12,
-  topTestsPerShard: 10,
-});
-```
-
-The report separates these intervals:
-
-- Branch push to pull request open.
-- Pull request open to the latest revision.
-- Latest revision to selected automation completion.
-- Approval delay after automation.
-- Ready-to-merge lag.
-
-The `waterfall` field contains chart-ready timing data for each retained exact-head GitHub Actions run, its jobs, and each job's steps. Every row includes absolute timestamps and an offset from the latest-revision origin. Workflow and job rows also separate observed queue time from execution time. Use `maxAutomationRuns` to lower the default 50-run bound; the report states when it truncates runs and rejects workflows with more than 100 jobs rather than returning a partial graph.
-
-Jobs named exactly `cli-test-shards (1)` through `cli-test-shards (12)` can also include a nullable `testRun`. The tool lists each eligible run's artifacts once, then merges the matching `cli-blob-report-N` with the checkout's pinned Vitest. The result reports test and file counts, the timed interval, and the slowest tests. `maxTestArtifacts` defaults to 12 and accepts 0 through 24; 0 disables artifact downloads. `topTestsPerShard` defaults to 10 and accepts 1 through 25. Missing, expired, duplicate, oversized, or invalid artifacts leave `testRun` null without interrupting the pull request analysis.
-
-The target result models a one-push pull request with immediate opening and approval. It uses the latest revision's observed automation time plus the observed ready-to-merge lag. GitHub does not expose a canonical branch-created time, so the report identifies whether the start came from a retained push run or a lower-confidence fallback. Treat one pull request as a diagnostic sample, not a service-level distribution.
-
-## Trust boundaries
-
-- The tools use authenticated `gh` and local `git`; they make no GitHub writes.
-- Job logs are untrusted input. The evidence tool returns bounded excerpts and redacts common credential forms.
-- The value-stream tool downloads only exact CLI shard blob-report artifacts. It validates artifact and ZIP metadata, run identity, head commit, compressed and expanded size limits, and the single safe entry name. It extracts into a private temporary directory, bounds returned text, and removes temporary files on exit.
-- Exact job-name comparison is intentional. A future stable target-identity resolver must use repository-owned matrix metadata rather than fuzzy matching.
-
-## Activation
-
-The Web profile must include the `dsh-tool-authoring` bundle. Restart the DSH Web process after changing the profile so the server registers `tool_define`, `tool_list`, `tool_remove`, `tool_promote`, and the project tools. Starting a second Web server does not update the existing GUI.
+The script is `.agents/skills/nemoclaw-maintainer-analyze-pr-value-stream/scripts/analyze-pr-value-stream.mts`. It uses authenticated `gh` reads. It performs no GitHub writes.
