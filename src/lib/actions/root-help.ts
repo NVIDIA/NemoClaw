@@ -80,12 +80,12 @@ export function help(): void {
   lines.push("");
   lines.push(`  ${G}Uninstall flags:${R}`);
   lines.push(`    --yes${" ".repeat(29)}Skip the confirmation prompt`);
-  lines.push(`    --keep-openshell${" ".repeat(18)}Leave the openshell binary installed`);
+  lines.push(`    --keep-openshell${" ".repeat(18)}Leave the OpenShell binary installed`);
   lines.push(
     `    --delete-models${" ".repeat(19)}Remove all Ollama models and non-credential Hugging Face cache data (authentication files remain)`,
   );
   lines.push(
-    `    --destroy-user-data${" ".repeat(15)}Remove preserved ~/.nemoclaw/ user data; managed CLI shims unless a confirmed sibling remains`,
+    `    --destroy-user-data${" ".repeat(15)}Skip eligible fresh backups; remove preserved user data; remove managed CLI shims only when no sibling gateway is confirmed`,
   );
   lines.push(
     `    --all-gateway-ports${" ".repeat(15)}Uninstall every gateway port on this host, not only NEMOCLAW_GATEWAY_PORT`,

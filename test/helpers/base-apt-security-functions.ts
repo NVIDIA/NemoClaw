@@ -5,10 +5,18 @@ type DebianArchitecture = "amd64" | "arm64";
 
 export const BASE_APT_SECURITY_HASHES: Record<
   DebianArchitecture,
-  { libexpat: string; libonig: string; libjq: string; jq: string; vimTiny: string }
+  {
+    libexpat: string;
+    libeventCore: string;
+    libonig: string;
+    libjq: string;
+    jq: string;
+    vimTiny: string;
+  }
 > = {
   amd64: {
     libexpat: "978e9d30b84893a4c8191d8dae4d1b93c9b7ecaa772ada2fdb892ae3765cab4e",
+    libeventCore: "544ca760ced0fba6c4c24f8078726031a04e8b7d9890f576ea9cd724cdbb8ee1",
     libonig: "3abee130696244050500bcc7870e3b4cb82ddd87149ece3fd55010c3d4e1d18c",
     libjq: "9a5bf964cef39ed8f0f162e20d856e31961d28a57772b5313989b42a8be7e941",
     jq: "b973a5d304f666845e8ccefab492e3850d4bc2e7aa2a1e7450862095125f2cc0",
@@ -16,6 +24,7 @@ export const BASE_APT_SECURITY_HASHES: Record<
   },
   arm64: {
     libexpat: "660f5f598a06aa56613a2fbf1ffbd408708175f1a6c2fac833842148f0228176",
+    libeventCore: "bfc3f57347da0fa26c9cf5229c918c80dfd84fa52f52ca3d4da7148f0f7d7a43",
     libonig: "137e708575c0622d347815d19cb471a107546b16e9602805ee27afad7bba107f",
     libjq: "eae4a828df2eb53d728f88109d9f9549e0983a90b573cf0c7fa1e4bbc7533a7e",
     jq: "c25086443abd04d1457cbb322a0837f9ba986f82b28f44670467c8dc9be1f696",
@@ -32,6 +41,9 @@ export function baseAptSecurityFunctions(architecture: DebianArchitecture): stri
       `    printf "${architecture}\\n"`,
       '  elif [[ "$#" -eq 1 && "$1" == "--audit" ]]; then',
       "    return 0",
+      '  elif [[ "$#" -eq 10 && "$1" == "-i" && "${2##*/}" == "libexpat1.deb" && "${3##*/}" == "libevent-core-2.1-7t64.deb" && "${4##*/}" == "libonig5.deb" && "${5##*/}" == "libjq1.deb" && "${6##*/}" == "jq.deb" && "${7##*/}" == "vim-common.deb" && "${8##*/}" == "vim-tiny.deb" && "${9##*/}" == "libssh2-1t64.deb" && "${10##*/}" == "nemoclaw-python3.13-htmlparser-fix.deb" ]]; then',
+      '    printf "dpkg-install\\n" >> "$call_log"',
+      '    [[ -f "$2" && -f "$3" && -f "$4" && -f "$5" && -f "$6" && -f "$7" && -f "$8" && -f "$9" && -f "${10}" ]]',
       '  elif [[ "$#" -eq 9 && "$1" == "-i" && "${2##*/}" == "libexpat1.deb" && "${3##*/}" == "libonig5.deb" && "${4##*/}" == "libjq1.deb" && "${5##*/}" == "jq.deb" && "${6##*/}" == "vim-common.deb" && "${7##*/}" == "vim-tiny.deb" && "${8##*/}" == "libssh2-1t64.deb" && "${9##*/}" == "nemoclaw-python3.13-htmlparser-fix.deb" ]]; then',
       '    printf "dpkg-install\\n" >> "$call_log"',
       '    [[ -f "$2" && -f "$3" && -f "$4" && -f "$5" && -f "$6" && -f "$7" && -f "$8" && -f "$9" ]]',
@@ -45,6 +57,7 @@ export function baseAptSecurityFunctions(architecture: DebianArchitecture): stri
       '  [[ "$#" -eq 3 && "$1" == "-W" && "$2" == \'-f=${Version}\' ]] || return 64',
       '  case "$3" in',
       '    libexpat1) printf "2.8.3-1" ;;',
+      '    libevent-core-2.1-7t64) printf "2.1.13-stable-1" ;;',
       '    libonig5) printf "6.9.9-1+b1" ;;',
       '    libjq1|jq) printf "1.8.2-1" ;;',
       '    perl-base) [[ "${perl_base_installed:-0}" == "1" ]] || return 64; printf "5.44.0-1nemoclaw1" ;;',
@@ -64,6 +77,7 @@ export function baseAptSecurityFunctions(architecture: DebianArchitecture): stri
       '  [[ "${10}" == "--connect-timeout" && "${11}" == "15" && "${12}" == "--max-time" && "${13}" == "120" && "${14}" == "-o" ]] || return 64',
       '  case "${16}" in',
       `    */e/expat/libexpat1_2.8.3-1_${architecture}.deb) [[ "\${15##*/}" == "libexpat1.deb" ]] ;;`,
+      `    https://snapshot.debian.org/archive/debian/20260703T143212Z/pool/main/libe/libevent/libevent-core-2.1-7t64_2.1.13-stable-1_${architecture}.deb) [[ "\${15##*/}" == "libevent-core-2.1-7t64.deb" ]] ;;`,
       `    */libo/libonig/libonig5_6.9.9-1+b1_${architecture}.deb) [[ "\${15##*/}" == "libonig5.deb" ]] ;;`,
       `    */j/jq/libjq1_1.8.2-1_${architecture}.deb) [[ "\${15##*/}" == "libjq1.deb" ]] ;;`,
       `    */j/jq/jq_1.8.2-1_${architecture}.deb) [[ "\${15##*/}" == "jq.deb" ]] ;;`,
@@ -79,22 +93,30 @@ export function baseAptSecurityFunctions(architecture: DebianArchitecture): stri
       "sha256sum() {",
       '  [[ "$#" -eq 2 && "$1" == "-c" && "$2" == "-" ]] || return 64',
       "  local line path count=0 parser_count=0",
+      "  local libexpat_count=0 libevent_count=0 libonig_count=0 libjq_count=0",
+      "  local jq_count=0 vim_common_count=0 vim_tiny_count=0",
       "  while IFS= read -r line; do",
       '    path="${line#*  }"',
       '    [[ -f "$path" ]] || return 1',
       '    case "$line" in',
-      `      "${hashes.libexpat}  "*/libexpat1.deb) ;;`,
-      `      "${hashes.libonig}  "*/libonig5.deb) ;;`,
-      `      "${hashes.libjq}  "*/libjq1.deb) ;;`,
-      `      "${hashes.jq}  "*/jq.deb) ;;`,
-      '      "c21aad77632ef790d2352f1c38e688069980bbd530034248dd5e1158da9c9fe3  "*/vim-common.deb) ;;',
-      `      "${hashes.vimTiny}  "*/vim-tiny.deb) ;;`,
+      `      "${hashes.libexpat}  "*/libexpat1.deb) (( libexpat_count += 1 )) ;;`,
+      `      "${hashes.libeventCore}  "*/libevent-core-2.1-7t64.deb) (( libevent_count += 1 )) ;;`,
+      `      "${hashes.libonig}  "*/libonig5.deb) (( libonig_count += 1 )) ;;`,
+      `      "${hashes.libjq}  "*/libjq1.deb) (( libjq_count += 1 )) ;;`,
+      `      "${hashes.jq}  "*/jq.deb) (( jq_count += 1 )) ;;`,
+      '      "c21aad77632ef790d2352f1c38e688069980bbd530034248dd5e1158da9c9fe3  "*/vim-common.deb) (( vim_common_count += 1 )) ;;',
+      `      "${hashes.vimTiny}  "*/vim-tiny.deb) (( vim_tiny_count += 1 )) ;;`,
       '      "4ff43a8578bda2f14686c67911b64c18e869841973722b1c623b5727491bdaf7  "*/python3.13/html/parser.py) (( parser_count += 1 )) ;;',
       "      *) return 1 ;;",
       "    esac",
       "    (( count += 1 ))",
       "  done",
-      '  [[ "$count" -eq 6 || ( "$count" -eq 1 && "$parser_count" -eq 1 ) ]]',
+      '  if [[ "$count" -eq 1 && "$parser_count" -eq 1 ]]; then',
+      "    return 0",
+      "  fi",
+      '  [[ "$libexpat_count" -eq 1 && "$libonig_count" -eq 1 && "$libjq_count" -eq 1 && "$jq_count" -eq 1 ]] || return 1',
+      '  [[ "$vim_common_count" -eq 1 && "$vim_tiny_count" -eq 1 ]] || return 1',
+      '  [[ ( "$count" -eq 6 && "$libevent_count" -eq 0 ) || ( "$count" -eq 7 && "$libevent_count" -eq 1 ) ]]',
       "}",
     ].join("\n"),
     [
@@ -112,8 +134,18 @@ export function baseAptSecurityFunctions(architecture: DebianArchitecture): stri
     ].join("\n"),
     [
       "ldd() {",
-      '  [[ "$#" -eq 1 && "$1" == "/usr/bin/jq" ]] || return 64',
-      '  printf "libonig.so.5 => /lib/libonig.so.5\\n"',
+      '  [[ "$#" -eq 1 ]] || return 64',
+      '  case "$1" in',
+      '    /usr/bin/jq) printf "libonig.so.5 => /lib/libonig.so.5\\n" ;;',
+      '    /usr/bin/tmux) printf "libevent_core-2.1.so.7 => /lib/libevent_core-2.1.so.7\\n" ;;',
+      "    *) return 64 ;;",
+      "  esac",
+      "}",
+    ].join("\n"),
+    [
+      "tmux() {",
+      '  [[ "$#" -eq 1 && "$1" == "-V" ]] || return 64',
+      '  printf "tmux 3.5a\\n"',
       "}",
     ].join("\n"),
     [
