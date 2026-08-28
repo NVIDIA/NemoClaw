@@ -434,15 +434,17 @@ function findUnreconciledCleanupTargets(target: string): readonly string[] {
     try {
       const rootBefore = fs.lstatSync(stagingRoot, { bigint: true });
       if (rootBefore.isSymbolicLink() || !rootBefore.isDirectory()) continue;
-      const staged = fs.lstatSync(stagedTarget, { bigint: true });
-      const rootAfter = fs.lstatSync(stagingRoot, { bigint: true });
-      if (
-        staged.isDirectory() &&
-        !staged.isSymbolicLink() &&
-        sameDirectoryIdentity(rootBefore, rootAfter)
-      ) {
-        stagedTargets.push(stagedTarget);
+      let staged: fs.BigIntStats | null = null;
+      try {
+        staged = fs.lstatSync(stagedTarget, { bigint: true });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
+      const rootAfter = fs.lstatSync(stagingRoot, { bigint: true });
+      if (!sameDirectoryIdentity(rootBefore, rootAfter)) continue;
+      stagedTargets.push(
+        staged?.isDirectory() && !staged.isSymbolicLink() ? stagedTarget : stagingRoot,
+      );
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }

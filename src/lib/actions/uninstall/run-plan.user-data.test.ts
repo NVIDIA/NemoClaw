@@ -561,6 +561,52 @@ describe("uninstall run plan", () => {
       }
     });
 
+    it("reports empty interrupted staging when the canonical directory is absent", () => {
+      const { tmpHome, stateDir } = setupStateDir();
+      fs.rmSync(stateDir, { recursive: true });
+      const stagingRoot = fs.mkdtempSync(
+        path.join(tmpHome, `.${path.basename(stateDir)}-cleanup-`),
+      );
+      try {
+        const logs: string[] = [];
+        const warnings: string[] = [];
+        const run = vi.fn(okWithKnownGatewayList);
+        const runDocker = vi.fn(() => ok(""));
+        const rmSync = vi.fn(fs.rmSync);
+        const result = runUninstallPlan(
+          { assumeYes: true, deleteModels: false, keepOpenShell: true },
+          {
+            ...preserveCaseDeps(tmpHome, logs, { warnings }),
+            rmSync,
+            run,
+            runDocker,
+          },
+        );
+
+        expect(result.exitCode).toBe(1);
+        expect(fs.existsSync(stateDir)).toBe(false);
+        expect(fs.readdirSync(stagingRoot)).toEqual([]);
+        const warningText = warnings.join("\n");
+        expect(warningText).toContain(`Cleanup cannot continue for ${stateDir}`);
+        expect(warningText).toContain(`unreconciled staging remains at ${stagingRoot}`);
+        expect(warningText).toContain("The canonical path is absent");
+        expect(warningText).toContain("Do not retry uninstall");
+        expect(warningText).toContain(`move it back to ${stateDir}`);
+        expect(logs.some((line) => /^\[\d+\/\d+\]/u.test(line))).toBe(false);
+        expect(rmSync).not.toHaveBeenCalled();
+        expect(runDocker).not.toHaveBeenCalled();
+        expect(
+          run.mock.calls.every(
+            ([command, args]) =>
+              command === "openshell" && args[0] === "gateway" && args[1] === "list",
+          ),
+        ).toBe(true);
+        expect(logs).not.toContain("Claws retracted. Until next time.");
+      } finally {
+        fs.rmSync(tmpHome, { recursive: true, force: true });
+      }
+    });
+
     it("reports abandoned staged state when the canonical directory also exists", () => {
       const { tmpHome, stateDir } = setupStateDir();
       const stagingRoot = fs.mkdtempSync(
