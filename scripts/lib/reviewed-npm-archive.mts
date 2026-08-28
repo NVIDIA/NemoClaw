@@ -61,9 +61,22 @@ export type ReviewedNpmMetadata = Readonly<{
   tarballUrl: string;
 }>;
 
+export type ReviewedNpmPackageWithoutIntegrity = Readonly<{
+  label: string;
+  packageSpec: string;
+  tarballUrl: string;
+}>;
+
 export type ReviewedNpmArchive = Readonly<{
   archivePath: string;
   rootDirectory: string;
+}>;
+
+export type ReviewedNpmArchiveFileRequest = Readonly<{
+  archivePath: string;
+  expectedIntegrity: string;
+  label: string;
+  maximumBytes?: number;
 }>;
 
 type NpmRunner = (args: readonly string[], request: ReviewedNpmArchiveRequest) => string;
@@ -94,6 +107,43 @@ function requireReviewedRequest(request: ReviewedNpmArchiveRequest): void {
   }
   if (!request.tarballUrl) {
     throw new Error(`${request.label} must use a committed npm tarball URL`);
+  }
+}
+
+export function readReviewedNpmArchiveFile(request: ReviewedNpmArchiveFileRequest): Buffer {
+  if (!isAbsolute(request.archivePath)) {
+    throw new Error(`${request.label} archive path must be absolute`);
+  }
+  let descriptor: number | undefined;
+  try {
+    const archivePath = resolve(request.archivePath);
+    descriptor = openSync(archivePath, "r");
+    const opened = fstatSync(descriptor);
+    const pathEntry = lstatSync(archivePath);
+    if (
+      !opened.isFile() ||
+      !pathEntry.isFile() ||
+      pathEntry.isSymbolicLink() ||
+      opened.dev !== pathEntry.dev ||
+      opened.ino !== pathEntry.ino
+    ) {
+      throw new Error("archive must be a non-symlink regular file");
+    }
+    if (request.maximumBytes !== undefined && opened.size > request.maximumBytes) {
+      throw new Error("archive must be a bounded regular file");
+    }
+    const archive = readFileSync(descriptor);
+    const actualIntegrity = `sha512-${createHash("sha512").update(archive).digest("base64")}`;
+    if (actualIntegrity !== request.expectedIntegrity) {
+      throw new Error(
+        `${request.label} archive integrity mismatch\nExpected: ${request.expectedIntegrity}\nActual:   ${actualIntegrity}`,
+      );
+    }
+    return archive;
+  } catch (error) {
+    throw new Error(`${request.label} archive is unreadable: ${String(error)}`);
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
   }
 }
 
@@ -421,9 +471,37 @@ function readReviewedLockPackages(
   omitDev = false,
   allowEmpty = false,
   allowNestedShrinkwrap = false,
+  reviewedRegistryPackages: readonly ReviewedNpmArchiveRequest[] = [],
+  allowedNestedShrinkwrapPackages: readonly string[] = [],
+  reviewedPackagesWithoutIntegrity: readonly ReviewedNpmPackageWithoutIntegrity[] = [],
 ): readonly ReviewedNpmArchiveRequest[] {
   const reviewed: ReviewedNpmArchiveRequest[] = [];
   const identities = new Map<string, ReviewedNpmArchiveRequest>();
+  const reviewedRegistryIdentities = new Map<string, ReviewedNpmArchiveRequest>();
+  const allowedNestedShrinkwrapIdentities = new Set(allowedNestedShrinkwrapPackages);
+  const reviewedPackagesWithoutIntegrityBySpec = new Map(
+    reviewedPackagesWithoutIntegrity.map((reviewed) => [reviewed.packageSpec, reviewed]),
+  );
+  for (const reviewedPackage of reviewedRegistryPackages) {
+    requireReviewedRequest(reviewedPackage);
+    let parsedTarball: URL;
+    try {
+      parsedTarball = new URL(reviewedPackage.tarballUrl);
+    } catch {
+      throw new Error(`${reviewedPackage.label} must use a valid reviewed npm tarball URL`);
+    }
+    if (
+      parsedTarball.protocol !== "https:" ||
+      parsedTarball.username ||
+      parsedTarball.password ||
+      reviewedRegistryIdentities.has(reviewedPackage.packageSpec)
+    ) {
+      throw new Error(
+        `${reviewedPackage.label} must use one credential-free HTTPS package identity`,
+      );
+    }
+    reviewedRegistryIdentities.set(reviewedPackage.packageSpec, reviewedPackage);
+  }
   const productionLocations = omitDev ? productionLockLocations(packages) : undefined;
   for (const [location, value] of Object.entries(packages)) {
     if (location === "") continue;
@@ -433,30 +511,56 @@ function readReviewedLockPackages(
     const record = value as Record<string, unknown>;
     assertNotProductionDev(productionLocations, location, record);
     if (omitDev && record.dev === true) continue;
-    if (!allowNestedShrinkwrap && Object.prototype.hasOwnProperty.call(record, "hasShrinkwrap")) {
-      throw new Error(
-        `reviewed npm lock package must not delegate to nested shrinkwrap: ${location}`,
-      );
-    }
     const locationName = packageNameFromLockLocation(location);
     const packageName = typeof record.name === "string" ? record.name : locationName;
     const version = typeof record.version === "string" ? record.version : "";
     const packageSpec = `${packageName}@${version}`;
+    if (
+      !allowNestedShrinkwrap &&
+      Object.prototype.hasOwnProperty.call(record, "hasShrinkwrap") &&
+      !allowedNestedShrinkwrapIdentities.has(packageSpec)
+    ) {
+      throw new Error(
+        `reviewed npm lock package must not delegate to nested shrinkwrap: ${location}`,
+      );
+    }
     const expectedIntegrity = typeof record.integrity === "string" ? record.integrity : "";
     const tarballUrl = typeof record.resolved === "string" ? record.resolved : "";
-    requireReviewedRequest({
-      expectedIntegrity,
-      label: `locked npm package ${packageSpec}`,
-      packageSpec,
-      tarballUrl,
-    });
+    const reviewedPackageWithoutIntegrity = reviewedPackagesWithoutIntegrityBySpec.get(packageSpec);
+    if (expectedIntegrity) {
+      requireReviewedRequest({
+        expectedIntegrity,
+        label: `locked npm package ${packageSpec}`,
+        packageSpec,
+        tarballUrl,
+      });
+    } else if (
+      !reviewedPackageWithoutIntegrity ||
+      reviewedPackageWithoutIntegrity.tarballUrl !== tarballUrl
+    ) {
+      throw new Error(
+        `locked npm package ${packageSpec} must use a committed sha512 npm integrity value`,
+      );
+    }
     let parsedTarball: URL;
     try {
       parsedTarball = new URL(tarballUrl);
     } catch {
       throw new Error(`reviewed npm lock has an invalid tarball URL: ${location}`);
     }
-    if (
+    const reviewedRegistryIdentity = reviewedRegistryIdentities.get(packageSpec);
+    if (reviewedRegistryIdentity) {
+      if (
+        reviewedRegistryIdentity.expectedIntegrity !== expectedIntegrity ||
+        reviewedRegistryIdentity.tarballUrl !== tarballUrl ||
+        parsedTarball.username ||
+        parsedTarball.password
+      ) {
+        throw new Error(
+          `reviewed npm lock package does not match its approved registry identity: ${location}`,
+        );
+      }
+    } else if (
       parsedTarball.origin !== registryOrigin ||
       parsedTarball.username ||
       parsedTarball.password
@@ -477,7 +581,7 @@ function readReviewedLockPackages(
       tarballUrl,
     };
     identities.set(packageSpec, request);
-    reviewed.push(request);
+    if (!reviewedPackageWithoutIntegrity) reviewed.push(request);
   }
   if (!allowEmpty && reviewed.length === 0) {
     throw new Error(`reviewed npm lock contains no packages: ${lockfilePath}`);
@@ -487,9 +591,12 @@ function readReviewedLockPackages(
 
 export function verifyReviewedNpmLockPackages(
   request: Readonly<{
+    allowedNestedShrinkwrapPackages?: readonly string[];
     allowNestedShrinkwrap?: boolean;
     lockfilePath: string;
     omitDev?: boolean;
+    reviewedRegistryPackages?: readonly ReviewedNpmArchiveRequest[];
+    reviewedPackagesWithoutIntegrity?: readonly ReviewedNpmPackageWithoutIntegrity[];
     registryOrigin: string;
   }>,
 ): readonly string[] {
@@ -501,6 +608,9 @@ export function verifyReviewedNpmLockPackages(
     request.omitDev,
     true,
     request.allowNestedShrinkwrap,
+    request.reviewedRegistryPackages,
+    request.allowedNestedShrinkwrapPackages,
+    request.reviewedPackagesWithoutIntegrity,
   ).map(({ packageSpec }) => packageSpec);
 }
 

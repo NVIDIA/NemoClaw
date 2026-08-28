@@ -95,6 +95,66 @@ env:
   NEMOCLAW_E2E_SHARD: default
 
 jobs:
+  package-openshell-sdk:
+    if: ${{ github.event_name == 'workflow_dispatch' && contains(format(',{0},', inputs.jobs), ',external-gateway-health,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      artifact_name: ${{ steps.identity.outputs.artifact_name }}
+    steps:
+      - name: Check out trusted OpenShell SDK package verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            ci/reviewed-npm-audit.json
+            scripts/audit-reviewed-npm-graph.mts
+            scripts/checks/package-openshell-sdk-for-pr.mts
+            scripts/lib/openclaw-npm-remediation.mts
+            scripts/lib/reviewed-npm-archive.mts
+            scripts/lib/reviewed-npm-audit.mts
+          sparse-checkout-cone-mode: false
+
+      - name: Set up Node for reviewed package download
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          registry-url: https://npm.pkg.github.com
+          scope: "@nvidia"
+
+      - id: package
+        name: Download and verify exact OpenShell SDK package
+        env:
+          NEMOCLAW_OPEN_SHELL_SDK_OUTPUT_DIRECTORY: ${{ runner.temp }}/openshell-sdk
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          artifact_path="$(node --experimental-strip-types scripts/checks/package-openshell-sdk-for-pr.mts)"
+          test -n "$artifact_path"
+          printf 'artifact_path=%s\n' "$artifact_path" >> "$GITHUB_OUTPUT"
+
+      - id: identity
+        name: Record reviewed OpenShell SDK artifact identity
+        env:
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          artifact_name="openshell-sdk-e2e-${RUN_ID}-${RUN_ATTEMPT}"
+          printf 'artifact_name=%s\n' "$artifact_name" >> "$GITHUB_OUTPUT"
+
+      - name: Upload reviewed OpenShell SDK archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.identity.outputs.artifact_name }}
+          path: ${{ steps.package.outputs.artifact_path }}
+          if-no-files-found: error
+          retention-days: 1
+
   base-image-publication:
     runs-on: ubuntu-latest
     timeout-minutes: 55
@@ -3263,6 +3323,71 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
+  external-gateway-health:
+    needs: [generate-matrix, package-openshell-sdk]
+    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'external-gateway-health') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      E2E_JOB: "1"
+      E2E_DEFAULT_ENABLED: "0"
+      E2E_TARGET_ID: "external-gateway-health"
+      E2E_AGENT_RUNTIME: "none"
+      E2E_OBSERVABLE_OUTCOME: "The reviewed SDK observes exact public gateway health over explicit HTTPS and CA"
+      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu host with OpenShell 0.0.106; no inference endpoint"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/external-gateway-health
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.106"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
+          ref: ${{ inputs.checkout_sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
+
+      - name: Download reviewed OpenShell SDK archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.package-openshell-sdk.outputs.artifact_name }}
+          path: ${{ runner.temp }}/openshell-sdk
+
+      - name: Install reviewed OpenShell SDK archive without package credentials
+        run: |
+          set -euo pipefail
+          mapfile -t archives < <(find "$RUNNER_TEMP/openshell-sdk" -maxdepth 1 -type f -name '*.tgz' -print)
+          test "${#archives[@]}" -eq 1
+          env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN \
+            npm install --no-save --package-lock=false --ignore-scripts "${archives[0]}"
+
+      - name: Install OpenShell CLI
+        run: env -u NODE_AUTH_TOKEN -u GITHUB_TOKEN bash scripts/install-openshell.sh
+
+      - name: Run external gateway health live test
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          npx tsx tools/e2e/live-vitest-invocation.mts run \
+            --test-path test/e2e/live/external-gateway-health.test.ts
+
+      - name: Upload external gateway health artifacts
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-external-gateway-health
+          path: e2e-artifacts/live/external-gateway-health/
+
   mcp-bridge:
     needs: [base-image-publication, generate-matrix]
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'mcp-bridge') }}
@@ -5737,6 +5862,7 @@ jobs:
         catalogue-github-read,
         catalogue-brave-nvidia-inference,
         openshell-gateway-auth-contract,
+        external-gateway-health,
         mcp-bridge,
         openshell-credential-generation-window,
         openshell-dev-artifact,
