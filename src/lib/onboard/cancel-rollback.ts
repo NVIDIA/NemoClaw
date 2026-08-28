@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../adapters/openshell/sandbox-identity";
 import type { RetainedSandboxRecoveryContext } from "../state/onboard-session";
 import { cliName } from "./branding";
 
@@ -55,10 +56,16 @@ export interface SandboxCancelRollback {
 export function buildCancelRollbackMessage(
   sandboxName: string,
   sandboxIdentityFingerprint?: string,
+  recoveryContext?: Pick<RetainedSandboxRecoveryContext, "createAttemptNonce">,
 ): string[] {
   return [
     "",
     `  Onboarding cancelled — preserved incomplete sandbox '${sandboxName}'.`,
+    ...(recoveryContext
+      ? [
+          `  Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${recoveryContext.createAttemptNonce}`,
+        ]
+      : []),
     ...(sandboxIdentityFingerprint
       ? [
           `  Durable sandbox identity fingerprint: ${sandboxIdentityFingerprint}`,
@@ -73,7 +80,7 @@ export function buildCancelRollbackMessage(
     "  Shared inference providers are gateway configuration and are not sandbox cleanup targets.",
     ...(sandboxIdentityFingerprint
       ? [
-          `  Run '${cliName()} ${sandboxName} destroy' to verify the retained immutable identity, remove only its qualified resources, and clear the matching recovery record.`,
+          `  Run '${cliName()} ${sandboxName} destroy'. If OpenShell confirms the retained sandbox absent, destroy removes only verified residual containers and can clear the matching recovery record. If it is still live, give the displayed create-attempt label to an OpenShell administrator for identity-bound removal.`,
         ]
       : [
           "  NemoClaw cannot clear this recovery record until an OpenShell administrator establishes the exact sandbox identity.",
@@ -204,6 +211,7 @@ export function createSandboxCancelRollback(
         for (const line of buildCancelRollbackMessage(
           sandboxName,
           identityFingerprint ?? undefined,
+          armedSandbox.context,
         )) {
           deps.log(line);
         }

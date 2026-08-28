@@ -851,12 +851,25 @@ if (${JSON.stringify(
           false,
         );
       };
+      const assertCreateAttemptLabelReported = () => {
+        const match = payload.createCommand?.match(
+          /--label (ai\.nvidia\.nemoclaw\.create-attempt=[0-9a-f]{62})/u,
+        );
+        assert.ok(match?.[1], "expected the sandbox create-attempt label");
+        assert.ok(
+          `${payload.creationError ?? ""}\n${result.stderr}`.includes(
+            `Create-attempt label: ${match[1]}`,
+          ),
+          "expected recovery output to report the exact create-attempt label",
+        );
+      };
       const assertPostCreateAuthorityRefusal = () => {
         assert.equal(payload.sandboxName, null);
         assert.equal(payload.sandboxCreated, true);
         assert.equal(payload.deleted, false);
         assert.match(payload.creationError, /left sandbox 'my-assistant' in place/u);
         assert.match(payload.creationError, new RegExp(identityFingerprint, "u"));
+        assertCreateAttemptLabelReported();
         assert.match(
           payload.creationError,
           /did not run OpenShell's mutable-name deletion command because the name may now identify a replacement sandbox/u,
@@ -892,6 +905,7 @@ if (${JSON.stringify(
         assert.equal(payload.deleted, false);
         assert.equal(payload.registeredSandbox, null);
         assert.match(payload.creationError, /automatic sandbox cleanup was not safe/u);
+        assertCreateAttemptLabelReported();
         assert.equal(payload.savedSession.status, "recovery_required");
         assert.equal(payload.savedSession.resumable, false);
         assert.equal(
@@ -914,6 +928,7 @@ if (${JSON.stringify(
         assert.equal(payload.deleted, false);
         assert.equal(payload.registeredSandbox, null);
         assert.match(payload.creationError, /registry publication failed/u);
+        assertCreateAttemptLabelReported();
         assert.equal(payload.savedSession.status, "recovery_required");
         assert.equal(payload.savedSession.resumable, false);
         assert.equal(
@@ -932,6 +947,7 @@ if (${JSON.stringify(
         assert.equal(payload.deleted, false);
         assert.equal(payload.registeredSandbox, null);
         assert.match(payload.creationError, /recovery record could not be persisted/u);
+        assertCreateAttemptLabelReported();
         assert.equal(payload.savedSession.status, "recovery_required");
         assert.equal(payload.savedSession.resumable, false);
         assert.equal(
@@ -978,6 +994,7 @@ if (${JSON.stringify(
         assert.equal(payload.deleted, false);
         assert.equal(payload.registeredSandbox, null);
         assert.match(payload.creationError, /recovery record could not be persisted/u);
+        assertCreateAttemptLabelReported();
         assert.equal(payload.savedSession.status, "recovery_required");
         assert.equal(payload.savedSession.resumable, false);
         assert.equal(payload.retainedRecoveryRecords.length, 1);
@@ -998,6 +1015,7 @@ if (${JSON.stringify(
           payload.creationError,
           /OpenShell sandbox policy authority inspection failed/u,
         );
+        assertCreateAttemptLabelReported();
         assert.equal(payload.savedSession.status, "recovery_required");
         assert.equal(payload.savedSession.resumable, false);
         assert.equal(
@@ -1040,6 +1058,7 @@ if (${JSON.stringify(
         assert.match(result.stderr, /not sandbox cleanup targets/u);
         assert.match(result.stderr, /nemoclaw my-assistant destroy/u);
         assert.match(result.stderr, /clear the matching recovery record/u);
+        assertCreateAttemptLabelReported();
 
         const differentName = spawnSync(process.execPath, [scriptPath], {
           cwd: repoRoot,

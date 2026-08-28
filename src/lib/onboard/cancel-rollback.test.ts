@@ -11,6 +11,14 @@ import {
 } from "./cancel-rollback";
 
 const SANDBOX_FINGERPRINT = "a".repeat(64);
+const RECOVERY_CONTEXT = {
+  gatewayName: "nemoclaw",
+  gatewayPort: 8080,
+  lifecycleGeneration: "generation-alpha",
+  verifiedEffectivePolicyIdentity: null,
+  createAttemptNonce: "c".repeat(62),
+  policyCreationReceipt: null,
+} as const;
 
 function createHarness() {
   const log = vi.fn();
@@ -21,13 +29,16 @@ describe("createSandboxCancelRollback", () => {
   it("preserves an armed cancelled sandbox and reports its captured identity (#9833)", () => {
     const { rollback, log } = createHarness();
 
-    rollback.arm("new-sb", SANDBOX_FINGERPRINT);
+    rollback.arm("new-sb", SANDBOX_FINGERPRINT, RECOVERY_CONTEXT);
     rollback.markCancelled();
     rollback.runIfArmed();
 
     const guidance = log.mock.calls.flat().join("\n");
     expect(guidance).toContain("preserved incomplete sandbox 'new-sb'");
     expect(guidance).toContain(SANDBOX_FINGERPRINT);
+    expect(guidance).toContain(
+      `ai.nvidia.nemoclaw.create-attempt=${RECOVERY_CONTEXT.createAttemptNonce}`,
+    );
     expect(guidance).toContain("did not run OpenShell's mutable-name deletion command");
     expect(guidance).toContain("Do not delete the sandbox by mutable sandbox name");
     expect(guidance).toContain("Shared inference providers are gateway configuration");
@@ -292,10 +303,15 @@ describe("makeOnboardCancelExit", () => {
 
 describe("buildCancelRollbackMessage", () => {
   it("preserves identity-bound recovery guidance", () => {
-    const message = buildCancelRollbackMessage("sb", SANDBOX_FINGERPRINT).join("\n");
+    const message = buildCancelRollbackMessage(
+      "sb",
+      SANDBOX_FINGERPRINT,
+      RECOVERY_CONTEXT,
+    ).join("\n");
 
     expect(message).toContain("preserved incomplete sandbox 'sb'");
     expect(message).toContain(SANDBOX_FINGERPRINT);
+    expect(message).toContain(RECOVERY_CONTEXT.createAttemptNonce);
     expect(message).toContain("identity-bound inspection, recovery, or removal");
     expect(message).not.toContain("openshell sandbox delete");
     expect(message).not.toContain("cannot delete it by immutable identity");
