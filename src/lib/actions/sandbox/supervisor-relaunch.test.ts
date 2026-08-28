@@ -75,10 +75,11 @@ function baseDeps(overrides: ManagedSupervisorRelaunchDeps = {}) {
     })),
     removeBackup: vi.fn(() => true),
     runOpenshell: vi.fn(() => ({ status: 0, stdout: "No sandboxes found.\n" })),
+    runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 10:00:00  Ready\n"),
     recreate: vi.fn(() => patchResult()),
     finalize: vi.fn(({ supervisorReady }) =>
       supervisorReady
-        ? { backupRemoved: true, rolledBack: false }
+        ? { backupRemoved: true, finalHandoffAcknowledged: true, rolledBack: false }
         : { backupRemoved: false, rolledBack: true },
     ),
     ...overrides,
@@ -148,6 +149,7 @@ describe("relaunchManagedSupervisorSession", () => {
 
     expect(relaunch?.finalize(true)).toEqual({
       backupRemoved: true,
+      finalHandoffAcknowledged: true,
       rolledBack: false,
       stateRestored: true,
       stateBackupRemoved: true,
@@ -156,12 +158,15 @@ describe("relaunchManagedSupervisorSession", () => {
     expect(deps.removeBackup).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/recovery");
     expect(deps.finalize).toHaveBeenCalledWith(
       {
-        lifecycleReleaseTimeoutSecs: 900,
+        finalHandoffTimeoutSecs: 900,
         result: expect.objectContaining({ newContainerId: "new-container-id" }),
         sandboxName: "alpha",
         supervisorReady: true,
       },
-      { runOpenshell: deps.runOpenshell },
+      {
+        runCaptureOpenshell: deps.runCaptureOpenshell,
+        runOpenshell: deps.runOpenshell,
+      },
     );
   });
 
@@ -389,12 +394,15 @@ describe("relaunchManagedSupervisorSession", () => {
     expect(deps.restartRestoredManagedGateway).toHaveBeenCalledWith("new-container-id");
     expect(deps.finalize).toHaveBeenCalledWith(
       {
-        lifecycleReleaseTimeoutSecs: 900,
+        finalHandoffTimeoutSecs: 900,
         result: expect.objectContaining({ newContainerId: "new-container-id" }),
         sandboxName: "alpha",
         supervisorReady: true,
       },
-      { runOpenshell: deps.runOpenshell },
+      {
+        runCaptureOpenshell: deps.runCaptureOpenshell,
+        runOpenshell: deps.runOpenshell,
+      },
     );
   });
 
@@ -405,6 +413,7 @@ describe("relaunchManagedSupervisorSession", () => {
 
     expect(relaunch?.finalize(true)).toMatchObject({ backupRemoved: true, rolledBack: false });
     expect(deps.finalize).toHaveBeenCalledWith(expect.objectContaining({ supervisorReady: true }), {
+      runCaptureOpenshell: deps.runCaptureOpenshell,
       runOpenshell: deps.runOpenshell,
       sleep,
     });
@@ -492,10 +501,32 @@ describe("relaunchManagedSupervisorSession", () => {
 
     expect(relaunch?.finalize(true)).toEqual({
       backupRemoved: true,
+      finalHandoffAcknowledged: true,
       rolledBack: false,
       stateRestored: true,
       stateBackupRemoved: false,
     });
+  });
+
+  it("retains the restored state backup when final handoff is not acknowledged (#9531)", () => {
+    const deps = baseDeps({
+      finalize: vi.fn(() => ({
+        backupRemoved: true,
+        finalHandoffAcknowledged: false,
+        lastSandboxPhase: "Deleting",
+        rolledBack: false,
+      })),
+    });
+    const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
+
+    expect(relaunch?.finalize(true)).toEqual({
+      backupRemoved: true,
+      finalHandoffAcknowledged: false,
+      lastSandboxPhase: "Deleting",
+      rolledBack: false,
+      stateRestored: true,
+    });
+    expect(deps.removeBackup).not.toHaveBeenCalled();
   });
 
   it("returns null when the pinned recreation fails", () => {

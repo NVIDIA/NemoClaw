@@ -24,6 +24,7 @@ export type SandboxRecord = {
   name: string;
   createdAt?: string;
   pendingRouteReservation?: true;
+  reservationSessionId?: string;
   agent?: string | null;
   baselineExclusionTransition?: {
     id: string;
@@ -62,6 +63,8 @@ export type SandboxRecord = {
   preferredInferenceApi?: string | null;
   lifecycleGeneration?: string;
   lifecycleLiveIdentityFingerprint?: string;
+  policyAuthority?: SandboxEntry["policyAuthority"];
+  policyCreationReceipt?: SandboxEntry["policyCreationReceipt"];
   hostLocalInferenceReceipt?: string | null;
   hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
   dashboardPort?: number | null;

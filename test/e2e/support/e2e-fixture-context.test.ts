@@ -331,6 +331,30 @@ describe("E2E fixture primitives", () => {
     }
   });
 
+  it("shell probe inherits the host PATH when command options add environment variables", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-shell-probe-path-"));
+    try {
+      const probe = new ShellProbe({
+        artifacts: new ArtifactSink(tmp),
+        progress: supportProgress(),
+        redact: (text) => text,
+        signal: new AbortController().signal,
+      });
+      const result = await probe.run(
+        trustedShellCommand({
+          command: "node",
+          args: ["-e", "process.stdout.write(process.env.PROBE_VALUE ?? '')"],
+          reason: "verify ShellProbe keeps PATH while merging command environment",
+        }),
+        { env: { PROBE_VALUE: "present" }, timeoutMs: 5_000 },
+      );
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe("present");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("shell probe reports child liveness to the shared observer without duplicating it", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-shell-observer-"));
     try {

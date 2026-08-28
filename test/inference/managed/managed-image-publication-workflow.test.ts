@@ -309,6 +309,43 @@ describe("complete managed-image publication workflow", () => {
     );
     expect(exportDigest.run).toContain('printf \'%s_digest=%s\\n\' "$ARCH" "$DIGEST"');
   });
+
+  it("publishes native base images without GitHub API metadata", () => {
+    const action = readAction("build-base-image-platform");
+    const platformBuild = step(
+      { steps: action.runs?.steps },
+      "Build and push platform digest",
+      "build-base-image-platform action",
+    );
+    expect(platformBuild.with?.labels).toBe(
+      "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}\n" +
+        "org.opencontainers.image.revision=${{ github.sha }}\n",
+    );
+    expect(JSON.stringify(action)).not.toContain('"metadata-tags"');
+    expect(
+      action.runs?.steps?.some((candidate) => candidate.uses?.includes("metadata-action")),
+    ).toBe(false);
+
+    const manifestAction = readAction("publish-base-image-manifest");
+    const manifestTags = step(
+      { steps: manifestAction.runs?.steps },
+      "Generate manifest tags",
+      "publish-base-image-manifest action",
+    );
+    expect(manifestTags).toMatchObject({
+      id: "meta",
+      env: {
+        IMAGE: "${{ inputs.registry }}/${{ inputs.image }}",
+        REF: "${{ github.ref }}",
+        REVISION: "${{ github.sha }}",
+      },
+      run: 'bash "$GITHUB_ACTION_PATH/tags.sh"',
+      shell: "bash",
+    });
+    expect(
+      manifestAction.runs?.steps?.some((candidate) => candidate.uses?.includes("metadata-action")),
+    ).toBe(false);
+  });
   it("builds and exercises every shipped agent from an exact PR image before merge (#7744)", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const reviewedAudit = managedPrReviewedAudit(workflow);
@@ -654,6 +691,7 @@ describe("complete managed-image publication workflow", () => {
       readWorkflow("e2e.yaml").jobs?.["mcp-bridge"],
       "unified E2E workflow is missing its stable MCP job",
     );
+    expect(workflow.on?.pull_request?.paths).toContain("test/e2e/live/mcp-bridge*.ts");
     expect(discovery.needs).toBe("pr-build-and-entrypoint");
     expect(discovery.if).toContain(
       "github.event.pull_request.head.repo.full_name == github.repository",
