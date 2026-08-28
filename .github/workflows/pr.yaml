@@ -215,8 +215,13 @@ jobs:
               node --experimental-strip-types "$trusted_inspector"
           )"
           required="$(
-            jq -er '.required | if type == "boolean" then tostring else error("invalid required flag") end' \
-              <<<"$decision"
+            jq -ser '
+              if length == 1 and (.[0] | type) == "object" and (.[0].required | type) == "boolean" then
+                .[0].required | tostring
+              else
+                error("decision must contain one object with a boolean required field")
+              end
+            ' <<<"$decision"
           )"
           if [ "$required" != "true" ]; then
             echo "required=false" >> "$GITHUB_OUTPUT"
