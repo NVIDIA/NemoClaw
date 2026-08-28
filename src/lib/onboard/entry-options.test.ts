@@ -178,6 +178,23 @@ describe("resolveOnboardEntryOptions", () => {
     expect(deps.exitProcess).toHaveBeenCalledTimes(1);
   });
 
+  it("accepts deploy as a sandbox name after the command is removed (#10572)", () => {
+    const deps = createDeps();
+
+    const result = resolveOnboardEntryOptions(
+      {
+        opts: { sandboxName: "Deploy" },
+        env: {},
+        stdinIsTty: true,
+        stdoutIsTty: true,
+      },
+      deps,
+    );
+
+    expect(result.requestedSandboxName).toBe("deploy");
+    expect(deps.error).not.toHaveBeenCalled();
+  });
+
   it("auto-detects resume from a persisted in_progress session without --resume (#5470)", () => {
     const deps = createDeps();
 
