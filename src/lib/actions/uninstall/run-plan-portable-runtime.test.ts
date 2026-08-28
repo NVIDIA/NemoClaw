@@ -503,7 +503,8 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
           HOME: homeDir,
           NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: gatewayStateDir,
         } as NodeJS.ProcessEnv,
-        existsSync: (target) => sharedOpenShellPaths.has(String(target)),
+        existsSync: (target) =>
+          sharedOpenShellPaths.has(String(target)) || String(target) === gatewayStateDir,
         hasPortableRuntimeCleanup: () => true,
         isTty: false,
         kill,
