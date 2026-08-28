@@ -76,4 +76,4 @@ Add `relevantPaths` to each failure before correlation when repository knowledge
 
 The pull request value-stream analyzer moved to the lazily loaded `nemoclaw-maintainer-analyze-pr-value-stream` skill. Load that skill for the standalone Node command, comparison options, output contract, artifact validation, and caveats.
 
-The script is `.agents/skills/nemoclaw-maintainer-analyze-pr-value-stream/scripts/analyze-pr-value-stream.mts`. It uses authenticated `gh` and local `git` reads. It performs no GitHub writes.
+The script is `.agents/skills/nemoclaw-maintainer-analyze-pr-value-stream/scripts/analyze-pr-value-stream.mts`. It uses authenticated `gh` reads. It performs no GitHub writes.

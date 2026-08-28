@@ -163,23 +163,29 @@ async function runGithubCli(input: GithubCliInput): Promise<{ stdout: string }> 
 
 type RequiredCheck = { name: string; appId: number | null; legacy: boolean };
 
+type RemoveDirectory = (directory: string) => Promise<void>;
+
+export async function cleanupArtifactDirectory(
+  directory: string,
+  removeDirectory: RemoveDirectory = async (target) => rm(target, { recursive: true, force: true }),
+): Promise<string | null> {
+  try {
+    await removeDirectory(directory);
+    return null;
+  } catch {
+    return `Artifact temporary-directory cleanup failed. Remove ${directory} before retrying.`;
+  }
+}
+
 async function readRequiredChecks(input: {
   workdir: string;
   repo: string;
-  number: number;
+  baseRefName: string;
   limit: number;
 }): Promise<{ protectionReadable: boolean; requirements: RequiredCheck[] }> {
   try {
-    const pr = JSON.parse(
-      (
-        await runGithubCli({
-          workdir: input.workdir,
-          args: ["pr", "view", String(input.number), "--repo", input.repo, "--json", "baseRefName"],
-        })
-      ).stdout,
-    );
-    if (typeof pr?.baseRefName !== "string") throw new Error("base branch was unavailable");
-    const endpoint = `repos/${input.repo}/branches/${encodeURIComponent(pr.baseRefName)}/protection/required_status_checks`;
+    if (input.baseRefName.length === 0) throw new Error("base branch was unavailable");
+    const endpoint = `repos/${input.repo}/branches/${encodeURIComponent(input.baseRefName)}/protection/required_status_checks`;
     const payload = JSON.parse(
       (await runGithubCli({ workdir: input.workdir, args: ["api", endpoint] })).stdout,
     );
@@ -248,7 +254,7 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
       "--repo",
       repository,
       "--json",
-      "number,url,state,isDraft,createdAt,mergedAt,headRefName,headRefOid,commits,reviews",
+      "number,url,state,isDraft,createdAt,mergedAt,baseRefName,headRefName,headRefOid,commits,reviews",
     ],
   });
   const pull = JSON.parse(pullResult.stdout);
@@ -258,6 +264,7 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
     pull.number !== input.number ||
     typeof pull.url !== "string" ||
     typeof pull.state !== "string" ||
+    typeof pull.baseRefName !== "string" ||
     typeof pull.headRefName !== "string" ||
     !/^[0-9a-f]{40,64}$/u.test(pull.headRefOid) ||
     !Array.isArray(pull.commits) ||
@@ -506,8 +513,10 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
       );
       return null;
     } finally {
-      if (temporaryDirectory !== null)
-        await rm(temporaryDirectory, { recursive: true, force: true });
+      if (temporaryDirectory !== null) {
+        const cleanupCaveat = await cleanupArtifactDirectory(temporaryDirectory);
+        if (cleanupCaveat !== null) artifactCaveats.add(cleanupCaveat);
+      }
     }
   };
   let testArtifactsRead = 0;
@@ -719,7 +728,7 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
   const configured = await readRequiredChecks({
     workdir: input.workdir,
     repo: repository,
-    number: input.number,
+    baseRefName: pull.baseRefName,
     limit: 100,
   });
   const requirements = configured.requirements;
@@ -759,7 +768,6 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
     return (
       String(check?.conclusion ?? "").toUpperCase() === "SUCCESS" &&
       Number.isFinite(completed) &&
-      (check?.legacyStatus === true || completed >= headObserved) &&
       completed <= terminalLimit
     );
   };
