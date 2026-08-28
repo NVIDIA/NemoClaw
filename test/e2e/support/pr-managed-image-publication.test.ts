@@ -130,6 +130,8 @@ on:
         "scripts/checks/run-managed-image-openshell-e2e.ts",
         "src/lib/actions/maintenance.test.ts",
         "src/lib/actions/maintenance.ts",
+        "src/lib/actions/sandbox/connect-probe-observe.test.ts",
+        "src/lib/actions/sandbox/launch-readiness-ordinary-pairing.test.ts",
         "src/lib/actions/sandbox/process-recovery.ts",
         "src/lib/actions/sandbox/mcp-bridge-input-targets.test.ts",
         "src/lib/actions/sandbox/mcp-bridge-tool-discovery.test.ts",

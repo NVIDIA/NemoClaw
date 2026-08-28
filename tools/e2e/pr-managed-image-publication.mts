@@ -38,6 +38,8 @@ const REUSABLE_NON_IMAGE_PATHS = [
   /^scripts\/install[.]sh$/u,
   /^scripts\/checks\/run-managed-image-openshell-e2e[.]ts$/u,
   /^src\/lib\/actions\/maintenance(?:[.]test)?[.]ts$/u,
+  /^src\/lib\/actions\/sandbox\/connect-probe-observe[.]test[.]ts$/u,
+  /^src\/lib\/actions\/sandbox\/launch-readiness-ordinary-pairing[.]test[.]ts$/u,
   /^src\/lib\/actions\/sandbox\/process-recovery[.]ts$/u,
   /^src\/lib\/actions\/sandbox\/mcp-bridge-tool-discovery(?:[.]test)?[.]ts$/u,
   /^src\/lib\/actions\/sandbox\/mcp-bridge-input-targets[.]test[.]ts$/u,
