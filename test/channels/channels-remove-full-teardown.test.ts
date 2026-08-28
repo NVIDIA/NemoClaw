@@ -550,7 +550,7 @@ const ctx = module.exports;
       "other presets must remain after removing a token-based channel",
     );
 
-    const messagingPlanUpdate = payload.registryUpdates.find(
+    const messagingPlanUpdate = payload.registryUpdates.findLast(
       (u: { updates: { messaging?: { plan?: { channels?: Array<{ channelId: string }> } } } }) =>
         u.updates.messaging?.plan,
     );

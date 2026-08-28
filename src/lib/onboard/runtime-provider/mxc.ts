@@ -29,6 +29,7 @@ import {
   qualifyMxcOpenShellAttachment,
   type MxcOpenShellAttachmentAuthority,
   type MxcOpenShellAttachmentObservation,
+  type MxcOpenShellAttachmentReceipt,
 } from "./mxc-openshell-attachment";
 import {
   observeMxcOpenShellAttachment,
@@ -50,6 +51,11 @@ export interface MxcExistingInstallationRuntimeProviderOptions {
   readonly bootstrapControlPlane: MxcNativeArtifactControlPlane;
   /** Trusted native boundary; Windows composition must reject reparse points and identity drift. */
   readonly observeFileDigest: MxcOpenShellFileDigestObserver;
+}
+
+export interface MxcExistingInstallationRuntimeProviderAttachment {
+  readonly provider: RuntimeProviderBundle;
+  readonly attachmentReceipt: MxcOpenShellAttachmentReceipt;
 }
 
 const MXC_PROVIDER_ID = "mxc";
@@ -212,31 +218,34 @@ export function createMxcRuntimeProviderBundle({
   };
 }
 
-/** Observe one existing installation before constructing the inactive provider candidate. */
-export async function createMxcRuntimeProviderBundleFromExistingInstallation({
+/** Observe one existing installation and retain its exact attachment receipt. */
+export async function attachMxcRuntimeProviderBundleFromExistingInstallation({
   hostFacts,
   openshellAttachmentAuthority,
   attachmentObservation,
   bootstrapControlPlane,
   observeFileDigest,
-}: MxcExistingInstallationRuntimeProviderOptions): Promise<RuntimeProviderBundle> {
+}: MxcExistingInstallationRuntimeProviderOptions): Promise<MxcExistingInstallationRuntimeProviderAttachment> {
   const observeAndQualify = async () => {
     const observation = await observeMxcOpenShellAttachment(
       attachmentObservation,
       observeFileDigest,
     );
-    qualifyMxcOpenShellAttachment(openshellAttachmentAuthority, observation);
-    return observation;
+    const attachmentReceipt = qualifyMxcOpenShellAttachment(
+      openshellAttachmentAuthority,
+      observation,
+    );
+    return { observation, attachmentReceipt };
   };
-  const openshellObservation = await observeAndQualify();
+  const initialAttachment = await observeAndQualify();
   const candidate = createMxcRuntimeProviderBundle({
     hostFacts,
     openshellAttachmentAuthority,
-    openshellObservation,
+    openshellObservation: initialAttachment.observation,
     bootstrapControlPlane,
   });
   const bootstrap = candidate.bootstrap as RuntimeProviderNativeArtifactBootstrapSurface;
-  return {
+  const provider: RuntimeProviderBundle = {
     ...candidate,
     bootstrap: {
       ...bootstrap,
@@ -244,7 +253,14 @@ export async function createMxcRuntimeProviderBundleFromExistingInstallation({
         await observeAndQualify();
         return bootstrap.run(input);
       },
-      recover: async (input) => bootstrap.recover(input),
+      recover: async (input) => {
+        await observeAndQualify();
+        return bootstrap.recover(input);
+      },
     },
   };
+  return Object.freeze({
+    provider,
+    attachmentReceipt: initialAttachment.attachmentReceipt,
+  });
 }
