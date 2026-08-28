@@ -3,7 +3,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
-import { TextDecoder } from "node:util";
+import { isDeepStrictEqual, TextDecoder } from "node:util";
 
 import {
   fingerprintOpenShellSandboxId,
@@ -102,6 +102,7 @@ export interface HermesPortableLifecycleDeps {
     | ((receipt: HermesPortableConfiguredReceipt) => HermesPortableContainerDeps);
   readonly podmanAuthorityDeps?: HermesPortablePodmanAuthorityDeps;
   readonly operatingAuthority?: HermesPortableOperatingAuthorityDeps;
+  readonly publishSuccessorReceipt?: typeof publishHermesPortableSuccessorReceipt;
   readonly now?: () => number;
   readonly sleep?: (milliseconds: number) => void;
   readonly log?: (message: string) => void;
@@ -116,6 +117,7 @@ interface QualifiedHermesPortableLifecycle {
   readonly container: HermesPortableContainerInspection;
   readonly capture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]>;
   readonly openShellPhase: string;
+  readonly assertOperatingAuthority: () => void;
 }
 
 function fail(message: string): never {
@@ -248,6 +250,8 @@ function sameSnapshot(
     left.identity.ino === right.identity.ino &&
     left.sha256 === right.sha256 &&
     left.bytes.equals(right.bytes) &&
+    isDeepStrictEqual(left.receipt.policy, right.receipt.policy) &&
+    left.successorPublicationPending === right.successorPublicationPending &&
     left.successor?.path === right.successor?.path &&
     left.successor?.identity.dev === right.successor?.identity.dev &&
     left.successor?.identity.ino === right.successor?.identity.ino &&
@@ -437,6 +441,7 @@ function qualify(
     container,
     capture,
     openShellPhase: liveIdentity.phase,
+    assertOperatingAuthority: operatingAuthority.assertCurrent,
   };
 }
 
@@ -458,11 +463,22 @@ export function requalifyHermesPortableSandboxAuthority(
     fail(`receipt phase '${snapshot.receipt.phase}' is incomplete and cannot be requalified`);
   }
   assertCurrentPortableHostFenceHeld(snapshot.receipt.runtimeAuthority.homeDir);
-  qualify(sandboxName, context, deps, snapshot, ["Ready", "Error", "Stopped"], {
+  const qualified = qualify(sandboxName, context, deps, snapshot, ["Ready", "Error", "Stopped"], {
     permitSchema5Requalification: true,
   });
-  const published = publishHermesPortableSuccessorReceipt(sandboxName, stateDir);
+  const publishSuccessor = deps.publishSuccessorReceipt ?? publishHermesPortableSuccessorReceipt;
+  const published = publishSuccessor(
+    sandboxName,
+    stateDir,
+    {},
+    {
+      expected: qualified.snapshot,
+      assertCurrent: qualified.assertOperatingAuthority,
+    },
+  );
+  qualified.assertOperatingAuthority();
   qualify(sandboxName, context, deps, published, ["Ready", "Error", "Stopped"]);
+  qualified.assertOperatingAuthority();
   return { kind: snapshot.successor ? "already-current" : "migrated", snapshot: published };
 }
 
@@ -596,11 +612,7 @@ export function recoverHermesPortableSandboxLifecycle(
           commandEnv,
           qualified.receipt.runtimeAuthority,
         );
-      buildHermesPortableOpenShellCommandAuthority(
-        qualified.receipt,
-        commandEnv,
-        assertExecutable,
-      );
+      buildHermesPortableOpenShellCommandAuthority(qualified.receipt, commandEnv, assertExecutable);
       rawLaunch(openshellExecArgs(qualified.receipt, qualified.receipt.startup.argv));
     }
     const recovered = waitFor(STARTUP_TIMEOUT_MS, deps, () => {

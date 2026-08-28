@@ -15,6 +15,7 @@ import type { PodmanExecutableAuthority, PodmanSocketAuthority } from "../../ada
 import { isMcpLifecycleLockHeld } from "../../state/mcp-lifecycle-lock-acquisition";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import { parsePortableRuntimeAuthority } from "../../state/onboard/portable-runtime-authority";
+import { assertCurrentPortableHostFenceHeld } from "../../state/portable-uninstall-retirement";
 import { portableDemoReceiptPath } from "./portable-runtime-receipt-readiness";
 import {
   HERMES_PORTABLE_PODMAN_VERSION,
@@ -214,6 +215,13 @@ export interface HermesPortableReceiptPublicationHooks {
   readonly afterStageDetach?: () => void;
   readonly beforeCleanupUnlink?: () => void;
   readonly beforeInterruptedStageRetirement?: () => void;
+}
+
+export interface HermesPortableSuccessorRequalificationAuthority {
+  readonly expected: HermesPortableReceiptSnapshot & {
+    readonly receipt: HermesPortableConfiguredReceipt;
+  };
+  readonly assertCurrent: () => void;
 }
 
 export interface HermesPortablePolicySourceSnapshot {
@@ -560,7 +568,8 @@ function parseStableDirectoryChain(
       (mode & 0o022n) !== 0n ||
       directory.path !== expectedPath ||
       (owner === "current-user"
-        ? index === 0 && directory.ownerUid !== uid
+        ? (index === 0 && directory.ownerUid !== uid) ||
+          (index > 0 && directory.ownerUid !== "0" && directory.ownerUid !== uid)
         : directory.ownerUid !== "0" && directory.ownerUid !== uid)
     ) {
       fail("has invalid stable directory authority");
@@ -2034,6 +2043,17 @@ export function readHermesPortableLifecycleReceiptForClassification(
   return readHermesPortableLifecycleReceiptInternal(sandboxName, stateDir, false, false, true);
 }
 
+/** Route a probe toward the host fence without interpreting receipt authority. */
+export function hasHermesPortableReceiptCandidate(sandboxName: string, stateDir: string): boolean {
+  try {
+    fs.lstatSync(hermesPortableReceiptDirectory(sandboxName, stateDir));
+    return true;
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 /** Select stable receipt authority while its same-transaction publisher resumes under the lock. */
 export function inspectPortableAgentReceiptAuthorityForPublicationRecovery(
   sandboxName: string,
@@ -2045,6 +2065,29 @@ export function inspectPortableAgentReceiptAuthorityForPublicationRecovery(
   const legacyPath = portableDemoReceiptPath(sandboxName, stateDir);
   const openclaw = existingPath(legacyPath);
   const hermes = readHermesPortableLifecycleReceiptInternal(sandboxName, stateDir, true, true);
+  if (openclaw && hermes) fail(`agent authority is ambiguous for '${sandboxName}'`);
+  if (hermes) return { kind: "hermes", snapshot: hermes };
+  if (openclaw) return { kind: "openclaw", path: legacyPath };
+  return { kind: "none" };
+}
+
+/** Select copied authority and exact staged evidence only for the locked probe path. */
+export function inspectPortableAgentReceiptAuthorityForRequalification(
+  sandboxName: string,
+  stateDir: string,
+): PortableAgentReceiptAuthority {
+  if (!isMcpLifecycleLockHeld(sandboxName, path.join(stateDir, "state"))) {
+    fail(`schema-6 requalification requires the sandbox lifecycle lock for '${sandboxName}'`);
+  }
+  const legacyPath = portableDemoReceiptPath(sandboxName, stateDir);
+  const openclaw = existingPath(legacyPath);
+  const hermes = readHermesPortableLifecycleReceiptInternal(
+    sandboxName,
+    stateDir,
+    true,
+    true,
+    true,
+  );
   if (openclaw && hermes) fail(`agent authority is ambiguous for '${sandboxName}'`);
   if (hermes) return { kind: "hermes", snapshot: hermes };
   if (openclaw) return { kind: "openclaw", path: legacyPath };
@@ -2180,6 +2223,7 @@ export function publishHermesPortableSuccessorReceipt(
   sandboxName: string,
   stateDir: string,
   hooks: HermesPortableReceiptPublicationHooks = {},
+  requalification?: HermesPortableSuccessorRequalificationAuthority,
 ): HermesPortableReceiptSnapshot & {
   readonly receipt: HermesPortableConfiguredReceipt;
   readonly successor: HermesPortableSuccessorSnapshot;
@@ -2191,7 +2235,17 @@ export function publishHermesPortableSuccessorReceipt(
         fail(`schema-6 publication requires the sandbox lifecycle lock for '${sandboxName}'`);
       }
     });
-  assertLifecycleLock();
+  if (requalification) {
+    if (requalification.expected.receipt.sandboxName !== sandboxName) {
+      fail("schema-6 requalification authority names another sandbox");
+    }
+    assertCurrentPortableHostFenceHeld(requalification.expected.receipt.runtimeAuthority.homeDir);
+  }
+  const assertPublicationAuthority = () => {
+    assertLifecycleLock();
+    requalification?.assertCurrent();
+  };
+  assertPublicationAuthority();
   if (existingPath(portableDemoReceiptPath(sandboxName, stateDir))) {
     fail(`will not publish schema-6 authority over OpenClaw authority for '${sandboxName}'`);
   }
@@ -2200,10 +2254,22 @@ export function publishHermesPortableSuccessorReceipt(
     stateDir,
     false,
     true,
-    true,
+    requalification !== undefined,
   );
   if (!active || active.receipt.phase !== "active") {
     fail("schema-6 publication requires complete active schema-5 authority");
+  }
+  if (
+    requalification &&
+    (active.path !== requalification.expected.path ||
+      active.identity.dev !== requalification.expected.identity.dev ||
+      active.identity.ino !== requalification.expected.identity.ino ||
+      active.sha256 !== requalification.expected.sha256 ||
+      !active.bytes.equals(requalification.expected.bytes) ||
+      !isDeepStrictEqual(active.receipt.policy, requalification.expected.receipt.policy) ||
+      active.successorPublicationPending !== requalification.expected.successorPublicationPending)
+  ) {
+    fail("schema-6 requalification authority changed before publication");
   }
   const receipt = createHermesPortableSuccessorReceipt(
     active as HermesPortableReceiptSnapshot & {
@@ -2217,7 +2283,7 @@ export function publishHermesPortableSuccessorReceipt(
   const cleanup = cleanupPath(staged);
   try {
     revalidateDirectory(directory);
-    assertLifecycleLock();
+    assertPublicationAuthority();
     const allowedEntries = new Set([
       "active.json",
       "authority.json",
@@ -2231,14 +2297,14 @@ export function publishHermesPortableSuccessorReceipt(
     if (unexpected.length > 0) {
       fail(`directory contains other schema-6 publication evidence for '${sandboxName}'`);
     }
-    retireInterruptedEmptyStage(target, staged, cleanup, directory, assertLifecycleLock);
+    retireInterruptedEmptyStage(target, staged, cleanup, directory, assertPublicationAuthority);
     retireInterruptedExactPrefixStage(
       target,
       staged,
       cleanup,
       directory,
       bytes,
-      assertLifecycleLock,
+      assertPublicationAuthority,
       hooks,
     );
     const disposition = reconcilePublicationArtifacts(target, staged, cleanup, bytes, hooks);
@@ -2250,6 +2316,7 @@ export function publishHermesPortableSuccessorReceipt(
       if (!current?.successor || current.receipt.phase !== "active") {
         fail("schema-6 successor could not be requalified after reconciliation");
       }
+      assertPublicationAuthority();
       return current as typeof current & {
         readonly receipt: HermesPortableConfiguredReceipt;
         readonly successor: HermesPortableSuccessorSnapshot;
@@ -2258,7 +2325,7 @@ export function publishHermesPortableSuccessorReceipt(
     if (disposition === "complete") fail("completed schema-6 publication is unreadable");
     if (disposition === "absent") writeStage(staged, bytes, hooks);
     revalidateDirectory(directory);
-    assertLifecycleLock();
+    assertPublicationAuthority();
     fsyncExactStage(staged, bytes, hooks);
     revalidateDirectory(directory);
     try {
@@ -2269,16 +2336,17 @@ export function publishHermesPortableSuccessorReceipt(
       if (!raced || !raced.bytes.equals(bytes)) fail("schema-6 publication raced other authority");
     }
     hooks.afterCanonicalLink?.();
-    assertLifecycleLock();
+    assertPublicationAuthority();
     fs.fsyncSync(directory.descriptor);
     hooks.afterDirectoryFsync?.();
     detachPublishedStage(target, staged, cleanup, bytes, hooks);
-    assertLifecycleLock();
+    assertPublicationAuthority();
     fs.fsyncSync(directory.descriptor);
     const published = readHermesPortableLifecycleReceipt(sandboxName, stateDir);
     if (!published?.successor || published.receipt.phase !== "active") {
       fail("schema-6 successor disappeared after publication");
     }
+    assertPublicationAuthority();
     return published as typeof published & {
       readonly receipt: HermesPortableConfiguredReceipt;
       readonly successor: HermesPortableSuccessorSnapshot;

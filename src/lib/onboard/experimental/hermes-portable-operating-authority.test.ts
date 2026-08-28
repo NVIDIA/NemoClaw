@@ -47,7 +47,7 @@ function executable(executablePath: string, sha256: string): PodmanExecutableAut
   };
 }
 
-function socket(inode = "11"): PodmanSocketAuthority {
+function socket(inode = "11", parentMode = 0o40700): PodmanSocketAuthority {
   const currentUid = String(uid());
   return {
     device: "1",
@@ -64,7 +64,7 @@ function socket(inode = "11"): PodmanSocketAuthority {
     ].map((directory, index) => ({
       device: "1",
       inode: String(index + 20),
-      mode: String(index === 0 ? 0o40700 : 0o40755),
+      mode: String(index === 0 ? parentMode : 0o40755),
       ownerUid: String(index === 0 ? uid() : 0),
       path: directory,
     })),
@@ -252,6 +252,62 @@ describe("Hermes Portable schema-6 operation authority", () => {
 
     expect(authority.receipt.socketAuthority.inode).toBe("99");
     expect(authority.assertCurrent).not.toThrow();
+  });
+
+  it("admits a safe recreated socket-directory mode for a new user session (#10423)", () => {
+    const authority = qualifyHermesPortableOperatingAuthority(snapshot(), {
+      env: environment(),
+      captureSocketAuthority: () => socket("99", 0o40710),
+      captureOpenShellExecutableAuthority: () => ({
+        version: "0.0.106",
+        executable: executable("/usr/bin/openshell", "b".repeat(64)),
+      }),
+      capturePodmanExecutableAuthority: () => ({
+        version: "5.7.0",
+        executable: executable("/usr/bin/podman", "c".repeat(64)),
+      }),
+    });
+
+    expect(authority.receipt.socketAuthority.directoryChain[0]?.mode).toBe(String(0o40710));
+    expect(authority.assertCurrent).not.toThrow();
+  });
+
+  it.each([
+    ["writable socket directory", () => socket("99", 0o40720)],
+    [
+      "foreign socket-directory owner",
+      () => ({
+        ...socket("99"),
+        directoryChain: socket("99").directoryChain.map((component, index) =>
+          index === 0 ? { ...component, ownerUid: "2000" } : component,
+        ),
+      }),
+    ],
+    [
+      "alternate socket directory",
+      () => ({
+        ...socket("99"),
+        directoryChain: socket("99").directoryChain.map((component, index) =>
+          index === 0 ? { ...component, path: "/run/user/1000/alternate" } : component,
+        ),
+      }),
+    ],
+    ["changed socket mode", () => ({ ...socket("99"), mode: String(0o140660) })],
+  ] as const)("rejects %s semantics after a user-session transition (#10423)", (_case, capture) => {
+    expect(() =>
+      qualifyHermesPortableOperatingAuthority(snapshot(), {
+        env: environment(),
+        captureSocketAuthority: capture,
+        captureOpenShellExecutableAuthority: () => ({
+          version: "0.0.106",
+          executable: executable("/usr/bin/openshell", "b".repeat(64)),
+        }),
+        capturePodmanExecutableAuthority: () => ({
+          version: "5.7.0",
+          executable: executable("/usr/bin/podman", "c".repeat(64)),
+        }),
+      }),
+    ).toThrow("current filesystem or runtime semantics disagree");
   });
 
   it("rejects operation-local socket replacement before completion (#10423)", () => {

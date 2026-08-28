@@ -534,7 +534,7 @@ describe("launchSandbox", () => {
     expect(launchedCommand()).toEqual(["bash", "-lc", "openclaw tui"]);
   });
 
-  it("does not run ordinary pairing or session setup for accepted schema-5 readiness (#9203)", async () => {
+  it("launches accepted Hermes readiness without entering recovery (#9203)", async () => {
     const hermes = loadAgent("hermes");
     const entry = sandboxEntry("hermes");
     mocks.inspectLaunchReadiness.mockResolvedValue({
@@ -552,6 +552,7 @@ describe("launchSandbox", () => {
     });
 
     expect(mocks.printInteractiveSessionHints).not.toHaveBeenCalled();
+    expect(mocks.prepareInteractiveSession).not.toHaveBeenCalled();
     expect(mocks.completeReadinessQualifiedInteractiveSessionSetup).not.toHaveBeenCalled();
     expect(mocks.completeInteractiveSessionSetup).not.toHaveBeenCalled();
     expect(mocks.prepareHermesLightTerminalSkin).not.toHaveBeenCalled();
