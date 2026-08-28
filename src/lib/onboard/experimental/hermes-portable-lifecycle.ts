@@ -50,9 +50,10 @@ import {
   type HermesPortablePolicyCaptureResult,
 } from "./hermes-portable-policy-state";
 import {
+  publishHermesPortableSuccessorReceipt,
   readHermesPortableLifecycleReceipt,
   readHermesPortableLifecycleReceiptForRequalification,
-  publishHermesPortableSuccessorReceipt,
+  retireHermesPortableCreatePolicyState,
   type HermesPortableConfiguredReceipt,
   type HermesPortableLifecycleReceipt,
   type HermesPortableReceiptSnapshot,
@@ -102,6 +103,7 @@ export interface HermesPortableLifecycleDeps {
   readonly podmanAuthorityDeps?: HermesPortablePodmanAuthorityDeps;
   readonly operatingAuthority?: HermesPortableOperatingAuthorityDeps;
   readonly publishSuccessorReceipt?: typeof publishHermesPortableSuccessorReceipt;
+  readonly retireCreatePolicyState?: typeof retireHermesPortableCreatePolicyState;
   readonly now?: () => number;
   readonly sleep?: (milliseconds: number) => void;
   readonly log?: (message: string) => void;
@@ -438,7 +440,7 @@ export type HermesPortableAuthorityRequalificationResult =
   | { readonly kind: "already-current"; readonly snapshot: HermesPortableReceiptSnapshot }
   | { readonly kind: "migrated"; readonly snapshot: HermesPortableReceiptSnapshot };
 
-/** Publish schema 6 only after the exact schema-7 authority passes the probe fence. */
+/** Publish policy-free authority and retire create-policy history after the probe fence. */
 export function requalifyHermesPortableSandboxAuthority(
   sandboxName: string,
   context: PortableDemoLifecycleContext,
@@ -467,7 +469,11 @@ export function requalifyHermesPortableSandboxAuthority(
   qualified.assertOperatingAuthority();
   qualify(sandboxName, context, deps, published, ["Ready", "Error", "Stopped"]);
   qualified.assertOperatingAuthority();
-  return { kind: snapshot.successor ? "already-current" : "migrated", snapshot: published };
+  const retireCreatePolicyState =
+    deps.retireCreatePolicyState ?? retireHermesPortableCreatePolicyState;
+  const compacted = retireCreatePolicyState(sandboxName, published.receipt.transactionId, stateDir);
+  qualified.assertOperatingAuthority();
+  return { kind: snapshot.successor ? "already-current" : "migrated", snapshot: compacted };
 }
 
 function openshellExecArgs(receipt: HermesPortableConfiguredReceipt, command: readonly string[]) {

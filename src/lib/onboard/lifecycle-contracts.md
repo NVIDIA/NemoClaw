@@ -77,6 +77,11 @@ re-read live OpenShell requirements. If post-create verification fails,
 NemoClaw preserves the sandbox for identity-bound recovery rather than deleting
 by mutable name.
 
+Hermes Portable keeps its create-policy file and pending/configuring receipts
+only while sandbox creation is incomplete. After its policy-free operating
+authority is durable, it removes that file and both policy-bearing receipt
+phases; the remaining active runtime authority contains no policy fields.
+
 ## Effect-order flows
 
 `*` marks a durable checkpoint and `!` marks the sandbox-delete boundary. In-place destructive effects that occur earlier are called out in the matrix.

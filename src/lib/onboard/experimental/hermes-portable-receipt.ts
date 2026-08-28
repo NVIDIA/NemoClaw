@@ -1216,17 +1216,78 @@ export function assertHermesPortablePolicySource(source: HermesPortablePolicySou
   return file.bytes;
 }
 
-/** Remove the bounded create-policy copy after OpenShell owns the active policy. */
-export function retireHermesPortablePolicySource(
+/** Retire the bounded create-policy copy and receipt history after OpenShell owns policy. */
+export function retireHermesPortableCreatePolicyState(
   sandboxName: string,
   transactionId: string,
   stateDir: string,
-): void {
-  const sourcePath = hermesPortablePolicySourcePath(sandboxName, transactionId, stateDir);
-  const file = readExactFile(sourcePath, 1n, MAX_POLICY_BYTES);
-  if (!file) return;
-  fs.unlinkSync(sourcePath);
-  if (fs.existsSync(sourcePath)) fail("create-policy source retirement did not complete");
+): HermesPortableReceiptSnapshot & {
+  readonly receipt: HermesPortableConfiguredReceipt;
+  readonly successor: HermesPortableSuccessorSnapshot;
+} {
+  if (!isMcpLifecycleLockHeld(sandboxName, path.join(stateDir, "state"))) {
+    fail(`create-policy retirement requires the sandbox lifecycle lock for '${sandboxName}'`);
+  }
+  const active = readHermesPortableLifecycleReceipt(sandboxName, stateDir);
+  if (
+    !active ||
+    active.receipt.phase !== "active" ||
+    !active.successor ||
+    active.receipt.transactionId !== transactionId
+  ) {
+    fail("create-policy retirement requires policy-free active operating authority");
+  }
+
+  const directory = validateDirectory(path.dirname(active.path));
+  try {
+    revalidateDirectory(directory);
+    const pending = readPhase(directory.path, "pending");
+    const configuring = readPhase(directory.path, "configuring");
+    for (const snapshot of [pending, configuring]) {
+      if (snapshot && snapshot.receipt.transactionId !== transactionId) {
+        fail("create-policy retirement found another transaction generation");
+      }
+    }
+
+    const sourcePath = hermesPortablePolicySourcePath(sandboxName, transactionId, stateDir);
+    const source = readExactFile(sourcePath, 1n, MAX_POLICY_BYTES);
+    if (source) {
+      if (pending?.receipt.phase === "pending") {
+        assertHermesPortablePolicySource(pending.receipt.policy);
+      }
+      fs.unlinkSync(sourcePath);
+    }
+    for (const snapshot of [pending, configuring]) {
+      if (!snapshot) continue;
+      const current = readExactFile(snapshot.path, 1n, MAX_RECEIPT_BYTES);
+      if (
+        !current ||
+        current.identity.dev !== snapshot.identity.dev ||
+        current.identity.ino !== snapshot.identity.ino ||
+        !current.bytes.equals(snapshot.bytes)
+      ) {
+        fail("create-policy receipt history changed before retirement");
+      }
+      fs.unlinkSync(snapshot.path);
+    }
+    fs.fsyncSync(directory.descriptor);
+  } finally {
+    fs.closeSync(directory.descriptor);
+  }
+
+  const compacted = readHermesPortableLifecycleReceipt(sandboxName, stateDir);
+  if (
+    !compacted ||
+    compacted.receipt.phase !== "active" ||
+    !compacted.successor ||
+    compacted.receipt.transactionId !== transactionId
+  ) {
+    fail("policy-free active operating authority could not be requalified after retirement");
+  }
+  return compacted as HermesPortableReceiptSnapshot & {
+    readonly receipt: HermesPortableConfiguredReceipt;
+    readonly successor: HermesPortableSuccessorSnapshot;
+  };
 }
 
 export function requalifyHermesPortablePolicySource(source: HermesPortablePolicySource): {
@@ -1826,22 +1887,28 @@ function readHermesPortableLifecycleReceiptInternal(
     const pending = readPhase(directoryPath, "pending", allowPublicationRecovery);
     const configuring = readPhase(directoryPath, "configuring", allowPublicationRecovery);
     const active = readPhase(directoryPath, "active", allowPublicationRecovery);
-    if (!pending) {
-      if (entries.length > 0) {
+    const successor = hasSuccessor
+      ? readSuccessor(directoryPath, allowSuccessorPublicationRecovery)
+      : null;
+    if (!pending && !active) {
+      if (entries.length > 0)
         fail(`directory contains incomplete or unknown publication evidence for '${sandboxName}'`);
-      }
       revalidateDirectory(directory);
       return null;
     }
+    if (!pending && (!active || !successor)) {
+      fail(`directory contains incomplete or unknown publication evidence for '${sandboxName}'`);
+    }
+    const transactionId = pending?.receipt.transactionId ?? active!.receipt.transactionId;
     const allowedEntries = new Set([
       "active.json",
       "authority.json",
       "configuring.json",
       "pending.json",
-      policySourceBasename(pending.receipt.transactionId),
+      policySourceBasename(transactionId),
     ]);
     const highestPhase = active ? "active" : configuring ? "configuring" : "pending";
-    if (allowPublicationRecovery) {
+    if (allowPublicationRecovery && pending) {
       validateRecoverablePhaseArtifacts(directoryPath, entries, pending, highestPhase);
     }
     if (
@@ -1854,7 +1921,7 @@ function readHermesPortableLifecycleReceiptInternal(
     ) {
       fail(`directory contains incomplete or unknown publication evidence for '${sandboxName}'`);
     }
-    if (!configuring && !active) {
+    if (pending && !configuring && !active) {
       validateReceiptPolicySource(
         directoryPath,
         pending.receipt as HermesPortablePendingReceipt,
@@ -1862,36 +1929,53 @@ function readHermesPortableLifecycleReceiptInternal(
       );
     }
     revalidateDirectory(directory);
-    if (!configuring && active) fail("phase chain is missing configuring authority");
-    if (pending.receipt.sandboxName !== sandboxName)
-      fail("sandbox identity does not match its path");
+    for (const snapshot of [pending, configuring, active]) {
+      if (snapshot && snapshot.receipt.sandboxName !== sandboxName) {
+        fail("sandbox identity does not match its path");
+      }
+    }
     if (configuring) {
-      if (
-        configuring.receipt.phase !== "configuring" ||
-        configuring.receipt.previousPhaseSha256 !== pending.sha256 ||
-        !sameTransaction(pending.receipt, configuring.receipt)
-      ) {
-        fail("configuring phase does not extend pending authority");
+      if (configuring.receipt.phase !== "configuring") {
+        fail("configuring phase contains invalid authority");
+      }
+      if (pending) {
+        if (
+          configuring.receipt.previousPhaseSha256 !== pending.sha256 ||
+          !sameTransaction(pending.receipt, configuring.receipt)
+        ) {
+          fail("configuring phase does not extend pending authority");
+        }
+      } else if (!active || !successor) {
+        fail("configuring phase has no pending authority");
       }
     }
     if (active) {
-      if (!configuring) fail("active phase has no configuring authority");
-      const configuringReceipt = configuring.receipt;
       const activeReceipt = active.receipt;
-      if (configuringReceipt.phase !== "configuring" || activeReceipt.phase !== "active") {
+      if (activeReceipt.phase !== "active") {
         fail("active phase files contain invalid phase authority");
       }
-      if (
-        activeReceipt.previousPhaseSha256 !== configuring.sha256 ||
-        !sameTransaction(configuringReceipt, activeReceipt) ||
-        activeReceipt.container.containerId !== configuringReceipt.container.containerId ||
-        activeReceipt.container.sandboxId !== configuringReceipt.container.sandboxId ||
-        activeReceipt.container.imageId !== configuringReceipt.container.imageId
-      ) {
-        fail("active phase does not extend configuring authority");
+      if (configuring) {
+        const configuringReceipt = configuring.receipt;
+        if (configuringReceipt.phase !== "configuring") {
+          fail("configuring phase contains invalid authority");
+        }
+        if (
+          activeReceipt.previousPhaseSha256 !== configuring.sha256 ||
+          !sameTransaction(configuringReceipt, activeReceipt) ||
+          activeReceipt.container.containerId !== configuringReceipt.container.containerId ||
+          activeReceipt.container.sandboxId !== configuringReceipt.container.sandboxId ||
+          activeReceipt.container.imageId !== configuringReceipt.container.imageId
+        ) {
+          fail("active phase does not extend configuring authority");
+        }
+      } else if (!successor) {
+        fail("active phase has no configuring authority");
+      } else if (pending && !sameTransaction(pending.receipt, activeReceipt)) {
+        fail("active phase disagrees with pending transaction history");
       }
     }
     const highest = active ?? configuring ?? pending;
+    if (!highest) fail("lifecycle receipt has no complete authority");
     const successorArtifacts = entries
       .map((entry) => successorPublicationIdentity(entry))
       .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
@@ -1906,10 +1990,9 @@ function readHermesPortableLifecycleReceiptInternal(
       fail("schema-8 publication recovery evidence disagrees with active authority");
     }
     if (hasSuccessor) {
-      if (!active || highest.receipt.phase !== "active") {
+      if (!active) {
         fail("schema-8 successor has no active schema-7 predecessor");
       }
-      const successor = readSuccessor(directoryPath, allowSuccessorPublicationRecovery);
       if (!successor) fail("schema-8 successor authority disappeared");
       const expected = createHermesPortableSuccessorReceipt(
         active as HermesPortableReceiptSnapshot & {
@@ -2144,7 +2227,7 @@ export function publishHermesPortableLifecycleReceipt(
   }
 }
 
-/** Publish the deterministic schema-8 operating authority without replacing schema-7 history. */
+/** Publish policy-free operating authority before retiring policy-bearing create history. */
 export function publishHermesPortableSuccessorReceipt(
   sandboxName: string,
   stateDir: string,

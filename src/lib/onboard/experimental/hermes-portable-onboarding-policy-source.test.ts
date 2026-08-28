@@ -17,9 +17,7 @@ import {
   hermesPortableReservationForOnboarding,
 } from "../../../../test/helpers/hermes-portable-onboarding-fixture";
 import type { SandboxEntry } from "../../state/registry";
-import {
-  pendingSandboxCreateIdentityForBoundary,
-} from "../sandbox-create/identity-boundary";
+import { pendingSandboxCreateIdentityForBoundary } from "../sandbox-create/identity-boundary";
 import {
   verifyLiveCreatedSandboxPolicyRequirements,
   type LiveCreatedSandboxPolicyRequirementsCheck,
@@ -32,6 +30,7 @@ import {
   runHermesPortableOnboardCreate,
   runHermesPortableOnboardingTransaction,
 } from "./hermes-portable-onboarding";
+import { hermesPortableReceiptDirectory } from "./hermes-portable-receipt";
 import type { SelectedDockerGpuRoute } from "../docker-gpu-route";
 
 const GATEWAY_PORT = 8080;
@@ -270,6 +269,10 @@ network_policies:
     expect(persistedPolicySources).toEqual([expect.stringMatching(/policy\..+\.yaml$/u)]);
     expect(verifiedCreateEffectCalls).toBe(1);
     expect(createSandboxCalls).toBe(1);
+    expect(fs.readdirSync(hermesPortableReceiptDirectory("alpha", stateDir)).sort()).toEqual([
+      "active.json",
+      "authority.json",
+    ]);
   });
 
   it("rejects a separately valid checkpoint replacement before configuration effects (#10423)", async () => {

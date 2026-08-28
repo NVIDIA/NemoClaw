@@ -28,6 +28,7 @@ import {
   publishHermesPortableLifecycleReceipt,
   publishHermesPortableSuccessorReceipt,
   readHermesPortableLifecycleReceipt,
+  retireHermesPortableCreatePolicyState,
   type HermesPortableConfiguredReceipt,
   type HermesPortablePendingReceipt,
   type HermesPortablePolicySource,
@@ -506,7 +507,7 @@ describe("Hermes portable receipt identity", () => {
     });
   });
 
-  it("publishes deterministic schema-8 authority without changing schema-7 history (#10423)", () => {
+  it("publishes deterministic policy-free schema-8 authority (#10423)", () => {
     const historical = publishActiveReceipt();
 
     const published = publishSuccessor();
@@ -522,6 +523,47 @@ describe("Hermes portable receipt identity", () => {
     expect(published.identity).toEqual(historical.identity);
     expect(repeated.bytes).toEqual(historical.bytes);
     expect(repeated.identity).toEqual(historical.identity);
+  });
+
+  it("retires policy-bearing create history after policy-free authority is durable (#10514)", () => {
+    const historical = publishActiveReceipt();
+    const published = publishSuccessor();
+    const directory = hermesPortableReceiptDirectory(SANDBOX, stateDir);
+    const sourcePath = hermesPortablePolicySourcePath(
+      SANDBOX,
+      historical.receipt.transactionId,
+      stateDir,
+    );
+
+    expect(fs.existsSync(sourcePath)).toBe(true);
+    const compacted = withMcpLifecycleLockSync(
+      SANDBOX,
+      () =>
+        retireHermesPortableCreatePolicyState(SANDBOX, historical.receipt.transactionId, stateDir),
+      { stateDir: path.join(stateDir, "state") },
+    );
+
+    expect(fs.readdirSync(directory).sort()).toEqual(["active.json", "authority.json"]);
+    expect(compacted.bytes).toEqual(historical.bytes);
+    expect(compacted.successor.bytes).toEqual(published.successor.bytes);
+    expect(readHermesPortableLifecycleReceipt(SANDBOX, stateDir)).toEqual(compacted);
+  });
+
+  it("reads policy-free authority across interrupted history retirement (#10514)", () => {
+    const activeSnapshot = publishActiveReceipt();
+    publishSuccessor();
+    const directory = hermesPortableReceiptDirectory(SANDBOX, stateDir);
+    const sourcePath = hermesPortablePolicySourcePath(
+      SANDBOX,
+      activeSnapshot.receipt.transactionId,
+      stateDir,
+    );
+
+    fs.unlinkSync(sourcePath);
+    fs.unlinkSync(path.join(directory, "pending.json"));
+    expect(readHermesPortableLifecycleReceipt(SANDBOX, stateDir)?.successor).toBeDefined();
+    fs.unlinkSync(path.join(directory, "configuring.json"));
+    expect(readHermesPortableLifecycleReceipt(SANDBOX, stateDir)?.successor).toBeDefined();
   });
 
   it("rejects a foreign-owned higher socket directory before schema-8 publication (#10423)", () => {

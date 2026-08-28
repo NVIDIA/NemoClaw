@@ -77,7 +77,7 @@ import {
   readHermesPortableLifecycleReceipt,
   reconcileHermesPortableCurrentPhasePublication,
   recoverableHermesPortablePolicyTransactionId,
-  retireHermesPortablePolicySource,
+  retireHermesPortableCreatePolicyState,
   type HermesPortableConfiguredReceipt,
   type HermesPortableLifecycleReceipt,
   type HermesPortablePendingReceipt,
@@ -1374,10 +1374,8 @@ export async function runHermesPortableOnboardingTransaction<T>(
         repairRegistryGatewayPort(activeSnapshot.receipt, finalIdentity.liveIdentityFingerprint),
         finalIdentity.liveIdentityFingerprint,
       );
-      if (activeSnapshot.successor || activeSnapshot.successorPublicationPending) {
-        activeSnapshot = publishHermesPortableSuccessorReceipt(input.sandboxName, input.stateDir);
-      }
-      retireHermesPortablePolicySource(
+      activeSnapshot = publishHermesPortableSuccessorReceipt(input.sandboxName, input.stateDir);
+      activeSnapshot = retireHermesPortableCreatePolicyState(
         activeSnapshot.receipt.sandboxName,
         activeSnapshot.receipt.transactionId,
         input.stateDir,
@@ -1580,10 +1578,10 @@ export async function runHermesPortableOnboardingTransaction<T>(
       activeReceipt(configuringSnapshot, currentContainer),
       input.stateDir,
     );
-    const active = publishHermesPortableSuccessorReceipt(input.sandboxName, input.stateDir);
-    retireHermesPortablePolicySource(
-      active.receipt.sandboxName,
-      active.receipt.transactionId,
+    const published = publishHermesPortableSuccessorReceipt(input.sandboxName, input.stateDir);
+    const active = retireHermesPortableCreatePolicyState(
+      published.receipt.sandboxName,
+      published.receipt.transactionId,
       input.stateDir,
     );
     return { active, createResult, created };
