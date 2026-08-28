@@ -3195,24 +3195,77 @@ EOF
 trusted_macos_openshell_gateway_process() {
   [ "$(uname -s)" = "Darwin" ] || return 1
 
-  local pid="$1" gateway_port="$2" gateway_name gateway_command gateway_exe
+  local pid="$1" gateway_port="$2" expected_generation="${3:-}"
+  local gateway_name gateway_command gateway_exe gateway_lsof_output
+  local process_generation_before process_generation_after
+  local observation_diagnostics_file observation_status observation_valid
   local user_bin_home brew_prefix trusted_brew_gateway
   command_exists ps || return 1
   command_exists lsof || return 1
 
   gateway_name="$(nemoclaw_gateway_name)" || return 1
-  gateway_command="$(ps -p "$pid" -o args= 2>/dev/null || true)"
-  [ "$gateway_command" = "openshell-gateway[nemoclaw=${gateway_name};port=${gateway_port}]" ] \
+  observation_diagnostics_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-process-observation-XXXXXX" 2>/dev/null)" \
     || return 1
+  _cleanup_files+=("$observation_diagnostics_file")
+  observation_valid=true
 
-  gateway_exe="$(lsof -a -p "$pid" -d txt -Fn 2>/dev/null | sed -n '/^n\// { s/^n//; p; }' | head -1)"
-  [ -n "$gateway_exe" ] || return 1
+  observation_status=0
+  process_generation_before="$(ps -p "$pid" -o lstart= 2>"$observation_diagnostics_file")" \
+    || observation_status=$?
+  if [ "$observation_status" -ne 0 ] || [ -s "$observation_diagnostics_file" ] || [ -z "$process_generation_before" ]; then
+    observation_valid=false
+  fi
+
+  if $observation_valid; then
+    : >"$observation_diagnostics_file"
+    observation_status=0
+    gateway_command="$(ps -p "$pid" -o args= 2>"$observation_diagnostics_file")" \
+      || observation_status=$?
+    if [ "$observation_status" -ne 0 ] || [ -s "$observation_diagnostics_file" ] \
+      || [ "$gateway_command" != "openshell-gateway[nemoclaw=${gateway_name};port=${gateway_port}]" ]; then
+      observation_valid=false
+    fi
+  fi
+
+  if $observation_valid; then
+    : >"$observation_diagnostics_file"
+    observation_status=0
+    gateway_lsof_output="$(lsof -a -p "$pid" -d txt -Fn 2>"$observation_diagnostics_file")" \
+      || observation_status=$?
+    if [ "$observation_status" -ne 0 ] || [ -s "$observation_diagnostics_file" ] \
+      || [[ "$gateway_lsof_output" != "p${pid}"$'\n'* ]]; then
+      observation_valid=false
+    else
+      gateway_exe="$(printf '%s\n' "$gateway_lsof_output" | sed -n '/^n\// { s/^n//; p; }' | head -1)"
+      [ -n "$gateway_exe" ] || observation_valid=false
+    fi
+  fi
+
+  if $observation_valid; then
+    : >"$observation_diagnostics_file"
+    observation_status=0
+    process_generation_after="$(ps -p "$pid" -o lstart= 2>"$observation_diagnostics_file")" \
+      || observation_status=$?
+    if [ "$observation_status" -ne 0 ] || [ -s "$observation_diagnostics_file" ] \
+      || [ "$process_generation_after" != "$process_generation_before" ]; then
+      observation_valid=false
+    fi
+  fi
+
+  rm -f "$observation_diagnostics_file"
+  _cleanup_files=("${_cleanup_files[@]/$observation_diagnostics_file/}")
+  $observation_valid || return 1
+  if [ -n "$expected_generation" ] && [ "$process_generation_before" != "$expected_generation" ]; then
+    return 1
+  fi
+
   user_bin_home="${XDG_BIN_HOME:-${HOME}/.local/bin}"
   if [ "${user_bin_home#/}" = "$user_bin_home" ]; then
     user_bin_home="${HOME}/.local/bin"
   fi
   case "$gateway_exe" in
     "${user_bin_home%/}/openshell-gateway" | /usr/local/bin/openshell-gateway | /usr/bin/openshell-gateway)
+      printf '%s\n' "$process_generation_before"
       return 0
       ;;
   esac
@@ -3224,7 +3277,8 @@ trusted_macos_openshell_gateway_process() {
   [ -e "$trusted_brew_gateway" ] || return 1
   trusted_brew_gateway="$(cd -P "$(dirname "$trusted_brew_gateway")" 2>/dev/null && printf '%s/%s\n' "$PWD" "$(basename "$trusted_brew_gateway")")" \
     || return 1
-  [ "$gateway_exe" = "$trusted_brew_gateway" ]
+  [ "$gateway_exe" = "$trusted_brew_gateway" ] || return 1
+  printf '%s\n' "$process_generation_before"
 }
 
 stop_legacy_openshell_gateway_process() {
@@ -3235,7 +3289,7 @@ stop_legacy_openshell_gateway_process() {
     *) return 1 ;;
   esac
 
-  local gateway_port runtime_dir pid_file pid gateway_exe listener_pids attempt
+  local gateway_port runtime_dir pid_file pid gateway_exe listener_pids attempt process_generation
   local listener_diagnostics_file listener_status listener_observation_valid
   gateway_port="$(resolve_nemoclaw_gateway_port)" || return 2
   if [ -n "${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR:-}" ]; then
@@ -3284,8 +3338,15 @@ stop_legacy_openshell_gateway_process() {
   fi
 
   if [ "$platform" = "Darwin" ]; then
-    trusted_macos_openshell_gateway_process "$pid" "$gateway_port" \
+    process_generation="$(trusted_macos_openshell_gateway_process "$pid" "$gateway_port")" \
       || error "Refusing to stop PID ${pid}: the recorded macOS process is not the expected NemoClaw OpenShell gateway."
+    if ! trusted_macos_openshell_gateway_process "$pid" "$gateway_port" "$process_generation" >/dev/null; then
+      if ! kill -0 "$pid" 2>/dev/null; then
+        rm -f "$pid_file"
+        return 0
+      fi
+      error "Refusing to stop PID ${pid}: the recorded macOS process changed or could not be verified immediately before signaling. The PID file, OpenShell registration, and sandbox backups were preserved."
+    fi
   else
     gateway_exe="$(readlink "/proc/${pid}/exe" 2>/dev/null || true)"
     [ "${gateway_exe##*/}" = "openshell-gateway" ] \
@@ -3299,6 +3360,14 @@ stop_legacy_openshell_gateway_process() {
     sleep 0.2
   done
   if kill -0 "$pid" 2>/dev/null; then
+    if [ "$platform" = "Darwin" ] \
+      && ! trusted_macos_openshell_gateway_process "$pid" "$gateway_port" "$process_generation" >/dev/null; then
+      if ! kill -0 "$pid" 2>/dev/null; then
+        rm -f "$pid_file"
+        return 0
+      fi
+      error "Refusing to forcibly terminate PID ${pid}: the recorded macOS process changed or could not be verified after SIGTERM. The PID file, OpenShell registration, and sandbox backups were preserved."
+    fi
     kill -KILL "$pid" 2>/dev/null \
       || error "Could not terminate the recorded legacy OpenShell gateway process ${pid}."
     for attempt in {1..10}; do

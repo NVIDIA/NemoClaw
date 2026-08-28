@@ -15,7 +15,13 @@ function writeExecutable(target: string, contents: string): void {
 }
 
 function runDarwinGatewayProcessStop(
-  options: { trustedExecutable?: boolean; trustedIdentity?: boolean } = {},
+  options: {
+    lsofDiagnostic?: string;
+    psDiagnostic?: string;
+    reusePidBeforeKill?: boolean;
+    trustedExecutable?: boolean;
+    trustedIdentity?: boolean;
+  } = {},
 ) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-darwin-gateway-stop-"));
   const home = path.join(tmp, "home");
@@ -23,6 +29,8 @@ function runDarwinGatewayProcessStop(
   const runtimeDir = path.join(tmp, "runtime");
   const gatewayBin = path.join(home, ".local", "bin", "openshell-gateway");
   const foreignGatewayBin = path.join(tmp, "foreign-gateway");
+  const pidReused = path.join(tmp, "pid-reused");
+  const signalLog = path.join(tmp, "signal.log");
   fs.mkdirSync(path.dirname(gatewayBin), { recursive: true });
   fs.mkdirSync(bin, { recursive: true });
   fs.mkdirSync(runtimeDir, { recursive: true });
@@ -34,11 +42,27 @@ function runDarwinGatewayProcessStop(
     `#!/usr/bin/env bash
 managed_pid="$(cat '${runtimeDir}/openshell-gateway.pid')" || exit 1
 [ "\${2:-}" = "$managed_pid" ] || exit 1
-printf '%s\n' '${
+case "\${4:-}" in
+  args=)
+    printf '%s\n' '${
       options.trustedIdentity === false
         ? "python"
         : "openshell-gateway[nemoclaw=nemoclaw-20369;port=20369]"
     }'
+    [ -z '${options.psDiagnostic ?? ""}' ] || {
+      printf '%s\n' '${options.psDiagnostic ?? ""}' >&2
+      exit 2
+    }
+    ;;
+  lstart=)
+    if [ -f '${pidReused}' ]; then
+      printf '%s\n' 'Fri Aug 28 13:00:01 2026'
+    else
+      printf '%s\n' 'Fri Aug 28 13:00:00 2026'
+    fi
+    ;;
+  *) exit 2 ;;
+esac
 `,
   );
   writeExecutable(
@@ -47,12 +71,43 @@ printf '%s\n' '${
 managed_pid="$(cat '${runtimeDir}/openshell-gateway.pid')" || exit 1
 [ "\${3:-}" = "$managed_pid" ] || exit 1
 printf 'p%s\nn%s\n' "$managed_pid" '${options.trustedExecutable === false ? foreignGatewayBin : gatewayBin}'
+[ -z '${options.lsofDiagnostic ?? ""}' ] || {
+  printf '%s\n' '${options.lsofDiagnostic ?? ""}' >&2
+  exit 2
+}
 `,
   );
 
-  const script =
-    options.trustedIdentity === false || options.trustedExecutable === false
-      ? `trap 'kill "$gateway_pid" 2>/dev/null || true' EXIT
+  const rejectsProcess =
+    options.trustedIdentity === false ||
+    options.trustedExecutable === false ||
+    options.psDiagnostic !== undefined ||
+    options.lsofDiagnostic !== undefined;
+  const pidReuseScript = `trap 'command kill "$gateway_pid" 2>/dev/null || true' EXIT
+source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
+HOME="${home}"
+NEMOCLAW_GATEWAY_PORT=20369
+NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="${runtimeDir}"
+"${gatewayBin}" 60 &
+gateway_pid=$!
+sleep 0.1
+printf '%s\n' "$gateway_pid" >"${runtimeDir}/openshell-gateway.pid"
+kill() {
+  case "\${1:-}" in
+    -0) return 0 ;;
+    -KILL) printf 'KILL\n' >>'${signalLog}'; return 0 ;;
+    *) printf 'TERM\n' >>'${signalLog}'; touch '${pidReused}'; return 0 ;;
+  esac
+}
+sleep() { :; }
+if (stop_legacy_openshell_gateway_process); then exit 9; fi
+grep -Fx 'TERM' '${signalLog}' >/dev/null
+if grep -Fx 'KILL' '${signalLog}' >/dev/null; then exit 8; fi
+test -e "${runtimeDir}/openshell-gateway.pid"
+command kill "$gateway_pid"
+wait "$gateway_pid" 2>/dev/null || true
+trap - EXIT`;
+  const rejectedProcessScript = `trap 'kill "$gateway_pid" 2>/dev/null || true' EXIT
 source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
 HOME="${home}"
 NEMOCLAW_GATEWAY_PORT=20369
@@ -66,8 +121,8 @@ kill -0 "$gateway_pid"
 test -e "${runtimeDir}/openshell-gateway.pid"
 kill "$gateway_pid"
 wait "$gateway_pid" 2>/dev/null || true
-trap - EXIT`
-      : `trap 'kill "$gateway_pid" 2>/dev/null || true' EXIT
+trap - EXIT`;
+  const successfulStopScript = `trap 'kill "$gateway_pid" 2>/dev/null || true' EXIT
 source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
 HOME="${home}"
 NEMOCLAW_GATEWAY_PORT=20369
@@ -81,6 +136,11 @@ stop_legacy_openshell_gateway_process
 wait "$gateway_pid" 2>/dev/null || true
 if kill -0 "$gateway_pid" 2>/dev/null; then exit 9; fi
 test ! -e "${runtimeDir}/openshell-gateway.pid"`;
+  const script = options.reusePidBeforeKill
+    ? pidReuseScript
+    : rejectsProcess
+      ? rejectedProcessScript
+      : successfulStopScript;
 
   return spawnSync("bash", ["-c", script], {
     encoding: "utf-8",
@@ -403,6 +463,30 @@ describe("install.sh macOS OpenShell upgrade recovery", () => {
     const result = runDarwinGatewayProcessStop({ trustedExecutable: false });
 
     expect(result.status, result.stdout + result.stderr).toBe(0);
+  });
+
+  it("rejects partial process identity when ps reports an observation error (#10369)", () => {
+    const result = runDarwinGatewayProcessStop({ psDiagnostic: "permission denied" });
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.stderr).not.toContain("permission denied");
+  });
+
+  it("rejects partial executable identity when lsof reports an observation error (#10369)", () => {
+    const result = runDarwinGatewayProcessStop({ lsofDiagnostic: "permission denied" });
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.stderr).not.toContain("permission denied");
+  });
+
+  it("does not send SIGKILL after the recorded macOS PID is reused (#10369)", () => {
+    const result = runDarwinGatewayProcessStop({ reusePidBeforeKill: true });
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.stderr).toContain("recorded macOS process changed or could not be verified");
+    expect(result.stderr).toContain(
+      "PID file, OpenShell registration, and sandbox backups were preserved",
+    );
   });
 
   it("clears a stale owned macOS gateway PID file only when the port has no listener (#10369)", () => {
