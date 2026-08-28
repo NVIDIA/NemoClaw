@@ -243,6 +243,34 @@ describe("rebuild gateway drift preflight", () => {
     },
   );
 
+  it("permits absent-sandbox recovery only with a verified transaction policy handoff", async () => {
+    const entry = makeSandboxEntry();
+    const registrySnapshot = { sandboxes: { alpha: entry } };
+    vi.mocked(registryPersistence.load).mockReturnValue(registrySnapshot as never);
+    captureOpenshellSpy
+      .mockReturnValueOnce({ status: 0, output: "beta Ready" })
+      .mockReturnValueOnce({
+        status: 1,
+        output: "Error:   × Not Found: sandbox not found",
+      });
+    const behaviorLog = vi.fn();
+
+    await expect(
+      resolveRebuildLiveState("alpha", entry, behaviorLog, bail, {
+        authoritativeRecoveryPolicyAvailable: true,
+      }),
+    ).resolves.toEqual({
+      staleRecovery: true,
+      staleRegistrySnapshot: registrySnapshot,
+    });
+
+    expect(registryPersistence.load).toHaveBeenCalledOnce();
+    expect(behaviorLog.mock.calls.flat().join("\n")).toContain(
+      "transaction-bound policy handoff is intact",
+    );
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
   it("recovers the named gateway before a generic sandbox-list query fails (#10421)", async () => {
     const entry = makeSandboxEntry();
     captureOpenshellSpy.mockReturnValueOnce({

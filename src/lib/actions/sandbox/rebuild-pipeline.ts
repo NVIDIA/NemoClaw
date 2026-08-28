@@ -17,7 +17,13 @@ import { cleanupTempDir } from "../../onboard/temp-files";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import * as onboardSession from "../../state/onboard-session";
 import { load as loadRegistry, REGISTRY_FILE } from "../../state/registry/persistence";
-import { captureRebuildPolicySource, runRebuildBackupPhase } from "./rebuild-backup-phase";
+import {
+  captureRebuildPolicySource,
+  clearRebuildPolicyHandoff,
+  type RebuildBackupManifest,
+  runRebuildBackupPhase,
+  writeRebuildPolicyHandoff,
+} from "./rebuild-backup-phase";
 import { buildRefreshMutableOpenClawConfigHashCommand } from "./rebuild-config-hash";
 import { runRebuildDestroyPhase } from "./rebuild-destroy-phase";
 import { REBUILD_HERMES_DASHBOARD_ENV_KEYS } from "./rebuild-durable-config";
@@ -131,8 +137,26 @@ async function rebuildSandboxUnlocked(
   options: string[] | RebuildSandboxOptions,
   opts: RebuildSandboxExecutionOptions,
 ): Promise<void> {
+  let executionOptions = opts;
+  if (!executionOptions.recoveryManifest) {
+    const transaction = onboardSession.loadSession()?.checkpoint?.sandboxRecreate;
+    const registryEntry = loadRegistry().sandboxes[sandboxName];
+    if (transaction?.sandboxName === sandboxName && registryEntry) {
+      const retainedRecovery = findRebuildRecoveryBackup({
+        sandboxName,
+        agentName: registryEntry.agent,
+        transactionId: transaction.id,
+      });
+      if (retainedRecovery) {
+        executionOptions = {
+          ...executionOptions,
+          recoveryManifest: retainedRecovery,
+        };
+      }
+    }
+  }
   const normalized = normalizeRebuildSandboxOptions(options);
-  const preflight = await runRebuildPreflightPhase(sandboxName, options, opts);
+  const preflight = await runRebuildPreflightPhase(sandboxName, options, executionOptions);
   if (!preflight) return;
   const {
     sandboxEntry,
@@ -165,6 +189,8 @@ async function rebuildSandboxUnlocked(
   let preparedImage = initiallyPreparedImage;
   let recoveryManifest = validatedRecoveryManifest;
   let rebuildPolicySourcePath: string | null = null;
+  let rebuildPolicySourceIsEphemeral = false;
+  let rebuildPolicyHandoffManifest: NonNullable<RebuildBackupManifest> | null = null;
   const preparedBackupRecovery = recoveryManifest !== null;
   const recoveryRecreate = staleRecovery || preparedBackupRecovery;
   try {
@@ -192,6 +218,7 @@ async function rebuildSandboxUnlocked(
     } = shieldsPhase;
     let sandboxStillExists = true;
     let sandboxExistenceAmbiguous = false;
+    let retainPolicyHandoffForRecovery = false;
 
     try {
       const preDeleteRecovery = revalidatePreparedRecoveryBeforeDelete(
@@ -199,7 +226,7 @@ async function rebuildSandboxUnlocked(
         sandboxEntry,
         recoveryManifest,
         recoveryRegistrySnapshot,
-        opts.allowLegacyManagedImageRecovery === true,
+        executionOptions.allowLegacyManagedImageRecovery === true,
         bail,
       );
       recoveryManifest = preDeleteRecovery.manifest;
@@ -225,6 +252,40 @@ async function rebuildSandboxUnlocked(
       });
       if (!backup) return;
       rebuildPolicySourcePath = backup.policySourcePath;
+      rebuildPolicySourceIsEphemeral = backup.backupManifest === null;
+      rebuildPolicyHandoffManifest = backup.backupManifest;
+      const publishPolicyHandoff = (policyDocument: string): boolean => {
+        if (!backup.backupManifest) {
+          try {
+            fs.writeFileSync(backup.policySourcePath, policyDocument, {
+              mode: 0o600,
+            });
+            return true;
+          } catch {
+            return false;
+          }
+        }
+        try {
+          backup.backupManifest = writeRebuildPolicyHandoff(backup.backupManifest, policyDocument);
+          rebuildPolicyHandoffManifest = backup.backupManifest;
+          const handoff = backup.backupManifest.rebuildPolicyHandoff;
+          if (!handoff) return false;
+          backup.policySourcePath = path.join(backup.backupManifest.backupPath, handoff.file);
+          rebuildPolicySourcePath = backup.policySourcePath;
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      const capturePolicyHandoff = (): boolean => {
+        const capturedPath = captureRebuildPolicySource(sandboxName);
+        if (!capturedPath) return false;
+        try {
+          return publishPolicyHandoff(fs.readFileSync(capturedPath, "utf8"));
+        } finally {
+          cleanupTempDir(capturedPath, "nemoclaw-rebuild-policy");
+        }
+      };
 
       // Validate the completed backup artifact produced above, not the mutable live
       // tree. This gate therefore follows backup creation and precedes every
@@ -343,6 +404,17 @@ async function rebuildSandboxUnlocked(
             "Replacement state restoration is incomplete; the replacement journal was retained.",
           );
         }
+        if (
+          backup.backupManifest?.rebuildPolicyHandoff &&
+          backup.backupManifest.backupPath !== recoveryBackup.backupPath &&
+          !clearRebuildPolicyHandoff(backup.backupManifest)
+        ) {
+          return bail(
+            "The unused current-run rebuild policy handoff could not be retired during recovery.",
+          );
+        }
+        rebuildPolicyHandoffManifest = recoveryBackup;
+        retainPolicyHandoffForRecovery = true;
         // The accepted replacement belongs to an earlier run. Its persisted
         // gate is independent of the current backup's cron plan, so probe every
         // Hermes target before retiring the replacement journal.
@@ -402,11 +474,15 @@ async function rebuildSandboxUnlocked(
           log,
           bail,
         });
+        if (recoveryBackup.rebuildPolicyHandoff && !clearRebuildPolicyHandoff(recoveryBackup)) {
+          return bail("The bounded rebuild policy handoff could not be retired after recovery.");
+        }
         clearRebuildRecoveryBackup({
           ...rebuildRecoveryIdentity,
           backupManifest: recoveryBackup,
         });
         recreateJournal.completeAcceptedTarget();
+        retainPolicyHandoffForRecovery = false;
         log(
           `Recovered and restored journaled replacement ${recreateJournal.id} for '${sandboxName}'`,
         );
@@ -427,9 +503,9 @@ async function rebuildSandboxUnlocked(
         validateAfterMcpPreparation: async (preparation) => {
           if (preparation.policyHandoff !== undefined) {
             try {
-              fs.writeFileSync(backup.policySourcePath, preparation.policyHandoff, {
-                mode: 0o600,
-              });
+              if (!publishPolicyHandoff(preparation.policyHandoff)) {
+                throw new Error("publish failed");
+              }
               preservedMcpPolicyHandoff = true;
             } catch {
               return {
@@ -483,7 +559,11 @@ async function rebuildSandboxUnlocked(
           // the stripped source policy. Do not overwrite that handoff with the
           // temporary teardown state at the delete edge.
           if (preservedMcpPolicyHandoff) return validation;
-          return captureRebuildPolicySource(sandboxName, backup.policySourcePath)
+          // A stale-recovery sandbox is already absent. Preflight admitted this
+          // path only after digest-verifying the policy handoff bound to the
+          // prepared recovery manifest, so there is no live policy to recapture.
+          if (staleRecovery) return validation;
+          return capturePolicyHandoff()
             ? validation
             : {
                 ok: false,
@@ -492,9 +572,11 @@ async function rebuildSandboxUnlocked(
         },
         onDeleted: () => {
           sandboxStillExists = false;
+          retainPolicyHandoffForRecovery = true;
         },
         onDeleteStateAmbiguous: () => {
           sandboxExistenceAmbiguous = true;
+          retainPolicyHandoffForRecovery = true;
         },
       });
       if (!mcpPreparation) return;
@@ -594,13 +676,26 @@ async function rebuildSandboxUnlocked(
         bail,
       });
       if (backup.backupManifest) {
+        if (
+          backup.backupManifest.rebuildPolicyHandoff &&
+          !clearRebuildPolicyHandoff(backup.backupManifest)
+        ) {
+          return bail("The bounded rebuild policy handoff could not be retired after rebuild.");
+        }
         clearRebuildRecoveryBackup({
           ...rebuildRecoveryIdentity,
           backupManifest: backup.backupManifest,
         });
       }
+      retainPolicyHandoffForRecovery = false;
     } finally {
-      if (rebuildPolicySourcePath) {
+      const handoffManifest = rebuildPolicyHandoffManifest;
+      if (handoffManifest?.rebuildPolicyHandoff && !retainPolicyHandoffForRecovery) {
+        runBestEffortRebuildCleanup(
+          () => clearRebuildPolicyHandoff(handoffManifest),
+          "  Warning: bounded rebuild policy handoff could not be removed.",
+        );
+      } else if (rebuildPolicySourcePath && rebuildPolicySourceIsEphemeral) {
         const retainedPolicySourcePath = rebuildPolicySourcePath;
         runBestEffortRebuildCleanup(
           () => cleanupTempDir(retainedPolicySourcePath, "nemoclaw-rebuild-policy"),

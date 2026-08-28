@@ -2,15 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import path from "node:path";
 
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../messaging";
-import { secureTempFile } from "../../onboard/temp-files";
+import { cleanupTempDir, secureTempFile } from "../../onboard/temp-files";
 import { hasCompleteOpenClawImagePluginProvenance } from "../../state/openclaw-plugin-restore";
-import { hasAuthoritativeOpenClawImagePluginProvenance } from "../../state/sandbox";
+import {
+  hasAuthoritativeOpenClawImagePluginProvenance,
+  readRebuildPolicyHandoff,
+  writeRebuildPolicyHandoff,
+} from "../../state/sandbox";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import { backupSandboxStateForRebuild, type RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import * as policyGet from "./policy-get";
+
+export { clearRebuildPolicyHandoff, writeRebuildPolicyHandoff } from "../../state/sandbox";
 
 export type RebuildBackupManifest = Exclude<
   ReturnType<typeof backupSandboxStateForRebuild>,
@@ -88,7 +95,7 @@ export function runRebuildBackupPhase(
   ) {
     return bailForUnsafeOpenClawPluginProvenance(input);
   }
-  const backupManifest =
+  let backupManifest =
     preparedRecoveryManifest ??
     backupStateForRebuild(
       input.sandboxName,
@@ -111,16 +118,42 @@ export function runRebuildBackupPhase(
   const backupWasForceSkipped =
     input.force === true && !input.staleRecovery && backupManifest === null;
 
-  if (input.staleRecovery) {
+  const retainedPolicy = backupManifest ? readRebuildPolicyHandoff(backupManifest) : null;
+  if (input.staleRecovery && !retainedPolicy) {
     return input.bail(
-      "The live OpenShell policy is unavailable. Rebuild will not reconstruct policy from NemoClaw state.",
+      "The live OpenShell policy and its verified rebuild handoff are unavailable. Rebuild will not reconstruct policy from NemoClaw state.",
     );
   }
-  const policySourcePath = captureRebuildPolicySource(input.sandboxName);
+  const retainedHandoff = backupManifest?.rebuildPolicyHandoff;
+  const policySourcePath =
+    retainedPolicy && backupManifest && retainedHandoff
+      ? fs.realpathSync(path.join(backupManifest.backupPath, retainedHandoff.file))
+      : captureRebuildPolicySource(input.sandboxName);
   if (!policySourcePath) {
     return input.bail(
       "The current OpenShell policy could not be captured before sandbox replacement.",
     );
+  }
+  if (backupManifest && !retainedPolicy) {
+    try {
+      backupManifest = writeRebuildPolicyHandoff(
+        backupManifest,
+        fs.readFileSync(policySourcePath, "utf8"),
+      );
+      const handoff = backupManifest.rebuildPolicyHandoff;
+      if (!handoff) throw new Error("rebuild policy handoff was not published");
+      return {
+        backupManifest,
+        backupWasForceSkipped,
+        policySourcePath: fs.realpathSync(path.join(backupManifest.backupPath, handoff.file)),
+      };
+    } catch (error) {
+      return input.bail(
+        `The current OpenShell policy could not be retained for rebuild recovery: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      cleanupTempDir(policySourcePath, "nemoclaw-rebuild-policy");
+    }
   }
   return { backupManifest, backupWasForceSkipped, policySourcePath };
 }

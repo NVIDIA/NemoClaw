@@ -129,6 +129,11 @@ export interface RebuildManifest {
   writableDir?: string;
   backupPath: string;
   blueprintDigest: string | null;
+  /** Bounded live-policy handoff retained only while a rebuild transaction is recoverable. */
+  rebuildPolicyHandoff?: {
+    file: string;
+    sha256: string;
+  };
   /** Allowlisted non-secret environment assignments captured for image recreation. */
   preservedEnv?: PreservedEnvFile[];
   /**
@@ -383,6 +388,13 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
     (value.blueprintDigest === undefined ||
       value.blueprintDigest === null ||
       typeof value.blueprintDigest === "string") &&
+    (value.rebuildPolicyHandoff === undefined ||
+      (isObjectRecord(value.rebuildPolicyHandoff) &&
+        typeof value.rebuildPolicyHandoff.file === "string" &&
+        typeof value.rebuildPolicyHandoff.sha256 === "string" &&
+        /^[a-f0-9]{64}$/.test(value.rebuildPolicyHandoff.sha256) &&
+        value.rebuildPolicyHandoff.file ===
+          `rebuild-policy-handoff.${value.rebuildPolicyHandoff.sha256}.yaml`)) &&
     (value.preservedEnv === undefined ||
       (value.agentType === "hermes" &&
         validatePreservedEnvFiles(value.preservedEnv, HERMES_PRESERVED_ENV_INVENTORY))) &&
@@ -2518,6 +2530,103 @@ function writeManifest(
 }
 
 export const __test = { writeManifest };
+
+function readBoundRebuildPolicyHandoff(filePath: string): string | null {
+  let descriptor: number | null = null;
+  try {
+    descriptor = openSync(filePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const before = fstatSync(descriptor, { bigint: true });
+    if (!before.isFile() || before.size > 8n * 1024n * 1024n) return null;
+    const content = readFileSync(descriptor, "utf8");
+    const after = fstatSync(descriptor, { bigint: true });
+    if (
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.size !== after.size ||
+      before.mtimeNs !== after.mtimeNs ||
+      before.ctimeNs !== after.ctimeNs
+    ) {
+      return null;
+    }
+    return content;
+  } catch {
+    return null;
+  } finally {
+    if (descriptor !== null) closeSync(descriptor);
+  }
+}
+
+/** Publish or replace the transaction-bound policy handoff beside its rebuild backup. */
+export function writeRebuildPolicyHandoff(
+  manifest: RebuildManifest,
+  policyDocument: string,
+): RebuildManifest {
+  if (!policyDocument.trim()) throw new Error("Cannot persist an empty rebuild policy handoff");
+  const sha256 = createHash("sha256").update(policyDocument).digest("hex");
+  const file = `rebuild-policy-handoff.${sha256}.yaml`;
+  const filePath = path.join(manifest.backupPath, file);
+  let created = false;
+  let published = false;
+  try {
+    try {
+      writeFileSync(filePath, policyDocument, { encoding: "utf8", mode: 0o600, flag: "wx" });
+      created = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const existing = readBoundRebuildPolicyHandoff(filePath);
+      if (existing !== policyDocument) {
+        throw new Error("Existing rebuild policy handoff does not match its content identity");
+      }
+    }
+    const next = {
+      ...manifest,
+      rebuildPolicyHandoff: { file, sha256 },
+    };
+    writeManifest(manifest.backupPath, next);
+    const previousFile = manifest.rebuildPolicyHandoff?.file;
+    Object.assign(manifest, next);
+    published = true;
+    if (previousFile && previousFile !== file) {
+      rmSync(path.join(manifest.backupPath, previousFile), { force: true });
+    }
+    return next;
+  } catch (error) {
+    // Roll back only a file that never became authoritative. Once the manifest
+    // is published, removing the new file would strand recovery on a dangling
+    // content identity if cleanup of the superseded handoff fails.
+    if (created && !published) rmSync(filePath, { force: true });
+    throw error;
+  }
+}
+
+/** Read a transaction-bound policy only when its exact published digest still matches. */
+export function readRebuildPolicyHandoff(manifest: RebuildManifest): string | null {
+  const handoff = manifest.rebuildPolicyHandoff;
+  if (!handoff) return null;
+  const content = readBoundRebuildPolicyHandoff(path.join(manifest.backupPath, handoff.file));
+  if (content === null) return null;
+  return createHash("sha256").update(content).digest("hex") === handoff.sha256 ? content : null;
+}
+
+/** Retire manifest authority before deleting the no-longer-needed handoff artifact. */
+export function clearRebuildPolicyHandoff(manifest: RebuildManifest): boolean {
+  const handoff = manifest.rebuildPolicyHandoff;
+  if (!handoff) return true;
+  const next = { ...manifest };
+  delete next.rebuildPolicyHandoff;
+  try {
+    writeManifest(manifest.backupPath, next);
+  } catch {
+    return false;
+  }
+  delete manifest.rebuildPolicyHandoff;
+  try {
+    rmSync(path.join(manifest.backupPath, handoff.file), { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function readManifestPayload(backupPath: string): unknown | null {
   const manifestPath = path.join(backupPath, "rebuild-manifest.json");

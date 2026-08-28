@@ -738,5 +738,11 @@ describe("rebuild post-restore phase", () => {
     const offsets = ordered.map((fragment) => output.indexOf(fragment));
     expect(offsets.every((offset) => offset >= 0)).toBe(true);
     expect(offsets).toEqual([...offsets].sort((left, right) => left - right));
+    expect(args.bail).toHaveBeenCalledWith(
+      "State restore remained incomplete after rebuilding 'alpha'.",
+    );
+    expect(vi.mocked(console.error).mock.calls.flat().join("\n")).toContain(
+      "nemoclaw alpha rebuild",
+    );
   });
 });

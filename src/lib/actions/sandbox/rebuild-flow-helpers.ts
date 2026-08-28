@@ -54,6 +54,11 @@ export type RebuildLiveState = {
   staleRegistrySnapshot: ReturnType<typeof loadRegistry> | null;
 };
 
+export type RebuildLiveStateOptions = {
+  /** A digest-verified policy handoff bound to the prepared recovery manifest. */
+  authoritativeRecoveryPolicyAvailable?: boolean;
+};
+
 export type RebuildAgentBaseImageOptions = {
   resolutionHint?: SandboxBaseImageResolutionMetadata | null;
   forceBaseImageRefresh?: boolean;
@@ -153,6 +158,7 @@ export async function resolveRebuildLiveState(
   sb: RebuildSandboxEntry,
   log: (msg: string) => void,
   bail: (msg: string, code?: number) => never,
+  options: RebuildLiveStateOptions = {},
 ): Promise<RebuildLiveState | null> {
   const recordedGateway = resolveSandboxGatewayName(sb);
   log(`Checking sandbox liveness on ${recordedGateway}: openshell sandbox list`);
@@ -201,6 +207,12 @@ export async function resolveRebuildLiveState(
   }
 
   if (reconciled.state === "missing") {
+    if (options.authoritativeRecoveryPolicyAvailable === true) {
+      log(
+        "Stale-sandbox recovery: the sandbox is absent, but its transaction-bound policy handoff is intact",
+      );
+      return { staleRecovery: true, staleRegistrySnapshot: loadRegistry() };
+    }
     console.log("");
     console.error(
       `  ${YW}⚠${R} Sandbox '${sandboxName}' is registered locally but absent from the live OpenShell gateway.`,

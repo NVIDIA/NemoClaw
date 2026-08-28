@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import * as gatewayDrift from "../../adapters/openshell/gateway-drift";
@@ -38,6 +42,7 @@ describe("rebuild resume snapshot repair", () => {
   let errorSpy: MockInstance;
   let logSpy: MockInstance;
   let session: Session;
+  let backupPath: string;
   const originalSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
   const observed = {
     handoffOptions: null as Record<string, unknown> | null,
@@ -51,6 +56,7 @@ describe("rebuild resume snapshot repair", () => {
   };
 
   beforeEach(() => {
+    backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-resume-"));
     spies = [];
     observed.handoffOptions = null;
     observed.preRepairMachineState = null;
@@ -203,7 +209,7 @@ describe("rebuild resume snapshot repair", () => {
         failedDirs: [],
         failedFiles: [],
         manifest: {
-          backupPath: "/tmp/nemoclaw-rebuild-backup",
+          backupPath,
           timestamp: "2026-06-01T00:00:00.000Z",
         },
       } as never),
@@ -272,6 +278,7 @@ describe("rebuild resume snapshot repair", () => {
     for (const spy of spies) spy.mockRestore();
     errorSpy.mockRestore();
     logSpy.mockRestore();
+    fs.rmSync(backupPath, { recursive: true, force: true });
     if (originalSandboxName === undefined) {
       delete process.env.NEMOCLAW_SANDBOX_NAME;
     } else {

@@ -400,6 +400,13 @@ export async function runRebuildPostRestorePhase(
       `    ${YW}\u26a0${R} Shields were previously enabled but the recreated sandbox starts unlocked \u2014 run \`${CLI_NAME} ${sandboxName} shields up\` to restore lockdown.`,
     );
   }
+  if (!restoreSucceeded) {
+    console.error(
+      `  State recovery remains incomplete. Correct the restore error, then run \`${CLI_NAME} ${sandboxName} rebuild\` again.`,
+    );
+    bail(`State restore remained incomplete after rebuilding '${sandboxName}'.`);
+    return;
+  }
   if (
     targetAgentName === "openclaw" &&
     !mcpBridgeRestoreUnverified &&

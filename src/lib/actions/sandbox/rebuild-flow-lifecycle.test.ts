@@ -133,7 +133,8 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(recreatedPolicy).toContain("mcp_bridge_github");
     expect(recreatedPolicy).toContain("nemoclaw-mcp-alpha-github");
     expect(rebuildPolicySourcePath).toBeDefined();
-    expect(fs.existsSync(path.dirname(rebuildPolicySourcePath!))).toBe(false);
+    expect(fs.existsSync(rebuildPolicySourcePath!)).toBe(false);
+    expect(fs.existsSync(path.dirname(rebuildPolicySourcePath!))).toBe(true);
     expect(process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP).toBe("0");
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith(
       "alpha",
