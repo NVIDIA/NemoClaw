@@ -30,8 +30,10 @@ export {
   detachMissingProviderReference,
   detachProvider,
   ensureMcpBridgeProviderProfile,
+  isProviderPolicyReceiptBoundaryRefusalError,
   refreshMcpProviderEnvironment,
   providerDetachChangedState,
+  reconcileIncompleteAddProviderAttachment,
   upsertMcpProvider,
 } from "./mcp-bridge-provider-mutation";
 export type { McpCredentialRevisionObservation } from "./mcp-bridge-provider-readiness";

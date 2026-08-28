@@ -40,10 +40,12 @@ import {
   detachProvider,
   ensureMcpBridgeProviderProfile,
   inspectMcpProvider,
+  isProviderPolicyReceiptBoundaryRefusalError,
   type McpCredentialRevisionObservation,
   observeMcpCredentialRevision,
   providerMatchesCredential,
   providerShapeDetail,
+  reconcileIncompleteAddProviderAttachment,
   refreshMcpProviderEnvironment,
   upsertMcpProvider,
   waitForAttachedMcpCredential,
@@ -314,7 +316,11 @@ async function addMcpBridgeUnlocked(
   // persisting ownership or mutating a provider, policy, or adapter.
   assertMcpCredentialBoundaryRuntimeVersion();
   await ensureSandboxGatewaySelected(sandboxName);
+  const addPolicyOperation = `add MCP server '${options.server}'`;
+  let addPolicyAuthority: policies.PolicyMutationAuthority | undefined;
   if (!existingEntry) {
+    addPolicyAuthority = policies.inspectPolicyMutationAuthority(sandboxName, addPolicyOperation);
+    policies.assertNemoClawManagedPolicy(addPolicyAuthority, addPolicyOperation);
     await withMcpCredentialOwnershipLock(() => {
       // Publish the durable MCP reservation under the same cross-command lock
       // used by credentials add. Neither command can pass its collision check
@@ -372,6 +378,13 @@ async function addMcpBridgeUnlocked(
       // adapter slot were absent before any side effect. After a crash, retries
       // may therefore reuse only missing or exact resources, never drift.
       writeBridgeEntry(sandboxName, entry);
+    }
+    if (resumingPreflightedAdd) {
+      reconcileIncompleteAddProviderAttachment(sandboxName, entry);
+    }
+    if (!addPolicyAuthority) {
+      addPolicyAuthority = policies.inspectPolicyMutationAuthority(sandboxName, addPolicyOperation);
+      policies.assertNemoClawManagedPolicy(addPolicyAuthority, addPolicyOperation);
     }
     const adapterInspection = inspectAgentAdapterRegistration(sandboxName, adapter, entry);
     if (
@@ -495,9 +508,11 @@ async function addMcpBridgeUnlocked(
       credentialRevision,
     });
     if (adapter === "hermes-config") assertHermesMcpRuntimeIntent(sandboxName);
+    policies.recheckPolicyMutationAuthority(sandboxName, addPolicyOperation, addPolicyAuthority);
     const { addState: _completedAddState, ...committedEntry } = entry;
     writeBridgeEntry(sandboxName, committedEntry);
   } catch (error) {
+    const preserveProviderAttachment = isProviderPolicyReceiptBoundaryRefusalError(error);
     const rollbackProviderInspection =
       (providerAttachAttempted || providerCreated) && entry.providerId
         ? inspectMcpProvider(providerName)
@@ -515,11 +530,14 @@ async function addMcpBridgeUnlocked(
     if (policyApplied) {
       removeGeneratedPolicy(sandboxName, entry, { bestEffort: true });
     }
-    const detachOutcome = providerAttachAttempted
-      ? detachProvider(sandboxName, entry, { bestEffort: true })
-      : "absent";
-    let reservationCleanupProved = !providerAttachAttempted;
-    if (providerAttachAttempted && detachOutcome !== "unknown") {
+    const detachOutcome =
+      providerAttachAttempted && !preserveProviderAttachment
+        ? detachProvider(sandboxName, entry, { bestEffort: true })
+        : preserveProviderAttachment
+          ? "unknown"
+          : "absent";
+    let reservationCleanupProved = !providerAttachAttempted && !preserveProviderAttachment;
+    if (providerAttachAttempted && !preserveProviderAttachment && detachOutcome !== "unknown") {
       try {
         waitForDetachedMcpCredential(sandboxName, entry);
         reservationCleanupProved = true;

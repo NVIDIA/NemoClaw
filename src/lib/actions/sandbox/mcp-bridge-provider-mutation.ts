@@ -45,7 +45,9 @@ export {
   attachProvider,
   detachMissingProviderReference,
   detachProvider,
+  isProviderPolicyReceiptBoundaryRefusalError,
   providerDetachChangedState,
+  reconcileIncompleteAddProviderAttachment,
 } from "./mcp-bridge-provider-attachments";
 
 /**

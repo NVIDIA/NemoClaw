@@ -8,6 +8,12 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import {
+  buildMcpAddPolicyReceiptFixture,
+  buildMcpRemovePolicyReceiptFixture,
+  readMcpSandboxRegistry,
+} from "../helpers/mcp-policy-receipt-process-fixture";
+
 const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.106");
 
 type CrashBoundary =
@@ -20,6 +26,14 @@ type CrashBoundary =
   | "credential-projection-coalesced"
   | "credential-projection-unstable"
   | "credential-projection-delayed-hostless"
+  | "policy-receipt-after-attach"
+  | "policy-receipt-finalize-pre-cas-failure"
+  | "policy-receipt-changed-before-compensation"
+  | "policy-receipt-finalize-post-cas-failure"
+  | "policy-receipt-after-attach-kill"
+  | "incomplete-add-transient-authority-failure"
+  | "initial-policy-receipt-mismatch"
+  | "final-add-verification-refusal"
   | "registered-credential-collision"
   | "registered-late-collision"
   | "adapter"
@@ -88,9 +102,9 @@ const registry = require("./src/lib/state/registry.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const { mockManagedEndpointlessProviderProfileRun } = require("./test/helpers/onboard-script-mocks.cjs");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
-const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 const ownershipLocks = require("./src/lib/state/mcp-lifecycle-lock/credential-ownership.js");
+${buildMcpAddPolicyReceiptFixture()}
 
 if (crashAfter === "credential-command-race") {
   const withMcpCredentialOwnershipLock = ownershipLocks.withMcpCredentialOwnershipLock;
@@ -221,10 +235,16 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     observedProviderName = args[4];
     attachmentAttemptedThisProcess = true;
     mark("attached");
+    if (receiptMutationScenario) mark("policy-receipt-mismatch");
     return { status: 0, stdout: "attached", stderr: "" };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "detach") {
+    mark("detach-attempted");
     fs.rmSync(marker("attached"), { force: true });
+    if (marked("policy-receipt-mismatch")) {
+      fs.rmSync(marker("policy-receipt-mismatch"), { force: true });
+      mark("attachment-compensated");
+    }
     return { status: 0, stdout: "Detached provider", stderr: "" };
   }
   if (args[0] === "provider" && args[1] === "delete") {
@@ -240,6 +260,12 @@ policies.getPresetContentGatewayState = () => {
 };
 policies.applyPresetContent = () => {
   if (crashAfter === "policy-failure") return false;
+  if (receiptMutationScenario && marked("policy-receipt-mismatch")) {
+    console.error(
+      "Refusing to apply generated MCP policy: the NemoClaw policy creation receipt does not match the live sandbox policy.",
+    );
+    return false;
+  }
   fs.appendFileSync(marker("policy-apply-log"), "apply\n", { mode: 0o600 });
   mark("policy");
   if (marked("attached")) mark("bound-policy");
@@ -257,6 +283,7 @@ processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
   const isObservation = proof.includes("printf '%s\\n' absent");
   const isPreupdateObservation =
     isObservation &&
+    includeSecret &&
     providerPresentAtStart &&
     !credentialUpdatedThisProcess &&
     !attachmentAttemptedThisProcess;
@@ -520,8 +547,8 @@ let observedProviderName = null;
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const { mockManagedEndpointlessProviderProfileRun } = require("./test/helpers/onboard-script-mocks.cjs");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
-const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
+${buildMcpRemovePolicyReceiptFixture()}
 
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   recovered: true,
@@ -529,7 +556,6 @@ gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   before: { state: "healthy_named" },
   after: { state: "healthy_named" },
 });
-
 providerCommands.runOpenshellProviderCommand = (args) => {
   const profileResult = mockManagedEndpointlessProviderProfileRun(args);
   if (profileResult) return profileResult;
@@ -546,6 +572,10 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     observedProviderName = args[4];
     const wasAttached = marked("attached");
     fs.rmSync(marker("attached"), { force: true });
+    if (marked("policy-receipt-mismatch")) {
+      fs.rmSync(marker("policy-receipt-mismatch"), { force: true });
+      mark("attachment-compensated");
+    }
     return {
       status: 0,
       stdout: wasAttached
@@ -757,6 +787,175 @@ describe("MCP add crash consistency", () => {
       expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(true);
       expect(readBridge(home).addState).toBeUndefined();
       expect(readFixtureArtifacts(home)).not.toContain("host-only-secret");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rotates the receipt after provider attachment before admitting one concurrent add (#9833)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-receipt-race-"));
+    try {
+      initializeSandboxRegistry(home);
+      const script = buildAddProcessScript(home, "policy-receipt-after-attach");
+      const first = spawnScript(home, script);
+      const second = spawnScript(home, script);
+      const results = await Promise.all([collectProcess(first), collectProcess(second)]);
+      const combinedOutput = results
+        .map((result) => `${result.stdout}\n${result.stderr}`)
+        .join("\n---\n");
+
+      expect(results.map((result) => result.status).sort(), combinedOutput).toEqual([0, 2]);
+      expect(results.find((result) => result.status === 2)?.stderr).toContain("already exists");
+      expect(combinedOutput).not.toContain(
+        "policy creation receipt does not match the live sandbox policy",
+      );
+      expect(readBridge(home).addState).toBeUndefined();
+      expect(fs.existsSync(path.join(home, "policy-receipt-finalized.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "policy-receipt-mismatch.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(true);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("compensates an attachment when receipt rotation fails before CAS and permits retry (#9833)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-receipt-rollback-"));
+    try {
+      const refused = runAddProcess(home, "policy-receipt-finalize-pre-cas-failure");
+      expect(refused.status, `${refused.stdout}\n${refused.stderr}`).toBe(2);
+      expect(refused.stderr).toContain("simulated pre-CAS receipt finalization failure");
+      expect(readBridge(home)).toMatchObject({ addState: "preflighted" });
+      expect(fs.existsSync(path.join(home, "policy-receipt-mismatch.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "attachment-compensated.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(false);
+
+      const retried = runAddProcess(home, "policy-receipt-after-attach");
+      expect(retried.status, `${retried.stdout}\n${retried.stderr}`).toBe(0);
+      expect(readBridge(home).addState).toBeUndefined();
+      expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(true);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves an incomplete attachment when another writer rotates the receipt (#9833)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-receipt-writer-"));
+    try {
+      const refused = runAddProcess(home, "policy-receipt-changed-before-compensation");
+      expect(refused.status, `${refused.stdout}\n${refused.stderr}`).toBe(2);
+      expect(refused.stderr).toContain("durable policy receipt changed");
+      expect(readBridge(home)).toMatchObject({ addState: "preflighted" });
+      expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "detach-attempted.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "attachment-compensated.marker"))).toBe(false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts an exact coherent attachment after post-CAS receipt verification fails (#9833)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-receipt-post-cas-"));
+    try {
+      const result = runAddProcess(home, "policy-receipt-finalize-post-cas-failure");
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(readBridge(home).addState).toBeUndefined();
+      expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "attachment-compensated.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "policy-receipt-mismatch.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "policy-receipt-finalized.marker"))).toBe(true);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("compensates an exact attachment left before receipt rotation and retries (#9833)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-receipt-kill-"));
+    try {
+      const interrupted = runAddProcess(home, "policy-receipt-after-attach-kill");
+      expect(interrupted.status, `${interrupted.stdout}\n${interrupted.stderr}`).toBe(88);
+      expect(readBridge(home)).toMatchObject({ addState: "preflighted" });
+      expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "policy-receipt-mismatch.marker"))).toBe(true);
+
+      const retried = runAddProcess(home, "policy-receipt-after-attach");
+      expect(retried.status, `${retried.stdout}\n${retried.stderr}`).toBe(0);
+      expect(readBridge(home).addState).toBeUndefined();
+      expect(fs.existsSync(path.join(home, "attachment-compensated.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "policy-receipt-mismatch.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("does not detach after a transient recovery inspection when the receipt is coherent (#9833)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-transient-receipt-"));
+    try {
+      const interrupted = runAddProcess(home, "policy-receipt-after-attach-kill");
+      expect(interrupted.status, `${interrupted.stdout}\n${interrupted.stderr}`).toBe(88);
+      fs.rmSync(path.join(home, "policy-receipt-mismatch.marker"), { force: true });
+
+      const refused = runAddProcess(home, "incomplete-add-transient-authority-failure");
+      expect(refused.status, `${refused.stdout}\n${refused.stderr}`).toBe(2);
+      expect(refused.stderr).toContain("simulated transient policy inspection failure");
+      expect(readBridge(home)).toMatchObject({ addState: "preflighted" });
+      expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "attachment-compensated.marker"))).toBe(false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an initial receipt mismatch before reserving MCP state (#9833)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-initial-receipt-"));
+    try {
+      const refused = runAddProcess(home, "initial-policy-receipt-mismatch");
+      expect(refused.status, `${refused.stdout}\n${refused.stderr}`).toBe(2);
+      expect(refused.stderr).toContain(
+        "policy creation receipt does not match the live sandbox policy",
+      );
+      const sandbox = readMcpSandboxRegistry(home).sandboxes["crash-test"];
+      expect(sandbox.mcp?.bridges ?? {}).toEqual({});
+      expect({
+        provider: fs.existsSync(path.join(home, "provider.marker")),
+        attachment: fs.existsSync(path.join(home, "attached.marker")),
+        policy: fs.existsSync(path.join(home, "policy.marker")),
+        adapter: fs.existsSync(path.join(home, "adapter.marker")),
+      }).toEqual({ provider: false, attachment: false, policy: false, adapter: false });
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("withholds completed state after final authority refusal, retries, and removes cleanly (#9833)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-final-receipt-"));
+    try {
+      const refused = runAddProcess(home, "final-add-verification-refusal");
+      expect(refused.status, `${refused.stdout}\n${refused.stderr}`).toBe(2);
+      expect(refused.stderr).toContain("simulated final add policy authority refusal");
+      expect(readBridge(home)).toMatchObject({ addState: "preflighted" });
+
+      fs.rmSync(path.join(home, "reject-final-add-verification.marker"), { force: true });
+      const retried = runAddProcess(home, "policy-receipt-after-attach");
+      expect(retried.status, `${retried.stdout}\n${retried.stderr}`).toBe(0);
+      expect(readBridge(home).addState).toBeUndefined();
+
+      const removed = runRemoveProcess(home, false);
+      expect(removed.status, `${removed.stdout}\n${removed.stderr}`).toBe(0);
+      const sandbox = readMcpSandboxRegistry(home).sandboxes["crash-test"];
+      expect(sandbox.mcp?.bridges ?? {}).toEqual({});
+      expect(sandbox.customPolicies ?? []).toEqual([]);
+      expect({
+        provider: fs.existsSync(path.join(home, "provider.marker")),
+        attachment: fs.existsSync(path.join(home, "attached.marker")),
+        policy: fs.existsSync(path.join(home, "policy.marker")),
+        adapter: fs.existsSync(path.join(home, "adapter.marker")),
+      }).toEqual({ provider: false, attachment: false, policy: false, adapter: false });
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

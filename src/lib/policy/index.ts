@@ -670,6 +670,34 @@ export interface PolicyMutationAuthority {
   readonly policyCreationReceipt?: NemoClawPolicyCreationReceipt | null;
 }
 
+export interface ManagedPolicyCompensationBoundary {
+  readonly gatewayName: string;
+  readonly inspection: SandboxPolicyAuthorityInspection;
+  readonly policyCreationReceipt: NemoClawPolicyCreationReceipt;
+}
+
+/** A receipt CAS succeeded, but its final coherent readback did not. */
+export class PolicyMutationReceiptFinalVerificationError extends PolicyAuthorityRefusalError {
+  readonly receiptRotation = "committed" as const;
+
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, "owner-unknown", options);
+    this.name = "PolicyMutationReceiptFinalVerificationError";
+  }
+}
+
+export function isPolicyMutationReceiptFinalVerificationError(
+  error: unknown,
+): error is PolicyMutationReceiptFinalVerificationError {
+  return (
+    error instanceof PolicyMutationReceiptFinalVerificationError ||
+    (typeof error === "object" &&
+      error !== null &&
+      "receiptRotation" in error &&
+      error.receiptRotation === "committed")
+  );
+}
+
 export const isPolicyAuthorityRefusalError = isAuthorityRefusalError;
 export const isExternalPolicyAuthorityRefusalError = isExternalAuthorityRefusalError;
 
@@ -915,6 +943,30 @@ export function inspectPolicyMutationAuthority(
     sandboxName,
     operation,
   );
+}
+
+/**
+ * Inspect only the immutable managed sandbox boundary for exact compensation.
+ * The returned receipt is not asserted to match the live policy hash.
+ */
+export function inspectManagedPolicyCompensationBoundary(
+  sandboxName: string,
+  operation: string,
+  requestedGatewayName?: string,
+): ManagedPolicyCompensationBoundary {
+  const live = inspectLivePolicyBoundary(sandboxName, operation, requestedGatewayName);
+  if (live.inspection.authority !== "owner-unknown") {
+    throw new PolicyAuthorityRefusalError(
+      `Refusing to ${operation}: OpenShell no longer reports a sandbox-scoped policy.`,
+      live.inspection.authority,
+    );
+  }
+  const boundary = managedReceiptSandboxBoundary(live, sandboxName, operation);
+  return {
+    gatewayName: live.gatewayName,
+    inspection: live.inspection,
+    policyCreationReceipt: boundary.receipt,
+  };
 }
 
 /** Require the durable policy receipt immediately before a local mutation. */
@@ -1189,16 +1241,18 @@ export function finalizePolicyMutationReceipt(
     );
   }
 
-  const completed = inspectPolicyMutationAuthority(
-    sandboxName,
-    operation,
-    previous.gatewayName,
-    true,
-  );
+  let completed: PolicyMutationAuthority;
+  try {
+    completed = inspectPolicyMutationAuthority(sandboxName, operation, previous.gatewayName, true);
+  } catch (error) {
+    throw new PolicyMutationReceiptFinalVerificationError(
+      `NemoClaw recorded the updated policy identity for '${sandboxName}', but could not verify it. The policy update remains incomplete.`,
+      { cause: error },
+    );
+  }
   if (!isDeepStrictEqual(completed.policyCreationReceipt, nextReceipt)) {
-    throw new PolicyAuthorityRefusalError(
-      `NemoClaw applied the sandbox policy for '${sandboxName}', but could not verify the recorded policy identity. The policy update is incomplete.`,
-      "owner-unknown",
+    throw new PolicyMutationReceiptFinalVerificationError(
+      `NemoClaw recorded the updated policy identity for '${sandboxName}', but the final receipt readback did not match. The policy update remains incomplete.`,
     );
   }
 }
@@ -2112,9 +2166,9 @@ function removePreset(
       const teamsActive =
         presetName === "teams"
           ? false
-          : getCredentialBoundMessagingChannelsFromEntry(
-              registry.getSandbox(sandboxName),
-            ).includes("teams");
+          : getCredentialBoundMessagingChannelsFromEntry(registry.getSandbox(sandboxName)).includes(
+              "teams",
+            );
       updated = reconcileTeamsOutlookLoginCredentialBinding(updated, sandboxName, teamsActive);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

@@ -54,8 +54,11 @@ import {
   applyPermissivePolicy,
   applyPresetContent,
   excludeBaselineEntry,
+  finalizePolicyMutationReceipt,
+  inspectManagedPolicyCompensationBoundary,
   inspectPolicyMutationAuthority,
   inspectPolicyRecoveryAuthority,
+  isPolicyMutationReceiptFinalVerificationError,
   recheckPolicyMutationAuthority,
   removePreset,
   restoreBaselineEntry,
@@ -283,6 +286,52 @@ describe("PolicyMutationAuthority", () => {
     expect(mocks.run).not.toHaveBeenCalled();
     expect(mocks.compareAndSetSandboxPolicyCreationReceipt).not.toHaveBeenCalled();
     expect(reportedErrors()).toContain("creation receipt does not match the live sandbox policy");
+  });
+
+  it("exposes only the immutable managed boundary for exact compensation (#9833)", () => {
+    livePolicyHash = "policy-attachment-drift";
+
+    expect(() => inspectPolicyMutationAuthority(SANDBOX, "continue MCP add")).toThrow(
+      /creation receipt does not match the live sandbox policy/u,
+    );
+    expect(inspectManagedPolicyCompensationBoundary(SANDBOX, "compensate MCP attach")).toEqual(
+      expect.objectContaining({
+        gatewayName: "nemoclaw",
+        policyCreationReceipt: expect.objectContaining({ policyHash: INITIAL_POLICY_HASH }),
+      }),
+    );
+  });
+
+  it("types a final receipt readback failure after the CAS succeeds (#9833)", () => {
+    const previous = inspectPolicyMutationAuthority(SANDBOX, "update MCP attachment");
+    livePolicyHash = UPDATED_POLICY_HASH;
+    mocks.inspectSandboxPolicyAuthority
+      .mockImplementationOnce(() => ({
+        authority: "owner-unknown",
+        effectivePolicy: {},
+        policyIdentity: { hash: livePolicyHash, activeVersion: 1 },
+      }))
+      .mockImplementationOnce(() => ({
+        authority: "owner-unknown",
+        effectivePolicy: {},
+        policyIdentity: { hash: livePolicyHash, activeVersion: 1 },
+      }))
+      .mockImplementationOnce(() => {
+        throw new Error("simulated final receipt readback failure");
+      });
+
+    let observed: unknown;
+    try {
+      finalizePolicyMutationReceipt(SANDBOX, BASE_POLICY, previous);
+    } catch (error) {
+      observed = error;
+    }
+
+    expect(isPolicyMutationReceiptFinalVerificationError(observed)).toBe(true);
+    expect(mocks.compareAndSetSandboxPolicyCreationReceipt).toHaveBeenCalledOnce();
+    expect(sandbox.policyCreationReceipt).toEqual(
+      expect.objectContaining({ policyHash: UPDATED_POLICY_HASH }),
+    );
   });
 
   it("refuses live policy drift between inspection and mutation (#9833)", () => {

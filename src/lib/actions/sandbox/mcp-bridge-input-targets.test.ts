@@ -9,6 +9,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { buildManagedMcpPolicyReceiptFixture } from "../../../../test/helpers/mcp-policy-receipt-process-fixture";
 import { isTrustedPrivateEndpointCapability } from "../../security/trusted-private-endpoint";
 import { addMcpBridge, normalizeMcpServerUrl } from "./mcp-bridge";
 import {
@@ -166,7 +167,7 @@ const replace = (module, name, value) => Object.defineProperty(module, name, {
   configurable: true, enumerable: true, value, writable: true,
 });
 const registry = require("./src/lib/state/registry.js");
-const policies = require("./src/lib/policy/index.js");
+${buildManagedMcpPolicyReceiptFixture()}
 const adapters = require("./src/lib/actions/sandbox/mcp-bridge-adapters.js");
 const policy = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
 const provider = require("./src/lib/actions/sandbox/mcp-bridge-provider.js");

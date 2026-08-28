@@ -182,6 +182,7 @@ const providerCommands = require("./src/lib/adapters/openshell/provider-command.
 const { mockManagedEndpointlessProviderProfileRun } = require("./test/helpers/onboard-script-mocks.cjs");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
+const policyAuthority = require("./src/lib/adapters/openshell/policy-authority.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 const generated = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
 
@@ -201,6 +202,28 @@ const entry = {
   policyName: "mcp-bridge-example",
   addedAt: "2026-06-01T00:00:00.000Z",
 };
+const receiptAuthority = {
+  authority: "nemoclaw-managed",
+  authorityRecordedNow: false,
+  gatewayName: "nemoclaw",
+  inspection: {
+    authority: "nemoclaw-managed",
+    effectivePolicy: {},
+    policyIdentity: { hash: "receipt-bound-policy", activeVersion: 1 },
+  },
+  policyCreationReceipt: { policyHash: "receipt-bound-policy", policyVersion: 1 },
+};
+policyAuthority.captureSandboxBasePolicy = () =>
+  "version: 1\nnetwork_policies:\n  baseline: {}\n";
+policies.inspectPolicyMutationAuthority = () => receiptAuthority;
+policies.inspectManagedPolicyCompensationBoundary = () => ({
+  gatewayName: receiptAuthority.gatewayName,
+  inspection: receiptAuthority.inspection,
+  policyCreationReceipt: receiptAuthority.policyCreationReceipt,
+});
+policies.assertNemoClawManagedPolicy = () => {};
+policies.recheckPolicyMutationAuthority = () => receiptAuthority;
+policies.finalizePolicyMutationReceipt = () => {};
 
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   recovered: true,

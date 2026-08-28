@@ -8,8 +8,15 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentMcpAdapter } from "../../src/lib/agent/defs";
 import type { McpBridgeEntry } from "../../src/lib/state/registry";
+import { restoreEnv } from "../helpers/env-test-helpers";
+import { mcpDestroyBridgeEntries as bridgeEntries } from "../helpers/mcp-destroy-lifecycle-fixture";
+import {
+  MCP_POLICY_BASE,
+  MCP_POLICY_RECEIPT_AUTHORITY,
+} from "../helpers/mcp-policy-receipt-process-fixture";
 import { findObservedCredentialRevision } from "../helpers/mcp-provider-revision";
 import { mockManagedEndpointlessProviderProfileRun } from "../helpers/onboard-script-mocks.cjs";
+import { stubRecreateJournal } from "../helpers/rebuild-recreate-journal-fixture";
 
 const testState = vi.hoisted(() => {
   const home = `/tmp/nemoclaw-mcp-destroy-${process.pid}-${Date.now()}`;
@@ -27,6 +34,7 @@ const testState = vi.hoisted(() => {
     adapterRegistered: true,
     applyPresetContent: vi.fn(),
     calls: [] as string[],
+    captureSandboxBasePolicy: vi.fn(),
     captureOpenshell: vi.fn(),
     executeGatewaySupervisorAction: vi.fn(),
     executeSandboxCommand: vi.fn(),
@@ -35,6 +43,7 @@ const testState = vi.hoisted(() => {
     failProviderDetach: null as string | null,
     getLiveSandboxPolicyEntryDigest: vi.fn(),
     getPresetContentGatewayState: vi.fn(),
+    inspectPolicyMutationAuthority: vi.fn(),
     home,
     originalEnv,
     policyApplyCalls: 0,
@@ -47,6 +56,8 @@ const testState = vi.hoisted(() => {
     attachedProviders: new Set<string>(),
     recoverNamedGatewayRuntime: vi.fn(),
     removePreset: vi.fn(),
+    recheckPolicyMutationAuthority: vi.fn(),
+    finalizePolicyMutationReceipt: vi.fn(),
     runOpenshell: vi.fn(),
     runOpenshellProviderCommand: vi.fn(),
     stopNimContainer: vi.fn(),
@@ -69,14 +80,24 @@ vi.mock("../../src/lib/adapters/openshell/runtime", async (importOriginal) => ({
   runOpenshell: testState.runOpenshell,
 }));
 
+vi.mock("../../src/lib/adapters/openshell/policy-authority", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/lib/adapters/openshell/policy-authority")>()),
+  captureSandboxBasePolicy: testState.captureSandboxBasePolicy,
+}));
+
 vi.mock("../../src/lib/gateway-runtime-action", () => ({
   recoverNamedGatewayRuntime: testState.recoverNamedGatewayRuntime,
 }));
 
-vi.mock("../../src/lib/policy", () => ({
+vi.mock("../../src/lib/policy", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/lib/policy")>()),
   applyPresetContent: testState.applyPresetContent,
+  assertNemoClawManagedPolicy: vi.fn(),
+  finalizePolicyMutationReceipt: testState.finalizePolicyMutationReceipt,
   getLiveSandboxPolicyEntryDigest: testState.getLiveSandboxPolicyEntryDigest,
   getPresetContentGatewayState: testState.getPresetContentGatewayState,
+  inspectPolicyMutationAuthority: testState.inspectPolicyMutationAuthority,
+  recheckPolicyMutationAuthority: testState.recheckPolicyMutationAuthority,
   removePreset: testState.removePreset,
 }));
 
@@ -99,59 +120,10 @@ vi.mock("../../src/lib/inference/nim", () => ({
 import * as bridge from "../../src/lib/actions/sandbox/mcp-bridge";
 import { isAgentMcpAdapter } from "../../src/lib/actions/sandbox/mcp-bridge-contracts";
 import { runRebuildDestroyPhase } from "../../src/lib/actions/sandbox/rebuild-destroy-phase";
-import type { RebuildRecreateJournal } from "../../src/lib/actions/sandbox/rebuild-recreate-journal";
 import * as registry from "../../src/lib/state/registry";
-
-function stubRecreateJournal(): RebuildRecreateJournal {
-  return {
-    id: "journal-1",
-    acceptedTarget: false,
-    sourceConfirmedAbsent: false,
-    gatewayAuthority: {
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-      mode: "nemoclaw-managed",
-      source: "standalone",
-      endpoint: null,
-      stateDir: null,
-      supervisor: null,
-      requiredCapabilities: [],
-    },
-    targetGeneration: "generation-1",
-    targetIntentFingerprint: "intent-1",
-    markDeleting: vi.fn(),
-    observeSourceForDelete: vi.fn(() => "source" as const),
-    confirmDeleted: vi.fn(),
-    completeAcceptedTarget: vi.fn(),
-  };
-}
 
 const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.106");
 
-const bridgeEntries: Record<"github" | "slack", McpBridgeEntry> = {
-  github: {
-    server: "github",
-    agent: "openclaw",
-    adapter: "mcporter",
-    url: "https://8.8.8.8/github",
-    env: ["GITHUB_TOKEN"],
-    providerName: "alpha-mcp-github",
-    providerId: "11111111-2222-4333-8444-555555555555",
-    policyName: "mcp-bridge-github",
-    addedAt: "2026-06-27T00:00:00.000Z",
-  },
-  slack: {
-    server: "slack",
-    agent: "openclaw",
-    adapter: "mcporter",
-    url: "https://8.8.8.8/slack",
-    env: ["SLACK_TOKEN"],
-    providerName: "alpha-mcp-slack",
-    providerId: "66666666-7777-4888-8999-000000000000",
-    policyName: "mcp-bridge-slack",
-    addedAt: "2026-06-27T00:00:00.000Z",
-  },
-};
 function ownedPolicy(
   server: "github" | "slack",
   options: {
@@ -166,20 +138,17 @@ function ownedPolicy(
   const resolvedAddresses = options.resolvedAddresses ?? [new URL(entry.url).hostname];
   return {
     name: entry.policyName,
-    content: bridge.buildMcpBridgePolicyYaml(entry.server, entry.url, adapter as AgentMcpAdapter, {
-      addresses: [...resolvedAddresses],
-    }, entry.providerName ?? ""),
+    content: bridge.buildMcpBridgePolicyYaml(
+      entry.server,
+      entry.url,
+      adapter as AgentMcpAdapter,
+      {
+        addresses: [...resolvedAddresses],
+      },
+      entry.providerName ?? "",
+    ),
     sourcePath: "generated:nemoclaw-mcp-bridge",
   };
-}
-function restoreEnv(name: string, value: string | undefined): void {
-  switch (value) {
-    case undefined:
-      delete process.env[name];
-      break;
-    default:
-      process.env[name] = value;
-  }
 }
 async function captureMessage(action: () => Promise<unknown>): Promise<string> {
   try {
@@ -226,6 +195,10 @@ beforeEach(() => {
   testState.failProviderDelete = null;
   testState.failProviderDetach = null;
   vi.resetAllMocks();
+  testState.captureSandboxBasePolicy.mockReturnValue(MCP_POLICY_BASE);
+  testState.inspectPolicyMutationAuthority.mockReturnValue(MCP_POLICY_RECEIPT_AUTHORITY);
+  testState.recheckPolicyMutationAuthority.mockReturnValue(MCP_POLICY_RECEIPT_AUTHORITY);
+  testState.finalizePolicyMutationReceipt.mockReturnValue(undefined);
   testState.recoverNamedGatewayRuntime.mockResolvedValue({
     recovered: true,
     attempted: false,
@@ -260,7 +233,14 @@ beforeEach(() => {
         return { status: 0, stdout: "ready", stderr: "" };
     }
     switch (true) {
-      case args[0] === "provider" && args[1] === "profile": return mockManagedEndpointlessProviderProfileRun(args) ?? { status: 0, stdout: "Imported provider profile", stderr: "" };
+      case args[0] === "provider" && args[1] === "profile":
+        return (
+          mockManagedEndpointlessProviderProfileRun(args) ?? {
+            status: 0,
+            stdout: "Imported provider profile",
+            stderr: "",
+          }
+        );
       case args[0] === "provider" && args[1] === "get": {
         const provider = testState.providers.get(args[2]);
         return provider
@@ -306,8 +286,12 @@ beforeEach(() => {
       case args[0] === "sandbox" && args[1] === "provider" && args[2] === "attach":
         testState.attachedProviders.add(args[4]);
         return { status: 0, stdout: "Attached provider", stderr: "" };
-      case args[0] === "provider" && args[1] === "update" && args.length === 3 && testState.providers.has(args[2]):
-        testState.providers.get(args[2])!.resourceVersion = (testState.providers.get(args[2])!.resourceVersion ?? 1) + 1;
+      case args[0] === "provider" &&
+        args[1] === "update" &&
+        args.length === 3 &&
+        testState.providers.has(args[2]):
+        testState.providers.get(args[2])!.resourceVersion =
+          (testState.providers.get(args[2])!.resourceVersion ?? 1) + 1;
         return { status: 0, stdout: "Updated provider", stderr: "" };
       case args[0] === "provider" &&
         args[1] === "delete" &&
@@ -1239,10 +1223,14 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect([...testState.providers.keys()]).toContain("alpha-mcp-github");
     expect(testState.calls).toContain("sandbox provider attach alpha alpha-mcp-github");
     expect(testState.providers.get("alpha-mcp-github")?.resourceVersion).toBe(2);
-    expect(testState.calls.some((call) => /^provider (create|update) .*--credential/.test(call))).toBe(false);
+    expect(
+      testState.calls.some((call) => /^provider (create|update) .*--credential/.test(call)),
+    ).toBe(false);
     expect(testState.policyApplyCalls).toBe(2);
     expect(testState.adapterCalls).toContain("command -v mcporter");
-    expect(testState.adapterCalls.some((call) => call.includes("openshell:resolve:env:GITHUB_TOKEN"))).toBe(true);
+    expect(
+      testState.adapterCalls.some((call) => call.includes("openshell:resolve:env:GITHUB_TOKEN")),
+    ).toBe(true);
     expect(sandbox?.mcp?.bridges).toHaveProperty("github");
     expect(sandbox?.mcp?.managedServerNames).toEqual(["github", "retired"]);
     expect(sandbox?.mcp?.destroyPreparedAt).toBeUndefined();
@@ -1319,7 +1307,9 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
 
     expect(process.env.GITHUB_TOKEN).toBe("ambient-value-that-must-not-rotate");
     expect(testState.providers.get("alpha-mcp-github")?.resourceVersion).toBe(2);
-    expect(testState.calls.some((call) => /^provider (create|update) .*--credential/.test(call))).toBe(false);
+    expect(
+      testState.calls.some((call) => /^provider (create|update) .*--credential/.test(call)),
+    ).toBe(false);
     expect([...testState.attachedProviders]).toContain("alpha-mcp-github");
     expect(testState.adapterRegistered).toBe(true);
     expect(testState.policyApplyCalls).toBe(2);

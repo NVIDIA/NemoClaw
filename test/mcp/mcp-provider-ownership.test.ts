@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { buildManagedMcpPolicyReceiptFixture } from "../helpers/mcp-policy-receipt-process-fixture";
+
 function runRemoveIdentityRace(swapAt: "detach" | "delete") {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-provider-race-"));
   const script = `
@@ -16,7 +18,8 @@ const swapAt = ${JSON.stringify(swapAt)};
 const registry = require("./src/lib/state/registry.js");
 const agentDefs = require("./src/lib/agent/defs.js");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
-const policies = require("./src/lib/policy/index.js");
+${buildManagedMcpPolicyReceiptFixture()}
+policies.finalizePolicyMutationReceipt = () => {};
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const expectedId = "11111111-2222-4333-8444-555555555555";
@@ -119,7 +122,8 @@ process.env.HOME = ${JSON.stringify(home)};
 const registry = require("./src/lib/state/registry.js");
 const agentDefs = require("./src/lib/agent/defs.js");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
-const policies = require("./src/lib/policy/index.js");
+${buildManagedMcpPolicyReceiptFixture()}
+policies.finalizePolicyMutationReceipt = () => {};
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const expectedId = "11111111-2222-4333-8444-555555555555";
@@ -343,12 +347,14 @@ bridge.statusMcpBridge("alpha", "fake").then(
     expect(status.provider.detail).toContain("Expected stable provider ID");
   });
 
-  it("clears multiple dangling stock OpenShell provider references without listing between them", () => {
+  it("clears dangling provider references and rotates each managed receipt", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-provider-dangling-"));
     const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const calls = [];
+${buildManagedMcpPolicyReceiptFixture()}
+policies.finalizePolicyMutationReceipt = () => calls.push("receipt finalize");
 const attached = new Set(["alpha-mcp-fake", "alpha-mcp-second"]);
 providerCommands.runOpenshellProviderCommand = (args) => {
   calls.push(args.join(" "));
@@ -423,10 +429,12 @@ process.stdout.write(JSON.stringify({ before, firstOutcome, afterFirst, secondOu
       "provider get alpha-mcp-fake",
       "sandbox provider detach alpha alpha-mcp-fake",
       "provider get alpha-mcp-fake",
+      "receipt finalize",
       "sandbox provider list alpha",
       "provider get alpha-mcp-second",
       "sandbox provider detach alpha alpha-mcp-second",
       "provider get alpha-mcp-second",
+      "receipt finalize",
       "sandbox provider list alpha",
     ]);
   });
