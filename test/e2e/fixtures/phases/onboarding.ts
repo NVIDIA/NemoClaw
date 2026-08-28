@@ -256,10 +256,10 @@ export class OnboardingPhaseFixture {
       );
     }
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
-    const useCandidateBase =
+    const localDockerfile =
       options.dcodeBaseImageReference === undefined &&
       process.env.E2E_WORKLOAD_SOURCE === "local-dockerfile";
-    const baseImageReference = useCandidateBase
+    const baseImageReference = localDockerfile
       ? undefined
       : requireDcodeBaseImageReference(
           options.dcodeBaseImageReference === undefined

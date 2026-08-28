@@ -10,7 +10,7 @@
 #
 # Required repository secret: NVSKILLS_CI_DISPATCH_TOKEN
 
-name: Automation / NVSkills CI
+name: Automation / Dispatch NVSkills CI Request
 
 on:
   issue_comment:
@@ -19,7 +19,6 @@ on:
 
 jobs:
   request:
-    name: Dispatch request
     if: >
       (github.event_name == 'issue_comment' &&
         github.event.issue.pull_request &&

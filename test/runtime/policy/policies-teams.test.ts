@@ -29,7 +29,12 @@ function parseResultPayload(stdout: string): any {
 }
 
 function allowedMethods(
-  policy: { endpoints: Array<{ host?: string; rules?: Array<{ allow?: { method?: string } }> }> },
+  policy: {
+    endpoints: Array<{
+      host?: string;
+      rules?: Array<{ allow?: { method?: string } }>;
+    }>;
+  },
   host: string,
 ): string[] {
   return allowedRules(policy, host)
@@ -54,9 +59,11 @@ function allowedRules(
 
 describe("Teams policy preset", () => {
   it("composes Microsoft Teams Bot Framework and Graph capabilities", () => {
-    const merged = policies.mergePresetNamesIntoPolicy("version: 1\nnetwork_policies: {}\n", [
-      "teams",
-    ]);
+    const merged = policies.mergePresetNamesIntoPolicy(
+      "version: 1\nnetwork_policies: {}\n",
+      ["teams"],
+      { sandboxName: "teams-preset" },
+    );
     expect(merged.appliedPresets).toEqual(["teams"]);
     expect(merged.missingPresets).toEqual([]);
     const teamsPolicy = YAML.parse(merged.policy).network_policies.teams;
@@ -82,6 +89,75 @@ describe("Teams policy preset", () => {
 
   it("returns Teams validation guidance", () => {
     expect(policies.getPresetValidationWarning("teams")).toContain("Microsoft Teams");
+  });
+
+  it("shares the Teams credential binding with Outlook only while Teams is active", () => {
+    const sandboxName = "teams-outlook";
+    const composed = policies.mergePresetNamesIntoPolicy(
+      "version: 1\nnetwork_policies: {}\n",
+      ["outlook", "teams"],
+      { sandboxName },
+    ).policy;
+    const composedPolicy = YAML.parse(composed);
+    const outlookLogin = composedPolicy.network_policies.outlook_graph.endpoints.find(
+      (endpoint: { host?: string }) => endpoint.host === "login.microsoftonline.com",
+    );
+    const teamsLogin = composedPolicy.network_policies.teams.endpoints.find(
+      (endpoint: { host?: string }) => endpoint.host === "login.microsoftonline.com",
+    );
+    expect(outlookLogin.credential_binding).toEqual({
+      provider: `${sandboxName}-teams-bridge`,
+    });
+    expect(outlookLogin.credential_binding).toEqual(teamsLogin.credential_binding);
+
+    const teamsEntries = policies.extractPresetEntries(
+      policies.loadPresetForSandbox(sandboxName, "teams"),
+    );
+    const withoutTeams = policies.removePresetFromPolicy(composed, teamsEntries);
+    const restored = YAML.parse(
+      policies.reconcileTeamsOutlookLoginCredentialBinding(withoutTeams, sandboxName),
+    );
+    const restoredOutlookLogin = restored.network_policies.outlook_graph.endpoints.find(
+      (endpoint: { host?: string }) => endpoint.host === "login.microsoftonline.com",
+    );
+    expect(restoredOutlookLogin).not.toHaveProperty("credential_binding");
+  });
+
+  it("refuses to overwrite a foreign Outlook credential binding", () => {
+    const outlook = policies.mergePresetNamesIntoPolicy(
+      "version: 1\nnetwork_policies: {}\n",
+      ["outlook"],
+      { sandboxName: "teams-outlook" },
+    ).policy;
+    const drifted = YAML.parse(outlook);
+    const outlookLogin = drifted.network_policies.outlook_graph.endpoints.find(
+      (endpoint: { host?: string }) => endpoint.host === "login.microsoftonline.com",
+    );
+    outlookLogin.credential_binding = { provider: "operator-owned" };
+
+    expect(() =>
+      policies.mergePresetNamesIntoPolicy(YAML.stringify(drifted), ["teams"], {
+        sandboxName: "teams-outlook",
+      }),
+    ).toThrow("already has a different credential binding");
+  });
+
+  it("keeps Hermes Teams and Outlook unbound when no bridge provider exists", () => {
+    const composed = policies.mergePresetNamesIntoPolicy(
+      "version: 1\nnetwork_policies: {}\n",
+      ["outlook", "teams"],
+      { agent: "hermes", sandboxName: "hermes-outlook" },
+    ).policy;
+    const parsed = YAML.parse(composed);
+    const outlookLogin = parsed.network_policies.outlook_graph.endpoints.find(
+      (endpoint: { host?: string }) => endpoint.host === "login.microsoftonline.com",
+    );
+    const teamsLogin = parsed.network_policies.teams.endpoints.find(
+      (endpoint: { host?: string }) => endpoint.host === "login.microsoftonline.com",
+    );
+
+    expect(outlookLogin).not.toHaveProperty("credential_binding");
+    expect(teamsLogin).not.toHaveProperty("credential_binding");
   });
 
   it("uses agent-specific preset content for Hermes Teams", () => {

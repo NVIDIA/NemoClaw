@@ -416,7 +416,9 @@ describe("complete managed-image publication workflow", () => {
     expect(step(prBuilder, "Checkout").with?.["persist-credentials"]).toBe(false);
     expect(step(prBuilder, "Checkout").with?.ref).toBe("${{ github.event.pull_request.head.sha }}");
     expect(releaseIdentity.id).toBe("release");
-    expect(releaseIdentity.run).toContain("git describe --tags --match 'v*' \"$CANDIDATE_SHA\"");
+    expect(releaseIdentity.run).toContain(
+      "git describe --tags --match 'v*' \"$CANDIDATE_SHA\"",
+    );
     expect(releaseIdentity.run).toContain("value=%s");
     expect(step(prBuilder, "Set up Docker Buildx").id).toBe("buildx");
     const matrixByAgent = new Map(matrix.map((entry) => [entry.agent, entry]));
@@ -672,7 +674,7 @@ describe("complete managed-image publication workflow", () => {
       "${{ github.event.pull_request.head.sha }}",
     );
     expect(step(activation, "Assemble exact all-agent activation catalog").run).toMatch(
-      /npm ci --ignore-scripts[\s\S]*pr-managed-image-source\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
+      /npm ci --ignore-scripts[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
     );
     expect(step(activation, "Build exact candidate CLI").run).toContain("npm run build:cli");
     expect(step(activation, "Install OpenShell CLI").run).toContain("scripts/install-openshell.sh");
@@ -725,7 +727,7 @@ describe("complete managed-image publication workflow", () => {
     expect(step(discovery, "Bind E2E correlation identity").run).toContain("randomUUID()");
     const assemble = step(discovery, "Assemble exact all-agent MCP catalog").run ?? "";
     expect(assemble).toMatch(
-      /npm ci --ignore-scripts[\s\S]*pr-managed-image-source\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
+      /npm ci --ignore-scripts[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
     );
     const run = step(discovery, "Run exact OpenClaw managed-image MCP discovery").run ?? "";
     expect(run).toContain('[[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]]');

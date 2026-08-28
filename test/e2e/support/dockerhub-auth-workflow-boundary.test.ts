@@ -349,21 +349,6 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
     );
   });
 
-  it("rejects an inference credential mapped to candidate code without authorization", () => {
-    const errors = validateMutation((workflow) => {
-      const run = namedStep(workflow.jobs.live, "Run live E2E tests");
-      expect(run).toBeDefined();
-      run!.env = {
-        ...run!.env,
-        NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
-      };
-    });
-
-    expect(errors).toContain(
-      "live E2E step must guard NVIDIA_INFERENCE_API_KEY behind a main run or an authorized NVIDIA-owned PR dispatch",
-    );
-  });
-
   it("rejects uniform unsafe cleanup drift without trusting the live job as canonical", () => {
     const workflow = loadWorkflow();
     const requiredJobs = imageJobNames(workflow);

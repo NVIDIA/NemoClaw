@@ -77,7 +77,7 @@ describe("Hermes portable sandbox endpoint provenance", () => {
     );
   });
 
-  it("keeps ordinary fresh Hermes endpoint provenance unchanged (#9203)", async () => {
+  it("preserves the selected endpoint source for ordinary fresh Hermes creation (#9833)", async () => {
     const { deps, calls } = createDeps();
 
     await handleSandboxState({
@@ -88,8 +88,6 @@ describe("Hermes portable sandbox endpoint provenance", () => {
       hostLocalInferenceRouteOnly: false,
     });
 
-    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
-      endpointSource: "onboard",
-    });
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({ endpointSource: null });
   });
 });

@@ -19,7 +19,6 @@ concurrency:
 jobs:
   # Detect which files changed so we can skip expensive jobs for docs-only PRs.
   changes:
-    name: Select changed components
     if: ${{ github.event.action != 'edited' || github.event.changes.base != null }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -47,7 +46,6 @@ jobs:
               - '!fern/assets/**'
 
   docs-only-checks:
-    name: Check documentation-only change
     needs: changes
     if: needs.changes.outputs.code != 'true'
     runs-on: ubuntu-latest
@@ -98,7 +96,6 @@ jobs:
         run: npm run docs
 
   static-checks:
-    name: Static Checks
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
@@ -130,7 +127,6 @@ jobs:
         uses: ./.trusted-ci-actions/.github/actions/ci-static-checks
 
   build-typecheck:
-    name: Build and type-check
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
@@ -161,7 +157,6 @@ jobs:
         uses: ./.trusted-ci-actions/.github/actions/ci-build-typecheck
 
   installer-integration:
-    name: Installer Integration
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
@@ -187,7 +182,6 @@ jobs:
         uses: ./.trusted-ci-actions/.github/actions/ci-installer-integration
 
   wechat-runtime-audit:
-    name: WeChat Runtime Audit
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
@@ -225,7 +219,6 @@ jobs:
           retention-days: 14
 
   reviewed-npm-audit:
-    name: npm Audit
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
@@ -259,7 +252,6 @@ jobs:
           report-dir: artifacts/reviewed-npm-audit
 
   cli-test-shards:
-    name: CLI / Shard ${{ matrix.shard }}
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
@@ -300,7 +292,6 @@ jobs:
           shard-count: "12"
 
   cli-tests:
-    name: CLI
     needs:
       - changes
       - cli-test-shards
@@ -396,7 +387,6 @@ jobs:
           shard-count: "12"
 
   plugin-tests:
-    name: Plugin
     needs: changes
     if: needs.changes.outputs.code == 'true'
     permissions:
@@ -431,7 +421,6 @@ jobs:
         uses: ./.trusted-ci-actions/.github/actions/ci-plugin-coverage
 
   checks:
-    name: Required Checks
     needs:
       - changes
       - docs-only-checks

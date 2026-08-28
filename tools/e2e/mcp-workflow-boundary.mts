@@ -11,7 +11,6 @@ import {
 } from "./upload-e2e-artifacts-workflow-boundary.mts";
 import {
   contentSha256,
-  MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256,
   MCP_DEV_POST_INSTALL_TRANSITION_CONTENT_SHA256,
   MCP_DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256,
   MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256,
@@ -170,14 +169,14 @@ function validateJobIdentity(
   requireEqual(
     errors,
     env.E2E_MANAGED_IMAGE_REVISION,
-    "${{ needs.generate-matrix.outputs.managed_image_revision }}",
-    `${jobName} must receive the selected managed-image revision`,
+    "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}",
+    `${jobName} must receive the selected managed-image cohort revision`,
   );
   requireEqual(
     errors,
-    env.E2E_WORKLOAD_SOURCE,
-    "${{ needs.generate-matrix.outputs.workload_source }}",
-    `${jobName} must receive the selected workload source`,
+    env.E2E_MANAGED_IMAGE_COHORT_RECEIPT,
+    "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}",
+    `${jobName} must receive the complete selected managed-image cohort receipt`,
   );
   requireEqual(
     errors,
@@ -191,7 +190,7 @@ function validateJobIdentity(
     JSON.stringify(jobNeeds(job)),
     JSON.stringify(
       jobName === "mcp-bridge-dev"
-        ? ["generate-matrix", DEV_ARTIFACT_JOB]
+        ? ["base-image-publication", "generate-matrix", DEV_ARTIFACT_JOB]
         : ["base-image-publication", "generate-matrix"],
     ),
     `${jobName} must depend on its reviewed artifact producers`,
@@ -282,13 +281,17 @@ function validateJobSecurity(
   job: UnknownRecord,
   canonicalDockerAuth: UnknownRecord,
 ): void {
-  if (jobName === "mcp-bridge-dev") {
-    const { steps: _jobSteps, ...jobExecutionContext } = job;
-    if (contentSha256(jobExecutionContext) !== MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256) {
-      errors.push(
-        "mcp-bridge-dev must preserve its reviewed job execution context before candidate activation",
-      );
-    }
+  const environment = asRecord(job.env);
+  if (
+    jobName === "mcp-bridge-dev" &&
+    (Object.hasOwn(environment, "NODE_OPTIONS") ||
+      ["BASH_ENV", "ENV"].some(
+        (name) => Object.hasOwn(environment, name) && environment[name] !== "/dev/null",
+      ))
+  ) {
+    errors.push(
+      "mcp-bridge-dev must preserve its reviewed job execution context before candidate activation",
+    );
   }
   const permissions = asRecord(job.permissions);
   if (Object.keys(permissions).sort().join(",") !== "contents" || permissions.contents !== "read") {
@@ -855,8 +858,8 @@ function validateCredentialWindowJob(
   requireEqual(
     errors,
     JSON.stringify(jobNeeds(job)),
-    JSON.stringify(["generate-matrix"]),
-    `${CREDENTIAL_WINDOW_JOB} must depend only on matrix generation so it can run in parallel`,
+    JSON.stringify(["base-image-publication", "generate-matrix"]),
+    `${CREDENTIAL_WINDOW_JOB} must depend on publication and matrix generation`,
   );
   requireEqual(
     errors,
@@ -879,7 +882,10 @@ function validateCredentialWindowJob(
 
   const env = asRecord(job.env);
   const expectedEnv = {
-    E2E_MANAGED_IMAGE_REVISION: "${{ needs.generate-matrix.outputs.managed_image_revision }}",
+    E2E_MANAGED_IMAGE_REVISION:
+      "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}",
+    E2E_MANAGED_IMAGE_COHORT_RECEIPT:
+      "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}",
     E2E_WORKLOAD_SOURCE: "${{ needs.generate-matrix.outputs.workload_source }}",
     E2E_JOB: "1",
     E2E_TARGET_ID: CREDENTIAL_WINDOW_JOB,

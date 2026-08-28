@@ -9,6 +9,14 @@ network_policies:
   slack:
     name: slack
     endpoints:
+      # slack.com carries two credentials, so it is declared twice and split by
+      # `path`:
+      # - A credential_binding authorizes one provider per endpoint.
+      # - OpenShell picks the endpoint by path specificity, so the narrow
+      #   apps.connections.open entry wins the Socket Mode handshake and every
+      #   other Web API call falls to the broad entry.
+      # - Drop the `path` selector and both entries score equal specificity, the
+      #   policy is rejected as ambiguous, and sandbox creation fails.
       - host: slack.com
         port: 443
         path: /api/apps.connections.open

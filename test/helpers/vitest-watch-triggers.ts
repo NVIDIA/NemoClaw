@@ -7,6 +7,8 @@ export type VitestWatchTriggerPattern = {
 };
 
 const E2E_WORKFLOW_CONTRACTS = [
+  "test/e2e/support/base-image-publication-workflow-boundary.test.ts",
+  "test/e2e/support/cli-artifact-workflow-boundary.test.ts",
   "test/e2e/support/dcode-profile-import-gate-workflow-boundary.test.ts",
   "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
   "test/e2e/support/e2e-host-dependency-workflow-boundary.test.ts",
@@ -22,6 +24,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
   "test/e2e/support/mcp-workflow-boundary.test.ts",
   "test/e2e/support/mcp-workflow-compatibility.test.ts",
+  "test/e2e/support/native-runtime-qualification-producer-workflow.test.ts",
   "test/e2e/support/openclaw-plugin-runtime-exdev-workflow-boundary.test.ts",
   "test/e2e/support/onboard-timeout-contract.test.ts",
   "test/e2e/support/openshell-gateway-auth-contract-workflow-boundary.test.ts",
@@ -57,6 +60,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
       "test/onboarding/onboard-sandbox-build.test.ts",
       "test/onboarding/onboard-sandbox-recreation.test.ts",
       "test/onboarding/onboard-terminal-dashboard.test.ts",
+      "test/repository/source-require-loader.test.ts",
     ),
   },
   {
@@ -320,7 +324,6 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-review-advisor\.yaml$/,
     testsToRun: runTests(
-      "test/automation/pull-requests/pr-review-advisor-workflow-boundary.test.ts",
       "test/automation/pull-requests/pr-review-advisor-workflow-boundary.test.ts",
     ),
   },

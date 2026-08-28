@@ -145,10 +145,16 @@ export function mergeHermesPreservedEnvIntoMessagingPlan(
     .flatMap((file) => file.assignments);
   if (assignments.length === 0) return plan;
 
-  const activeChannel = plan.channels.find(
-    (channel) =>
-      channel.active &&
-      !channel.disabled &&
+  const enabledChannels = plan.channels.filter(
+    (channel) => channel.active && !channel.disabled,
+  );
+  // Prefer a channel that already renders into ~/.hermes/.env so the preserved
+  // lines ride along with an existing entry. Fall back to any enabled channel:
+  // whether a channel renders env lines depends on its inputs, and anchoring
+  // only on that would silently drop the captured home-channel values whenever
+  // no channel happens to render one.
+  const activeChannel =
+    enabledChannels.find((channel) =>
       plan.agentRender.some(
         (render) =>
           render.channelId === channel.channelId &&
@@ -156,7 +162,7 @@ export function mergeHermesPreservedEnvIntoMessagingPlan(
           render.agent === "hermes" &&
           render.target === "~/.hermes/.env",
       ),
-  );
+    ) ?? enabledChannels[0];
   if (!activeChannel) return plan;
 
   const preservedRender: SandboxMessagingEnvLinesRenderPlan = {

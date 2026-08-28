@@ -33,31 +33,34 @@ const LIVE_VITEST_HELPER = "tools/e2e/live-vitest-invocation.mts run --test-path
 const E2E_ARTIFACT_ACTION = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@";
 const COLD_ONBOARD_PERFORMANCE_EVIDENCE_PATH =
   "e2e-artifacts/live/${{ matrix.id }}/onboard-progress-budget.json";
-const PUBLICATION_REQUIRED_CONDITION = "${{ steps.publication_mode.outputs.required == '1' }}";
-const PUBLICATION_PR_CONDITION = "${{ steps.publication_mode.outputs.pr == '1' }}";
-const PUBLICATION_REQUIRED_OR_PR_CONDITION =
-  "${{ steps.publication_mode.outputs.required == '1' || steps.publication_mode.outputs.pr == '1' }}";
-const PUBLICATION_OR_MANAGED_SOURCE_CONDITION =
-  "${{ steps.publication_mode.outputs.required == '1' || steps.select_pr_source.outputs.workload_source == 'managed-image' }}";
+const MANAGED_SOURCE_CONDITION =
+  "${{ inputs.pr_number == '' || steps.select_pr_source.outputs.workload_source == 'managed-image' }}";
 const PUBLICATION_CLASSIFIER_SCRIPT =
   [
     "set -euo pipefail",
-    "pr=0",
     'case "${REPOSITORY}:${REF}:${EVENT_NAME}:${CHECKOUT_SHA:+controller}" in',
     "  NVIDIA/NemoClaw:refs/heads/main:push:|NVIDIA/NemoClaw:refs/heads/main:workflow_dispatch:)",
-    "    required=1",
+    '    expected_sha="$WORKFLOW_SHA"',
+    "    allow_non_head=0",
+    "    select_nearest_successful=0",
     "    ;;",
     "  NVIDIA/NemoClaw:refs/heads/*:workflow_dispatch:controller)",
-    "    required=0",
-    "    pr=1",
+    '    [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {',
+    '      echo "::error::manual PR publication selection requires an exact base SHA" >&2',
+    "      exit 1",
+    "    }",
+    '    expected_sha="$BASE_SHA"',
+    "    allow_non_head=1",
+    "    select_nearest_successful=1",
     "    ;;",
     "  *)",
     '    echo "::error::base-image publication mode is not trusted" >&2',
     "    exit 1",
     "    ;;",
     "esac",
-    'printf \'required=%s\\n\' "${required}" >> "${GITHUB_OUTPUT}"',
-    'printf \'pr=%s\\n\' "${pr}" >> "${GITHUB_OUTPUT}"',
+    'printf \'allow_non_head=%s\\n\' "${allow_non_head}" >> "${GITHUB_OUTPUT}"',
+    'printf \'expected_sha=%s\\n\' "${expected_sha}" >> "${GITHUB_OUTPUT}"',
+    'printf \'select_nearest_successful=%s\\n\' "${select_nearest_successful}" >> "${GITHUB_OUTPUT}"',
   ].join("\n") + "\n";
 const ISSUE_API_REFERENCE = /\bgithub\.rest\.issues\b/u;
 const ISSUE_MUTATION_BEYOND_COMMENT =
@@ -100,6 +103,7 @@ type WorkflowJob = {
   "runs-on"?: unknown;
   steps?: WorkflowStep[];
   "timeout-minutes"?: unknown;
+  with?: Record<string, unknown>;
 };
 
 export type OperationsWorkflow = {
@@ -490,13 +494,8 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         step.with?.ref === "${{ github.workflow_sha }}";
       const trustedPublicationCheckout =
         jobName === "base-image-publication" &&
-        ((step.name === "Check out trusted E2E workflow" &&
-          step.if === PUBLICATION_REQUIRED_OR_PR_CONDITION &&
-          step.with?.ref === "${{ inputs.workflow_sha || github.workflow_sha }}") ||
-          (step.name === "Check out trusted PR base" &&
-            step.if ===
-              "${{ steps.select_pr_source.outputs.workload_source == 'managed-image' }}" &&
-            step.with?.ref === "${{ inputs.base_sha }}"));
+        step.name === "Check out trusted E2E workflow" &&
+        step.with?.ref === "${{ github.workflow_sha }}";
       const trustedManagedImageRuntimeCheckout =
         jobName === "managed-image-protected-runtime" &&
         step.name === "Checkout trusted protected runtime qualification" &&
@@ -601,13 +600,19 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   const errors: string[] = [];
   const job = workflow.jobs["base-image-publication"] ?? {};
   const expectedJob = {
-    name: "Base Image Publication / Verify",
     "runs-on": "ubuntu-latest",
     "timeout-minutes": 55,
     outputs: {
       dcode_base_contract: "${{ steps.validate_dcode_base.outputs.contract }}",
       dcode_base_ref: "${{ steps.validate_dcode_base.outputs.base_ref }}",
-      managed_image_revision: "${{ steps.publication.outputs.head_sha }}",
+      managed_image_artifact_provenance:
+        "${{ steps.download_managed_cohort.outputs.provenance }}",
+      managed_image_cohort: "${{ steps.validate_managed_cohort.outputs.cohort }}",
+      managed_image_receipt: "${{ steps.validate_managed_cohort.outputs.receipt }}",
+      managed_image_revision:
+        "${{ steps.validate_managed_cohort.outputs.revision }}",
+      managed_image_run_attempt: "${{ steps.validate_managed_cohort.outputs.run_attempt }}",
+      managed_image_run_id: "${{ steps.validate_managed_cohort.outputs.run_id }}",
       workload_source: "${{ steps.select_pr_source.outputs.workload_source || 'managed-image' }}",
     },
     permissions: {
@@ -620,27 +625,27 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         id: "publication_mode",
         name: "Classify base-image publication requirement",
         env: {
+          BASE_SHA: "${{ inputs.base_sha }}",
           CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
           EVENT_NAME: "${{ github.event_name }}",
           REF: "${{ github.ref }}",
           REPOSITORY: "${{ github.repository }}",
+          WORKFLOW_SHA: "${{ github.workflow_sha }}",
         },
         shell: "bash",
         run: PUBLICATION_CLASSIFIER_SCRIPT,
       },
       {
         name: "Check out trusted E2E workflow",
-        if: PUBLICATION_REQUIRED_OR_PR_CONDITION,
         uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
         with: {
-          ref: "${{ inputs.workflow_sha || github.workflow_sha }}",
+          ref: "${{ github.workflow_sha }}",
           "fetch-depth": 0,
           "persist-credentials": false,
         },
       },
       {
         name: "Set up Node for publication verification",
-        if: PUBLICATION_REQUIRED_OR_PR_CONDITION,
         uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
         with: {
           "node-version": 22,
@@ -649,7 +654,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       {
         id: "select_pr_source",
         name: "Select PR workload source",
-        if: PUBLICATION_PR_CONDITION,
+        if: "${{ inputs.pr_number != '' }}",
         env: {
           BASE_SHA: "${{ inputs.base_sha }}",
           CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository }}",
@@ -660,7 +665,7 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         shell: "bash",
         run: [
           "set -euo pipefail",
-          'workload_source="$(node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-source.mts select)"',
+          'workload_source="$(node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts select-source)"',
           'case "$workload_source" in',
           "  managed-image|local-dockerfile) ;;",
           '  *) echo "::error::PR workload source is invalid" >&2; exit 1 ;;',
@@ -670,37 +675,34 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
         ].join("\n"),
       },
       {
-        name: "Check out trusted PR base",
-        if: "${{ steps.select_pr_source.outputs.workload_source == 'managed-image' }}",
-        uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-        with: {
-          ref: "${{ inputs.base_sha }}",
-          "fetch-depth": 0,
-          "persist-credentials": false,
-        },
-      },
-      {
         id: "publication",
-        name: "Verify applicable base-image publication",
-        if: PUBLICATION_OR_MANAGED_SOURCE_CONDITION,
+        name: "Select complete base and managed-image publication",
+        if: MANAGED_SOURCE_CONDITION,
         env: {
-          EXPECTED_SHA:
-            "${{ steps.publication_mode.outputs.required == '1' && (inputs.checkout_sha || github.sha) || inputs.base_sha }}",
+          EXPECTED_SHA: "${{ steps.publication_mode.outputs.expected_sha }}",
           GITHUB_TOKEN: "${{ github.token }}",
+          PUBLICATION_HISTORY_ALLOW_NON_HEAD:
+            "${{ steps.publication_mode.outputs.allow_non_head }}",
           REQUIRE_MANAGED_IMAGE_PUBLICATION: "1",
+          SELECT_NEAREST_SUCCESSFUL_PUBLICATION:
+            "${{ steps.publication_mode.outputs.select_nearest_successful }}",
         },
         shell: "bash",
         run: [
           "set -euo pipefail",
           "export GITHUB_REF=refs/heads/main",
           'export GITHUB_SHA="$EXPECTED_SHA"',
-          "node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30",
+          "wait_seconds=3000",
+          'if [[ "$SELECT_NEAREST_SUCCESSFUL_PUBLICATION" == "1" ]]; then',
+          "  wait_seconds=300",
+          "fi",
+          'node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds "$wait_seconds" --poll-seconds 30',
           "",
         ].join("\n"),
       },
       {
         name: "Download immutable Deep Agents Code base contract",
-        if: PUBLICATION_OR_MANAGED_SOURCE_CONDITION,
+        if: MANAGED_SOURCE_CONDITION,
         env: {
           GITHUB_TOKEN: "${{ github.token }}",
           PUBLICATION_HEAD_SHA: "${{ steps.publication.outputs.head_sha }}",
@@ -712,13 +714,37 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       {
         id: "validate_dcode_base",
         name: "Validate immutable Deep Agents Code base",
-        if: PUBLICATION_OR_MANAGED_SOURCE_CONDITION,
+        if: MANAGED_SOURCE_CONDITION,
         env: {
           PUBLICATION_HEAD_SHA: "${{ steps.publication.outputs.head_sha }}",
           PUBLICATION_RUN_ATTEMPT: "${{ steps.publication.outputs.run_attempt }}",
           PUBLICATION_RUN_ID: "${{ steps.publication.outputs.run_id }}",
         },
         run: 'node --experimental-strip-types --no-warnings tools/e2e/dcode-base-image-contract.mts "${RUNNER_TEMP}/dcode-base-contract/contract.json"',
+      },
+      {
+        id: "download_managed_cohort",
+        name: "Download immutable managed-image cohort contract",
+        if: MANAGED_SOURCE_CONDITION,
+        env: {
+          GITHUB_TOKEN: "${{ github.token }}",
+          PUBLICATION_ARTIFACT_KIND: "managed-image-cohort",
+          PUBLICATION_HEAD_SHA: "${{ steps.publication.outputs.head_sha }}",
+          PUBLICATION_RUN_ATTEMPT: "${{ steps.publication.outputs.run_attempt }}",
+          PUBLICATION_RUN_ID: "${{ steps.publication.outputs.run_id }}",
+        },
+        run: 'node --experimental-strip-types --no-warnings tools/e2e/exact-artifact-download.mts "${RUNNER_TEMP}/managed-image-cohort"',
+      },
+      {
+        id: "validate_managed_cohort",
+        name: "Validate immutable managed-image cohort contract",
+        if: MANAGED_SOURCE_CONDITION,
+        env: {
+          PUBLICATION_HEAD_SHA: "${{ steps.publication.outputs.head_sha }}",
+          PUBLICATION_RUN_ATTEMPT: "${{ steps.publication.outputs.run_attempt }}",
+          PUBLICATION_RUN_ID: "${{ steps.publication.outputs.run_id }}",
+        },
+        run: 'node --experimental-strip-types --no-warnings tools/e2e/managed-image-cohort-contract.mts "${RUNNER_TEMP}/managed-image-cohort/cohort.json"',
       },
     ],
   };
@@ -730,18 +756,11 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   }
   const matrix = workflow.jobs["generate-matrix"] ?? {};
   if (!sameMembers(needs(matrix), ["base-image-publication"])) {
-    errors.push("generate-matrix must wait for workload-source selection");
+    errors.push("generate-matrix must wait for complete managed-image publication");
   }
   const matrixOutputs = matrix.outputs ?? {};
   if ("dcode_base_contract" in matrixOutputs || "dcode_base_ref" in matrixOutputs) {
     errors.push("generate-matrix must not relay Deep Agents Code base outputs");
-  }
-  if (
-    matrixOutputs.managed_image_revision !==
-      "${{ needs.base-image-publication.outputs.managed_image_revision }}" ||
-    matrixOutputs.workload_source !== "${{ needs.base-image-publication.outputs.workload_source }}"
-  ) {
-    errors.push("generate-matrix must relay the selected workload source and image revision");
   }
   const live = workflow.jobs.live ?? {};
   if (!sameMembers(needs(live), ["base-image-publication", "generate-matrix"])) {
@@ -751,34 +770,53 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   if (!sameMembers(needs(cloudOnboard), ["base-image-publication", "generate-matrix"])) {
     errors.push("cloud-onboard must wait for matrix generation and base-image publication");
   }
-  const mcpBridge = workflow.jobs["mcp-bridge"] ?? {};
-  if (!sameMembers(needs(mcpBridge), ["base-image-publication", "generate-matrix"])) {
-    errors.push("mcp-bridge must wait for matrix generation and base-image publication");
+  if (
+    cloudOnboard.env?.E2E_MANAGED_IMAGE_REVISION !==
+    "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}"
+  ) {
+    errors.push(
+      "cloud-onboard must use the selected managed-image revision when no exact PR catalog is present",
+    );
+  }
+  if (
+    live.env?.E2E_MANAGED_IMAGE_REVISION !==
+      "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}"
+  ) {
+    errors.push(
+      "live stock onboarding must use the selected managed-image revision when no exact PR catalog is present",
+    );
   }
   for (const jobName of [
-    "cloud-onboard",
-    "hermes-gpu-startup",
-    "live",
-    "mcp-bridge",
-    "mcp-bridge-dev",
-    "openshell-credential-generation-window",
+    "catalogue-standard",
+    "catalogue-nvidia-api",
+    "catalogue-nvidia-inference",
+    "catalogue-github-read",
+    "catalogue-brave-nvidia-inference",
   ]) {
-    const job = workflow.jobs[jobName] ?? {};
+    const catalogue = workflow.jobs[jobName] ?? {};
+    if (!sameMembers(needs(catalogue), ["base-image-publication", "generate-matrix"])) {
+      errors.push(`${jobName} must wait for matrix generation and base-image publication`);
+    }
     if (
-      job.env?.E2E_MANAGED_IMAGE_REVISION !==
-        "${{ needs.generate-matrix.outputs.managed_image_revision }}" ||
-      job.env?.E2E_WORKLOAD_SOURCE !== "${{ needs.generate-matrix.outputs.workload_source }}"
+      catalogue.with?.managed_image_revision !==
+      "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}"
     ) {
-      errors.push(`${jobName} must use the selected workload source and image revision`);
+      errors.push(
+        `${jobName} must use the selected managed-image revision when no exact PR catalog is present`,
+      );
+    }
+    if (
+      catalogue.with?.managed_image_catalog !==
+      "${{ needs.generate-matrix.outputs.managed_image_catalog }}"
+    ) {
+      errors.push(`${jobName} must pass the selected exact PR managed-image catalog`);
     }
   }
   if (
     live.env?.NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF !==
-    "${{ needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.dcode_base_ref || '' }}"
+      "${{ needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.dcode_base_ref || '' }}"
   ) {
-    errors.push(
-      "live DCode must bind the published base only for managed images and leave local base resolution to the candidate checkout",
-    );
+    errors.push("live DCode must use the selected immutable base reference");
   }
   const evidence = findStep(live, "Record immutable Deep Agents Code base evidence");
   const upload = findStep(live, "Upload E2E artifacts");
@@ -810,6 +848,62 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     ])
   ) {
     errors.push("staging-brev-launchable-identity must wait only for generate-matrix");
+  }
+  return errors;
+}
+
+const STOCK_ONBOARDING_JOBS = [
+  "live",
+  "mcp-bridge",
+  "openshell-credential-generation-window",
+  "mcp-bridge-dev",
+  "hermes-e2e",
+  "hermes-gpu-startup",
+  "cloud-onboard",
+  "messaging-providers",
+] as const;
+
+const STOCK_ONBOARDING_CATALOGUE_JOBS = [
+  "catalogue-standard",
+  "catalogue-nvidia-api",
+  "catalogue-nvidia-inference",
+  "catalogue-github-read",
+  "catalogue-brave-nvidia-inference",
+] as const;
+
+const MANAGED_IMAGE_REVISION_EXPRESSION =
+  "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}";
+const MANAGED_IMAGE_RECEIPT_EXPRESSION =
+  "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}";
+
+/** Require publication success and one exact cohort revision for every stock onboarding job. */
+export function validateStockOnboardingPublicationBoundary(
+  workflow: OperationsWorkflow,
+): string[] {
+  const errors: string[] = [];
+  for (const jobName of STOCK_ONBOARDING_JOBS) {
+    const job = workflow.jobs[jobName] ?? {};
+    if (!needs(job).includes("base-image-publication")) {
+      errors.push(`${jobName} must depend on base-image-publication before stock onboarding`);
+    }
+    if (job.env?.E2E_MANAGED_IMAGE_REVISION !== MANAGED_IMAGE_REVISION_EXPRESSION) {
+      errors.push(`${jobName} must receive the selected managed-image cohort revision`);
+    }
+    if (job.env?.E2E_MANAGED_IMAGE_COHORT_RECEIPT !== MANAGED_IMAGE_RECEIPT_EXPRESSION) {
+      errors.push(`${jobName} must receive the complete selected managed-image cohort receipt`);
+    }
+  }
+  for (const jobName of STOCK_ONBOARDING_CATALOGUE_JOBS) {
+    const job = workflow.jobs[jobName] ?? {};
+    if (!needs(job).includes("base-image-publication")) {
+      errors.push(`${jobName} must depend on base-image-publication before stock onboarding`);
+    }
+    if (job.with?.managed_image_revision !== MANAGED_IMAGE_REVISION_EXPRESSION) {
+      errors.push(`${jobName} must pass the selected managed-image cohort revision`);
+    }
+    if (job.with?.managed_image_receipt !== MANAGED_IMAGE_RECEIPT_EXPRESSION) {
+      errors.push(`${jobName} must pass the complete selected managed-image cohort receipt`);
+    }
   }
   return errors;
 }
@@ -880,7 +974,7 @@ function validateRelevantE2e(errors: string[], workflow: OperationsWorkflow): vo
   const job = workflow.jobs["relevant-e2e"] ?? {};
   const expectedCondition =
     "${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'push' }}";
-  if (job.name !== "Results / Require selected jobs" || job.if !== expectedCondition) {
+  if (job.name !== "Relevant E2E" || job.if !== expectedCondition) {
     errors.push("relevant-e2e must be the stable aggregate check for main pushes");
   }
   if (!isDeepStrictEqual(permissionMap(job.permissions), { contents: "read" })) {
@@ -1348,6 +1442,7 @@ export function validateE2eOperationsWorkflow(
     workflow as unknown as Record<string, unknown>,
   );
   errors.push(...validateBaseImagePublicationGate(workflow));
+  errors.push(...validateStockOnboardingPublicationBoundary(workflow));
   validateManualPrDispatch(errors, workflow);
   validatePrGateEvidenceProducers(errors, workflow);
   validateAggregation(errors, workflow);

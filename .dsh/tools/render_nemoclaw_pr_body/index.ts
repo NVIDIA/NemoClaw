@@ -4,10 +4,13 @@
 export default async function render_nemoclaw_pr_body(input: {
   workdir: string;
   baseRef?: string;
-  summary: string;
+  outcome: string;
+  reason: string;
   changes: string[];
-  relatedIssue?: { number: Integer; keyword: "Fixes" | "Closes" };
-  typeOfChange: "code" | "code-with-docs" | "docs-prose" | "docs-code-samples";
+  relatedIssues?: {
+    number: Integer;
+    keyword: "Fixes" | "Closes" | "Resolves" | "Refs" | "Relates to" | "Part of";
+  }[];
   tests: {
     result: "added-or-updated" | "existing" | "not-applicable";
     evidence?: string;
@@ -18,16 +21,16 @@ export default async function render_nemoclaw_pr_body(input: {
   hooks: { passed: boolean; evidence?: string };
   broadGate?: { passed: boolean; evidence: string };
   docs?: { buildPassed?: boolean; styleReviewed?: boolean; newPagesValidated?: boolean };
-  dgxStation?: { testedCommit: string; scenario: string; result: string; evidenceUrl: string };
+  dgxStation?: {
+    testedCommit: string;
+    scenario: string;
+    result: string;
+    evidenceUrl: string;
+    exceptionReason?: string;
+  };
   dco: { commitsVerified: boolean; name: string; email: string };
   noSecrets: boolean;
-}): Promise<{
-  body: string;
-  templateSha: string;
-  selectedChecks: string[];
-  blockers: string[];
-  warnings: string[];
-}> {
+}): Promise<{ body: string; blockers: string[] }> {
   const rejectControlCharacters = (value) => {
     if (typeof value === "string" && /[\u0000-\u001f\u007f]/.test(value))
       throw new Error("PR body inputs must not contain control characters");
@@ -47,15 +50,16 @@ export default async function render_nemoclaw_pr_body(input: {
   )
     throw new Error("baseRef must be a valid Git revision");
   const line = (value, label) => {
-    if (typeof value !== "string" || !value.trim() || /[\r\n]/.test(value))
-      throw new Error(label + " must be one non-empty line");
+    if (typeof value !== "string" || !value.trim() || value.length > 4000 || /[\r\n]/.test(value))
+      throw new Error(label + " must be one non-empty line of at most 4000 characters");
     return value.trim();
   };
   if (typeof input.workdir !== "string" || !input.workdir.trim())
     throw new Error("workdir is required");
-  const summary = line(input.summary, "summary");
-  if (!Array.isArray(input.changes) || input.changes.length === 0)
-    throw new Error("changes must not be empty");
+  const outcome = line(input.outcome, "outcome");
+  const reason = line(input.reason, "reason");
+  if (!Array.isArray(input.changes) || input.changes.length === 0 || input.changes.length > 100)
+    throw new Error("changes must contain 1 to 100 entries");
   const changes = input.changes.map((value, index) => line(value, "change " + index));
   const template = await tools.bash({
     command: "git show " + quote(baseRef + ":.github/PULL_REQUEST_TEMPLATE.md"),
@@ -65,160 +69,134 @@ export default async function render_nemoclaw_pr_body(input: {
   });
   if (template.kind !== "foreground" || template.exitCode !== 0)
     throw new Error("Could not read trusted pull request template");
-  const tree = await tools.bash({
-    command: "git rev-parse --verify " + quote(baseRef + "^{tree}"),
-    workdir: input.workdir,
-    description: "Resolve trusted template tree",
-    timeoutMs: 10000,
-  });
-  if (tree.kind !== "foreground" || tree.exitCode !== 0)
-    throw new Error("Could not resolve trusted template tree");
-  const types = {
-    code: "Code change (feature, bug fix, or refactor)",
-    "code-with-docs": "Code change with doc updates",
-    "docs-prose": "Doc only (prose changes, no code sample modifications)",
-    "docs-code-samples": "Doc only (includes code sample changes)",
-  };
-  if (!types[input.typeOfChange]) throw new Error("Unsupported typeOfChange");
+  const trustedTemplate = template.stdout.text;
+  for (const heading of [
+    "## Outcome",
+    "## Reason",
+    "## Changes",
+    "## Verification",
+    "## Review notes",
+  ])
+    if (!trustedTemplate.includes(heading))
+      throw new Error("Trusted pull request template is missing " + heading);
   const tests = input.tests;
   if (!tests || !["added-or-updated", "existing", "not-applicable"].includes(tests.result))
     throw new Error("tests.result is invalid");
-  const blockers = [],
-    warnings = [],
-    selected = [];
+  const blockers = [];
   if (tests.result !== "not-applicable" && !tests.evidence)
     blockers.push("Test evidence is required.");
   if (tests.result !== "added-or-updated" && !tests.justification)
     blockers.push("Test justification is required.");
+  if (!input.hooks || input.hooks.passed !== true)
+    blockers.push("Hook or validate:pr evidence is required.");
+  if (input.noSecrets !== true) blockers.push("No-secrets confirmation is required.");
+  if (!input.dco || input.dco.commitsVerified !== true)
+    blockers.push("Every commit must appear as Verified.");
+  const dcoName = typeof input.dco?.name === "string" ? input.dco.name.trim() : "";
+  const dcoEmail = typeof input.dco?.email === "string" ? input.dco.email.trim() : "";
+  if (!dcoName) blockers.push("DCO name is required.");
+  if (!dcoEmail) blockers.push("DCO email is required.");
   const sensitive = input.sensitivePath ?? { changed: false };
   if (sensitive.changed && !sensitive.reviewEvidence)
     blockers.push("Sensitive-path review evidence or a waiver is required.");
-  if (input.dco.commitsVerified !== true) blockers.push("Every commit must appear as Verified.");
-  const check = (label, on, detail) => {
-    if (on) selected.push(label);
-    return "- [" + (on ? "x" : " ") + "] " + label + (detail ? " " + detail : "");
-  };
-  const out = ["<!-- markdownlint-disable MD041 -->", "## Summary", "", summary, ""];
-  if (input.relatedIssue) {
+  const keywords = ["Fixes", "Closes", "Resolves", "Refs", "Relates to", "Part of"];
+  const relatedIssues = input.relatedIssues ?? [];
+  if (!Array.isArray(relatedIssues) || relatedIssues.length > 20)
+    throw new Error("relatedIssues must contain at most 20 issues");
+  for (const issue of relatedIssues)
     if (
-      !Number.isSafeInteger(input.relatedIssue.number) ||
-      input.relatedIssue.number < 1 ||
-      !["Fixes", "Closes"].includes(input.relatedIssue.keyword)
+      !Number.isSafeInteger(issue.number) ||
+      issue.number < 1 ||
+      !keywords.includes(issue.keyword)
     )
-      throw new Error("relatedIssue is invalid");
-    out.push(
-      "## Related Issue",
-      "",
-      input.relatedIssue.keyword + " #" + input.relatedIssue.number,
-      "",
+      throw new Error("relatedIssues contains an invalid relationship");
+  const verification = [];
+  const addEvidence = (label, detail) => {
+    verification.push("- " + label + ": " + line(detail, label));
+  };
+  addEvidence(
+    "Contributor validation",
+    input.hooks?.evidence ?? (input.hooks?.passed ? "Normal hooks passed" : "Missing"),
+  );
+  if (tests.result === "not-applicable")
+    addEvidence(
+      "Tests",
+      "Not applicable — " + (tests.justification?.trim() || "Missing justification"),
+    );
+  else addEvidence("Tests", tests.evidence?.trim() || "Missing evidence");
+  if (input.broadGate?.passed === true) addEvidence("Broad gate", input.broadGate.evidence);
+  if (input.docs?.buildPassed === true) addEvidence("Documentation build", "npm run docs passed");
+  if (input.docs?.styleReviewed === true) addEvidence("Documentation style", "Review completed");
+  if (input.docs?.newPagesValidated === true)
+    addEvidence("New documentation pages", "SPDX headers and frontmatter validated");
+  addEvidence("Secrets review", "The diff contains no secrets, API keys, or credentials");
+  const reviewNotes = [];
+  if (sensitive.changed && sensitive.reviewEvidence)
+    reviewNotes.push(
+      "- Sensitive-path review: " + line(sensitive.reviewEvidence, "Sensitive-path review"),
+    );
+  if (input.ciWaiver) {
+    if (!Number.isSafeInteger(input.ciWaiver.followUpIssue) || input.ciWaiver.followUpIssue < 1)
+      throw new Error("ciWaiver.followUpIssue must be positive");
+    reviewNotes.push(
+      "- CI exception: " +
+        line(input.ciWaiver.check, "CI check") +
+        "; approval: " +
+        line(input.ciWaiver.approval, "CI approval") +
+        "; follow-up: #" +
+        input.ciWaiver.followUpIssue,
     );
   }
-  out.push(
-    "## Changes",
-    "",
-    ...changes.map((value) => "- " + value),
-    "",
-    "## Type of Change",
-    "",
-    check(types.code, input.typeOfChange === "code"),
-    check(types["code-with-docs"], input.typeOfChange === "code-with-docs"),
-    check(types["docs-prose"], input.typeOfChange === "docs-prose"),
-    check(types["docs-code-samples"], input.typeOfChange === "docs-code-samples"),
-    "",
-    "## Quality Gates",
-    "",
-    check("Tests added or updated for changed behavior", tests.result === "added-or-updated"),
-    check(
-      "Existing tests cover changed behavior — justification:",
-      tests.result === "existing",
-      tests.justification,
-    ),
-    check(
-      "Tests not applicable — justification:",
-      tests.result === "not-applicable",
-      tests.justification,
-    ),
-    check(
-      "Sensitive paths changed (security, policy, credentials, preflight, onboarding, inference, runner, sandbox, or messaging)",
-      sensitive.changed,
-    ),
-    check(
-      "Sensitive-path review completed or maintainer-approved waiver recorded — reviewer/approval link/justification:",
-      sensitive.changed && Boolean(sensitive.reviewEvidence),
-      sensitive.reviewEvidence,
-    ),
-    check(
-      "Non-success, skipped, or missing CI check accepted by maintainer — check name, approval link, and follow-up issue:",
-      Boolean(input.ciWaiver),
-      input.ciWaiver
-        ? input.ciWaiver.check +
-            "; " +
-            input.ciWaiver.approval +
-            "; #" +
-            input.ciWaiver.followUpIssue
-        : undefined,
-    ),
-    "",
-    "## DGX Station Hardware Evidence",
-    "",
-    check("Tested on DGX Station", Boolean(input.dgxStation)),
-    "- Tested commit: " + (input.dgxStation?.testedCommit ?? ""),
-    "- Station profile/scenario: " + (input.dgxStation?.scenario ?? ""),
-    "- Result: " + (input.dgxStation?.result ?? ""),
-    "- Supporting evidence: " + (input.dgxStation?.evidenceUrl ?? ""),
-    "",
-    "## Verification",
-    "",
-    check(
-      "PR description includes a `Signed-off-by:` line and every commit appears as `Verified` in GitHub",
-      input.dco.commitsVerified === true,
-    ),
-    check(
-      "Normal `pre-commit`, `commit-msg`, and `pre-push` hooks passed, or `npm run validate:pr` passed after refreshing `origin/main` when hooks were skipped or unavailable",
-      input.hooks.passed === true,
-      input.hooks.evidence ? "— " + input.hooks.evidence : undefined,
-    ),
-    check(
-      "Targeted behavior tests pass for the current change set, or tests are marked not applicable above — command/result or justification:",
-      tests.result === "not-applicable" || Boolean(tests.evidence),
-      tests.evidence,
-    ),
-    check(
-      "Applicable broad gate passed — `npm test` for broad runtime/test-harness changes; `npm run check` for repo-wide validation/coverage changes — command/result:",
-      input.broadGate?.passed === true,
-      input.broadGate?.evidence,
-    ),
-    check(
-      "Quality Gates section completed with required justifications or waivers",
-      blockers.length === 0,
-    ),
-    check("No secrets, API keys, or credentials committed", input.noSecrets === true),
-    check(
-      "`npm run docs` builds without warnings (doc changes only)",
-      input.docs?.buildPassed === true,
-    ),
-    check(
-      "Doc pages follow the style guide (doc changes only)",
-      input.docs?.styleReviewed === true,
-    ),
-    check(
-      "New doc pages include SPDX header and frontmatter (new pages only)",
-      input.docs?.newPagesValidated === true,
-    ),
-    "",
-    "---",
-    "Signed-off-by: " +
-      line(input.dco.name, "DCO name") +
-      " <" +
-      line(input.dco.email, "DCO email") +
-      ">",
-    "",
-  );
-  return {
-    body: out.join("\n"),
-    templateSha: tree.stdout.text.trim(),
-    selectedChecks: selected,
-    blockers,
-    warnings,
+  if (input.dgxStation) {
+    reviewNotes.push(
+      "- DGX Station tested commit: " + line(input.dgxStation.testedCommit, "DGX tested commit"),
+      "- DGX Station profile or scenario: " + line(input.dgxStation.scenario, "DGX scenario"),
+      "- DGX Station result: " + line(input.dgxStation.result, "DGX result"),
+      "- DGX Station supporting evidence: " + line(input.dgxStation.evidenceUrl, "DGX evidence"),
+    );
+    if (input.dgxStation.exceptionReason)
+      reviewNotes.push(
+        "- DGX Station exception: " + line(input.dgxStation.exceptionReason, "DGX exception"),
+      );
+  }
+  const replaceSection = (body, heading, content, nextHeadingPattern) => {
+    const pattern = new RegExp(
+      "(^|\\n)(" + heading + ")\\n[\\s\\S]*?(?=\\n" + nextHeadingPattern + "|$)",
+      "u",
+    );
+    if (!pattern.test(body)) throw new Error("Trusted template is missing " + heading);
+    return body.replace(
+      pattern,
+      (_, prefix, title) => prefix + title + "\n\n" + content.trim() + "\n",
+    );
   };
+  let body = trustedTemplate.replace(/<!--(?! markdownlint-disable MD041)[\s\S]*?-->/gu, "").trim();
+  body = replaceSection(body, "## Outcome", outcome, "## Reason");
+  let reasonContent = reason;
+  if (relatedIssues.length)
+    reasonContent +=
+      "\n\n### Related issues\n\n" +
+      relatedIssues.map((issue) => issue.keyword + " #" + issue.number).join("\n");
+  body = replaceSection(body, "## Reason", reasonContent, "## Changes");
+  body = replaceSection(
+    body,
+    "## Changes",
+    changes.map((value) => "- " + value).join("\n"),
+    "## Verification",
+  );
+  body = replaceSection(body, "## Verification", verification.join("\n"), "## Review notes|---");
+  if (reviewNotes.length)
+    body = replaceSection(body, "## Review notes", reviewNotes.join("\n"), "---");
+  else body = body.replace(/\n## Review notes\n[\s\S]*?(?=\n---)/u, "");
+  body = body.replace(
+    /Signed-off-by: [^\n]*/u,
+    "Signed-off-by: " +
+      (dcoName || "Missing DCO name") +
+      " <" +
+      (dcoEmail || "missing-dco-email") +
+      ">",
+  );
+  body = body.trim() + "\n";
+  if (body.length > 60000) throw new Error("Rendered PR body exceeds 60000 characters");
+  return { body, blockers };
 }

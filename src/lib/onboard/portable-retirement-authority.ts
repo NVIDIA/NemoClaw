@@ -6,7 +6,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual, TextDecoder } from "node:util";
 
-import { acquireOnboardLock, normalizeSession, releaseOnboardLock } from "../state/onboard-session";
+import {
+  acquireOnboardLock,
+  assertOnboardLockOwned,
+  normalizeSession,
+  releaseOnboardLock,
+  type LockResult,
+} from "../state/onboard-session";
 import { assertHermesPortableUninstallCompleteForOnboarding } from "../state/hermes-portable-uninstall/journal";
 import {
   inspectPortableOnboardSupersession,
@@ -546,19 +552,29 @@ export async function supersedePortableRetirementAfterCompletedOnboard(
   );
 }
 
+export function printPortableOnboardLockContention(
+  displayName: string,
+  lockResult: LockResult,
+): void {
+  console.error(`  Another ${displayName} onboarding run is already in progress.`);
+  if (lockResult.holderPid) console.error(`  Lock holder PID: ${lockResult.holderPid}`);
+  if (lockResult.holderStartedAt) console.error(`  Started: ${lockResult.holderStartedAt}`);
+  console.error("  Wait for the active onboarding run to finish.");
+  console.error(
+    "  If the recorded process is no longer running, rerun this command; NemoClaw verifies stale ownership before removing its lock.",
+  );
+}
+
 export function beginPortableOnboardRetirementEntry(
   options: PortableOnboardRetirementEntryOptions,
 ) {
   const ownsOnboardLock = !options.alreadyHeld;
+  if (!ownsOnboardLock) assertOnboardLockOwned();
   const lockResult = ownsOnboardLock
     ? acquireOnboardLock(options.command)
     : { acquired: true as const };
   if (!lockResult.acquired) {
-    console.error(`  Another ${options.displayName} onboarding run is already in progress.`);
-    if (lockResult.holderPid) console.error(`  Lock holder PID: ${lockResult.holderPid}`);
-    if (lockResult.holderStartedAt) console.error(`  Started: ${lockResult.holderStartedAt}`);
-    console.error("  Wait for it to finish, or remove the stale lock if the previous run crashed:");
-    console.error(`    rm -f "${lockResult.lockFile}"`);
+    printPortableOnboardLockContention(options.displayName, lockResult);
     process.exit(1);
   }
   const boundary: PortableOnboardRetirementBoundary = {

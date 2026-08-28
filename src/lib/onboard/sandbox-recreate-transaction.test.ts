@@ -1033,6 +1033,49 @@ describe("source registry fingerprint", () => {
     }
   });
 
+  it("survives owned MCP policy preparation while retaining policy authority", () => {
+    const sourceEntry: SandboxEntry = {
+      ...SOURCE_ENTRY,
+      lifecycleGeneration: TARGET_GENERATION,
+      lifecycleLiveIdentityFingerprint: SOURCE_ID,
+      policyAuthority: "nemoclaw-managed",
+      policyCreationReceipt: {
+        schemaVersion: 1,
+        origin: "sandbox-create",
+        gatewayName: "nemoclaw-31818",
+        gatewayPort: 31818,
+        sandboxName: "alpha",
+        lifecycleGeneration: TARGET_GENERATION,
+        sandboxIdentityFingerprint: SOURCE_ID,
+        policyHash: "policy-before",
+        policyVersion: 1,
+      },
+      policies: ["mcp-search"],
+      customPolicies: [{ name: "mcp-search", content: "network_policies: {}" }],
+      mcp: { bridges: {}, managedServerNames: ["search"] },
+    };
+    const journaled = fingerprintSandboxRegistryEntry(sourceEntry);
+    const preparedEntry: SandboxEntry = {
+      ...sourceEntry,
+      policyCreationReceipt: {
+        ...sourceEntry.policyCreationReceipt!,
+        policyHash: "policy-after",
+        policyVersion: 2,
+      },
+      policies: [],
+      customPolicies: [],
+      mcp: { bridges: {}, managedServerNames: [] },
+    };
+
+    expect(fingerprintSandboxRegistryEntry(preparedEntry)).toBe(journaled);
+    expect(
+      fingerprintSandboxRegistryEntry({
+        ...preparedEntry,
+        policyAuthority: "externally-managed",
+      }),
+    ).not.toBe(journaled);
+  });
+
   it("changes when the row records another sandbox", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-recreate-journal-"));
     vi.stubEnv("HOME", home);

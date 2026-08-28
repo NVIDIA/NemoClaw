@@ -6,7 +6,7 @@ import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { TestProgress, TestProgressCapability } from "../fixtures/progress.ts";
 import { redactString } from "../fixtures/redaction.ts";
-import { resolveLiveE2eWorkloadSourceEnv } from "../fixtures/workload-source-env.ts";
+import { resolveLiveE2eWorkloadSourceEnv } from "../fixtures/shell-probe.ts";
 import {
   projectRawOutputForArtifact,
   type RawArtifactOutputMode,

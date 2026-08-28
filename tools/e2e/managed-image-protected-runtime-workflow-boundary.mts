@@ -122,7 +122,6 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/managed-image-protected-runtime",
     E2E_JOB: "1",
     E2E_TARGET_ID: JOB_ID,
-    E2E_WORKLOAD_SOURCE: "${{ needs.generate-matrix.outputs.workload_source }}",
     RELEASE_E2E_ACTIVATION_PATH: ACTIVATION_PATH,
     NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha }}",
     NEMOCLAW_E2E_SHARD: "linux-amd64-gpu",
@@ -134,8 +133,6 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
       "${{ github.workspace }}/.protected-managed-image-build-cache/linux-amd64",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT:
       "protected-managed-image-build-cache-${{ github.run_id }}-${{ inputs.checkout_sha || github.sha }}",
-    NEMOCLAW_PROTECTED_LOCAL_BASE_CONTRACT:
-      "${{ github.workspace }}/.protected-managed-image-build-cache/linux-amd64/local-bases.json",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT:
       "protected-${{ github.run_id }}-${{ github.run_attempt }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT:
@@ -266,11 +263,6 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     workflowSteps,
     "Resolve reviewed Hermes runtime base image",
   );
-  if (
-    hermesBase?.if !== "${{ needs.generate-matrix.outputs.workload_source == 'managed-image' }}"
-  ) {
-    errors.push(`${JOB_ID} must resolve the reviewed Hermes base only for managed images`);
-  }
   if (hermesBase?.uses !== REVIEWED_HERMES_PLATFORM_ACTION) {
     errors.push(`${JOB_ID} must use the shared reviewed Hermes platform resolver`);
   }
@@ -281,29 +273,9 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
 
   const bases = requireStep(errors, workflowSteps, "Resolve exact amd64 runtime base images");
   requireValues(errors, `${JOB_ID} runtime base env`, record(bases?.env), {
-    CHECKOUT_SHA: "${{ inputs.checkout_sha || github.sha }}",
     DCODE_BASE_REF: "${{ needs.base-image-publication.outputs.dcode_base_ref }}",
-    HERMES_BASE_DIGEST: "${{ steps.runtime-hermes-base.outputs.digest }}",
-    WORKLOAD_SOURCE: "${{ needs.generate-matrix.outputs.workload_source }}",
   });
   requireFragments(errors, bases, [
-    'case "$WORKLOAD_SOURCE" in',
-    "local-dockerfile)",
-    "Protected runtime workload source is invalid",
-    '[[ -f "$NEMOCLAW_PROTECTED_LOCAL_BASE_CONTRACT" && ! -L "$NEMOCLAW_PROTECTED_LOCAL_BASE_CONTRACT" ]]',
-    'kind == "nemoclaw-protected-local-bases-v1"',
-    ".revision == $revision",
-    '--file "$candidate_root/$dockerfile"',
-    "--platform linux/amd64",
-    "--push",
-    "--network=none",
-    '--cache-from "type=local,src=${cache_source}"',
-    'actual_digest="$(jq -er \'."containerimage.digest"\' "$metadata")"',
-    '[[ "$actual_digest" == "$expected_digest" ]]',
-    "rebuild_local_base openclaw Dockerfile.base",
-    "rebuild_local_base hermes agents/hermes/Dockerfile.base",
-    "rebuild_local_base dcode agents/langchain-deepagents-code/Dockerfile.base",
-    '"$E2E_ARTIFACT_DIR/local-bases.json"',
     'docker buildx imagetools inspect "$alias" --raw',
     '.platform.os == "linux" and .platform.architecture == "amd64"',
     'reference="${repository}@${digest}"',
@@ -346,7 +318,8 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     '--dcode-base "$BASE_DCODE"',
   ]);
   requireValues(errors, `${JOB_ID} protected runtime build bases`, record(build?.env), {
-    BASE_HERMES: "${{ steps.runtime-bases.outputs.hermes }}",
+    BASE_HERMES:
+      "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${{ steps.runtime-hermes-base.outputs.digest }}",
   });
 
   const install = requireStep(errors, workflowSteps, "Install OpenShell CLI");
@@ -408,9 +381,9 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     "Download exact protected runtime build cache",
     "Prepare E2E workspace",
     "Validate protected runtime activation contract",
-    "Start isolated protected runtime registry",
     "Resolve reviewed Hermes runtime base image",
     "Resolve exact amd64 runtime base images",
+    "Start isolated protected runtime registry",
     "Build exact all-agent protected runtime images",
     "Install OpenShell CLI",
     "Run all-agent GPU, local inference, rollback, and cleanup qualification",

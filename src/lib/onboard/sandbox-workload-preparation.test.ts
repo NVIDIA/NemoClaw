@@ -293,7 +293,7 @@ describe("sandbox workload preparation", () => {
           catalogPath,
           expectedCatalogRevision: "b".repeat(40),
         }),
-      ).rejects.toThrow("does not match the live E2E candidate revision");
+      ).rejects.toThrow("does not match the trusted catalog revision");
     } finally {
       fs.rmSync(fixtureRoot, { force: true, recursive: true });
     }
@@ -319,6 +319,28 @@ describe("sandbox workload preparation", () => {
     } finally {
       fs.rmSync(fixtureRoot, { force: true, recursive: true });
     }
+  });
+
+  it("rejects a registry catalog that does not match its trusted revision", async () => {
+    await expect(
+      prepareSandboxWorkloadSource(
+        {
+          ...input("hermes"),
+          version: "0.1.0",
+          catalogRevision: "b".repeat(40),
+        },
+        { resolveCatalog: async () => CATALOG },
+      ),
+    ).rejects.toThrow("does not match the trusted catalog revision");
+  });
+
+  it("rejects a cross-release catalog without an exact trusted revision", async () => {
+    await expect(
+      prepareSandboxWorkloadSource(
+        { ...input("langchain-deepagents-code"), version: "0.1.0" },
+        { resolveCatalog: async () => CATALOG },
+      ),
+    ).rejects.toThrow("belongs to 'v0.0.97', not 'v0.1.0'");
   });
 
   it("loads an exact local all-agent catalog without using the registry resolver (#7744)", async () => {

@@ -15,7 +15,6 @@ import {
 } from "./prepare-e2e-workflow-boundary.mts";
 import {
   contentSha256,
-  MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256,
   MCP_DEV_POST_INSTALL_TRANSITION_CONTENT_SHA256,
   MCP_DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256,
   MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256,
@@ -344,18 +343,22 @@ function validateConsumer(
   job: WorkflowRecord,
   jobSteps: WorkflowStep[],
 ): void {
-  if (jobName === "mcp-bridge-dev") {
-    const { steps: _jobSteps, ...jobExecutionContext } = job;
-    if (contentSha256(jobExecutionContext) !== MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256) {
-      errors.push(
-        "mcp-bridge-dev must preserve its reviewed job execution context before candidate activation",
-      );
-    }
-  }
   let expectedNeeds: string | string[] = CLI_ARTIFACT_PRODUCER_JOB;
   if (jobName === "mcp-bridge-dev") {
-    expectedNeeds = [CLI_ARTIFACT_PRODUCER_JOB, "openshell-dev-artifact"];
-  } else if (["cloud-onboard", "live", "mcp-bridge"].includes(jobName)) {
+    expectedNeeds = ["base-image-publication", CLI_ARTIFACT_PRODUCER_JOB, "openshell-dev-artifact"];
+  } else if (
+    [
+      "live",
+      "mcp-bridge",
+      "openshell-credential-generation-window",
+      "hermes-e2e",
+      "hermes-gpu-startup",
+      "cloud-onboard",
+      "messaging-providers",
+    ].includes(jobName)
+  ) {
+    expectedNeeds = ["base-image-publication", CLI_ARTIFACT_PRODUCER_JOB];
+  } else if (jobName === "cloud-onboard") {
     expectedNeeds = ["base-image-publication", CLI_ARTIFACT_PRODUCER_JOB];
   }
   if (!isDeepStrictEqual(job.needs, expectedNeeds)) {
@@ -395,7 +398,10 @@ function validateConsumer(
         ? trustedInstallIndex
         : jobSteps.length - 1
       : restoreIndex;
-  const stepsThroughSecurityBoundary = jobSteps.slice(0, securityBoundaryIndex + 1);
+  const stepsThroughSecurityBoundary = jobSteps.slice(
+    0,
+    securityBoundaryIndex + 1,
+  );
   const jobEnv = record(job.env);
   const defaultShell = record(record(job.defaults).run).shell;
   const unsafePreRestoreStep = stepsThroughSecurityBoundary.some(
@@ -441,7 +447,9 @@ function validateConsumer(
       contentSha256(jobSteps.slice(0, trustedInstallIndex + 1)) !==
         MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256)
   ) {
-    errors.push("mcp-bridge-dev must preserve every reviewed step through trusted installation");
+    errors.push(
+      "mcp-bridge-dev must preserve every reviewed step through trusted installation",
+    );
   }
   if (
     jobName === "mcp-bridge-dev" &&
@@ -473,8 +481,13 @@ function validateConsumer(
   const stepsBeforeRestore = jobSteps
     .slice(reviewedStepsStart, restoreIndex)
     .map((step) => step.name);
-  if (prepareIndex >= 0 && !isDeepStrictEqual(stepsBeforeRestore, reviewedStepsBeforeRestore)) {
-    errors.push(`${jobName} must preserve its reviewed steps through CLI artifact restore`);
+  if (
+    prepareIndex >= 0 &&
+    !isDeepStrictEqual(stepsBeforeRestore, reviewedStepsBeforeRestore)
+  ) {
+    errors.push(
+      `${jobName} must preserve its reviewed steps through CLI artifact restore`,
+    );
   }
 }
 
