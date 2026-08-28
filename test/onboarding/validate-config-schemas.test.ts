@@ -1,0 +1,1496 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+/**
+ * Exercise config JSON Schemas with focused synthetic fixtures.
+ *
+ * Checked-in config files are validated by scripts/validate-configs.mts. This
+ * suite protects schema behavior without coupling it to those config values.
+ */
+
+import type { ValidateFunction } from "ajv/dist/2020.js";
+import { describe, expect, it } from "vitest";
+
+import { compileConfigSchema, discoverTargets } from "../../scripts/validate-configs.mts";
+
+type LooseScalar = string | number | boolean | null;
+type LooseValue = LooseScalar | LooseObject | LooseValue[];
+type LooseObject = { [key: string]: LooseValue };
+
+function isLooseValue(value: LooseValue | object | undefined): value is LooseValue {
+  if (value === null) return true;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return true;
+  }
+  if (Array.isArray(value)) {
+    return value.every((entry) => isLooseValue(entry));
+  }
+  return isLooseObject(value);
+}
+
+function isLooseObject(value: LooseValue | object | undefined): value is LooseObject {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.values(value).every((entry) => isLooseValue(entry))
+  );
+}
+
+function compileSchema(schemaRelPath: string): ValidateFunction {
+  return compileConfigSchema(schemaRelPath);
+}
+
+function asRecord(value: LooseValue | undefined): LooseObject {
+  return isLooseObject(value) ? value : {};
+}
+
+function cloneObject(value: LooseObject | undefined): LooseObject {
+  return { ...asRecord(value) };
+}
+
+function expectValid(validate: ValidateFunction, data: object, label: string): void {
+  const valid = validate(data);
+  if (!valid) {
+    const messages = (validate.errors ?? []).map((e) => `  ${e.instancePath || "/"}: ${e.message}`);
+    expect.unreachable(`${label} failed schema validation:\n${messages.join("\n")}`);
+  }
+}
+
+function l7SchemaFixture(kind: "sandbox" | "preset", endpoint: Record<string, unknown>): object {
+  const network_policies = {
+    test_service: {
+      name: "Test Service",
+      binaries: [{ path: "/usr/bin/node" }],
+      endpoints: [
+        {
+          host: "api.example.com",
+          port: 443,
+          ...endpoint,
+        },
+      ],
+    },
+  };
+  return kind === "sandbox"
+    ? { version: 1, network_policies }
+    : { preset: { name: "test", description: "test" }, network_policies };
+}
+
+function registerOpenShellJsonRpcMcpMatcherTests(
+  kind: "sandbox" | "preset",
+  validate: ValidateFunction,
+): void {
+  it("matches the OpenShell MCP method-profile contract", () => {
+    const profiled = l7SchemaFixture(kind, {
+      protocol: "mcp",
+      mcp: { allow_all_known_mcp_methods: true },
+      rules: [{ allow: { tool: "search" } }],
+      deny_rules: [{ params: { name: "admin" } }],
+    });
+    expectValid(validate, profiled, `${kind} profiled MCP selectors`);
+
+    const toolsFamilyGlob = l7SchemaFixture(kind, {
+      protocol: "mcp",
+      rules: [{ allow: { method: "tools/*" } }],
+    });
+    expectValid(validate, toolsFamilyGlob, `${kind} MCP tools-family method glob`);
+
+    const missingMethod = l7SchemaFixture(kind, {
+      protocol: "mcp",
+      mcp: { allow_all_known_mcp_methods: false },
+      rules: [{ allow: { tool: "search" } }],
+    });
+    expect(validate(missingMethod)).toBe(false);
+  });
+
+  it.each([
+    ["a bare wildcard method", { method: "*" }],
+    ["a non-tools method glob", { method: "vendor/*" }],
+    ["a tools-family glob plus selector", { method: "tools/*", tool: "search" }],
+    [
+      "both tool selector forms",
+      { method: "tools/call", tool: "search", params: { name: "search" } },
+    ],
+  ])("rejects MCP rules with %s", (_label, allow) => {
+    const fixture = l7SchemaFixture(kind, {
+      protocol: "mcp",
+      mcp: { allow_all_known_mcp_methods: true },
+      rules: [{ allow }],
+    });
+    expect(validate(fixture)).toBe(false);
+  });
+
+  it.each(["search*", { any: ["search", "admin?"] }])(
+    "rejects the wildcard MCP tool selector %# when strict names are disabled",
+    (tool) => {
+      const exact = l7SchemaFixture(kind, {
+        protocol: "mcp",
+        mcp: { strict_tool_names: false },
+        rules: [{ allow: { method: "tools/call", tool: "search" } }],
+      });
+      expectValid(validate, exact, `${kind} exact MCP tool selector`);
+
+      const wildcard = l7SchemaFixture(kind, {
+        protocol: "mcp",
+        mcp: { strict_tool_names: false },
+        rules: [{ allow: { method: "tools/call", tool } }],
+      });
+      expect(validate(wildcard)).toBe(false);
+    },
+  );
+
+  it("allows empty MCP matchers only under the allow-all method profile", () => {
+    const profiled = l7SchemaFixture(kind, {
+      protocol: "mcp",
+      mcp: { allow_all_known_mcp_methods: true },
+      rules: [{ allow: {} }],
+      deny_rules: [{}],
+    });
+    expectValid(validate, profiled, `${kind} empty profiled MCP matchers`);
+
+    const unprofiled = l7SchemaFixture(kind, {
+      protocol: "mcp",
+      rules: [{ allow: {} }],
+    });
+    expect(validate(unprofiled)).toBe(false);
+
+    const unprofiledDeny = l7SchemaFixture(kind, {
+      protocol: "mcp",
+      rules: [{ allow: { method: "tools/list" } }],
+      deny_rules: [{}],
+    });
+    expect(validate(unprofiledDeny)).toBe(false);
+  });
+
+  it.each([
+    ["an exact tools/call allow", [{ allow: { method: "tools/call" } }], undefined],
+    ["a tools-family wildcard allow", [{ allow: { method: "tools/*" } }], undefined],
+    ["an exact tools/call deny", [], [{ method: "tools/call" }]],
+    ["a tools-family wildcard deny", [], [{ method: "tools/*" }]],
+  ])("rejects a tool-specific allow combined with %s", (_label, extraRules, denyRules) => {
+    const fixture = l7SchemaFixture(kind, {
+      protocol: "mcp",
+      rules: [{ allow: { method: "tools/call", tool: "search" } }, ...(extraRules ?? [])],
+      ...(denyRules === undefined ? {} : { deny_rules: denyRules }),
+    });
+    expect(validate(fixture)).toBe(false);
+  });
+
+  it.each(["strict_tool_names", "allow_all_known_mcp_methods"])(
+    "keeps the %s MCP option off non-MCP protocols",
+    (option) => {
+      const invalid = l7SchemaFixture(kind, {
+        protocol: "json-rpc",
+        mcp: { max_body_bytes: 131072, [option]: true },
+        rules: [{ allow: { method: "ping" } }],
+      });
+      expect(validate(invalid)).toBe(false);
+    },
+  );
+
+  it("retains the body-size alias on non-MCP protocols", () => {
+    const bodySizeAlias = l7SchemaFixture(kind, {
+      protocol: "json-rpc",
+      mcp: { max_body_bytes: 131072 },
+      rules: [{ allow: { method: "ping" } }],
+    });
+    expectValid(validate, bodySizeAlias, `${kind} non-MCP body-size alias`);
+  });
+
+  it("accepts the sole JSON-RPC wildcard sentinel", () => {
+    const wildcard = l7SchemaFixture(kind, {
+      protocol: "json-rpc",
+      rules: [{ allow: { method: "*" } }],
+    });
+    expectValid(validate, wildcard, `${kind} JSON-RPC wildcard sentinel`);
+  });
+
+  it.each(["reports.*", "reports?", "reports[0]", "reports{admin}"])(
+    "rejects the JSON-RPC method glob %s",
+    (method) => {
+      const glob = l7SchemaFixture(kind, {
+        protocol: "json-rpc",
+        rules: [{ allow: { method } }],
+      });
+      expect(validate(glob)).toBe(false);
+    },
+  );
+}
+
+// ── Validation target discovery ─────────────────────────────────────────────
+
+describe("config validation target discovery", () => {
+  const targets = discoverTargets();
+  const filesBySchema = new Map(targets.map((target) => [target.schema, target.files]));
+  const sandboxPolicyFiles = filesBySchema.get("schemas/sandbox-policy.schema.json") ?? [];
+  const presetFiles = filesBySchema.get("schemas/policy-preset.schema.json") ?? [];
+
+  it("includes every binary-scoped sandbox policy family", () => {
+    expect(sandboxPolicyFiles).toEqual(
+      expect.arrayContaining([
+        "nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
+        "nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
+        "agents/hermes/policy-additions.yaml",
+        "agents/hermes/policy-permissive.yaml",
+        "agents/openclaw/policy-permissive.yaml",
+      ]),
+    );
+  });
+
+  it("discovers model-specific setup manifests", () => {
+    expect(filesBySchema.get("nemoclaw-blueprint/model-specific-setup/schema.json") ?? []).toEqual(
+      expect.arrayContaining([
+        "nemoclaw-blueprint/model-specific-setup/openclaw/kimi-k2.6-managed-inference.json",
+      ]),
+    );
+  });
+
+  it("discovers channel-owned messaging policy presets", () => {
+    expect(presetFiles).toEqual(
+      expect.arrayContaining([
+        "src/lib/messaging/channels/slack/policy/openclaw.yaml",
+        "src/lib/messaging/channels/slack/policy/hermes.yaml",
+        "src/lib/messaging/channels/telegram/policy/openclaw.yaml",
+        "src/lib/messaging/channels/telegram/policy/hermes.yaml",
+      ]),
+    );
+  });
+
+  it("includes the onboard performance budget config", () => {
+    expect(filesBySchema.get("schemas/onboard-config.schema.json") ?? []).toEqual([
+      "ci/onboard-performance-budget.json",
+    ]);
+  });
+});
+
+describe("network-policy.schema.json", () => {
+  const validate = compileSchema("schemas/network-policy.schema.json");
+
+  it("accepts a valid policy map as a direct validation target", () => {
+    expect(
+      validate({
+        test_service: {
+          name: "Test Service",
+          binaries: [{ path: "/usr/bin/node" }],
+          endpoints: [{ host: "api.example.com", port: 443, access: "full" }],
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it("accepts an OpenShell hostless L4 endpoint with explicit address ranges", () => {
+    expect(
+      validate({
+        open_internet: {
+          name: "Open internet",
+          binaries: [{ path: "/**" }],
+          endpoints: [
+            {
+              ports: [80, 443],
+              allowed_ips: ["1.0.0.0/8", "2000::/3"],
+            },
+          ],
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects a hostless endpoint without explicit address ranges", () => {
+    expect(
+      validate({
+        invalid: {
+          name: "Invalid",
+          binaries: [{ path: "/**" }],
+          endpoints: [{ port: 443 }],
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects an endpoint that declares both port forms", () => {
+    expect(
+      validate({
+        invalid: {
+          name: "Invalid",
+          binaries: [{ path: "/**" }],
+          endpoints: [{ host: "api.example.com", port: 443, ports: [80, 443] }],
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it.each([
+    ["an empty policy map", {}],
+    ["an unrelated object", { unrelated: true }],
+    [
+      "a policy entry without endpoints",
+      {
+        test_service: {
+          name: "Test Service",
+          binaries: [{ path: "/usr/bin/node" }],
+        },
+      },
+    ],
+    [
+      "a policy entry without binaries",
+      {
+        test_service: {
+          name: "Test Service",
+          endpoints: [{ host: "api.example.com", port: 443 }],
+        },
+      },
+    ],
+  ])("rejects %s", (_label, invalid) => {
+    expect(validate(invalid)).toBe(false);
+  });
+});
+
+// ── Blueprint ────────────────────────────────────────────────────────────────
+
+describe("blueprint.schema.json", () => {
+  const validate = compileSchema("schemas/blueprint.schema.json");
+  const validBlueprint = {
+    version: "1.0.0",
+    profiles: ["default"],
+    components: {
+      sandbox: { image: "example.invalid/nemoclaw:fixture", name: "fixture" },
+      inference: {
+        profiles: {
+          default: { provider_type: "openai", endpoint: "https://api.example.com" },
+        },
+      },
+    },
+  };
+
+  it("accepts a minimal blueprint", () => {
+    expectValid(validate, validBlueprint, "minimal blueprint");
+  });
+
+  it("rejects blueprint with missing required field", () => {
+    const bad = cloneObject(validBlueprint);
+    delete bad.version;
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects blueprint with wrong type for version", () => {
+    const bad = { ...validBlueprint, version: 123 };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects blueprint with unknown top-level property", () => {
+    const bad = { ...validBlueprint, unknownField: true };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects blueprint with unknown nested component property", () => {
+    const root = asRecord(validBlueprint);
+    const components = asRecord(root.components);
+    const inference = asRecord(components.inference);
+    const bad = {
+      ...root,
+      components: {
+        ...components,
+        inference: {
+          ...inference,
+          extraField: true,
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects blueprint inference profile with unknown property", () => {
+    const root = asRecord(validBlueprint);
+    const components = asRecord(root.components);
+    const inference = asRecord(components.inference);
+    const profiles = asRecord(inference.profiles);
+    const defaultProfile = asRecord(profiles.default);
+    const bad = {
+      ...root,
+      components: {
+        ...components,
+        inference: {
+          ...inference,
+          profiles: {
+            ...profiles,
+            default: {
+              ...defaultProfile,
+              typoField: true,
+            },
+          },
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects blueprint policyAddition endpoint with protocol rest but no rules", () => {
+    const bad = {
+      version: "1.0.0",
+      profiles: ["default"],
+      components: {
+        sandbox: { image: "img:latest", name: "test-sandbox" },
+        inference: {
+          profiles: {
+            default: { provider_type: "openai", endpoint: "https://api.openai.com" },
+          },
+        },
+        policy: {
+          base: "policies/openclaw-sandbox.yaml",
+          additions: {
+            my_service: {
+              name: "My Service",
+              endpoints: [{ host: "api.example.com", port: 443, protocol: "rest" }],
+            },
+          },
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+});
+
+// ── Model Router pool config ────────────────────────────────────────────────
+
+describe("router-pool-config.schema.json", () => {
+  const validate = compileSchema("schemas/router-pool-config.schema.json");
+  const validRouterPoolConfig = {
+    routing: {
+      method: "fixture",
+      checkpoint: "fixture",
+      tolerance: 0.5,
+      encoder: "fixture",
+      encoder_backend: "fixture",
+    },
+    models: [
+      {
+        name: "fixture",
+        display_name: "Fixture",
+        litellm_model: "openai/fixture",
+        cost_per_m_input_tokens: 0,
+        cost_per_m_output_tokens: 0,
+        api_base: "https://api.example.com/v1",
+      },
+    ],
+  };
+
+  it("accepts a minimal router pool config", () => {
+    expectValid(validate, validRouterPoolConfig, "minimal router pool config");
+  });
+
+  it("rejects router pool config without routing settings", () => {
+    const bad = cloneObject(validRouterPoolConfig);
+    delete bad.routing;
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects router pool config models without LiteLLM model IDs", () => {
+    const root = asRecord(validRouterPoolConfig);
+    const firstModel = asRecord(Array.isArray(root.models) ? root.models[0] : undefined);
+    const { litellm_model: _litellmModel, ...modelWithoutId } = firstModel;
+    const bad = { ...root, models: [modelWithoutId] };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects router pool config api_base without HTTPS", () => {
+    const root = asRecord(validRouterPoolConfig);
+    const firstModel = asRecord(Array.isArray(root.models) ? root.models[0] : undefined);
+    const bad = {
+      ...root,
+      models: [{ ...firstModel, api_base: "http://integrate.api.nvidia.com/v1" }],
+    };
+    expect(validate(bad)).toBe(false);
+  });
+});
+
+// ── Base sandbox policy ──────────────────────────────────────────────────────
+
+describe("sandbox-policy.schema.json", () => {
+  const validate = compileSchema("schemas/sandbox-policy.schema.json");
+  registerOpenShellJsonRpcMcpMatcherTests("sandbox", validate);
+  const validSandboxPolicy = {
+    version: 1,
+    network_policies: {
+      test_service: {
+        name: "Test Service",
+        binaries: [{ path: "/usr/bin/node" }],
+        endpoints: [{ host: "api.example.com", port: 443, access: "full" }],
+      },
+    },
+  };
+
+  it("accepts a minimal sandbox policy", () => {
+    expectValid(validate, validSandboxPolicy, "minimal sandbox policy");
+  });
+
+  it("rejects policy with missing network_policies", () => {
+    const bad = cloneObject(validSandboxPolicy);
+    delete bad.network_policies;
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects policy with unknown top-level property", () => {
+    const bad = { ...validSandboxPolicy, extra: true };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects sandbox-policy endpoint with protocol rest but no rules", () => {
+    const bad = {
+      version: 1,
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          binaries: [{ path: "/usr/bin/node" }],
+          endpoints: [{ host: "api.example.com", port: 443, protocol: "rest" }],
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it.each([
+    ["an empty allow object", {}],
+    ["an invalid method without a path", { method: "GTE" }],
+    ["an MCP-only tool matcher", { tool: "admin" }],
+  ])("rejects sandbox-policy REST rules with %s", (_label, allow) => {
+    const bad = {
+      version: 1,
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          binaries: [{ path: "/usr/bin/node" }],
+          endpoints: [
+            {
+              host: "api.example.com",
+              port: 443,
+              protocol: "rest",
+              rules: [{ allow }],
+            },
+          ],
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects sandbox-policy network entries without explicit binary scoping", () => {
+    const bad = {
+      version: 1,
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          endpoints: [{ host: "api.example.com", port: 443, access: "full" }],
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("accepts sandbox-policy native WebSocket text rules and credential rewrite", () => {
+    const valid = {
+      version: 1,
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          binaries: [{ path: "/usr/bin/node" }],
+          endpoints: [
+            {
+              host: "gateway.example.com",
+              port: 443,
+              protocol: "websocket",
+              enforcement: "enforce",
+              websocket_credential_rewrite: true,
+              allowed_ips: ["10.0.0.0/8", "172.16.0.0/12"],
+              rules: [
+                { allow: { method: "GET", path: "/**" } },
+                { allow: { method: "WEBSOCKET_TEXT", path: "/**" } },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, valid, "websocket policy");
+  });
+
+  it.each([
+    ["rest", "*"],
+    ["websocket", "*"],
+  ])("accepts sandbox-policy %s wildcard methods", (protocol, method) => {
+    const valid = {
+      version: 1,
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          binaries: [{ path: "/usr/bin/node" }],
+          endpoints: [
+            {
+              host: "api.example.com",
+              port: 443,
+              protocol,
+              rules: [{ allow: { method, path: "/**" } }],
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, valid, `${protocol} wildcard policy`);
+  });
+
+  it.each([
+    ["rest", "WEBSOCKET_TEXT"],
+    ["websocket", "POST"],
+  ])("rejects sandbox-policy %s rules with %s", (protocol, method) => {
+    const bad = {
+      version: 1,
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          binaries: [{ path: "/usr/bin/node" }],
+          endpoints: [
+            {
+              host: "api.example.com",
+              port: 443,
+              protocol,
+              rules: [{ allow: { method, path: "/**" } }],
+            },
+          ],
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("accepts sandbox-policy request-body credential rewrite on REST endpoints", () => {
+    const valid = {
+      version: 1,
+      network_policies: {
+        slack: {
+          name: "Slack",
+          binaries: [{ path: "/usr/bin/node" }],
+          endpoints: [
+            {
+              host: "api.slack.com",
+              port: 443,
+              protocol: "rest",
+              enforcement: "enforce",
+              request_body_credential_rewrite: true,
+              rules: [{ allow: { method: "POST", path: "/**" } }],
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, valid, "rest body rewrite policy");
+  });
+
+  it("accepts sandbox-policy JSON-RPC and MCP endpoints with explicit L7 matchers", () => {
+    const valid = {
+      version: 1,
+      network_policies: {
+        mcp_bridge: {
+          name: "MCP Bridge",
+          binaries: [{ path: "/usr/local/bin/mcporter" }],
+          endpoints: [
+            {
+              host: "host.openshell.internal",
+              port: 31337,
+              path: "/mcp",
+              protocol: "json-rpc",
+              enforcement: "enforce",
+              json_rpc: { max_body_bytes: 131072 },
+              rules: [{ allow: { method: "tools/list" } }],
+            },
+            {
+              host: "host.openshell.internal",
+              port: 31337,
+              path: "/mcp",
+              protocol: "mcp",
+              enforcement: "enforce",
+              mcp: { max_body_bytes: 131072, strict_tool_names: true },
+              rules: [
+                {
+                  allow: {
+                    method: "tools/call",
+                    tool: { any: ["search", "read"] },
+                  },
+                },
+                {
+                  allow: {
+                    method: "tools/call",
+                    params: { name: { any: ["search", "read"] } },
+                  },
+                },
+              ],
+              deny_rules: [{ method: "tools/call", tool: "admin" }],
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, valid, "json-rpc and mcp policy");
+  });
+
+  it("accepts sandbox-policy JSON-RPC and MCP endpoints without endpoint paths", () => {
+    const valid = {
+      version: 1,
+      network_policies: {
+        rpc: {
+          name: "RPC",
+          binaries: [{ path: "/usr/bin/node" }],
+          endpoints: [
+            {
+              host: "rpc.example.com",
+              port: 443,
+              protocol: "json-rpc",
+              rules: [{ allow: { method: "ping" } }],
+            },
+            {
+              host: "mcp.example.com",
+              port: 443,
+              protocol: "mcp",
+              rules: [{ allow: { method: "tools/list" } }],
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, valid, "pathless JSON-RPC and MCP policy");
+  });
+
+  it("rejects sandbox-policy MCP endpoints without rules or explicit MCP allow-all", () => {
+    const bad = {
+      version: 1,
+      network_policies: {
+        mcp_bridge: {
+          name: "MCP Bridge",
+          binaries: [{ path: "/usr/local/bin/mcporter" }],
+          endpoints: [
+            {
+              host: "host.openshell.internal",
+              port: 31337,
+              path: "/mcp",
+              protocol: "mcp",
+              mcp: { max_body_bytes: 131072 },
+            },
+          ],
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("accepts sandbox-policy MCP endpoint allow-all without REST access presets", () => {
+    const valid = {
+      version: 1,
+      network_policies: {
+        mcp_bridge: {
+          name: "MCP Bridge",
+          binaries: [{ path: "/usr/local/bin/mcporter" }],
+          endpoints: [
+            {
+              host: "host.openshell.internal",
+              port: 31337,
+              path: "/mcp",
+              protocol: "mcp",
+              mcp: { max_body_bytes: 131072, allow_all_known_mcp_methods: true },
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, valid, "mcp policy allow-all");
+  });
+
+  it("rejects sandbox-policy JSON-RPC and MCP endpoints above the body-size cap", () => {
+    const oversizedJsonRpc = {
+      version: 1,
+      network_policies: {
+        rpc: {
+          name: "RPC",
+          binaries: [{ path: "/usr/local/bin/tool" }],
+          endpoints: [
+            {
+              host: "mcp.example.com",
+              port: 443,
+              path: "/rpc",
+              protocol: "json-rpc",
+              json_rpc: { max_body_bytes: 1048577 },
+              rules: [{ allow: { method: "initialize" } }],
+            },
+          ],
+        },
+      },
+    };
+    expect(validate(oversizedJsonRpc)).toBe(false);
+
+    const oversizedMcp = {
+      version: 1,
+      network_policies: {
+        mcp_bridge: {
+          name: "MCP Bridge",
+          binaries: [{ path: "/usr/local/bin/mcporter" }],
+          endpoints: [
+            {
+              host: "mcp.example.com",
+              port: 443,
+              path: "/mcp",
+              protocol: "mcp",
+              mcp: { max_body_bytes: 1048577, allow_all_known_mcp_methods: true },
+            },
+          ],
+        },
+      },
+    };
+    expect(validate(oversizedMcp)).toBe(false);
+  });
+
+  it("rejects sandbox-policy JSON-RPC and MCP endpoints with REST access presets", () => {
+    const base = {
+      version: 1,
+      network_policies: {
+        rpc: {
+          name: "RPC",
+          binaries: [{ path: "/usr/local/bin/mcporter" }],
+          endpoints: [
+            {
+              host: "rpc.example.com",
+              port: 443,
+              protocol: "json-rpc",
+              access: "full",
+              rules: [{ allow: { method: "initialize" } }],
+            },
+          ],
+        },
+      },
+    };
+    expect(validate(base)).toBe(false);
+
+    const mcp = {
+      version: 1,
+      network_policies: {
+        rpc: {
+          name: "RPC",
+          binaries: [{ path: "/usr/local/bin/mcporter" }],
+          endpoints: [
+            {
+              host: "mcp.example.com",
+              port: 443,
+              protocol: "mcp",
+              access: "full",
+              mcp: { allow_all_known_mcp_methods: true },
+            },
+          ],
+        },
+      },
+    };
+    expect(validate(mcp)).toBe(false);
+  });
+
+  it("rejects sandbox-policy endpoint with protocol websocket but no rules or access", () => {
+    const bad = {
+      version: 1,
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          binaries: [{ path: "/usr/bin/node" }],
+          endpoints: [{ host: "gateway.example.com", port: 443, protocol: "websocket" }],
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+});
+
+// ── Policy presets ───────────────────────────────────────────────────────────
+
+describe("policy-preset.schema.json", () => {
+  const validate = compileSchema("schemas/policy-preset.schema.json");
+  registerOpenShellJsonRpcMcpMatcherTests("preset", validate);
+  const validPolicyPreset = {
+    preset: { name: "test", description: "Test preset" },
+    network_policies: {
+      test_service: {
+        name: "Test Service",
+        binaries: [{ path: "/usr/bin/node" }],
+        endpoints: [{ host: "api.example.com", port: 443, access: "full" }],
+      },
+    },
+  };
+
+  it("accepts a minimal policy preset", () => {
+    expectValid(validate, validPolicyPreset, "minimal policy preset");
+  });
+
+  it("rejects preset without preset metadata", () => {
+    const bad = {
+      network_policies: {
+        test: { name: "test", endpoints: [{ host: "a.com", port: 443, access: "full" }] },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects preset without network_policies", () => {
+    const bad = { preset: { name: "test", description: "test" } };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects preset endpoint with protocol rest but no rules", () => {
+    const bad = {
+      preset: { name: "test", description: "test" },
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          binaries: [{ path: "/usr/bin/node" }],
+          endpoints: [{ host: "api.example.com", port: 443, protocol: "rest" }],
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it.each([
+    ["an empty allow object", {}],
+    ["an invalid method without a path", { method: "GTE" }],
+    ["an MCP-only tool matcher", { tool: "admin" }],
+  ])("rejects preset REST rules with %s", (_label, allow) => {
+    const bad = {
+      preset: { name: "test", description: "test" },
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          binaries: [{ path: "/usr/bin/node" }],
+          endpoints: [
+            {
+              host: "api.example.com",
+              port: 443,
+              protocol: "rest",
+              rules: [{ allow }],
+            },
+          ],
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects preset network entries without explicit binary scoping", () => {
+    const bad = {
+      preset: { name: "test", description: "test" },
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          endpoints: [{ host: "api.example.com", port: 443, access: "full" }],
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("accepts preset native WebSocket text rules and credential rewrite", () => {
+    const valid = {
+      preset: { name: "test", description: "test" },
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          binaries: [{ path: "/usr/bin/node" }],
+          endpoints: [
+            {
+              host: "gateway.example.com",
+              port: 443,
+              protocol: "websocket",
+              enforcement: "enforce",
+              websocket_credential_rewrite: true,
+              allowed_ips: ["10.0.0.0/8", "172.16.0.0/12"],
+              rules: [
+                { allow: { method: "GET", path: "/**" } },
+                { allow: { method: "WEBSOCKET_TEXT", path: "/**" } },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, valid, "websocket preset");
+  });
+
+  it.each([
+    ["rest", "*"],
+    ["websocket", "*"],
+  ])("accepts preset %s wildcard methods", (protocol, method) => {
+    const valid = {
+      preset: { name: "test", description: "test" },
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          binaries: [{ path: "/usr/bin/node" }],
+          endpoints: [
+            {
+              host: "api.example.com",
+              port: 443,
+              protocol,
+              rules: [{ allow: { method, path: "/**" } }],
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, valid, `${protocol} wildcard preset`);
+  });
+
+  it.each([
+    ["rest", "WEBSOCKET_TEXT"],
+    ["websocket", "POST"],
+  ])("rejects preset %s rules with %s", (protocol, method) => {
+    const bad = {
+      preset: { name: "test", description: "test" },
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          binaries: [{ path: "/usr/bin/node" }],
+          endpoints: [
+            {
+              host: "api.example.com",
+              port: 443,
+              protocol,
+              rules: [{ allow: { method, path: "/**" } }],
+            },
+          ],
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("accepts preset request-body credential rewrite on REST endpoints", () => {
+    const valid = {
+      preset: { name: "slack", description: "Slack" },
+      network_policies: {
+        slack: {
+          name: "Slack",
+          binaries: [{ path: "/usr/bin/node" }],
+          endpoints: [
+            {
+              host: "api.slack.com",
+              port: 443,
+              protocol: "rest",
+              enforcement: "enforce",
+              request_body_credential_rewrite: true,
+              rules: [{ allow: { method: "POST", path: "/**" } }],
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, valid, "rest body rewrite preset");
+  });
+
+  it("accepts preset JSON-RPC and MCP endpoints with focused option objects", () => {
+    const valid = {
+      preset: { name: "mcp", description: "MCP" },
+      network_policies: {
+        mcp_bridge: {
+          name: "MCP Bridge",
+          binaries: [{ path: "/usr/local/bin/mcporter" }],
+          endpoints: [
+            {
+              host: "mcp.example.com",
+              port: 443,
+              path: "/rpc",
+              protocol: "json-rpc",
+              json_rpc: { max_body_bytes: 131072 },
+              rules: [{ allow: { method: "initialize" } }],
+            },
+            {
+              host: "mcp.example.com",
+              port: 443,
+              path: "/mcp",
+              protocol: "mcp",
+              mcp: { max_body_bytes: 131072, allow_all_known_mcp_methods: false },
+              rules: [{ allow: { method: "tools/call", tool: "search" } }],
+              deny_rules: [{ method: "tools/call", params: { name: "admin" } }],
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, valid, "json-rpc and mcp preset");
+  });
+
+  it("accepts preset JSON-RPC and MCP endpoints without endpoint paths", () => {
+    const valid = {
+      preset: { name: "rpc", description: "RPC" },
+      network_policies: {
+        rpc: {
+          name: "RPC",
+          binaries: [{ path: "/usr/bin/node" }],
+          endpoints: [
+            {
+              host: "rpc.example.com",
+              port: 443,
+              protocol: "json-rpc",
+              rules: [{ allow: { method: "ping" } }],
+            },
+            {
+              host: "mcp.example.com",
+              port: 443,
+              protocol: "mcp",
+              rules: [{ allow: { method: "tools/list" } }],
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, valid, "pathless JSON-RPC and MCP preset");
+  });
+
+  it("rejects preset MCP endpoints with missing rules, invalid options, or invalid matchers", () => {
+    const base = {
+      preset: { name: "mcp", description: "MCP" },
+      network_policies: {
+        mcp_bridge: {
+          name: "MCP Bridge",
+          binaries: [{ path: "/usr/local/bin/mcporter" }],
+          endpoints: [
+            {
+              host: "mcp.example.com",
+              port: 443,
+              path: "/mcp",
+              protocol: "mcp",
+              mcp: { max_body_bytes: 131072 },
+              rules: [{ allow: { method: "tools/list" } }],
+            },
+          ],
+        },
+      },
+    };
+    type McpPresetFixture = {
+      network_policies: {
+        mcp_bridge: {
+          endpoints: Array<{
+            rules?: unknown[];
+            deny_rules?: unknown[];
+            mcp: { allow_all_known_mcp_methods?: unknown };
+          }>;
+        };
+      };
+    };
+    const missingRules = cloneObject(base) as McpPresetFixture;
+    delete missingRules.network_policies.mcp_bridge.endpoints[0]!.rules;
+    expect(validate(missingRules)).toBe(false);
+
+    const invalidOptions = cloneObject(base) as McpPresetFixture;
+    invalidOptions.network_policies.mcp_bridge.endpoints[0]!.mcp.allow_all_known_mcp_methods =
+      "yes";
+    expect(validate(invalidOptions)).toBe(false);
+
+    const invalidMatcher = cloneObject(base) as McpPresetFixture;
+    invalidMatcher.network_policies.mcp_bridge.endpoints[0]!.deny_rules = [{ tool: { any: [] } }];
+    expect(validate(invalidMatcher)).toBe(false);
+  });
+
+  it("accepts preset MCP allow-all and rejects JSON-RPC or MCP access presets", () => {
+    const allowAll = {
+      preset: { name: "mcp", description: "MCP" },
+      network_policies: {
+        mcp_bridge: {
+          name: "MCP Bridge",
+          binaries: [{ path: "/usr/local/bin/mcporter" }],
+          endpoints: [
+            {
+              host: "mcp.example.com",
+              port: 443,
+              path: "/mcp",
+              protocol: "mcp",
+              mcp: { allow_all_known_mcp_methods: true },
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, allowAll, "mcp preset allow-all");
+
+    const jsonRpcAccess = {
+      preset: { name: "mcp", description: "MCP" },
+      network_policies: {
+        mcp_bridge: {
+          name: "MCP Bridge",
+          binaries: [{ path: "/usr/local/bin/mcporter" }],
+          endpoints: [
+            {
+              host: "rpc.example.com",
+              port: 443,
+              protocol: "json-rpc",
+              access: "full",
+              rules: [{ allow: { method: "initialize" } }],
+            },
+          ],
+        },
+      },
+    };
+    expect(validate(jsonRpcAccess)).toBe(false);
+
+    const mcpAccess = {
+      preset: { name: "mcp", description: "MCP" },
+      network_policies: {
+        mcp_bridge: {
+          name: "MCP Bridge",
+          binaries: [{ path: "/usr/local/bin/mcporter" }],
+          endpoints: [
+            {
+              host: "mcp.example.com",
+              port: 443,
+              protocol: "mcp",
+              access: "full",
+              mcp: { allow_all_known_mcp_methods: true },
+            },
+          ],
+        },
+      },
+    };
+    expect(validate(mcpAccess)).toBe(false);
+  });
+
+  it("rejects preset JSON-RPC and MCP endpoints above the body-size cap", () => {
+    const oversizedJsonRpc = {
+      preset: { name: "rpc", description: "RPC" },
+      network_policies: {
+        rpc: {
+          name: "RPC",
+          binaries: [{ path: "/usr/local/bin/tool" }],
+          endpoints: [
+            {
+              host: "mcp.example.com",
+              port: 443,
+              path: "/rpc",
+              protocol: "json-rpc",
+              json_rpc: { max_body_bytes: 1048577 },
+              rules: [{ allow: { method: "initialize" } }],
+            },
+          ],
+        },
+      },
+    };
+    expect(validate(oversizedJsonRpc)).toBe(false);
+
+    const oversizedMcp = {
+      preset: { name: "mcp", description: "MCP" },
+      network_policies: {
+        mcp_bridge: {
+          name: "MCP Bridge",
+          binaries: [{ path: "/usr/local/bin/mcporter" }],
+          endpoints: [
+            {
+              host: "mcp.example.com",
+              port: 443,
+              path: "/mcp",
+              protocol: "mcp",
+              mcp: { max_body_bytes: 1048577, allow_all_known_mcp_methods: true },
+            },
+          ],
+        },
+      },
+    };
+    expect(validate(oversizedMcp)).toBe(false);
+  });
+
+  it("rejects preset endpoint with protocol websocket but no rules", () => {
+    const bad = {
+      preset: { name: "test", description: "test" },
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          binaries: [{ path: "/usr/bin/node" }],
+          endpoints: [{ host: "gateway.example.com", port: 443, protocol: "websocket" }],
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+});
+
+// ── OpenClaw plugin manifest ─────────────────────────────────────────────────
+
+describe("openclaw-plugin.schema.json", () => {
+  const validate = compileSchema("schemas/openclaw-plugin.schema.json");
+  const validPluginFixture = {
+    id: "fixture-plugin",
+    name: "Fixture Plugin",
+    version: "1.2.3",
+    description: "Schema fixture",
+    configSchema: { type: "object" },
+    commandAliases: [{ name: "fixture", kind: "runtime-slash" }],
+    activation: { onStartup: true },
+  };
+
+  it("accepts a minimal plugin manifest with runtime slash activation", () => {
+    expectValid(validate, validPluginFixture, "minimal plugin manifest");
+  });
+
+  it("rejects command alias without kind", () => {
+    const bad = {
+      ...validPluginFixture,
+      commandAliases: [{ name: "fixture" }],
+      activation: { onStartup: true },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects empty activation metadata", () => {
+    const bad = { ...validPluginFixture, activation: {} };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects activation properties NemoClaw does not use", () => {
+    const bad = { ...validPluginFixture, activation: { onStartup: true, onProviders: ["demo"] } };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects plugin with missing id", () => {
+    const { id: _id, ...bad } = validPluginFixture;
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects plugin with invalid version format", () => {
+    const bad = { ...validPluginFixture, version: "not-semver" };
+    expect(validate(bad)).toBe(false);
+  });
+});
+
+// ── Model-Specific Setup ────────────────────────────────────────────────────
+
+describe("model-specific-setup/schema.json", () => {
+  const validate = compileSchema("nemoclaw-blueprint/model-specific-setup/schema.json");
+  const exactModelFixture = {
+    id: "fixture-openclaw-exact",
+    agent: "openclaw",
+    description: "Fixture OpenClaw setup",
+    match: { modelIds: ["fixture/model"] },
+    effects: { openclawCompat: {} },
+  };
+  const modelFamilyFixture = {
+    id: "fixture-openclaw-family",
+    agent: "openclaw",
+    description: "Fixture OpenClaw model family setup",
+    match: { modelIdPrefixes: ["fixture"] },
+    effects: { openclawCompat: {} },
+  };
+
+  it("accepts an exact OpenClaw model selector", () => {
+    expectValid(validate, exactModelFixture, "exact OpenClaw model selector");
+  });
+
+  it("accepts a bounded OpenClaw model-family prefix", () => {
+    expectValid(validate, modelFamilyFixture, "OpenClaw model-family prefix");
+  });
+
+  it("rejects ambiguous exact and prefix model selectors", () => {
+    const bad = {
+      ...cloneObject(modelFamilyFixture),
+      match: {
+        ...asRecord(modelFamilyFixture.match),
+        modelIds: ["fixture/model"],
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects namespaced model-family prefixes", () => {
+    const bad = {
+      ...cloneObject(modelFamilyFixture),
+      match: {
+        ...asRecord(modelFamilyFixture.match),
+        modelIdPrefixes: ["provider/fixture"],
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects OpenClaw manifests with Hermes effects", () => {
+    const bad = {
+      ...cloneObject(exactModelFixture),
+      effects: {
+        hermesCompat: {
+          future: true,
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects manifests with empty match objects", () => {
+    const bad = {
+      ...cloneObject(exactModelFixture),
+      match: {},
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects whitespace-only manifest strings", () => {
+    const bad = {
+      ...cloneObject(exactModelFixture),
+      description: "   ",
+      match: {
+        modelIds: ["   "],
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it.each([
+    ["/etc/passwd", "/usr/local/share/nemoclaw/openclaw-plugins/fixture"],
+    ["../../secrets", "/usr/local/share/nemoclaw/openclaw-plugins/fixture"],
+    ["openclaw-plugins/subdir/../escape", "/usr/local/share/nemoclaw/openclaw-plugins/fixture"],
+    ["openclaw-plugins/fixture", "/etc/passwd"],
+    ["openclaw-plugins/fixture", "/usr/local/share/nemoclaw/openclaw-plugins/subdir/../escape"],
+  ])(
+    "rejects the OpenClaw plugin path pair %# outside the staged trees",
+    (pathValue, loadPathValue) => {
+      const bad = {
+        ...cloneObject(exactModelFixture),
+        effects: {
+          openclawPlugins: [
+            {
+              id: "fixture-plugin",
+              path: pathValue,
+              loadPath: loadPathValue,
+            },
+          ],
+        },
+      };
+      expect(validate(bad)).toBe(false);
+    },
+  );
+
+  it("accepts OpenClaw plugin paths inside the staged plugin trees", () => {
+    const valid = {
+      ...cloneObject(exactModelFixture),
+      effects: {
+        openclawPlugins: [
+          {
+            id: "fixture-plugin",
+            path: "openclaw-plugins/pluginA/main.js",
+            loadPath: "/usr/local/share/nemoclaw/openclaw-plugins/dir/sub_dir/plugin.so",
+          },
+        ],
+      },
+    };
+    expectValid(validate, valid, "fixture plugin paths");
+  });
+
+  it("rejects Hermes manifests with OpenClaw effects", () => {
+    const bad = {
+      id: "fixture-hermes",
+      agent: "hermes",
+      description: "Fixture Hermes setup",
+      match: {
+        modelIds: ["fixture/hermes"],
+      },
+      effects: {
+        openclawCompat: {},
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+});

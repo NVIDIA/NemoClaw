@@ -548,7 +548,7 @@ jobs:
         env:
           NEMOCLAW_RUN_GLIBC_PROBE_DOCKER_E2E: "1"
           NEMOCLAW_TEST_IMAGE: nemoclaw-production
-        run: npx vitest run --project integration test/image-compatibility-docker-lifecycle.test.ts --silent=false --reporter=default
+        run: npx vitest run --project integration test/e2e-runtime/image-compatibility-docker-lifecycle.test.ts --silent=false --reporter=default
 
       - name: Run gateway isolation E2E tests
         run: NEMOCLAW_TEST_IMAGE=nemoclaw-production bash test/e2e-gateway-isolation.sh

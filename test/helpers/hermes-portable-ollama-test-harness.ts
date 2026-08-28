@@ -171,6 +171,9 @@ export interface PortableGatewayProviderHarness {
   readonly setLookupFailure: (value: boolean) => void;
   readonly setMalformed: (value: boolean) => void;
   readonly setPresent: (value: boolean) => void;
+  readonly setProfileState: (
+    value: "exact" | "missing" | "incompatible" | "import-failed",
+  ) => void;
 }
 
 export function createPortableGatewayProviderHarness(
@@ -184,6 +187,7 @@ export function createPortableGatewayProviderHarness(
   let lookupFailure = false;
   let resourceVersion = 1;
   let credentialEnv = "NEMOCLAW_OLLAMA_PROXY_TOKEN";
+  let profileState: "exact" | "missing" | "incompatible" | "import-failed" = "exact";
   const calls: Array<{ readonly args: readonly string[]; readonly timeout: number }> = [];
   return Object.freeze({
     calls: () => calls,
@@ -213,9 +217,35 @@ export function createPortableGatewayProviderHarness(
     setPresent: (value: boolean) => {
       present = value;
     },
+    setProfileState: (value: "exact" | "missing" | "incompatible" | "import-failed") => {
+      profileState = value;
+    },
     run(args: string[], options: Parameters<PortableGatewayProviderHarness["run"]>[1]) {
       calls.push(Object.freeze({ args: Object.freeze([...args]), timeout: options.timeout }));
       events.push(`openshell:${args.join(" ")}`);
+      if (args[0] === "provider" && args[1] === "profile" && args[2] === "export") {
+        if (profileState === "missing" || profileState === "import-failed") {
+          return { status: 1, stdout: "", stderr: "provider profile not found" };
+        }
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            id: "openai",
+            credentials: [],
+            endpoints: profileState === "exact" ? [] : ["https://example.invalid"],
+            binaries: [],
+            inference_capable: true,
+          }),
+          stderr: "",
+        };
+      }
+      if (args[0] === "provider" && args[1] === "profile" && args[2] === "import") {
+        if (profileState === "import-failed") {
+          return { status: 1, stdout: "", stderr: "profile import failed" };
+        }
+        profileState = "exact";
+        return { status: 0, stdout: "", stderr: "" };
+      }
       if (args[0] === "provider" && args[1] === "get") {
         if (lookupFailure) {
           return { status: 1, stdout: "", stderr: "gateway lookup failed" };

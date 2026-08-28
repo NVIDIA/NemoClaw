@@ -101,6 +101,96 @@ describe("runDetachedForwardStartWithDiagnostics", () => {
     expect(result.diagnostic).toMatch(/forward did not appear in list within 30ms/);
   });
 
+  it("classifies a final OpenShell readiness rejection before returning timeout (#10155)", () => {
+    let now = 0;
+    const realNow = Date.now;
+    const trustedReadFileSync = fs.readFileSync.bind(fs);
+    let stderrReads = 0;
+    Date.now = () => now;
+    const readSpy = vi.spyOn(fs, "readFileSync").mockImplementation(((file, options) => {
+      const isForwardStderr = String(file).endsWith("nemoclaw-forward-start.err");
+      stderrReads += Number(isForwardStderr);
+      return isForwardStderr
+        ? stderrReads === 1
+          ? ""
+          : SANDBOX_NOT_READY_FORWARD_DIAGNOSTIC
+        : trustedReadFileSync(file, options as never);
+    }) as typeof fs.readFileSync);
+
+    try {
+      const fetchList = vi.fn().mockReturnValue(forwardListWith([]));
+      const isPortListening = vi.fn().mockReturnValue(false);
+
+      const result = runDetachedForwardStartWithDiagnostics(
+        vi.fn().mockReturnValue({}),
+        fetchList,
+        { port: 18789, sandboxName: "my-sandbox" },
+        {
+          overallTimeoutMs: 1,
+          pollIntervalMs: 1,
+          sleepMs: (ms) => {
+            now += ms;
+          },
+          isPortListening,
+        },
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe("listener-start-failure");
+      expect(result.diagnostic).toMatch(/message: "sandbox is not ready"/);
+      expect(result.diagnostic).not.toContain("forward did not appear in list within");
+      expect(fetchList).toHaveBeenCalledOnce();
+      expect(isPortListening).toHaveBeenCalledOnce();
+    } finally {
+      readSpy.mockRestore();
+      Date.now = realNow;
+    }
+  });
+
+  it("keeps a final readiness rejection terminal when forward ownership is unknown (#10155)", () => {
+    let now = 0;
+    const realNow = Date.now;
+    const trustedReadFileSync = fs.readFileSync.bind(fs);
+    let stderrReads = 0;
+    Date.now = () => now;
+    const readSpy = vi.spyOn(fs, "readFileSync").mockImplementation(((file, options) => {
+      const isForwardStderr = String(file).endsWith("nemoclaw-forward-start.err");
+      stderrReads += Number(isForwardStderr);
+      return isForwardStderr
+        ? stderrReads === 1
+          ? ""
+          : SANDBOX_NOT_READY_FORWARD_DIAGNOSTIC
+        : trustedReadFileSync(file, options as never);
+    }) as typeof fs.readFileSync);
+
+    try {
+      const isPortListening = vi.fn().mockReturnValue(false);
+      const result = runDetachedForwardStartWithDiagnostics(
+        vi.fn().mockReturnValue({}),
+        vi.fn(() => {
+          throw new Error("gateway transport unavailable");
+        }),
+        { port: 18789, sandboxName: "my-sandbox" },
+        {
+          overallTimeoutMs: 1,
+          pollIntervalMs: 1,
+          sleepMs: (ms) => {
+            now += ms;
+          },
+          isPortListening,
+        },
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe("timeout");
+      expect(result.diagnostic).toMatch(/openshell forward list failed/);
+      expect(isPortListening).not.toHaveBeenCalled();
+    } finally {
+      readSpy.mockRestore();
+      Date.now = realNow;
+    }
+  });
+
   it("surfaces spawn errors immediately without polling", () => {
     const fetchList = vi.fn();
     const spawn = vi.fn().mockReturnValue({ error: new Error("ENOENT: openshell not found") });
@@ -997,6 +1087,45 @@ describe("runDetachedForwardStartWithRetries", () => {
     expect(sleep).toHaveBeenCalledWith(5_000);
     expect(events).toEqual(["spawn-1", "sleep-5000", "spawn-2"]);
   });
+
+  it.each([
+    [
+      "fails",
+      () => {
+        throw new Error("gateway transport unavailable");
+      },
+    ],
+    ["returns no result", () => null],
+  ])(
+    "does not retry a readiness handoff when the ownership lookup %s (#10155)",
+    (_case, fetchForwardList) => {
+      let now = 0;
+      vi.spyOn(Date, "now").mockImplementation(() => now);
+      const spawn = readinessHandoffSpawn(1);
+      const delays: number[] = [];
+
+      const result = runDetachedForwardStartWithRetries(
+        spawn,
+        vi.fn(fetchForwardList),
+        { port: 18789, sandboxName: "my-sandbox" },
+        vi.fn(),
+        {
+          overallTimeoutMs: 1,
+          pollIntervalMs: 1,
+          sleepMs: (ms) => {
+            delays.push(ms);
+            now += ms;
+          },
+          isPortListening: vi.fn().mockReturnValue(false),
+        },
+      );
+
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe("timeout");
+      expect(spawn).toHaveBeenCalledOnce();
+      expect(delays).not.toContain(5_000);
+    },
+  );
 
   it("keeps retrying when four consecutive readiness handoffs are still settling", () => {
     const spawn = readinessHandoffSpawn(4);

@@ -9,6 +9,7 @@ import {
   hasManagedMcpPolicyClaims,
   inspectProvableManagedMcpPoliciesForDeadline,
   inspectExactManagedMcpPolicies as inspectRegisteredManagedMcpPolicies,
+  inspectRecordedManagedMcpPolicies,
   MCP_BRIDGE_POLICY_SOURCE,
 } from "../actions/sandbox/mcp-bridge-policy";
 import {
@@ -126,6 +127,23 @@ function inspectExactManagedMcpPolicies(sandbox: SandboxEntry, livePolicyYaml: s
 }
 
 describe("managed MCP Shields policy transitions (#7952)", () => {
+  it("renders a canonical recorded entry for an external policy handoff (#9833)", () => {
+    const alpha = registeredPolicy("alpha", "8.8.8.8");
+
+    expect(
+      inspectRecordedManagedMcpPolicies("alpha", {
+        getSandbox: () => sandboxWithPolicies([alpha]),
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        key: "mcp_bridge_alpha",
+        networkPolicy: networkEntry(alpha.content, "alpha"),
+        policyName: "mcp-bridge-alpha",
+        server: "alpha",
+      }),
+    ]);
+  });
+
   it("admits only canonical committed registrations that exactly match the live policy", () => {
     const alpha = registeredPolicy("alpha", "8.8.8.8");
     const sandbox = sandboxWithPolicies([alpha]);
@@ -631,25 +649,25 @@ describe("managed MCP Shields policy transitions (#7952)", () => {
     );
   });
 
-  it.each([
-    "destroyPreparedAt",
-    "destroyPendingAt",
-  ] as const)("omits every generated policy while %s is present", (marker) => {
-    const alpha = registeredPolicy("alpha", "8.8.8.8");
-    const sandbox = sandboxWithPolicies([alpha]);
-    sandbox.mcp![marker] = "2026-07-30T01:00:00.000Z";
+  it.each(["destroyPreparedAt", "destroyPendingAt"] as const)(
+    "omits every generated policy while %s is present",
+    (marker) => {
+      const alpha = registeredPolicy("alpha", "8.8.8.8");
+      const sandbox = sandboxWithPolicies([alpha]);
+      sandbox.mcp![marker] = "2026-07-30T01:00:00.000Z";
 
-    const result = inspectProvableManagedMcpPoliciesForDeadline(
-      "alpha",
-      livePolicy([{ content: alpha.content, server: "alpha" }]),
-      { getSandbox: () => sandbox },
-    );
+      const result = inspectProvableManagedMcpPoliciesForDeadline(
+        "alpha",
+        livePolicy([{ content: alpha.content, server: "alpha" }]),
+        { getSandbox: () => sandbox },
+      );
 
-    expect(result.policies).toEqual([]);
-    expect(result.omissions).toEqual([
-      expect.objectContaining({ server: "alpha", reason: expect.stringMatching(/destruction/) }),
-    ]);
-  });
+      expect(result.policies).toEqual([]);
+      expect(result.omissions).toEqual([
+        expect.objectContaining({ server: "alpha", reason: expect.stringMatching(/destruction/) }),
+      ]);
+    },
+  );
 
   it("omits drift and orphan claims without discarding another exact bridge", () => {
     const alpha = registeredPolicy("alpha", "8.8.8.8");

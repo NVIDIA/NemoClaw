@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { McpBridgeEntry } from "../../state/registry";
+import type { McpScrubbedAdapterEntry } from "./mcp-bridge-adapter-teardown";
 import { addMcpBridge as addMcpBridgeLifecycle } from "./mcp-bridge-add-restart";
 import {
   type McpBridgeAddOptions,
@@ -167,7 +168,7 @@ export async function prepareMcpBridgesForRebuild(
 export async function reattachMcpProvidersAfterRebuildAbort(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
-  scrubbedAdapterEntries: readonly McpBridgeEntry[] = [],
+  scrubbedAdapterEntries: readonly McpScrubbedAdapterEntry[] = [],
   validateContainingPolicyReceipt?: () => Promise<void>,
 ): Promise<void> {
   return reattachMcpProvidersAfterRebuildAbortLifecycle(

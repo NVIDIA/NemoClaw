@@ -150,7 +150,7 @@ NemoClaw no longer vendors or overlays that source.
 ### Test-only legacy license fixture limitation
 
 > **Removal condition:** Delete the test-only legacy license-table conversion in
-> `test/langchain-deepagents-code-nemotron-profile-plugin.test.ts` as soon as the
+> `test/agents/deepagents/langchain-deepagents-code-nemotron-profile-plugin.test.ts` as soon as the
 > runner's system setuptools accepts PEP 639 license strings. Production never
 > uses this conversion.
 

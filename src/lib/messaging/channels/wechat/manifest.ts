@@ -90,7 +90,7 @@ export const wechatManifest = {
       target: "openclaw.json",
       fragment: {
         path: "channels.openclaw-weixin",
-        value: {},
+        value: { enabled: true },
       },
     },
     {

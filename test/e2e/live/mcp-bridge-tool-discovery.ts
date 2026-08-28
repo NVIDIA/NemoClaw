@@ -36,11 +36,10 @@ export function shouldRetryMcpToolDiscoveryTransportFailure(
 export function shouldRetryMcpDiscoveryAfterRestart(
   requestsSinceAttempt: readonly FakeMcpRequest[],
 ): boolean {
-  // Status/readiness checks can hit the configured endpoint without speaking
-  // MCP. Those probes must not suppress the one bounded runtime restart: only
-  // fixture-visible MCP protocol traffic proves that the agent attempted
-  // discovery and produced a product failure worth preserving as-is.
-  return !requestsSinceAttempt.some((request) => request.rpcMethod !== undefined);
+  // The caller captures its observation offset after public-tunnel readiness.
+  // Every later request arrival is terminal, including an incomplete body,
+  // HEAD, or malformed JSON without an rpcMethod.
+  return requestsSinceAttempt.length === 0;
 }
 
 type McpToolDiscoveryStatusJson = {
@@ -274,6 +273,26 @@ type AuthenticatedMcpDiscoveryRestartDeps = {
   assertDiscovery: typeof assertAuthenticatedMcpDiscovery;
 };
 
+type McpDiscoveryRestartAttemptEvidence = {
+  attempt: number;
+  requestCount: number;
+  classification:
+    | "authenticated-discovery-complete"
+    | "no-request-observed"
+    | "request-observed"
+    | "restart-failed"
+    | "discovery-incomplete-after-restart";
+  restartDecision: "not-needed" | "restart-once" | "no-restart";
+  outcome: "passed" | "retrying" | "failed";
+};
+
+type McpDiscoveryRestartFinalOutcome =
+  | "passed-first-attempt"
+  | "failed-no-restart"
+  | "restart-failed"
+  | "passed-after-restart"
+  | "failed-after-restart";
+
 const AUTHENTICATED_MCP_DISCOVERY_RESTART_DEPS: AuthenticatedMcpDiscoveryRestartDeps = {
   assertDiscovery: assertAuthenticatedMcpDiscovery,
 };
@@ -282,24 +301,127 @@ export async function assertAuthenticatedMcpDiscoveryWithOneRestart(
   fakeMcp: FakeMcpHttpsServer,
   options: {
     requestOffset: number;
+    observationOffset: number;
     expectedSecret: string;
     label: string;
     restart: () => Promise<void>;
+    artifacts: Pick<ArtifactSink, "writeJson">;
+    artifactName: string;
   },
   deps: AuthenticatedMcpDiscoveryRestartDeps = AUTHENTICATED_MCP_DISCOVERY_RESTART_DEPS,
 ): Promise<void> {
-  try {
-    await deps.assertDiscovery(fakeMcp, options);
-  } catch (error) {
-    if (!shouldRetryMcpDiscoveryAfterRestart(fakeMcp.requests.slice(options.requestOffset))) {
-      throw error;
+  const attempts: McpDiscoveryRestartAttemptEvidence[] = [];
+  const observedRequests = (): readonly FakeMcpRequest[] =>
+    fakeMcp.observations.slice(options.observationOffset);
+  const writeEvidence = (finalOutcome: McpDiscoveryRestartFinalOutcome): Promise<string> =>
+    options.artifacts.writeJson(options.artifactName, {
+      schemaVersion: 1,
+      attempts,
+      finalOutcome,
+    });
+  const throwTerminalFailure = async (
+    finalOutcome: McpDiscoveryRestartFinalOutcome,
+    terminalError: unknown,
+  ): Promise<never> => {
+    try {
+      await writeEvidence(finalOutcome);
+    } catch (evidenceError) {
+      throw Object.assign(
+        new AggregateError(
+          [terminalError, evidenceError],
+          `Hermes initial MCP discovery result is ${finalOutcome}; retry evidence write failed`,
+          { cause: terminalError },
+        ),
+        { evidenceStatus: "write-failed" as const, finalOutcome },
+      );
     }
+    throw terminalError;
+  };
+  const firstAttempt = await deps.assertDiscovery(fakeMcp, options).then(
+    () => ({ ok: true }) as const,
+    (error: unknown) => ({ ok: false, error }) as const,
+  );
+  if (firstAttempt.ok) {
+    attempts.push({
+      attempt: 1,
+      requestCount: observedRequests().length,
+      classification: "authenticated-discovery-complete",
+      restartDecision: "not-needed",
+      outcome: "passed",
+    });
+    await writeEvidence("passed-first-attempt");
+    return;
+  }
+  const requests = observedRequests();
+  if (!shouldRetryMcpDiscoveryAfterRestart(requests)) {
+    attempts.push({
+      attempt: 1,
+      requestCount: requests.length,
+      classification: "request-observed",
+      restartDecision: "no-restart",
+      outcome: "failed",
+    });
+    return throwTerminalFailure("failed-no-restart", firstAttempt.error);
+  }
+  attempts.push({
+    attempt: 1,
+    requestCount: 0,
+    classification: "no-request-observed",
+    restartDecision: "restart-once",
+    outcome: "retrying",
+  });
+  try {
     await options.restart();
-    await deps.assertDiscovery(fakeMcp, {
+  } catch (restartError) {
+    attempts.push({
+      attempt: 2,
+      requestCount: observedRequests().length,
+      classification: "restart-failed",
+      restartDecision: "no-restart",
+      outcome: "failed",
+    });
+    return throwTerminalFailure("restart-failed", restartError);
+  }
+  const retryAttempt = await deps
+    .assertDiscovery(fakeMcp, {
       ...options,
       label: `${options.label} after one bridge restart`,
+    })
+    .then(
+      () => ({ ok: true }) as const,
+      (error: unknown) => ({ ok: false, error }) as const,
+    );
+  if (retryAttempt.ok) {
+    attempts.push({
+      attempt: 2,
+      requestCount: observedRequests().length,
+      classification: "authenticated-discovery-complete",
+      restartDecision: "not-needed",
+      outcome: "passed",
     });
+    await writeEvidence("passed-after-restart");
+    return;
   }
+  attempts.push({
+    attempt: 2,
+    requestCount: observedRequests().length,
+    classification: "discovery-incomplete-after-restart",
+    restartDecision: "no-restart",
+    outcome: "failed",
+  });
+  return throwTerminalFailure("failed-after-restart", retryAttempt.error);
+}
+
+export async function runHermesInitialMcpReadiness(operations: {
+  discover: () => Promise<void>;
+  inspectToolStatus: () => Promise<void>;
+  prepareModelTurn: () => Promise<void>;
+  runModelTurn: () => Promise<void>;
+}): Promise<void> {
+  await operations.discover();
+  await operations.inspectToolStatus();
+  await operations.prepareModelTurn();
+  await operations.runModelTurn();
 }
 
 export async function assertAuthenticatedMcpToolDiscovery(

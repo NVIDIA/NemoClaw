@@ -5,6 +5,7 @@ import type { McpBridgeEntry } from "../../state/registry";
 import {
   rollbackScrubbedMcpAdapters,
   scrubManagedMcpAdapterOrThrow,
+  type McpScrubbedAdapterEntry,
 } from "./mcp-bridge-adapter-teardown";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import {
@@ -27,8 +28,11 @@ import {
   assertMcpProviderRecoverable,
   assertNoProviderCredentialCollisions,
   assertNoRegisteredProviderCredentialCollisions,
+  attachProvider,
   detachProvider,
   preflightMcpEntryTargets,
+  refreshMcpProviderEnvironment,
+  waitForAttachedMcpCredential,
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
 import { restoreExistingMcpBridgeRuntime } from "./mcp-bridge-restart";
@@ -48,7 +52,7 @@ import { assertAuthenticatedBridgeEntry, validateSandboxName } from "./mcp-bridg
 export interface McpRebuildPreparation {
   entries: McpBridgeEntry[];
   detachedProviderEntries: McpBridgeEntry[];
-  scrubbedAdapterEntries: McpBridgeEntry[];
+  scrubbedAdapterEntries: McpScrubbedAdapterEntry[];
   /** Full read-only target, policy, provider, and registry proof before delete. */
   revalidateBeforeDelete?: () => Promise<void>;
   /** Final synchronous registry-only proof immediately before delete. */
@@ -168,7 +172,7 @@ export async function prepareMcpBridgesForRebuild(
   for (const entry of entries) assertMcpProviderRecoverable(entry);
   assertNoProviderCredentialCollisions(sandboxName, entries);
   const detached: McpBridgeEntry[] = [];
-  const scrubbedAdapters: McpBridgeEntry[] = [];
+  const scrubbedAdapters: McpScrubbedAdapterEntry[] = [];
   const removedPolicies: McpBridgeEntry[] = [];
   let providerDetachAttempted = false;
   try {
@@ -177,8 +181,7 @@ export async function prepareMcpBridgesForRebuild(
       // Hermes/agent cannot boot with a stale placeholder while its provider
       // is intentionally detached during recreate.
       await revalidateBeforeMutation();
-      scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry);
-      scrubbedAdapters.push(entry);
+      scrubbedAdapters.push(scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry));
     }
     if (policyAuthorityReceipt.authority === "nemoclaw-managed") {
       for (const entry of entries) {
@@ -278,7 +281,7 @@ export async function prepareMcpBridgesForRebuild(
 export async function reattachMcpProvidersAfterRebuildAbort(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
-  scrubbedAdapterEntries: readonly McpBridgeEntry[] = [],
+  scrubbedAdapterEntries: readonly McpScrubbedAdapterEntry[] = [],
   validateContainingPolicyReceipt?: () => Promise<void>,
 ): Promise<void> {
   if (entries.length === 0 && scrubbedAdapterEntries.length === 0) return;

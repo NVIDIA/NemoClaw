@@ -17,7 +17,7 @@ import { isTransientProviderValidationFailure } from "./network-policy-transient
 export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-brave-search";
 validateSandboxName(SANDBOX_NAME);
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
-const PLACEHOLDER_PATTERN = /^openshell:resolve:env:([A-Za-z0-9_]+_)?BRAVE_API_KEY$/;
+const PLACEHOLDER_PATTERN = /^openshell:resolve:env:(?:v[0-9]+_)?BRAVE_API_KEY$/;
 
 export function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
@@ -80,14 +80,6 @@ export async function cleanupBraveNemoClawSandbox(host: HostCliClient): Promise<
       ),
     `cleanup Brave sandbox ${SANDBOX_NAME}: ${output}`,
   ).toBe(true);
-}
-
-function parsePlaceholder(configText: string): string | undefined {
-  const parsed = JSON.parse(configText) as {
-    tools?: { web?: { search?: { apiKey?: unknown } } };
-  };
-  const value = parsed.tools?.web?.search?.apiKey;
-  return typeof value === "string" && value ? value : undefined;
 }
 
 function firstJsonObject(output: string): unknown {
@@ -205,11 +197,17 @@ export async function onboardBrave(
 export function assertBraveConfig(configText: string): string {
   const parsedConfig = JSON.parse(configText) as {
     tools?: { web?: { search?: { enabled?: unknown; provider?: unknown; apiKey?: unknown } } };
+    plugins?: {
+      entries?: { brave?: { config?: { webSearch?: { apiKey?: unknown } } } };
+    };
   };
   const searchConfig = parsedConfig.tools?.web?.search;
   expect(searchConfig?.enabled, configText).toBe(true);
   expect(searchConfig?.provider, configText).toBe("brave");
-  const placeholder = parsePlaceholder(configText);
+  expect(searchConfig?.apiKey, configText).toBeUndefined();
+  const placeholderValue = parsedConfig.plugins?.entries?.brave?.config?.webSearch?.apiKey;
+  const placeholder =
+    typeof placeholderValue === "string" && placeholderValue ? placeholderValue : undefined;
   expect(placeholder, configText).toMatch(PLACEHOLDER_PATTERN);
   return placeholder ?? "";
 }

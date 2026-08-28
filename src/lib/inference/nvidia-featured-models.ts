@@ -17,6 +17,7 @@ export const NVIDIA_FEATURED_MODELS_URL =
 // NVIDIA chat-completions route is available again or names a live successor.
 const RETIRED_NVIDIA_FEATURED_MODEL_IDS = new Set([
   "z-ai/glm-5.1", // Retired from NVIDIA Endpoints in #6069.
+  "z-ai/glm-5.2", // Featured feed still lists it; authenticated /v1/models does not (#10222).
   "moonshotai/kimi-k2.6", // Catalogs still list it after its backing route was removed.
   "deepseek-ai/deepseek-v4-pro", // Retired from NVIDIA Endpoints on 2026-08-07; its route returns HTTP 410.
 ]);

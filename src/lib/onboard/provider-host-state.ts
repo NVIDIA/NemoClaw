@@ -189,11 +189,10 @@ function probeVllmRunning(deps: DetectInferenceProviderHostStateDeps): boolean {
 
 function probeWindowsOllamaReachable(input: {
   isWsl: boolean;
-  isWindowsHostOllama: boolean;
   dockerRequirementSupported: boolean;
   dockerCapture: DockerCapture;
 }): boolean {
-  if (!input.isWsl || input.isWindowsHostOllama || !input.dockerRequirementSupported) return false;
+  if (!input.isWsl || !input.dockerRequirementSupported) return false;
   // A successful Docker run is not enough: a captive proxy, a stale listener, or
   // a stub on host.docker.internal can all answer with arbitrary 2xx bodies. Only
   // a body in the Ollama `/api/tags` wire format proves the Windows daemon is live.
@@ -263,7 +262,6 @@ export function detectInferenceProviderHostState(
       ? false
       : probeWindowsOllamaReachable({
           isWsl,
-          isWindowsHostOllama: directlyResolvedWindowsHostOllama,
           dockerRequirementSupported: windowsHostOllamaDockerRequirement.supported,
           dockerCapture: deps.dockerCapture,
         });

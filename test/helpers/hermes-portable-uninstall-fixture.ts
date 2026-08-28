@@ -18,7 +18,6 @@ import {
 } from "../../src/lib/adapters/openshell/sandbox-identity";
 import { loadAgent } from "../../src/lib/agent/defs";
 import { writeConfigFile } from "../../src/lib/state/config-io";
-import { createSandboxHostLocalInferenceProvenance } from "../../src/lib/state/registry/host-local-inference";
 import type { SandboxEntry } from "../../src/lib/state/registry/types";
 import { createPortableOnboardEnvironmentScope } from "../../src/lib/onboard/session-bootstrap";
 import {
@@ -429,15 +428,11 @@ export async function createHermesPortableUninstallFixture(
     lifecycleLiveIdentityFingerprint: fingerprintOpenShellSandboxLiveIdentity(LIVE_SANDBOX)!,
     provider: "ollama-local",
     model: "qwen3-vl:4b",
-    credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+    credentialEnv: null,
     endpointUrl: HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL,
     endpointSource: null,
     preferredInferenceApi: null,
     hostLocalInferenceReceipt: serializedInferenceReceipt,
-    hostLocalInferenceProvenance: createSandboxHostLocalInferenceProvenance(
-      SANDBOX_NAME,
-      serializedInferenceReceipt,
-    ),
   };
   const siblingRow: SandboxEntry = {
     ...targetRow,
@@ -455,7 +450,7 @@ export async function createHermesPortableUninstallFixture(
     lifecycleLiveIdentityFingerprint: "provider-sibling-live-identity",
     provider: "ollama-local",
     model: "qwen3-vl:4b",
-    credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+    credentialEnv: null,
     endpointUrl: HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL,
   };
   const registryFile = path.join(stateDir, "sandboxes.json");

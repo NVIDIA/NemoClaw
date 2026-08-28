@@ -51,6 +51,21 @@ describe("Deep Agents Code E2E base contract", () => {
     );
   });
 
+  it("requires the base contract reference recorded by the exact PR managed image", () => {
+    expect(
+      validateDcodeBaseImageContract(contract(), {
+        ...expected,
+        baseReference: AMD64_REFERENCE,
+      }).platformReferences[DCODE_BASE_IMAGE_TARGET_PLATFORM],
+    ).toBe(AMD64_REFERENCE);
+    expect(() =>
+      validateDcodeBaseImageContract(contract(), {
+        ...expected,
+        baseReference: `${IMAGE}@sha256:${"e".repeat(64)}`,
+      }),
+    ).toThrow("does not match the exact PR managed image");
+  });
+
   it.each([
     ["a mutable reference", { reference: `${IMAGE}:latest` }, /reference must match/u],
     ["the wrong source revision", { sourceRevision: "e".repeat(40) }, /source revision/u],
@@ -106,6 +121,7 @@ describe("Deep Agents Code E2E base contract", () => {
         [contractPath],
         {
           GITHUB_OUTPUT: outputPath,
+          EXPECTED_BASE_REF: platformReference,
           PUBLICATION_HEAD_SHA: HEAD_SHA,
           PUBLICATION_RUN_ATTEMPT: String(RUN_ATTEMPT),
           PUBLICATION_RUN_ID: String(RUN_ID),
@@ -129,5 +145,4 @@ describe("Deep Agents Code E2E base contract", () => {
       /did not prove both required imports/u,
     );
   });
-
 });

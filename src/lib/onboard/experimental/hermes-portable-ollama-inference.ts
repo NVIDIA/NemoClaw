@@ -201,10 +201,7 @@ export function createHermesPortableOllamaInferenceResolver(
     if (input.acceleration !== "nvidia-gpu") {
       throw new Error("Hermes Portable Ollama requires NVIDIA GPU acceleration authority.");
     }
-    if (input.requireToolCalling === null) {
-      throw new Error("Hermes Portable Ollama requires explicit tool-calling authority.");
-    }
-    if (input.allowPublishedResume !== input.recover) {
+    if (input.recover && !input.allowPublishedResume) {
       throw new Error("Hermes Portable Ollama recovery authority is inconsistent.");
     }
     const runtimeContext = options.runtimeContext;
@@ -288,6 +285,11 @@ export function createHermesPortableOllamaInferenceResolver(
       runGatewayOpenshell: options.runGatewayOpenshell,
     });
     const publishedReceipt = gatewayTransaction.publishedReceipt;
+    const requireToolCalling =
+      input.requireToolCalling ?? publishedReceipt?.inference?.toolCallingRequired;
+    if (typeof requireToolCalling !== "boolean") {
+      throw new Error("Hermes Portable Ollama requires explicit tool-calling authority.");
+    }
     const containerName = `nemoclaw-portable-ollama-${sandboxDigest.slice(0, 16)}`;
     const recoverInterrupted =
       publishedReceipt === null &&
@@ -344,8 +346,9 @@ export function createHermesPortableOllamaInferenceResolver(
           imageRef: PORTABLE_OLLAMA_IMAGE,
           gpuDevices,
           environment: Object.freeze([]),
+          ollamaContextLength: 64_000,
           model,
-          requireToolCalling: input.requireToolCalling,
+          requireToolCalling,
           networkName: PORTABLE_DOCKER_NETWORK_NAME,
           networkId: networkAuthority.networkId,
           networkGatewayIp: networkAuthority.gatewayIp,

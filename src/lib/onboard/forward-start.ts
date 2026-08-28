@@ -269,6 +269,9 @@ function classifyListenerStartDiagnostic(input: {
   listedForAnotherSandbox: boolean;
   isPortListening: (port: number) => boolean;
 }): DetachedForwardStartOutcome | null {
+  if (looksLikeSandboxNotReadyForwardStart(input.diagnostic) && !input.ownerLookupSucceeded) {
+    return null;
+  }
   if (!looksLikeForwardListenerStartFailure(input.diagnostic)) return null;
 
   if (input.listedForAnotherSandbox) {
@@ -381,6 +384,7 @@ export function runDetachedForwardStartWithDiagnostics(
   }
 
   let lastFetchError: string | null = null;
+  let lastOwnerLookupSucceeded = false;
   const readDiag = (): string => {
     const stderr = readDiagnosticFile(forwardErrPath);
     const stdout = readDiagnosticFile(forwardDiagPath);
@@ -406,15 +410,18 @@ export function runDetachedForwardStartWithDiagnostics(
         const fetchedList = fetchForwardList();
         if (fetchedList === null) {
           lastFetchError = "OpenShell returned no forward list result";
+          lastOwnerLookupSucceeded = false;
         } else {
           list = fetchedList;
           // Clear the cached transient error so a recovered gateway does not
           // leave a stale "openshell forward list failed: …" suffix on the
           // eventual timeout diagnostic.
           lastFetchError = null;
+          lastOwnerLookupSucceeded = true;
         }
       } catch (err) {
         lastFetchError = err instanceof Error ? err.message : String(err);
+        lastOwnerLookupSucceeded = false;
       }
       lastListSnapshot = list;
       const listedOwner = getOccupiedPorts(list).get(String(expect.port));
@@ -458,7 +465,7 @@ export function runDetachedForwardStartWithDiagnostics(
           diagnostic: diagSoFar,
           pid,
           port: expect.port,
-          ownerLookupSucceeded: lastFetchError === null,
+          ownerLookupSucceeded: lastOwnerLookupSucceeded,
           listedForAnotherSandbox,
           isPortListening,
         });
@@ -487,6 +494,20 @@ export function runDetachedForwardStartWithDiagnostics(
       sleepImpl(pollIntervalMs);
     }
     const finalDiag = readDiag();
+    const finalReadinessOutcome =
+      lastOwnerLookupSucceeded && looksLikeSandboxNotReadyForwardStart(finalDiag)
+        ? classifyListenerStartDiagnostic({
+            diagnostic: finalDiag,
+            pid,
+            port: expect.port,
+            ownerLookupSucceeded: true,
+            listedForAnotherSandbox: Boolean(
+              getOccupiedPorts(lastListSnapshot).get(String(expect.port)),
+            ),
+            isPortListening,
+          })
+        : null;
+    if (finalReadinessOutcome) return finalReadinessOutcome;
     const listTail = lastListSnapshot
       ? ` last forward list: ${compactText(redact(lastListSnapshot)).slice(0, 240)}`
       : " last forward list: <empty>";

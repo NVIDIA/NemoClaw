@@ -315,7 +315,7 @@ function resolveCanonicalManagedMcpAdapter(
 function requireCanonicalManagedPolicy(
   sandbox: registry.SandboxEntry,
   server: string,
-  livePolicies: Record<string, unknown>,
+  livePolicies?: Record<string, unknown>,
 ): ExactManagedMcpPolicy {
   const bridge = sandbox.mcp?.bridges[server];
   if (!bridge || bridge.addState || bridge.server !== server) {
@@ -389,10 +389,10 @@ function requireCanonicalManagedPolicy(
     throw new Error(`Managed MCP policy '${policyName}' has non-canonical generated content`);
   }
 
-  if (!Object.hasOwn(livePolicies, policyKey)) {
+  if (livePolicies && !Object.hasOwn(livePolicies, policyKey)) {
     throw new Error(`Managed MCP policy '${policyName}' is absent from the live gateway policy`);
   }
-  if (!isDeepStrictEqual(livePolicies[policyKey], registeredNetworkPolicy)) {
+  if (livePolicies && !isDeepStrictEqual(livePolicies[policyKey], registeredNetworkPolicy)) {
     throw new Error(`Managed MCP policy '${policyName}' has drifted from its ownership record`);
   }
 
@@ -412,16 +412,16 @@ function requireCanonicalManagedPolicy(
  * committed custom-policy record whose sole network entry exactly matches the
  * live base policy.
  */
-export function inspectExactManagedMcpPolicies(
+function inspectCanonicalManagedMcpPolicies(
   sandboxName: string,
-  livePolicyYaml: string,
+  livePolicies: Record<string, unknown> | undefined,
   deps: ManagedMcpPolicyInspectionDeps = managedMcpPolicyInspectionDeps,
 ): ExactManagedMcpPolicy[] {
-  const liveDocument = parseManagedPolicyDocument(livePolicyYaml, "Live gateway policy");
-  const livePolicies = readManagedNetworkPolicies(liveDocument, "Live gateway policy");
   const sandbox = deps.getSandbox(sandboxName);
   if (!sandbox) {
-    const unclassifiedKey = Object.keys(livePolicies).find((key) => key.startsWith("mcp_bridge_"));
+    const unclassifiedKey = Object.keys(livePolicies ?? {}).find((key) =>
+      key.startsWith("mcp_bridge_"),
+    );
     if (unclassifiedKey) {
       throw new Error(
         `Reserved MCP policy key ${diagnosticPreview(unclassifiedKey)} has no committed managed bridge ownership`,
@@ -439,7 +439,9 @@ export function inspectExactManagedMcpPolicies(
         `Generated MCP policy ${diagnosticPreview(orphaned.name)} has no committed managed bridge ownership`,
       );
     }
-    const unclassifiedKey = Object.keys(livePolicies).find((key) => key.startsWith("mcp_bridge_"));
+    const unclassifiedKey = Object.keys(livePolicies ?? {}).find((key) =>
+      key.startsWith("mcp_bridge_"),
+    );
     if (unclassifiedKey) {
       throw new Error(
         `Reserved MCP policy key ${diagnosticPreview(unclassifiedKey)} has no committed managed bridge ownership`,
@@ -476,7 +478,7 @@ export function inspectExactManagedMcpPolicies(
     }
     keys.add(entry.key);
   }
-  const unclassifiedKey = Object.keys(livePolicies).find(
+  const unclassifiedKey = Object.keys(livePolicies ?? {}).find(
     (key) => key.startsWith("mcp_bridge_") && !keys.has(key),
   );
   if (unclassifiedKey) {
@@ -485,6 +487,26 @@ export function inspectExactManagedMcpPolicies(
     );
   }
   return exact.sort((left, right) => left.key.localeCompare(right.key));
+}
+
+export function inspectExactManagedMcpPolicies(
+  sandboxName: string,
+  livePolicyYaml: string,
+  deps: ManagedMcpPolicyInspectionDeps = managedMcpPolicyInspectionDeps,
+): ExactManagedMcpPolicy[] {
+  const liveDocument = parseManagedPolicyDocument(livePolicyYaml, "Live gateway policy");
+  return inspectCanonicalManagedMcpPolicies(
+    sandboxName,
+    readManagedNetworkPolicies(liveDocument, "Live gateway policy"),
+    deps,
+  );
+}
+
+export function inspectRecordedManagedMcpPolicies(
+  sandboxName: string,
+  deps: ManagedMcpPolicyInspectionDeps = managedMcpPolicyInspectionDeps,
+): ExactManagedMcpPolicy[] {
+  return inspectCanonicalManagedMcpPolicies(sandboxName, undefined, deps);
 }
 
 /**

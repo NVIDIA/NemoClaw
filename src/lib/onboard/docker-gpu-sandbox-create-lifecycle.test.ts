@@ -50,8 +50,9 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     const finalizeBackup = vi.fn(() => ({
       backupRemoved: true,
       rolledBack: false,
-      lifecycleReleaseObserved: true,
       replacementRestarted: true,
+      finalHandoffAcknowledged: true,
+      lastSandboxPhase: "Ready",
     }));
     const capturePreRollbackDiagnostics = vi.fn(() => null);
     const onPatchFailureExit = vi.fn();
@@ -97,11 +98,11 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
         result,
         supervisorReady: true,
         sandboxName: "alpha",
-        lifecycleReleaseTimeoutSecs: 900,
+        finalHandoffTimeoutSecs: 900,
       },
       deps,
     );
-    expect(waitForSupervisor).toHaveBeenCalledTimes(2);
+    expect(waitForSupervisor).toHaveBeenCalledOnce();
     expect(capturePreRollbackDiagnostics).not.toHaveBeenCalled();
     expect(onPatchFailureExit).not.toHaveBeenCalled();
   });
@@ -138,7 +139,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
         result,
         supervisorReady: true,
         sandboxName: "alpha",
-        lifecycleReleaseTimeoutSecs: 900,
+        finalHandoffTimeoutSecs: 900,
       },
       deps,
     );
@@ -170,11 +171,14 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
 
     patch.maybeApplyDuringCreate();
     patch.waitForSupervisorReconnectIfNeeded();
-    await expect(patch.commitAfterReady()).rejects.toThrow("final runtime handoff");
+    await expect(patch.commitAfterReady()).rejects.toThrow("automatic rollback is unavailable");
     expect(onPatchFailureExit).toHaveBeenCalledOnce();
+    expect(onPatchFailureExit.mock.calls[0]?.[2]?.context).toMatchObject({
+      backupRemoved: true,
+    });
   });
 
-  it("rejects final handoff when OpenShell never releases the deleting lifecycle record (#9531)", async () => {
+  it("rejects final handoff when OpenShell reports Deleting after restart (#9531)", async () => {
     const deps = makeDeps();
     const result = deferredCreateResult();
     const waitForSupervisor = vi.fn(() => true);
@@ -191,8 +195,9 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
         finalizeBackup: vi.fn(() => ({
           backupRemoved: true,
           rolledBack: false,
-          lifecycleReleaseObserved: false,
           replacementRestarted: true,
+          finalHandoffAcknowledged: false,
+          lastSandboxPhase: "Deleting",
         })),
         onPatchFailureExit,
       },
@@ -200,7 +205,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
 
     patch.maybeApplyDuringCreate();
     patch.waitForSupervisorReconnectIfNeeded();
-    await expect(patch.commitAfterReady()).rejects.toThrow("final runtime handoff");
+    await expect(patch.commitAfterReady()).rejects.toThrow("automatic rollback is unavailable");
 
     expect(waitForSupervisor).toHaveBeenCalledOnce();
     expect(onPatchFailureExit).toHaveBeenCalledOnce();

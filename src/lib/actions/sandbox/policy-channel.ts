@@ -921,11 +921,27 @@ async function applyChannelAddToGatewayAndRegistry(
   try {
     // bestEffort: failures throw (instead of process.exit inside the helper)
     // so a partial add can be torn down below before exiting.
-    policyChannelDependencies.upsertMessagingProviders(tokenDefs, {
+    const providerNames = policyChannelDependencies.upsertMessagingProviders(tokenDefs, gatewayName, {
       bestEffort: true,
       revalidatePolicyRequirements: () => prepareMutation?.(),
       requireExactBindings: true,
     });
+    for (const providerName of providerNames) {
+      prepareMutation?.();
+      revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName);
+      const attached = policyChannelDependencies.runGatewayOpenshell(
+        gatewayName,
+        ["sandbox", "provider", "attach", "-g", gatewayName, sandboxName, providerName],
+        { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      if (attached.status !== 0) {
+        throw new Error(
+          `OpenShell did not attach messaging provider '${providerName}' to sandbox '${sandboxName}'.`,
+        );
+      }
+      prepareMutation?.();
+      revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName);
+    }
   } catch (err) {
     console.error(
       `  ✗ Failed to register '${channelName}' providers with the gateway: ${
@@ -964,6 +980,40 @@ async function applyChannelAddToGatewayAndRegistry(
   return true;
 }
 
+export function revalidateMessagingProviderAttachmentTarget(
+  sandboxName: string,
+  gatewayName: string,
+): void {
+  const expected = registry.getSandbox(sandboxName);
+  const lifecycleGeneration = expected?.lifecycleGeneration;
+  const expectedFingerprint = expected?.lifecycleLiveIdentityFingerprint;
+  if (
+    !expected ||
+    typeof lifecycleGeneration !== "string" ||
+    typeof expectedFingerprint !== "string" ||
+    (expected.gatewayName && expected.gatewayName !== gatewayName)
+  ) {
+    throw new Error(
+      `Sandbox '${sandboxName}' has incomplete lifecycle identity for messaging provider attachment.`,
+    );
+  }
+  const liveFingerprint = policyChannelDependencies.inspectMessagingProviderAttachmentTarget(
+    sandboxName,
+    gatewayName,
+  );
+  const confirmed = registry.getSandbox(sandboxName);
+  if (
+    liveFingerprint !== expectedFingerprint ||
+    confirmed?.lifecycleGeneration !== lifecycleGeneration ||
+    confirmed.lifecycleLiveIdentityFingerprint !== expectedFingerprint ||
+    (confirmed.gatewayName && confirmed.gatewayName !== gatewayName)
+  ) {
+    throw new Error(
+      `Sandbox '${sandboxName}' changed before messaging provider attachment completed.`,
+    );
+  }
+}
+
 // Remove a channel's bridge providers from the gateway and drop it from the
 // compiled messaging plan. Mirrors applyChannelAddToGatewayAndRegistry.
 async function applyChannelRemoveToGatewayAndRegistry(
@@ -989,9 +1039,9 @@ async function applyChannelRemoveToGatewayAndRegistry(
       ...bridgeProviderNamesForChannel(sandboxName, channelName),
     ]),
   ];
+  const gatewayName = getSandboxTargetGatewayName(sandboxName);
 
   if (providerNames.length > 0) {
-    const gatewayName = getSandboxTargetGatewayName(sandboxName);
     const recovery = await recoverNamedGatewayRuntime({ gatewayName });
     if (!recovery.recovered) {
       console.error(
@@ -1016,10 +1066,14 @@ async function applyChannelRemoveToGatewayAndRegistry(
   options.prepareCleanup?.();
   if (gatewayReachable) {
     for (const name of providerNames) {
-      const result = runOpenshell(["sandbox", "provider", "detach", sandboxName, name], {
-        ignoreError: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      const result = policyChannelDependencies.runGatewayOpenshell(
+        gatewayName,
+        ["sandbox", "provider", "detach", sandboxName, name],
+        {
+          ignoreError: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
       if (result.status !== 0) {
         const output = `${result.stdout || ""}${result.stderr || ""}`;
         if (!/\bNotFound\b|not found|not attached/i.test(output)) {
@@ -1810,10 +1864,14 @@ async function rollbackChannelAdd(
           token,
           providerType: snapshot.staticProviderType ?? MESSAGING_CREDENTIAL_PROVIDER_TYPE,
         }));
-        policyChannelDependencies.upsertMessagingProviders(priorTokenDefs, {
-          bestEffort: true,
-          requireExactBindings: true,
-        });
+        policyChannelDependencies.upsertMessagingProviders(
+          priorTokenDefs,
+          getSandboxTargetGatewayName(sandboxName),
+          {
+            bestEffort: true,
+            requireExactBindings: true,
+          },
+        );
       } catch (err) {
         console.error(
           `  ${YW}⚠${R} Failed to restore gateway providers for '${canonical}': ${
@@ -2002,8 +2060,11 @@ export function applyChannelPresetIfAvailable(
                 expectedExistingNetworkPolicyContent: options.expectedExistingNetworkPolicyContent,
               }
             : {}),
+          includeMessagingCredentialBindings: true,
         })
-      : policies.applyPreset(sandboxName, channelName);
+      : policies.applyPreset(sandboxName, channelName, {
+          includeMessagingCredentialBindings: true,
+        });
     if (!applied) {
       console.error(
         `  ${YW}⚠${R} Cannot enable channel '${channelName}': policy preset failed to apply.`,

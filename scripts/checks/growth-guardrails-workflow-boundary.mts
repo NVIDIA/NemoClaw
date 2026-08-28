@@ -13,7 +13,7 @@ const WORKFLOW_PATH = join(ROOT, ".github", "workflows", "codebase-growth-guardr
 const STATIC_ACTION_PATH = join(ROOT, ".github", "actions", "ci-static-checks", "action.yaml");
 const CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
 const TEST_COMMAND =
-  "set -euo pipefail\nnpx vitest run --project integration test/growth-guardrails.test.ts";
+  "set -euo pipefail\nnpx vitest run --project integration test/automation/pull-requests/growth-guardrails.test.ts";
 const STATIC_COMMAND =
   "npx prek run --all-files --stage pre-commit \\\n  --skip source-shape-test-budget \\\n  --skip test-skills-yaml";
 
@@ -49,7 +49,7 @@ export function validateGrowthGuardrailsWorkflowBoundary(
     on: {
       pull_request_target: { types: ["opened", "reopened", "synchronize", "ready_for_review"] },
     },
-    permissions: { contents: "read", "pull-requests": "read" },
+    permissions: { contents: "read" },
     jobs: {
       "codebase-growth-guardrails": {
         name: "codebase-growth-guardrails",
@@ -71,12 +71,8 @@ export function validateGrowthGuardrailsWorkflowBoundary(
           {
             name: "Test codebase growth guardrails",
             env: {
-              NEMOCLAW_GROWTH_PR: "1",
-              GH_TOKEN: "${{ github.token }}",
               PR_NUMBER: "${{ github.event.pull_request.number }}",
-              REPO: "${{ github.repository }}",
               BASE_SHA: "${{ github.event.pull_request.base.sha }}",
-              HEAD_REPO: "${{ github.event.pull_request.head.repo.full_name }}",
               HEAD_SHA: "${{ github.event.pull_request.head.sha }}",
             },
             run: TEST_COMMAND + "\n",

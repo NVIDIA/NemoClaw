@@ -12,9 +12,9 @@ on:
       - "managed-inference/recipes/llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1.yaml"
       - "scripts/checks/export-llama-cpp-image-config.mts"
       - "scripts/checks/verify-llama-cpp-image-publication-evidence.sh"
-      - "test/llama-cpp-image.test.ts"
-      - "test/llama-cpp-image-publication-evidence.test.ts"
-      - "test/llama-cpp-image-workflow.test.ts"
+      - "test/inference/llama/llama-cpp-image.test.ts"
+      - "test/inference/llama/llama-cpp-image-publication-evidence.test.ts"
+      - "test/inference/llama/llama-cpp-image-workflow.test.ts"
   workflow_dispatch:
     inputs:
       publish:

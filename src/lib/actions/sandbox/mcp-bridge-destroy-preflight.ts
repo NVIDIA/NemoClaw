@@ -3,6 +3,7 @@
 
 import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
+import type { McpScrubbedAdapterEntry } from "./mcp-bridge-adapter-teardown";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import {
   assertGeneratedPolicyRegistrationMutationSafe,
@@ -25,7 +26,7 @@ import { assertAuthenticatedBridgeEntry, validateSandboxName } from "./mcp-bridg
 export interface McpDestroyPreparation {
   entries: McpBridgeEntry[];
   detachedProviderEntries: McpBridgeEntry[];
-  scrubbedAdapterEntries: McpBridgeEntry[];
+  scrubbedAdapterEntries: McpScrubbedAdapterEntry[];
   /** Recheck the exact retained MCP policy authority before sandbox deletion. */
   revalidateBeforeDelete?: () => Promise<void>;
   /** Recheck the retained authority and exact manifest after confirmed deletion. */

@@ -127,10 +127,7 @@ describe("rebuildSandbox DCode flow: preflight", () => {
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).rejects.toThrow("Recorded DCode auto-approval state is invalid");
 
-    expect(harness.registryUpdateSpy).toHaveBeenCalledOnce();
-    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
-      policyAuthority: "nemoclaw-managed",
-    });
+    expect(harness.registryUpdateSpy).not.toHaveBeenCalled();
     expect(harness.prepareManagedDcodeRebuildImageSpy).not.toHaveBeenCalled();
     expectNoDcodeMutation(harness);
   });

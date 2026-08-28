@@ -237,7 +237,7 @@ Classify the effects that each workflow owns:
 - For `Release / Latest Tag`, verify that `latest` identifies the release tag. Verify label
   carry-forward and released-label deletion.
 - For `Docs / Publish Public`, require the `publish` job to succeed.
-- For `Images / Base Images`, require `Publish complete managed images` to
+- For `Images / Publish Base and Managed Images`, require `Publish complete managed images` to
   succeed. Report Pi candidate failures separately; they do not determine production promotion.
 
 A failed post-tag workflow does not change tag success. Report the failing job and recovery path.

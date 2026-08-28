@@ -122,7 +122,6 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/managed-image-protected-runtime",
     E2E_JOB: "1",
     E2E_TARGET_ID: JOB_ID,
-    E2E_WORKLOAD_SOURCE: "managed-image",
     RELEASE_E2E_ACTIVATION_PATH: ACTIVATION_PATH,
     NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha }}",
     NEMOCLAW_E2E_SHARD: "linux-amd64-gpu",

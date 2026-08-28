@@ -213,10 +213,10 @@ const {
   getLocalProviderBaseUrl,
   getLocalProviderHealthCheck,
   getLocalProviderValidationBaseUrl,
-  getOllamaModelOptions,
   getOllamaWarmupCommand,
   validateLocalProvider,
 } = localInference;
+const resolveNonInteractiveModel = localInference.resolveNonInteractiveOllamaModel;
 const {
   checkOllamaPortsOrWarn,
   assertOllamaUpgradeApplied,
@@ -347,6 +347,7 @@ const { resolveSandboxImageTagFromCreateOutput } =
   require("./domain/sandbox/image-tag") as typeof import("./domain/sandbox/image-tag");
 const nim: typeof import("./inference/nim") = require("./inference/nim");
 const onboardSession: typeof import("./state/onboard-session") = require("./state/onboard-session");
+const { markCancellationRecovery: recordRecovery } = onboardSession;
 const portableRetirementAuthority: typeof import("./onboard/portable-retirement-authority") = require("./onboard/portable-retirement-authority");
 const {
   registerIncompleteOnboardExitHandlerForSession,
@@ -458,6 +459,7 @@ const {
 }: typeof import("./onboard/cancel-rollback") = require("./onboard/cancel-rollback");
 const {
   createCoreOnboardFlowPhases,
+  isCoreFlowCompleteBeforeFinalization,
   prepareCoreOnboardFlowContext,
   prepareFinalOnboardFlowContext,
   runCoreOnboardFlowSlice,
@@ -914,10 +916,8 @@ const registeredCredentialProviders =
   credentialProviderRegistration.createCredentialProviderRegistration({
     root: ROOT,
     runOpenshell,
-    redact,
     getGatewayName: () => GATEWAY_NAME,
     getCredential,
-    normalizeCredentialValue,
     updateSession: onboardSession.updateSession,
     stagedLegacyValues,
     migratedLegacyKeys,
@@ -1718,17 +1718,17 @@ async function selectAndValidateOllamaModel(
     promptYesNoOrDefault(question, null, defaultIsYes);
   const interaction = { isNonInteractive, isAutoYes, confirm };
   while (true) {
-    const installedModels = getOllamaModelOptions();
+    const installedModels = localInference.getOllamaModelOptions();
     let model: string | typeof BACK_TO_SELECTION;
     if (lockedModel) {
       model = lockedModel;
     } else if (isNonInteractive()) {
-      model = localInference.resolveNonInteractiveOllamaModel(requestedModel, recoveredModel, gpu);
+      model = resolveNonInteractiveModel(requestedModel, recoveredModel, gpu, installedModels);
     } else {
       model = await promptOllamaModel(gpu, {
-        defaultModel:
-          promptDefaultModel && isSafeModelId(promptDefaultModel) ? promptDefaultModel : null,
+        defaultModel: isSafeModelId(promptDefaultModel ?? "") ? promptDefaultModel : null,
         excludeModels: probeFailures.excludedModels(),
+        installedModels,
       });
     }
     if (isBackToSelection(model)) {
@@ -1836,9 +1836,9 @@ async function handleNimLocalSelection(
   state: SetupNimSelectionState,
 ): Promise<SetupNimSelectionResult> {
   const localGpu = requireValue(gpu, "GPU details are required for local NIM model selection");
-  const models = nim.listModels().filter((m) => m.minGpuMemoryMB <= localGpu.totalMemoryMB);
+  const { models, usableMemoryMB } = nim.getNimModelOptions(localGpu);
   if (models.length === 0) {
-    console.log("  No NIM models fit your GPU VRAM. Falling back to cloud API.");
+    console.log(`  No NIM model fits ${usableMemoryMB} MB. Falling back to cloud API.`);
     applyCloudFallbackSelection(state, REMOTE_PROVIDER_CONFIG.build);
     state.assertRouteCompatible?.();
     return "selected";
@@ -1852,7 +1852,7 @@ async function handleNimLocalSelection(
       sel = models.find((m) => m.name === targetModel);
       if (!sel) {
         const label = args.requestedModel ? "NEMOCLAW_MODEL for NIM" : "Recorded NIM model";
-        console.error(`  Unsupported ${label}: ${targetModel}`);
+        console.error(nim.nimModelSelectionError(targetModel, label, localGpu));
         process.exit(1);
       }
     } else {
@@ -1861,7 +1861,7 @@ async function handleNimLocalSelection(
     note(`  [non-interactive] NIM model: ${sel.name}`);
   } else {
     console.log("");
-    console.log("  Models that fit your GPU:");
+    console.log(`  Models that fit ${usableMemoryMB} MB of usable GPU memory:`);
     models.forEach((m, i) => {
       console.log(`    ${i + 1}) ${m.name} (min ${m.minGpuMemoryMB} MB)`);
     });
@@ -1933,7 +1933,6 @@ async function handleNimLocalSelection(
   console.log(`  Pulling NIM image for ${catalogModel}...`);
   assertSelectionMutationAuthority(state, "install the local NIM runtime");
   nim.pullNimImage(catalogModel);
-
   console.log("  Starting NIM container...");
   const nimContainerNameLocal = nim.containerName(GATEWAY_NAME);
   assertSelectionMutationAuthority(state, "start the local NIM runtime");
@@ -1943,6 +1942,7 @@ async function handleNimLocalSelection(
 
   console.log("  Waiting for NIM to become healthy...");
   if (!nim.waitForNimHealth(undefined, undefined, { container: nimContainerNameLocal })) {
+    nim.stopNimContainerByNameOrThrow(nimContainerNameLocal);
     console.error("  NIM failed to start. Falling back to cloud API.");
     applyCloudFallbackSelection(state, REMOTE_PROVIDER_CONFIG.build);
     state.assertRouteCompatible?.();
@@ -2634,13 +2634,7 @@ const onboardRuntimeBoundary = new OnboardRuntimeBoundary({
     toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
   maybeForceE2eStepFailure,
 });
-
-const sandboxCancelRollback = installSandboxCancelRollback({
-  runOpenshell,
-  registry,
-  clearOnboardSession: onboardSession.clearSession,
-}); // #4614
-
+const sandboxCancelRollback = installSandboxCancelRollback({ recordRecovery }); // #4614
 const {
   arePolicyPresetsApplied,
   computeSetupPresetSuggestions,
@@ -2753,29 +2747,17 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   );
   setOnboardBrandingAgent(opts.agent || process.env.NEMOCLAW_AGENT || null);
   AUTO_YES = opts.autoYes === true || process.env.NEMOCLAW_YES === "1";
-  const entryOptions = onboardEntryOptions.resolveDefaultRunEntryOptions(
-    opts,
-    onboardSession.loadSession()?.status ?? null,
-    validateName,
-  );
-  const { fresh, nonInteractive, cannotPrompt, resume } = entryOptions;
-  const { requestedFromDockerfile, requestedSandboxName } = entryOptions;
-  NON_INTERACTIVE = nonInteractive;
-  const validatePolicyTierBeforeRuntime =
-    isNonInteractive() && !resume && opts.experimentalProfile !== "portable";
-  if (validatePolicyTierBeforeRuntime) validatePolicyTierEnvEarly();
+  const resolveEntryOptions = () =>
+    onboardEntryOptions.resolveDefaultRunEntryOptionsFromState(opts, validateName, onboardSession);
+  const initialEntryOptions = resolveEntryOptions();
+  NON_INTERACTIVE = initialEntryOptions.nonInteractive;
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   _preflightDashboardPort =
     opts.controlUiPort ?? (process.env.NEMOCLAW_DASHBOARD_PORT != null ? DASHBOARD_PORT : null);
   onboardRuntimeBoundary.reset();
-  const baseImageResolutionContext = baseImageResolutionFlow.createBaseImageResolutionContext({
-    fresh,
-    initialHint: opts.baseImageResolutionHint,
-    initialPreResolvedMetadata: opts.preResolvedBaseImageMetadata,
-  });
   const portableRetirementEntry = portableRetirementAuthority.beginPortableOnboardRetirementEntry({
     alreadyHeld: opts.onboardLockAlreadyHeld === true,
-    command: `nemoclaw onboard${resume ? " --resume" : ""}${fresh ? " --fresh" : ""}${isNonInteractive() ? " --non-interactive" : ""}${requestedFromDockerfile ? ` --from ${requestedFromDockerfile}` : ""}`,
+    command: `nemoclaw onboard${initialEntryOptions.resume ? " --resume" : ""}${initialEntryOptions.fresh ? " --fresh" : ""}${initialEntryOptions.nonInteractive ? " --non-interactive" : ""}${initialEntryOptions.requestedFromDockerfile ? ` --from ${initialEntryOptions.requestedFromDockerfile}` : ""}`,
     displayName: cliDisplayName(),
     homeDir: process.env.HOME || os.homedir(),
     loadRegistry: registry.load,
@@ -2783,14 +2765,12 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     sessionFile: onboardSession.SESSION_FILE,
     withLifecycleLock: sandboxMutationLock.withMcpLifecycleLock,
   });
-
   let portableEnvScope:
     | import("./onboard/session-bootstrap").PortableOnboardEnvironmentScope
     | null = null;
   const restorePortableEnvScope = () => portableEnvScope?.restore();
   // Secure removal remains gated on successful migration of every staged legacy credential.
   let stagedLegacyKeys: string[] = [];
-
   let onboardTrace: ReturnType<typeof onboardTracing.startOnboardTrace> = {
     collector: null,
     span: null,
@@ -2800,6 +2780,18 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     preserveIncompleteSession = false;
   try {
     await portableRetirementEntry.run(async () => {
+      const entryOptions = resolveEntryOptions();
+      const { fresh, nonInteractive, cannotPrompt, resume } = entryOptions;
+      const { requestedFromDockerfile, requestedSandboxName } = entryOptions;
+      NON_INTERACTIVE = nonInteractive;
+      const validatePolicyTierBeforeRuntime =
+        isNonInteractive() && !resume && opts.experimentalProfile !== "portable";
+      if (validatePolicyTierBeforeRuntime) validatePolicyTierEnvEarly();
+      const baseImageResolutionContext = baseImageResolutionFlow.createBaseImageResolutionContext({
+        fresh,
+        initialHint: opts.baseImageResolutionHint,
+        initialPreResolvedMetadata: opts.preResolvedBaseImageMetadata,
+      });
       const lockedRuntime = await resumeRuntime.prepare(
         opts,
         resume,
@@ -2840,6 +2832,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             nonInteractive: isNonInteractive(),
             authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
             servingProfileProvenance: opts.servingProfileProvenance ?? null,
+            apfInterceptorRequested: opts.apfInterceptorRequested ?? null,
+            recreateSandboxRequested: RECREATE_SANDBOX,
             checkpointProfile: lockedRuntime.checkpointProfile,
             portableRuntimeAuthority: lockedRuntime.portableRuntimeContext?.authority ?? null,
             agentFlag: opts.agent || null,
@@ -2905,7 +2899,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         );
         process.exit(1);
       }
-
       registerIncompleteOnboardExitHandlerForSession(
         onboardSession,
         () => completed || preserveIncompleteSession,
@@ -2968,13 +2961,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       onboardSessionBootstrap.reportReadOnlyHostMounts(effectiveHostMounts, note);
       const explicitSandboxGpuFlag = resolveSandboxGpuFlagFromOptions(opts);
       const recordedGpuPassthroughBeforePreflight = session?.gpuPassthrough === true;
-      type InitialOnboardFlowContext =
-        import("./onboard/machine/initial-flow-composition").InitialOnboardFlowContext<
-          typeof agent,
-          ReturnType<typeof nim.detectGpu>,
-          ReturnType<typeof resolveSandboxGpuConfig>
-        >;
-      const initialFlowContext: InitialOnboardFlowContext = {
+      const initialFlowContext = {
         resume,
         fresh,
         session,
@@ -2995,18 +2982,18 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         webSearchConfig: session?.webSearchConfig || null,
         webSearchSupported: false,
         selectedMessagingChannels,
-        gpu: null,
-        sandboxGpuConfig: null,
+        gpu: null as ReturnType<typeof nim.detectGpu> | null,
+        sandboxGpuConfig: null as ReturnType<typeof resolveSandboxGpuConfig> | null,
         gpuPassthrough: false,
         resumeHasResolvedGpuIntent: false,
         requestedGpuPassthrough: opts.gpu === true,
       };
+      type InitialOnboardFlowContext = typeof initialFlowContext;
       const policyAuthorityBindings =
         sandboxCreateOrchestration.createOnboardPolicyAuthorityBindings(
           sandboxCreateOrchestrationRuntime,
           opts.policyTier,
         );
-
       const [preflightPhase, gatewayPhase]: readonly [
         import("./onboard/machine/sequence-runner").OnboardSequencePhase<InitialOnboardFlowContext>,
         import("./onboard/machine/sequence-runner").OnboardSequencePhase<InitialOnboardFlowContext>,
@@ -3089,9 +3076,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         resume,
         recordRepairEvent,
       });
-
-      // #2753: for an unfinished sandbox, an explicit requested name precedes
-      // the checkpointed name from the interrupted session.
+      // #2753: An explicit requested name precedes its checkpointed name for an unfinished sandbox.
       const coreFlowContext = prepareCoreOnboardFlowContext({
         initial: initialFlowResult,
         recordedSandboxName,
@@ -3129,6 +3114,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         },
         providerInference: {
           gatewayName: GATEWAY_NAME,
+          inspectSandboxForCreate,
           forceProviderSelection: forceProviderSelectionForAgentChange,
           ...authoritativeRebuildTarget.rebuildProviderFlowOptions(opts, coreFlowContext),
           endpointProvenance,
@@ -3196,21 +3182,11 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             isInferenceRouteReady,
             isRoutedInferenceProvider,
             reconcileModelRouter,
-            reupsertRoutedProvider: (gatewayName, p, url, ce) => {
-              const r = routedInference.upsertRoutedProvider(p, url, ce, {
-                upsertProvider: setupInferenceFactory.bindGatewayUpsertProvider(
-                  upsertProvider,
-                  gatewayName,
-                ),
-                hydrateCredentialEnv,
-              });
-              return {
-                ok: r.ok,
-                endpointUrl: r.endpointUrl,
-                message: r.result.message,
-                status: r.result.status,
-              };
-            },
+            reupsertRoutedProvider: setupInferenceFactory.createRoutedResumeProviderUpsert({
+              upsertProvider,
+              runGatewayOpenshell: runCoreGatewayOpenshell,
+              hydrateCredentialEnv,
+            }),
             reserveSandboxInferenceRoute: registry.reserveSandboxInferenceRoute,
             registryUpdateSandbox: (name, updates) => registry.updateSandbox(name, updates),
             ...providerReviewDeps,
@@ -3228,9 +3204,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             },
           },
         },
-
         sandbox: {
           gatewayName: GATEWAY_NAME,
+          apfInterceptorRequested: session?.apfInterceptorRequested === true,
           hermesPortableLifecycle:
             lockedRuntime.portableRuntimeContext !== null && agent?.name === "hermes",
           ...authoritativeRebuildTarget.authoritativeRebuildSandboxFlowOptions(opts),
@@ -3312,6 +3288,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               ),
             ),
             updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
+            finalizeSandboxRouteReservation: registry.finalizeSandboxRouteReservation,
             getSandboxAgentRegistryFields,
             recordStepComplete,
             toSessionUpdates: (updates) =>
@@ -3332,6 +3309,13 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         resume,
         recordRepairEvent,
       });
+      if (isCoreFlowCompleteBeforeFinalization(coreFlowResult)) {
+        sandboxCancelRollback.disarm();
+        await portableRetirementEntry.supersede(lockedRuntime.checkpointProfile);
+        completed = true;
+        process.exitCode = 0;
+        return;
+      }
       setupInferenceFactory.selectGatewayForFollowupOrExit(GATEWAY_NAME, runOpenshell);
       const finalFlowContext = prepareFinalOnboardFlowContext(coreFlowResult);
       let liveFinalFlowContext: InitialOnboardFlowContext = finalFlowContext;
@@ -3589,7 +3573,6 @@ module.exports = {
   recoverGatewayRuntime,
   buildChain,
   buildControlUiUrls,
-
   startGateway,
   startDockerDriverGateway,
   findAvailableDashboardPort,

@@ -652,7 +652,17 @@ export async function runRebuildDestroyPhase(
       };
     }
     if (!validation.ok) {
-      input.onDeleteStateAmbiguous?.();
+      console.error(
+        "  Sandbox deletion was confirmed, but policy authority validation failed before recreation.",
+      );
+      if (backupManifest) {
+        console.error("  State backup is preserved at: " + backupManifest.backupPath);
+      }
+      console.error("  The replacement journal remains available for recovery.");
+      console.error(
+        `  Resolve the policy authority failure, then rerun the rebuild for '${sandboxName}' with --yes.`,
+      );
+      onDeleted();
       bail(validation.message, validation.code);
       return null;
     }

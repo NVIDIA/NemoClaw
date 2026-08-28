@@ -214,6 +214,19 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-inference"]);
   });
 
+  it("routes both Pi qualification targets through the NVIDIA API key profile", () => {
+    const targetIds = ["pi-agent-qualification-amd64", "pi-agent-qualification-arm64"];
+    const plan = buildE2eWorkflowPlan({ targets: targetIds.join(",") });
+
+    expect(targetIds.map((id) => catalogueTarget(id).profile)).toEqual([
+      "nvidia-api",
+      "nvidia-api",
+    ]);
+    expect(plan.catalogueMatrices["nvidia-api"].map((row) => row.id)).toEqual(targetIds);
+    expect(plan.catalogueMatrices["nvidia-inference"]).toEqual([]);
+    expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-api"]);
+  });
+
   it.each(["hermes-slack", "openclaw-inference-switch", "sandbox-operations"])(
     "preserves the profile, timeout, install mode, packages, and environment for migrated targets [%s]",
     (target) => {
@@ -698,16 +711,31 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-standard", "jetson-nvmap-gpu"]);
   });
 
-  it.each([
-    "test/e2e/live/openclaw-agent-assertion.ts",
-    "test/e2e/live/personal-egress-live-proof.ts",
-  ])("selects both Personal stock proof owners when a shared helper changes: %s", (changedFile) => {
-    const plan = buildE2eWorkflowPlan({}, { changedFiles: [changedFile] });
-
-    expect(plan.matrix.map((row) => row.id)).toContain("ubuntu-repo-cloud-openclaw");
-    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
-      "common-egress-agent-openclaw-personal-stock-price",
+  it("selects only the catalogue Personal public-fetch owner for an assertion change", () => {
+    const plan = buildE2eWorkflowPlan(
+      {},
+      { changedFiles: ["test/e2e/live/openclaw-agent-assertion.ts"] },
     );
+
+    expect(plan.matrix.map((row) => row.id)).not.toContain("ubuntu-repo-cloud-openclaw");
+    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toContain(
+      "common-egress-agent-openclaw-personal-public-fetch",
+    );
+  });
+
+  it("maps the trusted main Personal stock selector to the candidate public-fetch target", () => {
+    const legacyId = "common-egress-agent-openclaw-personal-stock-price";
+    const canonicalId = "common-egress-agent-openclaw-personal-public-fetch";
+    const target = catalogueTarget(legacyId);
+    const plan = buildE2eWorkflowPlan({ targets: legacyId });
+
+    expect(target).toMatchObject({
+      id: canonicalId,
+      selector: "^common-egress.+C4.+$",
+      shard: "openclaw-personal-public-fetch",
+      testFile: "test/e2e/live/common-egress-agent.test.ts",
+    });
+    expect(plan.catalogueMatrices["nvidia-inference"].map((row) => row.id)).toEqual([canonicalId]);
   });
 
   it("selects the Jetson test when no other E2E job owns a changed file (#8142)", () => {

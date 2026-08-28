@@ -62,6 +62,7 @@ export function collectManagedLlamaCppDoctorChecks(
 }
 
 type DoctorInferenceDeps = {
+  gatewayName?: string | null;
   probeProviderHealthImpl?: typeof probeProviderHealth;
   probeSandboxInferenceGatewayHealthImpl?: typeof probeSandboxInferenceGatewayHealth;
   /** False for terminal agents that do not have a long-running gateway serving process. */
@@ -146,11 +147,12 @@ async function collectInferenceRouteProbe(
   sandboxName: string,
   sandboxReachable: boolean,
   probe: typeof probeSandboxInferenceGatewayHealth,
+  gatewayName?: string | null,
 ): Promise<ProviderHealthStatus> {
   if (!sandboxReachable) return skippedInferenceGatewayProbe();
   let gateway: Awaited<ReturnType<typeof probeSandboxInferenceGatewayHealth>> = null;
   try {
-    gateway = await probe(sandboxName);
+    gateway = gatewayName ? await probe(sandboxName, { gatewayName }) : await probe(sandboxName);
   } catch {
     gateway = null;
   }
@@ -217,6 +219,7 @@ export async function collectInferenceChecks(
     sandboxName,
     sandboxReachable,
     deps.probeSandboxInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth,
+    deps.gatewayName,
   );
   pushInferenceHealthCheck(checks, gatewayProbe, { label: "Inference route (gateway)" });
   for (const diagnostic of collectProviderHealthDiagnostics(

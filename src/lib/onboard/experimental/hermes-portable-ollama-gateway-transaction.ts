@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
+import { checkOpenAiInferenceProviderProfile } from "../../adapters/openshell/provider-profile";
 import { ensureConfigDir, rejectSymlinksOnPath } from "../../state/config-io";
 import { parseGatewayProviderMetadata } from "../gateway-provider-metadata";
 import type { HostLocalInferenceReceiptWriter } from "../runtime-provider/host-local-inference";
@@ -689,14 +690,30 @@ function exactGatewayMutation(
             throw new Error("Hermes Portable inference gateway provider intent disappeared.");
           }
           let before = readExact(input.provider);
+          const requireOpenAiProfile = () => {
+            const profile = checkOpenAiInferenceProviderProfile({
+              runOpenshell: (args, options) =>
+                runGatewayOpenshell(args, {
+                  ignoreError: true,
+                  suppressOutput: true,
+                  stdio: ["ignore", "pipe", "pipe"],
+                  timeout: options?.timeout ?? GATEWAY_PROVIDER_MUTATION_TIMEOUT_MS,
+                }),
+            });
+            if (!profile.ok) {
+              throw new Error(profile.messages.join("\n"));
+            }
+          };
           if (active.phase === "created" || active.phase === "committed") {
             if (!active.providerAuthority || !matchesAuthority(before, active.providerAuthority)) {
               throw new Error(
                 "Hermes Portable inference recorded gateway provider authority changed.",
               );
             }
+            requireOpenAiProfile();
             return { ok: true };
           }
+          requireOpenAiProfile();
           if (active.phase === "prepared") {
             if (before.kind !== "absent") {
               throw new Error("Hermes Portable inference provider name is no longer unclaimed.");
@@ -817,14 +834,29 @@ export function createHermesPortableOllamaGatewayTransaction(options: {
   readonly credentialEnv: string;
   readonly runGatewayOpenshell: HermesPortableOllamaGatewayRunner;
 }) {
-  const providerCredentialEnv = `${options.credentialEnv}_${options.transactionId.toUpperCase()}`;
+  const receiptProbe = createReceiptWriter(
+    options.directory,
+    options.transactionId,
+    options.targetSha256,
+    () => {},
+  );
+  const recoveredReceipt = receiptProbe.readPublished();
+  if (
+    recoveredReceipt !== null &&
+    (recoveredReceipt.publication === undefined ||
+      recoveredReceipt.publication.targetSha256 !== options.targetSha256)
+  ) {
+    throw new Error("Hermes Portable Ollama published transaction authority is inconsistent.");
+  }
+  const transactionId = recoveredReceipt?.publication?.transactionId ?? options.transactionId;
+  const providerCredentialEnv = `${options.credentialEnv}_${transactionId.toUpperCase()}`;
   if (providerCredentialEnv.length > 128 || !SAFE_CREDENTIAL_ENV.test(providerCredentialEnv)) {
     throw new Error("Hermes Portable Ollama transaction credential authority is invalid.");
   }
   const gatewayProviderJournal = createGatewayProviderJournalStore(
     options.directory,
     Object.freeze({
-      transactionId: options.transactionId,
+      transactionId,
       targetSha256: options.targetSha256,
       gatewayName: "nemoclaw",
       sandboxName: options.sandboxName,
@@ -838,7 +870,7 @@ export function createHermesPortableOllamaGatewayTransaction(options: {
   );
   const receiptWriter = createReceiptWriter(
     options.directory,
-    options.transactionId,
+    transactionId,
     options.targetSha256,
     gatewayProviderJournal.markCommitted,
   );

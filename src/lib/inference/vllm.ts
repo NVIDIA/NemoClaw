@@ -492,9 +492,15 @@ export function computeCapabilityPreflight(
 export interface GpuMemoryDevice {
   index: number;
   uuid: string;
-  totalBytes: bigint;
-  freeBytes: bigint;
+  totalBytes: bigint | null;
+  freeBytes: bigint | null;
 }
+
+type GpuMemoryPreflightResult = { ok: true; warning?: string } | { ok: false; reason: string };
+
+const NVIDIA_GPU_INDEX_PATTERN = /^\d+$/;
+const NVIDIA_GPU_MEMORY_MIB_PATTERN = /^\d+$/;
+const NVIDIA_GPU_UUID_PATTERN = /^GPU-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 
 export function readGpuMemoryDevices(): GpuMemoryDevice[] {
   const out = captureNvidiaSmi(
@@ -507,13 +513,24 @@ export function readGpuMemoryDevices(): GpuMemoryDevice[] {
     const fields = line.split(",").map((field) => field.trim());
     if (fields.length !== 4) continue;
     const [indexRaw, uuid, totalMiBRaw, freeMiBRaw] = fields;
+    if (!NVIDIA_GPU_INDEX_PATTERN.test(indexRaw) || !NVIDIA_GPU_UUID_PATTERN.test(uuid)) {
+      continue;
+    }
     const index = Number(indexRaw);
+    if (!Number.isSafeInteger(index) || index < 0) continue;
+    if (totalMiBRaw === "[N/A]" && freeMiBRaw === "[N/A]") {
+      devices.push({ index, uuid, totalBytes: null, freeBytes: null });
+      continue;
+    }
+    if (
+      !NVIDIA_GPU_MEMORY_MIB_PATTERN.test(totalMiBRaw) ||
+      !NVIDIA_GPU_MEMORY_MIB_PATTERN.test(freeMiBRaw)
+    ) {
+      continue;
+    }
     const totalMiB = Number(totalMiBRaw);
     const freeMiB = Number(freeMiBRaw);
     if (
-      !Number.isSafeInteger(index) ||
-      index < 0 ||
-      !uuid ||
       !Number.isSafeInteger(totalMiB) ||
       totalMiB <= 0 ||
       !Number.isSafeInteger(freeMiB) ||
@@ -569,7 +586,7 @@ export function gpuMemoryPreflight(
   model: VllmModelDef,
   profile: VllmProfile,
   devices: readonly GpuMemoryDevice[] = readGpuMemoryDevices(),
-): { ok: true } | { ok: false; reason: string } {
+): GpuMemoryPreflightResult {
   const utilization = profile.gpuMemoryUtilization;
   if (utilization === undefined) return { ok: true };
   if (devices.length === 0) {
@@ -598,6 +615,27 @@ export function gpuMemoryPreflight(
         "Verify the Docker GPU selection and NVIDIA driver state, then resume onboarding.",
     };
   }
+  if (device.totalBytes === null || device.freeBytes === null) {
+    if (
+      device.totalBytes === null &&
+      device.freeBytes === null &&
+      (profile.platform === "n1x" || profile.platform === "spark")
+    ) {
+      return {
+        ok: true,
+        warning:
+          `${profile.name} GPU ${String(device.index)} (${device.uuid}) reports [N/A] for both total and free ` +
+          `memory. NemoClaw cannot pre-validate --gpu-memory-utilization=${String(utilization)} on this ` +
+          "unified-memory platform and continues without inferring available memory.",
+      };
+    }
+    return {
+      ok: false,
+      reason:
+        `${profile.name} GPU ${String(device.index)} did not report numeric total and free memory. ` +
+        "Verify NVIDIA memory telemetry and GPU health, then resume onboarding.",
+    };
+  }
   const requiredBytes = BigInt(Math.ceil(Number(device.totalBytes) * utilization));
   if (device.freeBytes >= requiredBytes) return { ok: true };
   const missingBytes = requiredBytes - device.freeBytes;
@@ -615,7 +653,7 @@ function installGpuMemoryPreflight(
   model: VllmModelDef,
   profile: VllmProfile,
   dualStationPlan: DualStationVllmPlan | null,
-): ReturnType<typeof gpuMemoryPreflight> {
+): GpuMemoryPreflightResult {
   if (!dualStationPlan) return gpuMemoryPreflight(model, profile);
   const utilization = profile.gpuMemoryUtilization;
   if (utilization === undefined) return { ok: true };
@@ -2307,6 +2345,12 @@ async function runVllmInstall(
     : model.managedBearerAuth
       ? buildLocalManagedVllmDockerEnv()
       : buildVllmDockerEnv();
+  let gpuMemoryWarningShown = false;
+  const reportGpuMemoryWarning = (result: GpuMemoryPreflightResult): void => {
+    if (!result.ok || !result.warning || gpuMemoryWarningShown) return;
+    console.error(warnLine(result.warning));
+    gpuMemoryWarningShown = true;
+  };
 
   console.log("");
   console.log("  Installing vLLM. Progress will print below.");
@@ -2328,6 +2372,7 @@ async function runVllmInstall(
   }
 
   const memory = installGpuMemoryPreflight(model, runtimeProfile, dualStationPlan);
+  reportGpuMemoryWarning(memory);
   if (!memory.ok) {
     console.error(`  vLLM install failed: ${memory.reason}`);
     return { ok: false };
@@ -2614,6 +2659,7 @@ async function runVllmInstall(
   }
 
   const launchMemory = installGpuMemoryPreflight(model, runtimeProfile, null);
+  reportGpuMemoryWarning(launchMemory);
   if (!launchMemory.ok) {
     console.error(`  vLLM install failed: ${launchMemory.reason}`);
     return { ok: false };

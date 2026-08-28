@@ -13,6 +13,8 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
+        credential_binding:
+          provider: "{sandboxName}-telegram-bridge"
         rules:
           - allow: { method: GET, path: "/bot*/**" }
           - allow: { method: POST, path: "/bot*/**" }

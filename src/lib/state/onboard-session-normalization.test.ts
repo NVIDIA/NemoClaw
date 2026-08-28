@@ -3,7 +3,12 @@
 
 import { describe, expect, it } from "vitest";
 
-import { createSession, filterSafeUpdates, normalizeSession } from "./onboard-session";
+import {
+  createSession,
+  filterSafeUpdates,
+  normalizeSession,
+  summarizeForDebug,
+} from "./onboard-session";
 
 type LegacySession = Omit<ReturnType<typeof createSession>, "machine"> & {
   machine?: unknown;
@@ -16,6 +21,52 @@ function requireNormalizedSession(legacy: LegacySession) {
 }
 
 describe("onboard session normalization", () => {
+  it("preserves valid recovery-only cancellation state (#9833)", () => {
+    const cancellationRecovery = {
+      reason: "cancelled_after_sandbox_creation" as const,
+      sandboxName: "retained-sb",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      recordedAt: "2026-08-27T00:00:00.000Z",
+    };
+    const normalized = normalizeSession({
+      ...createSession({ sandboxName: "retained-sb" }),
+      resumable: false,
+      status: "recovery_required",
+      cancellationRecovery,
+    });
+
+    expect(normalized).toMatchObject({
+      sandboxName: "retained-sb",
+      resumable: false,
+      status: "recovery_required",
+      cancellationRecovery,
+    });
+    expect(summarizeForDebug(normalized)?.cancellationRecovery).toEqual(cancellationRecovery);
+  });
+
+  it("keeps APF create intent and defaults legacy sessions to false (#9833)", () => {
+    const selected = createSession({ apfInterceptorRequested: true });
+    expect(normalizeSession(selected)?.apfInterceptorRequested).toBe(true);
+
+    const legacy = { ...selected } as Partial<typeof selected>;
+    delete legacy.apfInterceptorRequested;
+    expect(
+      normalizeSession(legacy as Parameters<typeof normalizeSession>[0])?.apfInterceptorRequested,
+    ).toBe(false);
+    expect(
+      normalizeSession({ ...selected, apfInterceptorRequested: false })?.apfInterceptorRequested,
+    ).toBe(false);
+  });
+
+  it("refuses malformed saved APF create intent instead of downgrading it (#9833)", () => {
+    const selected = createSession({ apfInterceptorRequested: true });
+    const malformed = { ...selected, apfInterceptorRequested: "true" };
+
+    expect(() =>
+      normalizeSession(malformed as unknown as Parameters<typeof normalizeSession>[0]),
+    ).toThrow(/saved APF selection is invalid/u);
+  });
+
   it("keeps recognized, absent, and legacy null policy authority values (#9833)", () => {
     const external = createSession({ policyAuthority: "externally-managed" });
     expect(normalizeSession(external)?.policyAuthority).toBe("externally-managed");

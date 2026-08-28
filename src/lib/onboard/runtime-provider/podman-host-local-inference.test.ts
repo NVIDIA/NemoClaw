@@ -469,6 +469,8 @@ describe("Podman host-local inference lifecycle", () => {
     expect(inference).toBeGreaterThan(ready);
     expect(acceleration).toBeGreaterThan(inference);
     expect(harness.events[inference]).toContain('"tool_choice":"required"');
+    expect(harness.events[inference]).toContain('"max_tokens":4096');
+    expect(harness.events[inference]).toContain('"temperature":0');
 
     prepared.validateBeforeCommit();
     expect(harness.routeAuthorityStore.load("ollama")).toBeNull();

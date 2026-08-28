@@ -40,7 +40,7 @@
 #     either Hermes CLI native env-var reference support (an upstream
 #     change) or a redesigned dashboard/runtime contract that no longer
 #     needs an `sk-`-prefixed rewrite sentinel in the rendered config.
-#   - Regression test: `test/hermes-gateway-wrapper.test.ts` —
+#   - Regression test: `test/agents/hermes/hermes-gateway-wrapper.test.ts` —
 #     `masks every api_key emitted by the managed policy ...` derives a
 #     fixture from `buildHermesManagedPolicy()` and asserts no raw sentinel
 #     survives in stdout for `config show`.

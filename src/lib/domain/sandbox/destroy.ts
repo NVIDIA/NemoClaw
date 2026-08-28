@@ -12,6 +12,7 @@ function stripAnsi(value = ""): string {
 }
 
 export type SpawnLikeResult = {
+  error?: Error;
   status: number | null;
   stdout?: string;
   stderr?: string;
@@ -68,14 +69,19 @@ export function getSandboxDeleteOutcome(deleteResult: SpawnLikeResult): {
   output: string;
   alreadyGone: boolean;
   gatewayUnreachable: boolean;
+  timedOut?: true;
 } {
   const output = `${deleteResult.stdout || ""}${deleteResult.stderr || ""}`.trim();
   const failed = deleteResult.status !== 0;
-  const alreadyGone = failed && isMissingSandboxDeleteOutput(output);
+  const timedOut =
+    failed && (deleteResult.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
+  const alreadyGone = failed && !timedOut && isMissingSandboxDeleteOutput(output);
   return {
     output,
     alreadyGone,
-    gatewayUnreachable: failed && !alreadyGone && isGatewayUnreachableDeleteOutput(output),
+    gatewayUnreachable:
+      failed && !alreadyGone && (timedOut || isGatewayUnreachableDeleteOutput(output)),
+    ...(timedOut ? { timedOut: true as const } : {}),
   };
 }
 

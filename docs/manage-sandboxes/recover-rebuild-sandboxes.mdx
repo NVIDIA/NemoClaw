@@ -103,6 +103,8 @@ If an operator drain exists, recovery prints `Hermes cron restore gate cleared; 
 The command does not own or clear the Hermes operator drain, so new Hermes turns and cron dispatch remain blocked while that drain is active.
 If gate reacquisition or cron validation fails, `recover` exits nonzero and retains the recovery state for another attempt.
 
+Portable Hermes recovery follows the exact receipt-bound start, authenticated-health, and rollback contract in the [`recover` command reference](../../reference/commands#nemoclaw-name-recover).
+
 Use `gateway restart` when you intentionally need a supported Hermes gateway to reload runtime configuration or plugins.
 
 ```bash
@@ -278,6 +280,11 @@ Back up those paths outside the sandbox before you approve legacy recovery.
 $$nemoclaw <sandbox-name> rebuild
 ```
 
+On WSL with Docker Desktop, a generated replacement image build uses a temporary credential-free Docker configuration when the configured Docker Desktop credential helper is unavailable.
+NemoClaw removes the temporary configuration after the build and does not modify your Docker configuration.
+An explicit custom Dockerfile continues to use your configured Docker credentials because its base image or build steps might require a private registry.
+If that custom rebuild cannot reach the credential helper, restore the Docker Desktop session or credential-helper access before retrying.
+
 <AgentOnly variant="openclaw">
 
 After post-restore writes, rebuild verifies that the final `openclaw.json` and `.config-hash` pair match.
@@ -315,8 +322,9 @@ The session then follows the current default selected through `inference set`, w
 <AgentOnly variant="hermes">
 The rebuild command preserves Hermes state, registered policies, and managed MCP configuration while recreating the container.
 It reuses a messaging provider only when its exact type and credential keys match the recorded channel binding.
-A stopped channel remains inactive and contributes no token upsert, rendered runtime configuration, or channel startup effect.
-A policy-required provider attachment is the narrow exception: when stopped Hermes Discord retains a credential-bound policy, rebuild attaches its exact validated static provider without starting Discord.
+A stopped channel remains inactive and contributes no token upsert, rendered runtime configuration, channel startup effect, or inactive built-in messaging preset.
+Exact custom policies remain preserved for separate replay.
+A policy-required provider attachment is the narrow exception: when a preserved custom policy still credential-binds stopped Hermes Discord, rebuild attaches its exact validated static provider without starting Discord.
 If that required provider is missing or incompatible, restore or re-add the channel credentials, then rerun the rebuild.
 A rebuild creates a new sandbox home and a new Hermes API bearer token.
 After the rebuild succeeds, retrieve the replacement token before reconnecting API clients:

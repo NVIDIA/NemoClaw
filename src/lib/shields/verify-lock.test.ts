@@ -307,6 +307,33 @@ describe("verifyShieldsLockState", () => {
     );
   });
 
+  it("flags lsattr failures as drift instead of swallowing them", async () => {
+    const { verifyShieldsLockState } = await loadVerifier();
+    const locked = makeExec({
+      "/sandbox/.openclaw/openclaw.json": "444 root:root",
+      "/sandbox/.openclaw/.config-hash": "444 root:root",
+      "/sandbox/.openclaw": "755 root:root",
+    });
+    const failing: Record<string, () => never> = {
+      lsattr: () => {
+        throw new Error("lsattr: Inappropriate ioctl for device While reading flags");
+      },
+    };
+    const exec = (cmd: string[]): string => (failing[cmd[0]] ?? (() => locked(cmd)))();
+
+    const result = verifyShieldsLockState("openclaw", target, { exec, verifyChattr: true });
+
+    expect(result.ok).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        "/sandbox/.openclaw/openclaw.json immutable bit unverified (lsattr failed: " +
+          "lsattr: Inappropriate ioctl for device While reading flags)",
+        "/sandbox/.openclaw/.config-hash immutable bit unverified (lsattr failed: " +
+          "lsattr: Inappropriate ioctl for device While reading flags)",
+      ]),
+    );
+  });
+
   it("surfaces a legacy state layout violation when the asserter throws", async () => {
     const { verifyShieldsLockState } = await loadVerifier();
     const exec = makeExec({

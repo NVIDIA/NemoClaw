@@ -15,7 +15,9 @@ describe("prepared rebuild recovery", () => {
   it("restores the validated pre-upgrade manifest without taking a second backup (#6114)", async () => {
     const harness = createRebuildFlowHarness({
       applyPreset: () => true,
-      sandboxListOutput: "alpha Error",
+      sandboxInventory: {
+        sandboxes: [{ name: "alpha", phase: "Error", readiness: "terminal" }],
+      },
     });
     const recoveryManifest = makePreparedRecoveryManifest();
 
@@ -56,7 +58,9 @@ describe("prepared rebuild recovery", () => {
   it("carries confirmed legacy managed-image recovery through the delete edge (#6114)", async () => {
     const harness = createRebuildFlowHarness({
       applyPreset: () => true,
-      sandboxListOutput: "alpha Error",
+      sandboxInventory: {
+        sandboxes: [{ name: "alpha", phase: "Error", readiness: "terminal" }],
+      },
       sandboxEntry: { nemoclawVersion: null },
       managedImageEvidence: false,
     });
@@ -84,7 +88,9 @@ describe("prepared rebuild recovery", () => {
 
   it("rejects an ambiguous legacy image without the scoped recovery capability (#6114)", async () => {
     const harness = createRebuildFlowHarness({
-      sandboxListOutput: "alpha Error",
+      sandboxInventory: {
+        sandboxes: [{ name: "alpha", phase: "Error", readiness: "terminal" }],
+      },
       sandboxEntry: { nemoclawVersion: null },
       managedImageEvidence: false,
     });
@@ -102,7 +108,9 @@ describe("prepared rebuild recovery", () => {
 
   it("rejects recorded custom-image evidence despite the scoped recovery capability (#6114)", async () => {
     const harness = createRebuildFlowHarness({
-      sandboxListOutput: "alpha Error",
+      sandboxInventory: {
+        sandboxes: [{ name: "alpha", phase: "Error", readiness: "terminal" }],
+      },
       sandboxEntry: {
         nemoclawVersion: null,
         fromDockerfile: "/tmp/custom.Dockerfile",

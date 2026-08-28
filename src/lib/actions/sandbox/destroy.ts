@@ -277,11 +277,10 @@ export function cleanupSandboxServices(
 }
 
 /**
- * Remove host-side shields state files for a sandbox.
+ * Remove host-side Shields state and recovery artifacts for a sandbox.
  *
- * Without this cleanup a stale shields-<name>.json from a previous
- * `shields up` survives destroy → re-onboard and causes
- * `deriveShieldsMode` to report "locked" on a fresh sandbox.
+ * Without this cleanup, stale state or an external policy handoff from a
+ * previous sandbox can survive destroy → re-onboard under the same name.
  *
  * See: https://github.com/NVIDIA/NemoClaw/issues/3114
  */
@@ -293,8 +292,14 @@ export function removeShieldsState(
   const rmSync = deps.rmSync ?? fs.rmSync;
   const warn = deps.warn ?? ((message: string) => console.warn(`  ${YW}⚠${R} ${message}`));
   const resolvedStateDir = path.resolve(stateDir);
-  for (const prefix of ["shields-", "shields-timer-"]) {
-    const filePath = path.resolve(resolvedStateDir, `${prefix}${sandboxName}.json`);
+  const recoveryArtifactName = `shields-external-policy-${sandboxName}.yaml`;
+  const artifactNames = [
+    recoveryArtifactName,
+    `shields-${sandboxName}.json`,
+    `shields-timer-${sandboxName}.json`,
+  ];
+  for (const artifactName of artifactNames) {
+    const filePath = path.resolve(resolvedStateDir, artifactName);
     if (!filePath.startsWith(`${resolvedStateDir}${path.sep}`)) {
       // Defense-in-depth: sandbox names are validated to [a-z0-9-] at
       // all entry points, but reject traversal attempts just in case.
@@ -303,12 +308,18 @@ export function removeShieldsState(
     try {
       rmSync(filePath, { force: true });
     } catch (error) {
-      // force: true already suppresses ENOENT; warn on real failures
-      // (e.g. EPERM) so stale state doesn't silently survive.
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        const message = error instanceof Error ? error.message : String(error);
-        warn(`Failed to remove shields cleanup artifact '${filePath}': ${message}`);
+      // force: true already suppresses ENOENT. A recovery handoff must not
+      // become unbound under a reusable sandbox name, so preserve Shields
+      // state and stop cleanup when that artifact cannot be removed.
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      const message = error instanceof Error ? error.message : String(error);
+      if (artifactName === recoveryArtifactName) {
+        throw new Error(
+          `Could not remove external Shields policy recovery artifact '${filePath}': ${message}. Shields state was preserved for retry.`,
+          { cause: error },
+        );
       }
+      warn(`Failed to remove Shields cleanup artifact '${filePath}': ${message}`);
     }
   }
 }
@@ -675,15 +686,31 @@ async function destroySandboxUnlocked(
       );
     }
     console.error(`  Failed to destroy sandbox '${sandboxName}'.`);
-    if (destructiveResult.gatewayUnreachable) {
+    const shieldsRecoveryRequired =
+      destructiveResult.shieldsRelockRequiresGateway ||
+      destructiveResult.workspaceTimeoutRequiresShieldsRecovery === true;
+    if (shieldsRecoveryRequired) {
       if (destructiveResult.shieldsRelockRequiresGateway) {
         console.error(
-          `  The OpenShell gateway is unreachable and shields could not be re-locked before delete. Local state was preserved so the auto-restore timer can still lock the config when the gateway returns.`,
+          `  The OpenShell gateway is unreachable and shields could not be re-locked before delete. Local state was preserved so the seven-attempt auto-restore recovery can continue. If recovery is exhausted, durable containment blocks sandbox mutations.`,
         );
+      } else {
         console.error(
-          `  Start the gateway (run '${CLI_NAME} ${sandboxName} status'), then retry destroy; --force cannot safely discard a record whose config lock is unconfirmed.`,
+          `  The workspace cleanup timeout left an active shields timer authoritative. Local state was preserved so bounded recovery can continue. If recovery is exhausted, durable containment blocks sandbox mutations.`,
         );
-      } else if (destructiveResult.hostLocalInferenceOwnershipRequiresGateway) {
+      }
+      console.error(
+        `  Start the gateway (run '${CLI_NAME} ${sandboxName} status'). Run '${CLI_NAME} ${sandboxName} shields status' to verify recovery or follow its durable containment guidance. Retry destroy only after recovery permits it; --force cannot safely discard a record while shields recovery is unresolved.`,
+      );
+    } else if (destructiveResult.timedOut) {
+      console.error(
+        `  NemoClaw preserved the local sandbox record because OpenShell did not confirm the remote operation.`,
+      );
+      console.error(
+        `  Run '${CLI_NAME} ${sandboxName} status' to check or start the recorded gateway, then retry destroy; --force cannot discard the record after a timeout.`,
+      );
+    } else if (destructiveResult.gatewayUnreachable) {
+      if (destructiveResult.hostLocalInferenceOwnershipRequiresGateway) {
         console.error(
           `  The OpenShell gateway is unreachable. Local state was preserved because it contains the exact host-local inference ownership required to retire the managed runtime.`,
         );
@@ -829,7 +856,7 @@ async function destroySandboxUnlocked(
    * ownership metadata or resolve the runtime conflict and retry.
    * Regression proof: destroy-flow.test.ts proves both blocked retention and
    * that a repaired matching receipt permits registry and session retirement;
-   * test/image-cleanup.test.ts proves the lower-level fail-closed contract.
+   * test/platform/images/image-cleanup.test.ts proves the lower-level fail-closed contract.
    * Removal condition: remove this recovery boundary only when the provider or
    * registry owns authenticated reconciliation that can safely complete cleanup
    * without retaining the local ownership row.

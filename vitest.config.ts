@@ -17,8 +17,11 @@ import { sourceLoaderNodeOptions } from "./test/helpers/source-loader-options";
 import { testTimeout } from "./test/helpers/timeouts";
 import { resolveVitestCoverageThresholds } from "./test/helpers/vitest-coverage-thresholds";
 import { resolveVitestFeedback } from "./test/helpers/vitest-feedback";
+import { installMalformedSourceMapCompatibility } from "./test/helpers/vitest-malformed-source-map-compat";
 import { vitestStateIsolation } from "./test/helpers/vitest-state-isolation";
 import { vitestWatchTriggerPatterns } from "./test/helpers/vitest-watch-triggers";
+
+installMalformedSourceMapCompatibility();
 
 const { isCi, silent } = resolveVitestFeedback();
 const LIVE_E2E_PROJECT_TIMEOUT_MS = 30 * 60 * 1000;
@@ -26,6 +29,9 @@ const runLiveE2E = shouldRunLiveE2E();
 const canonicalBannerBoundary = path.resolve("nemoclaw/src/shared/banner-boundary.cts");
 const canonicalCredentialFilterBoundary = path.resolve(
   "nemoclaw/src/shared/credential-filter-boundary.cts",
+);
+const canonicalOpenShellExternalTargetBoundary = path.resolve(
+  "nemoclaw/src/shared/openshell-external-target-boundary.cts",
 );
 const canonicalOpenShellPolicyBoundary = path.resolve(
   "nemoclaw/src/shared/openshell-policy-boundary.cts",
@@ -48,6 +54,10 @@ const canonicalSourceAliases = [
   {
     find: /^.*credential-filter-boundary\.cjs$/,
     replacement: canonicalCredentialFilterBoundary,
+  },
+  {
+    find: /^.*openshell-external-target-boundary\.cjs$/,
+    replacement: canonicalOpenShellExternalTargetBoundary,
   },
   {
     find: /^.*openshell-policy-boundary\.cjs$/,
@@ -164,9 +174,9 @@ export default defineConfig({
             "test/helpers/onboard-script-mocks.cjs",
           ],
           // Integration fixtures often spawn short Node programs. Coverage
-          // stays serial because concurrent source-loader forks exhaust the
-          // 7 GiB CI runner. The canonical local full suite instead runs this
-          // project as a bounded four-worker phase after the other projects.
+          // stays serial and runs after source projects because concurrent
+          // source-loader forks exhaust the 7 GiB CI runner. The canonical
+          // local full suite uses a bounded four-worker integration phase.
           ...integrationProjectScheduling,
           env: {
             ...controlledNonLiveEnv,
@@ -196,9 +206,8 @@ export default defineConfig({
           name: "installer-integration",
           alias: canonicalSourceAliases,
           // Installer fixtures spawn nested shell, Node, Python, and SSH
-          // processes. Use the same bounded scheduling as the other process
-          // fixtures so CI cannot turn a transient spawn failure into a
-          // fail-closed single-host result.
+          // processes. Serialize them in CI to reduce worker-pressure spawn
+          // failures. A fixture still fails when process creation fails.
           ...integrationProjectScheduling,
           env: controlledNonLiveEnv,
           setupFiles: [fixtureUmaskSetup, isolatedTestStateSetup],
@@ -249,9 +258,9 @@ export default defineConfig({
           // and never leaks `--require` into the real CLI subprocesses under
           // test. Mirrors the `cli` project.
           //
-          // Intentionally excludes the fixture-umask setup: live E2E has no
-          // guard-fixture suites and handles real credentials, so it must keep
-          // the caller's umask (and sets its own strict `umask 077` inline).
+          // Intentionally excludes the fixture-umask setup: live E2E keeps the
+          // caller's umask. Each target that writes credential-bearing files
+          // must set `umask 077` before creating those files.
           setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
           testTimeout: testTimeout(LIVE_E2E_PROJECT_TIMEOUT_MS),
           // Live targets mutate host, Docker, gateway, and sandbox state. A

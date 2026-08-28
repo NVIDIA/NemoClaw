@@ -16,51 +16,20 @@ const shieldsModulePath = "./index.js";
 export const externalPolicyAuthorityInspection = {
   authority: "externally-managed" as const,
   effectivePolicy: { version: 1, network_policies: {} },
+  policyIdentity: { hash: "external-policy-hash", activeVersion: 1 },
 };
 
-export function externalPolicyMutationAuthority(effectivePolicy: Record<string, unknown>) {
-  return {
-    authority: "externally-managed" as const,
-    authorityRecordedNow: false,
-    gatewayName: "nemoclaw",
-    inspection: { authority: "externally-managed" as const, effectivePolicy },
-  };
-}
-
-export function prepareExternalMcpRecoveryFixture(requireDist: NodeRequire, tmpDir: string) {
-  const alpha = managedMcpPolicy("alpha");
-  const beta = managedMcpPolicy("beta");
-  const harness = createShieldsFlowHarness(requireDist, tmpDir, {
-    livePolicyYaml: YAML.stringify({
-      version: 1,
-      network_policies: { restrictive_baseline: {}, [alpha.key]: alpha.networkPolicy },
-    }),
-    sandboxEntry: managedMcpSandbox([alpha]),
-  });
-  harness.shieldsDown("openclaw", { throwOnError: true });
-  const snapshotPath = String(
-    harness.getShieldsPosture("openclaw", false).state.shieldsPolicySnapshotPath,
-  );
-  const savedPolicy = YAML.parse(fs.readFileSync(snapshotPath, "utf-8"));
-  const registry = requireDist(
-    "../state/registry.js",
-  ) as typeof import("../../src/lib/state/registry.js");
-  vi.mocked(registry.getSandbox).mockReturnValue({
-    ...managedMcpSandbox([beta]),
-    policyAuthority: "externally-managed",
-  });
-  return { alpha, beta, harness, savedPolicy, snapshotPath };
-}
-
-export function bindExternalPolicyRecovery(
-  harness: ShieldsFlowHarness,
-  effectivePolicy: Record<string, unknown>,
-): void {
-  const authority = externalPolicyMutationAuthority(effectivePolicy);
-  harness.policyAuthoritySpy.mockReturnValue(authority);
-  harness.policyRecoveryAuthoritySpy.mockReturnValue(authority);
-  harness.runCaptureSpy.mockReturnValue(YAML.stringify(effectivePolicy));
-}
+const managedPolicyCreationReceipt = {
+  schemaVersion: 1 as const,
+  origin: "sandbox-create" as const,
+  gatewayName: "nemoclaw",
+  gatewayPort: 50_065,
+  sandboxName: "openclaw",
+  lifecycleGeneration: "11111111-1111-4111-8111-111111111111",
+  sandboxIdentityFingerprint: "a".repeat(64),
+  policyHash: "managed-policy-hash",
+  policyVersion: 1,
+};
 
 export const managedPolicyMutationAuthority = {
   authority: "nemoclaw-managed" as const,
@@ -69,12 +38,32 @@ export const managedPolicyMutationAuthority = {
   inspection: {
     authority: "nemoclaw-managed" as const,
     effectivePolicy: { version: 1, network_policies: {} },
+    policyIdentity: { hash: "managed-policy-hash", activeVersion: 1 },
   },
+  policyCreationReceipt: managedPolicyCreationReceipt,
 };
+
+export function bindManagedPolicyMutationAuthority(
+  policy: typeof import("../../src/lib/policy"),
+): MockInstance[] {
+  return [
+    vi
+      .spyOn(policy, "inspectPolicyMutationAuthority")
+      .mockReturnValue(managedPolicyMutationAuthority),
+    vi
+      .spyOn(policy, "inspectPolicyRecoveryAuthority")
+      .mockReturnValue(managedPolicyMutationAuthority),
+    vi
+      .spyOn(policy, "recheckPolicyMutationAuthority")
+      .mockReturnValue(managedPolicyMutationAuthority),
+    vi.spyOn(policy, "finalizePolicyMutationReceipt").mockImplementation(() => undefined),
+  ];
+}
 
 export type ShieldsFlowHarness = {
   applyShieldsPolicySnapshot: typeof import("../../src/lib/shields/index.js").applyShieldsPolicySnapshot;
   auditSpy: MockInstance;
+  clearShieldsState: typeof import("../../src/lib/shields/index.js").clearShieldsState;
   cleanupTempDirSpy: MockInstance;
   dockerSpawnCalls: Array<{ args: string[]; timeout: number | undefined }>;
   errorSpy: MockInstance;
@@ -82,6 +71,7 @@ export type ShieldsFlowHarness = {
   getOpenClawPosture: () => "locked" | "mutable";
   logSpy: MockInstance;
   policyAuthoritySpy: MockInstance;
+  policyReceiptFinalizeSpy: MockInstance;
   policyRecoveryAuthoritySpy: MockInstance;
   policySetBodies: string[];
   runCaptureSpy: MockInstance;
@@ -401,6 +391,7 @@ export function createShieldsFlowHarness(
     effectivePolicy: YAML.parse(
       options.livePolicyYaml ?? "version: 1\nnetwork_policies:\n  test: {}\n",
     ) as Record<string, unknown>,
+    policyIdentity: { hash: "managed-policy-hash", activeVersion: 1 },
   };
   vi.spyOn(policyAuthority, "inspectSandboxPolicyAuthority").mockReturnValue(
     policyAuthorityInspection,
@@ -410,6 +401,10 @@ export function createShieldsFlowHarness(
     authorityRecordedNow: false,
     gatewayName: options.sandboxEntry?.gatewayName ?? "nemoclaw",
     inspection: policyAuthorityInspection,
+    policyCreationReceipt:
+      policyAuthorityInspection.authority === "nemoclaw-managed"
+        ? managedPolicyCreationReceipt
+        : null,
   };
   const policyAuthoritySpy = vi
     .spyOn(policy, "inspectPolicyMutationAuthority")
@@ -418,6 +413,9 @@ export function createShieldsFlowHarness(
     .spyOn(policy, "inspectPolicyRecoveryAuthority")
     .mockReturnValue(policyMutationAuthority);
   vi.spyOn(policy, "recheckPolicyMutationAuthority").mockReturnValue(policyMutationAuthority);
+  const policyReceiptFinalizeSpy = vi
+    .spyOn(policy, "finalizePolicyMutationReceipt")
+    .mockImplementation(() => undefined);
   vi.spyOn(registry, "listSandboxes").mockReturnValue({
     sandboxes: [{ name: options.sandboxName ?? "openclaw", agent: resolvedAgentConfig.agentName }],
   });
@@ -681,6 +679,7 @@ export function createShieldsFlowHarness(
   return {
     applyShieldsPolicySnapshot: shields.applyShieldsPolicySnapshot,
     auditSpy,
+    clearShieldsState: shields.clearShieldsState,
     cleanupTempDirSpy,
     dockerSpawnCalls,
     errorSpy,
@@ -688,6 +687,7 @@ export function createShieldsFlowHarness(
     getOpenClawPosture: () => openClawPosture,
     logSpy,
     policyAuthoritySpy,
+    policyReceiptFinalizeSpy,
     policyRecoveryAuthoritySpy,
     policySetBodies,
     runCaptureSpy,

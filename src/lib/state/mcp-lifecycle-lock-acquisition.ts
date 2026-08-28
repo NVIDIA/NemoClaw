@@ -12,9 +12,8 @@ import {
   readShieldsTimerTakeoverToken,
 } from "./mcp-lifecycle-lock/shields-timer-authority";
 import {
-  decideMcpLifecycleGate,
+  decideMcpLifecycleAcquisition,
   decideMcpLifecycleLock,
-  decideMcpLifecycleTakeover,
   type CorruptGenerationState,
 } from "./mcp-lifecycle-lock/decisions";
 import {
@@ -438,7 +437,10 @@ async function acquireMcpLifecycleLock(
   for (;;) {
     const containmentPath = committedContainmentPath(lockPath);
     const containment = await readMcpLifecycleLockObservation(containmentPath);
-    const containmentDecision = decideMcpLifecycleGate(containment, false);
+    const containmentDecision = decideMcpLifecycleAcquisition({
+      phase: "containment",
+      observation: containment,
+    });
     if (containmentDecision.kind === "refuse") {
       throw committedContainmentActiveError(sandboxName, lockPath, containmentDecision.containment);
     }
@@ -455,7 +457,11 @@ async function acquireMcpLifecycleLock(
         corruptDeadlineTracker,
         monotonicNow(),
       );
-      if (deadlineDecision.kind === "contain") {
+      const acquisitionDecision = decideMcpLifecycleAcquisition({
+        phase: "deadline",
+        lock: deadlineDecision,
+      });
+      if (acquisitionDecision.kind === "contain") {
         assertBeforeDeadline();
         ensureDurableContainmentForStaleGenerationSync(
           lockPath,
@@ -483,7 +489,11 @@ async function acquireMcpLifecycleLock(
         corruptReaperTracker,
         monotonicNow(),
       );
-      if (reaperDecision.kind === "contain") {
+      const acquisitionDecision = decideMcpLifecycleAcquisition({
+        phase: "reaper",
+        lock: reaperDecision,
+      });
+      if (acquisitionDecision.kind === "contain") {
         assertBeforeDeadline();
         ensureDurableContainmentForStaleGenerationSync(
           lockPath,
@@ -506,8 +516,10 @@ async function acquireMcpLifecycleLock(
     // the timer exits before it publishes the fence. Timer/interactive
     // recovery uses the dedicated deadline-fence API and does not pass here.
     if (
-      decideMcpLifecycleGate(null, isShieldsTimerDeadlineExpired(sandboxName, stateDir)).kind ===
-      "wait"
+      decideMcpLifecycleAcquisition({
+        phase: "timer",
+        deadlineExpired: isShieldsTimerDeadlineExpired(sandboxName, stateDir),
+      }).kind === "wait"
     ) {
       await sleep(pollIntervalMs);
       continue;
@@ -526,16 +538,19 @@ async function acquireMcpLifecycleLock(
         // A stale-lock reaper may have appeared between our pre-check and the
         // atomic link. Do not enter the critical section until that generation
         // gate has gone away.
-        if (
-          !(await mcpLifecycleLockPathExists(containmentPath)) &&
-          !(await mcpLifecycleLockPathExists(deadlinePath)) &&
-          !(await mcpLifecycleLockPathExists(reaperPath)) &&
-          !isShieldsTimerDeadlineExpired(sandboxName, stateDir) &&
-          decideMcpLifecycleTakeover(
-            shieldsTakeoverToken,
-            readShieldsTimerTakeoverToken(sandboxName, stateDir),
-          ).kind === "proceed"
-        ) {
+        const publishedObservation = await readMcpLifecycleLockObservation(lockPath);
+        const publicationDecision = decideMcpLifecycleAcquisition({
+          phase: "published",
+          containmentPresent: await mcpLifecycleLockPathExists(containmentPath),
+          deadlinePresent: await mcpLifecycleLockPathExists(deadlinePath),
+          reaperPresent: await mcpLifecycleLockPathExists(reaperPath),
+          timerDeadlineExpired: isShieldsTimerDeadlineExpired(sandboxName, stateDir),
+          expectedOwnerToken: token,
+          observedOwnerToken: publishedObservation?.owner?.token,
+          expectedTakeoverToken: shieldsTakeoverToken,
+          observedTakeoverToken: readShieldsTimerTakeoverToken(sandboxName, stateDir),
+        });
+        if (publicationDecision.kind === "enter") {
           try {
             assertBeforeDeadline();
           } catch (error) {
@@ -564,8 +579,12 @@ async function acquireMcpLifecycleLock(
         corruptMainTracker,
         monotonicNow(),
       );
-      if (mainDecision.kind === "reap" || mainDecision.kind === "contain") {
-        if (mainDecision.kind === "reap") {
+      const acquisitionDecision = decideMcpLifecycleAcquisition({
+        phase: "main-owner",
+        lock: mainDecision,
+      });
+      if (acquisitionDecision.kind === "reap" || acquisitionDecision.kind === "contain") {
+        if (acquisitionDecision.kind === "reap") {
           assertBeforeDeadline();
           await tryReapStaleMainLock(
             lockPath,
@@ -626,7 +645,10 @@ function acquireMcpLifecycleLockSync(
   for (;;) {
     const containmentPath = committedContainmentPath(lockPath);
     const containment = readMcpLifecycleLockObservationSync(containmentPath);
-    const containmentDecision = decideMcpLifecycleGate(containment, false);
+    const containmentDecision = decideMcpLifecycleAcquisition({
+      phase: "containment",
+      observation: containment,
+    });
     if (containmentDecision.kind === "refuse") {
       throw committedContainmentActiveError(sandboxName, lockPath, containmentDecision.containment);
     }
@@ -643,7 +665,11 @@ function acquireMcpLifecycleLockSync(
         corruptDeadlineTracker,
         monotonicNow(),
       );
-      if (deadlineDecision.kind === "contain") {
+      const acquisitionDecision = decideMcpLifecycleAcquisition({
+        phase: "deadline",
+        lock: deadlineDecision,
+      });
+      if (acquisitionDecision.kind === "contain") {
         assertBeforeDeadline();
         ensureDurableContainmentForStaleGenerationSync(
           lockPath,
@@ -671,7 +697,11 @@ function acquireMcpLifecycleLockSync(
         corruptReaperTracker,
         monotonicNow(),
       );
-      if (reaperDecision.kind === "contain") {
+      const acquisitionDecision = decideMcpLifecycleAcquisition({
+        phase: "reaper",
+        lock: reaperDecision,
+      });
+      if (acquisitionDecision.kind === "contain") {
         assertBeforeDeadline();
         ensureDurableContainmentForStaleGenerationSync(
           lockPath,
@@ -689,8 +719,10 @@ function acquireMcpLifecycleLockSync(
     resetCorruptGenerationTracker(corruptReaperTracker);
 
     if (
-      decideMcpLifecycleGate(null, isShieldsTimerDeadlineExpired(sandboxName, options.stateDir))
-        .kind === "wait"
+      decideMcpLifecycleAcquisition({
+        phase: "timer",
+        deadlineExpired: isShieldsTimerDeadlineExpired(sandboxName, options.stateDir),
+      }).kind === "wait"
     ) {
       sleepSync(pollIntervalMs);
       continue;
@@ -706,16 +738,19 @@ function acquireMcpLifecycleLockSync(
       const owner = createMcpLifecycleLockOwner(sandboxName, token, shieldsTakeoverToken);
       assertBeforeDeadline();
       if (writeMcpLifecycleLockCandidateAndLinkSync(lockPath, owner)) {
-        if (
-          !mcpLifecycleLockPathExistsSync(containmentPath) &&
-          !mcpLifecycleLockPathExistsSync(deadlinePath) &&
-          !mcpLifecycleLockPathExistsSync(reaperPath) &&
-          !isShieldsTimerDeadlineExpired(sandboxName, options.stateDir) &&
-          decideMcpLifecycleTakeover(
-            shieldsTakeoverToken,
-            readShieldsTimerTakeoverToken(sandboxName, options.stateDir),
-          ).kind === "proceed"
-        ) {
+        const publishedObservation = readMcpLifecycleLockObservationSync(lockPath);
+        const publicationDecision = decideMcpLifecycleAcquisition({
+          phase: "published",
+          containmentPresent: mcpLifecycleLockPathExistsSync(containmentPath),
+          deadlinePresent: mcpLifecycleLockPathExistsSync(deadlinePath),
+          reaperPresent: mcpLifecycleLockPathExistsSync(reaperPath),
+          timerDeadlineExpired: isShieldsTimerDeadlineExpired(sandboxName, options.stateDir),
+          expectedOwnerToken: token,
+          observedOwnerToken: publishedObservation?.owner?.token,
+          expectedTakeoverToken: shieldsTakeoverToken,
+          observedTakeoverToken: readShieldsTimerTakeoverToken(sandboxName, options.stateDir),
+        });
+        if (publicationDecision.kind === "enter") {
           try {
             assertBeforeDeadline();
           } catch (error) {
@@ -744,8 +779,12 @@ function acquireMcpLifecycleLockSync(
         corruptMainTracker,
         monotonicNow(),
       );
-      if (mainDecision.kind === "reap" || mainDecision.kind === "contain") {
-        if (mainDecision.kind === "reap") {
+      const acquisitionDecision = decideMcpLifecycleAcquisition({
+        phase: "main-owner",
+        lock: mainDecision,
+      });
+      if (acquisitionDecision.kind === "reap" || acquisitionDecision.kind === "contain") {
+        if (acquisitionDecision.kind === "reap") {
           assertBeforeDeadline();
           tryReapStaleMainLockSync(
             lockPath,

@@ -112,10 +112,11 @@ describe("rebuildSandbox flow: recovery", () => {
   const REPLACEMENT_PROBE = "Name: alpha\nId: sbx-replacement\nPhase: Ready\n";
   const FOREIGN_PROBE = "Name: alpha\nId: sbx-foreign\nPhase: Ready\n";
   const REPLACEMENT_IDENTITY = fingerprintSandboxLiveIdentity(REPLACEMENT_PROBE);
+  const REPLACEMENT_GENERATION = "11111111-1111-4111-8111-111111111111";
   const POST_DELETE_PHASES = ["creating", "created", "registry_committing", "completed"] as const;
   const provenReplacement = {
     sandboxEntry: {
-      lifecycleGeneration: "generation-1",
+      lifecycleGeneration: REPLACEMENT_GENERATION,
       lifecycleLiveIdentityFingerprint: REPLACEMENT_IDENTITY,
     },
   };
@@ -131,7 +132,7 @@ describe("rebuildSandbox flow: recovery", () => {
           (session.checkpoint as { sandboxRecreate: Record<string, unknown> }).sandboxRecreate,
           {
             phase,
-            targetGeneration: "generation-1",
+            targetGeneration: REPLACEMENT_GENERATION,
             targetLiveIdentityFingerprint: REPLACEMENT_IDENTITY,
           },
         );

@@ -34,6 +34,7 @@ export function createGpuFlowInput(): SandboxGpuCreateFlowInput {
     initialGpuRoute: "native",
     compatibilityPolicyPath: "/tmp/compatibility-policy.yaml",
     dockerDriverGateway: true,
+    gatewayName: "nemoclaw",
     gatewayPort: 8080,
     sandboxReadyTimeoutSecs: 60,
     createArgv: ["openshell", "sandbox", "create", "--gpu"],

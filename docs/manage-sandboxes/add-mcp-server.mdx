@@ -23,6 +23,8 @@ The early capability check identifies managed image version only; NemoClaw still
 </AgentOnly>
 <AgentOnly variant="hermes">
 Hermes performs its managed runtime probe before an active add or restart changes a live provider or policy.
+Hermes stores the credential revision from the readiness check in the OpenShell resolver placeholder.
+Registration, inspection, rollback, and lifecycle reconciliation preserve that revision while it remains observable.
 </AgentOnly>
 <AgentOnly variant="openclaw">
 OpenClaw verifies the pinned `mcporter` during adapter registration and rolls back an incomplete add.
@@ -43,7 +45,8 @@ The assignment is illustrative.
 Load real values from an approved secret manager or masked prompt so the credential is not recorded in shell history.
 
 `--env KEY` reads the value from the host process environment and stores it in OpenShell's provider store.
-NemoClaw persists only the variable name, writes `openshell:resolve:env:KEY` into sandbox-side MCP config, and relies on OpenShell to resolve the placeholder at egress.
+NemoClaw persists only the variable name and writes an OpenShell resolver placeholder for that key into sandbox-side MCP configuration.
+OpenShell resolves the placeholder at egress.
 
 After `mcp add` commits, NemoClaw performs a fresh status inspection and runs the gated credential-resolution probe once unless you pass `--no-probe`.
 If readiness is inconclusive, the command reports a probe skip without failing the committed add.
@@ -103,7 +106,7 @@ The command records the resulting exact trust intent, so later lifecycle command
 
 NemoClaw records the normalized trust intent and every validated address as exact policy pins.
 The raw bearer value passes transiently to the OpenShell provider and remains absent from NemoClaw state, sandbox configuration, command arguments, and logs.
-The sandbox configuration contains only the `openshell:resolve:env:LOCAL_MCP_TOKEN` credential placeholder.
+The sandbox configuration contains only an OpenShell resolver placeholder for `LOCAL_MCP_TOKEN`, not the raw bearer value.
 You can unset the host variable after `mcp add` returns because OpenShell retains the credential.
 An exported replacement updates it during restart, and `mcp remove` or sandbox destroy deletes the registry-owned provider.
 

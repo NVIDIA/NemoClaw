@@ -156,7 +156,7 @@ describe("managed llama.cpp selection", () => {
     expect(resolveManagedLlamaCppSelection({}, catalog, report).kind).toBe("selected");
   });
 
-  it("selects Muse Glimmer as the highest-priority qualified DGX Spark recipe by default", () => {
+  it("selects Nemotron by default on a qualified DGX Spark (#10239)", () => {
     const { catalog, report } = fixture();
 
     const resolved = resolveManagedLlamaCppSelection({}, catalog, report);
@@ -165,9 +165,9 @@ describe("managed llama.cpp selection", () => {
       kind: "selected",
       selection: {
         selection: "automatic",
-        recipe: { metadata: { id: MUSE_RECIPE_ID } },
+        recipe: { metadata: { id: RECIPE_ID } },
         preset: {
-          metadata: { id: MUSE_PRESET_ID },
+          metadata: { id: SPARK_PRESET_ID },
           spec: { plan: { backend: "install-llama-cpp" } },
         },
       },
@@ -194,27 +194,26 @@ describe("managed llama.cpp selection", () => {
       ),
     ).toEqual([
       [550, synthetic.recipeId],
-      [500, MUSE_RECIPE_ID],
       [450, RECIPE_ID],
     ]);
   });
 
   it("rejects equal-priority automatic recipes instead of choosing by catalog order", () => {
     const { catalog, report } = fixture();
-    const synthetic = withSyntheticRecipe(catalog, 500);
+    const synthetic = withSyntheticRecipe(catalog, 450);
 
     expect(resolveManagedLlamaCppSelection({}, synthetic.catalog, report)).toEqual({
       kind: "rejected",
-      reason: `Automatic managed llama.cpp selection is ambiguous at priority 500: ${MUSE_PRESET_ID}, ${synthetic.presetId}.`,
+      reason: `Automatic managed llama.cpp selection is ambiguous at priority 450: ${SPARK_PRESET_ID}, ${synthetic.presetId}.`,
     });
   });
 
-  it("allows an explicit recipe to override automatic priority", () => {
+  it("selects explicit Muse instead of a higher-priority automatic recipe (#10239)", () => {
     const { catalog, report } = fixture();
     const synthetic = withSyntheticRecipe(catalog, 550);
 
     const resolved = resolveManagedLlamaCppSelection(
-      { [LLAMA_CPP_RECIPE_ENV]: RECIPE_ID },
+      { [LLAMA_CPP_RECIPE_ENV]: MUSE_RECIPE_ID },
       synthetic.catalog,
       report,
     );
@@ -223,8 +222,8 @@ describe("managed llama.cpp selection", () => {
       kind: "selected",
       selection: {
         selection: "explicit",
-        recipe: { metadata: { id: RECIPE_ID } },
-        preset: { metadata: { id: SPARK_PRESET_ID } },
+        recipe: { metadata: { id: MUSE_RECIPE_ID } },
+        preset: { metadata: { id: MUSE_PRESET_ID } },
       },
     });
   });

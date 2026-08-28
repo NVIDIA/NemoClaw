@@ -58,5 +58,5 @@ Rerun it whenever `package.json` or `package-lock.json` changes and again before
 
 ## Enforcement and Removal
 
-`test/e2e-fixture-dependency-review.test.ts` fails if any committed `test/e2e/fixtures/**/package-lock.json` is absent from this review and binds the weather fixture to the controls above.
+`test/automation/e2e/e2e-fixture-dependency-review.test.ts` fails if any committed `test/e2e/fixtures/**/package-lock.json` is absent from this review and binds the weather fixture to the controls above.
 Remove this waiver when the fixture is deleted or when repository-wide automated dependency review explicitly covers E2E fixture lockfiles while preserving the release-matched OpenClaw pin.

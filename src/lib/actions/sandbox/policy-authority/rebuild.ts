@@ -3,10 +3,7 @@
 
 import fs from "node:fs";
 
-import {
-  assertRecordedPolicyAuthority,
-  type SandboxPolicyAuthority,
-} from "../../../adapters/openshell/policy-authority";
+import { assertRecordedPolicyAuthority } from "../../../adapters/openshell/policy-authority";
 
 export { isPolicyAuthorityRefusalError } from "../../../adapters/openshell/policy-authority";
 import { prepareInitialSandboxCreatePolicy } from "../../../onboard/initial-policy";
@@ -30,11 +27,12 @@ import {
   inspectPolicyAuthorityRequirements,
   parseRequiredPolicyDocument,
   type PolicyAuthorityInspectionDeps,
+  type RecordedPolicyAuthority,
   type RequiredPolicy,
 } from "./preflight";
 
 export interface RebuildPolicyAuthorityReceipt {
-  readonly authority: SandboxPolicyAuthority;
+  readonly authority: RecordedPolicyAuthority;
   readonly gatewayName: string;
   readonly managedMcpPolicies: readonly RequiredPolicy[];
   readonly operation: string;
@@ -118,7 +116,9 @@ async function resolveRequiredPolicies(input: {
   const authoritativePresets = manifest?.policyPresets ?? sandboxEntry.policies ?? [];
   const recordedPresets: string[] = [];
   for (const preset of authoritativePresets) {
-    if (typeof preset !== "string" || preset.length === 0) continue;
+    if (typeof preset !== "string" || preset.length === 0) {
+      throw new Error(`Refusing to ${operation}: recorded policy preset metadata is invalid.`);
+    }
     if (builtinPresetNames.has(preset)) {
       recordedPresets.push(preset);
       continue;
@@ -153,7 +153,6 @@ async function resolveRequiredPolicies(input: {
   const required = [parseRequiredPolicy(readPreparedPolicy(prepared, operation), operation)];
   const customPolicies = manifest?.customPolicies ?? sandboxEntry.customPolicies ?? [];
   for (const custom of customPolicies) {
-    if (custom.sourcePath === MCP_BRIDGE_POLICY_SOURCE) continue;
     if (
       !custom ||
       typeof custom.name !== "string" ||
@@ -163,6 +162,7 @@ async function resolveRequiredPolicies(input: {
     ) {
       throw new Error(`Refusing to ${operation}: required custom policy metadata is invalid.`);
     }
+    if (custom.sourcePath === MCP_BRIDGE_POLICY_SOURCE) continue;
     required.push(parseRequiredPolicy(custom.content, operation));
   }
   required.push(...managedMcpPolicies);

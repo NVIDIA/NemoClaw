@@ -266,6 +266,7 @@ function operationsHarness(
   providerId: string,
   events: string[],
   failAt: FailurePhase = null,
+  previousLiveIdentityFingerprint = "fingerprint-old",
 ): ManagedWorkloadRebuildProviderOperations {
   const bound = {
     schemaVersion: 1 as const,
@@ -276,7 +277,7 @@ function operationsHarness(
     ...bound,
     previousRuntimeHandle: "runtime-old-exact",
     preparationHandle: "preparation-exact",
-    previousLiveIdentityFingerprint: "fingerprint-old",
+    previousLiveIdentityFingerprint,
   };
   const staged: StagedManagedWorkloadReplacement = {
     ...bound,
@@ -345,13 +346,19 @@ function transactionHarness(
   providerId: string,
   failAt: FailurePhase = null,
   platform: (typeof PLATFORMS)[number] = "linux/amd64",
+  previousEntryOverrides: Partial<SandboxEntry> = {},
 ) {
   const events: string[] = [];
-  const oldEntry = previousEntry(agent, providerId, platform);
+  const oldEntry = { ...previousEntry(agent, providerId, platform), ...previousEntryOverrides };
   let currentEntry = structuredClone(oldEntry);
   let providerPreparationCompleted = false;
   let ambiguousPersistenceReadback = false;
-  const operations = operationsHarness(providerId, events, failAt);
+  const operations = operationsHarness(
+    providerId,
+    events,
+    failAt,
+    oldEntry.lifecycleLiveIdentityFingerprint,
+  );
   const prepare = operations.prepare;
   operations.prepare = vi.fn(async (plan) => {
     const prepared = await prepare(plan);
@@ -631,41 +638,44 @@ describe("managed workload rebuild transaction", () => {
         PLATFORMS.map((platform) => [agent, provider, platform] as const),
       ),
     ),
-  )("atomically rebuilds %s through the socket-free %s provider contract on %s", async (agent, provider, platform) => {
-    const harness = transactionHarness(agent, provider, null, platform);
+  )(
+    "atomically rebuilds %s through the socket-free %s provider contract on %s",
+    async (agent, provider, platform) => {
+      const harness = transactionHarness(agent, provider, null, platform);
 
-    const result = await harness.run();
+      const result = await harness.run();
 
-    expect(result).toMatchObject({
-      status: "committed",
-      previousCleanup: "complete",
-      entry: {
-        agent,
-        openshellDriver: provider,
-        model: "nvidia/nemotron-new",
-        fromDockerfile: null,
-        lifecycleGeneration: "generation-new",
-        lifecycleLiveIdentityFingerprint: "fingerprint-new",
-        workload: {
-          kind: "managed-image",
-          platform,
-          release: NEW_RELEASE,
-          shared: true,
+      expect(result).toMatchObject({
+        status: "committed",
+        previousCleanup: "complete",
+        entry: {
+          agent,
+          openshellDriver: provider,
+          model: "nvidia/nemotron-new",
+          fromDockerfile: null,
+          lifecycleGeneration: "generation-new",
+          lifecycleLiveIdentityFingerprint: "fingerprint-new",
+          workload: {
+            kind: "managed-image",
+            platform,
+            release: NEW_RELEASE,
+            shared: true,
+          },
         },
-      },
-    });
-    expect(harness.events).toEqual([
-      "prepare",
-      "create",
-      "readiness",
-      "restore",
-      "provider-rebind",
-      "registry-commit",
-      "retire:runtime-old-exact",
-    ]);
-    expect(harness.currentEntry()).toEqual(result.entry);
-    expect(harness.currentEntry().imageTag).not.toBe(harness.oldEntry.imageTag);
-  });
+      });
+      expect(harness.events).toEqual([
+        "prepare",
+        "create",
+        "readiness",
+        "restore",
+        "provider-rebind",
+        "registry-commit",
+        "retire:runtime-old-exact",
+      ]);
+      expect(harness.currentEntry()).toEqual(result.entry);
+      expect(harness.currentEntry().imageTag).not.toBe(harness.oldEntry.imageTag);
+    },
+  );
 
   it.each([
     ["prepare", false],
@@ -689,6 +699,33 @@ describe("managed workload rebuild transaction", () => {
     );
   });
 
+  it("publishes a replacement without carrying the previous policy receipt (#9833)", async () => {
+    const lifecycleGeneration = "00000000-0000-4000-8000-000000000001";
+    const sandboxIdentityFingerprint = "a".repeat(64);
+    const harness = transactionHarness("openclaw", "mxc", null, "linux/amd64", {
+      lifecycleGeneration,
+      lifecycleLiveIdentityFingerprint: sandboxIdentityFingerprint,
+      policyAuthority: "nemoclaw-managed",
+      policyCreationReceipt: {
+        schemaVersion: 1,
+        origin: "sandbox-create",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        sandboxName: "rebuild-openclaw",
+        lifecycleGeneration,
+        sandboxIdentityFingerprint,
+        policyHash: "policy-old",
+        policyVersion: 1,
+      },
+    });
+
+    const result = await harness.run();
+
+    expect(result.entry.lifecycleGeneration).toBe("generation-new");
+    expect(result.entry).not.toHaveProperty("policyAuthority");
+    expect(result.entry).not.toHaveProperty("policyCreationReceipt");
+  });
+
   it("rolls back a not-ready replacement by exact staged handle", async () => {
     const harness = transactionHarness("hermes", "docker", "readiness");
 
@@ -705,27 +742,23 @@ describe("managed workload rebuild transaction", () => {
     expect(harness.currentEntry().lifecycleGeneration).toBe("generation-old");
   });
 
-  it.each(INVALID_PROVIDER_ARTIFACT_CASES)("$name and stops at the invalid transition", async ({
-    phase,
-    install,
-    events,
-    notCalled,
-    abortCalls,
-    rollbackCalls,
-  }) => {
-    const harness = transactionHarness("langchain-deepagents-code", "mxc");
-    install(harness.operations);
+  it.each(INVALID_PROVIDER_ARTIFACT_CASES)(
+    "$name and stops at the invalid transition",
+    async ({ phase, install, events, notCalled, abortCalls, rollbackCalls }) => {
+      const harness = transactionHarness("langchain-deepagents-code", "mxc");
+      install(harness.operations);
 
-    await expect(harness.run()).rejects.toMatchObject({ phase });
+      await expect(harness.run()).rejects.toMatchObject({ phase });
 
-    expect(harness.currentEntry()).toEqual(harness.oldEntry);
-    expect(harness.events).toEqual(events);
-    expect(harness.operations.abortPreparation).toHaveBeenCalledTimes(abortCalls);
-    expect(harness.operations.rollback).toHaveBeenCalledTimes(rollbackCalls);
-    notCalled.forEach((operation) => {
-      expect(harness.operations[operation]).not.toHaveBeenCalled();
-    });
-  });
+      expect(harness.currentEntry()).toEqual(harness.oldEntry);
+      expect(harness.events).toEqual(events);
+      expect(harness.operations.abortPreparation).toHaveBeenCalledTimes(abortCalls);
+      expect(harness.operations.rollback).toHaveBeenCalledTimes(rollbackCalls);
+      notCalled.forEach((operation) => {
+        expect(harness.operations[operation]).not.toHaveBeenCalled();
+      });
+    },
+  );
 
   it("aborts preparation when durable registry metadata drifts during preparation", async () => {
     const events: string[] = [];

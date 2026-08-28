@@ -89,9 +89,31 @@ export type ChannelConfig = {
 export type AccountConfig = Record<string, unknown>;
 export { shellQuote };
 
+export function assertDiscordGatewayCapture(captureFile: string, expectedToken: string): void {
+  const rows = fs
+    .readFileSync(captureFile, "utf8")
+    .trim()
+    .split(/\n+/)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const identify = rows.filter((row) => row.event === "identify").at(-1);
+  expect(identify !== undefined, "fake Discord Gateway did not capture IDENTIFY").toBe(true);
+  expect(
+    identify !== undefined && !Object.hasOwn(identify, "token"),
+    "fake Discord Gateway capture persisted token field",
+  ).toBe(true);
+  expect(
+    !rows.some((row) => JSON.stringify(row).includes(expectedToken)),
+    "fake Discord Gateway capture persisted raw token",
+  ).toBe(true);
+  expect(identify?.tokenMatchesExpected, "Discord token rewrite").toBe(true);
+  expect(identify?.tokenLooksPlaceholder, "Discord placeholder leaked").toBe(false);
+}
+
 export type FakeDockerApi = {
   kind: string;
   port: string;
+  alternatePort?: string;
   dir: string;
   captureFile: string;
   container: string;
@@ -319,11 +341,13 @@ export async function runHost(
     artifactName: string;
     env: NodeJS.ProcessEnv;
     redactionValues: string[];
+    cwd?: string;
     timeoutMs?: number;
   },
 ): Promise<ShellProbeResult> {
   return host.command(command, args, {
     artifactName: options.artifactName,
+    cwd: options.cwd,
     env: options.env,
     redactionValues: options.redactionValues,
     timeoutMs: options.timeoutMs ?? PROBE_TIMEOUT_MS,
@@ -354,15 +378,20 @@ export async function runSandboxNode(
     artifactName: string;
     env?: Record<string, string>;
     redactionValues: string[];
+    sandboxName?: string;
     timeoutMs?: number;
   },
 ): Promise<ShellProbeResult> {
-  return sandbox.exec(SANDBOX_NAME, buildSandboxNodeInvocation(source, options), {
-    artifactName: options.artifactName,
-    env: sandboxAccessEnv(),
-    redactionValues: options.redactionValues,
-    timeoutMs: options.timeoutMs ?? PROBE_TIMEOUT_MS,
-  });
+  return sandbox.exec(
+    options.sandboxName ?? SANDBOX_NAME,
+    buildSandboxNodeInvocation(source, options),
+    {
+      artifactName: options.artifactName,
+      env: sandboxAccessEnv(),
+      redactionValues: options.redactionValues,
+      timeoutMs: options.timeoutMs ?? PROBE_TIMEOUT_MS,
+    },
+  );
 }
 
 export function buildSandboxNodeInvocation(
@@ -602,6 +631,9 @@ export async function startFakeDockerApi(
     "-e",
     `${options.captureFileEnv}=/tmp/fake/capture.jsonl`,
   ];
+  if (options.kind === "slack") {
+    dockerArgs.splice(7, 0, "-p", "0:8081", "-e", "FAKE_SLACK_API_WEBSOCKET_PORT=8081");
+  }
   for (const [key, value] of Object.entries(options.expectedEnv)) {
     dockerArgs.push("-e", `${key}=${value}`);
   }
@@ -641,15 +673,32 @@ export async function startFakeDockerApi(
 
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (fs.existsSync(portFile) && fs.statSync(portFile).size > 0) {
-      const port = await runHost(host, "docker", ["port", container, "8080/tcp"], {
+      const restPort = await runHost(host, "docker", ["port", container, "8080/tcp"], {
         artifactName: `port-fake-${options.kind}-api`,
         env: options.env,
         redactionValues: options.redactionValues,
         timeoutMs: 30_000,
       });
-      const published = port.stdout.trim().split(":").at(-1)?.trim();
-      if (published) {
-        return { kind: options.kind, port: published, dir, captureFile, container };
+      const publishedRestPort = restPort.stdout.trim().split(":").at(-1)?.trim() ?? "";
+      let publishedWebsocketPort = "";
+      if (options.kind === "slack") {
+        const websocketPort = await runHost(host, "docker", ["port", container, "8081/tcp"], {
+          artifactName: "port-fake-slack-websocket-api",
+          env: options.env,
+          redactionValues: options.redactionValues,
+          timeoutMs: 30_000,
+        });
+        publishedWebsocketPort = websocketPort.stdout.trim().split(":").at(-1)?.trim() ?? "";
+      }
+      if (publishedRestPort && (options.kind !== "slack" || publishedWebsocketPort)) {
+        return {
+          kind: options.kind,
+          port: publishedRestPort,
+          ...(options.kind === "slack" ? { alternatePort: publishedWebsocketPort } : {}),
+          dir,
+          captureFile,
+          container,
+        };
       }
     }
     await sleep(100);
@@ -663,6 +712,7 @@ export async function applyRestRewritePolicy(
   api: FakeDockerApi,
   env: NodeJS.ProcessEnv,
   redactionValues: string[],
+  providerName?: string,
 ): Promise<void> {
   const result = await runHost(
     host,
@@ -691,41 +741,35 @@ export async function applyRestRewritePolicy(
     },
   );
   expectExitZero(result, `apply ${api.kind} fake REST policy`);
-}
+  if (!providerName) return;
 
-export async function applyWebSocketRewritePolicy(
-  host: HostCliClient,
-  api: FakeDockerApi,
-  env: NodeJS.ProcessEnv,
-  redactionValues: string[],
-): Promise<void> {
-  const result = await runHost(
+  const binding = await runHost(
     host,
-    "openshell",
+    "bash",
     [
-      "policy",
-      "update",
+      "-lc",
+      String.raw`set -eu
+policy_file="$(mktemp)"
+trap 'rm -f "$policy_file"' EXIT
+"$1" policy get --base "$2" >"$policy_file"
+node --import tsx "$5" "$policy_file" "$3" host.openshell.internal "$4" rest
+"$1" policy set --policy "$policy_file" --wait "$2"`,
+      `bind-fake-${api.kind}-rest-policy`,
+      host.openshellCommandPath,
       SANDBOX_NAME,
-      "--add-endpoint",
-      `host.openshell.internal:${api.port}:read-write:websocket:enforce:websocket-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
-      "--add-allow",
-      `host.openshell.internal:${api.port}:GET:/**`,
-      "--add-allow",
-      `host.openshell.internal:${api.port}:WEBSOCKET_TEXT:/**`,
-      "--binary",
-      "/usr/local/bin/node",
-      "--binary",
-      "/usr/bin/node",
-      "--wait",
+      providerName,
+      api.port,
+      path.join(REPO_ROOT, "test/e2e/fixtures/hermes-discord-policy-binding.ts"),
     ],
     {
-      artifactName: `apply-${api.kind}-websocket-policy`,
+      artifactName: `apply-${api.kind}-rest-policy-credential-binding`,
+      cwd: REPO_ROOT,
       env,
       redactionValues,
       timeoutMs: 120_000,
     },
   );
-  expectExitZero(result, `apply ${api.kind} fake WebSocket policy`);
+  expectExitZero(binding, `bind ${api.kind} fake REST policy credential`);
 }
 
 export function lastJsonLine(
@@ -798,26 +842,34 @@ req.end();
   return result.stdout.trim();
 }
 
-export async function runDiscordGatewayClient(
-  sandbox: SandboxClient,
-  port: string,
-  identifyToken: string,
-  redactionValues: string[],
-): Promise<string> {
-  const result = await runSandboxNode(
-    sandbox,
-    `
+export type DiscordGatewayIdentifyToken =
+  | { readonly kind: "explicit"; readonly value: string }
+  | { readonly kind: "revisioned-discord-env" };
+
+export const DISCORD_GATEWAY_CLIENT_SOURCE = String.raw`
 import crypto from "node:crypto";
 import net from "node:net";
 
 const host = "host.openshell.internal";
 const port = Number(process.env.FAKE_DISCORD_GATEWAY_PORT);
-const identifyToken = process.env.FAKE_DISCORD_IDENTIFY_TOKEN ?? "";
+function resolveIdentifyToken() {
+  const mode = process.env.FAKE_DISCORD_IDENTIFY_MODE || "explicit";
+  if (mode === "explicit") return process.env.FAKE_DISCORD_IDENTIFY_TOKEN || "";
+  if (mode !== "revisioned-discord-env") {
+    throw new Error("Discord Gateway proof identify mode is invalid");
+  }
+  const value = process.env.DISCORD_BOT_TOKEN || "";
+  if (!/^openshell:resolve:env:v[1-9][0-9]*_DISCORD_BOT_TOKEN$/.test(value)) {
+    throw new Error("Discord Gateway proof requires the revision-scoped DISCORD_BOT_TOKEN placeholder");
+  }
+  return value;
+}
+const identifyToken = resolveIdentifyToken();
 const results = [];
 
 function finish(message) {
   if (message) results.push(message);
-  console.log(results.join("\\n"));
+  console.log(results.join("\n"));
   process.exit(0);
 }
 
@@ -890,28 +942,28 @@ let finished = false;
 socket.on("connect", () => {
   const key = crypto.randomBytes(16).toString("base64");
   const requestTarget = proxy
-    ? \`http://\${host}:\${port}/gateway?v=10&encoding=json\`
+    ? "http://" + host + ":" + port + "/gateway?v=10&encoding=json"
     : "/gateway?v=10&encoding=json";
   socket.write([
-    \`GET \${requestTarget} HTTP/1.1\`,
-    \`Host: \${host}:\${port}\`,
+    "GET " + requestTarget + " HTTP/1.1",
+    "Host: " + host + ":" + port,
     "Upgrade: websocket",
     "Connection: Upgrade",
-    \`Sec-WebSocket-Key: \${key}\`,
+    "Sec-WebSocket-Key: " + key,
     "Sec-WebSocket-Version: 13",
-    "\\r\\n",
-  ].join("\\r\\n"));
+    "\r\n",
+  ].join("\r\n"));
 });
 
 socket.on("data", (chunk) => {
   if (!upgraded) {
     handshake = Buffer.concat([handshake, chunk]);
-    const end = handshake.indexOf("\\r\\n\\r\\n");
+    const end = handshake.indexOf("\r\n\r\n");
     if (end === -1) return;
-    const statusLine = handshake.slice(0, end).toString("latin1").split("\\r\\n")[0] ?? "";
+    const statusLine = handshake.slice(0, end).toString("latin1").split("\r\n")[0] ?? "";
     if (!statusLine.includes("101")) {
       clearTimeout(timer);
-      finish(\`HTTP_\${statusLine}\`);
+      finish("HTTP_" + statusLine);
     }
     upgraded = true;
     results.push("UPGRADE");
@@ -951,23 +1003,40 @@ socket.on("data", (chunk) => {
 });
 socket.on("error", (error) => {
   clearTimeout(timer);
-  if (!finished) finish(\`ERROR \${error.message}\`);
+  if (!finished) finish("ERROR " + error.message);
 });
 socket.on("close", () => {
   clearTimeout(timer);
   if (!finished) finish("CLOSED");
 });
-`,
-    {
-      artifactName: "fake-discord-gateway-client",
-      env: {
-        FAKE_DISCORD_GATEWAY_PORT: port,
-        FAKE_DISCORD_IDENTIFY_TOKEN: identifyToken,
-      },
-      redactionValues,
-      timeoutMs: 60_000,
+`;
+
+export async function runDiscordGatewayClient(
+  sandbox: SandboxClient,
+  options: {
+    readonly sandboxName?: string;
+    readonly port: string;
+    readonly identifyToken: DiscordGatewayIdentifyToken;
+    readonly redactionValues: string[];
+  },
+): Promise<string> {
+  const identifyEnv: Record<string, string> =
+    options.identifyToken.kind === "explicit"
+      ? {
+          FAKE_DISCORD_IDENTIFY_MODE: "explicit",
+          FAKE_DISCORD_IDENTIFY_TOKEN: options.identifyToken.value,
+        }
+      : { FAKE_DISCORD_IDENTIFY_MODE: "revisioned-discord-env" };
+  const result = await runSandboxNode(sandbox, DISCORD_GATEWAY_CLIENT_SOURCE, {
+    artifactName: "fake-discord-gateway-client",
+    env: {
+      FAKE_DISCORD_GATEWAY_PORT: options.port,
+      ...identifyEnv,
     },
-  );
+    redactionValues: options.redactionValues,
+    sandboxName: options.sandboxName,
+    timeoutMs: 60_000,
+  });
   expectExitZero(result, "fake Discord Gateway client");
   return result.stdout.trim();
 }

@@ -5,7 +5,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { REASONING_EFFORT_ENV } from "../onboard/reasoning-mode";
 import type { ConfigObject } from "../security/credential-filter";
 import { patchOpenClawInferenceConfig, runInferenceSet } from "./inference-set";
-import { baseSession, createDeps } from "./inference-set.test-support";
+import {
+  baseSession,
+  createDeps,
+  OPENAI_ENDPOINTLESS_PROFILE,
+} from "./inference-set.test-support";
 
 function compatibleEndpointConfig(modelOverrides: ConfigObject = {}): ConfigObject {
   return {
@@ -331,6 +335,13 @@ describe("inference set reasoning effort (#7659)", () => {
         case "provider:update":
           providerVersion += 1;
           return { status: 0, output: "", stdout: "", stderr: "" };
+        case "provider:profile":
+          return {
+            status: 0,
+            output: OPENAI_ENDPOINTLESS_PROFILE,
+            stdout: OPENAI_ENDPOINTLESS_PROFILE,
+            stderr: "",
+          };
         default:
           return { status: 0, output: "", stdout: "", stderr: "" };
       }

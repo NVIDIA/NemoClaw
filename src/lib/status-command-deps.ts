@@ -25,7 +25,7 @@ import {
 import type { MessagingAgentId } from "./messaging/manifest";
 import { resolveGatewayName } from "./onboard/gateway-binding";
 import { classifyHermesPortableRegistry } from "./onboard/experimental/hermes-portable-onboarding";
-import { inspectPortableAgentReceiptAuthority } from "./onboard/experimental/hermes-portable-receipt";
+import { inspectPortableAgentReceiptAuthorityForClassification } from "./onboard/experimental/hermes-portable-receipt";
 import { defaultPortableDemoStateDir } from "./onboard/experimental/portable-runtime-receipt-readiness";
 import { summarizeForDebug } from "./state/onboard-session";
 import * as registry from "./state/registry";
@@ -249,6 +249,7 @@ function probeGatewayHealth(): GatewayHealth {
 export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
   const opsBin = resolveOpenshell();
   const sessionDeps = opsBin ? createSystemDeps(opsBin) : null;
+  const onboardSummary = summarizeForDebug();
   // Cache the SSH process probe once per command invocation — avoids
   // spawning ps per sandbox row. #2604; mirrors buildListCommandDeps.
   let cachedSshOutput: string | null | undefined;
@@ -282,7 +283,8 @@ export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
     showServiceStatus,
     getServiceStatuses,
     getGatewayHealth: probeGatewayHealth,
-    getGatewayAuthority: () => summarizeForDebug()?.gatewayAuthority ?? null,
+    getGatewayAuthority: () => onboardSummary?.gatewayAuthority ?? null,
+    loadLastSession: () => onboardSummary,
     getActiveSessionCount: sessionDeps
       ? (name) => {
           try {
@@ -300,7 +302,7 @@ export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
     findMessagingOverlaps,
     readGatewayLog: (sandboxName) => readGatewayLog(rootDir, sandboxName),
     getHermesPortablePhase: (sandboxName) => {
-      const authority = inspectPortableAgentReceiptAuthority(
+      const authority = inspectPortableAgentReceiptAuthorityForClassification(
         sandboxName,
         defaultPortableDemoStateDir(process.env),
       );

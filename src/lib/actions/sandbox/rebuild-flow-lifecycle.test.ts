@@ -64,6 +64,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
       policyAuthorityInspection: {
         authority: "externally-managed",
         effectivePolicy: { network_policies: {} },
+        policyIdentity: { hash: "external-policy", activeVersion: 1 },
       },
     });
 
@@ -91,6 +92,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
       policyAuthorityInspection: {
         authority: "externally-managed",
         effectivePolicy: YAML.parse(OPENCLAW_BASELINE.content) as Record<string, unknown>,
+        policyIdentity: { hash: "external-policy", activeVersion: 1 },
       },
     });
 
@@ -121,8 +123,9 @@ describe("rebuildSandbox flow: lifecycle", () => {
   it("stops before replacement restore when authority flips after recreate (#9833)", async () => {
     let authorityFlipped = false;
     const managedInspection = {
-      authority: "nemoclaw-managed" as const,
+      authority: "owner-unknown" as const,
       effectivePolicy: {},
+      policyIdentity: { hash: "policy-alpha", activeVersion: 7 },
     };
     const harness = createRebuildFlowHarness({
       onboard: () => {
@@ -131,10 +134,18 @@ describe("rebuildSandbox flow: lifecycle", () => {
     });
     const inspectChangedAuthority = () =>
       authorityFlipped
-        ? { authority: "externally-managed", effectivePolicy: {} }
+        ? {
+            authority: "externally-managed" as const,
+            effectivePolicy: {},
+            policyIdentity: { hash: "external-policy", activeVersion: 2 },
+          }
         : managedInspection;
     harness.inspectSandboxPolicyAuthoritySpy.mockImplementation(inspectChangedAuthority);
-    harness.inspectGlobalPolicyAuthoritySpy.mockImplementation(inspectChangedAuthority);
+    harness.inspectGlobalPolicyAuthoritySpy.mockImplementation(() =>
+      authorityFlipped
+        ? { state: "active", inspection: inspectChangedAuthority() }
+        : { state: "absent" },
+    );
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
@@ -577,18 +588,23 @@ network_policies:
     );
   });
 
-  it("relocks as present when shields postwork throws after successful onboard", async () => {
+  it("relocks the recreated sandbox when recovery artifact cleanup fails (#9833)", async () => {
+    const recoveryArtifactPath = "/tmp/shields-external-policy-alpha.yaml";
     const harness = createRebuildFlowHarness({
       staleRecovery: true,
       sandboxEntry: { policyAuthority: "nemoclaw-managed" },
       clearShieldsState: () => {
-        throw new Error("post-onboard shields cleanup failed");
+        throw new Error(
+          `Could not remove external Shields policy recovery artifact '${recoveryArtifactPath}': permission denied`,
+        );
       },
     });
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("post-onboard shields cleanup failed");
+    ).rejects.toThrow(
+      `Could not remove external Shields policy recovery artifact '${recoveryArtifactPath}': permission denied`,
+    );
 
     expect(harness.onboardSpy).toHaveBeenCalledOnce();
     expect(harness.relockSpy).toHaveBeenLastCalledWith(
@@ -663,7 +679,7 @@ network_policies:
   it("disposes the base-image handoff when live-state preflight fails (#7144)", async () => {
     const disposeImageRef = vi.fn(() => true);
     const harness = createRebuildFlowHarness({
-      sandboxListOutput: "",
+      sandboxInventory: { sandboxes: [] },
       reconciledSandboxGatewayState: { state: "unknown", output: "indeterminate" },
       sandboxEntry: { policyAuthority: "nemoclaw-managed" },
       baseImagePreflight: {

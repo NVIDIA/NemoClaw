@@ -11,10 +11,12 @@ import {
   DEEPAGENTS_STRICT_JSON_HELPERS,
 } from "./mcp-bridge-adapter-deepagents-projection";
 import {
+  MANAGED_HTTP_SERVER_MATCH_HELPERS,
   DEEPAGENTS_MCP_CONFIG_PATH,
   deepAgentsManagedServerConfig,
   pythonJsonLiteral,
 } from "./mcp-bridge-adapter-status";
+import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 
 export function buildDeepAgentsMcpRegisterCommand(
@@ -22,6 +24,7 @@ export function buildDeepAgentsMcpRegisterCommand(
   replaceExisting = false,
   managedEntries: readonly McpBridgeEntry[] = [entry],
   teardownRollback = false,
+  credentialRevision?: McpAttachedCredentialRevision,
 ): string {
   const expectedServers = Object.fromEntries(
     managedEntries
@@ -31,6 +34,7 @@ export function buildDeepAgentsMcpRegisterCommand(
       ])
       .sort(([left], [right]) => left.localeCompare(right)),
   );
+  expectedServers[entry.server] = deepAgentsManagedServerConfig(entry, credentialRevision);
   const expectedServerCount = Object.keys(expectedServers).length;
   if (!teardownRollback && expectedServerCount > DEEPAGENTS_MCP_MAX_SERVERS) {
     throw new McpBridgeError(
@@ -42,7 +46,7 @@ export function buildDeepAgentsMcpRegisterCommand(
   }
   const payload = {
     server: entry.server,
-    expected: deepAgentsManagedServerConfig(entry),
+    expected: deepAgentsManagedServerConfig(entry, credentialRevision),
     expectedServers,
     replaceExisting,
   };
@@ -53,6 +57,7 @@ export function buildDeepAgentsMcpRegisterCommand(
     `config_path = pathlib.Path(${JSON.stringify(DEEPAGENTS_MCP_CONFIG_PATH)})`,
     ...DEEPAGENTS_STRICT_JSON_HELPERS,
     ...DEEPAGENTS_MANAGED_PROJECTION_HELPERS,
+    ...MANAGED_HTTP_SERVER_MATCH_HELPERS,
     "source_descriptor = None",
     "def fail_registration(message):",
     "    close_managed_projection_descriptor(source_descriptor)",
@@ -71,12 +76,25 @@ export function buildDeepAgentsMcpRegisterCommand(
     `    fail_registration('Invalid ${DEEPAGENTS_MCP_CONFIG_PATH}: mcpServers must be an object')`,
     "if payload['server'] in servers and not payload['replaceExisting']:",
     `    fail_registration(f"MCP server '{payload['server']}' already exists in ${DEEPAGENTS_MCP_CONFIG_PATH} and is not managed by NemoClaw.")`,
+    "for name, expected in payload['expectedServers'].items():",
+    "    if name == payload['server']:",
+    "        continue",
+    "    if name not in servers:",
+    `        fail_registration(f"Invalid ${DEEPAGENTS_MCP_CONFIG_PATH}: registry-owned MCP sibling '{name}' is absent")`,
+    "    if not managed_http_server_matches(servers[name], expected, True):",
+    `        fail_registration(f"Invalid ${DEEPAGENTS_MCP_CONFIG_PATH}: registry-owned MCP sibling '{name}' is not exact registry-owned state")`,
     "for name, current in servers.items():",
     "    if name == payload['server'] and payload['replaceExisting']:",
     "        continue",
-    "    if payload['expectedServers'].get(name) != current:",
+    "    if not managed_http_server_matches(current, payload['expectedServers'].get(name), True):",
     `        fail_registration(f"Invalid ${DEEPAGENTS_MCP_CONFIG_PATH}: MCP server '{name}' is not exact registry-owned state")`,
-    "data = {'mcpServers': payload['expectedServers']}",
+    "next_servers = {}",
+    "for name, expected in payload['expectedServers'].items():",
+    "    if name != payload['server'] and name in servers:",
+    "        next_servers[name] = servers[name]",
+    "    else:",
+    "        next_servers[name] = expected",
+    "data = {'mcpServers': next_servers}",
     "config_path.parent.mkdir(parents=True, exist_ok=True)",
     "try:",
     "    write_managed_projection(config_path, data, source_identity, source_descriptor)",
@@ -97,8 +115,12 @@ function registryOwnedDeepAgentsEntries(
   return [...entries.values()];
 }
 
-function verifyDeepAgentsAdapterRegistration(sandboxName: string, entry: McpBridgeEntry): void {
-  const inspection = inspectDeepAgentsAdapterRegistration(sandboxName, entry);
+function verifyDeepAgentsAdapterRegistration(
+  sandboxName: string,
+  entry: McpBridgeEntry,
+  credentialRevision?: McpAttachedCredentialRevision,
+): void {
+  const inspection = inspectDeepAgentsAdapterRegistration(sandboxName, entry, credentialRevision);
   if (inspection.state === "registered") return;
   const detail = inspection.state === "error" ? inspection.detail : inspection.state;
   throw new McpBridgeError(
@@ -112,6 +134,7 @@ export function registerDeepAgentsAdapter(
   envValues: Record<string, string> = {},
   replaceExisting = false,
   teardownRollback = false,
+  credentialRevision?: McpAttachedCredentialRevision,
 ): void {
   const stdout = runDeepAgentsAdapterCommand(
     sandboxName,
@@ -121,6 +144,7 @@ export function registerDeepAgentsAdapter(
       replaceExisting,
       registryOwnedDeepAgentsEntries(sandboxName, entry),
       teardownRollback,
+      credentialRevision,
     ),
     `Deep Agents Code MCP config registration failed for '${entry.server}'.`,
     { envValues },
@@ -132,6 +156,6 @@ export function registerDeepAgentsAdapter(
       );
     }
   } else {
-    verifyDeepAgentsAdapterRegistration(sandboxName, entry);
+    verifyDeepAgentsAdapterRegistration(sandboxName, entry, credentialRevision);
   }
 }

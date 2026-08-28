@@ -75,8 +75,8 @@ import type {
 import { encodeManagedStartupProfile } from "./managed-startup/profile";
 import { createManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import type {
-  RuntimeProviderBootstrapSurface,
   RuntimeProviderBundle,
+  RuntimeProviderManagedImageBootstrapSurface,
 } from "./runtime-provider/contract";
 import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
 import { prepareSandboxCreateLaunch } from "./sandbox-create-launch";
@@ -127,10 +127,10 @@ const PORTABLE_RUNTIME_AUTHORITY: CheckpointPortableRuntimeAuthority = {
 
 type OpenShellResult = ReturnType<SandboxGpuCreateFlowDeps["runOpenshell"]>;
 
-function readySandboxGetResult(): OpenShellResult {
+function readySandboxGetResult(sandboxId = "alpha-sandbox-id"): OpenShellResult {
   return {
     status: 0,
-    stdout: "Name: alpha\nId: alpha-sandbox-id\nState: Ready\n",
+    stdout: `Name: alpha\nId: ${sandboxId}\nState: Ready\n`,
     stderr: "",
   };
 }
@@ -302,6 +302,7 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
           bootstrap: {
             providerId: "mxc",
             supported: true,
+            bootstrapKind: "managed-image",
             createAuthorityStore: vi.fn(() => ({
               recordPreparedAuthority: vi.fn(),
             })),
@@ -322,7 +323,7 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
       ],
     ]);
     const runtimeProvider = registered.mxc as RuntimeProviderBundle & {
-      readonly bootstrap: Extract<RuntimeProviderBootstrapSurface, { readonly supported: true }>;
+      readonly bootstrap: RuntimeProviderManagedImageBootstrapSurface;
     };
     input.managedBootstrap = {
       bootstrapIdentity: launch.managedBootstrapIdentity!,
@@ -352,8 +353,9 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     const deps = createDeps();
     const adapterOverride = {} as never;
     deps.createManagedBootstrapAdapter = vi.fn(() => adapterOverride);
+    deps.runOpenshell = vi.fn(() => readySandboxGetResult("alpha-sandbox-id"));
     vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
-      args[1] === "get" ? "ID: mxc-alpha\n" : "alpha Ready",
+      args[1] === "get" ? "ID: alpha-sandbox-id\n" : "alpha Ready",
     );
     recoverUnfinished.mockRejectedValueOnce(new Error("unfinished recovery failed"));
 
@@ -491,10 +493,8 @@ describe("runSandboxGpuCreateFlow proof authorization", () => {
       "openshell sandbox exec denied by policy",
     );
     expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
-    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
-      ["sandbox", "delete", "alpha"],
-      expect.anything(),
-    );
+    const calls = vi.mocked(deps.runOpenshell).mock.calls;
+    expect(calls.flat()).not.toContain("delete");
   });
 
   it("does not let sandbox-controlled CUDA output authorize compatibility fallback (#6110)", async () => {
@@ -966,10 +966,8 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow("process.exit:1");
     expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
     expect(mocks.verifyGpuSandboxAccessAfterReady).not.toHaveBeenCalled();
-    expect(deps.runOpenshell).toHaveBeenCalledWith(
-      ["sandbox", "delete", "alpha"],
-      expect.objectContaining({ ignoreError: true }),
-    );
+    expect(deps.runOpenshell).not.toHaveBeenCalled();
+    expect(errorOutput()).toContain("Verify the sandbox identity before manual cleanup");
     expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
   });
 
@@ -1237,7 +1235,6 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
   it("streams native and compatibility attempts through direct argv without a shell (#6110)", async () => {
     failNativeCreate();
     const input = createInput();
-
     await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
       route: "compatibility",
     });
@@ -1317,7 +1314,7 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
     expect(input.sandboxGpuConfig.sandboxGpuProof).toBeNull();
   });
 
-  it("validates the full compatibility command before deleting native state (#6110)", async () => {
+  it("validates the full compatibility command before proving native state absent (#6110)", async () => {
     const input = createInput();
     input.compatibilityPolicyPath = null;
     failNativeCreate();
@@ -1348,7 +1345,7 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
     const deps = createDeps();
     await expectFlowExit(input, deps);
     expect(deps.openshellArgv).toHaveBeenCalledOnce();
-    expect(deps.runOpenshell).toHaveBeenCalledWith(
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
       expect.anything(),
     );
@@ -1375,19 +1372,21 @@ describe("runSandboxGpuCreateFlow cleanup and provenance", () => {
     );
   });
 
-  it("reports manual cleanup when ordinary readiness deletion fails (#6110)", async () => {
+  it("preserves the sandbox when ordinary readiness cleanup is name-only (#6110)", async () => {
     mockReadinessFailure();
     const deps = createDeps();
     vi.mocked(deps.runOpenshell).mockReturnValue({ status: 7, stderr: "gateway unavailable" });
     await expectFlowExit(createInput(), deps);
 
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
-    expect(output).toContain("could not be removed automatically");
-    expect(output).toContain('Manual cleanup: openshell sandbox delete "alpha"');
+    expect(deps.runOpenshell).not.toHaveBeenCalled();
+    expect(output).toContain("left sandbox 'alpha' in place");
+    expect(output).toContain("Verify the sandbox identity before manual cleanup");
+    expect(output).not.toContain("openshell sandbox delete");
     expect(output).not.toContain("Retry: nemoclaw onboard");
   });
 
-  it("treats an already-absent sandbox as successful ordinary readiness cleanup", async () => {
+  it("does not infer absence through a mutable-name readiness cleanup", async () => {
     mockReadinessFailure();
     const deps = createDeps();
     vi.mocked(deps.runOpenshell).mockReturnValue({
@@ -1397,8 +1396,10 @@ describe("runSandboxGpuCreateFlow cleanup and provenance", () => {
     await expectFlowExit(createInput(), deps);
 
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
-    expect(output).toContain("Retry: nemoclaw onboard");
-    expect(output).not.toContain("could not be removed automatically");
+    expect(deps.runOpenshell).not.toHaveBeenCalled();
+    expect(output).toContain("left sandbox 'alpha' in place");
+    expect(output).toContain("Verify the sandbox identity before manual cleanup");
+    expect(output).not.toContain("Retry: nemoclaw onboard");
   });
 
   it("fully redacts command diagnostics when cleanup cannot be proven safe", async () => {

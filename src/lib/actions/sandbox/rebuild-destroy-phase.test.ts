@@ -999,6 +999,59 @@ describe("rebuild destroy phase", () => {
     expect(recreateJournal.confirmDeleted).toHaveBeenCalledOnce();
   });
 
+  it("reports confirmed deletion and preserves recovery state when post-delete validation fails (#9833)", async () => {
+    const order: string[] = [];
+    const recreateJournal = stubRecreateJournal();
+    vi.mocked(recreateJournal.confirmDeleted).mockImplementation(() => {
+      order.push("journal:confirmed-deleted");
+    });
+    mocks.runOpenshell.mockReturnValue({ status: 0, stdout: "deleted", stderr: "" });
+    const validateAfterDeleteConfirmation = vi.fn(async () => {
+      order.push("validate:policy-authority");
+      return {
+        ok: false as const,
+        message: "Policy authority changed after sandbox deletion.",
+      };
+    });
+    const onDeleted = vi.fn(() => order.push("on-deleted"));
+    const onDeleteStateAmbiguous = vi.fn();
+
+    await expect(
+      runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry: { name: "alpha", agent: "openclaw", gatewayName: "nemoclaw" },
+        staleRecovery: false,
+        recreateJournal,
+        backupManifest: { backupPath: "/tmp/rebuild-backups/alpha/backup" } as never,
+        log: vi.fn(),
+        bail: vi.fn((message: string): never => {
+          throw new Error(message);
+        }),
+        relockShieldsIfNeeded: vi.fn(() => true),
+        validateAfterDeleteConfirmation,
+        onDeleted,
+        onDeleteStateAmbiguous,
+      }),
+    ).rejects.toThrow("Policy authority changed after sandbox deletion.");
+
+    expect(order).toEqual(["journal:confirmed-deleted", "validate:policy-authority", "on-deleted"]);
+    expect(onDeleteStateAmbiguous).not.toHaveBeenCalled();
+    expect(mocks.stopNimContainer).not.toHaveBeenCalled();
+    expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(
+      "  Sandbox deletion was confirmed, but policy authority validation failed before recreation.",
+    );
+    expect(console.error).toHaveBeenCalledWith(
+      "  State backup is preserved at: /tmp/rebuild-backups/alpha/backup",
+    );
+    expect(console.error).toHaveBeenCalledWith(
+      "  The replacement journal remains available for recovery.",
+    );
+    expect(console.error).toHaveBeenCalledWith(
+      "  Resolve the policy authority failure, then rerun the rebuild for 'alpha' with --yes.",
+    );
+  });
+
   it("journals the delete boundary before the destructive command (#7734)", async () => {
     const order: string[] = [];
     const recreateJournal = stubRecreateJournal();

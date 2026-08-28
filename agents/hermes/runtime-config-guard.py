@@ -1455,6 +1455,28 @@ def refresh_hashes(
         source_hash_text, config_path, env_path
     )
     current_mcp, _ = _current_mcp_servers_digest(config_path)
+    # The transaction helper and the managed supervisor can both observe the
+    # same pending reload. The helper may commit it first while the supervisor
+    # still retains its earlier pending observation. Replacing an already-current
+    # anchor with byte-identical content needlessly changes its inode and can
+    # make a concurrent host reconciliation reject an otherwise coherent
+    # snapshot. Keep the repeated apply fail-closed, but make it validation-only:
+    # authenticate config, env, and every relevant anchor as one stable current
+    # snapshot before returning without an atomic replacement.
+    if mcp_transition == "apply" and secrets.compare_digest(
+        state.intended, state.applied
+    ):
+        integrity = inspect_mcp_integrity_snapshot(
+            hermes_dir,
+            state_path,
+            compat_hash if mode == "both" else None,
+        )
+        if integrity.state != "current":
+            raise UnsafePathError(
+                "Hermes MCP applied-state commit did not observe current state"
+            )
+        assert_mcp_integrity_snapshot_current(integrity)
+        return
     if mcp_transition == "preserve":
         if not secrets.compare_digest(current_mcp, state.intended):
             raise UnsafePathError(

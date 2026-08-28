@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { SandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image/types";
 import {
   buildRebuildHermesChildEnv,
+  buildRebuildHermesRecreateEnv,
   planRebuildHermesBaseReuse,
 } from "../live/rebuild-hermes-env.ts";
 
@@ -98,5 +99,25 @@ describe("rebuild-Hermes base reuse", () => {
     expect(childEnv.NVIDIA_API_KEY).toBeUndefined();
     expect(childEnv.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
     expect(childEnv.BUILDX_BUILDER).toBeUndefined();
+  });
+
+  it("forwards the Discord credential needed to replace the legacy rebuild provider (#10155)", () => {
+    const childEnv = buildRebuildHermesChildEnv(
+      {
+        COMPATIBLE_API_KEY: "must-not-reach-child",
+        NVIDIA_API_KEY: "must-not-reach-child",
+        NVIDIA_INFERENCE_API_KEY: "must-not-reach-child",
+      },
+      buildRebuildHermesRecreateEnv("fixture-discord-token", {
+        NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF: preparedRef,
+      }),
+    );
+
+    expect(childEnv.DISCORD_BOT_TOKEN).toBe("fixture-discord-token");
+    expect(childEnv.NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF).toBe(preparedRef);
+    expect(childEnv.NEMOCLAW_REBUILD_VERBOSE).toBe("1");
+    expect(childEnv.COMPATIBLE_API_KEY).toBeUndefined();
+    expect(childEnv.NVIDIA_API_KEY).toBeUndefined();
+    expect(childEnv.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
   });
 });

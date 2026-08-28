@@ -517,7 +517,7 @@ export function buildLaunchReadinessRegistryProjection(
   const lifecycleGeneration = normalizedString(entry.lifecycleGeneration);
   const liveIdentityFingerprint = normalizedString(entry.lifecycleLiveIdentityFingerprint);
   if (!lifecycleGeneration || !liveIdentityFingerprint) throw new ObservationError("identity");
-  if (entry.pendingRouteReservation === true || entry.reservationSessionId) {
+  if (entry.pendingRouteReservation === true) {
     throw new ObservationError("config");
   }
   if (entry.baselineExclusionTransition) throw new ObservationError("config");
@@ -922,7 +922,6 @@ function resolveOpenClawPairingSettlementTarget(
     entry.name !== sandboxName ||
     (entry.agent !== null && entry.agent !== "openclaw") ||
     entry.pendingRouteReservation === true ||
-    entry.reservationSessionId ||
     !Number.isInteger(entry.gatewayPort) ||
     (entry.gatewayPort ?? 0) < 1 ||
     (entry.gatewayPort ?? 0) > 65535

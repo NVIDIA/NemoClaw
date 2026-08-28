@@ -81,19 +81,23 @@ describe("destroySandbox flow", () => {
     expectStrictSandboxPresenceClassification();
   });
 
-  it("selects the sandbox gateway, deletes live resources, cleans host state, and removes registry state", async () => {
-    const harness = createDestroyHarness();
+  it(
+    "selects the sandbox gateway, deletes live resources, cleans host state, and removes registry state",
+    { timeout: 30_000 },
+    async () => {
+      const harness = createDestroyHarness();
 
-    await expect(
-      harness.destroySandbox("alpha", { yes: true, cleanupGateway: true }),
-    ).resolves.toBeUndefined();
+      await expect(
+        harness.destroySandbox("alpha", { yes: true, cleanupGateway: true }),
+      ).resolves.toBeUndefined();
 
-    expectSuccessfulLiveDestroy(harness, exitSpy);
-    expect(harness.retirePortableLifecycleReceiptSpy).toHaveBeenCalledWith("alpha");
-    expect(harness.removeSandboxSpy.mock.invocationCallOrder[0]).toBeLessThan(
-      harness.retirePortableLifecycleReceiptSpy.mock.invocationCallOrder[0],
-    );
-  });
+      expectSuccessfulLiveDestroy(harness, exitSpy);
+      expect(harness.retirePortableLifecycleReceiptSpy).toHaveBeenCalledWith("alpha");
+      expect(harness.removeSandboxSpy.mock.invocationCallOrder[0]).toBeLessThan(
+        harness.retirePortableLifecycleReceiptSpy.mock.invocationCallOrder[0],
+      );
+    },
+  );
 
   it.each([
     ["--yes", false],

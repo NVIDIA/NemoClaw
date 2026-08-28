@@ -136,3 +136,75 @@ export function decideMcpLifecycleTakeover(
 ): McpLifecycleTakeoverDecision {
   return observedToken === expectedToken ? { kind: "proceed" } : { kind: "refuse" };
 }
+
+export type McpLifecycleAcquisitionInput =
+  | { phase: "containment"; observation: LockObservation | null }
+  | { phase: "deadline" | "reaper" | "main-owner"; lock: McpLifecycleLockDecision }
+  | { phase: "timer"; deadlineExpired: boolean }
+  | {
+      phase: "published";
+      containmentPresent: boolean;
+      deadlinePresent: boolean;
+      reaperPresent: boolean;
+      timerDeadlineExpired: boolean;
+      expectedOwnerToken: string;
+      observedOwnerToken: string | undefined;
+      expectedTakeoverToken: string | undefined;
+      observedTakeoverToken: string | undefined;
+    };
+
+export type McpLifecycleAcquisitionDecision =
+  | { kind: "publish" }
+  | { kind: "enter" }
+  | { kind: "wait"; ownerPid: number | null }
+  | { kind: "release" }
+  | { kind: "reap" }
+  | { kind: "refuse"; containment: LockObservation }
+  | {
+      kind: "contain";
+      role: "main" | "reaper" | "deadline";
+      observation: LockObservation;
+    };
+
+/** Decide the next ordinary-acquisition executor action from observed state. */
+export function decideMcpLifecycleAcquisition(
+  input: McpLifecycleAcquisitionInput,
+): McpLifecycleAcquisitionDecision {
+  if (input.phase === "published") {
+    const gatesOpen =
+      !input.containmentPresent &&
+      !input.deadlinePresent &&
+      !input.reaperPresent &&
+      !input.timerDeadlineExpired &&
+      input.observedOwnerToken === input.expectedOwnerToken;
+    return gatesOpen &&
+      decideMcpLifecycleTakeover(input.expectedTakeoverToken, input.observedTakeoverToken).kind ===
+        "proceed"
+      ? { kind: "enter" }
+      : { kind: "release" };
+  }
+
+  if (input.phase === "containment") {
+    const gate = decideMcpLifecycleGate(input.observation, false);
+    return gate.kind === "refuse"
+      ? { kind: "refuse", containment: gate.containment }
+      : { kind: "publish" };
+  }
+
+  if (input.phase === "timer") {
+    return decideMcpLifecycleGate(null, input.deadlineExpired).kind === "wait"
+      ? { kind: "wait", ownerPid: null }
+      : { kind: "publish" };
+  }
+
+  if (input.lock.kind === "reap" && input.phase === "main-owner") return { kind: "reap" };
+  if (input.lock.kind === "contain") {
+    const role = input.phase === "main-owner" ? "main" : input.phase;
+    return { kind: "contain", role, observation: input.lock.observation };
+  }
+  if (input.lock.kind === "absent") return { kind: "publish" };
+  if (input.lock.kind === "wait") {
+    return { kind: "wait", ownerPid: input.lock.ownerPid };
+  }
+  return { kind: "wait", ownerPid: null };
+}

@@ -699,6 +699,16 @@ describe("registerCreatedSandbox", () => {
     expect(classifyPortableLifecycleReceipt).not.toHaveBeenCalled();
   });
 
+  it("publishes ordinary registrations without verified-create transaction options", () => {
+    const registerSandbox = vi.fn();
+    const entry = registerCreatedSandbox({
+      ...createdRegistryEntryInput({ lifecycleGeneration: "generation-1" }),
+      registerSandbox,
+    });
+
+    expect(registerSandbox).toHaveBeenCalledExactlyOnceWith(entry);
+  });
+
   it("persists lifecycle identity for a non-OpenClaw agent", () => {
     const agentDefs = requireDist("../agent/defs.js") as typeof import("../agent/defs");
     const registerSandbox = vi.fn();

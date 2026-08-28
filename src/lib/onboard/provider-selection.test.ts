@@ -27,6 +27,7 @@ function resolve(overrides: Partial<Parameters<typeof resolveRequestedProviderSe
     isWsl: false,
     isWindowsHostOllama: false,
     windowsHostOllamaSupported: false,
+    windowsHostOllamaReachable: false,
     hermesProviderAvailable: false,
     ollamaRunning: false,
     readRecordedProvider: () => null,
@@ -77,6 +78,52 @@ describe("resolveRequestedProviderSelection", () => {
     });
 
     assert.equal(selectedKey(result), "install-windows-ollama");
+  });
+
+  it("restarts Windows-host Ollama when only WSL can reach the daemon (#10100)", () => {
+    const result = resolve({
+      options: [option("build"), option("ollama"), option("start-windows-ollama")],
+      requestedProvider: "install-windows-ollama",
+      isWsl: true,
+      isWindowsHostOllama: true,
+      windowsHostOllamaSupported: true,
+      windowsHostOllamaReachable: false,
+      ollamaRunning: true,
+    });
+
+    assert.equal(selectedKey(result), "start-windows-ollama");
+  });
+
+  it("restarts Docker-unreachable Windows-host Ollama for an explicit Ollama request (#10100)", () => {
+    const result = resolve({
+      options: [option("build"), option("ollama"), option("start-windows-ollama")],
+      requestedProvider: "ollama",
+      isWsl: true,
+      isWindowsHostOllama: true,
+      windowsHostOllamaSupported: true,
+      windowsHostOllamaReachable: false,
+      ollamaRunning: true,
+    });
+
+    assert.equal(selectedKey(result), "start-windows-ollama");
+  });
+
+  it("rejects explicit Windows-host Ollama on an unsupported container runtime (#10100)", () => {
+    const result = resolve({
+      options: [option("build"), option("ollama")],
+      requestedProvider: "ollama",
+      isWsl: true,
+      isWindowsHostOllama: true,
+      windowsHostOllamaSupported: false,
+      windowsHostOllamaReachable: false,
+      ollamaRunning: true,
+    });
+
+    assert.equal(result.kind, "failure");
+    assert.equal(
+      result.kind === "failure" ? result.reason.kind : null,
+      "unsupported-windows-host-ollama",
+    );
   });
 
   it("still installs WSL-local Ollama when a daemon is already running (#7472)", () => {

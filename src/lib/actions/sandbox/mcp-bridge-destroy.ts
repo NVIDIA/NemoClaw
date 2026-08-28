@@ -6,6 +6,7 @@ import * as registry from "../../state/registry";
 import {
   rollbackScrubbedMcpAdapters,
   scrubManagedMcpAdapterOrThrow,
+  type McpScrubbedAdapterEntry,
 } from "./mcp-bridge-adapter-teardown";
 import { MCP_BRIDGE_POLICY_SOURCE, McpBridgeError } from "./mcp-bridge-contracts";
 import {
@@ -171,14 +172,13 @@ export async function prepareMcpBridgesForDestroy(
   }
   assertMcpAdapterTeardownRuntimeCapabilities(sandboxName, sandbox, entries);
   const detached: McpBridgeEntry[] = [];
-  const scrubbedAdapters: McpBridgeEntry[] = [];
+  const scrubbedAdapters: McpScrubbedAdapterEntry[] = [];
   const removedPolicies: McpBridgeEntry[] = [];
   let providerDetachAttempted = false;
   try {
     for (const entry of entries) {
       await revalidateBeforeMutation();
-      scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry);
-      scrubbedAdapters.push(entry);
+      scrubbedAdapters.push(scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry));
     }
     if (policyAuthorityReceipt.authority === "nemoclaw-managed") {
       for (const entry of entries) {
