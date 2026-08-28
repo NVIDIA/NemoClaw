@@ -235,6 +235,24 @@ Other workflows, including onboarding, rebuild, and `doctor --fix`, can explicit
 `$$nemoclaw <name> gateway restart` instead restarts only the supported agent gateway inside the named sandbox.
 </AgentOnly>
 
+<AgentOnly variant="hermes">
+### Recover Portable Hermes Ollama
+
+For a Portable Hermes sandbox with a stopped receipt-owned Ollama runtime, run the probe-only connection command:
+
+```bash
+$$nemoclaw <sandbox-name> connect --probe-only
+```
+
+This is the only recovery operation that can resume the recorded runtime.
+It revalidates the lifecycle receipt, sandbox registry, OpenShell gateway, Podman executable and socket, network, published inference receipt, and sandbox inference route before it resumes the runtime.
+If the exact recorded runtime is already running, the command verifies it without starting another runtime.
+The command does not select or create a replacement runtime, pull a model, or use a model or runtime from another state root.
+If recovery cannot verify the route or another required authority, it exits nonzero.
+If a resumed runtime cannot complete recovery, NemoClaw restores its prior stopped state before it returns the failure.
+
+</AgentOnly>
+
 <AgentOnly variant="openclaw">
 ### Recover Portable Local Ollama
 
@@ -280,10 +298,10 @@ Back up those paths outside the sandbox before you approve legacy recovery.
 $$nemoclaw <sandbox-name> rebuild
 ```
 
-On WSL with Docker Desktop, a generated replacement image build uses a temporary credential-free Docker configuration when the configured Docker Desktop credential helper is unavailable.
-NemoClaw removes the temporary configuration after the build and does not modify your Docker configuration.
-An explicit custom Dockerfile continues to use your configured Docker credentials because its base image or build steps might require a private registry.
-If that custom rebuild cannot reach the credential helper, restore the Docker Desktop session or credential-helper access before retrying.
+On WSL with Docker Desktop, NemoClaw uses a temporary credential-free Docker configuration when an unavailable Docker Desktop credential helper blocks a public managed-image pull, GPU probe pull, local-inference probe pull, or generated replacement-image build on the default Docker context.
+NemoClaw removes the temporary configuration after the operation and does not modify your Docker configuration.
+NemoClaw preserves credentials for a non-default Docker context and for an explicit custom Dockerfile, because those paths can require a private registry.
+If an explicit custom Dockerfile cannot reach the credential helper, restore the Docker Desktop session or credential-helper access before retrying.
 
 <AgentOnly variant="openclaw">
 

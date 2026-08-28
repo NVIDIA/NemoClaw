@@ -1409,15 +1409,6 @@ An unknown model slug, malformed extra-args JSON, or a gated model (for example 
 Unset the managed-vLLM variable, or fix the value, before retrying a regular connection.
 `connect --probe-only` skips this install preflight so stale managed-vLLM variables cannot block recovery.
 
-<AgentOnly variant="hermes">
-
-For an active Portable Hermes receipt, `nemohermes <name> connect --probe-only` revalidates the recorded published Ollama runtime and inference route.
-If the exact recorded runtime is stopped, it resumes that runtime and verifies the route before it restores missing manifest-declared host forwards.
-The command does not select, install, or pull a model.
-If it cannot prove the recorded runtime, registry, or private publication authority, it exits nonzero without using another runtime.
-
-</AgentOnly>
-
 <AgentOnly variant="openclaw">
 For a portable experimental-profile sandbox with the recorded `ollama-local` provider, `connect --probe-only` probes `http://127.0.0.1:11434/api/tags` before it decides whether to start Ollama.
 If the API is unhealthy and the ownership receipt is valid, it starts the fixed user-local Ollama executable with `serve`.
@@ -4596,12 +4587,10 @@ If `--output` is set and the tarball cannot be written (for example, the destina
 The tarball is written to a temporary sibling and renamed on success, so a pre-existing file at `--output` is preserved when `tar` fails.
 
 When `--sandbox` is supplied explicitly through the flag or one of `NEMOCLAW_SANDBOX_NAME`, `NEMOCLAW_SANDBOX`, or `SANDBOX_NAME`, the name must match a registered sandbox.
-The flag wins, then the environment variables in that order.
-NemoClaw checks the sandbox on its registered owning gateway.
-An unknown sandbox, an invalid gateway binding, a denied OpenShell observation, or a sandbox absent from its owning gateway exits nonzero without writing a tarball.
-The error identifies the name and the source environment variable when applicable.
-Without an explicit name, `$$nemoclaw debug` selects the registered default sandbox, or the first registered sandbox when no default exists.
-It exits nonzero when that selected sandbox is stale or its gateway binding is invalid.
+The flag wins, then the env vars in that order.
+If `openshell sandbox list` succeeds, the sandbox must also appear in the live gateway.
+An unknown or stale name exits non-zero with an actionable error that names the sandbox and reports the source env var when applicable, and no tarball is written.
+Without an explicit name, `$$nemoclaw debug` falls back to the registry's default sandbox and warns if that default is stale.
 
 ### `$$nemoclaw credentials list`
 

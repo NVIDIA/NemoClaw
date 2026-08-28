@@ -206,14 +206,12 @@ Onboarding preflight prints this warning before the first image pull and then co
 NemoClaw reads the config from `$DOCKER_CONFIG/config.json` when `DOCKER_CONFIG` is set, and from `~/.docker/config.json` otherwise.
 On WSL, NemoClaw probes the credential helper with a read-only `list` call instead of relying on session markers, because WSLg can set `DISPLAY` in every WSL shell.
 
-To work around a failed pull, resume onboarding with an isolated Docker config so every remaining image pull bypasses the unavailable helper:
+On WSL 2, NemoClaw automatically uses a temporary credential-free Docker configuration for public managed-image and probe pulls on the default Docker context when this helper is unavailable.
+It removes the temporary configuration after the operation and does not modify your Docker configuration.
+NemoClaw keeps your configured credentials for a non-default Docker context and an explicit custom Dockerfile because those paths can require a private registry.
 
-```bash
-DOCKER_CONFIG=$(mktemp -d) $$nemoclaw onboard --resume
-```
-
-Alternatively, temporarily remove the `credsStore` entry from the Docker client config named above, then rerun `$$nemoclaw onboard`.
-Restore the entry afterward if you use registries that need stored credentials in GUI sessions.
+If an explicit custom Dockerfile cannot pull its base image, restore the Docker Desktop session or credential-helper access before retrying.
+Do not remove the `credsStore` entry unless you understand the effect on registries that use stored credentials.
 
 ### macOS first-run failures
 
