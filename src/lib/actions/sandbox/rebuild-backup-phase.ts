@@ -13,8 +13,8 @@ import {
   OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
   requiredObservabilityPolicyPresets,
 } from "../../onboard/observability-policy-presets";
+import { isStaleBuiltinWebSearchPolicyPreset } from "../../onboard/policy-preset-reconciliation";
 import { resolveRecreatePolicyPresets } from "../../onboard/policy-preset-persistence";
-import { isStaleBuiltinWebSearchPolicyPreset } from "../../onboard/policy-selection";
 import {
   ensureRequiredTierPolicyPresets,
   filterSuppressedAgentRequiredPresets,

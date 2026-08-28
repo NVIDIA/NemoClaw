@@ -40,8 +40,8 @@ const { computeSetupPresetSuggestions, filterSetupPolicyPresets, getSuggestedPol
       webSearchConfig?: { fetchEnabled?: boolean; provider?: "brave" | "tavily" } | null;
     }) => string[];
   };
-const { mergeRequiredSetupPolicyPresets, suppressedAgentRequiredPresets } =
-  require("../../src/lib/onboard/policy-selection") as {
+const { mergeRequiredSetupPolicyPresets } =
+  require("../../src/lib/onboard/policy-preset-reconciliation") as {
     mergeRequiredSetupPolicyPresets: (
       policyPresets: string[],
       options?: {
@@ -55,12 +55,12 @@ const { mergeRequiredSetupPolicyPresets, suppressedAgentRequiredPresets } =
         webSearchConfig?: { fetchEnabled?: boolean; provider?: "brave" | "tavily" } | null;
       },
     ) => string[];
-    suppressedAgentRequiredPresets: (
-      tierName: string,
-      agent: string | null | undefined,
-    ) => string[];
   };
-const { agentRequiredPresetAdditions, filterSuppressedAgentRequiredPresets } =
+const {
+  agentRequiredPresetAdditions,
+  filterSuppressedAgentRequiredPresets,
+  suppressedAgentRequiredPresets,
+} =
   require("../../src/lib/onboard/policy-tier-suppression") as {
     agentRequiredPresetAdditions: (
       agent: string | null | undefined,
@@ -69,6 +69,10 @@ const { agentRequiredPresetAdditions, filterSuppressedAgentRequiredPresets } =
     filterSuppressedAgentRequiredPresets: (
       presetNames: string[],
       tierName: string | null | undefined,
+      agent: string | null | undefined,
+    ) => string[];
+    suppressedAgentRequiredPresets: (
+      tierName: string,
       agent: string | null | undefined,
     ) => string[];
   };

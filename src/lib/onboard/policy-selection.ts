@@ -50,10 +50,6 @@ import {
 } from "./policy-tier-suppression";
 import { withPolicyApplicationTrace } from "./tracing";
 
-export {
-  isStaleBuiltinWebSearchPolicyPreset,
-  mergeRequiredSetupPolicyPresets,
-} from "./policy-preset-reconciliation";
 export { suppressedAgentRequiredPresets } from "./policy-tier-suppression";
 
 export type OnboardPolicyApplicationDeps = Omit<
