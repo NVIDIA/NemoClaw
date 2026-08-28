@@ -23,6 +23,7 @@ import {
   ensureRequiredTierPolicyPresets,
   suppressedAgentRequiredPresets,
 } from "./policy-tier-suppression";
+import { getTier } from "../policy/tiers";
 
 type Preset = { name: string; access?: string };
 
@@ -112,11 +113,13 @@ export function preparePolicyPresetResumeSelection(
   // Defaults of the recorded/active tier (e.g. `brave` on Balanced) are tier
   // egress presets, not stale web-search leftovers. Pass the recorded tier so
   // reconciliation checks the canonical tier definition. (#6844)
+  const normalizedTierName = options.tierName?.trim().toLowerCase();
+  const tier = normalizedTierName ? getTier(normalizedTierName) : null;
   const isStaleBuiltinWebSearch = (name: string) =>
     isStaleBuiltinWebSearchPolicyPreset(name, {
       webSearchConfig: options.webSearchConfig,
       customPresetNames: customPolicyPresetNames,
-      tierName: options.tierName,
+      tier,
     });
   const isInactiveObservability = (name: string) =>
     isInactiveObservabilityPolicyPreset(name, {

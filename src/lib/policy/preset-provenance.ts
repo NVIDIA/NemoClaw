@@ -3,7 +3,7 @@
 
 import { HERMES_TOOL_GATEWAY_PRESET_NAMES } from "../onboard/hermes-managed-tools";
 import { OPENCLAW_ONLY_POLICY_PRESETS } from "../onboard/openclaw-otel-policy-presets";
-import { tierIncludesPolicyPreset } from "./tiers";
+import { tierIncludesPolicyPreset, type TierPresetMembership } from "./tiers";
 
 export type PresetProvenance =
   | { source: "tier"; tier: string }
@@ -12,6 +12,7 @@ export type PresetProvenance =
 
 export interface PresetProvenanceContext {
   tierName?: string | null;
+  tier?: TierPresetMembership | null;
   agentName?: string | null;
 }
 
@@ -34,7 +35,7 @@ export function classifyPresetProvenance(
   const name = presetName.trim().toLowerCase();
   const tierName = context.tierName?.trim().toLowerCase() || null;
   const agentName = context.agentName?.trim().toLowerCase() ?? null;
-  if (tierName && tierIncludesPolicyPreset(tierName, name)) {
+  if (tierName && tierIncludesPolicyPreset(context.tier, name)) {
     return { source: "tier", tier: tierName };
   }
   if (agentName === "openclaw" && OPENCLAW_ONLY_POLICY_PRESETS.has(name)) {

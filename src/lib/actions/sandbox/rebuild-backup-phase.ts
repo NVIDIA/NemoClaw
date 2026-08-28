@@ -20,6 +20,7 @@ import {
   filterSuppressedAgentRequiredPresets,
 } from "../../onboard/policy-tier-suppression";
 import { parsePresetPolicyKeys } from "../../policy";
+import { getTier } from "../../policy/tiers";
 import { hasCompleteOpenClawImagePluginProvenance } from "../../state/openclaw-plugin-restore";
 import { hasAuthoritativeOpenClawImagePluginProvenance } from "../../state/sandbox";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
@@ -84,6 +85,8 @@ export function normalizeRebuildWebSearchPolicyPresets(
   const selectedProvider = webSearchConfig ? webSearchProviderForConfig(webSearchConfig) : null;
   const preserveStandaloneDcodeTavily =
     selectedProvider === null && sandboxEntry.agent === "langchain-deepagents-code";
+  const normalizedTierName = sandboxEntry.policyTier?.trim().toLowerCase();
+  const tier = normalizedTierName ? getTier(normalizedTierName) : null;
   const normalized = presets.filter((name) => {
     // Exact custom content is replayed from backupManifest.customPolicies.
     // Never substitute a same-name built-in during onboard or restore.
@@ -96,7 +99,7 @@ export function normalizeRebuildWebSearchPolicyPresets(
     return !isStaleBuiltinWebSearchPolicyPreset(name, {
       webSearchConfig,
       customPresetNames,
-      tierName: sandboxEntry.policyTier,
+      tier,
     });
   });
   if (

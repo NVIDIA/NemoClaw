@@ -14,7 +14,7 @@ import {
   mergeRequiredObservabilityPolicyPresets,
 } from "./observability-policy-presets";
 import { mergeRequiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-presets";
-import { tierIncludesPolicyPreset } from "../policy/tiers";
+import { getTier, tierIncludesPolicyPreset, type TierPresetMembership } from "../policy/tiers";
 import {
   ensureRequiredTierPolicyPresets,
   filterSuppressedAgentRequiredPresets,
@@ -97,13 +97,13 @@ export function isStaleBuiltinWebSearchPolicyPreset(
   options: {
     webSearchConfig?: WebSearchConfig | null;
     customPresetNames?: ReadonlySet<string> | null;
-    tierName?: string | null;
+    tier?: TierPresetMembership | null;
   } = {},
 ): boolean {
   if (options.customPresetNames?.has(name)) return false;
   // A preset in the recorded tier is tier egress, not stale provider state.
   // Unknown tiers fail closed because the canonical tier lookup returns false.
-  if (tierIncludesPolicyPreset(options.tierName, name)) {
+  if (tierIncludesPolicyPreset(options.tier, name)) {
     return false;
   }
   if (name === "nous-web") {
@@ -134,6 +134,8 @@ export function createUnavailablePolicyPresetPruner(options: {
   // Custom and interactive selections may explicitly opt into a built-in web-search
   // preset without storing provider config. Inactive observability remains ineligible.
   return (presetNames, pruning = {}) => {
+    const tierName = pruning.tierName?.trim().toLowerCase();
+    const tier = tierName ? getTier(tierName) : null;
     // OpenClaw keeps an already-applied channel preset until disabledChannels
     // explicitly retires it. Hermes recovery records the full enabled set, so
     // it can also prune repository defaults that are absent from that set.
@@ -151,7 +153,7 @@ export function createUnavailablePolicyPresetPruner(options: {
           !isStaleBuiltinWebSearchPolicyPreset(name, {
             webSearchConfig: options.webSearchConfig,
             customPresetNames: options.customPresetNames,
-            tierName: pruning.tierName,
+            tier,
           })) &&
         !isInactiveObservabilityPolicyPreset(name, options),
     );
