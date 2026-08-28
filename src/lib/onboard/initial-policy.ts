@@ -610,23 +610,25 @@ export function readHermesPortableInitialPolicySource(basePolicyPath: string): s
   }
   const parentPath = path.dirname(basePolicyPath);
   const parentBefore = fs.lstatSync(parentPath, { bigint: true });
-  const named = fs.lstatSync(basePolicyPath, { bigint: true });
   if (
     !parentBefore.isDirectory() ||
     parentBefore.isSymbolicLink() ||
     (parentBefore.uid !== 0n && parentBefore.uid !== BigInt(uid)) ||
-    !hasSafeHermesPortablePolicySourceMode(parentBefore, uid, gid, 0o775n) ||
-    !named.isFile() ||
-    named.isSymbolicLink()
+    !hasSafeHermesPortablePolicySourceMode(parentBefore, uid, gid, 0o775n)
   ) {
     throw new Error("Hermes portable policy source authority is unsafe.");
   }
-  const descriptor = fs.openSync(
-    basePolicyPath,
-    fs.constants.O_RDONLY |
-      fs.constants.O_NOFOLLOW |
-      (typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0),
-  );
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(
+      basePolicyPath,
+      fs.constants.O_RDONLY |
+        fs.constants.O_NOFOLLOW |
+        (typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0),
+    );
+  } catch {
+    throw new Error("Hermes portable policy source authority is unsafe.");
+  }
   try {
     const before = fs.fstatSync(descriptor, { bigint: true });
     if (
@@ -636,9 +638,7 @@ export function readHermesPortableInitialPolicySource(basePolicyPath: string): s
       (before.uid !== 0n && before.uid !== BigInt(uid)) ||
       !hasSafeHermesPortablePolicySourceMode(before, uid, gid, 0o664n) ||
       before.size < 1n ||
-      before.size > 256n * 1024n ||
-      named.dev !== before.dev ||
-      named.ino !== before.ino
+      before.size > 256n * 1024n
     ) {
       throw new Error("Hermes portable policy source authority is unsafe.");
     }
