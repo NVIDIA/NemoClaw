@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
-import fs from "node:fs";
 import path from "node:path";
 
 import {
@@ -13,6 +12,7 @@ import {
 } from "../../../src/lib/onboard/managed-image/contract.ts";
 import { INFERENCE_ROUTE_URL } from "../../../src/lib/inference/config.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import { readRegularArtifact } from "./managed-image-multiarch-startup-helpers.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -100,19 +100,14 @@ export function readPiQualificationReceipt(platform: ManagedImagePlatform): PiQu
     REPO_ROOT,
     `ci/pi-agent-qualification-v1-${platform.replace("/", "-")}.json`,
   );
-  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-  let contents: string;
-  try {
-    if (!fs.fstatSync(descriptor).isFile()) {
-      throw new Error("Pi qualification receipt must be a regular non-symlink file");
-    }
-    contents = fs.readFileSync(descriptor, "utf8");
-  } finally {
-    fs.closeSync(descriptor);
-  }
+  const contents = readRegularArtifact(file, REPO_ROOT);
   return {
-    contract: parseManagedImageContractV1(JSON.parse(contents) as unknown, "pi", platform),
-    digest: createHash("sha256").update(contents, "utf8").digest("hex"),
+    contract: parseManagedImageContractV1(
+      JSON.parse(contents.toString("utf8")) as unknown,
+      "pi",
+      platform,
+    ),
+    digest: createHash("sha256").update(contents).digest("hex"),
     path: file,
   };
 }
