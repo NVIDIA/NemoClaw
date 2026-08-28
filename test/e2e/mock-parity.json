@@ -209,6 +209,13 @@
       "fast": ["test/e2e/support/openshell-gateway-auth-source-contract-helpers.test.ts"]
     },
     {
+      "live": "test/e2e/live/external-gateway-health.test.ts",
+      "fast": [
+        "test/e2e/support/external-gateway-health-workflow-boundary.test.ts",
+        "test/install/reviewed-npm-archive.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/openshell-credential-generation-window.test.ts",
       "fast": [
         "test/credentials/openshell-credential-generation-window.test.ts",
@@ -700,6 +707,13 @@
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
         "test/e2e/support/workflow-e2e-progress.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/brev-workspace-cleanup.test.ts",
+      "fast": [
+        "test/e2e/support/brev-launchable-fixture.test.ts",
+        "test/e2e/support/issue-9880-staging-reproduction-workflow.test.ts"
       ]
     },
     {
