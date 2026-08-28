@@ -93,16 +93,11 @@ function nonNegativeInt(value: number | undefined, fallback: number): number {
  */
 export function shouldRunCompatibleEndpointSandboxSmoke(
   provider: string | null | undefined,
-  messagingChannels: string[] | null | undefined,
+  _messagingChannels: string[] | null | undefined,
   agent: CompatibleEndpointSmokeAgent = null,
 ): boolean {
   const agentName = agent?.name || "openclaw";
-  return (
-    agentName === "openclaw" &&
-    provider === "compatible-endpoint" &&
-    Array.isArray(messagingChannels) &&
-    messagingChannels.length > 0
-  );
+  return agentName === "openclaw" && provider === "compatible-endpoint";
 }
 
 /**
@@ -143,10 +138,14 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
     return;
   }
 
+  const hasMessagingChannels =
+    Array.isArray(options.messagingChannels) && options.messagingChannels.length > 0;
   console.log(
     options.forceCanonicalRoute
       ? "  Verifying provider-neutral inference through the sandbox runtime..."
-      : "  Verifying compatible endpoint through the messaging sandbox...",
+      : hasMessagingChannels
+        ? "  Verifying compatible endpoint through the messaging sandbox..."
+        : "  Verifying compatible endpoint through the sandbox runtime...",
   );
 
   const providerResult = options.runOpenshell(["provider", "get", options.provider], {
@@ -168,7 +167,7 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
         : `  Compatible endpoint provider '${options.provider}' is missing from the OpenShell gateway.`,
     );
     console.error(
-      options.forceCanonicalRoute
+      options.forceCanonicalRoute || !hasMessagingChannels
         ? "  The sandbox inference.local route cannot reach the selected model provider."
         : "  The sandbox would start Telegram, but agent turns would fail before reaching the model.",
     );
@@ -235,7 +234,11 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
         : "  Compatible endpoint sandbox smoke check failed.",
     );
     if (!options.forceCanonicalRoute) {
-      console.error("  Telegram provider startup is not the root cause; inference.local failed.");
+      console.error(
+        hasMessagingChannels
+          ? "  Telegram provider startup is not the root cause; inference.local failed."
+          : "  The sandbox inference.local route cannot reach the selected model provider.",
+      );
     }
     if (smokeOutput) console.error(`  ${compactText(options.redact(smokeOutput)).slice(0, 1200)}`);
     process.exit(smokeResult.status || 1);
