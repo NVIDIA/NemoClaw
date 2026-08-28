@@ -15,16 +15,16 @@ const STALE_DOCKER_ORPHAN_TIMEOUT_MS = 30_000;
 
 type DockerSandboxContainerQueryDeps = Pick<DockerGpuPatchDeps, "dockerCapture" | "dockerRun">;
 
-function sandboxContainerFilterArgs(sandboxName: string, sandboxNamespace?: string): string[] {
-  const args = [
-    "ps",
-    "-a",
-    "--no-trunc",
-    "--filter",
-    `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
-    "--filter",
-    `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`,
-  ];
+function sandboxContainerFilterArgs(
+  sandboxName: string,
+  sandboxNamespace?: string,
+  requireManagedBy = true,
+): string[] {
+  const args = ["ps", "-a", "--no-trunc"];
+  if (requireManagedBy) {
+    args.push("--filter", `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`);
+  }
+  args.push("--filter", `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`);
   if (sandboxNamespace !== undefined) {
     args.push("--filter", `label=${OPENSHELL_SANDBOX_NAMESPACE_LABEL}=${sandboxNamespace}`);
   }
@@ -58,6 +58,37 @@ export type OpenShellDockerSandboxContainerQuery =
   | { ok: true; ids: string[] }
   | { ok: false; ids: []; error: string };
 
+function queryDockerSandboxContainerIds(
+  filterArgs: readonly string[],
+  deps: DockerSandboxContainerQueryDeps,
+  timeoutMs: number,
+): OpenShellDockerSandboxContainerQuery {
+  const run = deps.dockerRun ?? dockerRun;
+  const requestedTimeoutMs =
+    Number.isFinite(timeoutMs) && timeoutMs > 0
+      ? Math.floor(timeoutMs)
+      : DOCKER_SANDBOX_QUERY_TIMEOUT_MS;
+  const result = run([...filterArgs, "--format", "{{.ID}}"], {
+    ignoreError: true,
+    suppressOutput: true,
+    timeout: Math.max(1, Math.min(DOCKER_SANDBOX_QUERY_TIMEOUT_MS, requestedTimeoutMs)),
+  });
+  if (Number(result.status ?? 1) !== 0) {
+    return {
+      ok: false,
+      ids: [],
+      error: commandResultText(result) || "docker ps did not complete successfully",
+    };
+  }
+  return {
+    ok: true,
+    ids: String(result.stdout ?? "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean),
+  };
+}
+
 /**
  * Status-bearing lookup used when an empty container list is a safety proof.
  * Unlike the best-effort discovery helper, this distinguishes Docker failure
@@ -69,35 +100,23 @@ export function queryOpenShellDockerSandboxContainers(
   timeoutMs: number = DOCKER_SANDBOX_QUERY_TIMEOUT_MS,
   sandboxNamespace?: string,
 ): OpenShellDockerSandboxContainerQuery {
-  const run = deps.dockerRun ?? dockerRun;
-  const requestedTimeoutMs =
-    Number.isFinite(timeoutMs) && timeoutMs > 0
-      ? Math.floor(timeoutMs)
-      : DOCKER_SANDBOX_QUERY_TIMEOUT_MS;
-  const boundedTimeoutMs = Math.max(
-    1,
-    Math.min(DOCKER_SANDBOX_QUERY_TIMEOUT_MS, requestedTimeoutMs),
+  return queryDockerSandboxContainerIds(
+    sandboxContainerFilterArgs(sandboxName, sandboxNamespace),
+    deps,
+    timeoutMs,
   );
-  const result = run(
-    [...sandboxContainerFilterArgs(sandboxName, sandboxNamespace), "--format", "{{.ID}}"],
-    {
-      ignoreError: true,
-      suppressOutput: true,
-      timeout: boundedTimeoutMs,
-    },
+}
+
+function queryDockerSandboxNameLabeledContainers(
+  sandboxName: string,
+  deps: DockerSandboxContainerQueryDeps = {},
+  timeoutMs: number = DOCKER_SANDBOX_QUERY_TIMEOUT_MS,
+): OpenShellDockerSandboxContainerQuery {
+  return queryDockerSandboxContainerIds(
+    sandboxContainerFilterArgs(sandboxName, undefined, false),
+    deps,
+    timeoutMs,
   );
-  if (Number(result.status ?? 1) !== 0) {
-    return {
-      ok: false,
-      ids: [],
-      error: commandResultText(result) || "docker ps did not complete successfully",
-    };
-  }
-  const ids = String(result.stdout ?? "")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  return { ok: true, ids };
 }
 
 type StaleDockerOrphanCleanupDeps = {
@@ -120,7 +139,10 @@ export function removeExactOpenShellDockerSandboxContainers(
     throw new Error("exact Docker cleanup contains an invalid or duplicate container identity");
   }
 
-  const queryContainers = deps.queryContainers ?? queryOpenShellDockerSandboxContainers;
+  // Recovery retirement requires the mutable name itself to be unambiguous.
+  // Inspect every name-labeled container, including foreign containers that do
+  // not carry OpenShell's managed-by marker, while removing only qualified IDs.
+  const queryContainers = deps.queryContainers ?? queryDockerSandboxNameLabeledContainers;
   const initial = queryContainers(sandboxName);
   if (!initial.ok) {
     throw new Error(`could not inspect the exact Docker cleanup target: ${initial.error}`);

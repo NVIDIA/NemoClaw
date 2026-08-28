@@ -86,7 +86,66 @@ describe("destroySandbox retained recovery flow", () => {
       );
       expect(harness.resolveRetainedSandboxRecoverySpy).toHaveBeenCalledWith(recovery);
       expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+      expect(harness.sessionState.sandboxName).toBeNull();
       expect(exitSpy).not.toHaveBeenCalled();
+
+      const exactRemovalCallsAfterCleanup = harness.dockerRunSpy.mock.calls.filter(
+        ([args]) => Array.isArray(args) && args[0] === "rm" && args[1] === "-f",
+      ).length;
+      harness.setSandboxPresent(false);
+      harness.setRegistryEntryPresent(false);
+      harness.setRetainedRecoveryRecords([]);
+      harness.setDockerIdentityResult({ status: 0, stdout: "" });
+
+      await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+      expect(
+        harness.dockerRunSpy.mock.calls.filter(
+          ([args]) => Array.isArray(args) && args[0] === "rm" && args[1] === "-f",
+        ),
+      ).toHaveLength(exactRemovalCallsAfterCleanup);
+      expect(harness.resolveRetainedSandboxRecoverySpy).toHaveBeenCalledOnce();
+    },
+  );
+
+  it(
+    "preserves recovery when a foreign name-labeled container appears after continuity checks (#10547)",
+    { timeout: 30_000 },
+    async () => {
+      const recovery = retainedRecoveryRecord();
+      const sandboxContainerId = "a".repeat(64);
+      const bootstrapContainerId = "b".repeat(64);
+      const foreignContainerId = "e".repeat(64);
+      const identityRows = [sandboxContainerId, bootstrapContainerId]
+        .map((id) => `${id}\topenshell\tdefault\tsb-alpha`)
+        .join("\n");
+      const harness = createDestroyHarness({
+        dockerNameLabeledIds: [bootstrapContainerId, foreignContainerId],
+        dockerOrphanIds: [bootstrapContainerId],
+        dockerRunResult: { status: 0, stdout: identityRows },
+        registryEntryOverrides: {
+          lifecycleGeneration: recovery.lifecycleGeneration!,
+          lifecycleLiveIdentityFingerprint: recovery.sandboxIdentityFingerprint!,
+        },
+        retainedRecoveryRecords: [recovery],
+      });
+
+      await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+        "process.exit(1)",
+      );
+
+      expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.objectContaining({ ignoreError: true }),
+      );
+      expect(harness.dockerRunSpy).not.toHaveBeenCalledWith(
+        ["rm", "-f", expect.any(String)],
+        expect.anything(),
+      );
+      expect(harness.errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("outside the retained identity set"),
+      );
+      expect(harness.resolveRetainedSandboxRecoverySpy).not.toHaveBeenCalled();
     },
   );
 

@@ -54,6 +54,13 @@ export type DestroyHarness = {
   runOpenshellSpy: MockInstance;
   selectGatewaySpy: MockInstance;
   sessionState: Session;
+  setDockerIdentityResult: (result: {
+    status: number | null;
+    stdout?: string;
+    stderr?: string;
+  }) => void;
+  setRegistryEntryPresent: (present: boolean) => void;
+  setRetainedRecoveryRecords: (records: RetainedSandboxRecoveryRecord[]) => void;
   setSandboxPresent: (present: boolean) => void;
   shieldsDownSpy: MockInstance;
   stopAllSpy: MockInstance;
@@ -72,6 +79,7 @@ type DestroyHarnessOptions = {
   deleteError?: Error;
   deleteOutput?: string;
   deleteStatus?: number | null;
+  dockerNameLabeledIds?: string[];
   dockerPsOutput?: string;
   dockerOrphanIds?: string[];
   dockerOrphanQueryStatus?: number | null;
@@ -291,40 +299,40 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     detected: true,
     sessions: [{ pid: 1 }],
   });
-  vi.spyOn(registry, "getSandbox").mockReturnValue(
-    options.registryEntryPresent === false
-      ? null
-      : {
-          ...sandboxEntry,
-          imageTag: options.imageTag === undefined ? sandboxEntry.imageTag : options.imageTag,
-          agent: options.agent ?? sandboxEntry.agent,
-          ...(options.provider ? { provider: options.provider } : {}),
-          ...(options.openshellDriver ? { openshellDriver: options.openshellDriver } : {}),
-          ...(options.endpointUrl ? { endpointUrl: options.endpointUrl } : {}),
-          ...(options.hostLocalInferenceReceipt !== undefined
-            ? { hostLocalInferenceReceipt: options.hostLocalInferenceReceipt }
-            : {}),
-          ...(options.hostLocalInferenceProvenance
-            ? { hostLocalInferenceProvenance: options.hostLocalInferenceProvenance }
-            : {}),
-          ...(options.workload ? { workload: options.workload } : {}),
-          ...(options.mcpServers?.length
-            ? {
-                mcp: {
-                  bridges: Object.fromEntries(
-                    options.mcpServers.map((server) => [
-                      server,
-                      {
-                        server,
-                        ...(options.mcpAddState ? { addState: options.mcpAddState } : {}),
-                      },
-                    ]),
-                  ),
+  const configuredRegistryEntry = {
+    ...sandboxEntry,
+    imageTag: options.imageTag === undefined ? sandboxEntry.imageTag : options.imageTag,
+    agent: options.agent ?? sandboxEntry.agent,
+    ...(options.provider ? { provider: options.provider } : {}),
+    ...(options.openshellDriver ? { openshellDriver: options.openshellDriver } : {}),
+    ...(options.endpointUrl ? { endpointUrl: options.endpointUrl } : {}),
+    ...(options.hostLocalInferenceReceipt !== undefined
+      ? { hostLocalInferenceReceipt: options.hostLocalInferenceReceipt }
+      : {}),
+    ...(options.hostLocalInferenceProvenance
+      ? { hostLocalInferenceProvenance: options.hostLocalInferenceProvenance }
+      : {}),
+    ...(options.workload ? { workload: options.workload } : {}),
+    ...(options.mcpServers?.length
+      ? {
+          mcp: {
+            bridges: Object.fromEntries(
+              options.mcpServers.map((server) => [
+                server,
+                {
+                  server,
+                  ...(options.mcpAddState ? { addState: options.mcpAddState } : {}),
                 },
-              }
-            : {}),
-          ...options.registryEntryOverrides,
-        },
+              ]),
+            ),
+          },
+        }
+      : {}),
+    ...options.registryEntryOverrides,
+  } as SandboxEntry;
+  let registryEntryPresent = options.registryEntryPresent !== false;
+  vi.spyOn(registry, "getSandbox").mockImplementation(() =>
+    registryEntryPresent ? configuredRegistryEntry : null,
   );
   let registeredSandboxCount = options.registeredSandboxCount ?? 0;
   vi.spyOn(registry, "listSandboxes").mockImplementation(() => ({
@@ -375,8 +383,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   });
   vi.spyOn(modelRouterProcess, "isRouterHealthy").mockResolvedValue(false);
   vi.spyOn(onboardSession, "loadSession").mockImplementation(() => ({ ...sessionState }));
-  vi.spyOn(onboardSession, "listRetainedSandboxRecoveryRecords").mockReturnValue(
-    options.retainedRecoveryRecords ?? [],
+  let retainedRecoveryRecords = [...(options.retainedRecoveryRecords ?? [])];
+  vi.spyOn(onboardSession, "listRetainedSandboxRecoveryRecords").mockImplementation(
+    () => retainedRecoveryRecords,
   );
   const resolveRetainedSandboxRecoverySpy = vi
     .spyOn(onboardSession, "resolveRetainedSandboxRecovery")
@@ -463,6 +472,10 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     });
   let identityProbeCall = 0;
   let dockerOrphanIds = [...(options.dockerOrphanIds ?? [])];
+  let dockerNameLabeledIds = [
+    ...(options.dockerNameLabeledIds ?? options.dockerOrphanIds ?? []),
+  ];
+  let dockerIdentityResult = options.dockerRunResult;
   const dockerRunSpy = vi.spyOn(dockerRun, "dockerRun").mockImplementation((args: unknown) => {
     const argv = Array.isArray(args) ? args.map(String) : [];
     const isDockerOrphanQuery =
@@ -477,10 +490,23 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
         stderr: "",
       } as ReturnType<typeof dockerRun.dockerRun>;
     }
+    const isDockerNameLabeledQuery =
+      argv[0] === "ps" &&
+      !argv.includes("label=openshell.ai/managed-by=openshell") &&
+      argv.includes("label=openshell.ai/sandbox-name=alpha") &&
+      argv.at(-1) === "{{.ID}}";
+    if (isDockerNameLabeledQuery) {
+      return {
+        status: options.dockerOrphanQueryStatus ?? 0,
+        stdout: dockerNameLabeledIds.join("\n"),
+        stderr: "",
+      } as ReturnType<typeof dockerRun.dockerRun>;
+    }
     if (argv[0] === "rm" && argv[1] === "-f") {
       const status = options.dockerRemoveStatus ?? 0;
       if (status === 0) {
         dockerOrphanIds = dockerOrphanIds.filter((id) => id !== argv[2]);
+        dockerNameLabeledIds = dockerNameLabeledIds.filter((id) => id !== argv[2]);
       }
       return { status, stdout: "", stderr: "" } as ReturnType<typeof dockerRun.dockerRun>;
     }
@@ -502,7 +528,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     };
     const result =
       options.dockerRunResultSequence?.[identityProbeCall - 1] ??
-      options.dockerRunResult ??
+      dockerIdentityResult ??
       defaultIdentityResult;
     return result as ReturnType<typeof dockerRun.dockerRun>;
   });
@@ -646,6 +672,15 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     runOpenshellSpy,
     selectGatewaySpy,
     sessionState,
+    setDockerIdentityResult: (result) => {
+      dockerIdentityResult = result;
+    },
+    setRegistryEntryPresent: (present: boolean) => {
+      registryEntryPresent = present;
+    },
+    setRetainedRecoveryRecords: (records) => {
+      retainedRecoveryRecords = [...records];
+    },
     setSandboxPresent: (present: boolean) => {
       sandboxPresent = present;
     },

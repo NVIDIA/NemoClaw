@@ -959,8 +959,14 @@ async function destroySandboxUnlocked(
       );
     }
   }
+  const retainedRecoveryOwnsDestroySession = retainedRecoveryAuthority
+    ? onboardSession.retainedSandboxRecoveryMatchesSession(
+        retainedRecoveryAuthority,
+        destroySession,
+      )
+    : false;
   if (
-    !retainedRecoveryAuthority &&
+    !retainedRecoveryOwnsDestroySession &&
     !routedSessionCleanupHandled &&
     destroySession?.sandboxName === sandboxName
   ) {

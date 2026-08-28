@@ -310,4 +310,33 @@ describe("retained sandbox recovery state", () => {
     });
     expect(recovery.listRetainedSandboxRecoveryRecords()).toEqual([]);
   });
+
+  it("keeps the recovery-only session when record retirement cannot be written (#10547)", async () => {
+    const recovery = await import("./onboard-session");
+    recovery.markRetainedSandboxRecovery(
+      "retained-sb",
+      "Sandbox creation failed after identity verification.",
+      "b".repeat(64),
+      {
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        lifecycleGeneration: "generation-1",
+        verifiedEffectivePolicyIdentity: null,
+        ...recoveryAuthority,
+      },
+    );
+    const [recorded] = recovery.listRetainedSandboxRecoveryRecords();
+    vi.spyOn(fs, "renameSync").mockImplementationOnce(() => {
+      throw new Error("simulated recovery retirement write failure");
+    });
+
+    expect(() => recovery.resolveRetainedSandboxRecovery(recorded!)).toThrow(
+      /simulated recovery retirement write failure/u,
+    );
+    expect(recovery.loadSession()).toMatchObject({
+      status: "recovery_required",
+      sandboxName: "retained-sb",
+    });
+    expect(recovery.listRetainedSandboxRecoveryRecords()).toEqual([recorded]);
+  });
 });

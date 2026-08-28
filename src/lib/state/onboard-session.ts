@@ -10,7 +10,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { isDeepStrictEqual } from "node:util";
 
 import type { SandboxPolicyAuthority } from "../adapters/openshell/policy-authority";
 import { isErrnoException } from "../core/errno";
@@ -2089,10 +2088,12 @@ export function recordRetainedSandboxRecovery(
   );
 }
 
-function recoveryRecordMatchesSession(
+export function retainedSandboxRecoveryMatchesSession(
   record: RetainedSandboxRecoveryRecord,
-  recovery: SessionCancellationRecovery,
+  session: Pick<Session, "cancellationRecovery"> | null | undefined,
 ): boolean {
+  const recovery = session?.cancellationRecovery;
+  if (!recovery) return false;
   return (
     record.sandboxName === recovery.sandboxName &&
     record.sandboxIdentityFingerprint === recovery.sandboxIdentityFingerprint &&
@@ -2106,24 +2107,17 @@ function recoveryRecordMatchesSession(
 /** Clear one recovery-only session after destroy verifies the retained resources absent. */
 export function resolveRetainedSandboxRecovery(record: RetainedSandboxRecoveryRecord): boolean {
   return withOwnedOnboardLock("nemoclaw retained sandbox recovery completion", () => {
-    const recorded = readRetainedSandboxRecoveryRecords(RETAINED_SANDBOX_RECOVERY_FILE).find(
-      (candidate) => candidate.recordId === record.recordId,
-    );
-    if (recorded && !isDeepStrictEqual(recorded, record)) {
-      throw new Error("Retained sandbox recovery authority changed before cleanup completed.");
-    }
+    const retired = retireRetainedSandboxRecovery(RETAINED_SANDBOX_RECOVERY_FILE, record);
+    if (!retired) return false;
     const current = loadSession();
-    if (
-      current?.cancellationRecovery &&
-      recoveryRecordMatchesSession(record, current.cancellationRecovery)
-    ) {
+    if (current && retainedSandboxRecoveryMatchesSession(record, current)) {
       current.status = "failed";
       current.resumable = false;
       current.sandboxName = null;
       current.cancellationRecovery = null;
       saveSession(current);
     }
-    return retireRetainedSandboxRecovery(RETAINED_SANDBOX_RECOVERY_FILE, record);
+    return true;
   });
 }
 
