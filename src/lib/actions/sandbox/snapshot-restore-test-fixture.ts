@@ -3,10 +3,7 @@
 
 import { vi } from "vitest";
 import { resolveTestAgentBaselinePolicy } from "../../../../test/support/snapshot-policy-test-fixture";
-import type {
-  SandboxPolicyAuthority,
-  SandboxPolicyAuthorityInspection,
-} from "../../adapters/openshell/policy-authority";
+import type { SandboxPolicyAuthorityInspection } from "../../adapters/openshell/policy-authority";
 import type {
   SandboxEntry,
   SandboxHostLocalInferenceProvenance,
@@ -59,7 +56,6 @@ export type SandboxRecord = {
   workload?: SandboxWorkloadReceipt;
   openshellDriver?: string | null;
   observabilityEnabled?: boolean;
-  policyAuthority?: SandboxPolicyAuthority;
   policies?: string[];
   customPolicies?: Array<{ name: string; content: string; sourcePath?: string }>;
   policyPresetsFinalized?: boolean;
@@ -165,12 +161,14 @@ const policyAuthorityMock = vi.hoisted(() => ({
     (_input: { gatewayName?: string }): SandboxPolicyAuthorityInspection => ({
       authority: "nemoclaw-managed",
       effectivePolicy: {},
+      policyIdentity: { hash: "managed-policy", activeVersion: 1 },
     }),
   ),
   inspectSandboxPolicyAuthorityMock: vi.fn(
     (_input: { gatewayName?: string; sandboxName: string }): SandboxPolicyAuthorityInspection => ({
       authority: "nemoclaw-managed",
       effectivePolicy: {},
+      policyIdentity: { hash: "managed-policy", activeVersion: 1 },
     }),
   ),
 }));
@@ -298,14 +296,18 @@ vi.mock("../../agent/defs", () => ({
   loadAgent: loadAgentMock,
 }));
 
-vi.mock("../../adapters/openshell/runtime", () => ({
+vi.mock("../../adapters/openshell/runtime", async (importOriginal) => ({
+  ...(await importOriginal()),
+  buildOpenShellSubprocessEnv: vi.fn(() => ({ ...process.env })),
   captureOpenshell: captureOpenshellMock,
+  captureResolvedOpenshell: captureOpenshellMock,
   getOpenshellBinary: vi.fn(() => "openshell"),
   runOpenshell: runOpenshellMock,
 }));
 
 vi.mock("../../adapters/openshell/policy-authority", async (importOriginal) => ({
   ...(await importOriginal()),
+  inspectActiveGlobalPolicy: policyAuthorityMock.inspectGlobalPolicyAuthorityMock,
   inspectGlobalPolicyAuthority: policyAuthorityMock.inspectGlobalPolicyAuthorityMock,
   inspectSandboxPolicyAuthority: policyAuthorityMock.inspectSandboxPolicyAuthorityMock,
 }));
@@ -516,10 +518,12 @@ export function resetSnapshotRestoreMocks(): void {
   inspectGlobalPolicyAuthorityMock.mockReset().mockReturnValue({
     authority: "nemoclaw-managed",
     effectivePolicy: {},
+    policyIdentity: { hash: "managed-policy", activeVersion: 1 },
   });
   inspectSandboxPolicyAuthorityMock.mockReset().mockReturnValue({
     authority: "nemoclaw-managed",
     effectivePolicy: {},
+    policyIdentity: { hash: "managed-policy", activeVersion: 1 },
   });
   restoreSandboxStateMock.mockReturnValue({
     success: true,

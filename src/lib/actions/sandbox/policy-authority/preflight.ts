@@ -69,6 +69,7 @@ export function inspectPolicyAuthorityRequirements(
 ) {
   const inspections: SandboxPolicyAuthorityInspection[] = [];
   const authorities: RecordedPolicyAuthority[] = [];
+  let liveInspection: SandboxPolicyAuthorityInspection | null = null;
   const preparedRequirement = {
     appliedPresets: [],
     policyPath: "",
@@ -82,6 +83,7 @@ export function inspectPolicyAuthorityRequirements(
       gatewayName: options.gatewayName,
     });
     if (observed.authority !== "owner-unknown") {
+      liveInspection = observed;
       authorities.push(observed.authority);
       if (observed.authority === "externally-managed") inspections.push(observed);
     } else {
@@ -99,6 +101,8 @@ export function inspectPolicyAuthorityRequirements(
         },
         deps,
       );
+      liveInspection =
+        qualified.authority === "externally-managed" ? qualified.inspection : observed;
       authorities.push(qualified.authority);
       if (qualified.authority === "externally-managed") inspections.push(qualified.inspection);
     }
@@ -127,7 +131,7 @@ export function inspectPolicyAuthorityRequirements(
   }
   return {
     authority,
-    liveInspection: options.inspectLiveSource ? (inspections[0] ?? null) : null,
+    liveInspection,
     verifyRequirements: () => assertPolicyAuthorityRequirements(options, inspections),
   };
 }
