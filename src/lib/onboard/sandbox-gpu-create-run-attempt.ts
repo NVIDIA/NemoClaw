@@ -29,7 +29,6 @@ import { installPortableDemoSandboxLifecycle } from "./experimental/portable-dem
 import { enforceManagedBootstrapRecoveryForSandbox } from "./managed-bootstrap/adapter";
 import type {
   ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff,
-  ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt,
   ManagedBootstrapRuntimeCreateLifecycle,
   ManagedBootstrapRuntimeOnboardRouting,
   ManagedBootstrapRuntimePatch,
@@ -125,7 +124,6 @@ function createPortableRuntimePatch(
 
 type NativeFallbackCleanupEvidence = Readonly<{
   nativeCleanupHandoff?: ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff;
-  nativeCleanupReceipt?: ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt;
 }>;
 
 async function rollbackNativeGpuFailureForFallback(
@@ -137,15 +135,10 @@ async function rollbackNativeGpuFailureForFallback(
     return {};
   }
   const rollback = await runtimePatch.rollbackManagedStartupAfterCreateFailure({
-    ownerCleanupHandoff: "native-gpu-fallback-after-absent-attachment",
+    ownerCleanupHandoff: "native-gpu-fallback",
   });
   if (rollback?.kind !== "openshell-owner-cleanup-required") return {};
-  const ownerCleanup = managedLifecycle.completeNativeGpuFallbackOwnerCleanup
-    ? await managedLifecycle.completeNativeGpuFallbackOwnerCleanup(rollback)
-    : rollback;
-  return ownerCleanup.kind === "openshell-owner-cleanup-completed"
-    ? { nativeCleanupReceipt: ownerCleanup }
-    : { nativeCleanupHandoff: ownerCleanup };
+  return { nativeCleanupHandoff: rollback };
 }
 
 function normalizedOpenShellCommandOutput(result: OpenShellCommandResult): string {
@@ -382,13 +375,13 @@ function recordNativeCreateFallbackEvidence(input: {
   readonly inspectNativeRuntime: () => NativeRuntimeSnapshot | null;
   readonly prebuildImageRef: string | null;
   readonly state: SandboxGpuCreateAttemptState;
-}): boolean {
+}): "pre-progress-rejection" | "runtime-error" | null {
   if (
     input.route !== "native" ||
     input.gpuRoutePlan !== "native-with-fallback" ||
     !input.nativeFallbackHasCleanBaseline
   ) {
-    return false;
+    return null;
   }
   const routingFailure = input.managedRouting
     ? input.managedRouting.isNativeCreateRoutingFailure(
@@ -400,16 +393,16 @@ function recordNativeCreateFallbackEvidence(input: {
       });
   if (routingFailure) {
     input.state.allowUnbuiltCompatibilitySource = input.prebuildImageRef === null;
-    return true;
+    return "pre-progress-rejection";
   }
   const snapshot = input.inspectNativeRuntime();
-  if (!snapshot) return false;
+  if (!snapshot) return null;
   const trustedRuntimeError = input.managedRouting
     ? input.managedRouting.isTrustedNativeRuntimeError(snapshot.stateError)
     : sandboxGpuCreateAttempt.isTrustedNativeGpuRuntimeError(snapshot.stateError);
-  if (!trustedRuntimeError) return false;
+  if (!trustedRuntimeError) return null;
   input.state.nativeRuntimeSnapshot = snapshot;
-  return true;
+  return "runtime-error";
 }
 
 async function handleFailedSandboxCreate(input: {
@@ -421,6 +414,7 @@ async function handleFailedSandboxCreate(input: {
   readonly managedRouting: ManagedBootstrapRuntimeOnboardRouting | undefined;
   readonly inspectNativeRuntime: () => NativeRuntimeSnapshot | null;
   readonly state: SandboxGpuCreateAttemptState;
+  readonly managedLifecycle: ManagedBootstrapRuntimeCreateLifecycle | null;
   readonly runtimePatch: ManagedBootstrapRuntimePatch;
   readonly captureRetainedSandboxRecovery: () => ReturnType<
     typeof captureRetainedApfSandboxRecovery
@@ -444,19 +438,26 @@ async function handleFailedSandboxCreate(input: {
     }
     return null;
   }
-  if (
-    recordNativeCreateFallbackEvidence({
-      route: input.route,
-      gpuRoutePlan: input.flow.gpuRoutePlan,
-      nativeFallbackHasCleanBaseline: input.nativeFallbackHasCleanBaseline,
-      createResult: input.createResult,
-      managedRouting: input.managedRouting,
-      inspectNativeRuntime: input.inspectNativeRuntime,
-      prebuildImageRef: input.flow.prebuild.imageRef,
-      state: input.state,
-    })
-  ) {
-    await input.runtimePatch.rollbackManagedStartupAfterCreateFailure();
+  const fallbackEvidence = recordNativeCreateFallbackEvidence({
+    route: input.route,
+    gpuRoutePlan: input.flow.gpuRoutePlan,
+    nativeFallbackHasCleanBaseline: input.nativeFallbackHasCleanBaseline,
+    createResult: input.createResult,
+    managedRouting: input.managedRouting,
+    inspectNativeRuntime: input.inspectNativeRuntime,
+    prebuildImageRef: input.flow.prebuild.imageRef,
+    state: input.state,
+  });
+  if (fallbackEvidence) {
+    let nativeCleanup: NativeFallbackCleanupEvidence = {};
+    if (fallbackEvidence === "pre-progress-rejection") {
+      await input.runtimePatch.rollbackManagedStartupAfterCreateFailure();
+    } else {
+      nativeCleanup = await rollbackNativeGpuFailureForFallback(
+        input.managedLifecycle,
+        input.runtimePatch,
+      );
+    }
     return {
       ok: false,
       route: input.route,
@@ -464,6 +465,10 @@ async function handleFailedSandboxCreate(input: {
       error: new Error("Native OpenShell GPU sandbox creation was rejected."),
       fallbackEligible: true,
       ...input.captureRetainedSandboxRecovery(),
+      ...(fallbackEvidence === "pre-progress-rejection"
+        ? { nativeCreateRejectedBeforeProgress: true as const }
+        : {}),
+      ...nativeCleanup,
     } as const;
   }
   await input.runtimePatch.rollbackManagedStartupAfterCreateFailure();
@@ -885,6 +890,7 @@ export function createSandboxGpuCreateAttemptRunner(
         managedRouting,
         inspectNativeRuntime,
         state,
+        managedLifecycle,
         runtimePatch,
         captureRetainedSandboxRecovery,
         printCreateFailureDiagnostics,
@@ -998,7 +1004,10 @@ export function createSandboxGpuCreateAttemptRunner(
             }))
       ) {
         state.nativeRuntimeSnapshot = runtimeSnapshot;
-        await runtimePatch.rollbackManagedStartupAfterCreateFailure();
+        const nativeCleanup = await rollbackNativeGpuFailureForFallback(
+          managedLifecycle,
+          runtimePatch,
+        );
         return {
           ok: false,
           route,
@@ -1008,6 +1017,7 @@ export function createSandboxGpuCreateAttemptRunner(
           ),
           fallbackEligible: true,
           ...captureRetainedSandboxRecovery(),
+          ...nativeCleanup,
         } as const;
       }
       persistApfPostCreateRecoveryOnce();
