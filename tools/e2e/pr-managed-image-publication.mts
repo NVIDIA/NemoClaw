@@ -5,7 +5,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { githubRequest, parseBaseImagePushPaths } from "./base-image-publication.mts";
+import {
+  parseManagedImageContractV1,
+  SHIPPED_MANAGED_IMAGE_AGENTS,
+  type ManagedImageContractCatalog,
+} from "../../src/lib/onboard/managed-image/contract.ts";
+import {
+  githubRequest,
+  matchesBaseImagePushPath,
+  parseBaseImagePushPaths,
+} from "./base-image-publication.mts";
 
 const REPOSITORY = "NVIDIA/NemoClaw";
 const BASE_IMAGE_WORKFLOW_PATH = ".github/workflows/base-image.yaml";
@@ -13,7 +22,6 @@ const MAX_CHANGED_FILES = 3_000;
 const PAGE_SIZE = 100;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
-const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/*-]+$/u;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -44,30 +52,6 @@ function exactString(value: unknown, expected: string, label: string): void {
   if (value !== expected) throw new Error(`${label} must be ${expected}`);
 }
 
-function compileManagedImagePath(pattern: string): RegExp {
-  if (
-    !SAFE_PATH_PATTERN.test(pattern) ||
-    pattern.startsWith("/") ||
-    pattern.includes("//") ||
-    pattern.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
-  ) {
-    throw new Error(`managed-image PR path '${pattern}' is invalid`);
-  }
-  const stars = [...pattern.matchAll(/\*/gu)].map((match) => match.index);
-  if (stars.length === 0) {
-    return new RegExp(`^${pattern.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}$`, "u");
-  }
-  if (pattern.endsWith("/**") && stars.length === 2) {
-    const prefix = pattern.slice(0, -3).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-    return new RegExp(`^${prefix}/.+$`, "u");
-  }
-  if (stars.length === 1) {
-    const escaped = pattern.replace(/[.+?^${}()|[\]\\]/gu, "\\$&").replaceAll("*", "[^/]*");
-    return new RegExp(`^${escaped}$`, "u");
-  }
-  throw new Error(`managed-image PR path '${pattern}' uses an unsupported glob`);
-}
-
 /** Determine whether changed PR files require local candidate image builds. */
 export function managedImagePublicationRequired(
   changedFiles: readonly string[],
@@ -76,7 +60,6 @@ export function managedImagePublicationRequired(
   if (changedFiles.length > MAX_CHANGED_FILES * 2) {
     throw new Error(`PR changed-path count exceeds ${MAX_CHANGED_FILES * 2}`);
   }
-  const matchers = patterns.map(compileManagedImagePath);
   for (const file of changedFiles) {
     if (
       file.length === 0 ||
@@ -88,9 +71,60 @@ export function managedImagePublicationRequired(
     ) {
       throw new Error("PR changed-file path is invalid");
     }
-    if (matchers.some((matcher) => matcher.test(file))) return true;
+    if (patterns.some((pattern) => matchesBaseImagePushPath(pattern, file))) return true;
   }
   return false;
+}
+
+function assembleManagedImageCatalog(
+  values: readonly unknown[],
+  candidateSha: string,
+): ManagedImageContractCatalog {
+  if (!SHA_PATTERN.test(candidateSha)) throw new Error("candidate SHA is invalid");
+  if (values.length !== SHIPPED_MANAGED_IMAGE_AGENTS.length) {
+    throw new Error(
+      `exact PR managed-image publication requires ${SHIPPED_MANAGED_IMAGE_AGENTS.length} contracts`,
+    );
+  }
+  const contracts = values.map((value) =>
+    parseManagedImageContractV1(value, undefined, "linux/amd64"),
+  );
+  const byAgent = new Map(contracts.map((contract) => [contract.agent, contract]));
+  if (
+    byAgent.size !== SHIPPED_MANAGED_IMAGE_AGENTS.length ||
+    SHIPPED_MANAGED_IMAGE_AGENTS.some((agent) => !byAgent.has(agent))
+  ) {
+    throw new Error("exact PR managed-image publication must contain every shipped agent once");
+  }
+  const revisions = new Set(contracts.map((contract) => contract.source.revision));
+  const releases = new Set(contracts.map((contract) => contract.source.release));
+  const cohorts = new Set(contracts.map((contract) => contract.source.cohort));
+  if (!revisions.has(candidateSha) || revisions.size !== 1) {
+    throw new Error("exact PR managed-image contracts do not match the candidate commit");
+  }
+  if (releases.size !== 1 || cohorts.size !== 1) {
+    throw new Error("exact PR managed-image contracts do not form one publication cohort");
+  }
+  return Object.fromEntries(
+    SHIPPED_MANAGED_IMAGE_AGENTS.map((agent) => [agent, byAgent.get(agent)!]),
+  );
+}
+
+function writeManagedImageCatalog(
+  contractPaths: readonly string[],
+  candidateSha: string,
+  outputPath: string,
+): void {
+  const contracts = contractPaths.map(
+    (contractPath) => JSON.parse(fs.readFileSync(contractPath, "utf8")) as unknown,
+  );
+  const catalog = assembleManagedImageCatalog(contracts, candidateSha);
+  fs.mkdirSync(path.dirname(path.resolve(outputPath)), { mode: 0o700, recursive: true });
+  fs.writeFileSync(outputPath, `${JSON.stringify(catalog)}\n`, {
+    encoding: "utf8",
+    flag: "wx",
+    mode: 0o600,
+  });
 }
 
 async function readChangedFiles(
@@ -177,9 +211,7 @@ export async function readPrChangedFiles(
   }
   if (
     !REPOSITORY_PATTERN.test(input.candidateRepository) ||
-    input.candidateRepository
-      .split("/")
-      .some((segment) => segment === "." || segment === "..")
+    input.candidateRepository.split("/").some((segment) => segment === "." || segment === "..")
   ) {
     throw new Error("candidate repository is invalid");
   }
@@ -197,8 +229,7 @@ export async function resolvePrManagedImageSource(
     readonly token: string;
     readonly workflowSource: string;
   },
-  request: (apiPath: string) => Promise<unknown> = (apiPath) =>
-    githubRequest(apiPath, input.token),
+  request: (apiPath: string) => Promise<unknown> = (apiPath) => githubRequest(apiPath, input.token),
 ): Promise<PrManagedImageSource> {
   if (!input.token) throw new Error("GITHUB_TOKEN is required");
   const changedFiles = await readPrChangedFiles(input, request);
@@ -214,9 +245,15 @@ function requiredInteger(value: string | undefined, label: string): number {
 }
 
 export async function main(argv = process.argv.slice(2), env = process.env): Promise<void> {
-  if (argv.length !== 1 || argv[0] !== "select-source") {
-    throw new Error("expected select-source");
+  if (argv[0] === "assemble") {
+    if (argv.length < 4) {
+      throw new Error("expected candidate SHA, output path, and managed-image contract paths");
+    }
+    writeManagedImageCatalog(argv.slice(3), argv[1], argv[2]);
+    console.log("pr-managed-image-catalog outcome=assembled");
+    return;
   }
+  if (argv.length !== 1 || argv[0] !== "select-source") throw new Error("expected select-source");
   const source = await resolvePrManagedImageSource({
     baseSha: env.BASE_SHA ?? "",
     candidateRepository: env.CANDIDATE_REPOSITORY ?? "",

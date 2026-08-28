@@ -206,6 +206,33 @@ function parseQuotedPath(raw: string, lineNumber: number): string {
   return value;
 }
 
+/** Match one validated base-image workflow path without duplicating its glob semantics. */
+export function matchesBaseImagePushPath(pattern: string, changedPath: string): boolean {
+  if (
+    changedPath.length === 0 ||
+    changedPath.length > 4_096 ||
+    /[\0\r\n]/u.test(changedPath) ||
+    changedPath.startsWith("/") ||
+    changedPath.includes("//") ||
+    changedPath.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    throw new Error("base-image changed path is invalid");
+  }
+  const matcher = REVIEWED_PATH_GLOBS.get(pattern);
+  if (matcher) return matcher.test(changedPath);
+  if (
+    !SAFE_PATH_PATTERN.test(pattern) ||
+    pattern.startsWith("/") ||
+    pattern.startsWith("-") ||
+    pattern.startsWith(":") ||
+    pattern.includes("//") ||
+    pattern.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    throw new Error("base-image push pattern is not reviewed");
+  }
+  return pattern === changedPath;
+}
+
 /**
  * Read the controlled path list without requiring a dependency install in the
  * preflight job. Deliberately reject YAML features such as flow lists, aliases,
