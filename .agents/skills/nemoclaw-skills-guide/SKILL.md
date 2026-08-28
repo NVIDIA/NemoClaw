@@ -28,7 +28,7 @@ Covers routing human users' AI agents to the canonical NemoClaw Markdown documen
 ### `nemoclaw-maintainer-*` (19 skills)
 
 For project maintainers.
-Covers the daily maintainer cadence, trusted E2E dispatch, continuous E2E maintenance, runtime-provider integration and qualification, Launchable validation, workflow policy, documentation refactors, releases, product slides, review selection, comparison, triage, security review, and stale bug verification.
+Covers the daily maintainer cadence, trusted E2E dispatch, continuous E2E maintenance, runtime-provider integration and qualification, Launchable validation, workflow policy, pull request value-stream analysis, documentation refactors, releases, product slides, review selection, comparison, triage, security review, and stale bug verification.
 
 ### `nemoclaw-contributor-*` (6 skills)
 
@@ -64,6 +64,7 @@ Component-specific guidance lives with the package it describes, not in a skill.
 | `nemoclaw-maintainer-evening` | Complete the cumulative documentation PR and release entry, show release context, and optionally start tag cutting. |
 | `nemoclaw-maintainer-cut-release-tag` | Verify candidate evidence, record the maintainer's E2E decision, and cut one signed semver tag. |
 | `nemoclaw-maintainer-e2e` | Describe default E2E triggered by pushes to `main`, dispatch exact-revision manual PR E2E, and verify applicable workflow evidence. |
+| `nemoclaw-maintainer-analyze-pr-value-stream` | Measure one PR from its earliest observable branch push through merge, separate approval delay from automation time, and compare the latest revision with a target. |
 | `nemoclaw-maintainer-runtime-provider` | Implement or review one managed runtime provider through the bundle API, qualification-backed activation, provider-neutral orchestration, and exact-commit E2E qualification. |
 | `nemoclaw-maintainer-fix-e2e-failures` | Continuously fix automatic `main` E2E failures by root cause, coordinate peer approvals, merge eligible PRs, and monitor new results. |
 | `nemoclaw-maintainer-validate-launchable` | Run advisory validation of the staging Brev Launchable deployment, exact image and runtime identity, preinstalled user journey, inference, and cleanup. |

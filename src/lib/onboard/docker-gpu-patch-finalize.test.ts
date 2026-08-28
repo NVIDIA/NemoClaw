@@ -40,12 +40,9 @@ function exactDeferredCreateResult(): DockerGpuPatchResult {
 
 function readyHandoffDeps() {
   return {
-    runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 10:00:00  Ready\n"),
-    runOpenshell: vi.fn((args: readonly string[]) =>
-      args[1] === "list"
-        ? { status: 0, stdout: "beta  2026-08-23 10:00:00  Ready\n" }
-        : { status: 0 },
-    ),
+    runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 10:00:02  Ready\n"),
+    runOpenshell: vi.fn(() => ({ status: 0 })),
+    sleep: vi.fn(),
   };
 }
 
@@ -101,6 +98,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
       backupRemoved: false,
       rolledBack: false,
       replacementStoppedForCommit: false,
+      lifecycleStopAcknowledged: false,
       finalHandoffAcknowledged: false,
       lastSandboxPhase: null,
     });
@@ -109,7 +107,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(dockerStart).not.toHaveBeenCalled();
   });
 
-  it("uses one exact stop, remove, start, and Ready acknowledgement handoff (#9531)", () => {
+  it("uses authoritative OpenShell stop/start around the exact Docker commit (#9531)", () => {
     const result = exactDeferredCreateResult();
     const events: string[] = [];
     const dockerStop = vi.fn(() => {
@@ -120,25 +118,20 @@ describe("finalizeDockerGpuPatchBackup", () => {
       events.push("remove backup");
       return { status: 0 };
     });
-    const dockerStart = vi.fn(() => {
-      events.push("start replacement");
-      return { status: 0 };
-    });
+    const dockerStart = vi.fn(() => ({ status: 0 }));
     const runCaptureOpenshell = vi.fn(() => {
       events.push("observe ready");
-      return "alpha  2026-08-23 10:00:00  Ready\n";
+      return "alpha  2026-08-23 10:00:02  Ready\n";
     });
-    const runOpenshellResults = {
-      exec: { event: "exec ready", result: { status: 0 } },
-      list: {
-        event: "observe lifecycle release",
-        result: { status: 0, stdout: "beta  2026-08-23 10:00:00  Ready\n" },
-      },
-    } as const;
-    const runOpenshell = vi.fn((args: readonly string[]) => {
-      const response = runOpenshellResults[args[1] === "list" ? "list" : "exec"];
-      events.push(response.event);
-      return response.result;
+    const runOpenshell = vi.fn((args: string[]) => {
+      events.push(
+        args[1] === "stop"
+          ? "stop through OpenShell"
+          : args[1] === "start"
+            ? "start through OpenShell"
+            : "exec ready",
+      );
+      return { status: 0 };
     });
     const dockerResults = {
       ps: {
@@ -183,15 +176,15 @@ describe("finalizeDockerGpuPatchBackup", () => {
       rolledBack: false,
       replacementStoppedForCommit: true,
       replacementRestarted: true,
-      lifecycleReleaseObserved: true,
+      lifecycleStopAcknowledged: true,
       finalHandoffAcknowledged: true,
       lastSandboxPhase: "Ready",
     });
     expect(events).toEqual([
+      "stop through OpenShell",
       "stop replacement",
       "remove backup",
-      "observe lifecycle release",
-      "start replacement",
+      "start through OpenShell",
       "observe ready",
       "exec ready",
       "read replacement namespace",
@@ -206,9 +199,24 @@ describe("finalizeDockerGpuPatchBackup", () => {
       result.oldContainerId,
       expect.objectContaining({ ignoreError: true }),
     );
-    expect(dockerStart).toHaveBeenCalledWith(
-      result.newContainerId,
-      expect.objectContaining({ ignoreError: true }),
+    expect(dockerStart).not.toHaveBeenCalled();
+    expect(runOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["sandbox", "stop", "alpha"],
+      expect.objectContaining({
+        killProcessTreeOnTimeout: true,
+        killSignal: "SIGKILL",
+        timeout: 60_000,
+      }),
+    );
+    expect(runOpenshell).toHaveBeenNthCalledWith(
+      2,
+      ["sandbox", "start", "alpha"],
+      expect.objectContaining({
+        killProcessTreeOnTimeout: true,
+        killSignal: "SIGKILL",
+        timeout: 60_000,
+      }),
     );
   });
 
@@ -232,19 +240,15 @@ describe("finalizeDockerGpuPatchBackup", () => {
           events.push("remove backup");
           return { status: 0 };
         }),
-        dockerStart: vi.fn(() => {
-          events.push("start replacement");
-          return { status: 0 };
-        }),
+        dockerStart: vi.fn(() => ({ status: 0 })),
         runCaptureOpenshell: vi.fn(() => {
           events.push("observe deleting");
-          return "alpha  2026-08-23 10:00:00  Deleting\n";
+          return "alpha  2026-08-23 10:00:02  Deleting\n";
         }),
-        runOpenshell: vi.fn((args: readonly string[]) =>
-          args[1] === "list"
-            ? { status: 0, stdout: "beta  2026-08-23 10:00:00  Ready\n" }
-            : { status: 1 },
-        ),
+        runOpenshell: vi.fn((args: string[]) => {
+          events.push(args[1] === "stop" ? "stop through OpenShell" : "start through OpenShell");
+          return { status: 0 };
+        }),
         dockerRun: vi.fn(() => ({ status: 0, stdout: `${result.newContainerId}\n` })),
         sleep,
       },
@@ -255,14 +259,15 @@ describe("finalizeDockerGpuPatchBackup", () => {
       rolledBack: false,
       replacementStoppedForCommit: true,
       replacementRestarted: true,
-      lifecycleReleaseObserved: true,
+      lifecycleStopAcknowledged: true,
       finalHandoffAcknowledged: false,
       lastSandboxPhase: "Deleting",
     });
     expect(events).toEqual([
+      "stop through OpenShell",
       "stop replacement",
       "remove backup",
-      "start replacement",
+      "start through OpenShell",
       "observe deleting",
     ]);
     expect(sleep).not.toHaveBeenCalled();
@@ -290,33 +295,18 @@ describe("finalizeDockerGpuPatchBackup", () => {
         dockerRm: vi.fn(() => ({ status: 0 })),
         dockerStart: vi.fn(() => ({ status: 0 })),
         dockerRun,
-        runCaptureOpenshell: vi.fn(() => "restored-name  2026-08-23 01:40:35  Ready\n"),
-        runOpenshell: vi.fn((args: readonly string[]) =>
-          args[1] === "list"
-            ? { status: 0, stdout: "restored-name  2026-08-23 01:40:35  Error\n" }
-            : { status: 0 },
-        ),
+        runCaptureOpenshell: vi.fn(() => "restored-name  2026-08-23 01:40:37  Ready\n"),
+        runOpenshell: vi.fn(() => ({ status: 0 })),
         sleep: vi.fn(),
       },
     );
 
     expect(outcome).toMatchObject({
       backupRemoved: true,
-      lifecycleReleaseObserved: true,
+      lifecycleStopAcknowledged: true,
       finalHandoffAcknowledged: true,
     });
     expect(dockerRun.mock.calls[0]?.[0]).toEqual([
-      "ps",
-      "-a",
-      "--no-trunc",
-      "--filter",
-      `id=${result.newContainerId}`,
-      "--filter",
-      "label=openshell.ai/managed-by=openshell",
-      "--format",
-      "{{.ID}}",
-    ]);
-    expect(dockerRun.mock.calls[1]?.[0]).toEqual([
       "inspect",
       "--type",
       "container",
@@ -324,7 +314,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
       '{{ index .Config.Labels "openshell.ai/sandbox-namespace" }}',
       result.newContainerId,
     ]);
-    expect(dockerRun.mock.calls[2]?.[0]).toEqual([
+    expect(dockerRun.mock.calls[1]?.[0]).toEqual([
       "ps",
       "-a",
       "--no-trunc",
@@ -336,6 +326,14 @@ describe("finalizeDockerGpuPatchBackup", () => {
       "label=openshell.ai/sandbox-namespace=current-gateway",
       "--format",
       "{{.ID}}",
+    ]);
+    expect(dockerRun.mock.calls[2]?.[0]).toEqual([
+      "inspect",
+      "--type",
+      "container",
+      "--format",
+      "{{json .State.Running}}",
+      result.newContainerId,
     ]);
   });
 
@@ -363,35 +361,86 @@ describe("finalizeDockerGpuPatchBackup", () => {
         dockerRm: vi.fn(() => ({ status: 0 })),
         dockerStart: vi.fn(() => ({ status: 0 })),
         dockerRun,
-        runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 01:40:35  Ready\n"),
-        runOpenshell: vi.fn((args: readonly string[]) =>
-          args[1] === "list"
-            ? { status: 0, stdout: "beta  2026-08-23 01:40:35  Ready\n" }
-            : { status: 0 },
-        ),
+        runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 01:40:37  Ready\n"),
+        runOpenshell: vi.fn(() => ({ status: 0 })),
         sleep: vi.fn(),
       },
     );
 
     expect(outcome).toMatchObject({
       backupRemoved: true,
-      lifecycleReleaseObserved: true,
+      lifecycleStopAcknowledged: true,
       replacementRestarted: true,
       finalHandoffAcknowledged: false,
     });
   });
 
-  it.each([
-    ["a failed query", { status: 1, stderr: "daemon unavailable" }],
-    ["no labeled replacement", { status: 0, stdout: "" }],
-    ["a different replacement", { status: 0, stdout: `${"c".repeat(64)}\n` }],
-    [
-      "multiple labeled replacements",
-      { status: 0, stdout: `${"b".repeat(64)}\n${"c".repeat(64)}\n` },
-    ],
-  ])("rejects retiring Error when the canonical query returns %s (#9531)", (_case, query) => {
+  it("does not require name absence between authoritative stop and start (#10153)", () => {
     const result = exactDeferredCreateResult();
+    const events: string[] = [];
+    const dockerRunResults = {
+      inspect: { status: 0, stdout: "true\n" },
+      ps: { status: 0, stdout: `${result.newContainerId}\n` },
+    } as const;
     const dockerStart = vi.fn(() => ({ status: 0 }));
+    const runCaptureOpenshell = vi.fn(() => {
+      events.push("observe replacement ready");
+      return "alpha  2026-08-23 10:00:06  Ready\n";
+    });
+    const runOpenshell = vi.fn((args: string[]) => {
+      events.push(
+        args[1] === "stop"
+          ? "stop through OpenShell"
+          : args[1] === "start"
+            ? "start through OpenShell"
+            : "exec ready",
+      );
+      return { status: 0 };
+    });
+
+    const outcome = finalizeDockerGpuPatchBackup(
+      {
+        result,
+        supervisorReady: true,
+        sandboxName: "alpha",
+        finalHandoffTimeoutSecs: 4,
+      },
+      {
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        dockerRun: vi.fn(
+          (args: readonly string[]) =>
+            dockerRunResults[String(args[0]) as keyof typeof dockerRunResults],
+        ),
+        dockerStart,
+        runCaptureOpenshell,
+        runOpenshell,
+        sleep: vi.fn(),
+      },
+    );
+
+    expect(outcome).toMatchObject({
+      backupRemoved: true,
+      lifecycleStopAcknowledged: true,
+      replacementRestarted: true,
+      finalHandoffAcknowledged: true,
+    });
+    expect(dockerStart).not.toHaveBeenCalled();
+    expect(events).toEqual([
+      "stop through OpenShell",
+      "start through OpenShell",
+      "observe replacement ready",
+      "exec ready",
+    ]);
+    expect(runOpenshell).not.toHaveBeenCalledWith(["sandbox", "list"], expect.any(Object));
+  });
+
+  it("does not mutate containers when authoritative OpenShell stop fails (#10153)", () => {
+    const result = exactDeferredCreateResult();
+    const dockerStop = vi.fn(() => ({ status: 0 }));
+    const dockerRm = vi.fn(() => ({ status: 0 }));
+    const dockerStart = vi.fn(() => ({ status: 0 }));
+    const runCaptureOpenshell = vi.fn(() => "alpha  2026-08-23 01:40:35  Ready\n");
 
     const outcome = finalizeDockerGpuPatchBackup(
       {
@@ -401,25 +450,25 @@ describe("finalizeDockerGpuPatchBackup", () => {
         finalHandoffTimeoutSecs: 1,
       },
       {
-        dockerStop: vi.fn(() => ({ status: 0 })),
-        dockerRm: vi.fn(() => ({ status: 0 })),
-        dockerRun: vi.fn(() => query),
+        dockerStop,
+        dockerRm,
+        dockerRun: vi.fn(),
         dockerStart,
-        runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 01:40:35  Ready\n"),
-        runOpenshell: vi.fn(() => ({
-          status: 0,
-          stdout: "alpha  2026-08-23 01:40:35  Error\n",
-        })),
+        runCaptureOpenshell,
+        runOpenshell: vi.fn(() => ({ status: 1 })),
         sleep: vi.fn(),
       },
     );
 
     expect(outcome).toMatchObject({
-      backupRemoved: true,
-      lifecycleReleaseObserved: false,
-      replacementRestarted: false,
+      backupRemoved: false,
+      lifecycleStopAcknowledged: false,
+      replacementStoppedForCommit: false,
     });
+    expect(dockerStop).not.toHaveBeenCalled();
+    expect(dockerRm).not.toHaveBeenCalled();
     expect(dockerStart).not.toHaveBeenCalled();
+    expect(runCaptureOpenshell).not.toHaveBeenCalled();
   });
 
   it("rolls back to the backup container when supervisor reconnect failed", () => {
@@ -545,6 +594,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
       rolledBack: false,
       replacementStoppedForCommit: true,
       replacementRestarted: true,
+      lifecycleStopAcknowledged: true,
       finalHandoffAcknowledged: false,
       lastSandboxPhase: null,
     });
@@ -552,10 +602,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
       "old-container-id",
       expect.objectContaining({ ignoreError: true }),
     );
-    expect(dockerStart).toHaveBeenCalledWith(
-      "new-container-id",
-      expect.objectContaining({ ignoreError: true }),
-    );
+    expect(dockerStart).not.toHaveBeenCalled();
   });
 
   it("fails closed when backup removal has no exit status", () => {
@@ -576,13 +623,11 @@ describe("finalizeDockerGpuPatchBackup", () => {
       rolledBack: false,
       replacementStoppedForCommit: true,
       replacementRestarted: true,
+      lifecycleStopAcknowledged: true,
       finalHandoffAcknowledged: false,
       lastSandboxPhase: null,
     });
-    expect(dockerStart).toHaveBeenCalledWith(
-      "new-container-id",
-      expect.objectContaining({ ignoreError: true }),
-    );
+    expect(dockerStart).not.toHaveBeenCalled();
   });
 
   it("retains the backup when the replacement cannot be stopped for the final handoff", () => {
@@ -604,12 +649,18 @@ describe("finalizeDockerGpuPatchBackup", () => {
       backupRemoved: false,
       rolledBack: false,
       replacementStoppedForCommit: false,
+      replacementRestarted: true,
+      lifecycleStopAcknowledged: true,
     });
     expect(dockerRm).not.toHaveBeenCalled();
     expect(dockerStart).not.toHaveBeenCalled();
   });
 
   it("reports a failed replacement restart after the backup is removed", () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 1 });
     const outcome = finalizeDockerGpuPatchBackup(
       {
         result: deferredCreateResult(),
@@ -621,7 +672,9 @@ describe("finalizeDockerGpuPatchBackup", () => {
         dockerStop: vi.fn(() => ({ status: 0 })),
         dockerRm: vi.fn(() => ({ status: 0 })),
         dockerStart: vi.fn(() => ({ status: 1 })),
-        ...readyHandoffDeps(),
+        runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 10:00:02  Ready\n"),
+        runOpenshell,
+        sleep: vi.fn(),
       },
     );
 
@@ -630,9 +683,20 @@ describe("finalizeDockerGpuPatchBackup", () => {
       rolledBack: false,
       replacementStoppedForCommit: true,
       replacementRestarted: false,
+      lifecycleStopAcknowledged: true,
       finalHandoffAcknowledged: false,
       lastSandboxPhase: null,
     });
+    expect(runOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["sandbox", "stop", "alpha"],
+      expect.any(Object),
+    );
+    expect(runOpenshell).toHaveBeenNthCalledWith(
+      2,
+      ["sandbox", "start", "alpha"],
+      expect.any(Object),
+    );
   });
 
   it("records a remaining exact-ID replacement when removal fails (#7996)", () => {

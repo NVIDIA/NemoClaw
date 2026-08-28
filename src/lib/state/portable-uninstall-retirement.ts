@@ -105,6 +105,14 @@ const tails = new Map<string, Promise<void>>();
 export const portableHostFencePath = (homeDir: string): string =>
   path.join(homeDir, ".nemoclaw-portable-host.lock");
 
+/** Require the current asynchronous operation to own the exact Portable host fence. */
+export function assertCurrentPortableHostFenceHeld(homeDir: string): void {
+  const owner = owners.getStore();
+  if (!owner?.active || owner.path !== portableHostFencePath(homeDir)) {
+    throw new Error("Portable host authority mutation requires the current HOME fence");
+  }
+}
+
 /** Resolve the portable state root while admitting only the isolated Vitest override. */
 export function defaultPortableStateDir(env: NodeJS.ProcessEnv): string {
   if (

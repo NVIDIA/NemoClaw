@@ -27,6 +27,9 @@ on:
       managed_image_revision:
         required: true
         type: string
+      managed_image_receipt:
+        required: true
+        type: string
       credential_boundary:
         required: true
         type: string
@@ -113,6 +116,7 @@ jobs:
       E2E_TARGET_ID: ${{ inputs.target_id }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.candidate_sha }}
+      E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ inputs.managed_image_receipt }}
       NEMOCLAW_E2E_CORRELATION_ID: ${{ inputs.risk_signal_correlation_id }}
       NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA: ${{ inputs.risk_signal_expected_sha }}
       NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: ${{ inputs.candidate_sha }}

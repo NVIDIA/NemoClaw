@@ -9,21 +9,42 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
+type WorkflowStep = {
+  env?: Record<string, string>;
+  id?: string;
+  if?: string;
+  name?: string;
+  run?: string;
+  uses?: string;
+  with?: Record<string, unknown>;
+};
+
+type WorkflowJob = {
+  env?: Record<string, string>;
+  outputs?: Record<string, string>;
+  permissions?: Record<string, string>;
+  steps?: WorkflowStep[];
+};
+
 type Workflow = {
-  jobs: Record<string, { steps?: Array<{ name?: string; run?: string }> }>;
+  jobs: Record<string, WorkflowJob>;
 };
 
 const WORKFLOW_PATH = ".github/workflows/pr-self-hosted.yaml";
 const CANDIDATE_SHA = "a".repeat(40);
 const BASE_SHA = "b".repeat(40);
 
+function workflow(): Workflow {
+  return YAML.parse(readFileSync(WORKFLOW_PATH, "utf8")) as Workflow;
+}
+
 function selectGenericGpuLane(
   changedFiles: readonly string[],
   copiedSha = CANDIDATE_SHA,
   baseSha = BASE_SHA,
 ) {
-  const workflow = YAML.parse(readFileSync(WORKFLOW_PATH, "utf8")) as Workflow;
-  const script = workflow.jobs["select-llama-cpp-generic-gpu"]?.steps?.find(
+  const value = workflow();
+  const script = value.jobs["select-llama-cpp-generic-gpu"]?.steps?.find(
     (step) => step.name === "Select llama.cpp generic GPU E2E from PR files",
   )?.run;
   expect(script).toEqual(expect.any(String));
@@ -104,7 +125,51 @@ describe("generic NVIDIA GPU PR selection", () => {
     );
   });
 
-  it("rejects a PR base that cannot identify an exact managed-image publication", () => {
+  it("rejects a PR whose base SHA is not a lowercase 40-character SHA", () => {
     expect(() => selectGenericGpuLane(["scripts/install.sh"], CANDIDATE_SHA, "main")).toThrow();
+  });
+
+  // source-shape-contract: security -- The copied PR workflow must run the publication verifier from the validated PR base before the generic GPU job receives its managed-image revision
+  it("binds trusted base publication to the generic NVIDIA GPU job", () => {
+    const value = workflow();
+    const selector = value.jobs["select-llama-cpp-generic-gpu"];
+
+    expect(selector?.permissions).toEqual({ actions: "read", contents: "read" });
+    expect(selector?.outputs).toMatchObject({
+      base_sha: "${{ steps.changed.outputs.base_sha }}",
+      managed_image_revision: "${{ steps.publication.outputs.head_sha }}",
+    });
+
+    const checkout = selector?.steps?.find(
+      (step) => step.name === "Check out PR base SHA for publication verification",
+    );
+    expect(checkout).toMatchObject({
+      if: "${{ steps.changed.outputs.selected == 'true' }}",
+      uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+      with: {
+        "fetch-depth": 0,
+        "persist-credentials": false,
+        ref: "${{ steps.changed.outputs.base_sha }}",
+      },
+    });
+
+    const publication = selector?.steps?.find((step) => step.id === "publication");
+    expect(publication).toMatchObject({
+      env: {
+        EXPECTED_SHA: "${{ steps.changed.outputs.base_sha }}",
+        GITHUB_TOKEN: "${{ github.token }}",
+        REQUIRE_MANAGED_IMAGE_PUBLICATION: "1",
+      },
+      if: "${{ steps.changed.outputs.selected == 'true' }}",
+    });
+    expect(publication?.run).toContain("export GITHUB_REF=refs/heads/main");
+    expect(publication?.run).toContain('export GITHUB_SHA="$EXPECTED_SHA"');
+    expect(publication?.run).toContain(
+      "node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30",
+    );
+
+    expect(value.jobs["llama-cpp-generic-gpu"]?.env?.E2E_MANAGED_IMAGE_REVISION).toBe(
+      "${{ needs.select-llama-cpp-generic-gpu.outputs.managed_image_revision }}",
+    );
   });
 });

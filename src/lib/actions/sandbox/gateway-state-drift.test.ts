@@ -263,6 +263,23 @@ describe("sandbox gateway state drift guard", () => {
     expect(removeSandboxSpy).not.toHaveBeenCalled();
   });
 
+  it("does not select a gateway when its lifecycle probe blocks recovery (#10421)", async () => {
+    getNamedGatewayLifecycleStateSpy.mockReturnValue({
+      state: "connected_other",
+      activeGateway: "openshell",
+      status: "",
+      recoveryBlocked: true,
+    });
+    const missing = { state: "missing", output: "NotFound" };
+
+    await expect(
+      gatewayState.reconcileMissingAgainstNamedGateway("alpha", missing),
+    ).resolves.toEqual(missing);
+
+    expect(runOpenshellSpy).not.toHaveBeenCalled();
+    expect(removeSandboxSpy).not.toHaveBeenCalled();
+  });
+
   it("routes gateway-error recovery to the sandbox persisted gateway", async () => {
     detectPreflightIssueSpy.mockReturnValue(null);
     getSandboxSpy.mockReturnValue({

@@ -115,6 +115,7 @@ export interface VerifiedSandboxPolicyBoundary {
   readonly gatewayPort: number;
   readonly lifecycleGeneration: string;
   readonly lifecycleLiveIdentityFingerprint: string;
+  readonly createAttemptNonce?: string;
   readonly route: import("./docker-gpu-route").SelectedDockerGpuRoute;
 }
 
@@ -128,9 +129,10 @@ export type VerifiedSandboxCreateEffects = (
   context: VerifiedSandboxCreateEffectsContext,
 ) => Promise<void>;
 
-/** Durable onboarding-session identity that owns the pending inference route. */
+/** Durable onboarding-session identity and exact pending inference route. */
 export interface InferenceRouteReservationAuthority {
   readonly sessionId: string;
+  readonly selection: import("../inference/selection").InferenceSelection;
 }
 
 export type OnboardOptions = {

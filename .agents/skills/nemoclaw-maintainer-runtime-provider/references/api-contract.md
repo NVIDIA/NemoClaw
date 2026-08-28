@@ -23,7 +23,7 @@ surfaces:
 | `lifecycle` | Optional for a candidate. Implements start, started-state verification, stop hooks, and channel-stop transport. |
 | `mutationAuthority` | Optional for a candidate. Lists the state-changing operations that the provider authorizes. |
 | `stateMutation` | Optional for a candidate. Implements the versioned fenced state-mutation transaction. |
-| `bootstrap` | Optional for a candidate. Creates the authority store, runtime lifecycle, and onboarding routing. |
+| `bootstrap` | Optional for a candidate. Binds provider-owned create, readiness, and create-recovery operations for its workload type. |
 | `snapshot` | Optional for a candidate. Implements versioned preflight, capture, restore validation, and restore. |
 | `recovery` | Optional for a candidate. Reconciles one persisted sandbox with its runtime. |
 | `cleanup` | Optional for a candidate. Prepares destroy, plans owned-workload cleanup, and performs exact removal. |
@@ -81,9 +81,19 @@ Lifecycle methods return normalized results. `verifyStarted()` must verify the s
 gateway after provider startup. `stop()` executes the supplied `beforeStop` hook at the required
 boundary and reports an already-stopped or stopped state when known.
 
-Bootstrap supplies provider-owned authority storage, create lifecycle, and onboarding routing.
+Bootstrap supplies provider-owned creation, readiness, and create-recovery operations. A
+native-artifact provider must bind its atomic `verifyAndCreate`, `verifyReadiness`, and
+`recoverCreate` operations when it constructs the bundle. The generic caller supplies only the
+bootstrap input and cannot replace these operations.
+
 Each operation must bind the provider ID, persisted sandbox identity, lifecycle generation, and
-provider resource handle to the same runtime resource.
+provider resource handle to the same runtime resource. The provider assigns the deterministic
+handle before mutation. Atomic `verifyAndCreate` must verify the exact artifact and executable
+identities under one stable authority before it creates the resource. Readiness evidence must
+repeat that identity. An unknown create result or a failed readiness check after matching create
+evidence must use the handle for provider-owned, idempotent recovery. Creation evidence that does
+not match the plan cannot authorize plan-only recovery or removal and must report that the resource
+may remain. Separated measurement and creation do not satisfy this contract.
 
 ### Mutation authority and state mutation
 
