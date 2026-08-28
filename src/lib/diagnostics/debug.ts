@@ -7,9 +7,8 @@ import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { dockerExecFileSync } from "../adapters/docker/exec";
-import { openshellSandboxSshHost } from "../adapters/openshell/sandbox-ssh-host";
+import { resolveOpenshellSandboxSshHost } from "../adapters/openshell/sandbox-ssh-host";
 import { DASHBOARD_PORT } from "../core/ports";
-import { listSandboxes } from "../state/registry";
 import { createTarball as createDiagnosticsTarball } from "./tarball";
 
 // ---------------------------------------------------------------------------
@@ -19,6 +18,8 @@ import { createTarball as createDiagnosticsTarball } from "./tarball";
 export interface DebugOptions {
   /** Target sandbox name (auto-detected if omitted). */
   sandboxName?: string;
+  /** OpenShell gateway that owns the selected registered sandbox. */
+  gatewayName?: string;
   /** Only collect minimal diagnostics. */
   quick?: boolean;
   /** Write a tarball to this path. */
@@ -233,45 +234,6 @@ function collectDmesg(collectDir: string, opts: DebugOptions = {}): void {
 }
 
 // ---------------------------------------------------------------------------
-// Auto-detect sandbox name
-// ---------------------------------------------------------------------------
-
-function detectSandboxName(): string {
-  // First, check the local registry for the default sandbox. This is
-  // the authoritative source — it reflects the user's actual onboard
-  // choices and survives gateway restarts. Falling back to "default"
-  // without checking the registry was the bug in #1728: debug always
-  // targeted a sandbox named "default" even though the user's sandbox
-  // was named something else (e.g. "my-assistant").
-  try {
-    const registry = listSandboxes();
-    if (registry.defaultSandbox) return registry.defaultSandbox;
-    const names = registry.sandboxes.map((s) => s.name).filter(Boolean);
-    if (names.length > 0) return names[0];
-  } catch {
-    /* registry unreadable — fall through to openshell probe */
-  }
-
-  // Fallback: ask the live gateway directly
-  if (!commandExists("openshell")) return "default";
-  try {
-    const output = execFileSync("openshell", ["sandbox", "list"], {
-      encoding: "utf-8",
-      timeout: 10_000,
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    const lines = output.split("\n").filter((l) => l.trim().length > 0);
-    for (const line of lines) {
-      const first = line.trim().split(/\s+/)[0];
-      if (first && first.toLowerCase() !== "name") return first;
-    }
-  } catch {
-    /* ignore */
-  }
-  return "default";
-}
-
-// ---------------------------------------------------------------------------
 // Diagnostic sections
 // ---------------------------------------------------------------------------
 
@@ -362,32 +324,40 @@ function collectDocker(collectDir: string, quick: boolean): void {
   }
 }
 
-function collectOpenshell(collectDir: string, sandboxName: string, quick: boolean): void {
+function collectOpenshell(
+  collectDir: string,
+  sandboxName: string,
+  gatewayName: string | undefined,
+  quick: boolean,
+): void {
+  const gatewayArgs = gatewayName ? ["-g", gatewayName] : [];
   section("OpenShell");
-  collect(collectDir, "openshell-status", "openshell", ["status"]);
-  collect(collectDir, "openshell-sandbox-list", "openshell", ["sandbox", "list"]);
-  collect(collectDir, "openshell-sandbox-get", "openshell", ["sandbox", "get", sandboxName]);
-  collect(collectDir, "openshell-logs", "openshell", ["logs", sandboxName]);
+  collect(collectDir, "openshell-status", "openshell", ["status", ...gatewayArgs]);
+  collect(collectDir, "openshell-sandbox-list", "openshell", ["sandbox", "list", ...gatewayArgs]);
+  collect(collectDir, "openshell-sandbox-get", "openshell", [
+    "sandbox",
+    "get",
+    ...gatewayArgs,
+    sandboxName,
+  ]);
+  collect(collectDir, "openshell-logs", "openshell", ["logs", ...gatewayArgs, sandboxName]);
 
   if (!quick) {
-    collect(collectDir, "openshell-gateway-info", "openshell", ["gateway", "info"]);
+    collect(collectDir, "openshell-gateway-info", "openshell", [
+      "gateway",
+      "info",
+      ...gatewayArgs,
+    ]);
   }
 }
 
-function collectSandboxInternals(collectDir: string, sandboxName: string, quick: boolean): void {
+function collectSandboxInternals(
+  collectDir: string,
+  sandboxName: string,
+  gatewayName: string | undefined,
+  quick: boolean,
+): void {
   if (!commandExists("openshell")) return;
-
-  // Check if sandbox exists. OpenShell ssh-config may succeed for unknown
-  // names, so verify the live sandbox first.
-  try {
-    execFileSync("openshell", ["sandbox", "get", sandboxName], {
-      encoding: "utf-8",
-      timeout: 10_000,
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-  } catch {
-    return;
-  }
 
   section("Sandbox Internals");
 
@@ -395,18 +365,29 @@ function collectSandboxInternals(collectDir: string, sandboxName: string, quick:
   const sshConfigDir = mkdtempSync(join(tmpdir(), "nemoclaw-ssh-"));
   const sshConfigPath = join(sshConfigDir, "config");
   try {
-    const sshResult = spawnSync("openshell", ["sandbox", "ssh-config", sandboxName], {
+    const gatewayArgs = gatewayName ? ["-g", gatewayName] : [];
+    const sshResult = spawnSync(
+      "openshell",
+      ["sandbox", "ssh-config", ...gatewayArgs, sandboxName],
+      {
       timeout: TIMEOUT_MS,
       stdio: ["ignore", "pipe", "ignore"],
-      encoding: "utf-8",
-    });
+        encoding: "utf-8",
+      },
+    );
     if (sshResult.status !== 0) {
       warn(`Could not generate SSH config for sandbox '${sandboxName}', skipping internals`);
       return;
     }
-    writeFileSync(sshConfigPath, sshResult.stdout ?? "");
-
-    const sshHost = openshellSandboxSshHost(sandboxName);
+    const sshConfig = sshResult.stdout ?? "";
+    const sshHost = resolveOpenshellSandboxSshHost(sandboxName, sshConfig);
+    if (!sshHost) {
+      warn(
+        `SSH config did not declare sandbox '${sandboxName}', skipping internals`,
+      );
+      return;
+    }
+    writeFileSync(sshConfigPath, sshConfig);
     const sshBase = [
       "-F",
       sshConfigPath,
@@ -539,13 +520,10 @@ export function runDebug(opts: DebugOptions = {}): void {
 
   // Resolve sandbox name. The CLI wrapper (runDebugCommandWithOptions) is the
   // sole supported caller; it already trims, validates, and applies the
-  // documented precedence (--sandbox > NEMOCLAW_SANDBOX_NAME > NEMOCLAW_SANDBOX
+  // command precedence (--sandbox > NEMOCLAW_SANDBOX_NAME > NEMOCLAW_SANDBOX
   // > SANDBOX_NAME) before calling here. Reading env again would let
   // whitespace-only values bypass validation, so only trim the option.
-  let sandboxName = opts.sandboxName?.trim() ?? "";
-  if (!sandboxName) {
-    sandboxName = detectSandboxName();
-  }
+  const sandboxName = opts.sandboxName?.trim() || "default";
 
   // Create temp collection directory
   const collectDir = mkdtempSync(join(tmpdir(), "nemoclaw-debug-"));
@@ -560,9 +538,9 @@ export function runDebug(opts: DebugOptions = {}): void {
     collectProcesses(collectDir, quick);
     collectGpu(collectDir, quick);
     collectDocker(collectDir, quick);
-    collectOpenshell(collectDir, sandboxName, quick);
+    collectOpenshell(collectDir, sandboxName, opts.gatewayName, quick);
     collectOnboardSession(collectDir, repoDir);
-    collectSandboxInternals(collectDir, sandboxName, quick);
+    collectSandboxInternals(collectDir, sandboxName, opts.gatewayName, quick);
 
     if (!quick) {
       collectNetwork(collectDir);
