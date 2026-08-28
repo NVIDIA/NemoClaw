@@ -566,7 +566,7 @@ When a service manager owns the gateway, the printed recovery stops it in the sa
 
 NemoClaw resolves the owning service before it prints, so the stop names the unit that runs on this host: the upstream OpenShell package unit, the NemoClaw user service, or the Homebrew formula. When no service manager owns the gateway, NemoClaw runs it standalone. Before it offers the state move in that case, the gateway runtime checks the recorded process and scans current gateway process identities for the runtime namespace tied to the selected state directory. It withholds the move unless that scan establishes that the standalone gateway state is unused.
 
-When NemoClaw prints the state move, run the exact commands it prints:
+When NemoClaw prints the state move, run the commands it prints:
 
 1. Stop the owning gateway service, when the printed chain includes that step.
 2. Create the printed `.incompatible` archive with owner-only access. If that path exists, NemoClaw adds a numeric suffix instead of nesting or replacing an earlier archive.
@@ -942,7 +942,7 @@ cleanup_retained_policy() {
     return 1
   fi
   platform_tmp_root=${platform_tmp_root%/}
-  IFS= read -r -p 'Enter the exact temporary policy directory from the error: ' retained_policy_dir
+  IFS= read -r -p 'Enter the temporary policy directory from the error: ' retained_policy_dir
   python3 - "$platform_tmp_root" "$retained_policy_dir" <<'PY'
 import os
 import re
@@ -1392,7 +1392,7 @@ On a direct-container deployment, first confirm that the sandbox is running:
 $$nemoclaw <name> status
 ```
 
-When `recover` repairs a stopped built-in gateway, NemoClaw repeats the recovery action only for these exact transient results:
+When `recover` repairs a stopped built-in gateway, NemoClaw repeats the recovery action only for these transient results:
 
 - Status `1` with blank stdout and exactly one stderr line: `SUPERVISOR_NOT_RUNNING`, `SUPERVISOR_DISCOVERY_PENDING`, `PRIVILEGED_CONTROL_UNAVAILABLE`, or `GATEWAY_HEALTH_TIMEOUT`.
 - Status `1` with blank stdout and exactly one stderr line, `SUPERVISOR_BUSY`.
@@ -1417,7 +1417,7 @@ Hermes host config writes, shields transitions, and lifecycle seals use the same
 
 ### A Hermes command reports that runtime provider state mutation owns direct-container execution
 
-A current managed Hermes image on the Docker driver can report this retryable refusal while an exact Shields provider fence is active:
+A current managed Hermes image on the Docker driver can report this retryable refusal while a Shields provider fence is active:
 
 ```text
 Runtime provider state mutation owns direct-container execution for sandbox '<name>'; retry after the provider fence is released.
@@ -1520,7 +1520,7 @@ NemoClaw rejects a candidate that fails its ownership, permission, or executable
 
 If NemoClaw reports that it removed the incomplete snapshot, install or repair `python3` at an accepted location. Then rerun the complete command.
 
-If cleanup fails, treat the exact reported directory as retained until you confirm that it is absent.
+If cleanup fails, treat the reported directory as retained until you confirm that it is absent.
 
 <Warning title="Retained Incomplete Snapshot">
   A retained incomplete snapshot can contain unsanitized credentials. The directory must remain
@@ -2752,7 +2752,7 @@ Do not apply this compatibility guidance to portable onboarding. Portable onboar
 | --- | --- | --- |
 | Native `--gpu` is rejected, host runtime evidence identifies GPU injection failure, or an explicit driver proof fails and host configuration confirms no GPU attachment | Ordinary Linux native attempt | The default native-only route stops. Retry with `NEMOCLAW_DOCKER_GPU_PATCH=fallback` only if you explicitly accept one bounded compatibility retry, or use `=1` to select compatibility before creation. |
 | `Cleanup could not be proven safe` | Native-to-compatibility handoff | Run the printed sandbox deletion command, verify both the gateway row and OpenShell-managed Docker containers labeled for that sandbox are absent, then rerun onboarding. |
-| The patched container exits or the compatibility attempt fails | Compatibility recreation | Inspect the saved diagnostics and the rollback outcome, then repair the NVIDIA Container Toolkit/CDI configuration. Keep the sandbox when the pre-patch container was restored. Use only an exact-container cleanup command printed after rollback. If no command was printed, inspect the sandbox and its labeled containers before removing anything. Then rerun onboarding. |
+| The patched container exits or the compatibility attempt fails | Compatibility recreation | Inspect the saved diagnostics and the rollback outcome, then repair the NVIDIA Container Toolkit/CDI configuration. Keep the sandbox when the pre-patch container was restored. Use only a container-specific cleanup command printed after rollback. If no command was printed, inspect the sandbox and its labeled containers before removing anything. Then rerun onboarding. |
 | A recreated container inherits only a loopback DNS stub and no usable upstream | Compatibility DNS fallback | Repair the host's `systemd-resolved` upstream configuration, then rerun onboarding. |
 
 For bridge-networked compatibility recreation without an explicit container DNS setting, NemoClaw selects a usable IPv4 upstream from `systemd-resolved` and probes that exact `--dns` path before it stops the original container. If the probe confirms that the resolver is unreachable, recreation stops and leaves the original container in place. An IPv6-only upstream list does not become a compatibility override; NemoClaw preserves Docker's default resolver path instead. Containers with explicit DNS settings or host networking keep their existing DNS path and do not use the fallback probe.
@@ -3072,7 +3072,7 @@ The error and file state identify the required recovery:
 | --- | --- | --- |
 | cgroups v2 is unavailable; the root file is missing | The host does not expose the cgroups v2 controller file at the expected mount. | Ask an administrator to boot or configure the Linux host with a cgroups v2 mount. |
 | Any controller file exists but is unreadable, or its read fails | The current user cannot read the existing hierarchy boundary. | Stop before changing delegation. Ask an administrator to restore read and directory-traversal access or correct the AppArmor, SELinux, or other Linux Security Module (LSM) policy that denied the read. Then run the classification command again. |
-| Any controller file is malformed | The file does not contain the bounded, space-separated controller names supplied by the kernel, so the hierarchy result is inconclusive. | Stop before changing delegation. Ask an administrator to inspect the cgroup filesystem and active security tooling for that exact file. Run the classification command again only after the file contains kernel-provided controller names. |
+| Any controller file is malformed | The file does not contain the bounded, space-separated controller names supplied by the kernel, so the hierarchy result is inconclusive. | Stop before changing delegation. Ask an administrator to inspect the cgroup filesystem and active security tooling for that file. Run the classification command again only after the file contains kernel-provided controller names. |
 | The kernel hierarchy does not expose `cpu`; the root file is readable | The root `cgroup.controllers` file does not contain the `cpu` controller. | Ask an administrator to enable the `cpu` controller in the host's kernel cgroup hierarchy. |
 | systemd did not expose `cpu`; the per-user-slice file is missing or does not contain `cpu` | The current user's `user-UID.slice` ancestor does not receive the `cpu` controller. | Apply all three named systemd drop-ins below. |
 | systemd did not delegate `cpu`; the user-manager file is missing or does not contain `cpu` | The current user's manager does not receive the `cpu` controller. | Apply all three named systemd drop-ins below. |
@@ -3306,19 +3306,19 @@ if [ "$creation_failed" != "0" ]; then
 fi
 ```
 
-If a creation command fails, do not reload systemd. Ask the administrator to inspect all three drop-in paths and their directories. Use the final value printed for every `*_created` record and its matching `device:inode` record. The initial `0` records describe only the state before creation starts; always route recovery from the final printed values. Do not search for staging names. Use only an exact `*_staging_dir_path` printed before its atomic `mkdir` attempt.
+If a creation command fails, do not reload systemd. Ask the administrator to inspect all three drop-in paths and their directories. Use the final value printed for every `*_created` record and its matching `device:inode` record. The initial `0` records describe only the state before creation starts; always route recovery from the final printed values. Do not search for staging names. Use only a `*_staging_dir_path` printed before its atomic `mkdir` attempt.
 
 Choose the cleanup route that matches the final records:
 
 - If any final `*_created` value is `0` but the same command printed its matching `*_id` afterward, that file or directory receipt was interrupted between its identity and final commit records. Retain that identity and replace the matching final `*_created` value with `1`. The general cleanup will require the path type and identity to match that record before removal.
-- If any final `*_drop_in_dir_created` or `*_staging_dir_created` value is `unrecorded`, do not treat a missing identity as proof of absence and do not enter the general partial cleanup. Complete [Recover an Unrecorded Drop-In Directory](#recover-an-unrecorded-drop-in-directory) for each exact recorded intent, replace each resolved final value with `0`, and leave its identity empty. Enter the general partial cleanup only after every final `*_created` value is `0` or `1`.
+- If any final `*_drop_in_dir_created` or `*_staging_dir_created` value is `unrecorded`, do not treat a missing identity as proof of absence and do not enter the general partial cleanup. Complete [Recover an Unrecorded Drop-In Directory](#recover-an-unrecorded-drop-in-directory) for each recorded intent, replace each resolved final value with `0`, and leave its identity empty. Enter the general partial cleanup only after every final `*_created` value is `0` or `1`.
 - Otherwise, when every final `*_created` value is `0` or `1` and every final `0` has an empty identity, go directly to [Clean Up a Partial Drop-In Creation](#clean-up-a-partial-drop-in-creation).
 
 #### Recover an Unrecorded Drop-In Directory
 
-If the final directory record is `created=unrecorded`, the procedure recorded an exact creation intent but did not commit a creation identity. The interruption can occur before `mkdir`, during it, or before its identity record. Do not treat the initial `created=0` record as proof that the directory was pre-existing. Do not use the general partial-creation cleanup until this state is resolved.
+If the final directory record is `created=unrecorded`, the procedure recorded a creation intent but did not commit a creation identity. The interruption can occur before `mkdir`, during it, or before its identity record. Do not treat the initial `created=0` record as proof that the directory was pre-existing. Do not use the general partial-creation cleanup until this state is resolved.
 
-Establish an exclusive host-configuration maintenance window with the administrator. Pause package operations and all other changes under `/etc/systemd/system` and `/etc/systemd/user` for the command's duration. Set `unrecorded_directory` to the exact recorded drop-in-directory path or unpredictable staging intent. The command accepts only those six exact paths, validates each staging name without scanning for basenames, requires the expected type and metadata, requires an empty directory, and binds removal to two matching identity reads.
+Establish an exclusive host-configuration maintenance window with the administrator. Pause package operations and all other changes under `/etc/systemd/system` and `/etc/systemd/user` for the command's duration. Set `unrecorded_directory` to the recorded drop-in-directory path or unpredictable staging intent. The command accepts only those six paths, validates each staging name without scanning for basenames, requires the expected type and metadata, requires an empty directory, and binds removal to two matching identity reads.
 
 ```bash
 unrecorded_directory="<exact-directory-from-identity-recording-error>"
@@ -3757,7 +3757,7 @@ Delegate=cpu memory pids
 CPUWeight=100
 ```
 
-Record all rollback lines from the creation command in the administrator's change record, including each file's last `created` value, each published file's `device:inode` value, and all three directory creation records. They identify the exact files and any directories created by this procedure and contain no credentials. Rollback must use those recorded values. If a required value is lost, do not use the removal command below; ask the administrator to inspect and remove the configuration through the host's normal change-management process.
+Record all rollback lines from the creation command in the administrator's change record, including each file's last `created` value, each published file's `device:inode` value, and all three directory creation records. They identify the files and any directories created by this procedure and contain no credentials. Rollback must use those recorded values. If a required value is lost, do not use the removal command below; ask the administrator to inspect and remove the configuration through the host's normal change-management process.
 
 The administrator's `sudo` policy can request authentication. NemoClaw never receives that credential.
 
@@ -4254,7 +4254,7 @@ systemctl --user start podman.socket
 
 These commands do not enable the socket for later user sessions.
 
-Then use the exact socket path from the NemoClaw failure to require a real server response:
+Then use the socket path from the NemoClaw failure to require a real server response:
 
 ```bash
 podman --remote \

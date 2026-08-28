@@ -397,7 +397,7 @@ The option requires these conditions:
 - Do not combine the option with `--resume` or `--recreate-sandbox`.
 - Do not select the Portable experimental profile.
 
-NemoClaw omits a caller policy from every sandbox creation attempt. After creation, NemoClaw binds the returned durable sandbox identity and verifies its effective policy. The policy must be sandbox-scoped and contain every policy entry required by the prepared configuration. NemoClaw then records the policy as externally managed and read-only. This verification does not establish that APF injected the policy.
+NemoClaw omits a caller policy from every sandbox creation attempt. After creation, NemoClaw binds the returned durable sandbox identity and verifies its effective policy. The policy must be sandbox-scoped and contain every policy entry required by the prepared configuration. NemoClaw stores no policy owner, receipt, or desired state; later policy commands read OpenShell directly. This verification does not establish that APF injected the policy.
 
 ```bash
 $$nemoclaw onboard --fresh --apf-interceptor --name my-apf-sandbox
@@ -551,7 +551,7 @@ Four tiers are available:
 | Restricted | No tier defaults. Web search or other integrations selected earlier can still add their required presets; deselect them during policy review for baseline-only access. |
 | Balanced (default) | Full dev tooling and a selected, supported web search provider. Package installs, model downloads, and inference. No messaging platform access by default. |
 | Open | Broad access across third-party services including supported messaging and productivity presets. Agent-specific unsupported presets are filtered out. |
-| Personal | Requires one broad web authority that lets every sandbox binary open TCP connections to public and private address ranges on destination ports 80 and 443. It replaces overlapping exact web endpoints while preserving non-web policy. Unspecified, loopback, and link-local ranges remain blocked. Intended only for trusted personal-use workloads. |
+| Personal | Requires one broad web authority that lets every sandbox binary open TCP connections to public and private address ranges on destination ports 80 and 443. It replaces overlapping web endpoints while preserving non-web policy. Unspecified, loopback, and link-local ranges remain blocked. Intended only for trusted personal-use workloads. |
 
 After selecting a tier, the wizard shows a combined preset and access-mode screen where you can include or exclude individual presets and toggle each between read and read-write access. When Personal is selected or carried forward, `personal-open-internet` is mandatory for every agent and every onboarding entry point, including Portable. The picker and policy modes control only additional presets; they cannot deselect, skip, or replace Personal's required web authority. For details on tiers and the presets each includes, refer to [Network Policies](network-policies#policy-tiers). When you finish the policy step, NemoClaw records the finalized built-in preset selection for that sandbox. When onboarding creates or recreates a sandbox with presets, NemoClaw prints the exact finalized create-time policy scope before registering providers or creating the sandbox. Later re-onboard runs seed from that finalized selection, so presets you intentionally removed stay removed unless you select them again or override the policy mode.
 
@@ -922,7 +922,7 @@ The command rejects a symlink or non-executable file before it records ownership
 It refuses to launch a duplicate when another `ollama` process exists but the API remains unhealthy.
 After a launch, it waits up to 30 seconds for valid `/api/tags` JSON with a `models` array.
 It then verifies the authenticated proxy and requires HTTP 2xx from the sandbox `inference.local/v1/models` route before it exits successfully.
-If Ollama does not become healthy within 30 seconds, the command identifies the exact receipt-bound executable and its `serve` argument, then tells you to retry recovery.
+If Ollama does not become healthy within 30 seconds, the command identifies the receipt-bound executable and its `serve` argument, then tells you to retry recovery.
 The command does not take over a system service or an unrelated user-managed Ollama daemon.
 </AgentOnly>
 
@@ -1831,7 +1831,7 @@ With `--from-file` or `--from-dir`, pass a repeatable `--trusted-private-host <e
 | --- | --- |
 | `--from-file <path>` | Apply a custom preset YAML file instead of a built-in preset |
 | `--from-dir <path>` | Apply every custom preset YAML file in a directory in lexicographic order |
-| `--trusted-private-host <exact-host-or-ip>` | Admit one exact private endpoint host from a custom preset and generate exact address pins; repeat for additional hosts |
+| `--trusted-private-host <exact-host-or-ip>` | Admit one private endpoint host from a custom preset and generate address pins; repeat for additional hosts |
 | `--yes`, `--force` | Skip the confirmation prompt (requires a preset name, `--from-file`, or `--from-dir`) |
 | `--dry-run` | Preview the endpoints a preset would open without applying changes |
 
@@ -2064,7 +2064,7 @@ Pause one configured messaging channel without clearing its credentials. The com
 
 </AgentOnly>
 <AgentOnly variant="hermes">
-When a stopped Hermes Discord channel keeps a credential-bound policy, the rebuild retains and attaches only the exact validated static provider that the policy requires.
+When a stopped Hermes Discord channel keeps a credential-bound policy, the rebuild retains and attaches only the validated static provider that the policy requires.
 It does not start Discord or recreate the provider credentials.
 </AgentOnly>
 <AgentOnly variant="openclaw,hermes">
@@ -2166,7 +2166,7 @@ $$nemoclaw my-assistant mcp add github --url https://api.githubcopilot.com/mcp/ 
 unset GITHUB_MCP_TOKEN
 ```
 
-For a private endpoint, use its exact URL host:
+For a private endpoint, use its URL host:
 
 ```bash
 export LOCAL_MCP_TOKEN='replace-with-secret-manager-value'
@@ -2564,7 +2564,7 @@ $$nemoclaw my-assistant rebuild [--yes|-y|--force] [--verbose|-v] [--tool-disclo
 | Flag | Description |
 | --- | --- |
 | `--yes`, `-y` | Skip the confirmation prompt. |
-| `--force` | Skip the confirmation prompt and continue when no state directory was preserved or a manifest-declared state file failed. NemoClaw restores any captured entries; after a total failure, it recreates from registry metadata only. If a pre-mutation no-op cannot execute in a sandbox with managed MCP servers, it may preserve the exact registered MCP intent through host-side recovery. |
+| `--force` | Skip the confirmation prompt and continue when no state directory was preserved or a manifest-declared state file failed. NemoClaw restores any captured entries; after a total failure, it recreates from registry metadata only. If a pre-mutation no-op cannot execute in a sandbox with managed MCP servers, it may preserve the registered MCP intent through host-side recovery. |
 | `--verbose`, `-v` | Log SSH commands, exit codes, and session state (also enabled by `NEMOCLAW_REBUILD_VERBOSE=1`) |
 | `--tool-disclosure <progressive\|direct>` | Change the model-visible tool catalog during this transactional rebuild. Use this path for sandboxes with managed MCP servers so their providers and adapter state are preserved. |
 | `--dcode-auto-approval <disabled\|thread-opt-in>` | Change the managed Deep Agents Code thread auto-approval capability. `thread-opt-in` is accepted only for managed Deep Agents Code sandboxes and is rejected for other agents or custom images. Enabling prints a warning, and either value requires sandbox recreation. |
@@ -2684,8 +2684,8 @@ Restore sandbox state from a snapshot. For an in-place restore, the sandbox must
 The selector accepts any of:
 
 - A version (`v1`, `v2`, ..., `vN`) from `snapshot list`.
-- An exact name passed to `snapshot create --name`.
-- An exact timestamp.
+- A name passed to `snapshot create --name`.
+- A timestamp.
 
 Pass `--to <dst>` to restore the snapshot into a different sandbox instead of the source. When `dst` does not exist, it is auto-created from the source image. For a Docker- or VM-driver source, the source can be stopped when its registry entry records both the sandbox image and a complete inference route. For a Kubernetes-driver source, the pod image must remain resolvable through its gateway. No re-onboarding is needed when those prerequisites are present. For a new destination, NemoClaw requires its owning gateway to report Ready state and a valid live identity. It revalidates that identity immediately before registration. The destination receives a new lifecycle generation and does not inherit the source sandbox's generation. If the destination is not Ready with the same valid identity, the command exits nonzero before registration or state restore. The created destination remains unregistered, so `--force` cannot select it for deletion. Run the exact owner-scoped deletion command printed by the failure:
 
@@ -2718,7 +2718,7 @@ $$nemoclaw my-assistant snapshot restore v3
 # restore by user-assigned name
 $$nemoclaw my-assistant snapshot restore before-upgrade
 
-# restore by exact timestamp
+# restore by timestamp
 $$nemoclaw my-assistant snapshot restore 2026-04-21T07-35-55-987Z
 
 # clone v3 into a new sandbox
@@ -3317,13 +3317,13 @@ The following variables let you tune onboarding without editing the Dockerfile o
 | Variable | Format | Effect |
 | --- | --- | --- |
 | `NEMOCLAW_PROVIDER` | provider key (e.g. `build`, `openrouter`, `openai`, `anthropic`, `anthropicCompatible`, `gemini`, `ollama`, `custom`, `vllm`, `nim-local`, `routed`, `hermes-provider`, `llama-cpp`, `install-llama-cpp`, `install-vllm`, `install-ollama`, `install-windows-ollama`, `start-windows-ollama`) | Selects the inference provider during onboarding. The wizard skips the provider menu in both interactive and non-interactive runs when this is set. On a qualified N1x host, only `install-vllm` supplies the explicit Deferred preview intent; another provider stops installation before onboarding. `llama-cpp` selects attachment of an authenticated, operator-managed llama.cpp server on loopback port `8081`. Set `NEMOCLAW_LLAMACPP_LOCAL_TOKEN`; set `NEMOCLAW_MODEL` to the served alias when the server exposes multiple models. `install-llama-cpp` selects the experimental DGX Spark managed path and rejects `NEMOCLAW_MODEL`; use `NEMOCLAW_LLAMACPP_RECIPE` for its declarative selection. If an operator-managed server does not provide consistent native llama.cpp evidence, select `custom`. Aliases: `cloud` → `build`, `open-router` / `openrouterai` → `openrouter`, `nim` → `nim-local`, `hermes` / `nous` / `nous-portal` → `hermes-provider`, `anthropiccompatible` → `anthropicCompatible`. Invalid values fail fast with the list of accepted keys. |
-| `NEMOCLAW_LLAMACPP_RECIPE` | repository-owned managed-inference recipe ID | Selects the exact managed llama.cpp recipe when `NEMOCLAW_PROVIDER=install-llama-cpp`, including a compatible lower-priority profile. When unset, NemoClaw selects the unique highest-priority compatible automatic profile. An unknown recipe, an ambiguous selection, or a stale or incompatible readiness report fails before image, model, or runtime effects. |
+| `NEMOCLAW_LLAMACPP_RECIPE` | repository-owned managed-inference recipe ID | Selects the managed llama.cpp recipe when `NEMOCLAW_PROVIDER=install-llama-cpp`, including a compatible lower-priority profile. When unset, NemoClaw selects the unique highest-priority compatible automatic profile. An unknown recipe, an ambiguous selection, or a stale or incompatible readiness report fails before image, model, or runtime effects. |
 | `NEMOCLAW_MODEL` | model ID | Selects an explicit model for a non-interactive onboarding run. NemoClaw preserves it across a detected provider switch, even when it matches the recorded provider's default. When this variable is unset during such a switch, NemoClaw ignores the `NEMOCLAW_PROVIDER_MODEL` compatibility fallback and uses normal provider model selection. |
 | `NEMOCLAW_TOOL_DISCLOSURE` | `progressive` or `direct` | Selects progressive tool discovery or the prior direct-exposure behavior outside the Portable experimental profile. Defaults to `progressive`; `--tool-disclosure` takes precedence when both are set. Fresh Portable onboarding ignores this variable and defaults to `direct` unless the flag explicitly selects a mode. |
 | `NEMOCLAW_ENDPOINT_URL` | URL | Custom endpoint URL. Used together with `NEMOCLAW_PROVIDER=custom` for OpenAI-compatible endpoints or `NEMOCLAW_PROVIDER=anthropicCompatible` for Anthropic-compatible endpoints. Onboarding rejects a URL that contains userinfo, query, or fragment components. It also rejects a URL that contains control characters, percent-encoded control characters, spaces within the URL, shell metacharacters, or other characters outside the URL-safe ASCII set, and a value that is not an absolute HTTP or HTTPS URL. NemoClaw trims ASCII spaces at the start and end of the URL before validation. |
 | `NEMOCLAW_COMPATIBLE_AUTH_MODE` | `none` or unset | Explicitly selects no authentication during non-interactive onboarding for an OpenAI-compatible HTTP endpoint on `localhost`, `127.0.0.1`, or `[::1]` and the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) or port `11434`. Port `11435` requires `NEMOCLAW_OLLAMA_PROXY_PORT` to use a different free port. |
-| `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` | comma-separated exact hostnames or IP literals | Allows operator-owned RFC1918, CGNAT, or IPv6 unique local destinations through supported inference, managed MCP, and custom-policy registration paths. Link-local metadata and other reserved ranges remain blocked; DNS resolution and exact address pinning remain active; wildcards are not supported. |
-| `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` | comma-separated exact hostnames or IP literals | Inference-only compatibility alias. Inference onboarding combines entries from this variable and `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`. |
+| `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` | comma-separated exact hostnames or IP literals | Allows operator-owned RFC1918, CGNAT, or IPv6 unique local destinations through supported inference, managed MCP, and custom-policy registration paths. Link-local metadata and other reserved ranges remain blocked; DNS resolution and address pinning remain active; wildcards are not supported. |
+| `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` | comma-separated hostnames or IP literals | Inference-only compatibility alias. Inference onboarding combines entries from this variable and `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`. |
 | `NEMOCLAW_PREFERRED_API` | `completions` (currently the only honored value) | Forces the validation probe to use the `/v1/chat/completions` API path instead of the newer `/v1/responses` API. |
 | `NEMOCLAW_OLLAMA_REQUIRE_TOOLS` | `0` to disable, anything else to keep the default | When set to `0`, skips the Ollama tool-calling capability check during local-inference onboarding. |
 | `NEMOCLAW_OLLAMA_INSTALL_MODE` | `system`, `user`, or empty/unset | Pins the Linux Ollama install location. Refer to the Linux Ollama install mode details below. |
@@ -3710,7 +3710,7 @@ The following environment variables tune onboard-time and recovery wall-clock li
 | --- | --- | --- |
 | `NEMOCLAW_OLLAMA_PULL_TIMEOUT` | `1800` (30 minutes) | Wall-clock timeout for `ollama pull` during onboard, in seconds. Accepts integer or float values. Already-downloaded layers are kept; re-running the pull resumes them. |
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | `180` | Wall-clock timeout for the inference-server validation probe during onboard, in seconds. Raise on slow networks or for very large prompts. |
-| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for post-create readiness, in seconds. Raise the timeout when the managed-image pull, explicit custom image build, gateway upload, or in-sandbox boot exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). Ordinary onboarding deletes the partially created sandbox when the deadline expires and prints the retry hint. Portable OpenClaw onboarding instead preserves the sandbox when NemoClaw cannot verify its exact runtime identity. |
+| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for post-create readiness, in seconds. Raise the timeout when the managed-image pull, explicit custom image build, gateway upload, or in-sandbox boot exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). Ordinary onboarding deletes the partially created sandbox when the deadline expires and prints the retry hint. Portable OpenClaw onboarding instead preserves the sandbox when NemoClaw cannot verify its runtime identity. |
 | `NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE` | `30` | Consecutive `Error`-phase polls the post-create readiness wait tolerates before treating `Error` as terminal. Polling starts at 250ms and backs off to a 2-second cap, while `NEMOCLAW_SANDBOX_READY_TIMEOUT` remains the overall deadline. The gateway can briefly report a just-created sandbox in `Error` while it re-registers the sandbox (seen on DGX Spark); the debounce lets that transient recover to `Ready`. `Failed` and `CrashLoopBackOff` always fail immediately. Set to `1` to restore fast-fail on the first `Error` poll. |
 | `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` | `30`, `90`, or `120`, depending on the recovery phase | Wall-clock timeout for OpenShell command re-registration after policy application, plus gateway health and re-registration during managed OpenClaw or Hermes recovery. A valid finite, nonnegative value overrides the internal budget for the current recovery phase. |
 
@@ -3766,7 +3766,7 @@ The following flags change defaults for commands that manage existing sandboxes.
 <AgentOnly variant="openclaw,hermes">
 | `NEMOCLAW_CONFIG_ACCEPT_NEW_PATH` | Exactly `"1"` to opt in (`true`, `yes`, `on` are not accepted) | Allows `$$nemoclaw <name> config set` to write a dotpath that does not already exist in the sandbox config, without the interactive confirmation. Equivalent to passing `--config-accept-new-path`, and it takes precedence over `NEMOCLAW_NON_INTERACTIVE=1`. Without it, a run without a TTY refuses the write instead. |
 </AgentOnly>
-| `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` | Exact JSON array of sandbox names | Confirms to the installer that the exact listed set of pre-fingerprint OpenClaw or Hermes sandboxes used NemoClaw-managed images, allowing recovery onto the current managed image. The normalized names must exactly match the installer's printed array. Set it only after verifying every named sandbox. Recorded custom-image evidence remains blocked. |
+| `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` | JSON array of sandbox names | Confirms to the installer that the listed set of pre-fingerprint OpenClaw or Hermes sandboxes used NemoClaw-managed images, allowing recovery onto the current managed image. The normalized names must exactly match the installer's printed array. Set it only after verifying every named sandbox. Recorded custom-image evidence remains blocked. |
 | `NEMOCLAW_DISABLE_INFERENCE_ROUTE_REPAIR` | `1` to enable | Skips automatic DNS-proxy mutation for stale `inference.local` routes during `$$nemoclaw <name> connect` and `$$nemoclaw <name> connect --probe-only`. The command still probes the route and exits non-zero when the provider-specific requirement fails. An `ollama-local` route still requires a healthy authenticated proxy and HTTP 2xx from `inference.local/v1/models`. Use only as a troubleshooting escape hatch. |
 <AgentOnly variant="openclaw">
 | `NEMOCLAW_PORTABLE_OLLAMA_REENROLL` | Exactly `1` for one recovery run | After you verify `${HOME}/.local/bin/ollama`, explicitly records that regular executable as NemoClaw-managed for a portable experimental-profile sandbox whose recorded provider is `ollama-local`. Use this once for a user-local Ollama that NemoClaw installed before ownership receipts existed. It never claims a system Ollama, symlink, non-executable file, or non-Ollama sandbox. |

@@ -548,7 +548,6 @@ describe("managed llama.cpp installer", () => {
     async (providerId) => {
       const selected = selection();
       const homeDir = temporaryHome();
-      const pullImage = vi.fn();
       const acquireGguf = vi.fn();
       const verifyGguf = vi.fn();
       const checkPort = vi.fn();
@@ -562,7 +561,6 @@ describe("managed llama.cpp installer", () => {
           sandboxName: "spark-agent",
           homeDir,
           runtimeProvider,
-          pullImage: pullImage as never,
           acquireGguf: acquireGguf as never,
           verifyGguf: verifyGguf as never,
           checkPort: checkPort as never,
@@ -573,7 +571,6 @@ describe("managed llama.cpp installer", () => {
         reason: `Runtime provider '${providerId}' does not provide the host-local-inference capability required for llama-cpp: Unsupported by this in-memory contract fixture.`,
       });
 
-      expect(pullImage).not.toHaveBeenCalled();
       expect(acquireGguf).not.toHaveBeenCalled();
       expect(verifyGguf).not.toHaveBeenCalled();
       expect(checkPort).not.toHaveBeenCalled();
@@ -586,7 +583,6 @@ describe("managed llama.cpp installer", () => {
     const homeDir = temporaryHome();
     const engineCapture = vi.fn<ContainerEngine["capture"]>();
     const hostCapture = vi.fn<ContainerEngine["captureHost"]>();
-    const pullImage = vi.fn();
     const acquireGguf = vi.fn();
     const verifyGguf = vi.fn();
     const checkPort = vi.fn();
@@ -602,7 +598,6 @@ describe("managed llama.cpp installer", () => {
         sandboxName: "spark-agent",
         homeDir,
         runtimeProvider,
-        pullImage: pullImage as never,
         acquireGguf: acquireGguf as never,
         verifyGguf: verifyGguf as never,
         checkPort: checkPort as never,
@@ -616,7 +611,6 @@ describe("managed llama.cpp installer", () => {
 
     expect(engineCapture).not.toHaveBeenCalled();
     expect(hostCapture).not.toHaveBeenCalled();
-    expect(pullImage).not.toHaveBeenCalled();
     expect(acquireGguf).not.toHaveBeenCalled();
     expect(verifyGguf).not.toHaveBeenCalled();
     expect(checkPort).not.toHaveBeenCalled();
@@ -630,14 +624,12 @@ describe("managed llama.cpp installer", () => {
     fs.mkdirSync(cacheParent, { mode: 0o700 });
     fs.chmodSync(cacheParent, 0o777);
     const harness = engineHarness();
-    const pullImage = vi.fn();
     const acquireGguf = vi.fn();
 
     const result = await installManagedLlamaCpp(selected, {
       sandboxName: "spark-agent",
       homeDir,
       runtimeProvider: managedRuntimeProvider(harness.engine),
-      pullImage: pullImage as never,
       acquireGguf: acquireGguf as never,
       checkPort: vi.fn(async () => ({ ok: true })),
       log: vi.fn(),
@@ -647,7 +639,7 @@ describe("managed llama.cpp installer", () => {
       ok: false,
       reason: "The shared cache parent is not current-user filesystem authority.",
     });
-    expect(pullImage).not.toHaveBeenCalled();
+    expect(harness.pulledImages).toEqual([]);
     expect(acquireGguf).not.toHaveBeenCalled();
     expect(harness.capture.mock.calls.some(([args]) => args[0] === "image")).toBe(false);
   });
@@ -658,14 +650,12 @@ describe("managed llama.cpp installer", () => {
     const cacheTarget = temporaryHome();
     fs.symlinkSync(cacheTarget, path.join(homeDir, ".cache"), "dir");
     const harness = engineHarness();
-    const pullImage = vi.fn();
     const acquireGguf = vi.fn();
 
     const result = await installManagedLlamaCpp(selected, {
       sandboxName: "spark-agent",
       homeDir,
       runtimeProvider: managedRuntimeProvider(harness.engine),
-      pullImage: pullImage as never,
       acquireGguf: acquireGguf as never,
       checkPort: vi.fn(async () => ({ ok: true })),
       log: vi.fn(),
@@ -675,7 +665,7 @@ describe("managed llama.cpp installer", () => {
       ok: false,
       reason: "The shared cache parent is not current-user filesystem authority.",
     });
-    expect(pullImage).not.toHaveBeenCalled();
+    expect(harness.pulledImages).toEqual([]);
     expect(acquireGguf).not.toHaveBeenCalled();
     expect(harness.capture.mock.calls.some(([args]) => args[0] === "image")).toBe(false);
   });
@@ -715,7 +705,6 @@ describe("managed llama.cpp installer", () => {
     } satisfies DockerLlamaCppManagedLifecycle;
     const createLifecycle = vi.fn(() => lifecycle);
     const verifyGguf = vi.fn(async () => artifact);
-    const pullImage = vi.fn();
     const acquireGguf = vi.fn();
 
     await expect(
@@ -723,7 +712,6 @@ describe("managed llama.cpp installer", () => {
         sandboxName: "spark-agent",
         homeDir: home.alias,
         runtimeProvider: managedRuntimeProvider(harness.engine, createLifecycle),
-        pullImage: pullImage as never,
         acquireGguf: acquireGguf as never,
         verifyGguf,
         checkPort: vi.fn(async () => ({ ok: true })),
@@ -737,7 +725,7 @@ describe("managed llama.cpp installer", () => {
     );
     expect(fs.lstatSync(cacheRoot, { bigint: true }).ino).toBe(cacheIdentity.ino);
     expect(fs.existsSync(managedLlamaCppStatePaths(home.canonical).ownerPath)).toBe(true);
-    expect(pullImage).not.toHaveBeenCalled();
+    expect(harness.pulledImages).toEqual([]);
     expect(acquireGguf).not.toHaveBeenCalled();
   });
 
@@ -983,10 +971,6 @@ describe("managed llama.cpp installer", () => {
     } satisfies DockerLlamaCppManagedLifecycle;
     const createLifecycle = vi.fn(() => lifecycle);
     const harness = engineHarness();
-    const pullImage = vi.fn(async (image: string) => {
-      harness.images.add(image);
-      return { status: 0 };
-    }) as never;
     const acquireGguf = vi.fn(async () => artifact);
     const verifyGguf = vi.fn(async () => {
       throw new Error("not cached");
@@ -997,7 +981,6 @@ describe("managed llama.cpp installer", () => {
       sandboxName: "spark-agent",
       homeDir,
       runtimeProvider,
-      pullImage,
       acquireGguf,
       verifyGguf,
       checkPort: vi.fn(async () => ({ ok: true })),
@@ -1009,7 +992,7 @@ describe("managed llama.cpp installer", () => {
       model: "nvidia-nemotron-3-nano-30b-a3b",
       receipt,
     });
-    expect(pullImage).toHaveBeenCalledTimes(2);
+    expect(harness.pulledImages).toHaveLength(2);
     expect(acquireGguf).toHaveBeenCalledWith(
       expect.objectContaining({
         execution: expect.objectContaining({
@@ -1048,6 +1031,100 @@ describe("managed llama.cpp installer", () => {
       }),
     );
     expect(lifecycle.start).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    [
+      "authentication",
+      { status: 1, stderr: "unauthorized: authentication required" },
+      "authentication-failure",
+    ],
+    ["storage", { status: 1, stderr: "no space left on device" }, "runner-storage-exhaustion"],
+    [
+      "runner network",
+      { status: 1, stderr: "dial tcp: temporary failure in name resolution" },
+      "runner-network-failure",
+    ],
+    [
+      "invalid dependency",
+      { status: 1, stderr: "manifest unknown: manifest not found" },
+      "image-manifest-unavailable",
+    ],
+    [
+      "registry availability",
+      { status: 1, stderr: "registry returned 503 Service Unavailable" },
+      "registry-availability-failure",
+    ],
+    [
+      "daemon behavior",
+      { status: 1, error: new Error("error during connect: dial tcp: connection refused") },
+      "container-runtime-failure",
+    ],
+    ["unclassified", { status: 7, stderr: "opaque pull failure" }, "unclassified-pull-failure"],
+  ])(
+    "classifies a failed image pull from diagnostic signatures as %s (#10558)",
+    async (layer, pullResult, expectedCode) => {
+      const selected = selection();
+      const homeDir = temporaryHome();
+      const harness = engineHarness();
+      harness.pullResults.push({ stdout: "", stderr: "", ...pullResult });
+
+      const result = await installManagedLlamaCpp(selected, {
+        sandboxName: "spark-agent",
+        homeDir,
+        runtimeProvider: managedRuntimeProvider(harness.engine),
+        verifyGguf: vi.fn(async () => {
+          throw new Error("not cached");
+        }),
+        checkPort: vi.fn(async () => ({ ok: true })),
+        log: vi.fn(),
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining(
+          `Failure classification: ${layer}. Diagnostic code: ${expectedCode}.`,
+        ),
+      });
+    },
+  );
+
+  it("suppresses untrusted pull output from the failure reason and installer log (#10558)", async () => {
+    const selected = selection();
+    const homeDir = temporaryHome();
+    const harness = engineHarness();
+    const secret = "opaque-value-with-no-credential-shape";
+    const terminalControls = "\u001b]0;forged title\u0007\u001b[31m\u202e";
+    const pullOutput =
+      `${"x".repeat(1_000)} stdout cause ${terminalControls}unauthorized: ` +
+      `https://pull-user:${secret}@registry.example/v2/image?token=${secret}`;
+    const pullStderr = `stderr cause token=${secret}`;
+    const pullError = new Error(`error cause Authorization: Bearer ${secret}`);
+    const log = vi.fn();
+    harness.pullResults.push({
+      status: 1,
+      stdout: pullOutput,
+      stderr: pullStderr,
+      error: pullError,
+    });
+    const result = await installManagedLlamaCpp(selected, {
+      sandboxName: "spark-agent",
+      homeDir,
+      runtimeProvider: managedRuntimeProvider(harness.engine),
+      verifyGguf: vi.fn(async () => {
+        throw new Error("not cached");
+      }),
+      checkPort: vi.fn(async () => ({ ok: true })),
+      log,
+    });
+
+    const failure = result as Extract<typeof result, { readonly ok: false }>;
+    expect(failure.reason).toContain(
+      "Failure classification: authentication. Diagnostic code: authentication-failure. Exit status: 1. Raw pull output suppressed.",
+    );
+    expect(failure.reason).not.toContain(secret);
+    expect(log.mock.calls.flat().join("\n")).not.toContain(secret);
+    expect(log.mock.calls.flat().join("\n")).not.toContain("unauthorized");
   });
 
   it("resumes an exact cached runtime without image pulls or Hugging Face acquisition", async () => {
@@ -1124,7 +1201,6 @@ describe("managed llama.cpp installer", () => {
       runtime: {} as DockerLlamaCppManagedLifecycle["runtime"],
       start: vi.fn(() => receipt),
     } satisfies DockerLlamaCppManagedLifecycle;
-    const pullImage = vi.fn();
     const acquireGguf = vi.fn();
     const checkPort = vi.fn();
 
@@ -1133,7 +1209,6 @@ describe("managed llama.cpp installer", () => {
         sandboxName: "spark-agent",
         homeDir,
         runtimeProvider: managedRuntimeProvider(harness.engine, () => lifecycle),
-        pullImage: pullImage as never,
         acquireGguf: acquireGguf as never,
         verifyGguf: vi.fn(async () => artifact),
         checkPort: checkPort as never,
@@ -1141,7 +1216,7 @@ describe("managed llama.cpp installer", () => {
       }),
     ).resolves.toMatchObject({ ok: true, receipt });
 
-    expect(pullImage).not.toHaveBeenCalled();
+    expect(harness.pulledImages).toEqual([]);
     expect(acquireGguf).not.toHaveBeenCalled();
     expect(checkPort).not.toHaveBeenCalled();
     expect(lifecycle.resume).toHaveBeenCalledWith(receipt);
@@ -1160,14 +1235,12 @@ describe("managed llama.cpp installer", () => {
       recipeId: selected.recipe.metadata.id,
     });
     const harness = engineHarness();
-    const pullImage = vi.fn();
     const acquireGguf = vi.fn();
 
     const result = await installManagedLlamaCpp(selected, {
       sandboxName: "second-sandbox",
       homeDir,
       runtimeProvider: managedRuntimeProvider(harness.engine),
-      pullImage: pullImage as never,
       acquireGguf: acquireGguf as never,
       log: vi.fn(),
     });
@@ -1177,7 +1250,6 @@ describe("managed llama.cpp installer", () => {
       reason: "Managed llama.cpp on this gateway is already reserved by sandbox 'first-sandbox'.",
     });
     expect(harness.capture).not.toHaveBeenCalled();
-    expect(pullImage).not.toHaveBeenCalled();
     expect(acquireGguf).not.toHaveBeenCalled();
   });
 
@@ -1185,14 +1257,12 @@ describe("managed llama.cpp installer", () => {
     const selected = selection();
     const homeDir = temporaryHome();
     const harness = engineHarness();
-    const pullImage = vi.fn();
     const acquireGguf = vi.fn();
 
     const result = await installManagedLlamaCpp(selected, {
       sandboxName: "spark-agent",
       homeDir,
       runtimeProvider: managedRuntimeProvider(harness.engine),
-      pullImage: pullImage as never,
       acquireGguf: acquireGguf as never,
       checkPort: vi.fn(async () => ({
         ok: false,
@@ -1207,7 +1277,7 @@ describe("managed llama.cpp installer", () => {
       ok: false,
       reason: "Managed llama.cpp port 8081 is unavailable: foreign-server is listening",
     });
-    expect(pullImage).not.toHaveBeenCalled();
+    expect(harness.pulledImages).toEqual([]);
     expect(acquireGguf).not.toHaveBeenCalled();
     expect(harness.capture.mock.calls.every(([args]) => args[0] !== "image")).toBe(true);
     expect(fs.existsSync(managedLlamaCppStatePaths(homeDir).stateDir)).toBe(false);

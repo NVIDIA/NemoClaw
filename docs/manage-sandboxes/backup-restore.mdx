@@ -107,13 +107,13 @@ $$nemoclaw my-assistant snapshot list
 If a timed shields-down window expires during snapshot work, the deadline gate blocks new mutations and waits for the exact snapshot owner to finish without signaling it. Snapshot work does not bypass recovery for an expired shields-down window.
 
 <AgentOnly variant="openclaw,hermes">
-Follow [Timed Shields Windows](../configure-sandboxes/understand-runtime-changes#timed-shields-windows) to correct state-directory failures or complete exact-generation recovery before you rerun `$$nemoclaw <name> snapshot create`.
+Follow [Timed Shields Windows](../configure-sandboxes/understand-runtime-changes#timed-shields-windows) to correct state-directory failures or complete generation recovery before you rerun `$$nemoclaw <name> snapshot create`.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 If a state-directory failure prevents gate publication, normal mutation-lock acquisition also fails.
 If recovery reports a state-directory failure, correct it and run `$$nemoclaw <name> shields status`.
-Durable containment or retained exact gates keep new mutations blocked until you complete exact-generation recovery.
-If the command reports exact-generation recovery guidance, stop all NemoClaw processes for the sandbox and follow that guidance before you rerun `$$nemoclaw <name> snapshot create`.
+Durable containment or retained gates keep new mutations blocked until you complete generation recovery.
+If the command reports generation recovery guidance, stop all NemoClaw processes for the sandbox and follow that guidance before you rerun `$$nemoclaw <name> snapshot create`.
 </AgentOnly>
 
 Tag a snapshot with a human-readable label:

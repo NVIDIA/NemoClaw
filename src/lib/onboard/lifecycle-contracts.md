@@ -53,7 +53,7 @@ Every nonterminal state has one production owner or an explicit internal designa
 | `post_verify` | `handlePostVerifyState` in `machine/handlers/finalization.ts` |
 | `complete`, `failed` | Terminal; no handler |
 
-The initial, core, and final flows give the strict runner ownership from the durable entry state. If a saved session is later than a slice entry, the flow runs earlier handlers as prerequisite repairs. Each repair emits a `state.repair.started` event and then a `state.repair.completed` or `state.repair.failed` event. A repair must return a legal, update-free transition chain and leave the durable state unchanged. The flow validates but does not apply the repair transitions. The repaired context then feeds the strict runner at an exact state or the next flow slice.
+The initial, core, and final flows give the strict runner ownership from the durable entry state. If a saved session is later than a slice entry, the flow runs earlier handlers as prerequisite repairs. Each repair emits a `state.repair.started` event and then a `state.repair.completed` or `state.repair.failed` event. A repair must return a legal, update-free transition chain and leave the durable state unchanged. The flow validates but does not apply the repair transitions. The repaired context then feeds the strict runner at a state or the next flow slice.
 
 FSM transitions remain step-granular.
 For OpenClaw onboarding, the sandbox handler additionally checkpoints each completed secret-free prompt group: sandbox name, web search selection, messaging selection and non-secret configuration, and resource profile.
@@ -91,8 +91,8 @@ fresh OpenClaw onboard
   resolve entry options -> save session/machine* -> host preflight
   -> gateway/inference-provider effects -> checkpoint name/identity and web prompts*
   -> checkpoint messaging prompts*
-  -> create or update exact web-search provider + save binding receipt*
-  -> create or update exact messaging providers + save binding receipts*
+  -> create or update web-search provider + save binding receipt*
+  -> create or update messaging providers + save binding receipts*
   -> checkpoint resource prompt*
   -> resolve complete sandbox-create intent
   -> materialize create plan -> create -> ready -> live validation -> register
@@ -185,7 +185,7 @@ Custom-image plugin provenance, explicit installer restore intent, the absent-ba
 
 Managed-image backups use one provider-neutral authority path for explicit snapshot creation, `backup-all`, stopped-sandbox backup retries, and rebuild backups.
 The contract applies to OpenClaw, Hermes, and Deep Agents Code.
-The path records the exact managed workload receipt and a versioned runtime receipt from the sandbox's registered provider.
+The path records the managed workload receipt and a versioned runtime receipt from the sandbox's registered provider.
 The state layer copies and sanitizes the backup before it invokes the provider fence.
 The fence re-reads the registry row and re-observes the provider runtime.
 The state layer publishes the manifest atomically only when the workload, provider, lifecycle generation, runtime identity, and acceleration receipt still match.
@@ -204,30 +204,28 @@ The provider-neutral receipt can represent another provider, including an MXC-st
 
 Legacy and custom-image snapshots retain their state-only backup and restore path.
 The managed authority path backs ordinary Docker onboarding and recreation for the shipped managed agents without activating another runtime provider.
-The raw state layer still rejects a managed manifest unless both exact content authority and a runtime-validation fence are present.
+The raw state layer still rejects a managed manifest unless both content authority and a runtime-validation fence are present.
 Cross-provider clone and rebind, durable interrupted-restore recovery, and provider expansion remain separately reviewable units tracked by the [incremental runtime epic](https://github.com/NVIDIA/NemoClaw/issues/7744).
-If provider proof fails after filesystem restoration, NemoClaw reports that state changed and requires the operator to retry the exact snapshot after the runtime stabilizes.
+If provider proof fails after filesystem restoration, NemoClaw reports that state changed and requires the operator to retry the same selected snapshot after the runtime stabilizes.
 
-## Dormant Podman managed bootstrap authority
+## Dormant Podman managed-bootstrap authority
 
 The Podman candidate owns a separate `managed-bootstrap` command scope bound
-to one exact rootless engine authority. Before a bootstrap mutation, it
+to one rootless engine authority. Before a bootstrap mutation, it
 discovers and stably inspects exactly one held OpenShell workload and acquires a
-durable lease over the exact watcher process and lifecycle owner. Ambiguous
+durable lease over the watcher process and lifecycle owner. Ambiguous
 workloads, watcher ownership, PID reuse, endpoint drift, or a competing lease
 fail closed.
 
 Preparation creates a private managed state volume and a stopped,
-final-labelled replacement while retaining the exact original. Its monotonic
+final-labelled replacement while retaining the original. Its monotonic
 journal records the engine authority, watcher lease, immutable original and
 replacement identities, image and specification fingerprints, state volume,
 and rollback decision before each external effect. Pre-commit rollback removes
-only the proven stopped replacement and owned volume, restores the exact
-original, and leaves the watcher lease with the caller until a healthy exact
-owner is independently requalified.
+only the proven stopped replacement and owned volume, restores the original, and leaves the watcher lease with the caller until a healthy owner is independently requalified.
 
 The image transaction accepts only that prepared authority. It stages one
-protected root-apply request, starts the exact replacement, and authenticates
+protected root-apply request, starts the replacement, and authenticates
 the image-owned completion for OpenClaw, Hermes, or LangChain Deep Agents Code.
 The watcher stays stopped and the journal remains authoritative throughout.
 These provider-owned modules remain disconnected from production runtime
@@ -250,7 +248,7 @@ The schema and sanitation authority is `Session` plus `normalizeSession`/`filter
 | Field group | Fields | Writer/owner and state meaning |
 |---|---|---|
 | Session envelope | `version`, `sessionId`, `mode`, `startedAt`, `updatedAt`, `status`, `resumable` | `createSession`, save/update helpers, and completion/failure paths. Values are always known after creation. |
-| Progress and recovery | `lastStepStarted`, `lastCompletedStep`, `failure`, `steps`, `machine`, `sandboxPromptProgress`, `stagedCredentialProviders`, `checkpoint` | Step helpers record step-progress bookkeeping and context updates accepted by `filterSafeUpdates`. `OnboardRuntime` owns machine transitions, terminal state, and machine events. Explicit session recovery and the process-exit failure backstop are separate recovery boundaries. The OpenClaw sandbox handler owns prompt-group completion markers. `stagedCredentialProviders` contains only names registered before sandbox setup so OpenClaw resume can require both durable ownership and an exact live binding. A recreate journal handed to this run by the driver that owns the replacement — matching sandbox name and target-intent fingerprint, and past the delete boundary at `deleted` — is the equivalent ownership proof for a replacement that reset the session and can no longer read a host credential, and it stays paired with the same exact live binding check. A journal merely resident in the session is not that proof, because nothing binds it to this run: one survives a failed attempt, and one is opened straight at `deleted` when the sandbox is already missing. Provider-effect replay requires the receipt provider set to match the providers selected by the current web search configuration or messaging plan. Each persisted and live provider name, provider type, and credential key must match before the handler skips registration. After a successful replay, the handler replaces obsolete bindings owned by that effect group before sandbox creation and preserves bindings owned by the other provider effect group. A marker is trusted only when its matching persisted value is present and valid, including an explicit `null` where supported. `checkpoint` is the dedicated versioned resume contract: a secret-free tri-state decision record plus durable sandbox identity, effect-group receipts, and logical web-search and messaging provider bindings, serialized alongside the session under its own `schemaVersion` with fail-closed handling of an unknown future version. The primary inference provider binding remains owned and revalidated by the provider and inference phases instead of entering this checkpoint ledger. |
+| Progress and recovery | `lastStepStarted`, `lastCompletedStep`, `failure`, `steps`, `machine`, `sandboxPromptProgress`, `stagedCredentialProviders`, `checkpoint` | Step helpers record step-progress bookkeeping and context updates accepted by `filterSafeUpdates`. `OnboardRuntime` owns machine transitions, terminal state, and machine events. Explicit session recovery and the process-exit failure backstop are separate recovery boundaries. The OpenClaw sandbox handler owns prompt-group completion markers. `stagedCredentialProviders` contains only names registered before sandbox setup so OpenClaw resume can require both durable ownership and a live binding. A recreate journal handed to this run by the driver that owns the replacement — matching sandbox name and target-intent fingerprint, and past the delete boundary at `deleted` — is the equivalent ownership proof for a replacement that reset the session and can no longer read a host credential, and it stays paired with the same live binding check. A journal merely resident in the session is not that proof, because nothing binds it to this run: one survives a failed attempt, and one is opened straight at `deleted` when the sandbox is already missing. Provider-effect replay requires the receipt provider set to match the providers selected by the current web search configuration or messaging plan. Each persisted and live provider name, provider type, and credential key must match before the handler skips registration. After a successful replay, the handler replaces obsolete bindings owned by that effect group before sandbox creation and preserves bindings owned by the other provider effect group. A marker is trusted only when its matching persisted value is present and valid, including an explicit `null` where supported. `checkpoint` is the dedicated versioned resume contract: a secret-free tri-state decision record plus durable sandbox identity, effect-group receipts, and logical web-search and messaging provider bindings, serialized alongside the session under its own `schemaVersion` with fail-closed handling of an unknown future version. The primary inference provider binding remains owned and revalidated by the provider and inference phases instead of entering this checkpoint ledger. |
 | Target identity | `agent`, `sandboxName`, `metadata.gatewayName`, `metadata.fromDockerfile` | Onboard selection, sandbox handler/registration, and rebuild session preparation. A completed sandbox step or valid `sandboxPromptProgress.sandboxName` marker is the trust gate for a recorded name. |
 | Inference intent | `provider`, `model`, `endpointUrl`, `credentialEnv`, `preferredInferenceApi`, `compatibleEndpointReasoning`, `nimContainer`, `webSearchConfig` | Provider/inference handlers and `runInferenceSet`. Known credential state is an environment-variable name or presence metadata, never the value. `redactUrl` masks userinfo and fragments, redacts values under sensitive parameter names, and redacts canonical token-shaped values even under benign parameter names. |
 | Agent and policy intent | `hermesAuthMethod`, `toolDisclosure`, `hermesToolGateways` | Agent setup retains feature choices only. Policy requirements are read from and applied to OpenShell; the session does not persist ownership, receipts, or preset attribution. |

@@ -196,7 +196,7 @@ Use the matching credential variable when you select another provider. Refer to 
 
 ## Verify Readiness
 
-Do not use process presence as the sandbox-ready signal. The authoritative OpenShell signal is the exact row for `headless-agent` in phase `Ready` or `Running`. The substring `NotReady` is not a ready state.
+Do not use process presence as the sandbox-ready signal. The authoritative OpenShell signal is the row for `headless-agent` in phase `Ready` or `Running`. The substring `NotReady` is not a ready state.
 
 Run each verification on the remote host:
 
@@ -220,7 +220,7 @@ The command prints one `Probe timing:` line with elapsed milliseconds for `readi
 
 Readiness requires all of these results:
 
-- The exact OpenShell sandbox row is `Ready` or `Running`.
+- The OpenShell sandbox row is `Ready` or `Running`.
 - `$$nemoclaw headless-agent status` exits with status `0` and reports the inference route as `healthy`.
 - `$$nemoclaw headless-agent connect --probe-only` exits with status `0`.
 
@@ -289,7 +289,7 @@ NemoClaw separates provider credentials, host metadata, and sandbox state.
 
 | Boundary | Stored data | Rebuild behavior |
 | --- | --- | --- |
-| OpenShell gateway | Provider credentials and provider registrations | Reused when the gateway and exact provider binding remain available. Raw values cannot be read back. |
+| OpenShell gateway | Provider credentials and provider registrations | Reused when the gateway and provider binding remain available. Raw values cannot be read back. |
 | `~/.nemoclaw/` on the host | Sandbox registry, provider names, and onboarding session state | Preserved by normal updates. The directory contains no sandbox policy or provider credential values. |
 | Agent configuration in the sandbox | Generated inference routes, OpenShell resolver placeholders, and agent-specific settings | Regenerated from host registry and OpenShell state. Generated files are not a credential store. |
 | Manifest-defined sandbox state | Agent workspace, memory, skills, and agent-specific durable files | Snapshotted and restored according to the selected agent manifest. |
@@ -437,7 +437,7 @@ Reattach to the `tmux` or `screen` session first. If the process exited with a r
 
 ### The Sandbox Is Missing or Not Ready
 
-Run `openshell sandbox list` and inspect the exact row for `headless-agent`. `NotReady` does not satisfy readiness. Run `$$nemoclaw headless-agent status`, then use its `start`, `connect --probe-only`, or `rebuild --yes` guidance.
+Run `openshell sandbox list` and inspect the row for `headless-agent`. `NotReady` does not satisfy readiness. Run `$$nemoclaw headless-agent status`, then use its `start`, `connect --probe-only`, or `rebuild --yes` guidance.
 
 ### Inference Returns HTTP 5xx
 

@@ -85,7 +85,7 @@ Current NemoClaw-managed Hermes images on the Docker driver use the `provider-st
 
 - The registered sandbox is a managed Hermes image.
 - The sandbox registry records its lifecycle generation.
-- The image exposes the exact root-owned capability installed by NemoClaw.
+- The image exposes the root-owned capability installed by NemoClaw.
 
 An older managed image uses the sealed-plan transition only after NemoClaw proves that the capability is absent. A custom image, including a legacy Dockerfile workflow, remains on its existing sealed-plan or compatibility contract and cannot opt in by adding a similarly named file. An invalid capability that is present fails closed and requires a rebuild with a current managed image.
 
@@ -111,7 +111,7 @@ NemoClaw serializes host-side gateway recovery, config and inference writes, sna
 
 If the timeout expires while a mutation is changing sandbox state, auto-restore closes the per-sandbox lifecycle deadline gate. The gate blocks new mutations and waits for the recorded live owner to release its exact lock generation. NemoClaw does not signal that process because portable process inspection cannot prove that all descendants stopped. After the owner releases the lock, auto-restore restores the restrictive policy and configuration posture. The ownership check includes both the process ID and process start identity so PID reuse does not grant control over an unrelated process.
 
-### Complete Exact-Generation Recovery
+### Complete Generation Recovery
 
 An interactive command can take over an expired timer. Interactive recovery has separate transition-takeover and restoration phases. Each phase makes up to 7 attempts and waits 5 seconds between failures, for up to 30 seconds of retry delay per phase. Detached recovery uses one 7-attempt budget across deadline setup, main-generation publication, and restoration. The deadline gate remains closed during those attempts.
 
