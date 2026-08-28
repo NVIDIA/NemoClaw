@@ -1099,6 +1099,9 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       if (!flow) {
         throw new Error("production managed-bootstrap flow returned no result");
       }
+      if (flow.origin !== "created") {
+        throw new Error("production managed-bootstrap flow unexpectedly resumed an existing sandbox");
+      }
       const expectedRoute = gpuEnabled ? "native" : "none";
       if (flow.route !== expectedRoute || flow.createResult.status !== 0) {
         throw new Error(

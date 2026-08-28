@@ -66,7 +66,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates=20250419 \
         curl=8.14.1-2+deb13u4 \
         git=1:2.47.3-0+deb13u1 \
-        libssl-dev=3.5.6-1~deb13u2 \
+        libssl-dev=3.5.7-1~deb13u2 \
         openssh-server=1:10.0p1-7+deb13u4 \
         xz-utils=5.8.1-1+deb13u1 \
         zlib1g-dev=1:1.3.dfsg+really1.3.1-1+b1 \
@@ -127,6 +127,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         iptables=1.8.11-2 \
         nftables=1.1.3-1 \
         libcap2-bin=1:2.75-10+deb13u1+b1 \
+        libssl3t64=3.5.7-1~deb13u2 \
         util-linux=2.41-5 \
         procps=2:4.0.4-9 \
         e2fsprogs=1.47.2-3+b11 \
@@ -207,6 +208,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && test "$(dpkg-query -W -f='${Version}' vim-common)" = "2:9.2.0858-1" \
     && test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0858-1" \
     && test "$(dpkg-query -W -f='${Version}' libssh2-1t64)" = "1.11.1-1+deb13u1+nemoclaw2" \
+    && test "$(dpkg-query -W -f='${Version}' libssl3t64)" = "3.5.7-1~deb13u2" \
     && test "$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)" = "3.13.5-2+deb13u4+nemoclaw1" \
     && test "$(dpkg-query -W -f='${Version}' perl)" = "$perl_version_before" \
     && test "$(jq --version)" = "jq-1.8.2" \
@@ -231,6 +233,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         "vim-common=2:9.2.0858-1" \
         "vim-tiny=2:9.2.0858-1" \
         "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2" \
+        "libssl3t64=3.5.7-1~deb13u2" \
         "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" \
         > /usr/local/share/nemoclaw/security-packages.txt \
     && chown root:root /usr/local/share/nemoclaw/security-packages.txt \

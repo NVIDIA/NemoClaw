@@ -103,6 +103,8 @@ If an operator drain exists, recovery prints `Hermes cron restore gate cleared; 
 The command does not own or clear the Hermes operator drain, so new Hermes turns and cron dispatch remain blocked while that drain is active.
 If gate reacquisition or cron validation fails, `recover` exits nonzero and retains the recovery state for another attempt.
 
+Portable Hermes recovery follows the exact receipt-bound start, authenticated-health, and rollback contract in the [`recover` command reference](../../reference/commands#nemoclaw-name-recover).
+
 Use `gateway restart` when you intentionally need a supported Hermes gateway to reload runtime configuration or plugins.
 
 ```bash

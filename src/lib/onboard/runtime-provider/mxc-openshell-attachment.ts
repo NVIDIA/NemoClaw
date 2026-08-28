@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { cloneAndDeepFreeze } from "../../core/immutable";
 
-export const MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION = 1 as const;
+export const MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION = 2 as const;
 
 const PROVIDER_ID = "mxc";
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
@@ -15,6 +15,7 @@ const REVISION_PATTERN = /^[a-f0-9]{7,64}$/u;
 const VERSION_PATTERN =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+(?:[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/u;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
+const LOCAL_DRIVE_PATH_PATTERN = /^[A-Za-z]:\\/u;
 const MAX_TEXT_BYTES = 4096;
 
 type ExactDistributionIdentity = {
@@ -35,7 +36,7 @@ type ExactGatewayIdentity = {
   readonly backend: "process_container";
 };
 
-export interface MxcOpenShellAttachmentExpectation {
+interface MxcOpenShellAttachmentExpectation {
   readonly distribution: ExactDistributionIdentity;
   readonly components: ExactComponentIdentity;
   readonly gateway: ExactGatewayIdentity;
@@ -43,6 +44,7 @@ export interface MxcOpenShellAttachmentExpectation {
 
 export interface MxcOpenShellAttachmentObservation extends MxcOpenShellAttachmentExpectation {
   readonly distributionRoot: string;
+  readonly mxcRoot: string;
   readonly cliPath: string;
   readonly gatewayPath: string;
   readonly wxcExecPath: string;
@@ -65,7 +67,7 @@ export interface MxcOpenShellAttachmentReceipt {
   readonly components: {
     readonly cli: { readonly path: string; readonly sha256: string };
     readonly gateway: { readonly path: string; readonly sha256: string };
-    readonly wxcExec: { readonly path: string; readonly sha256: string };
+    readonly wxcExec: { readonly root: string; readonly path: string; readonly sha256: string };
   };
   readonly gateway: ExactGatewayIdentity & { readonly configPath: string };
 }
@@ -124,10 +126,13 @@ function canonicalWindowsPath(value: unknown, label: string): string {
     typeof value !== "string" ||
     Buffer.byteLength(value, "utf8") > MAX_TEXT_BYTES ||
     CONTROL_CHARACTER_PATTERN.test(value) ||
+    !LOCAL_DRIVE_PATH_PATTERN.test(value) ||
     !path.win32.isAbsolute(value) ||
     path.win32.normalize(value) !== value
   ) {
-    throw new MxcOpenShellAttachmentError(`${label} must be a canonical absolute Windows path`);
+    throw new MxcOpenShellAttachmentError(
+      `${label} must be a canonical absolute local-drive Windows path`,
+    );
   }
   return value;
 }
@@ -200,6 +205,7 @@ function parseObservation(value: unknown): MxcOpenShellAttachmentObservation {
       "gateway",
       "gatewayConfigPath",
       "gatewayPath",
+      "mxcRoot",
       "wxcExecPath",
     ],
     "observed attachment",
@@ -210,6 +216,7 @@ function parseObservation(value: unknown): MxcOpenShellAttachmentObservation {
     gateway: parseGateway(input.gateway, "observed attachment gateway"),
   };
   const distributionRoot = canonicalWindowsPath(input.distributionRoot, "distribution root");
+  const mxcRoot = canonicalWindowsPath(input.mxcRoot, "MXC root");
   const cliPath = canonicalWindowsPath(input.cliPath, "OpenShell CLI path");
   const gatewayPath = canonicalWindowsPath(input.gatewayPath, "OpenShell gateway path");
   const wxcExecPath = canonicalWindowsPath(input.wxcExecPath, "wxc-exec path");
@@ -220,7 +227,6 @@ function parseObservation(value: unknown): MxcOpenShellAttachmentObservation {
   for (const [label, candidate] of [
     ["OpenShell CLI", cliPath],
     ["OpenShell gateway", gatewayPath],
-    ["wxc-exec", wxcExecPath],
   ] as const) {
     if (!pathWithin(distributionRoot, candidate)) {
       throw new MxcOpenShellAttachmentError(
@@ -228,9 +234,13 @@ function parseObservation(value: unknown): MxcOpenShellAttachmentObservation {
       );
     }
   }
+  if (!pathWithin(mxcRoot, wxcExecPath)) {
+    throw new MxcOpenShellAttachmentError("wxc-exec path must remain inside the observed MXC root");
+  }
   return {
     ...identity,
     distributionRoot,
+    mxcRoot,
     cliPath,
     gatewayPath,
     wxcExecPath,
@@ -255,7 +265,7 @@ function sameIdentity(
  * The caller must obtain the expectation from a trusted provider source, not
  * from the host observation that will be qualified against it.
  */
-export function createMxcOpenShellAttachmentAuthority(
+function createMxcOpenShellAttachmentAuthority(
   expectation: unknown,
 ): MxcOpenShellAttachmentAuthority {
   const accepted = cloneAndDeepFreeze(parseExpectation(expectation, "accepted attachment"));
@@ -278,6 +288,34 @@ export function createMxcOpenShellAttachmentAuthority(
   });
   ACCEPTED_IDENTITIES.set(authority, accepted);
   return authority;
+}
+
+/**
+ * Create the fixed, non-production authority used by attachment contract tests.
+ *
+ * The caller may vary only the SemVer value under test. Component identities stay fixed so this
+ * helper cannot turn caller-observed digests into accepted provider authority.
+ */
+export function createMxcOpenShellAttachmentTestAuthority(
+  version: string,
+): MxcOpenShellAttachmentAuthority {
+  return createMxcOpenShellAttachmentAuthority({
+    distribution: {
+      version,
+      revision: "a".repeat(40),
+      sha256: "1".repeat(64),
+    },
+    components: {
+      cliSha256: "2".repeat(64),
+      gatewaySha256: "3".repeat(64),
+      wxcExecSha256: "4".repeat(64),
+    },
+    gateway: {
+      configSha256: "5".repeat(64),
+      driver: "mxc",
+      backend: "process_container",
+    },
+  });
 }
 
 function acceptedIdentity(authority: unknown): MxcOpenShellAttachmentExpectation {
@@ -317,7 +355,11 @@ export function qualifyMxcOpenShellAttachment(
     components: {
       cli: { path: observed.cliPath, sha256: observed.components.cliSha256 },
       gateway: { path: observed.gatewayPath, sha256: observed.components.gatewaySha256 },
-      wxcExec: { path: observed.wxcExecPath, sha256: observed.components.wxcExecSha256 },
+      wxcExec: {
+        root: observed.mxcRoot,
+        path: observed.wxcExecPath,
+        sha256: observed.components.wxcExecSha256,
+      },
     },
     gateway: {
       ...observed.gateway,
