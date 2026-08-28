@@ -9,30 +9,25 @@ import {
   PolicyObservationError,
 } from "../../adapters/openshell/policy-state";
 import { assertPolicyRequirementContainment, parseOpenShellPolicy } from "../../policy/merge";
-import type { SelectedDockerGpuRoute } from "../docker-gpu-route";
 
-export interface CreatedSandboxPolicyRequirementsInput {
+export interface LiveCreatedSandboxPolicyRequirementsInput {
   readonly sandboxName: string;
   readonly gatewayName: string;
   readonly gatewayPort: number;
-  readonly lifecycleGeneration: string;
-  readonly lifecycleLiveIdentityFingerprint: string;
   readonly policySourcePath: string;
-  readonly route: SelectedDockerGpuRoute;
 }
 
-export interface CreatedSandboxPolicyRequirementsDeps {
+export interface LiveCreatedSandboxPolicyRequirementsDeps {
   readonly readFile?: typeof fs.readFileSync;
-  readonly sleep?: (seconds: number) => void;
 }
 
-export interface CreatedSandboxPolicyRequirementsCheck extends CreatedSandboxPolicyRequirementsInput {
+export interface LiveCreatedSandboxPolicyRequirementsCheck extends LiveCreatedSandboxPolicyRequirementsInput {
   readonly operation: string;
 }
 
 function readRequiredPolicy(
-  input: CreatedSandboxPolicyRequirementsInput & { readonly operation: string },
-  deps: CreatedSandboxPolicyRequirementsDeps,
+  input: LiveCreatedSandboxPolicyRequirementsCheck,
+  deps: LiveCreatedSandboxPolicyRequirementsDeps,
 ) {
   try {
     return parseOpenShellPolicy((deps.readFile ?? fs.readFileSync)(input.policySourcePath, "utf8"))
@@ -45,8 +40,8 @@ function readRequiredPolicy(
 }
 
 function observeCurrentPolicy(
-  input: CreatedSandboxPolicyRequirementsInput & { readonly operation: string },
-  deps: CreatedSandboxPolicyRequirementsDeps,
+  input: LiveCreatedSandboxPolicyRequirementsCheck,
+  deps: LiveCreatedSandboxPolicyRequirementsDeps,
 ): void {
   assertOpenShellGatewayPortBinding({
     gatewayName: input.gatewayName,
@@ -64,24 +59,10 @@ function observeCurrentPolicy(
   }
 }
 
-export function verifyCreatedApfInterceptorPolicyRequirements(
-  input: CreatedSandboxPolicyRequirementsCheck,
-  deps: CreatedSandboxPolicyRequirementsDeps = {},
-): void {
-  observeCurrentPolicy(input, deps);
-}
-
-export function verifyCreatedSandboxPolicyRequirements(
-  input: CreatedSandboxPolicyRequirementsCheck,
-  deps: CreatedSandboxPolicyRequirementsDeps = {},
-): void {
-  observeCurrentPolicy(input, deps);
-}
-
-/** Re-read current policy requirements without comparing a prior policy identity. */
-export function verifyCurrentCreatedSandboxPolicyRequirements(
-  input: CreatedSandboxPolicyRequirementsCheck,
-  deps: CreatedSandboxPolicyRequirementsDeps = {},
+/** Verify a created sandbox against the current live OpenShell policy. */
+export function verifyLiveCreatedSandboxPolicyRequirements(
+  input: LiveCreatedSandboxPolicyRequirementsCheck,
+  deps: LiveCreatedSandboxPolicyRequirementsDeps = {},
 ): void {
   observeCurrentPolicy(input, deps);
 }

@@ -45,9 +45,7 @@ import {
   sandboxCreateBoundaryFromPendingIdentity,
 } from "./identity-boundary";
 import {
-  verifyCurrentCreatedSandboxPolicyRequirements,
-  verifyCreatedApfInterceptorPolicyRequirements,
-  verifyCreatedSandboxPolicyRequirements,
+  verifyLiveCreatedSandboxPolicyRequirements,
 } from "./live-policy-requirements";
 import {
   attachProvidersAfterSandboxCreation,
@@ -278,7 +276,6 @@ interface VerifyCreatedSandboxEffectivePolicyRequirementsInput {
   readonly hermesPortable: boolean;
   readonly effectivePolicySourcePath?: string;
   readonly policySourcePathForRoute: () => string;
-  readonly apfInterceptorRequested: boolean;
   readonly operation: string;
 }
 
@@ -303,11 +300,7 @@ export function verifyCreatedSandboxEffectivePolicyRequirements(
     route: input.route,
     operation: input.operation,
   };
-  if (input.apfInterceptorRequested) {
-    verifyCreatedApfInterceptorPolicyRequirements(registrationInput);
-  } else {
-    verifyCreatedSandboxPolicyRequirements(registrationInput);
-  }
+  verifyLiveCreatedSandboxPolicyRequirements(registrationInput);
   return {
     sandboxName: input.sandboxName,
     gatewayName: input.gatewayName,
@@ -2240,14 +2233,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         checkpoint.sandboxIdentityFingerprint,
         `resuming sandbox creation for '${sandboxName}'`,
       );
-      verifyCurrentCreatedSandboxPolicyRequirements({
+      verifyLiveCreatedSandboxPolicyRequirements({
         sandboxName,
         gatewayName: GATEWAY_NAME,
         gatewayPort: GATEWAY_PORT,
-        lifecycleGeneration: createdSandboxLifecycle.generation,
-        lifecycleLiveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
         policySourcePath,
-        route: checkpoint.route,
         operation: `resume sandbox creation for '${sandboxName}'`,
       });
       revalidateCreatedSandboxIdentity(
@@ -2273,14 +2263,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       operation: string,
     ): SandboxEntry => {
       revalidateCreatedSandboxIdentity(boundary.lifecycleLiveIdentityFingerprint, operation);
-      verifyCurrentCreatedSandboxPolicyRequirements({
+      verifyLiveCreatedSandboxPolicyRequirements({
         sandboxName,
         gatewayName: GATEWAY_NAME,
         gatewayPort: GATEWAY_PORT,
-        lifecycleGeneration: createdSandboxLifecycle.generation,
-        lifecycleLiveIdentityFingerprint: boundary.lifecycleLiveIdentityFingerprint,
         policySourcePath: boundary.policySourcePath,
-        route: boundary.route,
         operation,
       });
       revalidateCreatedSandboxIdentity(boundary.lifecycleLiveIdentityFingerprint, operation);
@@ -2386,17 +2373,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             route: identity.route,
             operation: `verify effective policy for sandbox '${sandboxName}'`,
           };
-          if (resumeVerifiedCreateInput) {
-            verifyCurrentCreatedSandboxPolicyRequirements(registrationInput);
-          } else if (apfInterceptorRequested) {
-            verifyCreatedApfInterceptorPolicyRequirements(registrationInput, {
-              sleep: sleepSeconds,
-            });
-          } else {
-            verifyCreatedSandboxPolicyRequirements(registrationInput, {
-              sleep: sleepSeconds,
-            });
-          }
+          verifyLiveCreatedSandboxPolicyRequirements(registrationInput);
           return {
             sandboxName,
             gatewayName: GATEWAY_NAME,

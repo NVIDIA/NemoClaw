@@ -563,30 +563,12 @@ function installVerifiedSandboxCreateFixture(registry, options) {
     path.resolve(__dirname, "../../src/lib/onboard/sandbox-create/live-policy-requirements.ts"),
   );
   const policyRequirements = require(policyRequirementsPath);
-  const verifyApfPolicyRequirements = (input) => {
-    if (options.apfInterceptorRequested !== true) {
-      throw new Error("integration fixture received unexpected APF policy verification");
-    }
-    options.onVerifyCreatedPolicy?.(input);
-  };
   Object.defineProperties(policyRequirements, {
-    verifyCreatedApfInterceptorPolicyRequirements: {
+    verifyLiveCreatedSandboxPolicyRequirements: {
       configurable: true,
       enumerable: true,
       writable: true,
-      value: verifyApfPolicyRequirements,
-    },
-    verifyCreatedSandboxPolicyRequirements: {
-      configurable: true,
-      enumerable: true,
-      writable: true,
-      value: () => undefined,
-    },
-    verifyCurrentCreatedSandboxPolicyRequirements: {
-      configurable: true,
-      enumerable: true,
-      writable: true,
-      value: () => undefined,
+      value: (input) => options.onVerifyCreatedPolicy?.(input),
     },
   });
   require.cache[policyRequirementsPath].exports = policyRequirements;

@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const phaseMocks = vi.hoisted(() => ({
+  cleanupPolicySource: vi.fn(),
   openRecreateJournal: vi.fn(),
   recoverCronRestore: vi.fn(),
   runBackup: vi.fn(),
@@ -12,6 +13,11 @@ const phaseMocks = vi.hoisted(() => ({
   runPostRestore: vi.fn(),
   runPreflight: vi.fn(),
   runShields: vi.fn(),
+}));
+
+vi.mock("../../onboard/temp-files", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../onboard/temp-files")>()),
+  cleanupTempDir: phaseMocks.cleanupPolicySource,
 }));
 
 const gatewayAuthority = {
@@ -59,6 +65,7 @@ import { rebuildSandbox } from "./rebuild";
 
 describe("Hermes accepted replacement recovery", () => {
   const backupPath = "/tmp/nemoclaw-rebuild-backup";
+  const policySourcePath = "/tmp/nemoclaw-rebuild-policy-test/policy.yaml";
   const bail = vi.fn();
   const cleanupDcodePreflight = vi.fn();
   const completeAcceptedTarget = vi.fn();
@@ -121,6 +128,7 @@ describe("Hermes accepted replacement recovery", () => {
         preservedEnv: [],
       },
       backupWasForceSkipped: false,
+      policySourcePath,
     });
     phaseMocks.openRecreateJournal.mockReturnValue({
       id: "journal-1",
@@ -158,6 +166,10 @@ describe("Hermes accepted replacement recovery", () => {
     );
     expect(phaseMocks.runDestroy).not.toHaveBeenCalled();
     expect(phaseMocks.runCronRestoreTransaction).not.toHaveBeenCalled();
+    expect(phaseMocks.cleanupPolicySource).toHaveBeenCalledExactlyOnceWith(
+      policySourcePath,
+      "nemoclaw-rebuild-policy",
+    );
   });
 
   it("reports an operator drain that remains after accepted replacement recovery (#7806)", async () => {

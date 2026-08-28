@@ -21,8 +21,8 @@ import {
   pendingSandboxCreateIdentityForBoundary,
 } from "../sandbox-create/identity-boundary";
 import {
-  verifyCurrentCreatedSandboxPolicyRequirements,
-  type CreatedSandboxPolicyRequirementsCheck,
+  verifyLiveCreatedSandboxPolicyRequirements,
+  type LiveCreatedSandboxPolicyRequirementsCheck,
 } from "../sandbox-create/live-policy-requirements";
 import {
   runSandboxCreateWithPolicyVerification,
@@ -107,15 +107,12 @@ function checkpointEntry(
 
 function policyRequirementsInput(
   boundary: EffectiveVerifiedSandboxCreateBoundary,
-): CreatedSandboxPolicyRequirementsCheck {
+): LiveCreatedSandboxPolicyRequirementsCheck {
   return {
     sandboxName: boundary.sandboxName,
     gatewayName: boundary.gatewayName,
     gatewayPort: boundary.gatewayPort,
-    lifecycleGeneration: boundary.lifecycleGeneration,
-    lifecycleLiveIdentityFingerprint: boundary.lifecycleLiveIdentityFingerprint,
     policySourcePath: boundary.policySourcePath,
-    route: boundary.route,
     operation: "continue composed Hermes Portable onboarding",
   };
 }
@@ -226,7 +223,6 @@ network_policies:
             hermesPortable: true,
             effectivePolicySourcePath,
             policySourcePathForRoute: routeFallback,
-            apfInterceptorRequested: false,
             operation: "verify composed Hermes Portable policy",
           }),
         persistCreateIdentity: (_identity, _exactIdentity, boundary) => {
@@ -234,7 +230,7 @@ network_policies:
         },
         verifyCurrentPolicyRequirements: (_identity, _exactIdentity, boundary) => {
           expect(boundary.policySourcePath).toBe(effectivePolicySourcePath);
-          verifyCurrentCreatedSandboxPolicyRequirements(policyRequirementsInput(boundary));
+          verifyLiveCreatedSandboxPolicyRequirements(policyRequirementsInput(boundary));
         },
         runVerifiedCreateEffects,
         cleanupTemporarySources: vi.fn(),
@@ -385,7 +381,6 @@ network_policies:
             hermesPortable: true,
             effectivePolicySourcePath: "/durable.yaml",
             policySourcePathForRoute: routeFallback,
-            apfInterceptorRequested: false,
             operation: "verify incompatible Hermes Portable policy",
           }),
         persistCreateIdentity: () => {

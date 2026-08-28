@@ -4,11 +4,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const phaseMocks = vi.hoisted(() => ({
+  cleanupPolicySource: vi.fn(),
   runBackup: vi.fn(),
   runDestroy: vi.fn(),
   runPreflight: vi.fn(),
+  runRecreate: vi.fn(),
   runShields: vi.fn(),
   openRecreateJournal: vi.fn(),
+}));
+
+vi.mock("../../onboard/temp-files", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../onboard/temp-files")>()),
+  cleanupTempDir: phaseMocks.cleanupPolicySource,
 }));
 
 const gatewayAuthority = {
@@ -40,6 +47,10 @@ vi.mock("./rebuild-destroy-phase", () => ({
   runRebuildDestroyPhase: phaseMocks.runDestroy,
 }));
 
+vi.mock("./rebuild-recreate-phase", () => ({
+  runRebuildRecreatePhase: phaseMocks.runRecreate,
+}));
+
 vi.mock("./rebuild-shields-phase", () => ({
   runRebuildShieldsPhase: phaseMocks.runShields,
 }));
@@ -47,6 +58,7 @@ vi.mock("./rebuild-shields-phase", () => ({
 import { rebuildSandbox } from "./rebuild";
 
 describe("rebuild shields relock guard", () => {
+  const policySourcePath = "/tmp/nemoclaw-rebuild-policy-test/policy.yaml";
   const rebuildWindow = { relocked: false, wasLocked: true };
   const cleanupDcodePreflight = vi.fn();
   const releaseOnboardLock = vi.fn();
@@ -71,6 +83,8 @@ describe("rebuild shields relock guard", () => {
       liveState: { staleRecovery: false, staleRegistrySnapshot: null },
       recoveryManifest: null,
       dcodePreflight: {
+        applyDockerGpuPatchNetwork: () => vi.fn(),
+        checkAtDeleteEdge: vi.fn(async () => ({ ok: true })),
         cleanup: cleanupDcodePreflight,
         revalidateBeforeDelete: revalidateDcodeBeforeDelete,
       },
@@ -108,7 +122,11 @@ describe("rebuild shields relock guard", () => {
   });
 
   it("does not relock shields when sandbox deletion remains ambiguous (#7062)", async () => {
-    phaseMocks.runBackup.mockReturnValue({ backupManifest: null });
+    phaseMocks.runBackup.mockReturnValue({
+      backupManifest: null,
+      backupWasForceSkipped: false,
+      policySourcePath,
+    });
     phaseMocks.runDestroy.mockImplementation(
       ({ onDeleteStateAmbiguous }: { onDeleteStateAmbiguous?: () => void }) => {
         onDeleteStateAmbiguous?.();
@@ -121,7 +139,52 @@ describe("rebuild shields relock guard", () => {
     );
 
     expect(phaseMocks.runDestroy).toHaveBeenCalledOnce();
+    expect(phaseMocks.cleanupPolicySource).toHaveBeenCalledExactlyOnceWith(
+      policySourcePath,
+      "nemoclaw-rebuild-policy",
+    );
     expect(relockShields).not.toHaveBeenCalled();
     expect(rebuildWindow.relocked).toBe(false);
+  });
+
+  it("reports the retained handoff path when cleanup fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    phaseMocks.runBackup.mockReturnValue({
+      backupManifest: null,
+      backupWasForceSkipped: false,
+      policySourcePath,
+    });
+    phaseMocks.runDestroy.mockResolvedValue(null);
+    phaseMocks.cleanupPolicySource.mockImplementationOnce(() => {
+      throw new Error("cleanup failed");
+    });
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(warn).toHaveBeenCalledWith(
+      `  Warning: temporary rebuild policy handoff could not be removed. Remove ${policySourcePath} before retrying.`,
+    );
+  });
+
+  it("removes the live-policy handoff when sandbox recreation fails", async () => {
+    phaseMocks.runBackup.mockReturnValue({
+      backupManifest: null,
+      backupWasForceSkipped: false,
+      policySourcePath,
+    });
+    phaseMocks.runDestroy.mockResolvedValue({ entries: [], removalReceipt: null });
+    phaseMocks.runRecreate.mockRejectedValue(new Error("replacement creation failed"));
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("replacement creation failed");
+
+    expect(phaseMocks.runRecreate).toHaveBeenCalledOnce();
+    expect(phaseMocks.cleanupPolicySource).toHaveBeenCalledExactlyOnceWith(
+      policySourcePath,
+      "nemoclaw-rebuild-policy",
+    );
   });
 });
