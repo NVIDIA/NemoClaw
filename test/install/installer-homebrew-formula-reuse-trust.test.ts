@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { restoreHistoricalLinuxSandboxAssets } from "../helpers/openshell-installer-template";
+
 const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const INSTALLER_SOURCE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/install-openshell.sh"),
@@ -18,6 +20,7 @@ const TRUSTED_V00106_TEMPLATE_DIGESTS = [
   "e850e927aab619d52c5de72967137569d65dd7fa669920c7c5b558f0770140d1",
   "e7d51536442b217e3d5e77c4ba3b7c25e6a74898bf22523f7fb58627d34329cb",
   "18175cf47a0fece8ce75e5d523185062c7a7c913a3f4ceafbba4a7ca4df7c69b",
+  "293f45ea1d54e1531c3a070123c04b47f972f29504bd8902a44ab71acdfe6cca",
 ] as const;
 const tempDirs: string[] = [];
 
@@ -93,13 +96,15 @@ function runTrustCheck(source: string) {
 }
 
 describe("installer Homebrew formula reuse trust", () => {
-  const previousTemplate = restoreFlatInstallTestPaths(INSTALLER_SOURCE);
+  const groupedInstallTestsTemplate = restoreHistoricalLinuxSandboxAssets(INSTALLER_SOURCE);
+  const previousTemplate = restoreFlatInstallTestPaths(groupedInstallTestsTemplate);
   const baseTemplate = removeHomebrewFormulaReuseRepair(previousTemplate);
   const templates = [
     ["downstream", TRUSTED_V00106_TEMPLATE_DIGESTS[0], baseTemplate],
     ["strings preflight", TRUSTED_V00106_TEMPLATE_DIGESTS[1], addStringsPreflight(baseTemplate)],
     ["formula repair", TRUSTED_V00106_TEMPLATE_DIGESTS[2], previousTemplate],
-    ["grouped install tests", TRUSTED_V00106_TEMPLATE_DIGESTS[3], INSTALLER_SOURCE],
+    ["grouped install tests", TRUSTED_V00106_TEMPLATE_DIGESTS[3], groupedInstallTestsTemplate],
+    ["dev MUSL sandbox", TRUSTED_V00106_TEMPLATE_DIGESTS[4], INSTALLER_SOURCE],
   ] as const;
 
   it.each(templates)("accepts the %s template with digest %s", (_label, digest, source) => {

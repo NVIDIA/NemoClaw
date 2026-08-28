@@ -10,6 +10,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { restoreHistoricalLinuxSandboxAssets } from "../helpers/openshell-installer-template";
 import {
   V0099_ASSET_DIGESTS,
   V0099_CHECKSUM_MANIFESTS,
@@ -709,7 +710,8 @@ function removeV00106OperationalTrust(source: string): string {
 }
 
 function renderInstallerTemplate(openshellVersion: string, pinFunction: string): string {
-  const selected = INSTALLER_TEMPLATE.replaceAll("test/install/", "test/")
+  const selected = restoreHistoricalLinuxSandboxAssets(INSTALLER_TEMPLATE)
+    .replaceAll("test/install/", "test/")
     .replace(/^MIN_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$/m, `MIN_VERSION="${openshellVersion}"`)
     .replace(/^MAX_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$/m, `MAX_VERSION="${openshellVersion}"`)
     .replace(

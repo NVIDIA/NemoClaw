@@ -59,7 +59,7 @@ const DEV_ARTIFACT_INSTALL_ASSETS = [
   "openshell-checksums-sha256.txt",
   "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
   "openshell-gateway-checksums-sha256.txt",
-  "openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz",
+  "openshell-sandbox-x86_64-unknown-linux-musl.tar.gz",
   "openshell-sandbox-checksums-sha256.txt",
 ] as const;
 const DEV_COMPATIBILITY_STEP_NAME = "Classify OpenShell credential-boundary compatibility";

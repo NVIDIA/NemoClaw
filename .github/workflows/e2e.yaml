@@ -4001,7 +4001,7 @@ jobs:
           asset="$7"
           destination="$9"
           case "$asset" in
-            openshell-x86_64-unknown-linux-musl.tar.gz | openshell-checksums-sha256.txt | openshell-gateway-x86_64-unknown-linux-gnu.tar.gz | openshell-gateway-checksums-sha256.txt | openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz | openshell-sandbox-checksums-sha256.txt) ;;
+            openshell-x86_64-unknown-linux-musl.tar.gz | openshell-checksums-sha256.txt | openshell-gateway-x86_64-unknown-linux-gnu.tar.gz | openshell-gateway-checksums-sha256.txt | openshell-sandbox-x86_64-unknown-linux-musl.tar.gz | openshell-sandbox-checksums-sha256.txt) ;;
             *)
               printf 'Unsupported retained OpenShell asset: %s\n' "$asset" >&2
               exit 64
