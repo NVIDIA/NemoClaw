@@ -106,7 +106,12 @@ export interface GatewayInference {
 
 export type LlamaCppRouteDetails =
   | { kind: "attached"; endpointUrl: typeof LLAMA_CPP_HOST_OPENAI_BASE_URL }
-  | { kind: "managed" };
+  | { kind: "managed" }
+  | {
+      kind: "unavailable";
+      diagnostic: "Managed llama.cpp ownership state is unavailable.";
+      recovery: "Run nemoclaw doctor and correct the reported state before retrying.";
+    };
 
 type LlamaCppRouteSelection = {
   name: string;
@@ -145,7 +150,13 @@ export function getLlamaCppRouteDetails(
 
   const ownership = inspectOwnership(route.name, route.gatewayPort ?? undefined);
   if (ownership === "owned") return { kind: "managed" };
-  if (ownership === "unknown") return null;
+  if (ownership === "unknown") {
+    return {
+      kind: "unavailable",
+      diagnostic: "Managed llama.cpp ownership state is unavailable.",
+      recovery: "Run nemoclaw doctor and correct the reported state before retrying.",
+    };
+  }
   if (route.endpointUrl === LLAMA_CPP_HOST_OPENAI_BASE_URL) {
     return { kind: "attached", endpointUrl: LLAMA_CPP_HOST_OPENAI_BASE_URL };
   }

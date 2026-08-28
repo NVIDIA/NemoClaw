@@ -28,6 +28,7 @@ export interface InferenceGetDeps {
   captureOpenshell: typeof captureOpenshell;
   getSandbox?: typeof registry.getSandbox;
   log: (message?: string) => void;
+  inspectManagedLlamaCppOwnership?: typeof inspectManagedLlamaCppOwnership;
 }
 
 export class InferenceGetError extends Error {
@@ -66,7 +67,10 @@ export async function runInferenceGet(
     : null;
   const llamaCpp =
     sandbox?.provider === result.inference.provider && sandbox.model === result.inference.model
-      ? getLlamaCppRouteDetails(sandbox, inspectManagedLlamaCppOwnership)
+      ? getLlamaCppRouteDetails(
+          sandbox,
+          deps.inspectManagedLlamaCppOwnership ?? inspectManagedLlamaCppOwnership,
+        )
       : null;
   const payload: InferenceGetResult = {
     provider: result.inference.provider,
@@ -83,6 +87,9 @@ export async function runInferenceGet(
         deps.log(`Llama.cpp: ${payload.llamaCpp.kind}`);
         if (payload.llamaCpp.kind === "attached") {
           deps.log(`Endpoint:  ${payload.llamaCpp.endpointUrl}`);
+        } else if (payload.llamaCpp.kind === "unavailable") {
+          deps.log(`Ownership: ${payload.llamaCpp.diagnostic}`);
+          deps.log(`Recovery:  ${payload.llamaCpp.recovery}`);
         }
       }
     }

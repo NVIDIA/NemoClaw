@@ -222,6 +222,7 @@ export interface SandboxStatusSnapshot {
   recordedRoute: RecordedInferenceRoute | null;
   liveRoute: GatewayInference | null;
   routeDrift: SandboxStatusRouteDrift | null;
+  llamaCpp: LlamaCppRouteDetails | null;
   inferenceHealth: ProviderHealthStatus | null;
   terminalRuntimeHealth: TerminalRuntimeOomProbeResult | null;
   servingProcessHealth: ServingProcessHealth | null;
@@ -308,6 +309,7 @@ interface CollectSandboxStatusSnapshotDeps {
   reconcile?: ReconcileSandboxGatewayState;
   getSandboxStatusPreflightImpl?: typeof getSandboxStatusPreflight;
   getBaselineExclusionRuntimeStatus?: typeof getBaselineExclusionRuntimeStatus;
+  inspectManagedLlamaCppOwnership?: typeof inspectManagedLlamaCppOwnership;
 }
 
 function sanitizedStatusDetail(error: unknown): string {
@@ -511,6 +513,7 @@ export async function collectSandboxStatusSnapshot(
       recordedRoute: sb?.provider && sb.model ? { provider: sb.provider, model: sb.model } : null,
       liveRoute: null,
       routeDrift: null,
+      llamaCpp: null,
       inferenceHealth: null,
       terminalRuntimeHealth: null,
       servingProcessHealth: null,
@@ -655,6 +658,15 @@ export async function collectSandboxStatusSnapshot(
       provider: invocationRoute.provider ?? null,
     });
   }
+  // Classify once per snapshot so every renderer observes the same receipt state.
+  // Route drift suppresses attribution because the shared gateway route may belong
+  // to another sandbox or provider entirely (#10256).
+  const llamaCpp = routeDrift
+    ? null
+    : getLlamaCppRouteDetails(
+        sb,
+        opts.deps?.inspectManagedLlamaCppOwnership ?? inspectManagedLlamaCppOwnership,
+      );
   const statusAgent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
   const terminalRuntimeHealth =
     lookup.state === "present" && statusAgent.agentRuntime === "terminal"
@@ -676,6 +688,7 @@ export async function collectSandboxStatusSnapshot(
     recordedRoute,
     liveRoute,
     routeDrift,
+    llamaCpp,
     inferenceHealth,
     terminalRuntimeHealth,
     servingProcessHealth,
@@ -721,6 +734,7 @@ async function buildSandboxStatusReport(
     recordedRoute,
     liveRoute,
     routeDrift,
+    llamaCpp,
     inferenceHealth,
     terminalRuntimeHealth,
   } = snapshot;
@@ -767,10 +781,7 @@ async function buildSandboxStatusReport(
     model: liveRoute?.model ?? currentModel,
     provider: liveRoute?.provider ?? currentProvider,
     servingProfileProvenance: sb?.servingProfileProvenance ?? null,
-    // Suppress attribution when the gateway's live route has drifted away
-    // from this sandbox's recorded route (#10256) — the shared gateway
-    // route may belong to a different sandbox or provider entirely.
-    llamaCpp: routeDrift ? null : getLlamaCppRouteDetails(sb, inspectManagedLlamaCppOwnership),
+    llamaCpp,
     recordedRoute,
     liveRoute,
     routeDrift,

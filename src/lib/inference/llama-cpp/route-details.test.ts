@@ -32,6 +32,35 @@ describe("getLlamaCppRouteDetails", () => {
     ).toEqual({ kind: "managed" });
   });
 
+  it.each([
+    { servingProfileProvenance: { recipe: { backend: "install-llama-cpp" } } },
+    { hostLocalInferenceProvenance: {} },
+  ])("reports managed ownership from persisted provenance %#", (provenance) => {
+    expect(
+      getLlamaCppRouteDetails(
+        { name: "managed", provider: "llama-cpp-local", ...provenance } as never,
+        () => "absent",
+      ),
+    ).toEqual({ kind: "managed" });
+  });
+
+  it("reports unavailable ownership without exposing the endpoint", () => {
+    expect(
+      getLlamaCppRouteDetails(
+        {
+          name: "managed",
+          provider: "llama-cpp-local",
+          endpointUrl: "http://127.0.0.1:8081/v1",
+        } as never,
+        () => "unknown",
+      ),
+    ).toEqual({
+      kind: "unavailable",
+      diagnostic: "Managed llama.cpp ownership state is unavailable.",
+      recovery: "Run nemoclaw doctor and correct the reported state before retrying.",
+    });
+  });
+
   it("does not expose an unrecognized endpoint", () => {
     expect(
       getLlamaCppRouteDetails(

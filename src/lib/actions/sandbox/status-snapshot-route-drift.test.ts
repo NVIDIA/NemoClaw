@@ -64,6 +64,7 @@ describe("collectSandboxStatusSnapshot route drift", () => {
     expect(snapshot.recordedRoute).toEqual({ provider: "nvidia", model: "nvidia/nemotron" });
     expect(snapshot.currentProvider).toBe("nvidia");
     expect(snapshot.currentModel).toBe("nvidia/nemotron");
+    expect(snapshot.llamaCpp).toBeNull();
   });
 
   it("reads the sandbox's non-default gateway before computing drift (#6315)", async () => {
@@ -205,23 +206,26 @@ describe("getSandboxStatusReport llama.cpp attribution on drift (#10256)", () =>
     expect(report.llamaCpp).toBeNull();
   });
 
-  it("reports llamaCpp when the live gateway route still matches the recorded llama-cpp-local route", async () => {
+  it("classifies llama.cpp once in the snapshot consumed by the JSON report", async () => {
     liveGatewayInference("llama-cpp-local", "muse-glimmer");
+    const options = snapshotDeps({
+      provider: "llama-cpp-local",
+      model: "muse-glimmer",
+      endpointUrl: "http://127.0.0.1:8081/v1",
+    });
+    const inspectOwnership = vi.fn().mockReturnValueOnce("absent").mockReturnValue("unknown");
 
-    const report = await getSandboxStatusReport(
-      "alpha",
-      snapshotDeps({
-        provider: "llama-cpp-local",
-        model: "muse-glimmer",
-        endpointUrl: "http://127.0.0.1:8081/v1",
-      }).deps,
-    );
+    const report = await getSandboxStatusReport("alpha", {
+      ...options.deps,
+      inspectManagedLlamaCppOwnership: inspectOwnership,
+    });
 
     expect(report.routeDrift).toBeNull();
     expect(report.llamaCpp).toEqual({
       kind: "attached",
       endpointUrl: "http://127.0.0.1:8081/v1",
     });
+    expect(inspectOwnership).toHaveBeenCalledOnce();
   });
 });
 
