@@ -10,6 +10,7 @@ import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
+export { getNamedGatewayLifecycleState };
 import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { isTerminalSandboxPhase, TERMINAL_SANDBOX_PHASES } from "../../state/gateway";
@@ -51,6 +52,7 @@ import {
 import {
   captureOpenshell,
   captureOpenshellForStatus,
+  captureResolvedOpenshell,
   getOpenshellBinary,
   getStatusProbeTimeoutMs,
   isCommandTimeout,
@@ -71,6 +73,7 @@ import {
   buildHermesPortableCommandAuthority,
   inspectPortableAgentReceiptDisposition,
   qualifyPortableAgentLifecycleAuthority,
+  qualifyHermesPortableOperatingCommandAuthority,
   requalifyPortableAgentSandboxAuthority,
   recoverPortableAgentSandboxLifecycle,
   requireHermesPortableActiveLifecycleAuthority,
@@ -117,12 +120,33 @@ export {
   buildHermesPortableCommandEnvironment,
   inspectPortableAgentReceiptDisposition,
   qualifyPortableAgentLifecycleAuthority,
+  qualifyHermesPortableOperatingCommandAuthority,
   requalifyPortableAgentSandboxAuthority,
   requireHermesPortableActiveLifecycleAuthority,
 };
 export const withSandboxLifecycleLock = withMcpLifecycleLock;
 export const withSandboxLifecycleLockSync = withMcpLifecycleLockSync;
 export const withConnectSandboxLifecycleLock = withMcpLifecycleLock;
+
+/** Capture one recovery-only gateway command under receipt-owned authority. */
+export function captureHermesPortableInferenceRecoveryGateway(
+  sandboxName: string,
+  args: string[],
+  options: { readonly env?: NodeJS.ProcessEnv; readonly timeout: number },
+) {
+  if (options.env && Object.keys(options.env).length > 0) {
+    throw new Error("Hermes Portable inference recovery rejected command environment drift.");
+  }
+  const command = buildHermesPortableCommandAuthority(sandboxName);
+  return captureResolvedOpenshell(args, {
+    env: command.env,
+    openshellBinary: command.executablePath,
+    replaceEnv: true,
+    ignoreError: true,
+    includeStreams: true,
+    timeout: options.timeout,
+  });
+}
 
 type SandboxGatewayStateLookup = (
   sandboxName: string,
