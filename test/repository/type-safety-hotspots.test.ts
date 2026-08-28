@@ -136,11 +136,11 @@ export const value = 1;
   };
 }
 `,
-      "src/use-a.ts": `import { normalizeConfig } from ".././config";
+      "src/use-a.ts": `import { normalizeConfig } from "./config";
 
 export const configA = normalizeConfig("{}");
 `,
-      "src/use-b.ts": `import { normalizeConfig } from ".././config";
+      "src/use-b.ts": `import { normalizeConfig } from "./config";
 
 export const configB = normalizeConfig("{}");
 `,
@@ -196,17 +196,17 @@ export function normalizeConfig(raw: UserConfig | null): string | null {
   return raw?.owner ?? null;
 }
 `,
-      "src/use-a.ts": `import type { UserConfig } from ".././config";
+      "src/use-a.ts": `import type { UserConfig } from "./config";
 
 export const configA = null as UserConfig | null;
 `,
-      "src/use-b.ts": `import type { UserConfig } from ".././config";
+      "src/use-b.ts": `import type { UserConfig } from "./config";
 
 export function readOwner(value: UserConfig | null): string | null {
   return value?.owner ?? null;
 }
 `,
-      "src/use-c.ts": `import type { MaybeConfig } from ".././config";
+      "src/use-c.ts": `import type { MaybeConfig } from "./config";
 
 interface UserConfig {
   shadow: string | null;
@@ -215,31 +215,31 @@ interface UserConfig {
 export const maybe = null as MaybeConfig;
 export const shadow = null as UserConfig | null;
 `,
-      "src/use-d.ts": `import type { UserConfig as ImportedConfig } from ".././config";
+      "src/use-d.ts": `import type { UserConfig as ImportedConfig } from "./config";
 
 export const aliased = null as ImportedConfig | null;
 `,
-      "src/use-e.ts": `import type * as Config from ".././config";
+      "src/use-e.ts": `import type * as Config from "./config";
 
 export const namespaced = null as Config.UserConfig | null;
 `,
-      "src/barrel.ts": `export type { UserConfig } from ".././config";
+      "src/barrel.ts": `export type { UserConfig } from "./config";
 `,
-      "src/star-barrel.ts": `export * from ".././config";
+      "src/star-barrel.ts": `export * from "./config";
 `,
-      "src/use-f.ts": `import type { UserConfig as BarrelConfig } from ".././barrel";
+      "src/use-f.ts": `import type { UserConfig as BarrelConfig } from "./barrel";
 
 export const barreled = null as BarrelConfig | null;
 `,
-      "src/use-g.ts": `import type * as Barrel from ".././barrel";
+      "src/use-g.ts": `import type * as Barrel from "./barrel";
 
 export const namespacedBarrel = null as Barrel.UserConfig | null;
 `,
-      "src/use-h.ts": `import type { UserConfig as StarConfig } from ".././star-barrel";
+      "src/use-h.ts": `import type { UserConfig as StarConfig } from "./star-barrel";
 
 export const starBarreled = null as StarConfig | null;
 `,
-      "src/use-i.ts": `import type { HiddenConfig } from ".././config";
+      "src/use-i.ts": `import type { HiddenConfig } from "./config";
 
 export const hidden = null as HiddenConfig | null;
 `,

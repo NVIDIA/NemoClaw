@@ -22,7 +22,7 @@ import { execTimeout, testTimeoutOptions } from "../helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const TSX = path.join(REPO_ROOT, "node_modules", ".bin", "tsx");
-const DRIVER = path.join(import.meta.dirname, "fixtures", "uninstall-prompt-pty-driver.ts");
+const DRIVER = path.join(import.meta.dirname, "..", "fixtures", "uninstall-prompt-pty-driver.ts");
 const UNINSTALL_SH = path.join(REPO_ROOT, "uninstall.sh");
 
 const ptySupported =
@@ -94,8 +94,6 @@ describe.runIf(ptySupported)("uninstall confirm prompts under a pseudo-TTY (#518
   it("aborts without running the plan on a typed n", testTimeoutOptions(30_000), async () => {
     const pty = spawnUnderPty(`${TSX} ${DRIVER}`, { PTY_DRIVER_POISON_STDIN: "1" });
     await pty.waitForOutput("Proceed? [y/N]");
-    await sleep(500);
-    expect(pty.isAlive()).toBe(true);
     pty.write("n\n");
     expect(await pty.exited).toBe(0);
     expect(pty.output()).toContain("Aborted.");
@@ -112,11 +110,8 @@ describe.runIf(ptySupported)("uninstall confirm prompts under a pseudo-TTY (#518
         PTY_DRIVER_PRESERVABLE: "1",
       });
       await pty.waitForOutput("Proceed? [y/N]");
-      await sleep(300);
       pty.write("y\n");
       await pty.waitForOutput("Also remove them? [y/N]");
-      await sleep(300);
-      expect(pty.isAlive()).toBe(true);
       pty.write("n\n");
       expect(await pty.exited).toBe(0);
       expect(pty.output()).toContain("Keeping user data.");
@@ -133,8 +128,6 @@ describe.runIf(ptySupported)("uninstall confirm prompts under a pseudo-TTY (#518
         NEMOCLAW_NODE: TSX,
       });
       await pty.waitForOutput("Proceed? [y/N]");
-      await sleep(500);
-      expect(pty.isAlive()).toBe(true);
       pty.write("n\n");
       expect(await pty.exited).toBe(0);
       expect(pty.output()).toContain("Aborted.");

@@ -246,7 +246,7 @@ process.exit(0);
 }
 
 function runCli(tmpDir: string, args: string[]) {
-  const repoRoot = path.join(import.meta.dirname, "..");
+  const repoRoot = path.join(import.meta.dirname, "../../..");
   return spawnSync(process.execPath, [path.join(repoRoot, "bin", "nemoclaw.js"), ...args], {
     cwd: repoRoot,
     encoding: "utf-8",

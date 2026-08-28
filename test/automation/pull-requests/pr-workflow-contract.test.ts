@@ -353,9 +353,7 @@ describe("pull request and main workflow contracts", () => {
     ["pull_request", prWorkflow],
     ["main", mainWorkflow],
   ] as const)("keeps the %s CLI coverage shard budget aligned", (_workflowName, workflow) => {
-    expect(workflow.jobs["cli-test-shards"]?.["timeout-minutes"]).toBe(
-      cliShardTimeoutMinutes,
-    );
+    expect(workflow.jobs["cli-test-shards"]?.["timeout-minutes"]).toBe(cliShardTimeoutMinutes);
   });
 
   // source-shape-contract: security -- PR base SHA action execution prevents pull-request code from authorizing installer hashes

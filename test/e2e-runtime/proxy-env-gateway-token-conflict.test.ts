@@ -16,7 +16,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { extractShellFunctionFromSource } from "../helpers/shell-source";
 
-const OPENCLAW_START = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
+const OPENCLAW_START = join(import.meta.dirname, "..", "../scripts/nemoclaw-start.sh");
 const WRITE_RUNTIME_SHELL_ENV = extractShellFunctionFromSource(
   readFileSync(OPENCLAW_START, "utf-8"),
   "write_runtime_shell_env",

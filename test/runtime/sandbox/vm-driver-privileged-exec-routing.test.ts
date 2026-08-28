@@ -9,8 +9,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
 const helperPath = require.resolve("../../../src/lib/sandbox/privileged-exec");
-const dockerRunPath = require.resolve("../src/lib/adapters/docker/run");
-const registryPath = require.resolve("../src/lib/state/registry");
+const dockerRunPath = require.resolve("../../../src/lib/adapters/docker/run");
+const registryPath = require.resolve("../../../src/lib/state/registry");
 
 const FAKE_DOCKER = `#!/usr/bin/env bash
 set -euo pipefail

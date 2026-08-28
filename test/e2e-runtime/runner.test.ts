@@ -4,14 +4,16 @@
 import type { StdioOptions } from "node:child_process";
 import childProcess, { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { redact, runCapture } from "../../src/lib/runner";
 
-const runnerPath = path.join(import.meta.dirname, "..", "src", "lib", "runner.ts");
-const platformPath = path.join(import.meta.dirname, "..", "src", "lib", "platform.ts");
+const require = createRequire(import.meta.url);
+const runnerPath = path.join(import.meta.dirname, "..", "..", "src", "lib", "runner.ts");
+const platformPath = path.join(import.meta.dirname, "..", "..", "src", "lib", "platform.ts");
 const PINNED_OPEN_SHELL_SHA256 = {
   cliDarwinArm64: "969493205e3d3462226ff613eaba0b9cde0f582e3026294169d533d41e87c905",
   cliLinuxArm64: "ce981904ae8febd9cd6b3fbceb04e1dcfb48da6042bac08eadf0c2211f83fe55",
@@ -76,7 +78,7 @@ describe("runner helpers", () => {
     `;
 
     const result = spawnSync("node", ["-e", script], {
-      cwd: path.join(import.meta.dirname, ".."),
+      cwd: path.join(import.meta.dirname, "..", ".."),
       encoding: "utf-8",
       input: "preserved-answer\n",
     });
@@ -800,6 +802,39 @@ describe("regression guards", () => {
     }
   });
 
+  it("run shows the OpenShell runtime hint for a failing bash -c openshell command (#10247)", () => {
+    const originalSpawnSync = childProcess.spawnSync;
+    const originalExit = process.exit;
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = () => ({ status: 1, stdout: "", stderr: "" });
+    process.exit = (code) => {
+      throw new Error(`exit:${code}`);
+    };
+
+    try {
+      delete require.cache[require.resolve(runnerPath)];
+      const { run } = require(runnerPath);
+      expect(() => run(["bash", "-c", "openshell sandbox create foo"])).toThrow("exit:1");
+      // The equivalent runShell("openshell sandbox create foo") path already shows
+      // this hint (spawnAndHandle passes the real renderedCommand); run() through
+      // runArrayCmd must show it too, not silently drop it.
+      expect(errorSpy).toHaveBeenCalledWith(
+        "  This error originated from the OpenShell runtime layer.",
+      );
+    } finally {
+      childProcess.spawnSync = originalSpawnSync;
+      process.exit = originalExit;
+      stdoutSpy.mockRestore();
+      stderrSpy.mockRestore();
+      errorSpy.mockRestore();
+      delete require.cache[require.resolve(runnerPath)];
+    }
+  });
+
   it("runInteractive keeps stdin inherited while redacting captured output", () => {
     const originalSpawnSync = childProcess.spawnSync;
     const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
@@ -836,14 +871,14 @@ describe("regression guards", () => {
       const result = spawnSync(
         "node",
         [
-          path.join(import.meta.dirname, "..", "bin", "nemoclaw.js"),
+          path.join(import.meta.dirname, "..", "..", "bin", "nemoclaw.js"),
           `test; touch ${canary}`,
           "connect",
         ],
         {
           encoding: "utf-8",
           timeout: 10000,
-          cwd: path.join(import.meta.dirname, ".."),
+          cwd: path.join(import.meta.dirname, "..", ".."),
         },
       );
       expect(result.status).not.toBe(0);
@@ -855,7 +890,7 @@ describe("regression guards", () => {
 
   describe("credential exposure guards (#429)", () => {
     it("install-openshell.sh gh-absent path uses curl directly", () => {
-      const scriptPath = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
+      const scriptPath = path.join(import.meta.dirname, "..", "..", "scripts", "install-openshell.sh");
       const tmpBin = fs.mkdtempSync(path.join(os.tmpdir(), "gh-absent-"));
       const stub = `
         #!/usr/bin/env bash
@@ -953,7 +988,7 @@ describe("regression guards", () => {
     });
 
     it("install-openshell.sh gh-present-but-fails path falls back to curl", () => {
-      const scriptPath = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
+      const scriptPath = path.join(import.meta.dirname, "..", "..", "scripts", "install-openshell.sh");
       const tmpBin = fs.mkdtempSync(path.join(os.tmpdir(), "gh-stub-"));
       const checksumLog = path.join(tmpBin, "sha256sum.log");
       const ghStub = path.join(tmpBin, "gh");
@@ -1083,7 +1118,7 @@ describe("regression guards", () => {
           )[scenario]!;
           const result = spawnSync(
             "bash",
-            [path.join(import.meta.dirname, "..", script), "--version"],
+            [path.join(import.meta.dirname, "..", "..", script), "--version"],
             {
               encoding: "utf-8",
               env: {
@@ -1110,7 +1145,7 @@ describe("regression guards", () => {
     });
 
     it("scripts/setup-jetson.sh exists and is executable", () => {
-      const scriptPath = path.join(import.meta.dirname, "..", "scripts", "setup-jetson.sh");
+      const scriptPath = path.join(import.meta.dirname, "..", "..", "scripts", "setup-jetson.sh");
       expect(fs.existsSync(scriptPath)).toBe(true);
       const mode = fs.statSync(scriptPath).mode;
       expect((mode & 0o111) !== 0).toBe(true);
@@ -1118,7 +1153,7 @@ describe("regression guards", () => {
   });
 
   describe("OpenClaw runtime hardening", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
+    const repoRoot = path.join(import.meta.dirname, "..", "..");
 
     it("disables jiti filesystem cache in base, runtime, and connect shells", () => {
       const baseSrc = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf-8");
@@ -1185,7 +1220,7 @@ describe("regression guards", () => {
   });
 
   describe("sandbox ships tmux for the bundled tmux-session flow (#4513)", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
+    const repoRoot = path.join(import.meta.dirname, "..", "..");
 
     it("base image installs a pinned tmux in the apt package list", () => {
       const src = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf-8");

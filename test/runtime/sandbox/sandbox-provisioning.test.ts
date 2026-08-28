@@ -20,7 +20,7 @@ import {
   runLoggedDockerShell,
 } from "../../helpers/dockerfile-run-shell";
 
-const ROOT = path.resolve(import.meta.dirname, "../..");
+const ROOT = path.resolve(import.meta.dirname, "../../..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
 const DOCKERFILE_BASE = path.join(ROOT, "Dockerfile.base");
 const DOCKERFILE_SANDBOX = path.join(ROOT, "test", "Dockerfile.sandbox");

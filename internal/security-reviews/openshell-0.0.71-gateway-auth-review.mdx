@@ -38,7 +38,7 @@ Scope: NemoClaw Docker-driver gateway config generated for OpenShell `0.0.71`.
   Source boundary is the Hermes image entrypoint and `validate-hermes-env-secret-boundary.py`; NemoClaw re-runs that source validator through the topology-specific gateway controller before recovery/probe paths can succeed.
   The direct root-entrypoint supervisor validates the boundary in `agents/hermes/start.sh`, while the OpenShell-managed topology validates it in `scripts/managed-gateway-control.py`; both surface typed failures through the root-only gateway-control path.
   This PR cannot retroactively bake the validator into already-created older Hermes sandbox images, so missing-validator recovery fails closed with a re-image instruction instead of claiming the boundary was checked.
-  Regression coverage lives in `test/process-recovery/process-recovery.test.ts`, `test/managed-gateway-control.test.ts`, and `test/agents/hermes/hermes-gateway-supervisor-recovery.test.ts`.
+  Regression coverage lives in `test/process-recovery/process-recovery.test.ts`, `test/inference/managed/managed-gateway-control.test.ts`, and `test/agents/hermes/hermes-gateway-supervisor-recovery.test.ts`.
   Remove the NemoClaw recovery-side checks when every supported Hermes topology exposes a stable recovery entrypoint that always re-enters the validator.
 - Gateway JWT generation lock recovery: invalid state is a crashed NemoClaw process leaving `.jwt-generating` behind after taking the exclusive host-side bundle-generation lock.
   The source boundary is NemoClaw's own atomic JWT bundle writer; OpenShell consumes the resulting paths but does not own this lock, so the source fix belongs here.

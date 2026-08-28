@@ -7,8 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const REPO_ROOT = path.dirname(import.meta.dirname);
-const CHECK_DOCS = path.join(import.meta.dirname, "e2e", "e2e-cloud-experimental", "check-docs.sh");
+const REPO_ROOT = path.dirname(path.dirname(import.meta.dirname));
+const CHECK_DOCS = path.join(import.meta.dirname, "..", "e2e", "e2e-cloud-experimental", "check-docs.sh");
 
 function runCheckDocs(filePath: string, env: Record<string, string> = {}) {
   return spawnSync("bash", [CHECK_DOCS, "--only-links", "--local-only", filePath], {

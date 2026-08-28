@@ -6,7 +6,6 @@ import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { TestProgress, TestProgressCapability } from "../fixtures/progress.ts";
 import { redactString } from "../fixtures/redaction.ts";
-import { resolveLiveE2eWorkloadSourceEnv } from "../fixtures/workload-source-env.ts";
 import {
   projectRawOutputForArtifact,
   type RawArtifactOutputMode,
@@ -96,7 +95,7 @@ export async function runRawCommand(
       spawn: {
         cwd: options.cwd ?? REPO_ROOT,
         detached: true,
-        env: resolveLiveE2eWorkloadSourceEnv({ ...(options.env ?? {}) }),
+        env: { ...(options.env ?? {}) },
         stdio: ["ignore", "pipe", "pipe"],
       },
     });

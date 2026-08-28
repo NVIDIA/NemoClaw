@@ -129,8 +129,13 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
       errors.push(`workflow is missing ${contract.job}`);
       continue;
     }
-    if (job.needs !== "generate-matrix" || job.uses !== PROFILE_WORKFLOW) {
-      errors.push(`${contract.job} must call the standard E2E profile after matrix generation`);
+    if (
+      !isDeepStrictEqual(job.needs, ["base-image-publication", "generate-matrix"]) ||
+      job.uses !== PROFILE_WORKFLOW
+    ) {
+      errors.push(
+        `${contract.job} must call the standard E2E profile after matrix generation and base-image publication`,
+      );
     }
     if (job.name !== "${{ matrix.display_name }}") {
       errors.push(`${contract.job} must use the planned outcome-first display name`);
@@ -159,6 +164,10 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
         "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}",
       cli_artifact_provenance: "${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",
       managed_image_catalog: "${{ needs.generate-matrix.outputs.managed_image_catalog }}",
+      managed_image_revision:
+        "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}",
+      managed_image_receipt:
+        "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}",
       credential_boundary: contract.credentialBoundary,
       catalogue_id: "${{ matrix.id }}",
       target_id: "${{ matrix.target_id }}",
@@ -207,6 +216,8 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     risk_signal_correlation_id: "string",
     cli_artifact_provenance: "string",
     managed_image_catalog: "string",
+    managed_image_revision: "string",
+    managed_image_receipt: "string",
     credential_boundary: "string",
     catalogue_id: "string",
     target_id: "string",
@@ -274,7 +285,9 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   const jobEnv = record(runJob.env);
   const expectedJobEnv = {
     E2E_JOB: "1",
+    E2E_MANAGED_IMAGE_REVISION: "${{ inputs.managed_image_revision }}",
     E2E_TARGET_ID: "${{ inputs.target_id }}",
+    E2E_MANAGED_IMAGE_COHORT_RECEIPT: "${{ inputs.managed_image_receipt }}",
     NEMOCLAW_RUN_LIVE_E2E: "1",
     NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.candidate_sha }}",
     NEMOCLAW_E2E_CORRELATION_ID: "${{ inputs.risk_signal_correlation_id }}",
@@ -470,9 +483,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     !managedCatalogRun.includes(
       "managed-image catalog source identity does not match the candidate",
     ) ||
-    !managedCatalogRun.includes(
-      "managed-image catalog release does not match the restored CLI",
-    ) ||
+    !managedCatalogRun.includes("managed-image catalog release does not match the restored CLI") ||
     !managedCatalogRun.includes("NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG") ||
     managedCatalogRun.includes("NEMOCLAW_E2E_EXACT_RELEASE") ||
     managedCatalogRun.includes(".source.release = $release") ||

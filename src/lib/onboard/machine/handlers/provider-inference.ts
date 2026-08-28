@@ -84,6 +84,8 @@ export interface ProviderInferenceSetupOptions {
   reservationSessionId?: string;
   /** Recheck recorded-route ownership after acquiring route mutation locks. */
   isRecordedProviderRecoveryAuthorized?: () => boolean;
+  /** Recheck the receipt-bound policy requirements at each inference mutation edge. */
+  revalidatePolicyRequirements?: (operation: string) => void;
   /** Operation-scoped provider request selected for this onboarding attempt. */
   hostLocalInference?: HostLocalInferenceStartupSelection;
   /** Proxy token prepared after configuration review; avoids repeating host mutations in setup. */
@@ -159,6 +161,19 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
   deps: {
     checkGatewayRouteCompatibility: CurrentGatewayRouteCompatibilityCheck;
     preflightGatewayRouteDiscovery: CurrentGatewayRouteDiscoveryPreflight;
+    preflightPolicyRequirements(input: {
+      gatewayName: string;
+      sandboxName: string | null;
+      agent: Agent;
+      selectedMessagingChannels: readonly string[];
+      hermesToolGateways: readonly string[];
+      gpuPassthrough: boolean;
+      provider: string | null;
+      hostLocalInferenceRouteOnly?: boolean;
+      webSearchConfig: WebSearchConfig | null;
+      observabilityEnabled: boolean;
+      operation: string;
+    }): void;
     getSandboxRecoveryAuthority(
       sandboxName: string,
       sessionId: string | null | undefined,
@@ -181,6 +196,10 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       ) => GatewayRouteDiscoveryConstraints,
       canProbeRoute?: (provider: string) => boolean,
       recoverySessionId?: string | null,
+      revalidatePolicyRequirements?: (
+        route: ProviderInferenceProbeRoute,
+        operation: string,
+      ) => void,
     ): Promise<ProviderSelectionResult>;
     setupInference(
       sandboxName: string | null,
@@ -206,10 +225,12 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       gatewayName: string,
       provider: string | null | undefined,
       credentialEnv: string | null | undefined,
+      revalidatePolicyRequirements?: (operation: string) => void,
     ): Promise<{ forceInferenceSetup: boolean; credentialEnv: string | null }>;
     ensureManagedLlamaCppResumeReady(
       provider: string | null | undefined,
       sandboxName: string | null | undefined,
+      revalidatePolicyRequirements?: (operation: string) => void,
     ): Promise<boolean>;
     isResumeProviderSurfaceReady(
       gatewayName: string,
@@ -257,8 +278,8 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     reserveSandboxInferenceRoute(
       sandboxName: string,
       route: {
-        provider: string;
-        model: string;
+        provider: string | null;
+        model: string | null;
         endpointUrl: string | null;
         endpointSource: InferenceEndpointSource | null;
         credentialEnv: string | null;
@@ -266,6 +287,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
         gatewayName: string;
         reservationSessionId?: string;
       },
+      options?: { requireAbsent?: boolean },
     ): boolean;
     registryUpdateSandbox(sandboxName: string, updates: { nimContainer?: string | null }): void;
     checkpointSandboxIdentity(sandboxName: string, agent: Agent): Promise<void>;
@@ -525,6 +547,7 @@ function hostLocalInferenceSetupOptions(
     (candidate): candidate is HostLocalInferenceApplication => candidate === input.application,
   );
   if (!application) {
+    if (!isHostLocalInferenceProvider(input.provider)) return {};
     throw new Error(`Unsupported host-local inference application '${input.application}'.`);
   }
   const selected = resolver({
@@ -606,7 +629,9 @@ function hostLocalInferenceSetupOptions(
               !hasPublishedResume &&
               hasInterruptedRecovery))
         : selected.request.service === "ollama"
-          ? !input.allowPublishedResume && !hasPublishedResume && !hasInterruptedRecovery
+          ? input.allowPublishedResume
+            ? hasPublishedResume && !hasInterruptedRecovery
+            : !hasPublishedResume && !hasInterruptedRecovery
           : input.allowPublishedResume
             ? !(hasPublishedResume && hasInterruptedRecovery)
             : !hasPublishedResume && !hasInterruptedRecovery;
@@ -618,12 +643,12 @@ function hostLocalInferenceSetupOptions(
   return selected ? { hostLocalInference: selected } : {};
 }
 
-type EarlyManagedLlamaLifecycleSelection = {
+type EarlyManagedHostLocalLifecycleSelection = {
   readonly sandboxName: string;
   readonly setupOptions: HostLocalInferenceSetupOptions;
 };
 
-function resolveEarlyManagedLlamaLifecycleSelection(input: {
+function resolveEarlyManagedHostLocalLifecycleSelection(input: {
   readonly resumeProviderSelection: boolean;
   readonly provider: string | null;
   readonly model: string | null;
@@ -634,10 +659,10 @@ function resolveEarlyManagedLlamaLifecycleSelection(input: {
   readonly endpointUrl: string | null;
   readonly endpointSource: InferenceEndpointSource | null;
   readonly resolver: HostLocalInferenceStartupSelectionResolver;
-}): EarlyManagedLlamaLifecycleSelection | null {
+}): EarlyManagedHostLocalLifecycleSelection | null {
   if (
     !input.resumeProviderSelection ||
-    input.provider !== "llama-cpp-local" ||
+    (input.provider !== "llama-cpp-local" && input.provider !== "ollama-local") ||
     typeof input.model !== "string" ||
     typeof input.sandboxName !== "string"
   ) {
@@ -656,7 +681,7 @@ function resolveEarlyManagedLlamaLifecycleSelection(input: {
       allowPublishedResume: true,
       recover: isCanonicalHostLocalResume({
         effectiveResume: input.effectiveResume,
-        provider: "llama-cpp-local",
+        provider: input.provider,
         endpointUrl: input.endpointUrl,
         endpointSource: input.endpointSource,
       }),
@@ -665,16 +690,18 @@ function resolveEarlyManagedLlamaLifecycleSelection(input: {
 }
 
 async function ensureLegacyManagedLlamaCppResumeReady(
-  selection: EarlyManagedLlamaLifecycleSelection | null,
+  selection: EarlyManagedHostLocalLifecycleSelection | null,
   provider: string | null,
   sandboxName: string | null,
   ensure: (
     provider: string | null | undefined,
     sandboxName: string | null | undefined,
+    revalidatePolicyRequirements?: (operation: string) => void,
   ) => Promise<boolean>,
+  revalidatePolicyRequirements?: (operation: string) => void,
 ): Promise<void> {
-  if (selection?.setupOptions.hostLocalInference?.request.service === "llama-cpp") return;
-  await ensure(provider, sandboxName);
+  if (selection?.setupOptions.hostLocalInference) return;
+  await ensure(provider, sandboxName, revalidatePolicyRequirements);
 }
 
 function endpointSourceForCurrentUrl(
@@ -685,6 +712,100 @@ function endpointSourceForCurrentUrl(
   return endpointSource === "onboard" && (!onboardEndpointUrl || endpointUrl !== onboardEndpointUrl)
     ? null
     : endpointSource;
+}
+
+function resolvedHostLocalPolicyRouteEvidence(
+  setupOptions: HostLocalInferenceSetupOptions,
+  provider: string,
+  route: {
+    endpointUrl: string | null;
+    endpointSource: InferenceEndpointSource | null;
+    onboardEndpointUrl: string | null;
+  },
+): {
+  routeOnly: boolean;
+  proofAuthority: HostLocalInferenceSandboxProofAuthority | null;
+  routeKnown: boolean;
+} | null {
+  if (setupOptions.hostLocalInference) {
+    const resolvedRoute = resolvedHostLocalInferenceRoute(setupOptions.hostLocalInference, route);
+    return {
+      routeOnly: resolvedRoute.routeOnly,
+      proofAuthority: resolvedRoute.proofAuthority,
+      routeKnown: true,
+    };
+  }
+  return isHostLocalInferenceProvider(provider)
+    ? { routeOnly: false, proofAuthority: null, routeKnown: true }
+    : null;
+}
+
+function resolveInitialHostLocalPolicyRoute(input: {
+  resumeProviderSelection: boolean;
+  sandboxName: string | null;
+  provider: string | null;
+  model: string | null;
+  application: string;
+  acceleration: HostLocalOllamaAccelerationAuthority;
+  effectiveResume: boolean;
+  endpointUrl: string | null;
+  endpointSource: InferenceEndpointSource | null;
+  onboardEndpointUrl: string | null;
+  resolver: HostLocalInferenceStartupSelectionResolver;
+}): {
+  routeOnly: boolean;
+  proofAuthority: HostLocalInferenceSandboxProofAuthority | null;
+  routeKnown: boolean;
+  selection: {
+    sandboxName: string;
+    provider: string;
+    model: string;
+    setupOptions: HostLocalInferenceSetupOptions;
+  } | null;
+} {
+  if (
+    !input.resumeProviderSelection ||
+    !input.sandboxName ||
+    !input.provider ||
+    !input.model ||
+    !isHostLocalInferenceProvider(input.provider)
+  ) {
+    return {
+      routeOnly: false,
+      proofAuthority: null,
+      routeKnown: !isHostLocalInferenceProvider(input.provider ?? ""),
+      selection: null,
+    };
+  }
+  const setupOptions = hostLocalInferenceSetupOptions(input.resolver, {
+    application: input.application,
+    sandboxName: input.sandboxName,
+    provider: input.provider,
+    model: input.model,
+    acceleration: input.acceleration,
+    requireToolCalling: null,
+    freshRequireToolCalling: true,
+    allowPublishedResume: true,
+    recover: isCanonicalHostLocalResume({
+      effectiveResume: input.effectiveResume,
+      provider: input.provider,
+      endpointUrl: input.endpointUrl,
+      endpointSource: input.endpointSource,
+    }),
+  });
+  const routeEvidence = resolvedHostLocalPolicyRouteEvidence(setupOptions, input.provider, input);
+  if (!routeEvidence) {
+    throw new Error("Host-local inference policy route evidence was not resolved.");
+  }
+  return {
+    ...routeEvidence,
+    selection: {
+      sandboxName: input.sandboxName,
+      provider: input.provider,
+      model: input.model,
+      setupOptions,
+    },
+  };
 }
 
 function hasActiveMessagingChannels(
@@ -890,6 +1011,41 @@ async function repairResumedLocalInference(
   });
 }
 
+type ResumedHostLocalInferenceRepairDeps = LocalInferenceRepairDeps &
+  Pick<
+    ProviderInferenceStateOptions<unknown, unknown, unknown>["deps"],
+    "isNonInteractive" | "log"
+  >;
+
+async function repairOrRecoverResumedHostLocalInference(
+  selection: EarlyManagedHostLocalLifecycleSelection | null,
+  provider: string,
+  model: string,
+  agent: unknown,
+  revalidatePolicyRequirements: (operation: string, requiredProvider?: string | null) => void,
+  forceInferenceSetup: boolean,
+  deps: ResumedHostLocalInferenceRepairDeps,
+): Promise<boolean> {
+  const request = selection?.setupOptions.hostLocalInference?.request;
+  if (request?.service === "ollama" && "managed" in request) {
+    deps.log("  [resume] Recovering managed Ollama through its receipt-bound runtime.");
+    return true;
+  }
+  revalidatePolicyRequirements(
+    `repair local inference provider ${JSON.stringify(provider)}`,
+    provider,
+  );
+  await repairResumedLocalInference(provider, model, agent, {
+    ...deps,
+    repairLocalInferenceSystemdOverrideOrExit: (options) =>
+      deps.repairLocalInferenceSystemdOverrideOrExit({
+        ...options,
+        isNonInteractive: deps.isNonInteractive,
+      }),
+  });
+  return forceInferenceSetup;
+}
+
 type ConfigurationReviewDeps<Agent> = Pick<
   ProviderInferenceStateOptions<unknown, Agent, unknown>["deps"],
   | "checkpointSandboxIdentity"
@@ -1023,6 +1179,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let compatibleEndpointReasoningEffort = initial.compatibleEndpointReasoningEffort;
   let nimContainer = initial.nimContainer;
   const webSearchConfig = initial.webSearchConfig;
+  const observabilityEnabled = session?.observabilityEnabled === true;
   let forceProviderSelection = initialForceProviderSelection;
   let allowToolsIncompatible = false;
   let skipHostInferenceSmoke = false;
@@ -1037,9 +1194,68 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let endpointTrustedPrivateCapability: TrustedPrivateEndpointCapability | undefined;
   let inferenceCapabilityCache: OnboardInferenceCapabilityCache | undefined;
   let vllmModelIdentity: string | undefined;
-  let hostLocalInferenceRouteOnly = false;
-  let hostLocalInferenceProofAuthority: HostLocalInferenceSandboxProofAuthority | null = null;
   const effectiveResume = resume && !fresh;
+  let hostLocalInferenceRouteOnly = false;
+  let hostLocalInferenceRouteKnown = !isHostLocalInferenceProvider(provider ?? "");
+  let hostLocalInferenceProofAuthority: HostLocalInferenceSandboxProofAuthority | null = null;
+  const hostLocalInferenceResolutionCache = new Map<
+    string,
+    HostLocalInferenceStartupSelection | null
+  >();
+  const resolveHostLocalInferenceStartupSelection: HostLocalInferenceStartupSelectionResolver = (
+    input,
+  ) => {
+    const key = JSON.stringify(input);
+    if (hostLocalInferenceResolutionCache.has(key)) {
+      return hostLocalInferenceResolutionCache.get(key) ?? null;
+    }
+    const selection = deps.resolveHostLocalInferenceStartupSelection(input);
+    hostLocalInferenceResolutionCache.set(key, selection);
+    return selection;
+  };
+  let prospectiveHostLocalPolicyRoute: {
+    sandboxName: string;
+    provider: string;
+    model: string;
+    setupOptions: HostLocalInferenceSetupOptions;
+  } | null = null;
+  const readProspectiveHostLocalPolicyRoute = () => prospectiveHostLocalPolicyRoute;
+  const resolveProspectiveHostLocalPolicyRoute = (route: ProviderInferenceProbeRoute): void => {
+    const routeProvider = route.provider?.trim() ?? "";
+    const routeModel = route.model?.trim() ?? "";
+    if (!isHostLocalInferenceProvider(routeProvider) || !sandboxName || !routeModel) {
+      hostLocalInferenceRouteOnly = false;
+      hostLocalInferenceProofAuthority = null;
+      hostLocalInferenceRouteKnown = true;
+      prospectiveHostLocalPolicyRoute = null;
+      return;
+    }
+    const setupOptions = hostLocalInferenceSetupOptions(resolveHostLocalInferenceStartupSelection, {
+      application: agentName(agent),
+      sandboxName,
+      provider: routeProvider,
+      model: routeModel,
+      acceleration: selectedHostLocalOllamaAcceleration(gpu, gpuPassthrough),
+      requireToolCalling: true,
+      freshRequireToolCalling: true,
+      allowPublishedResume: false,
+      recover: false,
+    });
+    const resolvedRoute = resolvedHostLocalInferenceRoute(setupOptions.hostLocalInference, {
+      endpointUrl: route.endpointUrl ?? null,
+      endpointSource,
+      onboardEndpointUrl,
+    });
+    hostLocalInferenceRouteOnly = resolvedRoute.routeOnly;
+    hostLocalInferenceProofAuthority = resolvedRoute.proofAuthority;
+    hostLocalInferenceRouteKnown = true;
+    prospectiveHostLocalPolicyRoute = {
+      sandboxName,
+      provider: routeProvider,
+      model: routeModel,
+      setupOptions,
+    };
+  };
   const reusableResumeSandboxName = provenResumeSandboxName(
     session,
     sandboxName,
@@ -1047,8 +1263,59 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     authoritativeResumeConfig,
     deps.isNonInteractive() ? requestedSandboxName : null,
   );
+  const initialResumeProviderSelection = canResumeProviderSelection(
+    forceProviderSelection,
+    effectiveResume,
+    authoritativeResumeConfig,
+    session,
+    reviewRecoveryState(session, sandboxName),
+    provider,
+    model,
+  );
+  const initialHostLocalPolicyRoute = resolveInitialHostLocalPolicyRoute({
+    resumeProviderSelection: initialResumeProviderSelection,
+    sandboxName: reusableResumeSandboxName,
+    provider,
+    model,
+    application: agentName(agent),
+    acceleration: selectedHostLocalOllamaAcceleration(gpu, gpuPassthrough),
+    effectiveResume,
+    endpointUrl,
+    endpointSource,
+    onboardEndpointUrl,
+    resolver: resolveHostLocalInferenceStartupSelection,
+  });
+  hostLocalInferenceRouteOnly = initialHostLocalPolicyRoute.routeOnly;
+  hostLocalInferenceProofAuthority = initialHostLocalPolicyRoute.proofAuthority;
+  hostLocalInferenceRouteKnown = initialHostLocalPolicyRoute.routeKnown;
+  prospectiveHostLocalPolicyRoute = initialHostLocalPolicyRoute.selection;
   const stateResults: OnboardStateTransitionResult[] = [];
   const retryStateResults: OnboardStateTransitionResult[] = [];
+
+  const revalidatePolicyRequirements = (
+    operation: string,
+    requiredProvider: string | null = provider,
+  ): void => {
+    const routeKnownForProvider =
+      requiredProvider === provider
+        ? hostLocalInferenceRouteKnown
+        : prospectiveHostLocalPolicyRoute?.provider === requiredProvider;
+    deps.preflightPolicyRequirements({
+      gatewayName,
+      sandboxName,
+      agent,
+      selectedMessagingChannels,
+      hermesToolGateways,
+      gpuPassthrough,
+      provider: requiredProvider,
+      hostLocalInferenceRouteOnly: routeKnownForProvider && hostLocalInferenceRouteOnly,
+      webSearchConfig,
+      observabilityEnabled,
+      operation,
+    });
+  };
+
+  revalidatePolicyRequirements("select an inference provider");
 
   while (true) {
     // Drop a context window auto-detected by a prior compatible-endpoint pass
@@ -1081,7 +1348,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       provider,
       model,
     );
-    const earlyManagedLlamaLifecycleSelection = resolveEarlyManagedLlamaLifecycleSelection({
+    const earlyManagedHostLocalLifecycleSelection = resolveEarlyManagedHostLocalLifecycleSelection({
       resumeProviderSelection,
       provider,
       model,
@@ -1091,7 +1358,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       effectiveResume,
       endpointUrl,
       endpointSource,
-      resolver: deps.resolveHostLocalInferenceStartupSelection,
+      resolver: resolveHostLocalInferenceStartupSelection,
     });
     let shouldRecordProviderSelection = false;
     // A review interruption selected a provider but did not configure its
@@ -1112,13 +1379,23 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       // gateway-owned llama.cpp lifecycle before the selection shortcut can
       // skip setup. The dependency is a no-op for operator-attached llama.cpp
       // routes because those routes have no matching managed owner state.
+      revalidatePolicyRequirements(
+        `recover managed runtime for inference provider ${JSON.stringify(provider)}`,
+      );
       await ensureLegacyManagedLlamaCppResumeReady(
-        earlyManagedLlamaLifecycleSelection,
+        earlyManagedHostLocalLifecycleSelection,
         provider,
         sandboxName,
         deps.ensureManagedLlamaCppResumeReady,
+        (operation) => revalidatePolicyRequirements(operation, provider),
       );
-      const recovery = await deps.ensureResumeProviderReady(gatewayName, provider, credentialEnv);
+      revalidatePolicyRequirements(`recover inference provider ${JSON.stringify(provider)}`);
+      const recovery = await deps.ensureResumeProviderReady(
+        gatewayName,
+        provider,
+        credentialEnv,
+        (operation) => revalidatePolicyRequirements(operation, provider),
+      );
       forceInferenceSetup ||= recovery.forceInferenceSetup;
       credentialEnv = recovery.credentialEnv;
       // Rebuild may be resuming a legacy session whose step marker was never
@@ -1177,6 +1454,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         forceInferenceSetup = true;
         deps.log("  [resume] Refreshing compatible-endpoint inference route for messaging.");
       }
+      revalidatePolicyRequirements("record resumed provider selection");
       deps.skippedStepMessage("provider_selection", `${provider} / ${model}`);
       const selectedAgentName = (agent as { name?: string } | null)?.name;
       if ((!selectedAgentName || selectedAgentName === "openclaw") && reusableResumeSandboxName) {
@@ -1197,19 +1475,21 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       );
       compatibleEndpointReasoning = configuredReasoning.reasoning;
       compatibleEndpointReasoningEffort = configuredReasoning.effort;
-      await repairResumedLocalInference(resumedSelection.provider, resumedSelection.model, agent, {
-        ...deps,
-        repairLocalInferenceSystemdOverrideOrExit: (options) =>
-          deps.repairLocalInferenceSystemdOverrideOrExit({
-            ...options,
-            isNonInteractive: deps.isNonInteractive,
-          }),
-      });
+      forceInferenceSetup = await repairOrRecoverResumedHostLocalInference(
+        earlyManagedHostLocalLifecycleSelection,
+        resumedSelection.provider,
+        resumedSelection.model,
+        agent,
+        revalidatePolicyRequirements,
+        forceInferenceSetup,
+        deps,
+      );
     } else {
       // An incomplete Station Express resume intentionally retries setupNim here. The outer
       // Station resume wrapper restores the exact provider/model as non-interactive env input,
       // so this re-runs the failed managed install without presenting selection prompts and
       // obtains a fresh checkpoint identity before the provider step is committed.
+      revalidatePolicyRequirements("record provider selection start");
       await deps.startRecordedStep("provider_selection");
       const recoverRecordedProvider = providerRecovery.shouldRecover();
       const selection = await withProviderSelectionTrace(
@@ -1238,10 +1518,24 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
               return preflight.ok || isAdvisoryGatewayRouteConflict(preflight.result);
             },
             providerRecovery.sessionId,
+            (route, operation) => {
+              resolveProspectiveHostLocalPolicyRoute(route);
+              revalidatePolicyRequirements(operation, route.provider ?? null);
+            },
           ),
       );
       model = selection.model;
       provider = selection.provider;
+      const selectedProspectiveHostLocalPolicyRoute = readProspectiveHostLocalPolicyRoute();
+      if (
+        selectedProspectiveHostLocalPolicyRoute?.provider !== provider ||
+        selectedProspectiveHostLocalPolicyRoute.model !== model
+      ) {
+        hostLocalInferenceRouteOnly = false;
+        hostLocalInferenceProofAuthority = null;
+        hostLocalInferenceRouteKnown = !isHostLocalInferenceProvider(provider);
+        prospectiveHostLocalPolicyRoute = null;
+      }
       endpointUrl = selection.endpointUrl;
       credentialEnv = selection.credentialEnv;
       hermesAuthMethod = selection.hermesAuthMethod;
@@ -1307,6 +1601,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         preferredInferenceApi,
       });
     }
+    revalidatePolicyRequirements(`configure inference provider ${JSON.stringify(provider)}`);
     if (
       shouldRecordProviderSelection &&
       (authoritativeResumeConfig || effectiveResume) &&
@@ -1351,9 +1646,10 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     });
     const acceptedHostLocalResume =
       effectiveResume && resumeProviderSelection && isHostLocalInferenceProvider(selectedProvider);
+    const cachedProspectiveHostLocalPolicyRoute = readProspectiveHostLocalPolicyRoute();
     const resolveCachedHostLocalInferenceSetupOptions = createCachedHostLocalInferenceSetupResolver(
       {
-        resolver: deps.resolveHostLocalInferenceStartupSelection,
+        resolver: resolveHostLocalInferenceStartupSelection,
         application: agentName(agent),
         provider: selectedProvider,
         model: selectedModel,
@@ -1368,7 +1664,15 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         recordToolCallingRequirement: (required) => {
           allowToolsIncompatible = !required;
         },
-        initial: earlyManagedLlamaLifecycleSelection ?? undefined,
+        initial:
+          earlyManagedHostLocalLifecycleSelection ??
+          (cachedProspectiveHostLocalPolicyRoute?.provider === selectedProvider &&
+          cachedProspectiveHostLocalPolicyRoute.model === selectedModel
+            ? {
+                sandboxName: cachedProspectiveHostLocalPolicyRoute.sandboxName,
+                setupOptions: cachedProspectiveHostLocalPolicyRoute.setupOptions,
+              }
+            : undefined),
       },
     );
     const hostLocalResume = await resolveHostLocalResumeSetup({
@@ -1381,6 +1685,16 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     });
     sandboxName = hostLocalResume.sandboxName;
     const resumeHostLocalInferenceSetupOptions = hostLocalResume.setupOptions;
+    const resumedHostLocalPolicyRouteEvidence = resolvedHostLocalPolicyRouteEvidence(
+      resumeHostLocalInferenceSetupOptions,
+      selectedProvider,
+      { endpointUrl, endpointSource, onboardEndpointUrl },
+    );
+    if (resumedHostLocalPolicyRouteEvidence) {
+      hostLocalInferenceRouteOnly = resumedHostLocalPolicyRouteEvidence.routeOnly;
+      hostLocalInferenceProofAuthority = resumedHostLocalPolicyRouteEvidence.proofAuthority;
+      hostLocalInferenceRouteKnown = resumedHostLocalPolicyRouteEvidence.routeKnown;
+    }
     const resumeInference = canResumeInferenceRoute({
       needsBedrockRuntimeAdapter,
       hasHostLocalInference: Boolean(resumeHostLocalInferenceSetupOptions.hostLocalInference),
@@ -1398,6 +1712,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           const inferenceOptions = {
             gatewayName,
             allowToolsIncompatible,
+            revalidatePolicyRequirements,
             ...(skipHostInferenceSmoke ? { skipHostInferenceSmoke } : {}),
             ...(reuseGatewayCredentialWithoutLocalKey
               ? { reuseGatewayCredentialWithoutLocalKey }
@@ -1417,8 +1732,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             selectedProvider,
             selectedModel,
             credentialEnv,
-            () =>
-              deps.setupInference(
+            () => {
+              revalidatePolicyRequirements(
+                `configure inference provider ${JSON.stringify(provider)}`,
+              );
+              return deps.setupInference(
                 confirmedSandboxName,
                 selectedModel,
                 selectedProvider,
@@ -1427,7 +1745,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
                 hermesAuthMethod,
                 hermesToolGateways,
                 inferenceOptions,
-              ),
+              );
+            },
           );
         } finally {
           clearStagedCredentialEnv(deps, credentialEnv);
@@ -1441,6 +1760,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           forceProviderSelection = true;
           continue;
         }
+        revalidatePolicyRequirements("record successful resumed inference configuration");
         session = await deps.recordStepComplete(
           "inference",
           deps.toSessionUpdates({
@@ -1453,11 +1773,14 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             hermesToolGateways,
           }),
         );
+        revalidatePolicyRequirements("finish successful resumed inference configuration");
         break;
       }
       const sandboxStepComplete = session?.steps?.sandbox?.status === "complete";
       const resumeReservationName =
-        authoritativeResumeConfig || !sandboxStepComplete
+        authoritativeResumeConfig ||
+        session?.machine.recoveryReceipt?.reason === "failed_terminal_snapshot" ||
+        !sandboxStepComplete
           ? (reusableResumeSandboxName ?? (await deps.promptValidatedSandboxName(agent)))
           : null;
       if (resumeReservationName) sandboxName = resumeReservationName;
@@ -1478,6 +1801,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
               credentialEnv,
               preferredInferenceApi,
             });
+            revalidatePolicyRequirements(
+              `reconcile model router for inference provider ${JSON.stringify(provider)}`,
+            );
             try {
               await deps.reconcileModelRouter();
             } catch (err) {
@@ -1486,12 +1812,20 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
               );
               deps.exitProcess(1);
             }
+            revalidatePolicyRequirements(
+              `update routed inference provider ${JSON.stringify(provider)}`,
+            );
             const reupserted = deps.reupsertRoutedProvider(
               gatewayName,
               selectedProvider,
               endpointUrl,
               credentialEnv,
             );
+            if (reupserted.ok && resumeReservationName) {
+              revalidatePolicyRequirements(
+                `reserve routed inference route for sandbox ${JSON.stringify(resumeReservationName)}`,
+              );
+            }
             const reservationEndpointSource = endpointSourceForCurrentUrl(
               endpointSource,
               reupserted.endpointUrl,
@@ -1537,6 +1871,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             credentialEnv,
             preferredInferenceApi,
           });
+          revalidatePolicyRequirements(
+            `reserve inference route for sandbox ${JSON.stringify(resumeReservationName)}`,
+          );
           return deps.reserveSandboxInferenceRoute(resumeReservationName, {
             provider: selectedProvider,
             model: selectedModel,
@@ -1553,12 +1890,14 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           deps.exitProcess(1);
         }
       }
+      revalidatePolicyRequirements("record reused inference setup");
       deps.skippedStepMessage("inference", `${provider} / ${model}`);
       await deps.recordStateSkipped("inference", {
         reason: "resume",
         provider,
         model,
       });
+      revalidatePolicyRequirements("record successful reused inference configuration");
       if (nimContainer && sandboxName) deps.registryUpdateSandbox(sandboxName, { nimContainer });
       session = await deps.recordStepComplete(
         "inference",
@@ -1572,6 +1911,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           hermesToolGateways,
         }),
       );
+      revalidatePolicyRequirements("finish successful reused inference configuration");
       break;
     }
 
@@ -1608,6 +1948,13 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       const confirmedSandboxName = review.sandboxName;
       activeHostLocalInferenceSetupOptions =
         resolveCachedHostLocalInferenceSetupOptions(confirmedSandboxName);
+      const prospectiveHostLocalRoute = resolvedHostLocalInferenceRoute(
+        activeHostLocalInferenceSetupOptions.hostLocalInference,
+        { endpointUrl, endpointSource, onboardEndpointUrl },
+      );
+      hostLocalInferenceRouteOnly = prospectiveHostLocalRoute.routeOnly;
+      hostLocalInferenceProofAuthority = prospectiveHostLocalRoute.proofAuthority;
+      hostLocalInferenceRouteKnown = true;
       const freshManagedOllama =
         activeHostLocalInferenceSetupOptions.hostLocalInference?.request.service === "ollama" &&
         "managed" in activeHostLocalInferenceSetupOptions.hostLocalInference.request;
@@ -1621,6 +1968,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         !effectiveResume &&
         !deferProviderSelectionUntilInference
       ) {
+        revalidatePolicyRequirements("record reviewed provider selection");
         session = await deps.recordStepComplete(
           "provider_selection",
           deps.toSessionUpdates({
@@ -1642,6 +1990,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       // secret-free route. Do not start or persist the legacy host Ollama
       // proxy alongside it; that would leave cross-engine residue before the
       // provider-owned transaction can prove and commit its authority.
+      revalidatePolicyRequirements(`prepare local inference provider ${JSON.stringify(provider)}`);
       const preparedOllamaProxyToken = await prepareSelectedLocalProvider(
         activeHostLocalInferenceSetupOptions.hostLocalInference,
         provider,
@@ -1650,6 +1999,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       const inferenceOptions = {
         gatewayName,
         allowToolsIncompatible,
+        revalidatePolicyRequirements,
         ...(preparedOllamaProxyToken ? { preparedOllamaProxyToken } : {}),
         ...(skipHostInferenceSmoke ? { skipHostInferenceSmoke } : {}),
         ...(reuseGatewayCredentialWithoutLocalKey ? { reuseGatewayCredentialWithoutLocalKey } : {}),
@@ -1667,14 +2017,16 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         ),
         ...activeHostLocalInferenceSetupOptions,
       };
+      revalidatePolicyRequirements("record inference setup start");
       await deps.startRecordedStep("inference", { provider, model });
       inferenceResult = await withInferenceTrace(
         confirmedSandboxName,
         selectedProvider,
         selectedModel,
         credentialEnv,
-        () =>
-          deps.setupInference(
+        () => {
+          revalidatePolicyRequirements(`configure inference provider ${JSON.stringify(provider)}`);
+          return deps.setupInference(
             confirmedSandboxName,
             selectedModel,
             selectedProvider,
@@ -1683,7 +2035,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             hermesAuthMethod,
             hermesToolGateways,
             inferenceOptions,
-          ),
+          );
+        },
       );
     } finally {
       clearStagedCredentialEnv(deps, credentialEnv);
@@ -1706,11 +2059,13 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     endpointUrl = hostLocalRoute.endpointUrl;
     endpointSource = hostLocalRoute.endpointSource;
     onboardEndpointUrl = hostLocalRoute.onboardEndpointUrl;
+    revalidatePolicyRequirements("record inference runtime metadata");
     if (nimContainer && sandboxName) deps.registryUpdateSandbox(sandboxName, { nimContainer });
     if (deferProviderSelectionUntilInference) {
       // Provider selection remains in progress until its inference route has
       // configured successfully. This retains the selected provider/model for
       // interruption recovery without claiming a usable route prematurely.
+      revalidatePolicyRequirements("record successful deferred provider selection");
       session = await deps.recordStepComplete(
         "provider_selection",
         deps.toSessionUpdates({
@@ -1730,6 +2085,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         }),
       );
     }
+    revalidatePolicyRequirements("record successful inference configuration");
     session = await deps.recordStepComplete(
       "inference",
       deps.toSessionUpdates({

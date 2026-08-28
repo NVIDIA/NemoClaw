@@ -19,6 +19,13 @@ import type {
   SandboxMessagingPlan,
 } from "../manifest";
 import { isProviderPlaceholderForEnvKey } from "../provider-placeholders";
+import {
+  HERMES_ENV_RENDER_TARGET,
+  migrationOnlyEnvTargets,
+  ownedCredentialEnvKeys,
+  readEnvLineKey,
+  staleCredentialEnvKeys,
+} from "./credential-env-cleanup";
 import { allowRenderedOpenClawPlugins } from "./openclaw-plugin-allow";
 import { enabledPlanChannels, filterEnabledPlanEntries } from "./plan-filter";
 import type {
@@ -72,14 +79,22 @@ export async function applyAgentConfigAtOpenShell(
       entry.kind === "json-fragment" && disabledChannelIds.has(entry.channelId),
   );
 
-  for (const [target, render] of groupRenderByTarget([...enabledRender, ...disabledJsonRender])) {
+  const renderByTarget = groupRenderByTarget([...enabledRender, ...disabledJsonRender]);
+  const targets: [string, SandboxMessagingAgentRenderPlan[]][] = [
+    ...renderByTarget,
+    ...migrationOnlyEnvTargets(plan, new Set(renderByTarget.keys())).map(
+      (target) => [target, []] as [string, SandboxMessagingAgentRenderPlan[]],
+    ),
+  ];
+  for (const [target, render] of targets) {
     const resolvedTarget = resolveSandboxAgentConfigTarget(target, plan.agent);
     const kind = render[0]?.kind;
-    if (!kind) continue;
-    if (render.some((entry) => entry.kind !== kind)) {
+    if (kind && render.some((entry) => entry.kind !== kind)) {
       throw new Error(`Cannot apply mixed messaging render kinds to ${target}.`);
     }
     const existing = readSandboxFile(plan.sandboxName, resolvedTarget, options.runOpenshell);
+    // Nothing rendered and no file on disk: no migration to perform.
+    if (!kind && existing === undefined) continue;
     const contents =
       kind === "json-fragment"
         ? applyJsonFragments(
@@ -95,7 +110,7 @@ export async function applyAgentConfigAtOpenShell(
             ),
             resolvedTarget,
           )
-        : applyEnvLines(existing, render.filter(isEnvLinesRender));
+        : applyEnvLines(plan, existing, render.filter(isEnvLinesRender));
     writeSandboxFile(plan.sandboxName, resolvedTarget, contents, options.runOpenshell);
     appliedTargets.push(resolvedTarget);
   }
@@ -112,6 +127,33 @@ export async function applyAgentConfigAtOpenShell(
     appliedHooks,
     unresolvedTemplateRefs: uniqueStrings(enabledRender.flatMap((render) => render.templateRefs)),
   };
+}
+
+/**
+ * Repair the Hermes env file after starting an image built with an older
+ * applier. This deliberately touches only the manifest-owned credential key
+ * space and reports whether the gateway must reload the file.
+ */
+export function reconcileCredentialEnvAtOpenShell(
+  plan: SandboxMessagingPlan,
+  options: { readonly runOpenshell: MessagingOpenShellRunner },
+): { readonly changed: boolean; readonly target?: string } {
+  if (plan.agent !== "hermes" || ownedCredentialEnvKeys(plan).size === 0) {
+    return { changed: false };
+  }
+
+  const render = filterEnabledPlanEntries(plan, plan.agentRender).filter(
+    (entry): entry is SandboxMessagingEnvLinesRenderPlan =>
+      entry.target === HERMES_ENV_RENDER_TARGET && isEnvLinesRender(entry),
+  );
+  const target = resolveSandboxAgentConfigTarget(HERMES_ENV_RENDER_TARGET, plan.agent);
+  const existing = readSandboxFile(plan.sandboxName, target, options.runOpenshell);
+  if (existing === undefined) return { changed: false };
+
+  const contents = applyEnvLines(plan, existing, render);
+  if (contents === existing) return { changed: false };
+  writeSandboxFile(plan.sandboxName, target, contents, options.runOpenshell);
+  return { changed: true, target };
 }
 
 function hookRequestsForPhases(
@@ -276,10 +318,15 @@ type CredentialPlaceholderRule = {
   readonly placeholder: string;
 };
 
-function credentialPlaceholderRules(plan: SandboxMessagingPlan): CredentialPlaceholderRule[] {
+function activeCredentialBindings(
+  plan: SandboxMessagingPlan,
+): readonly SandboxMessagingPlan["credentialBindings"][number][] {
   const active = new Set(enabledPlanChannels(plan).map((channel) => channel.channelId));
-  return plan.credentialBindings.flatMap((binding) => {
-    if (!active.has(binding.channelId)) return [];
+  return plan.credentialBindings.filter((binding) => active.has(binding.channelId));
+}
+
+function credentialPlaceholderRules(plan: SandboxMessagingPlan): CredentialPlaceholderRule[] {
+  return activeCredentialBindings(plan).flatMap((binding) => {
     if (typeof binding.providerEnvKey !== "string" || typeof binding.placeholder !== "string") {
       return [];
     }
@@ -368,6 +415,7 @@ function setJsonPath(
 }
 
 function applyEnvLines(
+  plan: SandboxMessagingPlan,
   existing: string | undefined,
   render: readonly SandboxMessagingEnvLinesRenderPlan[],
 ): string {
@@ -383,30 +431,26 @@ function applyEnvLines(
       }
     }
   }
+  const stale = staleCredentialEnvKeys(plan, new Set(desired.keys()));
 
   const written = new Set<string>();
   const output = (existing ?? "")
     .split(/\n/)
     .filter((line, index, lines) => line.length > 0 || index < lines.length - 1)
-    .map((line) => {
+    .flatMap((line) => {
       const key = readEnvLineKey(line);
-      if (!key || !desired.has(key)) return line;
+      if (key !== null && stale.has(key)) return [];
+      if (!key || !desired.has(key)) return [line];
       written.add(key);
-      return desired.get(key) as string;
+      return [desired.get(key) as string];
     });
 
   for (const [key, line] of desired) {
-    if (!written.has(key)) output.push(line);
+    // A legacy plan can still render a stale key; appending it would undo the prune.
+    if (!written.has(key) && !stale.has(key)) output.push(line);
   }
   output.push(...rawDesiredLines);
   return output.length > 0 ? `${output.join("\n")}\n` : "";
-}
-
-function readEnvLineKey(line: string): string | null {
-  const index = line.indexOf("=");
-  if (index <= 0) return null;
-  const key = line.slice(0, index).trim();
-  return key.length > 0 ? key : null;
 }
 
 function applyHookBuildFileOutputs(
