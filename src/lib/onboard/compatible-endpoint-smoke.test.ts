@@ -119,11 +119,13 @@ function providerNeutralResponses(
 function runProviderNeutralScript(options: {
   authority: ProviderNeutralAuthority;
   model?: string;
+  script?: string;
   responses?: unknown[];
   denial?: unknown;
   denialBytes?: readonly number[];
   denialOversized?: boolean;
   directError?: "connection-refused" | "dns" | "timeout";
+  managedProxyResponses?: unknown[];
 }) {
   const model = options.model ?? "qwen3.5-9b";
   const directAuthority = `host.openshell.internal:${String(options.authority.directHostPort)}`;
@@ -140,16 +142,38 @@ function runProviderNeutralScript(options: {
     ? 'b"x" * 1048577'
     : `bytes(${JSON.stringify(denialBytes)})`;
   const prelude = `
+import atexit
 import errno
 import io
 import json
 import socket
+import time
 import urllib.error
 import urllib.request
 
 responses = json.loads(${JSON.stringify(JSON.stringify(responses))})
+managed_proxy_responses = json.loads(${JSON.stringify(
+    JSON.stringify(options.managedProxyResponses ?? []),
+  )})
+managed_proxy_enabled = ${options.managedProxyResponses === undefined ? "False" : "True"}
 denial_bytes = ${denialBody}
+inference_request_tokens = []
+direct_request_count = []
+direct_request_urls = []
+managed_proxy_request_count = []
+managed_proxy_request_urls = []
+sleep_delays = []
 direct_error = ${options.directError === undefined ? "None" : JSON.stringify(options.directError)}
+
+def emit_request_evidence():
+    print("INFERENCE_REQUEST_TOKENS=" + ",".join(str(value) for value in inference_request_tokens))
+    print("DIRECT_REQUEST_COUNT=" + str(len(direct_request_count)))
+    print("DIRECT_REQUEST_URLS=" + ",".join(direct_request_urls))
+    print("MANAGED_PROXY_REQUEST_COUNT=" + str(len(managed_proxy_request_count)))
+    print("MANAGED_PROXY_REQUEST_URLS=" + ",".join(managed_proxy_request_urls))
+    print("SLEEP_DELAYS=" + ",".join(str(value) for value in sleep_delays))
+
+atexit.register(emit_request_evidence)
 
 class FakeResponse:
     def __init__(self, status, payload):
@@ -170,7 +194,13 @@ class FakeOpener:
         if request.full_url.startswith("https://inference.local/"):
             if not responses:
                 raise RuntimeError("test response queue exhausted")
+            request_data = json.loads(request.data.decode("utf-8"))
+            inference_request_tokens.append(
+                request_data.get("max_tokens", request_data.get("max_completion_tokens"))
+            )
             return FakeResponse(200, responses.pop(0))
+        direct_request_count.append(1)
+        direct_request_urls.append(request.full_url)
         if direct_error == "connection-refused":
             raise urllib.error.URLError(ConnectionRefusedError(errno.ECONNREFUSED, "refused"))
         if direct_error == "dns":
@@ -185,10 +215,43 @@ class FakeOpener:
             io.BytesIO(denial_bytes),
         )
 
-urllib.request.build_opener = lambda *handlers: FakeOpener()
+class ManagedProxyOpener:
+    def open(self, request, timeout):
+        managed_proxy_request_count.append(1)
+        managed_proxy_request_urls.append(request.full_url)
+        if not managed_proxy_responses:
+            raise urllib.error.URLError(ConnectionRefusedError(errno.ECONNREFUSED, "refused"))
+        request_data = json.loads(request.data.decode("utf-8"))
+        inference_request_tokens.append(
+            request_data.get("max_tokens", request_data.get("max_completion_tokens"))
+        )
+        return FakeResponse(200, managed_proxy_responses.pop(0))
+
+def build_test_opener(*handlers):
+    proxy_disabled = any(
+        isinstance(handler, urllib.request.ProxyHandler) and handler.proxies == {}
+        for handler in handlers
+    )
+    if managed_proxy_enabled and not proxy_disabled:
+        return ManagedProxyOpener()
+    return FakeOpener()
+
+urllib.request.build_opener = build_test_opener
+time.sleep = lambda seconds: sleep_delays.append(seconds)
 `;
-  const script = buildProviderNeutralInferenceSandboxSmokeScript(model, options.authority);
-  return spawnSync("python3", ["-c", `${prelude}\n${script}`], { encoding: "utf8" });
+  const script =
+    options.script ?? buildProviderNeutralInferenceSandboxSmokeScript(model, options.authority);
+  return spawnSync("python3", ["-c", `${prelude}\n${script}`], {
+    encoding: "utf8",
+    env:
+      options.managedProxyResponses === undefined
+        ? process.env
+        : {
+            ...process.env,
+            HTTPS_PROXY: "http://openshell-runtime-proxy.invalid:8080",
+            NO_PROXY: "",
+          },
+  });
 }
 
 describe("compatible endpoint sandbox smoke helpers", () => {
@@ -268,7 +331,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     log.mockRestore();
   });
 
-  it("budgets the canonical outer timeout for both tool proofs and direct denial", () => {
+  it("budgets the canonical outer timeout for reasoning retry, tool proof, and direct denial", () => {
     const runOpenshell = vi
       .fn()
       .mockReturnValueOnce({ status: 0, stdout: "provider ready" })
@@ -292,7 +355,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(runOpenshell).toHaveBeenNthCalledWith(
       2,
       expect.any(Array),
-      expect.objectContaining({ timeout: 430_000 }),
+      expect.objectContaining({ timeout: 625_000 }),
     );
   });
 
@@ -483,6 +546,188 @@ describe("compatible endpoint sandbox smoke helpers", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
+      expect(result.stdout).toContain("INFERENCE_REQUEST_TOKENS=512,512");
+      expect(result.stdout).toContain("DIRECT_REQUEST_COUNT=1");
+    },
+  );
+
+  it("retries reasoning-only content through the public sandbox verification path", () => {
+    const authority = allAgentProofAuthorities[0].authority;
+    const model = "qwen3-vl:4b";
+    const responses = [
+      {
+        model,
+        choices: [
+          {
+            finish_reason: "length",
+            message: { content: "", reasoning_content: "Planning the response." },
+          },
+        ],
+      },
+      { model, choices: [{ message: { content: "PONG" } }] },
+      providerNeutralResponses(model)[1],
+    ];
+    let result: ReturnType<typeof runProviderNeutralScript> | undefined;
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "provider ready" })
+      .mockImplementationOnce((args: string[]) => {
+        result = runProviderNeutralScript({
+          authority,
+          model,
+          responses,
+          script: String(args.at(-1)),
+        });
+        return result;
+      });
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    try {
+      verifyCompatibleEndpointSandboxSmoke({
+        sandboxName: "managed-inference-sandbox",
+        provider: "ollama-local",
+        model,
+        runOpenshell,
+        redact: (value) => value,
+        forceCanonicalRoute: true,
+        hostLocalInferenceProofAuthority: authority,
+      });
+
+      expect(result?.status, result?.stderr).toBe(0);
+      expect(result?.stderr).toContain("REASONING_ONLY at the initial token limit");
+      expect(result?.stdout).toContain("INFERENCE_REQUEST_TOKENS=512,1024,512");
+      expect(result?.stdout).toContain("DIRECT_REQUEST_COUNT=1");
+      expect(log.mock.calls.flat().join("\n")).toContain(
+        "Provider responds through inference.local inside the sandbox",
+      );
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("routes managed inference through the runtime proxy and bypasses it for direct denial (#10423)", () => {
+    const authority = allAgentProofAuthorities[0].authority;
+    const result = runProviderNeutralScript({
+      authority,
+      managedProxyResponses: providerNeutralResponses("qwen3.5-9b"),
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
+    expect(result.stdout).toContain("MANAGED_PROXY_REQUEST_COUNT=2");
+    expect(result.stdout).toContain(
+      "MANAGED_PROXY_REQUEST_URLS=https://inference.local/v1/chat/completions,https://inference.local/v1/chat/completions",
+    );
+    expect(result.stdout).toContain("INFERENCE_REQUEST_TOKENS=512,512");
+    expect(result.stdout).toContain("DIRECT_REQUEST_COUNT=1");
+  });
+
+  it("does not fall back to direct DNS when the managed runtime proxy is unavailable (#10423)", () => {
+    const result = runProviderNeutralScript({
+      authority: allAgentProofAuthorities[0].authority,
+      managedProxyResponses: [],
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "inference.local content proof transport failed after bounded retries",
+    );
+    expect(result.stdout).toContain("MANAGED_PROXY_REQUEST_COUNT=3");
+    expect(result.stdout).toContain("INFERENCE_REQUEST_TOKENS=");
+    expect(result.stdout).toContain("DIRECT_REQUEST_COUNT=0");
+    expect(result.stdout).toContain("SLEEP_DELAYS=5,10");
+  });
+
+  it("executes the provider-neutral proof for receipt-owned llama.cpp authority (#10423)", () => {
+    const result = runProviderNeutralScript({
+      authority: {
+        service: "llama-cpp",
+        directHostPort: 18_080,
+        directHealthPath: "/health",
+        toolCallingRequired: true,
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
+    expect(result.stdout).toContain("INFERENCE_REQUEST_TOKENS=512,512");
+    expect(result.stdout).toContain("DIRECT_REQUEST_COUNT=1");
+    expect(result.stdout).toContain(
+      "DIRECT_REQUEST_URLS=http://host.openshell.internal:18080/v1/chat/completions",
+    );
+  });
+
+  it("fails after one larger-budget attempt when output remains reasoning-only", () => {
+    const reasoningOnly = {
+      model: "qwen3.5-9b",
+      choices: [
+        {
+          finish_reason: "length",
+          message: { content: null, reasoning_content: "Still planning. SECRET_CANARY" },
+        },
+      ],
+    };
+    const result = runProviderNeutralScript({
+      authority: allAgentProofAuthorities[0].authority,
+      responses: [reasoningOnly, reasoningOnly],
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("content proof failed: REASONING_ONLY");
+    expect(result.stderr).not.toContain("SECRET_CANARY");
+    expect(result.stdout).toContain("INFERENCE_REQUEST_TOKENS=512,1024");
+    expect(result.stdout).toContain("DIRECT_REQUEST_COUNT=0");
+  });
+
+  it.each([
+    {
+      shape: "CHOICES_MISSING",
+      response: { model: "qwen3.5-9b", choices: [] },
+    },
+    {
+      shape: "MESSAGE_MISSING",
+      response: { model: "qwen3.5-9b", choices: [{ finish_reason: "stop" }] },
+    },
+    {
+      shape: "REASONING_ONLY",
+      response: {
+        model: "qwen3.5-9b",
+        choices: [{ finish_reason: "stop", message: { reasoning: "Planning." } }],
+      },
+    },
+    {
+      shape: "TOOL_CALL_ONLY",
+      response: {
+        model: "qwen3.5-9b",
+        choices: [{ finish_reason: "tool_calls", message: { tool_calls: [{}] } }],
+      },
+    },
+    {
+      shape: "EMPTY_LENGTH",
+      response: {
+        model: "qwen3.5-9b",
+        choices: [{ finish_reason: "length", message: { content: "" } }],
+      },
+    },
+    {
+      shape: "EMPTY_OTHER",
+      response: {
+        model: "qwen3.5-9b",
+        choices: [{ finish_reason: "stop", message: { content: " " } }],
+      },
+    },
+  ])(
+    "reports fixed $shape content-shape evidence without running later proofs",
+    ({ shape, response }) => {
+      const result = runProviderNeutralScript({
+        authority: allAgentProofAuthorities[0].authority,
+        responses: [response],
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(`content proof failed: ${shape}`);
+      expect(result.stdout).toContain("INFERENCE_REQUEST_TOKENS=512");
+      expect(result.stdout).toContain("DIRECT_REQUEST_COUNT=0");
     },
   );
 
