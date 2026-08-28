@@ -1050,6 +1050,91 @@ describe("managed llama.cpp installer", () => {
     expect(lifecycle.start).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    ["authentication", { status: 1, stderr: "unauthorized: authentication required" }],
+    ["storage", { status: 1, stderr: "write layer: no space left on device" }],
+    ["runner network", { status: 1, stderr: "dial tcp: temporary failure in name resolution" }],
+    ["invalid dependency", { status: 1, stderr: "manifest unknown: manifest not found" }],
+    ["registry availability", { status: 1, stderr: "registry returned 503 Service Unavailable" }],
+    ["daemon behavior", { status: 1, error: new Error("Cannot connect to the Docker daemon") }],
+  ])("attributes a failed image pull to %s (#10558)", async (layer, pullResult) => {
+    const selected = selection();
+    const homeDir = temporaryHome();
+    const harness = engineHarness();
+
+    const result = await installManagedLlamaCpp(selected, {
+      sandboxName: "spark-agent",
+      homeDir,
+      runtimeProvider: managedRuntimeProvider(harness.engine),
+      pullImage: vi.fn(async () => pullResult),
+      verifyGguf: vi.fn(async () => {
+        throw new Error("not cached");
+      }),
+      checkPort: vi.fn(async () => ({ ok: true })),
+      log: vi.fn(),
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining(`Failure layer: ${layer}.`),
+    });
+  });
+
+  it("reports an unclassified layer when the pull failure has no recognized signature (#10558)", async () => {
+    const selected = selection();
+    const homeDir = temporaryHome();
+    const harness = engineHarness();
+    const result = await installManagedLlamaCpp(selected, {
+      sandboxName: "spark-agent",
+      homeDir,
+      runtimeProvider: managedRuntimeProvider(harness.engine),
+      pullImage: vi.fn(async () => ({ status: 7, stderr: "opaque pull failure" })),
+      verifyGguf: vi.fn(async () => {
+        throw new Error("not cached");
+      }),
+      checkPort: vi.fn(async () => ({ ok: true })),
+      log: vi.fn(),
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("Failure layer: unclassified."),
+    });
+  });
+
+  it("bounds and redacts the causal image-pull diagnostic (#10558)", async () => {
+    const selected = selection();
+    const homeDir = temporaryHome();
+    const harness = engineHarness();
+    const secret = "opaque-pull-token";
+    const pullOutput =
+      `unauthorized: https://pull-user:${secret}@registry.example/v2/image?token=${secret} ` +
+      "x".repeat(1_000);
+    const log = vi.fn();
+    const result = await installManagedLlamaCpp(selected, {
+      sandboxName: "spark-agent",
+      homeDir,
+      runtimeProvider: managedRuntimeProvider(harness.engine),
+      pullImage: vi.fn(async (_image, options) => {
+        options.logLine(pullOutput);
+        return { status: 1, stderr: pullOutput };
+      }),
+      verifyGguf: vi.fn(async () => {
+        throw new Error("not cached");
+      }),
+      checkPort: vi.fn(async () => ({ ok: true })),
+      log,
+    });
+
+    const failure = result as Extract<typeof result, { readonly ok: false }>;
+    expect(failure.reason).toContain("Failure layer: authentication.");
+    expect(failure.reason).toContain("command output redacted");
+    expect(failure.reason).not.toContain(secret);
+    expect(Buffer.byteLength(failure.reason, "utf8")).toBeLessThan(400);
+    expect(log.mock.calls.flat().join("\n")).not.toContain(secret);
+    expect(log.mock.calls.flat().join("\n")).not.toContain("unauthorized");
+  });
+
   it("resumes an exact cached runtime without image pulls or Hugging Face acquisition", async () => {
     const selected = selection();
     const homeDir = temporaryHome();

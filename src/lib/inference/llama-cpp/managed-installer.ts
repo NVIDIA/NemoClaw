@@ -121,6 +121,9 @@ interface DockerNetworkInspection {
 interface ManagedLlamaCppImagePullResult {
   readonly status: number | null;
   readonly error?: Error;
+  readonly output?: string;
+  readonly stderr?: string;
+  readonly stdout?: string;
 }
 
 type ManagedLlamaCppImagePull = (
@@ -131,6 +134,77 @@ type ManagedLlamaCppImagePull = (
     readonly logLine: (line: string) => void;
   },
 ) => Promise<ManagedLlamaCppImagePullResult>;
+
+type ManagedLlamaCppImagePullFailureLayer =
+  | "authentication"
+  | "daemon behavior"
+  | "invalid dependency"
+  | "registry availability"
+  | "runner network"
+  | "storage"
+  | "unclassified";
+
+const IMAGE_PULL_LAYER_PATTERNS: ReadonlyArray<{
+  readonly layer: ManagedLlamaCppImagePullFailureLayer;
+  readonly pattern: RegExp;
+}> = [
+  {
+    layer: "authentication",
+    pattern:
+      /(?:authentication required|unauthorized|pull access denied|requested access .* denied|credential helper|credentials? store)/iu,
+  },
+  {
+    layer: "storage",
+    pattern: /(?:no space left on device|disk quota exceeded|insufficient disk space)/iu,
+  },
+  {
+    layer: "runner network",
+    pattern:
+      /(?:dial tcp|no such host|temporary failure in name resolution|network is unreachable|connection (?:refused|reset)|tls handshake timeout|i\/o timeout|context deadline exceeded|client\.timeout|certificate signed by unknown authority)/iu,
+  },
+  {
+    layer: "invalid dependency",
+    pattern:
+      /(?:manifest unknown|manifest .* not found|no matching manifest|no match for platform)/iu,
+  },
+  {
+    layer: "registry availability",
+    pattern:
+      /(?:too many requests|rate limit|service unavailable|bad gateway|gateway timeout|status(?: code)?:? 5\d\d|unexpected status.*5\d\d)/iu,
+  },
+  {
+    layer: "daemon behavior",
+    pattern:
+      /(?:cannot connect to the (?:docker|container) daemon|daemon is not running|error during connect|docker pull failed to start)/iu,
+  },
+];
+
+const IMAGE_PULL_LAYER_CAUSES: Readonly<Record<ManagedLlamaCppImagePullFailureLayer, string>> = {
+  authentication: "registry authentication failed",
+  "daemon behavior": "the container daemon failed the pull",
+  "invalid dependency": "the pinned image does not resolve for this platform",
+  "registry availability": "the registry was unavailable",
+  "runner network": "the runner could not reach the registry",
+  storage: "container storage failed",
+  unclassified: "the pull failed without a recognized layer signature",
+};
+
+function classifyImagePullFailureLayer(diagnostic: string): ManagedLlamaCppImagePullFailureLayer {
+  return (
+    IMAGE_PULL_LAYER_PATTERNS.find(({ pattern }) => pattern.test(diagnostic))?.layer ??
+    "unclassified"
+  );
+}
+
+function imagePullFailureDiagnostic(result: ManagedLlamaCppImagePullResult): string {
+  const sources = [result.stdout, result.output, result.stderr, result.error?.message].filter(
+    (value): value is string => typeof value === "string" && value.trim().length > 0,
+  );
+  const layer = classifyImagePullFailureLayer(sources.join("\n"));
+  const status =
+    result.status === null ? "without an exit status" : `with exit ${String(result.status)}`;
+  return `Failure layer: ${layer}. Cause: ${IMAGE_PULL_LAYER_CAUSES[layer]} ${status}; command output redacted.`;
+}
 
 function requireSuccess(label: string, result: ReturnType<ContainerEngine["capture"]>): string {
   if (result.error || result.status !== 0) {
@@ -358,11 +432,13 @@ async function pullExactImages(
       ? await pull(image, {
           env: dockerEnv,
           maxTimeoutMs: IMAGE_PULL_TIMEOUT_MS,
-          logLine: (line) => log(`  ${line}`),
+          logLine: () => undefined,
         })
       : engine.capture(["pull", image], IMAGE_PULL_TIMEOUT_MS);
     if (result.status !== 0 || ("error" in result && result.error !== undefined)) {
-      throw new Error(`Pinned managed-inference image pull failed for ${image}.`);
+      throw new Error(
+        `Pinned managed-inference image pull failed for ${image}. ${imagePullFailureDiagnostic(result)}`,
+      );
     }
     const after = engine.capture(["image", "inspect", image], DOCKER_INSPECT_TIMEOUT_MS);
     if (after.error || after.status !== 0) {
