@@ -463,9 +463,9 @@ function unreconciledCleanupWarning(target: string, stagedTargets: readonly stri
     targetIsAbsent = (error as NodeJS.ErrnoException).code === "ENOENT";
   }
   const recovery = targetIsAbsent
-    ? `The canonical path is absent. If a staging entry is the intended directory, move it back to ${target}; otherwise, stop and reconcile the paths before continuing.`
+    ? `The canonical path is absent. Inspect every listed staging path before deciding whether one entry is the intended directory; if so, move it back to ${target}. Otherwise, stop and reconcile the paths before continuing.`
     : `The canonical path ${target} also exists. Do not move the canonical path or any staging entry. Reconcile the canonical path and each staging entry before continuing.`;
-  return `Cleanup cannot continue for ${target} because unreconciled staging remains at ${stagedTargets.join(", ")}. Do not retry uninstall until you inspect both paths without following links. ${recovery}`;
+  return `Cleanup cannot continue for ${target} because unreconciled staging remains at ${stagedTargets.join(", ")}. Do not retry uninstall until you inspect the canonical target ${target} and every listed staging path without following links. ${recovery}`;
 }
 
 function preflightSelectiveCleanupTargets(
@@ -614,7 +614,7 @@ function removePathExcept(
               ? ""
               : ` It contains preserved entries: ${preservedEntries.join(", ")}.`;
           deps.warn(
-            `Cleanup did not restore ${target}. Unreconciled staging remains at ${stagedTarget}.${preservedSummary} Do not retry uninstall until you inspect both paths without following links. If ${target} is absent and the staging entry is the intended directory, move it back to ${target}; if ${target} exists, stop and reconcile both paths before continuing.`,
+            `Cleanup did not restore ${target}. Unreconciled staging remains at ${stagedTarget}.${preservedSummary} Do not retry uninstall until you inspect the canonical target ${target} and every listed staging path without following links. If ${target} is absent, inspect every listed staging path before deciding whether one entry is the intended directory; if so, move it back to ${target}. If ${target} exists, stop and reconcile the canonical target and every listed staging path before continuing.`,
           );
         }
       }

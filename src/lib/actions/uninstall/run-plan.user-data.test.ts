@@ -561,6 +561,43 @@ describe("uninstall run plan", () => {
       }
     });
 
+    it("reports every abandoned staging path before choosing a restore source", () => {
+      const { tmpHome, stateDir } = setupStateDir();
+      const firstStagingRoot = fs.mkdtempSync(
+        path.join(tmpHome, `.${path.basename(stateDir)}-cleanup-`),
+      );
+      const firstStagedTarget = path.join(firstStagingRoot, "content");
+      fs.renameSync(stateDir, firstStagedTarget);
+      const secondStagingRoot = fs.mkdtempSync(
+        path.join(tmpHome, `.${path.basename(stateDir)}-cleanup-`),
+      );
+      const secondStagedTarget = path.join(secondStagingRoot, "content");
+      fs.mkdirSync(secondStagedTarget);
+      fs.writeFileSync(path.join(secondStagedTarget, "rebuild-backups"), "second candidate");
+      try {
+        const logs: string[] = [];
+        const warnings: string[] = [];
+        const result = runUninstallPlan(
+          { assumeYes: true, deleteModels: false, keepOpenShell: true },
+          preserveCaseDeps(tmpHome, logs, { warnings }),
+        );
+
+        expect(result.exitCode).toBe(1);
+        expect(fs.existsSync(stateDir)).toBe(false);
+        const warningText = warnings.join("\n");
+        expect(warningText).toContain(`the canonical target ${stateDir}`);
+        expect(warningText).toContain(firstStagedTarget);
+        expect(warningText).toContain(secondStagedTarget);
+        expect(warningText).toContain("every listed staging path without following links");
+        expect(warningText).toContain(
+          "Inspect every listed staging path before deciding whether one entry is the intended directory",
+        );
+        expect(logs.some((line) => /^\[\d+\/\d+\]/u.test(line))).toBe(false);
+      } finally {
+        fs.rmSync(tmpHome, { recursive: true, force: true });
+      }
+    });
+
     it("reports empty interrupted staging when the canonical directory is absent", () => {
       const { tmpHome, stateDir } = setupStateDir();
       fs.rmSync(stateDir, { recursive: true });
