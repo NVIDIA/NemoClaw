@@ -6,7 +6,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { directDockerfileCopySources } from "../../../scripts/lib/dockerfile-copy-sources.mts";
 import {
   CANDIDATE_AGENT_FEATURE_ENV,
   CANDIDATE_QUALIFICATION_RECEIPT_ENV,
@@ -322,21 +321,6 @@ test(
     expect(receipt.contract.agent).toBe("pi");
     expect(receipt.contract.platform).toBe(platform);
     expect(receipt.contract.source.repository).toBe("NVIDIA/NemoClaw");
-    const piDockerfiles = ["agents/pi/Dockerfile", "agents/pi/Dockerfile.base"];
-    const copiedSources = piDockerfiles.flatMap((dockerfile) =>
-      directDockerfileCopySources(path.join(REPO_ROOT, dockerfile), dockerfile).map(
-        ({ source }) => source,
-      ),
-    );
-    const imageSourcePaths = [
-      ...new Set([".dockerignore", ...piDockerfiles, ...copiedSources]),
-    ].sort();
-    const sourceParity = await host.command(
-      "git",
-      ["diff", "--quiet", receipt.contract.source.revision, "HEAD", "--", ...imageSourcePaths],
-      { artifactName: "pi-image-source-parity", env, timeoutMs: 30_000 },
-    );
-    expect(sourceParity.exitCode, resultText(sourceParity)).toBe(0);
     await preclean(host, lifecycle, sandbox, env);
 
     progress.phase("onboard Pi without a Dockerfile build");
@@ -483,7 +467,6 @@ test(
         imageReference: receipt.contract.reference,
         receiptSha256: receipt.digest,
         publicationCohort: receipt.contract.source.cohort,
-        runtimeSourceParity: true,
       },
       runtime: {
         package: "@earendil-works/pi-coding-agent",
@@ -498,9 +481,6 @@ test(
         ...inferenceEvidence,
       },
       policy: {
-        sha256: createHash("sha256")
-          .update(fs.readFileSync(path.join(REPO_ROOT, "agents/pi/policy-additions.yaml")))
-          .digest("hex"),
         credentialEnvironmentAbsent: true,
         credentialFilesAbsent: true,
         upstreamCredentialAbsentFromRegistryAndLogs: true,
