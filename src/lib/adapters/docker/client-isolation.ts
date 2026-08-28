@@ -121,7 +121,9 @@ function dockerDesktopCredentialHelperRespondsFromBuild(
 }
 
 function dockerContextIsDefaultFromBuild(env: NodeJS.ProcessEnv): boolean {
-  if (env.DOCKER_HOST) return env.DOCKER_HOST.startsWith("unix://");
+  // Any explicit endpoint owns daemon authority, including alternate Unix
+  // sockets. Preserve its client configuration and registry credentials.
+  if (env.DOCKER_HOST) return false;
   const result = dockerSpawnSync(["context", "show"], {
     encoding: "utf-8",
     env: dockerBuildSubprocessEnv(env),

@@ -109,6 +109,7 @@ function buildReplacementImage(
   const preparedEnvironment = (deps.prepareBuildEnvironment ?? prepareDockerBuildEnvironment)({
     env: deps.env,
     credentialHelperResponds: deps.credentialHelperResponds,
+    dockerContextIsDefault: deps.dockerContextIsDefault,
     isWslHost: deps.isWslHost,
     allowCredentialIsolation: origin === "generated",
   });

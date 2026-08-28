@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  mergeIsolatedDockerClientEnv,
   prepareDockerBuildEnvironment,
   type PreparedDockerBuildEnvironment,
   warnIfDockerBuildEnvironmentCleanupFailed,
 } from "../../adapters/docker/client-isolation";
-import { dockerRun as defaultDockerRun } from "../../adapters/docker/command";
+import {
+  dockerCapture as defaultDockerCapture,
+  dockerRun as defaultDockerRun,
+} from "../../adapters/docker/command";
+import { dockerRm as defaultDockerRm } from "../../adapters/docker/container";
 import { dockerImageInspect } from "../../adapters/docker/inspect";
 import { dockerPullWithProgressWatchdog } from "../../adapters/docker/pull";
 import { hasZeroDockerExitStatus } from "../docker-command-result";
@@ -78,17 +81,24 @@ function managedBootstrapImageReference(
   return `${input.image.repository}@${input.image.manifestDigest}`;
 }
 
-async function prepareDockerManagedBootstrapGpuProbeImage(image: string): Promise<void> {
-  const inspected = dockerImageInspect(image, {
-    ignoreError: true,
-    suppressOutput: true,
-    timeout: MANAGED_BOOTSTRAP_IMAGE_INSPECT_TIMEOUT_MS,
+async function prepareDockerManagedBootstrapGpuProbeImage(
+  image: string,
+  dockerClientEnv: NodeJS.ProcessEnv,
+): Promise<void> {
+  const prepared = prepareDockerBuildEnvironment({
+    env: dockerClientEnv,
+    allowCredentialIsolation: true,
   });
-  if (hasZeroDockerExitStatus(inspected)) return;
-
-  console.log("  Pulling managed sandbox image before Docker GPU mode selection...");
-  const prepared = prepareDockerBuildEnvironment({ allowCredentialIsolation: true });
   try {
+    const inspected = dockerImageInspect(image, {
+      env: prepared.env,
+      ignoreError: true,
+      suppressOutput: true,
+      timeout: MANAGED_BOOTSTRAP_IMAGE_INSPECT_TIMEOUT_MS,
+    });
+    if (hasZeroDockerExitStatus(inspected)) return;
+
+    console.log("  Pulling managed sandbox image before Docker GPU mode selection...");
     if (prepared.isolatedCredentialConfig) {
       console.log(
         "  Docker Desktop credential helper is unavailable in this WSL session; using an isolated credential-free config for the managed sandbox image pull.",
@@ -117,22 +127,19 @@ async function prepareDockerManagedBootstrapGpuProbeImage(image: string): Promis
   }
 }
 
-function withIsolatedDockerClientDeps(
+function withDockerClientEnvDeps(
   deps: DockerGpuPatchDeps,
   prepared: PreparedDockerBuildEnvironment,
 ): DockerGpuPatchDeps {
-  if (!prepared.isolatedCredentialConfig) return deps;
+  const capture = deps.dockerCapture ?? defaultDockerCapture;
   const run = deps.dockerRun ?? defaultDockerRun;
+  const remove = deps.dockerRm ?? defaultDockerRm;
+  const withEnv = (opts: Record<string, unknown> = {}) => ({ ...opts, env: prepared.env });
   return {
     ...deps,
-    dockerRun: (args, opts = {}) =>
-      run(args, {
-        ...opts,
-        env: mergeIsolatedDockerClientEnv(
-          ((opts.env as NodeJS.ProcessEnv | undefined) ?? {}) as NodeJS.ProcessEnv,
-          prepared,
-        ),
-      }),
+    dockerCapture: (args, opts = {}) => capture(args, withEnv(opts)),
+    dockerRun: (args, opts = {}) => run(args, withEnv(opts)),
+    dockerRm: (containerName, opts = {}) => remove(containerName, withEnv(opts)),
   };
 }
 
@@ -144,7 +151,10 @@ function selectedDockerMode(
   if (input.route !== "compatibility" || !input.sandboxGpuConfig.sandboxGpuEnabled) {
     return buildDockerGpuMode("startup-command");
   }
-  const prepared = prepareDockerBuildEnvironment({ allowCredentialIsolation: true });
+  const prepared = prepareDockerBuildEnvironment({
+    env: input.dockerClientEnv,
+    allowCredentialIsolation: true,
+  });
   try {
     if (prepared.isolatedCredentialConfig) {
       console.log(
@@ -159,7 +169,7 @@ function selectedDockerMode(
         dockerDesktopWsl,
         ...(dockerDesktopWsl ? { pullPolicy: "never" as const } : {}),
       },
-      withIsolatedDockerClientDeps(input.dependencies as DockerGpuPatchDeps, prepared),
+      withDockerClientEnvDeps(input.dependencies as DockerGpuPatchDeps, prepared),
     );
     if (selection.mode) return selection.mode;
     const message =
@@ -291,7 +301,10 @@ function createDockerLifecycle(
         input.route === "compatibility" &&
         input.sandboxGpuConfig.sandboxGpuEnabled
       ) {
-        await prepareDockerManagedBootstrapGpuProbeImage(managedBootstrapImageReference(input));
+        await prepareDockerManagedBootstrapGpuProbeImage(
+          managedBootstrapImageReference(input),
+          input.dockerClientEnv,
+        );
       }
       const mode = preselectedMode ?? selectedDockerMode(input, dockerDesktopWsl);
       const replacementOptions = dockerReplacementOptions(mode, input);

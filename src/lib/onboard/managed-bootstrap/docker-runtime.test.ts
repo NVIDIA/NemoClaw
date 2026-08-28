@@ -119,6 +119,10 @@ function compatibilityLifecycleInput(
     },
     requiredLimits: [],
     timeoutSecs: 30,
+    dockerClientEnv: {
+      DOCKER_CONFIG: "/managed-create/.docker",
+      DOCKER_HOST: "unix:///managed-create/docker.sock",
+    },
     network: {
       inferenceProvider: "openai",
       gatewayUsesContainerBridge: true,
@@ -297,16 +301,34 @@ describe("Docker managed-bootstrap GPU probe image", () => {
     }));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     dockerClientIsolationMocks.prepare.mockReturnValue({
-      env: { DOCKER_BUILDKIT: "1", DOCKER_CONFIG: isolatedConfig },
+      env: {
+        DOCKER_BUILDKIT: "1",
+        DOCKER_CONFIG: isolatedConfig,
+        DOCKER_HOST: input.dockerClientEnv.DOCKER_HOST,
+      },
       isolatedCredentialConfig: true,
       cleanup,
     });
 
     await runCompatibilityCreate(input, seed);
 
+    expect(dockerClientIsolationMocks.prepare).toHaveBeenCalledTimes(2);
+    expect(dockerClientIsolationMocks.prepare).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ env: input.dockerClientEnv }),
+    );
+    expect(dockerClientIsolationMocks.prepare).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ env: input.dockerClientEnv }),
+    );
     expect(dockerAdapterMocks.imageInspect).toHaveBeenCalledWith(
       sandboxImage,
-      expect.objectContaining({ ignoreError: true, suppressOutput: true, timeout: 30_000 }),
+      expect.objectContaining({
+        env: expect.objectContaining({ DOCKER_HOST: input.dockerClientEnv.DOCKER_HOST }),
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: 30_000,
+      }),
     );
     expect(dockerAdapterMocks.pullWithProgressWatchdog).toHaveBeenCalledWith(
       sandboxImage,
@@ -314,6 +336,7 @@ describe("Docker managed-bootstrap GPU probe image", () => {
     );
     const pullEnv = dockerAdapterMocks.pullWithProgressWatchdog.mock.calls[0]?.[1]?.env;
     expect(pullEnv?.DOCKER_CONFIG).toBe(isolatedConfig);
+    expect(pullEnv?.DOCKER_HOST).toBe(input.dockerClientEnv.DOCKER_HOST);
     expect(pullEnv?.DOCKER_BUILDKIT).toBe("1");
     expect(pullEnv).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
     expect(cleanup).toHaveBeenCalled();
@@ -334,6 +357,18 @@ describe("Docker managed-bootstrap GPU probe image", () => {
     expect(secondProbeArgs.slice(-2)).toEqual([sandboxImage, "true"]);
     expect(dockerRun.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ timeout: 30_000 }));
     expect(dockerRun.mock.calls[1]?.[1]).toEqual(expect.objectContaining({ timeout: 30_000 }));
+    expect(dockerRun.mock.calls[0]?.[1]?.env).toEqual(
+      expect.objectContaining({
+        DOCKER_CONFIG: isolatedConfig,
+        DOCKER_HOST: input.dockerClientEnv.DOCKER_HOST,
+      }),
+    );
+    expect(dockerRun.mock.calls[1]?.[1]?.env).toEqual(
+      expect.objectContaining({
+        DOCKER_CONFIG: isolatedConfig,
+        DOCKER_HOST: input.dockerClientEnv.DOCKER_HOST,
+      }),
+    );
   });
 
   it("skips the pull when the exact WSL sandbox image is already local", async () => {
@@ -504,6 +539,7 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
       },
       requiredLimits: [],
       timeoutSecs: 30,
+      dockerClientEnv: {},
       network: {
         inferenceProvider: "openai",
         gatewayUsesContainerBridge: false,
@@ -601,6 +637,7 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
       },
       requiredLimits: [],
       timeoutSecs: 30,
+      dockerClientEnv: {},
       onPatchFailure,
       network: {
         inferenceProvider: "openai",

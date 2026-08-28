@@ -532,6 +532,7 @@ export function createSandboxGpuCreateAttemptRunner(
           sandboxGpuConfig: input.sandboxGpuConfig,
           requiredLimits: input.requiredUlimits ?? [],
           timeoutSecs: input.sandboxReadyTimeoutSecs,
+          dockerClientEnv: input.sandboxEnv,
           network: {
             inferenceProvider: input.provider,
             gatewayUsesContainerBridge: input.dockerDriverGateway,

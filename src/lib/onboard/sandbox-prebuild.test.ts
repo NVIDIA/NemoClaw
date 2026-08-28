@@ -497,7 +497,7 @@ describe("sandbox BuildKit prebuild", () => {
     prepared.cleanup();
   });
 
-  it("keeps the caller Docker config for an explicit remote Docker host (#10349)", () => {
+  it("keeps the caller Docker config for an explicit Unix-socket Docker host (#10349)", () => {
     const dockerConfig = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wsl-docker-config-"));
     temporaryDirectories.push(dockerConfig);
     fs.writeFileSync(
@@ -508,7 +508,7 @@ describe("sandbox BuildKit prebuild", () => {
     const prepared = prepareDockerBuildEnvironment({
       env: {
         DOCKER_CONFIG: dockerConfig,
-        DOCKER_HOST: "tcp://remote-builder.example:2376",
+        DOCKER_HOST: "unix:///run/user/1001/docker.sock",
         WSL_DISTRO_NAME: "Ubuntu",
       },
       credentialHelperResponds: helperResponds,
