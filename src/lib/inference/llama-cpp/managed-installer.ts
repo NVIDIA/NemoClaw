@@ -121,7 +121,6 @@ interface DockerNetworkInspection {
 interface ManagedLlamaCppImagePullResult {
   readonly status: number | null;
   readonly error?: Error;
-  readonly output?: string;
   readonly stderr?: string;
   readonly stdout?: string;
 }
@@ -187,7 +186,7 @@ function classifyImagePullFailureLayer(diagnostic: string): ManagedLlamaCppImage
 }
 
 function imagePullFailureDiagnostic(result: ManagedLlamaCppImagePullResult): string {
-  const sources = [result.stdout, result.output, result.stderr, result.error?.message].filter(
+  const sources = [result.stdout, result.stderr, result.error?.message].filter(
     (value): value is string => typeof value === "string" && value.trim().length > 0,
   );
   const layer = classifyImagePullFailureLayer(sources.join("\n"));
@@ -197,7 +196,7 @@ function imagePullFailureDiagnostic(result: ManagedLlamaCppImagePullResult): str
       : "Redacted pull output matched this layer's signature.";
   const status =
     result.status === null ? "Exit status unavailable." : `Exit status: ${String(result.status)}.`;
-  return `Failure classification: ${layer}. ${evidence} ${status} Command output redacted.`;
+  return `Failure classification: ${layer}. ${evidence} ${status} Raw pull output is not included.`;
 }
 
 function requireSuccess(label: string, result: ReturnType<ContainerEngine["capture"]>): string {

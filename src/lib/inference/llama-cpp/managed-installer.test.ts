@@ -1114,7 +1114,7 @@ describe("managed llama.cpp installer", () => {
 
     const failure = result as Extract<typeof result, { readonly ok: false }>;
     expect(failure.reason).toContain("Failure classification: authentication.");
-    expect(failure.reason).toContain("Command output redacted.");
+    expect(failure.reason).toContain("Raw pull output is not included.");
     expect(failure.reason).not.toContain(secret);
     expect(Buffer.byteLength(failure.reason, "utf8")).toBeLessThan(400);
     expect(log.mock.calls.flat().join("\n")).not.toContain(secret);
