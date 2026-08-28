@@ -351,7 +351,10 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
 
   it.each([
     {
+      expectedDiagnostic: "sandbox namespace cannot be proven",
+      expectedRecovery: "sandbox namespace cannot be proven",
       portFree: true,
+      rejectedDiagnostic: "gateway port 9123 has a listener",
       scenario: "generated configuration",
       writeEvidence: (stateDir: string) =>
         fs.writeFileSync(path.join(stateDir, "openshell-gateway.toml"), "[gateway]\n", {
@@ -359,13 +362,19 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
         }),
     },
     {
+      expectedDiagnostic: "sandbox namespace cannot be proven",
+      expectedRecovery: "sandbox namespace cannot be proven",
       portFree: true,
+      rejectedDiagnostic: "gateway port 9123 has a listener",
       scenario: "runtime marker",
       writeEvidence: (stateDir: string) =>
         fs.writeFileSync(path.join(stateDir, "runtime.json"), "{}\n", { mode: 0o600 }),
     },
     {
+      expectedDiagnostic: "sandbox namespace cannot be proven",
+      expectedRecovery: "sandbox namespace cannot be proven",
       portFree: true,
+      rejectedDiagnostic: "gateway port 9123 has a listener",
       scenario: "PID evidence",
       writeEvidence: (stateDir: string) =>
         fs.writeFileSync(path.join(stateDir, "openshell-gateway.pid"), "4242\n", {
@@ -373,11 +382,20 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
         }),
     },
     {
+      expectedDiagnostic: "gateway port 9123 has a listener",
+      expectedRecovery: "rerun uninstall after the port is free",
       portFree: false,
+      rejectedDiagnostic: "sandbox namespace cannot be proven",
       scenario: "a live listener",
       writeEvidence: (_stateDir: string) => undefined,
     },
-  ])("preserves a configured reservation with $scenario", async ({ portFree, writeEvidence }) => {
+  ])("preserves a configured reservation with $scenario", async ({
+    expectedDiagnostic,
+    expectedRecovery,
+    portFree,
+    rejectedDiagnostic,
+    writeEvidence,
+  }) => {
     const tmpHome = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-uninstall-reservation-evidence-"),
     );
@@ -395,6 +413,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
         stateDir: customGatewayState,
       });
       writeEvidence(customGatewayState);
+      const errors = vi.fn();
 
       const result = runPortUninstall(
         {
@@ -405,13 +424,13 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
           keepOpenShell: false,
         },
         {
-          commandExists: (command) => command === "openshell",
+          commandExists: (command) => portFree && command === "openshell",
           env: {
             HOME: tmpHome,
             NEMOCLAW_GATEWAY_PORT: String(port),
             NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: customGatewayState,
           },
-          error: vi.fn(),
+          error: errors,
           hasPortableRuntimeCleanup: () => false,
           isPortFree: () => portFree,
           isTty: false,
@@ -424,6 +443,10 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
 
       expect(result.exitCode).toBe(1);
       expect(fs.existsSync(customGatewayState)).toBe(true);
+      const output = errors.mock.calls.flat().join("\n");
+      expect(output).toContain(expectedDiagnostic);
+      expect(output).toContain(expectedRecovery);
+      expect(output).not.toContain(rejectedDiagnostic);
     } finally {
       fs.rmSync(tmpHome, { force: true, recursive: true });
     }

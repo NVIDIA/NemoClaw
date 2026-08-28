@@ -76,8 +76,29 @@ function currentUid(): number {
   return process.getuid();
 }
 
+function stateRootParentOwnershipFailure(stateDir: string): string | null {
+  const parentDir = path.dirname(path.resolve(stateDir));
+  let parent: fs.Stats;
+  try {
+    parent = fs.lstatSync(parentDir);
+  } catch {
+    return "the gateway state directory's parent cannot be inspected";
+  }
+  if (
+    !parent.isDirectory() ||
+    parent.isSymbolicLink() ||
+    (parent.uid !== currentUid() && parent.uid !== 0) ||
+    (parent.mode & 0o022) !== 0
+  ) {
+    return "the gateway state directory's parent is not a trusted real directory without group or world write access";
+  }
+  return null;
+}
+
 function stateRootMarkerOwnershipFailure(target: ManagedGatewayStateRootTarget): string | null {
   const stateDir = path.resolve(target.stateDir);
+  const parentFailure = stateRootParentOwnershipFailure(stateDir);
+  if (parentFailure) return parentFailure;
   const markerPath = path.join(stateDir, MANAGED_GATEWAY_STATE_ROOT_MARKER);
   let directory: fs.Stats;
   try {
@@ -149,6 +170,8 @@ export function ensureManagedGatewayStateRoot(
     fs.mkdirSync(stateDir, { mode: 0o700, recursive: true });
     fs.chmodSync(stateDir, 0o700);
   }
+  const parentFailure = stateRootParentOwnershipFailure(stateDir);
+  if (parentFailure) throw new Error(`Unsafe gateway state directory: ${parentFailure}.`);
   const markerPath = path.join(stateDir, MANAGED_GATEWAY_STATE_ROOT_MARKER);
   if (fs.existsSync(markerPath)) {
     const failure = stateRootMarkerOwnershipFailure({ ...target, stateDir });

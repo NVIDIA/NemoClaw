@@ -3000,7 +3000,7 @@ function canBeginOpenShellCleanup(
   );
 }
 
-function isRemovableConfiguredGatewayReservation(
+function isUnusedConfiguredGatewayReservation(
   paths: UninstallPaths,
   options: UninstallRunOptions,
   runtime: UninstallRuntime,
@@ -3038,7 +3038,50 @@ function isRemovableConfiguredGatewayReservation(
   ) {
     return false;
   }
-  return (runtime.isPortFree ?? isHostPortFree)(GATEWAY_PORT);
+  return true;
+}
+
+function isRemovableConfiguredGatewayReservation(
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  teardownAuthority: GatewayOwner,
+  portableRuntimeCleanup: boolean,
+): boolean {
+  return (
+    isUnusedConfiguredGatewayReservation(
+      paths,
+      options,
+      runtime,
+      teardownAuthority,
+      portableRuntimeCleanup,
+    ) && (runtime.isPortFree ?? isHostPortFree)(GATEWAY_PORT)
+  );
+}
+
+function reportOccupiedConfiguredGatewayReservation(
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  teardownAuthority: GatewayOwner,
+  portableRuntimeCleanup: boolean,
+): boolean {
+  if (
+    !isUnusedConfiguredGatewayReservation(
+      paths,
+      options,
+      runtime,
+      teardownAuthority,
+      portableRuntimeCleanup,
+    ) ||
+    (runtime.isPortFree ?? isHostPortFree)(GATEWAY_PORT)
+  ) {
+    return false;
+  }
+  runtime.warn(
+    `No gateway resources were created, but gateway port ${String(GATEWAY_PORT)} has a listener. The unused configured gateway state reservation was preserved; inspect and stop the listener, then rerun uninstall after the port is free.`,
+  );
+  return true;
 }
 
 function removeConfiguredGatewayReservationIfSafe(
@@ -3075,16 +3118,25 @@ function canBeginOpenShellCleanupAfterReservation(
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
 ): boolean {
-  return (
-    reservationRemoved ||
-    canBeginOpenShellCleanup(
+  if (reservationRemoved) return true;
+  if (
+    reportOccupiedConfiguredGatewayReservation(
       paths,
       options,
       runtime,
-      scopedToSelectedGateway,
       teardownAuthority,
       portableRuntimeCleanup,
     )
+  ) {
+    return false;
+  }
+  return canBeginOpenShellCleanup(
+    paths,
+    options,
+    runtime,
+    scopedToSelectedGateway,
+    teardownAuthority,
+    portableRuntimeCleanup,
   );
 }
 
@@ -3681,7 +3733,7 @@ function prepareUninstallRun(
       return { kind: "complete", outcome: { exitCode: 1, plan } };
     }
   }
-  const removableConfiguredGatewayReservation = isRemovableConfiguredGatewayReservation(
+  const unusedConfiguredGatewayReservation = isUnusedConfiguredGatewayReservation(
     paths,
     resolvedOptions,
     runtime,
@@ -3690,7 +3742,7 @@ function prepareUninstallRun(
   );
   if (
     !portableRuntimeCleanup &&
-    !removableConfiguredGatewayReservation &&
+    !unusedConfiguredGatewayReservation &&
     !runtime.commandExists("openshell")
   ) {
     runtime.error(OPENSHELL_COMMAND_MISSING_ERROR);

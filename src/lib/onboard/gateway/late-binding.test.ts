@@ -6,6 +6,11 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+import {
+  buildDockerDriverGatewayConfigToml,
+  ensureDockerDriverGatewayJwtBundle,
+  gatewayIdForStateDir,
+} from "../docker-driver-gateway-config";
 import * as gatewayBinding from "../gateway-binding";
 import { createDockerDriverGatewayStart } from "./docker-driver-start";
 import { createGatewayRecoveryOrchestration } from "./recovery";
@@ -92,7 +97,7 @@ describe("gateway lifecycle late binding", () => {
     );
   });
 
-  it("uses the current binding for Docker-driver reachability", async () => {
+  it("admits proven pre-marker state and rejects unproven custom roots before startup", async () => {
     let name = "initial";
     let port = 9000;
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-start-boundary-"));
@@ -167,6 +172,25 @@ describe("gateway lifecycle late binding", () => {
 
     name = "resumed";
     port = 9777;
+    const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
+    fs.writeFileSync(
+      path.join(stateDir, "openshell-gateway.toml"),
+      buildDockerDriverGatewayConfigToml(
+        {
+          OPENSHELL_GRPC_ENDPOINT: `https://127.0.0.1:${String(port)}`,
+          OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
+          OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
+          OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
+        },
+        "/usr/bin/openshell-sandbox",
+        jwtBundle,
+        gatewayIdForStateDir(stateDir),
+      ),
+      { mode: 0o600 },
+    );
+    expect(
+      fs.existsSync(path.join(stateDir, gatewayBinding.MANAGED_GATEWAY_STATE_ROOT_MARKER)),
+    ).toBe(false);
     vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", stateDir);
     try {
       await start.startDockerDriverGateway();
@@ -193,6 +217,24 @@ describe("gateway lifecycle late binding", () => {
 
       await expect(start.startDockerDriverGateway()).rejects.toThrow(/refusing to adopt/);
       expect(fs.readFileSync(path.join(unsafeStateDir, "keep.txt"), "utf8")).toBe("keep\n");
+      expect(getDockerDriverGatewayEnv).toHaveBeenCalledTimes(1);
+      expect(managedStart).toHaveBeenCalledTimes(1);
+
+      const writableParent = path.join(root, "writable-parent");
+      const writableStateDir = path.join(writableParent, "gateway");
+      fs.mkdirSync(writableParent, { mode: 0o777 });
+      fs.chmodSync(writableParent, 0o777);
+      vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", writableStateDir);
+
+      await expect(start.startDockerDriverGateway()).rejects.toThrow(
+        /parent is not a trusted real directory/,
+      );
+      expect(
+        fs.existsSync(
+          path.join(writableStateDir, gatewayBinding.MANAGED_GATEWAY_STATE_ROOT_MARKER),
+        ),
+      ).toBe(false);
+      expect(fs.readdirSync(writableStateDir)).toEqual([]);
       expect(getDockerDriverGatewayEnv).toHaveBeenCalledTimes(1);
       expect(managedStart).toHaveBeenCalledTimes(1);
     } finally {

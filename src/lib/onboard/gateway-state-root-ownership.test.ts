@@ -8,11 +8,6 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  buildDockerDriverGatewayConfigToml,
-  ensureDockerDriverGatewayJwtBundle,
-  gatewayIdForStateDir,
-} from "./docker-driver-gateway-config";
-import {
   MANAGED_GATEWAY_STATE_ROOT_MARKER,
   ensureManagedGatewayStateRoot,
   managedGatewayStateRootOwnershipFailure,
@@ -54,6 +49,22 @@ describe("managed gateway state root ownership", () => {
     }
   });
 
+  it("rejects a custom root beneath a group- or world-writable parent", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-writable-gateway-parent-"));
+    const stateDir = path.join(root, "gateway");
+    try {
+      fs.chmodSync(root, 0o777);
+
+      expect(() => ensureManagedGatewayStateRoot(target(stateDir))).toThrow(
+        /parent is not a trusted real directory/,
+      );
+      expect(fs.existsSync(path.join(stateDir, MANAGED_GATEWAY_STATE_ROOT_MARKER))).toBe(false);
+    } finally {
+      fs.chmodSync(root, 0o700);
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   it("marks an empty dedicated directory and binds it to one gateway", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-owned-gateway-root-"));
     const stateDir = path.join(root, "gateway");
@@ -91,41 +102,6 @@ describe("managed gateway state root ownership", () => {
       } finally {
         readSpy.mockRestore();
       }
-    } finally {
-      fs.rmSync(root, { force: true, recursive: true });
-    }
-  });
-
-  it("adopts valid pre-marker managed gateway state for interrupted-onboard recovery", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-legacy-gateway-root-"));
-    const stateDir = path.join(root, "gateway");
-    try {
-      const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
-      fs.writeFileSync(
-        path.join(stateDir, "openshell-gateway.toml"),
-        buildDockerDriverGatewayConfigToml(
-          {
-            OPENSHELL_GRPC_ENDPOINT: "https://127.0.0.1:9123",
-            OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
-            OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
-            OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
-          },
-          "/usr/bin/openshell-sandbox",
-          jwtBundle,
-          gatewayIdForStateDir(stateDir),
-        ),
-        { mode: 0o600 },
-      );
-
-      expect(
-        managedGatewayStateRootOwnershipFailure(target(stateDir), {
-          allowLegacyManagedState: true,
-        }),
-      ).toBeNull();
-      ensureManagedGatewayStateRoot(target(stateDir), {
-        isLegacyManagedState: () => true,
-      });
-      expect(fs.existsSync(path.join(stateDir, MANAGED_GATEWAY_STATE_ROOT_MARKER))).toBe(true);
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
     }
