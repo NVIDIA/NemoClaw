@@ -40,6 +40,15 @@ import {
   ensureHermesDashboardPortForwardIfEnabled as ensureHermesDashboardPortForward,
   getHermesDashboardRecoveryConfig,
 } from "./hermes-dashboard-recovery";
+export {
+  HermesPortableForwardRecoveryError,
+  recoverHermesPortableLaunchForwards,
+} from "./probe/hermes-portable-forward-recovery";
+export type {
+  HermesPortableForwardRecoveryFailure,
+  HermesPortableForwardRecoveryInput,
+  HermesPortableForwardRecoveryResult,
+} from "./probe/hermes-portable-forward-recovery";
 
 type SandboxPortAgent = {
   forwardPort?: unknown;
@@ -496,22 +505,8 @@ export function areSandboxLaunchForwardsHealthy(
   const owningGatewayName = resolveSandboxGatewayName(sandbox);
   if (gatewayName && gatewayName !== owningGatewayName) return false;
   const agent = agentRuntime.getSessionAgent(sandboxName);
-  if (agent && !agentRuntime.hasGatewayRuntime(agent)) return true;
-
-  const primaryPort = resolveSandboxDashboardPort(sandboxName);
-  const requiredPorts = new Set<number>([primaryPort]);
-  const hermesDashboard = getHermesDashboardRecoveryConfig(sandboxName);
-  if (hermesDashboard) requiredPorts.add(hermesDashboard.publicPort);
-  const messagingForward = getSandboxMessagingHostForward(sandboxName);
-  if (messagingForward) requiredPorts.add(messagingForward.port);
-  for (const port of resolveDeclaredAgentForwardPorts(
-    sandbox,
-    primaryPort,
-    agent,
-    hermesDashboard?.publicPort ?? null,
-  )) {
-    requiredPorts.add(port);
-  }
+  const requiredPorts = resolveSandboxLaunchForwardPortsFromAuthority(sandboxName, sandbox, agent);
+  if (requiredPorts.length === 0) return true;
   const result = captureOpenshell(["forward", "list", "--gateway", owningGatewayName], {
     ignoreError: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
@@ -528,6 +523,41 @@ export function areSandboxLaunchForwardsHealthy(
     }
   }
   return true;
+}
+
+function resolveSandboxLaunchForwardPortsFromAuthority(
+  sandboxName: string,
+  sandbox: NonNullable<ReturnType<typeof registry.getSandbox>>,
+  agent: SandboxPortAgent,
+): number[] {
+  if (agent && !agentRuntime.hasGatewayRuntime(agent)) return [];
+
+  const primaryPort = resolveSandboxDashboardPort(sandboxName);
+  const requiredPorts = new Set<number>([primaryPort]);
+  const hermesDashboard = getHermesDashboardRecoveryConfig(sandboxName);
+  if (hermesDashboard) requiredPorts.add(hermesDashboard.publicPort);
+  const messagingForward = getSandboxMessagingHostForward(sandboxName);
+  if (messagingForward) requiredPorts.add(messagingForward.port);
+  for (const port of resolveDeclaredAgentForwardPorts(
+    sandbox,
+    primaryPort,
+    agent,
+    hermesDashboard?.publicPort ?? null,
+  )) {
+    requiredPorts.add(port);
+  }
+  return [...requiredPorts];
+}
+
+/** Resolve the complete forward set used by launch-readiness health. */
+export function resolveSandboxLaunchForwardPorts(sandboxName: string): number[] | null {
+  const sandbox = registry.getSandbox(sandboxName);
+  if (!sandbox) return null;
+  return resolveSandboxLaunchForwardPortsFromAuthority(
+    sandboxName,
+    sandbox,
+    agentRuntime.getSessionAgent(sandboxName),
+  );
 }
 
 export function recoverDeclaredAgentForwardPorts(
