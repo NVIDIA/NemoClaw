@@ -7,7 +7,11 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { type E2ETargetFixtures, expect } from "../fixtures/e2e-test.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { hermesSlackCredentialScanScript } from "./hermes-slack-credential-transport.ts";
+import {
+  hermesSlackCredentialFingerprintScanCommand,
+  hermesSlackCredentialFingerprints,
+  hermesSlackCredentialScanScript,
+} from "./hermes-slack-credential-transport.ts";
 import { assertHermesSlackApiProof } from "./hermes-slack-proof.ts";
 import {
   runSecondaryCleanup as bestEffortLifecycleCleanup,
@@ -27,6 +31,10 @@ import {
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes-slack";
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN ?? "xoxb-test-hermes-slack-token";
 const SLACK_APP_TOKEN = process.env.SLACK_APP_TOKEN ?? "xapp-test-hermes-slack-app-token";
+const SLACK_CREDENTIAL_FINGERPRINTS = hermesSlackCredentialFingerprints([
+  SLACK_BOT_TOKEN,
+  SLACK_APP_TOKEN,
+]);
 export const LIVE_TIMEOUT_MS = 70 * 60_000;
 const INSTALL_TIMEOUT_MS = 60 * 60_000;
 const HERMES_HEALTH_URL = "http://localhost:8642/health";
@@ -138,22 +146,30 @@ async function cleanupHermesSlackProvider(options: {
   expectExitZero(result, `cleanup OpenShell provider ${options.provider}`);
 }
 
-async function hostSlackTokenStdin(options: {
+async function scanHermesSlackCredentialFingerprints(options: {
   host: HostCliClient;
   apiKey: string;
   artifactName: string;
-  remoteCommand: string;
   timeoutMs?: number;
 }): Promise<ShellProbeResult> {
+  const scanEnv = hermesSlackEnv(options.apiKey);
+  delete scanEnv.SLACK_APP_TOKEN;
+  delete scanEnv.SLACK_BOT_TOKEN;
   const script = hermesSlackCredentialScanScript({
+    credentialFingerprints: SLACK_CREDENTIAL_FINGERPRINTS,
     openshellCommandPath: options.host.openshellCommandPath,
-    remoteCommand: options.remoteCommand,
+    remoteCommand: hermesSlackCredentialFingerprintScanCommand([
+      "/sandbox/.hermes/config.yaml",
+      "/sandbox/.hermes/.env",
+      "/tmp/nemoclaw-start.log",
+      "/tmp/gateway.log",
+    ]),
     sandboxName: SANDBOX_NAME,
   });
 
   return options.host.command("bash", ["-lc", script], {
     artifactName: options.artifactName,
-    env: hermesSlackEnv(options.apiKey),
+    env: scanEnv,
     redactionValues: redactions(options.apiKey),
     timeoutMs: options.timeoutMs ?? 60_000,
   });
@@ -545,38 +561,20 @@ PY`,
   expectExitZero(secretBoundaryProbe, "Hermes Slack secret-boundary scan");
   expect(secretBoundaryProbe.stdout.trim()).toBe("OK");
 
-  const tokenFileHits = await hostSlackTokenStdin({
+  const tokenScan = await scanHermesSlackCredentialFingerprints({
     host,
     apiKey,
-    artifactName: "phase-4-token-file-hits",
-    remoteCommand:
-      "grep -Fq -f - /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /tmp/nemoclaw-start.log /tmp/gateway.log 2>/dev/null && echo LEAK || echo OK",
+    artifactName: "phase-4-token-fingerprint-scan",
   });
-  expectExitZero(tokenFileHits, "raw Slack token file/log scan");
-  expect(tokenFileHits.stdout.trim()).toBe("OK");
-
-  const processScan = await hostSlackTokenStdin({
-    host,
-    apiKey,
-    artifactName: "phase-4-token-process-scan",
-    remoteCommand: String.raw`python3 -c 'import pathlib, sys
-raw_tokens = {line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")}
-cmdlines = []
-for path in pathlib.Path("/proc").glob("[0-9]*/cmdline"):
-    try:
-        cmdlines.append(path.read_bytes().replace(b"\0", b"\n").decode("utf-8", "replace"))
-    except Exception:
-        pass
-text = "\n".join(cmdlines)
-if not text:
-    print("EMPTY")
-elif any(token in text for token in raw_tokens):
-    print("LEAK")
-else:
-    print("OK")'`,
-  });
-  expectExitZero(processScan, "raw Slack token process scan");
-  if (processScan.stdout.trim() !== "EMPTY") expect(processScan.stdout.trim()).toBe("OK");
+  expectExitZero(tokenScan, "raw Slack credential fingerprint scan");
+  const tokenScanResult = JSON.parse(tokenScan.stdout.trim()) as {
+    files?: string;
+    processes?: string;
+  };
+  expect(tokenScanResult.files, "raw Slack token absent from selected files and logs").toBe("OK");
+  if (tokenScanResult.processes !== "EMPTY") {
+    expect(tokenScanResult.processes, "raw Slack token absent from process arguments").toBe("OK");
+  }
 
   progress.phase("validate Hermes-scoped Slack policy");
   const policy = await host.command(

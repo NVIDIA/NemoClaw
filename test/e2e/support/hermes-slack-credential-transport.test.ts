@@ -8,7 +8,11 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { hermesSlackCredentialScanScript } from "../live/hermes-slack-credential-transport.ts";
+import {
+  HERMES_SLACK_CREDENTIAL_FINGERPRINT_SCAN_SOURCE,
+  hermesSlackCredentialFingerprints,
+  hermesSlackCredentialScanScript,
+} from "../live/hermes-slack-credential-transport.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -43,7 +47,10 @@ function runCredentialTransport(transportFailure = false) {
   );
   chmodSync(ssh, 0o755);
 
+  const credentials = ["xoxb-test-credential", "xapp-test-credential"];
+  const credentialFingerprints = hermesSlackCredentialFingerprints(credentials);
   const script = hermesSlackCredentialScanScript({
+    credentialFingerprints,
     openshellCommandPath: openshell,
     remoteCommand: "cat >/dev/null",
     sandboxName: "e2e-hermes-slack",
@@ -51,29 +58,55 @@ function runCredentialTransport(transportFailure = false) {
   const result = spawnSync("bash", ["-c", script], {
     encoding: "utf8",
     env: {
-      ...process.env,
       OPENSHELL_CALLS: calls,
       PATH: `${root}:${process.env.PATH ?? ""}`,
-      SLACK_APP_TOKEN: "xapp-test-credential",
-      SLACK_BOT_TOKEN: "xoxb-test-credential",
       TRANSPORT_FAILURE: transportFailure ? "1" : "0",
     },
     timeout: 5_000,
   });
   return {
     calls: readFileSync(calls, "utf8"),
+    credentialFingerprints,
+    credentials,
     result,
   };
 }
 
-describe("Hermes Slack credential-scan transport", () => {
-  it("sends credentials through the OpenShell sandbox exec boundary", () => {
-    const { calls, result } = runCredentialTransport();
+describe("Hermes Slack credential-fingerprint scan", () => {
+  it("sends only derived fingerprints through the OpenShell sandbox exec boundary", () => {
+    const { calls, credentialFingerprints, credentials, result } = runCredentialTransport();
 
     expect(result.status, result.stderr).toBe(0);
     expect(calls).toContain("args=sandbox exec --name e2e-hermes-slack -- sh -lc cat >/dev/null");
-    expect(calls).toContain("payload=xoxb-test-credential\nxapp-test-credential");
+    const payload = calls.match(/^payload=(.+)$/mu)?.[1];
+    expect(JSON.parse(payload ?? "null")).toEqual(credentialFingerprints);
+    expect(calls).not.toContain(credentials[0]);
+    expect(calls).not.toContain(credentials[1]);
     expect(calls).not.toContain("ssh-args=");
+  });
+
+  it("detects an exact credential substring without receiving the credential", () => {
+    const root = mkdtempSync(join(tmpdir(), "nemoclaw-hermes-slack-fingerprint-"));
+    temporaryDirectories.push(root);
+    const fixture = join(root, "fixture.log");
+    const credential = "xoxb-test-fingerprint-only";
+    const input = JSON.stringify(hermesSlackCredentialFingerprints([credential]));
+    const scan = () =>
+      spawnSync(
+        "python3",
+        ["-c", HERMES_SLACK_CREDENTIAL_FINGERPRINT_SCAN_SOURCE, JSON.stringify([fixture]), "files"],
+        { encoding: "utf8", input },
+      );
+
+    writeFileSync(fixture, `prefix ${credential} suffix`);
+    const leaked = scan();
+    expect(leaked.status, leaked.stderr).toBe(0);
+    expect(JSON.parse(leaked.stdout)).toEqual({ files: "LEAK", processes: "EMPTY" });
+
+    writeFileSync(fixture, "only revision-scoped placeholders remain");
+    const clean = scan();
+    expect(clean.status, clean.stderr).toBe(0);
+    expect(JSON.parse(clean.stdout)).toEqual({ files: "OK", processes: "EMPTY" });
   });
 
   it("propagates an OpenShell sandbox exec transport failure", () => {

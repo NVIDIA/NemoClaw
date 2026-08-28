@@ -239,10 +239,6 @@ function expectPlanChannelState(channelId: string, expected: ChannelPlanExpected
   ).toEqual([]);
 }
 
-function expectPlanChannelRemoved(channelId: string): void {
-  expectPlanChannelState(channelId, "removed");
-}
-
 function requireEnvValue(env: NodeJS.ProcessEnv, key: string): string {
   const value = env[key];
   if (!value) throw new Error(`${key} must be configured for the channels stop/start target`);
@@ -598,7 +594,7 @@ async function removeGooglechatAndRebuild(
   );
   expectExitZero(remove, "channels remove googlechat");
   expect(resultText(remove)).toContain("Removed googlechat");
-  expectPlanChannelRemoved("googlechat");
+  expectPlanChannelState("googlechat", "removed");
 
   const rebuild = await rebuildSandbox(
     host,
@@ -760,7 +756,7 @@ export async function runChannelsStopStartTarget({
 
   progress.phase("remove Google Chat and validate provider cleanup");
   await removeGooglechatAndRebuild(host, env, redactions);
-  expectPlanChannelRemoved("googlechat");
+  expectPlanChannelState("googlechat", "removed");
   await expectChannelProvidersAbsent(host, env, redactions, "googlechat", "after-remove");
   expect(
     await policyPresetState(host, env, redactions, "googlechat", "after-remove"),
