@@ -89,6 +89,7 @@ Action = Literal[
     "lock",
     "unlock",
     "verify-lock",
+    "verify-unlock",
     "startup",
 ]
 Policy = Literal["high-risk", "confidentiality"]
@@ -2185,9 +2186,12 @@ def _run_guard_unserialized(
         return _restore_empty_credentials_startup_access(
             normalized_config, identity, deadline, plan
         )
-    # Verification shares the locked metadata contract but skips every mutation below.
-    posture_action: Action = "lock" if action == "verify-lock" else action
-    verify_only = action == "verify-lock"
+    posture_action: Action = (
+        "lock"
+        if action == "verify-lock"
+        else "unlock" if action == "verify-unlock" else action
+    )
+    verify_only = action in ("verify-lock", "verify-unlock")
     fail_closed_config_root = action == "lock" and (
         normalized_config in PRODUCTION_FAIL_CLOSED_CONFIG_DIRS
         or os.environ.get("NEMOCLAW_TEST_OPENCLAW_FAIL_CLOSED") == "1"
@@ -2590,6 +2594,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
             "lock",
             "unlock",
             "verify-lock",
+            "verify-unlock",
             "startup",
         ),
     )

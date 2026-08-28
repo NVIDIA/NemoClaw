@@ -144,6 +144,8 @@ on:
         "src/lib/adapters/podman/index.test.ts",
         "src/lib/adapters/podman/index.ts",
         "src/lib/inference/serving/profile-list.test.ts",
+        "src/lib/shields/index.ts",
+        "src/lib/shields/state-dir-lock.test.ts",
         "src/lib/onboard/credential-provider-registration.test.ts",
         "src/lib/onboard/credential-provider-registration.ts",
         "src/lib/onboard/managed-bootstrap/docker-runtime.test.ts",
