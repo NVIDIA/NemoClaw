@@ -166,7 +166,7 @@ export function ensureHermesDashboardForwardIfEnabled({
 
 export function formatHermesDashboardForwardFailure(state: HermesDashboardOnboardState): string {
   const port = state.config?.port ?? "unknown";
-  return `Failed to start Hermes dashboard forward on port ${port}. Free the port and re-run onboarding, set NEMOCLAW_DASHBOARD_PORT, or pass --control-ui-port <N> to choose another port.`;
+  return `Failed to start Hermes dashboard forward on port ${port}. NemoClaw stopped the onboarding forwards but left the sandbox running because OpenShell deletion targets a mutable name. Verify the sandbox identity before manual cleanup, then free the port and re-run onboarding, set NEMOCLAW_DASHBOARD_PORT, or pass --control-ui-port <N> to choose another port.`;
 }
 
 export function createHermesDashboardForwardEnsurer({
@@ -264,8 +264,6 @@ export function createHermesDashboardOnboardForwarding({
             ignoreError: true,
           });
         }
-        revalidateRollback?.(`delete sandbox '${targetSandbox}' during dashboard rollback`);
-        runOpenshell(["sandbox", "delete", targetSandbox], { ignoreError: true });
       },
       fail: failWithMessage,
     })(sandboxName, rollback, revalidatePolicyAuthority);

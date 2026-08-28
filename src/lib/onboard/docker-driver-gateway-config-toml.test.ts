@@ -6,7 +6,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { printOnboardResumeHint, resetOnboardResumeHintForTests } from "./resume-hint";
 import {
   baseGatewayEnv,
   DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
@@ -323,6 +324,149 @@ describe("docker-driver-gateway config TOML", () => {
     }
   });
 
+  it("names the configured driver and a recovery path when a Docker config blocks a Podman run (#10071)", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-cross-driver-"));
+    try {
+      const { configPath } = writePreScopedGatewayConfig(stateDir, false, "docker");
+      const bundle = jwtBundlePaths(stateDir);
+      const signingKeyBefore = fs.readFileSync(bundle.signingKeyPath, "utf-8");
+      const dockerToml = fs.readFileSync(configPath, "utf-8");
+      const podmanEnv = baseGatewayEnv(stateDir);
+      Object.assign(podmanEnv, {
+        OPENSHELL_DRIVERS: "podman",
+        OPENSHELL_PODMAN_SOCKET: path.join(stateDir, "podman.sock"),
+      });
+
+      expect(() =>
+        prepareDockerDriverGatewayConfigEnv(podmanEnv, stateDir, "/usr/bin/openshell-sandbox"),
+      ).toThrow(
+        /already configures a 'docker'-driver OpenShell gateway.*this run selected the 'podman' driver.*NemoClaw-managed state.*nemoclaw uninstall.*preserves externally managed or supervised state.*lifecycle authority.*NEMOCLAW_GATEWAY_PORT.*separate state directory.*NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR/s,
+      );
+      expect(fs.readFileSync(configPath, "utf-8")).toBe(dockerToml);
+      expect(fs.readFileSync(bundle.signingKeyPath, "utf-8")).toBe(signingKeyBefore);
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("names the configured driver and a recovery path when a Podman config blocks a Docker run (#10071)", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-cross-driver-"));
+    try {
+      const { configPath } = writePreScopedGatewayConfig(stateDir, false, "podman");
+      const bundle = jwtBundlePaths(stateDir);
+      const signingKeyBefore = fs.readFileSync(bundle.signingKeyPath, "utf-8");
+      const podmanToml = fs.readFileSync(configPath, "utf-8");
+      const dockerEnv = baseGatewayEnv(stateDir);
+
+      expect(() =>
+        prepareDockerDriverGatewayConfigEnv(dockerEnv, stateDir, "/usr/bin/openshell-sandbox"),
+      ).toThrow(
+        /already configures a 'podman'-driver OpenShell gateway.*this run selected the 'docker' driver/s,
+      );
+      expect(fs.readFileSync(configPath, "utf-8")).toBe(podmanToml);
+      expect(fs.readFileSync(bundle.signingKeyPath, "utf-8")).toBe(signingKeyBefore);
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not classify a malformed other-driver table as a cross-driver conflict (#10071)", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-malformed-driver-"));
+    try {
+      const { configPath } = writePreScopedGatewayConfig(stateDir, false, "docker");
+      const malformedToml = fs
+        .readFileSync(configPath, "utf-8")
+        .replace(/^grpc_endpoint = .*$/m, 'grpc_endpoint = ""');
+      fs.writeFileSync(configPath, malformedToml, { encoding: "utf-8", mode: 0o600 });
+      const podmanEnv = baseGatewayEnv(stateDir);
+      Object.assign(podmanEnv, {
+        OPENSHELL_DRIVERS: "podman",
+        OPENSHELL_PODMAN_SOCKET: path.join(stateDir, "podman.sock"),
+      });
+
+      expect(() =>
+        prepareDockerDriverGatewayConfigEnv(podmanEnv, stateDir, "/usr/bin/openshell-sandbox"),
+      ).toThrow(/driver config is incomplete/);
+      expect(() =>
+        prepareDockerDriverGatewayConfigEnv(podmanEnv, stateDir, "/usr/bin/openshell-sandbox"),
+      ).not.toThrow(/already configures a 'docker'-driver/);
+      expect(fs.readFileSync(configPath, "utf-8")).toBe(malformedToml);
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("still reports the generic schema mismatch when neither driver table is present (#10071)", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-no-driver-table-"));
+    try {
+      const { configPath } = writePreScopedGatewayConfig(stateDir);
+      const noDriversToml = fs
+        .readFileSync(configPath, "utf-8")
+        .replace(/\[openshell\.drivers\.docker\][\s\S]*$/, "");
+      fs.writeFileSync(configPath, noDriversToml, { encoding: "utf-8", mode: 0o600 });
+      const env = baseGatewayEnv(stateDir);
+
+      let error: unknown;
+      try {
+        prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox");
+      } catch (cause) {
+        error = cause;
+      }
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(
+        /cannot prove its generated gateway identity \(the config does not match NemoClaw's schema\)/,
+      );
+      expect((error as Error).message).not.toContain("already configures");
+      expect(fs.readFileSync(configPath, "utf-8")).toBe(noDriversToml);
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("suppresses the circular '--resume' hint after a cross-driver conflict (#10071)", () => {
+    resetOnboardResumeHintForTests();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-cross-driver-hint-"));
+    try {
+      writePreScopedGatewayConfig(stateDir, false, "docker");
+      const podmanEnv = baseGatewayEnv(stateDir);
+      Object.assign(podmanEnv, {
+        OPENSHELL_DRIVERS: "podman",
+        OPENSHELL_PODMAN_SOCKET: path.join(stateDir, "podman.sock"),
+      });
+
+      expect(() =>
+        prepareDockerDriverGatewayConfigEnv(podmanEnv, stateDir, "/usr/bin/openshell-sandbox"),
+      ).toThrow(/already configures a 'docker'-driver/);
+      printOnboardResumeHint(true, console.error);
+      const joined = errSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      // The generic hint repeats the exact command that just failed. Nothing
+      // about host state changes between attempts, so it must not print.
+      expect(joined).not.toContain("nemoclaw onboard --resume");
+      expect(joined).not.toContain("nemoclaw onboard --experimental-profile portable --fresh");
+    } finally {
+      errSpy.mockRestore();
+      resetOnboardResumeHintForTests();
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not suppress a later resume hint when an ownership probe swallows the conflict", () => {
+    resetOnboardResumeHintForTests();
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-probe-hint-"));
+    try {
+      writePreScopedGatewayConfig(stateDir, false, "podman");
+
+      expect(hasStateScopedSandboxNamespace(stateDir)).toBe(false);
+      const lines: string[] = [];
+      printOnboardResumeHint(false, (line) => lines.push(line));
+      expect(lines.join("\n")).toContain("nemoclaw onboard --resume");
+    } finally {
+      resetOnboardResumeHintForTests();
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("does not rewrite an oversized gateway config (#8740)", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-oversized-"));
     try {
@@ -333,7 +477,9 @@ describe("docker-driver-gateway config TOML", () => {
 
       expect(() =>
         prepareDockerDriverGatewayConfigEnv(env, stateDir, "/usr/bin/openshell-sandbox"),
-      ).toThrow(/cannot prove its generated gateway identity \(the config could not be read safely:/);
+      ).toThrow(
+        /cannot prove its generated gateway identity \(the config could not be read safely:/,
+      );
       expect(fs.readFileSync(configPath, "utf-8")).toBe(oversizedToml);
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
@@ -484,9 +630,7 @@ describe("docker-driver-gateway config TOML", () => {
       const config = fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8");
       expect(parseTomlString(config, "gateway_id")).toBe(gatewayIdForStateDir(stateDir));
       expect(parseTomlString(config, "sandbox_namespace")).toBe(gatewayIdForStateDir(stateDir));
-      expect(fs.readFileSync(path.join(stateDir, "openshell.db"), "utf-8")).toBe(
-        "legacy-database",
-      );
+      expect(fs.readFileSync(path.join(stateDir, "openshell.db"), "utf-8")).toBe("legacy-database");
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }

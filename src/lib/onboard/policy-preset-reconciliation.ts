@@ -7,6 +7,7 @@ import { mergeRequiredHermesToolGatewayPolicyPresets } from "./hermes-managed-to
 import {
   mergeEnabledMessagingChannelPolicyPresets,
   pruneDisabledMessagingPolicyPresets,
+  pruneInactiveMessagingPolicyPresets,
 } from "./messaging-policy-presets";
 import {
   isInactiveObservabilityPolicyPreset,
@@ -48,6 +49,11 @@ export function mergeRequiredSetupPolicyPresets(
         customOwnsObservability: options.customOwnsObservability,
       }),
   );
+  const activeAgentPresets = pruneInactiveMessagingPolicyPresets(
+    agentFilteredPresets,
+    options.enabledChannels,
+    options.customPresetNames,
+  );
   const effectiveHermesToolGateways = (options.hermesToolGateways ?? []).filter(
     (name) =>
       !isStaleBuiltinWebSearchPolicyPreset(name, {
@@ -59,7 +65,7 @@ export function mergeRequiredSetupPolicyPresets(
     mergeRequiredOpenclawOtelPolicyPresets(
       mergeEnabledMessagingChannelPolicyPresets(
         mergeRequiredHermesToolGatewayPolicyPresets(
-          agentFilteredPresets,
+          activeAgentPresets,
           effectiveHermesToolGateways,
           options.knownPresetNames,
         ),
@@ -137,6 +143,7 @@ export function isStaleBuiltinWebSearchPolicyPreset(
 
 export function createUnavailablePolicyPresetPruner(options: {
   disabledChannels?: string[] | null;
+  enabledChannels?: string[] | null;
   agent?: string | null;
   observabilityEnabled?: boolean | null;
   webSearchConfig?: WebSearchConfig | null;
@@ -151,8 +158,19 @@ export function createUnavailablePolicyPresetPruner(options: {
 ) => string[] {
   // Custom and interactive selections may explicitly opt into a built-in web-search
   // preset without storing provider config. Inactive observability remains ineligible.
-  return (presetNames, pruning = {}) =>
-    pruneDisabledMessagingPolicyPresets(presetNames, options.disabledChannels).filter(
+  return (presetNames, pruning = {}) => {
+    // OpenClaw keeps an already-applied channel preset until disabledChannels
+    // explicitly retires it. Hermes recovery records the full enabled set, so
+    // it can also prune repository defaults that are absent from that set.
+    const enabledChannelPruned =
+      options.agent?.trim().toLowerCase() === "hermes"
+        ? pruneInactiveMessagingPolicyPresets(
+            pruneDisabledMessagingPolicyPresets(presetNames, options.disabledChannels),
+            options.enabledChannels,
+            options.customPresetNames,
+          )
+        : pruneDisabledMessagingPolicyPresets(presetNames, options.disabledChannels);
+    return enabledChannelPruned.filter(
       (name) =>
         (pruning.preserveExplicitWebSearch ||
           !isStaleBuiltinWebSearchPolicyPreset(name, {
@@ -163,4 +181,5 @@ export function createUnavailablePolicyPresetPruner(options: {
           })) &&
         !isInactiveObservabilityPolicyPreset(name, options),
     );
+  };
 }

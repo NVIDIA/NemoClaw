@@ -2,10 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { McpBridgeEntry } from "../../state/registry";
-import { isPolicyAuthorityRefusalError } from "../../adapters/openshell/policy-authority";
+import {
+  isPolicyAuthorityRefusalError,
+  PolicyAuthorityRefusalError,
+} from "../../adapters/openshell/policy-authority";
 import {
   rollbackScrubbedMcpAdapters,
   scrubManagedMcpAdapterOrThrow,
+  type McpScrubbedAdapterEntry,
 } from "./mcp-bridge-adapter-teardown";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import {
@@ -22,8 +26,11 @@ import {
   assertMcpProviderRecoverable,
   assertNoProviderCredentialCollisions,
   assertNoRegisteredProviderCredentialCollisions,
+  attachProvider,
   detachProvider,
   preflightMcpEntryTargets,
+  refreshMcpProviderEnvironment,
+  waitForAttachedMcpCredential,
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
 import { restoreExistingMcpBridgeRuntime } from "./mcp-bridge-restart";
@@ -43,11 +50,31 @@ import { assertAuthenticatedBridgeEntry, validateSandboxName } from "./mcp-bridg
 export interface McpRebuildPreparation {
   entries: McpBridgeEntry[];
   detachedProviderEntries: McpBridgeEntry[];
-  scrubbedAdapterEntries: McpBridgeEntry[];
+  scrubbedAdapterEntries: McpScrubbedAdapterEntry[];
   /** Full read-only target, policy, provider, and registry proof before delete. */
   revalidateBeforeDelete?: () => Promise<void>;
   /** Final synchronous registry-only proof immediately before delete. */
   assertDeleteEdgeUnchanged?: () => void;
+}
+
+function compensatePolicyAuthorityRefusal(
+  sandboxName: string,
+  sandbox: ReturnType<typeof getSandboxOrThrow>,
+  detachedEntries: readonly McpBridgeEntry[],
+  scrubbedAdapterEntries: readonly McpScrubbedAdapterEntry[],
+): string[] {
+  const failures: string[] = [];
+  for (const entry of detachedEntries) {
+    try {
+      attachProvider(sandboxName, entry);
+      refreshMcpProviderEnvironment(entry);
+      waitForAttachedMcpCredential(sandboxName, entry);
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  failures.push(...rollbackScrubbedMcpAdapters(sandboxName, sandbox, scrubbedAdapterEntries));
+  return failures;
 }
 
 export { prepareMcpBridgesForExecUnavailableRebuild } from "./mcp-bridge-rebuild-exec-unavailable";
@@ -141,7 +168,7 @@ export async function prepareMcpBridgesForRebuild(
   for (const entry of entries) assertMcpProviderRecoverable(entry);
   assertNoProviderCredentialCollisions(sandboxName, entries);
   const detached: McpBridgeEntry[] = [];
-  const scrubbedAdapters: McpBridgeEntry[] = [];
+  const scrubbedAdapters: McpScrubbedAdapterEntry[] = [];
   const removedPolicies: McpBridgeEntry[] = [];
   try {
     for (const entry of entries) {
@@ -149,8 +176,7 @@ export async function prepareMcpBridgesForRebuild(
       // Hermes/agent cannot boot with a stale placeholder while its provider
       // is intentionally detached during recreate.
       await validatePolicyAuthority?.();
-      scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry);
-      scrubbedAdapters.push(entry);
+      scrubbedAdapters.push(scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry));
     }
     for (const entry of entries) {
       // The same-name replacement journal fingerprints this source row before
@@ -181,7 +207,21 @@ export async function prepareMcpBridgesForRebuild(
       detached.push(entry);
     }
   } catch (error) {
-    if (isPolicyAuthorityRefusalError(error)) throw error;
+    if (isPolicyAuthorityRefusalError(error)) {
+      const rollbackFailures = compensatePolicyAuthorityRefusal(
+        sandboxName,
+        sandbox,
+        detached,
+        scrubbedAdapters,
+      );
+      if (rollbackFailures.length === 0) throw error;
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new PolicyAuthorityRefusalError(
+        `${detail}\nMCP rebuild rollback could not reattach: ${rollbackFailures.join("; ")}`,
+        error instanceof PolicyAuthorityRefusalError ? error.observedAuthority : undefined,
+        { cause: error },
+      );
+    }
     const rollbackFailures: string[] = [];
     let runtimeRestored = false;
     if (removedPolicies.length > 0) {
@@ -226,7 +266,7 @@ export async function prepareMcpBridgesForRebuild(
 export async function reattachMcpProvidersAfterRebuildAbort(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
-  scrubbedAdapterEntries: readonly McpBridgeEntry[] = [],
+  scrubbedAdapterEntries: readonly McpScrubbedAdapterEntry[] = [],
   validatePolicyAuthority?: () => Promise<void>,
 ): Promise<void> {
   if (entries.length === 0 && scrubbedAdapterEntries.length === 0) return;

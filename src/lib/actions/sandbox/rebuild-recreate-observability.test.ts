@@ -581,6 +581,9 @@ describe("rebuild recreate shields state", () => {
       "bail: Recreate failed (stale-sandbox recovery).",
     );
 
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("Sandbox recreate error: inner onboard failed"),
+    );
     expect(clearShieldsState).not.toHaveBeenCalled();
   });
 });

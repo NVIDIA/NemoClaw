@@ -5,6 +5,11 @@ import fs from "node:fs";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
+import {
+  managedPolicyInspection,
+  managedSandboxEntry,
+  SANDBOX_IDENTITY,
+} from "../../../test/helpers/managed-policy-receipt-fixture";
 
 const mocks = vi.hoisted(() => ({
   addBaselineExclusion: vi.fn(),
@@ -14,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   getBaselineExclusions: vi.fn(),
   getBaselineExclusionTransition: vi.fn(),
   getSandbox: vi.fn(),
+  inspectOpenShellSandboxIdentityFingerprint: vi.fn(),
   inspectSandboxPolicyAuthority: vi.fn(),
   removeBaselineExclusion: vi.fn(),
   run: vi.fn(),
@@ -22,6 +28,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../adapters/openshell/policy-authority", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../adapters/openshell/policy-authority")>()),
+  inspectOpenShellSandboxIdentityFingerprint: mocks.inspectOpenShellSandboxIdentityFingerprint,
   inspectSandboxPolicyAuthority: mocks.inspectSandboxPolicyAuthority,
 }));
 
@@ -97,15 +104,11 @@ describe("excludeBaselineEntry persistence boundary (#7178)", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     mocks.runCapture.mockReturnValue(LIVE_POLICY);
     mocks.run.mockReturnValue({ status: 0 });
-    mocks.inspectSandboxPolicyAuthority.mockReturnValue({
-      authority: "nemoclaw-managed",
-      effectivePolicy: {},
-    });
+    mocks.inspectOpenShellSandboxIdentityFingerprint.mockReturnValue(SANDBOX_IDENTITY);
+    mocks.inspectSandboxPolicyAuthority.mockReturnValue(managedPolicyInspection());
     mocks.getSandbox.mockReturnValue({
-      name: "alpha",
-      agent: "hermes",
+      ...managedSandboxEntry("alpha", "hermes"),
       agentVersion: "1.2.3",
-      policyAuthority: "nemoclaw-managed",
     });
     mocks.getBaselineExclusions.mockReturnValue([]);
     mocks.getBaselineExclusionTransition.mockReturnValue(null);
@@ -147,23 +150,23 @@ describe("excludeBaselineEntry persistence boundary (#7178)", () => {
 
   it("refuses exclusion journal changes when authority changes during the live read (#9833)", () => {
     mocks.inspectSandboxPolicyAuthority
-      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
-      .mockReturnValueOnce({ authority: "externally-managed", effectivePolicy: {} });
+      .mockReturnValueOnce(managedPolicyInspection())
+      .mockReturnValueOnce({ ...managedPolicyInspection(), authority: "externally-managed" });
 
     expect(excludeBaselineEntry("alpha", "nous_research", LIVE_DIGEST, { nonFatal: true })).toBe(
       false,
     );
 
     expectNoBaselineMutation();
-    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("policy authority changed"));
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("externally managed"));
   });
 
   it("preserves a pending exclusion when authority changes at the policy-set edge (#9833)", () => {
     mocks.beginBaselineExclusionTransition.mockReturnValue(true);
     mocks.inspectSandboxPolicyAuthority
-      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
-      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
-      .mockReturnValue({ authority: "externally-managed", effectivePolicy: {} });
+      .mockReturnValueOnce(managedPolicyInspection())
+      .mockReturnValueOnce(managedPolicyInspection())
+      .mockReturnValue({ ...managedPolicyInspection(), authority: "externally-managed" });
 
     expect(excludeBaselineEntry("alpha", "nous_research", LIVE_DIGEST, { nonFatal: true })).toBe(
       false,
@@ -173,7 +176,7 @@ describe("excludeBaselineEntry persistence boundary (#7178)", () => {
     expect(mocks.run).not.toHaveBeenCalled();
     expect(mocks.clearBaselineExclusionTransition).not.toHaveBeenCalled();
     expect(mocks.commitBaselineExclusionTransition).not.toHaveBeenCalled();
-    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("policy authority changed"));
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("externally managed"));
   });
 
   it("clears a fresh transaction when live narrowing fails", () => {
@@ -263,12 +266,11 @@ describe("excludeBaselineEntry persistence boundary (#7178)", () => {
   it("pins every live read and write to the sandbox's recorded gateway (#7178)", () => {
     vi.stubEnv("OPENSHELL_GATEWAY", "ambient-gateway");
     mocks.getSandbox.mockReturnValue({
-      name: "alpha",
-      agent: "hermes",
+      ...managedSandboxEntry("alpha", "hermes", {
+        gatewayName: "nemoclaw-18080",
+        gatewayPort: 18080,
+      }),
       agentVersion: "1.2.3",
-      gatewayName: "nemoclaw-18080",
-      gatewayPort: 18080,
-      policyAuthority: "nemoclaw-managed",
     });
     mocks.beginBaselineExclusionTransition.mockReturnValue(true);
     mocks.runCapture
@@ -412,15 +414,11 @@ describe("restoreBaselineEntry persistence boundary (#7178)", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     mocks.runCapture.mockReturnValue("version: 1\nnetwork_policies: {}\n");
     mocks.run.mockReturnValue({ status: 0 });
-    mocks.inspectSandboxPolicyAuthority.mockReturnValue({
-      authority: "nemoclaw-managed",
-      effectivePolicy: {},
-    });
+    mocks.inspectOpenShellSandboxIdentityFingerprint.mockReturnValue(SANDBOX_IDENTITY);
+    mocks.inspectSandboxPolicyAuthority.mockReturnValue(managedPolicyInspection());
     mocks.getSandbox.mockReturnValue({
-      name: "alpha",
-      agent: "hermes",
+      ...managedSandboxEntry("alpha", "hermes"),
       agentVersion: "1.2.3",
-      policyAuthority: "nemoclaw-managed",
     });
     mocks.getBaselineExclusions.mockReturnValue([RECORDED]);
     mocks.getBaselineExclusionTransition.mockReturnValue(null);
@@ -471,13 +469,13 @@ describe("restoreBaselineEntry persistence boundary (#7178)", () => {
 
   it("refuses restore journal changes when authority changes during the live read (#9833)", () => {
     mocks.inspectSandboxPolicyAuthority
-      .mockReturnValueOnce({ authority: "nemoclaw-managed", effectivePolicy: {} })
-      .mockReturnValueOnce({ authority: "externally-managed", effectivePolicy: {} });
+      .mockReturnValueOnce(managedPolicyInspection())
+      .mockReturnValueOnce({ ...managedPolicyInspection(), authority: "externally-managed" });
 
     expect(restoreBaselineEntry("alpha", "nous_research", { nonFatal: true })).toBe(false);
 
     expectNoBaselineMutation();
-    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("policy authority changed"));
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("externally managed"));
   });
 
   it("clears the restore transaction when live policy restoration fails", () => {
@@ -511,10 +509,8 @@ describe("restoreBaselineEntry persistence boundary (#7178)", () => {
       digest: HERMES_MANAGED_INFERENCE_DIGEST,
     };
     mocks.getSandbox.mockReturnValue({
-      name: "alpha",
-      agent: "openclaw",
+      ...managedSandboxEntry("alpha", "openclaw"),
       agentVersion: "2.0.0",
-      policyAuthority: "nemoclaw-managed",
     });
     mocks.getBaselineExclusions.mockReturnValue([staleExclusion]);
     mocks.runCapture
@@ -625,10 +621,8 @@ describe("restoreBaselineEntry persistence boundary (#7178)", () => {
 
   it("keeps an interrupted restore pending when its agent baseline is unreadable (#7178)", () => {
     mocks.getSandbox.mockReturnValue({
-      name: "alpha",
-      agent: "agent-without-a-readable-baseline",
+      ...managedSandboxEntry("alpha", "agent-without-a-readable-baseline"),
       agentVersion: "1.2.3",
-      policyAuthority: "nemoclaw-managed",
     });
     mocks.runCapture.mockReturnValue(LIVE_POLICY);
     mocks.getBaselineExclusionTransition.mockReturnValue({

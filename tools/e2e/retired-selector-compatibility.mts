@@ -44,7 +44,7 @@ const REPLACEMENTS: Readonly<Record<RetiredControllerSelectorId, Replacement>> =
     legacyFile: "test/e2e/live/credential-migration.test.ts",
     tests: [
       {
-        files: ["test/credential-migration-reconciliation.test.ts"],
+        files: ["test/credentials/credential-migration-reconciliation.test.ts"],
         project: "integration",
       },
     ],
@@ -77,11 +77,11 @@ const REPLACEMENTS: Readonly<Record<RetiredControllerSelectorId, Replacement>> =
     ],
   },
   "gateway-drift-preflight": {
-    tests: [{ files: ["test/gateway-drift-preflight.test.ts"], project: "integration" }],
+    tests: [{ files: ["test/runtime/gateway/gateway-drift-preflight.test.ts"], project: "integration" }],
   },
   "gateway-health-honest": {
     legacyFile: "test/e2e/live/gateway-health-honest.test.ts",
-    tests: [{ files: ["test/gateway-health-honest.test.ts"], project: "integration" }],
+    tests: [{ files: ["test/runtime/gateway/gateway-health-honest.test.ts"], project: "integration" }],
   },
   "onboard-negative-paths": {
     legacyFile: "test/e2e/live/onboard-negative-paths.test.ts",
@@ -114,7 +114,7 @@ const REPLACEMENTS: Readonly<Record<RetiredControllerSelectorId, Replacement>> =
         project: "cli",
       },
       {
-        files: ["test/rebuild-stale-recovery.test.ts"],
+        files: ["test/process-recovery/rebuild-stale-recovery.test.ts"],
         project: "integration",
       },
     ],

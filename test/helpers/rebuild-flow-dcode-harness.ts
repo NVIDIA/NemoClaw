@@ -4,7 +4,9 @@
 import { type MockInstance, vi } from "vitest";
 import type { SandboxPolicyAuthorityInspection } from "../../src/lib/adapters/openshell/policy-authority";
 import type { GatewayRestartResult } from "../../src/lib/actions/sandbox/gateway-restart";
+import type { OpenShellSandboxInventory } from "../../src/lib/adapters/openshell/sandbox-observer";
 import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
+import { managedPolicyInspection } from "./managed-policy-receipt-fixture";
 import {
   agentDefs,
   agentOnboard,
@@ -51,6 +53,7 @@ import {
   shields,
   snapshotEnv,
   sourceSandboxGateway,
+  withManagedRebuildPolicyReceipt,
 } from "./rebuild-flow-harness";
 
 export { installRebuildFlowTestHooks } from "./rebuild-flow-harness";
@@ -98,7 +101,7 @@ export type RebuildFlowOverrides = {
   policyAuthorityInspection?: SandboxPolicyAuthorityInspection;
   sandboxEntryReads?: Array<Record<string, unknown> | null>;
   sessionSandboxName?: string;
-  sandboxListOutput?: string;
+  sandboxInventory?: OpenShellSandboxInventory;
   backupPolicyPresets?: string[];
   gatewayPresets?: string[];
   verificationUnavailableAfterPresetRemoval?: boolean;
@@ -245,7 +248,14 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     resolveGatewayAuthority,
   );
   vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
-    result: { status: 0, output: overrides.sandboxListOutput ?? "alpha Ready" },
+    result: {
+      ok: true,
+      value: overrides.sandboxInventory ?? {
+        sandboxes: [{ name: "alpha", phase: "Ready", readiness: "ready" }],
+      },
+    },
+    recoveryAttempted: false,
+    recoverySucceeded: false,
   });
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null);
   vi.spyOn(dockerImage, "dockerBuild").mockReturnValue({ status: 0 });
@@ -343,7 +353,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .mockImplementation(() => undefined);
   const finalizeIncompleteOnboardStepSpy = installTerminalStepFailureMock(onboardSession, session);
   session.sandboxName = overrides.sessionSandboxName ?? session.sandboxName;
-  const sandboxEntry = {
+  const sandboxEntry = withManagedRebuildPolicyReceipt({
     name: "alpha",
     provider: "ollama-local",
     model: "nvidia/nemotron",
@@ -354,28 +364,38 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     // Tests that exercise the legacy ambiguous-image path override this explicitly.
     nemoclawVersion: "0.0.71",
     nimContainer: null,
+    policyAuthority: "nemoclaw-managed" as const,
     ...(overrides.sandboxEntry ?? {}),
-  };
-  const recordedPolicyAuthority = (
-    sandboxEntry as typeof sandboxEntry & { policyAuthority?: unknown }
-  ).policyAuthority;
+  });
+  const recordedPolicyAuthority = (sandboxEntry as Record<string, unknown>).policyAuthority;
   const policyAuthorityInspection =
     overrides.policyAuthorityInspection ??
-    ({
-      authority:
-        recordedPolicyAuthority === "externally-managed"
-          ? "externally-managed"
-          : "nemoclaw-managed",
-      effectivePolicy: {},
-    } as const);
+    (recordedPolicyAuthority === "externally-managed"
+      ? ({
+          authority: "externally-managed",
+          effectivePolicy: {},
+          policyIdentity: { hash: "external-policy", activeVersion: 1 },
+        } as const)
+      : managedPolicyInspection());
   const inspectGlobalPolicyAuthoritySpy = vi
-    .spyOn(policyAuthority, "inspectGlobalPolicyAuthority")
-    .mockReturnValue(policyAuthorityInspection);
+    .spyOn(policyAuthority, "inspectActiveGlobalPolicy")
+    .mockReturnValue(
+      policyAuthorityInspection.authority === "externally-managed"
+        ? { state: "active", inspection: policyAuthorityInspection }
+        : { state: "absent" },
+    );
   const inspectSandboxPolicyAuthoritySpy = vi
     .spyOn(policyAuthority, "inspectSandboxPolicyAuthority")
     .mockReturnValue(policyAuthorityInspection);
+  vi.spyOn(policyAuthority, "assertOpenShellGatewayPortBinding").mockImplementation(
+    () => undefined,
+  );
+  vi.spyOn(policyAuthority, "inspectOpenShellSandboxIdentityFingerprint").mockImplementation(
+    () =>
+      String((sandboxEntry as Record<string, unknown>).lifecycleLiveIdentityFingerprint ?? ""),
+  );
   vi.spyOn(sandboxRecreateProbe, "observeSandboxPresenceOnGateway").mockReturnValue(
-    overrides.sandboxListOutput === "" ||
+    overrides.sandboxInventory?.sandboxes.length === 0 ||
       overrides.reconciledSandboxGatewayState?.state === "missing"
       ? "missing"
       : "present",
@@ -563,7 +583,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       const probedGateway = sourceSandboxGateway(argv, "get");
       const liveSource = "Name: alpha\nId: sbx-alpha-source\nPhase: Ready\n";
       const sourceInitiallyMissing =
-        overrides.sandboxListOutput === "" ||
+        overrides.sandboxInventory?.sandboxes.length === 0 ||
         overrides.reconciledSandboxGatewayState?.state === "missing";
       return probedGateway && !sourceInitiallyMissing && !deletedSourceGateways.has(probedGateway)
         ? { status: 0, output: liveSource, stdout: liveSource, stderr: "" }
