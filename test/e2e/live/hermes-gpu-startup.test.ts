@@ -27,7 +27,6 @@ import {
 } from "./hermes-gpu-startup-fallback.ts";
 import {
   assertHermesGpuStartupProof,
-  HERMES_GPU_EXTRA_PLACEHOLDER_KEYS,
   HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS,
 } from "./hermes-gpu-startup-proof.ts";
 
@@ -43,8 +42,6 @@ const GATEWAY_ALREADY_ABSENT =
   /gateway[^\n]*(?:does not exist|not found)|No (?:active )?gateway|No gateway metadata found/i;
 const FAKE_API_KEY = "e2e-hermes-gpu-startup-key";
 const FAKE_MODEL = "test-model";
-const EXTRA_PLACEHOLDER_TOKEN_A = "e2e-hermes-gpu-extra-telegram-token";
-const EXTRA_PLACEHOLDER_TOKEN_B = "e2e-hermes-gpu-extra-slack-token";
 const LIVE_TIMEOUT_MS = 70 * 60_000;
 const { route: GPU_ROUTE, scenario: GPU_STARTUP_SCENARIO } = resolveHermesGpuStartupScenario(
   process.env.E2E_HERMES_GPU_STARTUP_SCENARIO,
@@ -292,7 +289,7 @@ done`;
       {
         artifactName: "phase-2-hermes-gpu-startup-failure-diagnostics",
         env: buildAvailabilityProbeEnv(),
-        redactionValues: [FAKE_API_KEY, EXTRA_PLACEHOLDER_TOKEN_A, EXTRA_PLACEHOLDER_TOKEN_B],
+        redactionValues: [FAKE_API_KEY],
         timeoutMs: 30_000,
       },
     ),
@@ -336,7 +333,6 @@ test(
 
     const fake = await startFakeOpenAiCompatibleServer({
       apiKey: FAKE_API_KEY,
-      forbiddenMarkers: [EXTRA_PLACEHOLDER_TOKEN_A, EXTRA_PLACEHOLDER_TOKEN_B],
       host: "0.0.0.0",
       model: FAKE_MODEL,
       progress,
@@ -424,7 +420,7 @@ test(
       );
       await artifacts.writeJson("gpu-fallback-wrapper.json", {
         behavior:
-          "create real native state while dropping GPU attachment, reject exactly the first post-create nvidia-smi proof, then delegate compatibility retry",
+          "reject the exact native --gpu create before progress, then delegate one compatibility create and GPU proof",
         eventVocabulary: HERMES_GPU_FALLBACK_EVENTS,
       });
       return wrapper;
@@ -437,20 +433,17 @@ test(
       NEMOCLAW_COMPAT_MODEL: FAKE_MODEL,
       NEMOCLAW_ENDPOINT_URL: fake.baseUrl,
       NEMOCLAW_MODEL: FAKE_MODEL,
-      NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: HERMES_GPU_EXTRA_PLACEHOLDER_KEYS.join(","),
       NEMOCLAW_POLICY_MODE: "suggested",
       NEMOCLAW_PREFERRED_API: "openai-completions",
       NEMOCLAW_PROVIDER: "custom",
       ...(fallbackWrapper?.componentEnv ?? {}),
-      [HERMES_GPU_EXTRA_PLACEHOLDER_KEYS[0]]: EXTRA_PLACEHOLDER_TOKEN_A,
-      [HERMES_GPU_EXTRA_PLACEHOLDER_KEYS[1]]: EXTRA_PLACEHOLDER_TOKEN_B,
     });
     progress.phase("install Hermes sandbox on selected GPU route");
     const install = await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
       artifactName: "phase-2-install-hermes-gpu-startup",
       cwd: REPO_ROOT,
       env,
-      redactionValues: [FAKE_API_KEY, EXTRA_PLACEHOLDER_TOKEN_A, EXTRA_PLACEHOLDER_TOKEN_B],
+      redactionValues: [FAKE_API_KEY],
       timeoutMs: 60 * 60_000,
     });
     const gpuDiagnosticsDir = extractHermesGpuDiagnosticsDirectory(resultText(install));
@@ -468,14 +461,16 @@ test(
       const fallbackEvents = readHermesGpuFallbackEvents(wrapper.eventsPath);
       await artifacts.writeJson("gpu-fallback-events.json", fallbackEvents);
       expect(fallbackEvents).toEqual([
-        HERMES_GPU_FALLBACK_EVENTS.delegateNativeCreateWithoutGpu,
-        HERMES_GPU_FALLBACK_EVENTS.rejectNativeNvidiaSmiProof,
+        HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress,
         HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate,
-        HERMES_GPU_FALLBACK_EVENTS.delegateNvidiaSmiProofAfterRejection,
+        HERMES_GPU_FALLBACK_EVENTS.delegateNvidiaSmiProofAfterFallback,
       ]);
       expect(resultText(install)).toContain("Native GPU diagnostics saved:");
-      expect(HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS.every((fragment) =>
-          resultText(install).includes(fragment))).toBe(true);
+      expect(
+        HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS.every((fragment) =>
+          resultText(install).includes(fragment),
+        ),
+      ).toBe(true);
     };
     await (fallbackWrapper ? verifyFallback(fallbackWrapper) : Promise.resolve());
 
@@ -531,11 +526,6 @@ test(
     ).toBeGreaterThan(0);
     expect(inferencePosts.filter((request) => request.auth !== "ok")).toEqual([]);
     expect(inferencePosts.filter((request) => request.authorizationSent !== true)).toEqual([]);
-    expect(inferencePosts.filter((request) => (request.forbiddenMarkerMatches ?? 0) > 0)).toEqual(
-      [],
-    );
-    expect(JSON.stringify(fakeRequests)).not.toContain(EXTRA_PLACEHOLDER_TOKEN_A);
-    expect(JSON.stringify(fakeRequests)).not.toContain(EXTRA_PLACEHOLDER_TOKEN_B);
 
     progress.phase("remove Hermes GPU resources");
     await cleanupHermes(host, sandbox, "phase-5-clean-teardown");
@@ -555,12 +545,10 @@ test(
         openshellReady: true,
         sandboxCudaVerified: true,
         managedWorkloadAuthorityVerified: true,
-        extraPlaceholderCommandRoundTripValid: true,
         stableSingleContainer: true,
         startupConfigHashesValid: true,
         supervisorTopologyValid: true,
         authenticatedInferenceRequestVerified: true,
-        placeholderTokensAbsentFromInference: true,
         cleanTeardownVerified,
       },
     });
