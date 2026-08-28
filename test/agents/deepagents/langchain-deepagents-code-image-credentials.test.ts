@@ -11,6 +11,7 @@ import {
   makeNetworkSimulatingFixture,
   makeWrapperFixture,
   runWrapper,
+  runWrapperAsync,
 } from "../../helpers/langchain-deepagents-code-image.ts";
 import { CANONICAL_SECRET_POSITIVE_VECTORS } from "../../helpers/langchain-deepagents-code-secret-patterns.ts";
 
@@ -85,7 +86,7 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
     },
   );
 
-  it("pins the OTLP endpoint accept/refuse contract on runtime and dotenv paths (#6466, #6538)", () => {
+  it("pins the OTLP endpoint accept/refuse contract on runtime and dotenv paths (#6466, #6538)", async () => {
     // The managed collector URL is not a credential and must pass; everything
     // else refuses with the full contract. The #6538 review requires exact
     // status 2, the variable name present, the rejected value absent (no echo),
@@ -113,63 +114,81 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
     ];
 
     const mk = (tag: string) => makeWrapperFixture(fs.mkdtempSync(path.join(os.tmpdir(), tag)));
+    const cases: Array<() => Promise<void>> = [];
     for (const name of endpointNames) {
       for (const url of acceptUrls) {
-        const rt = mk("nemoclaw-dcode-otlp-ok-rt-");
-        expect(
-          runWrapper(rt.wrapperPath, ["-n", "hi"], { [name]: url }).status,
-          `rt ${name}=${url}`,
-        ).toBe(0);
-        expect(fs.existsSync(rt.ranMarker)).toBe(true);
-        const dv = mk("nemoclaw-dcode-otlp-ok-dv-");
-        fs.writeFileSync(dv.envFile, `${name}=${url}\n`, "utf8");
-        expect(runWrapper(dv.wrapperPath, ["-n", "hi"], {}).status, `dv ${name}=${url}`).toBe(0);
-        expect(fs.existsSync(dv.ranMarker)).toBe(true);
+        cases.push(async () => {
+          const rt = mk("nemoclaw-dcode-otlp-ok-rt-");
+          const result = await runWrapperAsync(rt.wrapperPath, ["-n", "hi"], { [name]: url });
+          expect(result.status, `rt ${name}=${url}`).toBe(0);
+          expect(fs.existsSync(rt.ranMarker)).toBe(true);
+        });
+        cases.push(async () => {
+          const dv = mk("nemoclaw-dcode-otlp-ok-dv-");
+          fs.writeFileSync(dv.envFile, `${name}=${url}\n`, "utf8");
+          const result = await runWrapperAsync(dv.wrapperPath, ["-n", "hi"], {});
+          expect(result.status, `dv ${name}=${url}`).toBe(0);
+          expect(fs.existsSync(dv.ranMarker)).toBe(true);
+        });
       }
 
       for (const value of rejectValues) {
-        const rt = mk("nemoclaw-dcode-otlp-bad-rt-");
-        const rtRes = runWrapper(rt.wrapperPath, ["-n", "hi"], { [name]: value });
-        expect(rtRes.status, `rt ${name}=${value}`).toBe(2);
-        expect(rtRes.stderr).toContain(name);
-        expect(rtRes.stderr).not.toContain(value);
-        expect(fs.existsSync(rt.ranMarker)).toBe(false);
-
-        const dv = mk("nemoclaw-dcode-otlp-bad-dv-");
-        fs.writeFileSync(dv.envFile, `${name}=${value}\n`, "utf8");
-        const dvRes = runWrapper(dv.wrapperPath, ["-n", "hi"], {});
-        expect(dvRes.status, `dv ${name}=${value}`).toBe(2);
-        expect(dvRes.stderr).toContain(name);
-        expect(dvRes.stderr).not.toContain(value);
-        expect(fs.existsSync(dv.ranMarker)).toBe(false);
+        cases.push(async () => {
+          const rt = mk("nemoclaw-dcode-otlp-bad-rt-");
+          const result = await runWrapperAsync(rt.wrapperPath, ["-n", "hi"], { [name]: value });
+          expect(result.status, `rt ${name}=${value}`).toBe(2);
+          expect(result.stderr).toContain(name);
+          expect(result.stderr).not.toContain(value);
+          expect(fs.existsSync(rt.ranMarker)).toBe(false);
+        });
+        cases.push(async () => {
+          const dv = mk("nemoclaw-dcode-otlp-bad-dv-");
+          fs.writeFileSync(dv.envFile, `${name}=${value}\n`, "utf8");
+          const result = await runWrapperAsync(dv.wrapperPath, ["-n", "hi"], {});
+          expect(result.status, `dv ${name}=${value}`).toBe(2);
+          expect(result.stderr).toContain(name);
+          expect(result.stderr).not.toContain(value);
+          expect(fs.existsSync(dv.ranMarker)).toBe(false);
+        });
       }
 
       // Empty value is treated as unset on both paths.
-      const ert = mk("nemoclaw-dcode-otlp-empty-rt-");
-      expect(
-        runWrapper(ert.wrapperPath, ["-n", "hi"], { [name]: "" }).status,
-        `rt ${name}=empty`,
-      ).toBe(0);
-      expect(fs.existsSync(ert.ranMarker)).toBe(true);
-      const edv = mk("nemoclaw-dcode-otlp-empty-dv-");
-      fs.writeFileSync(edv.envFile, `${name}=\n`, "utf8");
-      expect(runWrapper(edv.wrapperPath, ["-n", "hi"], {}).status, `dv ${name}=empty`).toBe(0);
-      expect(fs.existsSync(edv.ranMarker)).toBe(true);
+      cases.push(async () => {
+        const rt = mk("nemoclaw-dcode-otlp-empty-rt-");
+        const result = await runWrapperAsync(rt.wrapperPath, ["-n", "hi"], { [name]: "" });
+        expect(result.status, `rt ${name}=empty`).toBe(0);
+        expect(fs.existsSync(rt.ranMarker)).toBe(true);
+      });
+      cases.push(async () => {
+        const dv = mk("nemoclaw-dcode-otlp-empty-dv-");
+        fs.writeFileSync(dv.envFile, `${name}=\n`, "utf8");
+        const result = await runWrapperAsync(dv.wrapperPath, ["-n", "hi"], {});
+        expect(result.status, `dv ${name}=empty`).toBe(0);
+        expect(fs.existsSync(dv.ranMarker)).toBe(true);
+      });
 
       // Control characters in a dotenv value fail closed before trim/unquote
       // could strip a smuggled trailing TAB/VT/FF/ESC/CR (#6538).
       for (const ctrl of ["\t", "\x0b", "\x0c", "\x1b", "\r"]) {
-        const dv = mk("nemoclaw-dcode-otlp-ctrl-");
-        fs.writeFileSync(
-          dv.envFile,
-          `${name}="http://host.openshell.internal:4318${ctrl}"\n`,
-          "utf8",
-        );
-        const res = runWrapper(dv.wrapperPath, ["-n", "hi"], {});
-        expect(res.status, `dv ${name} ctrl=${JSON.stringify(ctrl)}`).toBe(2);
-        expect(fs.existsSync(dv.ranMarker)).toBe(false);
+        cases.push(async () => {
+          const dv = mk("nemoclaw-dcode-otlp-ctrl-");
+          fs.writeFileSync(
+            dv.envFile,
+            `${name}="http://host.openshell.internal:4318${ctrl}"\n`,
+            "utf8",
+          );
+          const result = await runWrapperAsync(dv.wrapperPath, ["-n", "hi"], {});
+          expect(result.status, `dv ${name} ctrl=${JSON.stringify(ctrl)}`).toBe(2);
+          expect(fs.existsSync(dv.ranMarker)).toBe(false);
+        });
       }
     }
+
+    const runNext = async (): Promise<void> => {
+      const next = cases.shift();
+      await (next ? next().then(runNext) : Promise.resolve());
+    };
+    await Promise.all([runNext(), runNext(), runNext(), runNext()]);
   });
 
   it.each([

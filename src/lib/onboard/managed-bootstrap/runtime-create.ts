@@ -38,7 +38,7 @@ export interface ManagedBootstrapRuntimeLimit {
 }
 
 export type ManagedBootstrapNativeGpuFallbackRollbackRequest = Readonly<{
-  ownerCleanupHandoff: "native-gpu-fallback-after-absent-attachment";
+  ownerCleanupHandoff: "native-gpu-fallback";
 }>;
 
 export type ManagedBootstrapNativeGpuFallbackRollbackOutcome =
@@ -54,17 +54,6 @@ export type ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff = Extract<
   ManagedBootstrapNativeGpuFallbackRollbackOutcome,
   { readonly kind: "openshell-owner-cleanup-required" }
 >;
-
-export type ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt = Readonly<{
-  kind: "openshell-owner-cleanup-completed";
-  sandboxName: string;
-  sandboxId: string;
-  runtimeId: string;
-}>;
-
-export type ManagedBootstrapNativeGpuFallbackOwnerCleanupOutcome =
-  | ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff
-  | ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt;
 
 /** Provider-neutral lifecycle surface consumed by sandbox-create coordinators. */
 export interface ManagedBootstrapRuntimePatch {
@@ -171,10 +160,6 @@ export interface ManagedBootstrapRuntimeCreateLifecycle {
    * `undefined` means activation has not selected a runtime yet; `null` fails closed.
    */
   inspectNativeRuntime?(): ManagedBootstrapRuntimeSnapshot | null | undefined;
-  /** Consume an exact provider-owned handoff before a single compatibility retry. */
-  completeNativeGpuFallbackOwnerCleanup?(
-    handoff: ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff,
-  ): Promise<ManagedBootstrapNativeGpuFallbackOwnerCleanupOutcome>;
   recoverUnfinished(): Promise<ManagedBootstrapRecoveryReport>;
   prepareNetwork(): Promise<void>;
   runCreate<T>(
@@ -195,6 +180,8 @@ export interface ManagedBootstrapRuntimeSnapshot {
 export interface ManagedBootstrapRuntimeCompatibilityLaunchInput {
   readonly createArgs: readonly string[];
   readonly currentRegistryImageRef: string | null;
+  /** Exact managed image selected before either GPU route is attempted. */
+  readonly managedImageReference: string;
   readonly prebuildImageId: string | null;
   readonly allowUnbuiltSource: boolean;
   readonly compatibilityPolicyPath: string;

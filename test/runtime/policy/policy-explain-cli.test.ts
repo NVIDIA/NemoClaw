@@ -12,7 +12,7 @@ import {
   POLICY_HASH,
   POLICY_VERSION,
   SANDBOX_ID,
-} from "./managed-policy-receipt-fixture";
+} from "../../helpers/managed-policy-receipt-fixture";
 
 const CLI = path.join(import.meta.dirname, "../../..", "bin", "nemoclaw.js");
 

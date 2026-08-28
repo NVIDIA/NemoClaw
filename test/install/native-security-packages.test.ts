@@ -27,6 +27,7 @@ const BASE_DOCKERFILES = [
   path.join(ROOT, "Dockerfile.base"),
   path.join(ROOT, "agents", "hermes", "Dockerfile.base"),
   path.join(ROOT, "agents", "langchain-deepagents-code", "Dockerfile.base"),
+  path.join(ROOT, "agents", "pi", "Dockerfile.base"),
 ] as const;
 
 function runLibssh2Harness(nestedFailure = false) {
@@ -195,6 +196,7 @@ describe("native security package remediation", () => {
       "/tmp/nemoclaw-native-security/nemoclaw-python3.13-htmlparser-fix.deb",
     );
     expect(content).toContain("libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2");
+    expect(content).toContain("libssl3t64=3.5.7-1~deb13u2");
     expect(content).toContain("nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1");
     expect(content).toContain("4ff43a8578bda2f14686c67911b64c18e869841973722b1c623b5727491bdaf7");
     expect(content).toContain("[p.feed('') for _ in range(20000)]");
