@@ -646,12 +646,12 @@ describe.sequential("common-egress agent live targets", () => {
       expect(
         await listActivePolicyPresets(host, OPENCLAW_BALANCED_SANDBOX, "c1-balanced-initial"),
       ).toEqual([
-        { name: "brave", provenance: "from balanced tier" },
-        { name: "brew", provenance: "from balanced tier" },
-        { name: "huggingface", provenance: "from balanced tier" },
-        { name: "npm", provenance: "from balanced tier" },
+        { name: "brave", provenance: "from openclaw agent" },
+        { name: "brew", provenance: "user-added" },
+        { name: "huggingface", provenance: "user-added" },
+        { name: "npm", provenance: "user-added" },
         { name: "openclaw-pricing", provenance: "from openclaw agent" },
-        { name: "pypi", provenance: "from balanced tier" },
+        { name: "pypi", provenance: "user-added" },
       ]);
       await assertPolicyAbsent(
         sandbox,
@@ -665,12 +665,12 @@ describe.sequential("common-egress agent live targets", () => {
       expect(
         await listActivePolicyPresets(host, OPENCLAW_BALANCED_SANDBOX, "c1-after-weather-add"),
       ).toEqual([
-        { name: "brave", provenance: "from balanced tier" },
-        { name: "brew", provenance: "from balanced tier" },
-        { name: "huggingface", provenance: "from balanced tier" },
-        { name: "npm", provenance: "from balanced tier" },
+        { name: "brave", provenance: "from openclaw agent" },
+        { name: "brew", provenance: "user-added" },
+        { name: "huggingface", provenance: "user-added" },
+        { name: "npm", provenance: "user-added" },
         { name: "openclaw-pricing", provenance: "from openclaw agent" },
-        { name: "pypi", provenance: "from balanced tier" },
+        { name: "pypi", provenance: "user-added" },
         { name: "weather", provenance: "user-added" },
       ]);
       await assertPolicyContains(sandbox, OPENCLAW_BALANCED_SANDBOX, "c1-policy", [
@@ -917,7 +917,7 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
       progress.phase("verify Personal policy and absent Brave Search or Tavily Search API keys");
       expect(
         await listActivePolicyPresets(host, OPENCLAW_PERSONAL_SANDBOX, "c4-personal-initial"),
-      ).toContainEqual({ name: "personal-open-internet", provenance: "from personal tier" });
+      ).toContainEqual({ name: "personal-open-internet", provenance: "user-added" });
       await assertPersonalRuntimeEgress(sandbox, OPENCLAW_PERSONAL_SANDBOX, "c4-personal", {
         beforeDeniedTargets: () => progress.phase("deny loopback and link-local targets"),
         beforePublicFetch: () => progress.phase("fetch a public website with curl"),
