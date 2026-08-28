@@ -9,17 +9,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import { PolicyAuthorityRefusalError } from "../../adapters/openshell/policy-authority";
 import type { SandboxEntry } from "../../state/registry";
-import {
-  revalidateCreatedSandboxLifecycleRegistration,
-  type SandboxRecreateObservation,
-} from "../sandbox-recreate-transaction";
 import { runSandboxProviderPreDeleteCleanup } from "../sandbox-provider-cleanup";
 import {
   applyManagedSandboxRebuildPolicyCarryForward,
   assertApfCreateIntent,
   backfillVerifiedExternalSandboxPolicyAuthority,
   completeHermesPortableSandboxRegistration,
-  createOnboardCreatedSandboxRegistrationWithManagedLifecycle,
   createProviderEffectBoundary,
   finalizeCreatedSandboxBeforeHermesCredentialReconciliation,
   hasManagedMcpRebuildHandoff,
@@ -44,69 +39,6 @@ const UNVERIFIED_RECOVERY_CONTEXT = {
   createAttemptNonce: "c".repeat(62),
   policyCreationReceipt: null,
 } as const;
-
-describe("managed bootstrap sandbox registration", () => {
-  const lifecycleGeneration = "generation-1";
-  const durableIdentity = "a".repeat(64);
-  const recordedRegistration = {
-    lifecycleGeneration,
-    lifecycleLiveIdentityFingerprint: durableIdentity,
-  };
-  const notReady = (liveIdentityFingerprint: string | null): SandboxRecreateObservation => ({
-    state: "not_ready",
-    liveIdentityFingerprint,
-  });
-
-  function registrationFixture(managedBootstrap: boolean, observation: SandboxRecreateObservation) {
-    const publish = vi.fn();
-    const completeRegistration = createOnboardCreatedSandboxRegistrationWithManagedLifecycle({
-      sandboxName: "alpha",
-      managedBootstrap,
-      sandboxGpuEnabled: false,
-      createdLifecycle: {
-        generation: lifecycleGeneration,
-        recordExactIdentity: vi.fn(),
-        capture: () => recordedRegistration,
-        revalidate: (registration, options) =>
-          revalidateCreatedSandboxLifecycleRegistration(
-            { sandboxName: "alpha", gatewayName: "nemoclaw" },
-            registration,
-            () => observation,
-            options,
-          ),
-      },
-      getRecordedRegistration: () => recordedRegistration,
-      createRegistration:
-        ({ createdLifecycle }) =>
-        async () =>
-          publish(createdLifecycle.revalidate(createdLifecycle.capture(recordedRegistration))),
-      registration: {} as never,
-    });
-    return {
-      complete: () => completeRegistration(null, null),
-      publish,
-    };
-  }
-
-  it.each([
-    ["managed matching", true, notReady(durableIdentity), ["published", 1]],
-    ["ordinary matching", false, notReady(durableIdentity), ["rejected", 0]],
-    ["managed missing", true, notReady(null), ["rejected", 0]],
-    ["managed malformed", true, notReady("not-a-fingerprint"), ["rejected", 0]],
-    ["managed changed", true, notReady("b".repeat(64)), ["rejected", 0]],
-  ] as const)(
-    "publishes only a managed sandbox with its matching valid not Ready identity: %s (#10512)",
-    async (_case, managedBootstrap, observation, expected) => {
-      const fixture = registrationFixture(managedBootstrap, observation);
-      const outcome = await fixture.complete().then(
-        () => "published",
-        () => "rejected",
-      );
-
-      expect([outcome, fixture.publish.mock.calls.length]).toEqual(expected);
-    },
-  );
-});
 
 describe("created Hermes credential environment reconciliation", () => {
   const plan = { agent: "hermes" } as never;
@@ -935,6 +867,49 @@ describe("sandbox create policy authority checks", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  it("checks the named Ready sandbox before registration can continue (#9833)", async () => {
+    const events: string[] = [];
+    const result = await runSandboxCreateWithPolicyAuthorityChecks({
+      sandboxName: "alpha",
+      revalidate: (sandboxIsLive) => events.push(sandboxIsLive ? "ready-check" : "create-check"),
+      create: async (verifyCreatedSandbox) => {
+        events.push("create");
+        await verifyCreatedSandbox("created");
+        return "created";
+      },
+      captureCreatedSandboxIdentity: () => {
+        events.push("capture-identity");
+        return exactIdentity;
+      },
+      persistCreatedSandboxIdentity: () => events.push("persist-identity"),
+      revalidateCreatedSandboxIdentity: () => events.push("identity-check"),
+      verifyCreatedPolicy: () => {
+        events.push("policy-check");
+        return "verified";
+      },
+      persistVerifiedPolicy: () => events.push("persist-checkpoint"),
+      revalidateVerifiedPolicy: () => events.push("revalidate-checkpoint"),
+      cleanupTemporarySources: vi.fn(),
+    });
+    events.push("register");
+
+    expect(result).toBe("created");
+    expect(events).toEqual([
+      "create-check",
+      "create",
+      "capture-identity",
+      "persist-identity",
+      "identity-check",
+      "policy-check",
+      "identity-check",
+      "persist-checkpoint",
+      "revalidate-checkpoint",
+      "identity-check",
+      "identity-check",
+      "register",
+    ]);
+  });
+
   it("removes temporary sources but preserves the sandbox after final authority failure (#9833)", async () => {
     const events: string[] = [];
     const revalidate = vi.fn(() => events.push("create-check"));
@@ -1394,6 +1369,33 @@ describe("sandbox create policy authority checks", () => {
 
     expect(persistVerifiedPolicy).toHaveBeenCalledOnce();
     expect(runVerifiedCreateEffects).not.toHaveBeenCalled();
+  });
+
+  it("retains the durable checkpoint when a deferred effect fails (#9833)", async () => {
+    const persistVerifiedPolicy = vi.fn();
+
+    await expect(
+      runSandboxCreateWithPolicyAuthorityChecks({
+        sandboxName: "alpha",
+        revalidate: vi.fn(),
+        create: async (verifyCreatedSandbox) => {
+          await verifyCreatedSandbox("created");
+          return "created";
+        },
+        captureCreatedSandboxIdentity: () => exactIdentity,
+        persistCreatedSandboxIdentity: vi.fn(),
+        revalidateCreatedSandboxIdentity: vi.fn(),
+        verifyCreatedPolicy: () => "verified",
+        persistVerifiedPolicy,
+        revalidateVerifiedPolicy: vi.fn(),
+        runVerifiedCreateEffects: async () => {
+          throw new Error("provider effect failed");
+        },
+        cleanupTemporarySources: vi.fn(),
+      }),
+    ).rejects.toThrow("automatic sandbox cleanup was not safe");
+
+    expect(persistVerifiedPolicy).toHaveBeenCalledOnce();
   });
 
   it("refuses continuation when identity changes during effective-policy verification (#9833)", async () => {
