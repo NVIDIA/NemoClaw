@@ -35,6 +35,8 @@ export default async function prepare_pr_for_human_review(input: {
   const quote = (value) => "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
   if (!Number.isSafeInteger(input.pullNumber) || input.pullNumber < 1)
     throw new Error("pullNumber must be positive");
+  if (!["blocked", "docs-updated", "no-docs-needed"].includes(input.docsResult))
+    throw new Error("docsResult is invalid");
   const repo = input.repository ?? "NVIDIA/NemoClaw";
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo))
     throw new Error("repository must be owner/name");
@@ -137,7 +139,7 @@ export default async function prepare_pr_for_human_review(input: {
       "--repo",
       repo,
       "--json",
-      "headRefName,headRefOid,url,title,state",
+      "headRefName,headRefOid,baseRefName,url,title,state",
     ],
     timeoutMs: 30000,
   });
@@ -149,65 +151,109 @@ export default async function prepare_pr_for_human_review(input: {
   if (!/^[0-9a-f]{40,64}$/.test(localHead)) throw new Error("Local HEAD is invalid");
   let push = null;
   if (input.push !== false) {
-    const pushed = await tools.bash({
-      command: "git push " + quote("origin") + " " + quote("HEAD:refs/heads/" + pr.headRefName),
+    push = await tools.publish_nemoclaw_pr_branch({
       workdir: input.workdir,
-      description: "Push human review branch",
-      timeoutMs: 120000,
+      repository: repo,
+      remote: "origin",
+      baseBranch: pr.baseRefName,
+      expectedHeadSha: localHead,
+      pullNumber: input.pullNumber,
+      expectedPullHeadSha: pr.headRefOid,
+      apply: true,
     });
-    if (pushed.kind !== "foreground") throw new Error("Git push did not finish");
-    const [pushStdout, pushStderr] = await Promise.all([
-      tools.project_diagnostic_text({
-        lines: [pushed.stdout.text],
-        clipMode: "tail",
-        maxCharacters: 2000,
-        maxLineCharacters: 500,
-        sourceTruncated: pushed.stdout.truncated,
-      }),
-      tools.project_diagnostic_text({
-        lines: [pushed.stderr.text],
-        clipMode: "tail",
-        maxCharacters: 4000,
-        maxLineCharacters: 500,
-        sourceTruncated: pushed.stderr.truncated,
-      }),
-    ]);
-    push = {
-      code: pushed.exitCode,
-      stdout: pushStdout.text,
-      stderr: pushStderr.text,
-      truncated:
-        pushed.stdout.truncated ||
-        pushed.stderr.truncated ||
-        pushStdout.truncated ||
-        pushStderr.truncated,
-    };
-    if (pushed.exitCode !== 0) {
-      const pushError = await tools.project_diagnostic_text({
-        lines: [pushed.stderr.text],
-        clipMode: "tail",
-        maxCharacters: 4000,
-        maxLineCharacters: 500,
-        sourceTruncated: pushed.stderr.truncated,
-      });
-      throw new Error(
-        "Git push failed; stop and resolve GitHub access before continuing.\n" + pushError.text,
-      );
-    }
+    if (push.remoteState !== "expected-commit")
+      return {
+        applied: true,
+        mode: "blocked",
+        plan,
+        notes: ["Publication did not establish the expected remote commit."],
+        resultJson: JSON.stringify({
+          ok: false,
+          step: "publication",
+          pullNumber: input.pullNumber,
+          headSha: push.headSha,
+          remoteState: push.remoteState,
+          blocker: push.blocker,
+          recovery:
+            "Reconcile the recorded PR branch and local commit without writing. Retry publication only if the expected commit is absent. Refresh evidence only after the PR commit and verification match the local commit.",
+        }),
+      };
+    if (!push.allVerified)
+      return {
+        applied: true,
+        mode: "blocked",
+        plan,
+        notes: ["Stopped after publication because GitHub did not verify every commit."],
+        resultJson: JSON.stringify({
+          ok: false,
+          step: "commit-verification",
+          pullNumber: input.pullNumber,
+          headSha: push.headSha,
+          commits: push.commits,
+          blocker: push.blocker,
+          recovery: push.commits.some((commit) => !commit.verified && commit.reason !== null)
+            ? "GitHub reports an unverified published commit. Replace that commit before continuing."
+            : "Re-read verification for the published commit without creating or pushing another commit. Continue only after every commit is verified.",
+        }),
+      };
   } else if (localHead !== pr.headRefOid)
     throw new Error("push:false requires the local commit to match the PR commit");
-  const receipt = await tools.refresh_pr_body_evidence({
-    number: input.pullNumber,
-    repo,
-    workdir: input.workdir,
-    expectedHeadSha: localHead,
-    docsReceipt: { result: input.docsResult, evidence: input.docsEvidence, agent: input.docsAgent },
-    ...(input.validationLine ? { targetedValidationLine: input.validationLine } : {}),
-    ...(input.broadGatePassed !== undefined
-      ? { broadGate: { passed: input.broadGatePassed, evidence: input.broadGateEvidence } }
-      : {}),
-    apply: true,
-  });
+  let receipt;
+  try {
+    receipt = await tools.refresh_pr_body_evidence({
+      number: input.pullNumber,
+      repo,
+      workdir: input.workdir,
+      expectedHeadSha: localHead,
+      docsReceipt: {
+        result: input.docsResult,
+        evidence: input.docsEvidence,
+        agent: input.docsAgent,
+      },
+      ...(input.validationLine ? { targetedValidationLine: input.validationLine } : {}),
+      ...(input.broadGatePassed !== undefined
+        ? { broadGate: { passed: input.broadGatePassed, evidence: input.broadGateEvidence } }
+        : {}),
+      apply: true,
+    });
+  } catch (error) {
+    const detail = await tools.project_diagnostic_text({
+      lines: [String(error?.message ?? error)],
+      maxLines: 5,
+      maxCharacters: 1000,
+    });
+    let current = null;
+    try {
+      current = await tools.read_nemoclaw_pr({
+        workdir: input.workdir,
+        number: input.pullNumber,
+        repository: repo,
+      });
+    } catch {
+      // Recovery remains read-only until the PR can be read again.
+    }
+    const unchanged = current?.state === "OPEN" && current.headRefOid === localHead;
+    return {
+      applied: true,
+      mode: "blocked",
+      plan,
+      notes: ["Publication completed, but PR evidence refresh failed."],
+      resultJson: JSON.stringify({
+        ok: false,
+        step: "evidence-refresh",
+        pullNumber: input.pullNumber,
+        publishedCommit: localHead,
+        currentPrCommit: current?.headRefOid ?? null,
+        published: input.push !== false,
+        blocker: detail.text || "Evidence refresh failed",
+        recovery: unchanged
+          ? "Refresh PR evidence for publishedCommit without creating or pushing another commit."
+          : current
+            ? "Stop because the PR commit changed."
+            : "Re-read and reconcile the PR commit before refreshing evidence.",
+      }),
+    };
+  }
   let ready = null;
   if (input.markReady) {
     if (input.docsResult === "blocked") {

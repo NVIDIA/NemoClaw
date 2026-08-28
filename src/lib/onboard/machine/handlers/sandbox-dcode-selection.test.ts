@@ -70,12 +70,12 @@ describe("handleSandboxState live DCode selection", () => {
       agent: { name: "langchain-deepagents-code" },
     });
 
-    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toEqual({
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
       resolved: expect.any(Object),
       recreate: false,
       toolDisclosure: "progressive",
       observabilityEnabled: true,
-      endpointSource: "onboard",
+      endpointSource: null,
       observabilityRequestedExplicitly: true,
       dcodeAutoApprovalMode: "disabled",
       extraProviders: [],

@@ -14,6 +14,7 @@ import {
 } from "./runner-mock-fixtures.js";
 import {
   blueprintWithPolicyAdditions,
+  createMutableSandboxPolicyResult,
   minimalBlueprint,
   resultForCommandFailure,
   resultWithBlueprintPolicyAuthority,
@@ -576,6 +577,65 @@ describe("runner", () => {
       );
     });
 
+    it("binds policy-authorized OpenShell operations to the selected gateway configuration", async () => {
+      vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://ambient-gateway.invalid");
+      vi.stubEnv("OPENSHELL_GATEWAY_INSECURE", "true");
+      const commandResult = createMutableSandboxPolicyResult(() => {
+        const merged = [...store.entries()].find(([path]) => path.endsWith("merged-policy.yaml"));
+        return YAML.parse(merged?.[1].content ?? TEST_SANDBOX_POLICY);
+      });
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+        args.join(" ") === "policy get -g test-gateway --base test-sandbox"
+          ? {
+              exitCode: 0,
+              stdout: ["Version: 1", "Hash: sha256:test", "---", TEST_SANDBOX_POLICY].join("\n"),
+              stderr: "",
+            }
+          : commandResult(args),
+      );
+
+      await actionApply(
+        "default",
+        blueprintWithPolicyAdditions({
+          nim_service: {
+            name: "nim_service",
+            endpoints: [{ host: "integrate.api.nvidia.com", port: 443, access: "full" }],
+          },
+        }),
+      );
+
+      const boundOptions = expect.objectContaining({
+        extendEnv: false,
+        env: expect.objectContaining({
+          OPENSHELL_GATEWAY: "test-gateway",
+        }),
+      });
+      expect(mockExeca).toHaveBeenCalledWith(
+        "openshell",
+        ["policy", "get", "-g", "test-gateway", "--base", "test-sandbox"],
+        boundOptions,
+      );
+      expect(mockExeca).toHaveBeenCalledWith(
+        "openshell",
+        expect.arrayContaining(["policy", "set"]),
+        boundOptions,
+      );
+      expect(mockExeca).not.toHaveBeenCalledWith(
+        "openshell",
+        expect.anything(),
+        expect.objectContaining({
+          env: expect.objectContaining({ OPENSHELL_GATEWAY_ENDPOINT: expect.anything() }),
+        }),
+      );
+      expect(mockExeca).not.toHaveBeenCalledWith(
+        "openshell",
+        expect.anything(),
+        expect.objectContaining({
+          env: expect.objectContaining({ OPENSHELL_GATEWAY_INSECURE: expect.anything() }),
+        }),
+      );
+    });
+
     const hasPlanJson = (): boolean => [...store.keys()].some((k) => k.endsWith("plan.json"));
 
     it("rejects provider creation failure with a compensated ownership plan (#6703)", async () => {
@@ -627,7 +687,7 @@ describe("runner", () => {
       expect(stdoutText()).toContain("Apply complete");
     });
 
-    it("compensates an owned inference provider when inference set fails (#6703)", async () => {
+    it("preserves an owned inference provider when name-only cleanup is unsafe (#9833)", async () => {
       mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
         if (args.join(" ") === "provider get my-provider") {
           return {
@@ -646,14 +706,14 @@ describe("runner", () => {
       });
 
       await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
-        /Failed to set inference route .*model 'gpt-4'.*inference route rejected/i,
+        /Failed to set inference route .*inference route rejected.*automatic cleanup was refused/iu,
       );
 
       expect(hasPlanJson()).toBe(true);
-      expect(mockExeca).toHaveBeenCalledWith(
+      expect(mockExeca).not.toHaveBeenCalledWith(
         "openshell",
         ["provider", "delete", "my-provider"],
-        expect.objectContaining({ reject: false }),
+        expect.anything(),
       );
       expect(stdoutText()).not.toContain("Apply complete");
       expect(stdoutText()).not.toContain("PROGRESS:100");

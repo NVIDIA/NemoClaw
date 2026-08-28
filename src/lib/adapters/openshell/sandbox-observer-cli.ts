@@ -143,7 +143,9 @@ function successfulCommandOutput(result: CapturedSandboxCommandResult): string {
   return stripOpenShellCliAnsi(result.stdout ?? result.output);
 }
 
-function commandError(result: CapturedSandboxCommandResult): OpenShellSandboxError | null {
+export function classifyCliOpenShellCommandError(
+  result: CapturedSandboxCommandResult,
+): OpenShellSandboxError | null {
   const output = stripOpenShellCliAnsi(commandOutput(result));
   const errorCode = (result.error as NodeJS.ErrnoException | undefined)?.code;
   if (errorCode === "ETIMEDOUT") {
@@ -156,7 +158,7 @@ function commandError(result: CapturedSandboxCommandResult): OpenShellSandboxErr
     };
   }
   if (
-    /\b(?:authentication failed|unauthorized|forbidden|permission denied|missing gateway auth token|device identity required|invalid token|expired token)\b/iu.test(
+    /\b(?:authentication failed|unauthorized|forbidden|permission denied|requires admin privileges|missing gateway auth token|device identity required|invalid token|expired token)\b/iu.test(
       output,
     )
   ) {
@@ -223,7 +225,7 @@ export function createCliOpenShellSandboxLookup(
       timeout: request.timeoutMs ?? deps.defaultTimeoutMs ?? OPENSHELL_PROBE_TIMEOUT_MS,
     });
     const output = commandOutput(result);
-    const error = commandError(result);
+    const error = classifyCliOpenShellCommandError(result);
     if (error && error.kind !== "command") {
       return { result: failure(error), displayOutput: "" };
     }
@@ -256,7 +258,7 @@ export function createCliOpenShellSandboxObserver(
       includeStreams: true,
       timeout: request.timeoutMs ?? deps.defaultTimeoutMs ?? OPENSHELL_PROBE_TIMEOUT_MS,
     });
-    const error = commandError(result);
+    const error = classifyCliOpenShellCommandError(result);
     if (error) return failure(error);
     return success(parseCliOpenShellSandboxInventory(successfulCommandOutput(result)));
   };
