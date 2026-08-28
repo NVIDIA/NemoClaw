@@ -15,6 +15,7 @@ import { readJsonFile, readJsonFileOr, restoreFile, snapshotFile } from "../fixt
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { createOldBaseBuildContext } from "./rebuild-openclaw-old-base-context.ts";
+import { createLegacyOpenClawOpenShellWrapper } from "./rebuild-openclaw-old-openshell-wrapper.ts";
 
 // The contract stays intentionally local to this live test: build an older
 // OpenClaw base image, recreate the sandbox from it through NemoClaw, seed
@@ -449,6 +450,23 @@ test(
     // an exact policy-creation receipt bound to its new immutable sandbox ID.
     // Direct OpenShell creation cannot truthfully establish NemoClaw ownership.
     progress.phase("create the old OpenClaw sandbox");
+    const realOpenShellResult = await host.command("bash", ["-lc", "command -v openshell"], {
+      artifactName: "phase-3-real-openshell-path",
+      env: dockerContextEnv(),
+      timeoutMs: 30_000,
+    });
+    expectExitZero(realOpenShellResult, "resolve real openshell path");
+    const realOpenShell = realOpenShellResult.stdout.trim();
+    expect(
+      path.isAbsolute(realOpenShell),
+      `openshell path must be absolute: ${realOpenShell}`,
+    ).toBe(true);
+    const oldOpenShellWrapper = createLegacyOpenClawOpenShellWrapper({
+      root: artifacts.pathFor("phase-3-old-openshell-wrapper"),
+      realOpenShell,
+      baseImage: OLD_BASE_TAG,
+      openClawVersion: OLD_OPENCLAW_VERSION,
+    });
     const createOldSandbox = await host.command(
       "node",
       [CLI_ENTRYPOINT, "onboard", "--non-interactive"],
@@ -457,12 +475,25 @@ test(
         env: cliEnv(apiKey, {
           NEMOCLAW_RECREATE_SANDBOX: "1",
           NEMOCLAW_SANDBOX_BASE_IMAGE_REF: OLD_BASE_TAG,
+          NEMOCLAW_OPENSHELL_BIN: oldOpenShellWrapper.executable,
+          PATH: `${oldOpenShellWrapper.directory}:${process.env.PATH ?? "/usr/bin:/bin"}`,
         }),
         redactionValues: [apiKey],
         timeoutMs: ONBOARD_TIMEOUT_MS,
       },
     );
     expectExitZero(createOldSandbox, "nemoclaw onboard old OpenClaw sandbox");
+    const oldOpenShellWrapperLog = fs.readFileSync(oldOpenShellWrapper.logFile, "utf8");
+    expect(oldOpenShellWrapperLog).toContain(`patch sandbox create BASE_IMAGE=${OLD_BASE_TAG}`);
+    expect(oldOpenShellWrapperLog).toContain(
+      `patch sandbox create OPENCLAW_VERSION=${OLD_OPENCLAW_VERSION}`,
+    );
+    expect(oldOpenShellWrapperLog).toContain(
+      "patch sandbox create NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1",
+    );
+    expect(oldOpenShellWrapperLog).toContain(
+      `patch sandbox create min_openclaw_version=${OLD_OPENCLAW_VERSION}`,
+    );
     await waitForSandboxReady(sandbox);
 
     const oldVersion = await sandbox.exec(SANDBOX_NAME, ["openclaw", "--version"], {
