@@ -302,14 +302,18 @@ describe("created sandbox policy receipt", () => {
     ({ route, intendedPolicy, livePolicy }) => {
       vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
         .mockReturnValueOnce(gatewayInfo())
-        .mockReturnValueOnce(metadata())
+        .mockReturnValueOnce(
+          metadata({ policy: parseOpenShellPolicy(livePolicy).policy }),
+        )
         .mockReturnValueOnce({
           status: 0,
           output: livePolicy,
           stdout: livePolicy,
           stderr: "",
         })
-        .mockReturnValueOnce(metadata());
+        .mockReturnValueOnce(
+          metadata({ policy: parseOpenShellPolicy(livePolicy).policy }),
+        );
 
       expect(
         verifyCreatedSandboxPolicyCreationReceipt(
