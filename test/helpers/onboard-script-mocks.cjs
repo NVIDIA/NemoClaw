@@ -283,7 +283,7 @@ const OPENCLAW_SECURITY_INVENTORY_PROBE = [
   'test -f "$security_inventory"',
   'test ! -L "$security_inventory"',
   `test "$(stat -c '%u:%g:%a' "$security_inventory")" = "0:0:444"`,
-  `printf '%s\\n' "architecture=$arch" "libexpat1=2.8.3-1" "libonig5=6.9.9-1+b1" "libjq1=1.8.2-1" "jq=1.8.2-1" "vim-common=2:9.2.0858-1" "vim-tiny=2:9.2.0858-1" "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2" "libssl3t64=3.5.7-1~deb13u2" "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" "perl-base=5.44.0-1nemoclaw1" "perl=5.44.0-1nemoclaw1" | cmp -s - "$security_inventory"`,
+  `printf '%s\\n' "architecture=$arch" "libexpat1=2.8.3-1" "libonig5=6.9.9-1+b1" "libjq1=1.8.2-1" "jq=1.8.2-1" "vim-common=2:9.2.0858-1" "vim-tiny=2:9.2.0858-1" "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2" "libssl3t64=3.5.7-1~deb13u2" "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" "perl-base=5.44.0-1nemoclaw1" "perl=5.44.0-1nemoclaw1" "libevent-core-2.1-7t64=2.1.13-stable-1" | cmp -s - "$security_inventory"`,
   `printf '%s\\n' "nemoclaw-security-inventory-ok"`,
 ].join("; ");
 
