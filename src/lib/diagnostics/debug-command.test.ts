@@ -11,8 +11,8 @@ describe("debug command", () => {
     await runDebugCommandWithOptions(
       { quick: true, output: "/tmp/out.tgz" },
       {
-        getDefaultSandbox: async () => "alpha",
-        getSandboxAvailability: async () => "available",
+        getDefaultSandbox: async () => ({ name: "alpha", gatewayName: "nemoclaw" }),
+        getSandboxAvailability: async () => ({ state: "available", gatewayName: "nemoclaw" }),
         runDebug,
       },
     );
@@ -20,22 +20,23 @@ describe("debug command", () => {
       quick: true,
       output: "/tmp/out.tgz",
       sandboxName: "alpha",
+      gatewayName: "nemoclaw",
     });
   });
 
   it("accepts an explicit --sandbox name that is registered", async () => {
     const runDebug = vi.fn();
-    const getSandboxAvailability = vi.fn().mockResolvedValue("available");
+    const getSandboxAvailability = vi.fn().mockResolvedValue({ state: "available", gatewayName: "nemoclaw" });
     await runDebugCommandWithOptions(
       { sandboxName: "alpha" },
       {
-        getDefaultSandbox: async () => "default",
+        getDefaultSandbox: async () => ({ name: "default", gatewayName: "nemoclaw" }),
         getSandboxAvailability,
         runDebug,
       },
     );
     expect(getSandboxAvailability).toHaveBeenCalledWith("alpha");
-    expect(runDebug).toHaveBeenCalledWith({ sandboxName: "alpha" });
+    expect(runDebug).toHaveBeenCalledWith({ sandboxName: "alpha", gatewayName: "nemoclaw" });
   });
 
   it("rejects an explicit --sandbox name that is not registered, exits non-zero, skips runDebug", async () => {
@@ -48,8 +49,8 @@ describe("debug command", () => {
       runDebugCommandWithOptions(
         { sandboxName: "does-not-exist", output: "/tmp/out.tgz" },
         {
-          getDefaultSandbox: async () => "alpha",
-          getSandboxAvailability: async () => "unregistered",
+          getDefaultSandbox: async () => ({ name: "alpha", gatewayName: "nemoclaw" }),
+          getSandboxAvailability: async () => ({ state: "unregistered" }),
           runDebug,
           errorLine: (msg) => errorLines.push(msg),
           exit,
@@ -74,8 +75,8 @@ describe("debug command", () => {
       runDebugCommandWithOptions(
         { sandboxName: "alpha" },
         {
-          getDefaultSandbox: async () => "alpha",
-          getSandboxAvailability: async () => "missing",
+          getDefaultSandbox: async () => ({ name: "alpha", gatewayName: "nemoclaw" }),
+          getSandboxAvailability: async () => ({ state: "missing" }),
           runDebug,
           errorLine: (msg) => errorLines.push(msg),
           exit,
@@ -99,8 +100,8 @@ describe("debug command", () => {
         {},
         {
           env: { NEMOCLAW_SANDBOX_NAME: "ghost" } as NodeJS.ProcessEnv,
-          getDefaultSandbox: async () => "alpha",
-          getSandboxAvailability: async () => "unregistered",
+          getDefaultSandbox: async () => ({ name: "alpha", gatewayName: "nemoclaw" }),
+          getSandboxAvailability: async () => ({ state: "unregistered" }),
           runDebug,
           errorLine: (msg) => errorLines.push(msg),
           exit,
@@ -115,7 +116,7 @@ describe("debug command", () => {
 
   it("prefers NEMOCLAW_SANDBOX_NAME over NEMOCLAW_SANDBOX and SANDBOX_NAME", async () => {
     const runDebug = vi.fn();
-    const getSandboxAvailability = vi.fn().mockResolvedValue("available");
+    const getSandboxAvailability = vi.fn().mockResolvedValue({ state: "available", gatewayName: "nemoclaw" });
     await runDebugCommandWithOptions(
       {},
       {
@@ -124,30 +125,30 @@ describe("debug command", () => {
           NEMOCLAW_SANDBOX: "secondary",
           SANDBOX_NAME: "tertiary",
         } as NodeJS.ProcessEnv,
-        getDefaultSandbox: async () => "default",
+        getDefaultSandbox: async () => ({ name: "default", gatewayName: "nemoclaw" }),
         getSandboxAvailability,
         runDebug,
       },
     );
     expect(getSandboxAvailability).toHaveBeenCalledWith("primary");
-    expect(runDebug).toHaveBeenCalledWith({ sandboxName: "primary" });
+    expect(runDebug).toHaveBeenCalledWith({ sandboxName: "primary", gatewayName: "nemoclaw" });
   });
 
   it("flag overrides env vars when both are present", async () => {
     const runDebug = vi.fn();
-    const getSandboxAvailability = vi.fn().mockResolvedValue("available");
+    const getSandboxAvailability = vi.fn().mockResolvedValue({ state: "available", gatewayName: "nemoclaw" });
     await runDebugCommandWithOptions(
       { sandboxName: "alpha" },
       {
         env: { NEMOCLAW_SANDBOX: "beta" } as NodeJS.ProcessEnv,
-        getDefaultSandbox: async () => "default",
+        getDefaultSandbox: async () => ({ name: "default", gatewayName: "nemoclaw" }),
         getSandboxAvailability,
         runDebug,
       },
     );
     expect(getSandboxAvailability).toHaveBeenCalledWith("alpha");
     expect(getSandboxAvailability).not.toHaveBeenCalledWith("beta");
-    expect(runDebug).toHaveBeenCalledWith({ sandboxName: "alpha" });
+    expect(runDebug).toHaveBeenCalledWith({ sandboxName: "alpha", gatewayName: "nemoclaw" });
   });
 
   it("stops before diagnostics when the configured default sandbox is rejected", async () => {
@@ -163,7 +164,7 @@ describe("debug command", () => {
         {
           env: {} as NodeJS.ProcessEnv,
           getDefaultSandbox: async () => null,
-          getSandboxAvailability: async () => "available",
+          getSandboxAvailability: async () => ({ state: "available", gatewayName: "nemoclaw" }),
           runDebug,
           exit,
         },
@@ -181,12 +182,12 @@ describe("debug command", () => {
       {},
       {
         env: {} as NodeJS.ProcessEnv,
-        getDefaultSandbox: async () => "alpha",
+        getDefaultSandbox: async () => ({ name: "alpha", gatewayName: "nemoclaw" }),
         getSandboxAvailability,
         runDebug,
       },
     );
     expect(getSandboxAvailability).not.toHaveBeenCalled();
-    expect(runDebug).toHaveBeenCalledWith({ sandboxName: "alpha" });
+    expect(runDebug).toHaveBeenCalledWith({ sandboxName: "alpha", gatewayName: "nemoclaw" });
   });
 });

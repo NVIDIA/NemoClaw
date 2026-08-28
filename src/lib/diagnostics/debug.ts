@@ -18,6 +18,8 @@ import { createTarball as createDiagnosticsTarball } from "./tarball";
 export interface DebugOptions {
   /** Target sandbox name (auto-detected if omitted). */
   sandboxName?: string;
+  /** OpenShell gateway that owns the selected registered sandbox. */
+  gatewayName?: string;
   /** Only collect minimal diagnostics. */
   quick?: boolean;
   /** Write a tarball to this path. */
@@ -322,32 +324,40 @@ function collectDocker(collectDir: string, quick: boolean): void {
   }
 }
 
-function collectOpenshell(collectDir: string, sandboxName: string, quick: boolean): void {
+function collectOpenshell(
+  collectDir: string,
+  sandboxName: string,
+  gatewayName: string | undefined,
+  quick: boolean,
+): void {
+  const gatewayArgs = gatewayName ? ["-g", gatewayName] : [];
   section("OpenShell");
-  collect(collectDir, "openshell-status", "openshell", ["status"]);
-  collect(collectDir, "openshell-sandbox-list", "openshell", ["sandbox", "list"]);
-  collect(collectDir, "openshell-sandbox-get", "openshell", ["sandbox", "get", sandboxName]);
-  collect(collectDir, "openshell-logs", "openshell", ["logs", sandboxName]);
+  collect(collectDir, "openshell-status", "openshell", ["status", ...gatewayArgs]);
+  collect(collectDir, "openshell-sandbox-list", "openshell", ["sandbox", "list", ...gatewayArgs]);
+  collect(collectDir, "openshell-sandbox-get", "openshell", [
+    "sandbox",
+    "get",
+    ...gatewayArgs,
+    sandboxName,
+  ]);
+  collect(collectDir, "openshell-logs", "openshell", ["logs", ...gatewayArgs, sandboxName]);
 
   if (!quick) {
-    collect(collectDir, "openshell-gateway-info", "openshell", ["gateway", "info"]);
+    collect(collectDir, "openshell-gateway-info", "openshell", [
+      "gateway",
+      "info",
+      ...gatewayArgs,
+    ]);
   }
 }
 
-function collectSandboxInternals(collectDir: string, sandboxName: string, quick: boolean): void {
+function collectSandboxInternals(
+  collectDir: string,
+  sandboxName: string,
+  gatewayName: string | undefined,
+  quick: boolean,
+): void {
   if (!commandExists("openshell")) return;
-
-  // Check if sandbox exists. OpenShell ssh-config may succeed for unknown
-  // names, so verify the live sandbox first.
-  try {
-    execFileSync("openshell", ["sandbox", "get", sandboxName], {
-      encoding: "utf-8",
-      timeout: 10_000,
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-  } catch {
-    return;
-  }
 
   section("Sandbox Internals");
 
@@ -355,11 +365,16 @@ function collectSandboxInternals(collectDir: string, sandboxName: string, quick:
   const sshConfigDir = mkdtempSync(join(tmpdir(), "nemoclaw-ssh-"));
   const sshConfigPath = join(sshConfigDir, "config");
   try {
-    const sshResult = spawnSync("openshell", ["sandbox", "ssh-config", sandboxName], {
+    const gatewayArgs = gatewayName ? ["-g", gatewayName] : [];
+    const sshResult = spawnSync(
+      "openshell",
+      ["sandbox", "ssh-config", ...gatewayArgs, sandboxName],
+      {
       timeout: TIMEOUT_MS,
       stdio: ["ignore", "pipe", "ignore"],
-      encoding: "utf-8",
-    });
+        encoding: "utf-8",
+      },
+    );
     if (sshResult.status !== 0) {
       warn(`Could not generate SSH config for sandbox '${sandboxName}', skipping internals`);
       return;
@@ -517,9 +532,9 @@ export function runDebug(opts: DebugOptions = {}): void {
     collectProcesses(collectDir, quick);
     collectGpu(collectDir, quick);
     collectDocker(collectDir, quick);
-    collectOpenshell(collectDir, sandboxName, quick);
+    collectOpenshell(collectDir, sandboxName, opts.gatewayName, quick);
     collectOnboardSession(collectDir, repoDir);
-    collectSandboxInternals(collectDir, sandboxName, quick);
+    collectSandboxInternals(collectDir, sandboxName, opts.gatewayName, quick);
 
     if (!quick) {
       collectNetwork(collectDir);

@@ -172,15 +172,18 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
   it("builds debug defaults from the sandbox registry and OpenShell liveness", async () => {
     mocks.listSandboxes.mockReturnValue({
       defaultSandbox: "alpha",
-      sandboxes: [{ name: "alpha" }],
+      sandboxes: [{ name: "alpha", gatewayPort: 18080 }],
     } as never);
     await DebugCliCommand.run(["--quick"], rootDir);
 
     const deps = mocks.runDebugCommandWithOptions.mock.calls[0][1];
-    await expect(deps.getDefaultSandbox()).resolves.toBe("alpha");
+    await expect(deps.getDefaultSandbox()).resolves.toEqual({
+      name: "alpha",
+      gatewayName: "nemoclaw-18080",
+    });
     expect(mocks.captureOpenshellCommand).toHaveBeenCalledWith(
       "/usr/bin/openshell",
-      ["sandbox", "list"],
+      ["sandbox", "list", "-g", "nemoclaw-18080"],
       expect.objectContaining({
         cwd: rootDir,
         ignoreError: true,
@@ -201,7 +204,7 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
 
     const deps = mocks.runDebugCommandWithOptions.mock.calls[0][1];
     await expect(deps.getDefaultSandbox()).resolves.toBeNull();
-    await expect(deps.getSandboxAvailability("alpha")).resolves.toBe("missing");
+    await expect(deps.getSandboxAvailability("alpha")).resolves.toEqual({ state: "missing" });
   });
 
   it("rejects a fallback registered sandbox missing from OpenShell", async () => {
@@ -227,7 +230,7 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
     await DebugCliCommand.run(["--quick"], rootDir);
 
     const deps = mocks.runDebugCommandWithOptions.mock.calls[0][1];
-    await expect(deps.getDefaultSandbox()).resolves.toBe("alpha");
+    await expect(deps.getDefaultSandbox()).resolves.toEqual({ name: "alpha", gatewayName: "nemoclaw" });
   });
 
   it("keeps registered debug sandboxes when OpenShell observation fails", async () => {
@@ -240,8 +243,8 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
     await DebugCliCommand.run(["--quick"], rootDir);
 
     const deps = mocks.runDebugCommandWithOptions.mock.calls[0][1];
-    await expect(deps.getDefaultSandbox()).resolves.toBe("alpha");
-    await expect(deps.getSandboxAvailability("alpha")).resolves.toBe("available");
+    await expect(deps.getDefaultSandbox()).resolves.toEqual({ name: "alpha", gatewayName: "nemoclaw" });
+    await expect(deps.getSandboxAvailability("alpha")).resolves.toEqual({ state: "available", gatewayName: "nemoclaw" });
   });
 
   it("maps gateway-token flags to the gateway token action", async () => {

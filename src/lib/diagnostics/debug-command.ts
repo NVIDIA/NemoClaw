@@ -3,10 +3,13 @@
 
 import type { DebugOptions } from "./debug";
 
-export type DebugSandboxAvailability = "available" | "unregistered" | "missing";
+export type DebugSandboxSelection = Readonly<{ name: string; gatewayName?: string }>;
+export type DebugSandboxAvailability =
+  | Readonly<{ state: "available"; gatewayName: string }>
+  | Readonly<{ state: "unregistered" | "missing" }>;
 
 export interface RunDebugCommandDeps {
-  getDefaultSandbox: () => Promise<string | null>;
+  getDefaultSandbox: () => Promise<DebugSandboxSelection | null>;
   getSandboxAvailability: (name: string) => Promise<DebugSandboxAvailability>;
   runDebug: (options: DebugOptions) => void;
   env?: NodeJS.ProcessEnv;
@@ -49,10 +52,10 @@ export async function runDebugCommandWithOptions(
   const explicit = resolveExplicitName(opts, env);
   if (explicit) {
     const availability = await deps.getSandboxAvailability(explicit.name);
-    if (availability !== "available") {
+    if (availability.state !== "available") {
       const sourceLabel =
         explicit.source === "env" && explicit.envVar ? ` (from ${explicit.envVar})` : "";
-      if (availability === "unregistered") {
+      if (availability.state === "unregistered") {
         errorLine(`Error: Sandbox '${explicit.name}'${sourceLabel} is not registered.`);
         errorLine("  Run `nemoclaw list` to see available sandboxes.");
       } else {
@@ -63,13 +66,15 @@ export async function runDebugCommandWithOptions(
       return;
     }
     opts.sandboxName = explicit.name;
+    opts.gatewayName = availability.gatewayName;
   } else {
     const defaultSandbox = await deps.getDefaultSandbox();
     if (defaultSandbox === null) {
       exit(1);
       return;
     }
-    opts.sandboxName = defaultSandbox;
+    opts.sandboxName = defaultSandbox.name;
+    opts.gatewayName = defaultSandbox.gatewayName;
   }
 
   deps.runDebug(opts);

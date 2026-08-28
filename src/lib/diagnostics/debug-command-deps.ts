@@ -7,7 +7,12 @@ import type { RunDebugCommandDeps } from "./debug-command";
 import { captureOpenshellCommand } from "../adapters/openshell/client";
 import { resolveOpenshell } from "../adapters/openshell/resolve";
 import { createCliOpenShellSandboxObserver } from "../adapters/openshell/sandbox-observer-cli";
-import { selectedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
+import {
+  namedOpenShellGateway,
+  selectedOpenShellGateway,
+  type OpenShellGatewayTarget,
+} from "../adapters/openshell/sandbox-observer";
+import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import * as registry from "../state/registry";
 
 const useColor = !process.env.NO_COLOR && !!process.stderr.isTTY;
@@ -24,29 +29,36 @@ export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
     },
   });
 
-  const liveSandboxNames = async (): Promise<ReadonlySet<string> | undefined> => {
-    const result = await sandboxObserver.listSandboxes({ target: selectedOpenShellGateway() });
+  const liveSandboxNames = async (
+    target: OpenShellGatewayTarget,
+  ): Promise<ReadonlySet<string> | undefined> => {
+    const result = await sandboxObserver.listSandboxes({ target });
     if (!result.ok) return undefined;
     return new Set(result.value.sandboxes.map((sandbox) => sandbox.name));
   };
 
-  const getDefaultSandbox = async (): Promise<string | null> => {
+  const getDefaultSandbox: RunDebugCommandDeps["getDefaultSandbox"] = async () => {
     const { defaultSandbox, sandboxes } = registry.listSandboxes();
     if (!defaultSandbox) {
-      const registeredName = sandboxes.find((sandbox) => sandbox.name)?.name;
-      const liveNames = await liveSandboxNames();
-      if (registeredName && liveNames && !liveNames.has(registeredName)) {
+      const registered = sandboxes.find((sandbox) => sandbox.name);
+      const gatewayName = registered ? resolveSandboxGatewayName(registered) : undefined;
+      const liveNames = await liveSandboxNames(
+        gatewayName ? namedOpenShellGateway(gatewayName) : selectedOpenShellGateway(),
+      );
+      if (registered && liveNames && !liveNames.has(registered.name)) {
         console.error(
-          `${RD}Warning:${R} sandbox '${registeredName}' exists in the local registry but not in OpenShell.`,
+          `${RD}Warning:${R} sandbox '${registered.name}' exists in the local registry but not in OpenShell.`,
         );
         console.error(
           `  Use ${B}--sandbox NAME${R} to target a specific sandbox, or run ${B}${CLI_NAME} onboard${R} again.\n`,
         );
         return null;
       }
-      return registeredName ?? liveNames?.values().next().value ?? "default";
+      if (registered && gatewayName) return { name: registered.name, gatewayName };
+      return { name: liveNames?.values().next().value ?? "default" };
     }
-    if (!sandboxes.find((sandbox) => sandbox.name === defaultSandbox)) {
+    const registered = sandboxes.find((sandbox) => sandbox.name === defaultSandbox);
+    if (!registered) {
       console.error(
         `${RD}Warning:${R} default sandbox '${defaultSandbox}' is no longer in the registry.`,
       );
@@ -55,7 +67,8 @@ export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
       );
       return null;
     }
-    const liveNames = await liveSandboxNames();
+    const gatewayName = resolveSandboxGatewayName(registered);
+    const liveNames = await liveSandboxNames(namedOpenShellGateway(gatewayName));
     if (liveNames && !liveNames.has(defaultSandbox)) {
       console.error(
         `${RD}Warning:${R} default sandbox '${defaultSandbox}' exists in the local registry but not in OpenShell.`,
@@ -65,16 +78,18 @@ export function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
       );
       return null;
     }
-    return defaultSandbox;
+    return { name: defaultSandbox, gatewayName };
   };
 
-  const getSandboxAvailability = async (
-    name: string,
-  ): Promise<"available" | "unregistered" | "missing"> => {
+  const getSandboxAvailability: RunDebugCommandDeps["getSandboxAvailability"] = async (name) => {
     const { sandboxes } = registry.listSandboxes();
-    if (!sandboxes.find((sandbox) => sandbox.name === name)) return "unregistered";
-    const liveNames = await liveSandboxNames();
-    return !liveNames || liveNames.has(name) ? "available" : "missing";
+    const registered = sandboxes.find((sandbox) => sandbox.name === name);
+    if (!registered) return { state: "unregistered" };
+    const gatewayName = resolveSandboxGatewayName(registered);
+    const liveNames = await liveSandboxNames(namedOpenShellGateway(gatewayName));
+    return !liveNames || liveNames.has(name)
+      ? { state: "available", gatewayName }
+      : { state: "missing" };
   };
 
   return {
