@@ -67,7 +67,10 @@ describe("destroy timeout recovery", () => {
       code: "ETIMEDOUT",
     });
     const harness = createDestroyHarness({
-      dockerRunResult: { status: 0, stdout: "" },
+      dockerRunResult: {
+        status: 0,
+        stdout: "aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha\n",
+      },
       mcpServers: ["github"],
       registeredSandboxCount: 1,
       wipeError,

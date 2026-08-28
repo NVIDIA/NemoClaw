@@ -88,7 +88,7 @@ nemoclaw <sandbox-name> snapshot list
 
 Snapshots preserve declared user state. They do not preserve `auth.json`, managed route credentials, generated model configuration, project trust decisions, or executable tool and extension state.
 
-Restore replaces sandbox state from a selector returned by `snapshot list`: a version such as `v3`, an exact snapshot name, or a timestamp. Review the target and retain any newer state before continuing.
+Restore replaces sandbox state from a selector returned by `snapshot list`: a version such as `v3`, a snapshot name, or a timestamp. Review the target and retain any newer state before continuing.
 
 ```bash
 nemoclaw <sandbox-name> snapshot restore <version-or-name-or-timestamp>
@@ -123,7 +123,7 @@ Refer to [Configure Model Limits](../inference/configure-model-limits) for the s
 
 ## Update NemoClaw and Pi
 
-Update the host CLI, inspect registered sandboxes, then rebuild Pi to consume a newer reviewed package and image.
+After a NemoClaw update, inspect registered sandboxes, then rebuild Pi to consume a newer reviewed package and image.
 
 ```bash
 nemoclaw update --yes

@@ -18,6 +18,7 @@ import {
   parseMessagingFixturePayload,
   writeCustomMessagingDockerfile,
 } from "../helpers/messaging-plan-fixtures";
+import { runBoundedOnboardScript } from "../helpers/onboard-child-process-harness";
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 
 type CommandEntry = {
@@ -30,9 +31,7 @@ type CommandEntry = {
   providerRevisions?: Record<string, number | undefined> | null;
   rawCredentialInEnv?: boolean;
 };
-
 const parseStdoutJson = parseMessagingFixturePayload;
-
 const repoRoot = path.join(import.meta.dirname, "../..");
 const requireForTest = createRequire(import.meta.url);
 const yamlModulePath = requireForTest.resolve("yaml");
@@ -159,9 +158,8 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
 });
 `;
       fs.writeFileSync(scriptPath, script);
-      const result = spawnSync(process.execPath, [scriptPath], {
+      const result = runBoundedOnboardScript(scriptPath, {
         cwd: repoRoot,
-        encoding: "utf-8",
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -510,7 +508,9 @@ const { createSandbox } = require(${onboardPath});
       const preflightPath = JSON.stringify(path.join(repoRoot, "src/lib/onboard/preflight.ts"));
       const credentialsPath = JSON.stringify(path.join(repoRoot, "src/lib/credentials/store.ts"));
       const telegramCredentialKeys = [
-        "TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN_AGENT_A", "TELEGRAM_BOT_TOKEN_AGENT_B",
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_BOT_TOKEN_AGENT_A",
+        "TELEGRAM_BOT_TOKEN_AGENT_B",
       ];
       const providerCredentialKeys = {
         "compatible-endpoint": ["COMPATIBLE_API_KEY"],
@@ -539,7 +539,7 @@ runner.run = (command, opts = {}) => {
   const refresh = normalized.match(/provider update -g nemoclaw ([^ ]+)$/)?.[1];
   if (refresh && gatewaySecrets.has(refresh)) { if (refresh === process.env.NEMOCLAW_TEST_FAIL_PROVIDER) return { status: 1 }; revisions.set(refresh, revisions.get(refresh) + 1); return { status: 0 }; }
   if (normalized.includes("provider get")) return { status: 1 };
-  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\nPhase: Ready\n"), stderr: Buffer.alloc(0) } : { status: 0 };
+  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\nPhase: Ready\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
 runner.runCapture = (command) => {
   const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
@@ -589,7 +589,10 @@ const { createSandbox } = require(${onboardPath});
             NEMOCLAW_NON_INTERACTIVE: "1",
             NEMOCLAW_TEST_FAIL_PROVIDER: failedProvider || "",
             ...Object.fromEntries(
-              [...Object.values(providerCredentialKeys).flat(), "GITHUB_TOKEN"].map((key) => [key, ""]),
+              [...Object.values(providerCredentialKeys).flat(), "GITHUB_TOKEN"].map((key) => [
+                key,
+                "",
+              ]),
             ),
           },
         });
@@ -716,7 +719,7 @@ runner.run = (command, opts = {}) => {
   commands.push({ command: normalized, env: opts.env || null });
   if (normalized.includes("provider get -g nemoclaw my-assistant-telegram-bridge")) return { status: 0, stdout: "Name: my-assistant-telegram-bridge\nType: nemoclaw-mcp-v1\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n" };
   if (normalized.includes("provider get")) return { status: 1 };
-  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\nPhase: Ready\n"), stderr: Buffer.alloc(0) } : { status: 0 };
+  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\nPhase: Ready\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
 runner.runCapture = (command) => {
   const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
@@ -786,11 +789,8 @@ const { createSandbox } = require(${onboardPath});
 });
 `;
       fs.writeFileSync(scriptPath, script);
-
-      const result = spawnSync(process.execPath, [scriptPath], {
+      const result = runBoundedOnboardScript(scriptPath, {
         cwd: repoRoot,
-        encoding: "utf-8",
-        timeout: 30_000,
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -879,7 +879,7 @@ runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null }); if (normalized.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   if (normalized.includes("provider get")) return { status: 1 };
-  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\nPhase: Ready\n"), stderr: Buffer.alloc(0) } : { status: 0 };
+  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\nPhase: Ready\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
 runner.runCapture = (command) => {
   const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
@@ -1049,7 +1049,7 @@ runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null }); if (normalized.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   if (normalized.includes("provider get")) return { status: 1 };
-  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\nPhase: Ready\n"), stderr: Buffer.alloc(0) } : { status: 0 };
+  return normalized.includes("sandbox get") && normalized.includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\nPhase: Ready\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
 runner.runCapture = (command) => {
   const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
@@ -1283,7 +1283,7 @@ runner.run = require(${onboardScriptMocksPath}).createStatefulMessagingProviderR
 runner.runCapture = (command) => {
   // Existing sandbox that is ready
   if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) {
-    return "Name: my-assistant\nId: sbx-4f2a91c0d7\n";
+    return "Name: my-assistant\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\n";
   }
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   // All messaging providers already exist in gateway
@@ -1526,7 +1526,7 @@ const { EventEmitter } = require("node:events");
 const commands = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null }); if (_n(command).includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
-  return _n(command).includes("sandbox get") && _n(command).includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\nPhase: Ready\n"), stderr: Buffer.alloc(0) } : { status: 0 };
+  return _n(command).includes("sandbox get") && _n(command).includes("my-assistant") ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\nPhase: Ready\n"), stderr: Buffer.alloc(0) } : { status: 0 };
 };
 runner.runCapture = (command) => {
   const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
