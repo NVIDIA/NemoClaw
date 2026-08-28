@@ -54,6 +54,7 @@ import {
   assertHermesPortableAgentLifecycleAuthority,
   inspectPortableAgentReceiptDisposition,
   qualifyPortableAgentLifecycleAuthority,
+  qualifyHermesPortableOperatingCommandAuthority,
   recoverPortableAgentSandboxLifecycle,
   requalifyPortableAgentSandboxAuthority,
   requireHermesPortableActiveLifecycleAuthority,
@@ -230,6 +231,31 @@ describe("portable agent lifecycle dispatch", () => {
       HOME: "/home/test",
     });
     expect(assertCurrent).toHaveBeenCalledOnce();
+  });
+
+  it("retains one operation-local schema-6 command generation for recovery (#10423)", () => {
+    const historical = hermes("active").snapshot.receipt;
+    const current = { ...historical, socketAuthority: { dev: "current" } };
+    const assertCurrent = vi.fn();
+    mocks.inspect.mockReturnValue({
+      kind: "hermes",
+      snapshot: { receipt: historical, successor: { receipt: { schemaVersion: 6 } } },
+    });
+    mocks.qualifyOperatingAuthority.mockReturnValue({ receipt: current, assertCurrent });
+
+    const qualified = qualifyHermesPortableOperatingCommandAuthority(
+      "alpha",
+      { HOME: "/home/test" },
+      "/state",
+    );
+    qualified.assertCurrent();
+
+    expect(qualified).toMatchObject({
+      env: { HOME: "/home/test" },
+      executablePath: "/usr/bin/openshell",
+    });
+    expect(mocks.qualifyOperatingAuthority).toHaveBeenCalledOnce();
+    expect(assertCurrent).toHaveBeenCalledTimes(2);
   });
 
   it("permits an incomplete receipt without a registry row and rejects active absence (#9203)", () => {

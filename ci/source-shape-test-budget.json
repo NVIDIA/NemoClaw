@@ -197,6 +197,11 @@
       "category": "security"
     },
     {
+      "file": "test/mcp/mcp-tool-discovery-image-contract.test.ts",
+      "test": "pins the reviewed image runtime artifacts exactly",
+      "category": "security"
+    },
+    {
       "file": "test/runtime/policy/repro-5978-policy-denial-hint.test.ts",
       "test": "prints only once when the file is sourced twice in one login shell",
       "category": "compatibility"
