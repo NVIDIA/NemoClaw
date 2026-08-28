@@ -25,3 +25,11 @@ export function classifyHermesSlackApiProof(output: string): HermesSlackApiProof
   }
   return { kind: "passed" };
 }
+
+export function assertHermesSlackApiProof(output: string): void {
+  const proof = classifyHermesSlackApiProof(output);
+  if (proof.kind === "passed") return;
+
+  const result = proof.kind === "timeout" ? "incomplete required evidence" : "failed";
+  throw new Error(`Slack API proof ${result}: ${proof.reason}`);
+}

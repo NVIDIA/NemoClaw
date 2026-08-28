@@ -3,7 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 
-import { classifyHermesSlackApiProof } from "../live/hermes-slack-proof.ts";
+import {
+  assertHermesSlackApiProof,
+  classifyHermesSlackApiProof,
+} from "../live/hermes-slack-proof.ts";
 
 describe("Hermes Slack API proof classification", () => {
   it("accepts both successful Slack API markers", () => {
@@ -14,11 +17,22 @@ describe("Hermes Slack API proof classification", () => {
     ).toEqual({ kind: "passed" });
   });
 
-  it("classifies a provider timeout as skippable evidence", () => {
+  it("rejects a provider timeout as incomplete required evidence", () => {
     expect(classifyHermesSlackApiProof("TIMEOUT auth.test: socket timeout\n")).toEqual({
       kind: "timeout",
       reason: "TIMEOUT auth.test: socket timeout",
     });
+    expect(() => assertHermesSlackApiProof("TIMEOUT auth.test: socket timeout\n")).toThrow(
+      "Slack API proof incomplete required evidence: TIMEOUT auth.test: socket timeout",
+    );
+  });
+
+  it("accepts complete required evidence in the live assertion path", () => {
+    expect(() =>
+      assertHermesSlackApiProof(
+        "OK auth.test: status=200 error=None\nOK apps.connections.open: status=200 error=None\n",
+      ),
+    ).not.toThrow();
   });
 
   it.each(["FAIL auth.test: status=403", "ERROR apps.connections.open: invalid response"])(

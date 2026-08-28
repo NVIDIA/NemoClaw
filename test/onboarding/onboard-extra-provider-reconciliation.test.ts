@@ -119,7 +119,9 @@ runner.runCapture = (command) => {
     : null;
   if (createdIdentity !== null) return createdIdentity;
   if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) {
-    return sandboxCreated ? "my-assistant\nId: sbx-4f2a91c0d7" : "";
+    return sandboxCreated
+      ? "my-assistant\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID
+      : "";
   }
   if (normalized.includes("sandbox list")) return sandboxCreated ? "my-assistant Ready" : "";
   const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
