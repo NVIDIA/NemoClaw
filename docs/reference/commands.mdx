@@ -452,6 +452,18 @@ For a new or fresh session, `--yes` and `NEMOCLAW_YES=1` accept supported confir
 If onboarding returns without reaching the final `complete` state, the command exits with status `1`.
 When that result is resumable, NemoClaw keeps the session `in_progress` at its last checkpoint instead of marking it failed, so correct the reported condition and run `$$nemoclaw onboard --resume`.
 
+If onboarding cannot complete after sandbox creation, NemoClaw preserves the sandbox and records its create-attempt label.
+When available, NemoClaw also records a durable identity fingerprint and verified policy evidence for recovery.
+Automatic and explicit resume, reuse, recreation, and fresh onboarding with that sandbox name remain blocked.
+Do not destroy the retained sandbox by name.
+Ask an OpenShell administrator to verify the exact live durable ID before using an identity-bound removal procedure.
+NemoClaw does not provide an operation to clear the recovery record, even after external removal.
+Start another onboarding run with a different name:
+
+```bash
+$$nemoclaw onboard --fresh --name <new-sandbox-name>
+```
+
 <AgentOnly variant="openclaw">
 
 OpenClaw sessions also record the web search selection, messaging selection and non-secret settings, and resource profile.
@@ -481,6 +493,8 @@ The installer also accepts `--fresh` and forwards it to `$$nemoclaw onboard`, wh
 `--resume` and `--fresh` are mutually exclusive.
 For an existing completed sandbox, use `--fresh --name <sandbox-name> --recreate-sandbox` when you intentionally want onboarding to replace that sandbox with a new provider, model, agent, or startup setting.
 Use `$$nemoclaw <sandbox-name> rebuild` when you want NemoClaw to recreate the sandbox from its recorded registry metadata without changing those selections.
+
+<AgentOnly variant="openclaw">
 
 #### `--apf-interceptor`
 
@@ -523,6 +537,8 @@ Ask an OpenShell administrator to obtain the exact live durable ID, verify it ag
 This onboarding mode does not support `--resume` or `--recreate-sandbox`, regardless of whether sandbox creation began.
 After the administrator confirms identity-bound removal, repeat the original command with `--fresh` and a new name.
 </Warning>
+
+</AgentOnly>
 
 #### `--tool-disclosure <progressive|direct>`
 
@@ -932,7 +948,7 @@ NemoClaw stores the recovery record independently from the active onboarding ses
 A fresh run with a different name can proceed without clearing that record, but automatic resume, explicit `--resume`, reuse, recreation, and fresh onboarding with the retained name remain blocked.
 NemoClaw has no supported operation in this release to clear the recovery record, so the retained name remains unavailable even after external recovery or removal.
 Preserve the record as evidence.
-Start fresh onboarding with `--fresh` and another available sandbox name.
+Start fresh onboarding with `$$nemoclaw onboard --fresh --name <new-sandbox-name>`.
 Select the required provider, model, agent, policy, and environment inputs again because `--fresh` does not retain them.
 
 If you run onboarding again with the same sandbox name and choose a different inference provider or model, NemoClaw detects the drift and recreates the sandbox so the running agent config matches your selection.
