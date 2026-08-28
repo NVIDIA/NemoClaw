@@ -32,6 +32,7 @@ const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/*-]+$/u;
 const PUBLIC_PULL_REQUEST_METADATA_PATH =
   /^\/repos\/NVIDIA\/NemoClaw\/pulls\/[1-9][0-9]*(?:$|\/files(?:\?|$))/u;
 const REUSABLE_NON_IMAGE_PATHS = [
+  /^ci\/test-file-size-budget[.]json$/u,
   /^[.]github\/actions\/restore-e2e-cli-artifact\/action[.]yaml$/u,
   /^[.]github\/workflows\/e2e(?:-standard-profile)?[.]yaml$/u,
   /^scripts\/install[.]sh$/u,

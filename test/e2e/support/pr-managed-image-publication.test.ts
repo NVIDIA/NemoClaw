@@ -122,6 +122,7 @@ on:
   it("allows reuse only across host-installer and E2E-only changes", () => {
     expect(
       managedImagePublicationReuseAllowed([
+        "ci/test-file-size-budget.json",
         ".github/actions/restore-e2e-cli-artifact/action.yaml",
         ".github/workflows/e2e-standard-profile.yaml",
         ".github/workflows/e2e.yaml",
