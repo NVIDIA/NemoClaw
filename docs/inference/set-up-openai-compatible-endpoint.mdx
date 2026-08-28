@@ -59,7 +59,7 @@ Select **Other OpenAI-compatible endpoint**.
 Enter the server base URL and the model ID reported by the server.
 
 Use a host-routable URL such as `http://localhost:8000/v1` when you want onboarding to verify the API, tool-calling, and streaming paths before gateway registration.
-To qualify for automatic rewriting, an HTTP endpoint URL must use the exact loopback host `localhost`, `127.0.0.1`, or `[::1]`.
+To qualify for automatic rewriting, an HTTP endpoint URL must use the loopback host `localhost`, `127.0.0.1`, or `[::1]`.
 Automatic rewriting is limited to the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) and ports `11434` and `11435`.
 NemoClaw validates the entered URL from the host and registers the OpenShell gateway route through `host.openshell.internal:<port>` for sandbox traffic.
 Sandbox inference requests continue to use the base `inference.local` policy, so the managed compatible-endpoint route does not require adding the `local-inference` preset.
@@ -74,7 +74,7 @@ If you manually enter a sandbox-internal alias such as `http://host.openshell.in
 Use a host-routable endpoint such as `localhost` when you need onboarding to verify the API, tool-calling, and streaming paths before gateway registration.
 Otherwise, verify the runtime route after onboarding with `$$nemoclaw <name> status` and a short agent request.
 
-For an HTTP URL using the exact host `localhost`, `127.0.0.1`, or `[::1]` and the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) or port `11434`, the API key prompt says that pressing Enter selects no authentication.
+For an HTTP URL using the host `localhost`, `127.0.0.1`, or `[::1]` and the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) or port `11434`, the API key prompt says that pressing Enter selects no authentication.
 Port `11435` also supports this mode when `NEMOCLAW_OLLAMA_PROXY_PORT` uses a different free port before onboarding.
 Other URLs still require `COMPATIBLE_API_KEY`.
 
@@ -155,7 +155,7 @@ The managed local registry uses the distinct address `10.87.0.3` on port `5000`.
 Keeping the host-gateway address outside the sandbox subnet prevents a Portable workload from receiving that address.
 
 <Warning>
-If Portable onboarding reports that the retired `169.254.1.2/32` address is still assigned to the loopback interface, remove only that exact assignment:
+If Portable onboarding reports that the retired `169.254.1.2/32` address is still assigned to the loopback interface, remove only that assignment:
 
 ```bash
 sudo ip address delete 169.254.1.2/32 dev lo
@@ -180,7 +180,7 @@ When no container is connected, onboarding prints one network command:
 podman --url 'unix://<verified-current-user-socket>' network rm <64-character-network-id>
 ```
 
-When the exact NemoClaw-managed registry is the only connected container, onboarding prints the registry commands before the network command.
+When the NemoClaw-managed registry is the only connected container, onboarding prints the registry commands before the network command.
 A stopped registry does not need the first command.
 Run each printed command in order.
 Continue only after it succeeds:
@@ -291,7 +291,7 @@ NEMOCLAW_PROVIDER=custom \
 | `NEMOCLAW_MODEL` | Model ID reported by the server. |
 | `NEMOCLAW_COMPATIBLE_AUTH_MODE` | Set to `none` to explicitly select no authentication for an HTTP endpoint using `localhost`, `127.0.0.1`, or `[::1]` and the port selected by `NEMOCLAW_VLLM_PORT` (`8000` by default) or port `11434`. Port `11435` requires `NEMOCLAW_OLLAMA_PROXY_PORT` to use a different free port. |
 | `NEMOCLAW_REASONING` | Enables reasoning-only validation with the case-insensitive true values `true`, `1`, `yes`, and `y`. |
-| `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` | Optional comma-separated exact hostnames or IP literals for operator-owned private endpoints. Wildcards are not supported. |
+| `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` | Optional comma-separated hostnames or IP literals for operator-owned private endpoints. Wildcards are not supported. |
 | `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` | Inference-only compatibility alias for `NEMOCLAW_TRUSTED_PRIVATE_HOSTS`. Inference onboarding combines entries from both variables. |
 | `COMPATIBLE_API_KEY` | Endpoint API key. Required unless loopback no-auth mode is selected. |
 
@@ -307,7 +307,7 @@ After `inference set` changes the effort, an ordinary sandbox restart preserves 
 </AgentOnly>
 
 Private and reserved addresses are blocked by default.
-To use an inference gateway on a trusted corporate network, list only its exact host and keep the endpoint URL on that host:
+To use an inference gateway on a trusted corporate network, list only its host and keep the endpoint URL on that host:
 
 ```bash
 NEMOCLAW_TRUSTED_PRIVATE_HOSTS=llm.corp.example \
@@ -319,7 +319,7 @@ NEMOCLAW_TRUSTED_PRIVATE_HOSTS=llm.corp.example \
 ```
 
 NemoClaw still resolves the host before probing and pins outbound validation to the complete canonical address set.
-An exact trusted host can return both public and supported private addresses.
+A trusted host can return both public and supported private addresses.
 NemoClaw pins every canonical answer.
 If any answer is a disallowed private, reserved, or special-purpose address, validation rejects the endpoint instead of discarding that answer.
 Among private answers, NemoClaw admits only RFC1918, carrier-grade network address translation (CGNAT), and IPv6 unique local address (ULA) destinations.

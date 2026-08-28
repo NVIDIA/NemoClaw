@@ -2105,7 +2105,7 @@ function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: Workfl
     INSTANCE_NAME: "nclaw-identity-${{ github.run_id }}-${{ github.run_attempt }}",
     E2E_AGENT_RUNTIME: "none",
     E2E_OBSERVABLE_OUTCOME:
-      "Exact staging image boots, passes the SSH access probe, and matches the baked runtime identity",
+      "The staging image boots, passes the SSH access probe, and matches the baked runtime identity",
     E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Brev Launchable host; no inference endpoint",
   };
   if (!isDeepStrictEqual(jobEnv, expectedJobEnv)) {
@@ -2339,7 +2339,7 @@ function validateStagingBrevLaunchableInput(
   }
   const description = stringValue(input.description);
   if (
-    !description.includes("Exact staging Brev Launchable") ||
+    !description.includes("staging Brev Launchable") ||
     !description.includes("jobs and targets are empty") ||
     !description.includes("full E2E run")
   ) {
@@ -2632,7 +2632,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const jobsDescription = stringValue(jobsInput.description);
   if (!jobsDescription.includes("include_staging_brev_launchable")) {
     errors.push(
-      "workflow_dispatch jobs input description must identify how to include Exact staging Brev Launchable",
+      "workflow_dispatch jobs input description must identify how to include staging Brev Launchable",
     );
   }
   if (!jobsDescription.includes("staging-brev-launchable-identity")) {
