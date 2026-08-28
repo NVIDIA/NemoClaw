@@ -12,7 +12,12 @@
 
 import { describe, expect, it } from "vitest";
 import * as policies from "../../../src/lib/policy";
-import { getTier, listTiers, resolveTierPresets } from "../../../src/lib/policy/tiers";
+import {
+  getTier,
+  listTiers,
+  resolveTierPresets,
+  tierIncludesPolicyPreset,
+} from "../../../src/lib/policy/tiers";
 
 interface TierPreset {
   name: string;
@@ -112,6 +117,27 @@ describe("tiers", () => {
 
     it("returns null for an unknown tier", () => {
       expect(getTier("nonexistent")).toBeNull();
+    });
+  });
+
+  describe("tierIncludesPolicyPreset", () => {
+    it.each(["balanced", "open", " BALANCED "])(
+      "recognizes brave in the %s tier definition",
+      (tierName) => {
+        expect(tierIncludesPolicyPreset(tierName, " BRAVE ")).toBe(true);
+      },
+    );
+
+    it.each(["restricted", "personal", "unknown", ""])(
+      "does not assign brave to the %s tier",
+      (tierName) => {
+        expect(tierIncludesPolicyPreset(tierName, "brave")).toBe(false);
+      },
+    );
+
+    it("rejects an empty preset name and a missing tier", () => {
+      expect(tierIncludesPolicyPreset("balanced", " ")).toBe(false);
+      expect(tierIncludesPolicyPreset(null, "brave")).toBe(false);
     });
   });
 

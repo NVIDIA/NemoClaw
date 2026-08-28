@@ -44,6 +44,14 @@ const { TIER_FIXTURES } = vi.hoisted(() => {
 
 vi.mock("./tiers", () => ({
   getTier: (name: string): FakeTier | undefined => TIER_FIXTURES[name],
+  tierIncludesPolicyPreset: (
+    tierName: string | null | undefined,
+    presetName: string,
+  ): boolean => {
+    const tier = TIER_FIXTURES[tierName?.trim().toLowerCase() ?? ""];
+    const name = presetName.trim().toLowerCase();
+    return tier?.presets.some((preset) => preset.name === name) ?? false;
+  },
 }));
 
 import {

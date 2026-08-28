@@ -136,6 +136,20 @@ function getTier(name: string): TierDefinition | null {
   return listTiers().find((tier) => tier.name === name) ?? null;
 }
 
+/** Return whether a preset belongs to the named canonical tier definition. */
+function tierIncludesPolicyPreset(
+  tierName: string | null | undefined,
+  presetName: string,
+): boolean {
+  const normalizedTierName = tierName?.trim().toLowerCase();
+  const normalizedPresetName = presetName.trim().toLowerCase();
+  if (!normalizedTierName || !normalizedPresetName) return false;
+  return (
+    getTier(normalizedTierName)?.presets.some((preset) => preset.name === normalizedPresetName) ??
+    false
+  );
+}
+
 /**
  * Resolve the final preset list for a tier, applying any per-preset access
  * overrides supplied by the user.
@@ -173,4 +187,4 @@ function resolveTierPresets(
   return presets;
 }
 
-export { getTier, listTiers, resolveTierPresets, TIERS_FILE };
+export { getTier, listTiers, resolveTierPresets, tierIncludesPolicyPreset, TIERS_FILE };
