@@ -27,6 +27,12 @@ describe("Pi candidate pull-request publication", () => {
     const record = step(candidate, "Record the exact Pi candidate contract");
     const upload = step(candidate, "Upload the exact Pi candidate contract");
 
+    expect(workflow.on?.pull_request?.paths).toEqual(
+      expect.arrayContaining([
+        "ci/pi-agent-qualification-v1-*.json",
+        "src/lib/agent/candidate-authority.ts",
+      ]),
+    );
     expect(candidate.if).toBe(
       "github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository",
     );
