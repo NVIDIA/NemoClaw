@@ -11,14 +11,13 @@ import {
   parseNemoClawPolicyCreationReceipt,
   type NemoClawPolicyCreationReceipt,
 } from "../../policy/merge";
+import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../sandbox-name-contract";
 
 export { parseNemoClawPolicyCreationReceipt } from "../../policy/merge";
 
 const SCHEMA_VERSION = 1;
 const FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/u;
 const SAFE_EVIDENCE_PATTERN = /^[A-Za-z0-9._:@/-]{1,256}$/u;
-const NAME_MAX_LENGTH = 63;
-const NAME_VALID_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u;
 
 export function retainedSandboxRecoveryFile(sessionDirectory: string): string {
   return path.join(sessionDirectory, "retained-sandbox-recovery.json");

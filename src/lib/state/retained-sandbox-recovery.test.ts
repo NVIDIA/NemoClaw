@@ -88,6 +88,24 @@ describe("retained sandbox recovery state", () => {
     });
   });
 
+  it("rejects a recovery target outside the canonical sandbox-name contract", async () => {
+    const recovery = await import("./onboard-session");
+
+    expect(() =>
+      recovery.recordRetainedSandboxRecovery({
+        sandboxName: "1sandbox",
+        sandboxIdentityFingerprint: "a".repeat(64),
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        lifecycleGeneration: "00000000-0000-4000-8000-000000000001",
+        verifiedEffectivePolicyIdentity: null,
+        ...recoveryAuthority,
+        resources: evidence,
+        reason: "retained_after_sandbox_creation_failure",
+      }),
+    ).toThrow("Cannot persist invalid retained sandbox recovery evidence");
+  });
+
   it("preserves distinct unresolved lifecycle tuples for one sandbox name (#9833)", async () => {
     const recovery = await import("./onboard-session");
     const first = recovery.recordRetainedSandboxRecovery({

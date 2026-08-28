@@ -55,8 +55,10 @@ import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";
 import { shouldCleanupGatewayAfterConfirmedFinalDestroy } from "./destroy-gateway-cleanup";
 import {
   assertUnambiguousDestroyContainerIdentity,
+  classifyDestroyContainerIdentity,
   classifyDestroySandboxPresence,
   isSameDestroyContainerIdentityProof,
+  observeDestroyContainerIdentity,
 } from "./destroy-presence";
 import {
   prepareSandboxDestroy,
@@ -113,6 +115,21 @@ function selectRetainedSandboxRecoveryAuthority(
   const matching = records.filter(
     (record) => record.sandboxName === sandboxName && matchesRegistryAuthority(record),
   );
+  if (!sandbox && matching.length > 1) {
+    const observation = observeDestroyContainerIdentity(sandboxName);
+    const observedMatches = matching.filter((record) => {
+      const verdict = classifyDestroyContainerIdentity(
+        sandboxName,
+        observation,
+        record.sandboxIdentityFingerprint!,
+      );
+      return (
+        verdict.status === "recovery" ||
+        (verdict.status === "clear" && verdict.identity !== null)
+      );
+    });
+    return observedMatches.length === 1 ? observedMatches[0]! : null;
+  }
   return matching.length === 1 ? matching[0]! : null;
 }
 
@@ -542,11 +559,21 @@ async function destroySandboxUnlocked(
   if (!(await confirmSandboxDestroy(sandboxName, normalized))) return;
   const destroySession = onboardSession.loadSession();
   const registeredSandbox = registry.getSandbox(sandboxName);
+  const retainedRecoveryRecords = onboardSession.listRetainedSandboxRecoveryRecords();
   const retainedRecoveryAuthority = selectRetainedSandboxRecoveryAuthority(
     sandboxName,
     registeredSandbox,
-    onboardSession.listRetainedSandboxRecoveryRecords(),
+    retainedRecoveryRecords,
   );
+  if (
+    !retainedRecoveryAuthority &&
+    retainedRecoveryRecords.some((record) => record.sandboxName === sandboxName)
+  ) {
+    console.error(
+      `  Refusing to destroy retained sandbox '${sandboxName}': NemoClaw could not select exactly one recovery record from the current immutable registry and Docker identities. No sandbox resources were removed. Resolve the identity conflict, then rerun '${CLI_NAME} ${sandboxName} destroy'.`,
+    );
+    requestSandboxDestroyExit(1);
+  }
   const retainedSandboxIdentityFingerprint =
     retainedRecoveryAuthority?.sandboxIdentityFingerprint ?? undefined;
   let portableContainerAuthority: ReturnType<typeof preparePortableDemoSandboxDestroyAuthority>;

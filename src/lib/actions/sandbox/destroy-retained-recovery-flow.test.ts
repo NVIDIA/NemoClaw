@@ -225,4 +225,74 @@ describe("destroySandbox retained recovery flow", () => {
       expect(exitSpy).not.toHaveBeenCalled();
     },
   );
+
+  it(
+    "selects only the retained record matching observed Docker identity without a registry row (#10547)",
+    { timeout: 30_000 },
+    async () => {
+      const matchingRecovery = retainedRecoveryRecord();
+      const olderRecovery = {
+        ...retainedRecoveryRecord("sb-older"),
+        recordId: "e".repeat(64),
+        lifecycleGeneration: "generation-older",
+      };
+      const sandboxContainerId = "a".repeat(64);
+      const bootstrapContainerId = "b".repeat(64);
+      const identityRows = [sandboxContainerId, bootstrapContainerId]
+        .map((id) => `${id}\topenshell\tdefault\tsb-alpha`)
+        .join("\n");
+      const harness = createDestroyHarness({
+        registryEntryPresent: false,
+        dockerOrphanIds: [bootstrapContainerId],
+        dockerRunResult: { status: 0, stdout: identityRows },
+        retainedRecoveryRecords: [olderRecovery, matchingRecovery],
+      });
+
+      await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+      expect(harness.dockerRunSpy).toHaveBeenCalledWith(
+        ["rm", "-f", bootstrapContainerId],
+        expect.objectContaining({ ignoreError: true }),
+      );
+      expect(harness.resolveRetainedSandboxRecoverySpy).toHaveBeenCalledOnce();
+      expect(harness.resolveRetainedSandboxRecoverySpy).toHaveBeenCalledWith(matchingRecovery);
+      expect(harness.resolveRetainedSandboxRecoverySpy).not.toHaveBeenCalledWith(olderRecovery);
+      expect(exitSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it(
+    "refuses destroy when observed Docker identity matches multiple retained records (#10547)",
+    { timeout: 30_000 },
+    async () => {
+      const firstRecovery = retainedRecoveryRecord();
+      const secondRecovery = {
+        ...firstRecovery,
+        recordId: "e".repeat(64),
+        lifecycleGeneration: "generation-second",
+        createAttemptNonce: "d".repeat(62),
+      };
+      const harness = createDestroyHarness({
+        registryEntryPresent: false,
+        dockerRunResult: {
+          status: 0,
+          stdout: `${"a".repeat(64)}\topenshell\tdefault\tsb-alpha`,
+        },
+        retainedRecoveryRecords: [firstRecovery, secondRecovery],
+      });
+
+      await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+        "process.exit(1)",
+      );
+
+      expect(harness.errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("could not select exactly one recovery record"),
+      );
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.anything(),
+      );
+      expect(harness.resolveRetainedSandboxRecoverySpy).not.toHaveBeenCalled();
+    },
+  );
 });
