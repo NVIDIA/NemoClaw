@@ -52,11 +52,10 @@ function errors(
 
 describe("channels stop/start persisted messaging plan state", () => {
   it.each(["openclaw", "hermes"] as const)(
-    "accepts the complete %s active, disabled, reactivated, and removed lifecycle",
+    "accepts the complete %s active, disabled, and removed states",
     (agent) => {
       expect(errors(plan(agent, "active"), agent, "active")).toEqual([]);
       expect(errors(plan(agent, "disabled"), agent, "disabled")).toEqual([]);
-      expect(errors(plan(agent, "active"), agent, "active")).toEqual([]);
       expect(errors(plan(agent, "removed"), agent, "removed")).toEqual([]);
     },
   );

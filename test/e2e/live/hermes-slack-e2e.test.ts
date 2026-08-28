@@ -16,7 +16,7 @@ test(
         "validate Slack providers and Hermes health",
         "inspect Slack config and secret isolation",
         "validate Hermes-scoped Slack policy",
-        "exercise Slack API through credential aliases",
+        "exercise Slack API through credential rewrite",
         "remove Hermes Slack sandbox",
         "record Hermes Slack results",
       ],

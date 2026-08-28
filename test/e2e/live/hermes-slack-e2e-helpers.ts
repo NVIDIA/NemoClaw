@@ -641,7 +641,7 @@ done`,
   expectExitZero(bridgeResidue, "Hermes Slack bridge residue probe");
   expect(resultText(bridgeResidue).trim()).toBe("");
 
-  progress.phase("exercise Slack API through credential aliases");
+  progress.phase("exercise Slack API through credential rewrite");
   const slackProbe = await sandboxShWithArgs(
     sandbox,
     SANDBOX_NAME,
@@ -813,7 +813,7 @@ PY`,
       rawTokensAbsentFromFilesLogsAndProcesses: true,
       hermesScopedSlackPolicy: true,
       noLegacyDecodeBridgeResidue: true,
-      slackPythonAliasEgress: true,
+      slackPythonCredentialRewriteEgress: true,
       cleanupVerified: process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1",
     },
   });

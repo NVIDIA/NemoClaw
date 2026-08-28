@@ -10,9 +10,10 @@ import {
 } from "../../../scripts/checks/e2e-mock-parity.mts";
 
 const live = "test/e2e/live/example.test.ts";
+const liveHelper = "test/e2e/live/example-helper.ts";
 const fast = "test/e2e/support/example.test.ts";
 const TAGGED_NEW_SOURCE = "// @module-tag e2e/credential-free\n";
-const exists = (file: string) => file === live || file === fast;
+const exists = (file: string) => file === live || file === liveHelper || file === fast;
 
 function manifest(entries: MockParityManifest["entries"]): MockParityManifest {
   return { version: 1, entries };
@@ -119,6 +120,48 @@ describe("changed live E2E mock parity", () => {
         fileExists: exists,
       }),
     ).toEqual([`${live}: change at least one mapped fast PR test with the live E2E`]);
+  });
+
+  it("requires mapped fast coverage when a declared live E2E helper changes", () => {
+    expect(
+      validateMockParity({
+        manifest: manifest([{ live, liveSources: [liveHelper], fast: [fast] }]),
+        changedFiles: [liveHelper],
+        fileExists: exists,
+      }),
+    ).toEqual([`${liveHelper}: change at least one fast PR test mapped from ${live}`]);
+  });
+
+  it("accepts a changed live E2E helper with a changed mapped fast test", () => {
+    expect(
+      validateMockParity({
+        manifest: manifest([{ live, liveSources: [liveHelper], fast: [fast] }]),
+        changedFiles: [liveHelper, fast],
+        fileExists: exists,
+      }),
+    ).toEqual([]);
+  });
+
+  it("rejects a changed live E2E helper without an owning manifest entry", () => {
+    expect(
+      validateMockParity({
+        manifest: manifest([{ live, fast: [fast] }]),
+        changedFiles: [liveHelper, fast],
+        fileExists: exists,
+      }),
+    ).toEqual([
+      `${liveHelper}: changed live E2E helper needs an owning entry in test/e2e/mock-parity.json`,
+    ]);
+  });
+
+  it("filters a comment-only live E2E helper change before ownership validation", () => {
+    const relevantFiles = filterMockParityRelevantChangedFiles(
+      [liveHelper],
+      () => "// old wording\nexport const helper = true;\n",
+      () => "// current wording\nexport const helper = true;\n",
+    );
+
+    expect(relevantFiles).toEqual([]);
   });
 
   it.each([

@@ -15,6 +15,7 @@ export const DEFAULT_PARITY_MANIFEST = "test/e2e/mock-parity.json";
 
 export type MockParityEntry = {
   live: string;
+  liveSources?: string[];
   fast?: string[];
   liveOnlyReason?: string;
 };
@@ -25,6 +26,7 @@ export type MockParityManifest = {
 };
 
 const LIVE_TEST = /^test\/e2e\/live\/.+\.test\.ts$/u;
+const LIVE_HELPER = /^test\/e2e\/live\/(?!.*\.test\.ts$).+\.ts$/u;
 const FAST_TESTS = [
   /^src\/.+\.test\.ts$/u,
   /^nemoclaw\/src\/.+\.test\.ts$/u,
@@ -96,6 +98,7 @@ export function validateMockParity(options: {
   }
 
   const entries = new Map<string, MockParityEntry>();
+  const sourceOwners = new Map<string, MockParityEntry[]>();
   for (const entry of manifest.entries) {
     if (!entry || typeof entry !== "object" || typeof entry.live !== "string") {
       errors.push("mock parity entries must be objects with a live path");
@@ -111,6 +114,14 @@ export function validateMockParity(options: {
     }
     entries.set(entry.live, entry);
 
+    if (
+      entry.liveSources !== undefined &&
+      (!Array.isArray(entry.liveSources) ||
+        entry.liveSources.some((file) => typeof file !== "string"))
+    ) {
+      errors.push(`${entry.live}: liveSources must be an array of live E2E helper paths`);
+      continue;
+    }
     if (
       entry.fast !== undefined &&
       (!Array.isArray(entry.fast) || entry.fast.some((file) => typeof file !== "string"))
@@ -131,6 +142,18 @@ export function validateMockParity(options: {
     }
 
     if (!fileExists(entry.live)) errors.push(`${entry.live}: live test does not exist`);
+    for (const sourceFile of new Set(entry.liveSources ?? [])) {
+      if (!isSafeRepoPath(sourceFile) || !LIVE_HELPER.test(sourceFile)) {
+        errors.push(`${entry.live}: ${sourceFile} is not a test/e2e/live/**/*.ts helper file`);
+        continue;
+      }
+      if (!fileExists(sourceFile)) {
+        errors.push(`${entry.live}: live E2E helper does not exist: ${sourceFile}`);
+      }
+      const owners = sourceOwners.get(sourceFile) ?? [];
+      owners.push(entry);
+      sourceOwners.set(sourceFile, owners);
+    }
     for (const fastFile of new Set(fast)) {
       if (!isFastPrTest(fastFile)) {
         errors.push(`${entry.live}: ${fastFile} is not collected by a fast PR test project`);
@@ -140,21 +163,41 @@ export function validateMockParity(options: {
     }
   }
 
-  for (const liveFile of [...new Set(changedFiles)].filter((file) => LIVE_TEST.test(file))) {
-    const entry = entries.get(liveFile);
-    if (!entry) {
-      errors.push(`${liveFile}: changed live E2E needs an entry in ${DEFAULT_PARITY_MANIFEST}`);
-      continue;
-    }
+  const changedFileSet = new Set(changedFiles);
+  const requireChangedFastTest = (entry: MockParityEntry, changedSource: string): void => {
     const mappedFastTests = Array.isArray(entry.fast)
       ? entry.fast.filter((fastFile): fastFile is string => typeof fastFile === "string")
       : [];
     if (
       mappedFastTests.length > 0 &&
-      !mappedFastTests.some((fastFile) => changedFiles.includes(fastFile))
+      !mappedFastTests.some((fastFile) => changedFileSet.has(fastFile))
     ) {
-      errors.push(`${liveFile}: change at least one mapped fast PR test with the live E2E`);
+      errors.push(
+        changedSource === entry.live
+          ? `${entry.live}: change at least one mapped fast PR test with the live E2E`
+          : `${changedSource}: change at least one fast PR test mapped from ${entry.live}`,
+      );
     }
+  };
+
+  for (const liveFile of [...changedFileSet].filter((file) => LIVE_TEST.test(file))) {
+    const entry = entries.get(liveFile);
+    if (!entry) {
+      errors.push(`${liveFile}: changed live E2E needs an entry in ${DEFAULT_PARITY_MANIFEST}`);
+      continue;
+    }
+    requireChangedFastTest(entry, liveFile);
+  }
+
+  for (const helperFile of [...changedFileSet].filter((file) => LIVE_HELPER.test(file))) {
+    const owners = sourceOwners.get(helperFile) ?? [];
+    if (owners.length === 0) {
+      errors.push(
+        `${helperFile}: changed live E2E helper needs an owning entry in ${DEFAULT_PARITY_MANIFEST}`,
+      );
+      continue;
+    }
+    for (const owner of owners) requireChangedFastTest(owner, helperFile);
   }
 
   return errors.sort();
@@ -184,7 +227,7 @@ export function filterMockParityRelevantChangedFiles(
   sourceAtHead: (file: string) => string | null,
 ): string[] {
   return files.filter((file) => {
-    if (!LIVE_TEST.test(file) && !isFastPrTest(file)) return true;
+    if (!LIVE_TEST.test(file) && !LIVE_HELPER.test(file) && !isFastPrTest(file)) return true;
     return isMockParityRelevantSourceChange(sourceAtBase(file), sourceAtHead(file));
   });
 }
