@@ -20,6 +20,7 @@ describe("messaging policy presets", () => {
     expect(requiredMessagingChannelPolicyPresets(["slack"])).toEqual(["slack"]);
     expect(requiredMessagingChannelPolicyPresets([" Slack "])).toEqual(["slack"]);
     expect(requiredMessagingChannelPolicyPresets(["discord"])).toEqual(["discord"]);
+    expect(requiredMessagingChannelPolicyPresets(["wechat"])).toEqual(["wechat"]);
   });
 
   it("names the channel behind an applied network policy preset (#9283)", () => {

@@ -6,6 +6,7 @@ import YAML from "yaml";
 
 import { loadManagedToolGatewayMatrix } from "../../agents/hermes/config/managed-tool-gateway.ts";
 import { loadAgent } from "../../src/lib/agent/defs.ts";
+import { requiredMessagingChannelPolicyPresets } from "../../src/lib/onboard/messaging-policy-presets.ts";
 import * as policies from "../../src/lib/policy";
 
 type AllowRule = {
@@ -498,6 +499,18 @@ describe("effective built-in policy contracts", () => {
     }
   });
 
+  it("composes Hermes WeChat's required preset into the bridge policy (#10079)", () => {
+    const effective = composePresets(requiredMessagingChannelPolicyPresets(["wechat"]), "hermes");
+    const wechat = requireNetworkPolicy(effective, "wechat_bridge");
+
+    expect(requireEndpoint(wechat, "ilinkai.weixin.qq.com").credential_binding).toEqual({
+      provider: "effective-policy-wechat-bridge",
+    });
+    expect(requireEndpoint(wechat, "ilinkai.wechat.com").credential_binding).toEqual({
+      provider: "effective-policy-wechat-bridge",
+    });
+  });
+
   it("composes Hermes-specific messaging mutation and runtime identity rules", () => {
     const effective = composePresets(["discord", "slack", "wechat"], "hermes");
     const discord = requireNetworkPolicy(effective, "discord");
@@ -521,13 +534,6 @@ describe("effective built-in policy contracts", () => {
         request_body_credential_rewrite: true,
       });
     }
-    expect(requireEndpoint(wechat, "ilinkai.weixin.qq.com").credential_binding).toEqual({
-      provider: "effective-policy-wechat-bridge",
-    });
-    expect(requireEndpoint(wechat, "ilinkai.wechat.com").credential_binding).toEqual({
-      provider: "effective-policy-wechat-bridge",
-    });
-
     const mutationRules = (discord.endpoints ?? [])
       .filter((endpoint) => endpoint.host !== "discord.com")
       .flatMap((endpoint) => rules(endpoint))
