@@ -154,6 +154,28 @@ The hosted installer's equivalent environment-variable form requires both `NEMOC
 Use the installer flag unless an automation boundary cannot pass installer arguments.
 For prerequisites, effects, verification, and recovery, refer to [Choose a Local Inference Server](../inference/local-inference/choose-local-inference-server#install-a-fixed-vllm-profile).
 
+### `--defer-onboarding`
+
+Install Hermes without starting onboarding when NVIDIA hosted inference credentials are not yet available.
+The equivalent environment variable is `NEMOCLAW_DEFER_ONBOARDING=1`.
+The installer defers onboarding only when all these conditions apply:
+
+- `NEMOCLAW_AGENT=hermes` is set.
+- No sandbox is registered.
+- No supported NVIDIA inference credential is available.
+- No local model profile is selected.
+- `NEMOCLAW_PROVIDER` is unset or selects `build`, `cloud`, or `routed`.
+
+If a supported credential or registered sandbox exists, the installer follows the normal onboarding or recovery path.
+When onboarding is deferred, the installer completes the software installation and reports that Hermes onboarding did not run.
+After credentials are available, run `nemohermes onboard` to create the sandbox.
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
+  NEMOCLAW_AGENT=hermes \
+  bash -s -- --defer-onboarding
+```
+
 ## Hosted Installer Exit Statuses
 
 The hosted installer reports how a run stopped through its exit status.
@@ -670,24 +692,25 @@ Credentials are registered with the OpenShell gateway and never persisted to hos
 Refer to [Credential Storage](../security/credential-storage) for details on inspection, rotation, and migration from earlier releases.
 The legacy `$$nemoclaw setup` command is deprecated; use `$$nemoclaw onboard` instead.
 
-On a qualified DGX Spark, the provider menu lists compatible experimental managed llama.cpp profiles in descending YAML priority order.
+On a qualified DGX Spark Arm64 or Linux x86_64 NVIDIA GPU host, the provider menu lists compatible experimental managed llama.cpp profiles in descending YAML priority order.
 During interactive onboarding without an explicit provider request, the menu ignores `NEMOCLAW_LLAMACPP_RECIPE` and marks the unique highest-priority compatible profile as `(recommended)`.
-The recommended profile appears as **Managed llama.cpp: Meta Muse Glimmer 30B on one DGX Spark (recommended)**.
-The NVIDIA Nemotron profile appears next without the recommendation marker.
+On DGX Spark, the recommended profile appears as **Managed llama.cpp: NVIDIA Nemotron 3 Nano 30B-A3B on one DGX Spark (recommended)**.
+On Linux x86_64, the recommended profile identifies one NVIDIA GPU.
+Meta Muse Glimmer remains available on DGX Spark without the recommendation marker.
 The selected menu entry determines the exact recipe even when `NEMOCLAW_LLAMACPP_RECIPE` names another recipe.
 Select the same path non-interactively with the repository-owned recipe:
 
 ```bash
 NEMOCLAW_PROVIDER=install-llama-cpp \
-NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.muse-glimmer-30b.spark-single.v1 \
+NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1 \
 NEMOCLAW_SANDBOX_NAME=my-assistant \
   $$nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
 ```
 
-Use `llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1` to select the lower-priority NVIDIA Nemotron recipe explicitly.
+Use `llama-cpp.muse-glimmer-30b.spark-single.v1` to select the Meta Muse Glimmer recipe explicitly.
 
 Do not set `NEMOCLAW_MODEL` for the managed llama.cpp path.
-For prerequisites, external traffic, verification, and recovery, refer to [Install Managed llama.cpp on DGX Spark](../inference/local-inference/choose-local-inference-server#install-managed-llamacpp-on-dgx-spark).
+For prerequisites, external traffic, verification, and recovery, refer to [Install Managed llama.cpp on an NVIDIA GPU Host](../inference/local-inference/set-up-llama-cpp#install-managed-llamacpp-on-an-nvidia-gpu-host).
 
 After provider selection, the wizard reviews the provider, model, credential state, and sandbox name before registering inference.
 The interactive review offers these actions:
@@ -1918,7 +1941,8 @@ Before it reports success, every completion path verifies the authenticated prox
 <AgentOnly variant="hermes">
 
 For an active Portable Hermes receipt, `recover` starts only the exact receipt-owned Podman container when it is stopped.
-It waits for the existing in-container `nemoclaw-start` supervisor to establish authenticated Hermes health and never launches another detached `nemoclaw-start` process.
+If authenticated health is not ready after that start, recovery launches the receipt-owned `nemoclaw-start` command once and waits for authenticated Hermes health.
+For an already-running container, recovery does not launch the startup command, does not stop the container, and only waits for authenticated health.
 If a container or OpenShell identity check, reconnect check, or health check later fails after recovery started the container, NemoClaw stops that exact container.
 It then requires Podman to report the container as `exited` and OpenShell to report `Error` or `Stopped`.
 If NemoClaw cannot prove that rollback, the command reports both the recovery failure and the rollback failure.
@@ -3223,6 +3247,10 @@ $$nemoclaw my-assistant channels status --channel slack --wait --timeout 180 --j
 | `--wait` | Wait for the selected channel's manifest-defined readiness check (requires `--channel`) |
 | `--timeout <seconds>` | Stop waiting after this number of seconds (default: `180`; requires `--wait`) |
 | `--json` | Emit the status or readiness report as JSON; non-ready terminal and timeout results exit nonzero |
+
+Without `--wait`, a detailed channel status request with `--json` returns the `schemaVersion`, `sandbox`, `channel`, and `report` envelope.
+A paused channel retains that envelope when NemoClaw skips its live probe.
+With `--wait`, the result contains top-level `status` and `readiness` fields, and the detailed channel status envelope is under `status`.
 
 Each live probe is bounded by an in-sandbox `openshell sandbox exec` with a hard timeout.
 The WhatsApp probe returns strict OpenClaw status JSON to the host, where NemoClaw allowlists pairing, liveness, connection-state, and timestamp fields before rendering the report and discards phone-number and free-text error fields.

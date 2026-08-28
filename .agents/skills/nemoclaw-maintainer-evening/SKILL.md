@@ -33,7 +33,7 @@ whether to stop without a tag.
 
 ## 2. Finish One Cumulative Documentation Change
 
-Inspect the current `Docs / Post-Merge Catch-Up` state. The Pi workflow owns documentation catch-up
+Inspect the current `Docs / Author Post-Merge Catch-Up` state. The Pi workflow owns documentation catch-up
 for merged changes. Continue its managed draft PR when one exists. If no managed PR exists and the
 release entry is the only missing change, use one direct documentation-only PR.
 
@@ -44,7 +44,7 @@ documentation writer review. Do not create a separate release-entry PR when the 
 docs PR can carry it.
 
 Merge the documentation PR before selecting the tag candidate. A docs-only merge does not start
-another `Docs / Post-Merge Catch-Up` run. Preserve the merged PR, its final commit, its merge commit,
+another `Docs / Author Post-Merge Catch-Up` run. Preserve the merged PR, its final commit, its merge commit,
 and the final automated refresh coverage commit for the tag session.
 
 If another product merge lands before candidate selection, decide whether it belongs in this

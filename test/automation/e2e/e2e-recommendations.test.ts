@@ -123,6 +123,7 @@ describe("E2E recommendation normalizer", () => {
         "tools/advisors/e2e-text.mts",
         "tools/advisors/json.mts",
         "tools/advisors/risk-plan.mts",
+        "tools/e2e/credential-free-tests.mts",
         "tools/e2e/execution-coverage.mts",
         "tools/e2e/onboard-timeout-contract.mts",
         "tools/e2e/selector-aliases.mts",
