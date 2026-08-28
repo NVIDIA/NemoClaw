@@ -88,11 +88,16 @@ export function endpointlessProviderProfilePath(root: string, profileId: string)
   return path.join(root, "nemoclaw-blueprint", "provider-profiles", `${profileId}.yaml`);
 }
 
+export type EndpointlessProviderProfileFailureReason =
+  | "export-failed"
+  | "import-failed"
+  | "incompatible";
+
 export type EndpointlessProviderProfileResult =
   | { readonly ok: true }
   | {
       readonly ok: false;
-      readonly reason: "export-failed" | "import-failed" | "incompatible";
+      readonly reason: EndpointlessProviderProfileFailureReason;
     };
 
 /** OpenShell provider type registered for every OpenAI-surface inference route. */
@@ -101,6 +106,28 @@ export const OPENAI_GATEWAY_PROVIDER_TYPE = "openai";
 export type OpenAiProviderProfileCheck =
   | { readonly ok: true }
   | { readonly ok: false; readonly messages: readonly string[] };
+
+/** Return the recovery guidance for an endpointless OpenAI profile failure. */
+export function endpointlessProviderProfileFailureMessages(
+  reason: EndpointlessProviderProfileFailureReason,
+): readonly string[] {
+  if (reason === "import-failed") {
+    return [
+      `\n  ✗ OpenShell could not import the checked-in '${OPENAI_GATEWAY_PROVIDER_TYPE}' inference provider profile.`,
+      "    Confirm OpenShell is available and authorized, then retry this command.",
+    ];
+  }
+  if (reason === "export-failed") {
+    return [
+      `\n  ✗ OpenShell provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}' could not be read for validation.`,
+      "    Confirm OpenShell is available, authorized, and the profile is readable, then retry this command.",
+    ];
+  }
+  return [
+    `\n  ✗ OpenShell provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}' already exists but does not match NemoClaw's endpointless inference contract.`,
+    "    Remove the conflicting profile, then retry this command.",
+  ];
+}
 
 /** Import one endpointless profile or validate the exact existing contract. */
 export function ensureEndpointlessProviderProfile(input: {
@@ -181,30 +208,5 @@ export function checkOpenAiInferenceProviderProfile(deps: {
     runOpenshell: deps.runOpenshell,
   });
   if (result.ok) return { ok: true };
-
-  if (result.reason === "import-failed") {
-    return {
-      ok: false,
-      messages: [
-        `\n  ✗ OpenShell could not import the checked-in '${OPENAI_GATEWAY_PROVIDER_TYPE}' inference provider profile.`,
-        "    Confirm OpenShell is available and authorized, then retry this command.",
-      ],
-    };
-  }
-  if (result.reason === "export-failed") {
-    return {
-      ok: false,
-      messages: [
-        `\n  ✗ OpenShell provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}' could not be read for validation.`,
-        "    Confirm OpenShell is available, authorized, and the profile is readable, then retry this command.",
-      ],
-    };
-  }
-  return {
-    ok: false,
-    messages: [
-      `\n  ✗ OpenShell provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}' already exists but does not match NemoClaw's endpointless inference contract.`,
-      "    Remove the conflicting profile, then retry this command.",
-    ],
-  };
+  return { ok: false, messages: endpointlessProviderProfileFailureMessages(result.reason) };
 }

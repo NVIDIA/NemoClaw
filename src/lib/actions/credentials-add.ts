@@ -4,11 +4,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
-import type {
-  OpenShellProviderAdapter,
-  OpenShellProviderError,
-} from "../adapters/openshell/provider-adapter";
-import { OPENAI_GATEWAY_PROVIDER_TYPE } from "../adapters/openshell/provider-profile";
+import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
+import {
+  endpointlessProviderProfileFailureMessages,
+  OPENAI_GATEWAY_PROVIDER_TYPE,
+} from "../adapters/openshell/provider-profile";
 import { selectedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { CLI_NAME } from "../cli/branding";
@@ -118,26 +118,13 @@ async function ensureCredentialProviderProfile(
     timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
   });
   if (profile.ok) return null;
-  return fail(openAiProviderProfileFailureLines(profile.error));
-}
-
-function openAiProviderProfileFailureLines(error: OpenShellProviderError): string[] {
-  if (error.kind === "command" && error.reason === "profile_import_failed") {
-    return [
-      `\n  ✗ OpenShell could not import the checked-in '${OPENAI_GATEWAY_PROVIDER_TYPE}' inference provider profile.`,
-      "    Confirm OpenShell is available and authorized, then retry this command.",
-    ];
-  }
-  if (error.kind === "command" && error.reason === "profile_incompatible") {
-    return [
-      `\n  ✗ OpenShell provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}' already exists but does not match NemoClaw's endpointless inference contract.`,
-      "    Remove the conflicting profile, then retry this command.",
-    ];
-  }
-  return [
-    `\n  ✗ OpenShell provider profile '${OPENAI_GATEWAY_PROVIDER_TYPE}' could not be read for validation.`,
-    "    Confirm OpenShell is available, authorized, and the profile is readable, then retry this command.",
-  ];
+  const reason =
+    profile.error.kind === "command" && profile.error.reason === "profile_import_failed"
+      ? "import-failed"
+      : profile.error.kind === "command" && profile.error.reason === "profile_incompatible"
+        ? "incompatible"
+        : "export-failed";
+  return fail(endpointlessProviderProfileFailureMessages(reason));
 }
 
 export async function runCredentialsAddAction(

@@ -270,6 +270,50 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(result.failureLines).toContain("  provider deletion failed");
   });
 
+  it("reports final attachments after successful detach recovery (#9806)", async () => {
+    const deleteProvider = vi
+      .fn<OpenShellProviderAdapter["deleteProvider"]>()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "attached",
+          message: "provider remains attached",
+          attachedSandboxes: ["alpha"],
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "attached",
+          message: "provider has a new attachment",
+          attachedSandboxes: ["beta"],
+        },
+      });
+    const detachProvider = vi.fn<OpenShellProviderAdapter["detachProvider"]>(async () => ({
+      ok: true,
+      value: { state: "detached" },
+    }));
+    const adapter = providerAdapter({ deleteProvider, detachProvider });
+
+    const result = await runCredentialsResetAction(
+      { provider: "custom-provider", confirmed: true },
+      { providerAdapter: adapter },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.failureLines).toContain(
+      "  'custom-provider' is still attached to sandbox(es): beta.",
+    );
+    expect(result.failureLines).toContain(
+      "  Detach it with 'openshell sandbox provider detach <sandbox> custom-provider'",
+    );
+    expect(result.failureLines).toContain(
+      "  for each, then re-run 'nemoclaw credentials reset custom-provider'.",
+    );
+  });
+
   it.each([
     ["absent", undefined],
     ["empty", []],

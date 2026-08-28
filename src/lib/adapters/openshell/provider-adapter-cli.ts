@@ -255,6 +255,13 @@ export function createCliOpenShellProviderAdapter(
     );
     const result = invoke(args, request, env);
     const error = commandError(result, Object.values(env));
+    if (request.fromExisting && error?.kind === "command") {
+      return failure({
+        kind: "command",
+        reason: error.reason,
+        message: "OpenShell could not create the provider from existing credentials.",
+      });
+    }
     return error ? failure(error) : success({ state: "created" });
   };
 

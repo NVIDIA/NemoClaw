@@ -128,6 +128,32 @@ describe("CLI OpenShell provider adapter", () => {
     expect(JSON.stringify(result)).not.toContain(credentialValue);
   });
 
+  it("does not expose an imported credential value in a provider failure (#9806)", async () => {
+    const storedCredentialValue = "arbitrary-stored-value";
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () => captured(1, "", `provider rejected ${storedCredentialValue}`),
+    });
+
+    const result = await adapter.createProvider({
+      target: selectedOpenShellGateway(),
+      name: "search-prod",
+      type: "tavily",
+      credentials: [],
+      config: [],
+      fromExisting: true,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "failed",
+        message: "OpenShell could not create the provider from existing credentials.",
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain(storedCredentialValue);
+  });
+
   it("imports an existing profile and returns sorted credential keys (#9806)", async () => {
     const run = vi
       .fn()

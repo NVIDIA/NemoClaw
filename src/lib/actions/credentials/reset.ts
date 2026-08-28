@@ -43,6 +43,23 @@ export type CredentialsProviderDeleteWithRecoveryResult = Readonly<{
 
 const KNOWN_CREDENTIAL_ENV_KEY_SET = new Set(KNOWN_CREDENTIAL_ENV_KEYS);
 
+function validatedAttachedSandboxes(error: OpenShellProviderError | undefined): readonly string[] {
+  if (error?.kind !== "command" || error.reason !== "attached") return [];
+  const attachedSandboxes = error.attachedSandboxes ?? [];
+  if (
+    attachedSandboxes.length === 0 ||
+    attachedSandboxes.some(
+      (sandbox) =>
+        sandbox.length === 0 ||
+        sandbox.length > NAME_MAX_LENGTH ||
+        !NAME_VALID_PATTERN.test(sandbox),
+    )
+  ) {
+    return [];
+  }
+  return attachedSandboxes;
+}
+
 function ok(outputLines: readonly string[]): CredentialsResetResult {
   return { exitCode: 0, outputLines, failureLines: [] };
 }
@@ -129,8 +146,14 @@ export function formatResetOutcome(
       "  registered providers, then retry with one of those names.",
     );
   }
-  if (recovery.recoveryFailures.length > 0) {
-    const stuck = recovery.recoveryFailures.map((failure) => failure.sandbox).join(", ");
+  const stuckSandboxes = [
+    ...new Set([
+      ...recovery.recoveryFailures.map((failure) => failure.sandbox),
+      ...validatedAttachedSandboxes(recovery.error),
+    ]),
+  ];
+  if (stuckSandboxes.length > 0) {
+    const stuck = stuckSandboxes.join(", ");
     lines.push(
       "",
       `  '${key}' is still attached to sandbox(es): ${stuck}.`,
@@ -163,16 +186,8 @@ async function deleteProviderWithRecovery(
       : { ok: false, error: result.error, recoveryFailures };
   }
 
-  const attachedSandboxes = result.error.attachedSandboxes ?? [];
-  if (
-    attachedSandboxes.length === 0 ||
-    attachedSandboxes.some(
-      (sandbox) =>
-        sandbox.length === 0 ||
-        sandbox.length > NAME_MAX_LENGTH ||
-        !NAME_VALID_PATTERN.test(sandbox),
-    )
-  ) {
+  const attachedSandboxes = validatedAttachedSandboxes(result.error);
+  if (attachedSandboxes.length === 0) {
     return { ok: false, error: result.error, recoveryFailures };
   }
 
