@@ -5,7 +5,7 @@ import {
   listMessagingCredentialMetadata,
   type MessagingCredentialMetadata,
 } from "../messaging/channels";
-import type { MessagingTokenDef } from "./messaging-prep";
+import { hasConfiguredMessagingCredential, type MessagingTokenDef } from "./messaging-prep";
 import { resolveQrSelectedChannels } from "./messaging-state";
 import type {
   ResolveSandboxCreateIntentInput,
@@ -127,12 +127,12 @@ export function resolveSandboxCreateMessagingProviderRequests(
   messagingTokenDefs: readonly MessagingTokenDef[],
   getMessagingChannelForEnvKey: (envKey: string) => string | null,
 ): SandboxCreateMessagingProviderRequest[] {
-  return messagingTokenDefs.map(({ name, envKey, providerType, token }) => ({
-    name,
-    envKey,
-    ...(providerType ? { providerType } : {}),
-    credentialConfigured: Boolean(token),
-    channel: getMessagingChannelForEnvKey(envKey),
+  return messagingTokenDefs.map((tokenDef) => ({
+    name: tokenDef.name,
+    envKey: tokenDef.envKey,
+    ...(tokenDef.providerType ? { providerType: tokenDef.providerType } : {}),
+    credentialConfigured: hasConfiguredMessagingCredential(tokenDef),
+    channel: getMessagingChannelForEnvKey(tokenDef.envKey),
   }));
 }
 

@@ -97,13 +97,15 @@ export function allMessagingChannelPolicyPresets(channels: string[] | null | und
   return all;
 }
 
-export function pruneInactiveHermesMessagingPolicyPresets(
+// An array means the caller knows the complete enabled-channel set. Remove only
+// repository-owned messaging presets outside that set; null preserves an
+// unknown selection, and a custom preset with the same name keeps user intent.
+export function pruneInactiveMessagingPolicyPresets(
   selectedPresets: string[],
   enabledChannels: string[] | null | undefined,
-  agent: string | null | undefined,
   customPresetNames?: ReadonlySet<string> | null,
 ): string[] {
-  if (agent?.trim().toLowerCase() !== "hermes" || !Array.isArray(enabledChannels)) {
+  if (!Array.isArray(enabledChannels)) {
     return selectedPresets;
   }
 
