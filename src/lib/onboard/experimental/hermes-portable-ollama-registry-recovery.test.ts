@@ -4,7 +4,6 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  capturePortableNetworkAuthority,
   PortableRegistryRecoveryPhaseError,
   PortableRegistryRecoveryRestorationError,
   preparePortableRegistryRecovery,
@@ -13,6 +12,10 @@ import {
 const NETWORK_ID = "6".repeat(64);
 const REGISTRY_ID = "7".repeat(64);
 const FOREIGN_REGISTRY_ID = "8".repeat(64);
+// SHA-256 of the documented canonical network/registry receipt fixture below,
+// computed independently from the production authority capture.
+const EXPECTED_AUTHORITY_SHA256 =
+  "5eca228b8c8674bcacf631f28e5f888b928260876da111e04cfee36ad48b7cff";
 
 function createRegistryHarness(initiallyRunning: boolean) {
   const calls: string[][] = [];
@@ -26,6 +29,7 @@ function createRegistryHarness(initiallyRunning: boolean) {
   let registryIp = initiallyRunning ? "10.87.0.3" : "";
   let registryCopies = 1;
   let registryPresent = true;
+  let networkInterface = "podman9";
   let registryOutput: string | undefined;
   const queuedRegistryOutputs: Array<string | undefined> = [];
   let postStartNetworkFailures = 0;
@@ -60,7 +64,7 @@ function createRegistryHarness(initiallyRunning: boolean) {
                     internal: false,
                     ipv6_enabled: false,
                     dns_enabled: true,
-                    network_interface: "podman9",
+                    network_interface: networkInterface,
                     subnets: [{ subnet: "10.87.0.0/24", gateway: "10.87.0.1" }],
                     labels: {},
                     ipam_options: {},
@@ -126,27 +130,11 @@ function createRegistryHarness(initiallyRunning: boolean) {
       }
     }),
   };
-  const expectedAuthoritySha256 = (() => {
-    const priorRunning = running;
-    const priorStatus = status;
-    const priorIp = registryIp;
-    running = true;
-    status = "running";
-    registryIp = "10.87.0.3";
-    const value = capturePortableNetworkAuthority(engine as never).authoritySha256;
-    running = priorRunning;
-    status = priorStatus;
-    registryIp = priorIp;
-    calls.length = 0;
-    timeouts.length = 0;
-    engine.capture.mockClear();
-    return value;
-  })();
   return {
     calls,
     timeouts,
     engine,
-    expectedAuthoritySha256,
+    expectedAuthoritySha256: EXPECTED_AUTHORITY_SHA256,
     isRunning: () => running,
     setCopies: (value: number) => {
       registryCopies = value;
@@ -162,6 +150,9 @@ function createRegistryHarness(initiallyRunning: boolean) {
     },
     setNetworkId: (value: string) => {
       registryNetworkId = value;
+    },
+    setNetworkInterface: (value: string) => {
+      networkInterface = value;
     },
     setIp: (value: string) => {
       registryIp = value;
@@ -296,6 +287,23 @@ describe("Hermes Portable registry recovery", () => {
     expect(prepared.started).toBe(false);
     prepared.assertCurrent();
     prepared.release();
+    expect(harness.calls.some((args) => args[0] === "start" || args[0] === "stop")).toBe(false);
+  });
+
+  it("rejects canonical authority drift against the independently fixed receipt digest", () => {
+    const harness = createRegistryHarness(true);
+    expect(harness.expectedAuthoritySha256).toBe(EXPECTED_AUTHORITY_SHA256);
+    harness.setNetworkInterface("podman10");
+
+    const error = captureRegistryPhase(() =>
+      preparePortableRegistryRecovery(
+        harness.engine as never,
+        harness.expectedAuthoritySha256,
+        vi.fn(),
+        vi.fn(),
+      ),
+    );
+    expect(error.phase).toBe("POSTCONDITION");
     expect(harness.calls.some((args) => args[0] === "start" || args[0] === "stop")).toBe(false);
   });
 
