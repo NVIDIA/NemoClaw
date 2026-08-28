@@ -105,6 +105,55 @@ type StaleDockerOrphanCleanupDeps = {
   forceRemove?: (containerId: string) => { status?: number | null };
 };
 
+/** Remove the remaining members of one immutable, prequalified Docker container set. */
+export function removeExactOpenShellDockerSandboxContainers(
+  sandboxName: string,
+  expectedContainerIds: readonly string[],
+  log: (message: string) => void,
+  deps: StaleDockerOrphanCleanupDeps = {},
+): void {
+  const expected = new Set(expectedContainerIds);
+  if (
+    expected.size !== expectedContainerIds.length ||
+    expectedContainerIds.some((containerId) => !/^[0-9a-f]{12,64}$/iu.test(containerId))
+  ) {
+    throw new Error("exact Docker cleanup contains an invalid or duplicate container identity");
+  }
+
+  const queryContainers = deps.queryContainers ?? queryOpenShellDockerSandboxContainers;
+  const initial = queryContainers(sandboxName);
+  if (!initial.ok) {
+    throw new Error(`could not inspect the exact Docker cleanup target: ${initial.error}`);
+  }
+  const unexpected = initial.ids.filter((containerId) => !expected.has(containerId));
+  if (unexpected.length > 0) {
+    throw new Error(
+      `found labeled Docker container(s) outside the retained identity set: ${unexpected.join(", ")}; refusing replacement cleanup`,
+    );
+  }
+
+  const remaining = new Set(initial.ids);
+  for (const containerId of expectedContainerIds) {
+    if (!remaining.has(containerId)) continue;
+    const removal = deps.forceRemove
+      ? deps.forceRemove(containerId)
+      : dockerRun(["rm", "-f", containerId], {
+          ignoreError: true,
+          suppressOutput: true,
+          timeout: STALE_DOCKER_ORPHAN_TIMEOUT_MS,
+        });
+    if (Number(removal.status ?? 1) !== 0) {
+      throw new Error(`could not remove exact Docker container '${containerId}'`);
+    }
+    log(`Removed exact Docker container '${containerId}' after OpenShell sandbox deletion`);
+  }
+
+  const confirmed = queryContainers(sandboxName);
+  if (!confirmed.ok || confirmed.ids.length !== 0) {
+    throw new Error("could not confirm exact Docker container removal");
+  }
+}
+
 /** Remove only the Docker container whose immutable ID passed the caller's authority check. */
 export function removeExactOpenShellDockerSandboxContainer(
   sandboxName: string,
@@ -112,34 +161,7 @@ export function removeExactOpenShellDockerSandboxContainer(
   log: (message: string) => void,
   deps: StaleDockerOrphanCleanupDeps = {},
 ): void {
-  const queryContainers = deps.queryContainers ?? queryOpenShellDockerSandboxContainers;
-  const initial = queryContainers(sandboxName);
-  if (!initial.ok) {
-    throw new Error(`could not inspect the exact Docker cleanup target: ${initial.error}`);
-  }
-  if (initial.ids.length === 0) return;
-  if (initial.ids.length !== 1 || initial.ids[0] !== expectedContainerId) {
-    throw new Error(
-      `expected exactly labeled Docker container '${expectedContainerId}', found ` +
-        `${initial.ids.length === 0 ? "none" : initial.ids.join(", ")}; refusing replacement cleanup`,
-    );
-  }
-
-  const removal = deps.forceRemove
-    ? deps.forceRemove(expectedContainerId)
-    : dockerRun(["rm", "-f", expectedContainerId], {
-        ignoreError: true,
-        suppressOutput: true,
-        timeout: STALE_DOCKER_ORPHAN_TIMEOUT_MS,
-      });
-  if (Number(removal.status ?? 1) !== 0) {
-    throw new Error(`could not remove exact Docker container '${expectedContainerId}'`);
-  }
-  const confirmed = queryContainers(sandboxName);
-  if (!confirmed.ok || confirmed.ids.length !== 0) {
-    throw new Error("could not confirm exact Docker container removal");
-  }
-  log(`Removed exact Docker container '${expectedContainerId}' after OpenShell sandbox deletion`);
+  removeExactOpenShellDockerSandboxContainers(sandboxName, [expectedContainerId], log, deps);
 }
 
 /**

@@ -34,7 +34,7 @@ describe("createSandboxCancelRollback", () => {
     expect(guidance).toContain("Shared inference providers are gateway configuration");
     expect(guidance).toContain("not sandbox cleanup targets");
     expect(guidance).toContain("sandbox-scoped resources whose ownership is confirmed");
-    expect(guidance).toContain("no supported operation to clear this recovery record");
+    expect(guidance).toContain("nemoclaw new-sb destroy");
     expect(guidance).toContain("credential environment name alone does not prove exposure");
     expect(guidance).toContain("rotate a credential only when identity-bound inspection proves");
     expect(guidance).not.toContain("rotate any credential");

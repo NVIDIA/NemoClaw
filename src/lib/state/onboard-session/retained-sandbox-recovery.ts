@@ -4,6 +4,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import {
@@ -545,4 +546,25 @@ export function recordRetainedSandboxRecovery(
     throw new Error("Retained sandbox recovery record did not survive durable readback.");
   }
   return reread;
+}
+
+/** Retire only the unchanged record whose external resources were verified absent. */
+export function resolveRetainedSandboxRecovery(
+  filePath: string,
+  expected: RetainedSandboxRecoveryRecord,
+): boolean {
+  const current = loadState(filePath);
+  const recorded = current.unresolved.find((candidate) => candidate.recordId === expected.recordId);
+  if (!recorded) return false;
+  if (!isDeepStrictEqual(recorded, expected)) {
+    throw new Error("Retained sandbox recovery authority changed before cleanup completed.");
+  }
+  writeStateFile(filePath, {
+    ...current,
+    unresolved: current.unresolved.filter((candidate) => candidate.recordId !== expected.recordId),
+  });
+  if (loadState(filePath).unresolved.some((candidate) => candidate.recordId === expected.recordId)) {
+    throw new Error("Retained sandbox recovery record remained after verified cleanup.");
+  }
+  return true;
 }

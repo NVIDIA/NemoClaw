@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   queryOpenShellDockerSandboxRuntimeSnapshot,
   removeExactOpenShellDockerSandboxContainer,
+  removeExactOpenShellDockerSandboxContainers,
 } from "./openshell-docker-sandbox-containers";
 
 const IMAGE_ID = `sha256:${"a".repeat(64)}`;
@@ -30,6 +31,72 @@ describe("removeExactOpenShellDockerSandboxContainer", () => {
     ).toThrow("could not confirm exact Docker container removal");
 
     expect(forceRemove).toHaveBeenCalledWith(expectedContainerId);
+  });
+
+  it("removes every remaining container from one exact failed attempt (#10547)", () => {
+    const expectedContainerIds = ["a".repeat(64), "b".repeat(64)];
+    let currentContainerIds = [...expectedContainerIds];
+    const queryContainers = vi.fn(() => ({ ok: true as const, ids: [...currentContainerIds] }));
+    const forceRemove = vi.fn((containerId: string) => {
+      currentContainerIds = currentContainerIds.filter((candidate) => candidate !== containerId);
+      return { status: 0 };
+    });
+
+    removeExactOpenShellDockerSandboxContainers(
+      "alpha",
+      expectedContainerIds,
+      vi.fn(),
+      { queryContainers, forceRemove },
+    );
+
+    expect(forceRemove.mock.calls.map(([containerId]) => containerId)).toEqual(
+      expectedContainerIds,
+    );
+    expect(currentContainerIds).toEqual([]);
+  });
+
+  it("continues cleanup when an earlier exact container is already absent (#10547)", () => {
+    const alreadyRemovedId = "a".repeat(64);
+    const remainingId = "b".repeat(64);
+    let currentContainerIds = [remainingId];
+    const queryContainers = vi.fn(() => ({ ok: true as const, ids: [...currentContainerIds] }));
+    const forceRemove = vi.fn((containerId: string) => {
+      currentContainerIds = currentContainerIds.filter((candidate) => candidate !== containerId);
+      return { status: 0 };
+    });
+
+    removeExactOpenShellDockerSandboxContainers(
+      "alpha",
+      [alreadyRemovedId, remainingId],
+      vi.fn(),
+      { queryContainers, forceRemove },
+    );
+
+    expect(forceRemove).toHaveBeenCalledExactlyOnceWith(remainingId);
+    expect(currentContainerIds).toEqual([]);
+  });
+
+  it("does not remove a container outside the retained identity set (#10547)", () => {
+    const expectedContainerId = "a".repeat(64);
+    const replacementContainerId = "b".repeat(64);
+    const forceRemove = vi.fn(() => ({ status: 0 }));
+
+    expect(() =>
+      removeExactOpenShellDockerSandboxContainers(
+        "alpha",
+        [expectedContainerId],
+        vi.fn(),
+        {
+          queryContainers: vi.fn(() => ({
+            ok: true as const,
+            ids: [replacementContainerId],
+          })),
+          forceRemove,
+        },
+      ),
+    ).toThrow("refusing replacement cleanup");
+
+    expect(forceRemove).not.toHaveBeenCalled();
   });
 });
 

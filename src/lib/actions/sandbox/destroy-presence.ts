@@ -7,7 +7,9 @@ import {
   OPENSHELL_SANDBOX_ID_LABEL,
   OPENSHELL_SANDBOX_NAME_LABEL,
   removeExactOpenShellDockerSandboxContainer,
+  removeExactOpenShellDockerSandboxContainers,
 } from "../../onboard/openshell-docker-sandbox-containers";
+import { fingerprintOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
 import { sanitizeReadinessText } from "../../readiness/sanitize";
 import {
   type DockerSandboxIdentityObservation,
@@ -35,6 +37,7 @@ export type SandboxNameLabeledContainer = {
 /** Verdict for whether destroy resolved one complete managed container identity. */
 export type DestroyContainerIdentityVerdict =
   | { status: "clear"; identity: SandboxNameLabeledContainer | null }
+  | { status: "recovery"; identities: SandboxNameLabeledContainer[] }
   | { status: "probe-failed"; detail: string }
   | {
       status: "ambiguous";
@@ -47,14 +50,27 @@ export type DestroyContainerIdentityVerdict =
 export type AssertUnambiguousDestroyIdentityDeps = {
   providerId: string;
   redact: (detail: string) => string;
+  retainedSandboxIdentityFingerprint?: string;
   cliName?: string;
-  classify?: (sandboxName: string) => DestroyContainerIdentityVerdict;
+  classify?: (
+    sandboxName: string,
+    retainedSandboxIdentityFingerprint?: string,
+  ) => DestroyContainerIdentityVerdict;
   error?: (message: string) => void;
 };
 
-export type DestroyContainerIdentityProof = {
-  identity: SandboxNameLabeledContainer | null | undefined;
-};
+export type DestroyContainerIdentityProof =
+  | { identity: SandboxNameLabeledContainer | null | undefined }
+  | { identities: readonly SandboxNameLabeledContainer[] };
+
+/** Normalize the legacy single-container proof and recovery set proof. */
+export function getDestroyContainerIdentities(
+  proof: DestroyContainerIdentityProof,
+): readonly SandboxNameLabeledContainer[] | undefined {
+  if ("identities" in proof) return proof.identities;
+  if (proof.identity === undefined) return undefined;
+  return proof.identity === null ? [] : [proof.identity];
+}
 
 function observeDockerSandboxIdentities(sandboxName: string): DockerSandboxIdentityObservation {
   return inspectDockerSandboxIdentities(`${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`, {
@@ -80,6 +96,19 @@ export function removeExactDestroyContainerIdentity(
   removeExactOpenShellDockerSandboxContainer(sandboxName, expectedIdentity.id, log);
 }
 
+/** Retire the exact container set qualified from one retained recovery fingerprint. */
+export function removeExactDestroyContainerIdentities(
+  sandboxName: string,
+  expectedIdentities: readonly SandboxNameLabeledContainer[],
+  log: (message: string) => void,
+): void {
+  removeExactOpenShellDockerSandboxContainers(
+    sandboxName,
+    expectedIdentities.map((identity) => identity.id),
+    log,
+  );
+}
+
 /**
  * Classify every Docker container carrying `openshell.ai/sandbox-name=<name>`.
  * The query intentionally does not filter by managed-by so a foreign container
@@ -88,6 +117,7 @@ export function removeExactDestroyContainerIdentity(
 export function classifyDestroyContainerIdentity(
   sandboxName: string,
   observation: DockerSandboxIdentityObservation,
+  retainedSandboxIdentityFingerprint?: string,
 ): DestroyContainerIdentityVerdict {
   if (observation.status === "probe-failed") {
     return {
@@ -123,6 +153,30 @@ export function classifyDestroyContainerIdentity(
       foreign,
       managed,
     };
+  }
+  if (managed.length > 0 && retainedSandboxIdentityFingerprint !== undefined) {
+    const identityMatches = managed.every(
+      (row) =>
+        row.workspace.length > 0 &&
+        row.sandboxId.length > 0 &&
+        fingerprintOpenShellSandboxId(row.sandboxId) === retainedSandboxIdentityFingerprint,
+    );
+    const oneWorkspace = new Set(managed.map((row) => row.workspace)).size === 1;
+    if (!identityMatches || !oneWorkspace) {
+      return {
+        status: "ambiguous",
+        sandboxName,
+        reason: "one or more managed containers do not match the retained sandbox identity",
+        foreign,
+        managed,
+      };
+    }
+    if (managed.length > 1) {
+      return {
+        status: "recovery",
+        identities: [...managed].sort((left, right) => left.id.localeCompare(right.id)),
+      };
+    }
   }
   if (managed.length !== 1) {
     return {
@@ -208,12 +262,18 @@ export function assertUnambiguousDestroyContainerIdentity(
 ): DestroyContainerIdentityProof | false {
   const classify =
     deps.classify ??
-    ((name: string) =>
-      classifyDestroyContainerIdentity(name, observeDestroyContainerIdentity(name)));
+    ((name: string, retainedSandboxIdentityFingerprint?: string) =>
+      classifyDestroyContainerIdentity(
+        name,
+        observeDestroyContainerIdentity(name),
+        retainedSandboxIdentityFingerprint,
+      ));
   const error = deps.error ?? ((message: string) => console.error(`  ${message}`));
   if (deps.providerId !== "docker") return { identity: undefined };
 
-  const verdict = classify(sandboxName);
+  const verdict = deps.retainedSandboxIdentityFingerprint
+    ? classify(sandboxName, deps.retainedSandboxIdentityFingerprint)
+    : classify(sandboxName);
   if (verdict.status === "ambiguous") {
     for (const line of formatAmbiguousDestroyIdentity(verdict, deps.cliName ?? "nemoclaw")) {
       error(line);
@@ -228,7 +288,9 @@ export function assertUnambiguousDestroyContainerIdentity(
     );
     return false;
   }
-  return { identity: verdict.identity };
+  return verdict.status === "recovery"
+    ? { identities: verdict.identities }
+    : { identity: verdict.identity };
 }
 
 /** Compare provider-owned identity proofs across two destroy checkpoints. */
@@ -236,12 +298,18 @@ export function isSameDestroyContainerIdentityProof(
   expected: DestroyContainerIdentityProof,
   actual: DestroyContainerIdentityProof,
 ): boolean {
-  if (expected.identity === undefined || actual.identity === undefined) {
-    return expected.identity === actual.identity;
+  const expectedIdentities = getDestroyContainerIdentities(expected);
+  const actualIdentities = getDestroyContainerIdentities(actual);
+  if (expectedIdentities === undefined || actualIdentities === undefined) {
+    return expectedIdentities === actualIdentities;
   }
-  return isSameDestroyContainerIdentity(expected.identity, {
-    status: "clear",
-    identity: actual.identity,
+  if (expectedIdentities.length !== actualIdentities.length) return false;
+  return expectedIdentities.every((identity, index) => {
+    const candidate = actualIdentities[index];
+    return candidate !== undefined && isSameDestroyContainerIdentity(identity, {
+      status: "clear",
+      identity: candidate,
+    });
   });
 }
 

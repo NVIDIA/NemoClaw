@@ -10,6 +10,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import type { SandboxPolicyAuthority } from "../adapters/openshell/policy-authority";
 import { isErrnoException } from "../core/errno";
@@ -65,6 +66,7 @@ import {
   listRetainedSandboxRecoveryRecords as readRetainedSandboxRecoveryRecords,
   parseNemoClawPolicyCreationReceipt,
   recordRetainedSandboxRecovery as writeRetainedSandboxRecovery,
+  resolveRetainedSandboxRecovery as retireRetainedSandboxRecovery,
   retainedSandboxRecoveryFile,
   type RecordRetainedSandboxRecoveryInput,
   type RetainedSandboxRecoveryRecord,
@@ -2085,6 +2087,44 @@ export function recordRetainedSandboxRecovery(
   return withOwnedOnboardLock("nemoclaw retained sandbox recovery", () =>
     writeRetainedSandboxRecovery(RETAINED_SANDBOX_RECOVERY_FILE, input),
   );
+}
+
+function recoveryRecordMatchesSession(
+  record: RetainedSandboxRecoveryRecord,
+  recovery: SessionCancellationRecovery,
+): boolean {
+  return (
+    record.sandboxName === recovery.sandboxName &&
+    record.sandboxIdentityFingerprint === recovery.sandboxIdentityFingerprint &&
+    record.gatewayName === recovery.gatewayName &&
+    record.gatewayPort === recovery.gatewayPort &&
+    record.lifecycleGeneration === recovery.lifecycleGeneration &&
+    record.createAttemptNonce === recovery.createAttemptNonce
+  );
+}
+
+/** Clear one recovery-only session after destroy verifies the retained resources absent. */
+export function resolveRetainedSandboxRecovery(record: RetainedSandboxRecoveryRecord): boolean {
+  return withOwnedOnboardLock("nemoclaw retained sandbox recovery completion", () => {
+    const recorded = readRetainedSandboxRecoveryRecords(RETAINED_SANDBOX_RECOVERY_FILE).find(
+      (candidate) => candidate.recordId === record.recordId,
+    );
+    if (recorded && !isDeepStrictEqual(recorded, record)) {
+      throw new Error("Retained sandbox recovery authority changed before cleanup completed.");
+    }
+    const current = loadSession();
+    if (
+      current?.cancellationRecovery &&
+      recoveryRecordMatchesSession(record, current.cancellationRecovery)
+    ) {
+      current.status = "failed";
+      current.resumable = false;
+      current.sandboxName = null;
+      current.cancellationRecovery = null;
+      saveSession(current);
+    }
+    return retireRetainedSandboxRecovery(RETAINED_SANDBOX_RECOVERY_FILE, record);
+  });
 }
 
 export function markCancellationRecovery(

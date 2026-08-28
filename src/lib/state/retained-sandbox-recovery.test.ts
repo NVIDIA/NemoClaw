@@ -245,9 +245,8 @@ describe("retained sandbox recovery state", () => {
     ).toEqual([]);
   });
 
-  it("does not expose a caller-supplied recovery resolution path (#9833)", async () => {
+  it("retires only the exact retained recovery record after verified cleanup (#10547)", async () => {
     const recovery = await import("./onboard-session");
-    const recoveryStore = await import("./onboard-session/retained-sandbox-recovery");
     const fingerprint = "b".repeat(64);
     const recorded = recovery.recordRetainedSandboxRecovery({
       sandboxName: "retained-sb",
@@ -260,24 +259,55 @@ describe("retained sandbox recovery state", () => {
       resources: evidence,
       reason: "cancelled_after_sandbox_creation",
     });
-    const unsupportedClear = (recovery as unknown as Record<string, unknown>)[
-      "resolveRetainedSandboxRecovery"
-    ];
-    (unsupportedClear as undefined | ((input: Record<string, unknown>) => unknown))?.({
-      recordId: recorded.recordId,
-      receiptId: "c".repeat(64),
-      sandboxName: recorded.sandboxName,
-      sandboxIdentityFingerprint: fingerprint,
-      gatewayName: recorded.gatewayName,
-      gatewayPort: recorded.gatewayPort,
-      outcome: "removed_verified_identity",
-    });
 
-    expect(unsupportedClear).toBeUndefined();
-    expect(
-      (recoveryStore as unknown as Record<string, unknown>)["resolveRetainedSandboxRecovery"],
-    ).toBeUndefined();
+    expect(() =>
+      recovery.resolveRetainedSandboxRecovery({
+        ...recorded,
+        sandboxIdentityFingerprint: "d".repeat(64),
+      }),
+    ).toThrow(/changed before cleanup completed/u);
     expect(recovery.listRetainedSandboxRecoveryRecords()).toEqual([recorded]);
+
+    expect(recovery.resolveRetainedSandboxRecovery(recorded)).toBe(true);
+    expect(recovery.resolveRetainedSandboxRecovery(recorded)).toBe(false);
+    expect(recovery.listRetainedSandboxRecoveryRecords()).toEqual([]);
   });
 
+  it("releases the matching recovery-only onboarding session after cleanup (#10547)", async () => {
+    const recovery = await import("./onboard-session");
+    recovery.markRetainedSandboxRecovery(
+      "retained-sb",
+      "Sandbox creation failed after identity verification.",
+      "b".repeat(64),
+      {
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        lifecycleGeneration: "generation-1",
+        verifiedEffectivePolicyIdentity: null,
+        ...recoveryAuthority,
+      },
+    );
+    const [recorded] = recovery.listRetainedSandboxRecoveryRecords();
+
+    expect(() =>
+      recovery.resolveRetainedSandboxRecovery({
+        ...recorded!,
+        reason: "cancelled_after_sandbox_creation",
+      }),
+    ).toThrow(/changed before cleanup completed/u);
+    expect(recovery.loadSession()).toMatchObject({
+      status: "recovery_required",
+      sandboxName: "retained-sb",
+    });
+
+    expect(recovery.resolveRetainedSandboxRecovery(recorded!)).toBe(true);
+
+    expect(recovery.loadSession()).toMatchObject({
+      status: "failed",
+      resumable: false,
+      sandboxName: null,
+      cancellationRecovery: null,
+    });
+    expect(recovery.listRetainedSandboxRecoveryRecords()).toEqual([]);
+  });
 });

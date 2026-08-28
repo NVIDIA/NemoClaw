@@ -8,6 +8,7 @@ import type { SandboxDestroyExecutionResult } from "../../src/lib/actions/sandbo
 import type { PreparedManagedLlamaCppRuntimeCleanup } from "../../src/lib/inference/local-model-profile/cleanup";
 import type { ManagedHermesStateVolumeCleanupResult } from "../../src/lib/onboard/managed-workload/hermes-state-volume";
 import type { Session } from "../../src/lib/state/onboard-session";
+import type { RetainedSandboxRecoveryRecord } from "../../src/lib/state/onboard-session/retained-sandbox-recovery";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../src/lib/state/registry";
 
 type DestroySandbox = (typeof import("../../src/lib/actions/sandbox/destroy"))["destroySandbox"];
@@ -44,6 +45,7 @@ export type DestroyHarness = {
   promptSpy: MockInstance;
   removeManagedHermesStateVolumeSpy: MockInstance;
   removeSandboxSpy: MockInstance;
+  resolveRetainedSandboxRecoverySpy: MockInstance;
   retirePortableLifecycleReceiptSpy: MockInstance;
   portableDestroyRevalidateSpy: MockInstance;
   portableDestroyVerifyAbsentSpy: MockInstance;
@@ -105,7 +107,9 @@ type DestroyHarnessOptions = {
   promptResponses?: string[];
   provider?: string;
   registryEntryPresent?: boolean;
+  registryEntryOverrides?: Partial<SandboxEntry>;
   registeredSandboxCount?: number;
+  retainedRecoveryRecords?: RetainedSandboxRecoveryRecord[];
   replaceSessionAfterRegistryRemoval?: boolean;
   removeSandboxResult?: boolean;
   restoreMcpError?: string;
@@ -319,6 +323,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
                 },
               }
             : {}),
+          ...options.registryEntryOverrides,
         },
   );
   let registeredSandboxCount = options.registeredSandboxCount ?? 0;
@@ -370,6 +375,12 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   });
   vi.spyOn(modelRouterProcess, "isRouterHealthy").mockResolvedValue(false);
   vi.spyOn(onboardSession, "loadSession").mockImplementation(() => ({ ...sessionState }));
+  vi.spyOn(onboardSession, "listRetainedSandboxRecoveryRecords").mockReturnValue(
+    options.retainedRecoveryRecords ?? [],
+  );
+  const resolveRetainedSandboxRecoverySpy = vi
+    .spyOn(onboardSession, "resolveRetainedSandboxRecovery")
+    .mockReturnValue(true);
   vi.spyOn(onboardSession, "acquireOnboardLock").mockImplementation(() =>
     sessionLockBusy
       ? {
@@ -628,6 +639,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     promptSpy,
     removeManagedHermesStateVolumeSpy,
     removeSandboxSpy,
+    resolveRetainedSandboxRecoverySpy,
     retirePortableLifecycleReceiptSpy,
     revokeHttpsPinRuntimeAdapterRouteSpy,
     restoreMcpBridgesAfterDestroyAbortSpy,

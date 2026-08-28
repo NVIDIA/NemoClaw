@@ -38,6 +38,7 @@ import { validateName } from "../../runner";
 import { killTimer as defaultKillShieldsTimer } from "../../shields/timer-control";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import * as onboardSession from "../../state/onboard-session";
+import type { RetainedSandboxRecoveryRecord } from "../../state/onboard-session/retained-sandbox-recovery";
 import { resolveNemoclawStateDir } from "../../state/paths";
 import * as registry from "../../state/registry";
 import {
@@ -55,6 +56,7 @@ import { shouldCleanupGatewayAfterConfirmedFinalDestroy } from "./destroy-gatewa
 import {
   assertUnambiguousDestroyContainerIdentity,
   classifyDestroySandboxPresence,
+  getDestroyContainerIdentities,
   isSameDestroyContainerIdentityProof,
 } from "./destroy-presence";
 import {
@@ -82,6 +84,38 @@ type RemoveSandboxRegistryEntryWithReceiptDeps = {
   removeImage?: (sandboxName: string) => RuntimeProviderWorkloadCleanupResult | void;
   removeSandboxWithReceipt?: typeof registry.removeSandboxWithReceipt;
 };
+
+function selectRetainedSandboxRecoveryAuthority(
+  sandboxName: string,
+  sandbox: registry.SandboxEntry | null,
+  records: readonly RetainedSandboxRecoveryRecord[],
+): RetainedSandboxRecoveryRecord | null {
+  const matchesRegistryAuthority = (record: RetainedSandboxRecoveryRecord): boolean => {
+    if (record.sandboxIdentityFingerprint === null) return false;
+    if (!sandbox) return true;
+    const pending = sandbox.pendingPolicyVerification;
+    if (pending) {
+      return (
+        record.gatewayName === pending.gatewayName &&
+        record.gatewayPort === pending.gatewayPort &&
+        record.lifecycleGeneration === pending.lifecycleGeneration &&
+        record.sandboxIdentityFingerprint === pending.sandboxIdentityFingerprint &&
+        (pending.createAttemptNonce === undefined ||
+          record.createAttemptNonce === pending.createAttemptNonce)
+      );
+    }
+    return (
+      record.gatewayName === sandbox.gatewayName &&
+      record.gatewayPort === sandbox.gatewayPort &&
+      record.lifecycleGeneration === sandbox.lifecycleGeneration &&
+      record.sandboxIdentityFingerprint === sandbox.lifecycleLiveIdentityFingerprint
+    );
+  };
+  const matching = records.filter(
+    (record) => record.sandboxName === sandboxName && matchesRegistryAuthority(record),
+  );
+  return matching.length === 1 ? matching[0]! : null;
+}
 
 export type RemoveSandboxRegistryEntryOutcome =
   | {
@@ -508,6 +542,14 @@ async function destroySandboxUnlocked(
   const normalized = normalizeDestroySandboxOptions(options);
   if (!(await confirmSandboxDestroy(sandboxName, normalized))) return;
   const destroySession = onboardSession.loadSession();
+  const registeredSandbox = registry.getSandbox(sandboxName);
+  const retainedRecoveryAuthority = selectRetainedSandboxRecoveryAuthority(
+    sandboxName,
+    registeredSandbox,
+    onboardSession.listRetainedSandboxRecoveryRecords(),
+  );
+  const retainedSandboxIdentityFingerprint =
+    retainedRecoveryAuthority?.sandboxIdentityFingerprint ?? undefined;
   let portableContainerAuthority: ReturnType<typeof preparePortableDemoSandboxDestroyAuthority>;
   try {
     portableContainerAuthority = preparePortableDemoSandboxDestroyAuthority(sandboxName, () => {
@@ -533,13 +575,18 @@ async function destroySandboxUnlocked(
         registry.getSandbox(sandboxName)?.openshellDriver,
       ),
       redact: redactDestroyError,
+      ...(retainedSandboxIdentityFingerprint
+        ? { retainedSandboxIdentityFingerprint }
+        : {}),
     });
   const initialIdentity = portableContainerAuthority ? null : inspectContainerIdentity();
   if (initialIdentity === false) {
     requestSandboxDestroyExit(1);
   }
+  const initialContainerIdentities = initialIdentity
+    ? getDestroyContainerIdentities(initialIdentity)
+    : undefined;
 
-  const registeredSandbox = registry.getSandbox(sandboxName);
   let preparedManagedLlamaCppCleanup: ReturnType<
     typeof prepareManagedLlamaCppRuntimeCleanupForSandbox
   > = null;
@@ -594,6 +641,17 @@ async function destroySandboxUnlocked(
   let destroyPreflight: ReturnType<typeof prepareSandboxDestroy>;
   destroyPreflight = abortPreparedCleanupOnError(() => prepareSandboxDestroy(sandboxName));
   const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } = destroyPreflight;
+  if (
+    retainedRecoveryAuthority &&
+    initialContainerIdentities?.length === 0 &&
+    !sandboxConfirmedAbsent
+  ) {
+    console.error(
+      `  Refusing to destroy retained sandbox '${sandboxName}': OpenShell still reports it present, but Docker exposed no container with the retained immutable identity. No sandbox resources were removed.`,
+    );
+    preparedManagedLlamaCppCleanup?.abort();
+    requestSandboxDestroyExit(1);
+  }
   // Recheck identity after pre-delete qualification and recoverable journal
   // publication reconciliation, before any sandbox runtime mutation.
   if (portableContainerAuthority) {
@@ -635,7 +693,10 @@ async function destroySandboxUnlocked(
       sandbox,
       sandboxConfirmedAbsent,
       sandboxName,
-      expectedContainerIdentity: initialIdentity?.identity,
+      expectedContainerIdentities: initialContainerIdentities,
+      ...(retainedSandboxIdentityFingerprint
+        ? { expectedContainerIdentityFingerprint: retainedSandboxIdentityFingerprint }
+        : {}),
       ...(portableContainerAuthority ? { portableContainerAuthority } : {}),
       stopInferenceResources: () => stopSandboxInferenceResources(sandboxName, sandbox),
     });
@@ -898,7 +959,11 @@ async function destroySandboxUnlocked(
       );
     }
   }
-  if (!routedSessionCleanupHandled && destroySession?.sandboxName === sandboxName) {
+  if (
+    !retainedRecoveryAuthority &&
+    !routedSessionCleanupHandled &&
+    destroySession?.sandboxName === sandboxName
+  ) {
     const cleanupResult = onboardSession.compareAndSwapSession(
       (current) =>
         current.sessionId === destroySession.sessionId &&
@@ -917,6 +982,20 @@ async function destroySandboxUnlocked(
       defaultDestroyWarn(
         "Another onboarding run owns the session lock. Keeping its replacement session unchanged.",
       );
+    }
+  }
+  if (
+    deleteSucceededOrAlreadyGone &&
+    retainedRecoveryAuthority
+  ) {
+    try {
+      onboardSession.resolveRetainedSandboxRecovery(retainedRecoveryAuthority);
+    } catch (error) {
+      console.error(
+        `  Sandbox '${sandboxName}' resources are gone, but NemoClaw could not clear its retained recovery record: ${redactDestroyError(error)}`,
+      );
+      console.error(`  Re-run '${CLI_NAME} ${sandboxName} destroy --yes' to finish local cleanup.`);
+      requestSandboxDestroyExit(1);
     }
   }
   if (

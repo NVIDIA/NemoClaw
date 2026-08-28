@@ -982,7 +982,7 @@ if (${JSON.stringify(
         assert.match(result.stderr, /Shared inference providers are gateway configuration/u);
         assert.match(result.stderr, /not sandbox cleanup targets/u);
         assert.match(result.stderr, /sandbox-scoped resources whose ownership is confirmed/u);
-        assert.match(result.stderr, /no supported operation to clear this recovery record/u);
+        assert.match(result.stderr, /nemoclaw my-assistant destroy/u);
         assert.match(result.stderr, /credential environment name alone does not prove exposure/u);
         assert.match(
           result.stderr,
