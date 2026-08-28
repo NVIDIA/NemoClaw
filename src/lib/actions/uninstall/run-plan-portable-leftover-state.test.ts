@@ -259,20 +259,23 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     },
   );
 
-  it("removes abandoned portable configuration after completed ordinary onboarding (#10545)", async () => {
-    const host = scope("nemoclaw-uninstall-completed-openclaw-");
-    completedOpenClawAuthority(host, "default");
-    const directory = abandonedPortableConfig(host, 0o700);
-    restoredDirectories.pop();
-    host.rmSync.mockImplementation((target, options) => {
-      const resolvedTarget = path.resolve(String(target));
-      expect(resolvedTarget.startsWith(`${host.homeDir}${path.sep}`)).toBe(true);
-      fs.rmSync(resolvedTarget, options);
-    });
+  it.each([0o700, 0o755, 0o600])(
+    "removes abandoned portable configuration with mode %i after completed ordinary onboarding (#10545)",
+    async (mode) => {
+      const host = scope("nemoclaw-uninstall-completed-openclaw-");
+      completedOpenClawAuthority(host, "default");
+      const directory = abandonedPortableConfig(host, mode);
+      restoredDirectories.pop();
+      host.rmSync.mockImplementation((target, options) => {
+        const resolvedTarget = path.resolve(String(target));
+        expect(resolvedTarget.startsWith(`${host.homeDir}${path.sep}`)).toBe(true);
+        fs.rmSync(resolvedTarget, options);
+      });
 
-    await expectOrdinaryUninstall(host);
-    expect(fs.existsSync(directory)).toBe(false);
-  });
+      await expectOrdinaryUninstall(host);
+      expect(fs.existsSync(directory)).toBe(false);
+    },
+  );
 
   it("refuses uninstall when an unexpected Portable configuration file remains after ordinary onboarding (#10545)", async () => {
     const host = scope("nemoclaw-uninstall-completed-extra-config-");
@@ -287,6 +290,27 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     expect(fs.existsSync(path.join(directory, "unexpected.conf"))).toBe(true);
     expect(host.runModelCleanup).not.toHaveBeenCalled();
     expect(host.rmSync).not.toHaveBeenCalled();
+    expect(host.runPortableCleanup).not.toHaveBeenCalled();
+  });
+
+  it("refuses uninstall when Portable configuration changes while preparing ordinary cleanup (#10545)", async () => {
+    const host = scope("nemoclaw-uninstall-completed-config-race-");
+    completedOpenClawAuthority(host, "default");
+    const directory = abandonedPortableConfig(host, 0o600);
+    const fchmodSync = fs.fchmodSync;
+    vi.spyOn(fs, "fchmodSync").mockImplementation((descriptor, mode) => {
+      fchmodSync(descriptor, mode);
+      fs.writeFileSync(path.join(directory, "unexpected.conf"), "unexpected\n", { mode: 0o600 });
+    });
+
+    const result = await uninstall(host);
+
+    expect(result.exitCode).toBe(1);
+    expect(fs.existsSync(path.join(directory, "containers.conf"))).toBe(true);
+    expect(fs.existsSync(path.join(directory, "unexpected.conf"))).toBe(true);
+    expect(host.rmSync.mock.calls.map(([target]) => path.resolve(String(target)))).not.toContain(
+      path.dirname(directory),
+    );
     expect(host.runPortableCleanup).not.toHaveBeenCalled();
   });
 

@@ -99,6 +99,7 @@ import {
   HERMES_PORTABLE_UNINSTALL_JOURNAL_FILE,
   hasPortableRuntimeCleanup,
   PORTABLE_RETIREMENT_STATE_ENTRIES,
+  prepareAbandonedPortableConfigurationRemoval,
   portableRetirementPreservationEntries,
   runPortableRuntimeCleanupTransaction,
   type PortableRuntimeCleanupInput,
@@ -3243,6 +3244,9 @@ function executePlan(
             ok = false;
           if (!removePathExcept(paths.nemoclawConfigDir, ["portable"], runtime)) ok = false;
         } else {
+          prepareAbandonedPortableConfigurationRemoval(
+            path.join(paths.nemoclawConfigDir, "portable"),
+          );
           removePath(paths.nemoclawConfigDir, runtime);
         }
       }

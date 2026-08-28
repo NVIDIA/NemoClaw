@@ -216,6 +216,7 @@ function verifyAuthority(
   const configDirectory = readPortableAuthorityDirectory(
     path.join(boundary.homeDir, ".config/nemoclaw/portable"),
     expected === "portable",
+    expected === "default",
   );
   const receiptDirectoryBefore = readPortableAuthorityDirectory(
     receiptDirectory,
@@ -287,7 +288,7 @@ function verifyAuthority(
     )
       throw new Error("Completed portable onboarding authority is incomplete");
   }
-  rejectUnknownRetirementArtifacts(boundary.homeDir, recovery);
+  rejectUnknownRetirementArtifacts(boundary.homeDir, recovery, true, expected === "default");
 }
 
 function artifactDirectory(homeDir: string, root: "config" | "receipt" | "registry"): string {
@@ -302,12 +303,13 @@ function rejectUnknownRetirementArtifacts(
   homeDir: string,
   recovery: PortableRetirementRecovery | null,
   required = true,
-  permitAnyMode = false,
+  permitConfigAnyMode = false,
 ): void {
+  const configDirectory = path.join(homeDir, ".config/nemoclaw/portable");
   const directories = new Map<string, Set<string>>([
     [path.join(homeDir, ".nemoclaw"), new Set(PORTABLE_RETIREMENT_STATE_ENTRIES)],
     [path.join(homeDir, ".nemoclaw/portable-demo-lifecycle"), new Set()],
-    [path.join(homeDir, ".config/nemoclaw/portable"), new Set()],
+    [configDirectory, new Set()],
   ]);
   for (const artifact of recovery?.artifacts ?? [])
     directories.get(artifactDirectory(homeDir, artifact.root))!.add(artifact.basename);
@@ -316,7 +318,7 @@ function rejectUnknownRetirementArtifacts(
       readPortableAuthorityDirectory(
         directory,
         required && directory === path.join(homeDir, ".nemoclaw"),
-        permitAnyMode,
+        permitConfigAnyMode && directory === configDirectory,
       ).entries.some((name) => PORTABLE_ARTIFACT_NAME.test(name) && !allowed.has(name))
     )
       throw new Error("Onboarding state contains an unknown portable uninstall artifact");

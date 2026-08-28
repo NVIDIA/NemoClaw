@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { TextDecoder } from "node:util";
 import { isDeepStrictEqual } from "node:util";
@@ -15,7 +16,9 @@ import {
   PORTABLE_RETIREMENT_STATE_ENTRIES,
   preparePortableRetirement,
   publishAndRetirePortableEvidence,
+  readPortableAuthorityDirectory,
   resumePortableEvidenceRetirement,
+  samePortableAuthorityDirectory,
   withPortableHostFence,
   type PreparedPortableRetirement,
   type PortableRetirementRecovery,
@@ -60,6 +63,58 @@ const PORTABLE_SELECTOR_NAMES = [
   "CONTAINER_SSHKEY",
 ] as const;
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
+
+function sameDirectoryObject(left: fs.BigIntStats, right: fs.BigIntStats): boolean {
+  return ["dev", "ino", "uid", "nlink"].every(
+    (key) => left[key as keyof fs.BigIntStats] === right[key as keyof fs.BigIntStats],
+  );
+}
+
+export function prepareAbandonedPortableConfigurationRemoval(directory: string): void {
+  const snapshot = readPortableAuthorityDirectory(directory, false, true);
+  if (!snapshot.identity) return;
+  if (!isDeepStrictEqual(snapshot.entries, ["containers.conf"]))
+    throw new Error("Portable configuration changed before ordinary cleanup");
+  if ((snapshot.identity.mode & 0o100n) !== 0n) return;
+
+  const descriptor = fs.openSync(
+    directory,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_DIRECTORY,
+  );
+  try {
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    const namedBefore = fs.lstatSync(directory, { bigint: true });
+    if (
+      !samePortableAuthorityDirectory(snapshot, {
+        entries: snapshot.entries,
+        identity: before,
+      }) ||
+      !samePortableAuthorityDirectory(snapshot, {
+        entries: snapshot.entries,
+        identity: namedBefore,
+      })
+    )
+      throw new Error("Portable configuration changed before ordinary cleanup");
+
+    fs.fchmodSync(descriptor, 0o700);
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    const namedAfter = fs.lstatSync(directory, { bigint: true });
+    const verifiedAfter = readPortableAuthorityDirectory(directory, true);
+    if (
+      !after.isDirectory() ||
+      namedAfter.isSymbolicLink() ||
+      !sameDirectoryObject(before, after) ||
+      !sameDirectoryObject(after, namedAfter) ||
+      !verifiedAfter.identity ||
+      !sameDirectoryObject(after, verifiedAfter.identity) ||
+      !isDeepStrictEqual(verifiedAfter.entries, ["containers.conf"]) ||
+      (after.mode & 0o777n) !== 0o700n
+    )
+      throw new Error("Portable configuration changed while preparing ordinary cleanup");
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
 
 function compareCodeUnits(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
