@@ -19,12 +19,14 @@ Use these internal sources for the current installation and registration instruc
 
 1. Check for DORI MCP tools.
    - If the current agent exposes `dori_handle` or `dori_route`, do not reconfigure the host.
-   - When `dori_collections` is available, verify that a collection source contains `tech-docs/skill-library`.
+   - When `dori_collections` is available, verify the collection against the
+     [canonical Skill Library source](AGENTS.md#verify-the-skill-library-source).
    - If the Skill Library is missing, identify it as the only missing component and continue to [Confirm Changes](#confirm-changes).
 2. When DORI MCP tools are unavailable, inspect the command-line interface (CLI).
    - Run `command -v dori`.
    - If the CLI exists, run `dori collections list --json`.
-   - Treat a collection whose source contains `tech-docs/skill-library` as the installed Skill Library.
+   - Treat the Skill Library as installed only when it matches the
+     [canonical source identity](AGENTS.md#verify-the-skill-library-source).
 3. Identify the host from explicit runtime context.
    Do not infer the host from the model name or repository files.
 4. Run `dori setup auto --dry-run` as a cross-check when the CLI exists.
@@ -74,12 +76,13 @@ When DORI MCP is unavailable and `dori` is missing, require an existing `uv` com
 When DORI MCP is unavailable and the Skill Library is missing, run:
 
 ```bash
-dori install gitlab:tech-docs/skill-library --all --yes
+DORI_GITLAB_HOST=gitlab-master.nvidia.com \
+  dori install gitlab:tech-docs/skill-library --all --yes
 ```
 
 When DORI MCP is available but the Skill Library is missing:
 
-1. Run `dori_collections(action="install", source="gitlab:tech-docs/skill-library")`.
+1. Run `dori_collections(action="install", source="https://gitlab-master.nvidia.com/tech-docs/skill-library")`.
 2. Run `dori_refresh`.
 3. Verify the source with `dori_collections(action="list")`.
 
@@ -103,6 +106,19 @@ The action can require an application restart, a new session, a window reload, o
 
 Until the current agent exposes DORI tools, continue the original task with the [documentation style contract](STYLE.md).
 
+## Handle a Failed Change
+
+If the DORI installation, Skill Library installation or verification, host setup or validation, or
+health check fails:
+
+1. Report the failed operation and its error without exposing credentials.
+2. Stop setup. Make no additional DORI or host-configuration changes, and do not retry in the same
+   task.
+3. Direct the user to the
+   [internal DORI installation guide](https://gitlab-master.nvidia.com/tech-docs/dori/-/blob/main/docs/get-started/install.md)
+   or the appropriate DORI owner for recovery.
+4. Continue the original documentation task with the [documentation style contract](STYLE.md).
+
 ## Protect Credentials and Repository State
 
 - Never search for, request, print, copy, export, or embed a token, password, cookie, SSH key, or credential-bearing URL.
@@ -112,4 +128,3 @@ Until the current agent exposes DORI tools, continue the original task with the 
   Confirm private-source access only for an explicit setup request.
 - Do not bypass approval controls for writes outside the repository.
 - Do not create or commit project-scoped DORI state or MCP configuration without separate repository-owner authorization.
-- Do not retry a failed installation in the same task.

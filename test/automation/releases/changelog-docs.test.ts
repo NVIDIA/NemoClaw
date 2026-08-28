@@ -166,7 +166,7 @@ describe("Fern changelog documentation", () => {
   });
 
   it("records a maintainer decision from displayed documentation coverage", () => {
-    const guide = fs.readFileSync(path.join(docsDir, "CONTRIBUTING.md"), "utf8");
+    const guide = fs.readFileSync(path.join(docsDir, "AUTOMATION.md"), "utf8");
 
     expect(guide).toContain(
       "The maintainer then decides whether to proceed, request another docs PR,",

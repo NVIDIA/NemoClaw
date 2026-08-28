@@ -26,7 +26,8 @@ normal documentation task.
 1. Check whether the current agent exposes `dori_handle` or `dori_route` and `dori_collections`.
    If the user explicitly asks not to use DORI, continue with the documentation contributor guide.
 2. When those tools are available, list the installed collections.
-   - If a collection source contains `tech-docs/skill-library`, use DORI for task routing.
+   - Use DORI for task routing only when the collection matches the
+     [canonical Skill Library source](#verify-the-skill-library-source).
    - If the collection is missing, inaccessible, or cannot be verified, continue with the
      documentation contributor guide.
 3. When the DORI tools are unavailable, continue with the documentation contributor guide.
@@ -37,6 +38,17 @@ normal documentation task.
 
 Capability detection does not approve installation or host configuration.
 DORI unavailability must not block documentation work.
+
+### Verify the Skill Library Source
+
+Treat a collection as the NVIDIA Skill Library only when its normalized source is exactly
+`gitlab-master.nvidia.com/tech-docs/skill-library`. Before comparing the source, remove an HTTPS
+scheme and one optional `.git` suffix or trailing slash.
+
+A different host, a hostname with an added prefix or suffix, or a longer project path does not
+qualify even when it contains `tech-docs/skill-library`. A `gitlab:tech-docs/skill-library`
+shorthand value does not establish the host. If the source metadata does not resolve that shorthand
+to the exact normalized source, continue without DORI.
 
 When DORI is available, route the task with the changed source files, user-visible impact, likely
 documentation updates, and required validation.
