@@ -12,6 +12,7 @@ import {
   restoreStateDirLockPosture,
   restoreStateDirStartupAccess,
   stateLockPlanCompatibilityIssues,
+  verifyStateDirLockPosture,
 } from "./state-dir-lock";
 
 type RunCall = { cmd: string[]; input?: string };
@@ -201,8 +202,37 @@ describe("recursive state-dir lock host wiring", () => {
       "--plan-json",
       JSON.stringify(PLAN),
     ]);
-    expect(calls[0]?.input).toContain('choices=("preflight", "lock", "unlock", "startup")');
+    expect(calls[0]?.input).toContain('"verify-lock",');
+    expect(calls[0]?.input).toContain('"verify-unlock",');
   });
+
+  it.each([
+    [true, "verify-lock"],
+    [false, "verify-unlock"],
+  ] as const)(
+    "uses the read-only host guard for recursive posture verification",
+    (locked, action) => {
+      const { calls, privileged } = createExec();
+
+      expect(verifyStateDirLockPosture(privileged, "/sandbox/.hermes", locked, PLAN)).toEqual([]);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.cmd).toEqual([
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=5s",
+        "12m",
+        "python3",
+        "-I",
+        "-",
+        action,
+        "--config-dir",
+        "/sandbox/.hermes",
+        "--plan-json",
+        JSON.stringify(PLAN),
+      ]);
+      expect(calls[0]?.input).toContain("Descriptor-safe recursive state-directory");
+    },
+  );
 
   it("hands the manifest plan to an injected startup helper (#8006)", () => {
     const startupPlan: AgentStateLockPlan = { ...PLAN, readOnlyRoots: ["agents", "skills"] };

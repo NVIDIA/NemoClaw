@@ -84,7 +84,14 @@ FS_APPEND_FL = 0x00000020
 FS_IOC_GETFLAGS = 0x80086601
 FS_IOC_SETFLAGS = 0x40086602
 
-Action = Literal["preflight", "lock", "unlock", "startup"]
+Action = Literal[
+    "preflight",
+    "lock",
+    "unlock",
+    "verify-lock",
+    "verify-unlock",
+    "startup",
+]
 Policy = Literal["high-risk", "confidentiality"]
 
 
@@ -2179,6 +2186,12 @@ def _run_guard_unserialized(
         return _restore_empty_credentials_startup_access(
             normalized_config, identity, deadline, plan
         )
+    posture_action: Action = (
+        "lock"
+        if action == "verify-lock"
+        else "unlock" if action == "verify-unlock" else action
+    )
+    verify_only = action in ("verify-lock", "verify-unlock")
     fail_closed_config_root = action == "lock" and (
         normalized_config in PRODUCTION_FAIL_CLOSED_CONFIG_DIRS
         or os.environ.get("NEMOCLAW_TEST_OPENCLAW_FAIL_CLOSED") == "1"
@@ -2221,7 +2234,7 @@ def _run_guard_unserialized(
             normalized_config,
             config_st.st_dev,
             deadline,
-            action,
+            posture_action,
             plan,
         )
         result.roots = len(roots)
@@ -2256,43 +2269,44 @@ def _run_guard_unserialized(
             plan.writable_subpaths,
         )
         replaced_inodes: dict[str, int] = {}
-        for root in roots:
-            path = context.display(root.name)
-            try:
-                root_lstat = os.stat(root.name, dir_fd=config_fd, follow_symlinks=False)
-                context.budget.observe_entry(path, root_lstat)
-                if root_lstat.st_dev != root.dev or root_lstat.st_ino != root.ino:
-                    raise GuardOperationError(
-                        Issue(
-                            "entry-raced",
-                            path,
-                            "state-dir root changed after preflight",
-                        )
-                    )
-                root_fd = _open_child_dir(config_fd, root.name, root_lstat)
+        if not verify_only:
+            for root in roots:
+                path = context.display(root.name)
                 try:
-                    _mutate_dir(
-                        context,
-                        root_fd,
-                        root.name,
-                        root.policy,
-                        action,
-                        identity,
-                        result,
-                        replaced_inodes,
-                        1,
-                        is_root=True,
+                    root_lstat = os.stat(root.name, dir_fd=config_fd, follow_symlinks=False)
+                    context.budget.observe_entry(path, root_lstat)
+                    if root_lstat.st_dev != root.dev or root_lstat.st_ino != root.ino:
+                        raise GuardOperationError(
+                            Issue(
+                                "entry-raced",
+                                path,
+                                "state-dir root changed after preflight",
+                            )
+                        )
+                    root_fd = _open_child_dir(config_fd, root.name, root_lstat)
+                    try:
+                        _mutate_dir(
+                            context,
+                            root_fd,
+                            root.name,
+                            root.policy,
+                            posture_action,
+                            identity,
+                            result,
+                            replaced_inodes,
+                            1,
+                            is_root=True,
+                        )
+                    finally:
+                        os.close(root_fd)
+                except GuardOperationError as exc:
+                    result.issues.append(exc.issue)
+                    return result
+                except OSError as exc:
+                    result.issues.append(
+                        _os_issue("mutation-failed", path, "mutate state-dir root", exc)
                     )
-                finally:
-                    os.close(root_fd)
-            except GuardOperationError as exc:
-                result.issues.append(exc.issue)
-                return result
-            except OSError as exc:
-                result.issues.append(
-                    _os_issue("mutation-failed", path, "mutate state-dir root", exc)
-                )
-                return result
+                    return result
 
         # A second independent descriptor traversal verifies the recursive
         # result and catches entries changed by a concurrent pre-open FD.
@@ -2331,7 +2345,7 @@ def _run_guard_unserialized(
                     root_fd,
                     root.name,
                     root.policy,
-                    action,
+                    posture_action,
                     identity,
                     replaced_inodes,
                     result.issues,
@@ -2573,7 +2587,17 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Safely manage recursive agent state directories"
     )
-    parser.add_argument("action", choices=("preflight", "lock", "unlock", "startup"))
+    parser.add_argument(
+        "action",
+        choices=(
+            "preflight",
+            "lock",
+            "unlock",
+            "verify-lock",
+            "verify-unlock",
+            "startup",
+        ),
+    )
     parser.add_argument("--config-dir", required=True)
     plan_source = parser.add_mutually_exclusive_group()
     plan_source.add_argument("--plan-json")

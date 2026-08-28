@@ -732,6 +732,7 @@ describe("legacy Hermes shields compatibility", () => {
     let dockerExecSpy: MockInstance;
     let registrySpy: MockInstance;
     let verifyLockSpy: MockInstance;
+    let verifyStateDirLockPostureSpy: MockInstance;
     let routeSpy: MockInstance;
     let auditSpy: MockInstance;
     let runCaptureSpy: MockInstance;
@@ -756,6 +757,7 @@ describe("legacy Hermes shields compatibility", () => {
         supportSpy,
         transitionSpy,
         verifyLockSpy,
+        verifyStateDirLockPostureSpy,
       } = harness);
     });
 
@@ -1179,13 +1181,9 @@ describe("legacy Hermes shields compatibility", () => {
           updatedAt: new Date().toISOString(),
         }),
       );
-      lifecycleGateSpy.mockReturnValue(false);
-      transitionSpy.mockImplementation(
-        createTransitionFailureForPosture(
-          "locked",
-          "recursive state lock plan drift under skills/pairing",
-        ),
-      );
+      verifyStateDirLockPostureSpy.mockReturnValue([
+        "recursive state lock plan drift under skills/pairing",
+      ]);
       const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
         throw new Error(`process exit ${String(code)}`);
       }) as never);
@@ -1198,11 +1196,24 @@ describe("legacy Hermes shields compatibility", () => {
       expect(errors).toContain("recursive state lock plan drift under skills/pairing");
       expect(errors).toContain("UP (DRIFTED");
       expect(logs).not.toContain("UP (lockdown active)");
-      expect(transitionSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ target: "locked", rollback: "locked" }),
+      expect(transitionSpy).not.toHaveBeenCalled();
+      expect(verifyStateDirLockPostureSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        target.configDir,
+        true,
+        expect.objectContaining({
+          readOnlyRoots: expect.arrayContaining(["skills"]),
+          confidentialRoots: expect.arrayContaining(["pairing"]),
+        }),
       );
 
       transitionSpy.mockClear();
+      transitionSpy.mockImplementation(
+        createTransitionFailureForPosture(
+          "locked",
+          "recursive state lock plan drift under skills/pairing",
+        ),
+      );
       vi.mocked(console.log).mockClear();
       expect(() => shields.shieldsUp(sandbox.name, { throwOnError: true })).toThrow(
         "recursive state lock plan drift under skills/pairing",
@@ -1224,13 +1235,9 @@ describe("legacy Hermes shields compatibility", () => {
     });
 
     it("does not report clean mutable-default when provider verification finds nested skills or pairing drift", () => {
-      lifecycleGateSpy.mockReturnValue(false);
-      transitionSpy.mockImplementation(
-        createTransitionFailureForPosture(
-          "mutable",
-          "recursive mutable state drift under skills/pairing",
-        ),
-      );
+      verifyStateDirLockPostureSpy.mockReturnValue([
+        "recursive mutable state drift under skills/pairing",
+      ]);
       const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
         throw new Error(`process exit ${String(code)}`);
       }) as never);
@@ -1243,27 +1250,27 @@ describe("legacy Hermes shields compatibility", () => {
       expect(errors).toContain("recursive mutable state drift under skills/pairing");
       expect(errors).toContain("NOT CONFIGURED (DRIFTED");
       expect(logs).not.toContain("NOT CONFIGURED (default mutable state)");
-      expect(transitionSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ target: "mutable", rollback: "mutable" }),
+      expect(transitionSpy).not.toHaveBeenCalled();
+      expect(verifyStateDirLockPostureSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        target.configDir,
+        false,
+        expect.objectContaining({
+          readOnlyRoots: expect.arrayContaining(["skills"]),
+          confidentialRoots: expect.arrayContaining(["pairing"]),
+        }),
       );
     });
-    it("gates the live provider round trip on sandbox Phase, failing open when inconclusive (#10104)", () => {
+    it("keeps read-only provider status independent of sandbox lifecycle phase (#10104)", () => {
       lifecycleGateSpy.mockReturnValue(false);
-      const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-        throw new Error(`process exit ${String(code)}`);
-      }) as never);
-      spies.push(exitSpy);
       runCaptureSpy.mockReturnValue(`${sandbox.name}  Provisioning\n`);
-      expect(() => shields.shieldsStatus(sandbox.name)).toThrow("process exit 2");
-      expect(transitionSpy).not.toHaveBeenCalled();
-      expect(vi.mocked(console.error).mock.calls.flat().map(String).join("\n")).toContain(
-        `Run 'nemoclaw ${sandbox.name} status'. Resolve the reported phase, then retry.`,
-      );
-      runCaptureSpy.mockReturnValue("");
       expect(() => shields.shieldsStatus(sandbox.name)).not.toThrow();
-      expect(transitionSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ target: "mutable", rollback: "mutable" }),
+      expect(transitionSpy).not.toHaveBeenCalled();
+      expect(runCaptureSpy).not.toHaveBeenCalledWith(
+        expect.arrayContaining(["sandbox", "list"]),
+        expect.anything(),
       );
+      expect(verifyStateDirLockPostureSpy).toHaveBeenCalled();
     });
 
     it("does not report clean timed DOWN on recursive drift or timer loss during verification", () => {
@@ -1322,12 +1329,9 @@ describe("legacy Hermes shields compatibility", () => {
         }),
       );
       lifecycleGateSpy.mockReturnValue(false);
-      transitionSpy.mockImplementation(
-        createTransitionFailureForPosture(
-          "mutable",
-          "recursive timed state drift under skills/pairing",
-        ),
-      );
+      verifyStateDirLockPostureSpy.mockReturnValue([
+        "recursive timed state drift under skills/pairing",
+      ]);
       const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
         throw new Error(`process exit ${String(code)}`);
       }) as never);
@@ -1340,9 +1344,7 @@ describe("legacy Hermes shields compatibility", () => {
       expect(errors).toContain("recursive timed state drift under skills/pairing");
       expect(errors).toContain("DOWN (DRIFTED");
       expect(logs).not.toContain("DOWN (temporarily unlocked)");
-      expect(transitionSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ target: "mutable", rollback: "mutable" }),
-      );
+      expect(transitionSpy).not.toHaveBeenCalled();
       expect(fs.existsSync(timerPath)).toBe(true);
       expect(fs.existsSync(transitionPath)).toBe(true);
 
@@ -1350,9 +1352,9 @@ describe("legacy Hermes shields compatibility", () => {
       transitionSpy.mockClear();
       vi.mocked(console.error).mockClear();
       vi.mocked(console.log).mockClear();
-      transitionSpy.mockImplementation(() => {
+      verifyStateDirLockPostureSpy.mockImplementation(() => {
         fs.rmSync(timerControl.timerAuthorizationProofPath(sandbox.name, processToken));
-        return { fence: {}, proof: {} };
+        return [];
       });
 
       expect(() => shields.shieldsStatus(sandbox.name)).toThrow("process exit 2");
@@ -1362,9 +1364,7 @@ describe("legacy Hermes shields compatibility", () => {
       expect(timerLossErrors).toContain("exact live future auto-restore timer authority");
       expect(timerLossErrors).toContain("DOWN (DRIFTED");
       expect(timerLossLogs).not.toContain("DOWN (temporarily unlocked)");
-      expect(transitionSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ target: "mutable", rollback: "mutable" }),
-      );
+      expect(transitionSpy).not.toHaveBeenCalled();
     });
 
     it("falls back to the sealed-plan protocol only after proving capability absence", () => {

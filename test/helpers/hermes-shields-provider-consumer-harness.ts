@@ -84,6 +84,7 @@ export type HermesShieldsProviderConsumerHarness = {
   supportSpy: MockInstance;
   transitionSpy: MockInstance;
   verifyLockSpy: MockInstance;
+  verifyStateDirLockPostureSpy: MockInstance;
   cleanup: () => void;
 };
 
@@ -260,6 +261,7 @@ export function createHermesShieldsProviderConsumerHarness(
   const transition = loadSource("./hermes-runtime-state-mutation.js");
   const runtimeProvider = loadSource("../onboard/runtime-provider/persisted-engine-lifecycle.js");
   const verifyLock = loadSource("./verify-lock.js");
+  const stateDirLock = loadSource("./state-dir-lock.js");
   const relockReconfirm = loadSource("./relock-reconfirm.js");
   const audit = loadSource("./audit.js");
   const timerControl = loadSource("./timer-control.js");
@@ -270,6 +272,9 @@ export function createHermesShieldsProviderConsumerHarness(
   const verifyLockSpy = vi
     .spyOn(verifyLock, "verifyShieldsLockState")
     .mockReturnValue({ issues: [] });
+  const verifyStateDirLockPostureSpy = vi
+    .spyOn(stateDirLock, "verifyStateDirLockPosture")
+    .mockReturnValue([]);
   const runSpy = vi.spyOn(runner, "run").mockReturnValue({ status: 0 });
   // #10104: default to an empty `sandbox list` capture (no matching row, so
   // the runtime-provider phase probe resolves to null and fails open) so
@@ -304,6 +309,7 @@ export function createHermesShieldsProviderConsumerHarness(
         Buffer.from(dockerExec.dockerExecFileSync(command as string[])),
       ),
     verifyLockSpy,
+    verifyStateDirLockPostureSpy,
     vi.spyOn(console, "log").mockImplementation(() => undefined),
     vi.spyOn(console, "error").mockImplementation(() => undefined),
     vi.spyOn(console, "warn").mockImplementation(() => undefined),
@@ -387,5 +393,6 @@ export function createHermesShieldsProviderConsumerHarness(
     supportSpy,
     transitionSpy,
     verifyLockSpy,
+    verifyStateDirLockPostureSpy,
   };
 }
