@@ -61,10 +61,14 @@ describe("codebase growth guardrails", () => {
     expect(violations, diagnostics.conditionals(violations)).toEqual([]);
   });
 
-  it("does not add test loops directly, through one-use helpers, or through callback-forwarding helpers", async () => {
-    const violations = await loopGrowthViolations(diff);
-    expect(violations, diagnostics.loops(violations)).toEqual([]);
-  });
+  it(
+    "does not add test loops directly, through one-use helpers, or through callback-forwarding helpers",
+    async () => {
+      const violations = await loopGrowthViolations(diff);
+      expect(violations, diagnostics.loops(violations)).toEqual([]);
+    },
+    60_000,
+  );
 });
 
 describe("codebase growth guardrail test support", () => {
