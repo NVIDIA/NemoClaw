@@ -37,6 +37,7 @@ const testState = vi.hoisted(() => {
     home,
     originalEnv,
     policyApplyCalls: 0,
+    republishCurrentPolicyDocument: vi.fn(),
     removedPolicyKeys: new Set<string>(),
     providers: new Map<
       string,
@@ -50,6 +51,7 @@ const testState = vi.hoisted(() => {
     runOpenshellProviderCommand: vi.fn(),
     stopNimContainer: vi.fn(),
     stopNimContainerByName: vi.fn(),
+    suppressCredentialUntilPolicyRepublish: false,
     warnUnpreservedUserManagedFiles: vi.fn(),
   };
 });
@@ -76,6 +78,7 @@ vi.mock("../../src/lib/policy", () => ({
   applyPresetContent: testState.applyPresetContent,
   getLiveSandboxPolicyEntryDigest: testState.getLiveSandboxPolicyEntryDigest,
   getPresetContentGatewayState: testState.getPresetContentGatewayState,
+  republishCurrentPolicyDocument: testState.republishCurrentPolicyDocument,
   removePreset: testState.removePreset,
 }));
 
@@ -201,6 +204,7 @@ beforeEach(() => {
   testState.adapterCalls.length = 0;
   testState.adapterRegistered = true;
   testState.policyApplyCalls = 0;
+  testState.suppressCredentialUntilPolicyRepublish = false;
   testState.removedPolicyKeys.clear();
   testState.failProviderDelete = null;
   testState.failProviderDetach = null;
@@ -228,6 +232,10 @@ beforeEach(() => {
   );
   testState.removePreset.mockImplementation((_sandboxName, policyName) => {
     testState.removedPolicyKeys.add(policyName.replaceAll("-", "_"));
+    return true;
+  });
+  testState.republishCurrentPolicyDocument.mockImplementation(() => {
+    testState.suppressCredentialUntilPolicyRepublish = false;
     return true;
   });
   testState.runOpenshell.mockReturnValue({ status: 0, stdout: "", stderr: "" });
@@ -341,11 +349,13 @@ beforeEach(() => {
     const encoded = command.match(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d/)?.[1] ?? "";
     const proof = encoded ? Buffer.from(encoded, "base64").toString("utf8") : command;
     const isRevisionObservation = proof.includes("printf '%s\\n' absent");
-    const credentialRevision = findObservedCredentialRevision(
-      proof,
-      testState.attachedProviders,
-      testState.providers,
-    );
+    const credentialRevision = testState.suppressCredentialUntilPolicyRepublish
+      ? null
+      : findObservedCredentialRevision(
+          proof,
+          testState.attachedProviders,
+          testState.providers,
+        );
     return {
       status:
         isNoopProbe ||
@@ -1226,6 +1236,29 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect([...testState.attachedProviders]).toContain("alpha-mcp-github");
     expect(testState.adapterRegistered).toBe(true);
     expect(testState.policyApplyCalls).toBe(0);
+  });
+
+  it("republishes the preserved rebuild policy only when an attached credential is absent", async () => {
+    testState.suppressCredentialUntilPolicyRepublish = true;
+    testState.attachedProviders.delete("alpha-mcp-github");
+    testState.adapterRegistered = false;
+    registry.registerSandbox({
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      mcp: { bridges: { github: bridgeEntries.github } },
+    });
+
+    await bridge.restoreMcpBridgesAfterRebuild("alpha", [bridgeEntries.github]);
+
+    expect(testState.republishCurrentPolicyDocument).toHaveBeenCalledOnce();
+    expect(testState.republishCurrentPolicyDocument).toHaveBeenCalledWith(
+      "alpha",
+      "refresh MCP credential projection for 'github'",
+    );
+    expect(testState.applyPresetContent).not.toHaveBeenCalled();
+    expect([...testState.attachedProviders]).toContain("alpha-mcp-github");
+    expect(testState.adapterRegistered).toBe(true);
   });
 
   it.each([

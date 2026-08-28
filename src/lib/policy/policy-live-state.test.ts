@@ -42,6 +42,7 @@ import {
   excludeBaselineEntry,
   inspectPolicyMutationContext,
   removePreset,
+  republishCurrentPolicyDocument,
   restoreBaselineEntry,
 } from "./index";
 
@@ -95,6 +96,55 @@ describe("live OpenShell policy mutations", () => {
 
     expect(removePreset(sandboxName, "weather", { nonFatal: true })).toBe(true);
     expect(YAML.parse(livePolicy).network_policies).toEqual({ host_approval: hostEntry });
+  });
+
+  it("republishes the exact current base policy through its recorded gateway", () => {
+    const observed = livePolicy;
+
+    expect(republishCurrentPolicyDocument(sandboxName, "refresh MCP projection")).toBe(true);
+
+    expect(livePolicy).toBe(observed);
+    expect(mocks.run).toHaveBeenCalledOnce();
+    expect(mocks.run).toHaveBeenCalledWith(
+      expect.arrayContaining(["policy", "set", sandboxName]),
+      expect.objectContaining({
+        ignoreError: true,
+        env: { OPENSHELL_GATEWAY: "nemoclaw" },
+      }),
+    );
+  });
+
+  it("refuses to republish when the live policy changes after capture", () => {
+    let observations = 0;
+    mocks.inspectSandboxPolicy.mockImplementation(() => {
+      observations += 1;
+      livePolicy =
+        observations === 2
+          ? YAML.stringify({
+              version: 1,
+              network_policies: {
+                host_approval: hostEntry,
+                concurrent_host_edit: {
+                  endpoints: [{ host: "concurrent.example.com", port: 443 }],
+                },
+              },
+            })
+          : livePolicy;
+      const policy = YAML.parse(livePolicy);
+      return {
+        policySource: "sandbox",
+        effectivePolicy: policy,
+        policy,
+        policyIdentity: {
+          hash: `sha256:refresh-${String(observations)}`,
+          activeVersion: observations,
+        },
+      };
+    });
+
+    expect(republishCurrentPolicyDocument(sandboxName, "refresh MCP projection")).toBe(false);
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(YAML.parse(livePolicy).network_policies).toHaveProperty("concurrent_host_edit");
   });
 
   it("does not overwrite a host edit that races a prepared full-policy update", () => {

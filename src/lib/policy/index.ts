@@ -934,6 +934,34 @@ export function setPolicyDocument(
 }
 
 /**
+ * Re-submit the exact current sandbox base policy without recomposing it.
+ *
+ * Provider attachment can require a policy publication edge before OpenShell
+ * projects a newly attached credential into fresh sandbox execs. Rebuild
+ * recovery must preserve the policy supplied to sandbox creation, including
+ * out-of-band operator edits, so it republishes the observed document instead
+ * of regenerating NemoClaw-owned entries.
+ */
+export function republishCurrentPolicyDocument(
+  sandboxName: string,
+  operation = "republish the current sandbox policy",
+): boolean {
+  let context: PolicyMutationContext;
+  let currentBasePolicy: string;
+  try {
+    context = inspectPolicyMutationContext(sandboxName, operation);
+    currentBasePolicy = captureSandboxBasePolicy(sandboxName, context.gatewayName);
+  } catch (error) {
+    return reportPolicyObservationFailure(error);
+  }
+  return setPolicyDocument(sandboxName, currentBasePolicy, {
+    nonFatal: true,
+    operation,
+    context,
+  });
+}
+
+/**
  * Merge preset entries into existing policy YAML using structured YAML
  * parsing. Invalid input fails closed instead of falling back to text
  * manipulation that could produce a syntactically valid but unsafe policy.
