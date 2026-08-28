@@ -499,7 +499,7 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     expect(host.runPortableCleanup).not.toHaveBeenCalled();
   });
 
-  it.each<[string, (directory: string, homeDir: string) => string]>([
+  it.each<[string, (directory: string, homeDir: string, recoveryEntry: string) => string]>([
     [
       "the original directory is gone",
       (directory, homeDir) => {
@@ -516,6 +516,27 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
         fs.mkdirSync(directory, { mode: 0o700 });
         const preserved = path.join(directory, "replacement.conf");
         fs.writeFileSync(preserved, "preserved\n", { mode: 0o600 });
+        return preserved;
+      },
+    ],
+    [
+      "the recorded inode was reused by a replacement generation",
+      (directory, homeDir, recoveryEntry) => {
+        fs.renameSync(directory, path.join(homeDir, "original-portable"));
+        fs.mkdirSync(directory, { mode: 0o700 });
+        const preserved = path.join(directory, "containers.conf");
+        fs.writeFileSync(preserved, "replacement\n", { mode: 0o600 });
+        const replacement = fs.lstatSync(directory, { bigint: true });
+        const recorded =
+          /^(\.portable-cleanup-v1-pending-)[0-9]+-[0-9]+-[0-9]+-([0-9]+)-([A-Za-z0-9]{6})$/u.exec(
+            recoveryEntry,
+          );
+        expect(recorded).not.toBeNull();
+        const simulatedReuse = `${recorded![1]}${String(replacement.dev)}-${String(replacement.ino)}-${String(replacement.uid)}-${recorded![2]}-${recorded![3]}`;
+        fs.renameSync(
+          path.join(path.dirname(directory), recoveryEntry),
+          path.join(path.dirname(directory), simulatedReuse),
+        );
         return preserved;
       },
     ],
@@ -549,10 +570,11 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     const first = await uninstall(host);
 
     expect(first.exitCode).toBe(1);
-    expect(
-      fs.readdirSync(configRoot).some((entry) => entry.startsWith(".portable-cleanup-v1-pending-")),
-    ).toBe(true);
-    const preserved = prepare(directory, host.homeDir);
+    const pending = fs
+      .readdirSync(configRoot)
+      .find((entry) => entry.startsWith(".portable-cleanup-v1-pending-"));
+    expect(pending).toBeDefined();
+    const preserved = prepare(directory, host.homeDir, pending!);
 
     const second = await uninstall(host);
 

@@ -71,12 +71,13 @@ const PORTABLE_SELECTOR_NAMES = [
 ] as const;
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
 const PORTABLE_CONFIGURATION_RECOVERY_PATTERN =
-  /^\.portable-cleanup-v1-(pending|bound|removed)-([0-9]+)-([0-9]+)-([0-9]+)-([A-Za-z0-9]{6})$/u;
+  /^\.portable-cleanup-v1-(pending|bound|removed)-([0-9]+)-([0-9]+)-([0-9]+)-([0-9]+)-([A-Za-z0-9]{6})$/u;
 let portableConfigurationPythonUnavailableForTest = false;
 
 type PortableConfigurationRecoveryPhase = "pending" | "bound" | "removed";
 
 interface PortableConfigurationRecovery {
+  readonly birthtimeNs: bigint;
   readonly dev: bigint;
   readonly entry: string;
   readonly ino: bigint;
@@ -235,6 +236,8 @@ function sameStableDirectoryIdentity(left: fs.BigIntStats, right: fs.BigIntStats
   return (
     left.isDirectory() &&
     right.isDirectory() &&
+    left.birthtimeNs > 0n &&
+    left.birthtimeNs === right.birthtimeNs &&
     left.dev === right.dev &&
     left.ino === right.ino &&
     left.uid === right.uid
@@ -247,10 +250,12 @@ function isErrnoException(error: unknown, code: string): boolean {
 
 function sameRecordedDirectory(
   identity: fs.BigIntStats,
-  recovery: Pick<PortableConfigurationRecovery, "dev" | "ino" | "uid">,
+  recovery: Pick<PortableConfigurationRecovery, "birthtimeNs" | "dev" | "ino" | "uid">,
 ): boolean {
   return (
     identity.isDirectory() &&
+    recovery.birthtimeNs > 0n &&
+    identity.birthtimeNs === recovery.birthtimeNs &&
     identity.dev === recovery.dev &&
     identity.ino === recovery.ino &&
     identity.uid === recovery.uid
@@ -271,10 +276,10 @@ function fsyncDirectory(directory: string): void {
 
 function recoveryEntry(
   phase: PortableConfigurationRecoveryPhase,
-  identity: Pick<fs.BigIntStats, "dev" | "ino" | "uid">,
+  identity: Pick<fs.BigIntStats, "birthtimeNs" | "dev" | "ino" | "uid">,
   suffix: string,
 ): string {
-  return `${PORTABLE_CONFIGURATION_CLEANUP_RECOVERY_PREFIX}${phase}-${String(identity.dev)}-${String(identity.ino)}-${String(identity.uid)}-${suffix}`;
+  return `${PORTABLE_CONFIGURATION_CLEANUP_RECOVERY_PREFIX}${phase}-${String(identity.dev)}-${String(identity.ino)}-${String(identity.uid)}-${String(identity.birthtimeNs)}-${suffix}`;
 }
 
 function inspectPortableConfigurationRecovery(
@@ -296,15 +301,19 @@ function inspectPortableConfigurationRecovery(
   const entry = candidates[0]!;
   const match = PORTABLE_CONFIGURATION_RECOVERY_PATTERN.exec(entry);
   if (!match) throw new Error("Portable configuration has invalid ordinary cleanup recovery");
+  const birthtimeNs = BigInt(match[5]!);
+  if (birthtimeNs <= 0n)
+    throw new Error("Portable configuration cleanup recovery has no stable generation");
   const recoveryPath = path.join(parent, entry);
   return {
+    birthtimeNs,
     dev: BigInt(match[2]!),
     entry,
     ino: BigInt(match[3]!),
     path: recoveryPath,
     phase: match[1] as PortableConfigurationRecoveryPhase,
     snapshot: readPortableAuthorityDirectory(recoveryPath, true),
-    suffix: match[5]!,
+    suffix: match[6]!,
     uid: BigInt(match[4]!),
   };
 }
@@ -356,6 +365,8 @@ function createPortableConfigurationRecovery(
   parent: string,
   identity: fs.BigIntStats,
 ): PortableConfigurationRecovery {
+  if (identity.birthtimeNs <= 0n)
+    throw new Error("Portable configuration cleanup requires a stable directory generation");
   const recoveryPath = fs.mkdtempSync(path.join(parent, recoveryEntry("pending", identity, "")));
   fsyncDirectory(parent);
   const recovery = inspectPortableConfigurationRecovery(parent);
