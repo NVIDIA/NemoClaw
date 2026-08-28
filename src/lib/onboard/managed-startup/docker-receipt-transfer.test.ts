@@ -143,6 +143,38 @@ describe("Docker daemon receipt transfer", () => {
     expect(fs.existsSync(hostPath)).toBe(true);
   });
 
+  it("identifies every retained recovery artifact when staging cleanup fails", () => {
+    const dockerRun = vi.fn((args: readonly string[]) => {
+      switch (args[0]) {
+        case "cp":
+          return { status: 1, stderr: "copy denied" };
+        case "rm":
+          return { status: 1, stderr: "cleanup denied" };
+        case "volume":
+          return args[1] === "rm" ? { status: 1, stderr: "cleanup denied" } : { status: 0 };
+        default:
+          return { status: 0 };
+      }
+    });
+    const hostPath = receiptPath();
+
+    expect(() =>
+      transferDockerReceiptToDaemon({
+        image: IMAGE,
+        receiptPath: hostPath,
+        destinations: ["/run/nemoclaw/receipt"],
+        dockerOptions: OPTIONS,
+        dockerRun,
+      }),
+    ).toThrow(
+      new RegExp(
+        `${hostPath}.*seed container nemoclaw-managed-startup-receipt-seed-.*daemon volume nemoclaw-managed-startup-receipt-volume-`,
+        "u",
+      ),
+    );
+    expect(fs.existsSync(hostPath)).toBe(true);
+  });
+
   it.each([
     ["copy", (args: readonly string[]) => args[0] === "cp"],
     ["seed removal", (args: readonly string[]) => args[0] === "rm" && args[1] === "-f"],

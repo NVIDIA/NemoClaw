@@ -61,21 +61,23 @@ function cleanupVolumeBestEffort(
   volumeName: string,
   dockerRun: DockerRun,
   dockerOptions: Record<string, unknown>,
-): void {
+): boolean {
   const removed = dockerRun(["volume", "rm", volumeName], dockerOptions);
   if (!hasZeroDockerExitStatus(removed)) {
     console.warn(
       `  ⚠ Protected managed-startup daemon receipt volume could not be removed (${volumeName}): ${commandDetail(removed)}`,
     );
+    return false;
   }
+  return true;
 }
 
 function cleanupSeedBestEffort(
   seedName: string,
   dockerRun: DockerRun,
   dockerOptions: Record<string, unknown>,
-): void {
-  dockerRun(["rm", "-f", seedName], dockerOptions);
+): boolean {
+  return hasZeroDockerExitStatus(dockerRun(["rm", "-f", seedName], dockerOptions));
 }
 
 /**
@@ -147,9 +149,18 @@ export function transferDockerReceiptToDaemon(
     seedCreated = false;
     return { hostPath: options.receiptPath, volumeName };
   } catch (error) {
-    if (seedCreated) cleanupSeedBestEffort(seedName, dockerRun, options.dockerOptions);
-    if (volumeCreated) cleanupVolumeBestEffort(volumeName, dockerRun, options.dockerOptions);
-    throw error;
+    const retained = [`host receipt ${options.receiptPath}`];
+    if (seedCreated && !cleanupSeedBestEffort(seedName, dockerRun, options.dockerOptions)) {
+      retained.push(`seed container ${seedName}`);
+    }
+    if (volumeCreated && !cleanupVolumeBestEffort(volumeName, dockerRun, options.dockerOptions)) {
+      retained.push(`daemon volume ${volumeName}`);
+    }
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `${detail} Protected managed-startup recovery artifacts retained: ${retained.join("; ")}.`,
+      { cause: error },
+    );
   }
 }
 
