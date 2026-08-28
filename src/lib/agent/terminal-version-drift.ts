@@ -17,6 +17,7 @@ import { parseVersionFromText } from "../adapters/openshell/client";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { evaluateStaleness } from "../sandbox/version-scheme";
 import type { AgentDefinition } from "./defs";
+import { terminalProbeShell } from "./terminal-probe-shell";
 
 export type RunCaptureOpenshell = (
   args: string[],
@@ -89,9 +90,9 @@ export function checkTerminalAgentVersion(
     // manifests. Keep this boundary aligned with terminal-smoke.ts; convert it
     // to an argv-form allowlist before accepting custom/user manifests here.
     // The timeout prevents a hung command from wedging onboarding.
-    const shell = agent.name === "pi" ? "bash" : "sh";
+    const probeShell = terminalProbeShell(agent);
     result = runCaptureOpenshell(
-      ["sandbox", "exec", "-n", sandboxName, "--", shell, "-lc", agent.versionCommand],
+      ["sandbox", "exec", "-n", sandboxName, ...probeShell.execArgs, agent.versionCommand],
       { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
     );
   } catch {

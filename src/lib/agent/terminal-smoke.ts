@@ -3,6 +3,7 @@
 
 import { DCODE_MANAGED_EXEC_LAUNCHER } from "../actions/sandbox/connect-inference-route-probe";
 import type { AgentDefinition } from "./defs";
+import { terminalProbeShell } from "./terminal-probe-shell";
 
 type RunCaptureOpenshell = (
   args: string[],
@@ -83,31 +84,15 @@ export function buildAgentSmokeArgs(
       command,
     ];
   }
-  if (agent.name === "pi") {
-    return [
-      "sandbox",
-      "exec",
-      "-n",
-      sandboxName,
-      ...(gatewayName ? ["-g", gatewayName] : []),
-      "--",
-      "bash",
-      "-lc",
-      smokeRunner(false),
-      "nemoclaw-agent-smoke",
-      command,
-    ];
-  }
+  const probeShell = terminalProbeShell(agent);
   return [
     "sandbox",
     "exec",
     "-n",
     sandboxName,
     ...(gatewayName ? ["-g", gatewayName] : []),
-    "--",
-    "sh",
-    "-lc",
-    smokeRunner(true),
+    ...probeShell.execArgs,
+    smokeRunner(probeShell.nestedCommandUsesLoginShell),
     "nemoclaw-agent-smoke",
     command,
   ];

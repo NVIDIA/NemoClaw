@@ -3,6 +3,7 @@
 
 import { shellQuote } from "../runner";
 import type { AgentDefinition } from "./defs";
+import { terminalProbeShell } from "./terminal-probe-shell";
 
 type RunCaptureOpenshell = (args: string[], opts?: { ignoreError?: boolean }) => string | null;
 
@@ -29,7 +30,7 @@ export function verifyAgentBinaryAvailable(
 ): AgentBinaryAvailability {
   const executable = agentExecutableName(agent);
   const binaryPath = typeof agent.binary_path === "string" ? agent.binary_path.trim() : "";
-  const shell = agent.name === "pi" ? "bash" : "sh";
+  const probeShell = terminalProbeShell(agent);
   const script = binaryPath
     ? [
         `if [ -x ${shellQuote(binaryPath)} ]; then echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}ok`)}; exit 0; fi`,
@@ -44,7 +45,7 @@ export function verifyAgentBinaryAvailable(
         `[ -n "$resolved" ] && [ -x "$resolved" ] && echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}ok`)} || echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}not_found`)}`,
       ].join("; ");
   const result = runCaptureOpenshell(
-    ["sandbox", "exec", "-n", sandboxName, "--", shell, "-lc", script],
+    ["sandbox", "exec", "-n", sandboxName, ...probeShell.execArgs, script],
     {
       ignoreError: true,
     },
