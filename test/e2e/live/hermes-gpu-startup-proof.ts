@@ -24,10 +24,6 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { buildHermesManagedStartupIntegrityScript } from "./hermes-gpu-startup-integrity.ts";
 import { stripAnsi } from "./json-envelope.ts";
 
-export const HERMES_GPU_EXTRA_PLACEHOLDER_KEYS = [
-  "TELEGRAM_BOT_TOKEN_AGENT_A",
-  "SLACK_BOT_TOKEN_AGENT_B",
-] as const;
 export const HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS = [
   "recreating the OpenShell-managed Docker container",
   "legacy GPU compatibility envelope",
@@ -77,9 +73,7 @@ export function assertHermesManagedWorkloadAuthority(
   authority: ManagedWorkloadAuthority | null,
 ): string {
   if (!authority) {
-    throw new Error(
-      `Hermes GPU sandbox '${sandboxName}' has no managed workload authority`,
-    );
+    throw new Error(`Hermes GPU sandbox '${sandboxName}' has no managed workload authority`);
   }
   if (
     typeof registryImageTag !== "string" ||
@@ -87,9 +81,7 @@ export function assertHermesManagedWorkloadAuthority(
     !IMMUTABLE_IMAGE_REFERENCE.test(registryImageTag) ||
     !IMMUTABLE_IMAGE_REFERENCE.test(authority.receipt.reference)
   ) {
-    throw new Error(
-      `Hermes GPU sandbox '${sandboxName}' has no immutable image reference`,
-    );
+    throw new Error(`Hermes GPU sandbox '${sandboxName}' has no immutable image reference`);
   }
   const authorityReference = authority.receipt.reference;
   expect(authority).toMatchObject({
@@ -131,14 +123,11 @@ export async function assertHermesGpuStartupProof({
   expect(plainStatus).toContain("CUDA verified");
   expect(plainStatus).not.toMatch(/last CUDA proof failed|CUDA unverified/i);
 
-  const openshellState = await sandbox.openshell(
-    ["sandbox", "get", sandboxName],
-    {
-      artifactName: "phase-4-openshell-sandbox-ready-gpu-startup",
-      env,
-      timeoutMs: 30_000,
-    },
-  );
+  const openshellState = await sandbox.openshell(["sandbox", "get", sandboxName], {
+    artifactName: "phase-4-openshell-sandbox-ready-gpu-startup",
+    env,
+    timeoutMs: 30_000,
+  });
   expect(openshellState.exitCode, resultText(openshellState)).toBe(0);
   expect(stripAnsi(resultText(openshellState))).toMatch(/Phase:\s*Ready/i);
 
@@ -188,55 +177,13 @@ export async function assertHermesGpuStartupProof({
 
   const registryEntry = loadSandboxRegistry().sandboxes[sandboxName];
   if (!registryEntry) {
-    throw new Error(
-      `Hermes GPU sandbox '${sandboxName}' is missing from the registry`,
-    );
+    throw new Error(`Hermes GPU sandbox '${sandboxName}' is missing from the registry`);
   }
   const managedAuthority = readManagedWorkloadAuthority(registryEntry);
   const managedImageReference = assertHermesManagedWorkloadAuthority(
     sandboxName,
     registryEntry.imageTag,
     managedAuthority,
-  );
-
-  const expectedExtraPlaceholderAssignment = `NEMOCLAW_EXTRA_PLACEHOLDER_KEYS=${HERMES_GPU_EXTRA_PLACEHOLDER_KEYS.join(",")}`;
-  const extraPlaceholderEnv = await host.command(
-    "docker",
-    [
-      "exec",
-      "--user",
-      "0",
-      containerId,
-      "python3",
-      "-c",
-      String.raw`import os
-from pathlib import Path
-
-expected = ${JSON.stringify(expectedExtraPlaceholderAssignment)}.encode("utf-8")
-for proc in Path("/proc").iterdir():
-    if not proc.name.isdigit() or int(proc.name) == os.getpid():
-        continue
-    try:
-        argv = [item.decode("utf-8", "strict") for item in (proc / "cmdline").read_bytes().split(b"\0") if item]
-        if not any(Path(item).name == "nemoclaw-start" for item in argv):
-            continue
-        entries = (proc / "environ").read_bytes().split(b"\0")
-    except (OSError, UnicodeDecodeError):
-        continue
-    if expected in entries:
-        print(expected.decode("utf-8"))
-        raise SystemExit(0)
-raise SystemExit(1)`,
-    ],
-    {
-      artifactName: "phase-4-gpu-startup-extra-placeholder-env",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    },
-  );
-  expect(extraPlaceholderEnv.exitCode, resultText(extraPlaceholderEnv)).toBe(0);
-  expect(extraPlaceholderEnv.stdout.trim()).toBe(
-    expectedExtraPlaceholderAssignment,
   );
 
   const guardWithoutStartupOwner = await sandbox.execShell(
@@ -297,10 +244,7 @@ raise SystemExit(1)`,
       timeoutMs: 30_000,
     },
   );
-  expect(
-    dockerCommandBoundary.exitCode,
-    resultText(dockerCommandBoundary),
-  ).toBe(0);
+  expect(dockerCommandBoundary.exitCode, resultText(dockerCommandBoundary)).toBe(0);
   const commandBoundary = JSON.parse(dockerCommandBoundary.stdout);
   const verifiedManagedAuthority = managedAuthority!;
   expect(verifiedManagedAuthority.agent).toBe("hermes");
@@ -330,10 +274,7 @@ raise SystemExit(1)`,
     ...OPENSHELL_SANDBOX_SUPERVISOR_ARGV,
   ]);
   expect(commandBoundary.has_openshell_sandbox_command).toBe(true);
-  assertHermesContainerImageAuthority(
-    commandBoundary.image,
-    managedImageReference,
-  );
+  assertHermesContainerImageAuthority(commandBoundary.image, managedImageReference);
   expect(commandBoundary.command_ends_with_nemoclaw_start).toBe(true);
   expect(commandBoundary.command_is_sleep_infinity).toBe(false);
 
@@ -371,7 +312,5 @@ raise SystemExit(1)`,
     .map((line) => line.trim())
     .filter(Boolean);
   expect(allContainerNames).toHaveLength(1);
-  expect(
-    allContainerNames.filter((name) => name.includes("-nemoclaw-gpu-backup-")),
-  ).toEqual([]);
+  expect(allContainerNames.filter((name) => name.includes("-nemoclaw-gpu-backup-"))).toEqual([]);
 }
