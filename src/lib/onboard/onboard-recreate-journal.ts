@@ -132,9 +132,11 @@ export function openOnboardRecreateJournal(
   );
 
   const runtime = createSandboxRecreateRuntime(
-    // The journal just committed is authoritative for this run; do not re-read
-    // it through a store that may not yet observe the write.
-    { loadSession: () => session, updateSession: onboardSession.updateSession },
+    {
+      loadSession: onboardSession.loadSession,
+      updateSession: onboardSession.updateSession,
+      compareAndSwapSession: onboardSession.compareAndSwapSession,
+    },
     {
       id: transaction.id,
       targetGeneration: transaction.targetGeneration,

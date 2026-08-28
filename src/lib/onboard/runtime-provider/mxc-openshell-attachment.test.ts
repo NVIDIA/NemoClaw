@@ -6,7 +6,6 @@ import { describe, expect, it } from "vitest";
 import {
   MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
   MxcOpenShellAttachmentError,
-  createMxcOpenShellAttachmentAuthority,
   qualifyMxcOpenShellAttachment,
   type MxcOpenShellAttachmentObservation,
 } from "./mxc-openshell-attachment";
@@ -28,7 +27,7 @@ describe("inactive OpenShell MXC installation attachment", () => {
     });
     expect(Object.isFrozen(authority)).toBe(true);
     expect(receipt).toEqual({
-      contractVersion: 1,
+      contractVersion: MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
       providerId: "mxc",
       mode: "attach-existing",
       authoritySha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
@@ -48,7 +47,8 @@ describe("inactive OpenShell MXC installation attachment", () => {
           sha256: DIGESTS.gateway,
         },
         wxcExec: {
-          path: "C:\\OpenShell\\mxc\\wxc-exec.exe",
+          root: "C:\\mxc-kit",
+          path: "C:\\mxc-kit\\bin\\wxc-exec.exe",
           sha256: DIGESTS.wxcExec,
         },
       },
@@ -120,17 +120,44 @@ describe("inactive OpenShell MXC installation attachment", () => {
     );
   });
 
-  it("rejects an unsupported backend before attachment (#8178)", () => {
-    const { observation } = mxcOpenShellAttachmentFixture();
-    const accepted = {
-      distribution: observation.distribution,
-      components: observation.components,
-      gateway: { ...observation.gateway, backend: "isolation_session" },
-    };
+  it("rejects wxc-exec from outside the observed MXC root (#8178)", () => {
+    const { authority, observation: fixtureObservation } = mxcOpenShellAttachmentFixture();
+    const observation = structuredClone(fixtureObservation);
+    const observed = observation as unknown as { wxcExecPath: string };
+    observed.wxcExecPath = "C:\\OtherMxc\\wxc-exec.exe";
 
-    expect(() => createMxcOpenShellAttachmentAuthority(accepted)).toThrow(
-      /backend must be 'process_container'/u,
+    expect(() => qualifyMxcOpenShellAttachment(authority, observation)).toThrow(
+      /wxc-exec path must remain inside the observed MXC root/u,
     );
+  });
+
+  it.each([
+    ["distribution root", "distributionRoot"],
+    ["MXC root", "mxcRoot"],
+    ["OpenShell CLI", "cliPath"],
+    ["OpenShell gateway", "gatewayPath"],
+    ["wxc-exec", "wxcExecPath"],
+    ["gateway configuration", "gatewayConfigPath"],
+  ] as const)("rejects a network %s before attachment qualification (#8178)", (_label, field) => {
+    const source = mxcOpenShellAttachmentFixture();
+
+    expect(() =>
+      qualifyMxcOpenShellAttachment(source.authority, {
+        ...source.observation,
+        [field]: "\\\\host\\share\\component.bin",
+      }),
+    ).toThrow(/local-drive Windows path/u);
+  });
+
+  it("rejects an unsupported observed backend before attachment (#8178)", () => {
+    const { authority, observation } = mxcOpenShellAttachmentFixture();
+
+    expect(() =>
+      qualifyMxcOpenShellAttachment(authority, {
+        ...observation,
+        gateway: { ...observation.gateway, backend: "isolation_session" },
+      }),
+    ).toThrow(/backend must be 'process_container'/u);
   });
 
   it("rejects credential-bearing fields instead of copying them into the receipt (#8178)", () => {
@@ -154,22 +181,6 @@ describe("inactive OpenShell MXC installation attachment", () => {
 
     expect(() => qualifyMxcOpenShellAttachment(copied, observation)).toThrow(
       /accepted identity authority is not provider-owned/u,
-    );
-  });
-
-  it("retains an owned accepted identity after the caller mutates its input (#8178)", () => {
-    const { observation } = mxcOpenShellAttachmentFixture();
-    const accepted = {
-      distribution: { ...observation.distribution },
-      components: { ...observation.components },
-      gateway: { ...observation.gateway },
-    };
-    const authority = createMxcOpenShellAttachmentAuthority(accepted);
-
-    accepted.components.gatewaySha256 = "6".repeat(64);
-
-    expect(qualifyMxcOpenShellAttachment(authority, observation).components.gateway.sha256).toBe(
-      DIGESTS.gateway,
     );
   });
 

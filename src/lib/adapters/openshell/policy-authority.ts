@@ -17,6 +17,7 @@ import {
   assertExternalPolicyRequirementContainment,
   assertMatchingPolicyAuthority,
   assertPolicyRequirementContainment,
+  classifyOpenShellGlobalPolicyHistory,
   parseActiveGlobalPolicyAuthorityMetadata,
   type ActiveGlobalPolicyInspection,
   type OpenShellPolicyAuthority,
@@ -24,7 +25,11 @@ import {
   type SandboxPolicyAuthorityInspection as CanonicalSandboxPolicyAuthorityInspection,
 } from "../../policy/merge";
 import * as openshellRuntime from "./runtime";
-import { fingerprintOpenShellSandboxLiveIdentity } from "./sandbox-identity";
+import {
+  fingerprintOpenShellSandboxId,
+  fingerprintOpenShellSandboxLiveIdentity,
+  parseStrictOpenShellSandboxListJson,
+} from "./sandbox-identity";
 const POLICY_AUTHORITY_CAPTURE_MAX_BYTES = 1024 * 1024;
 const POLICY_AUTHORITY_CAPTURE_TIMEOUT_MS = 30_000;
 
@@ -33,6 +38,13 @@ type JsonObject = Record<string, unknown>;
 export type SandboxPolicyAuthority = OpenShellPolicyAuthority;
 export type SandboxPolicyAuthorityInspection = CanonicalSandboxPolicyAuthorityInspection;
 export type { ActiveGlobalPolicyInspection } from "../../policy/merge";
+
+export type OpenShellSandboxPolicyReadiness =
+  | { readonly state: "ready" }
+  | {
+      readonly state: "transient";
+      readonly reason: "sandbox-not-ready" | "policy-version-pending";
+    };
 
 const POLICY_AUTHORITY_REFUSAL_CODE = "NEMOCLAW_POLICY_AUTHORITY_REFUSAL";
 
@@ -104,10 +116,21 @@ function failInspection(subject: "sandbox" | "global" | "gateway", reason: strin
 function captureBoundedOpenShell(
   args: string[],
   subject: "sandbox" | "global" | "gateway",
+  runtimeSelection?: { readonly gatewayName?: string },
 ): ReturnType<typeof openshellRuntime.captureResolvedOpenshell> {
+  const env = openshellRuntime.buildOpenShellSubprocessEnv();
+  if (runtimeSelection !== undefined) {
+    for (const name of ["XDG_CONFIG_HOME", "OPENSHELL_WORKSPACE"] as const) {
+      const value = process.env[name];
+      if (value !== undefined) env[name] = value;
+    }
+    if (runtimeSelection.gatewayName !== undefined) {
+      env.OPENSHELL_GATEWAY = runtimeSelection.gatewayName;
+    }
+  }
   try {
     return openshellRuntime.captureResolvedOpenshell(args, {
-      env: openshellRuntime.buildOpenShellSubprocessEnv(),
+      env,
       ignoreError: true,
       includeStreams: true,
       maxBuffer: POLICY_AUTHORITY_CAPTURE_MAX_BYTES,
@@ -122,8 +145,9 @@ function captureBoundedOpenShell(
 function captureAuthorityRead(
   args: string[],
   subject: "sandbox" | "global" | "gateway",
+  runtimeSelection?: { readonly gatewayName?: string },
 ): { readonly output: string; readonly stdout: string; readonly stderr: string } {
-  const result = captureBoundedOpenShell(args, subject);
+  const result = captureBoundedOpenShell(args, subject, runtimeSelection);
   if (
     !isObject(result) ||
     typeof result.output !== "string" ||
@@ -148,8 +172,12 @@ function captureAuthorityRead(
   return { output: result.output, stdout: result.stdout, stderr: result.stderr };
 }
 
-function capturePolicyRead(args: string[], subject: "sandbox" | "global"): string {
-  return captureAuthorityRead(args, subject).stdout;
+function capturePolicyRead(
+  args: string[],
+  subject: "sandbox" | "global",
+  runtimeSelection?: { readonly gatewayName?: string },
+): string {
+  return captureAuthorityRead(args, subject, runtimeSelection).stdout;
 }
 
 /** Inspect the effective policy source for one live sandbox. */
@@ -165,6 +193,7 @@ export function inspectSandboxPolicyAuthority({
   const raw = capturePolicyRead(
     buildPolicyGetFullJsonArgs(validatedSandboxName, validatedGatewayName),
     "sandbox",
+    { gatewayName: validatedGatewayName },
   );
   try {
     return parseSandboxPolicyAuthorityMetadata(raw, validatedSandboxName);
@@ -176,6 +205,49 @@ export function inspectSandboxPolicyAuthority({
   }
 }
 
+/**
+ * Bind one effective policy version to the exact live Ready sandbox row.
+ * A phase or version lag is an explicit convergence state; malformed,
+ * ambiguous, or replacement identity observations fail closed.
+ */
+export function inspectOpenShellSandboxPolicyReadiness(options: {
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly sandboxIdentityFingerprint: string;
+  readonly policyVersion: number;
+}): OpenShellSandboxPolicyReadiness {
+  const sandboxName = validatePolicyAuthorityName(options.sandboxName, "sandbox name");
+  const gatewayName = validatePolicyAuthorityName(options.gatewayName, "gateway name");
+  if (!/^[0-9a-f]{64}$/u.test(options.sandboxIdentityFingerprint)) {
+    failInspection("sandbox", "the expected sandbox identity is invalid");
+  }
+  if (!Number.isSafeInteger(options.policyVersion) || options.policyVersion < 0) {
+    failInspection("sandbox", "the expected policy version is invalid");
+  }
+  const result = captureAuthorityRead(
+    ["sandbox", "list", "-g", gatewayName, "--output", "json", "--limit", "1000"],
+    "sandbox",
+    { gatewayName },
+  );
+  const rows = parseStrictOpenShellSandboxListJson(result.stdout);
+  if (!rows) failInspection("sandbox", "OpenShell returned invalid sandbox readiness metadata");
+  const matches = rows.filter((row) => row.name === sandboxName);
+  if (matches.length !== 1) {
+    failInspection("sandbox", "OpenShell did not return one exact sandbox readiness row");
+  }
+  const row = matches[0]!;
+  if (fingerprintOpenShellSandboxId(row.id) !== options.sandboxIdentityFingerprint) {
+    failInspection("sandbox", "the live sandbox identity changed during policy verification");
+  }
+  if (row.phase !== "Ready") {
+    return { state: "transient", reason: "sandbox-not-ready" };
+  }
+  if (row.current_policy_version !== options.policyVersion) {
+    return { state: "transient", reason: "policy-version-pending" };
+  }
+  return { state: "ready" };
+}
+
 /** Inspect active global policy presence without assigning absent policy ownership. */
 export function inspectActiveGlobalPolicy({
   gatewayName,
@@ -184,9 +256,19 @@ export function inspectActiveGlobalPolicy({
     gatewayName === undefined
       ? undefined
       : validatePolicyAuthorityName(gatewayName, "gateway name");
-  const history = capturePolicyRead(buildGlobalPolicyListArgs(validatedGatewayName), "global");
-  if (history.trim().length === 0) return { state: "absent" };
-  const raw = capturePolicyRead(buildGlobalPolicyGetFullJsonArgs(validatedGatewayName), "global");
+  const history = captureAuthorityRead(buildGlobalPolicyListArgs(validatedGatewayName), "global", {
+    gatewayName: validatedGatewayName,
+  });
+  const historyState = classifyOpenShellGlobalPolicyHistory(history.stdout, history.stderr);
+  if (historyState === "absent") return { state: "absent" };
+  if (historyState === "invalid") {
+    failInspection("global", "OpenShell returned invalid global policy history");
+  }
+  const raw = captureAuthorityRead(
+    buildGlobalPolicyGetFullJsonArgs(validatedGatewayName),
+    "global",
+    { gatewayName: validatedGatewayName },
+  ).stdout;
   try {
     return parseActiveGlobalPolicyAuthorityMetadata(raw);
   } catch (error) {
@@ -199,12 +281,14 @@ export function inspectActiveGlobalPolicy({
 
 /** Read one sandbox base policy through the same bounded OpenShell adapter. */
 export function captureSandboxBasePolicy(sandboxName: string, gatewayName: string): string {
+  const validatedGatewayName = validatePolicyAuthorityName(gatewayName, "gateway name");
   return capturePolicyRead(
     buildPolicyGetArgs(
       validatePolicyAuthorityName(sandboxName, "sandbox name"),
-      validatePolicyAuthorityName(gatewayName, "gateway name"),
+      validatedGatewayName,
     ),
     "sandbox",
+    { gatewayName: validatedGatewayName },
   );
 }
 
@@ -217,7 +301,11 @@ export function inspectOpenShellSandboxIdentityFingerprint(options: {
   const sandboxName = validatePolicyAuthorityName(options.sandboxName, "sandbox name");
   let result: ReturnType<typeof openshellRuntime.captureResolvedOpenshell>;
   try {
-    result = captureBoundedOpenShell(["sandbox", "get", "-g", gatewayName, sandboxName], "sandbox");
+    result = captureBoundedOpenShell(
+      ["sandbox", "get", "-g", gatewayName, sandboxName],
+      "sandbox",
+      { gatewayName },
+    );
   } catch {
     throw new Error("OpenShell sandbox identity inspection could not run");
   }
@@ -249,7 +337,9 @@ export function assertOpenShellGatewayPortBinding(options: {
   ) {
     failInspection("gateway", "the expected gateway port is invalid");
   }
-  const result = captureAuthorityRead(["gateway", "info", "-g", gatewayName], "gateway");
+  const result = captureAuthorityRead(["gateway", "info", "-g", gatewayName], "gateway", {
+    gatewayName,
+  });
   if (
     openshellRuntime.classifyManagedGatewayEndpointBinding([result.output], options.gatewayPort) !==
     "match"

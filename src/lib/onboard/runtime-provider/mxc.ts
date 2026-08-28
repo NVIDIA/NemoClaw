@@ -17,6 +17,7 @@ import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
   type RuntimeProviderBundle,
   type RuntimeProviderDoctorCheck,
+  type RuntimeProviderNativeArtifactBootstrapSurface,
   type RuntimeProviderWorkloadProfile,
 } from "./contract";
 import { createMxcNativeArtifactBootstrapSurface } from "./mxc-bootstrap";
@@ -28,13 +29,33 @@ import {
   qualifyMxcOpenShellAttachment,
   type MxcOpenShellAttachmentAuthority,
   type MxcOpenShellAttachmentObservation,
+  type MxcOpenShellAttachmentReceipt,
 } from "./mxc-openshell-attachment";
+import {
+  observeMxcOpenShellAttachment,
+  type MxcOpenShellAttachmentObservationRequest,
+  type MxcOpenShellFileDigestObserver,
+} from "./mxc-openshell-observer";
 
 export interface MxcRuntimeProviderOptions {
   readonly hostFacts: WindowsMxcHostFacts;
   readonly openshellAttachmentAuthority: MxcOpenShellAttachmentAuthority;
   readonly openshellObservation: MxcOpenShellAttachmentObservation;
   readonly bootstrapControlPlane: MxcNativeArtifactControlPlane;
+}
+
+export interface MxcExistingInstallationRuntimeProviderOptions {
+  readonly hostFacts: WindowsMxcHostFacts;
+  readonly openshellAttachmentAuthority: MxcOpenShellAttachmentAuthority;
+  readonly attachmentObservation: MxcOpenShellAttachmentObservationRequest;
+  readonly bootstrapControlPlane: MxcNativeArtifactControlPlane;
+  /** Trusted native boundary; Windows composition must reject reparse points and identity drift. */
+  readonly observeFileDigest: MxcOpenShellFileDigestObserver;
+}
+
+export interface MxcExistingInstallationRuntimeProviderAttachment {
+  readonly provider: RuntimeProviderBundle;
+  readonly attachmentReceipt: MxcOpenShellAttachmentReceipt;
 }
 
 const MXC_PROVIDER_ID = "mxc";
@@ -195,4 +216,51 @@ export function createMxcRuntimeProviderBundle({
       "MXC has no container-engine operations; OpenShell owns the MXC control plane.",
     ),
   };
+}
+
+/** Observe one existing installation and retain its exact attachment receipt. */
+export async function attachMxcRuntimeProviderBundleFromExistingInstallation({
+  hostFacts,
+  openshellAttachmentAuthority,
+  attachmentObservation,
+  bootstrapControlPlane,
+  observeFileDigest,
+}: MxcExistingInstallationRuntimeProviderOptions): Promise<MxcExistingInstallationRuntimeProviderAttachment> {
+  const observeAndQualify = async () => {
+    const observation = await observeMxcOpenShellAttachment(
+      attachmentObservation,
+      observeFileDigest,
+    );
+    const attachmentReceipt = qualifyMxcOpenShellAttachment(
+      openshellAttachmentAuthority,
+      observation,
+    );
+    return { observation, attachmentReceipt };
+  };
+  const initialAttachment = await observeAndQualify();
+  const candidate = createMxcRuntimeProviderBundle({
+    hostFacts,
+    openshellAttachmentAuthority,
+    openshellObservation: initialAttachment.observation,
+    bootstrapControlPlane,
+  });
+  const bootstrap = candidate.bootstrap as RuntimeProviderNativeArtifactBootstrapSurface;
+  const provider: RuntimeProviderBundle = {
+    ...candidate,
+    bootstrap: {
+      ...bootstrap,
+      run: async (input) => {
+        await observeAndQualify();
+        return bootstrap.run(input);
+      },
+      recover: async (input) => {
+        await observeAndQualify();
+        return bootstrap.recover(input);
+      },
+    },
+  };
+  return Object.freeze({
+    provider,
+    attachmentReceipt: initialAttachment.attachmentReceipt,
+  });
 }

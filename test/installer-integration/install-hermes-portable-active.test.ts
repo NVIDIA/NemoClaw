@@ -210,6 +210,15 @@ describe("Hermes portable installer admission", testTimeoutOptions(60_000), () =
         endpointSource: null,
       });
       const selection = normalizeInferenceSelection(producedReservation);
+      const createReservation = registry.qualifyPendingSandboxCreateReservation(
+        {
+          sandboxName,
+          gatewayName,
+          sessionId: session.sessionId,
+          selection,
+        },
+        registry.getSandbox(sandboxName),
+      );
       const basePolicyPath = path.join(
         curlPipeCheckout,
         "nemoclaw-blueprint",
@@ -270,6 +279,30 @@ describe("Hermes portable installer admission", testTimeoutOptions(60_000), () =
         startup: { agent: loadAgent("hermes"), sandboxName, startupArgv },
         inferenceRouteReservation: { sessionId: session.sessionId, selection },
       };
+      const policyCreationReceipt = {
+        schemaVersion: 1 as const,
+        origin: "sandbox-create" as const,
+        gatewayName,
+        gatewayPort: 8080,
+        sandboxName,
+        lifecycleGeneration,
+        sandboxIdentityFingerprint: HERMES_PORTABLE_TEST_LIVE_IDENTITY,
+        policyHash: "sha256:portable-installer-policy",
+        policyVersion: 1,
+      };
+      const checkpoint = pendingSandboxPolicyVerificationForBoundary({
+        registration: {
+          policyAuthority: "nemoclaw-managed" as const,
+          policyCreationReceipt,
+          observedPolicyAuthority: "owner-unknown" as const,
+        },
+        sandboxName,
+        gatewayName,
+        gatewayPort: 8080,
+        lifecycleGeneration,
+        lifecycleLiveIdentityFingerprint: HERMES_PORTABLE_TEST_LIVE_IDENTITY,
+        route: "native" as const,
+      });
       const fixture = createHermesPortableTransactionFixture(transactionInput, {
         omitCleanup: true,
         policySource: createPlan.initialSandboxPolicy.sourceBytes,
@@ -278,8 +311,11 @@ describe("Hermes portable installer admission", testTimeoutOptions(60_000), () =
           expect(buildContextPath).toContain(path.join(stateDir, "hermes-portable-build-context"));
           expect(argv[argv.indexOf("--from") + 1]).toBe(path.join(buildContextPath, "Dockerfile"));
           expect(argv[argv.indexOf("--policy") + 1]).not.toBe(basePolicyPath);
+          registry.recordPendingSandboxPolicyVerification(createReservation, checkpoint);
           return { ready: true };
         },
+        revalidatePendingCreateRegistry: () =>
+          registry.requireCurrentPendingSandboxPolicyVerification(createReservation, checkpoint),
         registerSandbox: async (
           _created,
           receipt,
@@ -288,48 +324,8 @@ describe("Hermes portable installer admission", testTimeoutOptions(60_000), () =
           reservation,
         ) => {
           expect(revalidate()).toBe(liveIdentityFingerprint);
-          const createReservation = registry.qualifyPendingSandboxCreateReservation(
-            {
-              sandboxName,
-              gatewayName,
-              sessionId: session.sessionId,
-              selection,
-            },
-            registry.getSandbox(sandboxName),
-          );
           expect(reservation.authority).toEqual(createReservation.authority);
-          const policyCreationReceipt = {
-            schemaVersion: 1 as const,
-            origin: "sandbox-create" as const,
-            gatewayName,
-            gatewayPort: 8080,
-            sandboxName,
-            lifecycleGeneration: receipt.lifecycleGeneration,
-            sandboxIdentityFingerprint: liveIdentityFingerprint,
-            policyHash: "sha256:portable-installer-policy",
-            policyVersion: 1,
-          };
-          const verifiedPolicyBoundary = {
-            registration: {
-              policyAuthority: "nemoclaw-managed" as const,
-              policyCreationReceipt,
-              observedPolicyAuthority: "owner-unknown" as const,
-            },
-            sandboxName,
-            gatewayName,
-            gatewayPort: 8080,
-            lifecycleGeneration: receipt.lifecycleGeneration,
-            lifecycleLiveIdentityFingerprint: liveIdentityFingerprint,
-            route: "native" as const,
-          };
-          const checkpoint = pendingSandboxPolicyVerificationForBoundary(
-            verifiedPolicyBoundary,
-          );
-          registry.recordPendingSandboxPolicyVerification(createReservation, checkpoint);
-          registry.requireCurrentPendingSandboxPolicyVerification(
-            createReservation,
-            checkpoint,
-          );
+          registry.requireCurrentPendingSandboxPolicyVerification(createReservation, checkpoint);
           return completeHermesPortableSandboxRegistration({
             sandboxName,
             completeRegistration: async () => {

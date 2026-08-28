@@ -4,7 +4,11 @@
 import { isDeepStrictEqual } from "node:util";
 
 import type { AgentDefinition } from "../agent/defs";
-import type { InferenceEndpointSource, InferenceSelection } from "../inference/selection";
+import type {
+  InferenceEndpointSource,
+  InferenceSelection,
+  InferenceSelectionInput,
+} from "../inference/selection";
 import {
   inferenceSelectionRegistryFields,
   normalizeInferenceSelection,
@@ -204,6 +208,13 @@ export function selection(
       : null,
     nimContainer: sessionMatches ? (session.nimContainer ?? null) : null,
   });
+}
+
+/** Normalize the exact provider-phase route carried into sandbox creation. */
+export function sandboxCreateInferenceSelection(
+  input: InferenceSelectionInput,
+): InferenceSelection {
+  return normalizeInferenceSelection(input);
 }
 
 export function buildCreatedSandboxRegistryEntry(

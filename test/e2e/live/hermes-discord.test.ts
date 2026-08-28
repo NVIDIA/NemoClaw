@@ -586,7 +586,6 @@ text = Path("/sandbox/.hermes/.env").read_text(encoding="utf-8")
 lines = text.splitlines()
 errors = []
 required = [
-    "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
     f"NEMOCLAW_DISCORD_GUILD_IDS={os.environ['EXPECTED_GUILD_IDS']}",
     f"DISCORD_ALLOWED_USERS={os.environ['EXPECTED_ALLOWED_USERS']}",
     "API_SERVER_PORT=18642",

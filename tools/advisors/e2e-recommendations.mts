@@ -8,7 +8,12 @@ import path from "node:path";
 // the analyzed PR worktree. PR-provided TypeScript is never imported.
 import { getTarget, listTargets } from "../../test/e2e/registry/registry.ts";
 import { liveTargetSupport } from "../../test/e2e/registry/runtime-support.ts";
-import { moduleTagDeclarations } from "../e2e/module-tags.mts";
+import {
+  credentialFreeTestProjectForFile,
+  credentialFreeTestRowFromModule,
+  SHARED_E2E_JOB_ID,
+  type CredentialFreeTestProject,
+} from "../e2e/credential-free-tests.mts";
 import {
   catalogueRecommendationSelectorIds,
   E2E_TARGET_CATALOGUE,
@@ -23,14 +28,14 @@ const E2E_WORKFLOW_PATH = `.github/workflows/${E2E_WORKFLOW}`;
 export const E2E_RENDER_LIMIT = 20;
 const TRUSTED_REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const E2E_ALL_ID = "e2e-all";
-const CREDENTIAL_FREE_TEST_TAG = "e2e/credential-free";
-const SHARED_E2E_JOB_ID = "shared-e2e";
 const REGISTRY_LIVE_ENTRYPOINT = "test/e2e/live/registry-targets.test.ts";
 const FREE_STANDING_LIVE_TEST_PATTERN = /^test\/e2e\/live\/[^/]+\.test\.ts$/;
 const FREE_STANDING_LIVE_FILE_PATTERN = /^test\/e2e\/live\/[^/]+\.ts$/;
 const ALLOWED_WORKFLOWS = new Set<string>([E2E_WORKFLOW]);
 const TARGET_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const CONFIDENCES = ["low", "medium", "high"] as const;
+let trustedE2eWorkflowText: string | undefined;
+let trustedCredentialFreeTests: readonly E2eChangedCredentialFreeTest[] | undefined;
 const MODEL_COVERAGE_IDENTITY_FIELDS = ["workflow", "job", "script", "cost", "runner"] as const;
 const CLOUD_ONBOARD_E2E_PATTERNS: readonly RegExp[] = [
   /^src\/lib\/onboard(?:\.ts|\/)/,
@@ -371,7 +376,11 @@ function readE2eWorkflowText(): string | undefined {
 }
 
 function readTrustedE2eWorkflowText(): string {
-  return fs.readFileSync(path.join(TRUSTED_REPO_ROOT, E2E_WORKFLOW_PATH), "utf8");
+  trustedE2eWorkflowText ??= fs.readFileSync(
+    path.join(TRUSTED_REPO_ROOT, E2E_WORKFLOW_PATH),
+    "utf8",
+  );
+  return trustedE2eWorkflowText;
 }
 
 function buildE2eTargetNormalizationContext(
@@ -381,12 +390,10 @@ function buildE2eTargetNormalizationContext(
 ): E2eTargetNormalizationContext {
   const trustedWorkflowText = readTrustedE2eWorkflowText();
   const trustedCredentialFreeTests = discoverTrustedCredentialFreeTests();
-  const allowedJobIds = new Set(
-    [
-      ...extractAllowedE2eJobIds(trustedWorkflowText, trustedCredentialFreeTests),
-      ...catalogueRecommendationSelectorIds(),
-    ],
-  );
+  const allowedJobIds = new Set([
+    ...extractAllowedE2eJobIds(trustedWorkflowText, trustedCredentialFreeTests),
+    ...catalogueRecommendationSelectorIds(),
+  ]);
   // The analyzed workflow is untrusted input. It may explain why a changed test has
   // no trusted selector, but it must never introduce one absent from the trusted
   // workflow or catalogue.
@@ -416,7 +423,7 @@ function buildE2eTargetNormalizationContext(
   }
   for (const [file, project] of changedCredentialFreeProjects) {
     const source = changedSource(file, changedFileSources);
-    const row = source ? credentialFreeTestRow(file, source) : undefined;
+    const row = source ? changedCredentialFreeTestRow(file, project, source) : undefined;
     if (!row || !project || !isPrE2ePlanningJob(row.id)) continue;
     addMapValue(liveTestToJobs, row.file, row.id);
     allowedJobIds.add(row.id);
@@ -433,39 +440,20 @@ function buildE2eTargetNormalizationContext(
   };
 }
 
-function credentialFreeTestProjectForFile(file: string): "e2e-live" | "integration" | undefined {
-  if (/^test\/e2e\/live\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.test\.ts$/.test(file)) {
-    return "e2e-live";
-  }
-  if (/^test\/(?!e2e\/)(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.test\.(?:js|ts)$/.test(file)) {
-    return "integration";
-  }
-  return undefined;
-}
-
-export function credentialFreeTestIdForFile(file: string): string | undefined {
-  if (!credentialFreeTestProjectForFile(file)) return undefined;
-  const id = path.posix.basename(file).replace(/\.test\.(?:js|ts)$/, "");
-  return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id) ? id : undefined;
-}
-
-function credentialFreeTestRow(
+function changedCredentialFreeTestRow(
   file: string,
+  project: CredentialFreeTestProject,
   source: string,
 ): E2eChangedCredentialFreeTest | undefined {
-  const id = credentialFreeTestIdForFile(file);
-  if (!id) return undefined;
-  const declarations = moduleTagDeclarations(source);
-  if (
-    declarations.some(({ tag }) => tag.startsWith("e2e/") && tag !== CREDENTIAL_FREE_TEST_TAG) ||
-    declarations.filter(({ tag }) => tag === CREDENTIAL_FREE_TEST_TAG).length !== 1
-  ) {
+  try {
+    const row = credentialFreeTestRowFromModule({ file, project, source });
+    return { id: row.id, file: row.file };
+  } catch {
     return undefined;
   }
-  return { id, file };
 }
-
 function discoverTrustedCredentialFreeTests(): E2eChangedCredentialFreeTest[] {
+  if (trustedCredentialFreeTests) return [...trustedCredentialFreeTests];
   const rows: E2eChangedCredentialFreeTest[] = [];
   const testRoot = path.join(TRUSTED_REPO_ROOT, "test");
   const pending = [testRoot];
@@ -480,11 +468,14 @@ function discoverTrustedCredentialFreeTests(): E2eChangedCredentialFreeTest[] {
       }
       if (!entry.isFile() || !/\.test\.(?:js|ts)$/.test(entry.name)) continue;
       const file = path.relative(TRUSTED_REPO_ROOT, absolute).split(path.sep).join("/");
-      const row = credentialFreeTestRow(file, fs.readFileSync(absolute, "utf8"));
+      const project = credentialFreeTestProjectForFile(file);
+      if (!project) continue;
+      const row = changedCredentialFreeTestRow(file, project, fs.readFileSync(absolute, "utf8"));
       if (row) rows.push(row);
     }
   }
-  return rows.sort((left, right) => left.id.localeCompare(right.id));
+  trustedCredentialFreeTests = rows.sort((left, right) => left.id.localeCompare(right.id));
+  return [...trustedCredentialFreeTests];
 }
 
 function extractAllowedE2eJobIds(

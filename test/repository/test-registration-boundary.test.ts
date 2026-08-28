@@ -254,9 +254,15 @@ describe("test registration boundary repository state", () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-test-registration-boundary-"));
     try {
       writeFileSync(path.join(root, "collected.test.ts"), 'import "./imported-suite";\n');
+      writeFileSync(path.join(root, "escaped.test.ts"), 'import "./escaped\\u002dsuite";\n');
+      writeFileSync(path.join(root, "label.test.ts"), 'export const label = "-suite";\n');
       writeFileSync(
         path.join(root, "imported-suite.ts"),
         'import { it } from "vitest";\nit("imported", () => {});\n',
+      );
+      writeFileSync(
+        path.join(root, "escaped-suite.ts"),
+        'import { it } from "vitest";\nit("escaped", () => {});\n',
       );
       writeFileSync(
         path.join(root, "orphan-suite.ts"),
