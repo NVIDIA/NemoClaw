@@ -287,7 +287,7 @@ mismatched digests.
 ## Documentation
 
 - Treat `docs/` as the source of truth for public-facing documentation. Follow the [Documentation Agent Guide](docs/AGENTS.md) for the documentation-agent workflow, including DORI routing.
-- Ordinary code PRs may defer only `docs/**`, `fern/docs.yml`, and `fern/assets/**` changes to `Docs / Post-Merge Catch-Up`.
+- Ordinary code PRs may defer only `docs/**`, `fern/docs.yml`, and `fern/assets/**` changes to `Docs / Author Post-Merge Catch-Up`.
   Keep all other owning repository guidance in the same PR, including active `AGENTS.md` files, `.agents/skills/**`, and `test/e2e/**/README.md`.
 - Direct documentation-only changes follow `docs/AGENTS.md`, the shared [Documentation Writing and Review](.agents/skills/_shared/documentation-writing-review.md) contract, documented validation, and independent review.
 
