@@ -107,7 +107,7 @@ RUN set -eu; \
     strings "$binary" | grep -Fq '/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh'
 
 # Fetch immutable reviewed archives outside RUN instructions. The protected
-# GPU rebuild imports these checksum-addressed source records from the exact
+# GPU rebuild imports these checksum-addressed source records from the
 # amd64 build cache, while every package-materialization RUN remains offline.
 FROM scratch AS wechat-npm-archives
 
@@ -138,7 +138,7 @@ ADD --chmod=0444 --checksum=sha256:b1b01eb1522aea8f652cc7b692d1c417195713deb12b3
 FROM codex-acp-${TARGETARCH}-archive AS codex-acp-platform-archive
 
 # Reviewed-archive invariants (#5896): checksum-addressed source archives,
-# committed SRI verification, offline installation, and exact architecture.
+# committed SRI verification, offline installation, and architecture selection.
 FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c AS codex-acp-runtime
 ARG TARGETARCH
 ARG CODEX_ACP_0_11_1_INTEGRITY
@@ -188,7 +188,7 @@ RUN --network=none install -d -o root -g root -m 0755 /out/wechat-npm-cache \
     && chown -R root:root /out/wechat-npm-cache \
     && chmod -R a+rX,go-w /out/wechat-npm-cache
 
-# Fetch every exact-lock messaging archive outside RUN instructions. BuildKit
+# Fetch every locked messaging archive outside RUN instructions. BuildKit
 # verifies the committed SHA-256 source pins before the selected architecture
 # enters the cache stage; SHA-512 verification against package-lock.json and
 # every package-materialization command then execute with networking disabled.
@@ -486,7 +486,7 @@ ADD --chmod=0444 --checksum=sha256:a6fda898620be2c49d477a0b266f4be3a9eb16da47426
 FROM openclaw-managed-messaging-npm-${TARGETARCH}-archives AS openclaw-managed-messaging-npm-archives
 
 # Keep the complete managed-image messaging dependency graph inert for normal
-# Dockerfile builds. Release-image builds select the exact-lock cache stage.
+# Dockerfile builds. Release-image builds select the lock cache stage.
 FROM node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c AS openclaw-managed-messaging-npm-cache-0
 RUN install -d -o root -g root -m 0755 /out/npm-cache
 
@@ -691,7 +691,7 @@ RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
     node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
       --npm-root /usr/local/lib/node_modules/npm
 
-# Reassert the npm-private brace-expansion fix for the exact final filesystem.
+# Reassert the npm-private brace-expansion fix for the final filesystem.
 # hadolint ignore=DL3059
 RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
       export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
@@ -700,7 +700,7 @@ RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
     node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts \
       --npm-root /usr/local/lib/node_modules/npm
 
-# Reassert the npm-private ip-address fix for the exact final filesystem. When
+# Reassert the npm-private ip-address fix for the final filesystem. When
 # onboarding supplied a corporate CA, use it for the registry-backed download.
 # hadolint ignore=DL3059
 RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
@@ -790,7 +790,7 @@ RUN test -f /usr/local/bin/node \
     && json5_unsafe="$(find -L /opt/nemoclaw/node_modules/json5 \( ! -user root -o -perm /022 \) -print -quit)" \
     && test -z "$json5_unsafe"
 # Reviewed-archive invariants (#5896): the dedicated build stage materializes
-# the exact lock, seeds resolver metadata, and re-packs every archive offline
+# the committed lock, seeds resolver metadata, and re-packs every archive offline
 # before this root-owned immutable cache enters the final image.
 COPY --from=wechat-npm-cache /out/wechat-npm-cache/ /usr/local/share/nemoclaw/wechat-npm-cache/
 COPY --from=openclaw-patch-payload / /
@@ -826,7 +826,7 @@ COPY --from=codex-acp-runtime /usr/local/bin/codex-acp /usr/local/bin/codex-acp
 RUN command -v codex-acp >/dev/null
 
 # Upgrade OpenClaw if the base image is stale.
-# Reuse exact OpenClaw and locked-mcporter base installs only from a published
+# Reuse pinned OpenClaw and locked-mcporter base installs only from a published
 # NemoClaw base whose package provenance marker matches this build target;
 # otherwise reinstall both.
 #
@@ -937,12 +937,12 @@ RUN --network=default set -eu; \
     rm -f "$OPENCLAW_EXPECTED_PROVENANCE"; \
     rm -rf "$OPENCLAW_PROVENANCE_PATH"; \
     if [ "$USE_REVIEWED_BASE_RUNTIME" = "1" ]; then \
-        echo "INFO: Reusing reviewed base OpenClaw $CUR_VER with exact provenance"; \
+        echo "INFO: Reusing reviewed base OpenClaw $CUR_VER with matching reviewed provenance"; \
     elif [ "$(printf '%s\n%s' "$OPENCLAW_VERSION" "$CUR_VER" | sort -V | head -n1)" = "$OPENCLAW_VERSION" ] \
         && [ "$CUR_VER" != "$OPENCLAW_VERSION" ]; then \
         echo "ERROR: Base image has OpenClaw $CUR_VER, which is newer than reviewed target $OPENCLAW_VERSION" >&2; exit 1; \
     else \
-        echo "INFO: Base image OpenClaw $CUR_VER lacks exact reviewed provenance; installing $OPENCLAW_VERSION"; \
+        echo "INFO: Base image OpenClaw $CUR_VER lacks matching reviewed provenance; installing $OPENCLAW_VERSION"; \
         # npm 10's atomic-move install can hit EROFS on overlayfs when the prior
         # install spans image layers. Removing it first also prevents unreviewed
         # files from surviving a same-version reinstall.
@@ -991,12 +991,12 @@ RUN --network=default set -eu; \
         2026.3.11) npm ls -g --depth=1 openclaw tar >/dev/null ;; \
     esac; \
     if [ "$USE_REVIEWED_BASE_RUNTIME" = "1" ]; then \
-        echo "INFO: Reusing reviewed base mcporter $CUR_MCPORTER_VER with exact lock provenance"; \
+        echo "INFO: Reusing reviewed base mcporter $CUR_MCPORTER_VER with matching lock provenance"; \
     else \
         node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts --verify-only \
             --package-spec "mcporter@${MCPORTER_VERSION}" --integrity "$MCPORTER_EXPECTED_INTEGRITY" \
             --tarball-url "$MCPORTER_EXPECTED_TARBALL" --label "mcporter ${MCPORTER_VERSION}"; \
-        # Reinstall from the committed lock when exact protected base provenance
+        # Reinstall from the committed lock when matching protected base provenance
         # is unavailable; matching top-level versions can hide transitive drift.
         echo "INFO: Installing locked mcporter $MCPORTER_VERSION dependency graph"; \
         rm -rf /usr/local/lib/node_modules/mcporter /usr/local/bin/mcporter; \
@@ -1058,7 +1058,7 @@ RUN --network=default set -eu; \
 # OpenClaw's web_fetch SSRF guard blocks *.internal hostnames before the
 # OpenShell L7 proxy sees the request. NemoClaw users legitimately reach
 # host-local approved services through host.openshell.internal after the
-# OpenShell policy explicitly allows that host:port. Add this exact hostname
+# OpenShell policy explicitly allows that host:port. Add this hostname
 # only to the web_fetch trusted-env-proxy policy, only inside an OpenShell
 # sandbox. The generic SSRF helper and strict/direct DNS-pinned paths remain
 # unmodified, so metadata/link-local/private IP literals are unchanged.
@@ -1183,7 +1183,7 @@ RUN set -eu; \
     # Reviewed against openclaw@2026.7.1 dist: fetchWithWebToolsNetworkGuard \
     # passes useEnvProxy into withTrustedEnvProxyGuardedFetchMode(resolved), and \
     # the SSRF guard consumes policy.allowedHostnames to skip private-network \
-    # checks for an exact normalized hostname. hostnameAllowlist only gates \
+    # checks for a normalized hostname. hostnameAllowlist only gates \
     # hostname pattern matching and does not bypass .internal/private blocking. \
     # Executable fixture proof lives in test/security/fetch-guard-patch-regression.test.ts; \
     # the live network-policy E2E exercises this path in the assembled image. \
@@ -1380,7 +1380,7 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-chat-
 # canonical locked pairing writer (#4462). The upstream devices CLI otherwise
 # asks for the very scopes it is trying to approve, so the handshake fails
 # before device.pair.approve runs and its operator.admin retry fails likewise.
-# This exact-dist patch allows only a signed, device-token-authenticated CLI to
+# This dist patch allows only a signed, device-token-authenticated CLI to
 # approve its own complete operator-only request while it already holds
 # operator.pairing; the canonical pairing function repeats identity, role, and
 # bounded-scope validation after acquiring its state lock.
@@ -2007,7 +2007,7 @@ RUN OPENCLAW_VERSION="${OPENCLAW_VERSION}" node --experimental-strip-types /src/
 # A managed image is a neutral capability carrier, not an all-channels-enabled
 # deployment. Regenerate after every optional plugin is installed so OpenClaw's
 # install registry survives while every optional plugin/channel remains inert.
-# Validate the exact generated file through the pinned OpenClaw CLI.
+# Validate the generated file through the pinned OpenClaw CLI.
 # hadolint ignore=DL3059,DL4006,SC2016
 RUN if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
         node --experimental-strip-types /scripts/generate-openclaw-config.mts; \
@@ -2408,10 +2408,10 @@ RUN check_metadata() { \
 #           host-side delivery-chain monitoring (verify-deployment.ts, host
 #           port forward, sandbox status).
 #
-# nemoclaw-start records `pid starttime` for the exact gateway process in
+# nemoclaw-start records `pid starttime` for the gateway process in
 # /tmp/nemoclaw-gateway.pid on every launch.  When curl sees connection
 # refused, validate both values against `/proc/<pid>/stat` field 22 before
-# accepting the exact OpenClaw gateway cmdline fallback.  A numeric PID or
+# accepting the OpenClaw gateway cmdline fallback.  A numeric PID or
 # OpenClaw-looking argv alone is insufficient because either can belong to a
 # recycled process.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \

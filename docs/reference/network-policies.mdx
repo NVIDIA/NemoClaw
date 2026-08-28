@@ -76,7 +76,7 @@ The following endpoint groups are allowed by default:
 <AgentOnly variant="hermes">
 
 Hermes baseline endpoint groups are declared by the Hermes agent policy additions.
-Use `$$nemoclaw <sandbox> policy list` or `openshell policy get --base <sandbox>` on a live sandbox to inspect the exact applied baseline.
+Use `$$nemoclaw <sandbox> policy list` or `openshell policy get --base <sandbox>` on a live sandbox to inspect the applied baseline.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -132,7 +132,7 @@ Apply maintained presets such as `github`, `pypi`, or `tavily` only when the san
 During onboarding, the wizard prompts for a policy tier that determines the default set of presets applied on top of the baseline policy.
 The baseline policy is always applied regardless of the selected tier.
 An operator can persistently exclude a specific baseline entry with [`policy exclude`](#excluding-a-baseline-entry) when they accept reduced, unsupported functionality.
-This is the supported registry-backed way to replay a live exact-key removal during rebuild; raw `openshell policy set` edits are not replayed, while edits made to the source baseline itself are applied when the sandbox is recreated.
+This is the supported registry-backed way to replay a live key removal during rebuild; raw `openshell policy set` edits are not replayed, while edits made to the source baseline itself are applied when the sandbox is recreated.
 
 | Tier | Presets included | Description |
 |------|------------------|-------------|
@@ -236,7 +236,7 @@ It is not a general remote observability policy.
 
 | Preset | Destination | Binary | Rules |
 |---|---|---|---|
-| `observability-otlp-local` | `host.openshell.internal:4318` | `/opt/venv/bin/python3*` | Exact `POST /v1/traces` only |
+| `observability-otlp-local` | `host.openshell.internal:4318` | `/opt/venv/bin/python3*` | `POST /v1/traces` only |
 
 The sandbox sends OTLP/HTTP protobuf traces to a collector that the operator runs on the host.
 The managed exporter uses standard OTLP transport headers but does not accept operator-supplied custom or authentication headers.
@@ -325,7 +325,7 @@ openshell policy set --policy current-policy.yaml --wait <sandbox-name>
 
 The baseline policy applies to every sandbox, but an operator can persistently exclude a specific baseline entry when they accept reduced, unsupported functionality in exchange for tighter egress.
 
-Preview the exact scope, then exclude an exact baseline key:
+Preview the scope, then exclude a baseline key:
 
 ```bash
 $$nemoclaw <sandbox-name> policy exclude <key> --dry-run
@@ -337,9 +337,9 @@ It also names the supported features that may stop working before it requires ex
 NemoClaw refuses to exclude an entry that does not have a reviewed feature-impact disclosure, so a new baseline entry cannot bypass this review.
 The versioned exclusion record is bound to the reviewed entry content and active agent, recorded in the sandbox registry, and replayed on rebuild.
 If the sandbox's active agent changes, NemoClaw requires you to clear or review the exclusion again instead of applying an approval from another agent baseline.
-NemoClaw journals the cross-system update before changing the live OpenShell policy and verifies the exact live result before publishing the durable intent.
+NemoClaw journals the cross-system update before changing the live OpenShell policy and verifies that the live policy equals the intended result before publishing the durable intent.
 If the process or persistence layer fails between those steps, `policy list`, `policy explain`, and `status` report `repair required`.
-Sandbox creation or recreation, rebuild, and cross-sandbox snapshot cloning stop before destructive work, and rerunning the same `policy exclude` or `policy restore` command reconciles only an exact source or target state.
+Sandbox creation or recreation, rebuild, and cross-sandbox snapshot cloning stop before destructive work, and rerunning the same `policy exclude` or `policy restore` command reconciles only when the state equals the recorded source or intended target.
 An unreadable live policy, or one that matches neither the pre-mutation source nor the intended target, remains fail-closed for manual inspection instead of being guessed or overwritten.
 An interrupted restore finalizes only when the durable exclusion still exactly matches the staged exclusion and the current release baseline still exactly matches the journaled target; if either changes or becomes unreadable, the journal remains pending for inspection and re-review.
 If a later release changes that entry, create and rebuild fail closed until re-review; if the release removes it, they fail closed until the stale record is cleared.

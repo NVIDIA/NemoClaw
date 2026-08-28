@@ -414,7 +414,6 @@ INSTALLER_MUTATIONS["reviewed-release-cohorts-url-drift"] = (source) =>
     "https://github.com/NVIDIA/OpenShell/releases/download/${RELEASE_TAG}/$name",
     "https://attacker.invalid/openshell/${RELEASE_TAG}/$name",
   );
-
 for (const mode of [
   "complete-multiple-installer-versions",
   "secondary-installer-version-mismatch",
@@ -537,6 +536,7 @@ const trustAlternateRelease = (source: string): string => {
     },
     installerTemplateSha256: [
       "c3418c0837c450df89ca1b6ca3a598cdee47b0d30e2c2433fd7732ec35c2ccc2",
+      "ec5d942bf1b1af45ffbdb2c1ceeb8ede25a0169d9f856ad3a83577d81088ee37",
     ],
     manifests: [
 ${manifests}
