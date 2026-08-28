@@ -15,6 +15,7 @@ import type { OpenShellTools } from "../../tools/openshell-agent/runtime.mts";
 
 const directories: string[] = [];
 const repository = "NVIDIA/NemoClaw";
+const repositoryId = "R_kgDOTestRepository";
 const signOff =
   "Signed-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>";
 const rangeStartTag = "v1.0.0";
@@ -122,6 +123,7 @@ class FakeGitHub {
   readonly partialSha = "d".repeat(40);
   readonly commits = new Map<string, Record<string, unknown>>();
   beforePullCreation = (): void => undefined;
+  beforeRefUpdate = (): void => undefined;
   afterWrite = (): void => undefined;
   afterPullRead = (): void => undefined;
   projectPullHead = (headSha: string): void => {
@@ -141,9 +143,13 @@ class FakeGitHub {
   ) {
     return {
       body,
-      base: { ref: "main", repo: { full_name: repository } },
+      base: { ref: "main", repo: { full_name: repository, node_id: repositoryId } },
       draft: true,
-      head: { ref: this.branch, repo: { full_name: repository }, sha: headSha },
+      head: {
+        ref: this.branch,
+        repo: { full_name: repository, node_id: repositoryId },
+        sha: headSha,
+      },
       html_url: `https://github.com/${repository}/pull/42`,
       number: 42,
       state: "open",
@@ -242,13 +248,44 @@ class FakeGitHub {
         this.afterWrite();
         return ref;
       }
-      case `PATCH /repos/${repository}/git/refs/heads/${this.branch}`: {
-        expect(body).toEqual({ force: false, sha: this.commitSha });
+      case "POST /graphql": {
+        const graphql = body as {
+          query: string;
+          variables: {
+            input: {
+              clientMutationId: string;
+              refUpdates: Array<{
+                afterOid: string;
+                beforeOid: string;
+                force: boolean;
+                name: string;
+              }>;
+              repositoryId: string;
+            };
+          };
+        };
+        const input = graphql.variables.input;
+        expect(graphql.query).toContain("updateRefs");
+        expect(input).toMatchObject({
+          clientMutationId: this.commitSha,
+          refUpdates: [
+            {
+              afterOid: this.commitSha,
+              force: false,
+              name: `refs/heads/${this.branch}`,
+            },
+          ],
+          repositoryId,
+        });
+        this.beforeRefUpdate();
+        expect(this.branchRef?.object.sha, "conditional branch update rejected").toBe(
+          input.refUpdates[0]?.beforeOid,
+        );
         const ref = { object: { sha: this.commitSha }, ref: `refs/heads/${this.branch}` };
         this.branchRef = ref;
         this.projectPullHead(this.commitSha);
         this.afterWrite();
-        return ref;
+        return { updateRefs: { clientMutationId: input.clientMutationId } };
       }
       case `POST /repos/${repository}/pulls`: {
         this.beforePullCreation();
@@ -278,8 +315,7 @@ function requestCount(api: FakeGitHub, method: string, suffix?: string): number 
   ).length;
 }
 function writeCount(api: FakeGitHub): number {
-  return api.request.mock.calls.filter(([method]) => method === "PATCH" || method === "POST")
-    .length;
+  return api.request.mock.calls.filter(([method]) => method === "POST").length;
 }
 
 const credentials =
@@ -428,7 +464,7 @@ describe("post-merge documentation publisher", () => {
       throw new Error("pull creation failed");
     };
     await expect(publish(value, api)).rejects.toThrow(
-      `managed documentation branch ${api.branch} at ${api.commitSha} remains without a draft PR; follow https://github.com/NVIDIA/NemoClaw/blob/main/docs/AUTOMATION.md#recover-an-orphaned-managed-branch`,
+      `managed documentation branch ${api.branch} at ${api.commitSha} remains without a draft PR; PR creation failed: pull creation failed; follow https://github.com/NVIDIA/NemoClaw/blob/main/docs/AUTOMATION.md#recover-an-orphaned-managed-branch`,
     );
     expect(api.branchRef?.object.sha).toBe(api.commitSha);
     expect(api.openPulls).toEqual([]);
@@ -463,6 +499,15 @@ describe("post-merge documentation publisher", () => {
     const api = new FakeGitHub(value);
     api.installActive();
     await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
+    expect(writeCount(api)).toBe(0);
+  });
+  it("leaves a ready-for-review managed PR unchanged", async () => {
+    const value = fixture();
+    const api = new FakeGitHub(value);
+    api.installActive();
+    api.openPulls[0]!.draft = false;
+    await publish(value, api);
+    expect(api.branchRef?.object.sha).toBe(api.existingSha);
     expect(writeCount(api)).toBe(0);
   });
   it("rejects a patch whose digest was not approved", async () => {
@@ -524,7 +569,16 @@ describe("post-merge documentation publisher", () => {
     expect(api.openPulls[0]?.head.sha).toBe(api.commitSha);
     expect(api.openPulls[0]?.body).toBe(managedBody);
     expect(api.openPulls[0]?.title).toBe(managedTitle);
-    expect(requestCount(api, "PATCH", `/git/refs/heads/${api.branch}`)).toBe(1);
+    expect(requestCount(api, "POST", "/graphql")).toBe(1);
+    expect(
+      api.request.mock.calls.find(([method, url]) => method === "POST" && url === "/graphql")?.[2],
+    ).toMatchObject({
+      variables: {
+        input: {
+          refUpdates: [{ beforeOid: api.existingSha }],
+        },
+      },
+    });
     expect(requestCount(api, "POST", "/pulls")).toBe(0);
   });
   it("accepts a confirmed fast-forward before the PR head projection catches up", async () => {
@@ -535,7 +589,29 @@ describe("post-merge documentation publisher", () => {
     await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
     expect(api.branchRef?.object.sha).toBe(api.commitSha);
     expect(api.openPulls[0]?.head.sha).toBe(api.existingSha);
-    expect(requestCount(api, "PATCH", `/git/refs/heads/${api.branch}`)).toBe(1);
+    expect(requestCount(api, "POST", "/graphql")).toBe(1);
+  });
+  it("rejects a conditional update when the managed branch moves to an ancestor", async () => {
+    const value = fixture();
+    const api = new FakeGitHub(value);
+    api.installActive();
+    api.beforeRefUpdate = () => {
+      api.branchRef = {
+        object: { sha: api.initialParent },
+        ref: `refs/heads/${api.branch}`,
+      };
+    };
+    await expect(publish(value, api)).rejects.toThrow("conditional branch update rejected");
+    expect(api.branchRef?.object.sha).toBe(api.initialParent);
+    expect(
+      api.request.mock.calls.find(([method, url]) => method === "POST" && url === "/graphql")?.[2],
+    ).toMatchObject({
+      variables: {
+        input: {
+          refUpdates: [{ beforeOid: api.existingSha }],
+        },
+      },
+    });
   });
   it("stops without writes for exact previous workflow metadata", async () => {
     const value = fixture();
@@ -624,15 +700,16 @@ describe("post-merge documentation publisher", () => {
     expect(requestCount(api, "POST", "/pulls")).toBe(1);
     expect(requestCount(api, "POST", "/git/refs")).toBe(1);
   });
-  it("reconciles a lost fast-forward response without retrying", async () => {
+  it("does not retry a conditional update after a lost response", async () => {
     const value = fixture();
     const api = new FakeGitHub(value);
     api.installActive();
     api.afterWrite = () => {
       throw new Error("lost response");
     };
-    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
-    expect(requestCount(api, "PATCH", `/git/refs/heads/${api.branch}`)).toBe(1);
+    await expect(publish(value, api)).rejects.toThrow("lost response");
+    expect(api.branchRef?.object.sha).toBe(api.commitSha);
+    expect(requestCount(api, "POST", "/graphql")).toBe(1);
   });
 });
 

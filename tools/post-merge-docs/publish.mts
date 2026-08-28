@@ -15,9 +15,9 @@ const PREFIX = "automation/post-merge-docs-";
 const SIGN_OFF =
   "Signed-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>";
 const SHA = /^[0-9a-f]{40}$/u;
-type Method = "GET" | "PATCH" | "POST";
+type Method = "GET" | "POST";
 export type Request = (method: Method, apiPath: string, body?: unknown) => Promise<unknown>;
-type Repo = { full_name: string };
+type Repo = { full_name: string; node_id?: string };
 type Pull = {
   body: string | null;
   base: { ref: string; repo: Repo };
@@ -39,6 +39,15 @@ type Commit = {
 };
 function fail(message: string): never {
   throw new Error(message);
+}
+function failureDiagnostic(error: unknown): string {
+  const message = error instanceof Error ? error.message : "unknown error";
+  return (
+    message
+      .replace(/[\u0000-\u001f\u007f]+/gu, " ")
+      .trim()
+      .slice(0, 512) || "unknown error"
+  );
 }
 function environment(name: string): string {
   return process.env[name] || fail(`${name} is required`);
@@ -170,11 +179,13 @@ function checkedPull(
   if (
     pull.state !== "open" ||
     typeof pull.draft !== "boolean" ||
-    !pull.draft ||
     !Number.isSafeInteger(pull.number) ||
     pull.number < 1 ||
     pull.base.ref !== "main" ||
     pull.base.repo.full_name !== repository ||
+    typeof pull.base.repo.node_id !== "string" ||
+    !pull.base.repo.node_id ||
+    pull.base.repo.node_id.length > 256 ||
     pull.head.repo?.full_name !== repository ||
     !SHA.test(pull.head.sha) ||
     (branch !== undefined && pull.head.ref !== branch) ||
@@ -357,24 +368,39 @@ async function createCommit(input: {
   return commitSha;
 }
 async function updateRef(
-  repository: string,
   branch: string,
+  beforeSha: string,
   commitSha: string,
+  repositoryId: string,
   request: Request,
 ): Promise<void> {
-  const readPath = `/repos/${repository}/git/ref/heads/${branch}`;
-  const updatePath = `/repos/${repository}/git/refs/heads/${branch}`;
-  try {
-    const updated = (await request("PATCH", updatePath, {
-      force: false,
-      sha: commitSha,
-    })) as { object?: { sha?: string }; ref?: string };
-    if (updated.ref !== `refs/heads/${branch}` || updated.object?.sha !== commitSha)
-      fail("GitHub did not confirm documentation branch update");
-  } catch (error) {
-    const reconciled = (await request("GET", readPath)) as { object?: { sha?: string } } | null;
-    if (reconciled?.object?.sha !== commitSha) throw error;
-  }
+  const clientMutationId = commitSha;
+  const mutation = `
+    mutation UpdatePostMergeDocumentationRef($input: UpdateRefsInput!) {
+      updateRefs(input: $input) {
+        clientMutationId
+      }
+    }
+  `;
+  const result = (await request("POST", "/graphql", {
+    query: mutation,
+    variables: {
+      input: {
+        clientMutationId,
+        refUpdates: [
+          {
+            afterOid: commitSha,
+            beforeOid: beforeSha,
+            force: false,
+            name: `refs/heads/${branch}`,
+          },
+        ],
+        repositoryId,
+      },
+    },
+  })) as { updateRefs?: { clientMutationId?: string } };
+  if (result.updateRefs?.clientMutationId !== clientMutationId)
+    fail("GitHub did not confirm the conditional documentation branch update");
 }
 
 export async function publishDocumentation(input: {
@@ -392,6 +418,7 @@ export async function publishDocumentation(input: {
   const body = pullBody(repository, rangeStartTag, target);
   const title = pullTitle(target);
   const active = await checkpoint(repository, mainSha, request);
+  if (active && !active.draft) return;
   const temporary = fs.mkdtempSync(path.join(tmpdir(), "nemoclaw-docs-publish-"));
   try {
     const destination = path.join(temporary, "repository");
@@ -406,14 +433,7 @@ export async function publishDocumentation(input: {
       if (ref?.object?.sha !== active.head.sha)
         fail("managed documentation PR and branch point to different commits");
       const current = await managedCommit(repository, active.head.sha, request);
-      await requireCurrentPullMetadata(
-        active,
-        current,
-        repository,
-        rangeStartTag,
-        target,
-        request,
-      );
+      await requireCurrentPullMetadata(active, current, repository, rangeStartTag, target, request);
       if (!prepared.changes.length || current.tree?.sha === prepared.finalTree) {
         fail(`Documentation remains pending in ${active.html_url}`);
       }
@@ -433,7 +453,7 @@ export async function publishDocumentation(input: {
     requireSamePull(active, await checkpoint(repository, mainSha, request));
 
     if (active) {
-      await updateRef(repository, branch, commitSha, request);
+      await updateRef(branch, active.head.sha, commitSha, active.base.repo.node_id!, request);
       fail(`Documentation remains pending in ${active.html_url}`);
     }
 
@@ -468,13 +488,14 @@ export async function publishDocumentation(input: {
         } | null;
         if (!matching.length && orphaned?.object?.sha === commitSha)
           fail(
-            `managed documentation branch ${branch} at ${commitSha} remains without a draft PR; follow https://github.com/${repository}/blob/main/docs/AUTOMATION.md#recover-an-orphaned-managed-branch`,
+            `managed documentation branch ${branch} at ${commitSha} remains without a draft PR; PR creation failed: ${failureDiagnostic(error)}; follow https://github.com/${repository}/blob/main/docs/AUTOMATION.md#recover-an-orphaned-managed-branch`,
           );
         throw error;
       }
       pull = matching[0];
     }
     checkedPull(pull, repository, branch, body, title);
+    if (!pull.draft) fail("GitHub did not create a draft documentation PR");
     if (pull.head.sha !== commitSha) fail("documentation PR does not point to the verified commit");
     fail(`Documentation remains pending in ${pull.html_url}`);
   } finally {
@@ -496,10 +517,17 @@ function client(token: string): Request {
       signal: AbortSignal.timeout(30_000),
     });
     if (method === "GET" && response.status === 404) return null;
-    const value = (await response.json()) as { message?: string };
-    if (!response.ok)
-      fail(`GitHub API request failed: ${value.message ?? `HTTP ${response.status}`}`);
-    return value;
+    const value = (await response.json()) as {
+      data?: unknown;
+      errors?: Array<{ message?: string }>;
+      message?: string;
+    };
+    const graphqlError = value.errors?.find((error) => typeof error.message === "string")?.message;
+    if (!response.ok || (apiPath === "/graphql" && value.errors?.length))
+      fail(
+        `GitHub API request failed: ${graphqlError ?? value.message ?? `HTTP ${response.status}`}`,
+      );
+    return apiPath === "/graphql" ? value.data : value;
   };
 }
 async function main(): Promise<void> {
