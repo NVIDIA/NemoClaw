@@ -9,9 +9,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import { PolicyObservationError } from "../../adapters/openshell/policy-state";
 import type { SandboxEntry } from "../../state/registry";
+import type { SandboxCreateIntent as ResolvedSandboxCreateIntent } from "../sandbox-create-intent-types";
 import { runSandboxProviderPreDeleteCleanup } from "../sandbox-provider-cleanup";
 import {
   assertApfCreateIntent,
+  bindRebuildPolicyProvidersToCreateIntent,
   completeHermesPortableSandboxRegistration,
   createProviderEffectBoundary,
   finalizeCreatedSandboxBeforeHermesCredentialReconciliation,
@@ -34,6 +36,33 @@ const UNVERIFIED_RECOVERY_CONTEXT = {
   lifecycleGeneration: "generation-1",
   createAttemptNonce: "a".repeat(62),
 } as const;
+
+describe("rebuild policy provider handoff", () => {
+  it("adds exact credential-binding providers to the replacement create intent", () => {
+    const original = {
+      extraProviders: ["operator-provider"],
+    } as unknown as ResolvedSandboxCreateIntent;
+    const rebound = bindRebuildPolicyProvidersToCreateIntent(
+      original,
+      [
+        "version: 1",
+        "network_policies:",
+        "  managed_mcp:",
+        "    endpoints:",
+        "      - credential_binding:",
+        "          provider: mcp-provider",
+        "  duplicate_binding:",
+        "    endpoints:",
+        "      - credential_binding:",
+        "          provider: operator-provider",
+        "",
+      ].join("\n"),
+    );
+
+    expect(rebound.extraProviders).toEqual(["operator-provider", "mcp-provider"]);
+    expect(original.extraProviders).toEqual(["operator-provider"]);
+  });
+});
 
 describe("created Hermes credential environment reconciliation", () => {
   const plan = { agent: "hermes" } as never;

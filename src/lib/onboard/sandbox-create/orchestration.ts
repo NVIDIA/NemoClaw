@@ -19,6 +19,7 @@ import type {
   QualifiedPendingSandboxCreateReservation,
 } from "../../state/registry";
 import type { HermesAuthMethod } from "../hermes-auth";
+import { getCredentialBindingProviders } from "../initial-policy";
 import type { PreparedSandboxBuildContext } from "../build-context-stage";
 import type { DcodeSelectionDriftReader } from "../dcode-selection-drift";
 import { assertProviderlessInterceptorEnvironment } from "../entry-options";
@@ -39,6 +40,7 @@ import type {
   VerifiedSandboxCreateEffectsContext,
   VerifiedSandboxCreateBoundary,
 } from "../types";
+import type { SandboxCreateIntent as ResolvedSandboxCreateIntent } from "../sandbox-create-intent-types";
 import * as sandboxCreatePlanMaterialization from "../sandbox-create-plan-materialization";
 import {
   pendingSandboxCreateIdentityForBoundary,
@@ -60,6 +62,28 @@ function cancelRecoveryIdentity(
   return {
     lifecycleLiveIdentityFingerprint: requireVerifiedCreateBoundary().lifecycleLiveIdentityFingerprint,
   };
+}
+
+/** Attach every provider named by the exact rebuild policy during sandbox creation. */
+export function bindRebuildPolicyProvidersToCreateIntent(
+  intent: ResolvedSandboxCreateIntent,
+  policyContent: string,
+): ResolvedSandboxCreateIntent {
+  const policyProviders = getCredentialBindingProviders(policyContent);
+  if (policyProviders.length === 0) return intent;
+  return {
+    ...intent,
+    extraProviders: [...new Set([...intent.extraProviders, ...policyProviders])],
+  };
+}
+
+function bindRebuildPolicySourceProvidersToCreateIntent(
+  intent: ResolvedSandboxCreateIntent,
+  policySourcePath: string | undefined,
+): ResolvedSandboxCreateIntent {
+  return policySourcePath
+    ? bindRebuildPolicyProvidersToCreateIntent(intent, fs.readFileSync(policySourcePath, "utf8"))
+    : intent;
 }
 
 export function createOnboardCreatedSandboxRegistrationWithManagedLifecycle(input: {
@@ -1188,7 +1212,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           planRegisteredExtraProviders(GATEWAY_NAME, { runOpenshell }),
       },
     );
-    const resolvedCreateIntent = preparedCreateIntent.intent;
+    const resolvedCreateIntent = bindRebuildPolicySourceProvidersToCreateIntent(
+      preparedCreateIntent.intent,
+      createIntent?.rebuildPolicySourcePath,
+    );
     const messagingCapabilities = preparedCreateIntent.messagingCapabilities;
     const manageDashboard = sandboxGpuCreateFlow.shouldManageHermesPortableDashboard(
       dashboardRuntime.shouldManageDashboardForAgent(agent),

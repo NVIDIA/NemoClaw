@@ -358,7 +358,7 @@ export function getNetworkPolicyNames(policyContent: string): Set<string> | null
   }
 }
 
-function getCredentialBindingProviders(policyContent: string): string[] {
+export function getCredentialBindingProviders(policyContent: string): string[] {
   const parsed = YAML.parse(policyContent);
   if (!isObjectRecord(parsed) || !isObjectRecord(parsed.network_policies)) return [];
 
