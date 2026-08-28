@@ -716,20 +716,6 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
     if (page === maxCheckPages)
       throw new Error("check run history exceeded maxCheckPages; increase the bounded limit");
   }
-  const statusesResult = await runGithubCli({
-    workdir: input.workdir,
-    args: [
-      "api",
-      "repos/" + repository + "/commits/" + pull.headRefOid + "/status",
-      "--jq",
-      "[.statuses[] | {id,context,state,created_at,updated_at,target_url}]",
-    ],
-  });
-  const legacyStatuses = JSON.parse(statusesResult.stdout);
-  if (!Array.isArray(legacyStatuses))
-    throw new Error("GitHub commit status response was not an array");
-  if (legacyStatuses.length > 100)
-    throw new Error("commit status history exceeded the complete bounded contract");
   const configured = await readRequiredChecks({
     workdir: input.workdir,
     repo: repository,
@@ -737,6 +723,32 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
     limit: 100,
   });
   const requirements = configured.requirements;
+  const legacyStatuses: any[] = [];
+  if (requirements.some((requirement) => requirement.legacy)) {
+    for (let page = 1; page <= maxCheckPages; page += 1) {
+      const result = await runGithubCli({
+        workdir: input.workdir,
+        args: [
+          "api",
+          "repos/" +
+            repository +
+            "/commits/" +
+            pull.headRefOid +
+            "/status?per_page=100&page=" +
+            page,
+          "--jq",
+          "[.statuses[] | {id,context,state,created_at,updated_at,target_url}]",
+        ],
+      });
+      const pageStatuses = JSON.parse(result.stdout);
+      if (!Array.isArray(pageStatuses))
+        throw new Error("GitHub commit status response was not an array");
+      legacyStatuses.push(...pageStatuses);
+      if (pageStatuses.length < 100) break;
+      if (page === maxCheckPages)
+        throw new Error("commit status history exceeded maxCheckPages; increase the bounded limit");
+    }
+  }
   const readinessBasis =
     configured.protectionReadable && requirements.length > 0
       ? "required checks reported by current base-branch protection"
@@ -747,7 +759,7 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
     return (
       String(check?.conclusion ?? "").toUpperCase() === "SUCCESS" &&
       Number.isFinite(completed) &&
-      completed >= headObserved &&
+      (check?.legacyStatus === true || completed >= headObserved) &&
       completed <= terminalLimit
     );
   };
@@ -766,11 +778,12 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
                 status: "completed",
                 conclusion:
                   String(status.state ?? "").toLowerCase() === "success" ? "success" : status.state,
-                created_at: status.created_at,
-                started_at: status.created_at,
+                created_at: status.created_at ?? status.updated_at,
+                started_at: status.created_at ?? status.updated_at,
                 completed_at: status.updated_at,
                 html_url: status.target_url,
                 app: { id: null, slug: "commit-status" },
+                legacyStatus: true,
               })),
           ]
         : checks.filter(
@@ -832,8 +845,8 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
         ? "within-target"
         : "over-target";
   const checkRows = successful.map((check: any) => {
-    const created = parseTime(check.created_at, "check createdAt");
     const started = parseTime(check.started_at, "check startedAt");
+    const created = parseTime(check.created_at ?? check.started_at, "check createdAt");
     const completed = parseTime(check.completed_at, "check completedAt");
     return {
       name: String(check.name).slice(0, 200),

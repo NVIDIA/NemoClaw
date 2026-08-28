@@ -30,15 +30,21 @@ const run = (id) => ({id,event:"push",head_sha:sha,created_at:"2026-01-01T00:00:
 let value;
 if (args.startsWith("pr view") && args.includes("baseRefName")) value = {baseRefName:"main"};
 else if (args.startsWith("pr view")) value = pull;
-else if (args.includes("required_status_checks")) value = scenario === "wrong-app" ? {contexts:[],checks:[{context:"required-a",app_id:7}]} : scenario === "any-app" ? {contexts:[],checks:[{context:"required-a",app_id:-1}]} : scenario === "legacy-status" ? {contexts:["legacy-required"],checks:[]} : {contexts:["required-a", "required-b"],checks:[]};
+else if (args.includes("required_status_checks")) value = scenario === "wrong-app" || scenario === "app-status-denied" ? {contexts:[],checks:[{context:"required-a",app_id:7}]} : scenario === "any-app" ? {contexts:[],checks:[{context:"required-a",app_id:-1}]} : scenario.startsWith("legacy-") ? {contexts:["legacy-required"],checks:[]} : {contexts:["required-a", "required-b"],checks:[]};
 else if (args.includes("actions/runs?")) value = scenario === "fallback" ? [] : scenario === "truncated" ? [run(11),run(12)] : [run(11)];
 else if (args.includes("/actions/runs/11/jobs")) value = {total_count:1,jobs:[{id:21,name:scenario.startsWith("artifact") ? "cli-test-shards (1)" : "job",status:scenario === "queued" ? "queued" : "completed",conclusion:scenario === "queued" ? null : "success",created_at:"2026-01-01T00:00:31Z",started_at:scenario === "queued" ? null : "2026-01-01T00:00:32Z",completed_at:scenario === "queued" ? null : "2026-01-01T00:02:00Z",runner_name:null,runner_group_name:null,labels:[],html_url:"",steps:[{number:1,name:"step",status:scenario === "queued" ? "queued" : "completed",conclusion:scenario === "queued" ? null : "success",started_at:scenario === "queued" ? null : "2026-01-01T00:00:33Z",completed_at:scenario === "queued" ? null : "2026-01-01T00:01:00Z"}]}]};
 else if (args.includes("/actions/runs/12/jobs")) value = {total_count:0,jobs:[]};
 else if (args.includes("/actions/runs/") && !args.includes("/jobs") && !args.includes("/artifacts")) { const id = Number(args.split("/actions/runs/")[1].split(" ")[0]); value={...run(id),run_attempt:1,html_url:""}; }
 else if (args.includes("/artifacts?") && scenario === "artifact-failure") { console.error("Authorization: secret-token"); process.exit(1); }
 else if (args.includes("/artifacts?")) value = {total_count:1,artifacts:[{id:31,name:"cli-blob-report-1",size_in_bytes:25000001,expired:false,workflow_run:{id:11,head_sha:sha},workflow_run_id:11,workflow_run_head_sha:sha}]};
-else if (args.includes("/check-runs?")) { const checks=scenario === "legacy-status" ? [] : [{id:1,name:"required-a",status:"completed",conclusion:"success",created_at:"2026-01-01T00:00:35Z",started_at:"2026-01-01T00:00:45Z",completed_at:"2026-01-01T00:02:30Z",html_url:"",app:{id:scenario === "wrong-app" ? 8 : 7,slug:"actions"}}]; if (scenario !== "incomplete" && scenario !== "wrong-app" && scenario !== "any-app" && scenario !== "legacy-status") checks.push({...checks[0],id:2,name:"required-b",created_at:"2026-01-01T00:00:40Z",completed_at:"2026-01-01T00:02:40Z"}); value=checks; }
-else if (args.endsWith("/status --jq [.statuses[] | {id,context,state,created_at,updated_at,target_url}]")) value = scenario === "legacy-status" ? [{id:3,context:"legacy-required",state:"success",created_at:"2026-01-01T00:00:34Z",updated_at:"2026-01-01T00:02:20Z",target_url:""}] : [];
+else if (args.includes("/check-runs?")) { const checks=scenario.startsWith("legacy-") ? [] : [{id:1,name:"required-a",status:"completed",conclusion:"success",created_at:"2026-01-01T00:00:35Z",started_at:"2026-01-01T00:00:45Z",completed_at:"2026-01-01T00:02:30Z",html_url:"",app:{id:scenario === "wrong-app" ? 8 : 7,slug:"actions"}}]; if (scenario !== "incomplete" && scenario !== "wrong-app" && scenario !== "any-app" && scenario !== "app-status-denied" && !scenario.startsWith("legacy-")) checks.push({...checks[0],id:2,name:"required-b",created_at:"2026-01-01T00:00:40Z",completed_at:"2026-01-01T00:02:40Z"}); value=checks; }
+else if (args.includes("/status?")) {
+  if (scenario === "app-status-denied") { console.error("Commit statuses forbidden"); process.exit(1); }
+  const page = Number(new URL("https://example.test/?" + args.split("?")[1].split(" ")[0]).searchParams.get("page"));
+  if (scenario === "legacy-paginated" && page === 1) value = Array.from({length:100},(_,index)=>({id:index,context:"other-"+index,state:"success",created_at:"2026-01-01T00:00:01Z",updated_at:"2026-01-01T00:00:02Z",target_url:""}));
+  else if (scenario === "legacy-paginated" && page === 2) value = [{id:103,context:"legacy-required",state:"success",created_at:"2026-01-01T00:00:03Z",updated_at:"2026-01-01T00:00:20Z",target_url:""}];
+  else value = [{id:3,context:"legacy-required",state:"success",created_at:"2026-01-01T00:00:04Z",updated_at:"2026-01-01T00:00:20Z",target_url:""}];
+}
 else { console.error("unexpected gh call: " + args); process.exit(2); }
 process.stdout.write(JSON.stringify(value));
 `,
@@ -149,10 +155,24 @@ describe("pull request value-stream analysis", () => {
     expect(report.automation.checksConsidered).toBe(1);
   });
 
-  test("settles automation from a successful legacy commit status (#10542)", async () => {
+  test("settles automation from an earlier exact-commit legacy status (#10542)", async () => {
     const report = JSON.parse((await run("legacy-status", ["--max-test-artifacts", "0"])).stdout);
-    expect(report.events.automationSettled).toBe("2026-01-01T00:02:20.000Z");
-    expect(report.automation.firstCheckCreatedAt).toBe("2026-01-01T00:00:34.000Z");
+    expect(report.events.automationSettled).toBe("2026-01-01T00:00:20.000Z");
+    expect(report.automation.firstCheckCreatedAt).toBe("2026-01-01T00:00:04.000Z");
+  });
+
+  test("skips legacy status permission when app-bound checks are sufficient (#10542)", async () => {
+    const report = JSON.parse(
+      (await run("app-status-denied", ["--max-test-artifacts", "0"])).stdout,
+    );
+    expect(report.events.automationSettled).toBe("2026-01-01T00:02:30.000Z");
+  });
+
+  test("finds a required legacy status on the second bounded page (#10542)", async () => {
+    const report = JSON.parse(
+      (await run("legacy-paginated", ["--max-test-artifacts", "0"])).stdout,
+    );
+    expect(report.events.automationSettled).toBe("2026-01-01T00:00:20.000Z");
   });
 
   test("reports bounded artifact rejection status without exposing diagnostics (#10542)", async () => {
