@@ -43,29 +43,4 @@ describe("makeMessagingPlan", () => {
     expect(credentialBindings[0].providerName).toBe("my-assistant-telegram-bridge");
   });
 
-  it("isolates channel override inputs from later results and caller inputs (#8357)", () => {
-    const inputs = [
-      {
-        channelId: "discord" as MessagingChannelId,
-        inputId: "botToken",
-        kind: "secret" as const,
-        required: true,
-        credentialAvailable: false,
-      },
-    ];
-    const options = {
-      channels: ["discord"] as MessagingChannelId[],
-      channelOverrides: { discord: { active: false, inputs } },
-    };
-
-    const first = makeMessagingPlan(options);
-    const second = makeMessagingPlan(options);
-
-    expect(first.channels[0].inputs).not.toBe(second.channels[0].inputs);
-    expect(first.channels[0].inputs[0]).not.toBe(inputs[0]);
-    (first.channels[0].inputs as unknown as { inputId: string }[])[0].inputId = "mutated";
-
-    expect(second.channels[0].inputs[0].inputId).toBe("botToken");
-    expect(inputs[0].inputId).toBe("botToken");
-  });
 });

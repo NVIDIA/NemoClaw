@@ -79,7 +79,7 @@ describe("onboarding policy application", () => {
   });
 
   // Downstream guard, not end-to-end resume coverage: a normal resume drops the preset
-  // in preparation. End-to-end lives in policy-resume-selection.test.ts. (#10153)
+  // in preparation, which policy-resume-selection.test.ts covers. (#10153)
   describe("OpenClaw selection reaching application with an unconfigured channel preset (#10153)", () => {
     // `getAppliedPresets` concatenates custom names onto built-in ones, so applied
     // state differs by whether a custom preset owns the name. (#10153)

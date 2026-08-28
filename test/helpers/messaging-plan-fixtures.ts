@@ -24,11 +24,6 @@ type DockerfilePlan = {
   channels?: DockerfilePlanChannel[];
 };
 
-/** Per-channel fields a caller needs to differ from the default derivation. */
-export type TestMessagingPlanChannelOverride = Partial<
-  Pick<SandboxMessagingPlan["channels"][number], "active" | "inputs">
->;
-
 export interface TestMessagingPlanOptions {
   readonly sandboxName?: string;
   readonly channels?: readonly MessagingChannelId[];
@@ -37,16 +32,6 @@ export interface TestMessagingPlanOptions {
   readonly workflow?: MessagingCompilerWorkflow;
   readonly authMode?: ChannelAuthMode;
   readonly credentialBindings?: readonly SandboxMessagingCredentialBindingPlan[];
-  /**
-   * The rebuild workflow planner sets `disabled` from the persisted disabled set, then
-   * `active` from `!disabled && isChannelPlanStartable(channel)`, so a channel absent from
-   * that set can be inactive without being disabled. A fresh manifest compile instead marks
-   * a channel with missing required inputs disabled. The channel and disabled lists alone
-   * cannot express the planner shape.
-   */
-  readonly channelOverrides?: Readonly<
-    Partial<Record<MessagingChannelId, TestMessagingPlanChannelOverride>>
-  >;
 }
 
 export function makeMessagingPlan(options: TestMessagingPlanOptions = {}): SandboxMessagingPlan {
@@ -58,7 +43,6 @@ export function makeMessagingPlan(options: TestMessagingPlanOptions = {}): Sandb
     workflow = "onboard",
     authMode,
     credentialBindings = [],
-    channelOverrides = {},
   } = options;
   const disabled = new Set(disabledChannels);
   return {
@@ -70,12 +54,11 @@ export function makeMessagingPlan(options: TestMessagingPlanOptions = {}): Sandb
       channelId,
       displayName: channelId,
       authMode: authMode ?? (channelId === "whatsapp" ? "in-sandbox-qr" : "token-paste"),
-      active: channelOverrides[channelId]?.active ?? !disabled.has(channelId),
+      active: !disabled.has(channelId),
       selected: true,
       configured: true,
       disabled: disabled.has(channelId),
-      // Clone so repeated calls and caller-owned inputs stay isolated (#8357).
-      inputs: structuredClone(channelOverrides[channelId]?.inputs ?? []),
+      inputs: [],
       hooks: [],
     })),
     disabledChannels: [...disabledChannels],
@@ -89,14 +72,9 @@ export function makeMessagingPlan(options: TestMessagingPlanOptions = {}): Sandb
 }
 
 /**
- * Synthetic credential bindings for conflict preflight only. `enforceMessagingChannelConflicts`
- * aborts unless an active credential-bearing channel carries a complete hash, so a fixture with
- * active credential channels needs an entry per manifest credential. Resolving the set from the
- * manifests keeps the fixture tracking them instead of restating them.
- *
- * These are not compiled bindings: `providerName` stays a `{sandboxName}` template and each hash
- * is a deterministic sentinel, so two fixtures built from the same channels look like they share
- * a credential. Do not use them where a test compares hashes across sandboxes.
+ * Synthetic bindings for conflict preflight only: `enforceMessagingChannelConflicts` needs a
+ * complete hash per active credential channel. Not compiled, so never compare them across
+ * sandboxes: `providerName` stays a template and each hash is a deterministic sentinel.
  */
 export function messagingCredentialBindingsForChannels(
   channelIds: readonly MessagingChannelId[],

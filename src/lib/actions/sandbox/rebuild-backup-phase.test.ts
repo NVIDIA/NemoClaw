@@ -168,6 +168,37 @@ describe("rebuild web-search policy normalization", () => {
     },
   );
 
+  // Rebuild's planner sets `active` from `!disabled && isChannelPlanStartable(channel)`, so a
+  // configured channel whose required secret has no credential is inactive but not disabled.
+  function inactiveDiscordPlan() {
+    const plan = makeMessagingPlan({
+      sandboxName: "alpha",
+      agent: "openclaw",
+      workflow: "rebuild",
+      channels: ["slack", "discord"],
+    });
+    return {
+      ...plan,
+      channels: plan.channels.map((channel) =>
+        channel.channelId === "discord"
+          ? {
+              ...channel,
+              active: false,
+              inputs: [
+                {
+                  channelId: "discord" as const,
+                  inputId: "botToken",
+                  kind: "secret" as const,
+                  required: true,
+                  credentialAvailable: false,
+                },
+              ],
+            }
+          : channel,
+      ),
+    };
+  }
+
   // Configured channel with no credential: `active: false`, `disabled: false`. (#10153)
   it("drops a channel preset the plan cannot start during rebuild (#10153)", () => {
     const result = runRebuildBackupPhase({
@@ -180,27 +211,7 @@ describe("rebuild web-search policy normalization", () => {
       },
       staleRecovery: false,
       preparedRecoveryManifest: { policyPresets: ["discord", "slack"] } as never,
-      messagingPlan: makeMessagingPlan({
-        sandboxName: "alpha",
-        agent: "openclaw",
-        workflow: "rebuild",
-        channels: ["slack", "discord"],
-        // Required secret with no credential; an empty `inputs` would be startable.
-        channelOverrides: {
-          discord: {
-            active: false,
-            inputs: [
-              {
-                channelId: "discord",
-                inputId: "botToken",
-                kind: "secret",
-                required: true,
-                credentialAvailable: false,
-              },
-            ],
-          },
-        },
-      }),
+      messagingPlan: inactiveDiscordPlan(),
       webSearchConfig: null,
       log: vi.fn(),
       bail: (message): never => {
