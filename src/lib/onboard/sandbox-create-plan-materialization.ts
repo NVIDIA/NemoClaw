@@ -3,7 +3,7 @@
 
 import type { InitialSandboxPolicy } from "./initial-policy";
 import type { SandboxPolicyAuthority } from "../adapters/openshell/policy-authority";
-import type { MessagingTokenDef } from "./messaging-prep";
+import { hasConfiguredMessagingCredential, type MessagingTokenDef } from "./messaging-prep";
 import { filterMessagingProvidersForSandboxCreate } from "./sandbox-create-intent";
 import type {
   MaterializeSandboxCreatePlanInput,
@@ -83,7 +83,9 @@ export type SandboxCreatePlan = {
   compatibilityPolicyPath: string | null;
   sandboxGpuLogMessage: string | null;
   /** One-shot provider activation owned by the post-create verification boundary. */
-  activateDeferredProviderEffects: (() => readonly string[]) | null;
+  activateDeferredProviderEffects:
+    | ((revalidatePolicyRequirements: (operation: string) => void) => readonly string[])
+    | null;
 };
 
 function sameProviderNames(left: readonly string[], right: readonly string[]): boolean {
@@ -162,6 +164,9 @@ export function prepareSandboxCreatePolicy(
         ? intent.policy.options.additionalPresets.filter((name) => name !== "local-inference")
         : [...intent.policy.options.additionalPresets],
       agentName: intent.policy.options.agentName,
+      // Channel presets bind `{sandboxName}-<channel>-bridge`; without the name,
+      // composing them throws.
+      sandboxName: intent.sandboxName,
       policyTier: intent.policy.options.policyTier,
       baselineExclusions: intent.policy.options.baselineExclusions.map((exclusion) => ({
         ...exclusion,
@@ -216,7 +221,7 @@ export function validateSandboxCreateIntentBindings(
         `Cannot materialize sandbox create intent; missing credential binding '${request.envKey}' for provider '${request.name}'.`,
       );
     }
-    if (Boolean(tokenDef.token) !== request.credentialConfigured) {
+    if (hasConfiguredMessagingCredential(tokenDef) !== request.credentialConfigured) {
       throw new Error(
         `Cannot materialize sandbox create intent; credential availability changed for provider '${request.name}'.`,
       );
@@ -258,6 +263,23 @@ function buildCreateProviderSet(
       hermesToolGatewayProvider,
       ...intent.extraProviders,
     ].filter((provider): provider is string => Boolean(provider)),
+  );
+}
+
+function assertDeferredProviderPlanSupported(
+  intent: SandboxCreateIntent,
+  messagingProviders: readonly string[],
+  initialSandboxPolicy: InitialSandboxPolicy,
+): void {
+  const requiresProviderAttachment =
+    Boolean(intent.inferenceProvider) ||
+    messagingProviders.length > 0 ||
+    intent.extraProviders.length > 0 ||
+    intent.hermesToolGateways.length > 0;
+  if (!requiresProviderAttachment) return;
+  initialSandboxPolicy.cleanup?.();
+  throw new Error(
+    `Cannot create sandbox '${intent.sandboxName}' with deferred providers because OpenShell cannot bind provider attachment to a verified immutable sandbox identity. No sandbox was created; use an OpenShell release with identity-bound provider attachment before retrying.`,
   );
 }
 
@@ -320,13 +342,16 @@ export function materializeSandboxCreatePlan({
   };
   const plannedMessagingProviders = filterMessagingProvidersForSandboxCreate(
     [
-      ...enabledMessagingTokenDefs.filter(({ token }) => Boolean(token)).map(({ name }) => name),
+      ...enabledMessagingTokenDefs.filter(hasConfiguredMessagingCredential).map(({ name }) => name),
       ...intent.reusableMessagingProviders,
     ],
     intent.messagingProviderRequests,
     intent.policy.activeMessagingChannels,
     intent.disabledChannelNames,
   );
+  if (deferSandboxEffectsUntilPolicyVerification) {
+    assertDeferredProviderPlanSupported(intent, plannedMessagingProviders, initialSandboxPolicy);
+  }
   if (policyAuthority === "nemoclaw-managed") {
     assertCredentialBindingProvidersAttached(
       initialSandboxPolicy,
@@ -340,13 +365,16 @@ export function materializeSandboxCreatePlan({
     }
   }
 
-  const activateProviderEffects = (): readonly string[] => {
-    runProviderPreDeleteCleanup();
+  const activateProviderEffects = (
+    revalidatePolicyRequirements?: (operation: string) => void,
+  ): readonly string[] => {
+    runProviderPreDeleteCleanup(revalidatePolicyRequirements);
     const activatedMessagingProviders = filterMessagingProvidersForSandboxCreate(
       [
         ...upsertMessagingProviders(enabledMessagingTokenDefs, {
           replaceExisting: true,
           allowedSandboxes: [intent.sandboxName],
+          ...(revalidatePolicyRequirements ? { revalidatePolicyRequirements } : {}),
         }),
         ...intent.reusableMessagingProviders,
       ],

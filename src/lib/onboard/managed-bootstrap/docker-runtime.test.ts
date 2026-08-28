@@ -65,7 +65,6 @@ import type {
   ManagedBootstrapPreparedTransaction,
 } from "./adapter";
 import {
-  completeDockerManagedNativeGpuFallbackOwnerCleanup,
   createDockerManagedBootstrapSurface,
   formatDockerGpuModeFailureDetails,
 } from "./docker-runtime";
@@ -190,51 +189,50 @@ afterEach(() => {
   }
 });
 
-describe("Docker managed-bootstrap native fallback owner cleanup", () => {
-  const handoff = Object.freeze({
-    kind: "openshell-owner-cleanup-required" as const,
-    sandboxName: "alpha",
-    sandboxId: "sandbox-alpha",
-    runtimeId: NEW_ID,
-  });
-  it("retains the exact handoff instead of deleting a mutable sandbox name", async () => {
-    const runOpenshell = vi.fn(() => {
-      throw new Error("name-only OpenShell cleanup must not run");
+describe("Docker managed-bootstrap pre-create GPU fallback", () => {
+  it("reuses the exact managed image when native create is rejected before runtime discovery (#10155)", () => {
+    const managedImageReference = `registry.example/nemoclaw-hermes@sha256:${"d".repeat(64)}`;
+    const routing = createDockerManagedBootstrapSurface().createOnboardRouting({
+      sandboxName: "alpha",
+      openshellArgv: (args) => ["openshell", ...args],
+      nativeFallbackEnabled: false,
     });
-    const recoverUnfinished = vi.fn();
 
-    await expect(
-      completeDockerManagedNativeGpuFallbackOwnerCleanup({
-        providerId: "docker",
-        bootstrapIdentity: IDENTITY,
-        handoff,
-        runOpenshell,
-        recoverUnfinished,
+    expect(
+      routing.prepareCompatibilityLaunch({
+        createArgs: [
+          "--from",
+          "registry.example/native-source",
+          "--name",
+          "alpha",
+          "--gpu",
+          "--policy",
+          "/tmp/native-policy.yaml",
+        ],
+        currentRegistryImageRef: managedImageReference,
+        managedImageReference,
+        prebuildImageId: null,
+        allowUnbuiltSource: false,
+        compatibilityPolicyPath: "/tmp/compatibility-policy.yaml",
+        startupCommand: ["managed-hold"],
+        runtimeSnapshot: null,
       }),
-    ).resolves.toBe(handoff);
-    expect(runOpenshell).not.toHaveBeenCalled();
-    expect(recoverUnfinished).not.toHaveBeenCalled();
-  });
-
-  it("blocks fallback even if a mutable name would resolve to the expected ID", async () => {
-    const runOpenshell = vi.fn(() => ({
-      status: 0,
-      stdout: "ID: sandbox-alpha\n",
-      stderr: "",
-    }));
-    const recoverUnfinished = vi.fn();
-
-    await expect(
-      completeDockerManagedNativeGpuFallbackOwnerCleanup({
-        providerId: "docker",
-        bootstrapIdentity: IDENTITY,
-        handoff,
-        runOpenshell,
-        recoverUnfinished,
-      }),
-    ).resolves.toBe(handoff);
-    expect(runOpenshell).not.toHaveBeenCalled();
-    expect(recoverUnfinished).not.toHaveBeenCalled();
+    ).toEqual({
+      createArgv: [
+        "openshell",
+        "sandbox",
+        "create",
+        "--from",
+        managedImageReference,
+        "--name",
+        "alpha",
+        "--policy",
+        "/tmp/compatibility-policy.yaml",
+        "--",
+        "managed-hold",
+      ],
+      registryImageRef: managedImageReference,
+    });
   });
 });
 

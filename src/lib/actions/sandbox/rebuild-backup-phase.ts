@@ -3,7 +3,10 @@
 
 import { type WebSearchConfig, webSearchProviderForConfig } from "../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../messaging";
-import { mergeRebuildMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
+import {
+  mergeRebuildMessagingPolicyPresets,
+  pruneInactiveMessagingPolicyPresets,
+} from "../../onboard/messaging-policy-presets";
 import {
   isDcodeAgent,
   isInactiveObservabilityPolicyPreset,
@@ -52,9 +55,7 @@ export function excludePolicyPresetsByName(
   excludedNames: readonly (string | undefined)[],
 ): string[] {
   const excluded = new Set(
-    excludedNames.filter(
-      (name): name is string => typeof name === "string" && name.length > 0,
-    ),
+    excludedNames.filter((name): name is string => typeof name === "string" && name.length > 0),
   );
   return presets.filter((name) => !excluded.has(name));
 }
@@ -228,8 +229,19 @@ export function runRebuildBackupPhase(
     enabledChannelIds,
     disabledChannels,
   );
+  const activeMessagingPolicyPresets = input.messagingPlan
+    ? pruneInactiveMessagingPolicyPresets(
+        mergedPolicyPresets,
+        enabledChannelIds,
+        new Set(
+          (input.sandboxEntry.customPolicies ?? []).map((policy) =>
+            policy.name.trim().toLowerCase(),
+          ),
+        ),
+      )
+    : mergedPolicyPresets;
   const policyPresets = normalizeRebuildTargetPolicyPresets(
-    mergedPolicyPresets,
+    activeMessagingPolicyPresets,
     input.sandboxEntry,
     input.webSearchConfig,
   );

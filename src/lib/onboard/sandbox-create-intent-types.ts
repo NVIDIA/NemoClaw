@@ -101,7 +101,9 @@ export type MaterializeSandboxCreatePlanInput = {
   deferSandboxEffectsUntilPolicyVerification?: boolean;
   managedStateMount?: ManagedHermesStateVolumeMount | null;
   messagingTokenDefs: MessagingTokenDef[];
-  runProviderPreDeleteCleanup(): void;
+  runProviderPreDeleteCleanup(
+    revalidatePolicyRequirements?: (operation: string) => void,
+  ): void;
   upsertMessagingProviders(
     tokenDefs: MessagingTokenDef[],
     options: {

@@ -278,8 +278,8 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     reserveSandboxInferenceRoute(
       sandboxName: string,
       route: {
-        provider: string;
-        model: string;
+        provider: string | null;
+        model: string | null;
         endpointUrl: string | null;
         endpointSource: InferenceEndpointSource | null;
         credentialEnv: string | null;
@@ -287,6 +287,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
         gatewayName: string;
         reservationSessionId?: string;
       },
+      options?: { requireAbsent?: boolean },
     ): boolean;
     registryUpdateSandbox(sandboxName: string, updates: { nimContainer?: string | null }): void;
     checkpointSandboxIdentity(sandboxName: string, agent: Agent): Promise<void>;
@@ -546,6 +547,7 @@ function hostLocalInferenceSetupOptions(
     (candidate): candidate is HostLocalInferenceApplication => candidate === input.application,
   );
   if (!application) {
+    if (!isHostLocalInferenceProvider(input.provider)) return {};
     throw new Error(`Unsupported host-local inference application '${input.application}'.`);
   }
   const selected = resolver({
