@@ -383,7 +383,6 @@ function projectMessagingState(entry: SandboxEntry): unknown {
       agent: persisted.plan.agent,
       workflow: persisted.plan.workflow,
       disabledChannels: [...persisted.plan.disabledChannels],
-      networkPolicy: persisted.plan.networkPolicy,
       channels: persisted.plan.channels.map((channel) => {
         const originalInputs = new Map(
           (originalChannels.get(channel.channelId)?.inputs ?? []).map((input) => [

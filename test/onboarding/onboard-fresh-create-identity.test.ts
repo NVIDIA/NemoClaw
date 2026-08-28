@@ -778,12 +778,29 @@ if (${JSON.stringify(
       };
       const assertProviderlessApfCreation = () => {
         assertSuccessfulCreation();
-        assert.equal("policyAuthority" in payload.registeredSandbox, false);
-        assert.equal("policyCreationReceipt" in payload.registeredSandbox, false);
-        assert.doesNotMatch(payload.createCommand, /(?:^|\s)--policy(?:\s|$)/u);
+        for (const field of [
+          "appliedPolicies",
+          "policies",
+          "policyAuthority",
+          "policyCreationReceipt",
+          "policyTier",
+        ]) {
+          assert.equal(field in payload.registeredSandbox, false);
+        }
+        assert.doesNotMatch(payload.createCommand, /(?:^|\s)--policy(?:=|\s)/u);
         assert.doesNotMatch(payload.createCommand, /(?:^|\s)--provider(?:\s|$)/u);
         assert.equal(payload.credentialReadCalls, 0);
         assert.deepEqual(providerExposureCommands, []);
+        const createIndex = payload.commandNames.findIndex((command: string) =>
+          command.includes("sandbox create"),
+        );
+        const deferredEffectIndexes = payload.commandNames
+          .map((command: string, index: number) => ({ command, index }))
+          .filter(({ command }: { command: string }) =>
+            /provider (?:profile import|create)|sandbox provider attach/u.test(command),
+          )
+          .map(({ index }: { index: number }) => index);
+        assert.ok(deferredEffectIndexes.every((index: number) => index > createIndex));
       };
       const assertPostCreateAuthorityRefusal = () => {
         assert.equal(payload.sandboxName, null);

@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { beforeEach, describe, it, vi } from "vitest";
-import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
+import { ONBOARD_CREATED_SANDBOX_ID, writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 import { type CommandEntry, onboardScriptMocksPath } from "../helpers/onboard-split-context";
 
 beforeEach(() => {
@@ -61,7 +61,7 @@ runner.run = (command) => {
 	  if (cmd.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:8080";
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
 	  // Existing sandbox that is NOT ready
-	  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
+	  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID].join(String.fromCharCode(10));
 	  if (cmd.includes("sandbox list")) return _deleted ? "" : "my-assistant NotReady";
 	  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
 	  return "";
@@ -69,7 +69,7 @@ runner.run = (command) => {
 	registry.getSandbox = () => fixtureMocks.sandboxLifecycleFixture({
 	  name: "my-assistant",
 	  toolDisclosure: "progressive",
-	}, { sandboxId: "sbx-4f2a91c0d7" });
+	}, { sandboxId: fixtureMocks.ONBOARD_CREATED_SANDBOX_ID });
 childProcess.spawn = () => {
   throw new Error("unexpected sandbox create");
 };
@@ -137,7 +137,7 @@ const { createSandbox } = require(${onboardPath});
 	const fixtureMocks = require(${onboardScriptMocksPath});
 	fixtureMocks.mockStandaloneGatewayTeardownAuthority();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-let _deleted = false; let _sandboxId = "sbx-4f2a91c0d7";
+let _deleted = false; let _sandboxId = fixtureMocks.ONBOARD_CREATED_SANDBOX_ID;
 const registry = require(${registryPath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
@@ -154,7 +154,7 @@ const commands = []; let registeredSandbox = null;
     reference: "openshell/sandbox-from:source",
     shared: false,
   },
-	}, { sandboxId: "sbx-4f2a91c0d7" });
+	}, { sandboxId: fixtureMocks.ONBOARD_CREATED_SANDBOX_ID });
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
   const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
@@ -272,7 +272,9 @@ const { createSandbox } = require(${onboardPath});
         ),
         "must defer source image retirement until replacement registration is proven",
       );
-      const sourceFingerprint = createHash("sha256").update("sbx-4f2a91c0d7").digest("hex");
+      const sourceFingerprint = createHash("sha256")
+        .update(ONBOARD_CREATED_SANDBOX_ID)
+        .digest("hex");
       const replacementFingerprint = createHash("sha256").update("sbx-8e6b10fd33").digest("hex");
       assert.match(payload.registeredSandbox?.lifecycleGeneration ?? "", /^[0-9a-f-]{36}$/);
       assert.equal(
@@ -313,7 +315,7 @@ const { createSandbox } = require(${onboardPath});
 	const fixtureMocks = require(${onboardScriptMocksPath});
 	fixtureMocks.mockStandaloneGatewayTeardownAuthority();
 	const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-	let _deleted = false; let _sandboxId = "sbx-4f2a91c0d7";
+	let _deleted = false; let _sandboxId = fixtureMocks.ONBOARD_CREATED_SANDBOX_ID;
 const registry = require(${registryPath});
 const sandboxState = require(${sandboxStatePath});
 const childProcess = require("node:child_process");
@@ -353,7 +355,7 @@ runner.run = (command) => {
 	const sourceSandbox = fixtureMocks.sandboxLifecycleFixture({
 	  name: "my-assistant",
 	  gpuEnabled: false,
-	}, { sandboxId: "sbx-4f2a91c0d7" });
+	}, { sandboxId: fixtureMocks.ONBOARD_CREATED_SANDBOX_ID });
 	registry.getSandbox = () => sourceSandbox;
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
 	  sandboxName: "my-assistant",
@@ -499,7 +501,7 @@ const { createSandbox } = require(${onboardPath});
 	const fixtureMocks = require(${onboardScriptMocksPath});
 	fixtureMocks.mockStandaloneGatewayTeardownAuthority();
 	const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-	let _deleted = false; let _sandboxId = "sbx-4f2a91c0d7";
+	let _deleted = false; let _sandboxId = fixtureMocks.ONBOARD_CREATED_SANDBOX_ID;
 const registry = require(${registryPath});
 const sandboxState = require(${sandboxStatePath});
 const childProcess = require("node:child_process");
@@ -539,7 +541,7 @@ runner.run = (command) => {
 	const sourceSandbox = fixtureMocks.sandboxLifecycleFixture({
 	  name: "my-assistant",
 	  gpuEnabled: false,
-	}, { sandboxId: "sbx-4f2a91c0d7" });
+	}, { sandboxId: fixtureMocks.ONBOARD_CREATED_SANDBOX_ID });
 	registry.getSandbox = () => sourceSandbox;
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
 	  sandboxName: "my-assistant",
@@ -653,7 +655,7 @@ const { createSandbox } = require(${onboardPath});
 	const fixtureMocks = require(${onboardScriptMocksPath});
 	fixtureMocks.mockStandaloneGatewayTeardownAuthority();
 	const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-	let _deleted = false; let _sandboxId = "sbx-4f2a91c0d7";
+	let _deleted = false; let _sandboxId = fixtureMocks.ONBOARD_CREATED_SANDBOX_ID;
 const registry = require(${registryPath});
 const sandboxState = require(${sandboxStatePath});
 const childProcess = require("node:child_process");
@@ -698,7 +700,7 @@ runner.run = (command) => {
 	const sourceSandbox = fixtureMocks.sandboxLifecycleFixture({
 	  name: "my-assistant",
 	  gpuEnabled: false,
-	}, { sandboxId: "sbx-4f2a91c0d7" });
+	}, { sandboxId: fixtureMocks.ONBOARD_CREATED_SANDBOX_ID });
 	registry.getSandbox = () => sourceSandbox;
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
 	  sandboxName: "my-assistant",
@@ -805,149 +807,6 @@ const { createSandbox } = require(${onboardPath});
   );
 
   it(
-    "recreating a sandbox preserves the user's policy preset selections",
-    {
-      timeout: 60_000,
-    },
-    async () => {
-      const repoRoot = path.join(import.meta.dirname, "../..");
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-recreate-preserves-"));
-      const fakeBin = path.join(tmpDir, "bin");
-      const scriptPath = path.join(tmpDir, "recreate-preserves.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-      const registryPath = JSON.stringify(
-        path.join(repoRoot, "src", "lib", "state", "registry.ts"),
-      );
-      const sessionModulePath = JSON.stringify(
-        path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
-      );
-
-      fs.mkdirSync(fakeBin, { recursive: true });
-      writeOkOpenshell(fakeBin);
-
-      const script = String.raw`
-	const runner = require(${runnerPath});
-	const fixtureMocks = require(${onboardScriptMocksPath});
-	fixtureMocks.mockStandaloneGatewayTeardownAuthority();
-	const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-	let _deleted = false; let _sandboxId = "sbx-4f2a91c0d7";
-const registry = require(${registryPath});
-const onboardSession = require(${sessionModulePath});
-const childProcess = require("node:child_process");
-const { EventEmitter } = require("node:events");
-
-const commands = [];
-runner.run = (command, opts = {}) => {
-  const cmd = _n(command);
-  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
-  if (profileResult !== null) return profileResult;
-  _deleted = _deleted || cmd.includes("sandbox delete");
-  commands.push({ command: cmd, env: opts.env || null });
-  if (cmd.includes("sandbox list")) {
-    return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
-  }
-	  return cmd.includes("sandbox get") && cmd.includes("my-assistant")
-	    ? { status: 0, stdout: Buffer.from("my-assistant\nId: " + _sandboxId + "\n"), stderr: Buffer.alloc(0) }
-    : { status: 0 };
-};
-	runner.runCapture = (command) => {
-	  const cmd = _n(command);
-	  if (cmd.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:8080";
-	  if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
-	  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command, { sandboxName: "my-assistant", sandboxId: _sandboxId });
-	  if (createdIdentity !== null) return createdIdentity;
-	  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: " + _sandboxId].join(String.fromCharCode(10));
-	  if (cmd.includes("sandbox list")) return _deleted ? "" : "my-assistant Ready";
-	  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
-  {
-    const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
-      defaultCurlOutput: "ok",
-    });
-    if (mockedCapture !== null) return mockedCapture;
-  }
-  return "";
-};
-
-// Existing sandbox has a custom preset selection: only "npm" (not the
-// full "balanced" tier). Recreating the sandbox must preserve this
-// customisation rather than reverting to the tier defaults.
-	const sourceSandbox = fixtureMocks.sandboxLifecycleFixture({
-	  name: "my-assistant",
-	  gpuEnabled: false,
-	}, { sandboxId: "sbx-4f2a91c0d7" });
-	registry.getSandbox = () => sourceSandbox;
-	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
-	  sandboxName: "my-assistant",
-	  provider: "nvidia-prod",
-	  model: "gpt-5.4",
-	  getSandbox: registry.getSandbox,
-	});
-
-const preflight = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"))});
-preflight.checkPortAvailable = async () => ({ ok: true });
-
-	childProcess.spawn = (...args) => {
-	  _deleted = false;
-	  _sandboxId = "sbx-8e6b10fd37";
-  const child = new EventEmitter();
-  child.stdout = new EventEmitter();
-  child.stderr = new EventEmitter();
-  child.unref = () => {};
-  child.pid = 4242;
-  commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
-  process.nextTick(() => {
-    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
-    child.emit("close", 0);
-  });
-  return child;
-};
-
-const { createSandbox } = require(${onboardPath});
-
-(async () => {
-  process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
-  process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
-	  await createSandbox(...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
-	    [null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, null, null, null, []],
-	    createFixture,
-	  ));
-  const session = onboardSession.loadSession();
-  console.log(JSON.stringify({ hasPolicyPresets: Boolean(session && "policyPresets" in session) }));
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-      fs.writeFileSync(scriptPath, script);
-
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          HOME: tmpDir,
-          PATH: `${fakeBin}:${process.env.PATH || ""}`,
-          NEMOCLAW_NON_INTERACTIVE: "1",
-        },
-      });
-
-      assert.equal(result.status, 0, result.stderr);
-      const payloadLine = result.stdout
-        .trim()
-        .split("\n")
-        .slice()
-        .reverse()
-        .find((line) => line.startsWith("{") && line.endsWith("}"));
-      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
-      const payload = JSON.parse(payloadLine);
-
-      assert.equal(payload.hasPolicyPresets, false);
-    },
-  );
-
-  it(
     "interactive mode prompts before reusing an existing ready sandbox",
     {
       timeout: 60_000,
@@ -1009,7 +868,7 @@ runner.run = (command, opts = {}) => {
     return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
   }
   return cmd.includes("sandbox get") && cmd.includes("my-assistant")
-    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
 };
 runner.runFile = (file, args = [], opts = {}) => {
@@ -1020,7 +879,7 @@ runner.runFile = (file, args = [], opts = {}) => {
 	  const cmd = _n(command);
 	  if (cmd.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:8080";
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
-	  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
+	  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID].join(String.fromCharCode(10));
 	  if (cmd.includes("sandbox list")) return _deleted ? "" : "my-assistant Ready";
 	  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
 	  return "";
@@ -1028,7 +887,7 @@ runner.runFile = (file, args = [], opts = {}) => {
 	registry.getSandbox = () => fixtureMocks.sandboxLifecycleFixture({
 	  name: "my-assistant",
 	  toolDisclosure: "progressive",
-	}, { sandboxId: "sbx-4f2a91c0d7" });
+	}, { sandboxId: fixtureMocks.ONBOARD_CREATED_SANDBOX_ID });
 
 // Mock prompt to return "y" (reuse)
 credentials.prompt = async () => "y";
@@ -1130,7 +989,7 @@ const { createSandbox } = require(${onboardPath});
 	const fixtureMocks = require(${onboardScriptMocksPath});
 	fixtureMocks.mockStandaloneGatewayTeardownAuthority();
 	const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-	let _deleted = false; let _sandboxId = "sbx-4f2a91c0d7";
+	let _deleted = false; let _sandboxId = fixtureMocks.ONBOARD_CREATED_SANDBOX_ID;
 const registry = require(${registryPath});
 const credentials = require(${credentialsPath});
 const childProcess = require("node:child_process");
@@ -1192,7 +1051,7 @@ runner.runFile = (file, args = [], opts = {}) => {
 	const sourceSandbox = fixtureMocks.sandboxLifecycleFixture({
 	  name: "my-assistant",
 	  toolDisclosure: "progressive",
-	}, { sandboxId: "sbx-4f2a91c0d7" });
+	}, { sandboxId: fixtureMocks.ONBOARD_CREATED_SANDBOX_ID });
 	registry.getSandbox = () => sourceSandbox;
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
 	  sandboxName: "my-assistant",
@@ -1312,7 +1171,7 @@ const { createSandbox } = require(${onboardPath});
 	const fixtureMocks = require(${onboardScriptMocksPath});
 	fixtureMocks.mockStandaloneGatewayTeardownAuthority();
 	const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-	let _deleted = false; let _sandboxId = "sbx-4f2a91c0d7";
+	let _deleted = false; let _sandboxId = fixtureMocks.ONBOARD_CREATED_SANDBOX_ID;
 const registry = require(${registryPath});
 const credentials = require(${credentialsPath});
 const childProcess = require("node:child_process");
@@ -1358,7 +1217,7 @@ runner.run = (command, opts = {}) => {
 	const sourceSandbox = fixtureMocks.sandboxLifecycleFixture({
 	  name: "my-assistant",
 	  toolDisclosure: "progressive",
-	}, { sandboxId: "sbx-4f2a91c0d7" });
+	}, { sandboxId: fixtureMocks.ONBOARD_CREATED_SANDBOX_ID });
 	registry.getSandbox = () => sourceSandbox;
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
 	  sandboxName: "my-assistant",

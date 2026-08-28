@@ -14,6 +14,7 @@ const repoRoot = path.join(import.meta.dirname, "../..");
 const onboardScriptMocksPath = JSON.stringify(
   path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
 );
+const ONBOARD_SUBPROCESS_TIMEOUT_MS = 30_000;
 const createdTmpDirs: string[] = [];
 
 function makeTmpDir(prefix: string): string {
@@ -78,7 +79,7 @@ runner.run = (command) => {
     return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
   }
   return cmd.includes("sandbox get") && cmd.includes("my-assistant")
-    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
 };
 runner.runCapture = (command) => {
@@ -89,7 +90,7 @@ runner.runCapture = (command) => {
     const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command, { sandboxName: "my-assistant" });
     if (createdIdentity !== null) return createdIdentity;
   }
-  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return sandboxDeleted && !sandboxRecreated ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
+  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return sandboxDeleted && !sandboxRecreated ? "" : ["my-assistant", "Id: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID].join(String.fromCharCode(10));
   if (cmd.includes("sandbox list")) {
     return sandboxRecreated ? "my-assistant Ready" : sandboxDeleted ? "" : "my-assistant NotReady";
   }
@@ -217,7 +218,8 @@ const MARKER_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852
         cwd: repoRoot,
         encoding: "utf-8",
         env,
-        timeout: 30_000,
+        timeout: ONBOARD_SUBPROCESS_TIMEOUT_MS,
+        killSignal: "SIGKILL",
       });
 
       assert.equal(result.status, 0, result.stderr || result.error?.message);
@@ -374,6 +376,8 @@ const { createSandbox } = require(${onboardPath});
       const result = spawnSync(process.execPath, [scriptPath], {
         cwd: repoRoot,
         encoding: "utf-8",
+        timeout: ONBOARD_SUBPROCESS_TIMEOUT_MS,
+        killSignal: "SIGKILL",
         env: {
           ...process.env,
           HOME: tmpDir,
@@ -441,7 +445,7 @@ runner.runCapture = (command) => {
   const normalized = _n(command);
   if (normalized.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:8080";
   if (normalized.includes("policy get") && normalized.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
-  if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) return ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
+  if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) return ["my-assistant", "Id: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID].join(String.fromCharCode(10));
   if (normalized.includes("sandbox list")) return "my-assistant NotReady";
   // Keep dashboard allocation inside this restore-intent fixture; host port
   // occupancy is unrelated to the not-ready decision under test.
@@ -490,6 +494,8 @@ const { createSandbox } = require(${onboardPath});
         cwd: repoRoot,
         encoding: "utf-8",
         env,
+        timeout: ONBOARD_SUBPROCESS_TIMEOUT_MS,
+        killSignal: "SIGKILL",
       });
 
       assert.notEqual(
