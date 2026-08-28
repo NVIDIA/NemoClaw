@@ -163,6 +163,49 @@ async function runGithubCli(input: GithubCliInput): Promise<{ stdout: string }> 
 
 type RequiredCheck = { name: string; appId: number | null; legacy: boolean };
 
+const artifactDirectories = new Set<string>();
+const artifactAbortController = new AbortController();
+const cancellationSignals = ["SIGINT", "SIGTERM"] as const;
+let cancellationHandlersInstalled = false;
+
+function artifactCancellationSignal(): AbortSignal {
+  return artifactAbortController.signal;
+}
+
+function removeCancellationHandlers(): void {
+  for (const signal of cancellationSignals) process.removeListener(signal, handleCancellation);
+  cancellationHandlersInstalled = false;
+}
+
+async function handleCancellation(signal: (typeof cancellationSignals)[number]): Promise<void> {
+  artifactAbortController.abort();
+  const retained: string[] = [];
+  await Promise.all(
+    [...artifactDirectories].map(async (directory) => {
+      const caveat = await cleanupArtifactDirectory(directory);
+      if (caveat !== null) retained.push(caveat);
+      else artifactDirectories.delete(directory);
+    }),
+  );
+  for (const message of retained) process.stderr.write(message + "\n");
+  removeCancellationHandlers();
+  process.kill(process.pid, signal);
+}
+
+function trackArtifactDirectory(directory: string): void {
+  artifactDirectories.add(directory);
+  if (cancellationHandlersInstalled) return;
+  for (const signal of cancellationSignals) process.on(signal, handleCancellation);
+  cancellationHandlersInstalled = true;
+}
+
+async function releaseArtifactDirectory(directory: string): Promise<string | null> {
+  const caveat = await cleanupArtifactDirectory(directory);
+  if (caveat === null) artifactDirectories.delete(directory);
+  if (artifactDirectories.size === 0 && cancellationHandlersInstalled) removeCancellationHandlers();
+  return caveat;
+}
+
 type RemoveDirectory = (directory: string) => Promise<void>;
 
 export async function cleanupArtifactDirectory(
@@ -480,6 +523,7 @@ async function readTestRun(context: ArtifactReadContext): Promise<TestRun | null
     )
       return null;
     temporaryDirectory = await mkdtemp(path.join(tmpdir(), "nemoclaw-value-stream-"));
+    trackArtifactDirectory(temporaryDirectory);
     const zipPath = path.join(temporaryDirectory, "artifact.zip");
     const blobDirectory = path.join(temporaryDirectory, "blobs");
     const reporterPath = path.join(temporaryDirectory, "reporter.mjs");
@@ -504,7 +548,13 @@ async function readTestRun(context: ArtifactReadContext): Promise<TestRun | null
     const download = await execFileAsync(
       "gh",
       ["api", "repos/" + repository + "/actions/artifacts/" + artifact.id + "/zip"],
-      { cwd: workdir, encoding: "buffer", maxBuffer: 25_000_001, timeout: 120_000 },
+      {
+        cwd: workdir,
+        encoding: "buffer",
+        maxBuffer: 25_000_001,
+        timeout: 120_000,
+        signal: artifactCancellationSignal(),
+      },
     );
     if (!Buffer.isBuffer(download.stdout) || download.stdout.length !== artifact.size_in_bytes)
       return null;
@@ -513,6 +563,7 @@ async function readTestRun(context: ArtifactReadContext): Promise<TestRun | null
       encoding: "utf8",
       maxBuffer: 100_000,
       timeout: 30_000,
+      signal: artifactCancellationSignal(),
     });
     const entries = inventory.stdout.split("\n").filter((line) => /^[-dlcbps]/u.test(line));
     if (entries.length !== 1) return null;
@@ -532,6 +583,7 @@ async function readTestRun(context: ArtifactReadContext): Promise<TestRun | null
       encoding: "buffer",
       maxBuffer: 100_000_001,
       timeout: 60_000,
+      signal: artifactCancellationSignal(),
     });
     if (!Buffer.isBuffer(extracted.stdout) || extracted.stdout.length !== expanded) return null;
     await writeFile(path.join(blobDirectory, entryName), extracted.stdout, { mode: 0o600 });
@@ -547,6 +599,7 @@ async function readTestRun(context: ArtifactReadContext): Promise<TestRun | null
           encoding: "utf8",
           maxBuffer: 1_000_000,
           timeout: 120_000,
+          signal: artifactCancellationSignal(),
           env: {
             DSH_TEST_SUMMARY: summaryPath,
             DSH_TOP_TESTS: String(topTestsPerShard),
@@ -622,7 +675,7 @@ async function readTestRun(context: ArtifactReadContext): Promise<TestRun | null
     return null;
   } finally {
     if (temporaryDirectory !== null) {
-      const cleanupCaveat = await cleanupArtifactDirectory(temporaryDirectory);
+      const cleanupCaveat = await releaseArtifactDirectory(temporaryDirectory);
       if (cleanupCaveat !== null) artifactCaveats.add(cleanupCaveat);
     }
   }

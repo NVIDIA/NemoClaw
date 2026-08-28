@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -30,6 +30,9 @@ async function fakeGithub(scenario: string): Promise<{
   let artifactPath: string | null = null;
   let artifactSize = 25_000_001;
   switch (scenario) {
+    case "artifact-cancel":
+      artifactSize = 1;
+      break;
     case "artifact-success": {
       const fixtureDirectory = path.join(directory, "fixture");
       await execa("mkdir", ["-p", fixtureDirectory]);
@@ -82,7 +85,7 @@ else if (args.includes("/actions/runs/12/jobs")) value = {total_count:0,jobs:[]}
 else if (args.includes("/actions/runs/") && !args.includes("/jobs") && !args.includes("/artifacts")) { const id = Number(args.split("/actions/runs/")[1].split(" ")[0]); value={...run(id),run_attempt:1,html_url:""}; }
 else if (args.includes("/artifacts?") && scenario === "artifact-failure") { console.error("Authorization: secret-token"); process.exit(1); }
 else if (args.includes("/artifacts?")) value = {total_count:1,artifacts:[{id:31,name:"cli-blob-report-1",size_in_bytes:Number(process.env.VALUE_STREAM_ARTIFACT_SIZE),expired:false,workflow_run:{id:11,head_sha:sha},workflow_run_id:11,workflow_run_head_sha:sha}]};
-else if (args.includes("/actions/artifacts/31/zip")) { if (scenario === "cleanup-failure") fs.chmodSync(process.env.TMPDIR, 0o500); process.stdout.write(fs.readFileSync(process.env.VALUE_STREAM_ARTIFACT)); process.exit(0); }
+else if (args.includes("/actions/artifacts/31/zip")) { if (scenario === "artifact-cancel") setInterval(() => {}, 1000); else { process.stdout.write(fs.readFileSync(process.env.VALUE_STREAM_ARTIFACT)); process.exit(0); } }
 else if (args.includes("/check-runs?")) { const checks=scenario.startsWith("legacy-") ? [] : [{id:1,name:"required-a",status:"completed",conclusion:"success",created_at:"2026-01-01T00:00:35Z",started_at:"2026-01-01T00:00:45Z",completed_at:scenario === "early-check" ? "2026-01-01T00:00:20Z" : "2026-01-01T00:02:30Z",html_url:"",app:{id:scenario === "wrong-app" ? 8 : 7,slug:"actions"}}]; if (scenario !== "incomplete" && scenario !== "wrong-app" && scenario !== "any-app" && scenario !== "app-status-denied" && scenario !== "early-check" && !scenario.startsWith("legacy-")) checks.push({...checks[0],id:2,name:"required-b",created_at:"2026-01-01T00:00:40Z",completed_at:"2026-01-01T00:02:40Z"}); value=checks; }
 else if (args.includes("/status?")) {
   if (scenario === "app-status-denied") { console.error("Commit statuses forbidden"); process.exit(1); }
@@ -271,6 +274,44 @@ describe("pull request value-stream analysis", () => {
     });
     expect(testRun.durationSeconds).toBeGreaterThanOrEqual(0);
     expect(testRun.slowTests).toHaveLength(1);
+  });
+
+  test("removes the artifact directory when analysis is terminated (#10542)", async () => {
+    const fake = await fakeGithub("artifact-cancel");
+    const cancellationRoot = await mkdtemp(path.join(tmpdir(), "value-stream-cancellation-"));
+    temporaryDirectories.push(cancellationRoot);
+    const processResult = execa(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        "--no-warnings",
+        analyzer,
+        "--workdir",
+        root,
+        "--number",
+        "42",
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: fake.directory + path.delimiter + process.env.PATH,
+          TMPDIR: cancellationRoot,
+          VALUE_STREAM_SCENARIO: "artifact-cancel",
+          VALUE_STREAM_LOG: fake.logPath,
+          VALUE_STREAM_ARTIFACT: "",
+          VALUE_STREAM_ARTIFACT_SIZE: "1",
+        },
+        reject: false,
+      },
+    );
+    await vi.waitUntil(
+      async () => (await readFile(fake.logPath, "utf8")).includes("/actions/artifacts/31/zip"),
+      { timeout: 10_000, interval: 20 },
+    );
+    processResult.kill("SIGTERM");
+    const result = await processResult;
+    expect(result.signal).toBe("SIGTERM");
+    await expect(readdir(cancellationRoot)).resolves.toEqual([]);
   });
 
   test("reports retained artifact directory when cleanup fails (#10542)", async () => {
