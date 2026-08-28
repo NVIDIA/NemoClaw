@@ -9,10 +9,10 @@ import {
   readColdOnboardPerformanceBudget,
   readOnboardTraceWindow,
 } from "../fixtures/onboard-performance.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import {
   buildOpenClawFirstTurnLatencyEvidence,
   extractOpenClawAgentDurationEvidence,
-  extractOpenClawAgentPayloadText,
 } from "../live/agent-turn-latency-helpers.ts";
 
 const TRACE_ID = "0123456789abcdef0123456789abcdef";
@@ -457,7 +457,7 @@ describe("onboard performance evidence", () => {
 
   it("rejects echoed user messages as first-agent-response evidence", () => {
     expect(
-      extractOpenClawAgentPayloadText(
+      parseOpenClawAgentText(
         JSON.stringify({
           messages: [{ role: "user", content: "Reply with exactly: NEMOCLAW_E2E_READY_6002" }],
         }),
@@ -467,7 +467,7 @@ describe("onboard performance evidence", () => {
 
   it("accepts a framed OpenClaw agent-output payload", () => {
     expect(
-      extractOpenClawAgentPayloadText(
+      parseOpenClawAgentText(
         `progress\n${JSON.stringify({ result: { payloads: [{ text: "NEMOCLAW_E2E_READY_6002" }] } })}`,
       ),
     ).toBe("NEMOCLAW_E2E_READY_6002");
@@ -475,7 +475,7 @@ describe("onboard performance evidence", () => {
 
   it("joins top-level agent-output payload fragments", () => {
     expect(
-      extractOpenClawAgentPayloadText(
+      parseOpenClawAgentText(
         JSON.stringify({
           payloads: [{ text: "NEMOCLAW_" }, { text: "E2E_READY_6002" }],
         }),

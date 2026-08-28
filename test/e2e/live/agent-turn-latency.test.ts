@@ -7,6 +7,7 @@ import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { normalizeMode } from "../fixtures/inference-adapter.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import {
   assertHermesConfig,
   assertNoOpenClawTransportErrors,
@@ -16,7 +17,6 @@ import {
   cleanupTurnSandbox,
   cleanupTurnSandboxes,
   env,
-  extractOpenClawAgentPayloadText,
   HERMES_SANDBOX,
   hermesTurnCommand,
   installSandbox,
@@ -157,7 +157,7 @@ runAgentTurnLatencyTest(
     expect(openclaw.result.exitCode, resultText(openclaw.result)).toBe(0);
     assertNoOpenClawTransportErrors(resultText(openclaw.result));
     expect(
-      containsAnswer(extractOpenClawAgentPayloadText(openclaw.result.stdout), "42"),
+      containsAnswer(parseOpenClawAgentText(openclaw.result.stdout), "42"),
       resultText(openclaw.result),
     ).toBe(true);
     expect(openclaw.elapsedMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
@@ -169,7 +169,7 @@ runAgentTurnLatencyTest(
     expect(openclawFollowUp.result.exitCode, resultText(openclawFollowUp.result)).toBe(0);
     assertNoOpenClawTransportErrors(resultText(openclawFollowUp.result));
     expect(
-      containsAnswer(extractOpenClawAgentPayloadText(openclawFollowUp.result.stdout), "56"),
+      containsAnswer(parseOpenClawAgentText(openclawFollowUp.result.stdout), "56"),
       resultText(openclawFollowUp.result),
     ).toBe(true);
     expect(openclawFollowUp.elapsedMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);

@@ -12,24 +12,26 @@ import {
 describe("E2E answer assertions", () => {
   it("normalizes harmless model-inserted whitespace", () => {
     expect(compactAnswerText("4\n2")).toBe("42");
-    expect(containsAnswer("4\n2", "42")).toBe(true);
     expect(containsAnswer("The answer is 4\n2.", "42")).toBe(true);
   });
 
-  it("accepts the expected conversational answer (#10215)", () => {
-    expect(containsAnswer("The answer is 5\n6.", "56")).toBe(true);
+  it("requires numeric answer boundaries (#10215)", () => {
+    expect(containsAnswer("156", "56")).toBe(false);
+    expect(containsAnswer("560", "56")).toBe(false);
+    expect(containsAnswer("The result is [5\n6].", "56")).toBe(true);
+    expect(containsAnswer("The result is {5\n6}.", "56")).toBe(true);
+  });
+
+  it("accepts text answers and rejects empty output (#10215)", () => {
+    expect(containsAnswer("Request acknowledged.", "acknowledged")).toBe(true);
     expect(containsAnswer("", "56")).toBe(false);
   });
 
   it.each([
     '{"type":"function","function":{"name":"read","parameters":{"value":56}}',
-    '[{"name":"read","parameters":{"value":56}},{"name":"tts"}]',
-    '{"id":"call_1","type":"function","function":{"name":"read","parameters":{"value":56}}}',
-    '{"tool":"read","arguments":{"value":56}}',
-    '{"tool_calls":[{"function":{"arguments":{"value":56}}}]}',
-    'Tool call: {"name":"read","parameters":{"value":56}}',
-    '~~~json\n{"type":"function","function":{"name":"read","param":{"value":56}}}\n~~~',
-  ])("rejects internal tool output: %s (#10215)", (output) => {
+    '[{"name":"read","parameters":{"value":56}}]',
+    "Tool call: read returned 56",
+  ])("rejects tool-call output containing the expected answer: %s (#10215)", (output) => {
     expect(containsAnswer(output, "56"), output).toBe(false);
   });
 

@@ -5,10 +5,20 @@ export function compactAnswerText(text: string): string {
   return text.replace(/\s+/g, "");
 }
 
+function containsToolCallOutput(text: string): boolean {
+  return (
+    /\btool[ _-]?calls?\b/i.test(text) ||
+    /"(?:function|arguments|parameters|param)"\s*:/u.test(text)
+  );
+}
+
 export function containsAnswer(text: string, answer: string): boolean {
-  const trimmed = text.trim();
-  if (/[{[]/u.test(trimmed)) return false;
-  return compactAnswerText(trimmed).includes(compactAnswerText(answer));
+  const compactText = compactAnswerText(text.trim());
+  const compactAnswer = compactAnswerText(answer);
+  if (!compactText || !compactAnswer || containsToolCallOutput(text)) return false;
+  if (!/^\d+$/u.test(compactAnswer)) return compactText.includes(compactAnswer);
+  const escapedAnswer = compactAnswer.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^0-9])${escapedAnswer}([^0-9]|$)`, "u").test(compactText);
 }
 
 export function containsReplyTokenAllowingWhitespace(text: string, replyToken: string): boolean {
