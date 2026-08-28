@@ -63,6 +63,120 @@ const PORTABLE_SELECTOR_NAMES = [
   "CONTAINER_SSHKEY",
 ] as const;
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
+const PORTABLE_CONFIGURATION_RECOVERY_PREFIX = ".portable-cleanup-v1-";
+const PORTABLE_CONFIGURATION_RECOVERY_PATTERN =
+  /^\.portable-cleanup-v1-(pending|bound|removed)-([0-9]+)-([0-9]+)-([0-9]+)-([A-Za-z0-9]{6})$/u;
+const PORTABLE_CONFIGURATION_PYTHON_LOCATIONS = [
+  "/usr/bin/python3",
+  "/usr/local/bin/python3",
+  "/opt/homebrew/bin/python3",
+  "/opt/local/bin/python3",
+] as const;
+
+type PortableConfigurationRecoveryPhase = "pending" | "bound" | "removed";
+
+interface PortableConfigurationRecovery {
+  readonly dev: bigint;
+  readonly entry: string;
+  readonly ino: bigint;
+  readonly path: string;
+  readonly phase: PortableConfigurationRecoveryPhase;
+  readonly snapshot: ReturnType<typeof readPortableAuthorityDirectory>;
+  readonly suffix: string;
+  readonly uid: bigint;
+}
+
+// Node does not expose unlinkat(2). Pass the already-open recovery and Portable
+// directory descriptors to isolated Python so removal never resolves the
+// quarantined pathname again. Final directory removals are non-recursive.
+const PORTABLE_CONFIGURATION_DELETE_HELPER = String.raw`
+import os
+import stat
+import sys
+
+O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
+O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+O_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
+DIR_FLAGS = os.O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+
+
+def fail() -> None:
+    sys.exit(1)
+
+
+def same_identity(left: os.stat_result, right: os.stat_result) -> bool:
+    return (
+        left.st_dev == right.st_dev
+        and left.st_ino == right.st_ino
+        and left.st_uid == right.st_uid
+    )
+
+
+def remove_portable() -> None:
+    recovery_fd = 3
+    portable_fd = 4
+    held = os.fstat(portable_fd)
+    named = os.lstat("portable", dir_fd=recovery_fd)
+    if not same_identity(held, named):
+        fail()
+    entries = sorted(entry.name for entry in os.scandir(portable_fd))
+    if entries not in ([], ["containers.conf"]):
+        fail()
+    if entries:
+        configuration = os.lstat("containers.conf", dir_fd=portable_fd)
+        if (
+            not stat.S_ISREG(configuration.st_mode)
+            or configuration.st_uid != os.getuid()
+            or configuration.st_nlink != 1
+        ):
+            fail()
+        os.unlink("containers.conf", dir_fd=portable_fd)
+    os.fsync(portable_fd)
+    named_after = os.lstat("portable", dir_fd=recovery_fd)
+    if not same_identity(held, named_after):
+        fail()
+    try:
+        os.rmdir("portable", dir_fd=recovery_fd)
+        os.fsync(recovery_fd)
+    except OSError:
+        fail()
+
+
+def remove_recovery() -> None:
+    parent_fd = 3
+    recovery_fd = 4
+    name = sys.argv[2]
+    if (
+        not name
+        or name in (".", "..")
+        or os.sep in name
+        or (os.altsep is not None and os.altsep in name)
+    ):
+        fail()
+    held = os.fstat(recovery_fd)
+    named = os.lstat(name, dir_fd=parent_fd)
+    if not same_identity(held, named) or list(os.scandir(recovery_fd)):
+        fail()
+    try:
+        os.rmdir(name, dir_fd=parent_fd)
+        os.fsync(parent_fd)
+    except OSError:
+        fail()
+
+
+if __name__ == "__main__":
+    try:
+        if len(sys.argv) < 2:
+            fail()
+        if sys.argv[1] == "portable" and len(sys.argv) == 2:
+            remove_portable()
+        elif sys.argv[1] == "recovery" and len(sys.argv) == 3:
+            remove_recovery()
+        else:
+            fail()
+    except Exception:
+        fail()
+`;
 
 function sameDirectoryObject(left: fs.BigIntStats, right: fs.BigIntStats): boolean {
   return ["dev", "ino", "uid", "nlink"].every(
@@ -70,49 +184,385 @@ function sameDirectoryObject(left: fs.BigIntStats, right: fs.BigIntStats): boole
   );
 }
 
-export function prepareAbandonedPortableConfigurationRemoval(directory: string): void {
-  const snapshot = readPortableAuthorityDirectory(directory, false, true);
-  if (!snapshot.identity) return;
-  if (!isDeepStrictEqual(snapshot.entries, ["containers.conf"]))
-    throw new Error("Portable configuration changed before ordinary cleanup");
-  if ((snapshot.identity.mode & 0o100n) !== 0n) return;
+function trustedPortableConfigurationPython(candidate: string): string | null {
+  if (!path.isAbsolute(candidate)) return null;
+  try {
+    const canonical = fs.realpathSync(candidate);
+    const currentUid = process.getuid?.();
+    if (currentUid === undefined) return null;
+    let inspected = canonical;
+    while (true) {
+      const metadata = fs.statSync(inspected);
+      if ((metadata.mode & 0o022) !== 0) return null;
+      if (metadata.uid !== 0 && metadata.uid !== currentUid) return null;
+      const parent = path.dirname(inspected);
+      if (parent === inspected) break;
+      inspected = parent;
+    }
+    const executable = fs.statSync(canonical);
+    if (!executable.isFile()) return null;
+    fs.accessSync(canonical, fs.constants.R_OK | fs.constants.X_OK);
+    return canonical;
+  } catch {
+    return null;
+  }
+}
 
+function resolvePortableConfigurationPython(): string | null {
+  const candidates: string[] = [...PORTABLE_CONFIGURATION_PYTHON_LOCATIONS];
+  try {
+    candidates.push(path.join(path.dirname(fs.realpathSync(process.execPath)), "python3"));
+  } catch {
+    // Fixed system locations remain authoritative when Node.js cannot be canonicalized.
+  }
+  for (const candidate of new Set(candidates)) {
+    const trusted = trustedPortableConfigurationPython(candidate);
+    if (trusted) return trusted;
+  }
+  return null;
+}
+
+function assertPortableConfigurationFile(directory: string): void {
+  if (typeof fs.constants.O_NOFOLLOW !== "number") {
+    throw new Error("Portable configuration cleanup requires O_NOFOLLOW");
+  }
+  const configuration = path.join(directory, "containers.conf");
+  const nonblock = typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0;
+  let descriptor: number | null = null;
+  try {
+    descriptor = fs.openSync(
+      configuration,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | nonblock,
+    );
+    const held = fs.fstatSync(descriptor, { bigint: true });
+    const named = fs.lstatSync(configuration, { bigint: true });
+    const currentUid = process.getuid?.();
+    if (
+      currentUid === undefined ||
+      !held.isFile() ||
+      named.isSymbolicLink() ||
+      !named.isFile() ||
+      held.uid !== BigInt(currentUid) ||
+      held.nlink !== 1n ||
+      !sameDirectoryObject(held, named)
+    )
+      throw new Error("Portable containers.conf is not a current-user single-link regular file");
+  } catch {
+    throw new Error("Portable containers.conf is not a current-user single-link regular file");
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
+  }
+}
+
+function sameStableDirectoryIdentity(left: fs.BigIntStats, right: fs.BigIntStats): boolean {
+  return (
+    left.isDirectory() &&
+    right.isDirectory() &&
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.uid === right.uid
+  );
+}
+
+function isErrnoException(error: unknown, code: string): boolean {
+  return error instanceof Error && (error as NodeJS.ErrnoException).code === code;
+}
+
+function sameRecordedDirectory(
+  identity: fs.BigIntStats,
+  recovery: Pick<PortableConfigurationRecovery, "dev" | "ino" | "uid">,
+): boolean {
+  return (
+    identity.isDirectory() &&
+    identity.dev === recovery.dev &&
+    identity.ino === recovery.ino &&
+    identity.uid === recovery.uid
+  );
+}
+
+function fsyncDirectory(directory: string): void {
   const descriptor = fs.openSync(
     directory,
     fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_DIRECTORY,
   );
   try {
-    const before = fs.fstatSync(descriptor, { bigint: true });
-    const namedBefore = fs.lstatSync(directory, { bigint: true });
-    if (
-      !samePortableAuthorityDirectory(snapshot, {
-        entries: snapshot.entries,
-        identity: before,
-      }) ||
-      !samePortableAuthorityDirectory(snapshot, {
-        entries: snapshot.entries,
-        identity: namedBefore,
-      })
-    )
-      throw new Error("Portable configuration changed before ordinary cleanup");
-
-    fs.fchmodSync(descriptor, 0o700);
-    const after = fs.fstatSync(descriptor, { bigint: true });
-    const namedAfter = fs.lstatSync(directory, { bigint: true });
-    const verifiedAfter = readPortableAuthorityDirectory(directory, true);
-    if (
-      !after.isDirectory() ||
-      namedAfter.isSymbolicLink() ||
-      !sameDirectoryObject(before, after) ||
-      !sameDirectoryObject(after, namedAfter) ||
-      !verifiedAfter.identity ||
-      !sameDirectoryObject(after, verifiedAfter.identity) ||
-      !isDeepStrictEqual(verifiedAfter.entries, ["containers.conf"]) ||
-      (after.mode & 0o777n) !== 0o700n
-    )
-      throw new Error("Portable configuration changed while preparing ordinary cleanup");
+    fs.fsyncSync(descriptor);
   } finally {
     fs.closeSync(descriptor);
+  }
+}
+
+function recoveryEntry(
+  phase: PortableConfigurationRecoveryPhase,
+  identity: Pick<fs.BigIntStats, "dev" | "ino" | "uid">,
+  suffix: string,
+): string {
+  return `${PORTABLE_CONFIGURATION_RECOVERY_PREFIX}${phase}-${String(identity.dev)}-${String(identity.ino)}-${String(identity.uid)}-${suffix}`;
+}
+
+function inspectPortableConfigurationRecovery(
+  parent: string,
+): PortableConfigurationRecovery | null {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(parent);
+  } catch (error) {
+    if (isErrnoException(error, "ENOENT")) return null;
+    throw error;
+  }
+  const candidates = entries.filter((entry) =>
+    entry.startsWith(PORTABLE_CONFIGURATION_RECOVERY_PREFIX),
+  );
+  if (candidates.length === 0) return null;
+  if (candidates.length !== 1)
+    throw new Error("Portable configuration has ambiguous ordinary cleanup recovery");
+  const entry = candidates[0]!;
+  const match = PORTABLE_CONFIGURATION_RECOVERY_PATTERN.exec(entry);
+  if (!match) throw new Error("Portable configuration has invalid ordinary cleanup recovery");
+  const recoveryPath = path.join(parent, entry);
+  return {
+    dev: BigInt(match[2]!),
+    entry,
+    ino: BigInt(match[3]!),
+    path: recoveryPath,
+    phase: match[1] as PortableConfigurationRecoveryPhase,
+    snapshot: readPortableAuthorityDirectory(recoveryPath, true),
+    suffix: match[5]!,
+    uid: BigInt(match[4]!),
+  };
+}
+
+function renamePortableConfigurationRecovery(
+  parent: string,
+  recovery: PortableConfigurationRecovery,
+  phase: PortableConfigurationRecoveryPhase,
+): PortableConfigurationRecovery {
+  const entry = recoveryEntry(phase, recovery, recovery.suffix);
+  const target = path.join(parent, entry);
+  fs.renameSync(recovery.path, target);
+  fsyncDirectory(parent);
+  const renamed = inspectPortableConfigurationRecovery(parent);
+  if (
+    !renamed ||
+    renamed.entry !== entry ||
+    !recovery.snapshot.identity ||
+    !renamed.snapshot.identity ||
+    !sameStableDirectoryIdentity(recovery.snapshot.identity, renamed.snapshot.identity)
+  )
+    throw new Error("Portable configuration cleanup recovery changed while advancing");
+  return renamed;
+}
+
+function runPortableConfigurationDeleteHelper(
+  action: "portable" | "recovery",
+  parentDescriptor: number,
+  heldDescriptor: number,
+  entry?: string,
+): boolean {
+  const python = resolvePortableConfigurationPython();
+  if (!python) return false;
+  const result = spawnSync(
+    python,
+    ["-I", "-c", PORTABLE_CONFIGURATION_DELETE_HELPER, action, ...(entry ? [entry] : [])],
+    {
+      encoding: "utf-8",
+      env: {},
+      maxBuffer: 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe", parentDescriptor, heldDescriptor],
+      timeout: 30_000,
+    },
+  );
+  return result.status === 0 && !result.error;
+}
+
+function createPortableConfigurationRecovery(
+  parent: string,
+  identity: fs.BigIntStats,
+): PortableConfigurationRecovery {
+  const recoveryPath = fs.mkdtempSync(path.join(parent, recoveryEntry("pending", identity, "")));
+  fsyncDirectory(parent);
+  const recovery = inspectPortableConfigurationRecovery(parent);
+  if (!recovery || recovery.path !== recoveryPath || recovery.snapshot.entries.length !== 0)
+    throw new Error("Portable configuration cleanup recovery changed while creating it");
+  return recovery;
+}
+
+function removeBoundPortableConfiguration(recovery: PortableConfigurationRecovery): void {
+  const portableDirectory = path.join(recovery.path, "portable");
+  const portable = readPortableAuthorityDirectory(portableDirectory, true);
+  if (
+    !portable.identity ||
+    !sameRecordedDirectory(portable.identity, recovery) ||
+    (!isDeepStrictEqual(portable.entries, ["containers.conf"]) && portable.entries.length !== 0)
+  )
+    throw new Error("Portable configuration cleanup recovery does not match its identity");
+  if (isDeepStrictEqual(portable.entries, ["containers.conf"])) {
+    assertPortableConfigurationFile(portableDirectory);
+  }
+  const recoveryDescriptor = fs.openSync(
+    recovery.path,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_DIRECTORY,
+  );
+  const portableDescriptor = fs.openSync(
+    portableDirectory,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_DIRECTORY,
+  );
+  try {
+    const heldRecovery = fs.fstatSync(recoveryDescriptor, { bigint: true });
+    const heldPortable = fs.fstatSync(portableDescriptor, { bigint: true });
+    if (
+      !recovery.snapshot.identity ||
+      !sameStableDirectoryIdentity(recovery.snapshot.identity, heldRecovery) ||
+      !sameRecordedDirectory(heldPortable, recovery) ||
+      !runPortableConfigurationDeleteHelper("portable", recoveryDescriptor, portableDescriptor)
+    )
+      throw new Error("Portable configuration could not be removed by verified identity");
+  } finally {
+    fs.closeSync(portableDescriptor);
+    fs.closeSync(recoveryDescriptor);
+  }
+  const after = readPortableAuthorityDirectory(recovery.path, true);
+  if (
+    !recovery.snapshot.identity ||
+    !after.identity ||
+    !sameStableDirectoryIdentity(recovery.snapshot.identity, after.identity) ||
+    after.entries.length !== 0
+  )
+    throw new Error("Portable configuration remained after identity-bound removal");
+}
+
+export function removeAbandonedPortableConfiguration(directory: string): string | null {
+  const parent = path.dirname(directory);
+  let recovery = inspectPortableConfigurationRecovery(parent);
+  const snapshot = readPortableAuthorityDirectory(directory, false, true);
+  if (!recovery && !snapshot.identity) return null;
+  if (!recovery && snapshot.identity && !isDeepStrictEqual(snapshot.entries, ["containers.conf"]))
+    throw new Error("Portable configuration changed before ordinary cleanup");
+
+  if (!recovery) {
+    const descriptor = fs.openSync(
+      directory,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_DIRECTORY,
+    );
+    try {
+      const before = fs.fstatSync(descriptor, { bigint: true });
+      const namedBefore = fs.lstatSync(directory, { bigint: true });
+      if (
+        !samePortableAuthorityDirectory(snapshot, {
+          entries: snapshot.entries,
+          identity: before,
+        }) ||
+        !samePortableAuthorityDirectory(snapshot, {
+          entries: snapshot.entries,
+          identity: namedBefore,
+        })
+      )
+        throw new Error("Portable configuration changed before ordinary cleanup");
+
+      if ((before.mode & 0o777n) !== 0o700n) fs.fchmodSync(descriptor, 0o700);
+      const after = fs.fstatSync(descriptor, { bigint: true });
+      const namedAfter = fs.lstatSync(directory, { bigint: true });
+      const verifiedAfter = readPortableAuthorityDirectory(directory, true);
+      if (
+        !after.isDirectory() ||
+        namedAfter.isSymbolicLink() ||
+        !sameDirectoryObject(before, after) ||
+        !sameDirectoryObject(after, namedAfter) ||
+        !verifiedAfter.identity ||
+        !sameDirectoryObject(after, verifiedAfter.identity) ||
+        !isDeepStrictEqual(verifiedAfter.entries, ["containers.conf"]) ||
+        (after.mode & 0o777n) !== 0o700n
+      )
+        throw new Error("Portable configuration changed while preparing ordinary cleanup");
+      assertPortableConfigurationFile(directory);
+
+      recovery = createPortableConfigurationRecovery(parent, after);
+      fs.renameSync(directory, path.join(recovery.path, "portable"));
+      fsyncDirectory(recovery.path);
+      fsyncDirectory(parent);
+      const moved = readPortableAuthorityDirectory(path.join(recovery.path, "portable"), true);
+      const held = fs.fstatSync(descriptor, { bigint: true });
+      if (
+        !moved.identity ||
+        !sameDirectoryObject(after, held) ||
+        !sameDirectoryObject(held, moved.identity) ||
+        !sameRecordedDirectory(moved.identity, recovery) ||
+        !isDeepStrictEqual(moved.entries, ["containers.conf"])
+      )
+        throw new Error("Portable configuration changed while binding ordinary cleanup");
+      assertPortableConfigurationFile(path.join(recovery.path, "portable"));
+      recovery = renamePortableConfigurationRecovery(parent, recovery, "bound");
+    } finally {
+      fs.closeSync(descriptor);
+    }
+  }
+
+  if (recovery.phase === "pending") {
+    if (recovery.snapshot.entries.length === 0) {
+      if (!snapshot.identity || !sameRecordedDirectory(snapshot.identity, recovery))
+        throw new Error("Portable configuration cleanup recovery is incomplete");
+      assertPortableConfigurationFile(directory);
+      fs.renameSync(directory, path.join(recovery.path, "portable"));
+      fsyncDirectory(recovery.path);
+      fsyncDirectory(parent);
+    } else if (isDeepStrictEqual(recovery.snapshot.entries, ["portable"])) {
+      const moved = readPortableAuthorityDirectory(path.join(recovery.path, "portable"), true);
+      if (!moved.identity || !sameRecordedDirectory(moved.identity, recovery))
+        throw new Error("Portable configuration cleanup recovery changed before binding");
+      assertPortableConfigurationFile(path.join(recovery.path, "portable"));
+    } else throw new Error("Portable configuration cleanup recovery changed before binding");
+    recovery = renamePortableConfigurationRecovery(parent, recovery, "bound");
+  }
+  if (recovery.phase === "bound") {
+    if (isDeepStrictEqual(recovery.snapshot.entries, ["portable"]))
+      removeBoundPortableConfiguration(recovery);
+    else if (recovery.snapshot.entries.length !== 0)
+      throw new Error("Portable configuration cleanup recovery changed during removal");
+    recovery = renamePortableConfigurationRecovery(parent, recovery, "removed");
+  }
+  if (recovery.phase !== "removed" || recovery.snapshot.entries.length !== 0)
+    throw new Error("Portable configuration cleanup recovery did not complete");
+  return recovery.entry;
+}
+
+export function finalizeAbandonedPortableConfigurationRemoval(
+  parent: string,
+  recoveryEntryName: string,
+): void {
+  const recovery = inspectPortableConfigurationRecovery(parent);
+  if (
+    !recovery ||
+    recovery.entry !== recoveryEntryName ||
+    recovery.phase !== "removed" ||
+    recovery.snapshot.entries.length !== 0 ||
+    !recovery.snapshot.identity
+  )
+    throw new Error("Portable configuration cleanup recovery cannot be finalized");
+  const parentDescriptor = fs.openSync(
+    parent,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_DIRECTORY,
+  );
+  const recoveryDescriptor = fs.openSync(
+    recovery.path,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_DIRECTORY,
+  );
+  try {
+    if (
+      !sameStableDirectoryIdentity(
+        recovery.snapshot.identity,
+        fs.fstatSync(recoveryDescriptor, { bigint: true }),
+      ) ||
+      !runPortableConfigurationDeleteHelper(
+        "recovery",
+        parentDescriptor,
+        recoveryDescriptor,
+        recovery.entry,
+      )
+    )
+      throw new Error("Portable configuration cleanup recovery could not be finalized");
+  } finally {
+    fs.closeSync(recoveryDescriptor);
+    fs.closeSync(parentDescriptor);
   }
 }
 

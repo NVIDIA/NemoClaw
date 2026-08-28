@@ -220,6 +220,7 @@ function completedOpenClawAuthority(
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   for (const directory of restoredDirectories.splice(0)) fs.chmodSync(directory, 0o700);
   for (const directory of temporaryDirectories.splice(0))
     fs.rmSync(directory, { force: true, recursive: true });
@@ -251,11 +252,15 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
       const host = scope("nemoclaw-uninstall-config-");
       stateRoot(host);
       const directory = abandonedPortableConfig(host, mode);
+      restoredDirectories.pop();
+      host.rmSync.mockImplementation((target, options) => {
+        const resolvedTarget = path.resolve(String(target));
+        expect(resolvedTarget.startsWith(`${host.homeDir}${path.sep}`)).toBe(true);
+        fs.rmSync(resolvedTarget, options);
+      });
 
       await expectOrdinaryUninstall(host);
-      expect(host.rmSync.mock.calls.map(([target]) => String(target))).toContain(
-        path.dirname(directory),
-      );
+      expect(fs.existsSync(directory)).toBe(false);
     },
   );
 
@@ -311,6 +316,238 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     expect(host.rmSync.mock.calls.map(([target]) => path.resolve(String(target)))).not.toContain(
       path.dirname(directory),
     );
+    expect(host.runPortableCleanup).not.toHaveBeenCalled();
+  });
+
+  it("preserves replacement Portable configuration after binding abandoned cleanup (#10545)", async () => {
+    const host = scope("nemoclaw-uninstall-completed-config-replacement-");
+    completedOpenClawAuthority(host, "default");
+    const directory = abandonedPortableConfig(host, 0o700);
+    const renameSync = fs.renameSync;
+    vi.spyOn(fs, "renameSync").mockImplementation((source, destination) => {
+      renameSync(source, destination);
+      const replace = () => {
+        fs.mkdirSync(directory, { mode: 0o700 });
+        fs.writeFileSync(path.join(directory, "replacement.conf"), "replacement\n", {
+          mode: 0o600,
+        });
+      };
+      new Map([[path.resolve(directory), replace]]).get(path.resolve(String(source)))?.();
+    });
+    host.rmSync.mockImplementation((target, options) => {
+      const resolvedTarget = path.resolve(String(target));
+      expect(resolvedTarget.startsWith(`${host.homeDir}${path.sep}`)).toBe(true);
+      fs.rmSync(resolvedTarget, options);
+    });
+
+    const result = await uninstall(host);
+
+    expect(result.exitCode).toBe(0);
+    expect(fs.existsSync(path.join(directory, "containers.conf"))).toBe(false);
+    expect(fs.existsSync(path.join(directory, "replacement.conf"))).toBe(true);
+    expect(host.runPortableCleanup).not.toHaveBeenCalled();
+  });
+
+  it("refuses a quarantined Portable pathname replacement immediately before removal (#10545)", async () => {
+    const host = scope("nemoclaw-uninstall-completed-quarantine-replacement-");
+    completedOpenClawAuthority(host, "default");
+    const directory = abandonedPortableConfig(host, 0o700);
+    restoredDirectories.pop();
+    const originalOpenSync = fs.openSync;
+    let boundPortableOpenCount = 0;
+    vi.spyOn(fs, "openSync").mockImplementation((target, flags, mode) => {
+      const descriptor = originalOpenSync(target, flags, mode);
+      const resolved = path.resolve(String(target));
+      const recoveryEntry = path.basename(path.dirname(resolved));
+      const isBoundPortable =
+        resolved.endsWith(`${path.sep}portable`) &&
+        recoveryEntry.startsWith(".portable-cleanup-v1-bound-");
+      const openCount = isBoundPortable ? ++boundPortableOpenCount : boundPortableOpenCount;
+      const replace = () => {
+        const verifiedDirectory = path.join(path.dirname(resolved), "verified-portable");
+        fs.renameSync(resolved, verifiedDirectory);
+        fs.mkdirSync(resolved, { mode: 0o700 });
+        fs.writeFileSync(path.join(resolved, "replacement.conf"), "replacement\n", {
+          mode: 0o600,
+        });
+      };
+      (isBoundPortable && openCount === 2 ? replace : () => undefined)();
+      return descriptor;
+    });
+
+    const result = await uninstall(host);
+
+    const configDirectory = path.dirname(directory);
+    const recoveryEntry = fs
+      .readdirSync(configDirectory)
+      .find((entry) => entry.startsWith(".portable-cleanup-v1-bound-"));
+    expect(result.exitCode).toBe(1);
+    expect(recoveryEntry).toBeDefined();
+    expect(
+      fs.existsSync(
+        path.join(configDirectory, recoveryEntry!, "verified-portable", "containers.conf"),
+      ),
+    ).toBe(true);
+    expect(
+      fs.existsSync(path.join(configDirectory, recoveryEntry!, "portable", "replacement.conf")),
+    ).toBe(true);
+    expect(
+      host.rmSync.mock.calls.some(([target]) =>
+        path.resolve(String(target)).startsWith(`${configDirectory}${path.sep}`),
+      ),
+    ).toBe(false);
+    expect(host.runPortableCleanup).not.toHaveBeenCalled();
+  });
+
+  it("retries identity-bound Portable removal after later configuration cleanup fails (#10545)", async () => {
+    const host = scope("nemoclaw-uninstall-completed-cleanup-retry-");
+    completedOpenClawAuthority(host, "default");
+    const directory = abandonedPortableConfig(host, 0o700);
+    const configDirectory = path.dirname(directory);
+    const laterConfiguration = path.join(configDirectory, "ordinary.conf");
+    fs.writeFileSync(laterConfiguration, "ordinary\n", { mode: 0o600 });
+    let failLaterCleanup = true;
+    host.rmSync.mockImplementation((target, options) => {
+      const resolvedTarget = path.resolve(String(target));
+      expect(resolvedTarget.startsWith(`${host.homeDir}${path.sep}`)).toBe(true);
+      return resolvedTarget === laterConfiguration && failLaterCleanup
+        ? (() => {
+            failLaterCleanup = false;
+            throw new Error("injected later configuration cleanup failure");
+          })()
+        : fs.rmSync(resolvedTarget, options);
+    });
+
+    const first = await uninstall(host);
+
+    expect(first.exitCode).toBe(1);
+    expect(fs.existsSync(directory)).toBe(false);
+    expect(
+      fs
+        .readdirSync(configDirectory)
+        .some((entry) => entry.startsWith(".portable-cleanup-v1-removed-")),
+    ).toBe(true);
+    fs.mkdirSync(directory, { mode: 0o700 });
+    fs.writeFileSync(path.join(directory, "containers.conf"), "replacement\n", { mode: 0o600 });
+
+    const second = await uninstall(host);
+
+    expect(second.exitCode).toBe(0);
+    expect(fs.readFileSync(path.join(directory, "containers.conf"), "utf-8")).toBe("replacement\n");
+    expect(fs.existsSync(laterConfiguration)).toBe(false);
+    expect(
+      fs.readdirSync(configDirectory).some((entry) => entry.startsWith(".portable-cleanup-v1-")),
+    ).toBe(false);
+    expect(host.runPortableCleanup).not.toHaveBeenCalled();
+  });
+
+  it("ignores a PATH-preceding Python helper during identity-bound cleanup (#10545)", async () => {
+    const host = scope("nemoclaw-uninstall-completed-python-path-");
+    completedOpenClawAuthority(host, "default");
+    const directory = abandonedPortableConfig(host, 0o700);
+    restoredDirectories.pop();
+    const attackerBin = path.join(host.homeDir, "attacker-bin");
+    const attackerPython = path.join(attackerBin, "python3");
+    fs.mkdirSync(attackerBin, { mode: 0o700 });
+    fs.writeFileSync(attackerPython, '#!/bin/sh\n: > "$0.used"\nexit 97\n', { mode: 0o700 });
+    vi.stubEnv("PATH", `${attackerBin}${path.delimiter}${process.env.PATH ?? ""}`);
+    host.rmSync.mockImplementation((target, options) => {
+      const resolvedTarget = path.resolve(String(target));
+      expect(resolvedTarget.startsWith(`${host.homeDir}${path.sep}`)).toBe(true);
+      fs.rmSync(resolvedTarget, options);
+    });
+
+    const result = await uninstall(host);
+
+    expect(result.exitCode).toBe(0);
+    expect(fs.existsSync(`${attackerPython}.used`)).toBe(false);
+    expect(fs.existsSync(directory)).toBe(false);
+    expect(host.runPortableCleanup).not.toHaveBeenCalled();
+  });
+
+  it.each<[string, (configuration: string, homeDir: string) => string]>([
+    [
+      "a directory at containers.conf",
+      (configuration) => {
+        fs.unlinkSync(configuration);
+        fs.mkdirSync(configuration, { mode: 0o700 });
+        const preserved = path.join(configuration, "preserved.txt");
+        fs.writeFileSync(preserved, "preserved\n", { mode: 0o600 });
+        return preserved;
+      },
+    ],
+    [
+      "a symlink at containers.conf",
+      (configuration, homeDir) => {
+        fs.unlinkSync(configuration);
+        const preserved = path.join(homeDir, "symlink-target.conf");
+        fs.writeFileSync(preserved, "preserved\n", { mode: 0o600 });
+        fs.symlinkSync(preserved, configuration);
+        return preserved;
+      },
+    ],
+    [
+      "a hard link at containers.conf",
+      (configuration, homeDir) => {
+        fs.unlinkSync(configuration);
+        const preserved = path.join(homeDir, "hard-link-target.conf");
+        fs.writeFileSync(preserved, "preserved\n", { mode: 0o600 });
+        fs.linkSync(preserved, configuration);
+        return preserved;
+      },
+    ],
+  ])("refuses %s before abandoned configuration removal (#10545)", async (_case, prepare) => {
+    const host = scope("nemoclaw-uninstall-completed-config-entry-");
+    completedOpenClawAuthority(host, "default");
+    const directory = abandonedPortableConfig(host, 0o700);
+    const configuration = path.join(directory, "containers.conf");
+    const preserved = prepare(configuration, host.homeDir);
+
+    const result = await uninstall(host);
+
+    expect(result.exitCode).toBe(1);
+    expect(fs.existsSync(preserved)).toBe(true);
+    expect(fs.existsSync(configuration)).toBe(true);
+    expect(
+      host.rmSync.mock.calls.some(([target]) =>
+        path.resolve(String(target)).startsWith(`${path.dirname(directory)}${path.sep}`),
+      ),
+    ).toBe(false);
+    expect(host.runPortableCleanup).not.toHaveBeenCalled();
+  });
+
+  it("refuses a foreign-owned containers.conf before abandoned configuration removal (#10545)", async () => {
+    const host = scope("nemoclaw-uninstall-completed-foreign-config-");
+    completedOpenClawAuthority(host, "default");
+    const directory = abandonedPortableConfig(host, 0o700);
+    const configuration = path.join(directory, "containers.conf");
+    const lstatSync = fs.lstatSync;
+    vi.spyOn(fs, "lstatSync").mockImplementation(((target, options) => {
+      const stat =
+        lstatSync(target, options) ??
+        (() => {
+          throw new Error("lstat returned no metadata");
+        })();
+      const foreignStat = stat as fs.BigIntStats;
+      const substituted = new Proxy(foreignStat, {
+        get: (value, property, receiver) =>
+          property === "uid" ? foreignStat.uid + 1n : Reflect.get(value, property, receiver),
+      });
+      return path.resolve(String(target)) === path.resolve(configuration) &&
+        typeof stat.uid === "bigint"
+        ? substituted
+        : stat;
+    }) as typeof fs.lstatSync);
+
+    const result = await uninstall(host);
+
+    expect(result.exitCode).toBe(1);
+    expect(fs.existsSync(configuration)).toBe(true);
+    expect(
+      host.rmSync.mock.calls.some(([target]) =>
+        path.resolve(String(target)).startsWith(`${path.dirname(directory)}${path.sep}`),
+      ),
+    ).toBe(false);
     expect(host.runPortableCleanup).not.toHaveBeenCalled();
   });
 

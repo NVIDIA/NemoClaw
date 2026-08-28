@@ -97,10 +97,11 @@ import {
 } from "./plan";
 import {
   HERMES_PORTABLE_UNINSTALL_JOURNAL_FILE,
+  finalizeAbandonedPortableConfigurationRemoval,
   hasPortableRuntimeCleanup,
   PORTABLE_RETIREMENT_STATE_ENTRIES,
-  prepareAbandonedPortableConfigurationRemoval,
   portableRetirementPreservationEntries,
+  removeAbandonedPortableConfiguration,
   runPortableRuntimeCleanupTransaction,
   type PortableRuntimeCleanupInput,
   type PortableRuntimeCleanupResult,
@@ -470,6 +471,25 @@ function removePathExcept(
   }
   deps.log(`Removed contents of ${target} (preserved: ${preserved.join(", ")})`);
   return true;
+}
+
+function removeOrdinaryNemoclawConfiguration(
+  paths: UninstallPaths,
+  runtime: UninstallRuntime,
+  priorOutcome: boolean,
+): boolean {
+  const recoveryEntry = removeAbandonedPortableConfiguration(
+    path.join(paths.nemoclawConfigDir, "portable"),
+  );
+  if (!recoveryEntry) {
+    removePath(paths.nemoclawConfigDir, runtime);
+    return priorOutcome;
+  }
+  if (!removePathExcept(paths.nemoclawConfigDir, ["portable", recoveryEntry], runtime)) {
+    return false;
+  }
+  finalizeAbandonedPortableConfigurationRemoval(paths.nemoclawConfigDir, recoveryEntry);
+  return priorOutcome;
 }
 
 function removeFileWithOptionalSudo(target: string, deps: UninstallRuntime): void {
@@ -3243,12 +3263,7 @@ function executePlan(
           )
             ok = false;
           if (!removePathExcept(paths.nemoclawConfigDir, ["portable"], runtime)) ok = false;
-        } else {
-          prepareAbandonedPortableConfigurationRemoval(
-            path.join(paths.nemoclawConfigDir, "portable"),
-          );
-          removePath(paths.nemoclawConfigDir, runtime);
-        }
+        } else ok = removeOrdinaryNemoclawConfiguration(paths, runtime, ok);
       }
     }
   }
