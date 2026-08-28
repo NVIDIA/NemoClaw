@@ -2356,7 +2356,11 @@ For gateway-based agents, it also reports messaging channel conflicts within the
 `doctor` also checks whether the sandbox registry contains the metadata required for snapshot, rebuild, upgrade, recovery, and reboot.
 When lifecycle metadata is incomplete, the report names the missing or invalid fields and affected operations without printing stored values.
 Dashboard metadata is required only for agents that manage a dashboard.
-If the registered gateway binding is invalid, `doctor` reports a failed gateway check and does not select, probe, or recover a gateway from that binding.
+The `Registered gateway binding` result depends on the sandbox registry:
+
+- For a registered sandbox with a valid binding, `doctor` reports a successful check with the resolved gateway name.
+- For a registered sandbox with an invalid binding, the check fails, and `doctor` does not select, probe, or recover a gateway from that binding.
+- For an unregistered sandbox name, `doctor` uses the ambient default gateway for its other gateway checks and omits the `Registered gateway binding` check.
 
 <AgentOnly variant="hermes">
 
