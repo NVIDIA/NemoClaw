@@ -67,11 +67,30 @@ describe("OpenShell policy observation", () => {
     );
   });
 
-  it("reads the live base policy", () => {
+  it("extracts round-trippable YAML from the live base policy display", () => {
     vi.spyOn(openshellRuntime, "captureResolvedOpenshell").mockReturnValue(
-      capture("version: 1\nnetwork_policies: {}\n") as never,
+      capture(
+        [
+          "Version: 13",
+          "Hash: sha256:current",
+          "Updated: 2026-08-28T00:00:00Z",
+          "---",
+          "version: 1",
+          "network_policies: {}",
+          "",
+        ].join("\n"),
+      ) as never,
     );
-    expect(captureSandboxBasePolicy("alpha", "nemoclaw")).toContain("network_policies");
+    expect(captureSandboxBasePolicy("alpha", "nemoclaw")).toBe("version: 1\nnetwork_policies: {}");
+  });
+
+  it("rejects a metadata-only base policy display", () => {
+    vi.spyOn(openshellRuntime, "captureResolvedOpenshell").mockReturnValue(
+      capture("Version: 13\nHash: sha256:current\n") as never,
+    );
+    expect(() => captureSandboxBasePolicy("alpha", "nemoclaw")).toThrow(
+      /policy inspection failed/u,
+    );
   });
 
   it("reads active global policy through the selected gateway", () => {

@@ -17,6 +17,7 @@ import {
   assertPolicyRequirementContainment,
   classifyOpenShellGlobalPolicyHistory,
   parseActiveGlobalPolicyMetadata,
+  parseOpenShellPolicy,
   type ActiveGlobalPolicyInspection,
   type OpenShellPolicyInspection,
   parseSandboxPolicyMetadata,
@@ -263,11 +264,19 @@ export function inspectActiveGlobalPolicy({
 /** Read one sandbox base policy through the same bounded OpenShell adapter. */
 export function captureSandboxBasePolicy(sandboxName: string, gatewayName: string): string {
   const validatedGatewayName = validatePolicyName(gatewayName, "gateway name");
-  return capturePolicyRead(
+  const raw = capturePolicyRead(
     buildPolicyGetArgs(validatePolicyName(sandboxName, "sandbox name"), validatedGatewayName),
     "sandbox",
     { gatewayName: validatedGatewayName },
   );
+  try {
+    return parseOpenShellPolicy(raw).yamlBody;
+  } catch (error) {
+    failInspection(
+      "sandbox",
+      error instanceof Error ? error.message : "OpenShell returned invalid base policy output",
+    );
+  }
 }
 
 /** Read and fingerprint one sandbox ID without exposing the ID in diagnostics. */
