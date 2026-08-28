@@ -62,10 +62,6 @@ export type ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt = Readonly<{
   runtimeId: string;
 }>;
 
-export type ManagedBootstrapNativeGpuFallbackOwnerCleanupOutcome =
-  | ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff
-  | ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt;
-
 /** Provider-neutral lifecycle surface consumed by sandbox-create coordinators. */
 export interface ManagedBootstrapRuntimePatch {
   maybeApplyDuringCreate(): void | Promise<void>;
@@ -171,10 +167,6 @@ export interface ManagedBootstrapRuntimeCreateLifecycle {
    * `undefined` means activation has not selected a runtime yet; `null` fails closed.
    */
   inspectNativeRuntime?(): ManagedBootstrapRuntimeSnapshot | null | undefined;
-  /** Consume an exact provider-owned handoff before a single compatibility retry. */
-  completeNativeGpuFallbackOwnerCleanup?(
-    handoff: ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff,
-  ): Promise<ManagedBootstrapNativeGpuFallbackOwnerCleanupOutcome>;
   recoverUnfinished(): Promise<ManagedBootstrapRecoveryReport>;
   prepareNetwork(): Promise<void>;
   runCreate<T>(

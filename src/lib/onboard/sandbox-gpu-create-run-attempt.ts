@@ -25,7 +25,6 @@ import { installPortableDemoSandboxLifecycle } from "./experimental/portable-dem
 import { enforceManagedBootstrapRecoveryForSandbox } from "./managed-bootstrap/adapter";
 import type {
   ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff,
-  ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt,
   ManagedBootstrapRuntimeCreateLifecycle,
   ManagedBootstrapRuntimePatch,
   ManagedBootstrapRuntimeSnapshot,
@@ -120,7 +119,6 @@ function createPortableRuntimePatch(
 
 type NativeFallbackCleanupEvidence = Readonly<{
   nativeCleanupHandoff?: ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff;
-  nativeCleanupReceipt?: ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt;
 }>;
 
 async function rollbackNativeGpuFailureForFallback(
@@ -135,12 +133,7 @@ async function rollbackNativeGpuFailureForFallback(
     ownerCleanupHandoff: "native-gpu-fallback",
   });
   if (rollback?.kind !== "openshell-owner-cleanup-required") return {};
-  const ownerCleanup = managedLifecycle.completeNativeGpuFallbackOwnerCleanup
-    ? await managedLifecycle.completeNativeGpuFallbackOwnerCleanup(rollback)
-    : rollback;
-  return ownerCleanup.kind === "openshell-owner-cleanup-completed"
-    ? { nativeCleanupReceipt: ownerCleanup }
-    : { nativeCleanupHandoff: ownerCleanup };
+  return { nativeCleanupHandoff: rollback };
 }
 
 function normalizedOpenShellCommandOutput(result: OpenShellCommandResult): string {
@@ -762,10 +755,7 @@ export function createSandboxGpuCreateAttemptRunner(
         if (nativeCreateRejectedBeforeProgress) {
           await runtimePatch.rollbackManagedStartupAfterCreateFailure();
         } else {
-          nativeCleanup = await rollbackNativeGpuFailureForFallback(
-            managedLifecycle,
-            runtimePatch,
-          );
+          nativeCleanup = await rollbackNativeGpuFailureForFallback(managedLifecycle, runtimePatch);
         }
         return {
           ok: false,

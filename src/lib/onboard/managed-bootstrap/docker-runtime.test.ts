@@ -65,7 +65,6 @@ import type {
   ManagedBootstrapPreparedTransaction,
 } from "./adapter";
 import {
-  completeDockerManagedNativeGpuFallbackOwnerCleanup,
   createDockerManagedBootstrapSurface,
   formatDockerGpuModeFailureDetails,
 } from "./docker-runtime";
@@ -188,54 +187,6 @@ afterEach(() => {
   for (const stateRoot of temporaryStateRoots.splice(0)) {
     fs.rmSync(stateRoot, { recursive: true, force: true });
   }
-});
-
-describe("Docker managed-bootstrap native fallback owner cleanup", () => {
-  const handoff = Object.freeze({
-    kind: "openshell-owner-cleanup-required" as const,
-    sandboxName: "alpha",
-    sandboxId: "sandbox-alpha",
-    runtimeId: NEW_ID,
-  });
-  it("retains the exact handoff instead of deleting a mutable sandbox name", async () => {
-    const runOpenshell = vi.fn(() => {
-      throw new Error("name-only OpenShell cleanup must not run");
-    });
-    const recoverUnfinished = vi.fn();
-
-    await expect(
-      completeDockerManagedNativeGpuFallbackOwnerCleanup({
-        providerId: "docker",
-        bootstrapIdentity: IDENTITY,
-        handoff,
-        runOpenshell,
-        recoverUnfinished,
-      }),
-    ).resolves.toBe(handoff);
-    expect(runOpenshell).not.toHaveBeenCalled();
-    expect(recoverUnfinished).not.toHaveBeenCalled();
-  });
-
-  it("blocks fallback even if a mutable name would resolve to the expected ID", async () => {
-    const runOpenshell = vi.fn(() => ({
-      status: 0,
-      stdout: "ID: sandbox-alpha\n",
-      stderr: "",
-    }));
-    const recoverUnfinished = vi.fn();
-
-    await expect(
-      completeDockerManagedNativeGpuFallbackOwnerCleanup({
-        providerId: "docker",
-        bootstrapIdentity: IDENTITY,
-        handoff,
-        runOpenshell,
-        recoverUnfinished,
-      }),
-    ).resolves.toBe(handoff);
-    expect(runOpenshell).not.toHaveBeenCalled();
-    expect(recoverUnfinished).not.toHaveBeenCalled();
-  });
 });
 
 describe("Docker managed-bootstrap pre-create GPU fallback", () => {
