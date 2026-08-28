@@ -8,10 +8,7 @@ import {
   initialDockerGpuRoute,
   type SelectedDockerGpuRoute,
 } from "./docker-gpu-route";
-import type {
-  ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff,
-  ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt,
-} from "./managed-bootstrap/runtime-create";
+import type { ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff } from "./managed-bootstrap/runtime-create";
 import {
   type OpenShellDockerSandboxContainerQuery,
   queryOpenShellDockerSandboxContainers,
@@ -40,8 +37,9 @@ export type SandboxGpuCreateAttemptFailure = {
     readonly createAttemptNonce: string;
     readonly liveIdentityFingerprint: string | null;
   };
+  /** Strict native `--gpu` parser rejection observed before build or create progress. */
+  nativeCreateRejectedBeforeProgress?: true;
   nativeCleanupHandoff?: ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff;
-  nativeCleanupReceipt?: ManagedBootstrapNativeGpuFallbackOwnerCleanupReceipt;
 };
 
 export type SandboxGpuCreateAttemptResult<T> =
@@ -168,26 +166,24 @@ function commandText(result: CommandResult): string {
   return `${String(result.stdout ?? "")}\n${String(result.stderr ?? "")}`.trim();
 }
 
-/** Delete a failed native attempt and prove two stable, status-bearing absences. */
-export function cleanupNativeGpuAttemptForFallback(
+function proveNativeGpuAttemptAbsence(
   sandboxName: string,
   deps: NativeGpuFallbackCleanupDeps,
-  options: { maxAttempts?: number; stableAbsenceChecks?: number } = {},
+  options: {
+    deleteStatus: number | null;
+    initialReason: string | null;
+    maxAttempts?: number;
+    stableAbsenceChecks?: number;
+  },
 ): NativeGpuFallbackCleanupResult {
   const maxAttempts = Math.max(1, options.maxAttempts ?? MAX_CLEANUP_ATTEMPTS);
   const stableAbsenceChecks = Math.max(1, options.stableAbsenceChecks ?? STABLE_ABSENCE_CHECKS);
-  const deletion = deps.runOpenshell(["sandbox", "delete", sandboxName], {
-    ignoreError: true,
-    suppressOutput: true,
-  });
-  const deleteStatus = deletion.status ?? null;
   const queryContainers =
     deps.queryContainers ?? ((name: string) => queryOpenShellDockerSandboxContainers(name));
   let stableChecks = 0;
   let sandboxPresent: boolean | null = null;
   let containerIds: string[] | null = null;
-  let lastReason =
-    deleteStatus === 0 ? "cleanup absence has not been verified" : commandText(deletion) || null;
+  let lastReason = options.initialReason;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const list = deps.runOpenshell(["sandbox", "list"], {
@@ -205,7 +201,7 @@ export function cleanupNativeGpuAttemptForFallback(
         return {
           safe: true,
           reason: null,
-          deleteStatus,
+          deleteStatus: options.deleteStatus,
           sandboxPresent: false,
           containerIds: [],
         };
@@ -226,39 +222,52 @@ export function cleanupNativeGpuAttemptForFallback(
   return {
     safe: false,
     reason: lastReason || "cleanup absence could not be proven",
-    deleteStatus,
+    deleteStatus: options.deleteStatus,
     sandboxPresent,
     containerIds,
   };
 }
 
-/**
- * Keep owner-managed runtimes out of the generic mutable-name cleanup path.
- * Only the lifecycle's exact owner-cleanup receipt may authorize the retry.
- */
+/** Delete a failed native attempt and prove two stable, status-bearing absences. */
+export function cleanupNativeGpuAttemptForFallback(
+  sandboxName: string,
+  deps: NativeGpuFallbackCleanupDeps,
+  options: { maxAttempts?: number; stableAbsenceChecks?: number } = {},
+): NativeGpuFallbackCleanupResult {
+  const deletion = deps.runOpenshell(["sandbox", "delete", sandboxName], {
+    ignoreError: true,
+    suppressOutput: true,
+  });
+  const deleteStatus = deletion.status ?? null;
+  return proveNativeGpuAttemptAbsence(sandboxName, deps, {
+    deleteStatus,
+    initialReason:
+      deleteStatus === 0 ? "cleanup absence has not been verified" : commandText(deletion) || null,
+    ...options,
+  });
+}
+
+/** Prove that a strict pre-progress rejection created nothing, without deleting by name. */
+export function verifyRejectedNativeGpuAttemptAbsentForFallback(
+  sandboxName: string,
+  deps: NativeGpuFallbackCleanupDeps,
+  options: { maxAttempts?: number; stableAbsenceChecks?: number } = {},
+): NativeGpuFallbackCleanupResult {
+  return proveNativeGpuAttemptAbsence(sandboxName, deps, {
+    deleteStatus: null,
+    initialReason: "pre-create rejection absence has not been verified",
+    ...options,
+  });
+}
+
+/** Keep owner-managed runtimes out of the generic mutable-name cleanup path. */
 export function cleanupNativeGpuFailureForFallback(
   sandboxName: string,
   failure: SandboxGpuCreateAttemptFailure,
   deps: NativeGpuFallbackCleanupDeps,
 ): NativeGpuFallbackCleanupResult {
-  if (failure.nativeCleanupReceipt) {
-    const receipt = failure.nativeCleanupReceipt;
-    if (receipt.sandboxName === sandboxName) {
-      return {
-        safe: true,
-        reason: null,
-        deleteStatus: null,
-        sandboxPresent: false,
-        containerIds: [],
-      };
-    }
-    return {
-      safe: false,
-      reason: "managed bootstrap owner cleanup receipt does not match the requested sandbox",
-      deleteStatus: null,
-      sandboxPresent: null,
-      containerIds: [receipt.runtimeId],
-    };
+  if (failure.nativeCreateRejectedBeforeProgress) {
+    return verifyRejectedNativeGpuAttemptAbsentForFallback(sandboxName, deps);
   }
   if (failure.nativeCleanupHandoff) {
     return {

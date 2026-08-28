@@ -97,7 +97,12 @@ export const teamsManifest = {
       primary: true,
     },
   ],
-  policyPresets: [{ name: "teams", policyKeys: ["teams"] }],
+  // requiredAtCreate - the preset carries this channel's credential_binding:
+  // - The provider profile is endpointless, so the binding is the only thing that
+  //   makes MSTEAMS_APP_PASSWORD injectable.
+  // - The sandbox reads the provider environment once, at boot, so a preset
+  //   applied afterwards never reaches the running agent.
+  policyPresets: [{ name: "teams", policyKeys: ["teams"], requiredAtCreate: true }],
   hostForward: {
     port: "{{teamsConfig.webhookPort}}",
     label: "Microsoft Teams webhook",
@@ -113,7 +118,14 @@ export const teamsManifest = {
         value: {
           enabled: true,
           appId: "{{teamsConfig.appId}}",
-          appPassword: "{{credential.teamsClientSecret.placeholder}}",
+          // No appPassword here: OpenShell 0.0.106 injects
+          // MSTEAMS_APP_PASSWORD as a revision-scoped placeholder and rejects
+          // the canonical form once the policy binds the credential. The
+          // OpenClaw Teams token resolver falls back to
+          // process.env.MSTEAMS_APP_PASSWORD. The Hermes env line below is
+          // deliberately unchanged: Hermes reads TEAMS_CLIENT_SECRET, which is
+          // not the provider env key, so it has no injected value to fall back
+          // to.
           tenantId: "{{teamsConfig.tenantId}}",
           webhook: {
             port: "{{teamsConfig.webhookPort}}",

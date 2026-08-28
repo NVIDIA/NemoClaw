@@ -686,7 +686,7 @@ describe("blueprint identity wrapper", () => {
     expect(JSON.stringify(plan)).not.toContain("OKTA_CLIENT_SECRET");
   });
 
-  it("compensates a created identity provider and sandbox when apply later fails", async () => {
+  it("preserves a created identity provider and sandbox when apply later fails (#9833)", async () => {
     process.env.OKTA_CLIENT_ID = "client-id";
     process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
     process.env.OKTA_CLIENT_SECRET = "client-secret";
@@ -707,7 +707,7 @@ describe("blueprint identity wrapper", () => {
     ]);
 
     await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
-      /route failed/,
+      /route failed.*automatic cleanup was refused/u,
     );
 
     expect(mockExeca).not.toHaveBeenCalledWith(
@@ -715,25 +715,25 @@ describe("blueprint identity wrapper", () => {
       ["sandbox", "provider", "detach", "test-sandbox", "acme-okta-runtime"],
       expect.anything(),
     );
-    expect(mockExeca).toHaveBeenCalledWith(
+    expect(mockExeca).not.toHaveBeenCalledWith(
       "openshell",
       ["provider", "delete", "acme-okta-runtime"],
-      expect.objectContaining({ reject: false }),
+      expect.anything(),
     );
-    expect(mockExeca).toHaveBeenCalledWith(
+    expect(mockExeca).not.toHaveBeenCalledWith(
       "openshell",
       ["sandbox", "remove", "-g", "test-gateway", "test-sandbox"],
-      expect.objectContaining({ reject: false }),
+      expect.anything(),
     );
     const planEntry = [...store.entries()].find(([path]) => path.endsWith("/plan.json"))?.[1];
     expect(JSON.parse(planEntry!.content!).identity).toMatchObject({
-      provider_created: false,
+      provider_created: true,
       attachment_created: false,
     });
-    expect(JSON.parse(planEntry!.content!).inference_provider_created_by_apply).toBe(false);
+    expect(JSON.parse(planEntry!.content!).inference_provider_created_by_apply).toBe(true);
   });
 
-  it("compensates owned identity, sandbox, and inference providers after a policy failure", async () => {
+  it("preserves owned resources after a policy failure instead of cleaning up by mutable name (#9833)", async () => {
     process.env.OKTA_CLIENT_ID = "client-id";
     process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
     process.env.OKTA_CLIENT_SECRET = "client-secret";
@@ -765,29 +765,19 @@ describe("blueprint identity wrapper", () => {
           },
         }),
       ),
-    ).rejects.toThrow("OpenShell policy receipt inspection failed.");
+    ).rejects.toThrow(/automatic cleanup was refused.*mutable resource names/u);
 
     const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
-    expect(commands).toContain("sandbox provider detach test-sandbox acme-okta-runtime");
-    expect(commands).toContain("provider delete acme-okta-runtime");
-    expect(commands).toContain("sandbox remove -g test-gateway test-sandbox");
-    expect(commands).toContain("provider delete test-provider");
-    expectPolicyBoundaryImmediatelyBefore(
-      commands,
-      "sandbox provider detach test-sandbox acme-okta-runtime",
-    );
-    expectPolicyBoundaryImmediatelyBefore(commands, "provider delete acme-okta-runtime");
-    expectPolicyBoundaryImmediatelyBefore(commands, "provider delete test-provider");
-    expectPolicyBoundaryImmediatelyBefore(commands, "sandbox stop -g test-gateway test-sandbox");
-    expectPolicyBoundaryImmediatelyBefore(commands, "sandbox remove -g test-gateway test-sandbox");
-    expect(commands.indexOf("provider delete test-provider")).toBeLessThan(
-      commands.indexOf("sandbox remove -g test-gateway test-sandbox"),
-    );
+    expect(commands).not.toContain("sandbox provider detach test-sandbox acme-okta-runtime");
+    expect(commands).not.toContain("provider delete acme-okta-runtime");
+    expect(commands).not.toContain("sandbox stop -g test-gateway test-sandbox");
+    expect(commands).not.toContain("sandbox remove -g test-gateway test-sandbox");
+    expect(commands).not.toContain("provider delete test-provider");
     const planEntry = [...store.entries()].find(([path]) => path.endsWith("/plan.json"))?.[1];
     expect(JSON.parse(planEntry!.content!)).toMatchObject({
-      sandbox_created_by_apply: false,
-      inference_provider_created_by_apply: false,
-      identity: { provider_created: false, attachment_created: false },
+      sandbox_created_by_apply: true,
+      inference_provider_created_by_apply: true,
+      identity: { provider_created: true, attachment_created: true },
     });
   });
 
@@ -811,7 +801,7 @@ describe("blueprint identity wrapper", () => {
     expect(commandLines.join("\n")).not.toContain("provider delete acme-okta-runtime");
   });
 
-  it("compensates a sandbox even when an identity component is not configured", async () => {
+  it("preserves a sandbox after a later failure without an identity component (#9833)", async () => {
     responseQueue([
       [
         "inference set --provider test-provider --model test-model",
@@ -819,16 +809,18 @@ describe("blueprint identity wrapper", () => {
       ],
     ]);
 
-    await expect(actionApply("default", blueprint())).rejects.toThrow(/route failed/);
+    await expect(actionApply("default", blueprint())).rejects.toThrow(
+      /route failed.*automatic cleanup was refused/u,
+    );
 
-    expect(mockExeca).toHaveBeenCalledWith(
+    expect(mockExeca).not.toHaveBeenCalledWith(
       "openshell",
       ["sandbox", "remove", "-g", "test-gateway", "test-sandbox"],
-      expect.objectContaining({ reject: false }),
+      expect.anything(),
     );
   });
 
-  it("persists exact created-sandbox ownership and consumes it during rollback", async () => {
+  it("preserves the created sandbox when rollback has only mutable-name mutations (#9833)", async () => {
     process.env.OKTA_CLIENT_ID = "client-id";
     process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
     process.env.OKTA_CLIENT_SECRET = "client-secret";
@@ -888,26 +880,18 @@ describe("blueprint identity wrapper", () => {
         ],
       ],
     ]);
-    await actionRollback(plan.run_id);
+    await expect(actionRollback(plan.run_id)).rejects.toThrow(
+      /Cannot roll back.*mutable sandbox and provider names/u,
+    );
 
     const rollbackCommands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
-    expect(rollbackCommands).toContain("sandbox stop -g test-gateway test-sandbox");
-    expect(rollbackCommands).toContain("sandbox remove -g test-gateway test-sandbox");
-    expect(rollbackCommands).toContain("sandbox provider detach test-sandbox acme-okta-runtime");
-    expect(rollbackCommands).toContain("provider delete acme-okta-runtime");
-    expectPolicyBoundaryImmediatelyBefore(
-      rollbackCommands,
+    expect(rollbackCommands).not.toContain("sandbox stop -g test-gateway test-sandbox");
+    expect(rollbackCommands).not.toContain("sandbox remove -g test-gateway test-sandbox");
+    expect(rollbackCommands).not.toContain(
       "sandbox provider detach test-sandbox acme-okta-runtime",
     );
-    expectPolicyBoundaryImmediatelyBefore(rollbackCommands, "provider delete acme-okta-runtime");
-    expectPolicyBoundaryImmediatelyBefore(
-      rollbackCommands,
-      "sandbox stop -g test-gateway test-sandbox",
-    );
-    expectPolicyBoundaryImmediatelyBefore(
-      rollbackCommands,
-      "sandbox remove -g test-gateway test-sandbox",
-    );
+    expect(rollbackCommands).not.toContain("provider delete acme-okta-runtime");
+    expect(store.get(`/fakehome/.nemoclaw/state/runs/${plan.run_id}/rolled_back`)).toBeUndefined();
   });
 
   it("preserves a sandbox for a legacy plan without an ownership receipt", async () => {
@@ -981,25 +965,16 @@ describe("blueprint identity wrapper", () => {
         ],
       ],
     ]);
-    await actionRollback(JSON.parse(planEntry!.content!).run_id);
+    await expect(actionRollback(JSON.parse(planEntry!.content!).run_id)).rejects.toThrow(
+      /mutable sandbox and provider names/u,
+    );
     const rollbackCommands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
-    expect(rollbackCommands).toContain("provider delete test-provider");
-    expect(rollbackCommands).toContain("sandbox remove -g test-gateway test-sandbox");
-    expectPolicyBoundaryImmediatelyBefore(rollbackCommands, "provider delete test-provider");
-    expectPolicyBoundaryImmediatelyBefore(
-      rollbackCommands,
-      "sandbox stop -g test-gateway test-sandbox",
-    );
-    expectPolicyBoundaryImmediatelyBefore(
-      rollbackCommands,
-      "sandbox remove -g test-gateway test-sandbox",
-    );
-    expect(rollbackCommands.indexOf("provider delete test-provider")).toBeLessThan(
-      rollbackCommands.indexOf("sandbox remove -g test-gateway test-sandbox"),
-    );
+    expect(rollbackCommands).not.toContain("provider delete test-provider");
+    expect(rollbackCommands).not.toContain("sandbox stop -g test-gateway test-sandbox");
+    expect(rollbackCommands).not.toContain("sandbox remove -g test-gateway test-sandbox");
   });
 
-  it("keeps an owned sandbox receipt retryable when removal fails", async () => {
+  it("refuses name-only rollback before attempting an owned sandbox removal (#9833)", async () => {
     const stateDir = "/fakehome/.nemoclaw/state/runs/failed-sandbox-removal";
     store.set(stateDir, { type: "dir" });
     store.set(`${stateDir}/plan.json`, {
@@ -1015,12 +990,13 @@ describe("blueprint identity wrapper", () => {
     ]);
 
     await expect(actionRollback("failed-sandbox-removal")).rejects.toThrow(
-      /Failed to remove owned sandbox 'owned-sandbox': remove denied/,
+      /mutable sandbox and provider names/u,
     );
+    expect(mockExeca).not.toHaveBeenCalled();
     expect(store.get(`${stateDir}/rolled_back`)).toBeUndefined();
   });
 
-  it("keeps owned inference provider cleanup retryable when deletion fails", async () => {
+  it("refuses name-only rollback before attempting an owned provider deletion (#9833)", async () => {
     const stateDir = "/fakehome/.nemoclaw/state/runs/failed-inference-provider-removal";
     store.set(stateDir, { type: "dir" });
     store.set(`${stateDir}/plan.json`, {
@@ -1041,12 +1017,13 @@ describe("blueprint identity wrapper", () => {
     ]);
 
     await expect(actionRollback("failed-inference-provider-removal")).rejects.toThrow(
-      /Failed to remove owned inference provider 'test-provider': provider delete denied/,
+      /mutable sandbox and provider names/u,
     );
+    expect(mockExeca).not.toHaveBeenCalled();
     expect(store.get(`${stateDir}/rolled_back`)).toBeUndefined();
   });
 
-  it("preserves rollback resources when policy authority changes before provider removal", async () => {
+  it("preserves rollback resources without using a separate policy read to authorize deletion (#9833)", async () => {
     const stateDir = "/fakehome/.nemoclaw/state/runs/provider-authority-drift";
     store.set(stateDir, { type: "dir" });
     store.set(`${stateDir}/plan.json`, {
@@ -1080,7 +1057,7 @@ describe("blueprint identity wrapper", () => {
     );
 
     await expect(actionRollback("provider-authority-drift")).rejects.toThrow(
-      /receipt does not match the live sandbox policy/u,
+      /mutable sandbox and provider names/u,
     );
     const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
     expect(commands).not.toContain("provider delete test-provider");
@@ -1088,7 +1065,7 @@ describe("blueprint identity wrapper", () => {
     expect(commands).not.toContain("sandbox remove -g test-gateway test-sandbox");
   });
 
-  it("preserves a stopped sandbox when authority changes before removal", async () => {
+  it("does not stop a sandbox before refusing name-only rollback (#9833)", async () => {
     const stateDir = "/fakehome/.nemoclaw/state/runs/sandbox-authority-drift";
     store.set(stateDir, { type: "dir" });
     store.set(`${stateDir}/plan.json`, {
@@ -1125,10 +1102,10 @@ describe("blueprint identity wrapper", () => {
     );
 
     await expect(actionRollback("sandbox-authority-drift")).rejects.toThrow(
-      /receipt does not match the live sandbox policy/u,
+      /mutable sandbox and provider names/u,
     );
     const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
-    expect(commands).toContain("sandbox stop -g test-gateway test-sandbox");
+    expect(commands).not.toContain("sandbox stop -g test-gateway test-sandbox");
     expect(commands).not.toContain("sandbox remove -g test-gateway test-sandbox");
   });
 
@@ -1151,7 +1128,7 @@ describe("blueprint identity wrapper", () => {
     expect(store.get(`${stateDir}/rolled_back`)).toBeUndefined();
   });
 
-  it("persists an ownership receipt so failed compensation remains recoverable", async () => {
+  it("persists an ownership receipt when automatic compensation is unavailable (#9833)", async () => {
     process.env.OKTA_CLIENT_ID = "client-id";
     process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
     process.env.OKTA_CLIENT_SECRET = "client-secret";
@@ -1179,7 +1156,7 @@ describe("blueprint identity wrapper", () => {
     ]);
 
     await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
-      /route failed; cleanup failed:.*delete denied/,
+      /route failed.*automatic cleanup was refused/u,
     );
 
     const planEntry = [...store.entries()].find(([path]) => path.endsWith("/plan.json"))?.[1];
@@ -1190,10 +1167,8 @@ describe("blueprint identity wrapper", () => {
       attachment_created: false,
     });
 
-    await actionRollback(plan.run_id);
-    expect(
-      store.get(`/fakehome/.nemoclaw/state/runs/${plan.run_id}/rolled_back`)?.content,
-    ).toBeDefined();
+    await expect(actionRollback(plan.run_id)).rejects.toThrow(/mutable sandbox and provider names/u);
+    expect(store.get(`/fakehome/.nemoclaw/state/runs/${plan.run_id}/rolled_back`)).toBeUndefined();
   });
 
   it("persists attachment ownership before the initial credential mint", async () => {
@@ -1223,7 +1198,7 @@ describe("blueprint identity wrapper", () => {
     ]);
 
     await expect(actionApply("default", blueprint({ identity: oktaIdentity() }))).rejects.toThrow(
-      /rotate failed.*cleanup failed:.*first delete denied/s,
+      /rotate failed.*automatic cleanup was refused/su,
     );
 
     const planEntry = [...store.entries()].find(([path]) => path.endsWith("/plan.json"))?.[1];
@@ -1234,13 +1209,11 @@ describe("blueprint identity wrapper", () => {
       attachment_created: true,
     });
 
-    await actionRollback(plan.run_id);
-    expect(
-      store.get(`/fakehome/.nemoclaw/state/runs/${plan.run_id}/rolled_back`)?.content,
-    ).toBeDefined();
+    await expect(actionRollback(plan.run_id)).rejects.toThrow(/mutable sandbox and provider names/u);
+    expect(store.get(`/fakehome/.nemoclaw/state/runs/${plan.run_id}/rolled_back`)).toBeUndefined();
   });
 
-  it("surfaces a validated ownership receipt in status and consumes it in rollback", async () => {
+  it("surfaces a validated ownership receipt and preserves it when rollback is unsafe (#9833)", async () => {
     const stateDir = "/fakehome/.nemoclaw/state/runs/identity-run";
     const receipt = {
       provider_type: "okta-runtime-v1",
@@ -1282,34 +1255,36 @@ describe("blueprint identity wrapper", () => {
     expect(statusOutput).toContain('"attachment_created": true');
     expect(statusOutput).toContain('"inference_provider_created_by_apply": true');
     stdout.mockRestore();
-    await actionRollback("identity-run");
+    await expect(actionRollback("identity-run")).rejects.toThrow(
+      /mutable sandbox and provider names/u,
+    );
 
-    expect(mockExeca).toHaveBeenCalledWith(
+    expect(mockExeca).not.toHaveBeenCalledWith(
       "openshell",
       ["sandbox", "provider", "detach", "test-sandbox", "acme-okta-runtime"],
-      expect.objectContaining({ reject: false }),
+      expect.anything(),
     );
-    expect(mockExeca).toHaveBeenCalledWith(
+    expect(mockExeca).not.toHaveBeenCalledWith(
       "openshell",
       ["provider", "delete", "acme-okta-runtime"],
-      expect.objectContaining({ reject: false }),
+      expect.anything(),
     );
-    expect(mockExeca).toHaveBeenCalledWith(
+    expect(mockExeca).not.toHaveBeenCalledWith(
       "openshell",
       ["sandbox", "stop", "-g", "test-gateway", "test-sandbox"],
-      expect.objectContaining({ reject: false }),
+      expect.anything(),
     );
-    expect(mockExeca).toHaveBeenCalledWith(
+    expect(mockExeca).not.toHaveBeenCalledWith(
       "openshell",
       ["sandbox", "remove", "-g", "test-gateway", "test-sandbox"],
-      expect.objectContaining({ reject: false }),
+      expect.anything(),
     );
-    expect(mockExeca).toHaveBeenCalledWith(
+    expect(mockExeca).not.toHaveBeenCalledWith(
       "openshell",
       ["provider", "delete", "test-provider"],
-      expect.objectContaining({ reject: false }),
+      expect.anything(),
     );
-    expect(store.get(`${stateDir}/rolled_back`)?.content).toBeDefined();
+    expect(store.get(`${stateDir}/rolled_back`)).toBeUndefined();
   });
 
   it("blocks rollback when the persisted identity ownership receipt is invalid", async () => {

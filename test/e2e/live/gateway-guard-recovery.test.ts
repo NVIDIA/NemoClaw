@@ -54,6 +54,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { pollUntil } from "../fixtures/polling.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { ubuntuRepoDocker } from "../registry/matrix.ts";
+import { parseLegacyKeepaliveHandoffReceipt } from "./gateway-guard-legacy-keepalive-fixture.ts";
 
 // Reuses the standard ubuntu-repo-docker environment with the
 // `cloud-openclaw` onboarding profile (the only one the framework's
@@ -471,6 +472,7 @@ test(
       timeoutMs: 120_000,
     });
     expect(restart.exitCode, resultText(restart)).toBe(0);
+    await waitForSandboxExecReady(host, instance.sandboxName, progress, "restart-openshell-ready");
 
     progress.phase("recover managed supervisor and inference");
     const credentialCanary = "nemoclaw-e2e-recovery-secret-restart";
@@ -574,9 +576,7 @@ test(
       },
     );
     expect(createLegacyKeepalive.exitCode, resultText(createLegacyKeepalive)).toBe(0);
-    const handoffReceipt = JSON.parse(createLegacyKeepalive.stdout) as {
-      newContainerId?: unknown;
-    };
+    const handoffReceipt = parseLegacyKeepaliveHandoffReceipt(createLegacyKeepalive.stdout);
     expect(handoffReceipt.newContainerId).toMatch(/^[0-9a-f]{64}$/iu);
     // Do not overlap the fixture's recreation with the restart below. The
     // fixture runs in its own process, so the host must observe the replacement

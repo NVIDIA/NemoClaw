@@ -635,6 +635,13 @@ describe("connectSandbox flow", () => {
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
+    expect(harness.requalifyPortableAgentAuthoritySpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ readRegistry: expect.any(Function) }),
+    );
+    expect(harness.requalifyPortableAgentAuthoritySpy.mock.invocationCallOrder[0]!).toBeLessThan(
+      harness.inspectLaunchReadinessSpy.mock.invocationCallOrder[0]!,
+    );
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
     expect(harness.ensureLiveSandboxSpy).not.toHaveBeenCalled();
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();

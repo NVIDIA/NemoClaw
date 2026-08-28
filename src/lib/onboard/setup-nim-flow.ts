@@ -49,6 +49,7 @@ import type { InferenceProviderHostGpu, InferenceProviderHostState } from "./pro
 import { buildInferenceProviderMenu, type ProviderMenuChoice } from "./provider-menu";
 import {
   applyVllmInstallResumeDefaults,
+  resolveSelectedEndpointSource,
   resolveRequestedProviderSelection,
   vllmInstallRecoveryOptions,
 } from "./provider-selection";
@@ -1346,9 +1347,12 @@ export function createSetupNim(
       recoveredRegistryRoute.endpointUrl === endpointUrl;
     const endpointSource = recoveredRegistryRouteMatches
       ? (recoveredRegistryRoute.endpointSource ?? null)
-      : endpointPinnedAddresses || endpointTrustedPrivateCapability
-        ? "onboard"
-        : null;
+      : resolveSelectedEndpointSource({
+          provider,
+          endpointUrl,
+          hasPinnedAddresses: Boolean(endpointPinnedAddresses),
+          hasTrustedPrivateCapability: Boolean(endpointTrustedPrivateCapability),
+        });
     await maybePromptForSupportedInferenceInputCapability(deps, agent, selectedModel);
     return {
       model: selectedModel,
