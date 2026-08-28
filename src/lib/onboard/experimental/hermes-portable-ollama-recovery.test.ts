@@ -11,7 +11,16 @@ import {
   type HostLocalInferenceReceipt,
 } from "../runtime-provider/host-local-inference";
 import type { HostLocalInferenceStartupRequest } from "../runtime-provider/host-local-inference-routing";
-import { recoverHermesPortableOllamaInference } from "./hermes-portable-ollama-inference";
+import {
+  HermesPortableOllamaRecoveryError,
+  HermesPortableOllamaRecoveryPhaseError,
+  recoverHermesPortableOllamaInference,
+  rethrowHermesPortableOllamaRegistryRecoveryError,
+} from "./hermes-portable-ollama-inference";
+import {
+  PortableRegistryRecoveryPhaseError,
+  PortableRegistryRecoveryRestorationError,
+} from "./hermes-portable-ollama-authority";
 
 const GPU_DEVICE = "nvidia.com/gpu=GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 
@@ -394,13 +403,135 @@ describe("Hermes Portable Ollama inference recovery", () => {
       throw new Error("runtime authority unavailable");
     });
 
-    expect(() =>
-      recoverHermesPortableOllamaInference(harness.input, harness.overrides as never),
-    ).toThrow("runtime authority unavailable");
+    let caught: unknown;
+    try {
+      recoverHermesPortableOllamaInference(harness.input, harness.overrides as never);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(HermesPortableOllamaRecoveryPhaseError);
+    expect(caught).toMatchObject({ phase: "RUNTIME_AUTHORITY" });
+    expect((caught as Error).message).not.toContain("runtime authority unavailable");
 
     expect(harness.prepareStartup).not.toHaveBeenCalled();
     expect(harness.registryRunning()).toBe(false);
     expect(harness.events).toContain("registry-rollback");
+  });
+
+  it.each([
+    ["registry", "REGISTRY_PREPARATION_POSTCONDITION", 0],
+    ["runtime", "RUNTIME_AUTHORITY", 1],
+    ["lifecycle", "LIFECYCLE_AUTHORITY", 1],
+    ["private-publication", "PRIVATE_PUBLICATION_AUTHORITY", 1],
+    ["runtime-inspection", "EXACT_RUNTIME_INSPECTION", 1],
+  ] as const)(
+    "classifies the fixed %s failure boundary after rollback",
+    (owner, phase, registryRollbackCount) => {
+      const harness = createHarness();
+      const canary = "nested recovery diagnostic canary";
+      switch (owner) {
+        case "registry":
+          harness.overrides.prepareRegistryRecovery.mockImplementation(() => {
+            throw new Error(canary);
+          });
+          break;
+        case "runtime":
+          harness.overrides.createRuntimeAuthority.mockImplementation(() => {
+            throw new Error(canary);
+          });
+          break;
+        case "lifecycle":
+          harness.overrides.prepareInferenceAuthority.mockImplementation(() => {
+            throw new Error(canary);
+          });
+          break;
+        case "private-publication":
+          harness.overrides.preparePublishedAuthority.mockImplementation(() => {
+            throw new Error(canary);
+          });
+          break;
+        case "runtime-inspection":
+          harness.runtime.inspectManaged.mockImplementation(() => {
+            throw new Error(canary);
+          });
+          break;
+      }
+
+      let caught: unknown;
+      try {
+        recoverHermesPortableOllamaInference(harness.input, harness.overrides as never);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(HermesPortableOllamaRecoveryPhaseError);
+      expect(caught).toMatchObject({ phase });
+      expect((caught as Error).message).not.toContain(canary);
+      expect(harness.registryRunning()).toBe(false);
+      expect(harness.events.filter((event) => event === "registry-rollback")).toHaveLength(
+        registryRollbackCount,
+      );
+      expect(harness.prepareStartup).not.toHaveBeenCalled();
+    },
+  );
+
+  it("maps the exact registry phase without disclosing the nested diagnostic", () => {
+    let caught: unknown;
+    try {
+      rethrowHermesPortableOllamaRegistryRecoveryError(
+        Object.assign(new PortableRegistryRecoveryPhaseError("NETWORK_INSPECTION"), {
+          nestedDiagnostic: "registry phase canary",
+        }),
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(HermesPortableOllamaRecoveryPhaseError);
+    expect(caught).toMatchObject({ phase: "REGISTRY_PREPARATION_NETWORK_INSPECTION" });
+    expect((caught as Error).message).not.toContain("registry phase canary");
+  });
+
+  it("maps registry restoration uncertainty ahead of the nested phase", () => {
+    let caught: unknown;
+    try {
+      rethrowHermesPortableOllamaRegistryRecoveryError(
+        Object.assign(new PortableRegistryRecoveryRestorationError(), {
+          phase: "NETWORK_INSPECTION",
+          nestedDiagnostic: "registry restoration canary",
+        }),
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(HermesPortableOllamaRecoveryError);
+    expect(caught).toMatchObject({ failure: "registry-restoration-unproved" });
+    expect((caught as Error).message).not.toContain("registry restoration canary");
+  });
+
+  it("reports registry restoration uncertainty instead of the nested phase", () => {
+    const harness = createHarness();
+    const canary = "nested recovery diagnostic canary";
+    harness.overrides.prepareRegistryRecovery.mockReturnValue({
+      started: true,
+      assertCurrent: vi.fn(),
+      rollback: vi.fn(() => {
+        throw new Error(canary);
+      }),
+      release: vi.fn(),
+    });
+    harness.overrides.createRuntimeAuthority.mockImplementation(() => {
+      throw new Error(canary);
+    });
+
+    let caught: unknown;
+    try {
+      recoverHermesPortableOllamaInference(harness.input, harness.overrides as never);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(HermesPortableOllamaRecoveryError);
+    expect(caught).toMatchObject({ failure: "registry-restoration-unproved" });
+    expect((caught as Error).message).not.toContain(canary);
+    expect(harness.prepareStartup).not.toHaveBeenCalled();
   });
 
   it("rejects direct launch intent before registry or runtime mutation", () => {

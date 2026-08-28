@@ -82,6 +82,18 @@ export type ConnectHarnessOptions = {
     | "runtime-restoration-unproved"
     | "registry-restoration-unproved"
     | "recovery-failed";
+  hermesInferenceRecoveryPhase?:
+    | "REGISTRY_PREPARATION_AUTHORITY"
+    | "REGISTRY_PREPARATION_START_DISPATCH"
+    | "REGISTRY_PREPARATION_SETTLEMENT_CURRENTNESS"
+    | "REGISTRY_PREPARATION_NETWORK_INSPECTION"
+    | "REGISTRY_PREPARATION_PINNED_REGISTRY_INSPECTION"
+    | "REGISTRY_PREPARATION_PENDING_DEADLINE"
+    | "REGISTRY_PREPARATION_POSTCONDITION"
+    | "RUNTIME_AUTHORITY"
+    | "LIFECYCLE_AUTHORITY"
+    | "PRIVATE_PUBLICATION_AUTHORITY"
+    | "EXACT_RUNTIME_INSPECTION";
   registryEntry?: Partial<SandboxEntry>;
   registryEntries?: Array<Partial<SandboxEntry> & Pick<SandboxEntry, "name">>;
   sessionAgent?: unknown;
@@ -277,6 +289,11 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const recoverHermesPortableOllamaInferenceSpy = vi
     .spyOn(hermesInferenceRecovery, "recoverHermesPortableInferenceForConnectProbe")
     .mockImplementation(((input: { verifyRoute: () => unknown }) => {
+      if (options.hermesInferenceRecoveryPhase) {
+        throw new hermesOllamaInference.HermesPortableOllamaRecoveryPhaseError(
+          options.hermesInferenceRecoveryPhase,
+        );
+      }
       if (options.hermesInferenceRecoveryFailure === "recovery-failed") {
         throw new Error("nested recovery diagnostic canary");
       }

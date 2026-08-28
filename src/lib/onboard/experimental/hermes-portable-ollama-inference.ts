@@ -60,8 +60,11 @@ import {
   capturePortableNetworkAuthority,
   captureQualifiedGpuDevices,
   preparePortableRegistryRecovery,
+  PortableRegistryRecoveryPhaseError,
+  PortableRegistryRecoveryRestorationError,
   PORTABLE_OLLAMA_IMAGE,
   PORTABLE_PROBE_IMAGE,
+  type PortableRegistryRecoveryPhase,
   type PreparedPortableRegistryRecovery,
   withRetainedImageAcquisition,
 } from "./hermes-portable-ollama-authority";
@@ -149,34 +152,41 @@ function prepareHermesPortableOllamaRegistryRecovery(options: {
   if (!("networkId" in options.inferenceReceipt.endpoint)) {
     failRecovery("published Ollama network authority is missing");
   }
-  const sourceEnv = {
-    ...options.env,
-    ...buildHermesPortablePodmanEnvironment(options.receipt.runtimeAuthority, options.env),
-  };
-  const engines = createHermesPortablePodmanOperationEngines(
-    options.receipt.podmanExecutableAuthority,
-    options.receipt.socketAuthority,
-    options.receipt.runtimeAuthority,
-    sourceEnv,
-  );
-  const captureGpuDevices = () =>
-    captureQualifiedGpuDevices(captureCurrentGpuDevices, captureCurrentCdiDevices);
-  const qualification = Object.freeze({
-    expectedVersion: HERMES_PORTABLE_PODMAN_VERSION,
-    captureCurrentCdiDevices: () => captureGpuDevices(),
-    assertCurrentAuthority: engines.assertCurrent,
+  const preparedAuthority = atOllamaRecoveryPhase("REGISTRY_PREPARATION_AUTHORITY", () => {
+    const sourceEnv = {
+      ...options.env,
+      ...buildHermesPortablePodmanEnvironment(options.receipt.runtimeAuthority, options.env),
+    };
+    const engines = createHermesPortablePodmanOperationEngines(
+      options.receipt.podmanExecutableAuthority,
+      options.receipt.socketAuthority,
+      options.receipt.runtimeAuthority,
+      sourceEnv,
+    );
+    const captureGpuDevices = () =>
+      captureQualifiedGpuDevices(captureCurrentGpuDevices, captureCurrentCdiDevices);
+    const qualification = Object.freeze({
+      expectedVersion: HERMES_PORTABLE_PODMAN_VERSION,
+      captureCurrentCdiDevices: () => captureGpuDevices(),
+      assertCurrentAuthority: engines.assertCurrent,
+    });
+    const authority = qualifyPodmanInferenceAuthority(engines.hostLocalInference, qualification);
+    const assertEngineCurrent = (): void => {
+      engines.assertCurrent();
+      revalidatePodmanInferenceAuthority(engines.hostLocalInference, authority, qualification);
+    };
+    return Object.freeze({ engines, assertEngineCurrent });
   });
-  const authority = qualifyPodmanInferenceAuthority(engines.hostLocalInference, qualification);
-  const assertEngineCurrent = (): void => {
-    engines.assertCurrent();
-    revalidatePodmanInferenceAuthority(engines.hostLocalInference, authority, qualification);
-  };
-  return preparePortableRegistryRecovery(
-    engines.hostLocalInference,
-    options.inferenceReceipt.endpoint.networkAuthoritySha256,
-    assertEngineCurrent,
-    options.assertCallerCurrent,
-  );
+  try {
+    return preparePortableRegistryRecovery(
+      preparedAuthority.engines.hostLocalInference,
+      options.inferenceReceipt.endpoint.networkAuthoritySha256,
+      preparedAuthority.assertEngineCurrent,
+      options.assertCallerCurrent,
+    );
+  } catch (error) {
+    rethrowHermesPortableOllamaRegistryRecoveryError(error);
+  }
 }
 
 /** Reconstruct the exact schema-5 Podman inference owner without acquiring images. */
@@ -255,6 +265,14 @@ export type HermesPortableOllamaRecoveryFailure =
   | "runtime-restoration-unproved"
   | "registry-restoration-unproved";
 
+export type HermesPortableOllamaRecoveryPhase =
+  | `REGISTRY_PREPARATION_${PortableRegistryRecoveryPhase}`
+  | "REGISTRY_PREPARATION_AUTHORITY"
+  | "RUNTIME_AUTHORITY"
+  | "LIFECYCLE_AUTHORITY"
+  | "PRIVATE_PUBLICATION_AUTHORITY"
+  | "EXACT_RUNTIME_INSPECTION";
+
 export class HermesPortableOllamaRecoveryError extends Error {
   constructor(
     readonly failure: HermesPortableOllamaRecoveryFailure,
@@ -262,6 +280,46 @@ export class HermesPortableOllamaRecoveryError extends Error {
   ) {
     super(`Hermes Portable managed inference recovery failed: ${message}`);
     this.name = "HermesPortableOllamaRecoveryError";
+  }
+}
+
+export class HermesPortableOllamaRecoveryPhaseError extends Error {
+  constructor(readonly phase: HermesPortableOllamaRecoveryPhase) {
+    super("Hermes Portable managed inference recovery stopped at a fixed boundary.");
+    this.name = "HermesPortableOllamaRecoveryPhaseError";
+  }
+}
+
+export function rethrowHermesPortableOllamaRegistryRecoveryError(error: unknown): never {
+  if (
+    error instanceof HermesPortableOllamaRecoveryError ||
+    error instanceof HermesPortableOllamaRecoveryPhaseError
+  ) {
+    throw error;
+  }
+  if (error instanceof PortableRegistryRecoveryRestorationError) {
+    failRecovery(
+      "exact stopped-registry restoration was not proved",
+      "registry-restoration-unproved",
+    );
+  }
+  if (error instanceof PortableRegistryRecoveryPhaseError) {
+    throw new HermesPortableOllamaRecoveryPhaseError(`REGISTRY_PREPARATION_${error.phase}`);
+  }
+  throw new HermesPortableOllamaRecoveryPhaseError("REGISTRY_PREPARATION_POSTCONDITION");
+}
+
+function atOllamaRecoveryPhase<T>(phase: HermesPortableOllamaRecoveryPhase, operation: () => T): T {
+  try {
+    return operation();
+  } catch (error) {
+    if (
+      error instanceof HermesPortableOllamaRecoveryError ||
+      error instanceof HermesPortableOllamaRecoveryPhaseError
+    ) {
+      throw error;
+    }
+    throw new HermesPortableOllamaRecoveryPhaseError(phase);
   }
 }
 
@@ -454,53 +512,78 @@ export function recoverHermesPortableOllamaInference(
   requirePublishedOllamaRecoveryReceipt(receipt);
   const providerEntry = inferenceLifecycleRow(input.entry, receipt.providerId);
   const assertCallerCurrent = (): void => {
-    operating.assertCurrent();
+    try {
+      operating.assertCurrent();
+    } catch {
+      failRecovery("schema-6 operating authority changed during recovery");
+    }
     if (!isDeepStrictEqual(input.readRegistry(input.sandboxName), input.entry)) {
       failRecovery("sandbox registry authority changed during recovery");
     }
   };
-  const registryRecovery = deps.prepareRegistryRecovery({
-    receipt: operating.receipt,
-    inferenceReceipt: receipt,
-    env,
-    assertCallerCurrent,
-  });
+  const registryRecovery = atOllamaRecoveryPhase("REGISTRY_PREPARATION_POSTCONDITION", () =>
+    deps.prepareRegistryRecovery({
+      receipt: operating.receipt,
+      inferenceReceipt: receipt,
+      env,
+      assertCallerCurrent,
+    }),
+  );
   let ollamaStateRestored = true;
   try {
-    const runtimeAuthority = deps.createRuntimeAuthority({
-      receipt: operating.receipt,
-      stateDir,
-      env,
+    const runtimeAuthority = atOllamaRecoveryPhase("RUNTIME_AUTHORITY", () => {
+      const current = deps.createRuntimeAuthority({
+        receipt: operating.receipt,
+        stateDir,
+        env,
+      });
+      current.assertCurrent();
+      if (current.bundle.identity.id !== receipt.providerId) {
+        failRecovery("published runtime provider authority changed");
+      }
+      return current;
     });
-    runtimeAuthority.assertCurrent();
-    if (runtimeAuthority.bundle.identity.id !== receipt.providerId) {
-      failRecovery("published runtime provider authority changed");
-    }
-    const preparedAuthority = deps.prepareInferenceAuthority(
-      runtimeAuthority.bundle,
-      providerEntry,
-      { environment: env },
+    const { operation, preparedAuthority, runtime } = atOllamaRecoveryPhase(
+      "LIFECYCLE_AUTHORITY",
+      () => {
+        const currentPreparedAuthority = deps.prepareInferenceAuthority(
+          runtimeAuthority.bundle,
+          providerEntry,
+          { environment: env },
+        );
+        if (
+          !currentPreparedAuthority ||
+          currentPreparedAuthority.serializedReceipt !== serializedRegistryReceipt
+        ) {
+          failRecovery("published host-local inference authority is missing");
+        }
+        const currentOperation = deps.requireOperation(runtimeAuthority.bundle, "ollama", {
+          env,
+          acceleration: "nvidia-gpu",
+        });
+        const currentRuntime = currentOperation.managedRuntime;
+        if (!currentRuntime || !currentRuntime.resumeManaged) {
+          failRecovery("runtime provider does not support published managed inference resume");
+        }
+        return Object.freeze({
+          operation: currentOperation,
+          preparedAuthority: currentPreparedAuthority,
+          runtime: currentRuntime,
+        });
+      },
     );
-    if (!preparedAuthority || preparedAuthority.serializedReceipt !== serializedRegistryReceipt) {
-      failRecovery("published host-local inference authority is missing");
-    }
-    const operation = deps.requireOperation(runtimeAuthority.bundle, "ollama", {
-      env,
-      acceleration: "nvidia-gpu",
+    const published = atOllamaRecoveryPhase("PRIVATE_PUBLICATION_AUTHORITY", () => {
+      const current = deps.preparePublishedAuthority({
+        directory: runtimeAuthority.inferenceStateDir,
+        sandboxName: input.sandboxName,
+        credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
+        runGatewayOpenshell: input.runGatewayOpenshell,
+      });
+      if (current.serializedReceipt !== serializedRegistryReceipt) {
+        failRecovery("private and registry inference receipts disagree");
+      }
+      return current;
     });
-    const runtime = operation.managedRuntime;
-    if (!runtime || !runtime.resumeManaged) {
-      failRecovery("runtime provider does not support published managed inference resume");
-    }
-    const published = deps.preparePublishedAuthority({
-      directory: runtimeAuthority.inferenceStateDir,
-      sandboxName: input.sandboxName,
-      credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
-      runGatewayOpenshell: input.runGatewayOpenshell,
-    });
-    if (published.serializedReceipt !== serializedRegistryReceipt) {
-      failRecovery("private and registry inference receipts disagree");
-    }
 
     const requireCurrent = (): void => {
       registryRecovery.assertCurrent();
@@ -531,12 +614,15 @@ export function recoverHermesPortableOllamaInference(
       }
     };
 
-    const inspected = runtime.inspectManaged(receipt);
-    requireExactRecoveryReceipt(
-      serializedRegistryReceipt,
-      inspected.receipt,
-      "runtime inspection changed receipt",
-    );
+    const inspected = atOllamaRecoveryPhase("EXACT_RUNTIME_INSPECTION", () => {
+      const current = runtime.inspectManaged(receipt);
+      requireExactRecoveryReceipt(
+        serializedRegistryReceipt,
+        current.receipt,
+        "runtime inspection changed receipt",
+      );
+      return current;
+    });
     if (inspected.running) {
       requireExactRecoveryReceipt(
         serializedRegistryReceipt,

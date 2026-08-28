@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   capturePortableNetworkAuthority,
+  PortableRegistryRecoveryPhaseError,
+  PortableRegistryRecoveryRestorationError,
   preparePortableRegistryRecovery,
 } from "./hermes-portable-ollama-authority";
 
@@ -25,14 +27,18 @@ function createRegistryHarness(initiallyRunning: boolean) {
   let registryCopies = 1;
   let registryPresent = true;
   let registryOutput: string | undefined;
+  const queuedRegistryOutputs: Array<string | undefined> = [];
+  let postStartNetworkFailures = 0;
   let startStatus = 0;
   let startError: Error | undefined;
   let beforeStart: () => void = () => undefined;
+  let afterStart: () => void = () => undefined;
   let afterStartInspect: () => void = () => undefined;
   let startLabel: string | undefined;
   let startIp = "10.87.0.3";
   let startChangesState = true;
   let startInvoked = false;
+  let stopStatus = 0;
   const engine = {
     capture: vi.fn((args: readonly string[], timeout?: number) => {
       calls.push([...args]);
@@ -40,25 +46,29 @@ function createRegistryHarness(initiallyRunning: boolean) {
       switch (args[0]) {
         case "network":
           expect(args[1]).toBe("inspect");
-          return {
-            status: 0,
-            stdout: JSON.stringify([
-              {
-                id: NETWORK_ID,
-                name: "openshell-docker",
-                driver: "bridge",
-                internal: false,
-                ipv6_enabled: false,
-                dns_enabled: true,
-                network_interface: "podman9",
-                subnets: [{ subnet: "10.87.0.0/24", gateway: "10.87.0.1" }],
-                labels: {},
-                ipam_options: {},
-                options: {},
-              },
-            ]),
-            stderr: "",
-          };
+          const networkFailure = startInvoked && postStartNetworkFailures > 0;
+          postStartNetworkFailures -= Number(networkFailure);
+          return networkFailure
+            ? { status: 1, stdout: "", stderr: "network canary" }
+            : {
+                status: 0,
+                stdout: JSON.stringify([
+                  {
+                    id: NETWORK_ID,
+                    name: "openshell-docker",
+                    driver: "bridge",
+                    internal: false,
+                    ipv6_enabled: false,
+                    dns_enabled: true,
+                    network_interface: "podman9",
+                    subnets: [{ subnet: "10.87.0.0/24", gateway: "10.87.0.1" }],
+                    labels: {},
+                    ipam_options: {},
+                    options: {},
+                  },
+                ]),
+                stderr: "",
+              };
         case "container": {
           expect(args[1]).toBe("inspect");
           startInvoked ? afterStartInspect() : undefined;
@@ -82,7 +92,9 @@ function createRegistryHarness(initiallyRunning: boolean) {
             ? {
                 status: 0,
                 stdout:
-                  registryOutput ??
+                  (queuedRegistryOutputs.length > 0
+                    ? queuedRegistryOutputs.shift()
+                    : registryOutput) ??
                   JSON.stringify(Array.from({ length: registryCopies }, () => row)),
                 stderr: "",
               }
@@ -96,6 +108,7 @@ function createRegistryHarness(initiallyRunning: boolean) {
           status = startChangesState ? "running" : status;
           registryIp = startChangesState ? startIp : registryIp;
           registryLabel = startLabel ?? registryLabel;
+          afterStart();
           return {
             status: startStatus,
             stdout: REGISTRY_ID,
@@ -104,10 +117,10 @@ function createRegistryHarness(initiallyRunning: boolean) {
           };
         case "stop":
           expect(args.at(-1)).toBe(REGISTRY_ID);
-          running = false;
-          status = "exited";
-          registryIp = "";
-          return { status: 0, stdout: REGISTRY_ID, stderr: "" };
+          running = stopStatus === 0 ? false : running;
+          status = stopStatus === 0 ? "exited" : status;
+          registryIp = stopStatus === 0 ? "" : registryIp;
+          return { status: stopStatus, stdout: REGISTRY_ID, stderr: "" };
         default:
           throw new Error(`Unexpected registry test command: ${args.join(" ")}`);
       }
@@ -159,6 +172,12 @@ function createRegistryHarness(initiallyRunning: boolean) {
     setOutput: (value: string) => {
       registryOutput = value;
     },
+    setNextOutput: (value: string | undefined) => {
+      queuedRegistryOutputs.push(value);
+    },
+    setPostStartNetworkFailures: (value: number) => {
+      postStartNetworkFailures = value;
+    },
     setStartOutcome: (value: { readonly status: number; readonly changesState: boolean }) => {
       startStatus = value.status;
       startChangesState = value.changesState;
@@ -177,6 +196,9 @@ function createRegistryHarness(initiallyRunning: boolean) {
     setBeforeStart: (callback: () => void) => {
       beforeStart = callback;
     },
+    setAfterStart: (callback: () => void) => {
+      afterStart = callback;
+    },
     setAfterStartInspect: (callback: () => void) => {
       afterStartInspect = callback;
     },
@@ -184,6 +206,9 @@ function createRegistryHarness(initiallyRunning: boolean) {
       beforeStart = () => {
         throw new Error("registry capture failed");
       };
+    },
+    setStopStatus: (value: number) => {
+      stopStatus = value;
     },
     setStartTimeout: (changesState: boolean) => {
       startStatus = 1;
@@ -214,6 +239,17 @@ function createFakeTiming(initial = 0) {
     },
     current: () => current,
   };
+}
+
+function captureRegistryPhase(operation: () => unknown): PortableRegistryRecoveryPhaseError {
+  let caught: unknown;
+  try {
+    operation();
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(PortableRegistryRecoveryPhaseError);
+  return caught as PortableRegistryRecoveryPhaseError;
 }
 
 const rejectionCases: ReadonlyArray<{
@@ -292,7 +328,7 @@ describe("Hermes Portable registry recovery", () => {
         vi.fn(),
         vi.fn(),
       ),
-    ).toThrow("differs from receipt");
+    ).toThrow(PortableRegistryRecoveryPhaseError);
     expect(harness.calls.some((args) => args[0] === "start")).toBe(false);
   });
 
@@ -401,7 +437,7 @@ describe("Hermes Portable registry recovery", () => {
     const clock = createFakeTiming();
     harness.setStartIp("");
 
-    expect(() =>
+    const error = captureRegistryPhase(() =>
       preparePortableRegistryRecovery(
         harness.engine as never,
         harness.expectedAuthoritySha256,
@@ -409,7 +445,8 @@ describe("Hermes Portable registry recovery", () => {
         vi.fn(),
         clock.timing,
       ),
-    ).toThrow("could not start its exact registry authority");
+    );
+    expect(error.phase).toBe("PENDING_DEADLINE");
     expect(clock.current()).toBe(30_000);
     expect(clock.sleeps).toHaveLength(30);
     expect(clock.sleeps.every((milliseconds) => milliseconds === 1_000)).toBe(true);
@@ -461,7 +498,7 @@ describe("Hermes Portable registry recovery", () => {
     (value) => {
       const harness = createRegistryHarness(false);
 
-      expect(() =>
+      const error = captureRegistryPhase(() =>
         preparePortableRegistryRecovery(
           harness.engine as never,
           harness.expectedAuthoritySha256,
@@ -469,7 +506,8 @@ describe("Hermes Portable registry recovery", () => {
           vi.fn(),
           { now: () => value, sleep: vi.fn() },
         ),
-      ).toThrow("could not start its exact registry authority");
+      );
+      expect(error.phase).toBe("PENDING_DEADLINE");
       expect(harness.calls.filter((args) => args[0] === "start")).toHaveLength(1);
       expect(harness.isRunning()).toBe(false);
     },
@@ -481,7 +519,7 @@ describe("Hermes Portable registry recovery", () => {
     const sleep = vi.fn();
     harness.setStartIp("");
 
-    expect(() =>
+    const error = captureRegistryPhase(() =>
       preparePortableRegistryRecovery(
         harness.engine as never,
         harness.expectedAuthoritySha256,
@@ -489,12 +527,23 @@ describe("Hermes Portable registry recovery", () => {
         vi.fn(),
         { now: () => samples.shift() ?? 0, sleep },
       ),
-    ).toThrow("could not start its exact registry authority");
+    );
+    expect(error.phase).toBe("PENDING_DEADLINE");
     expect(sleep).not.toHaveBeenCalled();
     expect(harness.isRunning()).toBe(false);
   });
 
-  it.each(["caller", "engine"])("rejects %s authority drift during settlement", (owner) => {
+  it.each([
+    {
+      owner: "caller",
+      assertFailure: (operation: () => unknown) => expect(operation).toThrow("authority drift"),
+    },
+    {
+      owner: "engine",
+      assertFailure: (operation: () => unknown) =>
+        expect(captureRegistryPhase(operation).phase).toBe("SETTLEMENT_CURRENTNESS"),
+    },
+  ])("rejects $owner authority drift during settlement", ({ owner, assertFailure }) => {
     const harness = createRegistryHarness(false);
     const clock = createFakeTiming();
     const caller = vi.fn();
@@ -506,15 +555,15 @@ describe("Hermes Portable registry recovery", () => {
     });
     harness.setStartIp("");
 
-    expect(() =>
+    const operation = () =>
       preparePortableRegistryRecovery(
         harness.engine as never,
         harness.expectedAuthoritySha256,
         engine,
         caller,
         clock.timing,
-      ),
-    ).toThrow();
+      );
+    assertFailure(operation);
     expect(clock.sleeps).toEqual([1_000]);
     expect(harness.calls.filter((args) => args[0] === "start")).toHaveLength(1);
     expect(harness.calls).toContainEqual(["stop", "--time", "10", REGISTRY_ID]);
@@ -524,30 +573,32 @@ describe("Hermes Portable registry recovery", () => {
     const harness = createRegistryHarness(false);
     harness.setStartTimeout(false);
 
-    expect(() =>
+    const error = captureRegistryPhase(() =>
       preparePortableRegistryRecovery(
         harness.engine as never,
         harness.expectedAuthoritySha256,
         vi.fn(),
         vi.fn(),
       ),
-    ).toThrow("could not start its exact registry authority");
+    );
+    expect(error.phase).toBe("POSTCONDITION");
     expect(harness.isRunning()).toBe(false);
   });
 
-  it("rejects a timed-out start when the running registry authority changed", () => {
+  it("classifies a timed-out start with a foreign registry IP address", () => {
     const harness = createRegistryHarness(false);
     harness.setStartTimeout(true);
-    harness.setStartLabel("changed");
+    harness.setStartIp("10.87.0.99");
 
-    expect(() =>
+    const error = captureRegistryPhase(() =>
       preparePortableRegistryRecovery(
         harness.engine as never,
         harness.expectedAuthoritySha256,
         vi.fn(),
         vi.fn(),
       ),
-    ).toThrow();
+    );
+    expect(error.phase).toBe("PINNED_REGISTRY_INSPECTION");
     expect(harness.isRunning()).toBe(false);
   });
 
@@ -581,37 +632,131 @@ describe("Hermes Portable registry recovery", () => {
     const harness = createRegistryHarness(false);
     configure(harness);
 
-    expect(() =>
+    const error = captureRegistryPhase(() =>
       preparePortableRegistryRecovery(
         harness.engine as never,
         harness.expectedAuthoritySha256,
         vi.fn(),
         vi.fn(),
       ),
-    ).toThrow("could not start its exact registry authority");
+    );
+    expect(error.phase).toBe("POSTCONDITION");
     expect(harness.isRunning()).toBe(false);
   });
 
-  it("rejects a thrown start capture before inspecting a postcondition", () => {
+  it("rejects a thrown start capture after proving the exact registry stayed stopped", () => {
     const harness = createRegistryHarness(false);
     harness.setStartThrows();
 
-    expect(() =>
+    const error = captureRegistryPhase(() =>
       preparePortableRegistryRecovery(
         harness.engine as never,
         harness.expectedAuthoritySha256,
         vi.fn(),
         vi.fn(),
       ),
-    ).toThrow("registry capture failed");
+    );
+    expect(error.phase).toBe("START_DISPATCH");
+    expect(error.message).not.toContain("registry capture failed");
     expect(harness.isRunning()).toBe(false);
     const startIndex = harness.calls.findIndex((args) => args[0] === "start");
     expect(
       harness.calls
         .slice(startIndex + 1)
         .some((args) => args[0] === "network" || args[0] === "container"),
-    ).toBe(false);
+    ).toBe(true);
+    expect(harness.calls.filter((args) => args[0] === "stop")).toHaveLength(0);
     expect(harness.calls.filter((args) => args[0] === "start")).toHaveLength(1);
+  });
+
+  it("restores a registry when start dispatch throws after the exact mutation", () => {
+    const harness = createRegistryHarness(false);
+    harness.setAfterStart(() => {
+      throw new Error("after-dispatch authority canary");
+    });
+
+    const error = captureRegistryPhase(() =>
+      preparePortableRegistryRecovery(
+        harness.engine as never,
+        harness.expectedAuthoritySha256,
+        vi.fn(),
+        vi.fn(),
+      ),
+    );
+    expect(error.phase).toBe("START_DISPATCH");
+    expect(error.message).not.toContain("after-dispatch authority canary");
+    expect(harness.isRunning()).toBe(false);
+    expect(harness.calls).toContainEqual(["stop", "--time", "10", REGISTRY_ID]);
+  });
+
+  it("reports restoration uncertainty when post-mutation start dispatch rollback fails", () => {
+    const harness = createRegistryHarness(false);
+    harness.setAfterStart(() => {
+      throw new Error("after-dispatch authority canary");
+    });
+    harness.setStopStatus(125);
+
+    expect(() =>
+      preparePortableRegistryRecovery(
+        harness.engine as never,
+        harness.expectedAuthoritySha256,
+        vi.fn(),
+        vi.fn(),
+      ),
+    ).toThrow(PortableRegistryRecoveryRestorationError);
+    expect(harness.isRunning()).toBe(true);
+  });
+
+  it("classifies one failed post-start network inspection without disclosing its output", () => {
+    const harness = createRegistryHarness(false);
+    harness.setPostStartNetworkFailures(1);
+
+    const error = captureRegistryPhase(() =>
+      preparePortableRegistryRecovery(
+        harness.engine as never,
+        harness.expectedAuthoritySha256,
+        vi.fn(),
+        vi.fn(),
+      ),
+    );
+    expect(error.phase).toBe("NETWORK_INSPECTION");
+    expect(error.message).not.toContain("network canary");
+    expect(harness.isRunning()).toBe(false);
+  });
+
+  it("classifies one malformed pinned-registry inspection before rollback", () => {
+    const harness = createRegistryHarness(false);
+    const injectMalformedOutput = vi.fn().mockImplementationOnce(() => {
+      harness.setNextOutput("nested registry output canary");
+    });
+    harness.setAfterStartInspect(injectMalformedOutput);
+
+    const error = captureRegistryPhase(() =>
+      preparePortableRegistryRecovery(
+        harness.engine as never,
+        harness.expectedAuthoritySha256,
+        vi.fn(),
+        vi.fn(),
+      ),
+    );
+    expect(error.phase).toBe("PINNED_REGISTRY_INSPECTION");
+    expect(error.message).not.toContain("nested registry output canary");
+    expect(harness.isRunning()).toBe(false);
+  });
+
+  it("reports restoration uncertainty instead of the failed postcondition", () => {
+    const harness = createRegistryHarness(false);
+    harness.setStartLabel("changed");
+    harness.setStopStatus(125);
+
+    expect(() =>
+      preparePortableRegistryRecovery(
+        harness.engine as never,
+        harness.expectedAuthoritySha256,
+        vi.fn(),
+        vi.fn(),
+      ),
+    ).toThrow(PortableRegistryRecoveryRestorationError);
   });
 
   it("rolls back an exact running registry when an ordinary error has authority drift", () => {

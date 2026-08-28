@@ -104,4 +104,41 @@ describe("Hermes Portable connect recovery errors", () => {
       expect(harness.recoverHermesPortableOllamaInferenceSpy).toHaveBeenCalledOnce();
     },
   );
+
+  it.each([
+    "REGISTRY_PREPARATION_AUTHORITY",
+    "REGISTRY_PREPARATION_START_DISPATCH",
+    "REGISTRY_PREPARATION_SETTLEMENT_CURRENTNESS",
+    "REGISTRY_PREPARATION_NETWORK_INSPECTION",
+    "REGISTRY_PREPARATION_PINNED_REGISTRY_INSPECTION",
+    "REGISTRY_PREPARATION_PENDING_DEADLINE",
+    "REGISTRY_PREPARATION_POSTCONDITION",
+    "RUNTIME_AUTHORITY",
+    "LIFECYCLE_AUTHORITY",
+    "PRIVATE_PUBLICATION_AUTHORITY",
+    "EXACT_RUNTIME_INSPECTION",
+  ] as const)("prints only the fixed %s recovery boundary (#10423)", async (phase) => {
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      hermesInferenceRecoveryPhase: phase,
+      registryEntry: {
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+        lifecycleGeneration: "generation-1",
+      },
+      portableReceiptDisposition: { kind: "hermes", phase: "active" },
+      portableRecoveryResult: { kind: "already-running" },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+    const output = harness.errorSpy.mock.calls.flat().join("\n");
+    expect(output).toContain(`Managed inference recovery stopped at boundary ${phase}`);
+    expect(output).toContain("Do not run another probe or launch");
+    expect(output).not.toContain("nested recovery diagnostic canary");
+    expect(output).not.toContain("before retrying");
+    expect(harness.recoverHermesPortableOllamaInferenceSpy).toHaveBeenCalledOnce();
+  });
 });

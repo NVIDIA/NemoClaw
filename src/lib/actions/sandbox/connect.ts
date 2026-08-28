@@ -458,14 +458,28 @@ function failHermesPortableInferenceRecovery(
   sandboxName: string,
   failure: HermesPortableInferenceConnectRecoveryFailure,
 ): never {
-  const detail =
-    failure === "runtime-restoration-unproved"
-      ? "NemoClaw could not prove restoration of the exact stopped managed inference runtime. Do not run another probe or launch until the recorded runtime state is inspected."
-      : failure === "registry-restoration-unproved"
-        ? "NemoClaw could not prove restoration of the exact stopped Portable registry. Do not run another probe or launch until the recorded registry state is inspected."
-        : failure === "authority-drift"
-          ? "Recorded managed inference authority changed during recovery. Do not run another probe or launch until the current Portable state is inspected."
-          : "Managed inference recovery stopped without a verified result. Do not run another probe or launch until the current Portable state is inspected.";
+  let detail: string;
+  switch (failure) {
+    case "runtime-restoration-unproved":
+      detail =
+        "NemoClaw could not prove restoration of the exact stopped managed inference runtime. Do not run another probe or launch until the recorded runtime state is inspected.";
+      break;
+    case "registry-restoration-unproved":
+      detail =
+        "NemoClaw could not prove restoration of the exact stopped Portable registry. Do not run another probe or launch until the recorded registry state is inspected.";
+      break;
+    case "authority-drift":
+      detail =
+        "Recorded managed inference authority changed during recovery. Do not run another probe or launch until the current Portable state is inspected.";
+      break;
+    case "recovery-failed":
+      detail =
+        "Managed inference recovery stopped without a verified result. Do not run another probe or launch until the current Portable state is inspected.";
+      break;
+    default:
+      detail = `Managed inference recovery stopped at boundary ${failure}. Do not run another probe or launch until the current Portable state is inspected.`;
+      break;
+  }
   console.error(
     `  Error: Hermes Portable inference recovery for '${sandboxName}' failed. ${detail}`,
   );

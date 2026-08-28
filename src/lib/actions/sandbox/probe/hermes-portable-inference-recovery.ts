@@ -3,8 +3,10 @@
 
 import {
   HermesPortableOllamaRecoveryError,
+  HermesPortableOllamaRecoveryPhaseError,
   recoverHermesPortableOllamaInference,
   type HermesPortableOllamaRecoveryFailure,
+  type HermesPortableOllamaRecoveryPhase,
 } from "../../../onboard/experimental/hermes-portable-ollama-inference";
 import type { SandboxEntry } from "../../../state/registry";
 import {
@@ -21,13 +23,16 @@ export interface HermesPortableInferenceConnectRecoveryInput {
 
 export type HermesPortableInferenceConnectRecoveryFailure =
   | HermesPortableOllamaRecoveryFailure
+  | HermesPortableOllamaRecoveryPhase
   | "recovery-failed";
 
 /** Reduce every recovery failure to one closed class without exposing nested diagnostics. */
 export function classifyHermesPortableInferenceConnectRecoveryFailure(
   error: unknown,
 ): HermesPortableInferenceConnectRecoveryFailure {
-  return error instanceof HermesPortableOllamaRecoveryError ? error.failure : "recovery-failed";
+  if (error instanceof HermesPortableOllamaRecoveryError) return error.failure;
+  if (error instanceof HermesPortableOllamaRecoveryPhaseError) return error.phase;
+  return "recovery-failed";
 }
 
 /** Resume exact published Ollama authority for one probe-only connect operation. */

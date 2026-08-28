@@ -335,9 +335,45 @@ export interface PreparedPortableRegistryRecovery {
   readonly release: () => void;
 }
 
+export type PortableRegistryRecoveryPhase =
+  | "START_DISPATCH"
+  | "SETTLEMENT_CURRENTNESS"
+  | "NETWORK_INSPECTION"
+  | "PINNED_REGISTRY_INSPECTION"
+  | "PENDING_DEADLINE"
+  | "POSTCONDITION";
+
+export class PortableRegistryRecoveryPhaseError extends Error {
+  constructor(readonly phase: PortableRegistryRecoveryPhase) {
+    super("Hermes Portable inference registry recovery stopped at a fixed boundary.");
+    this.name = "PortableRegistryRecoveryPhaseError";
+  }
+}
+
+export class PortableRegistryRecoveryRestorationError extends Error {
+  constructor() {
+    super("Hermes Portable inference registry restoration was not proved.");
+    this.name = "PortableRegistryRecoveryRestorationError";
+  }
+}
+
 interface PortableRegistryRecoveryTiming {
   readonly now: () => number;
   readonly sleep: (milliseconds: number) => void;
+}
+
+function atRegistryRecoveryPhase<T>(phase: PortableRegistryRecoveryPhase, operation: () => T): T {
+  try {
+    return operation();
+  } catch (error) {
+    if (
+      error instanceof PortableRegistryRecoveryPhaseError ||
+      error instanceof PortableRegistryRecoveryRestorationError
+    ) {
+      throw error;
+    }
+    throw new PortableRegistryRecoveryPhaseError(phase);
+  }
 }
 
 function defaultRegistrySettlementSleep(milliseconds: number): void {
@@ -375,25 +411,30 @@ function observePortableRegistryStart(
   runtimeId: string,
   expectedAuthoritySha256: string,
 ): PortableRegistryStartObservation {
-  const network = inspectPortableNetworkShape(engine);
+  const network = atRegistryRecoveryPhase("NETWORK_INSPECTION", () =>
+    inspectPortableNetworkShape(engine),
+  );
   if (!isDeepStrictEqual(network, expectedNetwork)) {
-    throw new Error("Hermes Portable inference registry recovery network authority changed.");
+    throw new PortableRegistryRecoveryPhaseError("POSTCONDITION");
   }
-  const registry = inspectPortableRegistryShape(engine, runtimeId);
-  requirePortableRegistryNetwork(network, registry);
+  const registry = atRegistryRecoveryPhase("PINNED_REGISTRY_INSPECTION", () => {
+    const inspected = inspectPortableRegistryShape(engine, runtimeId);
+    requirePortableRegistryNetwork(network, inspected);
+    return inspected;
+  });
   if (registry.runtimeId !== runtimeId) {
-    throw new Error("Hermes Portable inference registry recovery identity changed.");
+    throw new PortableRegistryRecoveryPhaseError("POSTCONDITION");
   }
   const canonical = canonicalPortableNetworkAuthority(network, registry);
   const authoritySha256 = digest(canonical);
   if (authoritySha256 !== expectedAuthoritySha256) {
-    throw new Error("Hermes Portable inference registry recovery authority changed.");
+    throw new PortableRegistryRecoveryPhaseError("POSTCONDITION");
   }
   if (registry.running && registry.ipAddress === "") {
     return Object.freeze({ kind: "pending" });
   }
   if (!registry.running || registry.ipAddress !== PORTABLE_REGISTRY_IP) {
-    throw new Error("Hermes Portable inference registry start did not settle.");
+    throw new PortableRegistryRecoveryPhaseError("POSTCONDITION");
   }
   return Object.freeze({
     kind: "running",
@@ -420,12 +461,13 @@ function settlePortableRegistryStart(
 ): ReturnType<typeof capturePortableNetworkAuthorityForReference> {
   const now = registrySettlementClock(timing.now ?? Date.now);
   const sleep = timing.sleep ?? defaultRegistrySettlementSleep;
-  const deadline = now() + REGISTRY_START_SETTLEMENT_TIMEOUT_MS;
+  const deadline =
+    atRegistryRecoveryPhase("PENDING_DEADLINE", now) + REGISTRY_START_SETTLEMENT_TIMEOUT_MS;
   if (!Number.isFinite(deadline)) {
-    throw new Error("Hermes Portable inference registry settlement deadline is invalid.");
+    throw new PortableRegistryRecoveryPhaseError("PENDING_DEADLINE");
   }
   for (;;) {
-    now();
+    atRegistryRecoveryPhase("PENDING_DEADLINE", now);
     assertRecoveryCurrent();
     const observation = observePortableRegistryStart(
       engine,
@@ -437,11 +479,13 @@ function settlePortableRegistryStart(
       assertRecoveryCurrent();
       return observation.authority;
     }
-    const remaining = deadline - now();
+    const remaining = deadline - atRegistryRecoveryPhase("PENDING_DEADLINE", now);
     if (remaining <= 0) {
-      throw new Error("Hermes Portable inference registry start did not settle.");
+      throw new PortableRegistryRecoveryPhaseError("PENDING_DEADLINE");
     }
-    sleep(Math.min(REGISTRY_START_SETTLEMENT_INTERVAL_MS, remaining));
+    atRegistryRecoveryPhase("PENDING_DEADLINE", () =>
+      sleep(Math.min(REGISTRY_START_SETTLEMENT_INTERVAL_MS, remaining)),
+    );
   }
 }
 
@@ -493,20 +537,27 @@ export function preparePortableRegistryRecovery(
   }
   const assertRecoveryCurrent = () => {
     assertCallerCurrent();
-    assertEngineCurrent();
+    atRegistryRecoveryPhase("SETTLEMENT_CURRENTNESS", assertEngineCurrent);
   };
   assertRecoveryCurrent();
-  const network = inspectPortableNetworkShape(engine);
-  const candidate = inspectPortableRegistryShape(engine, REGISTRY_CONTAINER);
-  requirePortableRegistryNetwork(network, candidate);
+  const network = atRegistryRecoveryPhase("NETWORK_INSPECTION", () =>
+    inspectPortableNetworkShape(engine),
+  );
+  const candidate = atRegistryRecoveryPhase("PINNED_REGISTRY_INSPECTION", () => {
+    const inspected = inspectPortableRegistryShape(engine, REGISTRY_CONTAINER);
+    requirePortableRegistryNetwork(network, inspected);
+    return inspected;
+  });
   const prospectiveSha256 = digest(canonicalPortableNetworkAuthority(network, candidate));
   if (prospectiveSha256 !== expectedAuthoritySha256) {
-    throw new Error("Hermes Portable inference registry recovery authority differs from receipt.");
+    throw new PortableRegistryRecoveryPhaseError("POSTCONDITION");
   }
   if (candidate.running) {
-    const authority = capturePortableNetworkAuthority(engine);
+    const authority = atRegistryRecoveryPhase("POSTCONDITION", () =>
+      capturePortableNetworkAuthority(engine),
+    );
     if (authority.authoritySha256 !== expectedAuthoritySha256) {
-      throw new Error("Hermes Portable inference running registry authority differs from receipt.");
+      throw new PortableRegistryRecoveryPhaseError("POSTCONDITION");
     }
     let released = false;
     const assertCurrent = () => {
@@ -524,11 +575,15 @@ export function preparePortableRegistryRecovery(
     });
   }
   const runtimeId = candidate.runtimeId;
-  inspectExactStoppedRegistry(engine, network, runtimeId, expectedAuthoritySha256);
+  atRegistryRecoveryPhase("POSTCONDITION", () =>
+    inspectExactStoppedRegistry(engine, network, runtimeId, expectedAuthoritySha256),
+  );
   assertRecoveryCurrent();
-  engine.capture(["start", runtimeId], REGISTRY_MUTATION_TIMEOUT_MS);
   let authority: ReturnType<typeof capturePortableNetworkAuthorityForReference>;
   try {
+    atRegistryRecoveryPhase("START_DISPATCH", () =>
+      engine.capture(["start", runtimeId], REGISTRY_MUTATION_TIMEOUT_MS),
+    );
     authority = settlePortableRegistryStart(
       engine,
       network,
@@ -537,7 +592,7 @@ export function preparePortableRegistryRecovery(
       assertRecoveryCurrent,
       timing,
     );
-  } catch {
+  } catch (error) {
     try {
       if (inspectPinnedRegistryRunning(engine, runtimeId)) {
         const stopped = engine.capture(
@@ -551,11 +606,9 @@ export function preparePortableRegistryRecovery(
       inspectExactStoppedRegistry(engine, network, runtimeId, expectedAuthoritySha256);
       assertEngineCurrent();
     } catch {
-      throw new Error(
-        "Hermes Portable inference registry start failed and exact stopped-state restoration was not proved.",
-      );
+      throw new PortableRegistryRecoveryRestorationError();
     }
-    throw new Error("Hermes Portable inference could not start its exact registry authority.");
+    throw error;
   }
   let released = false;
   const assertCurrent = () => {
