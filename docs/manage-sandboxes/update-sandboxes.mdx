@@ -114,14 +114,14 @@ The backup's sandbox and agent identities must match the registry.
 The registry must also contain positive evidence that NemoClaw managed the sandbox image.
 </AgentOnly>
 <AgentOnly variant="openclaw,hermes">
-The registry must contain positive evidence that NemoClaw managed the sandbox image, unless the exact-name pre-fingerprint confirmation below applies.
+The registry must contain positive evidence that NemoClaw managed the sandbox image, unless the name pre-fingerprint confirmation below applies.
 </AgentOnly>
 If the replacement gateway reports a stale sandbox as Ready or Running, the installer reuses the validated pre-upgrade backup.
 It does not attempt another backup from the replaced legacy runtime.
 
 <AgentOnly variant="openclaw,hermes">
 For a listed pre-fingerprint OpenClaw or Hermes registry entry, the installer's explicit managed-image confirmation is the only exception to the registry evidence requirement.
-In a non-interactive run, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to the exact JSON array of names printed by the installer, such as `["my-assistant","preserve-hermes"]`, only after you verify every named sandbox used a managed image.
+In a non-interactive run, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to a JSON array that equals the normalized array of names printed by the installer, such as `["my-assistant","preserve-hermes"]`, only after you verify every named sandbox used a managed image.
 
 Legacy managed-image confirmation never overrides recorded custom-image evidence.
 </AgentOnly>

@@ -185,13 +185,17 @@ describe("onboard custom Dockerfile", () => {
       fs.writeFileSync(path.join(customBuildDir, "credentials.json"), "{}");
 
       fs.mkdirSync(fakeBin, { recursive: true });
-      writeOkOpenshell(fakeBin, { readySandboxGet: true });
+      writeOkOpenshell(fakeBin);
 
       const customDockerfilePath = JSON.stringify(path.join(customBuildDir, "Dockerfile"));
 
       const script = String.raw`
 const runner = require(${runnerPath});
 const fixtureMocks = require(${onboardScriptMocksPath});
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
+  sandboxName: "my-assistant",
+});
+createdSandbox.installRuntimeObservation();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
@@ -233,21 +237,15 @@ runner.run = (command, opts = {}) => {
   commands.push({ command: normalized, env: opts.env || null });
   const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
-  if (normalized.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
-  return normalized.includes("sandbox get") && normalized.includes("my-assistant")
-    ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\n"), stderr: Buffer.alloc(0) }
-    : { status: 0 };
+  const sandboxResult = createdSandbox.run(command);
+  return sandboxResult ?? { status: 0 };
 };
 runner.runCapture = (command) => {
   const normalized = _n(command);
   if (normalized.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:8080";
   if (normalized.includes("policy get") && normalized.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
-  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command, {
-    sandboxName: "my-assistant",
-  });
-  if (createdIdentity !== null) return createdIdentity;
-  if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) return "";
-  if (normalized.includes("sandbox list")) return "my-assistant Ready";
+  const sandboxCapture = createdSandbox.capture(command);
+  if (sandboxCapture !== null) return sandboxCapture;
   {
     const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
@@ -265,6 +263,7 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
+  createdSandbox.create(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();

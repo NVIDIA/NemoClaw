@@ -7,8 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CaptureOpenshellResult } from "../../src/lib/adapters/openshell/client";
 import {
-  ONBOARD_CREATED_SANDBOX_ID,
-  mockCreatedSandboxIdentityList,
+  createCreatedSandboxFixture,
   mockStructuredOpenShellCaptureFromRunner,
 } from "./onboard-script-mocks.cjs";
 
@@ -27,36 +26,31 @@ const exactCreateQuery = [
   "--limit",
   "2",
 ] as const;
+const exactCreateCommand = [
+  "openshell",
+  "sandbox",
+  "create",
+  "--label",
+  selector,
+] as const;
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("mockCreatedSandboxIdentityList", () => {
-  it("publishes identity for the exact gateway-scoped create-attempt query (#9833)", () => {
-    expect(
-      mockCreatedSandboxIdentityList(exactCreateQuery, {
-        gatewayName: "nemoclaw-test",
-        sandboxName: "my-assistant",
-      }),
-    ).toContain('"name":"my-assistant"');
-  });
-
+describe("created sandbox fixture selector observations", () => {
   it("publishes identity through the Linux process-tree timeout wrapper (#10238, #9833)", () => {
+    const fixture = createCreatedSandboxFixture({ gatewayName: "nemoclaw-test" });
+    fixture.create(exactCreateCommand);
+
     expect(
-      mockCreatedSandboxIdentityList(
-        [
-          "/usr/bin/timeout",
-          "--signal=KILL",
-          "29.75s",
-          "/opt/openshell",
-          ...exactCreateQuery.slice(1),
-        ],
-        {
-          gatewayName: "nemoclaw-test",
-          sandboxName: "my-assistant",
-        },
-      ),
+      fixture.capture([
+        "/usr/bin/timeout",
+        "--signal=KILL",
+        "29.75s",
+        "/opt/openshell",
+        ...exactCreateQuery.slice(1),
+      ]),
     ).toContain('"name":"my-assistant"');
   });
 
@@ -93,7 +87,10 @@ describe("mockCreatedSandboxIdentityList", () => {
       ],
     ],
   ])("rejects %s (#9833)", (_case, command) => {
-    expect(mockCreatedSandboxIdentityList(command, { gatewayName: "nemoclaw-test" })).toBeNull();
+    const fixture = createCreatedSandboxFixture({ gatewayName: "nemoclaw-test" });
+    fixture.create(exactCreateCommand);
+
+    expect(fixture.capture(command)).toBeNull();
   });
 });
 
@@ -106,15 +103,22 @@ describe("mockStructuredOpenShellCaptureFromRunner", () => {
     ) => CaptureOpenshellResult;
   };
   let restoreCapture: () => void;
+  let createdSandbox: ReturnType<typeof createCreatedSandboxFixture>;
 
   beforeEach(() => {
     const runner = require("../../src/lib/runner.ts") as {
       runCapture: (command: readonly string[]) => string;
     };
     client = require("../../src/lib/adapters/openshell/client.ts");
-    vi.spyOn(runner, "runCapture").mockReturnValue("");
-    restoreCapture = mockStructuredOpenShellCaptureFromRunner();
-    mockCreatedSandboxIdentityList(exactCreateQuery, {
+    createdSandbox = createCreatedSandboxFixture({
+      gatewayName: "nemoclaw-test",
+      sandboxName: "my-assistant",
+    });
+    createdSandbox.create(exactCreateCommand);
+    vi.spyOn(runner, "runCapture").mockImplementation(
+      (command) => createdSandbox.capture([...command]) ?? "",
+    );
+    restoreCapture = mockStructuredOpenShellCaptureFromRunner({
       gatewayName: "nemoclaw-test",
       sandboxName: "my-assistant",
     });
@@ -124,8 +128,15 @@ describe("mockStructuredOpenShellCaptureFromRunner", () => {
     restoreCapture();
   });
 
-  it("clears a published identity when a new fixture is installed (#9833)", () => {
-    const restoreSecondCapture = mockStructuredOpenShellCaptureFromRunner();
+  it("does not synthesize an identity without a fixture observation (#10463)", () => {
+    const runner = require("../../src/lib/runner.ts") as {
+      runCapture: (command: readonly string[]) => string;
+    };
+    vi.mocked(runner.runCapture).mockReturnValue("");
+    const restoreSecondCapture = mockStructuredOpenShellCaptureFromRunner({
+      gatewayName: "nemoclaw-test",
+      sandboxName: "my-assistant",
+    });
     try {
       const result = client.captureOpenshellCommand(
         "/opt/openshell",
@@ -165,7 +176,7 @@ describe("mockStructuredOpenShellCaptureFromRunner", () => {
         ["sandbox", "get", "-g", "nemoclaw-test", "my-assistant"],
         { includeStreams: true },
       ).stdout,
-    ).toContain(`Id: ${ONBOARD_CREATED_SANDBOX_ID}`);
+    ).toContain(`Id: ${createdSandbox.state.sandboxId}`);
   });
 
   it.each([
