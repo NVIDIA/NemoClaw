@@ -11,6 +11,7 @@ import {
   isPolicyAuthorityRefusalError,
   PolicyAuthorityRefusalError,
 } from "../../adapters/openshell/policy-authority";
+import { redactDiagnosticText } from "../../diagnostics/redact";
 import { checkPortAvailable } from "../../onboard/preflight";
 import type { RuntimeProviderBundle } from "../../onboard/runtime-provider/contract";
 import { createHostLocalCreateJournalStore } from "../../onboard/runtime-provider/host-local-create-journal";
@@ -52,6 +53,11 @@ export const MANAGED_LLAMA_CPP_OWNER_LABEL = "io.nvidia.nemoclaw.managed-llama-c
 export const MANAGED_LLAMA_CPP_OWNER_VALUE = "true" as const;
 
 const IMAGE_PULL_TIMEOUT_MS = 30 * 60 * 1000;
+const IMAGE_PULL_DIAGNOSTIC_MAX_BYTES = 512;
+const IMAGE_PULL_DIAGNOSTIC_TRUNCATED_PREFIX = "[truncated] ";
+const IMAGE_PULL_TERMINAL_CONTROL_SEQUENCE =
+  /(?:\u001b\[[0-?]*[ -/]*[@-~]|\u009b[0-?]*[ -/]*[@-~]|(?:\u001b\]|\u009d)(?:[^\u0007\u001b\u009c]|\u001b(?!\\))*(?:\u0007|\u001b\\|\u009c)|\u001b[ -/]*[@-~])/gu;
+const IMAGE_PULL_UNSAFE_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]|\p{Cf}/gu;
 const DOCKER_INSPECT_TIMEOUT_MS = 15_000;
 
 export interface ManagedLlamaCppInstallOptions {
@@ -185,18 +191,60 @@ function classifyImagePullFailureLayer(diagnostic: string): ManagedLlamaCppImage
   );
 }
 
+function boundedImagePullDiagnosticTail(value: string): string {
+  if (Buffer.byteLength(value, "utf8") <= IMAGE_PULL_DIAGNOSTIC_MAX_BYTES) return value;
+  let remainingBytes =
+    IMAGE_PULL_DIAGNOSTIC_MAX_BYTES -
+    Buffer.byteLength(IMAGE_PULL_DIAGNOSTIC_TRUNCATED_PREFIX, "utf8");
+  let cursor = value.length;
+  const tail: string[] = [];
+  while (cursor > 0 && remainingBytes > 0) {
+    let start = cursor - 1;
+    const lastCodeUnit = value.charCodeAt(start);
+    if (
+      start > 0 &&
+      lastCodeUnit >= 0xdc00 &&
+      lastCodeUnit <= 0xdfff &&
+      value.charCodeAt(start - 1) >= 0xd800 &&
+      value.charCodeAt(start - 1) <= 0xdbff
+    ) {
+      start -= 1;
+    }
+    const character = value.slice(start, cursor);
+    const characterBytes = Buffer.byteLength(character, "utf8");
+    if (characterBytes > remainingBytes) break;
+    tail.push(character);
+    remainingBytes -= characterBytes;
+    cursor = start;
+  }
+  return `${IMAGE_PULL_DIAGNOSTIC_TRUNCATED_PREFIX}${tail.reverse().join("")}`;
+}
+
+function imagePullDiagnosticExcerpt(sources: readonly string[]): string {
+  const diagnostic = sources
+    .map((source) =>
+      source
+        .replace(IMAGE_PULL_TERMINAL_CONTROL_SEQUENCE, "")
+        .replace(IMAGE_PULL_UNSAFE_CHARACTERS, ""),
+    )
+    .join(" | ");
+  const redacted = redactDiagnosticText(diagnostic).replace(/\s+/gu, " ").trim();
+  return redacted.length > 0 ? boundedImagePullDiagnosticTail(redacted) : "unavailable";
+}
+
 function imagePullFailureDiagnostic(result: ManagedLlamaCppImagePullResult): string {
   const sources = [result.stdout, result.stderr, result.error?.message].filter(
     (value): value is string => typeof value === "string" && value.trim().length > 0,
   );
-  const layer = classifyImagePullFailureLayer(sources.join("\n"));
+  const diagnostic = sources.join("\n");
+  const layer = classifyImagePullFailureLayer(diagnostic);
   const evidence =
     layer === "unclassified"
       ? "No recognized failure-layer signature matched."
       : "A pull-output signature matched this layer.";
   const status =
     result.status === null ? "Exit status unavailable." : `Exit status: ${String(result.status)}.`;
-  return `Failure classification: ${layer}. ${evidence} ${status} Raw pull output is not included.`;
+  return `Failure classification: ${layer}. ${evidence} ${status} Redacted pull diagnostic: ${imagePullDiagnosticExcerpt(sources)}`;
 }
 
 function requireSuccess(label: string, result: ReturnType<ContainerEngine["capture"]>): string {

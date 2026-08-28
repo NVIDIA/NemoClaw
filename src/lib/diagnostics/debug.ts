@@ -10,6 +10,7 @@ import { dockerExecFileSync } from "../adapters/docker/exec";
 import { openshellSandboxSshHost } from "../adapters/openshell/sandbox-ssh-host";
 import { DASHBOARD_PORT } from "../core/ports";
 import { listSandboxes } from "../state/registry";
+import { redactDiagnosticText } from "./redact";
 import { createTarball as createDiagnosticsTarball } from "./tarball";
 
 // ---------------------------------------------------------------------------
@@ -56,14 +57,12 @@ function section(title: string): void {
 // Secret redaction — delegates to unified redact module (#2381).
 // ---------------------------------------------------------------------------
 
-import { redactFullWithUrls } from "../security/redact";
-
 /**
  * Redact collected diagnostics before they are written to the bundle or
  * echoed to the terminal.
  */
 export function redact(text: string): string {
-  return redactFullWithUrls(text);
+  return redactDiagnosticText(text);
 }
 
 // ---------------------------------------------------------------------------

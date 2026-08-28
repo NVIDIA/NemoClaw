@@ -1051,19 +1051,36 @@ describe("managed llama.cpp installer", () => {
   });
 
   it.each([
-    ["authentication", { status: 1, stderr: "unauthorized: authentication required" }],
-    ["storage", { status: 1, stderr: "no space left on device" }],
-    ["runner network", { status: 1, stderr: "dial tcp: temporary failure in name resolution" }],
-    ["invalid dependency", { status: 1, stderr: "manifest unknown: manifest not found" }],
-    ["registry availability", { status: 1, stderr: "registry returned 503 Service Unavailable" }],
+    [
+      "authentication",
+      { status: 1, stderr: "unauthorized: authentication required" },
+      "unauthorized: authentication required",
+    ],
+    ["storage", { status: 1, stderr: "no space left on device" }, "no space left on device"],
+    [
+      "runner network",
+      { status: 1, stderr: "dial tcp: temporary failure in name resolution" },
+      "dial tcp: temporary failure in name resolution",
+    ],
+    [
+      "invalid dependency",
+      { status: 1, stderr: "manifest unknown: manifest not found" },
+      "manifest unknown: manifest not found",
+    ],
+    [
+      "registry availability",
+      { status: 1, stderr: "registry returned 503 Service Unavailable" },
+      "registry returned 503 Service Unavailable",
+    ],
     [
       "daemon behavior",
       { status: 1, error: new Error("error during connect: dial tcp: connection refused") },
+      "error during connect: dial tcp: connection refused",
     ],
-    ["unclassified", { status: 7, stderr: "opaque pull failure" }],
+    ["unclassified", { status: 7, stderr: "opaque pull failure" }, "opaque pull failure"],
   ])(
     "classifies a failed image pull from diagnostic signatures as %s (#10558)",
-    async (layer, pullResult) => {
+    async (layer, pullResult, expectedDiagnostic) => {
       const selected = selection();
       const homeDir = temporaryHome();
       const harness = engineHarness();
@@ -1088,25 +1105,30 @@ describe("managed llama.cpp installer", () => {
         ok: false,
         reason: expect.stringContaining(`Failure classification: ${layer}. ${evidence}`),
       });
+      const failure = result as Extract<typeof result, { readonly ok: false }>;
+      expect(failure.reason).toContain(`Redacted pull diagnostic: ${expectedDiagnostic}`);
     },
   );
 
-  it("reports a bounded image-pull classification without streaming sensitive output (#10558)", async () => {
+  it("reports a bounded redacted pull diagnostic without streaming sensitive output (#10558)", async () => {
     const selected = selection();
     const homeDir = temporaryHome();
     const harness = engineHarness();
     const secret = "opaque-pull-token";
+    const terminalControls = "\u001b]0;forged title\u0007\u001b[31m\u202e";
     const pullOutput =
-      `unauthorized: https://pull-user:${secret}@registry.example/v2/image?token=${secret} ` +
-      "x".repeat(1_000);
+      `${"x".repeat(1_000)} stdout cause ${terminalControls}unauthorized: ` +
+      `https://pull-user:${secret}@registry.example/v2/image?token=${secret}`;
+    const pullStderr = `stderr cause token=${secret}`;
+    const pullError = new Error(`error cause Authorization: Bearer ${secret}`);
     const log = vi.fn();
     const result = await installManagedLlamaCpp(selected, {
       sandboxName: "spark-agent",
       homeDir,
       runtimeProvider: managedRuntimeProvider(harness.engine),
       pullImage: vi.fn(async (_image, options) => {
-        options.logLine(pullOutput);
-        return { status: 1, stderr: pullOutput };
+        options.logLine([pullOutput, pullStderr, pullError.message].join("\n"));
+        return { status: 1, stdout: pullOutput, stderr: pullStderr, error: pullError };
       }),
       verifyGguf: vi.fn(async () => {
         throw new Error("not cached");
@@ -1117,9 +1139,15 @@ describe("managed llama.cpp installer", () => {
 
     const failure = result as Extract<typeof result, { readonly ok: false }>;
     expect(failure.reason).toContain("Failure classification: authentication.");
-    expect(failure.reason).toContain("Raw pull output is not included.");
+    expect(failure.reason).toContain("Redacted pull diagnostic: [truncated]");
+    expect(failure.reason).toContain("stdout cause unauthorized");
+    expect(failure.reason).toContain("stderr cause token=<REDACTED>");
+    expect(failure.reason).toContain("error cause Authorization: Bearer <REDACTED>");
     expect(failure.reason).not.toContain(secret);
-    expect(Buffer.byteLength(failure.reason, "utf8")).toBeLessThan(400);
+    expect(failure.reason).not.toContain("forged title");
+    expect(failure.reason).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]|\p{Cf}/u);
+    const diagnostic = failure.reason.split("Redacted pull diagnostic: ")[1] ?? "";
+    expect(Buffer.byteLength(diagnostic, "utf8")).toBeLessThanOrEqual(512);
     expect(log.mock.calls.flat().join("\n")).not.toContain(secret);
     expect(log.mock.calls.flat().join("\n")).not.toContain("unauthorized");
   });
