@@ -3,8 +3,13 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { getSandboxFailurePhase, isSandboxReady } from "../state/gateway";
 import {
+  namedOpenShellGateway,
+  type OpenShellSandboxObserver,
+  type OpenShellSandboxReadiness,
+} from "../adapters/openshell/sandbox-observer";
+import {
+  createCliSandboxReadyWaiter,
   createSandboxReadyWaiter,
   formatCreatedSandboxReadinessFailureMessage,
   getSandboxReadyErrorDebouncePolls,
@@ -15,122 +20,220 @@ import {
 } from "./sandbox-readiness-tracing";
 
 const NAME = "my-sandbox";
+const TARGET = namedOpenShellGateway("nemoclaw");
+const READY_PHASES = new Set(["Ready", "Running"]);
+const TERMINAL_PHASES = new Set(["Error", "Failed", "CrashLoopBackOff"]);
 
-function replay(outputs: readonly string[]) {
+function readinessForPhase(phase: string): OpenShellSandboxReadiness {
+  return READY_PHASES.has(phase)
+    ? "ready"
+    : TERMINAL_PHASES.has(phase)
+      ? "terminal"
+      : "not_ready";
+}
+
+function replay(phases: readonly (string | null)[]) {
   let i = 0;
-  const runCaptureOpenshell = vi.fn(() => outputs[Math.min(i++, outputs.length - 1)]);
+  const listSandboxes = vi.fn<OpenShellSandboxObserver["listSandboxes"]>(async () => {
+    const phase = phases[Math.min(i++, phases.length - 1)] ?? null;
+    return {
+      ok: true,
+      value: {
+        sandboxes: phase ? [{ name: NAME, phase, readiness: readinessForPhase(phase) }] : [],
+      },
+    };
+  });
   const sleep = vi.fn();
-  return { runCaptureOpenshell, sleep, polls: () => i };
+  return { observer: { listSandboxes }, listSandboxes, sleep, polls: () => i };
 }
 
 describe("createSandboxReadyWaiter", () => {
-  it("uses the legacy Docker-driver poll settings as an adaptive deadline budget", () => {
-    const runCaptureOpenshell = vi.fn(() => `${NAME}   Provisioning`);
+  it("reads the authoritative gateway name for each CLI-backed wait (#9803)", async () => {
+    let gatewayName = "nemoclaw";
+    const capture = vi.fn((_args: string[]) => ({
+      status: 0,
+      output: `${NAME} Ready`,
+      stdout: `${NAME} Ready`,
+      stderr: "",
+    }));
+    const waitForSandboxReady = createCliSandboxReadyWaiter({
+      capture,
+      getGatewayName: () => gatewayName,
+      isLinuxDockerDriverGatewayEnabled: () => true,
+      sleep: vi.fn(),
+    });
+
+    await expect(waitForSandboxReady(NAME, 1, 0)).resolves.toEqual({
+      ready: true,
+      reason: "ready",
+      error: null,
+    });
+    gatewayName = "nemoclaw-18080";
+    await expect(waitForSandboxReady(NAME, 1, 0)).resolves.toEqual({
+      ready: true,
+      reason: "ready",
+      error: null,
+    });
+
+    expect(capture.mock.calls.map(([args]) => args)).toEqual([
+      ["sandbox", "list", "-g", "nemoclaw"],
+      ["sandbox", "list", "-g", "nemoclaw-18080"],
+    ]);
+  });
+
+  it("uses the legacy Docker-driver poll settings as an adaptive deadline budget", async () => {
+    const { observer, listSandboxes } = replay(["Provisioning"]);
     const sleep = vi.fn();
     const waitForSandboxReady = createSandboxReadyWaiter({
-      runCaptureOpenshell,
-      isSandboxReady,
+      observer,
+      target: TARGET,
       isLinuxDockerDriverGatewayEnabled: () => true,
       sleep,
     });
 
-    expect(waitForSandboxReady(NAME, 2, 3)).toBe(false);
-    expect(runCaptureOpenshell).toHaveBeenCalledTimes(7);
+    await expect(waitForSandboxReady(NAME, 2, 3)).resolves.toEqual({
+      ready: false,
+      reason: "timeout",
+      error: null,
+    });
+    expect(listSandboxes).toHaveBeenCalledTimes(7);
+    expect(listSandboxes).toHaveBeenCalledWith({ target: TARGET });
     expect(sleep).toHaveBeenCalledTimes(7);
     expect(sleep).toHaveBeenNthCalledWith(1, 0.25);
     expect(sleep.mock.calls.reduce((total, [seconds]) => total + seconds, 0)).toBeCloseTo(6, 2);
     expect(Math.max(...sleep.mock.calls.map(([seconds]) => seconds))).toBeLessThanOrEqual(3);
   });
 
-  it("uses the same deadline for the legacy Kubernetes pod fallback", () => {
-    const runCaptureOpenshell = vi
-      .fn()
-      .mockReturnValueOnce(`${NAME}   Provisioning`)
-      .mockReturnValueOnce("Pending");
+  it("uses the same deadline for the legacy Kubernetes pod fallback", async () => {
+    const { observer, listSandboxes } = replay(["Provisioning"]);
+    const fallbackReadinessProbe = vi.fn(async () => ({
+      ok: true as const,
+      value: "not_ready" as const,
+    }));
     const sleep = vi.fn();
     const waitForSandboxReady = createSandboxReadyWaiter({
-      runCaptureOpenshell,
-      isSandboxReady,
+      observer,
+      target: TARGET,
+      fallbackReadinessProbe,
       isLinuxDockerDriverGatewayEnabled: () => false,
       sleep,
     });
 
-    expect(waitForSandboxReady(NAME, 1, 2)).toBe(false);
-    expect(runCaptureOpenshell).toHaveBeenCalledTimes(8);
-    expect(runCaptureOpenshell.mock.calls[1]?.[0]).toContain("kubectl");
+    await expect(waitForSandboxReady(NAME, 1, 2)).resolves.toEqual({
+      ready: false,
+      reason: "timeout",
+      error: null,
+    });
+    expect(listSandboxes).toHaveBeenCalledTimes(4);
+    expect(fallbackReadinessProbe).toHaveBeenCalledTimes(4);
+    expect(fallbackReadinessProbe).toHaveBeenCalledWith({
+      target: TARGET,
+      sandboxName: NAME,
+    });
     expect(sleep).toHaveBeenCalledTimes(4);
     expect(sleep.mock.calls.reduce((total, [seconds]) => total + seconds, 0)).toBeCloseTo(2, 2);
   });
 
-  it("keeps the traced waiter within its deadline without an extra final delay", () => {
-    const runCaptureOpenshell = vi
-      .fn()
-      .mockReturnValueOnce(`${NAME}   Provisioning`)
-      .mockReturnValueOnce("Pending");
+  it("keeps the traced waiter within its deadline without an extra final delay", async () => {
+    const { observer } = replay(["Provisioning"]);
+    const fallbackReadinessProbe = vi.fn(async () => ({
+      ok: true as const,
+      value: "not_ready" as const,
+    }));
     const sleep = vi.fn();
 
-    expect(
+    await expect(
       waitForSandboxReadyWithTrace({
         sandboxName: NAME,
         attempts: 1,
         delaySeconds: 2,
-        runCaptureOpenshell,
-        isSandboxReady,
+        observer,
+        target: TARGET,
+        fallbackReadinessProbe,
         isLinuxDockerDriverGatewayEnabled: () => false,
         sleep,
       }),
-    ).toBe(false);
+    ).resolves.toEqual({ ready: false, reason: "timeout", error: null });
     expect(sleep).toHaveBeenCalledTimes(4);
     expect(sleep.mock.calls.reduce((total, [seconds]) => total + seconds, 0)).toBeCloseTo(2, 2);
+  });
+
+  it("stops on an authentication failure without using the readiness fallback (#9803)", async () => {
+    const error = {
+      kind: "authentication" as const,
+      message: "OpenShell could not authenticate the sandbox observation.",
+    };
+    const listSandboxes = vi.fn<OpenShellSandboxObserver["listSandboxes"]>(async () => ({
+      ok: false,
+      error,
+    }));
+    const fallbackReadinessProbe = vi.fn();
+    const sleep = vi.fn();
+
+    await expect(
+      waitForSandboxReadyWithTrace({
+        sandboxName: NAME,
+        attempts: 10,
+        delaySeconds: 2,
+        observer: { listSandboxes },
+        target: TARGET,
+        fallbackReadinessProbe,
+        isLinuxDockerDriverGatewayEnabled: () => false,
+        sleep,
+      }),
+    ).resolves.toEqual({ ready: false, reason: "observation_failed", error });
+    expect(listSandboxes).toHaveBeenCalledOnce();
+    expect(fallbackReadinessProbe).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
   });
 });
 
 describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
-  it("waits for the exact recreated sandbox to become executable before accepting stable Ready (#9050)", () => {
-    const { runCaptureOpenshell, sleep } = replay([`${NAME}   Ready`]);
+  it("waits for the exact recreated sandbox to become executable before accepting stable Ready (#9050)", async () => {
+    const { observer, listSandboxes, sleep } = replay(["Ready"]);
     const checkReadyIdentity = vi.fn().mockReturnValueOnce("not_ready").mockReturnValue("ready");
 
-    expect(
+    await expect(
       waitForCreatedSandboxReadyWithTrace({
         sandboxName: NAME,
         timeoutSecs: 30,
-        runCaptureOpenshell,
-        isSandboxReady,
+        observer,
+        target: TARGET,
         stableReadyPolls: 2,
         checkReadyIdentity,
         sleep,
       }),
-    ).toEqual({ ready: true, reason: "ready", failurePhase: null });
+    ).resolves.toEqual({ ready: true, reason: "ready", failurePhase: null });
     expect(checkReadyIdentity).toHaveBeenCalledTimes(3);
-    expect(runCaptureOpenshell).toHaveBeenCalledTimes(3);
+    expect(listSandboxes).toHaveBeenCalledTimes(3);
     expect(sleep).toHaveBeenCalledTimes(2);
   });
 
-  it("stops when the recreated sandbox identity changes (#9050)", () => {
-    const { runCaptureOpenshell, sleep } = replay([`${NAME}   Ready`]);
+  it("stops when the recreated sandbox identity changes (#9050)", async () => {
+    const { observer, listSandboxes, sleep } = replay(["Ready"]);
 
-    expect(
+    await expect(
       waitForCreatedSandboxReadyWithTrace({
         sandboxName: NAME,
         timeoutSecs: 30,
-        runCaptureOpenshell,
-        isSandboxReady,
+        observer,
+        target: TARGET,
         checkReadyIdentity: () => "identity_changed",
         sleep,
       }),
-    ).toEqual({ ready: false, reason: "identity_changed", failurePhase: null });
-    expect(runCaptureOpenshell).toHaveBeenCalledOnce();
+    ).resolves.toEqual({ ready: false, reason: "identity_changed", failurePhase: null });
+    expect(listSandboxes).toHaveBeenCalledOnce();
     expect(sleep).not.toHaveBeenCalled();
   });
 
-  it("stops after an unknown durable-identity probe failure (#9050)", () => {
-    const { runCaptureOpenshell, sleep } = replay([`${NAME}   Ready`]);
+  it("stops after an unknown durable-identity probe failure (#9050)", async () => {
+    const { observer, listSandboxes, sleep } = replay(["Ready"]);
 
-    const readiness = waitForCreatedSandboxReadyWithTrace({
+    const readiness = await waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
       timeoutSecs: 30,
-      runCaptureOpenshell,
-      isSandboxReady,
+      observer,
+      target: TARGET,
       checkReadyIdentity: () => "probe_failed",
       sleep,
     });
@@ -142,39 +245,67 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
     expect(formatCreatedSandboxReadinessFailureMessage(NAME, readiness, 30)).toBe(
       `  NemoClaw could not verify that sandbox '${NAME}' returned a durable ID and accepted commands.`,
     );
-    expect(runCaptureOpenshell).toHaveBeenCalledOnce();
+    expect(listSandboxes).toHaveBeenCalledOnce();
     expect(sleep).not.toHaveBeenCalled();
   });
 
-  it("does not probe when the readiness deadline is zero (#3768)", () => {
-    const { runCaptureOpenshell, sleep } = replay([`${NAME}   Ready`]);
+  it("does not probe when the readiness deadline is zero (#3768)", async () => {
+    const { observer, listSandboxes, sleep } = replay(["Ready"]);
 
-    expect(
+    await expect(
       waitForCreatedSandboxReadyWithTrace({
         sandboxName: NAME,
         timeoutSecs: 0,
-        runCaptureOpenshell,
-        isSandboxReady,
+        observer,
+        target: TARGET,
         sleep,
       }),
-    ).toEqual({ ready: false, reason: "timeout", failurePhase: null });
-    expect(runCaptureOpenshell).not.toHaveBeenCalled();
+    ).resolves.toEqual({ ready: false, reason: "timeout", failurePhase: null });
+    expect(listSandboxes).not.toHaveBeenCalled();
   });
 
-  it("fast-fails on the first Error poll when the debounce is opted out (K=1)", () => {
-    const { runCaptureOpenshell, sleep } = replay([
-      `${NAME}   Provisioning   1s ago`,
-      `${NAME}   Error          3s ago`,
-    ]);
+  it("stops on a typed observation failure instead of treating it as missing", async () => {
+    const error = {
+      kind: "authentication" as const,
+      message: "OpenShell could not authenticate the sandbox observation.",
+    };
+    const listSandboxes = vi.fn<OpenShellSandboxObserver["listSandboxes"]>(async () => ({
+      ok: false,
+      error,
+    }));
+    const sleep = vi.fn();
 
-    const ready = waitForCreatedSandboxReadyWithTrace({
+    const readiness = await waitForCreatedSandboxReadyWithTrace({
+      sandboxName: NAME,
+      timeoutSecs: 30,
+      observer: { listSandboxes },
+      target: TARGET,
+      sleep,
+    });
+
+    expect(readiness).toEqual({
+      ready: false,
+      reason: "observation_failed",
+      failurePhase: null,
+      error,
+    });
+    expect(formatCreatedSandboxReadinessFailureMessage(NAME, readiness, 30)).toContain(
+      error.message,
+    );
+    expect(listSandboxes).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("fast-fails on the first Error poll when the debounce is opted out (K=1)", async () => {
+    const { observer, listSandboxes, sleep } = replay(["Provisioning", "Error"]);
+
+    const ready = await waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
       // 600 / 2 = 300 readyAttempts. With the K=1 (no-debounce) opt-out we bail
       // out after the 2nd poll, preserving the original fast-fail intent.
       timeoutSecs: 600,
-      runCaptureOpenshell,
-      isSandboxReady,
-      getSandboxFailurePhase,
+      observer,
+      target: TARGET,
       errorPhaseDebouncePolls: 1,
       sleep,
     });
@@ -184,50 +315,38 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
       reason: "terminal_failure_phase",
       failurePhase: "Error",
     });
-    expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    expect(listSandboxes).toHaveBeenCalledTimes(2);
     // Should not sleep after detecting the terminal phase.
     expect(sleep).toHaveBeenCalledTimes(1);
   });
 
-  it("recovers when a transient Error flips to Ready within the debounce window (#6043)", () => {
+  it("recovers when a transient Error flips to Ready within the debounce window (#6043)", async () => {
     // DGX Spark repro: the gateway re-registers the just-created sandbox and
     // `sandbox list` briefly reports Error before flipping to Ready. The
     // default debounce must tolerate the transient rather than fast-failing.
-    const { runCaptureOpenshell, sleep } = replay([
-      `${NAME}   Provisioning   1s ago`,
-      `${NAME}   Error          3s ago`,
-      `${NAME}   Error          5s ago`,
-      `${NAME}   Ready          7s ago`,
-    ]);
+    const { observer, listSandboxes, sleep } = replay(["Provisioning", "Error", "Error", "Ready"]);
 
-    const ready = waitForCreatedSandboxReadyWithTrace({
+    const ready = await waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
       timeoutSecs: 600,
-      runCaptureOpenshell,
-      isSandboxReady,
-      getSandboxFailurePhase,
+      observer,
+      target: TARGET,
       sleep,
     });
 
     expect(ready).toEqual({ ready: true, reason: "ready", failurePhase: null });
-    expect(runCaptureOpenshell).toHaveBeenCalledTimes(4);
+    expect(listSandboxes).toHaveBeenCalledTimes(4);
   });
 
-  it("resets the debounce counter when a non-Error poll interrupts the Error streak", () => {
+  it("resets the debounce counter when a non-Error poll interrupts the Error streak", async () => {
     // Flapping Error must not accumulate toward the terminal threshold.
-    const { runCaptureOpenshell, sleep } = replay([
-      `${NAME}   Error          1s ago`,
-      `${NAME}   Provisioning   3s ago`,
-      `${NAME}   Error          5s ago`,
-      `${NAME}   Ready          7s ago`,
-    ]);
+    const { observer, sleep } = replay(["Error", "Provisioning", "Error", "Ready"]);
 
-    const ready = waitForCreatedSandboxReadyWithTrace({
+    const ready = await waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
       timeoutSecs: 600,
-      runCaptureOpenshell,
-      isSandboxReady,
-      getSandboxFailurePhase,
+      observer,
+      target: TARGET,
       errorPhaseDebouncePolls: 2,
       sleep,
     });
@@ -236,15 +355,14 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
     expect(ready).toEqual({ ready: true, reason: "ready", failurePhase: null });
   });
 
-  it("still fails terminally after sustained Error exceeds the debounce window (#6043)", () => {
-    const { runCaptureOpenshell, sleep } = replay([`${NAME}   Error   3s ago`]);
+  it("still fails terminally after sustained Error exceeds the debounce window (#6043)", async () => {
+    const { observer, listSandboxes, sleep } = replay(["Error"]);
 
-    const ready = waitForCreatedSandboxReadyWithTrace({
+    const ready = await waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
       timeoutSecs: 600,
-      runCaptureOpenshell,
-      isSandboxReady,
-      getSandboxFailurePhase,
+      observer,
+      target: TARGET,
       errorPhaseDebouncePolls: 3,
       sleep,
     });
@@ -256,22 +374,21 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
     });
     // 3 consecutive Error polls trigger the terminal failure; the wait sleeps
     // twice between the first three polls and stops before the full timeout.
-    expect(runCaptureOpenshell).toHaveBeenCalledTimes(3);
+    expect(listSandboxes).toHaveBeenCalledTimes(3);
     expect(sleep).toHaveBeenCalledTimes(2);
   });
 
-  it("reports the Error phase (not a generic timeout) when the debounce outlasts the timeout", () => {
+  it("reports the Error phase (not a generic timeout) when the debounce outlasts the timeout", async () => {
     // Small readiness timeout (1 poll) with the default debounce (30): a stuck
     // Error can never reach the debounce threshold, but it must still surface
     // the terminal phase rather than a phase-less timeout (#6043 review PRA-1).
-    const { runCaptureOpenshell, sleep } = replay([`${NAME}   Error   3s ago`]);
+    const { observer, sleep } = replay(["Error"]);
 
-    const ready = waitForCreatedSandboxReadyWithTrace({
+    const ready = await waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
       timeoutSecs: 2, // -> readyAttempts = 1, far below the default 30-poll debounce
-      runCaptureOpenshell,
-      isSandboxReady,
-      getSandboxFailurePhase,
+      observer,
+      target: TARGET,
       sleep,
     });
 
@@ -282,41 +399,40 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
     });
   });
 
-  it.each([
-    "Failed",
-    "CrashLoopBackOff",
-  ])("fast-fails immediately on genuinely terminal phase %s even with a large debounce", (phase) => {
-    const { runCaptureOpenshell, sleep } = replay([
-      `${NAME}   Provisioning   1s ago`,
-      `${NAME}   ${phase}   3s ago`,
-    ]);
+  it.each(["Failed", "CrashLoopBackOff"])(
+    "fast-fails immediately on genuinely terminal phase %s even with a large debounce",
+    async (phase) => {
+      const { observer, listSandboxes, sleep } = replay(["Provisioning", phase]);
 
-    const ready = waitForCreatedSandboxReadyWithTrace({
+      const ready = await waitForCreatedSandboxReadyWithTrace({
+        sandboxName: NAME,
+        timeoutSecs: 600,
+        observer,
+        target: TARGET,
+        // Even with a very large debounce, non-Error terminal phases must not
+        // be debounced (#6043 CodeRabbit/advisor: debounce is Error-only).
+        errorPhaseDebouncePolls: 999,
+        sleep,
+      });
+
+      expect(ready).toEqual({
+        ready: false,
+        reason: "terminal_failure_phase",
+        failurePhase: phase,
+      });
+      expect(listSandboxes).toHaveBeenCalledTimes(2);
+      expect(sleep).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("rounds a fractional debounce override (2.6 -> 3), matching envInt semantics", async () => {
+    const { observer, listSandboxes, sleep } = replay(["Error"]);
+
+    const ready = await waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
       timeoutSecs: 600,
-      runCaptureOpenshell,
-      isSandboxReady,
-      getSandboxFailurePhase,
-      // Even with a very large debounce, non-Error terminal phases must not
-      // be debounced (#6043 CodeRabbit/advisor: debounce is Error-only).
-      errorPhaseDebouncePolls: 999,
-      sleep,
-    });
-
-    expect(ready).toEqual({ ready: false, reason: "terminal_failure_phase", failurePhase: phase });
-    expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
-    expect(sleep).toHaveBeenCalledTimes(1);
-  });
-
-  it("rounds a fractional debounce override (2.6 -> 3), matching envInt semantics", () => {
-    const { runCaptureOpenshell, sleep } = replay([`${NAME}   Error   3s ago`]);
-
-    const ready = waitForCreatedSandboxReadyWithTrace({
-      sandboxName: NAME,
-      timeoutSecs: 600,
-      runCaptureOpenshell,
-      isSandboxReady,
-      getSandboxFailurePhase,
+      observer,
+      target: TARGET,
       errorPhaseDebouncePolls: 2.6,
       sleep,
     });
@@ -329,25 +445,19 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
     // round(2.6) === 3 (truncation would give 2), so the 3rd consecutive Error
     // poll is terminal — the same rounding rule as the
     // NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE env path.
-    expect(runCaptureOpenshell).toHaveBeenCalledTimes(3);
+    expect(listSandboxes).toHaveBeenCalledTimes(3);
   });
 
-  it("ignores a non-finite debounce override and falls back to the env/default", () => {
+  it("ignores a non-finite debounce override and falls back to the env/default", async () => {
     // NaN is not finite, so the override is dropped and the default (30) is
     // used: a 4-poll transient Error still recovers to Ready.
-    const { runCaptureOpenshell } = replay([
-      `${NAME}   Error   1s ago`,
-      `${NAME}   Error   3s ago`,
-      `${NAME}   Error   5s ago`,
-      `${NAME}   Ready   7s ago`,
-    ]);
+    const { observer } = replay(["Error", "Error", "Error", "Ready"]);
 
-    const ready = waitForCreatedSandboxReadyWithTrace({
+    const ready = await waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
       timeoutSecs: 600,
-      runCaptureOpenshell,
-      isSandboxReady,
-      getSandboxFailurePhase,
+      observer,
+      target: TARGET,
       errorPhaseDebouncePolls: Number.NaN,
       sleep: () => {},
     });
@@ -486,31 +596,23 @@ describe("getSandboxReadyErrorDebouncePolls env contract", () => {
   });
 });
 
-// PRA-5 acceptance: deterministic replay of the reporter's DGX Spark
-// gateway/port-fallback create sequence through the real readiness waiter. DGX
+// PRA-5 acceptance: typed replay of the reporter's DGX Spark
+// gateway/port-fallback phase sequence through the real readiness waiter. DGX
 // Spark hardware is unavailable, so this checked-in replay is the acceptance
 // gate: it proves the pre-fix fast-fail regressed on the exact reporter signal
 // and that the shipped default recovers.
 describe("DGX Spark fresh-onboard readiness replay (#6043)", () => {
-  // Rows as `openshell sandbox list` reports them while the gateway supervisor
-  // restarts (dashboard port fallback 18789 -> 18794) and re-registers the
-  // just-created sandbox before it settles to Ready.
-  const reporterSequence = [
-    `${NAME}   Provisioning   2s ago`,
-    `${NAME}   Error          6s ago`,
-    `${NAME}   Error          8s ago`,
-    `${NAME}   Error          10s ago`,
-    `${NAME}   Ready          14s ago`,
-  ] as const;
+  // The CLI-adapter test owns the captured table layout that produced these
+  // phases. This action test owns the debounce decision for typed observations.
+  const reporterPhaseSequence = ["Provisioning", "Error", "Error", "Error", "Ready"] as const;
 
-  it("regressed pre-fix: fast-fail (K=1) surfaces the exact reporter failure line", () => {
-    const { runCaptureOpenshell, sleep } = replay(reporterSequence);
-    const ready = waitForCreatedSandboxReadyWithTrace({
+  it("regressed pre-fix: fast-fail (K=1) surfaces the reporter failure phase", async () => {
+    const { observer, sleep } = replay(reporterPhaseSequence);
+    const ready = await waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
       timeoutSecs: 1500,
-      runCaptureOpenshell,
-      isSandboxReady,
-      getSandboxFailurePhase,
+      observer,
+      target: TARGET,
       errorPhaseDebouncePolls: 1,
       sleep,
     });
@@ -531,14 +633,13 @@ describe("DGX Spark fresh-onboard readiness replay (#6043)", () => {
     ).toContain("entered Failed phase before it became ready (waited up to 1500s)");
   });
 
-  it("recovers with the shipped default debounce: onboard continues to Ready", () => {
-    const { runCaptureOpenshell, sleep } = replay(reporterSequence);
-    const ready = waitForCreatedSandboxReadyWithTrace({
+  it("recovers with the shipped default debounce: onboard continues to Ready", async () => {
+    const { observer, sleep } = replay(reporterPhaseSequence);
+    const ready = await waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
       timeoutSecs: 1500,
-      runCaptureOpenshell,
-      isSandboxReady,
-      getSandboxFailurePhase,
+      observer,
+      target: TARGET,
       sleep,
     });
 
@@ -557,14 +658,11 @@ describe("DGX Spark fresh-onboard readiness replay (#6043)", () => {
   // upstream OpenShell `sandbox list` fix. A maintainer
   // enables this once OpenShell guarantees `sandbox list` no longer reports a
   // transient Error while the gateway re-registers a just-created sandbox: if
-  // the raw upstream sequence contains no Error rows, the debounce in
+  // the typed upstream sequence contains no Error phase, the debounce in
   // waitForCreatedSandboxReadyWithTrace can be deleted.
   it.skip("upstream_openshell_sandbox_list_error_transient_fixed", () => {
-    // Replace `reporterSequence` with a captured `sandbox list` trace from a
-    // fixed OpenShell during a fresh GPU onboard, then assert no Error rows.
-    const hasTransientError = reporterSequence.some(
-      (row) => getSandboxFailurePhase(row, NAME) === "Error",
-    );
+    // Replace `reporterPhaseSequence` with phases from a fixed OpenShell trace.
+    const hasTransientError = reporterPhaseSequence.includes("Error");
     expect(hasTransientError).toBe(false);
   });
 });

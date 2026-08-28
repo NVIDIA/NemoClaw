@@ -3,58 +3,72 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { getSandboxFailurePhase, isSandboxReady } from "../state/gateway";
+import {
+  namedOpenShellGateway,
+  type OpenShellSandboxObserver,
+  type OpenShellSandboxReadiness,
+} from "../adapters/openshell/sandbox-observer";
 import { waitForCreatedSandboxReadyWithTrace } from "./sandbox-readiness-tracing";
 
 const NAME = "my-sandbox";
+const TARGET = namedOpenShellGateway("nemoclaw");
+const READY_PHASES = new Set(["Ready", "Running"]);
+const TERMINAL_PHASES = new Set(["Error", "Failed", "CrashLoopBackOff"]);
 
-function replay(outputs: readonly string[]) {
+function readinessForPhase(phase: string): OpenShellSandboxReadiness {
+  return READY_PHASES.has(phase)
+    ? "ready"
+    : TERMINAL_PHASES.has(phase)
+      ? "terminal"
+      : "not_ready";
+}
+
+function replay(phases: readonly string[]) {
   let index = 0;
-  const runCaptureOpenshell = vi.fn(() => outputs[Math.min(index++, outputs.length - 1)] ?? "");
-  return { runCaptureOpenshell, sleep: vi.fn() };
+  const listSandboxes = vi.fn<OpenShellSandboxObserver["listSandboxes"]>(async () => {
+    const phase = phases[Math.min(index++, phases.length - 1)] ?? "Provisioning";
+    return {
+      ok: true,
+      value: { sandboxes: [{ name: NAME, phase, readiness: readinessForPhase(phase) }] },
+    };
+  });
+  return { observer: { listSandboxes }, listSandboxes, sleep: vi.fn() };
 }
 
 describe("created sandbox Ready stability", () => {
-  it("preserves single-poll Ready acceptance by default", () => {
-    const { runCaptureOpenshell, sleep } = replay([`${NAME}   Ready   1s ago`]);
+  it("preserves single-poll Ready acceptance by default", async () => {
+    const { observer, listSandboxes, sleep } = replay(["Ready"]);
 
-    const ready = waitForCreatedSandboxReadyWithTrace({
+    const ready = await waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
       timeoutSecs: 600,
-      runCaptureOpenshell,
-      isSandboxReady,
-      getSandboxFailurePhase,
+      observer,
+      target: TARGET,
       sleep,
     });
 
     expect(ready).toEqual({ ready: true, reason: "ready", failurePhase: null });
-    expect(runCaptureOpenshell).toHaveBeenCalledOnce();
+    expect(listSandboxes).toHaveBeenCalledOnce();
     expect(sleep).not.toHaveBeenCalled();
   });
 
-  it("rejects a stale Ready row until compatibility recreation reaches stable Ready", () => {
+  it("rejects a stale Ready row until compatibility recreation reaches stable Ready", async () => {
     // Exact fallback-run ordering from 28817562371: after a successful
     // supervisor exec, sandbox-list first retained the old container's Ready
     // row, then published the recreated supervisor's Error -> Ready sequence.
-    const { runCaptureOpenshell, sleep } = replay([
-      `${NAME}   Ready   old-container`,
-      `${NAME}   Error   replacement-registering`,
-      `${NAME}   Ready   replacement-connected`,
-      `${NAME}   Ready   replacement-stable`,
-    ]);
+    const { observer, listSandboxes, sleep } = replay(["Ready", "Error", "Ready", "Ready"]);
 
-    const ready = waitForCreatedSandboxReadyWithTrace({
+    const ready = await waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
       timeoutSecs: 600,
-      runCaptureOpenshell,
-      isSandboxReady,
-      getSandboxFailurePhase,
+      observer,
+      target: TARGET,
       stableReadyPolls: 2,
       sleep,
     });
 
     expect(ready).toEqual({ ready: true, reason: "ready", failurePhase: null });
-    expect(runCaptureOpenshell).toHaveBeenCalledTimes(4);
+    expect(listSandboxes).toHaveBeenCalledTimes(4);
     expect(sleep).toHaveBeenCalledTimes(3);
     expect(sleep).toHaveBeenNthCalledWith(1, 2);
   });

@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { expect, vi } from "vitest";
 
+import { createCliOpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer-cli";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import type { SandboxGpuProofResult } from "../../state/registry";
 import type { ManagedBootstrapRuntimeCreateLifecycleInput } from "../managed-bootstrap/runtime-create";
@@ -58,6 +59,9 @@ export function createGpuFlowInput(): SandboxGpuCreateFlowInput {
 }
 
 export function createGpuFlowDeps(): SandboxGpuCreateFlowDeps {
+  const runCaptureOpenshell = vi.fn(
+    (_args: string[], _options?: Record<string, unknown>) => "alpha Ready",
+  );
   return {
     runOpenshell: vi.fn((args: string[]) =>
       args[0] === "sandbox" && args[1] === "get"
@@ -68,7 +72,16 @@ export function createGpuFlowDeps(): SandboxGpuCreateFlowDeps {
           }
         : { status: 0, stdout: "", stderr: "" },
     ),
-    runCaptureOpenshell: vi.fn(() => "alpha Ready"),
+    runCaptureOpenshell,
+    sandboxObserver: createCliOpenShellSandboxObserver({
+      capture: (args, options) => {
+        const stdout = runCaptureOpenshell(args, {
+          ignoreError: true,
+          timeout: options.timeout,
+        });
+        return { status: 0, output: stdout, stdout, stderr: "" };
+      },
+    }),
     sleep: vi.fn(),
     openshellArgv: vi.fn((args: string[]) => ["openshell", ...args]),
     verifyDirectSandboxGpu: vi.fn(() => VERIFIED_GPU_PROOF),

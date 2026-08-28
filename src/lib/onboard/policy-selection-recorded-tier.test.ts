@@ -9,7 +9,11 @@ function createPolicySelectionHarness(controlPlaneReady = true) {
   const selectPolicyTier = vi.fn(async () => "balanced");
   const setPolicyTier = vi.fn();
   const syncPresetSelection = vi.fn();
-  const waitForSandboxReady = vi.fn(() => true);
+  const waitForSandboxReady = vi.fn<SetupPolicySelectionDeps["waitForSandboxReady"]>(async () => ({
+    ready: true,
+    reason: "ready",
+    error: null,
+  }));
   const waitForSandboxControlPlaneReady = vi.fn(() => controlPlaneReady);
   const onSelection = vi.fn();
   const deps = {
@@ -118,6 +122,35 @@ describe("policy selection after interrupted onboarding", () => {
     expect(waitForSandboxControlPlaneReady).toHaveBeenCalledWith("alpha");
     expect(waitForSandboxControlPlaneReady.mock.invocationCallOrder[0]).toBeGreaterThan(
       syncPresetSelection.mock.invocationCallOrder[0],
+    );
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("reports an observation failure before policy application instead of calling it not ready (#9803)", async () => {
+    const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`process.exit(${code})`);
+    });
+    const errorLine = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { deps, syncPresetSelection, waitForSandboxReady } = createPolicySelectionHarness();
+    waitForSandboxReady.mockResolvedValueOnce({
+      ready: false,
+      reason: "observation_failed",
+      error: {
+        kind: "authentication",
+        message: "OpenShell could not authenticate the sandbox observation.",
+      },
+    });
+
+    await expect(setupPoliciesWithSelection(deps, "alpha", setupOptions)).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(syncPresetSelection).not.toHaveBeenCalled();
+    expect(errorLine).toHaveBeenCalledWith(
+      "  NemoClaw could not observe sandbox 'alpha' before policy application.",
+    );
+    expect(errorLine).toHaveBeenCalledWith(
+      "  OpenShell could not authenticate the sandbox observation.",
     );
     expect(exit).toHaveBeenCalledWith(1);
   });

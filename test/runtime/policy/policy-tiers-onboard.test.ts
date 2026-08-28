@@ -145,7 +145,7 @@ function createSetupHarness({
     step: () => undefined,
     note: (message) => notes.push(message),
     isNonInteractive: () => nonInteractive,
-    waitForSandboxReady: () => true,
+    waitForSandboxReady: async () => ({ ready: true, reason: "ready", error: null }),
     waitForSandboxControlPlaneReady: () => true,
     syncPresetSelection: (sandboxName, current, selected, accessByName) => {
       syncCalls.push({

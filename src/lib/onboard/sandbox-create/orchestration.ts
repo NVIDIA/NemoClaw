@@ -12,6 +12,7 @@ import {
 } from "../../adapters/openshell/policy-authority";
 import type { SandboxPolicyAuthority } from "../../adapters/openshell/policy-authority";
 import { HERMES_PORTABLE_OPENSHELL_VERSION } from "../../adapters/openshell/resolve-shared";
+import { createCliOpenShellSandboxObserverFromRunner } from "../../adapters/openshell/sandbox-observer-cli";
 import type { AgentDefinition } from "../../agent/defs";
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
@@ -2776,6 +2777,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             {
               runOpenshell: hermesPortableReadyRunner ?? runOpenshell,
               runCaptureOpenshell: hermesPortableReadyCapture ?? runCaptureOpenshell,
+              sandboxObserver: createCliOpenShellSandboxObserverFromRunner(
+                hermesPortableReadyRunner ?? runOpenshell,
+              ),
               sleep: sleepSeconds,
               openshellArgv,
               verifyDirectSandboxGpu: createGpuVerifier,
