@@ -1195,8 +1195,7 @@ runLinuxOpenShellGatewayUpgrade(
         "install pinned legacy NemoClaw and its sandbox",
         "start the survivor agent and workspace marker",
         "upgrade to the current OpenShell gateway",
-        "confirm survivor state and registry after upgrade",
-        "confirm missing policy fails closed with backup preserved",
+        "verify version-specific upgrade outcome",
       ],
     },
   },
@@ -1309,14 +1308,13 @@ runLinuxOpenShellGatewayUpgrade(
     );
 
     const assertRecoveredUpgrade = async (): Promise<void> => {
-      progress.phase("confirm survivor state and registry after upgrade");
       await assertSurvivorSandboxAfterUpgrade(host);
       await verifyOpenClawStateUpgradeProof(host, fake, artifacts, legacyStateContract);
     };
     const assertFailClosedUpgrade = async (): Promise<void> => {
-      progress.phase("confirm missing policy fails closed with backup preserved");
       await assertMissingSurvivorFailsClosedAfterUpgrade(host, currentInstallLog);
     };
+    progress.phase("verify version-specific upgrade outcome");
     await (
       LEGACY_GATEWAY_PRESERVES_LIVE_POLICY ? assertRecoveredUpgrade : assertFailClosedUpgrade
     )();
