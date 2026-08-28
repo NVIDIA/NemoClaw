@@ -294,6 +294,135 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
     },
   );
 
+  it.each(["relative", "shared-root", "shared-parent"])(
+    "rejects an unsafe %s gateway state override before cleanup",
+    async (scenario) => {
+      const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-unsafe-state-"));
+      const port = 9123;
+      try {
+        const configured =
+          scenario === "relative"
+            ? "relative-gateway-state"
+            : scenario === "shared-root"
+              ? path.join(tmpHome, ".local", "state", "nemoclaw")
+              : path.join(tmpHome, ".local", "state");
+        vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(port));
+        vi.resetModules();
+        const runPortUninstall = (await import("./run-plan")).runUninstallPlan;
+        const run = vi.fn(() => ok());
+        const rmSync = vi.fn();
+        const errors = vi.fn();
+
+        const result = runPortUninstall(
+          {
+            assumeYes: true,
+            deleteModels: false,
+            destroyUserData: true,
+            gatewayName: `nemoclaw-${String(port)}`,
+            keepOpenShell: false,
+          },
+          {
+            env: {
+              HOME: tmpHome,
+              NEMOCLAW_GATEWAY_PORT: String(port),
+              NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: configured,
+            },
+            error: errors,
+            rmSync,
+            run,
+          },
+        );
+
+        expect(result.exitCode).toBe(1);
+        expect(errors).toHaveBeenCalledWith(
+          expect.stringContaining("Refusing uninstall before cleanup"),
+        );
+        expect(run).not.toHaveBeenCalled();
+        expect(rmSync).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tmpHome, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it("refuses a registered-sandbox cleanup when the override belongs to another gateway", async () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-wrong-state-"));
+    const selectedPort = 9123;
+    try {
+      vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(selectedPort));
+      vi.resetModules();
+      const runPortUninstall = bindManagedGatewayAuthority(
+        (await import("./run-plan")).runUninstallPlan,
+      );
+      const selectedStateRoot = path.join(tmpHome, ".nemoclaw", "gateways", String(selectedPort));
+      const selectedGatewayState = path.join(tmpHome, "selected-gateway-state");
+      const otherGatewayState = path.join(tmpHome, "other-gateway-state");
+      fs.mkdirSync(selectedStateRoot, { mode: 0o700, recursive: true });
+      fs.mkdirSync(selectedGatewayState, { mode: 0o700 });
+      fs.writeFileSync(path.join(selectedGatewayState, "keep"), "selected\n", { mode: 0o600 });
+      fs.writeFileSync(
+        path.join(selectedStateRoot, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: "selected-box",
+          sandboxes: {
+            "selected-box": {
+              gatewayName: `nemoclaw-${String(selectedPort)}`,
+              gatewayPort: selectedPort,
+              name: "selected-box",
+            },
+          },
+        }),
+        { mode: 0o600 },
+      );
+      writeScopedGatewayState(tmpHome, 8080, otherGatewayState);
+      const openshellCalls: string[][] = [];
+      const warnings = vi.fn();
+
+      const result = runPortUninstall(
+        {
+          assumeYes: true,
+          deleteModels: false,
+          destroyUserData: true,
+          gatewayName: `nemoclaw-${String(selectedPort)}`,
+          keepOpenShell: false,
+        },
+        {
+          commandExists: (command) => command === "openshell",
+          env: {
+            HOME: tmpHome,
+            NEMOCLAW_GATEWAY_PORT: String(selectedPort),
+            NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: otherGatewayState,
+          },
+          error: warnings,
+          existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
+          hasPortableRuntimeCleanup: () => false,
+          isTty: false,
+          log: vi.fn(),
+          rmSync: fs.rmSync,
+          run: (_command, args) => {
+            openshellCalls.push(args);
+            return args[0] === "gateway" && args[1] === "list"
+              ? ok(JSON.stringify([{ name: "nemoclaw" }, { name: "nemoclaw-9123" }]))
+              : ok();
+          },
+          runDocker: () => ok(""),
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(openshellCalls).not.toContainEqual(["sandbox", "delete", "selected-box"]);
+      expect(openshellCalls).not.toContainEqual(["gateway", "remove", "nemoclaw-9123"]);
+      expect(warnings.mock.calls.flat().join("\n")).toContain(
+        "selected process identity cannot be proven",
+      );
+      expect(fs.existsSync(selectedStateRoot)).toBe(true);
+      expect(fs.existsSync(selectedGatewayState)).toBe(true);
+      expect(fs.existsSync(otherGatewayState)).toBe(true);
+    } finally {
+      fs.rmSync(tmpHome, { force: true, recursive: true });
+    }
+  });
+
   it("preserves selected state when a gateway-scoped sandbox deletion fails", async () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-select-fail-"));
     const port = 9123;

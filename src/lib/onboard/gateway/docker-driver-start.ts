@@ -79,6 +79,19 @@ export function createDockerDriverGatewayStart(
     const openshellVersionOutput = deps.runCaptureOpenshell(["--version"], { ignoreError: true });
     const gatewayEnv = deps.getDockerDriverGatewayEnv(openshellVersionOutput);
     const stateDir = deps.getDockerDriverGatewayStateDir();
+    if (process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim()) {
+      deps.gatewayBinding.ensureManagedGatewayStateRoot(
+        {
+          gatewayName: deps.gatewayName(),
+          gatewayPort: deps.gatewayPort(),
+          stateDir,
+        },
+        {
+          isLegacyManagedState: () =>
+            dockerDriverGatewayLaunch.hasStateScopedSandboxNamespace(stateDir),
+        },
+      );
+    }
     const runtimeIdentity = gatewayBin
       ? dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity({
           gatewayBin,

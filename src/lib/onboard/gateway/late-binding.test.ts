@@ -104,6 +104,7 @@ describe("gateway lifecycle late binding", () => {
     const dockerDriverGatewayEnv = {
       startPackageManagedDockerDriverGatewayWithEnvOverride: managedStart,
     } as unknown as typeof import("../docker-driver-gateway-env");
+    const ensureManagedGatewayStateRoot = vi.fn();
     const start = createDockerDriverGatewayStart({
       SUPPORTED_OPENSHELL_FALLBACK_VERSION: "0.0.0",
       checkGatewayPortAvailable: async () => ({ ok: true }),
@@ -119,8 +120,9 @@ describe("gateway lifecycle late binding", () => {
       dockerDriverGatewayEnv,
       envInt: (_name, fallback) => fallback,
       gatewayBinding: {
+        ensureManagedGatewayStateRoot,
         resolveGatewayCompatContainerName: (value: number) => `gateway-${value}`,
-      } as typeof import("../gateway-binding"),
+      } as unknown as typeof import("../gateway-binding"),
       gatewayName: () => name,
       gatewayPort: () => port,
       getDockerDriverGatewayEndpoint: () => "https://127.0.0.1",
@@ -152,9 +154,18 @@ describe("gateway lifecycle late binding", () => {
 
     name = "resumed";
     port = 9777;
-    await start.startDockerDriverGateway();
+    vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", "/tmp/gateway");
+    try {
+      await start.startDockerDriverGateway();
+    } finally {
+      vi.unstubAllEnvs();
+    }
 
     expect(managedStart).toHaveBeenCalledWith(expect.objectContaining({ gatewayName: "resumed" }));
     expect(verifyReachability).toHaveBeenCalledWith(false, expect.objectContaining({ port: 9777 }));
+    expect(ensureManagedGatewayStateRoot).toHaveBeenCalledWith(
+      { gatewayName: "resumed", gatewayPort: 9777, stateDir: "/tmp/gateway" },
+      expect.objectContaining({ isLegacyManagedState: expect.any(Function) }),
+    );
   });
 });

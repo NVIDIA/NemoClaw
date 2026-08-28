@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { waitUntil } from "../core/wait";
+import { resolveGatewayStateDirForPort } from "./gateway/state-dir";
 import {
   gatewayIdForStateDir,
   hasStateScopedSandboxNamespace,
@@ -125,9 +126,11 @@ export function resolveDockerDriverGatewayStateDir(
   env: NodeJS.ProcessEnv = process.env,
   homeDir: string = env.HOME || os.homedir(),
 ): string {
-  const configured = env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
-  if (configured && configured.trim()) return path.resolve(configured.trim());
-  return path.join(homeDir, ".local", "state", "nemoclaw", "openshell-docker-gateway");
+  return resolveGatewayStateDirForPort({
+    configured: env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+    home: homeDir,
+    port: 8080,
+  });
 }
 
 export function resolveDockerDriverGatewayPidFile(

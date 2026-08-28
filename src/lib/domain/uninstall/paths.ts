@@ -4,7 +4,7 @@
 import path from "node:path";
 
 import { GATEWAY_PORT } from "../../core/ports";
-import { resolveGatewayStateDirName } from "../../onboard/gateway-binding";
+import { resolveGatewayStateDirForPort } from "../../onboard/gateway-binding";
 import { nemoclawStateRoot } from "../../state/state-root";
 
 export const DEFAULT_GATEWAY_NAME = "nemoclaw";
@@ -66,7 +66,6 @@ export function defaultUninstallPaths(options: UninstallPathOptions): UninstallP
   const xdgBinHome = options.xdgBinHome || path.join(options.home, ".local", "bin");
   const tmpDir = options.tmpDir || "/tmp";
   const gatewayLocalStateDir = path.join(options.home, ".local", "state", "nemoclaw");
-  const configuredGatewayStateDir = options.gatewayStateDir?.trim();
   return {
     helperServiceGlob: path.join(tmpDir, "nemoclaw-services-*"),
     huggingFaceModelCacheDir: path.join(options.home, ".cache", "huggingface"),
@@ -79,9 +78,11 @@ export function defaultUninstallPaths(options: UninstallPathOptions): UninstallP
     })),
     nemoclawStateDir: nemoclawStateRoot(options.home, GATEWAY_PORT),
     gatewayLocalStateDir,
-    selectedGatewayLocalStateDir: configuredGatewayStateDir
-      ? path.resolve(configuredGatewayStateDir)
-      : path.join(gatewayLocalStateDir, resolveGatewayStateDirName(GATEWAY_PORT)),
+    selectedGatewayLocalStateDir: resolveGatewayStateDirForPort({
+      configured: options.gatewayStateDir,
+      home: options.home,
+      port: GATEWAY_PORT,
+    }),
     openshellConfigDir: path.join(options.home, ".config", "openshell"),
     openshellInstallPaths: openshellInstallPathsForBinDirs(["/usr/local/bin", xdgBinHome]),
     repoRoot: options.repoRoot || path.resolve(__dirname, "..", "..", "..", ".."),

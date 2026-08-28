@@ -48,7 +48,12 @@ import {
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE,
 } from "../../onboard/docker-driver-gateway-service";
-import { resolveGatewayName, resolveGatewayPortFromName } from "../../onboard/gateway-binding";
+import {
+  resolveGatewayName,
+  resolveGatewayPortFromName,
+  managedGatewayStateRootOwnershipFailure,
+  UnsafeGatewayStateDirectoryError,
+} from "../../onboard/gateway-binding";
 import { type GatewayOwner, isExternallySupervised } from "../../onboard/gateway-ownership";
 import {
   type GatewayTeardownAuthorityResolver,
@@ -1764,6 +1769,22 @@ function canRemoveScopedOpenShellResources(
     }
     return false;
   }
+  if (runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim()) {
+    const ownershipFailure = managedGatewayStateRootOwnershipFailure(
+      {
+        gatewayName: options.gatewayName || resolveGatewayName(GATEWAY_PORT),
+        gatewayPort: GATEWAY_PORT,
+        stateDir,
+      },
+      { allowLegacyManagedState: true },
+    );
+    if (ownershipFailure) {
+      runtime.warn(
+        `Refusing ${scopedToSelectedGateway ? "scoped gateway cleanup" : "gateway cleanup"} because the configured state directory is not proven to be the selected gateway's dedicated managed root: ${ownershipFailure}.`,
+      );
+      return false;
+    }
+  }
   if (!requireLiveManagedProcess) return true;
   if (teardownAuthority.source === "packaged-service") {
     const reason = packageManagedServiceGatewayProcessOwnershipFailure(stateDir, runtime);
@@ -2960,14 +2981,13 @@ function canBeginOpenShellCleanup(
   options: UninstallRunOptions,
   runtime: UninstallRuntime,
   scopedToSelectedGateway: boolean,
-  sandboxNames: readonly string[],
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
 ): boolean {
   if (portableRuntimeCleanup) return true;
-  const requireLiveManagedProcess =
-    !selectedGatewayStateDirIsWithinDefaultRoot(paths) &&
-    (!scopedToSelectedGateway || sandboxNames.length === 0);
+  const requireLiveManagedProcess = Boolean(
+    runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim(),
+  );
   return canRemoveScopedOpenShellResources(
     paths,
     options,
@@ -3000,7 +3020,6 @@ function executePlan(
       options,
       runtime,
       scopedToSelectedGateway,
-      sandboxNames,
       teardownAuthority,
       portableRuntimeCleanup,
     )
@@ -3412,15 +3431,25 @@ function prepareUninstallRun(
 ): UninstallRunPreparation {
   const runtime = buildRuntime(deps);
   const expectedGatewayName = resolveGatewayName(GATEWAY_PORT);
+  const resolvedOptions = { ...options, gatewayName: expectedGatewayName };
+  let paths: UninstallPaths;
+  let plan: UninstallPlan;
+  try {
+    ({ paths, plan } = buildRunPlan(resolvedOptions, { ...deps, env: runtime.env }));
+  } catch (error) {
+    if (!(error instanceof UnsafeGatewayStateDirectoryError)) throw error;
+    runtime.error(`Refusing uninstall before cleanup: ${error.message}`);
+    const fallbackEnv = { ...runtime.env };
+    delete fallbackEnv.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
+    ({ plan } = buildRunPlan(resolvedOptions, { ...deps, env: fallbackEnv }));
+    return { kind: "complete", outcome: { exitCode: 1, plan } };
+  }
   if (options.gatewayName && options.gatewayName !== expectedGatewayName) {
     runtime.error(
       `Refusing to uninstall gateway '${options.gatewayName}': NEMOCLAW_GATEWAY_PORT=${String(GATEWAY_PORT)} selects '${expectedGatewayName}'.`,
     );
-    const { plan } = buildRunPlan(options, { ...deps, env: runtime.env });
     return { kind: "complete", outcome: { exitCode: 1, plan } };
   }
-  const resolvedOptions = { ...options, gatewayName: expectedGatewayName };
-  const { paths, plan } = buildRunPlan(resolvedOptions, { ...deps, env: runtime.env });
   if (managedDistributedVllmStateRootStatus(paths, runtime) === "unsafe") {
     return { kind: "complete", outcome: { exitCode: 1, plan } };
   }
