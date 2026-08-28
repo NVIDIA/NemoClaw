@@ -69,6 +69,7 @@ export const sandboxSession = requireDist("../../state/sandbox-session.js");
 export const sandboxState = requireDist("../../state/sandbox.js");
 export const sandboxVersion = requireDist("../../sandbox/version.js");
 export const shields = requireDist("../../shields/index.js");
+export const tempFiles = requireDist("../../onboard/temp-files.js");
 
 export function purgeRebuildModule(): void {
   delete require.cache[requireDist.resolve(rebuildModulePath)];

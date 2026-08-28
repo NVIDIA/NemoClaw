@@ -49,14 +49,17 @@ import {
   sandboxVersion,
   shields,
   sourceSandboxGateway,
+  tempFiles,
 } from "./rebuild-flow-harness";
 
 export {
+  createHarnessTempDir,
   installRebuildFlowTestHooks,
   originalSandboxName,
   policyGet,
   portableAgentLifecycle,
   snapshotEnv,
+  tempFiles,
 } from "./rebuild-flow-harness";
 
 export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): RebuildFlowHarness {

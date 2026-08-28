@@ -160,6 +160,7 @@ async function rebuildSandboxUnlocked(
   const { staleRecovery } = liveState;
   let preparedImage = initiallyPreparedImage;
   let recoveryManifest = validatedRecoveryManifest;
+  let rebuildPolicySourcePath: string | null = null;
   const preparedBackupRecovery = recoveryManifest !== null;
   const recoveryRecreate = staleRecovery || preparedBackupRecovery;
   try {
@@ -219,6 +220,7 @@ async function rebuildSandboxUnlocked(
         relockShieldsIfNeeded,
       });
       if (!backup) return;
+      rebuildPolicySourcePath = backup.policySourcePath;
 
       // Validate the completed backup artifact produced above, not the mutable live
       // tree. This gate therefore follows backup creation and precedes every
@@ -521,8 +523,14 @@ async function rebuildSandboxUnlocked(
         log,
         bail,
       });
-      cleanupTempDir(backup.policySourcePath, "nemoclaw-rebuild-policy");
     } finally {
+      if (rebuildPolicySourcePath) {
+        const retainedPolicySourcePath = rebuildPolicySourcePath;
+        runBestEffortRebuildCleanup(
+          () => cleanupTempDir(retainedPolicySourcePath, "nemoclaw-rebuild-policy"),
+          `  Warning: temporary rebuild policy handoff could not be removed. Remove ${retainedPolicySourcePath} before retrying.`,
+        );
+      }
       if (!rebuildShieldsWindow.relocked && !sandboxExistenceAmbiguous) {
         relockShieldsIfNeeded(sandboxStillExists);
       }

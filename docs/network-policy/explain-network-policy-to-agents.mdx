@@ -46,7 +46,7 @@ The `--write` target is the OpenClaw workspace and is not a Hermes agent-context
 
 ## Understand Redaction
 
-The summary includes the recorded tier, applied presets, allowed host categories, known presets that are not applied, and policy management commands. It also explains the support boundaries between NemoClaw, OpenShell, and the agent.
+The summary includes the inferred tier when available, applied presets, allowed host categories, known presets that are not applied, and policy management commands. It also explains the support boundaries between NemoClaw, OpenShell, and the agent.
 
 The output omits network rule bodies, credential metadata, and binary allowlists. It includes only host stems and category-level summaries. NemoClaw drops private, loopback, link-local, metadata, unique-local, reserved, CGNAT, benchmarking, and internal-suffix hosts from `allowedHostCategories`. It reports their count in `redactedHostCount`.
 

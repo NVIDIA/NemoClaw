@@ -99,7 +99,7 @@ $$nemoclaw my-assistant policy add --from-file ./presets/my-service-api.yaml --d
 $$nemoclaw my-assistant policy add --from-file ./presets/my-service-api.yaml --yes
 ```
 
-NemoClaw records the complete YAML content with the sandbox. You can remove the preset later without keeping the original file.
+NemoClaw namespaces the preset keys in the current OpenShell policy. You can remove the preset later by name without keeping the original file while that live policy remains available.
 
 ## Apply Every File in a Directory
 
@@ -125,13 +125,13 @@ Run the same command after editing the file. NemoClaw compares the preset with t
 
 ## Remove a Custom Preset
 
-Remove the preset by its recorded name:
+Remove the preset by its name:
 
 ```bash
 $$nemoclaw my-assistant policy remove my-service-api --yes
 ```
 
-Run `$$nemoclaw <name> policy list` to see every maintained and custom preset recorded for the sandbox.
+Run `$$nemoclaw <name> policy list` to see every maintained and custom preset present in the current OpenShell policy.
 
 <AgentOnly variant="openclaw,hermes">
 
