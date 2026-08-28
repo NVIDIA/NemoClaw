@@ -4151,7 +4151,9 @@ function restoreShieldsDelta(
   forwardPolicy: string | null,
   livePolicy: string,
 ): string {
-  if (!forwardPolicy) return snapshotPolicy;
+  if (!forwardPolicy) {
+    throw new Error("Shields recovery has no bound forward-policy artifact");
+  }
   const before = YAML.parse(snapshotPolicy) as Record<string, unknown>;
   const forward = YAML.parse(forwardPolicy) as Record<string, unknown>;
   const live = YAML.parse(livePolicy) as Record<string, unknown>;
@@ -4227,13 +4229,16 @@ function applyShieldsPolicySnapshot(
     snapshotPath,
     "Restrictive policy snapshot",
   ).toString("utf-8");
-  const forwardPolicy = transition?.forwardPolicy
-    ? readBoundShieldsPolicyArtifact(
-        transition.forwardPolicy,
-        transition.forwardPolicy.path,
-        "Shields-down forward policy",
-      ).toString("utf-8")
-    : null;
+  if (!transition?.forwardPolicy) {
+    throw new Error(
+      "Shields recovery has no bound forward-policy artifact; refusing to replace live OpenShell policy",
+    );
+  }
+  const forwardPolicy = readBoundShieldsPolicyArtifact(
+    transition.forwardPolicy,
+    transition.forwardPolicy.path,
+    "Shields-down forward policy",
+  ).toString("utf-8");
   const restoredPolicy = restoreShieldsDelta(snapshotPolicy, forwardPolicy, livePolicy);
   const stagedPath = secureTempFile("nemoclaw-shields-restore", ".yaml");
   try {
