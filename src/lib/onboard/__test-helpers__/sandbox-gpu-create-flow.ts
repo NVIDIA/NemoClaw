@@ -133,9 +133,7 @@ export function resetGpuFlowMocks(): void {
   vi.clearAllMocks();
 }
 
-export function createGpuFlowTestHarness(
-  mocks: Record<string, ReturnType<typeof vi.fn>>,
-) {
+export function createGpuFlowTestHarness(mocks: Record<string, ReturnType<typeof vi.fn>>) {
   const readyCheckOptions = { ignoreError: true, timeout: 5_000 };
   const failedProof: SandboxGpuProofResult = {
     status: "failed",
@@ -173,6 +171,26 @@ export function createGpuFlowTestHarness(
     runtimeDir: "/run/user/1001",
     socketPath: "/run/user/1001/podman/podman.sock",
   };
+  const managedDockerConfigPreservationCases = [
+    {
+      title: "the Desktop helper responds",
+      helperResponds: true,
+      dockerHost: "unix:///var/run/docker.sock",
+      contextStdout: "default\n",
+    },
+    {
+      title: "the Docker context is not default",
+      helperResponds: false,
+      dockerHost: undefined,
+      contextStdout: "remote-builder\n",
+    },
+    {
+      title: "an explicit remote Docker host is selected",
+      helperResponds: false,
+      dockerHost: "tcp://remote-builder.example:2376",
+      contextStdout: "default\n",
+    },
+  ];
   const temporaryDirectories: string[] = [];
 
   type OpenShellResult = ReturnType<SandboxGpuCreateFlowDeps["runOpenshell"]>;
@@ -344,6 +362,7 @@ export function createGpuFlowTestHarness(
     NVIDIA_SMI_FAILED_PROOF: nvidiaSmiFailedProof,
     DEFAULT_RUNTIME_SNAPSHOT: defaultRuntimeSnapshot,
     PORTABLE_RUNTIME_AUTHORITY: portableRuntimeAuthority,
+    managedDockerConfigPreservationCases,
     readySandboxGetResult,
     createSequencedOpenShellRunner,
     failNativeCreate,

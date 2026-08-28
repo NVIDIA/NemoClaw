@@ -5,6 +5,7 @@ import {
   mergeIsolatedDockerClientEnv,
   prepareDockerBuildEnvironment,
   type PreparedDockerBuildEnvironment,
+  warnIfDockerBuildEnvironmentCleanupFailed,
 } from "../../adapters/docker/client-isolation";
 import { dockerRun as defaultDockerRun } from "../../adapters/docker/command";
 import { dockerImageInspect } from "../../adapters/docker/inspect";
@@ -109,7 +110,10 @@ async function prepareDockerManagedBootstrapGpuProbeImage(image: string): Promis
       `Docker managed sandbox image pull failed before GPU mode selection: ${reason}.`,
     );
   } finally {
-    prepared.cleanup();
+    warnIfDockerBuildEnvironmentCleanupFailed(
+      prepared.cleanup(),
+      `managed sandbox image '${image}'`,
+    );
   }
 }
 
@@ -164,7 +168,10 @@ function selectedDockerMode(
         : "Docker did not accept a compatibility GPU mode for managed bootstrap.";
     throw new Error(`${message}${formatDockerGpuModeFailureDetails(selection.attempts)}`);
   } finally {
-    prepared.cleanup();
+    warnIfDockerBuildEnvironmentCleanupFailed(
+      prepared.cleanup(),
+      `GPU mode probes for managed sandbox image '${managedBootstrapImageReference(input)}'`,
+    );
   }
 }
 

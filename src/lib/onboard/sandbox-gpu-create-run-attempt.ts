@@ -6,6 +6,7 @@ import { randomBytes } from "node:crypto";
 import {
   mergeIsolatedDockerClientEnv,
   prepareDockerBuildEnvironment,
+  warnIfDockerBuildEnvironmentCleanupFailed,
 } from "../adapters/docker/client-isolation";
 import {
   NEMOCLAW_CREATE_ATTEMPT_LABEL,
@@ -71,6 +72,7 @@ const CREATED_SANDBOX_PUBLICATION_POLL_INTERVAL_SECONDS = 1;
 
 async function streamSandboxCreateWithPublicImageCredentialIsolation(
   isolate: boolean,
+  sandboxName: string,
   sandboxEnv: NodeJS.ProcessEnv,
   run: (env: NodeJS.ProcessEnv) => Promise<StreamSandboxCreateResult>,
 ): Promise<StreamSandboxCreateResult> {
@@ -90,7 +92,10 @@ async function streamSandboxCreateWithPublicImageCredentialIsolation(
     }
     return await run(mergeIsolatedDockerClientEnv(sandboxEnv, prepared));
   } finally {
-    prepared.cleanup();
+    warnIfDockerBuildEnvironmentCleanupFailed(
+      prepared.cleanup(),
+      `managed sandbox create '${sandboxName}'`,
+    );
   }
 }
 
@@ -591,6 +596,7 @@ export function createSandboxGpuCreateAttemptRunner(
     const streamCreate = () =>
       streamSandboxCreateWithPublicImageCredentialIsolation(
         managedBootstrap != null,
+        input.sandboxName,
         input.sandboxEnv,
         (createEnv) =>
           streamSandboxCreate(createExecutable, createExecutableArgs, createEnv, {

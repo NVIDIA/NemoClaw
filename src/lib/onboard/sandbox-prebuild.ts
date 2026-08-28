@@ -11,6 +11,7 @@ import {
   dockerBuildSubprocessEnv,
   prepareDockerBuildEnvironment,
   type PreparedDockerBuildEnvironment,
+  warnIfDockerBuildEnvironmentCleanupFailed,
 } from "../adapters/docker/client-isolation";
 import { dockerSpawn } from "../adapters/docker/exec";
 import { dockerImageInspectFormat } from "../adapters/docker/inspect";
@@ -268,7 +269,12 @@ export async function prebuildSandboxImageIfEligible(
     );
     return { createArgs, imageRef: null, imageId: null };
   } finally {
-    preparedDockerEnvironment?.cleanup();
+    if (preparedDockerEnvironment) {
+      warnIfDockerBuildEnvironmentCleanupFailed(
+        preparedDockerEnvironment.cleanup(),
+        `generated sandbox image '${imageRef}'`,
+      );
+    }
   }
 
   if (status !== 0) {

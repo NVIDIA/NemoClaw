@@ -7,6 +7,7 @@ import { dockerBuild, dockerRmi } from "../../adapters/docker";
 import {
   prepareDockerBuildEnvironment,
   type DockerBuildEnvironmentInput,
+  warnIfDockerBuildEnvironmentCleanupFailed,
 } from "../../adapters/docker/client-isolation";
 import { fingerprintBuildContext } from "../../adapters/fs/build-context-fingerprint";
 import type { AgentDefinition } from "../../agent/defs";
@@ -119,7 +120,10 @@ function buildReplacementImage(
       stdio: ["ignore", "pipe", "pipe"],
     });
   } finally {
-    preparedEnvironment.cleanup();
+    warnIfDockerBuildEnvironmentCleanupFailed(
+      preparedEnvironment.cleanup(),
+      `rebuild image '${imageTag}'`,
+    );
   }
 }
 

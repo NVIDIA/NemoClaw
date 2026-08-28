@@ -36,8 +36,12 @@ export interface DockerBuildEnvironmentInput {
 export interface PreparedDockerBuildEnvironment {
   env: NodeJS.ProcessEnv;
   isolatedCredentialConfig: boolean;
-  cleanup(): void;
+  cleanup(): DockerBuildEnvironmentCleanupResult;
 }
+
+export type DockerBuildEnvironmentCleanupResult =
+  | { ok: true }
+  | { ok: false; directory: string; error: string };
 
 export function createCredentialFreeDockerConfig(purpose: "portable" | "wsl-buildkit"): string {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-${purpose}-docker-config-`));
@@ -72,10 +76,10 @@ export function dockerBuildSubprocessEnv(
     }
   }
   // Match the runner and Docker probe contract: an explicitly selected host
-  // owns daemon authority, so an ambient context and its credentials must not
-  // redirect the build to another daemon.
+  // owns daemon authority, so an ambient context must not redirect the build.
+  // Keep DOCKER_CONFIG because the selected daemon can still require registry
+  // credentials or client certificates from that configuration.
   if (env.DOCKER_HOST !== undefined) {
-    delete env.DOCKER_CONFIG;
     delete env.DOCKER_CONTEXT;
   }
   return env;
@@ -114,7 +118,7 @@ function dockerDesktopCredentialHelperRespondsFromBuild(
 }
 
 function dockerContextIsDefaultFromBuild(env: NodeJS.ProcessEnv): boolean {
-  if (env.DOCKER_HOST) return true;
+  if (env.DOCKER_HOST) return env.DOCKER_HOST.startsWith("unix://");
   const result = dockerSpawnSync(["context", "show"], {
     encoding: "utf-8",
     env: dockerBuildSubprocessEnv(env),
@@ -142,8 +146,8 @@ export function prepareDockerBuildEnvironment(
   const contextIsDefault = input.dockerContextIsDefault ?? dockerContextIsDefaultFromBuild;
   const credentialFreeConfig =
     input.allowCredentialIsolation !== false &&
-    requiresCredentialFreeWslBuildConfig(sourceEnv, helperResponds, input.isWslHost) &&
-    contextIsDefault(sourceEnv)
+    contextIsDefault(sourceEnv) &&
+    requiresCredentialFreeWslBuildConfig(sourceEnv, helperResponds, input.isWslHost)
       ? createCredentialFreeDockerConfig("wsl-buildkit")
       : null;
   return {
@@ -154,11 +158,42 @@ export function prepareDockerBuildEnvironment(
     },
     isolatedCredentialConfig: credentialFreeConfig !== null,
     cleanup: () => {
-      if (credentialFreeConfig !== null) {
+      if (credentialFreeConfig === null) return { ok: true };
+      try {
         fs.rmSync(credentialFreeConfig, { recursive: true, force: true });
+        return { ok: true };
+      } catch (error) {
+        return {
+          ok: false,
+          directory: credentialFreeConfig,
+          error: error instanceof Error ? error.message : String(error),
+        };
       }
     },
   };
+}
+
+function boundedCleanupDiagnostic(value: string): string {
+  return value.replace(/[^\x20-\x7E]/gu, "?").slice(0, 240);
+}
+
+/** Warn without replacing the Docker operation result when temporary cleanup fails. */
+export function warnIfDockerBuildEnvironmentCleanupFailed(
+  result: DockerBuildEnvironmentCleanupResult,
+  operation: string,
+  warn: (message: string) => void = console.warn,
+): void {
+  if (result.ok) return;
+  const directory = boundedCleanupDiagnostic(result.directory);
+  const operationLabel = boundedCleanupDiagnostic(operation);
+  const detail = boundedCleanupDiagnostic(result.error);
+  try {
+    warn(
+      `  Warning: failed to remove credential-free Docker config '${directory}' after ${operationLabel}: ${detail}. It contains no credentials and can be removed after Docker no longer uses it.`,
+    );
+  } catch {
+    // Cleanup diagnostics must never replace the Docker operation result.
+  }
 }
 
 /** Overlay a credential-free Docker client config onto a host subprocess env. */

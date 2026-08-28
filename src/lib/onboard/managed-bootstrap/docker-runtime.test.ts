@@ -186,7 +186,7 @@ beforeEach(() => {
       dockerClientIsolationMocks.original?.(input) ?? {
         env: {},
         isolatedCredentialConfig: false,
-        cleanup: () => {},
+        cleanup: () => ({ ok: true }),
       },
   );
   runtimeSnapshotMocks.query.mockReturnValue({
@@ -205,6 +205,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
   for (const stateRoot of temporaryStateRoots.splice(0)) {
     fs.rmSync(stateRoot, { recursive: true, force: true });
   }
@@ -288,7 +289,13 @@ describe("Docker managed-bootstrap GPU probe image", () => {
     dockerAdapterMocks.imageInspect.mockReturnValue({ status: 1 });
     dockerRun.mockReturnValueOnce({ status: 1, stderr: "probe rejected" });
     const isolatedConfig = "/tmp/nemoclaw-wsl-buildkit-docker-config";
-    const cleanup = vi.fn();
+    const retainedDirectory = "/tmp/nemoclaw-wsl-buildkit-docker-config";
+    const cleanup = vi.fn(() => ({
+      ok: false as const,
+      directory: retainedDirectory,
+      error: "permission denied",
+    }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     dockerClientIsolationMocks.prepare.mockReturnValue({
       env: { DOCKER_BUILDKIT: "1", DOCKER_CONFIG: isolatedConfig },
       isolatedCredentialConfig: true,
@@ -310,6 +317,9 @@ describe("Docker managed-bootstrap GPU probe image", () => {
     expect(pullEnv?.DOCKER_BUILDKIT).toBe("1");
     expect(pullEnv).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
     expect(cleanup).toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(retainedDirectory));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(sandboxImage));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("contains no credentials"));
     expect(dockerAdapterMocks.pullWithProgressWatchdog.mock.invocationCallOrder[0]).toBeLessThan(
       dockerRun.mock.invocationCallOrder[0] ?? 0,
     );
@@ -412,9 +422,21 @@ describe("Docker managed-bootstrap GPU probe image", () => {
       const { dependencies, dockerRun } = gpuModeDependencies();
       const seed = authority("openclaw");
       const input = compatibilityLifecycleInput(seed, dependencies);
+      const sandboxImage = `${input.image.repository}@${input.image.manifestDigest}`;
+      const retainedDirectory = "/tmp/nemoclaw-retained-docker-config";
       sandboxCreateMocks.isDockerDesktopWslRuntime.mockReturnValue(true);
       dockerAdapterMocks.imageInspect.mockReturnValue({ status: 1 });
       dockerAdapterMocks.pullWithProgressWatchdog.mockResolvedValue(pullResult);
+      dockerClientIsolationMocks.prepare.mockReturnValue({
+        env: { DOCKER_CONFIG: retainedDirectory },
+        isolatedCredentialConfig: true,
+        cleanup: () => ({
+          ok: false,
+          directory: retainedDirectory,
+          error: "permission denied",
+        }),
+      });
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       const lifecycle = createDockerManagedBootstrapSurface().createLifecycle(input);
 
       await expect(
@@ -422,6 +444,8 @@ describe("Docker managed-bootstrap GPU probe image", () => {
       ).rejects.toThrow(
         `Docker managed sandbox image pull failed before GPU mode selection: ${reason}.`,
       );
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining(retainedDirectory));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining(sandboxImage));
       expect(dockerRun).not.toHaveBeenCalled();
       expect(adapterMocks.prepare).not.toHaveBeenCalled();
     },

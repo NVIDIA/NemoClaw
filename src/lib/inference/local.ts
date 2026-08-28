@@ -14,6 +14,7 @@ import {
   mergeIsolatedDockerClientEnv,
   prepareDockerBuildEnvironment,
   type PreparedDockerBuildEnvironment,
+  warnIfDockerBuildEnvironmentCleanupFailed,
 } from "../adapters/docker";
 import { createBearerAuthConfig } from "../adapters/http/auth-config";
 import { CONTAINER_REACHABILITY_IMAGE } from "../adapters/http/container-curl-probe";
@@ -1203,7 +1204,10 @@ export function validateSandboxFacingOllamaModel(
         `probed endpoint reports, or stop one daemon so one daemon answers both endpoints.`,
     };
   } finally {
-    prepared.cleanup();
+    warnIfDockerBuildEnvironmentCleanupFailed(
+      prepared.cleanup(),
+      `sandbox-facing Ollama model probe for '${selected}'`,
+    );
   }
 }
 
@@ -1337,7 +1341,10 @@ export function validateLocalProvider(
         };
     }
   } finally {
-    prepared.cleanup();
+    warnIfDockerBuildEnvironmentCleanupFailed(
+      prepared.cleanup(),
+      `local-inference container probe for '${provider}'`,
+    );
   }
 }
 

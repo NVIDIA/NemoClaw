@@ -109,6 +109,7 @@ const {
   NVIDIA_SMI_FAILED_PROOF,
   DEFAULT_RUNTIME_SNAPSHOT,
   PORTABLE_RUNTIME_AUTHORITY,
+  managedDockerConfigPreservationCases,
   readySandboxGetResult,
   createSequencedOpenShellRunner,
   failNativeCreate,
@@ -158,51 +159,41 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
   });
 
-  it.each([
-    {
-      title: "the Desktop helper responds",
-      helperResponds: true,
-      dockerHost: "unix:///var/run/docker.sock",
-      contextStdout: "default\n",
-    },
-    {
-      title: "the Docker context is not default",
-      helperResponds: false,
-      dockerHost: undefined,
-      contextStdout: "remote-builder\n",
-    },
-  ])("keeps the caller Docker config when $title (#10349)", async (row) => {
-    const dockerConfig = writeDesktopCredsStore();
-    mocks.helperResponds.mockReturnValue(row.helperResponds);
-    mocks.dockerSpawnSync.mockReturnValue({
-      status: 0,
-      error: undefined,
-      stdout: row.contextStdout,
-      stderr: "",
-    });
-    const input = createInput();
-    attachManagedBootstrap(input);
-    input.sandboxEnv = {
-      PATH: "/usr/bin",
-      OPENSHELL_GATEWAY: "1",
-      WSL_DISTRO_NAME: "Ubuntu",
-      DOCKER_CONFIG: dockerConfig,
-      ...(row.dockerHost === undefined ? {} : { DOCKER_HOST: row.dockerHost }),
-    };
-    const captured = captureCreateEnv();
-    const deps = createDeps();
-    vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
-      args[1] === "get" ? "ID: alpha-sandbox-id\nState: Ready\n" : "alpha Ready",
-    );
+  it.each(managedDockerConfigPreservationCases)(
+    "keeps the caller Docker config when $title (#10349)",
+    async (row) => {
+      const dockerConfig = writeDesktopCredsStore();
+      mocks.helperResponds.mockReturnValue(row.helperResponds);
+      mocks.dockerSpawnSync.mockReturnValue({
+        status: 0,
+        error: undefined,
+        stdout: row.contextStdout,
+        stderr: "",
+      });
+      const input = createInput();
+      attachManagedBootstrap(input);
+      input.sandboxEnv = {
+        PATH: "/usr/bin",
+        OPENSHELL_GATEWAY: "1",
+        WSL_DISTRO_NAME: "Ubuntu",
+        DOCKER_CONFIG: dockerConfig,
+        ...(row.dockerHost === undefined ? {} : { DOCKER_HOST: row.dockerHost }),
+      };
+      const captured = captureCreateEnv();
+      const deps = createDeps();
+      vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
+        args[1] === "get" ? "ID: alpha-sandbox-id\nState: Ready\n" : "alpha Ready",
+      );
 
-    await runSandboxGpuCreateFlow(input, deps);
+      await runSandboxGpuCreateFlow(input, deps);
 
-    expect(captured.env.DOCKER_CONFIG).toBe(dockerConfig);
-    expect(captured.env.PATH).toBe("/usr/bin");
-    expect(captured.env.OPENSHELL_GATEWAY).toBe("1");
-    expect(captured.configExisted).toBe(true);
-    expect(fs.existsSync(dockerConfig)).toBe(true);
-  });
+      expect(captured.env.DOCKER_CONFIG).toBe(dockerConfig);
+      expect(captured.env.PATH).toBe("/usr/bin");
+      expect(captured.env.OPENSHELL_GATEWAY).toBe("1");
+      expect(captured.configExisted).toBe(true);
+      expect(fs.existsSync(dockerConfig)).toBe(true);
+    },
+  );
 
   it("recovers before an MXC-style create without a Docker branch in central orchestration", async () => {
     const input = createInput();

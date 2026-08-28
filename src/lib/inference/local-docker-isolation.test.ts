@@ -7,7 +7,7 @@ import { validateLocalProvider } from "./local";
 
 describe("local inference Docker client isolation", () => {
   it("passes only the isolated Docker config to local-inference probe commands (#10349)", () => {
-    const cleanup = vi.fn();
+    const cleanup = vi.fn(() => ({ ok: true as const }));
     const isolatedConfig = "/tmp/nemoclaw-isolated-docker-config";
     const calls: Array<{ cmd: readonly string[]; env: NodeJS.ProcessEnv | undefined }> = [];
     const outputs = ['{"models":[]}', "200"];
