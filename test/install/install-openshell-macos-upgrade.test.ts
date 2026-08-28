@@ -72,6 +72,7 @@ test ! -e "${runtimeDir}/openshell-gateway.pid"`;
     env: {
       ...process.env,
       HOME: home,
+      XDG_BIN_HOME: "",
       PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`,
     },
   });
