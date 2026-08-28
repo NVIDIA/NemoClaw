@@ -112,6 +112,7 @@ describe("E2E workflow plan", () => {
     expect(plan.hermesSelected).toBe(true);
     expect(plan.explicitOnlyJobs).toEqual([
       "staging-brev-launchable-identity",
+      "external-gateway-health",
       "llama-cpp-dgx-spark-qualification",
     ]);
     expect(releaseRequiredWorkflowJobs()).toContain("live");

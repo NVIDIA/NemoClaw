@@ -37,6 +37,7 @@ const UPLOAD_E2E_ARTIFACTS_ACTION_PREFIX = "NVIDIA/NemoClaw/.github/actions/uplo
 const UPLOAD_ARTIFACT_ACTION = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a";
 const UPLOAD_ARTIFACT_ACTION_PREFIX = "actions/upload-artifact@";
 const MANAGED_IMAGE_BUILD_CACHE_PUBLISH_STEP = "Publish exact amd64 protected runtime build cache";
+const OPEN_SHELL_SDK_E2E_PACKAGE_UPLOAD_STEP = "Upload reviewed OpenShell SDK archive";
 const MANAGED_IMAGE_BUILD_CACHE_ARTIFACT_NAME =
   "${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT }}";
 const MANAGED_IMAGE_BUILD_CACHE_ARTIFACT_PATH =
@@ -108,7 +109,27 @@ function isExactNativeRuntimeAggregateUpload(jobName: string, step: WorkflowStep
   );
 }
 
+function isExactOpenShellSdkE2ePackageUpload(jobName: string, step: WorkflowStep): boolean {
+  const inputs = record(step.with);
+  return (
+    jobName === "package-openshell-sdk" &&
+    step.name === OPEN_SHELL_SDK_E2E_PACKAGE_UPLOAD_STEP &&
+    step.uses === UPLOAD_ARTIFACT_ACTION &&
+    inputs.name === "${{ steps.identity.outputs.artifact_name }}" &&
+    inputs.path === "${{ steps.package.outputs.artifact_path }}" &&
+    inputs["if-no-files-found"] === "error" &&
+    inputs["retention-days"] === 1
+  );
+}
+
 const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
+  [
+    "external-gateway-health",
+    {
+      name: "e2e-external-gateway-health",
+      path: "e2e-artifacts/live/external-gateway-health/",
+    },
+  ],
   [
     "generate-matrix",
     {
@@ -462,6 +483,7 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
         uses.startsWith(UPLOAD_ARTIFACT_ACTION_PREFIX) &&
         !isExactCommitCliArtifactUpload &&
         !isExactManagedImageBuildCacheUpload(jobName, step) &&
+        !isExactOpenShellSdkE2ePackageUpload(jobName, step) &&
         !isExactNativeRuntimeAggregateUpload(jobName, step)
       ) {
         errors.push(`${jobName} must not invoke actions/upload-artifact directly`);
