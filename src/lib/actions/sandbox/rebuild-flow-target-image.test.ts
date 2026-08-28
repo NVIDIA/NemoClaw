@@ -513,7 +513,7 @@ describe("rebuildSandbox flow: target image", () => {
 
       const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
       expect(errors).toContain("Recreate failed after sandbox was destroyed");
-      expect(errors).toContain("Backup is preserved at: /tmp/nemoclaw-rebuild-backup");
+      expect(errors).toContain(`Backup is preserved at: ${harness.backupPath}`);
       expect(errors).toContain("onboard --resume");
     } finally {
       restoreEnv();

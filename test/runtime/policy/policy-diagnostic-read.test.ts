@@ -26,7 +26,7 @@ describe("OpenShell policy read boundaries", () => {
     expect(command.slice(1)).toEqual(["policy", "get", "--full", "my-assistant"]);
   });
 
-  it("queries the full effective policy when matching gateway presets", () => {
+  it("queries the gateway-scoped base policy when matching presets", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-diagnostic-"));
     const fakeOpenshell = path.join(tmpDir, "openshell");
     const argsFile = path.join(tmpDir, "args.txt");
@@ -43,7 +43,9 @@ describe("OpenShell policy read boundaries", () => {
     vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", fakeOpenshell);
     try {
       expect(policies.getGatewayPresets("my-assistant")).toEqual([]);
-      expect(fs.readFileSync(argsFile, "utf-8").trim()).toBe("policy get --base my-assistant");
+      expect(fs.readFileSync(argsFile, "utf-8").trim()).toBe(
+        "policy get -g nemoclaw --base my-assistant",
+      );
     } finally {
       vi.unstubAllEnvs();
       fs.rmSync(tmpDir, { recursive: true, force: true });

@@ -12,7 +12,6 @@ import {
   MessagingWorkflowPlanner,
 } from "../../messaging";
 import * as policies from "../../policy";
-import * as runner from "../../runner";
 import type { SandboxEntry } from "../../state/registry/types";
 import * as registry from "../../state/registry";
 import { removeSandboxChannel, startSandboxChannel, stopSandboxChannel } from "./policy-channel";
@@ -231,7 +230,7 @@ describe("policy channel remove/enable flows", () => {
     const updateSandboxSpy = vi.spyOn(registry, "updateSandbox");
     const applyPresetSpy = vi.spyOn(policies, "applyPreset");
     const rebuildSpy = vi.spyOn(policyChannelDependencies, "rebuildSandbox");
-    vi.spyOn(runner, "runCapture").mockReturnValue("version: 1\nnetwork_policies: {}\n");
+    vi.spyOn(policies, "getPresetContentGatewayState").mockReturnValue("absent");
     await expect(
       startSandboxChannel("alpha", { channel: "telegram", dryRun: true }),
     ).resolves.toBeUndefined();
@@ -256,29 +255,7 @@ describe("policy channel remove/enable flows", () => {
     vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha" });
     vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["telegram"]);
     vi.spyOn(registry, "getDisabledChannels").mockReturnValue(["telegram"]);
-    const liveTelegramPolicy = [
-      "version: 1",
-      "network_policies:",
-      "  telegram_bot:",
-      "    name: telegram_bot",
-      "    endpoints:",
-      "      - host: api.telegram.org",
-      "        port: 443",
-      "        protocol: rest",
-      "        enforcement: enforce",
-      // An already-matching live policy carries the materialized provider.
-      "        credential_binding:",
-      "          provider: alpha-telegram-bridge",
-      "        rules:",
-      "          - allow: { method: GET, path: '/bot*/**' }",
-      "          - allow: { method: POST, path: '/bot*/**' }",
-      "          - allow: { method: GET, path: '/file/bot*/**' }",
-      "    binaries:",
-      "      - { path: /usr/local/bin/node }",
-      "      - { path: /usr/bin/node }",
-      "",
-    ].join("\n");
-    vi.spyOn(runner, "runCapture").mockReturnValue(liveTelegramPolicy);
+    vi.spyOn(policies, "getPresetContentGatewayState").mockReturnValue("match");
 
     await expect(
       startSandboxChannel("alpha", { channel: "telegram", dryRun: true }),

@@ -9,6 +9,7 @@ import {
   agentDefs,
   agentOnboard,
   agentRuntime,
+  createHarnessTempDir,
   createRebuildFlowSession,
   destroy,
   dockerImage,
@@ -18,6 +19,7 @@ import {
   gatewayState,
   gatewayTeardownAuthority,
   installTerminalStepFailureMock,
+  listHarnessRebuildBackups,
   loadRebuildSandbox,
   mcpBridge,
   messaging,
@@ -38,11 +40,11 @@ import {
   rebuildManagedImage,
   rebuildMessagingConflict,
   rebuildOnboardDependencies,
-  rebuildRecoveryBackup,
   rebuildRoutePreflight,
   rebuildShields,
   registry,
   registryPersistence,
+  registerHarnessRebuildBackup,
   resolve,
   sandboxList,
   sandboxSession,
@@ -131,6 +133,7 @@ export type RebuildFlowOverrides = {
 };
 
 export type RebuildFlowHarness = {
+  backupPath: string;
   rebuildSandbox: RebuildSandbox;
   applyPresetSpy: MockInstance;
   applyPresetContentSpy: MockInstance;
@@ -176,12 +179,6 @@ export type RebuildFlowHarness = {
 };
 
 export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): RebuildFlowHarness {
-  vi.spyOn(rebuildRecoveryBackup, "recordRebuildRecoveryBackup").mockImplementation(
-    () => undefined,
-  );
-  vi.spyOn(rebuildRecoveryBackup, "clearRebuildRecoveryBackup").mockImplementation(
-    () => undefined,
-  );
   purgeRebuildModule();
   vi.spyOn(policyGet, "getSandboxPolicy").mockReturnValue({
     yaml: "version: 1\nnetwork_policies:\n  host_preserved: {}\n",
@@ -486,30 +483,51 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       window.relocked = true;
       return true;
     });
+  const backupPath = createHarnessTempDir("nemoclaw-rebuild-backup-");
+  const backupManifest = {
+    agentType: overrides.agentName ?? "openclaw",
+    backupPath,
+    timestamp: "2026-06-01T00:00:00.000Z",
+  };
+  registerHarnessRebuildBackup(
+    backupManifest as ReturnType<typeof sandboxState.listBackups>[number],
+  );
   const backupSandboxStateSpy = vi.spyOn(sandboxState, "backupSandboxState").mockReturnValue({
     success: true,
     backedUpDirs: ["workspace"],
     backedUpFiles: ["user.md"],
     failedDirs: [],
     failedFiles: [],
-    manifest: {
-      agentType: overrides.agentName ?? "openclaw",
-      backupPath: "/tmp/nemoclaw-rebuild-backup",
-      timestamp: "2026-06-01T00:00:00.000Z",
-    },
+    manifest: backupManifest,
   });
+  let latestValidatedRecoveryManifest: Record<string, unknown> | null = null;
   vi.spyOn(sandboxState, "validateRebuildRecoveryManifest").mockImplementation(
     (...args: unknown[]) => {
       const manifest = args[2] as Record<string, unknown>;
-      return overrides.recoveryManifestValidation?.(manifest) ?? { ok: true as const, manifest };
+      const result = overrides.recoveryManifestValidation?.(manifest) ?? {
+        ok: true as const,
+        manifest,
+      };
+      if (result.ok) {
+        latestValidatedRecoveryManifest = result.manifest;
+        registerHarnessRebuildBackup(
+          result.manifest as ReturnType<typeof sandboxState.listBackups>[number],
+        );
+      }
+      return result;
     },
   );
-  vi.spyOn(sandboxState, "getLatestBackup").mockImplementation(
-    () =>
-      (overrides.preDeleteLatestManifest === undefined
-        ? makePreparedRecoveryManifest()
-        : overrides.preDeleteLatestManifest) as ReturnType<typeof sandboxState.getLatestBackup>,
-  );
+  vi.spyOn(sandboxState, "getLatestBackup").mockImplementation(() => {
+    const manifest =
+      overrides.preDeleteLatestManifest === undefined
+        ? latestValidatedRecoveryManifest
+        : overrides.preDeleteLatestManifest;
+    if (manifest) {
+      registerHarnessRebuildBackup(manifest as ReturnType<typeof sandboxState.listBackups>[number]);
+    }
+    return manifest as ReturnType<typeof sandboxState.getLatestBackup>;
+  });
+  vi.spyOn(sandboxState, "listBackups").mockImplementation(listHarnessRebuildBackups);
   vi.spyOn(sandboxState, "hasPositiveManagedImageEvidence").mockReturnValue(
     overrides.managedImageEvidence ?? true,
   );
@@ -751,6 +769,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   warnSpy.mockClear();
 
   return {
+    backupPath,
     rebuildSandbox: loadRebuildSandbox(),
     applyPresetSpy,
     applyPresetContentSpy,

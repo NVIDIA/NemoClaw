@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, vi } from "vitest";
+import { cleanupPreparedRecoveryManifests } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
 import { type RebuildSandbox, snapshotEnv } from "./rebuild-flow-test-support";
 
 export * from "./rebuild-flow-test-support";
@@ -58,7 +59,6 @@ export const rebuildInference = requireDist("./inference-invocation-probe.js");
 export const rebuildManagedImage = requireDist("./rebuild-managed-image-preflight.js");
 export const rebuildMessagingConflict = requireDist("./rebuild-messaging-conflict-preflight.js");
 export const rebuildPreparedImageContext = requireDist("./rebuild-prepared-image-context.js");
-export const rebuildRecoveryBackup = requireDist("./rebuild-recreate-journal.js");
 export const rebuildRoutePreflight = requireDist("./rebuild-preflight-guards.js");
 export const rebuildShields = requireDist("./rebuild-shields.js");
 export const rebuildUsageNotice = requireDist("./rebuild-usage-notice.js");
@@ -88,6 +88,20 @@ export function sourceSandboxGateway(argv: string[], verb: string): string | nul
 }
 
 const harnessTempDirs: string[] = [];
+type HarnessRebuildBackup = ReturnType<typeof sandboxState.listBackups>[number];
+const harnessRebuildBackups: HarnessRebuildBackup[] = [];
+
+export function registerHarnessRebuildBackup(backup: HarnessRebuildBackup): void {
+  const existing = harnessRebuildBackups.findIndex(
+    (entry) => entry.backupPath === backup.backupPath,
+  );
+  if (existing >= 0) harnessRebuildBackups.splice(existing, 1);
+  harnessRebuildBackups.push(structuredClone(backup));
+}
+
+export function listHarnessRebuildBackups(): HarnessRebuildBackup[] {
+  return structuredClone(harnessRebuildBackups);
+}
 
 export function createHarnessTempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -105,6 +119,7 @@ export function installRebuildFlowTestHooks(options: RebuildFlowTestHookOptions 
     "NEMOCLAW_SANDBOX_NAME",
   ]);
   beforeEach(() => {
+    harnessRebuildBackups.splice(0);
     delete process.env.NEMOCLAW_SANDBOX_NAME;
     if (options.acceptThirdPartySoftware) {
       process.env.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE = "1";
@@ -118,6 +133,7 @@ export function installRebuildFlowTestHooks(options: RebuildFlowTestHookOptions 
     for (const dir of harnessTempDirs.splice(0)) {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+    cleanupPreparedRecoveryManifests();
     restoreRebuildFlowEnv();
   });
 }

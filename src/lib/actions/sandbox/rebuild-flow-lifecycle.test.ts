@@ -159,11 +159,9 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.session.steps.gateway.status).toBe("complete");
     expect(harness.session.steps.preflight.status).toBe("complete");
     expect(harness.session.steps.sandbox.status).toBe("pending");
-    expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
-      "alpha",
-      "/tmp/nemoclaw-rebuild-backup",
-      { targetAgentType: "openclaw" },
-    );
+    expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith("alpha", harness.backupPath, {
+      targetAgentType: "openclaw",
+    });
     expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
     expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
     expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(

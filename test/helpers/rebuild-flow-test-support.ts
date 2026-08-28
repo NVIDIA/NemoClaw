@@ -131,6 +131,7 @@ export type RebuildFlowOverrides = {
   clearShieldsState?: () => void;
 };
 export type RebuildFlowHarness = {
+  backupPath: string;
   rebuildSandbox: RebuildSandbox;
   applyPresetSpy: MockInstance;
   backupSandboxStateSpy: MockInstance;
