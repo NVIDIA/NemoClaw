@@ -44,10 +44,6 @@ function preservingBase(site: string): DiscoveredPolicyRead {
   return { site, view: "base", failureHandling: "error-preserving" };
 }
 
-function preservingFull(site: string): DiscoveredPolicyRead {
-  return { site, view: "full", failureHandling: "error-preserving" };
-}
-
 function ignoredBase(site: string): DiscoveredPolicyRead {
   return { site, view: "base", failureHandling: "ignore-error" };
 }
@@ -115,15 +111,15 @@ const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [
     ],
   },
   {
-    relativePath: "src/lib/actions/sandbox/launch-readiness/health.ts",
-    expectedReads: [preservingFull("readLaunchReadinessLivePolicy")],
-  },
-  {
     relativePath: "src/lib/actions/sandbox/gateway-state.ts",
     expectedReads: [
       ignoredFull("getSandboxGatewayState"),
       ignoredFull("getSandboxGatewayStateForStatus"),
     ],
+  },
+  {
+    relativePath: "src/lib/actions/sandbox/launch-readiness.ts",
+    expectedReads: [unclassifiedFull("captureLivePolicy")],
   },
   {
     relativePath: "src/lib/policy/commands.ts",

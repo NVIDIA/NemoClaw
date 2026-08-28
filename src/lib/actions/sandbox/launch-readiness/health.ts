@@ -1,12 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  captureOpenshell,
-  createCliOpenShellSandboxPolicyReader,
-  namedOpenShellGateway,
-  type OpenShellSandboxPolicyReader,
-} from "../../../adapters/openshell/runtime";
+import { captureOpenshell } from "../../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../../adapters/openshell/timeouts";
 import type { AgentDefinition } from "../../../agent/defs";
 import { isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
@@ -37,23 +32,12 @@ export type LaunchReadinessObservationCategory =
 
 export type LaunchReadinessCaptureResult = ReturnType<typeof captureOpenshell>;
 
-export type LaunchReadinessCaptureOptions = {
-  ignoreError?: true;
-  includeStderr?: boolean;
-  includeStreams?: boolean;
-  timeout?: number;
-  maxBuffer?: number;
-};
-
 export type LaunchReadinessFailedCheck = "inference request";
 
 export interface LaunchReadinessHealthDeps {
   listAgents?: typeof listAgents;
   loadAgent?: typeof loadAgent;
-  capture?: (
-    args: string[],
-    options?: LaunchReadinessCaptureOptions,
-  ) => LaunchReadinessCaptureResult;
+  capture?: (args: string[]) => LaunchReadinessCaptureResult;
   gatewayHealth?: (sandboxName: string, gatewayName: string) => Promise<boolean | null>;
   forwardsHealthy?: (sandboxName: string, gatewayName: string) => boolean | null;
   smoke?: typeof runAgentSmokeCommands;
@@ -63,10 +47,7 @@ export interface LaunchReadinessHealthDeps {
     gatewayName: string,
   ) => ReturnType<typeof parseSandboxInferenceRouteProbeResult>;
   inferenceInvocationProbe?: typeof runSandboxInferenceInvocationProbe;
-  readPolicy?: OpenShellSandboxPolicyReader["readSandboxPolicy"];
 }
-
-const LIVE_POLICY_MAX_BYTES = 2 * 1_024 * 1_024;
 
 export class LaunchReadinessObservationError extends Error {
   constructor(
@@ -86,36 +67,13 @@ export class LaunchReadinessEvidenceError extends Error {
 
 export function captureLaunchReadiness(
   args: string[],
-  options: LaunchReadinessCaptureOptions = {},
+  options: { includeStreams?: boolean; maxBuffer?: number } = {},
 ): LaunchReadinessCaptureResult {
   return captureOpenshell(args, {
     ignoreError: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
     ...options,
   });
-}
-
-export async function readLaunchReadinessLivePolicy(
-  sandboxName: string,
-  gatewayName: string,
-  deps: LaunchReadinessHealthDeps,
-): Promise<string> {
-  const readPolicy: OpenShellSandboxPolicyReader["readSandboxPolicy"] =
-    deps.readPolicy ??
-    createCliOpenShellSandboxPolicyReader({
-      capture: (args, options) =>
-        (deps.capture ?? captureLaunchReadiness)(args, {
-          ...options,
-          maxBuffer: LIVE_POLICY_MAX_BYTES,
-        }),
-    }).readSandboxPolicy;
-  const result = await readPolicy({
-    target: namedOpenShellGateway(gatewayName),
-    sandboxName,
-    scope: "effective",
-  });
-  if (!result.ok) throw new LaunchReadinessEvidenceError();
-  return result.value.document;
 }
 
 function normalizedString(value: unknown): string | null {

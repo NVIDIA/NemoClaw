@@ -53,7 +53,6 @@ import {
   type LaunchReadinessHealthDeps,
   LaunchReadinessObservationError as ObservationError,
   requireLaunchSemanticHealth,
-  readLaunchReadinessLivePolicy,
   resolveLaunchInteractiveCommand,
   resolveTrustedLaunchAgent,
 } from "./launch-readiness/health";
@@ -73,6 +72,7 @@ import {
 
 export { createProbeTimingRecorder, type ProbeTimingRecorder } from "./probe/timing";
 
+const LIVE_POLICY_MAX_BYTES = 2 * 1_024 * 1_024;
 const ALLOWED_OPENSHELL_DRIVERS = new Set(["docker", "kubernetes", "vm"]);
 
 export type LaunchReadinessPerformanceStage =
@@ -658,15 +658,17 @@ function classifyReceipt(
   return read.kind === "valid" ? "config" : read.kind;
 }
 
-async function captureLivePolicy(
+function captureLivePolicy(
   sandboxName: string,
   gatewayName: string,
   deps: LaunchReadinessDeps,
-): Promise<string> {
+): string {
+  const result = (
+    deps.capture ?? ((args) => captureLaunchReadiness(args, { maxBuffer: LIVE_POLICY_MAX_BYTES }))
+  )(["policy", "get", "-g", gatewayName, "--full", sandboxName]);
+  if (result.status !== 0 || !result.output?.trim()) throw new LaunchReadinessEvidenceError();
   try {
-    return launchReadinessPolicyDigest(
-      await readLaunchReadinessLivePolicy(sandboxName, gatewayName, deps),
-    );
+    return launchReadinessPolicyDigest(result.output);
   } catch {
     throw new LaunchReadinessEvidenceError();
   }
@@ -756,7 +758,7 @@ async function captureLaunchIdentity(
     throw new ObservationError("identity");
   }
 
-  const livePolicy = await captureLivePolicy(sandboxName, gatewayName, deps);
+  const livePolicy = captureLivePolicy(sandboxName, gatewayName, deps);
   const inferenceSelection = normalizeInferenceSelection(entry);
   const inference = registry.getSandboxEntryInference(entry);
   const inferenceResult = (deps.capture ?? ((args) => captureLaunchReadiness(args)))(
