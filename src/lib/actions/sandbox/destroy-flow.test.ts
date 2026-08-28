@@ -1272,17 +1272,58 @@ describe("destroySandbox flow", () => {
 
     expectActiveTimerDestroyOrder(harness);
   });
-
-  it("warns and still deletes when active-window hardening fails after the wipe (#7727)", async () => {
+  it("skips unrestorable hardening when Docker confirms absence (#10066)", async () => {
     const harness = createDestroyHarness({
       activeTimer: true,
+      sandboxPresent: true,
+      dockerRunResult: { status: 0, stdout: "", stderr: "" },
+      openshellDriver: "docker",
+      shieldsUpError: new Error("inline auto-restore would commit containment"),
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.events).not.toContain("wipe");
+    expect(harness.events).not.toContain("harden");
+    expect(harness.events.indexOf("delete")).toBeLessThan(harness.events.indexOf("timer-cleanup"));
+    expect(harness.killTimerSpy).toHaveBeenCalledOnce();
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("hardens a live Docker identity when OpenShell reports absence (#10066)", async () => {
+    const harness = createDestroyHarness({
+      activeTimer: true,
+      sandboxPresent: false,
+      dockerRunResult: {
+        status: 0,
+        stdout: "aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha\n",
+        stderr: "",
+      },
+      openshellDriver: "docker",
+      shieldsUpError: new Error("must still harden a live Docker identity"),
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.events).toContain("wipe");
+    expect(harness.events).toContain("harden");
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+  it("warns with the invoked CLI and still deletes when active-window hardening fails (#7727)", async () => {
+    const harness = createDestroyHarness({
+      activeTimer: true,
+      invokedCliName: "nemohermes",
       shieldsUpError: new Error("injected hardening failure"),
     });
 
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
-    expectFailedHardeningStillDeletes(harness);
+    expectFailedHardeningStillDeletes(harness, "nemohermes");
     expect(exitSpy).not.toHaveBeenCalled();
+    vi.unstubAllEnvs();
+    resetDestroyModuleCache();
   });
 
   it("keeps the timer and local record when --force cannot confirm deletion after failed hardening (#7727)", async () => {

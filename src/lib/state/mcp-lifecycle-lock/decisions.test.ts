@@ -143,6 +143,7 @@ describe("lifecycle lock decisions", () => {
     ["open", null, false, "proceed"],
     ["timer deadline", null, true, "wait"],
     ["committed containment", observation(owner()), false, "refuse"],
+    ["containment over an expired timer", observation(owner()), true, "refuse"],
   ] as const)("maps the %s gate to %s", (_name, containment, timerExpired, kind) => {
     expect(decideMcpLifecycleGate(containment, timerExpired).kind).toBe(kind);
   });
