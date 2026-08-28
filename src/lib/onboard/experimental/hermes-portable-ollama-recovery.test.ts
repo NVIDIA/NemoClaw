@@ -228,6 +228,32 @@ function createHarness(initiallyRunning = false, registryInitiallyRunning = fals
 }
 
 describe("Hermes Portable Ollama inference recovery", () => {
+  it.each([
+    ["missing", undefined, "sandbox registry host-local inference receipt is missing"],
+    ["malformed", "not-json\n", "serialized receipt is not valid JSON"],
+  ] as const)(
+    "rejects an ollama-local registry receipt that is %s before registry recovery",
+    (_label, serializedReceipt, expectedError) => {
+      const harness = createHarness();
+      const entry = {
+        ...harness.input.entry,
+        hostLocalInferenceReceipt: serializedReceipt,
+      } as SandboxEntry;
+
+      expect(() =>
+        recoverHermesPortableOllamaInference(
+          {
+            ...harness.input,
+            entry,
+            readRegistry: vi.fn(() => entry),
+          },
+          harness.overrides as never,
+        ),
+      ).toThrow(expectedError);
+      expect(harness.overrides.prepareRegistryRecovery).not.toHaveBeenCalled();
+    },
+  );
+
   it("resumes one stopped published runtime and commits only after final route proof", () => {
     const harness = createHarness();
 

@@ -331,7 +331,7 @@ async function runSandboxConnectProbe(
   if (hermesPortable) {
     if (probeOnly !== true) throw new Error("Hermes inference recovery requires probe-only mode");
     measure("inference", () =>
-      recoverHermesPortableInferenceRouteForProbeOnlyOrExit(sandboxName, agent),
+      verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(sandboxName, agent),
     );
     let authority: HermesPortableActiveLifecycleAuthority;
     try {
@@ -743,8 +743,8 @@ function verifyHermesPortableInferenceRouteOrExit(
   }
 }
 
-/** Resume published Ollama authority only for the explicit probe-only command. */
-function recoverHermesPortableInferenceRouteForProbeOnlyOrExit(
+/** Verify the recorded route and resume published Ollama only for probe-only recovery. */
+function verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
   expectedAuthority?: HermesPortableActiveLifecycleAuthority,
@@ -758,6 +758,9 @@ function recoverHermesPortableInferenceRouteForProbeOnlyOrExit(
     );
   } catch {
     failHermesPortableInferenceRoute(sandboxName, "missing or incomplete");
+  }
+  if (authority.entry.provider !== "ollama-local") {
+    return verifyHermesPortableInferenceRouteOrExit(sandboxName, agent, authority);
   }
   let verified: SandboxEntry | null = null;
   try {
@@ -2016,7 +2019,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
             throw new Error("Hermes inference recovery requires probe-only mode");
           }
           const verified = probeTiming!.measure("inference", () =>
-            recoverHermesPortableInferenceRouteForProbeOnlyOrExit(
+            verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(
               sandboxName,
               acceptedReadiness.agent,
               activeAuthority,
