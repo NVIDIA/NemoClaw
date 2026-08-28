@@ -105,6 +105,32 @@ fetch("https://example.com/").then(() => {
 
 validateSandboxName(SANDBOX_NAME);
 
+function execPiShell(
+  sandbox: SandboxClient,
+  script: ReturnType<typeof trustedSandboxShellScript>,
+  options: Parameters<SandboxClient["openshell"]>[1],
+) {
+  return sandbox.openshell(
+    [
+      "sandbox",
+      "exec",
+      "-n",
+      SANDBOX_NAME,
+      "--env",
+      "BASH_ENV=",
+      "--env",
+      "ENV=",
+      "--",
+      "bash",
+      "--noprofile",
+      "--norc",
+      "-c",
+      script,
+    ],
+    options,
+  );
+}
+
 function qualificationEnv(
   inference: E2EInferenceAdapter,
   guard: DockerBuildGuard,
@@ -160,8 +186,8 @@ async function runReadTask(
 ): Promise<{ assistantText: string; eventCount: number; toolCallId: string }> {
   const remotePath = `/sandbox/.nemoclaw-pi-${phase}.txt`;
   const token = `NEMOCLAW_PI_${phase.toUpperCase().replaceAll("-", "_")}_${randomBytes(8).toString("hex").toUpperCase()}`;
-  const seed = await sandbox.execShell(
-    SANDBOX_NAME,
+  const seed = await execPiShell(
+    sandbox,
     trustedSandboxShellScript(
       `umask 077; printf '%s\\n' ${shellQuote(token)} > ${shellQuote(remotePath)}; sync`,
     ),
@@ -212,8 +238,8 @@ async function runReadTask(
 }
 
 async function sessionInventory(sandbox: SandboxClient, env: NodeJS.ProcessEnv, phase: string) {
-  const result = await sandbox.execShell(
-    SANDBOX_NAME,
+  const result = await execPiShell(
+    sandbox,
     trustedSandboxShellScript(
       "find /sandbox/.pi/agent/sessions -type f -name '*.jsonl' -print0 | sort -z | xargs -0 -r sha256sum",
     ),
@@ -229,8 +255,8 @@ async function readPiInferenceEvidence(
   env: NodeJS.ProcessEnv,
   expectedModel: string,
 ): Promise<{ api: string; model: string; route: string }> {
-  const result = await sandbox.execShell(
-    SANDBOX_NAME,
+  const result = await execPiShell(
+    sandbox,
     trustedSandboxShellScript("cat /sandbox/.pi/agent/models.json"),
     { artifactName: "pi-managed-inference-config", env, timeoutMs: 30_000 },
   );
