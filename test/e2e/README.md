@@ -460,11 +460,11 @@ check. It rejects a dirty NemoClaw checkout and requires exact expected
 identities for that checkout, the original OpenShell distribution artifact,
 the extracted OpenShell CLI, gateway, supervisor relay, separately rooted
 `wxc-exec.exe`, complete OpenClaw artifact tree, Node.js, and OpenClaw
-entrypoint. It projects these paths into the inactive attachment observer
-contract but does not mint the provider-owned authority required to qualify or
-activate the distribution. The target also requires an existing work root and
-records the operator's exact host-preparation declaration. It observes whether
-the test process is elevated but does not change host ACLs or elevation.
+entrypoint. It observes these paths through the inactive native stable-file
+boundary before sandbox mutation but does not mint the provider-owned authority
+required to qualify or activate the distribution. The target also requires an
+existing work root and records the operator's exact host-preparation declaration.
+It observes whether the test process is elevated but does not change host ACLs or elevation.
 Compute the canonical artifact-tree digest after staging:
 
 The OpenClaw artifact, share, and host-state directories must be fresh siblings
@@ -562,7 +562,8 @@ It does not inspect OpenShell terminal wording or repeat the forward mutation.
 The complete create, forward, chat, and cleanup flow runs twice to detect stale
 state. After preflight and local setup succeed, it
 writes a secret-free receipt for either verdict and records whether sensitive
-runtime artifacts were removed. Receipt schema version 4 also classifies startup
+runtime artifacts were removed. Receipt schema version 4 retains the observed
+gateway-configuration digest and also classifies startup
 as not observed, spawn failed, exited before readiness, health timeout, or ready.
 The ready outcome means that the in-sandbox health probe succeeded.
 It does not mean that the qualification passed.

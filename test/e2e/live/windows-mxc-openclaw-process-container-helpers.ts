@@ -9,8 +9,15 @@ import os from "node:os";
 import path from "node:path";
 
 import { assessWindowsMxcProcessContainerCandidate } from "../../../src/lib/onboard/windows-mxc/host-qualification.ts";
-import { MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION } from "../../../src/lib/onboard/runtime-provider/mxc-openshell-attachment.ts";
-import type { MxcOpenShellAttachmentObservationRequest } from "../../../src/lib/onboard/runtime-provider/mxc-openshell-observer.ts";
+import {
+  MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
+  type MxcOpenShellAttachmentObservation,
+} from "../../../src/lib/onboard/runtime-provider/mxc-openshell-attachment.ts";
+import {
+  type MxcOpenShellAttachmentObservationRequest,
+  observeMxcOpenShellAttachment,
+} from "../../../src/lib/onboard/runtime-provider/mxc-openshell-observer.ts";
+import { createMxcWindowsOpenShellFileDigestObserver } from "../../../src/lib/onboard/runtime-provider/mxc-windows-file-observer.ts";
 import {
   sha256File,
   sha256WindowsOpenClawArtifactTree,
@@ -147,6 +154,7 @@ export type TrustedOpenClawProcessIdentity = {
 };
 
 type QualificationChecks = {
+  readonly attachmentObserved: boolean;
   readonly artifactIdentity: boolean;
   readonly filesystemControlWrite: boolean;
   readonly filesystemDeniedWrite: boolean;
@@ -201,6 +209,7 @@ export interface WindowsMxcOpenClawQualificationReceipt {
     readonly openShell: {
       readonly distributionSha256: string;
       readonly cliSha256: string;
+      readonly gatewayConfigSha256: string | null;
       readonly gatewaySha256: string;
       readonly packageVersion: string;
       readonly relaySha256: string;
@@ -432,6 +441,7 @@ function buildWindowsMxcSetupFailureReceipt(
       openShell: {
         distributionSha256: inputs.expected.openShellDistributionSha256,
         cliSha256: inputs.expected.openShellCliSha256,
+        gatewayConfigSha256: null,
         gatewaySha256: inputs.expected.openShellGatewaySha256,
         packageVersion: inputs.openShell.packageVersion,
         relaySha256: inputs.expected.openShellRelaySha256,
@@ -440,6 +450,7 @@ function buildWindowsMxcSetupFailureReceipt(
       wxcExecSha256: inputs.expected.wxcExecSha256,
     },
     checks: {
+      attachmentObserved: false,
       artifactIdentity: true,
       filesystemControlWrite: false,
       filesystemDeniedWrite: false,
@@ -731,6 +742,42 @@ export function createWindowsMxcOpenShellAttachmentObservationRequest(
       gatewayConfigPath: observedGatewayConfigPath,
     }),
   });
+}
+
+function assertWindowsMxcOpenShellAttachmentObservation(
+  observation: MxcOpenShellAttachmentObservation,
+  inputs: WindowsMxcOpenClawQualificationInputs,
+): void {
+  const expected = {
+    distributionSha256: inputs.expected.openShellDistributionSha256,
+    cliSha256: inputs.expected.openShellCliSha256,
+    gatewaySha256: inputs.expected.openShellGatewaySha256,
+    wxcExecSha256: inputs.expected.wxcExecSha256,
+  };
+  const observed = {
+    distributionSha256: observation.distribution.sha256,
+    cliSha256: observation.components.cliSha256,
+    gatewaySha256: observation.components.gatewaySha256,
+    wxcExecSha256: observation.components.wxcExecSha256,
+  };
+  for (const [name, value] of Object.entries(observed)) {
+    if (value !== expected[name as keyof typeof expected]) {
+      throw new Error(`${name} does not match the stable attachment observation`);
+    }
+  }
+}
+
+/** Observe pinned attachment inputs without minting provider authority or selecting MXC. */
+async function observeWindowsMxcOpenShellAttachment(
+  inputs: WindowsMxcOpenClawQualificationInputs,
+  gatewayConfigPath: string,
+): Promise<MxcOpenShellAttachmentObservation> {
+  const observation = await observeMxcOpenShellAttachment(
+    createWindowsMxcOpenShellAttachmentObservationRequest(inputs, gatewayConfigPath),
+    createMxcWindowsOpenShellFileDigestObserver(),
+  );
+  assertWindowsMxcOpenShellAttachmentObservation(observation, inputs);
+  return observation;
 }
 
 export function sandboxListContainsExactName(output: string, sandboxName: string): boolean {
@@ -1894,7 +1941,10 @@ async function prepareWindowsMxcOpenClawLocalSetup(input: {
         }),
         { encoding: "utf8", mode: 0o600 },
       );
-      createWindowsMxcOpenShellAttachmentObservationRequest(input.inputs, gatewayConfigPath);
+      const attachmentObservation = await observeWindowsMxcOpenShellAttachment(
+        input.inputs,
+        gatewayConfigPath,
+      );
       fs.writeFileSync(
         policyPath,
         renderWindowsMxcFilesystemPolicy({
@@ -1959,6 +2009,7 @@ async function prepareWindowsMxcOpenClawLocalSetup(input: {
       const forwardStdout = localSetup.trackDescriptor(fs.openSync(forwardLogPath, "w"));
       const forwardStderr = localSetup.trackDescriptor(fs.openSync(forwardErrorPath, "w"));
       return {
+        attachmentObservation,
         clientEnvironment,
         clientHomeDirectory,
         configDirectory,
@@ -2079,6 +2130,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     `windows-mxc-forward-health-readiness-${runId}.json`,
   );
   const {
+    attachmentObservation,
     clientEnvironment,
     clientHomeDirectory,
     configDirectory,
@@ -2144,6 +2196,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     versionExitCode: null,
   };
   let checks: QualificationChecks = {
+    attachmentObserved: true,
     artifactIdentity: true,
     filesystemControlWrite: false,
     filesystemDeniedWrite: false,
@@ -2759,14 +2812,15 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
         version: inputs.openClaw.version,
       },
       openShell: {
-        distributionSha256: inputs.expected.openShellDistributionSha256,
-        cliSha256: inputs.expected.openShellCliSha256,
-        gatewaySha256: inputs.expected.openShellGatewaySha256,
-        packageVersion: inputs.openShell.packageVersion,
+        distributionSha256: attachmentObservation.distribution.sha256,
+        cliSha256: attachmentObservation.components.cliSha256,
+        gatewayConfigSha256: attachmentObservation.gateway.configSha256,
+        gatewaySha256: attachmentObservation.components.gatewaySha256,
+        packageVersion: attachmentObservation.distribution.version,
         relaySha256: inputs.expected.openShellRelaySha256,
-        revision: inputs.openShell.revision,
+        revision: attachmentObservation.distribution.revision,
       },
-      wxcExecSha256: inputs.expected.wxcExecSha256,
+      wxcExecSha256: attachmentObservation.components.wxcExecSha256,
     },
     checks,
     startup,

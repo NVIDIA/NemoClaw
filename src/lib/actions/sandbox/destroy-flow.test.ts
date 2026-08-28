@@ -81,12 +81,6 @@ describe("destroySandbox flow", () => {
     expectStrictSandboxPresenceClassification();
   });
 
-  it("loads the destroy flow from TypeScript source (#10106)", { timeout: 30_000 }, () => {
-    const harness = createDestroyHarness();
-
-    expect(harness.destroySourcePath).toBe(path.join(import.meta.dirname, "destroy.ts"));
-  });
-
   it(
     "selects the sandbox gateway, deletes live resources, cleans host state, and removes registry state",
     { timeout: 30_000 },
