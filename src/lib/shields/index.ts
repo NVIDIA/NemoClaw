@@ -605,6 +605,39 @@ function readTimerBoundShieldsDownTransition(sandboxName: string): ShieldsDownTr
   return transition?.snapshotPath === marker.snapshotPath ? transition : null;
 }
 
+function readStateBoundActiveShieldsDownTransition(
+  sandboxName: string,
+  state: ShieldsState,
+): ShieldsDownTransition | null {
+  const snapshotPath = state.shieldsPolicySnapshotPath;
+  const snapshotPolicy = state.shieldsPolicySnapshot;
+  if (!snapshotPath || !snapshotPolicy) return null;
+
+  const prefix = `shields-transition-${sandboxName}-`;
+  const suffix = ".json";
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = fs.readdirSync(STATE_DIR, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  const matches = entries.flatMap((entry) => {
+    if (!entry.isFile() || !entry.name.startsWith(prefix) || !entry.name.endsWith(suffix)) {
+      return [];
+    }
+    const processToken = entry.name.slice(prefix.length, -suffix.length);
+    if (!/^[0-9a-f]{32}$/.test(processToken)) return [];
+    const transition = readShieldsDownTransition(sandboxName, processToken);
+    return transition?.phase === "active" &&
+      transition.snapshotPath === snapshotPath &&
+      sameBoundShieldsPolicyArtifact(transition.snapshotPolicy, snapshotPolicy) &&
+      transition.forwardPolicy
+      ? [transition]
+      : [];
+  });
+  return matches.length === 1 ? matches[0]! : null;
+}
+
 function writeShieldsDownTransition(
   transition: ShieldsDownTransition,
   expectedPhase: ShieldsDownTransition["phase"] | null,
@@ -4459,6 +4492,14 @@ function recoverExpiredAutoRestoreInline(
       : "  Warning: DOWN state has a missing or malformed auto-restore marker; attempting inline restore under the lifecycle gate.",
   );
 
+  const stateBoundTransition = marker
+    ? null
+    : readStateBoundActiveShieldsDownTransition(sandboxName, state);
+  const recoveryProcessToken =
+    marker?.processToken && /^[0-9a-f]{32}$/.test(marker.processToken)
+      ? marker.processToken
+      : stateBoundTransition?.processToken;
+
   if (marker?.processToken && /^[0-9a-f]{32}$/.test(marker.processToken)) {
     try {
       synchronizeAutoRestoreTransition(sandboxName, marker.processToken, marker.snapshotPath, {
@@ -4489,11 +4530,10 @@ function recoverExpiredAutoRestoreInline(
     marker?.allowLegacyHermesProtocol === true,
     cachedTarget,
     undefined,
-    marker?.processToken && /^[0-9a-f]{32}$/.test(marker.processToken)
+    recoveryProcessToken
       ? {
-          transitionProcessToken: marker.processToken,
-          deadlineAuthoritative: true,
-          expiredTimerRecovery: true,
+          transitionProcessToken: recoveryProcessToken,
+          ...(marker ? { deadlineAuthoritative: true, expiredTimerRecovery: true } : {}),
         }
       : {},
   );
@@ -4541,8 +4581,8 @@ function recoverExpiredAutoRestoreInline(
         }
       : {}),
   });
-  if (marker?.processToken && /^[0-9a-f]{32}$/.test(marker.processToken)) {
-    clearShieldsDownTransition(sandboxName, marker.processToken);
+  if (recoveryProcessToken) {
+    clearShieldsDownTransition(sandboxName, recoveryProcessToken);
   }
   clearTimerMarker(sandboxName);
   appendAuditEntry({
