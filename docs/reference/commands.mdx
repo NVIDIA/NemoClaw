@@ -4741,7 +4741,7 @@ Successful managed cleanup recursively removes that directory and all contents; 
 
 ```bash
 NEMOCLAW_GATEWAY_PORT=<port> \
-NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR=<original-absolute-path> \
+NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="<original-absolute-path>" \
   $$nemoclaw uninstall
 ```
 
@@ -4821,7 +4821,7 @@ When it finds only the selected port, it uses the standard uninstall confirmatio
 Each port runs as its own uninstall so that every port-scoped value, including the state root, registry file, gateway name, and Docker resource names, resolves from that port rather than from the calling environment.
 An ambient `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` applies only to the currently selected port, which runs last.
 Child passes for other ports use their default per-port gateway state directories.
-If another port with a custom directory fails, rerun `NEMOCLAW_GATEWAY_PORT=<failed-port> NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR=<original-absolute-path> $$nemoclaw uninstall`.
+If another port with a custom directory fails, rerun `NEMOCLAW_GATEWAY_PORT=<failed-port> NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="<original-absolute-path>" $$nemoclaw uninstall`.
 Outside portable cleanup, the selected port runs last so its pass can remove the shared host resources once no other environment remains.
 `--delete-models`, `--destroy-user-data`, and `--keep-openshell` apply to every port, subject to the portable preservation contract; `--gateway` remains a check against the selected port only.
 A failure to enumerate the gateway state roots safely stops the sweep before any port uninstall begins.
