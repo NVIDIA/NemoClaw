@@ -762,7 +762,9 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
         .filter(
           (check: any) =>
             check?.name === requirement.name &&
-            (requirement.appId === null || check?.app?.id === requirement.appId),
+            (requirement.appId === null ||
+              requirement.appId === -1 ||
+              check?.app?.id === requirement.appId),
         )
         .sort((a: any, b: any) => Date.parse(b?.created_at) - Date.parse(a?.created_at))[0];
       if (latest === undefined || !eligible(latest)) requiredChecksComplete = false;

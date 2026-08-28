@@ -30,14 +30,14 @@ const run = (id) => ({id,event:"push",head_sha:sha,created_at:"2026-01-01T00:00:
 let value;
 if (args.startsWith("pr view") && args.includes("baseRefName")) value = {baseRefName:"main"};
 else if (args.startsWith("pr view")) value = pull;
-else if (args.includes("required_status_checks")) value = scenario === "wrong-app" ? {contexts:[],checks:[{context:"required-a",app_id:7}]} : {contexts:["required-a", "required-b"],checks:[]};
+else if (args.includes("required_status_checks")) value = scenario === "wrong-app" ? {contexts:[],checks:[{context:"required-a",app_id:7}]} : scenario === "any-app" ? {contexts:[],checks:[{context:"required-a",app_id:-1}]} : {contexts:["required-a", "required-b"],checks:[]};
 else if (args.includes("actions/runs?")) value = scenario === "fallback" ? [] : scenario === "truncated" ? [run(11),run(12)] : [run(11)];
 else if (args.includes("/actions/runs/11/jobs")) value = {total_count:1,jobs:[{id:21,name:scenario.startsWith("artifact") ? "cli-test-shards (1)" : "job",status:scenario === "queued" ? "queued" : "completed",conclusion:scenario === "queued" ? null : "success",created_at:"2026-01-01T00:00:31Z",started_at:scenario === "queued" ? null : "2026-01-01T00:00:32Z",completed_at:scenario === "queued" ? null : "2026-01-01T00:02:00Z",runner_name:null,runner_group_name:null,labels:[],html_url:"",steps:[{number:1,name:"step",status:scenario === "queued" ? "queued" : "completed",conclusion:scenario === "queued" ? null : "success",started_at:scenario === "queued" ? null : "2026-01-01T00:00:33Z",completed_at:scenario === "queued" ? null : "2026-01-01T00:01:00Z"}]}]};
 else if (args.includes("/actions/runs/12/jobs")) value = {total_count:0,jobs:[]};
 else if (args.includes("/actions/runs/") && !args.includes("/jobs") && !args.includes("/artifacts")) { const id = Number(args.split("/actions/runs/")[1].split(" ")[0]); value={...run(id),run_attempt:1,html_url:""}; }
 else if (args.includes("/artifacts?") && scenario === "artifact-failure") { console.error("Authorization: secret-token"); process.exit(1); }
 else if (args.includes("/artifacts?")) value = {total_count:1,artifacts:[{id:31,name:"cli-blob-report-1",size_in_bytes:25000001,expired:false,workflow_run:{id:11,head_sha:sha},workflow_run_id:11,workflow_run_head_sha:sha}]};
-else if (args.includes("/check-runs?")) { const checks=[{id:1,name:"required-a",status:"completed",conclusion:"success",created_at:"2026-01-01T00:00:35Z",started_at:"2026-01-01T00:00:45Z",completed_at:"2026-01-01T00:02:30Z",html_url:"",app:{id:scenario === "wrong-app" ? 8 : 7,slug:"actions"}}]; if (scenario !== "incomplete" && scenario !== "wrong-app") checks.push({...checks[0],id:2,name:"required-b",created_at:"2026-01-01T00:00:40Z",completed_at:"2026-01-01T00:02:40Z"}); value=checks; }
+else if (args.includes("/check-runs?")) { const checks=[{id:1,name:"required-a",status:"completed",conclusion:"success",created_at:"2026-01-01T00:00:35Z",started_at:"2026-01-01T00:00:45Z",completed_at:"2026-01-01T00:02:30Z",html_url:"",app:{id:scenario === "wrong-app" ? 8 : 7,slug:"actions"}}]; if (scenario !== "incomplete" && scenario !== "wrong-app" && scenario !== "any-app") checks.push({...checks[0],id:2,name:"required-b",created_at:"2026-01-01T00:00:40Z",completed_at:"2026-01-01T00:02:40Z"}); value=checks; }
 else { console.error("unexpected gh call: " + args); process.exit(2); }
 process.stdout.write(JSON.stringify(value));
 `,
@@ -140,6 +140,12 @@ describe("pull request value-stream analysis", () => {
     const report = JSON.parse((await run("wrong-app", ["--max-test-artifacts", "0"])).stdout);
     expect(report.events.automationSettled).toBeNull();
     expect(report.automation.checksConsidered).toBe(0);
+  });
+
+  test("accepts any provider for an unrestricted required check (#10542)", async () => {
+    const report = JSON.parse((await run("any-app", ["--max-test-artifacts", "0"])).stdout);
+    expect(report.events.automationSettled).toBe("2026-01-01T00:02:30.000Z");
+    expect(report.automation.checksConsidered).toBe(1);
   });
 
   test("reports bounded artifact rejection status without exposing diagnostics (#10542)", async () => {
