@@ -710,6 +710,13 @@
       ]
     },
     {
+      "live": "test/e2e/live/brev-workspace-cleanup.test.ts",
+      "fast": [
+        "test/e2e/support/brev-launchable-fixture.test.ts",
+        "test/e2e/support/issue-9880-staging-reproduction-workflow.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/whatsapp-qr-compact.test.ts",
       "fast": [
         "test/e2e/support/e2e-progress-fixture.test.ts",
