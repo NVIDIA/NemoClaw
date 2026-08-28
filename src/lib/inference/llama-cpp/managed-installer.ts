@@ -179,16 +179,6 @@ const IMAGE_PULL_LAYER_PATTERNS: ReadonlyArray<{
   },
 ];
 
-const IMAGE_PULL_LAYER_CAUSES: Readonly<Record<ManagedLlamaCppImagePullFailureLayer, string>> = {
-  authentication: "registry authentication failed",
-  "daemon behavior": "the container daemon failed the pull",
-  "invalid dependency": "the pinned image does not resolve for this platform",
-  "registry availability": "the registry was unavailable",
-  "runner network": "the host could not reach the registry",
-  storage: "container storage failed",
-  unclassified: "the pull failed without a recognized layer signature",
-};
-
 function classifyImagePullFailureLayer(diagnostic: string): ManagedLlamaCppImagePullFailureLayer {
   return (
     IMAGE_PULL_LAYER_PATTERNS.find(({ pattern }) => pattern.test(diagnostic))?.layer ??
@@ -201,9 +191,13 @@ function imagePullFailureDiagnostic(result: ManagedLlamaCppImagePullResult): str
     (value): value is string => typeof value === "string" && value.trim().length > 0,
   );
   const layer = classifyImagePullFailureLayer(sources.join("\n"));
+  const evidence =
+    layer === "unclassified"
+      ? "No recognized failure-layer signature matched."
+      : "Redacted pull output matched this layer's signature.";
   const status =
-    result.status === null ? "without an exit status" : `with exit ${String(result.status)}`;
-  return `Failure layer: ${layer}. Cause: ${IMAGE_PULL_LAYER_CAUSES[layer]} ${status}; command output redacted.`;
+    result.status === null ? "Exit status unavailable." : `Exit status: ${String(result.status)}.`;
+  return `Failure classification: ${layer}. ${evidence} ${status} Command output redacted.`;
 }
 
 function requireSuccess(label: string, result: ReturnType<ContainerEngine["capture"]>): string {

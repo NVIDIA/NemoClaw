@@ -1051,61 +1051,44 @@ describe("managed llama.cpp installer", () => {
   });
 
   it.each([
-    [
-      "authentication",
-      "registry authentication failed",
-      { status: 1, stderr: "unauthorized: authentication required" },
-    ],
-    ["storage", "container storage failed", { status: 1, stderr: "no space left on device" }],
-    [
-      "runner network",
-      "the host could not reach the registry",
-      { status: 1, stderr: "dial tcp: temporary failure in name resolution" },
-    ],
-    [
-      "invalid dependency",
-      "the pinned image does not resolve for this platform",
-      { status: 1, stderr: "manifest unknown: manifest not found" },
-    ],
-    [
-      "registry availability",
-      "the registry was unavailable",
-      { status: 1, stderr: "registry returned 503 Service Unavailable" },
-    ],
-    [
-      "daemon behavior",
-      "the container daemon failed the pull",
-      { status: 1, error: new Error("Cannot connect to the Docker daemon") },
-    ],
-    [
-      "unclassified",
-      "the pull failed without a recognized layer signature",
-      { status: 7, stderr: "opaque pull failure" },
-    ],
-  ])("attributes a failed image pull to %s (#10558)", async (layer, cause, pullResult) => {
-    const selected = selection();
-    const homeDir = temporaryHome();
-    const harness = engineHarness();
+    ["authentication", { status: 1, stderr: "unauthorized: authentication required" }],
+    ["storage", { status: 1, stderr: "no space left on device" }],
+    ["runner network", { status: 1, stderr: "dial tcp: temporary failure in name resolution" }],
+    ["invalid dependency", { status: 1, stderr: "manifest unknown: manifest not found" }],
+    ["registry availability", { status: 1, stderr: "registry returned 503 Service Unavailable" }],
+    ["daemon behavior", { status: 1, error: new Error("Cannot connect to the Docker daemon") }],
+    ["unclassified", { status: 7, stderr: "opaque pull failure" }],
+  ])(
+    "classifies a failed image pull from diagnostic signatures as %s (#10558)",
+    async (layer, pullResult) => {
+      const selected = selection();
+      const homeDir = temporaryHome();
+      const harness = engineHarness();
 
-    const result = await installManagedLlamaCpp(selected, {
-      sandboxName: "spark-agent",
-      homeDir,
-      runtimeProvider: managedRuntimeProvider(harness.engine),
-      pullImage: vi.fn(async () => pullResult),
-      verifyGguf: vi.fn(async () => {
-        throw new Error("not cached");
-      }),
-      checkPort: vi.fn(async () => ({ ok: true })),
-      log: vi.fn(),
-    });
+      const result = await installManagedLlamaCpp(selected, {
+        sandboxName: "spark-agent",
+        homeDir,
+        runtimeProvider: managedRuntimeProvider(harness.engine),
+        pullImage: vi.fn(async () => pullResult),
+        verifyGguf: vi.fn(async () => {
+          throw new Error("not cached");
+        }),
+        checkPort: vi.fn(async () => ({ ok: true })),
+        log: vi.fn(),
+      });
 
-    expect(result).toMatchObject({
-      ok: false,
-      reason: expect.stringContaining(`Failure layer: ${layer}. Cause: ${cause}`),
-    });
-  });
+      const evidence =
+        layer === "unclassified"
+          ? "No recognized failure-layer signature matched."
+          : "Redacted pull output matched this layer's signature.";
+      expect(result).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining(`Failure classification: ${layer}. ${evidence}`),
+      });
+    },
+  );
 
-  it("bounds and redacts the causal image-pull diagnostic (#10558)", async () => {
+  it("reports a bounded image-pull classification without streaming sensitive output (#10558)", async () => {
     const selected = selection();
     const homeDir = temporaryHome();
     const harness = engineHarness();
@@ -1130,8 +1113,8 @@ describe("managed llama.cpp installer", () => {
     });
 
     const failure = result as Extract<typeof result, { readonly ok: false }>;
-    expect(failure.reason).toContain("Failure layer: authentication.");
-    expect(failure.reason).toContain("command output redacted");
+    expect(failure.reason).toContain("Failure classification: authentication.");
+    expect(failure.reason).toContain("Command output redacted.");
     expect(failure.reason).not.toContain(secret);
     expect(Buffer.byteLength(failure.reason, "utf8")).toBeLessThan(400);
     expect(log.mock.calls.flat().join("\n")).not.toContain(secret);
