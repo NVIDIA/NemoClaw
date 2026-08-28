@@ -1,0 +1,38 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.115
+
+NemoClaw v0.0.115 strengthens Portable Hermes recovery, sandbox lifecycle authority, managed messaging credentials, and installer recovery.
+It also improves managed local inference and adds bounded experimental planning for an externally managed OpenShell target.
+
+- Portable Hermes recovery now revalidates the exact receipt-owned Podman container, OpenShell gateway, executable, policy, route, and runtime identities before each operation.
+  If recovery starts a stopped receipt-owned container and authenticated Hermes health remains unavailable, it launches the receipt-recorded `nemoclaw-start` command once and waits for authenticated health.
+  If the container was already running, recovery only waits for authenticated health and does not launch another startup process.
+  A failed recovery rolls back only the exact container that recovery started.
+  Related changes: [PR #10315](https://github.com/NVIDIA/NemoClaw/pull/10315), [PR #10376](https://github.com/NVIDIA/NemoClaw/pull/10376), [PR #10441](https://github.com/NVIDIA/NemoClaw/pull/10441), [PR #10456](https://github.com/NVIDIA/NemoClaw/pull/10456), and [PR #10499](https://github.com/NVIDIA/NemoClaw/pull/10499).
+- Stock Docker-driver onboarding for OpenClaw, Hermes, and LangChain Deep Agents Code now requires the release's exact managed image.
+  Registry or catalog failures stop before sandbox creation instead of falling back to a local stock-image build; explicit custom Dockerfiles remain separate.
+  Existing and recreated sandboxes retain exact image, policy, route-reservation, and lifecycle authority checks.
+  Related changes: [PR #10113](https://github.com/NVIDIA/NemoClaw/pull/10113), [PR #10320](https://github.com/NVIDIA/NemoClaw/pull/10320), [PR #10321](https://github.com/NVIDIA/NemoClaw/pull/10321), [PR #10322](https://github.com/NVIDIA/NemoClaw/pull/10322), [PR #10332](https://github.com/NVIDIA/NemoClaw/pull/10332), [PR #10396](https://github.com/NVIDIA/NemoClaw/pull/10396), and [PR #10422](https://github.com/NVIDIA/NemoClaw/pull/10422).
+- Messaging setup now binds revision-scoped credentials to canonical OpenShell providers before sandbox creation or rebuild.
+  This restores runtime credential delivery for maintained Slack, Discord, Google Chat, and Telegram paths while preserving endpoint-specific policy matching and fail-closed provider ownership.
+  Related changes: [PR #10170](https://github.com/NVIDIA/NemoClaw/pull/10170), [PR #10271](https://github.com/NVIDIA/NemoClaw/pull/10271), [PR #10273](https://github.com/NVIDIA/NemoClaw/pull/10273), [PR #10275](https://github.com/NVIDIA/NemoClaw/pull/10275), [PR #10277](https://github.com/NVIDIA/NemoClaw/pull/10277), [PR #10307](https://github.com/NVIDIA/NemoClaw/pull/10307), and [PR #10314](https://github.com/NVIDIA/NemoClaw/pull/10314).
+- The Hermes installer accepts `--defer-onboarding` or `NEMOCLAW_DEFER_ONBOARDING=1` only for NVIDIA-hosted inference when no supported credential and no sandbox exist.
+  It installs NemoClaw and Hermes without creating a provider, sandbox, or completed onboarding state; any credential or existing sandbox keeps the normal validation and recovery path.
+  Related change: [PR #10299](https://github.com/NVIDIA/NemoClaw/pull/10299).
+- The experimental managed llama.cpp path now offers NVIDIA Nemotron 3 Nano 30B-A3B on qualified DGX Spark Arm64 and Linux x86_64 NVIDIA GPU hosts and recommends it during onboarding.
+  Meta Muse Glimmer remains available on DGX Spark only by explicit selection, and existing Muse-owned installations are not migrated.
+  Local NVIDIA NIM selection now enforces the documented usable-memory limit, including the DGX Spark unified-memory cap.
+  Related changes: [PR #10122](https://github.com/NVIDIA/NemoClaw/pull/10122) and [PR #10292](https://github.com/NVIDIA/NemoClaw/pull/10292).
+- `nemoclaw upgrade-sandboxes --check` now exits nonzero when it reports actionable stale, unknown-version, backup-recovery, or missing-sandbox state.
+  Sandbox destruction and stale-container cleanup have bounded waits and preserve registry or lifecycle authority when deletion cannot be confirmed.
+  Non-portable managed Hermes uninstall also removes its exact owned state volume and stops before state retirement on Docker failure.
+  Related changes: [PR #10128](https://github.com/NVIDIA/NemoClaw/pull/10128), [PR #10133](https://github.com/NVIDIA/NemoClaw/pull/10133), and [PR #10224](https://github.com/NVIDIA/NemoClaw/pull/10224).
+- The experimental direct blueprint runner can validate and sanitize a plan for an externally managed OpenShell target.
+  Planning validates the HTTPS endpoint, workspace, expected release range, CA bundle, and authentication-file metadata without reading credential contents, connecting to the gateway, authenticating, or applying changes.
+  Related change: [PR #10045](https://github.com/NVIDIA/NemoClaw/pull/10045).
+- Security and diagnostics now reject config reads through a symlinked config directory, redact URL userinfo credentials in debug bundles, bind sandbox mutations and cancellation recovery to durable exact identity, and classify incomplete onboarding without reporting success.
+  Related changes: [PR #10041](https://github.com/NVIDIA/NemoClaw/pull/10041), [PR #10127](https://github.com/NVIDIA/NemoClaw/pull/10127), [PR #10146](https://github.com/NVIDIA/NemoClaw/pull/10146), and [PR #10396](https://github.com/NVIDIA/NemoClaw/pull/10396).
