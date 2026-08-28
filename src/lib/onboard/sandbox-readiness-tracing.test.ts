@@ -28,6 +28,11 @@ import {
 
 const NAME = "my-sandbox";
 const TARGET = namedOpenShellGateway("nemoclaw");
+const REJECTED_OBSERVATION_ERROR = {
+  kind: "command" as const,
+  reason: "failed" as const,
+  message: "OpenShell sandbox observation failed before returning a result.",
+};
 
 function replay(frames: readonly SandboxObservationFrame[]) {
   return replaySandboxObservations(NAME, frames);
@@ -194,6 +199,54 @@ describe("createSandboxReadyWaiter", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
+  it("returns a typed failure when the sandbox observer rejects (#9803)", async () => {
+    const listSandboxes = vi
+      .fn<OpenShellSandboxObserver["listSandboxes"]>()
+      .mockRejectedValue(new Error("untrusted observer diagnostic"));
+
+    const result = await waitForSandboxReadyWithTrace({
+      sandboxName: NAME,
+      attempts: 1,
+      delaySeconds: 2,
+      observer: { listSandboxes },
+      target: TARGET,
+      isLinuxDockerDriverGatewayEnabled: () => true,
+      sleep: vi.fn(),
+    });
+
+    expect(result).toEqual({
+      ready: false,
+      reason: "observation_failed",
+      error: REJECTED_OBSERVATION_ERROR,
+    });
+    expect(JSON.stringify(result)).not.toContain("untrusted observer diagnostic");
+  });
+
+  it("returns a typed failure when the legacy readiness probe rejects (#9803)", async () => {
+    const { observer } = replay([pendingSandboxFrame("Provisioning")]);
+    const fallbackReadinessProbe = vi
+      .fn<OpenShellSandboxReadinessProbe>()
+      .mockRejectedValue(new Error("untrusted legacy probe diagnostic"));
+
+    const result = await waitForSandboxReadyWithTrace({
+      sandboxName: NAME,
+      attempts: 1,
+      delaySeconds: 2,
+      observer,
+      target: TARGET,
+      fallbackReadinessProbe,
+      isLinuxDockerDriverGatewayEnabled: () => false,
+      sleep: vi.fn(),
+    });
+
+    expect(result).toEqual({
+      ready: false,
+      reason: "observation_failed",
+      error: REJECTED_OBSERVATION_ERROR,
+    });
+    expect(JSON.stringify(result)).not.toContain("untrusted legacy probe diagnostic");
+  });
+
   it("retries an unreachable gateway observation before accepting Ready (#9803)", async () => {
     const listSandboxes = vi
       .fn<OpenShellSandboxObserver["listSandboxes"]>()
@@ -335,6 +388,28 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
     expect(listSandboxes).toHaveBeenCalledOnce();
     expect(listSandboxes).toHaveBeenCalledWith({ target: TARGET, timeoutMs: 30_000 });
     expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("returns a typed failure when the created-sandbox observer rejects (#9803)", async () => {
+    const listSandboxes = vi
+      .fn<OpenShellSandboxObserver["listSandboxes"]>()
+      .mockRejectedValue(new Error("untrusted created-sandbox diagnostic"));
+
+    const result = await waitForCreatedSandboxReadyWithTrace({
+      sandboxName: NAME,
+      timeoutSecs: 30,
+      observer: { listSandboxes },
+      target: TARGET,
+      sleep: vi.fn(),
+    });
+
+    expect(result).toEqual({
+      ready: false,
+      reason: "observation_failed",
+      failurePhase: null,
+      error: REJECTED_OBSERVATION_ERROR,
+    });
+    expect(JSON.stringify(result)).not.toContain("untrusted created-sandbox diagnostic");
   });
 
   it("retries a timed-out observation before accepting created-sandbox Ready (#9803)", async () => {

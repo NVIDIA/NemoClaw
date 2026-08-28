@@ -155,6 +155,23 @@ function remainingObservationTimeoutMs(deadlineMs?: number, now?: () => number):
   return Math.max(1, Math.floor(deadlineMs - now()));
 }
 
+async function settleSandboxObservation<T>(
+  observe: () => Promise<OpenShellSandboxResult<T>>,
+): Promise<OpenShellSandboxResult<T>> {
+  try {
+    return await observe();
+  } catch {
+    return {
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "failed",
+        message: "OpenShell sandbox observation failed before returning a result.",
+      },
+    };
+  }
+}
+
 async function pollSandboxReady(
   options: SandboxReadyWaitOptions & {
     trace?: (event: string, attributes: Record<string, unknown>) => void;
@@ -187,11 +204,13 @@ async function pollSandboxReady(
   const transient = { error: null as OpenShellSandboxError | null };
   await waitUntilAsync(async () => {
     attempt += 1;
-    const observation = await observeOpenShellSandbox(
-      observer,
-      target,
-      sandboxName,
-      remainingObservationTimeoutMs(waitOptions.deadlineMs, waitOptions.now),
+    const observation = await settleSandboxObservation(() =>
+      observeOpenShellSandbox(
+        observer,
+        target,
+        sandboxName,
+        remainingObservationTimeoutMs(waitOptions.deadlineMs, waitOptions.now),
+      ),
     );
     if (!observation.ok) {
       if (isTransientObservationError(observation.error)) {
@@ -223,11 +242,15 @@ async function pollSandboxReady(
     if (isLinuxDockerDriverGatewayEnabled()) {
       return false;
     }
-    const fallback = await fallbackReadinessProbe?.({
-      target,
-      sandboxName,
-      timeoutMs: remainingObservationTimeoutMs(waitOptions.deadlineMs, waitOptions.now),
-    });
+    const fallback = fallbackReadinessProbe
+      ? await settleSandboxObservation(() =>
+          fallbackReadinessProbe({
+            target,
+            sandboxName,
+            timeoutMs: remainingObservationTimeoutMs(waitOptions.deadlineMs, waitOptions.now),
+          }),
+        )
+      : undefined;
     if (fallback && !fallback.ok) {
       if (isTransientObservationError(fallback.error)) {
         transient.error = fallback.error;
@@ -403,11 +426,13 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
       let result: CreatedSandboxReadinessResult | null = null;
       await waitUntilAsync(async () => {
         attempt += 1;
-        const observation = await observeOpenShellSandbox(
-          observer,
-          target,
-          sandboxName,
-          remainingObservationTimeoutMs(readinessDeadlineMs, readinessNow),
+        const observation = await settleSandboxObservation(() =>
+          observeOpenShellSandbox(
+            observer,
+            target,
+            sandboxName,
+            remainingObservationTimeoutMs(readinessDeadlineMs, readinessNow),
+          ),
         );
         if (!observation.ok) {
           if (isTransientObservationError(observation.error)) {
