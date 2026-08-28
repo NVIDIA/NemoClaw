@@ -762,6 +762,15 @@ describe("post-merge documentation publisher", () => {
     await expect(publish(value, api)).rejects.toThrow("unmanaged documentation branch");
     expect(writeCount(api)).toBe(0);
   });
+  it("rejects an orphan branch whose tree differs from the approved patch", async () => {
+    const value = fixture();
+    const api = new FakeGitHub(value);
+    api.installOrphan("e".repeat(40));
+    await expect(publish(value, api)).rejects.toThrow("unmanaged documentation branch");
+    expect(api.branchRef?.object.sha).toBe(api.existingSha);
+    expect(api.openPulls).toEqual([]);
+    expect(writeCount(api)).toBe(0);
+  });
   it("reconciles exact lost branch and PR responses without retrying", async () => {
     const value = fixture();
     const api = new FakeGitHub(value);
@@ -772,14 +781,14 @@ describe("post-merge documentation publisher", () => {
     expect(requestCount(api, "POST", "/pulls")).toBe(1);
     expect(requestCount(api, "POST", "/git/refs")).toBe(1);
   });
-  it("does not retry a conditional update after a lost response", async () => {
+  it("reconciles an applied conditional update after a lost response", async () => {
     const value = fixture();
     const api = new FakeGitHub(value);
     api.installActive();
     api.afterWrite = () => {
       throw new Error("lost response");
     };
-    await expect(publish(value, api)).rejects.toThrow("lost response");
+    await expect(publish(value, api)).rejects.toThrow("Documentation remains pending");
     expect(api.branchRef?.object.sha).toBe(api.commitSha);
     expect(requestCount(api, "POST", "/graphql")).toBe(1);
   });

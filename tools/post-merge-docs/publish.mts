@@ -332,6 +332,7 @@ async function managedCommit(
 async function recoverableOrphan(
   repository: string,
   mainSha: string,
+  finalTree: string,
   ref: { object?: { sha?: string } } | null,
   request: Request,
 ): Promise<string | undefined> {
@@ -343,7 +344,11 @@ async function recoverableOrphan(
   } catch {
     return fail("an unmanaged documentation branch already exists for this main commit");
   }
-  if (commit.parents?.length !== 1 || commit.parents[0]?.sha !== mainSha)
+  if (
+    commit.parents?.length !== 1 ||
+    commit.parents[0]?.sha !== mainSha ||
+    commit.tree?.sha !== finalTree
+  )
     fail("an unmanaged documentation branch already exists for this main commit");
   return commitSha;
 }
@@ -489,7 +494,7 @@ export async function publishDocumentation(input: {
     const ref = (await request("GET", refPath)) as { object?: { sha?: string } } | null;
     const orphanSha = active
       ? undefined
-      : await recoverableOrphan(repository, mainSha, ref, request);
+      : await recoverableOrphan(repository, mainSha, prepared.finalTree, ref, request);
     if (active) {
       if (ref?.object?.sha !== active.head.sha)
         fail("managed documentation PR and branch point to different commits");
@@ -523,7 +528,14 @@ export async function publishDocumentation(input: {
     requireSamePull(active, await checkpoint(repository, mainSha, request));
 
     if (active) {
-      await updateRef(branch, active.head.sha, commitSha, active.base.repo.node_id!, request);
+      try {
+        await updateRef(branch, active.head.sha, commitSha, active.base.repo.node_id!, request);
+      } catch (error) {
+        const reconciled = (await request("GET", refPath)) as {
+          object?: { sha?: string };
+        } | null;
+        if (reconciled?.object?.sha !== commitSha) throw error;
+      }
       fail(`Documentation remains pending in ${active.html_url}`);
     }
 
