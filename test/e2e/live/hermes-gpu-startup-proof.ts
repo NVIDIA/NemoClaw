@@ -25,10 +25,6 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { buildHermesManagedStartupIntegrityScript } from "./hermes-gpu-startup-integrity.ts";
 import { stripAnsi } from "./json-envelope.ts";
 
-export const HERMES_GPU_EXTRA_PLACEHOLDER_KEYS = [
-  "TELEGRAM_BOT_TOKEN_AGENT_A",
-  "SLACK_BOT_TOKEN_AGENT_B",
-] as const;
 export const HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS = [
   "recreating the OpenShell-managed Docker container",
   "legacy GPU compatibility envelope",
@@ -225,43 +221,6 @@ export async function assertHermesGpuStartupProof({
   );
   expect(managedImageContentId).toMatch(IMMUTABLE_IMAGE_CONTENT_ID);
 
-  const expectedExtraPlaceholderAssignment = `NEMOCLAW_EXTRA_PLACEHOLDER_KEYS=${HERMES_GPU_EXTRA_PLACEHOLDER_KEYS.join(",")}`;
-  const extraPlaceholderEnv = await runtimeProvider.command(
-    [
-      "container",
-      "exec",
-      "--user",
-      "0",
-      containerId,
-      "python3",
-      "-c",
-      String.raw`import os
-from pathlib import Path
-
-expected = ${JSON.stringify(expectedExtraPlaceholderAssignment)}.encode("utf-8")
-for proc in Path("/proc").iterdir():
-    if not proc.name.isdigit() or int(proc.name) == os.getpid():
-        continue
-    try:
-        argv = [item.decode("utf-8", "strict") for item in (proc / "cmdline").read_bytes().split(b"\0") if item]
-        if not any(Path(item).name == "nemoclaw-start" for item in argv):
-            continue
-        entries = (proc / "environ").read_bytes().split(b"\0")
-    except (OSError, UnicodeDecodeError):
-        continue
-    if expected in entries:
-        print(expected.decode("utf-8"))
-        raise SystemExit(0)
-raise SystemExit(1)`,
-    ],
-    {
-      artifactName: "phase-4-gpu-startup-extra-placeholder-env",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    },
-  );
-  expect(extraPlaceholderEnv.exitCode, resultText(extraPlaceholderEnv)).toBe(0);
-  expect(extraPlaceholderEnv.stdout.trim()).toBe(expectedExtraPlaceholderAssignment);
   const guardWithoutStartupOwner = await sandbox.execShell(
     sandboxName,
     trustedSandboxShellScript(

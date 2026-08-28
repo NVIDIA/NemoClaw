@@ -52,7 +52,7 @@ export function assertMcpBridgeManagedImageReceipt(options: {
   const exactCandidateCatalog = environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG?.trim();
   if (!selectedRevision && !exactCandidateCatalog) return;
 
-  const expectedRevision = selectedRevision ?? environment.NEMOCLAW_E2E_EXPECTED_SHA?.trim() ?? "";
+  const expectedRevision = selectedRevision || environment.NEMOCLAW_E2E_EXPECTED_SHA?.trim() || "";
   if (!/^[0-9a-f]{40}$/u.test(expectedRevision)) {
     throw new Error("managed-image MCP qualification requires an exact cohort revision");
   }
