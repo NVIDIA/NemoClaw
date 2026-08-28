@@ -85,7 +85,9 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(review).toContain("`3ef6bbd201263d354fd83ec55b3c306ded2eb72a`");
     expect(review).toContain("`bd0bac012aee38a60894781f4597dc29ee7bedb3448540249921f10d3bef327f`");
     expect(review).toContain("`ac986bede64a2785436676c0ea084ec586574f8cb00a9d047e095b435d3e21c0`");
-    expect(pinnedBaseDigest).toMatch(/^sha256:[0-9a-f]{64}$/u);
+    expect(pinnedBaseDigest).toBe(
+      "sha256:d30f58b0374c7d281df07c126cc257baaf63eb051264a575b96099ec037d5e5d",
+    );
     expect(review).toContain(
       `The \`BASE_IMAGE\` argument in \`agents/hermes/Dockerfile\` pins the patched multi-platform Open Container Initiative (OCI) index \`${pinnedBaseDigest}\`.`,
     );
