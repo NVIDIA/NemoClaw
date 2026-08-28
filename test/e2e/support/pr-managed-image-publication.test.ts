@@ -131,6 +131,8 @@ on:
         "src/lib/actions/maintenance.test.ts",
         "src/lib/actions/maintenance.ts",
         "src/lib/actions/sandbox/connect-probe-observe.test.ts",
+        "src/lib/actions/sandbox/gateway-failure-classifier.test.ts",
+        "src/lib/actions/sandbox/gateway-failure-classifier.ts",
         "src/lib/actions/sandbox/launch-readiness-ordinary-pairing.test.ts",
         "src/lib/actions/sandbox/process-recovery.ts",
         "src/lib/actions/sandbox/mcp-bridge-input-targets.test.ts",
@@ -138,6 +140,7 @@ on:
         "src/lib/actions/sandbox/mcp-bridge-tool-discovery.ts",
         "src/lib/actions/sandbox/stopped-sandbox-backup.test.ts",
         "src/lib/actions/sandbox/stopped-sandbox-backup.ts",
+        "src/lib/actions/sandbox/status-preflight.ts",
         "src/lib/adapters/podman/index.test.ts",
         "src/lib/adapters/podman/index.ts",
         "src/lib/inference/serving/profile-list.test.ts",
@@ -187,6 +190,8 @@ on:
     expect(source).not.toContain("scripts/checks/run-managed-image-openshell-e2e.ts");
     expect(source).not.toContain("src/lib/actions/maintenance.ts");
     expect(source).not.toContain("src/lib/actions/sandbox/process-recovery.ts");
+    expect(source).not.toContain("src/lib/actions/sandbox/gateway-failure-classifier.ts");
+    expect(source).not.toContain("src/lib/actions/sandbox/status-preflight.ts");
     expect(source).not.toContain("src/lib/actions/sandbox/mcp-bridge-tool-discovery.ts");
     expect(source).not.toContain("src/lib/actions/sandbox/stopped-sandbox-backup.ts");
     expect(source).not.toContain("src/lib/adapters/podman/index.ts");
