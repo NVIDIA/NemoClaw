@@ -84,6 +84,7 @@ import {
   type HermesPortableActiveLifecycleAuthority,
   printGatewayLifecycleHint,
   qualifyPortableAgentLifecycleAuthority,
+  requalifyPortableAgentSandboxAuthority,
   recoverPortableDemoSandboxLifecycleForConnect,
   isTerminalSandboxPhase,
   TERMINAL_SANDBOX_PHASES,
@@ -462,7 +463,7 @@ function portableAgentLifecycleAuthorityDeps() {
   return { readRegistry: registry.getSandbox };
 }
 
-/** Verify the recorded schema-5 route without invoking any inference repair. */
+/** Verify the recorded Hermes route without invoking any inference repair. */
 function verifyHermesPortableInferenceRouteOrExit(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
@@ -1222,11 +1223,12 @@ type WaitForSandboxReadyOptions = {
 
 // OpenShell can transiently publish `Error` immediately after `sandbox start`
 // before the same sandbox advances through `Provisioning` to `Ready`. Its list
-// output exposes no structured transition reason, so only the start caller opts
-// into ten three-second grace polls; every other terminal phase still fails
-// immediately, and a persistent Error fails after the bound. Remove this
-// compatibility exception once OpenShell exposes a structured restart signal or
-// guarantees that post-start recovery never emits the terminal Error phase.
+// output exposes no structured transition reason. A caller opts into ten
+// three-second grace polls only after it starts the container; every other
+// terminal phase still fails immediately, and a persistent Error fails after
+// the bound. Remove this compatibility exception once OpenShell exposes a
+// structured restart signal or guarantees that post-start recovery never emits
+// the terminal Error phase.
 const START_INITIAL_ERROR_GRACE_POLLS = 10;
 
 // Readiness budget for the repair paths that wait for a restarted sandbox
@@ -1725,6 +1727,9 @@ async function prepareConnectSandboxWithinLifecycleFence(
   probeTiming?: ProbeTimingRecorder,
 ): Promise<PreparedConnectChild | null> {
   if (probeOnly) {
+    probeTiming!.measure("authority", () =>
+      requalifyPortableAgentSandboxAuthority(sandboxName, portableAgentLifecycleAuthorityDeps()),
+    );
     let readiness = await probeTiming!.measureAsync("readiness", () =>
       inspectLaunchReadiness(sandboxName),
     );
@@ -1804,13 +1809,14 @@ async function prepareConnectSandboxWithinLifecycleFence(
           withinLifecycleFence: async ({ hermesPortable, requalify }) => {
             // Restart a stopped container before the readiness wait. Without this step,
             // OpenShell keeps reporting the stopped sandbox until the wait expires (#8967).
-            if (!hermesPortable) {
-              probeTiming!.measure("lifecycle", () =>
-                startStoppedSandboxContainerForProbeRecovery(sandboxName),
-              );
-            }
+            const startedStoppedContainer = hermesPortable
+              ? false
+              : probeTiming!.measure("lifecycle", () =>
+                  startStoppedSandboxContainerForProbeRecovery(sandboxName),
+                );
             await probeTiming!.measureAsync("gateway", () =>
               waitForSandboxReadyOrExit(sandboxName, {
+                allowInitialErrorAfterStart: startedStoppedContainer,
                 allowDockerRuntimeInspection: !hermesPortable,
                 observer: hermesPortable
                   ? createCliOpenShellSandboxObserver({

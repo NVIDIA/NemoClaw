@@ -7,7 +7,10 @@ import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 import { requireFixture } from "./require-fixture";
 
 type ControllerWorkflow = {
-  jobs: Record<string, { steps: Array<{ id?: string; run?: string }> }>;
+  jobs: Record<
+    string,
+    { steps: Array<{ env?: Record<string, string>; id?: string; name?: string; run?: string }> }
+  >;
 };
 
 const EXPECTED_ERROR = "trusted controller matrix must pin typed target runner to ubuntu-latest";
@@ -89,5 +92,17 @@ describe("trusted E2E target routing boundary (#7824)", () => {
     controllerMatrix.run = controllerMatrix.run!.replace(output, `${unsafeOverride}\n${output}`);
 
     expect(validateE2eWorkflow(workflow)).toContain(EXPECTED_ERROR);
+  });
+
+  it("rejects an inference credential exposed to an unauthorized PR candidate", () => {
+    const { workflow } = fixture();
+    const run = workflow.jobs.live!.steps.find((step) => step.name === "Run live E2E tests")!;
+    const validationError =
+      "live E2E step must guard NVIDIA_INFERENCE_API_KEY behind a trusted main run or an authorized NVIDIA-owned PR dispatch";
+
+    expect(validateE2eWorkflow(workflow)).not.toContain(validationError);
+    run.env!.NVIDIA_INFERENCE_API_KEY = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
+
+    expect(validateE2eWorkflow(workflow)).toContain(validationError);
   });
 });

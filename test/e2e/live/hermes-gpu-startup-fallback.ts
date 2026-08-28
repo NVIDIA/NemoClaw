@@ -8,10 +8,9 @@ import path from "node:path";
 import { REQUIRED_OPENSHELL_MCP_FEATURES } from "../../../src/lib/onboard/openshell-feature-gate";
 
 export const HERMES_GPU_FALLBACK_EVENTS = {
-  delegateNativeCreateWithoutGpu: "delegate-native-create-without-gpu",
-  rejectNativeNvidiaSmiProof: "reject-native-nvidia-smi-proof",
+  rejectNativeCreateBeforeProgress: "reject-native-create-before-progress",
   delegateCompatibilityCreate: "delegate-compatibility-create",
-  delegateNvidiaSmiProofAfterRejection: "delegate-nvidia-smi-proof-after-rejection",
+  delegateNvidiaSmiProofAfterFallback: "delegate-nvidia-smi-proof-after-fallback",
 } as const;
 
 export const HERMES_GPU_NATIVE_NVIDIA_SMI_PROOF = [
@@ -81,12 +80,10 @@ function quoteShellLiteral(value: string): string {
 }
 
 /**
- * Create an E2E-only OpenShell CLI wrapper that simulates a native injector
- * silently dropping the exact `--gpu` request while still delegating creation,
- * so a real partial sandbox exists with host-visible GPU attachment absent.
- * It then atomically rejects the first exact post-create `nvidia-smi` proof
- * with a narrow NVML driver error. Every other invocation transparently
- * delegates its original argv to the real CLI. This
+ * Create an E2E-only OpenShell CLI wrapper that rejects the exact native
+ * `--gpu` create before build or sandbox progress. The compatibility create
+ * and its GPU proof delegate to the real CLI. Every other invocation also
+ * transparently delegates its original argv. This
  * test-only wrapper never logs argv: its sole artifact is an event log made of
  * fixed labels, so sandbox-create environment arguments never enter artifacts.
  * This interception pattern is specific to the #6110 fallback proof and must
@@ -120,6 +117,7 @@ export function createHermesGpuFallbackWrapper(
     `REAL_OPENSHELL=${quoteShellLiteral(realOpenshellPath)}`,
     `FALLBACK_STATE_DIR=${quoteShellLiteral(stateDir)}`,
     `NATIVE_NVIDIA_SMI_PROOF=${quoteShellLiteral(HERMES_GPU_NATIVE_NVIDIA_SMI_PROOF)}`,
+    'NATIVE_CREATE_REJECTED="$FALLBACK_STATE_DIR/native-create-rejected"',
     "",
     "is_sandbox_create=0",
     "has_gpu_flag=0",
@@ -135,17 +133,11 @@ export function createHermesGpuFallbackWrapper(
     "",
     'if [[ "$is_sandbox_create" == "1" ]]; then',
     '  if [[ "$has_gpu_flag" == "1" ]]; then',
-    `    printf '%s\\n' '${HERMES_GPU_FALLBACK_EVENTS.delegateNativeCreateWithoutGpu}' >>"$FALLBACK_STATE_DIR/events.log"`,
-    "    filtered_args=()",
-    "    stripped_gpu=0",
-    '    for arg in "$@"; do',
-    '      if [[ "$stripped_gpu" == "0" && "$arg" == "--gpu" ]]; then',
-    "        stripped_gpu=1",
-    "        continue",
-    "      fi",
-    '      filtered_args+=("$arg")',
-    "    done",
-    '    exec "$REAL_OPENSHELL" "${filtered_args[@]}"',
+    '    if mkdir "$NATIVE_CREATE_REJECTED" 2>/dev/null; then',
+    `      printf '%s\\n' '${HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreateBeforeProgress}' >>"$FALLBACK_STATE_DIR/events.log"`,
+    "    fi",
+    `    printf '%s\\n' "error: unexpected argument '--gpu' found" >&2`,
+    "    exit 2",
     "  else",
     `    printf '%s\\n' '${HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate}' >>"$FALLBACK_STATE_DIR/events.log"`,
     "  fi",
@@ -156,13 +148,8 @@ export function createHermesGpuFallbackWrapper(
     "  is_native_nvidia_smi_proof=1",
     "fi",
     "",
-    'if [[ "$is_native_nvidia_smi_proof" == "1" ]]; then',
-    '  if mkdir "$FALLBACK_STATE_DIR/native-nvidia-smi-proof-rejected" 2>/dev/null; then',
-    `    printf '%s\\n' '${HERMES_GPU_FALLBACK_EVENTS.rejectNativeNvidiaSmiProof}' >>"$FALLBACK_STATE_DIR/events.log"`,
-    `    printf '%s\\n' 'Failed to initialize NVML: Driver/library version mismatch' >&2`,
-    "    exit 1",
-    "  fi",
-    `  printf '%s\\n' '${HERMES_GPU_FALLBACK_EVENTS.delegateNvidiaSmiProofAfterRejection}' >>"$FALLBACK_STATE_DIR/events.log"`,
+    'if [[ "$is_native_nvidia_smi_proof" == "1" && -d "$NATIVE_CREATE_REJECTED" ]]; then',
+    `  printf '%s\\n' '${HERMES_GPU_FALLBACK_EVENTS.delegateNvidiaSmiProofAfterFallback}' >>"$FALLBACK_STATE_DIR/events.log"`,
     "fi",
     "",
     "# Transparent test-only delegation: argv is never written by this wrapper.",
