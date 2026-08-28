@@ -147,13 +147,9 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
 
     expect(added.channels.telegram).toMatchObject({
       enabled: true,
-      accounts: {
-        default: {
-          botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
-          enabled: true,
-        },
-      },
+      accounts: { default: { enabled: true } },
     });
+    expect(JSON.stringify(added.channels.telegram)).not.toContain("botToken");
     expect(added.plugins.entries.telegram).toEqual({ enabled: true });
     expect(added.plugins.allow).toContain("telegram");
     expect(addedPlan.credentialBindings).toContainEqual(

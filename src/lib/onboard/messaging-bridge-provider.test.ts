@@ -14,6 +14,7 @@ import {
   matchesRegisteredStaticMessagingProfile,
   MESSAGING_BRIDGE_PENDING_VALUE,
   type MessagingBridgeProfile,
+  refreshStatusForCredential,
 } from "./messaging-bridge-provider";
 
 const SA_JSON = JSON.stringify({
@@ -23,6 +24,17 @@ const SA_JSON = JSON.stringify({
 const normalizeCredentialValue = (v: unknown) => String(v ?? "").trim();
 const redact = (s: string) => s;
 const noLog = vi.fn();
+
+// `openshell provider refresh status` output as the CLI prints it, so the parser
+// meets real ANSI-decorated column runs.
+const STATUS_HEADER =
+  "\u001B[1mPROVIDER                \u001B[0m  \u001B[1mCREDENTIAL_KEY              \u001B[0m  " +
+  "\u001B[1mSTRATEGY                    \u001B[0m  \u001B[1mSTATUS            \u001B[0m  \u001B[1mEXPIRES_AT\u001B[0m";
+const statusTable = (status: string) =>
+  `${STATUS_HEADER}\nsbx-googlechat-bridge  GOOGLE_CHAT_ACCESS_TOKEN      ` +
+  `google_service_account_jwt    ${status}           2026-08-25 12:18:05`;
+const MINTED_STATUS_TABLE = statusTable("refreshed");
+const PENDING_STATUS_TABLE = statusTable("configured");
 
 // Injected in-memory profile mirroring the co-located google-chat-bridge profile,
 // so the unit tests do not touch the filesystem or the manifest registry.
@@ -239,6 +251,7 @@ describe("configureMessagingBridgeRefreshes", () => {
     const parentSecret = process.env[secretEnvName];
     const runOpenshell = vi.fn((_args: string[], _opts: { env?: NodeJS.ProcessEnv }) => ({
       status: 0,
+      stdout: MINTED_STATUS_TABLE,
     }));
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
       runOpenshell,
@@ -248,7 +261,7 @@ describe("configureMessagingBridgeRefreshes", () => {
       profiles: [GC_PROFILE],
     });
     expect(result).toEqual({ ok: true });
-    expect(runOpenshell).toHaveBeenCalledTimes(1);
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
     const args = runOpenshell.mock.calls[0][0];
     expect(args.slice(0, 3)).toEqual(["provider", "refresh", "configure"]);
     expect(args).toContain(GC_PROFILE.credentialKey);
@@ -269,6 +282,7 @@ describe("configureMessagingBridgeRefreshes", () => {
     // only the first scope leaves `:pull` rejected with 403 at runtime.
     const runOpenshell = vi.fn((_args: string[], _opts: { env?: NodeJS.ProcessEnv }) => ({
       status: 0,
+      stdout: MINTED_STATUS_TABLE,
     }));
 
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
@@ -294,6 +308,7 @@ describe("configureMessagingBridgeRefreshes", () => {
     };
     const runOpenshell = vi.fn((_args: string[], _opts: { env?: NodeJS.ProcessEnv }) => ({
       status: 0,
+      stdout: MINTED_STATUS_TABLE,
     }));
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
       runOpenshell,
@@ -325,7 +340,7 @@ describe("configureMessagingBridgeRefreshes", () => {
   });
 
   it("resolves the secret from the injected env too (parity)", () => {
-    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: MINTED_STATUS_TABLE }));
     const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
       runOpenshell,
       redact,
@@ -336,7 +351,125 @@ describe("configureMessagingBridgeRefreshes", () => {
       profiles: [GC_PROFILE],
     });
     expect(result).toEqual({ ok: true });
-    expect(runOpenshell).toHaveBeenCalledTimes(1);
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
+  });
+
+  it("waits for the first mint before reporting the bridge configured", () => {
+    const runOpenshell = vi.fn((_args: string[], _opts: unknown) => ({
+      status: 0,
+      stdout: MINTED_STATUS_TABLE,
+    }));
+    const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
+      runOpenshell,
+      redact,
+      getCredential: () => SA_JSON,
+      log: noLog,
+      profiles: [GC_PROFILE],
+      sleep: () => undefined,
+    });
+    expect(result).toEqual({ ok: true });
+    const statusArgs = runOpenshell.mock.calls[1][0];
+    expect(statusArgs.slice(0, 3)).toEqual(["provider", "refresh", "status"]);
+    expect(statusArgs).toContain("sbx-googlechat-bridge");
+    expect(statusArgs).toContain(GC_PROFILE.credentialKey);
+  });
+
+  it("fails closed when the gateway never mints the first token", () => {
+    // Reporting success here would let onboarding create the sandbox while the
+    // provider still holds the create-time sentinel:
+    // - The sandbox captures that environment once, at boot.
+    // - The agent would authenticate with the sentinel for the life of the
+    //   container, and the channel API would reject every outbound reply.
+    const runOpenshell = vi.fn((_args: string[], _opts: unknown) => ({
+      status: 0,
+      stdout: PENDING_STATUS_TABLE,
+    }));
+    const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
+      runOpenshell,
+      redact,
+      getCredential: () => SA_JSON,
+      log: noLog,
+      profiles: [GC_PROFILE],
+      sleep: () => undefined,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("configured");
+  });
+
+  it("rejects a refreshed row printed by a failed status command", () => {
+    // A nonzero probe can still print a stale table; trusting it would create
+    // the sandbox against an unminted credential.
+    const runOpenshell = vi.fn((args: string[], _opts: unknown) => ({
+      status: args[1] === "refresh" && args[2] === "status" ? 1 : 0,
+      stdout: MINTED_STATUS_TABLE,
+    }));
+    const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
+      runOpenshell,
+      redact,
+      getCredential: () => SA_JSON,
+      log: noLog,
+      profiles: [GC_PROFILE],
+      sleep: () => undefined,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("unknown");
+  });
+
+  it("stops at the overall deadline when each probe burns command time", () => {
+    // Attempts alone do not bound the wait: a hanging probe spends its own time.
+    let clock = 0;
+    const runOpenshell = vi.fn((_args: string[], _opts: unknown) => {
+      clock += 60_000;
+      return { status: 0, stdout: PENDING_STATUS_TABLE };
+    });
+    const result = configureMessagingBridgeRefreshes([BRIDGE_DEF], {
+      runOpenshell,
+      redact,
+      getCredential: () => SA_JSON,
+      log: noLog,
+      profiles: [GC_PROFILE],
+      sleep: () => undefined,
+      now: () => clock,
+    });
+    expect(result.ok).toBe(false);
+    // Six probes at a minute each cross the five-minute deadline well before
+    // the fifty-attempt cap.
+    expect(
+      runOpenshell.mock.calls.filter((call) => call[0][2] === "status").length,
+    ).toBeLessThan(10);
+  });
+
+  it("bounds each status probe with a command timeout", () => {
+    const runOpenshell = vi.fn((_args: string[], _opts: unknown) => ({
+      status: 0,
+      stdout: MINTED_STATUS_TABLE,
+    }));
+    configureMessagingBridgeRefreshes([BRIDGE_DEF], {
+      runOpenshell,
+      redact,
+      getCredential: () => SA_JSON,
+      log: noLog,
+      profiles: [GC_PROFILE],
+      sleep: () => undefined,
+    });
+    const statusCall = runOpenshell.mock.calls.find((call) => call[0][2] === "status");
+    expect(statusCall?.[1]).toMatchObject({ timeout: 15_000 });
+  });
+});
+
+describe("refreshStatusForCredential", () => {
+  it("reads the STATUS cell out of the CLI table", () => {
+    expect(refreshStatusForCredential(MINTED_STATUS_TABLE, "GOOGLE_CHAT_ACCESS_TOKEN")).toBe(
+      "refreshed",
+    );
+    expect(refreshStatusForCredential(PENDING_STATUS_TABLE, "GOOGLE_CHAT_ACCESS_TOKEN")).toBe(
+      "configured",
+    );
+  });
+
+  it("returns an empty status when the credential has no row", () => {
+    expect(refreshStatusForCredential(STATUS_HEADER, "GOOGLE_CHAT_ACCESS_TOKEN")).toBe("");
+    expect(refreshStatusForCredential("", "GOOGLE_CHAT_ACCESS_TOKEN")).toBe("");
   });
 });
 

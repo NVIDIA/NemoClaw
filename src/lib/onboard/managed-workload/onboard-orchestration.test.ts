@@ -183,6 +183,16 @@ describe("managed workload onboard orchestration", () => {
     ).toBe(false);
   });
 
+  it("keeps stock managed images required during providerless interceptor creation (#9833)", () => {
+    expect(
+      shouldActivateStockManagedRuntime({
+        portableLifecycle: false,
+        hermesPortableLifecycle: false,
+        agentName: "openclaw",
+      }),
+    ).toBe(true);
+  });
+
   it("rejects an unavailable catalog for stock managed-image onboarding", async () => {
     const { runtime } = createFreshOnboardingRuntime(
       {},

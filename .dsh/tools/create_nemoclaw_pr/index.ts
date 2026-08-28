@@ -29,6 +29,8 @@ export default async function create_nemoclaw_pr(input: {
   verificationPending: boolean;
   url?: string;
   unverified: { sha: string; reason: string | null }[];
+  blocker?: string | null;
+  remoteState?: "not-checked" | "expected-commit" | "unchanged" | "unknown";
 }> {
   const q = (v) => "'" + String(v).replaceAll("'", "'\"'\"'") + "'";
   const repo = input.repo ?? "NVIDIA/NemoClaw",
@@ -136,6 +138,24 @@ export default async function create_nemoclaw_pr(input: {
       verificationPending: true,
       unverified: [],
     };
+  if (publication.remoteState !== "expected-commit")
+    return {
+      ok: false,
+      apply: true,
+      mutated: publication.mutated,
+      step: "publication",
+      repo,
+      remote,
+      baseBranch,
+      headBranch: branch,
+      draft: input.draft === true,
+      assignee,
+      commitCount: publication.commits.length,
+      verificationPending: false,
+      unverified: [],
+      blocker: publication.blocker,
+      remoteState: publication.remoteState,
+    };
   if (!publication.allVerified)
     return {
       ok: false,
@@ -210,7 +230,7 @@ export default async function create_nemoclaw_pr(input: {
       return {
         ok: true,
         apply: true,
-        mutated: false,
+        mutated: true,
         repo,
         remote,
         baseBranch,

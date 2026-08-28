@@ -40,6 +40,14 @@ const SECURITY_IMAGES = [
     additionalStartMarker: null,
     endMarker: "# Node remains available",
   },
+  {
+    name: "Pi",
+    dockerfile: path.join(ROOT, "agents", "pi", "Dockerfile.base"),
+    finalDockerfile: path.join(ROOT, "agents", "pi", "Dockerfile"),
+    startMarker: "# Install the reviewed libexpat, jq, and Vim packages",
+    additionalStartMarker: null,
+    endMarker: "# Pi runs on Node.js",
+  },
 ] as const;
 const ARCHITECTURES = ["amd64", "arm64"] as const;
 const EXPECTED_SECURITY_PACKAGE_INVENTORY = [
@@ -50,6 +58,7 @@ const EXPECTED_SECURITY_PACKAGE_INVENTORY = [
   "vim-common=2:9.2.0858-1",
   "vim-tiny=2:9.2.0858-1",
   "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2",
+  "libssl3t64=3.5.7-1~deb13u2",
   "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1",
   "perl-base=5.44.0-1nemoclaw1",
   "perl=5.44.0-1nemoclaw1",

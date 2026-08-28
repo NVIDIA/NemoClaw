@@ -11,7 +11,6 @@ import {
   mergePolicyMessagingChannels,
   mergeRebuildMessagingPolicyPresets,
   messagingChannelsForPolicyPresets,
-  pruneInactiveHermesMessagingPolicyPresets,
   pruneDisabledMessagingPolicyPresets,
   requiredMessagingChannelPolicyPresets,
 } from "./messaging-policy-presets";
@@ -39,19 +38,20 @@ describe("messaging policy presets", () => {
     ]);
   });
 
-  // #5967: a channel that is not flagged requiredAtCreate (Discord, Telegram,
-  // WhatsApp, Teams, WeChat, Google Chat) still needs its egress preset merged so policy
-  // finalization persists it and policy-list marks it applied.
+  // #5967: channels not flagged requiredAtCreate (WhatsApp, WeChat, and
+  // Google Chat) still need their egress preset merged so policy finalization
+  // persists it and policy-list marks it applied. Discord, Slack, Teams, and
+  // Telegram bind credentials, so they are create-time required instead.
   it("merges an enabled channel preset that is not required at create time", () => {
-    expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["telegram"])).toEqual([
+    expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["wechat"])).toEqual([
       "npm",
-      "telegram",
+      "wechat",
     ]);
-    expect(requiredMessagingChannelPolicyPresets(["telegram"])).toEqual([]);
-    expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["slack", "discord"])).toEqual([
+    expect(requiredMessagingChannelPolicyPresets(["wechat"])).toEqual([]);
+    expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["slack", "wechat"])).toEqual([
       "npm",
       "slack",
-      "discord",
+      "wechat",
     ]);
   });
 
@@ -80,48 +80,6 @@ describe("messaging policy presets", () => {
       "npm",
       "pypi",
     ]);
-  });
-
-  it("removes inactive repository messaging presets only for Hermes", () => {
-    expect(
-      pruneInactiveHermesMessagingPolicyPresets(
-        ["npm", "slack", "discord", "googlechat", "custom-egress"],
-        ["slack"],
-        "hermes",
-      ),
-    ).toEqual(["npm", "slack", "custom-egress"]);
-    expect(
-      pruneInactiveHermesMessagingPolicyPresets(
-        ["npm", "slack", "googlechat"],
-        ["googlechat"],
-        "hermes",
-      ),
-    ).toEqual(["npm", "googlechat"]);
-    expect(
-      pruneInactiveHermesMessagingPolicyPresets(
-        ["npm", "slack", "discord"],
-        ["slack"],
-        "openclaw",
-      ),
-    ).toEqual(["npm", "slack", "discord"]);
-    expect(
-      pruneInactiveHermesMessagingPolicyPresets(
-        ["npm", "slack", "discord"],
-        null,
-        "hermes",
-      ),
-    ).toEqual(["npm", "slack", "discord"]);
-  });
-
-  it("preserves a custom preset that shadows an inactive repository messaging preset", () => {
-    expect(
-      pruneInactiveHermesMessagingPolicyPresets(
-        ["npm", "discord"],
-        ["slack"],
-        "hermes",
-        new Set(["discord"]),
-      ),
-    ).toEqual(["npm", "discord"]);
   });
 
   it("maps every channel that has a policy preset to its preset for cleanup", () => {
@@ -218,5 +176,4 @@ describe("messaging policy presets", () => {
     expect(allMessagingChannelPolicyPresets(["nonexistent"])).toEqual([]);
     expect(mergeEnabledMessagingChannelPolicyPresets(["npm"], ["nonexistent"])).toEqual(["npm"]);
   });
-
 });

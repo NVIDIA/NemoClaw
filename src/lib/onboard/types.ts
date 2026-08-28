@@ -128,9 +128,10 @@ export type VerifiedSandboxCreateEffects = (
   context: VerifiedSandboxCreateEffectsContext,
 ) => Promise<void>;
 
-/** Durable onboarding-session identity that owns the pending inference route. */
+/** Durable onboarding-session identity and exact pending inference route. */
 export interface InferenceRouteReservationAuthority {
   readonly sessionId: string;
+  readonly selection: import("../inference/selection").InferenceSelection;
 }
 
 export type OnboardOptions = {

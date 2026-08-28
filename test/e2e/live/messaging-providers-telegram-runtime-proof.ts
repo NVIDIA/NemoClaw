@@ -158,12 +158,18 @@ if (typeof sendMessageTelegram !== "function") {
 }
 const cfg = JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));
 const account = cfg.channels?.telegram?.accounts?.default;
-if (!account?.botToken) {
-  throw new Error("missing channels.telegram.accounts.default.botToken in openclaw.json");
+if (!account) {
+  throw new Error("missing channels.telegram.accounts.default in openclaw.json");
+}
+if (Object.prototype.hasOwnProperty.call(account, "botToken")) {
+  throw new Error("unexpected persisted Telegram botToken in openclaw.json");
 }
 const target = process.env.OPENCLAW_MESSAGE_TARGET || "42424242";
 const text = process.env.OPENCLAW_MESSAGE_TEXT || "NemoClaw OpenClaw Telegram plugin mock E2E";
-const token = account.botToken;
+const token = process.env.TELEGRAM_BOT_TOKEN;
+if (!/^openshell:resolve:env:v[0-9]+_TELEGRAM_BOT_TOKEN$/.test(token || "")) {
+  throw new Error("missing revision-scoped TELEGRAM_BOT_TOKEN environment placeholder");
+}
 const api = {
   sendMessage: (chatId, body, params = {}) =>
     requestFakeTelegram(

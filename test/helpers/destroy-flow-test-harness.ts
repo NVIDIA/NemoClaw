@@ -23,7 +23,6 @@ export type DestroyHarness = {
   captureOpenshellSpy: MockInstance;
   compareAndSwapSessionSpy: MockInstance;
   destroySandbox: DestroySandbox;
-  destroySourcePath: string;
   dockerCaptureSpy: MockInstance;
   dockerRunSpy: MockInstance;
   errorSpy: MockInstance;
@@ -145,19 +144,6 @@ export function sandboxListJson(names: string[]): string {
 
 export function resetDestroyModuleCache(): void {
   delete require.cache[requireSource.resolve(destroyModulePath)];
-}
-
-type DestroySandboxPresenceClassifier = (
-  sandboxName: string,
-  result: { status: number | null; stdout?: string; stderr?: string },
-) => string;
-
-export function loadDestroySandboxPresenceClassifier(): DestroySandboxPresenceClassifier {
-  resetDestroyModuleCache();
-  const destroyModule = requireSource(destroyModulePath) as {
-    classifyDestroySandboxPresence: DestroySandboxPresenceClassifier;
-  };
-  return destroyModule.classifyDestroySandboxPresence;
 }
 
 export function traceDestroyBoundaryCalls(
@@ -607,7 +593,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     dockerCaptureSpy,
     dockerRunSpy,
     destroySandbox: requireSource(destroyModulePath).destroySandbox,
-    destroySourcePath: requireSource.resolve(destroyModulePath),
     errorSpy,
     events,
     executeSandboxDestroySpy,

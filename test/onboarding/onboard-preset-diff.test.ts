@@ -318,11 +318,10 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     assert.deepEqual(payload.finalApplied, ["npm", "googlechat"]);
   });
 
-  // Regression for #5967: these channels are not `requiredAtCreate`, so their
-  // policy presets are absent from the create-time boot policy. Finalization
-  // must still apply enabled presets and remove disabled presets through the
-  // shared channel-to-preset registry path.
-  const nonCreateTimeChannelPresets = [
+  // Regression for #5967: finalization must apply every enabled channel's
+  // egress policy and remove it when the channel is disabled, including
+  // create-time-required channels whose presets bind credentials.
+  const messagingChannelPresets = [
     "discord",
     "telegram",
     "teams",
@@ -331,7 +330,7 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     "googlechat",
   ].map((channel) => ({ channel }));
 
-  it.each(nonCreateTimeChannelPresets)(
+  it.each(messagingChannelPresets)(
     "resume selection applies the $channel policy required by a configured $channel channel (#5967)",
     async ({ channel }) => {
       const payload = await runPolicyScenario({
@@ -350,7 +349,7 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     },
   );
 
-  it.each(nonCreateTimeChannelPresets)(
+  it.each(messagingChannelPresets)(
     "custom non-interactive selection removes disabled $channel while honoring the explicit preset list (#5967)",
     async ({ channel }) => {
       const payload = await runPolicyScenario({

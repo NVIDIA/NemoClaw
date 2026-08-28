@@ -6,7 +6,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual, TextDecoder } from "node:util";
 
-import { acquireOnboardLock, normalizeSession, releaseOnboardLock } from "../state/onboard-session";
+import {
+  acquireOnboardLock,
+  assertOnboardLockOwned,
+  normalizeSession,
+  releaseOnboardLock,
+} from "../state/onboard-session";
 import { assertHermesPortableUninstallCompleteForOnboarding } from "../state/hermes-portable-uninstall/journal";
 import {
   inspectPortableOnboardSupersession,
@@ -550,6 +555,7 @@ export function beginPortableOnboardRetirementEntry(
   options: PortableOnboardRetirementEntryOptions,
 ) {
   const ownsOnboardLock = !options.alreadyHeld;
+  if (!ownsOnboardLock) assertOnboardLockOwned();
   const lockResult = ownsOnboardLock
     ? acquireOnboardLock(options.command)
     : { acquired: true as const };

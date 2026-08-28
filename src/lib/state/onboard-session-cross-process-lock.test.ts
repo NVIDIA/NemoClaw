@@ -39,6 +39,23 @@ afterEach(() => {
 });
 
 describe("cross-process onboard lock", () => {
+  it("rejects caller-asserted onboarding lock ownership without a live descriptor (#9833)", async () => {
+    const authority = await import("../onboard/portable-retirement-authority");
+
+    expect(() =>
+      authority.beginPortableOnboardRetirementEntry({
+        alreadyHeld: true,
+        command: "nemoclaw onboard --resume",
+        displayName: "NemoClaw",
+        homeDir: tempHome,
+        loadRegistry: () => ({ defaultSandbox: null, sandboxes: {} }),
+        registryFile: path.join(tempHome, ".nemoclaw", "registry.json"),
+        sessionFile: session.SESSION_FILE,
+        withLifecycleLock: async (_sandboxName, operation) => await operation(),
+      }),
+    ).toThrow(/does not own.*onboarding lock/u);
+  });
+
   it("updates under a caller-owned onboard lock without releasing it", () => {
     session.saveSession(
       session.createSession({
@@ -158,5 +175,82 @@ describe("cross-process onboard lock", () => {
       child.kill();
       await exited;
     }
+  });
+
+  it("never reports two successful recovery writes after losing one record (#9833)", async () => {
+    const readyA = path.join(tempHome, "writer-a.ready");
+    const readyB = path.join(tempHome, "writer-b.ready");
+    const childScript = `
+      const fs = require("node:fs");
+      const session = require(process.argv[1]);
+      const ownReady = process.argv[2];
+      const peerReady = process.argv[3];
+      const role = process.argv[4];
+      const originalWriteFileSync = fs.writeFileSync;
+      const wait = (milliseconds) => Atomics.wait(
+        new Int32Array(new SharedArrayBuffer(4)),
+        0,
+        0,
+        milliseconds,
+      );
+      let synchronized = false;
+      fs.writeFileSync = (...args) => {
+        if (!synchronized && typeof args[0] === "number") {
+          synchronized = true;
+          originalWriteFileSync(ownReady, role);
+          const deadline = Date.now() + 750;
+          while (!fs.existsSync(peerReady) && Date.now() < deadline) wait(10);
+          if (role === "b") wait(100);
+        }
+        return originalWriteFileSync(...args);
+      };
+      try {
+        const recorded = session.recordRetainedSandboxRecovery({
+          sandboxName: "writer-" + role,
+          sandboxIdentityFingerprint: role.repeat(64),
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          lifecycleGeneration: "generation-" + role,
+          verifiedEffectivePolicyIdentity: null,
+          resources: {
+            sharedInferenceProviders: [],
+            sandboxScopedProviders: [],
+            credentialEnvironmentVariables: [],
+          },
+          reason: "retained_after_sandbox_creation_failure",
+        });
+        process.stdout.write(JSON.stringify({ ok: true, recordId: recorded.recordId }));
+      } catch (error) {
+        process.stdout.write(JSON.stringify({ ok: false, error: String(error) }));
+      }
+    `;
+    const runWriter = (role: "a" | "b", ownReady: string, peerReady: string) =>
+      new Promise<{ ok: boolean }>((resolve, reject) => {
+        const child = spawn(
+          process.execPath,
+          ["--require", "tsx/cjs", "-e", childScript, sessionPath, ownReady, peerReady, role],
+          { env: { ...process.env, HOME: tempHome }, stdio: ["ignore", "pipe", "pipe"] },
+        );
+        let stdout = "";
+        let stderr = "";
+        child.stdout.on("data", (chunk) => (stdout += String(chunk)));
+        child.stderr.on("data", (chunk) => (stderr += String(chunk)));
+        child.once("error", reject);
+        child.once("close", (code) => {
+          code === 0
+            ? resolve(JSON.parse(stdout) as { ok: boolean })
+            : reject(new Error(`recovery writer exited ${String(code)}: ${stderr}`));
+        });
+      });
+
+    const results = await Promise.all([
+      runWriter("a", readyA, readyB),
+      runWriter("b", readyB, readyA),
+    ]);
+    const successfulWrites = results.filter((result) => result.ok).length;
+    const records = session.listRetainedSandboxRecoveryRecords();
+
+    expect(successfulWrites).toBeGreaterThan(0);
+    expect(records).toHaveLength(successfulWrites);
   });
 });

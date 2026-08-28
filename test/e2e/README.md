@@ -457,12 +457,15 @@ default.
 
 The target requires a Windows x64 host that passes the minimum MXC candidate
 check. It rejects a dirty NemoClaw checkout and requires exact expected
-identities for that checkout, the OpenShell CLI, gateway, supervisor relay,
-OpenShell-supplied `wxc-exec.exe`, complete OpenClaw artifact tree, Node.js, and
-OpenClaw entrypoint. The target also requires an existing work root and records
-the operator's exact host-preparation declaration. It observes whether the test
-process is elevated but does not change host ACLs or elevation. Compute the
-canonical artifact-tree digest after staging:
+identities for that checkout, the original OpenShell distribution artifact,
+the extracted OpenShell CLI, gateway, supervisor relay, separately rooted
+`wxc-exec.exe`, complete OpenClaw artifact tree, Node.js, and OpenClaw
+entrypoint. It observes these paths through the inactive native stable-file
+boundary before sandbox mutation but does not mint the provider-owned authority
+required to qualify or activate the distribution. The target also requires an
+existing work root and records the operator's exact host-preparation declaration.
+It observes whether the test process is elevated but does not change host ACLs or elevation.
+Compute the canonical artifact-tree digest after staging:
 
 The OpenClaw artifact, share, and host-state directories must be fresh siblings
 directly beneath the declared drive root. This matches the current package's
@@ -483,10 +486,14 @@ values. Do not put credentials in them.
 | --- | --- |
 | `E2E_ARTIFACT_DIR` | Existing directory outside the NemoClaw checkout for secret-free qualification receipts |
 | `NEMOCLAW_E2E_EXPECTED_SHA` | Exact 40-character NemoClaw checkout revision |
+| `NEMOCLAW_WINDOWS_MXC_OPENSHELL_DISTRIBUTION_ARTIFACT` | Original OpenShell distribution artifact path |
+| `NEMOCLAW_WINDOWS_MXC_OPENSHELL_DISTRIBUTION_ROOT` | Root of the extracted OpenShell distribution |
+| `NEMOCLAW_WINDOWS_MXC_OPENSHELL_DISTRIBUTION_SHA256` | Expected original OpenShell distribution artifact SHA-256 |
 | `NEMOCLAW_WINDOWS_MXC_OPENSHELL_CLI` | Extracted `openshell.exe` path |
 | `NEMOCLAW_WINDOWS_MXC_OPENSHELL_GATEWAY` | Extracted `openshell-gateway.exe` path |
 | `NEMOCLAW_WINDOWS_MXC_OPENSHELL_RELAY` | Extracted `openshell-supervisor-relay.exe` path from the same package |
-| `NEMOCLAW_WINDOWS_MXC_WXC_EXEC` | `wxc-exec.exe` supplied for that OpenShell package |
+| `NEMOCLAW_WINDOWS_MXC_ROOT` | Root of the separately supplied MXC distribution |
+| `NEMOCLAW_WINDOWS_MXC_WXC_EXEC` | `wxc-exec.exe` beneath the separate MXC root |
 | `NEMOCLAW_WINDOWS_MXC_OPENSHELL_VERSION` | Exact OpenShell package version |
 | `NEMOCLAW_WINDOWS_MXC_OPENSHELL_REVISION` | Exact 40-character OpenShell source revision |
 | `NEMOCLAW_WINDOWS_MXC_OPENSHELL_CLI_SHA256` | Expected OpenShell CLI SHA-256 |
@@ -555,7 +562,8 @@ It does not inspect OpenShell terminal wording or repeat the forward mutation.
 The complete create, forward, chat, and cleanup flow runs twice to detect stale
 state. After preflight and local setup succeed, it
 writes a secret-free receipt for either verdict and records whether sensitive
-runtime artifacts were removed. Receipt schema version 3 also classifies startup
+runtime artifacts were removed. Receipt schema version 4 retains the observed
+gateway-configuration digest and also classifies startup
 as not observed, spawn failed, exited before readiness, health timeout, or ready.
 The ready outcome means that the in-sandbox health probe succeeded.
 It does not mean that the qualification passed.
