@@ -46,7 +46,10 @@ case "$*" in
   "gateway info -g nemoclaw") printf 'Gateway: nemoclaw\\n' ;;
   "sandbox list"|"sandbox list -g nemoclaw") printf 'ordinary-authority Ready\\n' ;;
   "sandbox ssh-config ordinary-authority") printf 'Host openshell-ordinary-authority.default\\n  HostName 127.0.0.1\\n  User sandbox\\n  Port 2222\\n' ;;
-  "sandbox delete "*) printf 'delete\\n' >> ${JSON.stringify(eventLog)} ;;
+  "sandbox delete "*)
+    printf 'delete\\n' >> ${JSON.stringify(eventLog)}
+    rm -rf ${JSON.stringify(path.dirname(sandboxConfigDir))}
+    ;;
   "status") printf 'Status: Connected\\nGateway: nemoclaw\\n' ;;
 esac
 exit 0
@@ -395,6 +398,7 @@ esac
       );
       expect(output).toContain("Pre-uninstall backup: 1 backed up, 0 failed, 0 skipped");
       expect(events).toEqual(["backup-complete", "delete"]);
+      expect(fs.existsSync(path.join(tmp, "sandbox"))).toBe(false);
       expect(output).toMatch(/NemoClaw/);
       expect(output).toMatch(/Claws retracted/);
     } finally {

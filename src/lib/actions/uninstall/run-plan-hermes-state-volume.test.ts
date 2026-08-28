@@ -212,8 +212,8 @@ describe("managed Hermes state volume uninstall", () => {
     }
   });
 
-  it("removes an owned stopped sandbox container before its Hermes state volume", () => {
-    const harness = runManagedHermesVolumeUninstall("owned", true, "owned");
+  it("removes an owned stopped sandbox container before its Hermes state volume", async () => {
+    const harness = await runManagedHermesVolumeUninstall("owned", true, "owned");
     try {
       expect(harness.result.exitCode, harness.errors.join("\n")).toBe(0);
       expect(harness.containerPresent()).toBe(false);
@@ -226,8 +226,8 @@ describe("managed Hermes state volume uninstall", () => {
     }
   });
 
-  it("keeps a foreign container that prevents Hermes state volume removal", () => {
-    const harness = runManagedHermesVolumeUninstall("owned", true, "foreign");
+  it("keeps a foreign container that prevents Hermes state volume removal", async () => {
+    const harness = await runManagedHermesVolumeUninstall("owned", true, "foreign");
     try {
       expect(harness.result.exitCode).toBe(1);
       expect(harness.containerPresent()).toBe(true);
