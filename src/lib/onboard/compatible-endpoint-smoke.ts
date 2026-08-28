@@ -535,7 +535,7 @@ model = ${modelValue}
 max_tokens_field = ${maxTokensField}
 tool_calling_required = ${toolCallingRequired}
 max_response_bytes = 1048576
-inference_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+inference_opener = urllib.request.build_opener()
 direct_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 def post_inference(payload, label):
