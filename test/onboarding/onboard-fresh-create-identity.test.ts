@@ -63,6 +63,14 @@ describe("fresh create identity", () => {
       expectedOutcome: "providerless-apf" as const,
     },
     {
+      title: "rejects mismatched selector and get identities before later effects (#10463)",
+      apfInterceptorRequested: true,
+      provider: null,
+      model: null,
+      agent: null,
+      expectedOutcome: "identity-mismatch-refusal" as const,
+    },
+    {
       title: "surfaces retained sandbox recovery through the public error message (#9833)",
       apfInterceptorRequested: true,
       provider: null,
@@ -207,12 +215,19 @@ const fs = require("node:fs");
 
 const commands = [];
 const lifecycleObservationCommands = [];
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
+  sandboxName: "my-assistant",
+  sandboxId: "sbx-fresh-create",
+  gatewayName: "nemoclaw-18080",
+});
+const mismatchedSandboxId = createdSandbox.state.sandboxId + "-mismatch";
 let sandboxListCalls = 0;
 let dockerPsCalls = 0;
-let sandboxCreated = false;
 let registeredSandbox = null;
 let effectivePolicy = {};
 let credentialReadCalls = 0;
+let identityMismatchGetCalls = 0;
+let policyVerificationCalls = 0;
 let routeReservationCalls = 0;
 const keepAlive = setInterval(() => {}, 1000);
 const apfInterceptorRequested = ${JSON.stringify(apfInterceptorRequested)};
@@ -227,6 +242,9 @@ const cancellationSelector = ${JSON.stringify(
       )};
 const cancelAfterCreate = cancellationSelector !== null;
 const recoveryReentry = process.env.NEMOCLAW_RECOVERY_REENTRY || "";
+const identityMismatchRefusal = ${JSON.stringify(
+        expectedOutcome === "identity-mismatch-refusal",
+      )};
 const stagedMessagingRefusal = ${JSON.stringify(expectedOutcome === "staged-messaging-refusal")};
 const postCreateAuthorityRefusal = ${JSON.stringify(
         expectedOutcome === "post-create-authority-refusal",
@@ -266,12 +284,11 @@ runner.run = (command, opts = {}) => {
   commands.push({ command: cmd, env: opts.env || null });
   const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
-  if (cmd.includes("sandbox list")) {
-    return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
+  if (cmd.includes("sandbox delete") && createdSandbox.state.lifecycleState === "created") {
+    createdSandbox.delete();
   }
-  return cmd.includes("sandbox get") && cmd.includes("my-assistant") && sandboxCreated
-    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-fresh-create\n"), stderr: Buffer.alloc(0) }
-    : { status: 0 };
+  const sandboxResult = createdSandbox.run(command);
+  return sandboxResult ?? { status: 0 };
 };
 	runner.runCapture = (command) => {
 	  const cmd = _n(command);
@@ -285,21 +302,25 @@ runner.run = (command, opts = {}) => {
 	  if (cmd.includes("sandbox get") || cmd.includes("sandbox list")) {
 	    lifecycleObservationCommands.push(cmd);
 	  }
-	  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command, {
-	    sandboxName: "my-assistant",
-	    sandboxId: "sbx-fresh-create",
-	  });
-	  if (createdIdentity !== null) return createdIdentity;
+  if (cmd.includes("sandbox list") && !cmd.includes("--selector")) {
+    sandboxListCalls += 1;
+    createdSandbox.setPhase(sandboxListCalls >= 2 ? "Ready" : "Pending");
+  }
+	  const sandboxCapture = createdSandbox.capture(command);
+	  if (sandboxCapture !== null) {
+    if (
+      identityMismatchRefusal &&
+      cmd.includes("sandbox get") &&
+      sandboxCapture.includes("Id: " + createdSandbox.state.sandboxId)
+    ) {
+      identityMismatchGetCalls += 1;
+      return sandboxCapture.replace(createdSandbox.state.sandboxId, mismatchedSandboxId);
+    }
+    return sandboxCapture;
+  }
   if (cmd.startsWith("docker ps -a --no-trunc ")) {
     dockerPsCalls += 1;
     if (dockerPsCalls === 1) return "a".repeat(64);
-  }
-  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) {
-    return sandboxCreated ? ["my-assistant", "Id: sbx-fresh-create"].join(String.fromCharCode(10)) : "";
-  }
-  if (cmd.includes("sandbox list")) {
-    sandboxListCalls += 1;
-    return sandboxListCalls >= 2 ? "my-assistant Ready" : "my-assistant Pending";
   }
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
@@ -374,6 +395,7 @@ runner.run = (command, opts = {}) => {
 	  apfInterceptorRequested,
 	  getSandbox: (name) => retainedRegistryEntry ?? durableGetSandbox(name),
 	  onVerifyCreatedPolicy: (input) => {
+	    policyVerificationCalls += 1;
 	    if (postCreateAuthorityRefusal) {
 	      throw new Error("external policy authority changed");
 	    }
@@ -423,8 +445,9 @@ process.kill = (pid, signal) => {
 };
 
 childProcess.spawn = (...args) => {
-  sandboxCreated = true;
-  _deleted = false;
+  const command = [args[0], ...(Array.isArray(args[1]) ? args[1] : [])];
+  createdSandbox.create(command);
+  if (_n(command).includes("sandbox create")) _deleted = false;
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -448,7 +471,7 @@ childProcess.spawn = (...args) => {
     process.nextTick(() => child.emit("close", signal === "SIGTERM" ? 0 : 1));
     return true;
   };
-  commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null, child });
+  commands.push({ command: _n(command), env: args[2]?.env || null, child });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.stderr.emit("data", Buffer.from("Setting up NemoClaw...\n"));
@@ -494,7 +517,8 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
     creationError,
     exitCode,
     deleted: _deleted,
-    sandboxCreated,
+    sandboxCreated: createdSandbox.state.lifecycleState === "created",
+    sandboxId: createdSandbox.state.sandboxId,
     sandboxListCalls,
     killCalls: createCommand?.child?.killCalls ?? [],
     groupKillCalls,
@@ -504,6 +528,9 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
     lifecycleObservationCommands,
     registeredSandbox,
     credentialReadCalls,
+    identityMismatchGetCalls,
+    mismatchedSandboxId,
+    policyVerificationCalls,
     routeReservationCalls,
     checkpointReadCalls,
     registryMutationCalls,
@@ -688,7 +715,7 @@ if (${JSON.stringify(
           command,
         ),
       );
-      const identityFingerprint = createHash("sha256").update("sbx-fresh-create").digest("hex");
+      const identityFingerprint = createHash("sha256").update(payload.sandboxId).digest("hex");
       const assertRecoveryTuple = (record: Record<string, unknown>) => {
         assert.equal(record.gatewayName, "nemoclaw-18080");
         assert.equal(record.gatewayPort, 18080);
@@ -754,7 +781,7 @@ if (${JSON.stringify(
         assert.match(payload.registeredSandbox.lifecycleGeneration, /^[0-9a-f-]{36}$/u);
         assert.equal(
           payload.registeredSandbox.lifecycleLiveIdentityFingerprint,
-          createHash("sha256").update("sbx-fresh-create").digest("hex"),
+          createHash("sha256").update(payload.sandboxId).digest("hex"),
         );
         assert.match(
           payload.createCommand,
@@ -802,6 +829,27 @@ if (${JSON.stringify(
           )
           .map(({ index }: { index: number }) => index);
         assert.ok(deferredEffectIndexes.every((index: number) => index > createIndex));
+      };
+      const assertIdentityMismatchRefusal = () => {
+        assert.equal(payload.sandboxName, null);
+        assert.equal(payload.sandboxCreated, true);
+        assert.equal(payload.deleted, false);
+        assert.match(payload.creationError, /automatic sandbox cleanup was not safe/u);
+        assert.notEqual(payload.mismatchedSandboxId, payload.sandboxId);
+        assert.ok(payload.identityMismatchGetCalls >= 1);
+        assert.equal(payload.policyVerificationCalls, 0);
+        assert.equal(payload.registeredSandbox, null);
+        assert.equal(payload.credentialReadCalls, 0);
+        assert.deepEqual(payload.registryMutationCalls, [
+          { operation: "update", name: "my-assistant" },
+        ]);
+        assert.deepEqual(providerEffectCommands, []);
+        assert.equal(
+          payload.commandNames.some((command: string) =>
+            /(?:^|\s)policy (?:set|apply)(?:\s|$)/u.test(command),
+          ),
+          false,
+        );
       };
       const assertPostCreateAuthorityRefusal = () => {
         assert.equal(payload.sandboxName, null);
@@ -1082,6 +1130,7 @@ if (${JSON.stringify(
         "unsupported-agent-refusal": assertUnsupportedAgentRefusal,
         "resolved-agent-refusal": assertUnsupportedAgentRefusal,
         "providerless-apf": assertProviderlessApfCreation,
+        "identity-mismatch-refusal": assertIdentityMismatchRefusal,
         "post-create-authority-refusal": assertPostCreateAuthorityRefusal,
         "post-create-runner-refusal": assertPostCreateRunnerRefusal,
         "post-create-registration-refusal": assertPostCreateRegistrationRefusal,

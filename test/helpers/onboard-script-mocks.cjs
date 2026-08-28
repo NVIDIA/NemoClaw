@@ -88,6 +88,8 @@ Module._resolveFilename = function resolveLazySourceFilename(request, parent, is
 };
 Module._extensions[".ts"] = lazySourceRequire;
 
+const { createdSandboxId: ONBOARD_READY_SANDBOX_ID } = require("./onboard-fixture-contract.json");
+
 function normalizeCommand(command) {
   return (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
 }
@@ -141,7 +143,7 @@ function mockManagedEndpointlessProviderProfileRun(command) {
 function createStatefulMessagingProviderRunner({
   commands,
   initialProviders = [],
-  readySandboxName = null,
+  createdSandbox = null,
 }) {
   const providers = new Map(
     initialProviders.map(([name, type, credential]) => [name, { type, credential }]),
@@ -160,6 +162,8 @@ function createStatefulMessagingProviderRunner({
     const args = normalized.split(/\s+/);
     const providerIndex = args.indexOf("provider");
     commands.push({ command: normalized, env: options.env || null });
+    const sandboxResult = createdSandbox?.run(command) ?? null;
+    if (sandboxResult !== null) return sandboxResult;
 
     const providerAction = providerIndex >= 0 ? args[providerIndex + 1] : null;
     if (providerAction === "profile") {
@@ -246,20 +250,6 @@ function createStatefulMessagingProviderRunner({
         stderr: Buffer.alloc(0),
       };
     }
-    if (
-      readySandboxName &&
-      args.includes("sandbox") &&
-      args.includes("get") &&
-      args.includes(readySandboxName)
-    ) {
-      return {
-        status: 0,
-        stdout: Buffer.from(
-          `Name: ${readySandboxName}\nId: ${ONBOARD_CREATED_SANDBOX_ID}\nPhase: Ready\n`,
-        ),
-        stderr: Buffer.alloc(0),
-      };
-    }
     return { status: 0 };
   };
 }
@@ -291,7 +281,6 @@ const OPENCLAW_SECURITY_INVENTORY_PROBE = [
 
 const ONBOARD_SANDBOX_OLD_CONTAINER_ID = "a".repeat(64);
 const ONBOARD_SANDBOX_NEW_CONTAINER_ID = "b".repeat(64);
-const { createdSandboxId: ONBOARD_CREATED_SANDBOX_ID } = require("./onboard-fixture-contract.json");
 const ONBOARD_SANDBOX_INSPECT = {
   Id: ONBOARD_SANDBOX_OLD_CONTAINER_ID,
   Image: `sha256:${"c".repeat(64)}`,
@@ -378,14 +367,6 @@ function mockOnboardRunCapture(command, options = {}) {
   return mockSandboxExecCurl(command, options);
 }
 
-let publishedCreatedSandboxIdentity = null;
-let publishedCreatedGatewayName = "nemoclaw";
-let publishedCreatedGatewayPort = 8080;
-
-function clearMockCreatedSandboxIdentity() {
-  publishedCreatedSandboxIdentity = null;
-}
-
 function exactOpenShellArgs(command) {
   const args = Array.isArray(command) ? command.map(String) : [];
   const verbs = new Set(["gateway", "policy", "sandbox"]);
@@ -405,48 +386,266 @@ function exactOpenShellArgs(command) {
   return null;
 }
 
-function mockCreatedSandboxIdentityList(command, options = {}) {
-  const args = exactOpenShellArgs(command);
-  if (!args) return null;
-  const prefix = "ai.nvidia.nemoclaw.create-attempt=";
-  const selector = args[5] || "";
-  const gatewayName = options.gatewayName || publishedCreatedGatewayName;
-  if (
-    args.length !== 10 ||
-    args[0] !== "sandbox" ||
-    args[1] !== "list" ||
-    args[2] !== "-g" ||
-    args[3] !== gatewayName ||
-    args[4] !== "--selector" ||
-    !selector.startsWith(prefix) ||
-    !/^[0-9a-f]{62}$/u.test(selector.slice(prefix.length)) ||
-    args[6] !== "--output" ||
-    args[7] !== "json" ||
-    args[8] !== "--limit" ||
-    args[9] !== "2"
-  ) {
-    return null;
-  }
-  const nonce = selector.slice(prefix.length);
-  publishedCreatedGatewayName = gatewayName;
-  publishedCreatedSandboxIdentity = {
-    id: options.sandboxId || ONBOARD_CREATED_SANDBOX_ID,
-    name: options.sandboxName || "my-assistant",
-    labels: { "ai.nvidia.nemoclaw.create-attempt": nonce },
-    resource_version: 1,
-    created_at: "2026-08-25T00:00:00Z",
-    phase: "Ready",
-    current_policy_version: 1,
+function createCreatedSandboxFixture(options = {}) {
+  const sandboxIdentity = require(
+    path.resolve(__dirname, "../../src/lib/adapters/openshell/sandbox-identity.ts"),
+  );
+  const initialSandboxId = hasOwn(options, "sandboxId")
+    ? options.sandboxId
+    : ONBOARD_READY_SANDBOX_ID;
+  const initialLifecycleState = hasOwn(options, "lifecycleState")
+    ? options.lifecycleState
+    : "absent";
+  const state = {
+    sandboxName: hasOwn(options, "sandboxName") ? options.sandboxName : "my-assistant",
+    sandboxId: initialSandboxId,
+    gatewayName: hasOwn(options, "gatewayName") ? options.gatewayName : "nemoclaw",
+    phase: hasOwn(options, "phase") ? options.phase : "Ready",
+    lifecycleState: initialLifecycleState,
+    generation: initialLifecycleState === "created" ? 1 : 0,
+    createAttemptNonce: null,
+    ownerScopedIdentityObserved: initialLifecycleState === "created",
   };
-  return JSON.stringify([publishedCreatedSandboxIdentity]);
+  const lifecycleStates = new Set(["absent", "created", "deleted"]);
+  const createAttemptNoncePattern = new RegExp(
+    `^[0-9a-f]{${sandboxIdentity.NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH}}$`,
+    "u",
+  );
+
+  const assertState = () => {
+    if (
+      typeof state.sandboxName !== "string" ||
+      state.sandboxName.length === 0 ||
+      state.sandboxName.trim() !== state.sandboxName
+    ) {
+      throw new Error("Created sandbox fixture requires one sandbox name.");
+    }
+    if (!sandboxIdentity.isOpenShellSandboxId(state.sandboxId)) {
+      throw new Error("Created sandbox fixture requires one durable sandbox ID.");
+    }
+    if (
+      typeof state.gatewayName !== "string" ||
+      state.gatewayName.length === 0 ||
+      state.gatewayName.trim() !== state.gatewayName
+    ) {
+      throw new Error("Created sandbox fixture requires one gateway name.");
+    }
+    if (typeof state.phase !== "string" || state.phase.length === 0) {
+      throw new Error("Created sandbox fixture requires one sandbox phase.");
+    }
+    if (!lifecycleStates.has(state.lifecycleState)) {
+      throw new Error("Created sandbox fixture requires one known lifecycle state.");
+    }
+    if (
+      state.createAttemptNonce !== null &&
+      !createAttemptNoncePattern.test(state.createAttemptNonce)
+    ) {
+      throw new Error("Created sandbox fixture requires one valid create-attempt nonce.");
+    }
+  };
+
+  const commandDetails = (command) => {
+    const args = Array.isArray(command) ? command.map(String) : [];
+    const sandboxIndex = args.indexOf("sandbox");
+    if (sandboxIndex < 0) return null;
+    const gatewayIndex = args.findIndex((arg) => arg === "-g" || arg === "--gateway");
+    const gatewayName = gatewayIndex >= 0 ? args[gatewayIndex + 1] || null : null;
+    return { args, action: args[sandboxIndex + 1] || null, gatewayName };
+  };
+
+  const nonceFromCreateCommand = (command) => {
+    const details = commandDetails(command);
+    if (!details || details.action !== "create") {
+      throw new Error("Created sandbox fixture requires one sandbox create command.");
+    }
+    if (details.gatewayName !== null && details.gatewayName !== state.gatewayName) {
+      throw new Error("Created sandbox fixture requires its configured gateway.");
+    }
+    const prefix = `${sandboxIdentity.NEMOCLAW_CREATE_ATTEMPT_LABEL}=`;
+    const labels = details.args.flatMap((arg, index) => {
+      if (arg === "--label") return [details.args[index + 1] || ""];
+      return arg.startsWith("--label=") ? [arg.slice("--label=".length)] : [];
+    });
+    const nonces = labels
+      .filter((label) => label.startsWith(prefix))
+      .map((label) => label.slice(prefix.length));
+    if (nonces.length !== 1 || !createAttemptNoncePattern.test(nonces[0])) {
+      throw new Error("Created sandbox fixture requires one valid create-attempt label.");
+    }
+    return nonces[0];
+  };
+
+  const isCreated = () => state.lifecycleState === "created";
+  const observe = (command, allowPublishedUnscopedGet) => {
+    const details = commandDetails(command);
+    if (!details) return null;
+    const { args, action, gatewayName } = details;
+    if (action === "get") {
+      const wrongGateway = gatewayName !== null && gatewayName !== state.gatewayName;
+      const unscopedBeforePublication =
+        gatewayName === null && (!allowPublishedUnscopedGet || !state.ownerScopedIdentityObserved);
+      if (wrongGateway || unscopedBeforePublication) {
+        return null;
+      }
+      const sandboxName = args.at(-1);
+      if (sandboxName !== state.sandboxName) return null;
+      if (gatewayName === state.gatewayName && isCreated()) {
+        state.ownerScopedIdentityObserved = true;
+      }
+      return isCreated()
+        ? `Name: ${state.sandboxName}\nId: ${state.sandboxId}\nPhase: ${state.phase}\n`
+        : "";
+    }
+    if (action !== "list") return null;
+
+    const selectorIndex = args.indexOf("--selector");
+    if (selectorIndex >= 0) {
+      const prefix = `${sandboxIdentity.NEMOCLAW_CREATE_ATTEMPT_LABEL}=`;
+      const exactArgs = exactOpenShellArgs(command);
+      if (
+        !exactArgs ||
+        exactArgs.length !== 10 ||
+        exactArgs[0] !== "sandbox" ||
+        exactArgs[1] !== "list" ||
+        exactArgs[2] !== "-g" ||
+        exactArgs[3] !== state.gatewayName ||
+        exactArgs[4] !== "--selector" ||
+        !exactArgs[5].startsWith(prefix) ||
+        exactArgs[6] !== "--output" ||
+        exactArgs[7] !== "json" ||
+        exactArgs[8] !== "--limit" ||
+        exactArgs[9] !== "2"
+      ) {
+        return null;
+      }
+      const selector = exactArgs[5];
+      if (!isCreated()) return "[]";
+      const nonce = selector.slice(prefix.length);
+      if (nonce !== state.createAttemptNonce) return "[]";
+      return JSON.stringify([
+        {
+          id: state.sandboxId,
+          name: state.sandboxName,
+          labels: { [sandboxIdentity.NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce },
+          resource_version: state.generation,
+          created_at: "2026-08-25T00:00:00Z",
+          phase: state.phase,
+          current_policy_version: 1,
+        },
+      ]);
+    }
+
+    if (gatewayName !== null && gatewayName !== state.gatewayName) return null;
+    return isCreated() ? `${state.sandboxName} ${state.phase}\n` : "No sandboxes found.\n";
+  };
+
+  const capture = (command) => observe(command, false);
+
+  const run = (command) => {
+    const output = observe(command, true);
+    if (output === null) return null;
+    if (output === "") {
+      return {
+        status: 1,
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.from(`Error: sandbox ${state.sandboxName} not found\n`),
+      };
+    }
+    return { status: 0, stdout: Buffer.from(output), stderr: Buffer.alloc(0) };
+  };
+
+  const create = (command) => {
+    const details = commandDetails(command);
+    if (!details || details.action !== "create") return;
+    const createAttemptNonce = nonceFromCreateCommand(command);
+    if (state.lifecycleState === "created") {
+      if (createAttemptNonce !== state.createAttemptNonce) {
+        throw new Error("Created sandbox fixture cannot change a live create attempt.");
+      }
+      return;
+    }
+    if (state.lifecycleState !== "absent") {
+      throw new Error("Created sandbox fixture cannot create a deleted sandbox.");
+    }
+    state.createAttemptNonce = createAttemptNonce;
+    state.ownerScopedIdentityObserved = false;
+    assertState();
+    state.lifecycleState = "created";
+    state.generation += 1;
+  };
+
+  const deleteSandbox = () => {
+    if (state.lifecycleState !== "created") {
+      throw new Error("Created sandbox fixture can delete only a created sandbox.");
+    }
+    state.lifecycleState = "deleted";
+    state.ownerScopedIdentityObserved = false;
+  };
+
+  const recreate = (command) => {
+    if (state.lifecycleState !== "deleted") {
+      throw new Error("Created sandbox fixture can recreate only a deleted sandbox.");
+    }
+    const createAttemptNonce = nonceFromCreateCommand(command);
+    state.generation += 1;
+    const replacementFingerprint = sandboxIdentity.fingerprintOpenShellSandboxId(initialSandboxId);
+    state.sandboxId = `sbx-recreated-${state.generation}-${replacementFingerprint}`;
+    state.createAttemptNonce = createAttemptNonce;
+    state.ownerScopedIdentityObserved = false;
+    assertState();
+    state.lifecycleState = "created";
+  };
+
+  const setPhase = (phase) => {
+    state.phase = phase;
+    assertState();
+  };
+
+  const installRuntimeObservation = () => {
+    const openshellRuntime = require(
+      path.resolve(__dirname, "../../src/lib/adapters/openshell/runtime.ts"),
+    );
+    const previousCapture = openshellRuntime.captureResolvedOpenshell;
+    const fixtureCapture = (args, options = {}) => {
+      const result = run(["openshell", ...args]);
+      if (result === null) return previousCapture(args, options);
+      const stdout = result.stdout.toString();
+      const stderr = result.stderr.toString();
+      return {
+        status: result.status,
+        output: options.includeStderr ? `${stdout}${stderr}` : stdout,
+        stdout,
+        stderr,
+      };
+    };
+    openshellRuntime.captureResolvedOpenshell = fixtureCapture;
+    return () => {
+      if (openshellRuntime.captureResolvedOpenshell === fixtureCapture) {
+        openshellRuntime.captureResolvedOpenshell = previousCapture;
+      }
+    };
+  };
+
+  assertState();
+  return Object.freeze({
+    capture,
+    create,
+    delete: deleteSandbox,
+    installRuntimeObservation,
+    recreate,
+    run,
+    setPhase,
+    get state() {
+      return Object.freeze({ ...state });
+    },
+  });
 }
 
 function installVerifiedSandboxCreateFixture(registry, options) {
-  mockStructuredOpenShellCaptureFromRunner();
   const sandboxName = options.sandboxName;
   const gatewayName = options.gatewayName || "nemoclaw";
-  publishedCreatedGatewayName = gatewayName;
-  publishedCreatedGatewayPort = options.gatewayPort || 8080;
+  const gatewayPort = options.gatewayPort || 8080;
+  mockStructuredOpenShellCaptureFromRunner({ gatewayName, gatewayPort, sandboxName });
   const sessionId = options.sessionId || "integration-fixture-session";
   const selection = {
     provider: options.provider,
@@ -727,7 +926,7 @@ function managedSandboxPolicyReceiptFixture(entry, options = {}) {
   const gatewayName = options.gatewayName || "nemoclaw";
   const gatewayPort = options.gatewayPort || 8080;
   const lifecycleGeneration = options.lifecycleGeneration || "123e4567-e89b-42d3-a456-426614174983";
-  const sandboxId = options.sandboxId || ONBOARD_CREATED_SANDBOX_ID;
+  const sandboxId = options.sandboxId || ONBOARD_READY_SANDBOX_ID;
   const sandboxIdentityFingerprint = require("node:crypto")
     .createHash("sha256")
     .update(sandboxId)
@@ -755,20 +954,22 @@ function managedSandboxPolicyReceiptFixture(entry, options = {}) {
   };
 }
 
-function mockStructuredOpenShellCaptureFromRunner() {
+function mockStructuredOpenShellCaptureFromRunner(options = {}) {
   const runner = require(path.resolve(__dirname, "../../src/lib/runner.ts"));
   const client = require(path.resolve(__dirname, "../../src/lib/adapters/openshell/client.ts"));
   const originalCaptureOpenshellCommand = client.captureOpenshellCommand;
-  publishedCreatedSandboxIdentity = null;
+  const gatewayName = options.gatewayName || "nemoclaw";
+  const gatewayPort = options.gatewayPort || 8080;
+  const sandboxName = options.sandboxName || null;
   client.captureOpenshellCommand = (binary, args, options = {}) => {
     const exactGatewayInfo =
       args.length === 4 &&
       args[0] === "gateway" &&
       args[1] === "info" &&
       args[2] === "-g" &&
-      args[3] === publishedCreatedGatewayName;
+      args[3] === gatewayName;
     if (exactGatewayInfo) {
-      const stdout = `Gateway endpoint: http://127.0.0.1:${publishedCreatedGatewayPort}\n`;
+      const stdout = `Gateway endpoint: http://127.0.0.1:${gatewayPort}\n`;
       return {
         status: 0,
         output: stdout.trim(),
@@ -780,17 +981,17 @@ function mockStructuredOpenShellCaptureFromRunner() {
       args[0] === "policy" &&
       args[1] === "get" &&
       args[2] === "-g" &&
-      args[3] === publishedCreatedGatewayName &&
+      args[3] === gatewayName &&
       args[4] === "--full" &&
       args[5] === "--output" &&
       args[6] === "json" &&
-      publishedCreatedSandboxIdentity?.name === args[7];
+      sandboxName === args[7];
     const isFreshGlobalPolicyHistoryRead =
       args.length === 7 &&
       args[0] === "policy" &&
       args[1] === "list" &&
       args[2] === "-g" &&
-      args[3] === publishedCreatedGatewayName &&
+      args[3] === gatewayName &&
       args[4] === "--global" &&
       args[5] === "--limit" &&
       args[6] === "1";
@@ -812,7 +1013,7 @@ function mockStructuredOpenShellCaptureFromRunner() {
     if (isCreatedSandboxPolicyRead && stdout.trim().length === 0) {
       const fallback = JSON.stringify({
         scope: "sandbox",
-        sandbox: publishedCreatedSandboxIdentity.name,
+        sandbox: sandboxName,
         status: "effective",
         policy_source: "sandbox",
         hash: "fixture-policy",
@@ -830,23 +1031,10 @@ function mockStructuredOpenShellCaptureFromRunner() {
       args[0] === "sandbox" &&
       args[1] === "get" &&
       args[2] === "-g" &&
-      args[3] === publishedCreatedGatewayName;
+      args[3] === gatewayName;
     if (isSandboxGet && stdout.trim().length === 0) {
-      const sandboxName = String(args.at(-1) || "unknown");
-      if (publishedCreatedSandboxIdentity?.name === sandboxName) {
-        const readyOutput = [
-          `Name: ${sandboxName}`,
-          `Id: ${publishedCreatedSandboxIdentity.id}`,
-          "Phase: Ready",
-          "",
-        ].join("\n");
-        return {
-          status: 0,
-          output: readyOutput.trim(),
-          ...(options.includeStreams === true ? { stdout: readyOutput, stderr: "" } : {}),
-        };
-      }
-      const stderr = `Error: sandbox ${sandboxName} not found\n`;
+      const requestedSandboxName = String(args.at(-1) || "unknown");
+      const stderr = `Error: sandbox ${requestedSandboxName} not found\n`;
       return {
         status: 1,
         output: options.includeStderr === true ? stderr.trim() : "",
@@ -861,7 +1049,6 @@ function mockStructuredOpenShellCaptureFromRunner() {
   };
   return () => {
     client.captureOpenshellCommand = originalCaptureOpenshellCommand;
-    publishedCreatedSandboxIdentity = null;
   };
 }
 
@@ -1029,11 +1216,7 @@ function mockManagedImageBootstrap() {
   const authorityStore = require(
     path.resolve(__dirname, "../../src/lib/onboard/managed-bootstrap/docker-authority-store.ts"),
   );
-  const sandboxIdentity = require(
-    path.resolve(__dirname, "../../src/lib/adapters/openshell/sandbox-identity.ts"),
-  );
 
-  sandboxIdentity.resolveOpenShellSandboxId = () => ONBOARD_CREATED_SANDBOX_ID;
   authorityStore.createDockerManagedBootstrapAuthorityStore = () => ({
     async recordPreparedAuthority(authority) {
       return {
@@ -1182,15 +1365,13 @@ if (process.env.NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG === "1") {
 }
 
 module.exports = {
-  ONBOARD_CREATED_SANDBOX_ID,
   mockEndpointlessProviderProfileRun,
   mockManagedEndpointlessProviderProfileRun,
   createStatefulMessagingProviderRunner,
   isOpenClawSecurityInventoryProbe,
   mockDockerSandboxLifecycleReleaseFromRunner,
   mockFreshOpenClawPluginDiscovery,
-  clearMockCreatedSandboxIdentity,
-  mockCreatedSandboxIdentityList,
+  createCreatedSandboxFixture,
   mockStructuredOpenShellCaptureFromRunner,
   installVerifiedSandboxCreateFixture,
   managedSandboxPolicyReceiptFixture,
