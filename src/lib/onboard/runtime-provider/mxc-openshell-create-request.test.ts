@@ -172,10 +172,18 @@ describe("inactive MXC OpenShell create request", () => {
       mutate(changed);
 
       expect(() => projectMxcOpenShellCreateRequest(changed as never)).toThrow(
-        /bootstrap plan does not match its provider-owned authority/u,
+        /bootstrap plan was not issued by the provider-owned bootstrap surface/u,
       );
     },
   );
+
+  it("rejects a copied self-consistent plan without provider provenance (#8178)", async () => {
+    const copied = structuredClone(await bootstrapPlan());
+
+    expect(() => projectMxcOpenShellCreateRequest(copied)).toThrow(
+      /bootstrap plan was not issued by the provider-owned bootstrap surface/u,
+    );
+  });
 
   it("passes the same canonical request to create, readiness, and recovery (#8178)", async () => {
     const plan = await bootstrapPlan();

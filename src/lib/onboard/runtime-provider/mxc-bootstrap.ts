@@ -23,6 +23,7 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const PROVIDER_HANDLE_PATTERN = /^mxc-native-artifact-v1:[a-f0-9]{64}$/u;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
 const MAX_PATH_BYTES = 4096;
+const ISSUED_BOOTSTRAP_PLANS = new WeakSet<RuntimeProviderNativeArtifactBootstrapPlan>();
 
 export class MxcNativeArtifactBootstrapError extends Error {
   constructor(message: string) {
@@ -185,7 +186,9 @@ function preparePlan(
   } as const;
   const providerHandle = `mxc-native-artifact-v1:${sha256Json(operationIdentity)}`;
   const authority = { ...operationIdentity, providerHandle };
-  return frozen({ ...authority, authoritySha256: sha256Json(authority) });
+  const plan = frozen({ ...authority, authoritySha256: sha256Json(authority) });
+  ISSUED_BOOTSTRAP_PLANS.add(plan);
+  return plan;
 }
 
 /**
@@ -202,6 +205,11 @@ export function validateMxcNativeArtifactBootstrapPlan(
     (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)
   ) {
     throw new MxcNativeArtifactBootstrapError("bootstrap plan must be a plain object");
+  }
+  if (!ISSUED_BOOTSTRAP_PLANS.has(value as RuntimeProviderNativeArtifactBootstrapPlan)) {
+    throw new MxcNativeArtifactBootstrapError(
+      "bootstrap plan was not issued by the provider-owned bootstrap surface",
+    );
   }
   const candidate = value as Record<string, unknown>;
   const expected = preparePlan({
