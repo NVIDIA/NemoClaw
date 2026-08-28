@@ -194,7 +194,10 @@ export class BrevLaunchableFixture {
     timeoutMs = DEFAULT_BREV_EXEC_READY_TIMEOUT_MS,
   ): Promise<void> {
     const deadline = Date.now() + timeoutMs;
+    let attempts = 0;
+    let lastResult: ShellProbeResult | undefined;
     while (Date.now() < deadline) {
+      attempts += 1;
       const remaining = deadline - Date.now();
       const result = await this.exec(ownership, "true", {
         artifactName: "brev-exec-readiness",
@@ -202,9 +205,18 @@ export class BrevLaunchableFixture {
         timeoutMs: Math.min(30_000, remaining),
       });
       if (result.exitCode === 0) return;
+      lastResult = result;
       await delay(Math.min(this.pollMs, Math.max(1, deadline - Date.now())));
     }
-    throw new Error("Brev exec readiness timed out");
+    await this.artifacts.writeJson("brev-exec-readiness-failure.json", {
+      attempts,
+      lastResult,
+      workspaceId: ownership.id,
+      workspaceName: ownership.name,
+    });
+    throw new Error(
+      `Brev exec readiness timed out after ${attempts} attempts: ${lastResult ? resultText(lastResult) : "no command result"}`,
+    );
   }
 
   private async exec(

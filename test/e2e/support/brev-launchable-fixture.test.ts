@@ -293,6 +293,25 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
     expect(ownership.id).toBe("owned-id");
   });
 
+  it("records the last failed Brev exec readiness attempt", async () => {
+    const root = temporaryRoot();
+    const command = vi.fn(ownedExecCommand("", 1, "ssh unavailable"));
+    const fixture = createFixture(root, command);
+
+    await expect(fixture.waitForExec(recordedOwnership(), 10)).rejects.toThrow(
+      "Brev exec readiness timed out",
+    );
+    const evidence = JSON.parse(
+      fs.readFileSync(path.join(root, "brev-exec-readiness-failure.json"), "utf8"),
+    );
+    expect(evidence).toMatchObject({
+      attempts: expect.any(Number),
+      lastResult: { exitCode: 1, stderr: "ssh unavailable" },
+      workspaceId: "owned-id",
+      workspaceName: "fixture-workspace",
+    });
+  });
+
   it("refuses a replacement before Brev exec readiness without executing on it", async () => {
     const root = temporaryRoot();
     const lifecycle = replaceableWorkspaceCommand();
@@ -496,13 +515,15 @@ function recordedOwnership(): BrevWorkspaceOwnership {
 
 function ownedExecCommand(
   stdout: string,
+  exitCode = 0,
+  stderr = "",
 ): (_binary: string, args: string[], _options?: ShellProbeRunOptions) => Promise<ShellProbeResult> {
   return async (_binary, args, _options) => {
     switch (args[0]) {
       case "ls":
         return workspaceResult("owned-id");
       case "exec":
-        return result(stdout);
+        return { ...result(stdout), exitCode, stderr };
       default:
         throw new Error(`unexpected command: ${args.join(" ")}`);
     }
