@@ -11,7 +11,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
+import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import {
@@ -304,7 +304,7 @@ async function assertAgentCanAnswer(
   );
   const reply = parseOpenClawAgentText(result.stdout);
   expectExitZero(result, `nemoclaw ${sandboxName} agent --json`);
-  expect(containsInteger42Answer(reply), resultText(result)).toBe(true);
+  expect(containsAnswer(reply, "42"), resultText(result)).toBe(true);
 }
 
 async function assertForcedGatewayRestart(

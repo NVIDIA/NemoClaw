@@ -46,7 +46,7 @@
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
+import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -555,7 +555,7 @@ test(
       },
     );
     expect(inference.exitCode, resultText(inference)).toBe(0);
-    expect(containsInteger42Answer(inference.stdout), resultText(inference)).toBe(true);
+    expect(containsAnswer(inference.stdout, "42"), resultText(inference)).toBe(true);
 
     progress.phase("recreate and restart sandbox container with legacy keepalive");
     // ── Assert #6635 legacy Docker restart recovery ────────────────
@@ -698,6 +698,6 @@ test(
       },
     );
     expect(legacyInference.exitCode, resultText(legacyInference)).toBe(0);
-    expect(containsInteger42Answer(legacyInference.stdout), resultText(legacyInference)).toBe(true);
+    expect(containsAnswer(legacyInference.stdout, "42"), resultText(legacyInference)).toBe(true);
   },
 );

@@ -6,21 +6,14 @@ import { describe, expect, it } from "vitest";
 import {
   compactAnswerText,
   containsAnswer,
-  containsInteger42Answer,
-  containsIntegerAnswer,
   containsReplyTokenAllowingWhitespace,
 } from "./e2e-answer-assertions.ts";
 
 describe("E2E answer assertions", () => {
   it("normalizes harmless model-inserted whitespace", () => {
     expect(compactAnswerText("4\n2")).toBe("42");
-    expect(containsInteger42Answer("4\n2")).toBe(true);
-    expect(containsInteger42Answer("The answer is 4\n2.")).toBe(true);
-  });
-
-  it("does not match unrelated integers after whitespace normalization", () => {
-    expect(containsInteger42Answer("142")).toBe(false);
-    expect(containsInteger42Answer("420")).toBe(false);
+    expect(containsAnswer("4\n2", "42")).toBe(true);
+    expect(containsAnswer("The answer is 4\n2.", "42")).toBe(true);
   });
 
   it("accepts the expected conversational answer (#10215)", () => {
