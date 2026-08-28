@@ -409,7 +409,7 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it("rolls back owned state before propagating authority drift after policy apply (#9833)", async () => {
+  it("preserves live policy while rolling back owned state after authority drift (#9833)", async () => {
     const refusal = new PolicyAuthorityRefusalError(
       "OpenShell policy authority changed before channel plan persistence",
     );
@@ -424,7 +424,10 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     await expect(addSandboxChannel("test-sb", { channel: "telegram" })).rejects.toBe(refusal);
 
     expect(applyPresetSpy).toHaveBeenCalledOnce();
-    expect(removePresetSpy).toHaveBeenCalledWith("test-sb", "telegram", { nonFatal: true });
+    expect(removePresetSpy).not.toHaveBeenCalled();
+    expect(printedText()).toContain(
+      "Policy authority changed; the live 'telegram' policy was preserved",
+    );
     expect(deleteCredentialSpy).toHaveBeenCalledWith("TELEGRAM_BOT_TOKEN");
     expect(runOpenshellSpy).toHaveBeenCalledWith(
       ["sandbox", "provider", "detach", "test-sb", "test-sb-telegram-bridge"],
