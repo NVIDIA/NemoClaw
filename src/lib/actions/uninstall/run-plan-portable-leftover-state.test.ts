@@ -259,11 +259,29 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     },
   );
 
-  it("completes ordinary uninstall after completed default OpenClaw onboarding", async () => {
+  it("removes abandoned portable configuration after completed ordinary onboarding (#10545)", async () => {
     const host = scope("nemoclaw-uninstall-completed-openclaw-");
     completedOpenClawAuthority(host, "default");
+    const directory = abandonedPortableConfig(host, 0o700);
 
     await expectOrdinaryUninstall(host);
+    expect(host.rmSync.mock.calls.map(([target]) => String(target))).toContain(
+      path.dirname(directory),
+    );
+  });
+
+  it("refuses uninstall when an unexpected Portable configuration file remains after ordinary onboarding (#10545)", async () => {
+    const host = scope("nemoclaw-uninstall-completed-extra-config-");
+    completedOpenClawAuthority(host, "default");
+    const directory = abandonedPortableConfig(host, 0o700);
+    fs.writeFileSync(path.join(directory, "unexpected.conf"), "unexpected\n", { mode: 0o600 });
+
+    const result = await uninstall(host);
+
+    expect(result.exitCode).toBe(1);
+    expect(host.runModelCleanup).not.toHaveBeenCalled();
+    expect(host.rmSync).not.toHaveBeenCalled();
+    expect(host.runPortableCleanup).not.toHaveBeenCalled();
   });
 
   it("completes ordinary uninstall when managed OpenClaw registration records its explicit agent (#10073)", async () => {

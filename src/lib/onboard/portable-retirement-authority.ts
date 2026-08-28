@@ -247,7 +247,10 @@ function verifyAuthority(
   if (expected === "default") {
     if (checkpoint.runtimeAuthority.kind !== "unset" || receiptEntries.length || receipts.length)
       throw new Error("Completed ordinary onboarding has portable receipt authority");
-    if (configEntries.length)
+    if (
+      configEntries.length &&
+      (recovery !== null || !isDeepStrictEqual(configEntries, ["containers.conf"]))
+    )
       throw new Error("Completed ordinary onboarding has portable configuration authority");
   } else {
     const basename = `${createHash("sha256").update(sandboxName).digest("hex")}.json`;
