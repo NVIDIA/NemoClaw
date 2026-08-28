@@ -115,8 +115,19 @@ runs:
           { echo "::error::exact-commit CLI artifact is incomplete"; exit 1; }
         [[ "$(node --version)" =~ ^v22\.[0-9]+\.[0-9]+$ ]] ||
           { echo "::error::consumer must restore the CLI under the pinned Node 22 toolchain"; exit 1; }
+
+        sha256_file() {
+          node --input-type=module --eval '
+            import { createHash } from "node:crypto";
+            import { createReadStream } from "node:fs";
+            const hash = createHash("sha256");
+            for await (const chunk of createReadStream(process.argv[1])) hash.update(chunk);
+            process.stdout.write(hash.digest("hex"));
+          ' "$1"
+        }
+
         source_tree="$(git rev-parse 'HEAD^{tree}')"
-        lockfile_sha256="$(sha256sum package-lock.json | awk '{print $1}')"
+        lockfile_sha256="$(sha256_file package-lock.json)"
         jq -e \
           --arg artifactName "$ARTIFACT_NAME" \
           --arg candidateRepository "$CANDIDATE_REPOSITORY" \
@@ -147,7 +158,7 @@ runs:
             .payload.sha256 == $payloadSha256
           ' "$manifest" >/dev/null ||
           { echo "::error::exact-commit CLI artifact provenance mismatch"; exit 1; }
-        actual_payload_sha256="$(sha256sum "$payload" | awk '{print $1}')"
+        actual_payload_sha256="$(sha256_file "$payload")"
         [[ "$actual_payload_sha256" == "$PAYLOAD_SHA256" ]] ||
           { echo "::error::exact-commit CLI artifact payload digest mismatch"; exit 1; }
         while IFS= read -r member; do

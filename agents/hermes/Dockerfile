@@ -143,7 +143,7 @@ COPY agents/hermes/validate-cli-adapter.py /usr/local/lib/nemoclaw/validate-herm
 COPY agents/hermes/hermes-cli-adapter-v1.json /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json
 
 
-# Fetch the exact managed capability wheels outside RUN instructions so
+# Fetch the managed capability wheels outside RUN instructions so
 # both the standard build and the protected --network none rebuild install the
 # reviewed union from immutable inputs rather than a reusable networked layer.
 FROM scratch AS hermes-managed-teams-common-wheels
@@ -281,7 +281,7 @@ RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
       --npm-root /usr/local/lib/node_modules/npm \
       --archive /tmp/nemoclaw-bundled-npm-tar.tgz
 
-# Reassert the npm-private brace-expansion fix for the exact final filesystem.
+# Reassert the npm-private brace-expansion fix for the final filesystem.
 # When onboarding supplied a corporate CA, use it for the registry-backed
 # download.
 # hadolint ignore=DL3059
@@ -292,7 +292,7 @@ RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
     node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts \
       --npm-root /usr/local/lib/node_modules/npm
 
-# Reassert the npm-private ip-address fix for the exact final filesystem. When
+# Reassert the npm-private ip-address fix for the final filesystem. When
 # onboarding supplied a corporate CA, use it for the registry-backed download.
 # hadolint ignore=DL3059
 RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
@@ -533,7 +533,7 @@ RUN test -x /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
 
 # Hermes v0.19.0's operator drain is scoped to one container epoch. NemoClaw's
 # rebuild drain must instead survive gateway and container restarts until the
-# restored scripts and cron jobs are revalidated. Patch the exact pinned drain
+# restored scripts and cron jobs are revalidated. Patch the pinned drain
 # predicate to compose an independent root-owned marker, and hydrate that
 # predicate during GatewayRunner construction so startup cannot dispatch before
 # the asynchronous watcher gets its first tick.
@@ -601,7 +601,7 @@ RUN /usr/bin/python3 -I \
 # is active, NemoClaw seals that directory, so a managed gateway restart cannot
 # reopen the ledger. Relocate
 # only this audit database to the existing cross-UID runtime boundary, and keep
-# Hermes' quick snapshot inventory aligned. Full source hashes plus exact-shape
+# Hermes' quick snapshot inventory aligned. Full source hashes and shape-constrained
 # patching force a fresh review when either pinned upstream module changes.
 ARG NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256=2f0d3eacc02ee72608cd96d521a457ef57425bdddc00291ed90ae553f7a36039
 ARG NEMOCLAW_HERMES_CRON_EXECUTIONS_SOURCE_SHA256=b37215a27a453191420622f78dc8962fa44feac2521a6f51d71b18831e7cacb7
@@ -657,7 +657,7 @@ RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.p
 # Hermes v0.19.0 forces the gateway-created Discord recovery ledger to 0600,
 # which prevents sandbox-owned online backup and makes a sandbox-restored
 # database unwritable by the gateway. The final layout uses a gateway:sandbox
-# setgid parent, and this exact-source patch retains group write on the ledger.
+# setgid parent, and this source patch retains group write on the ledger.
 # Remove it when upstream supports an equivalent cross-identity mode contract.
 ARG NEMOCLAW_HERMES_DISCORD_RECOVERY_PATCHER_SHA256=e42f0712c2895c8d1c766c0748c110dc830394b2caf63c3f1a99a113ab374628
 # hadolint ignore=DL4006
@@ -677,8 +677,8 @@ RUN /usr/bin/python3 -I /opt/nemoclaw-hermes-config/image-build-probes.py \
 
 # Hermes v0.19.0's bundled Langfuse plugin rejects OpenShell resolver
 # placeholders before the SDK can construct its Basic-auth headers. Accept only
-# the exact public/secret placeholder bound to the matching standard Langfuse
-# key; raw keys keep Hermes' upstream pk-lf-/sk-lf- validation. The patcher
+# the OpenShell public and secret placeholders when each placeholder is bound
+# to its matching standard Langfuse key. raw keys keep Hermes' upstream pk-lf-/sk-lf- validation. The patcher
 # fails closed when the pinned upstream source shape changes.
 ARG NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256=c6aad6a7cb56083a3fbb54617ada3edae4bbae1348ba45565944144b07fc283b
 # hadolint ignore=DL4006
@@ -918,7 +918,7 @@ RUN printf '%s  %s\n' \
 RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py
 # Hermes v0.19.0 has several built-in environment override paths that can
 # re-enable an explicitly disabled platform when ambient credentials exist.
-# Apply this after the profile-policy patch above, then bind both its exact
+# Apply this after the profile-policy patch above, then bind both its
 # output module and this narrow patcher before preserving explicit disables
 # across environment processing.
 ARG NEMOCLAW_HERMES_NEUTRAL_PLATFORM_PATCHER_SHA256=29769d0ae10646dd0a66b32dbefd5f85540544172d57cac96bb4f0941e260948

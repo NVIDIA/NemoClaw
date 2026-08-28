@@ -132,6 +132,7 @@ function lifecycleInput(adapterOverride: ManagedBootstrapAdapter) {
   return {
     providerId: "podman",
     environment: {},
+    dockerClientEnv: {},
     stateRoot: "/unused/provider-state",
     bootstrapIdentity: IDENTITY,
     request,

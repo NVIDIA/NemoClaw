@@ -242,6 +242,11 @@
       "category": "security"
     },
     {
+      "file": "test/install/installer-homebrew-formula-reuse-trust.test.ts",
+      "test": "accepts the prospective dev MUSL sandbox template with its trusted digest",
+      "category": "security"
+    },
+    {
       "file": "test/mcp/mcp-tool-discovery-image-contract.test.ts",
       "test": "pins the reviewed image runtime artifacts exactly",
       "category": "security"

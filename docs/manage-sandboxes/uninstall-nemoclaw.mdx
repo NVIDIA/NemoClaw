@@ -188,14 +188,14 @@ If no other cleanup fails, uninstall exits with status `0` even though that proc
 Uninstall still tries to stop a `root`-owned process and the gateway process that this installation recorded.
 If either stop fails, uninstall reports the process without printing a reusable privileged kill command.
 Do not signal a PID from saved output.
-Immediately before a privileged stop, verify that the live process owner and `openshell-gateway` command line match the exact gateway name and port.
+Immediately before a privileged stop, verify that the live process owner and `openshell-gateway` command line match the gateway name and port.
 Also prove that the PID file, runtime marker, and loaded sandbox namespace still match the selected state directory.
 Rerun uninstall after the process stops.
 A gateway-scoped uninstall and every `--all-gateway-ports` pass exit nonzero after that failure.
 A single full uninstall reports the process and continues.
 Before each sandbox deletion during scoped Docker cleanup, NemoClaw proves the selected configuration and running gateway identity again and passes the selected gateway name to OpenShell.
 The configuration and running process must use the state-root-specific OpenShell sandbox namespace that NemoClaw generated.
-For a standalone NemoClaw-managed gateway, the live proof also binds the process owner, PID file, runtime marker, and command line to the exact gateway name and port.
+For a standalone NemoClaw-managed gateway, the live proof also binds the process owner, PID file, runtime marker, and command line to the gateway name and port.
 For a package-managed gateway, NemoClaw instead binds the trusted active service's current main process, executable, owner, and loaded sandbox namespace to the default gateway.
 For an externally supervised gateway, NemoClaw proves the configured state.
 It binds the supervisor's current main process to its owner, loaded sandbox namespace, declared executable, selected gateway name, and selected port.
@@ -216,8 +216,8 @@ It records the initial lifecycle receipts and sandbox registry state for compari
 NemoClaw first acquires the process-bound portable host lock at `~/.nemoclaw-portable-host.lock`.
 This host-wide fence coordinates portable onboarding, rebuild, and uninstall.
 It then acquires every receipt lifecycle lock in sorted order before it acquires the process-bound sandbox registry lock.
-Portable lock acquisition fails before cleanup unless NemoClaw can establish the current Linux process's exact boot identity and process start tick.
-A live lock owner with that exact identity is never displaced because of the lock's age.
+Portable lock acquisition fails before cleanup unless NemoClaw can establish the current Linux process's boot identity and process start tick.
+A live lock owner with that identity is never displaced because of the lock's age.
 A contender waits only for the bounded acquisition interval and exits nonzero if the lock remains held.
 With every lock held, NemoClaw verifies that the recorded receipts and registry state have not changed.
 This one-to-one ownership check applies only to NemoClaw's host `sandboxes.json`.
@@ -225,32 +225,32 @@ Each receipt must have one current matching row in that file, and the file must 
 Missing, mismatched, or extra rows make NemoClaw exit nonzero before it changes a container or host state.
 An unrelated row, including a non-portable row, makes ownership ambiguous and triggers this fail-closed result before any effect, even with `--destroy-user-data`.
 An unrelated sandbox registered only with OpenShell is outside that host registry and remains usable.
-NemoClaw holds those same sorted lifecycle locks and the process-bound registry lock throughout exact Podman container removal, exact-name OpenShell sandbox deletion, portable registry removal, selector cleanup, and the final retirement operation for the receipts, sandbox registry rows, and `~/.config/nemoclaw/portable/containers.conf`.
+NemoClaw holds those same sorted lifecycle locks and the process-bound registry lock throughout Podman container removal, deletion of the OpenShell sandbox with the matching name, portable registry removal, selector cleanup, and the final retirement operation for the receipts, sandbox registry rows, and `~/.config/nemoclaw/portable/containers.conf`.
 Before it retires `~/.config/nemoclaw/portable/containers.conf` or lifecycle receipts, NemoClaw revalidates the current user's local Podman socket authority and lifecycle generation.
-It also revalidates the exact receipt-owned sandbox containers, their expected OpenShell labels and current running state, and the managed portable registry container.
-NemoClaw uses the pinned local Podman socket to remove only the exact receipt-owned sandbox containers.
-Before every exact receipt-name OpenShell sandbox deletion, NemoClaw runs `openshell status -g <gateway>` to prove that the gateway name recorded by the matching registry row is connected.
-It then runs `openshell sandbox delete -g <gateway> <sandbox>` for that exact gateway and sandbox name.
-After deletion, bounded `openshell sandbox get -g <gateway> <sandbox>` probes must verify that the exact sandbox is absent.
+It also revalidates the receipt-owned sandbox containers, their expected OpenShell labels and current running state, and the managed portable registry container.
+NemoClaw uses the pinned local Podman socket to remove only the receipt-owned sandbox containers.
+Before every receipt-deletion of the OpenShell sandbox with the matching name, NemoClaw runs `openshell status -g <gateway>` to prove that the gateway name recorded by the matching registry row is connected.
+It then runs `openshell sandbox delete -g <gateway> <sandbox>` for that gateway and sandbox name.
+After deletion, bounded `openshell sandbox get -g <gateway> <sandbox>` probes must verify that the sandbox is absent.
 If the single delete command returns a nonzero status, NemoClaw still performs those read-only probes.
-Cleanup continues only when the connected recorded gateway returns the strict structured absence result for that exact sandbox; it never repeats the delete mutation.
+Cleanup continues only when the connected recorded gateway returns the strict structured absence result for that sandbox; it never repeats the delete mutation.
 It never relies on or switches the globally selected gateway, and it never falls back to implicit deletion.
 A same-name sandbox on another gateway remains untouched.
 It never uses `openshell sandbox delete --all` during portable OpenShell cleanup.
-If explicit deletion reports an exact receipt sandbox as absent, cleanup continues only because the gateway-scoped status probe proved that exact gateway is connected and reachable.
+If explicit deletion reports a receipt sandbox as absent, cleanup continues only because the gateway-scoped status probe proved that gateway is connected and reachable.
 A missing gateway, missing provider, transport failure, verification timeout, generic or ambiguous `NotFound` result during verification, or absence that the status probe cannot prove is fatal.
 Uninstall exits nonzero and preserves the portable registry row and container, selectors, receipts, `~/.config/nemoclaw/portable/containers.conf`, gateway state, shared OpenShell provider and gateway registrations, and unrelated OpenShell-only sandboxes.
-Portable cleanup retires only the exact receipt-owned portable resources.
+Portable cleanup retires only the receipt-owned portable resources.
 It preserves model stores and images, shared OpenShell provider and gateway registrations, the gateway service and process, shared OpenShell binaries and configuration, and unrelated OpenShell-registered sandboxes.
 Before it removes the portable registry container or selectors, NemoClaw verifies that the original lifecycle receipts and sandbox registry state have not changed.
 If either changed, uninstall exits nonzero before later gateway-state or `~/.config/nemoclaw/portable/containers.conf` deletion.
-After that verification, NemoClaw removes the prevalidated portable registry container by its exact ID.
+After that verification, NemoClaw removes the prevalidated portable registry container by its ID.
 It unsets the current-user systemd manager values that the portable profile installs, `CONTAINERS_CONF` and `NETAVARK_FW`, only when their current values match NemoClaw's recorded or derived portable projection; it inspects and preserves `CONTAINER_HOST`, `CONTAINER_CONNECTION`, and `CONTAINER_SSHKEY` because the portable profile does not own those values.
 NemoClaw preserves unrelated or changed selector values.
 It skips the generic Docker availability probe and all generic Docker container, image, and volume cleanup.
 It does not remove the user's Podman installation, storage, networks, or unrelated containers.
 It does not disable a user-managed socket.
-On every successful portable cleanup, the final retirement operation removes the exact portable lifecycle receipts, their matching `sandboxes.json` rows, and `~/.config/nemoclaw/portable/containers.conf`, regardless of `--destroy-user-data`.
+On every successful portable cleanup, the final retirement operation removes the portable lifecycle receipts, their matching `sandboxes.json` rows, and `~/.config/nemoclaw/portable/containers.conf`, regardless of `--destroy-user-data`.
 After NemoClaw removes `containers.conf`, it removes `~/.config/nemoclaw/portable/` and `~/.config/nemoclaw/` only when each directory is empty.
 NemoClaw preserves either directory when it contains an unrelated entry.
 Other preserved user data follows the normal `--destroy-user-data` behavior.
@@ -267,10 +267,10 @@ It contains a random local cleanup ID, receipt basenames derived from SHA-256 ha
 After successful schema `5` Portable Ollama cleanup with `--destroy-user-data`, `~/.nemoclaw/hermes-portable-uninstall-transaction.json` remains at mode `0600` under the current-UID-owned, mode-`0700` `~/.nemoclaw/` directory.
 Another same-user process can change the journal, so this protection assumes cooperative NemoClaw writers under that UID.
 The journal is credential-free.
-A completed journal remains as exact no-op evidence for a repeated uninstall.
+A completed journal remains as no-op evidence for a repeated uninstall.
 While the journal records an incomplete phase, Hermes Portable onboarding stops before it publishes replacement lifecycle authority.
 Rerun full uninstall to complete the recorded cleanup before you onboard again.
-If a later completed onboarding publishes a new schema `5` lifecycle, the next uninstall replaces the completed journal with that lifecycle's exact authority before mutation.
+If a later completed onboarding publishes a new schema `5` lifecycle, the next uninstall replaces the completed journal with that lifecycle's authority before mutation.
 </AgentOnly>
 
 A repeat invocation remains on portable cleanup and performs no Docker probe or mutation, implicit OpenShell cleanup, or model cleanup.
@@ -282,13 +282,13 @@ This cleanup does not change Docker uninstall, externally supervised gateways, `
 
 <AgentOnly variant="hermes">
 For a schema `5` Portable Ollama receipt, the full-uninstall transaction extends the Portable boundary to the committed gateway provider and receipt-owned inference runtime.
-While the host fence, sorted sandbox lifecycle locks, and process-bound registry lock remain held, NemoClaw binds the exact lifecycle receipt, registry row revision and lifecycle generation, sandbox and Podman container identities and labels, provider revision and profile, inference runtime, socket, and network.
+While the host fence, sorted sandbox lifecycle locks, and process-bound registry lock remain held, NemoClaw binds the lifecycle receipt, registry row revision and lifecycle generation, sandbox and Podman container identities and labels, provider revision and profile, inference runtime, socket, and network.
 It writes the credential-free transaction journal before the first mutation, then records sandbox, provider, inference, registry, receipt, and completion phases.
-Before each phase, it revalidates the exact authority recorded in the journal.
-If a resource disappeared after an earlier recorded action but before its phase update, the retry proves that exact absence and continues without repeating the mutation.
+Before each phase, it revalidates the authority recorded in the journal.
+If a resource disappeared after an earlier recorded action but before its phase update, the retry proves that absence and continues without repeating the mutation.
 An unexpected absence, same-name replacement, sandbox phase other than `Ready` or `Stopped`, changed container label set, provider revision or profile change, socket or network change, or registry authority drift stops cleanup before an unproven mutation.
 When another recorded sandbox shares the provider or inference runtime, uninstall preserves that shared resource.
-The transaction removes exact receipt-owned resources before it retires the matching registry row and lifecycle receipt.
+The transaction removes receipt-owned resources before it retires the matching registry row and lifecycle receipt.
 When both the provider and inference runtime are exclusive, it then retires their private inference state.
 If either resource is shared, it preserves that recovery state for the sibling owner.
 It never removes a Podman image.
@@ -300,8 +300,8 @@ Keep that state intact.
 For an already scoped gateway with stale runtime evidence, restore it through the supported install or onboarding recovery flow, verify the generated identity, and retry.
 A proven legacy gateway is not silently converted by onboarding.
 To retire one, first remove sibling gateways through their own proven scoped cleanup, verify that only the legacy gateway remains, and then use the full single-gateway uninstall path.
-For an ambiguous or incomplete identity, stop the gateway and restore the exact generated `openshell-gateway.toml` and complete `jwt/` directory from a dedicated host-level backup path, represented here as `<gateway-identity-backup>`.
-The backup must have been captured from that gateway's exact state directory before the failure and kept under the owning user's exclusive access.
+For an ambiguous or incomplete identity, stop the gateway and restore the generated `openshell-gateway.toml` and complete `jwt/` directory from a dedicated host-level backup path, represented here as `<gateway-identity-backup>`.
+The backup must have been captured from that gateway's state directory before the failure and kept under the owning user's exclusive access.
 Keep the `<gateway-identity-backup>` directory and its nested `jwt/` directory at mode `0700`, and keep the configuration and JWT files at mode `0600`.
 The default gateway stores them under `~/.local/state/nemoclaw/openshell-docker-gateway/`; a non-default gateway uses `~/.local/state/nemoclaw/openshell-docker-gateway-<port>/`.
 Restore them as the owning user.
@@ -323,7 +323,7 @@ If a backup fails or any registered sandbox is skipped, uninstall stops that gat
 A registry entry confirmed absent from both the selected gateway and Docker is exempt because no sandbox state remains to capture.
 Outside portable cleanup, when uninstall confirms that no sibling gateways remain, it also removes the shared CLI, services, images, providers, configuration, models, and swap.
 During full uninstall, a managed distributed-vLLM receipt makes NemoClaw first revalidate the recorded plan and every cluster node, GPU, container, and SSH peer identity.
-It then removes only the exact receipt-owned containers.
+It then removes only the receipt-owned containers.
 The managed-cluster receipt is host-global under `~/.nemoclaw/`.
 Current dual-DGX Station receipts and copied SSH bindings are also host-global under `~/.nemoclaw/`.
 Earlier releases can leave Station receipts and bindings under `~/.nemoclaw/gateways/<port>/`; NemoClaw discovers and validates those legacy locations in place.

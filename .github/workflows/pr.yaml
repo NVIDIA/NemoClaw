@@ -214,7 +214,15 @@ jobs:
               NEMOCLAW_CI_TARGET_ROOT="$GITHUB_WORKSPACE" \
               node --experimental-strip-types "$trusted_inspector"
           )"
-          required="$(jq -er '.required | select(type == "boolean")' <<<"$decision")"
+          required="$(
+            jq -ser '
+              if length == 1 and (.[0] | type) == "object" and (.[0].required | type) == "boolean" then
+                .[0].required | tostring
+              else
+                error("decision must contain one object with a boolean required field")
+              end
+            ' <<<"$decision"
+          )"
           if [ "$required" != "true" ]; then
             echo "required=false" >> "$GITHUB_OUTPUT"
             exit 0

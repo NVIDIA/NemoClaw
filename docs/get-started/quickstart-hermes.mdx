@@ -19,7 +19,7 @@ The `nemohermes` command is the NemoClaw CLI with Hermes pre-selected.
 
 Copy this starter prompt into Cursor, Claude Code, Codex, Copilot, or another local coding agent when you want it to guide the installation.
 The prompt points the agent to [Use NemoClaw Docs with Your Coding Agents](../resources/agent-skills), this quickstart, the Markdown docs, and the optional `nemoclaw-user-guide` skill.
-It asks the agent to confirm Hermes before it runs commands that create a sandbox or receive credentials and to use the checked-in local credential helper and form only after you approve the exact command that receives credentials.
+It asks the agent to confirm Hermes before it runs commands that create a sandbox or receive credentials and to use the checked-in local credential helper and form only after you approve the command that receives credentials.
 
 <Markdown src="/../docs/_build/StarterPrompt.generated.mdx" />
 
@@ -156,11 +156,11 @@ Use these details when your first-run path needs more control.
 
     This path does not inspect, start, or use a host Ollama process.
     It does not use the default Docker runtime.
-    Before the provider-selection step completes, NemoClaw creates the receipt-owned runner, sends one validation request for the selected model, and confirms that the exact model is loaded.
+    Before the provider-selection step completes, NemoClaw creates the receipt-owned runner, sends one validation request for the selected model, and confirms that the model is loaded.
     NemoClaw records the provider selection only after those checks pass.
 
     Run `nemohermes uninstall` for full cleanup of a receipt-owned Portable Ollama runner.
-    NemoClaw revalidates the exact lifecycle receipt, sandbox and Podman container identities, committed gateway provider revision, inference runtime, socket, and Portable network before it removes an owned resource.
+    NemoClaw revalidates the lifecycle receipt, sandbox and Podman container identities, committed gateway provider revision, inference runtime, socket, and Portable network before it removes an owned resource.
     If cleanup is interrupted, preserve the reported state and rerun the same command.
     NemoClaw resumes the recorded phase without deleting a same-name replacement, shared provider or inference runtime, or Podman image.
     Per-sandbox `destroy` remains outside this full-uninstall cleanup contract.
@@ -224,7 +224,7 @@ Use these details when your first-run path needs more control.
     On supported non-N1x express platforms, enter `n` to continue with interactive onboarding when you want to select the agent or other settings yourself.
     On N1x, declining the preview or setting only `NEMOCLAW_NO_EXPRESS=1` stops installation before onboarding.
     Accept the preview, or set `NEMOCLAW_PROVIDER=install-vllm` before installation to provide the required explicit managed-vLLM intent.
-    The first Hermes start can take several minutes while OpenShell pulls the exact managed image when it is not already cached.
+    The first Hermes start can take several minutes while OpenShell pulls the managed image when it is not already cached.
     The N1x preview selects one-host managed vLLM with `nvidia/Qwen3.6-35B-A3B-NVFP4`.
     Refer to [Set Up vLLM](../inference/local-inference/set-up-vllm) for managed model profiles and headless setup.
     Refer to [Set Up vLLM on Two DGX Stations](../inference/local-inference/set-up-vllm-on-two-dgx-stations) for the Deferred paired workflow.
@@ -335,7 +335,7 @@ Use these details when your first-run path needs more control.
     The onboard flow starts both port forwards automatically.
     For a new sandbox, NemoClaw reserves the selected dashboard loopback port through sandbox preparation and creation.
     If another listener claims the port before NemoClaw binds the reservation, NemoClaw selects another port before changing sandbox resources.
-    If OpenShell returns the exact `sandbox is not ready` response, NemoClaw waits 5 seconds and retries the affected forward up to 12 times.
+    If OpenShell returns the `sandbox is not ready` response, NemoClaw waits 5 seconds and retries the affected forward up to 12 times.
     The readiness-specific delays total at most 1 minute and preserve the existing sandbox and selected host port.
     NemoClaw releases the reservation immediately before OpenShell starts the dashboard forward.
     If forwarding then fails, onboarding removes the new sandbox and tells you to resolve the reported error before retrying.
