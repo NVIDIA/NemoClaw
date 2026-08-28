@@ -12,7 +12,10 @@ import * as openshellRuntimeModule from "../../../src/lib/adapters/openshell/run
 import * as messagingBridgeProviderModule from "../../../src/lib/onboard/messaging-bridge-provider.ts";
 import * as onboardProvidersModule from "../../../src/lib/onboard/providers.ts";
 import * as statePathsModule from "../../../src/lib/state/paths.ts";
-import { cleanupWhenOpenShellAvailable } from "../fixtures/cleanup-resources.ts";
+import {
+  assertCleanupSucceededOrAbsent,
+  cleanupWhenOpenShellAvailable,
+} from "../fixtures/cleanup-resources.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { expect } from "../fixtures/e2e-test.ts";
@@ -330,7 +333,7 @@ const PROVIDERS: Record<string, (sandbox: string) => string[]> = {
   googlechat: (sandbox) => [`${sandbox}-googlechat-bridge`],
 };
 const PROVIDER_ALREADY_ABSENT =
-  /\bNotFound\b|provider[^\n]*(?:not found|does not exist)|no such provider/i;
+  /\bNotFound\b|provider[^\n]*(?:not found|does not exist)|no (?:such )?provider/i;
 
 function channelsStopStartProviderNames(sandboxName: string): string[] {
   return CHANNELS.flatMap((channel) => PROVIDERS[channel](sandboxName));
@@ -348,8 +351,11 @@ async function cleanupChannelsStopStartProvider(
     redactionValues: redactions,
     timeoutMs: 60_000,
   });
-  if (result.exitCode === 0 || PROVIDER_ALREADY_ABSENT.test(resultText(result))) return;
-  expectExitZero(result, `cleanup OpenShell provider ${provider}`);
+  assertCleanupSucceededOrAbsent(
+    result,
+    PROVIDER_ALREADY_ABSENT,
+    `cleanup OpenShell provider ${provider}`,
+  );
 }
 
 export function registerChannelsStopStartProviderCleanup(

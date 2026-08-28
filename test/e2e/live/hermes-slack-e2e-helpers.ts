@@ -3,6 +3,7 @@
 
 import { setTimeout as sleep } from "node:timers/promises";
 import {
+  assertCleanupSucceededOrAbsent,
   cleanupWhenOpenShellAvailable,
   registerSandboxCleanupUnlessKept,
 } from "../fixtures/cleanup-resources.ts";
@@ -149,15 +150,19 @@ async function cleanupHermesSlackProvider(options: {
       timeoutMs: 60_000,
     },
   );
-  if (
-    result.exitCode === 0 ||
-    /\bNotFound\b|provider[^\n]*(?:not found|does not exist)|no such provider/i.test(
-      resultText(result),
-    )
-  ) {
-    return;
-  }
-  expectExitZero(result, `cleanup OpenShell provider ${options.provider}`);
+  assertCleanupSucceededOrAbsent(
+    result,
+    /\bNotFound\b|provider[^\n]*(?:not found|does not exist)|no (?:such )?provider/i,
+    `cleanup OpenShell provider ${options.provider}`,
+  );
+}
+
+export function assertHermesSlackCredentialFingerprintScanResult(result: {
+  readonly files?: string;
+  readonly processes?: string;
+}): void {
+  expect(result.files, "raw Slack token absent from selected files and logs").toBe("OK");
+  expect(result.processes, "raw Slack token absent from process arguments").toBe("OK");
 }
 
 async function scanHermesSlackCredentialFingerprints(options: {
@@ -613,10 +618,7 @@ PY`,
     files?: string;
     processes?: string;
   };
-  expect(tokenScanResult.files, "raw Slack token absent from selected files and logs").toBe("OK");
-  if (tokenScanResult.processes !== "EMPTY") {
-    expect(tokenScanResult.processes, "raw Slack token absent from process arguments").toBe("OK");
-  }
+  assertHermesSlackCredentialFingerprintScanResult(tokenScanResult);
 
   progress.phase("validate Hermes-scoped Slack policy");
   const policy = await host.command(

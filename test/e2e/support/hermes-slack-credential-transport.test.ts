@@ -13,6 +13,7 @@ import {
   hermesSlackCredentialFingerprints,
   hermesSlackCredentialScanScript,
 } from "../live/hermes-slack-credential-transport.ts";
+import { assertHermesSlackCredentialFingerprintScanResult } from "../live/hermes-slack-e2e-helpers.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -114,5 +115,11 @@ describe("Hermes Slack credential-fingerprint scan", () => {
 
     expect(result.status).not.toBe(0);
     expect(calls).toContain("args=sandbox exec --name e2e-hermes-slack");
+  });
+
+  it("rejects missing process-argument evidence", () => {
+    expect(() =>
+      assertHermesSlackCredentialFingerprintScanResult({ files: "OK", processes: "EMPTY" }),
+    ).toThrow(/raw Slack token absent from process arguments/);
   });
 });
