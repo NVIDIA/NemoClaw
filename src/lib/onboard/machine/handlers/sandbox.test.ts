@@ -79,20 +79,17 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { sessionId: expect.any(String) },
+      expect.objectContaining({ sessionId: expect.any(String), selection: expect.any(Object) }),
       {
         resolved: expect.any(Object),
         recreate: false,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
-        endpointSource: "onboard",
+        endpointSource: null,
         extraProviders: [],
       },
     );
-    expect(calls.finalizeRouteReservation).toHaveBeenCalledWith(
-      "my-assistant",
-      expect.any(String),
-    );
+    expect(calls.finalizeRouteReservation).not.toHaveBeenCalled();
     expect(calls.updateSandbox).toHaveBeenCalledWith(
       "my-assistant",
       expect.objectContaining({ model: "model", provider: "provider" }),
@@ -561,7 +558,7 @@ describe("handleSandboxState", () => {
       null,
       ["nous-audio"],
       null,
-      { sessionId: expect.any(String) },
+      expect.objectContaining({ sessionId: expect.any(String), selection: expect.any(Object) }),
       {
         resolved: expect.any(Object),
         recreate: false,
@@ -849,7 +846,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { sessionId: session.sessionId },
+      expect.objectContaining({ sessionId: session.sessionId, selection: expect.any(Object) }),
       {
         resolved: expect.any(Object),
         recreate: true,
@@ -1017,7 +1014,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { sessionId: session.sessionId },
+      expect.objectContaining({ sessionId: session.sessionId, selection: expect.any(Object) }),
       expect.objectContaining({
         resolved: expect.any(Object),
         recreate: true,
@@ -1150,7 +1147,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { sessionId: session.sessionId },
+      expect.objectContaining({ sessionId: session.sessionId, selection: expect.any(Object) }),
       expect.objectContaining({
         resolved: expect.any(Object),
         recreate: true,

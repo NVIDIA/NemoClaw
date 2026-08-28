@@ -6,31 +6,15 @@ import { TextDecoder } from "node:util";
 
 import YAML from "yaml";
 
+import { mergePresetNamesIntoPolicy } from "../../policy";
 import { parseOpenShellPolicy } from "../../policy/merge";
+import type { SandboxEntry } from "../../state/registry/types";
+import { ensureRequiredTierPolicyPresets } from "../policy-tier-suppression";
+import { isOpenShellGpuBaselineEnrichment } from "../sandbox-gpu-route-policy";
 
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
 const MAX_POLICY_BYTES = 256 * 1024;
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/u;
-const PROC_PATH = "/proc";
-const OPENSHELL_PROXY_REQUIRED_READ_ONLY_PATHS = new Set([
-  "/usr",
-  "/lib",
-  "/etc",
-  "/app",
-  "/var/log",
-  "/dev/urandom",
-]);
-const OPENSHELL_PROXY_REQUIRED_READ_WRITE_PATHS = new Set(["/tmp"]);
-const OPENSHELL_GPU_READ_ONLY_PATHS = new Set(["/run/nvidia-persistenced", "/usr/lib/wsl"]);
-const OPENSHELL_GPU_READ_WRITE_PATHS = new Set([
-  "/dev/nvidiactl",
-  "/dev/nvidia-uvm",
-  "/dev/nvidia-uvm-tools",
-  "/dev/nvidia-modeset",
-  "/dev/dxg",
-  PROC_PATH,
-]);
-const OPENSHELL_GPU_DEVICE_PATH = /^\/dev\/nvidia[0-9]+$/u;
 
 export interface HermesPortablePolicyCaptureResult {
   readonly status: number | null;
@@ -46,6 +30,7 @@ export interface HermesPortablePolicyCapture {
 export interface HermesPortableLivePolicyProof {
   readonly intendedSemanticSha256: string;
   readonly verifiedLivePolicySemanticSha256: string;
+  readonly expectedPolicySource: "create" | "finalized-registry";
 }
 
 function fail(message: string): never {
@@ -132,113 +117,6 @@ function semanticDigest(policy: Record<string, unknown>): string {
     .digest("hex");
 }
 
-function policyWithoutFilesystemPolicy(policy: Record<string, unknown>): Record<string, unknown> {
-  const result: Record<string, unknown> = Object.create(null);
-  for (const key of Object.keys(policy)) {
-    if (key !== "filesystem_policy") result[key] = policy[key];
-  }
-  return result;
-}
-
-function filesystemPolicyWithoutPaths(policy: Record<string, unknown>): Record<string, unknown> {
-  const result: Record<string, unknown> = Object.create(null);
-  for (const key of Object.keys(policy)) {
-    if (key !== "read_only" && key !== "read_write") result[key] = policy[key];
-  }
-  return result;
-}
-
-function readUniquePaths(
-  policy: Record<string, unknown>,
-  key: "read_only" | "read_write",
-): Set<string> | null {
-  const value = policy[key];
-  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) return null;
-  const paths = new Set(value);
-  return paths.size === value.length ? paths : null;
-}
-
-function isSubset(subset: ReadonlySet<string>, superset: ReadonlySet<string>): boolean {
-  return [...subset].every((entry) => superset.has(entry));
-}
-
-function setsOverlap(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
-  return [...left].some((entry) => right.has(entry));
-}
-
-function isOpenShellNativeGpuBaselineEnrichment(
-  intended: Record<string, unknown>,
-  live: Record<string, unknown>,
-): boolean {
-  if (
-    semanticDigest(policyWithoutFilesystemPolicy(intended)) !==
-    semanticDigest(policyWithoutFilesystemPolicy(live))
-  ) {
-    return false;
-  }
-  const intendedFilesystem = intended.filesystem_policy;
-  const liveFilesystem = live.filesystem_policy;
-  if (
-    !intendedFilesystem ||
-    typeof intendedFilesystem !== "object" ||
-    Array.isArray(intendedFilesystem) ||
-    !liveFilesystem ||
-    typeof liveFilesystem !== "object" ||
-    Array.isArray(liveFilesystem)
-  ) {
-    return false;
-  }
-  const intendedFilesystemRecord = intendedFilesystem as Record<string, unknown>;
-  const liveFilesystemRecord = liveFilesystem as Record<string, unknown>;
-  if (
-    semanticDigest(filesystemPolicyWithoutPaths(intendedFilesystemRecord)) !==
-    semanticDigest(filesystemPolicyWithoutPaths(liveFilesystemRecord))
-  ) {
-    return false;
-  }
-  const intendedReadOnly = readUniquePaths(intendedFilesystemRecord, "read_only");
-  const intendedReadWrite = readUniquePaths(intendedFilesystemRecord, "read_write");
-  const liveReadOnly = readUniquePaths(liveFilesystemRecord, "read_only");
-  const liveReadWrite = readUniquePaths(liveFilesystemRecord, "read_write");
-  if (!intendedReadOnly || !intendedReadWrite || !liveReadOnly || !liveReadWrite) return false;
-  if (
-    setsOverlap(intendedReadOnly, intendedReadWrite) ||
-    setsOverlap(liveReadOnly, liveReadWrite)
-  ) {
-    return false;
-  }
-
-  // The native direct-GPU create policy deliberately omits /proc so OpenShell
-  // can add it read-write only after it observes the GPU devices. Treat that
-  // exact omission as the authority signal; ordinary/non-GPU policies retain
-  // /proc read-only and cannot use this exception.
-  if (intendedReadOnly.has(PROC_PATH) || intendedReadWrite.has(PROC_PATH)) return false;
-  if (
-    !isSubset(OPENSHELL_PROXY_REQUIRED_READ_ONLY_PATHS, intendedReadOnly) ||
-    !isSubset(OPENSHELL_PROXY_REQUIRED_READ_WRITE_PATHS, intendedReadWrite)
-  ) {
-    return false;
-  }
-  if (liveReadOnly.has(PROC_PATH) || !liveReadWrite.has(PROC_PATH)) return false;
-  if (!isSubset(intendedReadOnly, liveReadOnly) || !isSubset(intendedReadWrite, liveReadWrite)) {
-    return false;
-  }
-
-  for (const path of liveReadOnly) {
-    if (!intendedReadOnly.has(path) && !OPENSHELL_GPU_READ_ONLY_PATHS.has(path)) return false;
-  }
-  for (const path of liveReadWrite) {
-    if (
-      !intendedReadWrite.has(path) &&
-      !OPENSHELL_GPU_READ_WRITE_PATHS.has(path) &&
-      !OPENSHELL_GPU_DEVICE_PATH.test(path)
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
-
 function rejectReservedCreateEntries(policy: Record<string, unknown>): void {
   const policies = policy.network_policies;
   if (!policies || typeof policies !== "object" || Array.isArray(policies)) return;
@@ -251,6 +129,71 @@ function parseCreatePolicy(bytes: Buffer): Record<string, unknown> {
   const policy = parseOnePolicyDocument(decode(bytes, "create input"), "create input");
   rejectReservedCreateEntries(policy);
   return policy;
+}
+
+function finalizedPresetNames(entry: SandboxEntry): string[] {
+  if (entry.agent !== "hermes") fail("finalized registry has another agent");
+  if (entry.baselineExclusionTransition !== undefined) {
+    fail("finalized registry has an incomplete baseline-policy mutation");
+  }
+  if ((entry.customPolicies ?? []).length > 0) {
+    fail("finalized custom policy authority is not supported");
+  }
+  const rawPresetNames: unknown = entry.policies;
+  if (rawPresetNames !== undefined && !Array.isArray(rawPresetNames)) {
+    fail("finalized registry preset authority is invalid");
+  }
+  const presetNames = (rawPresetNames ?? []) as unknown[];
+  if (
+    presetNames.some((name) => typeof name !== "string" || !NAME.test(name)) ||
+    new Set(presetNames).size !== presetNames.length
+  ) {
+    fail("finalized registry preset authority is invalid");
+  }
+  const names = presetNames as string[];
+  const requiredNames = ensureRequiredTierPolicyPresets(entry.policyTier, names);
+  if (
+    requiredNames.length !== names.length ||
+    requiredNames.some((name, index) => name !== names[index])
+  ) {
+    fail("finalized policy tier disagrees with preset authority");
+  }
+  return names;
+}
+
+/** Reconstruct the exact live policy authorized by a completed onboarding policy step. */
+export function resolveHermesPortableExpectedPolicyBytes(
+  createPolicyBytes: Buffer,
+  finalizedRegistryEntry?: SandboxEntry | null,
+): { readonly bytes: Buffer; readonly source: "create" | "finalized-registry" } {
+  parseCreatePolicy(createPolicyBytes);
+  if (finalizedRegistryEntry?.policyPresetsFinalized !== true) {
+    return { bytes: Buffer.from(createPolicyBytes), source: "create" };
+  }
+  const presetNames = finalizedPresetNames(finalizedRegistryEntry);
+  const excludedBaselineKeys = (finalizedRegistryEntry.baselineExclusions ?? []).map(
+    (entry) => entry.key,
+  );
+  let composed: ReturnType<typeof mergePresetNamesIntoPolicy>;
+  try {
+    composed = mergePresetNamesIntoPolicy(decode(createPolicyBytes, "create input"), presetNames, {
+      agent: "hermes",
+      sandboxName: finalizedRegistryEntry.name,
+      excludedBaselineKeys,
+    });
+  } catch {
+    fail("cannot compose finalized registry preset authority");
+  }
+  if (
+    composed.missingPresets.length > 0 ||
+    composed.appliedPresets.length !== presetNames.length ||
+    composed.appliedPresets.some((name, index) => name !== presetNames[index])
+  ) {
+    fail("cannot compose finalized registry preset authority");
+  }
+  const bytes = Buffer.from(composed.policy, "utf8");
+  parseCreatePolicy(bytes);
+  return { bytes, source: "finalized-registry" };
 }
 
 /** Capture and bind the exact create-policy bytes before sandbox creation. */
@@ -280,12 +223,17 @@ export function proveHermesPortableLivePolicy(input: {
   readonly gatewayName: string;
   readonly sandboxName: string;
   readonly createPolicyBytes: Buffer;
+  readonly finalizedRegistryEntry?: SandboxEntry | null;
   readonly capture: HermesPortablePolicyCapture;
 }): HermesPortableLivePolicyProof {
   if (!NAME.test(input.gatewayName) || !NAME.test(input.sandboxName)) {
     fail("gateway or sandbox identity is invalid");
   }
-  const intended = parseCreatePolicy(input.createPolicyBytes);
+  const expected = resolveHermesPortableExpectedPolicyBytes(
+    input.createPolicyBytes,
+    input.finalizedRegistryEntry,
+  );
+  const intended = parseCreatePolicy(expected.bytes);
   const intendedSemanticSha256 = semanticDigest(intended);
   const prefix = ["policy", "get", "-g", input.gatewayName] as const;
   const base = capturePolicy(
@@ -300,10 +248,7 @@ export function proveHermesPortableLivePolicy(input: {
   );
   const baseDigest = semanticDigest(base);
   const fullDigest = semanticDigest(full);
-  if (
-    baseDigest !== intendedSemanticSha256 &&
-    !isOpenShellNativeGpuBaselineEnrichment(intended, base)
-  ) {
+  if (baseDigest !== intendedSemanticSha256 && !isOpenShellGpuBaselineEnrichment(intended, base)) {
     fail("scoped base policy disagrees with create input");
   }
   if (fullDigest !== baseDigest) {
@@ -312,10 +257,11 @@ export function proveHermesPortableLivePolicy(input: {
   return {
     intendedSemanticSha256,
     verifiedLivePolicySemanticSha256: fullDigest,
+    expectedPolicySource: expected.source,
   };
 }
 
 export const hermesPortablePolicyAuthorityInternals = {
-  isOpenShellNativeGpuBaselineEnrichment,
+  isOpenShellGpuBaselineEnrichment,
   semanticDigest,
 };

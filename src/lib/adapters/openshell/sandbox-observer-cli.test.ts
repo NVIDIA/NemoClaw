@@ -183,6 +183,7 @@ describe("CLI OpenShell sandbox observer", () => {
   it.each([
     ["transport", "unreachable", captured(1, "", "client error (Connect): Connection refused")],
     ["transport", "unreachable", captured(1, "", "Status: Disconnected")],
+    ["transport", "unreachable", captured(1, "", "Unknown gateway 'nemoclaw'.")],
     ["transport", "identity_mismatch", captured(1, "", "handshake verification failed")],
     ["schema", undefined, captured(1, "", "protobuf decode error: invalid wire type")],
     ["command", "failed", captured(7, "", "unexpected opaque failure")],

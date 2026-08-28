@@ -267,9 +267,6 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
 
     ".sourceRevision == $candidateSha",
     "candidate CLI build identity does not match the candidate commit SHA",
-    ".source.revision == $revision",
-    ".source.release == $release",
-    "managed-image catalog source identity does not match the candidate",
     "--sort=name",
     "--mtime=@0",
     "nemoclaw/dist/shared",
@@ -359,8 +356,18 @@ function validateConsumer(
   }
   let expectedNeeds: string | string[] = CLI_ARTIFACT_PRODUCER_JOB;
   if (jobName === "mcp-bridge-dev") {
-    expectedNeeds = [CLI_ARTIFACT_PRODUCER_JOB, "openshell-dev-artifact"];
-  } else if (jobName === "live") {
+    expectedNeeds = ["base-image-publication", CLI_ARTIFACT_PRODUCER_JOB, "openshell-dev-artifact"];
+  } else if (
+    [
+      "live",
+      "mcp-bridge",
+      "openshell-credential-generation-window",
+      "hermes-e2e",
+      "hermes-gpu-startup",
+      "cloud-onboard",
+      "messaging-providers",
+    ].includes(jobName)
+  ) {
     expectedNeeds = ["base-image-publication", CLI_ARTIFACT_PRODUCER_JOB];
   } else if (jobName === "cloud-onboard") {
     expectedNeeds = ["base-image-publication", CLI_ARTIFACT_PRODUCER_JOB];

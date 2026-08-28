@@ -5,7 +5,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { startTestProgress, type TestProgress } from "../fixtures/progress.ts";
@@ -132,6 +132,11 @@ describe("Podman CPU lifecycle helper", () => {
     const bootstrapPath = path.join(root, "gateway-bootstrap.cjs");
     const pidPath = path.join(root, "gateway.pid");
     const progress = testProgress([]);
+    const nativeSetTimeout = globalThis.setTimeout;
+    const timerSpy = vi
+      .spyOn(globalThis, "setTimeout")
+      .mockImplementation(((callback, delay, ...args) =>
+        nativeSetTimeout(callback, delay === 5_000 ? 25 : delay, ...args)) as typeof setTimeout);
     await fs.writeFile(
       bootstrapPath,
       [
@@ -170,6 +175,7 @@ describe("Podman CPU lifecycle helper", () => {
       expect(processIsAlive(pid as number)).toBe(false);
       progress.phase(PHASES[1]);
     } finally {
+      timerSpy.mockRestore();
       killProcessIfAlive(await processId(pidPath));
       progress.stop();
       await fs.rm(root, { force: true, recursive: true });

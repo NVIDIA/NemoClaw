@@ -76,9 +76,25 @@ function runPreparedContextScenario(scenario: PreparedContextScenario): Prepared
 const fs = require("node:fs");
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
-const runner = require(${runnerPath});
 const registry = require(${registryPath});
+const fixtureMocks = require(${onboardScriptMocksPath});
+const scenario = ${JSON.stringify(scenario)};
+const buildCtx = ${JSON.stringify(preparedBuildCtx)};
+const buildId = ${JSON.stringify(buildId)};
+const sandboxName = "prepared-dcode";
+const commands = [];
+const registerCalls = [];
+const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+  sandboxName,
+  provider: "nvidia-prod",
+  model: "nvidia/nemotron-3-super-120b-a12b",
+  registerSandbox: (entry) => registerCalls.push(entry),
+});
+const runner = require(${runnerPath});
 const preflight = require(${preflightPath});
+const policyAuthorityPreflight = require(${JSON.stringify(
+    path.join(repoRoot, "src", "lib", "onboard", "policy-authority", "preflight.ts"),
+  )});
 const credentials = require(${credentialsPath});
 const buildContextStage = require(${buildContextStagePath});
 const dockerfilePatchFlow = require(${dockerfilePatchFlowPath});
@@ -87,19 +103,13 @@ const imageTag = require(${imageTagPath});
 const dockerGpuSandboxCreate = require(${dockerGpuSandboxCreatePath});
 const wait = require(${waitPath});
 const { loadAgent } = require(${agentDefsPath});
-
-const scenario = ${JSON.stringify(scenario)};
-const buildCtx = ${JSON.stringify(preparedBuildCtx)};
-const buildId = ${JSON.stringify(buildId)};
-const sandboxName = "prepared-dcode";
-const commands = [];
-const registerCalls = [];
 const planFromRefs = [];
 const resolvedBuildIds = [];
 let cleanupCalls = 0;
 let patchCalls = 0;
 let patchSleepUsesSeconds = null;
 let stageCalls = 0;
+let sandboxCreated = false;
 
 dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch = (options) => {
   patchSleepUsesSeconds = options.deps.sleep === wait.sleepSeconds;
@@ -155,6 +165,8 @@ runner.runFile = (file, args = []) => {
 };
 runner.runCapture = (command) => {
   const normalized = normalize(command);
+  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command, { sandboxName });
+  if (createdIdentity !== null) return createdIdentity;
   if (
     normalized.includes(
       "sandbox exec --name " +
@@ -169,21 +181,18 @@ runner.runCapture = (command) => {
       "Endpoint: https://inference.local/v1",
     ].join("\n");
   }
-  if (normalized.includes("sandbox get")) return "";
-  if (normalized.includes("sandbox list")) return sandboxName + " Ready";
+  if (normalized.includes("sandbox get")) {
+    return sandboxCreated ? sandboxName + "\nId: sbx-4f2a91c0d7\n" : "";
+  }
+  if (normalized.includes("sandbox list")) return sandboxCreated ? sandboxName + " Ready" : "";
   return "";
 };
-registry.getSandbox = () => null;
 registry.getDefault = () => null;
 registry.listExtraProviders = () => [];
-registry.registerSandbox = (entry) => {
-  registerCalls.push(entry);
-  return true;
-};
-registry.updateSandbox = () => true;
-registry.setDefault = () => true;
-registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
+policyAuthorityPreflight.qualifySandboxPolicyAuthority = () => ({
+  authority: "nemoclaw-managed",
+});
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
@@ -194,6 +203,7 @@ childProcess.spawn = (...args) => {
   child.pid = 6195;
   commands.push(normalize([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]));
   process.nextTick(() => {
+    sandboxCreated = true;
     child.stdout.emit("data", Buffer.from("Created sandbox: " + sandboxName + "\n"));
     child.emit("close", 0);
   });
@@ -220,23 +230,29 @@ const { createSandbox } = require(${onboardPath});
   let errorMessage = null;
   try {
     await createSandbox(
-      null,
-      "nvidia/nemotron-3-super-120b-a12b",
-      "nvidia-prod",
-      null,
-      sandboxName,
-      null,
-      null,
-      scenario === "custom-dockerfile" ? "/tmp/custom/Dockerfile" : null,
-      agent,
-      null,
-      null,
-      null,
-      [],
-      null,
-      null,
-      null,
-      preparedBuildContext,
+      ...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+        [
+          null,
+          "nvidia/nemotron-3-super-120b-a12b",
+          "nvidia-prod",
+          null,
+          sandboxName,
+          null,
+          null,
+          scenario === "custom-dockerfile" ? "/tmp/custom/Dockerfile" : null,
+          agent,
+          null,
+          null,
+          null,
+          [],
+          null,
+          null,
+          null,
+          null,
+          preparedBuildContext,
+        ],
+        createFixture,
+      ),
     );
   } catch (error) {
     errorMessage = error instanceof Error ? error.message : String(error);
@@ -270,7 +286,6 @@ const { createSandbox } = require(${onboardPath});
       HOME: tmpDir,
       NEMOCLAW_HOME: path.join(tmpDir, ".nemoclaw"),
       NEMOCLAW_NON_INTERACTIVE: "1",
-      NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK: "1",
       PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
     },
   });
@@ -286,59 +301,70 @@ const { createSandbox } = require(${onboardPath});
 }
 
 describe("onboard prepared DCode build context", () => {
-  it("creates from the supplied context without restaging or repatching it (#6195)", {
-    timeout: 90_000,
-  }, () => {
-    const result = runPreparedContextScenario("create");
+  it(
+    "creates from the supplied context without restaging or repatching it (#6195)",
+    {
+      timeout: 90_000,
+    },
+    () => {
+      const result = runPreparedContextScenario("create");
 
-    assert.equal(result.errorMessage, null);
-    assert.equal(result.stageCalls, 0);
-    assert.equal(result.patchCalls, 0);
-    assert.deepEqual(result.planFromRefs, [`${result.buildCtx}/Dockerfile`]);
-    assert.deepEqual(result.resolvedBuildIds, [result.buildId]);
-    assert.equal(result.cleanupCalls, 1);
-    assert.ok(
-      result.commands.some((command) =>
-        command.includes(`sandbox create --from ${result.buildCtx}/Dockerfile`),
-      ),
-      `expected create command to use prepared context; commands:\n${result.commands.join("\n")}`,
-    );
-    assert.ok(
-      result.registerCalls.some(
-        (entry) => entry.imageTag === `openshell/sandbox-from:${result.buildId}`,
-      ),
-      "expected the prepared build ID to determine the registered image tag",
-    );
-  });
+      assert.equal(result.errorMessage, null);
+      assert.equal(result.stageCalls, 0);
+      assert.equal(result.patchCalls, 0);
+      assert.deepEqual(result.planFromRefs, [`${result.buildCtx}/Dockerfile`]);
+      assert.deepEqual(result.resolvedBuildIds, [result.buildId]);
+      assert.equal(result.cleanupCalls, 1);
+      assert.ok(
+        result.commands.some((command) =>
+          command.includes(`sandbox create --from ${result.buildCtx}/Dockerfile`),
+        ),
+        `expected create command to use prepared context; commands:\n${result.commands.join("\n")}`,
+      );
+      assert.ok(
+        result.registerCalls.some(
+          (entry) => entry.imageTag === `openshell/sandbox-from:${result.buildId}`,
+        ),
+        "expected the prepared build ID to determine the registered image tag",
+      );
+    },
+  );
 
+  it(
+    "passes the seconds-based sleep helper to the Docker GPU patch during prepared-context onboarding (#9218)",
+    {
+      timeout: 90_000,
+    },
+    () => {
+      const result = runPreparedContextScenario("create");
 
-  it("passes the seconds-based sleep helper to the Docker GPU patch during prepared-context onboarding (#9218)", {
-    timeout: 90_000,
-  }, () => {
-    const result = runPreparedContextScenario("create");
+      assert.equal(result.errorMessage, null);
+      assert.equal(result.patchSleepUsesSeconds, true);
+    },
+  );
 
-    assert.equal(result.errorMessage, null);
-    assert.equal(result.patchSleepUsesSeconds, true);
-  });
+  it(
+    "rejects a prepared context combined with a custom Dockerfile (#6195)",
+    {
+      timeout: 90_000,
+    },
+    () => {
+      const result = runPreparedContextScenario("custom-dockerfile");
 
-  it("rejects a prepared context combined with a custom Dockerfile (#6195)", {
-    timeout: 90_000,
-  }, () => {
-    const result = runPreparedContextScenario("custom-dockerfile");
-
-    assert.match(
-      result.errorMessage ?? "",
-      /prepared DCode build context cannot be used for this sandbox target/i,
-    );
-    assert.equal(result.stageCalls, 0);
-    assert.equal(result.patchCalls, 0);
-    assert.deepEqual(result.planFromRefs, []);
-    assert.deepEqual(result.resolvedBuildIds, []);
-    assert.equal(result.cleanupCalls, 0);
-    assert.equal(
-      result.commands.some((command) => command.includes("sandbox create")),
-      false,
-    );
-    assert.deepEqual(result.registerCalls, []);
-  });
+      assert.match(
+        result.errorMessage ?? "",
+        /prepared DCode build context cannot be used for this sandbox target/i,
+      );
+      assert.equal(result.stageCalls, 0);
+      assert.equal(result.patchCalls, 0);
+      assert.deepEqual(result.planFromRefs, []);
+      assert.deepEqual(result.resolvedBuildIds, []);
+      assert.equal(result.cleanupCalls, 0);
+      assert.equal(
+        result.commands.some((command) => command.includes("sandbox create")),
+        false,
+      );
+      assert.deepEqual(result.registerCalls, []);
+    },
+  );
 });
