@@ -33,6 +33,7 @@ type LegacyOnboardProvidersModule = {
 };
 
 type RebuildModule = typeof import("./rebuild");
+type StopModule = typeof import("./stop");
 type GooglechatWebhookLifecycleModule =
   typeof import("../../messaging/channels/googlechat/tunnel/lifecycle");
 type GooglechatTunnelRuntimeDeps =
@@ -76,6 +77,12 @@ export const policyChannelDependencies = {
   ): ReturnType<RebuildModule["rebuildSandbox"]> {
     const rebuild = require("./rebuild") as RebuildModule;
     return rebuild.rebuildSandbox(sandboxName, args);
+  },
+  stopSandbox(
+    sandboxName: Parameters<StopModule["stopSandbox"]>[0],
+  ): ReturnType<StopModule["stopSandbox"]> {
+    const stop = require("./stop") as StopModule;
+    return stop.stopSandbox(sandboxName);
   },
   stopGooglechatWebhookTunnel(sandboxName: string): void {
     const lifecycle =
