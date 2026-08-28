@@ -22,6 +22,7 @@ import {
   assertNemoClawPolicyCreationReceiptMatches,
   parseNemoClawPolicyCreationReceipt,
   parseOpenShellPolicy,
+  withoutProviderComposedPolicies,
 } from "../../policy/merge";
 import type { SelectedDockerGpuRoute } from "../docker-gpu-route";
 import { isOpenShellGpuBaselineEnrichment } from "../sandbox-gpu-route-policy";
@@ -63,6 +64,7 @@ export function pendingSandboxPolicyVerificationForBoundary(
     sandboxName: boundary.sandboxName,
     lifecycleGeneration: boundary.lifecycleGeneration,
     sandboxIdentityFingerprint: boundary.lifecycleLiveIdentityFingerprint,
+    ...(boundary.createAttemptNonce ? { createAttemptNonce: boundary.createAttemptNonce } : {}),
     route: boundary.route,
   };
   const registration = boundary.registration;
@@ -101,6 +103,7 @@ export function verifiedSandboxPolicyBoundaryFromPendingCheckpoint(
     gatewayPort: checkpoint.gatewayPort,
     lifecycleGeneration: checkpoint.lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
+    ...(checkpoint.createAttemptNonce ? { createAttemptNonce: checkpoint.createAttemptNonce } : {}),
     route: checkpoint.route,
   };
   if (checkpoint.policyAuthority === "nemoclaw-managed") {
@@ -131,6 +134,19 @@ function refusal(reason: string): never {
   throw new PolicyAuthorityRefusalError(
     `Cannot record NemoClaw policy ownership: ${reason}. The sandbox remains owner-unknown and policy mutation is disabled.`,
   );
+}
+
+function basePolicyFromEffectivePolicy(
+  policy: ReturnType<typeof parseOpenShellPolicy>["policy"],
+): ReturnType<typeof parseOpenShellPolicy>["policy"] {
+  const networkPolicies = policy.network_policies;
+  if (!networkPolicies || typeof networkPolicies !== "object" || Array.isArray(networkPolicies)) {
+    return policy;
+  }
+  return {
+    ...policy,
+    network_policies: withoutProviderComposedPolicies(networkPolicies as never),
+  };
 }
 
 function waitForCreatedSandboxPolicyReadiness(
@@ -208,6 +224,10 @@ export function verifyCreatedSandboxPolicyCreationReceipt(
     ).policy;
   } catch {
     refusal("the live base policy could not be compared");
+  }
+  const observedBasePolicy = basePolicyFromEffectivePolicy(before.effectivePolicy);
+  if (!isDeepStrictEqual(observedBasePolicy, liveBasePolicy)) {
+    refusal("the policy evidence changed during receipt verification");
   }
   const after = inspectSandboxPolicyAuthority({
     sandboxName: input.sandboxName,
