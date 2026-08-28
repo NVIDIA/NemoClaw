@@ -223,7 +223,11 @@ async function pollSandboxReady(
     if (isLinuxDockerDriverGatewayEnabled()) {
       return false;
     }
-    const fallback = await fallbackReadinessProbe?.({ target, sandboxName });
+    const fallback = await fallbackReadinessProbe?.({
+      target,
+      sandboxName,
+      timeoutMs: remainingObservationTimeoutMs(waitOptions.deadlineMs, waitOptions.now),
+    });
     if (fallback && !fallback.ok) {
       if (isTransientObservationError(fallback.error)) {
         transient.error = fallback.error;

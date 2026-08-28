@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   namedOpenShellGateway,
   type OpenShellSandboxObserver,
+  type OpenShellSandboxReadinessProbe,
 } from "../adapters/openshell/sandbox-observer";
 import {
   pendingSandboxFrame,
@@ -98,9 +99,9 @@ describe("createSandboxReadyWaiter", () => {
 
   it("uses the same deadline for the legacy Kubernetes pod fallback", async () => {
     const { observer, listSandboxes } = replay([pendingSandboxFrame("Provisioning")]);
-    const fallbackReadinessProbe = vi.fn(async () => ({
-      ok: true as const,
-      value: "not_ready" as const,
+    const fallbackReadinessProbe = vi.fn<OpenShellSandboxReadinessProbe>(async () => ({
+      ok: true,
+      value: "not_ready",
     }));
     const sleep = vi.fn();
     const waitForSandboxReady = createSandboxReadyWaiter({
@@ -118,10 +119,22 @@ describe("createSandboxReadyWaiter", () => {
     });
     expect(listSandboxes).toHaveBeenCalledTimes(4);
     expect(fallbackReadinessProbe).toHaveBeenCalledTimes(4);
-    expect(fallbackReadinessProbe).toHaveBeenCalledWith({
-      target: TARGET,
-      sandboxName: NAME,
-    });
+    expect(fallbackReadinessProbe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: TARGET,
+        sandboxName: NAME,
+        timeoutMs: expect.any(Number),
+      }),
+    );
+    const listTimeouts = listSandboxes.mock.calls.map(([request]) => request.timeoutMs);
+    const fallbackTimeouts = fallbackReadinessProbe.mock.calls.map(
+      ([request]) => request.timeoutMs,
+    );
+    expect(
+      fallbackTimeouts.every(
+        (timeoutMs, index) => timeoutMs! > 0 && timeoutMs! <= listTimeouts[index]!,
+      ),
+    ).toBe(true);
     expect(sleep).toHaveBeenCalledTimes(4);
     expect(sleep.mock.calls.reduce((total, [seconds]) => total + seconds, 0)).toBeCloseTo(2, 2);
   });
