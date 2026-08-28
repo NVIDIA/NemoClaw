@@ -10,42 +10,11 @@ import {
   portableAgentLifecycle,
   snapshotEnv,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
-import { listMessagingCredentialMetadata } from "../../messaging/channels";
+import {
+  makeMessagingPlan,
+  messagingCredentialBindingsForChannels,
+} from "../../../../test/helpers/messaging-plan-fixtures";
 import { makePreparedRecoveryManifest } from "./rebuild-flow-test-fixtures";
-
-// Rebuild and the conflict guard both read `active`, so a partial channel literal
-// reads as inactive and changes what the fixture exercises. (#10153)
-function planChannel(
-  channelId: string,
-  overrides: { active: boolean; disabled?: boolean },
-): Record<string, unknown> {
-  return {
-    channelId,
-    displayName: channelId,
-    authMode: "token-paste",
-    active: overrides.active,
-    selected: true,
-    configured: true,
-    disabled: overrides.disabled ?? false,
-    inputs: [],
-    hooks: [],
-  };
-}
-
-function planCredentialBindings(channelIds: readonly string[]): Record<string, unknown>[] {
-  return listMessagingCredentialMetadata()
-    .filter((credential) => channelIds.includes(credential.channelId))
-    .map((credential) => ({
-      channelId: credential.channelId,
-      credentialId: credential.credentialId,
-      sourceInput: credential.sourceInput,
-      providerName: credential.providerNameTemplate,
-      providerEnvKey: credential.providerEnvKey,
-      placeholder: credential.placeholder,
-      credentialAvailable: true,
-      credentialHash: `hash-${credential.channelId}-${credential.credentialId}`,
-    }));
-}
 
 describe("rebuildSandbox flow: lifecycle", () => {
   installRebuildFlowTestHooks();
@@ -653,33 +622,19 @@ network_policies:
   });
 
   it("restores enabled messaging presets while pruning disabled ones from final policies", async () => {
-    const disabledSlackPlan = {
-      schemaVersion: 1,
+    const disabledSlackPlan = makeMessagingPlan({
       sandboxName: "alpha",
       agent: "openclaw",
       workflow: "rebuild",
-      channels: [
-        planChannel("telegram", { active: true }),
-        planChannel("discord", { active: true }),
-        planChannel("whatsapp", { active: true }),
-        planChannel("wechat", { active: true }),
-        planChannel("slack", { active: false, disabled: true }),
-      ],
+      channels: ["telegram", "discord", "whatsapp", "wechat", "slack"],
       disabledChannels: ["slack"],
-      // `enforceMessagingChannelConflicts` aborts unless an active credential-bearing
-      // channel carries a complete hash. Resolved from the manifests. (#10153)
-      credentialBindings: planCredentialBindings([
+      credentialBindings: messagingCredentialBindingsForChannels([
         "telegram",
         "discord",
         "whatsapp",
         "wechat",
       ]),
-      networkPolicy: { presets: [], entries: [] },
-      agentRender: [],
-      buildSteps: [],
-      stateUpdates: [],
-      healthChecks: [],
-    };
+    });
     const harness = createRebuildFlowHarness({
       applyPreset: () => true,
       backupPolicyPresets: ["slack", "npm", "pypi", "telegram"],

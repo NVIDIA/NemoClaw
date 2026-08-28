@@ -13,6 +13,7 @@ import type {
   SandboxMessagingCredentialBindingPlan,
   SandboxMessagingPlan,
 } from "../../src/lib/messaging";
+import { listMessagingCredentialMetadata } from "../../src/lib/messaging/channels";
 
 type DockerfilePlanChannel = {
   channelId?: unknown;
@@ -23,6 +24,11 @@ type DockerfilePlan = {
   channels?: DockerfilePlanChannel[];
 };
 
+/** Per-channel fields a caller needs to differ from the default derivation. */
+export type TestMessagingPlanChannelOverride = Partial<
+  Pick<SandboxMessagingPlan["channels"][number], "active" | "inputs">
+>;
+
 export interface TestMessagingPlanOptions {
   readonly sandboxName?: string;
   readonly channels?: readonly MessagingChannelId[];
@@ -31,6 +37,16 @@ export interface TestMessagingPlanOptions {
   readonly workflow?: MessagingCompilerWorkflow;
   readonly authMode?: ChannelAuthMode;
   readonly credentialBindings?: readonly SandboxMessagingCredentialBindingPlan[];
+  /**
+   * The rebuild workflow planner sets `disabled` from the persisted disabled set, then
+   * `active` from `!disabled && isChannelPlanStartable(channel)`, so a channel absent from
+   * that set can be inactive without being disabled. A fresh manifest compile instead marks
+   * a channel with missing required inputs disabled. The channel and disabled lists alone
+   * cannot express the planner shape.
+   */
+  readonly channelOverrides?: Readonly<
+    Partial<Record<MessagingChannelId, TestMessagingPlanChannelOverride>>
+  >;
 }
 
 export function makeMessagingPlan(options: TestMessagingPlanOptions = {}): SandboxMessagingPlan {
@@ -42,6 +58,7 @@ export function makeMessagingPlan(options: TestMessagingPlanOptions = {}): Sandb
     workflow = "onboard",
     authMode,
     credentialBindings = [],
+    channelOverrides = {},
   } = options;
   const disabled = new Set(disabledChannels);
   return {
@@ -53,11 +70,12 @@ export function makeMessagingPlan(options: TestMessagingPlanOptions = {}): Sandb
       channelId,
       displayName: channelId,
       authMode: authMode ?? (channelId === "whatsapp" ? "in-sandbox-qr" : "token-paste"),
-      active: !disabled.has(channelId),
+      active: channelOverrides[channelId]?.active ?? !disabled.has(channelId),
       selected: true,
       configured: true,
       disabled: disabled.has(channelId),
-      inputs: [],
+      // Clone so repeated calls and caller-owned inputs stay isolated (#8357).
+      inputs: structuredClone(channelOverrides[channelId]?.inputs ?? []),
       hooks: [],
     })),
     disabledChannels: [...disabledChannels],
@@ -68,6 +86,34 @@ export function makeMessagingPlan(options: TestMessagingPlanOptions = {}): Sandb
     stateUpdates: [],
     healthChecks: [],
   };
+}
+
+/**
+ * Synthetic credential bindings for conflict preflight only. `enforceMessagingChannelConflicts`
+ * aborts unless an active credential-bearing channel carries a complete hash, so a fixture with
+ * active credential channels needs an entry per manifest credential. Resolving the set from the
+ * manifests keeps the fixture tracking them instead of restating them.
+ *
+ * These are not compiled bindings: `providerName` stays a `{sandboxName}` template and each hash
+ * is a deterministic sentinel, so two fixtures built from the same channels look like they share
+ * a credential. Do not use them where a test compares hashes across sandboxes.
+ */
+export function messagingCredentialBindingsForChannels(
+  channelIds: readonly MessagingChannelId[],
+): SandboxMessagingCredentialBindingPlan[] {
+  const wanted = new Set<string>(channelIds);
+  return listMessagingCredentialMetadata()
+    .filter((credential) => wanted.has(credential.channelId))
+    .map((credential) => ({
+      channelId: credential.channelId as MessagingChannelId,
+      credentialId: credential.credentialId,
+      sourceInput: credential.sourceInput,
+      providerName: credential.providerNameTemplate,
+      providerEnvKey: credential.providerEnvKey,
+      placeholder: credential.placeholder,
+      credentialAvailable: true,
+      credentialHash: `hash-${credential.channelId}-${credential.credentialId}`,
+    }));
 }
 
 export function encodeMessagingPlan(plan: SandboxMessagingPlan): string {

@@ -3,6 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { makeMessagingPlan } from "../../../../test/helpers/messaging-plan-fixtures";
 import * as sandboxState from "../../state/sandbox";
 import {
   normalizeRebuildObservabilityPolicyPresets,
@@ -11,48 +12,6 @@ import {
   type RebuildBackupPhaseInput,
   runRebuildBackupPhase,
 } from "./rebuild-backup-phase";
-
-type RebuildMessagingPlan = NonNullable<RebuildBackupPhaseInput["messagingPlan"]>;
-type RebuildPlanChannel = RebuildMessagingPlan["channels"][number];
-
-// One owner for the rebuild messaging-plan schema. The rebuild tests below differ
-// only by agent and channel activity. (#10153)
-function rebuildPlanChannel(
-  channelId: RebuildPlanChannel["channelId"],
-  overrides: Partial<Pick<RebuildPlanChannel, "active" | "inputs">> = {},
-): RebuildPlanChannel {
-  return {
-    channelId,
-    displayName: channelId,
-    authMode: "token-paste",
-    active: overrides.active ?? true,
-    selected: true,
-    configured: true,
-    disabled: false,
-    inputs: overrides.inputs ?? [],
-    hooks: [],
-  };
-}
-
-function rebuildMessagingPlan(
-  agent: RebuildMessagingPlan["agent"],
-  channels: readonly RebuildPlanChannel[],
-): RebuildMessagingPlan {
-  return {
-    schemaVersion: 1,
-    sandboxName: "alpha",
-    agent,
-    workflow: "rebuild",
-    channels,
-    disabledChannels: [],
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
-  };
-}
 
 describe("rebuild web-search policy normalization", () => {
   afterEach(() => {
@@ -154,7 +113,12 @@ describe("rebuild web-search policy normalization", () => {
       },
       staleRecovery: false,
       preparedRecoveryManifest,
-      messagingPlan: rebuildMessagingPlan("hermes", [rebuildPlanChannel("slack")]),
+      messagingPlan: makeMessagingPlan({
+        sandboxName: "alpha",
+        agent: "hermes",
+        workflow: "rebuild",
+        channels: ["slack"],
+      }),
       webSearchConfig: null,
       log: vi.fn(),
       bail: (message): never => {
@@ -186,7 +150,12 @@ describe("rebuild web-search policy normalization", () => {
         },
         staleRecovery: false,
         preparedRecoveryManifest: { policyPresets: ["discord", "slack"] } as never,
-        messagingPlan: rebuildMessagingPlan(planAgent, [rebuildPlanChannel("slack")]),
+        messagingPlan: makeMessagingPlan({
+          sandboxName: "alpha",
+          agent: planAgent,
+          workflow: "rebuild",
+          channels: ["slack"],
+        }),
         webSearchConfig: null,
         log: vi.fn(),
         bail: (message): never => {
@@ -211,22 +180,27 @@ describe("rebuild web-search policy normalization", () => {
       },
       staleRecovery: false,
       preparedRecoveryManifest: { policyPresets: ["discord", "slack"] } as never,
-      messagingPlan: rebuildMessagingPlan("openclaw", [
-        rebuildPlanChannel("slack"),
+      messagingPlan: makeMessagingPlan({
+        sandboxName: "alpha",
+        agent: "openclaw",
+        workflow: "rebuild",
+        channels: ["slack", "discord"],
         // Required secret with no credential; an empty `inputs` would be startable.
-        rebuildPlanChannel("discord", {
-          active: false,
-          inputs: [
-            {
-              channelId: "discord",
-              inputId: "botToken",
-              kind: "secret",
-              required: true,
-              credentialAvailable: false,
-            },
-          ],
-        }),
-      ]),
+        channelOverrides: {
+          discord: {
+            active: false,
+            inputs: [
+              {
+                channelId: "discord",
+                inputId: "botToken",
+                kind: "secret",
+                required: true,
+                credentialAvailable: false,
+              },
+            ],
+          },
+        },
+      }),
       webSearchConfig: null,
       log: vi.fn(),
       bail: (message): never => {
