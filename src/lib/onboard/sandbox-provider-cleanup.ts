@@ -32,6 +32,7 @@ export type SandboxProviderRunOpenshell = (
 
 export type DetachSandboxProvidersDeps = {
   runOpenshell?: SandboxProviderRunOpenshell;
+  revalidateSandboxIdentity?: (operation: string) => void;
   /**
    * Treat OpenShell `sandbox not found` outputs as success-equivalent. Used
    * by the resume-after-prune call site where the sandbox is expected to be
@@ -148,11 +149,20 @@ export function detachSandboxProviders(
   const failures: Array<{ name: string; output: string }> = [];
   for (const suffix of SANDBOX_PROVIDER_SUFFIXES) {
     const name = `${sandboxName}-${suffix}`;
+    // OpenShell resolves provider detach by mutable sandbox name. These checks detect
+    // replacement and stop later detaches; they do not make this command an atomic,
+    // identity-bound mutation. Operators must not mutate the sandbox concurrently.
+    deps.revalidateSandboxIdentity?.(
+      `detaching provider '${name}' from sandbox '${sandboxName}'`,
+    );
     const result = runOpenshell(["sandbox", "provider", "detach", sandboxName, name], {
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
       suppressOutput: true,
     });
+    deps.revalidateSandboxIdentity?.(
+      `confirming provider '${name}' detach from sandbox '${sandboxName}'`,
+    );
     if (result.status === 0) {
       detached.push(name);
       continue;
@@ -258,6 +268,7 @@ export function runSandboxProviderPreDeleteCleanup(
 ): DetachSandboxProvidersResult {
   const result = detachSandboxProviders(sandboxName, {
     runOpenshell: deps.runOpenshell,
+    revalidateSandboxIdentity: deps.revalidateSandboxIdentity,
     tolerateMissingSandbox: deps.tolerateMissingSandbox,
   });
   if (result.failures.length === 0) return result;
