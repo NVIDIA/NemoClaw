@@ -42,7 +42,8 @@ vi.mock("./rebuild-recreate-journal", () => ({
   recordRebuildRecoveryBackup: phaseMocks.recordRecoveryBackup,
 }));
 
-vi.mock("./rebuild-backup-phase", () => ({
+vi.mock("./rebuild-backup-phase", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./rebuild-backup-phase")>()),
   runRebuildBackupPhase: phaseMocks.runBackup,
 }));
 
