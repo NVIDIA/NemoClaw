@@ -2661,6 +2661,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               terminalAgent: agentDefs.isTerminalAgent(agent),
               managedBootstrap,
               verifyCreatedSandboxBeforeEffects: async (identity) => {
+                managedBootstrapCreateFinished = managedBootstrap !== null;
                 await verifyCreatedSandbox(identity);
               },
               revalidateVerifiedSandboxBeforeEffect: (operation) =>
@@ -2675,7 +2676,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               verifyDirectSandboxGpu: createGpuVerifier,
             },
           );
-          managedBootstrapCreateFinished = managedBootstrap !== null;
           return created;
         },
       });
