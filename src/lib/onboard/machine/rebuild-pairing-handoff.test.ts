@@ -162,7 +162,7 @@ describe("rebuild pairing handoff", () => {
     // (identity/devices are `backup: false` and removed on destroy), so a
     // rebuild handoff must reach finalization exactly like fresh onboarding:
     // the real final handlers settle ordinary OpenClaw pairing before the
-    // deployment probe (and never carry the obsolete suppress field).
+    // deployment probe.
     const sandboxPhase = createSandboxOnboardFlowPhase({
       gatewayName: "nemoclaw",
       recreateJournalTargetIntentFingerprint: "intent-1",
@@ -176,6 +176,26 @@ describe("rebuild pairing handoff", () => {
     });
     const sandboxResult = await sandboxPhase.run(context());
     const { calls } = createFinalizationCalls();
+
+    // Hold pairing settlement open until the test proves the deployment probe
+    // waits for it: `verifyDeployment` must not start while pairing is still
+    // pending. A suppress-if-rebuild regression would let verification run
+    // immediately, so this ordering is the observable contract under test.
+    const events: string[] = [];
+    let releasePairing!: () => void;
+    const pairingGate = new Promise<void>((resolve) => {
+      releasePairing = resolve;
+    });
+    calls.settleOrdinaryPairing.mockImplementation(async () => {
+      events.push("pairing-started");
+      await pairingGate;
+      events.push("pairing-settled");
+      return { kind: "settled" as const };
+    });
+    calls.verify.mockImplementation(async () => {
+      events.push("verify");
+      return { ok: true };
+    });
 
     const phases = createFinalOnboardFlowPhases({
       branchState: "openclaw",
@@ -193,19 +213,19 @@ describe("rebuild pairing handoff", () => {
     });
 
     await phases[2].run(sandboxResult.context);
-    await phases[3].run(sandboxResult.context);
+    const postVerifyRun = phases[3].run(sandboxResult.context);
+
+    await vi.waitFor(() => {
+      expect(events).toContain("pairing-started");
+    });
+    expect(events).not.toContain("verify");
+    releasePairing();
+    await postVerifyRun;
 
     expect(calls.settleOrdinaryPairing).toHaveBeenCalledExactlyOnceWith("alpha");
-    expect(calls.settleOrdinaryPairing.mock.invocationCallOrder[0]).toBeLessThan(
-      calls.verify.mock.invocationCallOrder[0],
-    );
     expect(calls.settleOrdinaryPairing.mock.invocationCallOrder[0]).toBeGreaterThan(
       calls.recoverProcesses.mock.invocationCallOrder[0],
     );
-    // The obsolete handoff field is no longer part of the flow context, so the
-    // suppress-if-rebuild branch cannot execute (#10479).
-    expect(
-      (sandboxResult.context as unknown as Record<string, unknown>).recreateJournalHandoff,
-    ).toBeUndefined();
+    expect(events).toEqual(["pairing-started", "pairing-settled", "verify"]);
   });
 });

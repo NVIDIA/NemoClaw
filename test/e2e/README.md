@@ -414,14 +414,6 @@ The inert declarations are combinatorial gaps, not supported matrix cells. #8285
 
 The report also groups repeated observable outcomes. Those rows are retained only when agent runtime or environment provides distinct evidence. Validation rejects two rows with the same three coverage dimensions.
 
-## Known coverage gaps
-
-A real gap that is not ready for a live test is recorded here instead of adding speculative coverage. Each note names the missing dimension, the nearest existing coverage, why a new test would duplicate or overreach current behavior, and the issue or PR that will make it testable. These notes do not schedule a combination or change release judgment by themselves.
-
-| Missing dimension | Nearest existing coverage | Why not covered now | Follow-up |
-|---|---|---|---|
-| Rebuilt OpenClaw sandbox is immediately usable (gateway pairing settled) right after `rebuild --yes`, with no manual `recover` step | `rebuild-openclaw-old-base-context` live target plus the deterministic finalization and rebuild-handoff regression tests added in #10493 | The assertion needs a live managed-image OpenShell sandbox on an NVIDIA runtime (Ubuntu 24.04 x86_64 with Docker and OpenShell CLI), which only NVIDIA runners can provide; the host-side decision is already covered deterministically at the flow and handler boundary | #10479 (NV QA / UAT reproduction on Ubuntu 24.04); extend the rebuild target with a post-rebuild agent probe when the runtime is available |
-
 ## Launch-readiness locked-image acceptance
 
 Use the repository helper to test an existing OpenClaw sandbox without
