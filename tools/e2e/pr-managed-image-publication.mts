@@ -58,7 +58,7 @@ const REUSABLE_NON_IMAGE_PATHS = [
   /^src\/lib\/onboard\/managed-workload\/onboard-orchestration(?:[.]test)?[.]ts$/u,
   /^src\/lib\/onboard\/machine\/finalization-deps(?:[.]test)?[.]ts$/u,
   /^src\/lib\/onboard\/machine\/messaging-credential-convergence(?:[.]test)?[.]ts$/u,
-  /^src\/lib\/onboard\/runtime-provider\/(?:docker-state-mutation|podman-runtime-surfaces|podman-state-mutation)(?:[.]test)?[.]ts$/u,
+  /^src\/lib\/onboard\/runtime-provider\/(?:docker-state-mutation|podman-host-local-inference(?:-[a-z-]+)?|podman-runtime-surfaces|podman-state-mutation)(?:[.]test)?[.]ts$/u,
   /^src\/lib\/onboard\/sandbox-create\/orchestration[.]ts$/u,
   /^src\/lib\/onboard\/sandbox-workload-preparation[.]test[.]ts$/u,
   /^src\/lib\/onboard\/workload\/preparation[.]ts$/u,

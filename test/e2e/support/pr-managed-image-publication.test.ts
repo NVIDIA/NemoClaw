@@ -163,6 +163,8 @@ on:
         "src/lib/onboard/machine/messaging-credential-convergence.test.ts",
         "src/lib/onboard/machine/messaging-credential-convergence.ts",
         "src/lib/onboard/runtime-provider/docker-state-mutation.ts",
+        "src/lib/onboard/runtime-provider/podman-host-local-inference-cleanup-settlement.test.ts",
+        "src/lib/onboard/runtime-provider/podman-host-local-inference.ts",
         "src/lib/onboard/runtime-provider/podman-runtime-surfaces.ts",
         "src/lib/onboard/runtime-provider/podman-state-mutation.test.ts",
         "src/lib/onboard/runtime-provider/podman-state-mutation.ts",
