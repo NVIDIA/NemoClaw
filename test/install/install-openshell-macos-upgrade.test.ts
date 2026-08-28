@@ -32,6 +32,8 @@ function runDarwinGatewayProcessStop(
   writeExecutable(
     path.join(bin, "ps"),
     `#!/usr/bin/env bash
+managed_pid="$(cat '${runtimeDir}/openshell-gateway.pid')" || exit 1
+[ "\${2:-}" = "$managed_pid" ] || exit 1
 printf '%s\n' '${
       options.trustedIdentity === false
         ? "python"
@@ -42,7 +44,9 @@ printf '%s\n' '${
   writeExecutable(
     path.join(bin, "lsof"),
     `#!/usr/bin/env bash
-printf 'p%s\nn%s\n' "$4" '${options.trustedExecutable === false ? foreignGatewayBin : gatewayBin}'
+managed_pid="$(cat '${runtimeDir}/openshell-gateway.pid')" || exit 1
+[ "\${3:-}" = "$managed_pid" ] || exit 1
+printf 'p%s\nn%s\n' "$managed_pid" '${options.trustedExecutable === false ? foreignGatewayBin : gatewayBin}'
 `,
   );
 
