@@ -25,6 +25,14 @@ describe("checks runner", () => {
     });
   });
 
+  it("registers the OpenShell sandbox observation boundary check (#9803)", () => {
+    expect(CHECKS).toContainEqual({
+      name: "openshell-sandbox-observation-boundary",
+      command: process.platform === "win32" ? "tsx.cmd" : "tsx",
+      args: ["scripts/checks/openshell-sandbox-observation-boundary.mts"],
+    });
+  });
+
   it("registers the onboarding entry composition check", () => {
     expect(CHECKS).toContainEqual({
       name: "onboard-entry-composition",
