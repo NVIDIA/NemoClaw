@@ -29,8 +29,11 @@ function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
 }
 
-function writeScopedGatewayState(home: string, port = 8080): void {
-  const stateDir = path.join(home, ".local", "state", "nemoclaw", resolveGatewayStateDirName(port));
+function writeScopedGatewayState(
+  home: string,
+  port = 8080,
+  stateDir = path.join(home, ".local", "state", "nemoclaw", resolveGatewayStateDirName(port)),
+): void {
   const configPath = path.join(stateDir, "openshell-gateway.toml");
   const jwtBundle = ensureDockerDriverGatewayJwtBundle(stateDir);
   fs.writeFileSync(
@@ -181,6 +184,73 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
   });
+
+  it.each([
+    { liveGatewayNames: ["nemoclaw", "nemoclaw-9123"], mode: "gateway-scoped", siblingKept: true },
+    { liveGatewayNames: ["nemoclaw-9123"], mode: "full", siblingKept: false },
+  ])(
+    "removes configured gateway state during $mode cleanup without a sandbox",
+    async ({ liveGatewayNames, siblingKept }) => {
+      const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-custom-state-"));
+      const port = 9123;
+      try {
+        vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(port));
+        vi.resetModules();
+        const runPortUninstall = bindManagedGatewayAuthority(
+          (await import("./run-plan")).runUninstallPlan,
+        );
+        const selectedStateRoot = path.join(tmpHome, ".nemoclaw", "gateways", String(port));
+        const customGatewayState = path.join(tmpHome, "custom-gateway-state");
+        const siblingGatewayState = path.join(
+          tmpHome,
+          ".local",
+          "state",
+          "nemoclaw",
+          "openshell-docker-gateway",
+        );
+        fs.mkdirSync(selectedStateRoot, { mode: 0o700, recursive: true });
+        fs.mkdirSync(siblingGatewayState, { mode: 0o700, recursive: true });
+        fs.writeFileSync(path.join(siblingGatewayState, "keep"), "sibling\n");
+        writeScopedGatewayState(tmpHome, port, customGatewayState);
+
+        const result = runPortUninstall(
+          {
+            assumeYes: true,
+            deleteModels: false,
+            destroyUserData: true,
+            gatewayName: `nemoclaw-${String(port)}`,
+            keepOpenShell: false,
+          },
+          {
+            commandExists: (command) => command === "openshell",
+            env: {
+              HOME: tmpHome,
+              NEMOCLAW_GATEWAY_PORT: String(port),
+              NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: customGatewayState,
+            } as NodeJS.ProcessEnv,
+            error: vi.fn(),
+            existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
+            hasPortableRuntimeCleanup: () => false,
+            isTty: false,
+            log: vi.fn(),
+            rmSync: fs.rmSync,
+            run: (_command, args) =>
+              args[0] === "gateway" && args[1] === "list"
+                ? ok(JSON.stringify(liveGatewayNames.map((name) => ({ name }))))
+                : ok(),
+            runDocker: () => ok(""),
+          },
+        );
+
+        expect(result.exitCode).toBe(0);
+        expect(fs.existsSync(customGatewayState)).toBe(false);
+        expect(fs.existsSync(selectedStateRoot)).toBe(false);
+        expect(fs.existsSync(siblingGatewayState)).toBe(siblingKept);
+      } finally {
+        fs.rmSync(tmpHome, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("preserves selected state when a gateway-scoped sandbox deletion fails", async () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-select-fail-"));

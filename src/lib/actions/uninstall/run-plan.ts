@@ -91,6 +91,7 @@ import {
   classifyShimPath,
   defaultUninstallPaths,
   NEMOCLAW_PROVIDERS,
+  selectedGatewayStateDirIsWithinDefaultRoot,
   type FileSystemDeps,
   type UninstallPaths,
   type UninstallPlan,
@@ -310,6 +311,13 @@ function removePath(
   deps.rmSync(target, { force: true, recursive: true });
   deps.log(`Removed ${target}`);
   return true;
+}
+
+function removeManagedGatewayState(paths: UninstallPaths, runtime: UninstallRuntime): void {
+  removePath(paths.gatewayLocalStateDir, runtime);
+  if (!selectedGatewayStateDirIsWithinDefaultRoot(paths)) {
+    removePath(paths.selectedGatewayLocalStateDir, runtime);
+  }
 }
 
 // Entries under `nemoclawStateDir` (~/.nemoclaw/) that survive uninstall by
@@ -1687,7 +1695,12 @@ function canRemoveScopedOpenShellResources(
   teardownAuthority: GatewayOwner,
   requireLiveManagedProcess = false,
 ): boolean {
-  if (!scopedToSelectedGateway) return true;
+  if (
+    !scopedToSelectedGateway &&
+    (isExternallySupervised(teardownAuthority) || selectedGatewayStateDirIsWithinDefaultRoot(paths))
+  ) {
+    return true;
+  }
   if (isExternallySupervised(teardownAuthority)) {
     const stateDir = teardownAuthority.stateDir;
     const supervisor = teardownAuthority.supervisor;
@@ -1739,7 +1752,16 @@ function canRemoveScopedOpenShellResources(
   }
   const stateDir = paths.selectedGatewayLocalStateDir;
   if (!hasStateScopedSandboxNamespace(stateDir)) {
-    runtime.warn("Refusing scoped gateway cleanup because its sandbox namespace cannot be proven.");
+    runtime.warn(
+      scopedToSelectedGateway
+        ? "Refusing scoped gateway cleanup because its sandbox namespace cannot be proven."
+        : "Refusing gateway cleanup because the configured state directory's sandbox namespace cannot be proven.",
+    );
+    if (!runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim()) {
+      runtime.warn(
+        "If onboarding used a gateway state override, rerun with NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR=<absolute-path> set to its original resolved directory.",
+      );
+    }
     return false;
   }
   if (!requireLiveManagedProcess) return true;
@@ -3220,7 +3242,7 @@ function executePlan(
         }
         runtime.log("Sibling gateways remain; kept shared OpenShell and NemoClaw config.");
       } else {
-        if (!preserveSharedOpenShell) removePath(paths.gatewayLocalStateDir, runtime);
+        if (!preserveSharedOpenShell) removeManagedGatewayState(paths, runtime);
         if (preserveSharedOpenShell) runtime.log(configKeepMessage);
         else if (GATEWAY_PORT === DEFAULT_GATEWAY_PORT) {
           const envCleanup = removeNemoclawOpenShellGatewayEnv(paths, runtime);
@@ -3323,6 +3345,7 @@ export function buildRunPlan(
   const home = env.HOME || os.homedir();
   const paths = {
     ...defaultUninstallPaths({
+      gatewayStateDir: env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
       home,
       repoRoot: path.resolve(__dirname, "..", "..", ".."),
       tmpDir: env.TMPDIR,
