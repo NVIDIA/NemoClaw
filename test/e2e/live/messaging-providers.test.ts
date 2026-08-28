@@ -1076,10 +1076,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
     );
     const gatewayProof = await runDiscordGatewayClient(sandbox, {
       port: fakeGateway.port,
-      identifyToken: {
-        kind: "explicit",
-        value: "openshell:resolve:env:DISCORD_BOT_TOKEN",
-      },
+      identifyToken: { kind: "revisioned-discord-env" },
       redactionValues,
     });
     check(

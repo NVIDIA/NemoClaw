@@ -13,8 +13,8 @@ import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
+import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT } from "../fixtures/paths.ts";
-import type { RuntimeProviderPrerequisite } from "../fixtures/runtime-provider.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 //
@@ -145,7 +145,7 @@ async function runProbeOnlyConnect(
 
 async function cleanupDoubleOnboardState(
   host: HostCliClient,
-  runtimeProvider: RuntimeProviderPrerequisite,
+  lifecycle: LifecyclePhaseFixture,
   sandbox: SandboxClient,
 ): Promise<void> {
   const names = [INSTALL_SANDBOX_NAME, SANDBOX_A, SANDBOX_B].filter(Boolean);
@@ -174,7 +174,7 @@ async function cleanupDoubleOnboardState(
       timeoutMs: 30_000,
     }),
   );
-  await stopGatewayRuntime(host, runtimeProvider, "cleanup-stop-gateway-runtime");
+  await lifecycle.stopGatewayRuntime();
   await ignoreCleanupError(() =>
     sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
       artifactName: "cleanup-openshell-gateway-destroy-nemoclaw",
@@ -196,46 +196,6 @@ async function gatewayRuntimeId(
 ): Promise<string> {
   const runtime = await gateway.resolveHostRuntime();
   return runtime?.kind === "container" ? `${runtime.kind}:${runtime.id}` : (runtime?.kind ?? "");
-}
-
-async function stopGatewayRuntime(
-  host: HostCliClient,
-  runtimeProvider: RuntimeProviderPrerequisite,
-  artifactName: string,
-): Promise<void> {
-  const script = String.raw`
-set +e
-openshell forward stop 18789 >/dev/null 2>&1
-openshell gateway stop -g nemoclaw >/dev/null 2>&1
-exit 0
-`;
-  const stop = await host.command("bash", ["-lc", script], {
-    artifactName,
-    env: commandEnv(),
-    timeoutMs: 60_000,
-  });
-  expect(stop.exitCode, resultText(stop)).toBe(0);
-  const resources = await runtimeProvider.command(
-    ["container", "ps", "--filter", "name=^openshell-cluster-nemoclaw$", "--format", "{{.Names}}"],
-    { artifactName: `${artifactName}-runtime-resource`, timeoutMs: 30_000 },
-  );
-  expect(resources.exitCode, resultText(resources)).toBe(0);
-  const matchingResources = resources.stdout
-    .split(/\r?\n/u)
-    .map((name) => name.trim())
-    .filter((name) => name === "openshell-cluster-nemoclaw");
-  await Promise.all(
-    matchingResources.map(async (resourceName) => {
-    const stopResource = await runtimeProvider.command(
-        ["container", "stop", resourceName],
-      {
-        artifactName: `${artifactName}-stop-runtime-resource`,
-        timeoutMs: 60_000,
-      },
-    );
-    expect(stopResource.exitCode, resultText(stopResource)).toBe(0);
-    }),
-  );
 }
 
 function gatewayAliasEndpoint(): string {
@@ -460,7 +420,7 @@ test(
     ],
   },
   },
-  async ({ artifacts, cleanup, gateway, host, progress, runtimeProvider, sandbox, skip }) => {
+  async ({ artifacts, cleanup, gateway, host, lifecycle, progress, runtimeProvider, sandbox, skip }) => {
   expect(
     fs.existsSync(CLI_DIST_ENTRYPOINT),
     "run `npm run build:cli` before live repo CLI targets",
@@ -508,9 +468,9 @@ test(
     env: commandEnv(),
     timeoutMs: 60_000,
   });
-  cleanup.trackDisposable("stop double-onboard gateway runtime", () =>
-      stopGatewayRuntime(host, runtimeProvider, "cleanup-stop-gateway-runtime"),
-  );
+  cleanup.trackDisposable("stop double-onboard gateway runtime", async () => {
+    await lifecycle.stopGatewayRuntime();
+  });
   cleanup.trackForward(host, 18789, {
     artifactName: "cleanup-openshell-forward-stop-18789",
     env: commandEnv(),
@@ -547,7 +507,7 @@ test(
     ],
   });
 
-    await cleanupDoubleOnboardState(host, runtimeProvider, sandbox);
+    await cleanupDoubleOnboardState(host, lifecycle, sandbox);
 
   progress.phase("onboard first sandbox");
   // Phase 2: first onboard.
@@ -863,7 +823,8 @@ test(
     env: commandEnv(),
     timeoutMs: 30_000,
   });
-    await stopGatewayRuntime(host, runtimeProvider, "phase-6-stop-gateway-runtime");
+    await lifecycle.stopGatewayRuntime();
+    await gateway.expectHostRuntimeStopped({ artifactName: "phase-6-gateway-runtime-stopped" });
   const postStopStatus = await command(host, [SANDBOX_B, "status"], {
     artifactName: "phase-6-status-after-gateway-stop",
     env: commandEnv(),
@@ -880,7 +841,7 @@ test(
 
   progress.phase("remove double-onboard resources");
   // Phase 7: final cleanup with explicit assertions.
-    await cleanupDoubleOnboardState(host, runtimeProvider, sandbox);
+    await cleanupDoubleOnboardState(host, lifecycle, sandbox);
   const sandboxAAfterCleanup = await sandbox.openshell(["sandbox", "get", SANDBOX_A], {
     artifactName: "phase-7-openshell-sandbox-a-after-cleanup",
     env: commandEnv(),
