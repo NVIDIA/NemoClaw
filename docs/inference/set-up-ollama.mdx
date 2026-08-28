@@ -31,14 +31,14 @@ Run the fresh Portable command in the [Hermes quickstart](../../get-started/quic
 Before the provider-selection step completes, NemoClaw verifies the Portable network, registry, GPU, and Podman authority.
 NemoClaw launches the runner with `OLLAMA_CONTEXT_LENGTH=64000`.
 That value is part of the runner's launch and runtime identity.
-Before NemoClaw accepts or reuses the runner, the recorded launch arguments and inspected container environment must agree on the exact value.
+Before NemoClaw accepts or reuses the runner, the recorded launch arguments and inspected container environment must use the same value.
 A missing or changed value causes a configuration drift error instead of runner reuse.
-It then creates the runner, sends one validation request for the selected model, and confirms that the exact model is loaded.
+It then creates the runner, sends one validation request for the selected model, and confirms that Ollama loaded the selected model.
 This path does not inspect, start, or use a host Ollama process, and it does not use the default Docker runtime.
 
 <Warning title="Portable Cleanup Boundary">
 Run `$$nemoclaw uninstall` for full cleanup of a receipt-owned Portable Ollama runner.
-Before its first mutation, NemoClaw records the exact schema `5` lifecycle receipt, sandbox registry revision and lifecycle generation, sandbox and Podman container identities, committed gateway provider revision and profile, inference runtime, socket, and Portable network.
+Before its first mutation, NemoClaw records the schema `5` lifecycle receipt, sandbox registry revision and lifecycle generation, sandbox and Podman container identities, committed gateway provider revision and profile, inference runtime, socket, and Portable network.
 It revalidates that authority before each cleanup phase and preserves a provider or inference runtime that another recorded sandbox shares.
 An interrupted run keeps owner-private, credential-free recovery state.
 Preserve the reported state and rerun the same command to resume the recorded phase.
@@ -67,7 +67,7 @@ If sudo is unavailable in a non-interactive run, rerun interactively or upgrade 
 An upgrade also needs sudo to restart the service onto the new binary, so it does not accept an already-loopback-only daemon as a reason to skip that step.
 A fresh install takes the latest version.
 
-Before a Linux systemd restart, NemoClaw reads the service's exact `User` and `ExecStart` executable.
+Before a Linux systemd restart, NemoClaw reads the service's `User` and `ExecStart` executable.
 It requires one absolute executable path, one service user, a regular ELF executable, and one absolute ELF interpreter path.
 NemoClaw then runs the executable with `--version` as the service user, which proves that the executable and its interpreter can run for that user.
 After a failed run, NemoClaw verifies execute access to both paths before it considers permission repair.
@@ -123,7 +123,7 @@ The command rejects a symlink or non-executable file before it records ownership
 It refuses to launch a duplicate when another `ollama` process exists but the API is unhealthy.
 After it launches the daemon, it waits up to 30 seconds for `/api/tags` to return valid JSON with a `models` array.
 Recovery then verifies the authenticated proxy and requires HTTP 2xx from the sandbox `inference.local/v1/models` route.
-If Ollama does not become healthy within 30 seconds, the command identifies the exact receipt-bound executable and its `serve` argument, then tells you to retry recovery.
+If Ollama does not become healthy within 30 seconds, the command identifies the receipt-bound executable and its `serve` argument, then tells you to retry recovery.
 The command exits non-zero with recovery guidance when startup or route validation fails.
 It does not start, stop, or replace a system service or another user-managed Ollama daemon.
 </AgentOnly>
@@ -180,7 +180,7 @@ Each Ollama-backed OpenClaw passthrough checks whether the selected model is sti
 <AgentOnly variant="hermes">
 Hermes requires at least `64000` tokens, so NemoClaw requests that host-side context length when it starts Ollama on macOS or Linux.
 Fresh onboarding verifies after model warm-up that `/api/ps` reports at least `64000` for the loaded model.
-Resumed onboarding and sandbox rebuilds warm the exact recorded Ollama model and repeat this verification before reusing its route.
+Resumed onboarding and sandbox rebuilds warm the recorded Ollama model and repeat this verification before reusing its route.
 
 When `NEMOCLAW_CONTEXT_WINDOW` is unset, NemoClaw writes the verified runtime value as `model.context_length` in `/sandbox/.hermes/config.yaml`.
 An explicit `NEMOCLAW_CONTEXT_WINDOW` must be at least `64000`; NemoClaw writes that value only when the loaded model reports at least the same context length.

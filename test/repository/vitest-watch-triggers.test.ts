@@ -116,15 +116,27 @@ function triggeredBy(relativePath: string): string[] {
 }
 
 describe("Vitest opaque-input watch triggers", () => {
-  it("maps the onboard child-process preload to its managed-image fixtures", () => {
-    expect(triggeredBy("test/helpers/onboard-script-mocks.cjs")).toEqual([
+  it.each([
+    "test/helpers/onboard-fixture-contract.json",
+    "test/helpers/onboard-script-mocks.cjs",
+  ])("maps %s to every sandbox identity consumer (#10463)", (fixturePath) => {
+    expect(triggeredBy(fixturePath)).toEqual([
+      "test/helpers/onboard-created-sandbox-fixture.test.ts",
+      "test/onboarding/onboard-custom-dockerfile.test.ts",
       "test/onboarding/onboard-extra-provider-reconciliation.test.ts",
+      "test/onboarding/onboard-fresh-create-identity.test.ts",
       "test/onboarding/onboard-installer-restore-intent.test.ts",
+      "test/onboarding/onboard-managed-image-buildless-e2e.test.ts",
+      "test/onboarding/onboard-mcp-observability-redirect.test.ts",
       "test/onboarding/onboard-messaging.test.ts",
+      "test/onboarding/onboard-prepared-build-context.test.ts",
       "test/onboarding/onboard-reservation-recreate.test.ts",
       "test/onboarding/onboard-sandbox-build.test.ts",
       "test/onboarding/onboard-sandbox-recreation.test.ts",
+      "test/onboarding/onboard-script-mocks-contract.test.ts",
       "test/onboarding/onboard-terminal-dashboard.test.ts",
+      "test/onboarding/onboard.test.ts",
+      "test/security/shellquote-sandbox.test.ts",
       "test/repository/source-require-loader.test.ts",
     ]);
   });

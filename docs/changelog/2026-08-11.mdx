@@ -18,7 +18,7 @@ It also strengthens Hermes Shields state changes and removes sensitive values fr
   The startup check stops sooner if the router process exits and terminates a router that does not become healthy before the deadline.
   For more information, refer to [Set Up Model Router](/user-guide/openclaw/inference/hosted-inference/set-up-model-router).
   Related change: [PR #8825](https://github.com/NVIDIA/NemoClaw/pull/8825).
-- OpenClaw and Hermes onboarding now retry the exact completed OpenShell `sandbox is not ready` forwarding failure after 5 seconds, within the existing three-retry bound.
+- OpenClaw and Hermes onboarding now retry the completed OpenShell `sandbox is not ready` forwarding failure after 5 seconds, within the existing three-retry bound.
   The retry preserves the sandbox and selected port, while authentication, gateway, port-ownership, and unrelated failures remain terminal.
   For more information, refer to the [OpenClaw Quickstart](/user-guide/openclaw/get-started/quickstart) and [Hermes Quickstart](/user-guide/hermes/get-started/quickstart).
   Related changes: [PR #8826](https://github.com/NVIDIA/NemoClaw/pull/8826) and [PR #8828](https://github.com/NVIDIA/NemoClaw/pull/8828).
@@ -36,11 +36,11 @@ It also strengthens Hermes Shields state changes and removes sensitive values fr
   For more information, refer to [Set Up WhatsApp](/user-guide/hermes/manage-sandboxes/messaging-channels/set-up-whatsapp) and the [Hermes CLI Commands Reference](/user-guide/hermes/reference/commands).
   Related changes: [PR #8229](https://github.com/NVIDIA/NemoClaw/pull/8229) and [PR #8535](https://github.com/NVIDIA/NemoClaw/pull/8535).
 - Current NemoClaw-managed Hermes images on the Docker driver now use the durable runtime provider state mutation contract for Shields transitions.
-  NemoClaw validates the exact request and receipt, holds Hermes gateway startup behind the current fence, and preserves rollback and recovery across controller restarts.
+  NemoClaw validates that the request and receipt match, holds Hermes gateway startup behind the current fence, and preserves rollback and recovery across controller restarts.
   An older managed image uses the sealed-plan compatibility path only after NemoClaw proves that the runtime-provider capability is absent.
   For more information, refer to [Understand Runtime Changes](/user-guide/hermes/manage-sandboxes/configure-sandboxes/understand-runtime-changes), [Troubleshooting](/user-guide/hermes/reference/troubleshooting), and [Trusted Computing Base](/user-guide/hermes/security/trusted-computing-base).
   Related change: [PR #8658](https://github.com/NVIDIA/NemoClaw/pull/8658).
-- `nemoclaw <sandbox> rebuild --yes` now reuses a web search credential registered with the OpenShell gateway only when the rebuild hands onboarding a recreate journal for the same sandbox and target intent after deletion, and the live binding matches the exact sandbox-scoped provider name, provider type, and credential key.
+- `nemoclaw <sandbox> rebuild --yes` now reuses a web search credential registered with the OpenShell gateway only when the rebuild hands onboarding a recreate journal for the same sandbox and target intent after deletion, and the live binding matches the sandbox-scoped provider name, provider type, and credential key.
   Legacy supervisor recovery retries temporary state-backup transport failures after restart, cleans incomplete backups before retrying, and keeps integrity or cleanup failures terminal.
   Failed OpenShell forward-list queries also remain distinct from an empty list, so cleanup does not stop a forward when it cannot establish ownership.
   For more information, refer to [Credential Storage](/user-guide/openclaw/security/credential-storage), [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
