@@ -198,11 +198,6 @@
     },
     {
       "file": "test/mcp/mcp-tool-discovery-image-contract.test.ts",
-      "test": "accepts Pi only in the refreshed reviewed managed startup runtime",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/mcp/mcp-tool-discovery-image-contract.test.ts",
       "test": "pins the reviewed image runtime artifacts exactly",
       "category": "security"
     },

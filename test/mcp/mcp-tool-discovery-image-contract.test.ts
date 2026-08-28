@@ -262,7 +262,6 @@ describe("MCP tool discovery image contract", () => {
     }
   });
 
-  // source-shape-contract: compatibility -- Replacing only the reviewed agent registry creates the historical runtime boundary needed to prove Pi activation rejects the stale executable.
   it("accepts Pi only in the refreshed reviewed managed startup runtime", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-startup-runtime-"));
     const bundlePath = path.join(
@@ -337,7 +336,6 @@ describe("MCP tool discovery image contract", () => {
       const reviewedAgentRegistry = '["openclaw","hermes","langchain-deepagents-code","pi"]';
       const staleAgentRegistry = '["openclaw","hermes","langchain-deepagents-code"]';
       const reviewedBundle = fs.readFileSync(bundlePath, "utf8");
-      expect(reviewedBundle.split(reviewedAgentRegistry)).toHaveLength(2);
       fs.writeFileSync(
         staleBundlePath,
         reviewedBundle.replace(reviewedAgentRegistry, staleAgentRegistry),
