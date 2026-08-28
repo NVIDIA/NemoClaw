@@ -12,6 +12,48 @@ import {
   runRebuildBackupPhase,
 } from "./rebuild-backup-phase";
 
+type RebuildMessagingPlan = NonNullable<RebuildBackupPhaseInput["messagingPlan"]>;
+type RebuildPlanChannel = RebuildMessagingPlan["channels"][number];
+
+// One owner for the rebuild messaging-plan schema. The rebuild tests below differ
+// only by agent and channel activity. (#10153)
+function rebuildPlanChannel(
+  channelId: RebuildPlanChannel["channelId"],
+  overrides: Partial<Pick<RebuildPlanChannel, "active" | "inputs">> = {},
+): RebuildPlanChannel {
+  return {
+    channelId,
+    displayName: channelId,
+    authMode: "token-paste",
+    active: overrides.active ?? true,
+    selected: true,
+    configured: true,
+    disabled: false,
+    inputs: overrides.inputs ?? [],
+    hooks: [],
+  };
+}
+
+function rebuildMessagingPlan(
+  agent: RebuildMessagingPlan["agent"],
+  channels: readonly RebuildPlanChannel[],
+): RebuildMessagingPlan {
+  return {
+    schemaVersion: 1,
+    sandboxName: "alpha",
+    agent,
+    workflow: "rebuild",
+    channels,
+    disabledChannels: [],
+    credentialBindings: [],
+    networkPolicy: { presets: [], entries: [] },
+    agentRender: [],
+    buildSteps: [],
+    stateUpdates: [],
+    healthChecks: [],
+  };
+}
+
 describe("rebuild web-search policy normalization", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -112,32 +154,7 @@ describe("rebuild web-search policy normalization", () => {
       },
       staleRecovery: false,
       preparedRecoveryManifest,
-      messagingPlan: {
-        schemaVersion: 1,
-        sandboxName: "alpha",
-        agent: "hermes",
-        workflow: "rebuild",
-        channels: [
-          {
-            channelId: "slack",
-            displayName: "Slack",
-            authMode: "token-paste",
-            active: true,
-            selected: true,
-            configured: true,
-            disabled: false,
-            inputs: [],
-            hooks: [],
-          },
-        ],
-        disabledChannels: [],
-        credentialBindings: [],
-        networkPolicy: { presets: [], entries: [] },
-        agentRender: [],
-        buildSteps: [],
-        stateUpdates: [],
-        healthChecks: [],
-      },
+      messagingPlan: rebuildMessagingPlan("hermes", [rebuildPlanChannel("slack")]),
       webSearchConfig: null,
       log: vi.fn(),
       bail: (message): never => {
@@ -169,32 +186,7 @@ describe("rebuild web-search policy normalization", () => {
         },
         staleRecovery: false,
         preparedRecoveryManifest: { policyPresets: ["discord", "slack"] } as never,
-        messagingPlan: {
-          schemaVersion: 1,
-          sandboxName: "alpha",
-          agent: planAgent,
-          workflow: "rebuild",
-          channels: [
-            {
-              channelId: "slack",
-              displayName: "Slack",
-              authMode: "token-paste",
-              active: true,
-              selected: true,
-              configured: true,
-              disabled: false,
-              inputs: [],
-              hooks: [],
-            },
-          ],
-          disabledChannels: [],
-          credentialBindings: [],
-          networkPolicy: { presets: [], entries: [] },
-          agentRender: [],
-          buildSteps: [],
-          stateUpdates: [],
-          healthChecks: [],
-        },
+        messagingPlan: rebuildMessagingPlan(planAgent, [rebuildPlanChannel("slack")]),
         webSearchConfig: null,
         log: vi.fn(),
         bail: (message): never => {
@@ -219,52 +211,22 @@ describe("rebuild web-search policy normalization", () => {
       },
       staleRecovery: false,
       preparedRecoveryManifest: { policyPresets: ["discord", "slack"] } as never,
-      messagingPlan: {
-        schemaVersion: 1,
-        sandboxName: "alpha",
-        agent: "openclaw",
-        workflow: "rebuild",
-        channels: [
-          {
-            channelId: "slack",
-            displayName: "Slack",
-            authMode: "token-paste",
-            active: true,
-            selected: true,
-            configured: true,
-            disabled: false,
-            inputs: [],
-            hooks: [],
-          },
-          {
-            channelId: "discord",
-            displayName: "Discord",
-            authMode: "token-paste",
-            // Required secret with no credential; an empty `inputs` would be startable.
-            active: false,
-            selected: true,
-            configured: true,
-            disabled: false,
-            inputs: [
-              {
-                channelId: "discord",
-                inputId: "botToken",
-                kind: "secret",
-                required: true,
-                credentialAvailable: false,
-              },
-            ],
-            hooks: [],
-          },
-        ],
-        disabledChannels: [],
-        credentialBindings: [],
-        networkPolicy: { presets: [], entries: [] },
-        agentRender: [],
-        buildSteps: [],
-        stateUpdates: [],
-        healthChecks: [],
-      },
+      messagingPlan: rebuildMessagingPlan("openclaw", [
+        rebuildPlanChannel("slack"),
+        // Required secret with no credential; an empty `inputs` would be startable.
+        rebuildPlanChannel("discord", {
+          active: false,
+          inputs: [
+            {
+              channelId: "discord",
+              inputId: "botToken",
+              kind: "secret",
+              required: true,
+              credentialAvailable: false,
+            },
+          ],
+        }),
+      ]),
       webSearchConfig: null,
       log: vi.fn(),
       bail: (message): never => {
