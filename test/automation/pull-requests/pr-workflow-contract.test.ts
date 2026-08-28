@@ -161,6 +161,7 @@ type SdkPackageLocatorFixture = Readonly<{
   artifactFailureRunId?: number;
   artifactsByRunId?: Readonly<Record<string, unknown>>;
   inspectorDecision?: unknown;
+  inspectorOutput?: string;
   runs: readonly unknown[];
   step: WorkflowStep;
   workflowRunFailure?: boolean;
@@ -185,7 +186,9 @@ function runSdkPackageLocator(fixture: SdkPackageLocatorFixture): Readonly<{
     };
     writeFileSync(
       join(inspectorDirectory, "prepare-ci-npm-install.mts"),
-      `process.stdout.write(${JSON.stringify(JSON.stringify(inspectorDecision))});\n`,
+      `process.stdout.write(${JSON.stringify(
+        fixture.inspectorOutput ?? JSON.stringify(inspectorDecision),
+      )});\n`,
     );
     writeFileSync(join(workflowDirectory, "openshell-sdk-package-pr.yaml"), "name: test\n");
     writeFileSync(join(fakeBin, "seq"), "#!/bin/sh\nprintf '1\\n'\n", { mode: 0o755 });
@@ -691,6 +694,24 @@ describe("pull request and main workflow contracts", () => {
 
     expect(result).toMatchObject({ status: 0, stderr: "" });
     expect(githubOutput).toBe("required=false\n");
+  });
+
+  it.each([
+    ["empty output", ""],
+    ["multiple JSON values", '{"required":false}\n{"required":false}'],
+  ])("rejects a trusted SDK package decision with %s", (_case, inspectorOutput) => {
+    const { githubOutput, result } = runSdkPackageLocator({
+      inspectorOutput,
+      runs: [],
+      step: requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      ),
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("decision must contain exactly one JSON value");
+    expect(githubOutput).toBe("");
   });
 
   it("rejects a trusted SDK package decision with a non-boolean requirement", () => {

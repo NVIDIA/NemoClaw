@@ -215,9 +215,11 @@ jobs:
               node --experimental-strip-types "$trusted_inspector"
           )"
           required="$(
-            jq -r '
-              if (.required | type) == "boolean" then
-                .required
+            jq -ers '
+              if length != 1 then
+                error("decision must contain exactly one JSON value")
+              elif (.[0].required | type) == "boolean" then
+                .[0].required | tostring
               else
                 error("required must be a boolean")
               end
