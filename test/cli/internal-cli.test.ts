@@ -44,6 +44,31 @@ describe("internal oclif namespace", () => {
     expect(result.stdout).toContain("--delete-models");
     expect(result.stdout).toContain("--keep-openshell");
     expect(result.stdout).toContain("--yes");
+
+    // The preview must name the gateway the selected port resolves to. It
+    // already scopes the state root to that port, so a default-port gateway
+    // name would preview destroying a different environment's gateway and
+    // Docker volume than `run-plan` removes.
+    const preview = spawnSync(process.execPath, [CLI, "internal", "uninstall", "plan", "--json"], {
+      encoding: "utf-8",
+      env: { ...process.env, NEMOCLAW_GATEWAY_PORT: "8091" },
+    });
+
+    expect(preview.status).toBe(0);
+    const plan = JSON.parse(preview.stdout) as {
+      gatewayName: string;
+      steps: { actions: { kind: string; name?: string }[] }[];
+    };
+    const actions = plan.steps.flatMap((step) => step.actions);
+    expect(plan.gatewayName).toBe("nemoclaw-8091");
+    expect(actions).toContainEqual({
+      kind: "destroy-openshell-gateway",
+      name: "nemoclaw-8091",
+    });
+    expect(actions).toContainEqual({
+      kind: "delete-docker-volume",
+      name: "openshell-cluster-nemoclaw-8091",
+    });
   });
 
   it("exposes the dev npm-link shim command through oclif routing", () => {
