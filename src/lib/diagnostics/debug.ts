@@ -9,8 +9,8 @@ import { join } from "node:path";
 import { dockerExecFileSync } from "../adapters/docker/exec";
 import { openshellSandboxSshHost } from "../adapters/openshell/sandbox-ssh-host";
 import { DASHBOARD_PORT } from "../core/ports";
+import { redactFullWithUrls } from "../security/redact";
 import { listSandboxes } from "../state/registry";
-import { redactDiagnosticText } from "./redact";
 import { createTarball as createDiagnosticsTarball } from "./tarball";
 
 // ---------------------------------------------------------------------------
@@ -62,7 +62,7 @@ function section(title: string): void {
  * echoed to the terminal.
  */
 export function redact(text: string): string {
-  return redactDiagnosticText(text);
+  return redactFullWithUrls(text);
 }
 
 // ---------------------------------------------------------------------------

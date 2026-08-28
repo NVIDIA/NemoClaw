@@ -1054,33 +1054,33 @@ describe("managed llama.cpp installer", () => {
     [
       "authentication",
       { status: 1, stderr: "unauthorized: authentication required" },
-      "unauthorized: authentication required",
+      "authentication-failure",
     ],
-    ["storage", { status: 1, stderr: "no space left on device" }, "no space left on device"],
+    ["storage", { status: 1, stderr: "no space left on device" }, "runner-storage-exhaustion"],
     [
       "runner network",
       { status: 1, stderr: "dial tcp: temporary failure in name resolution" },
-      "dial tcp: temporary failure in name resolution",
+      "runner-network-failure",
     ],
     [
       "invalid dependency",
       { status: 1, stderr: "manifest unknown: manifest not found" },
-      "manifest unknown: manifest not found",
+      "image-manifest-unavailable",
     ],
     [
       "registry availability",
       { status: 1, stderr: "registry returned 503 Service Unavailable" },
-      "registry returned 503 Service Unavailable",
+      "registry-availability-failure",
     ],
     [
       "daemon behavior",
       { status: 1, error: new Error("error during connect: dial tcp: connection refused") },
-      "error during connect: dial tcp: connection refused",
+      "container-runtime-failure",
     ],
-    ["unclassified", { status: 7, stderr: "opaque pull failure" }, "opaque pull failure"],
+    ["unclassified", { status: 7, stderr: "opaque pull failure" }, "unclassified-pull-failure"],
   ])(
     "classifies a failed image pull from diagnostic signatures as %s (#10558)",
-    async (layer, pullResult, expectedDiagnostic) => {
+    async (layer, pullResult, expectedCode) => {
       const selected = selection();
       const homeDir = temporaryHome();
       const harness = engineHarness();
@@ -1097,26 +1097,20 @@ describe("managed llama.cpp installer", () => {
         log: vi.fn(),
       });
 
-      const evidence =
-        layer === "unclassified"
-          ? "No recognized failure-layer signature matched."
-          : "A pull-output signature matched this layer.";
       expect(result).toMatchObject({
         ok: false,
-        reason: expect.stringContaining(`Failure classification: ${layer}. ${evidence}`),
+        reason: expect.stringContaining(
+          `Failure classification: ${layer}. Diagnostic code: ${expectedCode}.`,
+        ),
       });
-      const failure = result as Extract<typeof result, { readonly ok: false }>;
-      expect(failure.reason).toContain(
-        `Pull diagnostic (recognized credential patterns redacted): ${expectedDiagnostic}`,
-      );
     },
   );
 
-  it("reports a bounded pull diagnostic with recognized credentials removed (#10558)", async () => {
+  it("suppresses untrusted pull output from the failure reason and installer log (#10558)", async () => {
     const selected = selection();
     const homeDir = temporaryHome();
     const harness = engineHarness();
-    const secret = "opaque-pull-token";
+    const secret = "opaque-value-with-no-credential-shape";
     const terminalControls = "\u001b]0;forged title\u0007\u001b[31m\u202e";
     const pullOutput =
       `${"x".repeat(1_000)} stdout cause ${terminalControls}unauthorized: ` +
@@ -1140,22 +1134,10 @@ describe("managed llama.cpp installer", () => {
     });
 
     const failure = result as Extract<typeof result, { readonly ok: false }>;
-    expect(failure.reason).toContain("Failure classification: authentication.");
     expect(failure.reason).toContain(
-      "Review the diagnostic before sharing because unrecognized credential formats can remain.",
+      "Failure classification: authentication. Diagnostic code: authentication-failure. Exit status: 1. Raw pull output suppressed.",
     );
-    expect(failure.reason).toContain(
-      "Pull diagnostic (recognized credential patterns redacted): [truncated]",
-    );
-    expect(failure.reason).toContain("stdout cause unauthorized");
-    expect(failure.reason).toContain("stderr cause token=<REDACTED>");
-    expect(failure.reason).toContain("error cause Authorization: Bearer <REDACTED>");
     expect(failure.reason).not.toContain(secret);
-    expect(failure.reason).not.toContain("forged title");
-    expect(failure.reason).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]|\p{Cf}/u);
-    const diagnostic =
-      failure.reason.split("Pull diagnostic (recognized credential patterns redacted): ")[1] ?? "";
-    expect(Buffer.byteLength(diagnostic, "utf8")).toBeLessThanOrEqual(512);
     expect(log.mock.calls.flat().join("\n")).not.toContain(secret);
     expect(log.mock.calls.flat().join("\n")).not.toContain("unauthorized");
   });
