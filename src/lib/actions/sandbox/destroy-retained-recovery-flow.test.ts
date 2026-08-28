@@ -49,7 +49,7 @@ describe("destroySandbox retained recovery flow", () => {
   });
 
   it(
-    "removes every container from one retained failed attempt and clears recovery (#10547)",
+    "removes every container after OpenShell confirms the retained sandbox absent (#10547)",
     { timeout: 30_000 },
     async () => {
       const recovery = retainedRecoveryRecord();
@@ -59,6 +59,7 @@ describe("destroySandbox retained recovery flow", () => {
         .map((id) => `${id}\topenshell\tdefault\tsb-alpha`)
         .join("\n");
       const harness = createDestroyHarness({
+        sandboxPresent: false,
         dockerOrphanIds: [bootstrapContainerId],
         dockerRunResult: { status: 0, stdout: identityRows },
         registryEntryOverrides: {
@@ -70,9 +71,9 @@ describe("destroySandbox retained recovery flow", () => {
 
       await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
-      expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
         ["sandbox", "delete", "alpha"],
-        expect.objectContaining({ ignoreError: true }),
+        expect.anything(),
       );
       expect(harness.dockerRunSpy).toHaveBeenCalledWith(
         ["rm", "-f", bootstrapContainerId],
@@ -114,6 +115,7 @@ describe("destroySandbox retained recovery flow", () => {
         .map((id) => `${id}\topenshell\tdefault\tsb-alpha`)
         .join("\n");
       const harness = createDestroyHarness({
+        sandboxPresent: false,
         dockerNameLabeledIds: [bootstrapContainerId, foreignContainerId],
         dockerOrphanIds: [bootstrapContainerId],
         dockerRunResult: { status: 0, stdout: identityRows },
@@ -128,9 +130,9 @@ describe("destroySandbox retained recovery flow", () => {
         "process.exit(1)",
       );
 
-      expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
         ["sandbox", "delete", "alpha"],
-        expect.objectContaining({ ignoreError: true }),
+        expect.anything(),
       );
       expect(harness.dockerRunSpy).not.toHaveBeenCalledWith(
         ["rm", "-f", expect.any(String)],
@@ -162,7 +164,7 @@ describe("destroySandbox retained recovery flow", () => {
       );
 
       expect(harness.errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Docker exposed no container with the retained immutable identity"),
+        expect.stringContaining("delete command accepts only the mutable sandbox name"),
       );
       expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
         ["sandbox", "delete", "alpha"],
@@ -174,7 +176,7 @@ describe("destroySandbox retained recovery flow", () => {
   );
 
   it(
-    "does not delete a same-name OpenShell replacement while retained Docker identities remain (#10547)",
+    "does not issue mutable-name deletion for a live retained sandbox with matching identity (#10547)",
     { timeout: 30_000 },
     async () => {
       const recovery = retainedRecoveryRecord();
@@ -184,9 +186,6 @@ describe("destroySandbox retained recovery flow", () => {
           status: 0,
           stdout: `${containerId}\topenshell\tdefault\tsb-alpha`,
         },
-        openShellSandboxIdentityFingerprint: createHash("sha256")
-          .update("sb-replacement")
-          .digest("hex"),
         registryEntryOverrides: {
           lifecycleGeneration: recovery.lifecycleGeneration!,
           lifecycleLiveIdentityFingerprint: recovery.sandboxIdentityFingerprint!,
@@ -199,7 +198,7 @@ describe("destroySandbox retained recovery flow", () => {
       );
 
       expect(harness.errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Retained recovery sandbox identity changed"),
+        expect.stringContaining("cannot bind that deletion to the retained immutable identity"),
       );
       expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
         ["sandbox", "delete", "alpha"],
@@ -274,6 +273,7 @@ describe("destroySandbox retained recovery flow", () => {
         .join("\n");
       const harness = createDestroyHarness({
         registryEntryPresent: false,
+        sandboxPresent: false,
         dockerOrphanIds: [bootstrapContainerId],
         dockerRunResult: { status: 0, stdout: identityRows },
         retainedRecoveryRecords: [olderRecovery, matchingRecovery],

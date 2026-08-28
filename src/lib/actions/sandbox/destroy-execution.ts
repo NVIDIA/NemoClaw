@@ -75,10 +75,6 @@ type SandboxDestroyExecutionInput = {
   // Docker IDs qualified before destroy preparation.
   expectedContainerIdentities?: readonly SandboxNameLabeledContainer[];
   expectedContainerIdentityFingerprint?: string;
-  retainedRecoveryIdentity?: {
-    readonly fingerprint: string;
-    readonly gatewayName: string;
-  };
   portableContainerAuthority?: PreparedPortableDemoSandboxDestroyAuthority;
   stopInferenceResources: () => void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
@@ -307,7 +303,6 @@ export async function executeSandboxDestroy({
   sandboxName,
   expectedContainerIdentities,
   expectedContainerIdentityFingerprint,
-  retainedRecoveryIdentity,
   portableContainerAuthority,
   stopInferenceResources,
   runtimeProviders = CURRENT_RUNTIME_PROVIDER_BUNDLES,
@@ -380,40 +375,9 @@ export async function executeSandboxDestroy({
         };
       }
     };
-    const inspectRetainedRecoveryContinuity = (): IdentityContinuity => {
-      if (
-        !retainedRecoveryIdentity ||
-        pendingPolicyVerification ||
-        sandboxConfirmedAbsent
-      ) {
-        return { status: "match" };
-      }
-      try {
-        const inspectIdentity =
-          deps.inspectOpenShellSandboxIdentityFingerprint ??
-          inspectOpenShellSandboxIdentityFingerprint;
-        return inspectIdentity({
-          sandboxName,
-          gatewayName: retainedRecoveryIdentity.gatewayName,
-        }) === retainedRecoveryIdentity.fingerprint
-          ? { status: "match" }
-          : {
-              status: "changed",
-              subject: "Retained recovery sandbox identity",
-            };
-      } catch (error) {
-        return {
-          status: "probe-failed",
-          subject: "Retained recovery sandbox identity",
-          detail: redactDestroyError(error),
-        };
-      }
-    };
     const inspectIdentityContinuity = (): IdentityContinuity => {
       const pendingContinuity = inspectPendingPolicyVerificationContinuity();
       if (pendingContinuity.status !== "match") return pendingContinuity;
-      const retainedContinuity = inspectRetainedRecoveryContinuity();
-      if (retainedContinuity.status !== "match") return retainedContinuity;
       if (portableContainerAuthority) {
         try {
           portableContainerAuthority.revalidate();

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 
 import { expect, type MockInstance, vi } from "vitest";
@@ -108,7 +107,6 @@ type DestroyHarnessOptions = {
   mcpAddState?: "prepared";
   mcpServers?: string[];
   openshellDriver?: string;
-  openShellSandboxIdentityFingerprint?: string;
   portableCommandError?: string;
   portableDestroyAuthority?: boolean;
   portableDestroyPrepareError?: string;
@@ -143,10 +141,6 @@ const sandboxEntry = {
   gatewayName: "nemoclaw-19080",
   gatewayPort: 19080,
 };
-
-const DEFAULT_OPENSHELL_SANDBOX_IDENTITY_FINGERPRINT = createHash("sha256")
-  .update("sb-alpha")
-  .digest("hex");
 
 export function sandboxListJson(names: string[]): string {
   return JSON.stringify(
@@ -227,11 +221,18 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     "../../state/mcp-lifecycle-lock.js",
   ) as typeof import("../../src/lib/state/mcp-lifecycle-lock");
   const registry = requireSource("../../state/registry.js");
-  const policyAuthority = requireSource("../../adapters/openshell/policy-authority.js");
-  vi.spyOn(policyAuthority, "inspectOpenShellSandboxIdentityFingerprint").mockReturnValue(
-    options.openShellSandboxIdentityFingerprint ??
-      DEFAULT_OPENSHELL_SANDBOX_IDENTITY_FINGERPRINT,
+  const openShellDockerContainers = requireSource(
+    "../../onboard/openshell-docker-sandbox-containers.js",
   );
+  const removeExactDockerContainers =
+    openShellDockerContainers.removeExactOpenShellDockerSandboxContainers;
+  vi.spyOn(
+    openShellDockerContainers,
+    "removeExactOpenShellDockerSandboxContainers",
+  ).mockImplementation((...args: Parameters<typeof removeExactDockerContainers>) => {
+    exactDockerCleanupPhase = true;
+    return removeExactDockerContainers(...args);
+  });
   const destroyExecution = requireSource("./destroy-execution.js");
   const destroyCommand = requireSource("../../../commands/sandbox/destroy.js").default;
   const destroyPreflight = requireSource("./destroy-preflight.js");
@@ -436,7 +437,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     });
   const gatewayPinsAtSandboxList: Array<string | undefined> = [];
   let identityProbeCall = 0;
-  let absentListIdentityProbeCall: number | null = null;
   const runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockImplementation((args: unknown) => {
     const argv = Array.isArray(args) ? args : [];
     switch (`${String(argv[0])}:${String(argv[1])}`) {
@@ -450,9 +450,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
         };
       case "sandbox:list":
         gatewayPinsAtSandboxList.push(process.env.OPENSHELL_GATEWAY);
-        if (!sandboxPresent && absentListIdentityProbeCall === null) {
-          absentListIdentityProbeCall = identityProbeCall;
-        }
         return {
           status: 0,
           stdout: sandboxListJson(sandboxPresent ? ["alpha"] : []),
@@ -461,7 +458,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
       case "sandbox:delete":
         events.push("delete");
         sandboxPresent = false;
-        exactDockerCleanupPhase = true;
         return {
           status: options.deleteStatus === undefined ? 0 : options.deleteStatus,
           stdout: options.deleteOutput ?? "",
@@ -541,17 +537,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     }
     identityProbeCall += 1;
     options.onDockerRun?.(identityProbeCall);
-    // After OpenShell reports the sandbox absent, destroy performs one
-    // pre-mutation and five execution continuity observations before exact
-    // post-delete cleanup. Track that boundary relative to the list call so
-    // earlier record-selection observations do not affect the mock. Once
-    // entered, keep the phase across a failed cleanup retry.
-    if (
-      absentListIdentityProbeCall !== null &&
-      identityProbeCall - absentListIdentityProbeCall > 6
-    ) {
-      exactDockerCleanupPhase = true;
-    }
     const defaultIdentityResult = {
       status: 0,
       stdout: sandboxPresent ? "aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha" : "",
@@ -722,7 +707,6 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     },
     setSandboxPresent: (present: boolean) => {
       sandboxPresent = present;
-      if (!present) exactDockerCleanupPhase = true;
     },
     shieldsDownSpy,
     stopAllSpy,

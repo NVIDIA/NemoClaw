@@ -665,13 +665,9 @@ async function destroySandboxUnlocked(
   let destroyPreflight: ReturnType<typeof prepareSandboxDestroy>;
   destroyPreflight = abortPreparedCleanupOnError(() => prepareSandboxDestroy(sandboxName));
   const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } = destroyPreflight;
-  if (
-    retainedRecoveryAuthority &&
-    initialContainerIdentities?.length === 0 &&
-    !sandboxConfirmedAbsent
-  ) {
+  if (retainedRecoveryAuthority && !sandboxConfirmedAbsent) {
     console.error(
-      `  Refusing to destroy retained sandbox '${sandboxName}': OpenShell still reports it present, but Docker exposed no container with the retained immutable identity. No sandbox resources were removed.`,
+      `  Refusing to automatically delete retained sandbox '${sandboxName}': OpenShell still reports it present, but its delete command accepts only the mutable sandbox name. NemoClaw cannot bind that deletion to the retained immutable identity. No sandbox resources were removed. Ask an OpenShell administrator to resolve create-attempt label '${retainedRecoveryAuthority.createAttemptNonce}' to the exact sandbox and use an identity-bound removal procedure. After OpenShell confirms the retained sandbox is absent, rerun '${CLI_NAME} ${sandboxName} destroy --yes' to reconcile its verified Docker containers and recovery record.`,
     );
     preparedManagedLlamaCppCleanup?.abort();
     requestSandboxDestroyExit(1);
@@ -720,14 +716,6 @@ async function destroySandboxUnlocked(
       expectedContainerIdentities: initialContainerIdentities,
       ...(retainedSandboxIdentityFingerprint
         ? { expectedContainerIdentityFingerprint: retainedSandboxIdentityFingerprint }
-        : {}),
-      ...(retainedRecoveryAuthority && retainedSandboxIdentityFingerprint
-        ? {
-            retainedRecoveryIdentity: {
-              fingerprint: retainedSandboxIdentityFingerprint,
-              gatewayName: retainedRecoveryAuthority.gatewayName,
-            },
-          }
         : {}),
       ...(portableContainerAuthority ? { portableContainerAuthority } : {}),
       stopInferenceResources: () => stopSandboxInferenceResources(sandboxName, sandbox),
