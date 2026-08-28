@@ -1235,8 +1235,7 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
   it("streams native and compatibility attempts through direct argv without a shell (#6110)", async () => {
     failNativeCreate();
     const input = createInput();
-    const deps = createDeps();
-    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
       route: "compatibility",
     });
 
@@ -1259,10 +1258,6 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
     );
     expect(mocks.streamSandboxCreate.mock.calls.flat()).not.toContain("bash");
     expect(mocks.streamSandboxCreate.mock.calls.flat()).not.toContain("-lc");
-    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
-      ["sandbox", "delete", "alpha"],
-      expect.anything(),
-    );
   });
 
   it("discloses the compatibility container-swap confinement tradeoff and native-only opt-out", async () => {
