@@ -51,8 +51,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/repository/github-actions-workflow-names.test.ts"),
   },
   {
-    pattern:
-      /(?:^|\/)test\/helpers\/(?:onboard-fixture-contract\.json|onboard-script-mocks\.cjs)$/,
+    pattern: /(?:^|\/)test\/helpers\/(?:onboard-fixture-contract\.json|onboard-script-mocks\.cjs)$/,
     testsToRun: runTests(
       "test/helpers/onboard-created-sandbox-fixture.test.ts",
       "test/onboarding/onboard-custom-dockerfile.test.ts",
@@ -215,6 +214,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     pattern: /(?:^|\/)\.github\/workflows\/managed-images\.yaml$/,
     testsToRun: runTests(
       "test/inference/managed/managed-image-publication-workflow.test.ts",
+      "test/inference/managed/pi-candidate-pr-publication-workflow.test.ts",
       "test/e2e-runtime/pull-public-exact-digest.test.ts",
     ),
   },
