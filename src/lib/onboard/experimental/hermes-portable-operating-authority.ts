@@ -22,6 +22,7 @@ import {
   type HermesPortableConfiguredReceipt,
   type HermesPortablePolicyAuthority,
   type HermesPortableReceiptSnapshot,
+  type HermesPortableStableSocketAuthority,
   type HermesPortableSuccessorReceipt,
 } from "./hermes-portable-receipt";
 
@@ -49,6 +50,60 @@ function fail(message: string): never {
   throw new Error(`Hermes portable schema-6 authority ${message}`);
 }
 
+const MODE_TYPE_MASK = 0o170000n;
+const DIRECTORY_MODE = 0o040000n;
+const SOCKET_MODE = 0o140000n;
+
+function parsedMode(value: string): bigint | null {
+  if (!/^[0-9]+$/u.test(value)) return null;
+  const mode = BigInt(value);
+  return mode <= 0o177777n ? mode : null;
+}
+
+function hasSafeDirectoryMode(value: string): boolean {
+  const mode = parsedMode(value);
+  return mode !== null && (mode & MODE_TYPE_MASK) === DIRECTORY_MODE && (mode & 0o022n) === 0n;
+}
+
+function hasSafeSocketMode(socketMode: string, parentMode: string | undefined): boolean {
+  const mode = parsedMode(socketMode);
+  const parent = parentMode === undefined ? null : parsedMode(parentMode);
+  return (
+    mode !== null &&
+    parent !== null &&
+    (mode & MODE_TYPE_MASK) === SOCKET_MODE &&
+    (mode & 0o002n) === 0n &&
+    ((mode & 0o020n) === 0n || (parent & 0o077n) === 0n)
+  );
+}
+
+function sameStableSocketSemantics(
+  expected: HermesPortableStableSocketAuthority,
+  currentSocket: PodmanSocketAuthority,
+): boolean {
+  const current = stableHermesPortableSocketAuthority(currentSocket);
+  if (
+    expected.socketPath !== current.socketPath ||
+    expected.mode !== current.mode ||
+    expected.ownerUid !== current.ownerUid ||
+    expected.directoryChain.length !== current.directoryChain.length ||
+    !hasSafeSocketMode(expected.mode, expected.directoryChain[0]?.mode) ||
+    !hasSafeSocketMode(current.mode, current.directoryChain[0]?.mode)
+  ) {
+    return false;
+  }
+  return expected.directoryChain.every((component, index) => {
+    const candidate = current.directoryChain[index];
+    return (
+      candidate !== undefined &&
+      component.path === candidate.path &&
+      component.ownerUid === candidate.ownerUid &&
+      hasSafeDirectoryMode(component.mode) &&
+      hasSafeDirectoryMode(candidate.mode)
+    );
+  });
+}
+
 function requireStableAuthority(
   expected: HermesPortableSuccessorReceipt,
   receipt: HermesPortableConfiguredReceipt,
@@ -67,7 +122,7 @@ function requireStableAuthority(
     expected.policy.size !== policy.sourceIdentity.size ||
     expected.policy.mode !== policy.sourceIdentity.mode ||
     expected.policy.uid !== policy.sourceIdentity.uid ||
-    !isDeepStrictEqual(expected.socketAuthority, stableHermesPortableSocketAuthority(socket)) ||
+    !sameStableSocketSemantics(expected.socketAuthority, socket) ||
     expected.openshellExecutableAuthority.version !== openshell.version ||
     !isDeepStrictEqual(
       expected.openshellExecutableAuthority.executable,

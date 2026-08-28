@@ -16,9 +16,9 @@ describe("PR review advisor completion comment", () => {
   it("links the commit review and all previous workflow runs", () => {
     expect(buildCompletionComment(RUN_URL, COMMIT_SHA, RUNS_URL)).toBe(
       "<!-- nemoclaw-pr-review-advisor -->\n" +
-        "PR review advisory complete for commit `abcdef1`: " +
-        "[read the full review](https://github.com/NVIDIA/NemoClaw/actions/runs/123). " +
-        "Read it before deciding whether to request changes, approve, or merge this PR.\n\n" +
+        "**PR Review Advisor finished for commit `abcdef1`.** " +
+        "Include the [Advisor findings](https://github.com/NVIDIA/NemoClaw/actions/runs/123) " +
+        "in the complete PR feedback collection. Verify and group valid findings before repair.\n\n" +
         "[All previous runs](https://github.com/NVIDIA/NemoClaw/actions/workflows/pr-review-advisor.yaml)\n",
     );
   });

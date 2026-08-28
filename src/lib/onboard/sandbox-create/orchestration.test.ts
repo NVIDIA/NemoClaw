@@ -9,19 +9,166 @@ import { describe, expect, it, vi } from "vitest";
 
 import { PolicyAuthorityRefusalError } from "../../adapters/openshell/policy-authority";
 import type { SandboxEntry } from "../../state/registry";
+import { runSandboxProviderPreDeleteCleanup } from "../sandbox-provider-cleanup";
 import {
   applyManagedSandboxRebuildPolicyCarryForward,
   assertApfCreateIntent,
   backfillVerifiedExternalSandboxPolicyAuthority,
   completeHermesPortableSandboxRegistration,
   createProviderEffectBoundary,
+  finalizeCreatedSandboxBeforeHermesCredentialReconciliation,
   hasManagedMcpRebuildHandoff,
+  installPostCreateRecoveryRetryOwner,
+  persistPostCreateRecovery,
   persistRetainedSandboxRecoveryMessage,
   readManagedDcodeCreateSelectionDrift,
   readSandboxRecreateRegistryEntry,
+  reconcileCreatedHermesCredentialEnvironment,
   resolveSandboxCreatePolicyAuthority,
+  runAuthorityBoundProviderCleanup,
+  runAsyncWithPostCreateRecovery,
   runSandboxCreateWithPolicyAuthorityChecks,
+  runWithPostCreateRecovery,
 } from "./orchestration";
+
+const UNVERIFIED_RECOVERY_CONTEXT = {
+  gatewayName: "nemoclaw",
+  gatewayPort: 8080,
+  lifecycleGeneration: "generation-1",
+  verifiedEffectivePolicyIdentity: null,
+  createAttemptNonce: "c".repeat(62),
+  policyCreationReceipt: null,
+} as const;
+
+describe("created Hermes credential environment reconciliation", () => {
+  const plan = { agent: "hermes" } as never;
+
+  it("finalizes policy registration before reconciling credentials (#9833)", async () => {
+    const events: string[] = [];
+
+    await finalizeCreatedSandboxBeforeHermesCredentialReconciliation(
+      async () => {
+        events.push("registration:start");
+        await Promise.resolve();
+        events.push("registration:complete");
+        return { sandboxName: "alpha" };
+      },
+      () => events.push("credentials:reconcile"),
+    );
+
+    expect(events).toEqual([
+      "registration:start",
+      "registration:complete",
+      "credentials:reconcile",
+    ]);
+  });
+
+  it("restarts and rechecks the managed gateway after changing the env file", () => {
+    const events: string[] = [];
+    const restart = { status: 0, stdout: "managed completion", stderr: "" };
+
+    reconcileCreatedHermesCredentialEnvironment(
+      { sandboxName: "alpha", plan },
+      {
+        revalidatePolicyAuthority: (operation) => events.push(`policy:${operation}`),
+        reconcileCredentialEnv: () => {
+          events.push("reconcile");
+          return { changed: true };
+        },
+        restartGateway: () => {
+          events.push("restart");
+          return restart;
+        },
+        parseRestartCompletion: (result) => {
+          events.push("parse");
+          return result === restart ? {} : null;
+        },
+        waitForGateway: () => {
+          events.push("wait");
+          return true;
+        },
+      },
+      vi.fn(),
+    );
+
+    expect(events).toEqual([
+      expect.stringMatching(/^policy:reconciling/u),
+      "reconcile",
+      expect.stringMatching(/^policy:confirming/u),
+      "restart",
+      "parse",
+      "wait",
+      expect.stringMatching(/^policy:completing/u),
+    ]);
+  });
+
+  it("does not restart when the env file was already reconciled", () => {
+    const restartGateway = vi.fn();
+    const waitForGateway = vi.fn();
+
+    reconcileCreatedHermesCredentialEnvironment(
+      { sandboxName: "alpha", plan },
+      {
+        revalidatePolicyAuthority: vi.fn(),
+        reconcileCredentialEnv: () => ({ changed: false }),
+        restartGateway,
+        parseRestartCompletion: vi.fn(),
+        waitForGateway,
+      },
+      vi.fn(),
+    );
+
+    expect(restartGateway).not.toHaveBeenCalled();
+    expect(waitForGateway).not.toHaveBeenCalled();
+  });
+
+  it("refuses a same-name replacement at the credential mutation edge (#9833)", () => {
+    const expectedIdentity = "identity-a";
+    let liveIdentity = expectedIdentity;
+    const mutations: string[] = [];
+    const revalidatePolicyAuthority = vi.fn(() => {
+      liveIdentity === expectedIdentity || (() => { throw new Error("sandbox identity changed"); })();
+      liveIdentity = "identity-b";
+    });
+
+    expect(() =>
+      reconcileCreatedHermesCredentialEnvironment(
+        { sandboxName: "alpha", plan },
+        {
+          revalidatePolicyAuthority,
+          reconcileCredentialEnv: ((_plan: never, revalidate?: (operation: string) => void) => {
+            revalidate?.("mutating credential environment");
+            mutations.push(liveIdentity);
+            return { changed: true };
+          }) as never,
+          restartGateway: vi.fn(),
+          parseRestartCompletion: vi.fn(),
+          waitForGateway: vi.fn(),
+        },
+        vi.fn(),
+      ),
+    ).toThrow(/sandbox identity changed/u);
+    expect(mutations).toEqual([]);
+  });
+
+  it("fails onboarding when the changed gateway cannot prove restart completion", () => {
+    const recordRecovery = vi.fn();
+    expect(() =>
+      reconcileCreatedHermesCredentialEnvironment(
+        { sandboxName: "alpha", plan },
+        {
+          revalidatePolicyAuthority: vi.fn(),
+          reconcileCredentialEnv: () => ({ changed: true }),
+          restartGateway: () => ({ status: 1, stdout: "", stderr: "failed" }),
+          parseRestartCompletion: () => null,
+          waitForGateway: vi.fn(),
+        },
+        recordRecovery,
+      ),
+    ).toThrow("managed gateway restart did not complete");
+    expect(recordRecovery).toHaveBeenCalledOnce();
+  });
+});
 
 describe("retained create recovery persistence", () => {
   it.each([
@@ -46,12 +193,26 @@ describe("retained create recovery persistence", () => {
         session.saveSession(session.createSession({ sandboxName: "alpha" }));
 
         expect(
-          persistRetainedSandboxRecoveryMessage(message, session.finalizeIncompleteOnboardStep),
+          persistRetainedSandboxRecoveryMessage(
+            {
+              sandboxName: "alpha",
+              message,
+              ...(fingerprint ? { sandboxIdentityFingerprint: fingerprint } : {}),
+              recoveryContext: UNVERIFIED_RECOVERY_CONTEXT,
+            },
+            session.markRetainedSandboxRecovery,
+          ),
         ).toBe(true);
 
         const stored = session.loadSession();
-        expect(stored?.machine.state).toBe("failed");
-        expect(stored?.steps.sandbox?.status).toBe("failed");
+        expect(stored?.status).toBe("recovery_required");
+        expect(stored?.resumable).toBe(false);
+        expect(stored?.cancellationRecovery?.reason).toBe(
+          "retained_after_sandbox_creation_failure",
+        );
+        expect(stored?.cancellationRecovery?.sandboxName).toBe("alpha");
+        expect(stored?.machine.state).not.toBe("failed");
+        expect(stored?.steps.sandbox?.status).not.toBe("failed");
         expect(stored?.failure?.message).toContain(createAttemptLabel);
         expect(stored?.steps.sandbox?.error).toContain(createAttemptLabel);
         const fingerprintExpectation = fingerprint
@@ -67,18 +228,64 @@ describe("retained create recovery persistence", () => {
     },
   );
 
+  it("forwards the full verified recovery tuple to durable state (#9833)", () => {
+    const recoveryContext = {
+      gatewayName: "nemoclaw-18080",
+      gatewayPort: 18080,
+      lifecycleGeneration: "00000000-0000-4000-8000-000000000004",
+      verifiedEffectivePolicyIdentity: { hash: "sha256:policy-4", activeVersion: 4 },
+      createAttemptNonce: "d".repeat(62),
+      policyCreationReceipt: {
+        schemaVersion: 1,
+        origin: "sandbox-create",
+        gatewayName: "nemoclaw-18080",
+        gatewayPort: 18080,
+        sandboxName: "alpha",
+        lifecycleGeneration: "00000000-0000-4000-8000-000000000004",
+        sandboxIdentityFingerprint: "f".repeat(64),
+        policyHash: "sha256:policy-4",
+        policyVersion: 4,
+      },
+    } as const;
+    const markRetainedSandboxRecovery = vi.fn(() => true);
+    const input = {
+      stage: "registry publication" as const,
+      sandboxName: "alpha",
+      gatewayName: recoveryContext.gatewayName,
+      lifecycleGeneration: recoveryContext.lifecycleGeneration,
+      exactIdentity: "f".repeat(64),
+      recoveryContext,
+      markRetainedSandboxRecovery,
+    };
+
+    persistPostCreateRecovery(input);
+
+    expect(markRetainedSandboxRecovery).toHaveBeenCalledWith(
+      "alpha",
+      expect.stringContaining(recoveryContext.lifecycleGeneration),
+      "f".repeat(64),
+      recoveryContext,
+    );
+  });
+
   it("reports persistence failure when no onboard session owns the recovery (#9211)", () => {
     const finalizeIncompleteOnboardStep = vi.fn(() => null);
 
     expect(
       persistRetainedSandboxRecoveryMessage(
-        "Create-attempt label: ai.nvidia.nemoclaw.create-attempt=authority",
+        {
+          sandboxName: "alpha",
+          message: "Create-attempt label: ai.nvidia.nemoclaw.create-attempt=authority",
+          recoveryContext: UNVERIFIED_RECOVERY_CONTEXT,
+        },
         finalizeIncompleteOnboardStep,
       ),
     ).toBe(false);
     expect(finalizeIncompleteOnboardStep).toHaveBeenCalledExactlyOnceWith(
-      "sandbox",
+      "alpha",
       "Create-attempt label: ai.nvidia.nemoclaw.create-attempt=authority",
+      undefined,
+      UNVERIFIED_RECOVERY_CONTEXT,
     );
   });
 
@@ -94,20 +301,138 @@ describe("retained create recovery persistence", () => {
 
       expect(
         persistRetainedSandboxRecoveryMessage(
-          "Create-attempt label: ai.nvidia.nemoclaw.create-attempt=unpersisted",
-          session.finalizeIncompleteOnboardStep,
+          {
+            sandboxName: "alpha",
+            message: "Create-attempt label: ai.nvidia.nemoclaw.create-attempt=unpersisted",
+            recoveryContext: UNVERIFIED_RECOVERY_CONTEXT,
+          },
+          session.markRetainedSandboxRecovery,
         ),
-      ).toBe(false);
+      ).toBe(true);
 
       const stored = session.loadSession();
-      expect(stored?.failure?.message).toBe("Earlier sandbox failure");
-      expect(stored?.steps.sandbox?.error).toBe("Earlier sandbox failure");
+      expect(stored?.status).toBe("recovery_required");
+      expect(stored?.failure?.message).toContain("create-attempt=unpersisted");
+      expect(stored?.steps.sandbox?.error).toContain("create-attempt=unpersisted");
     } finally {
       vi.resetModules();
       fs.rmSync(tempHome, { force: true, recursive: true });
       vi.unstubAllEnvs();
     }
   });
+
+  it.each([
+    ["registry publication", "false"],
+    ["registry publication", "throw"],
+    ["registry publication", "journal readback mismatch"],
+    ["onboarding finalization", "false"],
+    ["onboarding finalization", "throw"],
+    ["onboarding finalization", "journal readback mismatch"],
+  ] as const)(
+    "keeps the original %s error when recovery persistence returns %s (#9833)",
+    async (stage, failureMode) => {
+      const operationError = new Error(`${stage} failed`);
+      const recoveryFailures = {
+        false: () => false,
+        throw: () => {
+          throw new Error("retained sandbox recovery writer threw");
+        },
+        "journal readback mismatch": () => {
+          throw new Error("Retained sandbox recovery record did not survive durable readback.");
+        },
+      } satisfies Record<typeof failureMode, () => false | never>;
+      const markRetainedSandboxRecovery = vi.fn(recoveryFailures[failureMode]);
+      const recordRecovery = () =>
+        persistPostCreateRecovery({
+          stage,
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          lifecycleGeneration: "generation-1",
+          exactIdentity: "f".repeat(64),
+          recoveryContext: UNVERIFIED_RECOVERY_CONTEXT,
+          markRetainedSandboxRecovery,
+        });
+
+      const caught =
+        stage === "registry publication"
+          ? await runAsyncWithPostCreateRecovery(
+              async () => Promise.reject(operationError),
+              recordRecovery,
+            ).catch((error: unknown) => error)
+          : (() => {
+              try {
+                return runWithPostCreateRecovery(() => {
+                  throw operationError;
+                }, recordRecovery);
+              } catch (error) {
+                return error;
+              }
+            })();
+
+      expect(caught).toBeInstanceOf(AggregateError);
+      expect((caught as AggregateError).errors).toEqual(
+        expect.arrayContaining([
+          operationError,
+          expect.objectContaining({
+            message: expect.stringContaining("could not save the retained sandbox recovery"),
+          }),
+        ]),
+      );
+      expect(((caught as AggregateError).errors[1] as Error).cause).toEqual(
+        failureMode === "false"
+          ? undefined
+          : expect.objectContaining({
+              message: expect.stringMatching(/writer threw|did not survive durable readback/u),
+            }),
+      );
+    },
+  );
+
+  it.each(["registry publication", "onboarding finalization"] as const)(
+    "retries %s recovery at exit without rerunning the failed operation (#9833)",
+    async (stage) => {
+      const exitHandlers: Array<() => void> = [];
+      const owner = installPostCreateRecoveryRetryOwner({
+        log: vi.fn(),
+        registerExitHandler: (handler) => exitHandlers.push(handler),
+      });
+      const operationError = new Error(`${stage} failed`);
+      const operation = vi.fn(() => {
+        throw operationError;
+      });
+      const recordRecovery = vi
+        .fn()
+        .mockImplementationOnce(() => {
+          throw new Error("retained recovery write failed");
+        })
+        .mockImplementationOnce(() => undefined);
+      const recordWithOwner = () => owner.record(recordRecovery);
+
+      const caught =
+        stage === "registry publication"
+          ? await runAsyncWithPostCreateRecovery(async () => operation(), recordWithOwner).catch(
+              (error: unknown) => error,
+            )
+          : (() => {
+              try {
+                return runWithPostCreateRecovery(operation, recordWithOwner);
+              } catch (error) {
+                return error;
+              }
+            })();
+
+      expect(caught).toBeInstanceOf(AggregateError);
+      expect(operation).toHaveBeenCalledOnce();
+      expect(recordRecovery).toHaveBeenCalledOnce();
+
+      exitHandlers[0]();
+      expect(recordRecovery).toHaveBeenCalledTimes(2);
+      expect(operation).toHaveBeenCalledOnce();
+
+      exitHandlers[0]();
+      expect(recordRecovery).toHaveBeenCalledTimes(2);
+    },
+  );
 });
 
 describe("APF create policy selection", () => {
@@ -144,25 +469,74 @@ describe("APF create policy selection", () => {
 });
 
 describe("deferred provider effect authority", () => {
-  it("refuses a second provider attachment after policy authority changes (#9833)", async () => {
-    const events: string[] = [];
-    const recordPolicyCheck = (operation: string) => {
-      events.push(`policy: ${operation}`);
-    };
-    const revalidatePolicyRequirements = vi.fn(recordPolicyCheck);
-    const runOpenshell = vi.fn((args: string[]) => {
-      events.push(args.join(" "));
-      revalidatePolicyRequirements
-        .mockImplementationOnce(recordPolicyCheck)
-        .mockImplementationOnce((operation) => {
-          recordPolicyCheck(operation);
-          throw new Error("policy authority changed after the first provider attachment");
-        });
-      return { status: 0 };
+  it("carries identity authority through every provider cleanup effect (#9833)", () => {
+    let liveIdentity = "identity-a";
+    const operations: string[] = [];
+    const revalidateSandboxIdentity = vi.fn((operation: string) => {
+      operations.push(operation);
+      liveIdentity === "identity-a" ||
+        (() => {
+          throw new Error("sandbox identity changed");
+        })();
     });
-    const revalidateSandboxIdentity = vi.fn((_exactIdentity: string, operation: string) => {
-      events.push(`identity: ${operation}`);
+    const runProviderPreDeleteCleanup = vi.fn((_sandboxName, deps) => {
+      expect(deps.revalidateSandboxIdentity).toBe(revalidateSandboxIdentity);
+      deps.revalidateSandboxIdentity?.("detaching provider");
+      liveIdentity = "identity-b";
+      deps.revalidateSandboxIdentity?.("confirming provider detach");
+      return { detached: [], failures: [] };
     });
+
+    expect(() =>
+      runAuthorityBoundProviderCleanup({
+        sandboxName: "alpha",
+        revalidateSandboxIdentity,
+        runProviderPreDeleteCleanup,
+        runOpenshell: vi.fn(),
+        redact: (value) => value,
+      }),
+    ).toThrow(/sandbox identity changed/u);
+    expect(runProviderPreDeleteCleanup).toHaveBeenCalledOnce();
+    expect(operations).toEqual([
+      "cleaning up providers for sandbox 'alpha'",
+      "detaching provider",
+      "confirming provider detach",
+    ]);
+  });
+
+  it("refuses provider cleanup when a sandbox appears after verified absence (#9833)", () => {
+    let observationCount = 0;
+    const revalidatePolicyAuthority = vi.fn();
+    const runOpenshell = vi.fn(() => ({
+      pid: 1,
+      output: [null, "", ""],
+      stdout: "",
+      stderr: "",
+      status: 0,
+      signal: null,
+    }));
+
+    expect(() =>
+      runAuthorityBoundProviderCleanup({
+        sandboxName: "alpha",
+        observeSandbox: () =>
+          observationCount++ === 0
+            ? { state: "missing", liveIdentityFingerprint: null }
+            : { state: "ready", liveIdentityFingerprint: "f".repeat(64) },
+        revalidatePolicyAuthority,
+        runProviderPreDeleteCleanup: runSandboxProviderPreDeleteCleanup,
+        runOpenshell,
+        redact: (value) => value,
+        tolerateMissingSandbox: true,
+      }),
+    ).toThrow(/appeared after absence was verified/u);
+    expect(revalidatePolicyAuthority).toHaveBeenCalledOnce();
+    expect(runOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("refuses every deferred provider attachment before a same-name replacement can receive credentials (#9833)", async () => {
+    const revalidatePolicyRequirements = vi.fn();
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
     const boundary = createProviderEffectBoundary({
       deferred: true,
       sandboxName: "alpha",
@@ -186,8 +560,6 @@ describe("deferred provider effect authority", () => {
         return ["first", "second"];
       },
       revalidatePolicyAuthorityBeforeCreate: vi.fn(),
-      runOpenshell: runOpenshell as never,
-      revalidateSandboxIdentity,
     });
     const runAfterVerifiedCreate = boundary.runAfterVerifiedCreate;
     expect(runAfterVerifiedCreate).toBeTypeOf("function");
@@ -208,19 +580,15 @@ describe("deferred provider effect authority", () => {
         route: "direct" as never,
         revalidatePolicyRequirements,
       }),
-    ).rejects.toThrow("policy authority changed after the first provider attachment");
+    ).rejects.toThrow("OpenShell cannot attach providers to the immutable identity");
 
-    expect(runOpenshell).toHaveBeenCalledExactlyOnceWith(
-      ["sandbox", "provider", "attach", "-g", "nemoclaw", "alpha", "first"],
-      { ignoreError: true, suppressOutput: true },
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["sandbox", "provider", "attach"]),
+      expect.anything(),
     );
-    expect(revalidateSandboxIdentity).toHaveBeenCalledWith(
-      "a".repeat(64),
-      "attaching provider 'second' to sandbox 'alpha'",
+    expect(revalidatePolicyRequirements).toHaveBeenCalledWith(
+      "attaching deferred providers to sandbox 'alpha'",
     );
-    expect(events).toContain("policy: attaching provider 'second' to sandbox 'alpha'");
-    expect(events).toContain("policy: cleaning up providers for sandbox 'alpha'");
-    expect(events).not.toContain("sandbox provider attach -g nemoclaw alpha second");
   });
 });
 
@@ -477,6 +845,7 @@ describe("sandbox create policy authority checks", () => {
   });
   const exactIdentityBoundary = () => ({
     captureCreatedSandboxIdentity: vi.fn(() => exactIdentity),
+    persistCreatedSandboxIdentity: vi.fn(),
     revalidateCreatedSandboxIdentity: vi.fn(),
     ...verifiedPolicyBoundary(),
   });
@@ -512,6 +881,7 @@ describe("sandbox create policy authority checks", () => {
         events.push("capture-identity");
         return exactIdentity;
       },
+      persistCreatedSandboxIdentity: () => events.push("persist-identity"),
       revalidateCreatedSandboxIdentity: () => events.push("identity-check"),
       verifyCreatedPolicy: () => {
         events.push("policy-check");
@@ -528,6 +898,7 @@ describe("sandbox create policy authority checks", () => {
       "create-check",
       "create",
       "capture-identity",
+      "persist-identity",
       "identity-check",
       "policy-check",
       "identity-check",
@@ -560,12 +931,18 @@ describe("sandbox create policy authority checks", () => {
     }).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(AggregateError);
+    expect((error as AggregateError).message).toMatch(
+      new RegExp(
+        `left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*did not run OpenShell's mutable-name deletion command.*Do not delete the sandbox by mutable sandbox name.*OpenShell administrator.*identity-bound recovery or removal procedure`,
+        "u",
+      ),
+    );
     expect((error as AggregateError).errors).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           message: expect.stringMatching(
             new RegExp(
-              `left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*Do not delete the sandbox by name, even after this comparison.*Contact the OpenShell administrator for an identity-bound recovery or removal procedure`,
+              `left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*did not run OpenShell's mutable-name deletion command.*Do not delete the sandbox by mutable sandbox name.*OpenShell administrator.*identity-bound recovery or removal procedure`,
               "u",
             ),
           ),
@@ -574,6 +951,146 @@ describe("sandbox create policy authority checks", () => {
     );
     expect(events).toEqual(["create-check", "create", "ready-check", "cleanup-sources"]);
   });
+
+  it("records recovery before returning a post-create authority failure (#9833)", async () => {
+    const persistRetainedSandboxRecovery = vi.fn(() => true);
+
+    await expect(
+      runSandboxCreateWithPolicyAuthorityChecks({
+        sandboxName: "alpha",
+        revalidate: vi.fn(),
+        create: async (verifyCreatedSandbox) => {
+          await verifyCreatedSandbox("created");
+          return "created";
+        },
+        ...exactIdentityBoundary(),
+        revalidateVerifiedPolicy: () => {
+          throw new Error("external policy authority changed");
+        },
+        persistRetainedSandboxRecovery,
+        cleanupTemporarySources: vi.fn(),
+      }),
+    ).rejects.toThrow("automatic sandbox cleanup was not safe");
+
+    expect(persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
+      expect.stringContaining("left sandbox 'alpha' in place"),
+      exactIdentity,
+      "verified",
+      "created",
+    );
+  });
+
+  it("retains verified policy evidence when checkpoint persistence fails (#9833)", async () => {
+    const verifiedEvidence = { policyHash: "sha256:policy-4", policyVersion: 4 } as const;
+    const persistRetainedSandboxRecovery = vi.fn(() => true);
+
+    await expect(
+      runSandboxCreateWithPolicyAuthorityChecks({
+        sandboxName: "alpha",
+        revalidate: vi.fn(),
+        create: async (verifyCreatedSandbox) => {
+          await verifyCreatedSandbox("created");
+          return "created";
+        },
+        ...exactIdentityBoundary(),
+        verifyCreatedPolicy: () => verifiedEvidence,
+        persistVerifiedPolicy: () => {
+          throw new Error("checkpoint write failed");
+        },
+        persistRetainedSandboxRecovery,
+        cleanupTemporarySources: vi.fn(),
+      }),
+    ).rejects.toThrow("automatic sandbox cleanup was not safe");
+
+    expect(persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
+      expect.stringContaining("left sandbox 'alpha' in place"),
+      exactIdentity,
+      verifiedEvidence,
+      "created",
+    );
+  });
+
+  it("records recovery when the create runner fails after verification (#9833)", async () => {
+    const createFailure = new Error("runtime patch failed after verification");
+    const persistRetainedSandboxRecovery = vi.fn(() => true);
+
+    const error = await runSandboxCreateWithPolicyAuthorityChecks({
+      sandboxName: "alpha",
+      revalidate: vi.fn(),
+      create: async (verifyCreatedSandbox) => {
+        await verifyCreatedSandbox("created");
+        throw createFailure;
+      },
+      ...exactIdentityBoundary(),
+      persistRetainedSandboxRecovery,
+      cleanupTemporarySources: vi.fn(),
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AggregateError);
+    expect((error as AggregateError).errors).toContain(createFailure);
+    expect((error as AggregateError).message).toContain(
+      "post-create verification or finalization failed",
+    );
+    expect((error as AggregateError).message).not.toContain(
+      "after policy authority validation failed",
+    );
+    expect(persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
+      expect.stringContaining("left sandbox 'alpha' in place"),
+      exactIdentity,
+      "verified",
+      "created",
+    );
+  });
+
+  it.each(["false", "throw", "journal readback mismatch"] as const)(
+    "retries create-runner recovery when its durable writer returns %s (#9833)",
+    async (failureMode) => {
+      const exitHandlers: Array<() => void> = [];
+      const retryOwner = installPostCreateRecoveryRetryOwner({
+        log: vi.fn(),
+        registerExitHandler: (handler) => exitHandlers.push(handler),
+      });
+      const createFailure = new Error("runtime patch failed after verification");
+      const writerFailures = {
+        false: () => false,
+        throw: () => {
+          throw new Error("retained recovery writer threw");
+        },
+        "journal readback mismatch": () => {
+          throw new Error("Retained sandbox recovery record did not survive durable readback.");
+        },
+      } satisfies Record<typeof failureMode, () => boolean>;
+      const writer = vi
+        .fn()
+        .mockImplementationOnce(writerFailures[failureMode])
+        .mockReturnValue(true);
+      const create = vi.fn(async (verifyCreatedSandbox: (created: string) => Promise<string>) => {
+        await verifyCreatedSandbox("created");
+        throw createFailure;
+      });
+
+      const error = await runSandboxCreateWithPolicyAuthorityChecks({
+        sandboxName: "alpha",
+        revalidate: vi.fn(),
+        create,
+        ...exactIdentityBoundary(),
+        persistRetainedSandboxRecovery: writer,
+        retainedSandboxRecoveryRetryOwner: retryOwner,
+        cleanupTemporarySources: vi.fn(),
+      }).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(AggregateError);
+      expect(writer).toHaveBeenCalledOnce();
+      expect(create).toHaveBeenCalledOnce();
+
+      exitHandlers[0]();
+      expect(writer).toHaveBeenCalledTimes(2);
+      expect(create).toHaveBeenCalledOnce();
+
+      exitHandlers[0]();
+      expect(writer).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it("does not delete a same-name replacement after final authority failure (#9833)", async () => {
     let sandboxIdentity = "created";
@@ -588,6 +1105,7 @@ describe("sandbox create policy authority checks", () => {
         return "created";
       },
       captureCreatedSandboxIdentity: () => exactIdentity,
+      persistCreatedSandboxIdentity: vi.fn(),
       revalidateCreatedSandboxIdentity,
       ...verifiedPolicyBoundary(),
       revalidateVerifiedPolicy: () => {
@@ -603,7 +1121,7 @@ describe("sandbox create policy authority checks", () => {
         expect.objectContaining({
           message: expect.stringMatching(
             new RegExp(
-              `left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*Do not delete the sandbox by name, even after this comparison`,
+              `left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*Do not delete the sandbox by mutable sandbox name`,
               "u",
             ),
           ),
@@ -621,6 +1139,75 @@ describe("sandbox create policy authority checks", () => {
       "recording verified policy for sandbox 'alpha'",
     );
     expect(sandboxIdentity).toBe("replacement");
+  });
+
+  it("retains the durable checkpoint when identity-bound provider attachment is unavailable (#9833)", async () => {
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const checkpoint = { state: "absent" };
+    const providerBoundary = createProviderEffectBoundary({
+      deferred: true,
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      preparationInput: {
+        openshellDriver: "kubernetes",
+        inferenceProvider: null,
+        messagingProviders: [],
+        messagingProviderRequests: [],
+        extraProviders: [],
+        gatewayName: "nemoclaw",
+      },
+      preparationDeps: {
+        providerExistsInGateway: vi.fn(() => true),
+        runOpenshell: runOpenshell as never,
+        cleanupCreateSources: vi.fn(),
+      },
+      runVerifiedSandboxCreateEffects: null,
+      activateDeferredProviderEffects: () => ["credential-provider"],
+      revalidatePolicyAuthorityBeforeCreate: vi.fn(),
+    });
+    const error = await runSandboxCreateWithPolicyAuthorityChecks({
+      sandboxName: "alpha",
+      revalidate: vi.fn(),
+      create: async (verifyCreatedSandbox) => {
+        await verifyCreatedSandbox("created");
+        return "created";
+      },
+      ...exactIdentityBoundary(),
+      persistVerifiedPolicy: () => {
+        checkpoint.state = "verified-create";
+      },
+      runVerifiedCreateEffects: async () => {
+        await providerBoundary.runAfterVerifiedCreate?.({
+          registration: {
+            policyAuthority: "nemoclaw-managed",
+            policyCreationReceipt: {
+              schemaVersion: 1,
+              origin: "sandbox-create",
+              gatewayName: "nemoclaw",
+              gatewayPort: 8080,
+              sandboxName: "alpha",
+              lifecycleGeneration: "00000000-0000-4000-8000-000000000001",
+              sandboxIdentityFingerprint: exactIdentity,
+              policyHash: "policy-alpha",
+              policyVersion: 1,
+            },
+            observedPolicyAuthority: "owner-unknown",
+          },
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          lifecycleGeneration: "00000000-0000-4000-8000-000000000001",
+          lifecycleLiveIdentityFingerprint: exactIdentity,
+          route: "none",
+          revalidatePolicyRequirements: vi.fn(),
+        });
+      },
+      cleanupTemporarySources: vi.fn(),
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(checkpoint.state).toBe("verified-create");
+    expect(runOpenshell).not.toHaveBeenCalled();
   });
 
   it("reports temporary source cleanup failure with sandbox preservation (#9833)", async () => {
@@ -669,6 +1256,7 @@ describe("sandbox create policy authority checks", () => {
         events.push("capture");
         return exactIdentity;
       },
+      persistCreatedSandboxIdentity: () => events.push("persist-identity"),
       revalidateCreatedSandboxIdentity: () => events.push("identity"),
       verifyCreatedPolicy: () => {
         events.push("policy");
@@ -684,6 +1272,7 @@ describe("sandbox create policy authority checks", () => {
       "preflight",
       "create-without-policy",
       "capture",
+      "persist-identity",
       "identity",
       "policy",
       "identity",
@@ -707,6 +1296,7 @@ describe("sandbox create policy authority checks", () => {
         return "created";
       },
       captureCreatedSandboxIdentity: () => exactIdentity,
+      persistCreatedSandboxIdentity: vi.fn(),
       revalidateCreatedSandboxIdentity: vi.fn(),
       verifyCreatedPolicy: () => {
         throw new PolicyAuthorityRefusalError("policy verification failed");
@@ -736,6 +1326,7 @@ describe("sandbox create policy authority checks", () => {
           return "created";
         },
         captureCreatedSandboxIdentity: () => exactIdentity,
+        persistCreatedSandboxIdentity: vi.fn(),
         revalidateCreatedSandboxIdentity: vi.fn(),
         verifyCreatedPolicy: () => "verified",
         persistVerifiedPolicy: () => {
@@ -764,6 +1355,7 @@ describe("sandbox create policy authority checks", () => {
           return "created";
         },
         captureCreatedSandboxIdentity: () => exactIdentity,
+        persistCreatedSandboxIdentity: vi.fn(),
         revalidateCreatedSandboxIdentity: vi.fn(),
         verifyCreatedPolicy: () => "verified",
         persistVerifiedPolicy,
@@ -791,6 +1383,7 @@ describe("sandbox create policy authority checks", () => {
           return "created";
         },
         captureCreatedSandboxIdentity: () => exactIdentity,
+        persistCreatedSandboxIdentity: vi.fn(),
         revalidateCreatedSandboxIdentity: vi.fn(),
         verifyCreatedPolicy: () => "verified",
         persistVerifiedPolicy,
@@ -807,6 +1400,7 @@ describe("sandbox create policy authority checks", () => {
 
   it("refuses continuation when identity changes during effective-policy verification (#9833)", async () => {
     const continuationEffect = vi.fn();
+    const persistRetainedSandboxRecovery = vi.fn(() => true);
     const revalidate = vi
       .fn()
       .mockImplementationOnce(() => undefined)
@@ -828,13 +1422,54 @@ describe("sandbox create policy authority checks", () => {
           return "created";
         },
         captureCreatedSandboxIdentity: () => exactIdentity,
+        persistCreatedSandboxIdentity: vi.fn(),
         revalidateCreatedSandboxIdentity,
         ...verifiedPolicyBoundary(),
+        persistRetainedSandboxRecovery,
         cleanupTemporarySources: vi.fn(),
       }),
     ).rejects.toThrow("automatic sandbox cleanup was not safe");
 
     expect(continuationEffect).not.toHaveBeenCalled();
+    expect(persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
+      expect.stringContaining("left sandbox 'alpha' in place"),
+      exactIdentity,
+      null,
+      "created",
+    );
+  });
+
+  it("stops before policy verification when the exact identity cannot be persisted (#9833)", async () => {
+    const revalidateCreatedSandboxIdentity = vi.fn();
+    const verifyCreatedPolicy = vi.fn();
+    const persistVerifiedPolicy = vi.fn();
+    const runVerifiedCreateEffects = vi.fn();
+
+    await expect(
+      runSandboxCreateWithPolicyAuthorityChecks({
+        sandboxName: "alpha",
+        revalidate: vi.fn(),
+        create: async (verifyCreatedSandbox) => {
+          await verifyCreatedSandbox("created");
+          return "created";
+        },
+        captureCreatedSandboxIdentity: () => exactIdentity,
+        persistCreatedSandboxIdentity: () => {
+          throw new Error("durable identity journal unavailable");
+        },
+        revalidateCreatedSandboxIdentity,
+        verifyCreatedPolicy,
+        persistVerifiedPolicy,
+        revalidateVerifiedPolicy: vi.fn(),
+        runVerifiedCreateEffects,
+        cleanupTemporarySources: vi.fn(),
+      }),
+    ).rejects.toThrow("automatic sandbox cleanup was not safe");
+
+    expect(revalidateCreatedSandboxIdentity).not.toHaveBeenCalled();
+    expect(verifyCreatedPolicy).not.toHaveBeenCalled();
+    expect(persistVerifiedPolicy).not.toHaveBeenCalled();
+    expect(runVerifiedCreateEffects).not.toHaveBeenCalled();
   });
 
   it("fails closed when a create implementation skips the post-create gate (#9833)", async () => {
@@ -849,6 +1484,9 @@ describe("sandbox create policy authority checks", () => {
     }).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(AggregateError);
+    expect((error as AggregateError).message).toMatch(
+      /left sandbox 'alpha' in place.*did not return a durable sandbox identity fingerprint.*Do not delete the sandbox by mutable sandbox name.*identity-bound recovery or removal procedure/u,
+    );
     expect((error as AggregateError).errors).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ message: expect.stringContaining("post-create verification") }),
