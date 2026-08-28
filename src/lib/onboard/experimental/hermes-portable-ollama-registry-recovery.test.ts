@@ -14,6 +14,7 @@ const FOREIGN_REGISTRY_ID = "8".repeat(64);
 
 function createRegistryHarness(initiallyRunning: boolean) {
   const calls: string[][] = [];
+  const timeouts: Array<number | undefined> = [];
   let running = initiallyRunning;
   let status = initiallyRunning ? "running" : "exited";
   let registryId = REGISTRY_ID;
@@ -23,14 +24,19 @@ function createRegistryHarness(initiallyRunning: boolean) {
   let registryIp = initiallyRunning ? "10.87.0.3" : "";
   let registryCopies = 1;
   let registryPresent = true;
+  let registryOutput: string | undefined;
   let startStatus = 0;
   let startError: Error | undefined;
-  let beforeStart = () => undefined;
+  let beforeStart: () => void = () => undefined;
+  let afterStartInspect: () => void = () => undefined;
   let startLabel: string | undefined;
+  let startIp = "10.87.0.3";
   let startChangesState = true;
+  let startInvoked = false;
   const engine = {
-    capture: vi.fn((args: readonly string[]) => {
+    capture: vi.fn((args: readonly string[], timeout?: number) => {
       calls.push([...args]);
+      timeouts.push(timeout);
       switch (args[0]) {
         case "network":
           expect(args[1]).toBe("inspect");
@@ -55,6 +61,7 @@ function createRegistryHarness(initiallyRunning: boolean) {
           };
         case "container": {
           expect(args[1]).toBe("inspect");
+          startInvoked ? afterStartInspect() : undefined;
           const referenceMatches =
             args[2] === "nemoclaw-portable-registry" || args[2] === registryId;
           const row = {
@@ -74,7 +81,9 @@ function createRegistryHarness(initiallyRunning: boolean) {
           return registryPresent && referenceMatches
             ? {
                 status: 0,
-                stdout: JSON.stringify(Array.from({ length: registryCopies }, () => row)),
+                stdout:
+                  registryOutput ??
+                  JSON.stringify(Array.from({ length: registryCopies }, () => row)),
                 stderr: "",
               }
             : { status: 1, stdout: "", stderr: "not found" };
@@ -82,9 +91,10 @@ function createRegistryHarness(initiallyRunning: boolean) {
         case "start":
           expect(args[1]).toBe(REGISTRY_ID);
           beforeStart();
+          startInvoked = true;
           running = startChangesState ? true : running;
           status = startChangesState ? "running" : status;
-          registryIp = startChangesState ? "10.87.0.3" : registryIp;
+          registryIp = startChangesState ? startIp : registryIp;
           registryLabel = startLabel ?? registryLabel;
           return {
             status: startStatus,
@@ -115,11 +125,13 @@ function createRegistryHarness(initiallyRunning: boolean) {
     status = priorStatus;
     registryIp = priorIp;
     calls.length = 0;
+    timeouts.length = 0;
     engine.capture.mockClear();
     return value;
   })();
   return {
     calls,
+    timeouts,
     engine,
     expectedAuthoritySha256,
     isRunning: () => running,
@@ -138,8 +150,14 @@ function createRegistryHarness(initiallyRunning: boolean) {
     setNetworkId: (value: string) => {
       registryNetworkId = value;
     },
+    setIp: (value: string) => {
+      registryIp = value;
+    },
     setPresent: (value: boolean) => {
       registryPresent = value;
+    },
+    setOutput: (value: string) => {
+      registryOutput = value;
     },
     setStartOutcome: (value: { readonly status: number; readonly changesState: boolean }) => {
       startStatus = value.status;
@@ -152,6 +170,15 @@ function createRegistryHarness(initiallyRunning: boolean) {
     },
     setStartLabel: (value: string) => {
       startLabel = value;
+    },
+    setStartIp: (value: string) => {
+      startIp = value;
+    },
+    setBeforeStart: (callback: () => void) => {
+      beforeStart = callback;
+    },
+    setAfterStartInspect: (callback: () => void) => {
+      afterStartInspect = callback;
     },
     setStartThrows: () => {
       beforeStart = () => {
@@ -169,6 +196,25 @@ function createRegistryHarness(initiallyRunning: boolean) {
 }
 
 type RegistryHarness = ReturnType<typeof createRegistryHarness>;
+
+function createFakeTiming(initial = 0) {
+  let current = initial;
+  const sleeps: number[] = [];
+  return {
+    timing: {
+      now: vi.fn(() => current),
+      sleep: vi.fn((milliseconds: number) => {
+        sleeps.push(milliseconds);
+        current += milliseconds;
+      }),
+    },
+    sleeps,
+    advance: (milliseconds: number) => {
+      current += milliseconds;
+    },
+    current: () => current,
+  };
+}
 
 const rejectionCases: ReadonlyArray<{
   readonly label: string;
@@ -283,6 +329,197 @@ describe("Hermes Portable registry recovery", () => {
     expect(harness.calls.some((args) => args[0] === "stop")).toBe(false);
   });
 
+  it("uses a fresh bounded settlement window after the start command returns", () => {
+    const harness = createRegistryHarness(false);
+    const clock = createFakeTiming();
+    const ips = ["", "10.87.0.3"];
+    harness.setStartTimeout(true);
+    harness.setStartIp("");
+    harness.setBeforeStart(() => clock.advance(30_000));
+    harness.setAfterStartInspect(() => {
+      harness.setIp(ips.shift() ?? "10.87.0.3");
+    });
+
+    const prepared = preparePortableRegistryRecovery(
+      harness.engine as never,
+      harness.expectedAuthoritySha256,
+      vi.fn(),
+      vi.fn(),
+      clock.timing,
+    );
+
+    expect(prepared.started).toBe(true);
+    expect(clock.sleeps).toEqual([1_000]);
+    expect(clock.current()).toBe(31_000);
+    expect(harness.calls.filter((args) => args[0] === "start")).toEqual([["start", REGISTRY_ID]]);
+    const startIndex = harness.calls.findIndex((args) => args[0] === "start");
+    expect(
+      harness.calls
+        .slice(startIndex + 1)
+        .filter((args) => args[0] === "container")
+        .every((args) => args[2] === REGISTRY_ID),
+    ).toBe(true);
+    expect(harness.timeouts[startIndex]).toBe(30_000);
+  });
+
+  it.each([
+    {
+      label: "nonzero result",
+      configure: (harness: RegistryHarness) =>
+        harness.setStartOutcome({ status: 125, changesState: true }),
+    },
+    {
+      label: "ordinary command error",
+      configure: (harness: RegistryHarness) => harness.setStartError("EIO", true),
+    },
+  ])("settles delayed exact running authority after a $label", ({ configure }) => {
+    const harness = createRegistryHarness(false);
+    const clock = createFakeTiming();
+    const ips = ["", "10.87.0.3"];
+    configure(harness);
+    harness.setStartIp("");
+    harness.setAfterStartInspect(() => {
+      harness.setIp(ips.shift() ?? "10.87.0.3");
+    });
+
+    const prepared = preparePortableRegistryRecovery(
+      harness.engine as never,
+      harness.expectedAuthoritySha256,
+      vi.fn(),
+      vi.fn(),
+      clock.timing,
+    );
+
+    expect(prepared.started).toBe(true);
+    expect(clock.sleeps).toEqual([1_000]);
+    expect(harness.calls.filter((args) => args[0] === "start")).toHaveLength(1);
+    expect(harness.calls.some((args) => args[0] === "stop")).toBe(false);
+  });
+
+  it("performs a final exact observation after the settlement deadline", () => {
+    const harness = createRegistryHarness(false);
+    const clock = createFakeTiming();
+    harness.setStartIp("");
+
+    expect(() =>
+      preparePortableRegistryRecovery(
+        harness.engine as never,
+        harness.expectedAuthoritySha256,
+        vi.fn(),
+        vi.fn(),
+        clock.timing,
+      ),
+    ).toThrow("could not start its exact registry authority");
+    expect(clock.current()).toBe(30_000);
+    expect(clock.sleeps).toHaveLength(30);
+    expect(clock.sleeps.every((milliseconds) => milliseconds === 1_000)).toBe(true);
+    expect(harness.calls.filter((args) => args[0] === "start")).toHaveLength(1);
+    expect(harness.calls.filter((args) => args[0] === "stop")).toEqual([
+      ["stop", "--time", "10", REGISTRY_ID],
+    ]);
+    expect(harness.isRunning()).toBe(false);
+  });
+
+  it.each([
+    { label: "name drift", mutate: (harness: RegistryHarness) => harness.setName("other") },
+    { label: "label drift", mutate: (harness: RegistryHarness) => harness.setLabel("0") },
+    {
+      label: "network drift",
+      mutate: (harness: RegistryHarness) => harness.setNetworkId("8".repeat(64)),
+    },
+    { label: "foreign IP", mutate: (harness: RegistryHarness) => harness.setIp("10.87.0.99") },
+    {
+      label: "full-ID replacement",
+      mutate: (harness: RegistryHarness) => harness.setIdentity(FOREIGN_REGISTRY_ID),
+    },
+    {
+      label: "missing inspection",
+      mutate: (harness: RegistryHarness) => harness.setPresent(false),
+    },
+    { label: "ambiguous inspection", mutate: (harness: RegistryHarness) => harness.setCopies(2) },
+    { label: "malformed inspection", mutate: (harness: RegistryHarness) => harness.setOutput("{") },
+  ])("rejects post-start $label without settlement retry", ({ mutate }) => {
+    const harness = createRegistryHarness(false);
+    const clock = createFakeTiming();
+    harness.setAfterStartInspect(() => mutate(harness));
+
+    expect(() =>
+      preparePortableRegistryRecovery(
+        harness.engine as never,
+        harness.expectedAuthoritySha256,
+        vi.fn(),
+        vi.fn(),
+        clock.timing,
+      ),
+    ).toThrow();
+    expect(clock.sleeps).toEqual([]);
+    expect(harness.calls.filter((args) => args[0] === "start")).toHaveLength(1);
+  });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, -1])(
+    "rejects an invalid initial settlement clock sample %s",
+    (value) => {
+      const harness = createRegistryHarness(false);
+
+      expect(() =>
+        preparePortableRegistryRecovery(
+          harness.engine as never,
+          harness.expectedAuthoritySha256,
+          vi.fn(),
+          vi.fn(),
+          { now: () => value, sleep: vi.fn() },
+        ),
+      ).toThrow("could not start its exact registry authority");
+      expect(harness.calls.filter((args) => args[0] === "start")).toHaveLength(1);
+      expect(harness.isRunning()).toBe(false);
+    },
+  );
+
+  it("rejects a backward settlement clock before another observation", () => {
+    const harness = createRegistryHarness(false);
+    const samples = [1, 0];
+    const sleep = vi.fn();
+    harness.setStartIp("");
+
+    expect(() =>
+      preparePortableRegistryRecovery(
+        harness.engine as never,
+        harness.expectedAuthoritySha256,
+        vi.fn(),
+        vi.fn(),
+        { now: () => samples.shift() ?? 0, sleep },
+      ),
+    ).toThrow("could not start its exact registry authority");
+    expect(sleep).not.toHaveBeenCalled();
+    expect(harness.isRunning()).toBe(false);
+  });
+
+  it.each(["caller", "engine"])("rejects %s authority drift during settlement", (owner) => {
+    const harness = createRegistryHarness(false);
+    const clock = createFakeTiming();
+    const caller = vi.fn();
+    const engine = vi.fn();
+    const selected = owner === "caller" ? caller : engine;
+    Array.from({ length: 3 }).forEach(() => selected.mockImplementationOnce(() => undefined));
+    selected.mockImplementationOnce(() => {
+      throw new Error("authority drift");
+    });
+    harness.setStartIp("");
+
+    expect(() =>
+      preparePortableRegistryRecovery(
+        harness.engine as never,
+        harness.expectedAuthoritySha256,
+        engine,
+        caller,
+        clock.timing,
+      ),
+    ).toThrow();
+    expect(clock.sleeps).toEqual([1_000]);
+    expect(harness.calls.filter((args) => args[0] === "start")).toHaveLength(1);
+    expect(harness.calls).toContainEqual(["stop", "--time", "10", REGISTRY_ID]);
+  });
+
   it("keeps a timed-out start terminal when the pinned registry remains stopped", () => {
     const harness = createRegistryHarness(false);
     harness.setStartTimeout(false);
@@ -368,6 +605,13 @@ describe("Hermes Portable registry recovery", () => {
       ),
     ).toThrow("registry capture failed");
     expect(harness.isRunning()).toBe(false);
+    const startIndex = harness.calls.findIndex((args) => args[0] === "start");
+    expect(
+      harness.calls
+        .slice(startIndex + 1)
+        .some((args) => args[0] === "network" || args[0] === "container"),
+    ).toBe(false);
+    expect(harness.calls.filter((args) => args[0] === "start")).toHaveLength(1);
   });
 
   it("rolls back an exact running registry when an ordinary error has authority drift", () => {
