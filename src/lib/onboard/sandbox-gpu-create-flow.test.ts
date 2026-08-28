@@ -132,6 +132,8 @@ afterEach(resetHarness);
 
 describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
   it("isolates an unavailable WSL Docker Desktop helper during managed create (#10349)", async () => {
+    vi.stubEnv("DOCKER_CONTEXT", "ambient-remote-context");
+    vi.stubEnv("DOCKER_HOST", "tcp://ambient-remote.example:2376");
     const dockerConfig = writeDesktopCredsStore();
     const input = createInput();
     attachManagedBootstrap(input);
@@ -140,7 +142,6 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
       OPENSHELL_GATEWAY: "1",
       WSL_DISTRO_NAME: "Ubuntu",
       DOCKER_CONFIG: dockerConfig,
-      DOCKER_HOST: "unix:///var/run/docker.sock",
     };
     const captured = captureCreateEnv();
     const deps = createDeps();
@@ -156,6 +157,8 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     expect(captured.env.OPENSHELL_GATEWAY).toBe("1");
     expect(captured.configExisted).toBe(true);
     expect(fs.existsSync(String(captured.env.DOCKER_CONFIG))).toBe(false);
+    expect(mocks.dockerSpawnSync.mock.calls[0]?.[1]?.env).not.toHaveProperty("DOCKER_CONTEXT");
+    expect(mocks.dockerSpawnSync.mock.calls[0]?.[1]?.env).not.toHaveProperty("DOCKER_HOST");
     expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
   });
 

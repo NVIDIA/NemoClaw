@@ -61,7 +61,10 @@ export function dockerBuildSubprocessEnv(
   const env = buildSubprocessEnv();
   for (const key of DOCKER_ENV_NAMES) {
     const value = sourceEnv[key];
-    if (value !== undefined) env[key] = value;
+    // sourceEnv owns Docker daemon and client selection. Do not let a Docker
+    // variable omitted by the caller leak back in from the parent process.
+    if (value === undefined) delete env[key];
+    else env[key] = value;
   }
   for (const key of Object.keys(env)) {
     if (

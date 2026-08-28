@@ -129,6 +129,7 @@ export function setupGpuFlowMocks(mocks: Record<string, ReturnType<typeof vi.fn>
 }
 
 export function resetGpuFlowMocks(): void {
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
   vi.clearAllMocks();
 }
