@@ -37,7 +37,7 @@ skill has already produced a plan whose candidate lacks the entry or another req
 change, merge the documentation PR and generate a new plan for the resulting candidate.
 
 A push that changes only `docs/**`, `fern/docs.yml`, or `fern/assets/**` does not start
-`Docs / Post-Merge Catch-Up`. Merging the cumulative docs PR therefore does not start a final model
+`Docs / Author Post-Merge Catch-Up`. Merging the cumulative docs PR therefore does not start a final model
 run or create an empty-patch receipt.
 
 Before tag confirmation, show the maintainer:

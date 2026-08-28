@@ -3,7 +3,7 @@
 
 # Post-Merge Documentation Automation
 
-This directory owns the trusted authoring and publishing boundary for `Docs / Post-Merge Catch-Up`.
+This directory owns the trusted authoring and publishing boundary for `Docs / Author Post-Merge Catch-Up`.
 
 Repository administrators retain the `POST_MERGE_DOCS_API_KEY` Actions secret until rotation or
 removal. GitHub exposes it only to the author job's `Configure isolated inference` step. Hosted-runner
