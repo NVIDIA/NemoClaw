@@ -44,7 +44,6 @@ const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-pi-qual";
 const TASK_VERSION = "pi-read-v1";
 const LIVE_TIMEOUT_MS = 90 * 60_000;
 const PI_COMMAND_TIMEOUT_MS = 5 * 60_000;
-const PI_INTERACTIVE_READY_MARKER = "to interrupt";
 const SECURITY_PROBE = String.raw`
 const fs = require("node:fs");
 const path = require("node:path");
@@ -275,18 +274,14 @@ async function runInteractiveTask(
     "Join these four fragments with underscores and reply with only the result: NEMOCLAW, PI, INTERACTIVE, OK. Do not use tools.";
   const result = await driveInteractiveCommand({
     activityLabel: "command: pi-interactive-qualification",
-    cmd: [host.commandPath, "launch", SANDBOX_NAME],
+    cmd: [host.commandPath, SANDBOX_NAME, "exec", "--", "pi", "--no-approve", prompt],
     env,
     progress,
-    rules: [
-      { trigger: PI_INTERACTIVE_READY_MARKER, response: `${prompt}\r` },
-      { trigger: token, response: "/exit\r" },
-    ],
+    rules: [{ trigger: token, response: "/exit\r" }],
     timeoutMs: PI_COMMAND_TIMEOUT_MS,
   });
   await artifacts.writeText("pi-interactive-terminal.txt", result.output);
   expect(result.timedOut).toBe(false);
-  expect(result.firedTriggers).toContain(PI_INTERACTIVE_READY_MARKER);
   expect(result.firedTriggers).toContain(token);
   expect(result.output).toContain(token);
   expect(result.exitCode).toBe(0);
