@@ -73,6 +73,7 @@ import {
   buildHermesPortableCommandAuthority,
   inspectPortableAgentReceiptDisposition,
   qualifyPortableAgentLifecycleAuthority,
+  qualifyHermesPortableOperatingCommandAuthority,
   requalifyPortableAgentSandboxAuthority,
   recoverPortableAgentSandboxLifecycle,
   requireHermesPortableActiveLifecycleAuthority,
@@ -119,6 +120,7 @@ export {
   buildHermesPortableCommandEnvironment,
   inspectPortableAgentReceiptDisposition,
   qualifyPortableAgentLifecycleAuthority,
+  qualifyHermesPortableOperatingCommandAuthority,
   requalifyPortableAgentSandboxAuthority,
   requireHermesPortableActiveLifecycleAuthority,
 };

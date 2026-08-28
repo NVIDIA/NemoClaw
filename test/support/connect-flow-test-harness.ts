@@ -32,6 +32,7 @@ requireDist(connectModulePath);
 delete require.cache[requireDist.resolve(connectModulePath)];
 
 export type ConnectHarness = {
+  assertHermesPortableOperatingCommandCurrentSpy: MockInstance;
   applyVmDnsMonkeypatchSpy: MockInstance;
   captureOpenshellSpy: MockInstance;
   captureResolvedOpenshellSpy: MockInstance;
@@ -241,6 +242,16 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     },
     executablePath: "/usr/bin/openshell",
   });
+  const assertHermesPortableOperatingCommandCurrentSpy = vi.fn();
+  vi.spyOn(gatewayState, "qualifyHermesPortableOperatingCommandAuthority").mockReturnValue({
+    assertCurrent: assertHermesPortableOperatingCommandCurrentSpy,
+    env: {
+      HOME: "/home/test",
+      XDG_CONFIG_HOME: "/home/test/.config",
+      XDG_RUNTIME_DIR: "/run/user/1000",
+    },
+    executablePath: "/usr/bin/openshell",
+  });
   vi.spyOn(gatewayState, "assertHermesPortableLifecycleForConnect").mockImplementation(
     () => undefined,
   );
@@ -377,6 +388,14 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
           (options.agentName === "hermes"
             ? "Gateway inference:\n  Provider: ollama-local\n  Model: qwen3-vl:4b\n"
             : "Provider: unknown\nModel: unknown\n"),
+      };
+    }
+    if (argv[0] === "forward" && argv[1] === "list") {
+      const sandboxName = String(registryEntries[0]?.name ?? "alpha");
+      const port = String(registryEntries[0]?.dashboardPort ?? 18_789);
+      return {
+        status: 0,
+        output: `SANDBOX BIND PORT PID STATUS\n${sandboxName} 127.0.0.1 ${port} 12345 running`,
       };
     }
     if (
@@ -525,6 +544,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   spawnSyncSpy.mockClear();
 
   return {
+    assertHermesPortableOperatingCommandCurrentSpy,
     applyVmDnsMonkeypatchSpy,
     captureOpenshellSpy,
     captureResolvedOpenshellSpy,
