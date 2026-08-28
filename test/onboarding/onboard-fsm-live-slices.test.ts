@@ -475,6 +475,7 @@ if (scenario.mode === "stale-recovery-admission") {
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
         lifecycleGeneration: "stale-admission-generation",
+        createAttemptNonce: "c".repeat(62),
         resources: {
           sharedInferenceProviders: [],
           sandboxScopedProviders: [],

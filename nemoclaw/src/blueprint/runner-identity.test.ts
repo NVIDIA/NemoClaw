@@ -457,6 +457,44 @@ describe("blueprint identity wrapper", () => {
     expect(commands).toContain("sandbox provider attach test-sandbox acme-okta-runtime");
   });
 
+  it("sets the route when OpenShell reports inference is not configured", async () => {
+    process.env.OKTA_CLIENT_ID = "client-id";
+    process.env.OKTA_REFRESH_TOKEN = "refresh-secret";
+    process.env.OKTA_CLIENT_SECRET = "client-secret";
+    responseQueue([
+      [
+        "provider get test-provider",
+        [{ exitCode: 0, stdout: matchingInferenceProvider, stderr: "" }],
+      ],
+      [
+        "inference get",
+        [
+          {
+            exitCode: 0,
+            stdout: "Inference:\n  Not configured\nSystem inference:\n  Not configured\n",
+            stderr: "",
+          },
+        ],
+      ],
+      [
+        "provider get acme-okta-runtime",
+        [
+          failureResult("provider not found"),
+          ...Array.from({ length: 4 }, () => ({
+            exitCode: 0,
+            stdout: matchingProvider,
+            stderr: "",
+          })),
+        ],
+      ],
+    ]);
+
+    await actionApply("default", blueprint({ identity: oktaIdentity() }));
+
+    const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
+    expect(commands).toContain("inference set --provider test-provider --model test-model");
+  });
+
   it("sets an exact reused route when the requested timeout differs", async () => {
     process.env.OKTA_CLIENT_ID = "client-id";
     process.env.OKTA_REFRESH_TOKEN = "refresh-secret";

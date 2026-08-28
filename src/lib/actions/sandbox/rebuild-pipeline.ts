@@ -16,7 +16,7 @@ import { cleanupTempDir } from "../../onboard/temp-files";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import * as onboardSession from "../../state/onboard-session";
 import { load as loadRegistry, REGISTRY_FILE } from "../../state/registry/persistence";
-import { runRebuildBackupPhase } from "./rebuild-backup-phase";
+import { captureRebuildPolicySource, runRebuildBackupPhase } from "./rebuild-backup-phase";
 import { buildRefreshMutableOpenClawConfigHashCommand } from "./rebuild-config-hash";
 import { runRebuildDestroyPhase } from "./rebuild-destroy-phase";
 import { REBUILD_HERMES_DASHBOARD_ENV_KEYS } from "./rebuild-durable-config";
@@ -403,11 +403,21 @@ async function rebuildSandboxUnlocked(
             recreateOptions.targetGatewayPort,
           );
         },
-        validateAtDeleteEdge: () =>
-          revalidateManagedWorkloadRebuildBeforeDelete(
-            sandboxName,
-            recreateOptions.managedWorkloadRebuild,
-          ) ?? revalidateRebuildRouteBeforeDelete(routePreflightReceipt),
+        validateAtDeleteEdge: () => {
+          const validation =
+            revalidateManagedWorkloadRebuildBeforeDelete(
+              sandboxName,
+              recreateOptions.managedWorkloadRebuild,
+            ) ?? revalidateRebuildRouteBeforeDelete(routePreflightReceipt);
+          if (!validation.ok) return validation;
+          return captureRebuildPolicySource(sandboxName, backup.policySourcePath)
+            ? validation
+            : {
+                ok: false,
+                message:
+                  "The current OpenShell policy became unavailable before sandbox deletion.",
+              };
+        },
         onDeleted: () => {
           sandboxStillExists = false;
         },

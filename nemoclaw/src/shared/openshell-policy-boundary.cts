@@ -157,6 +157,27 @@ function formatPolicyKeys(keys: readonly string[]): string {
   return keys.map((key) => JSON.stringify(key)).join(", ");
 }
 
+function policyValueContains(observed: unknown, required: unknown): boolean {
+  if (isMapping(required)) {
+    return (
+      isMapping(observed) &&
+      Object.entries(required).every(
+        ([key, value]) =>
+          Object.hasOwn(observed, key) && policyValueContains(observed[key], value),
+      )
+    );
+  }
+  if (Array.isArray(required)) {
+    return (
+      Array.isArray(observed) &&
+      required.every((requiredValue) =>
+        observed.some((observedValue) => policyValueContains(observedValue, requiredValue)),
+      )
+    );
+  }
+  return isDeepStrictEqual(observed, required);
+}
+
 function assertPolicyRequirementContainmentForOwner(
   inspection: OpenShellPolicyInspection,
   requiredPolicy: OpenShellPolicyMapping,
@@ -179,7 +200,7 @@ function assertPolicyRequirementContainmentForOwner(
   for (const key of Object.keys(requiredNetwork).sort()) {
     if (!observedNetwork || !Object.hasOwn(observedNetwork, key)) {
       missing.push(key);
-    } else if (!isDeepStrictEqual(observedNetwork[key], requiredNetwork[key])) {
+    } else if (!policyValueContains(observedNetwork[key], requiredNetwork[key])) {
       drifted.push(key);
     }
   }
@@ -191,7 +212,7 @@ function assertPolicyRequirementContainmentForOwner(
   for (const key of requiredSections) {
     if (!Object.hasOwn(effectivePolicy, key)) {
       missingSections.push(key);
-    } else if (!isDeepStrictEqual(effectivePolicy[key], required[key])) {
+    } else if (!policyValueContains(effectivePolicy[key], required[key])) {
       driftedSections.push(key);
     }
   }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 
 import {
   assertPolicyRequirementContainment,
@@ -9,6 +10,7 @@ import {
   parseActiveGlobalPolicyMetadata,
   parseOpenShellPolicy,
   parseSandboxPolicyMetadata,
+  stripProviderComposedPolicies,
   withoutProviderComposedPolicies,
 } from "./openshell-policy-boundary.cjs";
 
@@ -56,6 +58,44 @@ describe("OpenShell policy boundary", () => {
     });
   });
 
+  it("rejects invalid sandbox identity metadata", () => {
+    expect(() =>
+      parseSandboxPolicyMetadata(
+        JSON.stringify({
+          scope: "sandbox",
+          sandbox: "alpha",
+          status: "effective",
+          policy_source: "sandbox",
+          hash: "invalid hash",
+          active_version: 0,
+          policy: {},
+        }),
+        "alpha",
+      ),
+    ).toThrow(/invalid sandbox policy identity metadata/);
+  });
+
+  it.each([
+    ["empty global metadata", "", /empty global policy metadata/],
+    [
+      "invalid global fields",
+      JSON.stringify({ scope: "sandbox", status: "loaded", policy_source: "global" }),
+      /invalid global policy metadata/,
+    ],
+    [
+      "non-mapping global policy",
+      JSON.stringify({
+        scope: "global",
+        status: "loaded",
+        policy_source: "global",
+        policy: [],
+      }),
+      /invalid global policy metadata/,
+    ],
+  ])("rejects %s", (_name, raw, expected) => {
+    expect(() => parseActiveGlobalPolicyMetadata(raw)).toThrow(expected);
+  });
+
   it("allows unrelated live entries but rejects missing or drifted requirements", () => {
     const inspection = {
       policySource: "sandbox" as const,
@@ -83,6 +123,25 @@ describe("OpenShell policy boundary", () => {
       network_policies: {},
     });
     expect(withoutProviderComposedPolicies({ npm: 1, _provider_token: 2 })).toEqual({ npm: 1 });
+  });
+
+  it("filters provider-composed entries from serialized policy only when present", () => {
+    const unchanged = "version: 1\nfilesystem_policy:\n  read_only: true\n";
+    expect(stripProviderComposedPolicies(unchanged)).toBe(unchanged);
+
+    const withoutProviderEntry = "version: 1\nnetwork_policies:\n  npm: {}\n";
+    expect(stripProviderComposedPolicies(withoutProviderEntry)).toBe(withoutProviderEntry);
+
+    expect(
+      YAML.parse(
+        stripProviderComposedPolicies(
+          "version: 1\nnetwork_policies:\n  npm: {}\n  _provider_token: {}\n",
+        ),
+      ),
+    ).toEqual({ version: 1, network_policies: { npm: {} } });
+    expect(() => stripProviderComposedPolicies("version: [unterminated")).toThrow(
+      /invalid YAML/,
+    );
   });
 
   it("classifies the OpenShell global history absence contract", () => {
@@ -154,6 +213,42 @@ describe("OpenShell policy boundary", () => {
     expect(() =>
       assertPolicyRequirementContainment(inspection, {
         filesystem_policy: { read_only: false },
+      }),
+    ).toThrow(/drifted sections/);
+    expect(() =>
+      assertPolicyRequirementContainment(inspection, {
+        process_policy: { run_as_user: true },
+      }),
+    ).toThrow(/missing sections/);
+  });
+
+  it("accepts OpenShell-enriched policy values while retaining requirements", () => {
+    const inspection = {
+      policySource: "sandbox" as const,
+      policyIdentity: { activeVersion: 8, hash: "sha256:gpu-enriched" },
+      effectivePolicy: {
+        filesystem_policy: {
+          read_only: ["/etc/ssl", "/proc/driver/nvidia"],
+          devices: { allow: ["/dev/nvidia0"] },
+        },
+        network_policies: {
+          required: {
+            endpoints: [{ host: "example.test", tls: "passthrough" }],
+            openshell_metadata: { source: "gpu" },
+          },
+        },
+      },
+    };
+
+    expect(() =>
+      assertPolicyRequirementContainment(inspection, {
+        filesystem_policy: { read_only: ["/etc/ssl"] },
+        network_policies: { required: { endpoints: [{ host: "example.test" }] } },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertPolicyRequirementContainment(inspection, {
+        filesystem_policy: { read_only: ["/missing"] },
       }),
     ).toThrow(/drifted sections/);
   });

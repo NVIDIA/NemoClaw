@@ -390,6 +390,7 @@ describe("runner", () => {
       );
       expect(() => loadBlueprint()).toThrow(/valid nested component shapes/);
     });
+
   });
 
   describe("actionPlan", () => {

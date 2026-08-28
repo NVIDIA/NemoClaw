@@ -48,6 +48,18 @@ function bailForUnsafeOpenClawPluginProvenance(input: RebuildBackupPhaseInput): 
   return input.bail("Custom-image OpenClaw plugin provenance is unavailable.");
 }
 
+export function captureRebuildPolicySource(
+  sandboxName: string,
+  policySourcePath?: string,
+): string | null {
+  const policy = policyGet.getSandboxPolicy(sandboxName).yaml;
+  if (!policy) return null;
+  const resolvedPolicySourcePath =
+    policySourcePath ?? secureTempFile("nemoclaw-rebuild-policy", ".yaml");
+  fs.writeFileSync(resolvedPolicySourcePath, policy, { mode: 0o600 });
+  return resolvedPolicySourcePath;
+}
+
 export function runRebuildBackupPhase(
   input: RebuildBackupPhaseInput,
   backupStateForRebuild: typeof backupSandboxStateForRebuild = backupSandboxStateForRebuild,
@@ -104,13 +116,11 @@ export function runRebuildBackupPhase(
       "The live OpenShell policy is unavailable. Rebuild will not reconstruct policy from NemoClaw state.",
     );
   }
-  const policy = policyGet.getSandboxPolicy(input.sandboxName).yaml;
-  if (!policy) {
+  const policySourcePath = captureRebuildPolicySource(input.sandboxName);
+  if (!policySourcePath) {
     return input.bail(
       "The current OpenShell policy could not be captured before sandbox replacement.",
     );
   }
-  const policySourcePath = secureTempFile("nemoclaw-rebuild-policy", ".yaml");
-  fs.writeFileSync(policySourcePath, policy, { mode: 0o600 });
   return { backupManifest, backupWasForceSkipped, policySourcePath };
 }

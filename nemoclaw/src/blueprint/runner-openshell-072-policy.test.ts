@@ -161,6 +161,100 @@ describe("blueprint policy convenience", () => {
     expect([...store.keys()].some((path) => path.endsWith("policy-update.yaml"))).toBe(false);
   });
 
+  it("skips the convenience mutation when OpenShell already contains the requirement", async () => {
+    livePolicy.network_policies = {
+      ...(livePolicy.network_policies as Record<string, unknown>),
+      nim_service: additions.nim_service,
+    };
+
+    await actionApply("default", blueprint());
+
+    expect(
+      mockExeca.mock.calls.some(
+        ([, args]) => Array.isArray(args) && args[0] === "policy" && args[1] === "set",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects a scalar future policy section before writing", async () => {
+    livePolicy.future_section = "unreviewed-scalar";
+
+    await expect(actionApply("default", blueprint())).rejects.toThrow(
+      /future_section.*must be a YAML mapping/,
+    );
+  });
+
+  it("surfaces a failed OpenShell policy write", async () => {
+    const implementation = mockExeca.getMockImplementation();
+    expect(implementation).toBeDefined();
+    mockExeca.mockImplementation(async (command: string, args: string[]) =>
+      args[0] === "policy" && args[1] === "set"
+        ? { exitCode: 1, stdout: "", stderr: "write rejected" }
+        : implementation!(command, args),
+    );
+
+    await expect(actionApply("default", blueprint())).rejects.toThrow(
+      /Failed to apply policy additions: write rejected/,
+    );
+  });
+
+  it("fails closed when policy inspection throws", async () => {
+    const implementation = mockExeca.getMockImplementation();
+    expect(implementation).toBeDefined();
+    mockExeca.mockImplementation(async (command: string, args: string[]) =>
+      args.join(" ") === "policy get -g test-gateway --full --output json test-sandbox"
+        ? Promise.reject(new Error("transport interrupted"))
+        : implementation!(command, args),
+    );
+
+    await expect(actionApply("default", blueprint())).rejects.toThrow(
+      /sandbox policy inspection failed/,
+    );
+  });
+
+  it("fails closed on malformed sandbox policy metadata", async () => {
+    const implementation = mockExeca.getMockImplementation();
+    expect(implementation).toBeDefined();
+    mockExeca.mockImplementation(async (command: string, args: string[]) =>
+      args.join(" ") === "policy get -g test-gateway --full --output json test-sandbox"
+        ? { exitCode: 0, stdout: "{}", stderr: "" }
+        : implementation!(command, args),
+    );
+
+    await expect(actionApply("default", blueprint())).rejects.toThrow(
+      /invalid sandbox policy metadata.*must stop/,
+    );
+  });
+
+  it("fails closed on malformed active global policy metadata", async () => {
+    globalActive = true;
+    const implementation = mockExeca.getMockImplementation();
+    expect(implementation).toBeDefined();
+    mockExeca.mockImplementation(async (command: string, args: string[]) =>
+      args.join(" ") === "policy get -g test-gateway --global --full --output json"
+        ? { exitCode: 0, stdout: "{}", stderr: "" }
+        : implementation!(command, args),
+    );
+
+    await expect(actionApply("default", blueprint())).rejects.toThrow(
+      /invalid global policy metadata.*must stop/,
+    );
+  });
+
+  it("fails closed on ambiguous global policy history", async () => {
+    const implementation = mockExeca.getMockImplementation();
+    expect(implementation).toBeDefined();
+    mockExeca.mockImplementation(async (command: string, args: string[]) =>
+      args.join(" ") === "policy list -g test-gateway --global --limit 1"
+        ? { exitCode: 0, stdout: "", stderr: "unexpected diagnostic" }
+        : implementation!(command, args),
+    );
+
+    await expect(actionApply("default", blueprint())).rejects.toThrow(
+      /invalid global policy history.*must stop/,
+    );
+  });
+
   it("accepts a global OpenShell policy and still uses the same convenience mutation", async () => {
     globalActive = true;
     await actionApply("default", blueprint());

@@ -1,12 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+
 import { describe, expect, it, vi } from "vitest";
 import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-assertions";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
   originalSandboxName,
+  policyGet,
   portableAgentLifecycle,
   snapshotEnv,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
@@ -57,6 +60,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
     onTestFinished(restoreEnv);
     process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "0";
     let innerBackupMarker: string | undefined;
+    let recreatedPolicy: string | undefined;
     const mcpEntry = {
       server: "github",
       url: "https://mcp.example.test/mcp",
@@ -74,10 +78,28 @@ describe("rebuildSandbox flow: lifecycle", () => {
         entries: [mcpEntry],
         detachedProviderEntries: [mcpEntry],
       },
-      onboard: () => {
+      onboard: (_session, options) => {
         innerBackupMarker = process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
+        recreatedPolicy = fs.readFileSync(String(options.rebuildPolicySourcePath), "utf8");
       },
     });
+    vi.mocked(policyGet.getSandboxPolicy)
+      .mockReset()
+      .mockReturnValueOnce({
+        yaml: [
+          "version: 1",
+          "network_policies:",
+          "  durable_user_policy: {}",
+          "  mcp_bridge_github:",
+          "    endpoints:",
+          "      - credential_binding:",
+          "          provider: nemoclaw-mcp-alpha-github",
+          "",
+        ].join("\n"),
+      })
+      .mockReturnValue({
+        yaml: "version: 1\nnetwork_policies:\n  durable_user_policy: {}\n",
+      });
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes", "--verbose"], { throwOnError: true }),
@@ -106,6 +128,10 @@ describe("rebuildSandbox flow: lifecycle", () => {
       }),
     );
     expect(innerBackupMarker).toBe("1");
+    expect(policyGet.getSandboxPolicy).toHaveBeenCalledTimes(2);
+    expect(recreatedPolicy).toContain("durable_user_policy");
+    expect(recreatedPolicy).not.toContain("mcp_bridge_github");
+    expect(recreatedPolicy).not.toContain("nemoclaw-mcp-alpha-github");
     expect(process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP).toBe("0");
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith(
       "alpha",
@@ -154,6 +180,32 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
       "rebuild completed",
     );
+  });
+
+  it("keeps the original sandbox when the post-MCP OpenShell policy is unavailable", async () => {
+    const mcpEntry = {
+      server: "github",
+      providerName: "nemoclaw-mcp-alpha-github",
+    };
+    const harness = createRebuildFlowHarness({
+      mcpPreparation: {
+        entries: [mcpEntry],
+        detachedProviderEntries: [mcpEntry],
+      },
+    });
+    vi.mocked(policyGet.getSandboxPolicy)
+      .mockReset()
+      .mockReturnValueOnce({ yaml: "version: 1\nnetwork_policies: {}\n" })
+      .mockReturnValue({ yaml: "" });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("OpenShell policy became unavailable before sandbox deletion");
+
+    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledOnce();
+    expect(harness.reattachMcpProvidersAfterRebuildAbortSpy).toHaveBeenCalledOnce();
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
   });
 
   it("keeps the original sandbox when the shared route drifts at the delete edge (#7798)", async () => {
