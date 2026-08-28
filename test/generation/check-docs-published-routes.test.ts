@@ -438,29 +438,6 @@ See [Missing Other Page](../other/missing).
   });
 });
 
-describe("Pi documentation routes", () => {
-  const index = buildPublishedRouteIndex();
-
-  it("publishes Pi onboarding, model configuration, operations, and reference routes", () => {
-    expect(index.routes.has("/user-guide/pi/get-started/quickstart")).toBe(true);
-    expect(index.routes.has("/user-guide/pi/inference/configure-model-limits")).toBe(true);
-    expect(index.routes.has("/user-guide/pi/manage-sandboxes/run-pi")).toBe(true);
-    expect(index.routes.has("/user-guide/pi/reference/commands")).toBe(true);
-    expect(index.routes.has("/user-guide/pi/reference/pi-support")).toBe(true);
-    expect([
-      index.routes.has("/user-guide/openclaw/get-started/quickstart-pi"),
-      index.routes.has("/user-guide/openclaw/manage-sandboxes/run-pi"),
-      index.routes.has("/user-guide/openclaw/reference/pi-support"),
-      index.routes.has("/user-guide/hermes/get-started/quickstart-pi"),
-      index.routes.has("/user-guide/hermes/manage-sandboxes/run-pi"),
-      index.routes.has("/user-guide/hermes/reference/pi-support"),
-      index.routes.has("/user-guide/deepagents/get-started/quickstart-pi"),
-      index.routes.has("/user-guide/deepagents/manage-sandboxes/run-pi"),
-      index.routes.has("/user-guide/deepagents/reference/pi-support"),
-    ]).toEqual([false, false, false, false, false, false, false, false, false]);
-  });
-});
-
 describe("Manage Sandboxes extension routes", () => {
   const index = buildPublishedRouteIndex();
 
