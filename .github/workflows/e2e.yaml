@@ -3958,6 +3958,7 @@ jobs:
           path: .trusted-openshell-dev-artifact
           persist-credentials: false
           sparse-checkout: |
+            .github/scripts/copy-openshell-dev-asset.sh
             .github/scripts/docker-auth-cleanup.sh
             scripts/install-openshell.sh
             tools/e2e/openshell-dev-artifact.mts
@@ -4007,12 +4008,8 @@ jobs:
               exit 64
               ;;
           esac
-          source_asset="${OPENSHELL_DEV_ASSET_DIR}/${asset}"
-          if [[ ! -f "$source_asset" || -L "$source_asset" || "$destination" != /* || ! -d "$destination" || -L "$destination" ]]; then
-            printf 'Unsafe retained OpenShell asset path: %s\n' "$asset" >&2
-            exit 64
-          fi
-          cp -- "$source_asset" "$destination/$asset"
+          bash "${{ github.workspace }}/.trusted-openshell-dev-artifact/.github/scripts/copy-openshell-dev-asset.sh" \
+            "$OPENSHELL_DEV_ASSET_DIR" "$asset" "$destination"
           EOF
           cat >"$shim_dir/curl" <<'EOF'
           #!/usr/bin/env bash

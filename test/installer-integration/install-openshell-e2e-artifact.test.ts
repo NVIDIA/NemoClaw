@@ -8,10 +8,15 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import YAML from "yaml";
 
 const INSTALLER = path.join(import.meta.dirname, "../..", "scripts", "install-openshell.sh");
-const WORKFLOW = path.join(import.meta.dirname, "../..", ".github", "workflows", "e2e.yaml");
+const COPY_HELPER = path.join(
+  import.meta.dirname,
+  "../..",
+  ".github",
+  "scripts",
+  "copy-openshell-dev-asset.sh",
+);
 const FEATURE_MARKERS =
   "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
 
@@ -68,35 +73,6 @@ function createFixture(architecture: "x86_64" | "aarch64" = "x86_64") {
   return { assetDirectory, fakeBin, root };
 }
 
-function installStepRun(): string {
-  const workflow = YAML.parse(fs.readFileSync(WORKFLOW, "utf8")) as {
-    jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
-  };
-  const run = workflow.jobs["mcp-bridge-dev"].steps.find(
-    (step) => step.name === "Install immutable OpenShell dev artifact",
-  )?.run;
-  expect(run).toBeTypeOf("string");
-  return String(run).replace(
-    "${{ github.workspace }}/.trusted-openshell-dev-artifact/scripts/install-openshell.sh",
-    INSTALLER,
-  );
-}
-
-function runInstallStep(fixture: ReturnType<typeof createFixture>) {
-  return spawnSync("bash", ["-c", installStepRun()], {
-    env: {
-      ...process.env,
-      NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
-      NEMOCLAW_OPENSHELL_CHANNEL: "dev",
-      NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1",
-      OPENSHELL_DEV_ASSET_DIR: fixture.assetDirectory,
-      PATH: `${fixture.fakeBin}:/usr/bin:/bin`,
-      XDG_BIN_HOME: path.join(fixture.root, "local-bin"),
-    },
-    encoding: "utf8",
-  });
-}
-
 function runInstaller(fixture: ReturnType<typeof createFixture>) {
   writeExecutable(
     path.join(fixture.fakeBin, "gh"),
@@ -104,7 +80,7 @@ function runInstaller(fixture: ReturnType<typeof createFixture>) {
 set -euo pipefail
 asset="$7"
 destination="$9"
-cp -- "$OPENSHELL_DEV_ASSET_DIR/$asset" "$destination/$asset"`,
+bash "$OPENSHELL_DEV_COPY_HELPER" "$OPENSHELL_DEV_ASSET_DIR" "$asset" "$destination"`,
   );
   writeExecutable(
     path.join(fixture.fakeBin, "curl"),
@@ -119,6 +95,7 @@ exit 1`,
       NEMOCLAW_OPENSHELL_CHANNEL: "dev",
       NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1",
       OPENSHELL_DEV_ASSET_DIR: fixture.assetDirectory,
+      OPENSHELL_DEV_COPY_HELPER: COPY_HELPER,
       PATH: `${fixture.fakeBin}:/usr/bin:/bin`,
       XDG_BIN_HOME: path.join(fixture.root, "local-bin"),
     },
@@ -130,7 +107,7 @@ describe("OpenShell retained E2E artifact installation", () => {
   it("runs retained assets through the trusted installer without network fallback (#9051)", () => {
     const fixture = createFixture();
     try {
-      const result = runInstallStep(fixture);
+      const result = runInstaller(fixture);
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       expect(result.stdout).toContain("Verifying SHA-256 checksum");
       expect(result.stderr).not.toContain("Network fallback is disabled");
@@ -139,7 +116,7 @@ describe("OpenShell retained E2E artifact installation", () => {
     }
   });
 
-  it("installs the arm64 development MUSL sandbox with release checksum verification", () => {
+  it("installs the arm64 development MUSL sandbox with retained-artifact checksum verification", () => {
     const fixture = createFixture("aarch64");
     try {
       const result = runInstaller(fixture);
@@ -159,7 +136,7 @@ describe("OpenShell retained E2E artifact installation", () => {
         path.join(fixture.assetDirectory, "openshell-x86_64-unknown-linux-musl.tar.gz"),
         "tampered",
       );
-      const result = runInstallStep(fixture);
+      const result = runInstaller(fixture);
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain("SHA-256 checksum verification failed");
     } finally {
@@ -176,7 +153,7 @@ describe("OpenShell retained E2E artifact installation", () => {
       );
       fs.rmSync(archive);
       fs.symlinkSync(path.join(fixture.root, "source", "openshell"), archive);
-      const result = runInstallStep(fixture);
+      const result = runInstaller(fixture);
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain("Network fallback is disabled for retained OpenShell assets");
     } finally {

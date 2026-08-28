@@ -41,10 +41,12 @@ const DEV_ARTIFACT_DOWNLOAD_ACTION =
   "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c";
 const DEV_ARTIFACT_TRUSTED_CHECKOUT_NAME = "Checkout trusted OpenShell dev tooling";
 const DEV_ARTIFACT_TRUSTED_CHECKOUT = ".trusted-openshell-dev-artifact";
+const DEV_ARTIFACT_COPY_HELPER = ".github/scripts/copy-openshell-dev-asset.sh";
 const DEV_ARTIFACT_TRUSTED_PATHS =
   "scripts/install-openshell.sh\ntools/e2e/openshell-dev-artifact.mts\n";
-const DEV_ARTIFACT_SHARD_TRUSTED_PATHS = `.github/scripts/docker-auth-cleanup.sh\n${DEV_ARTIFACT_TRUSTED_PATHS}`;
+const DEV_ARTIFACT_SHARD_TRUSTED_PATHS = `${DEV_ARTIFACT_COPY_HELPER}\n.github/scripts/docker-auth-cleanup.sh\n${DEV_ARTIFACT_TRUSTED_PATHS}`;
 const DEV_ARTIFACT_TRUSTED_TOOL = `\${{ github.workspace }}/${DEV_ARTIFACT_TRUSTED_CHECKOUT}/${DEV_ARTIFACT_TOOL}`;
+const DEV_ARTIFACT_TRUSTED_COPY_HELPER = `\${{ github.workspace }}/${DEV_ARTIFACT_TRUSTED_CHECKOUT}/${DEV_ARTIFACT_COPY_HELPER}`;
 const DEV_ARTIFACT_TRUSTED_INSTALLER = `\${{ github.workspace }}/${DEV_ARTIFACT_TRUSTED_CHECKOUT}/scripts/install-openshell.sh`;
 const DEV_ARTIFACT_SOURCE_OUTPUT = "${{ needs.openshell-dev-artifact.outputs.source_commit }}";
 const DEV_ARTIFACT_MANIFEST_OUTPUT = "${{ needs.openshell-dev-artifact.outputs.manifest_sha256 }}";
@@ -537,11 +539,8 @@ function validateJobExecution(
     for (const token of [
       ...DEV_ARTIFACT_INSTALL_ASSETS,
       'cat >"$shim_dir/gh"',
-      'source_asset="${OPENSHELL_DEV_ASSET_DIR}/${asset}"',
-      'if [[ ! -f "$source_asset" || -L "$source_asset" || "$destination" != /* || ! -d "$destination" || -L "$destination" ]]; then',
-      "Unsafe retained OpenShell asset path:",
-      "exit 64",
-      'cp -- "$source_asset" "$destination/$asset"',
+      `bash "${DEV_ARTIFACT_TRUSTED_COPY_HELPER}"`,
+      '"$OPENSHELL_DEV_ASSET_DIR" "$asset" "$destination"',
       'cat >"$shim_dir/curl"',
       "Network fallback is disabled for retained OpenShell assets.",
       'PATH="$shim_dir:$PATH"',
