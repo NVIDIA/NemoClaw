@@ -86,8 +86,8 @@ That path supports operator-selected endpoints and ports without claiming llama.
 ## Install Managed llama.cpp on DGX Spark
 
 Use this experimental path when you want NemoClaw to manage one declarative llama.cpp recipe on one DGX Spark.
-The recommended recipe serves Meta Muse Glimmer 30B through the OpenAI Chat Completions API.
-The NVIDIA Nemotron 3 Nano 30B-A3B recipe remains available as a lower-priority profile.
+The recommended recipe serves NVIDIA Nemotron 3 Nano 30B-A3B through the OpenAI Chat Completions API.
+The Meta Muse Glimmer 30B recipe remains available by explicit selection, and existing Muse-owned installations are not migrated.
 
 <Note>
 This path is an experimental implementation.
@@ -128,8 +128,8 @@ $$nemoclaw onboard
 
 NemoClaw lists compatible managed llama.cpp profiles in descending YAML `priority` order.
 During interactive onboarding without an explicit provider request, the menu ignores `NEMOCLAW_LLAMACPP_RECIPE` and marks the unique highest-priority compatible profile as `(recommended)`.
-The recommended profile appears as **Managed llama.cpp: Meta Muse Glimmer 30B on one DGX Spark (recommended)**.
-The NVIDIA Nemotron profile appears next without the recommendation marker.
+The recommended profile appears as **Managed llama.cpp: NVIDIA Nemotron 3 Nano 30B-A3B on one DGX Spark (recommended)**.
+The Meta Muse Glimmer profile remains available without the recommendation marker.
 Select any listed profile to install its exact repository-owned recipe.
 The selected menu entry determines the exact recipe even when `NEMOCLAW_LLAMACPP_RECIPE` names another recipe.
 
@@ -137,12 +137,12 @@ For non-interactive onboarding, select the repository-owned recipe explicitly:
 
 ```bash
 NEMOCLAW_PROVIDER=install-llama-cpp \
-NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.muse-glimmer-30b.spark-single.v1 \
+NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1 \
 NEMOCLAW_SANDBOX_NAME=my-assistant \
   $$nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
 ```
 
-Use `llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1` to select the lower-priority NVIDIA Nemotron recipe explicitly.
+Use `llama-cpp.muse-glimmer-30b.spark-single.v1` to select the Meta Muse Glimmer recipe explicitly.
 
 For non-interactive onboarding or an explicit `install-llama-cpp` provider request, an unset `NEMOCLAW_LLAMACPP_RECIPE` selects the unique highest-priority compatible automatic profile.
 If more than one compatible automatic profile has the highest priority, automatic non-interactive selection stops instead of selecting by catalog order.
