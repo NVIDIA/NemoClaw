@@ -6,13 +6,13 @@ import { describe, expect, it, vi } from "vitest";
 import { runDebugCommandWithOptions } from "./debug-command";
 
 describe("debug command", () => {
-  it("runs parsed debug options and falls back to the default sandbox", () => {
+  it("runs parsed debug options and falls back to the default sandbox", async () => {
     const runDebug = vi.fn();
-    runDebugCommandWithOptions(
+    await runDebugCommandWithOptions(
       { quick: true, output: "/tmp/out.tgz" },
       {
-        getDefaultSandbox: () => "alpha",
-        isSandboxKnown: () => true,
+        getDefaultSandbox: async () => "alpha",
+        isSandboxKnown: async () => true,
         runDebug,
       },
     );
@@ -23,13 +23,13 @@ describe("debug command", () => {
     });
   });
 
-  it("accepts an explicit --sandbox name that is registered", () => {
+  it("accepts an explicit --sandbox name that is registered", async () => {
     const runDebug = vi.fn();
     const isSandboxKnown = vi.fn().mockReturnValue(true);
-    runDebugCommandWithOptions(
+    await runDebugCommandWithOptions(
       { sandboxName: "alpha" },
       {
-        getDefaultSandbox: () => undefined,
+        getDefaultSandbox: async () => undefined,
         isSandboxKnown,
         runDebug,
       },
@@ -38,24 +38,24 @@ describe("debug command", () => {
     expect(runDebug).toHaveBeenCalledWith({ sandboxName: "alpha" });
   });
 
-  it("rejects an explicit --sandbox name that is not registered, exits non-zero, skips runDebug", () => {
+  it("rejects an explicit --sandbox name that is not registered, exits non-zero, skips runDebug", async () => {
     const runDebug = vi.fn();
     const errorLines: string[] = [];
     const exit = vi.fn(() => {
       throw new Error("exit");
     }) as unknown as (code: number) => never;
-    expect(() =>
+    await expect(
       runDebugCommandWithOptions(
         { sandboxName: "does-not-exist", output: "/tmp/out.tgz" },
         {
-          getDefaultSandbox: () => "alpha",
-          isSandboxKnown: () => false,
+          getDefaultSandbox: async () => "alpha",
+          isSandboxKnown: async () => false,
           runDebug,
           errorLine: (msg) => errorLines.push(msg),
           exit,
         },
       ),
-    ).toThrow("exit");
+    ).rejects.toThrow("exit");
     expect(exit).toHaveBeenCalledWith(1);
     expect(runDebug).not.toHaveBeenCalled();
     expect(errorLines[0]).toContain("does-not-exist");
@@ -63,35 +63,35 @@ describe("debug command", () => {
     expect(errorLines.join("\n")).toContain("nemoclaw list");
   });
 
-  it("validates an env-sourced sandbox name and reports the env source on failure", () => {
+  it("validates an env-sourced sandbox name and reports the env source on failure", async () => {
     const runDebug = vi.fn();
     const errorLines: string[] = [];
     const exit = vi.fn(() => {
       throw new Error("exit");
     }) as unknown as (code: number) => never;
-    expect(() =>
+    await expect(
       runDebugCommandWithOptions(
         {},
         {
           env: { NEMOCLAW_SANDBOX_NAME: "ghost" } as NodeJS.ProcessEnv,
-          getDefaultSandbox: () => "alpha",
-          isSandboxKnown: () => false,
+          getDefaultSandbox: async () => "alpha",
+          isSandboxKnown: async () => false,
           runDebug,
           errorLine: (msg) => errorLines.push(msg),
           exit,
         },
       ),
-    ).toThrow("exit");
+    ).rejects.toThrow("exit");
     expect(exit).toHaveBeenCalledWith(1);
     expect(runDebug).not.toHaveBeenCalled();
     expect(errorLines[0]).toContain("ghost");
     expect(errorLines[0]).toContain("NEMOCLAW_SANDBOX_NAME");
   });
 
-  it("prefers NEMOCLAW_SANDBOX_NAME over NEMOCLAW_SANDBOX and SANDBOX_NAME", () => {
+  it("prefers NEMOCLAW_SANDBOX_NAME over NEMOCLAW_SANDBOX and SANDBOX_NAME", async () => {
     const runDebug = vi.fn();
     const isSandboxKnown = vi.fn().mockReturnValue(true);
-    runDebugCommandWithOptions(
+    await runDebugCommandWithOptions(
       {},
       {
         env: {
@@ -99,7 +99,7 @@ describe("debug command", () => {
           NEMOCLAW_SANDBOX: "secondary",
           SANDBOX_NAME: "tertiary",
         } as NodeJS.ProcessEnv,
-        getDefaultSandbox: () => undefined,
+        getDefaultSandbox: async () => undefined,
         isSandboxKnown,
         runDebug,
       },
@@ -108,14 +108,14 @@ describe("debug command", () => {
     expect(runDebug).toHaveBeenCalledWith({ sandboxName: "primary" });
   });
 
-  it("flag overrides env vars when both are present", () => {
+  it("flag overrides env vars when both are present", async () => {
     const runDebug = vi.fn();
     const isSandboxKnown = vi.fn().mockReturnValue(true);
-    runDebugCommandWithOptions(
+    await runDebugCommandWithOptions(
       { sandboxName: "alpha" },
       {
         env: { NEMOCLAW_SANDBOX: "beta" } as NodeJS.ProcessEnv,
-        getDefaultSandbox: () => undefined,
+        getDefaultSandbox: async () => undefined,
         isSandboxKnown,
         runDebug,
       },
@@ -125,14 +125,14 @@ describe("debug command", () => {
     expect(runDebug).toHaveBeenCalledWith({ sandboxName: "alpha" });
   });
 
-  it("falls back to getDefaultSandbox when neither flag nor env is set", () => {
+  it("falls back to getDefaultSandbox when neither flag nor env is set", async () => {
     const runDebug = vi.fn();
     const isSandboxKnown = vi.fn();
-    runDebugCommandWithOptions(
+    await runDebugCommandWithOptions(
       {},
       {
         env: {} as NodeJS.ProcessEnv,
-        getDefaultSandbox: () => "alpha",
+        getDefaultSandbox: async () => "alpha",
         isSandboxKnown,
         runDebug,
       },

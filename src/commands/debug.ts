@@ -9,32 +9,33 @@ import { runDebug } from "../lib/diagnostics/debug";
 import type { DebugOptions } from "../lib/diagnostics/debug";
 import type { RunDebugCommandDeps } from "../lib/diagnostics/debug-command";
 import { runDebugCommandWithOptions } from "../lib/diagnostics/debug-command";
-import type { CaptureOpenshellResult } from "../lib/adapters/openshell/client";
 import { captureOpenshellCommand } from "../lib/adapters/openshell/client";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "../lib/adapters/openshell/timeouts";
-import * as registry from "../lib/state/registry";
 import { resolveOpenshell } from "../lib/adapters/openshell/resolve";
-import { parseLiveSandboxNames } from "../lib/runtime-recovery";
+import { createCliOpenShellSandboxObserver } from "../lib/adapters/openshell/sandbox-observer-cli";
+import { selectedOpenShellGateway } from "../lib/adapters/openshell/sandbox-observer";
+import * as registry from "../lib/state/registry";
 
 const useColor = !process.env.NO_COLOR && !!process.stderr.isTTY;
 const B = useColor ? "\x1b[1m" : "";
 const R = useColor ? "\x1b[0m" : "";
 const RD = useColor ? "\x1b[1;31m" : "";
 
-function captureOpenshell(rootDir: string, args: string[]): CaptureOpenshellResult {
-  const openshell = resolveOpenshell();
-  if (!openshell) {
-    return { status: 1, output: "" };
-  }
-  return captureOpenshellCommand(openshell, args, {
-    cwd: rootDir,
-    ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
-}
-
 function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
-  const getDefaultSandbox = (): string | undefined => {
+  const sandboxObserver = createCliOpenShellSandboxObserver({
+    capture: (args, options) => {
+      const openshell = resolveOpenshell();
+      if (!openshell) return { status: 1, output: "" };
+      return captureOpenshellCommand(openshell, args, { cwd: rootDir, ...options });
+    },
+  });
+
+  const liveSandboxNames = async (): Promise<ReadonlySet<string> | undefined> => {
+    const result = await sandboxObserver.listSandboxes({ target: selectedOpenShellGateway() });
+    if (!result.ok) return undefined;
+    return new Set(result.value.sandboxes.map((sandbox) => sandbox.name));
+  };
+
+  const getDefaultSandbox = async (): Promise<string | undefined> => {
     const { defaultSandbox, sandboxes } = registry.listSandboxes();
     if (!defaultSandbox) return undefined;
     if (!sandboxes.find((sandbox) => sandbox.name === defaultSandbox)) {
@@ -46,8 +47,8 @@ function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
       );
       return undefined;
     }
-    const liveList = captureOpenshell(rootDir, ["sandbox", "list"]);
-    if (liveList.status === 0 && !parseLiveSandboxNames(liveList.output).has(defaultSandbox)) {
+    const liveNames = await liveSandboxNames();
+    if (liveNames && !liveNames.has(defaultSandbox)) {
       console.error(
         `${RD}Warning:${R} default sandbox '${defaultSandbox}' exists in the local registry but not in OpenShell.`,
       );
@@ -59,14 +60,11 @@ function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
     return defaultSandbox;
   };
 
-  const isSandboxKnown = (name: string): boolean => {
+  const isSandboxKnown = async (name: string): Promise<boolean> => {
     const { sandboxes } = registry.listSandboxes();
     if (!sandboxes.find((sandbox) => sandbox.name === name)) return false;
-    const liveList = captureOpenshell(rootDir, ["sandbox", "list"]);
-    if (liveList.status === 0 && !parseLiveSandboxNames(liveList.output).has(name)) {
-      return false;
-    }
-    return true;
+    const liveNames = await liveSandboxNames();
+    return !liveNames || liveNames.has(name);
   };
 
   return {
@@ -99,6 +97,6 @@ export default class DebugCliCommand extends NemoClawCommand {
     if (flags.quick) options.quick = true;
     if (flags.output) options.output = flags.output;
     if (flags.sandbox) options.sandboxName = flags.sandbox;
-    runDebugCommandWithOptions(options, buildDebugCommandDeps(this.config.root));
+    await runDebugCommandWithOptions(options, buildDebugCommandDeps(this.config.root));
   }
 }

@@ -4,8 +4,8 @@
 import type { DebugOptions } from "./debug";
 
 export interface RunDebugCommandDeps {
-  getDefaultSandbox: () => string | undefined;
-  isSandboxKnown: (name: string) => boolean;
+  getDefaultSandbox: () => Promise<string | undefined>;
+  isSandboxKnown: (name: string) => Promise<boolean>;
   runDebug: (options: DebugOptions) => void;
   env?: NodeJS.ProcessEnv;
   errorLine?: (message: string) => void;
@@ -31,7 +31,10 @@ function resolveExplicitName(
   return null;
 }
 
-export function runDebugCommandWithOptions(options: DebugOptions, deps: RunDebugCommandDeps): void {
+export async function runDebugCommandWithOptions(
+  options: DebugOptions,
+  deps: RunDebugCommandDeps,
+): Promise<void> {
   const opts = { ...options };
   const env = deps.env ?? process.env;
   const errorLine = deps.errorLine ?? ((msg: string) => console.error(msg));
@@ -43,7 +46,7 @@ export function runDebugCommandWithOptions(options: DebugOptions, deps: RunDebug
 
   const explicit = resolveExplicitName(opts, env);
   if (explicit) {
-    if (!deps.isSandboxKnown(explicit.name)) {
+    if (!(await deps.isSandboxKnown(explicit.name))) {
       const sourceLabel =
         explicit.source === "env" && explicit.envVar ? ` (from ${explicit.envVar})` : "";
       errorLine(`Error: Sandbox '${explicit.name}'${sourceLabel} is not registered.`);
@@ -53,7 +56,7 @@ export function runDebugCommandWithOptions(options: DebugOptions, deps: RunDebug
     }
     opts.sandboxName = explicit.name;
   } else {
-    opts.sandboxName = deps.getDefaultSandbox();
+    opts.sandboxName = await deps.getDefaultSandbox();
   }
 
   deps.runDebug(opts);

@@ -177,12 +177,45 @@ describe("simple global oclif adapters", testTimeoutOptions(30_000), () => {
     await DebugCliCommand.run(["--quick"], rootDir);
 
     const deps = mocks.runDebugCommandWithOptions.mock.calls[0][1];
-    expect(deps.getDefaultSandbox()).toBe("alpha");
+    await expect(deps.getDefaultSandbox()).resolves.toBe("alpha");
     expect(mocks.captureOpenshellCommand).toHaveBeenCalledWith(
       "/usr/bin/openshell",
       ["sandbox", "list"],
-      expect.objectContaining({ cwd: rootDir, ignoreError: true }),
+      expect.objectContaining({
+        cwd: rootDir,
+        ignoreError: true,
+        includeStderr: true,
+        includeStreams: true,
+      }),
     );
+  });
+
+  it("rejects a registered debug sandbox missing from a successful OpenShell observation", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      defaultSandbox: "alpha",
+      sandboxes: [{ name: "alpha" }],
+    } as never);
+    mocks.captureOpenshellCommand.mockReturnValue({ status: 0, output: "beta\n" });
+
+    await DebugCliCommand.run(["--quick"], rootDir);
+
+    const deps = mocks.runDebugCommandWithOptions.mock.calls[0][1];
+    await expect(deps.getDefaultSandbox()).resolves.toBeUndefined();
+    await expect(deps.isSandboxKnown("alpha")).resolves.toBe(false);
+  });
+
+  it("keeps registered debug sandboxes when OpenShell observation fails", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      defaultSandbox: "alpha",
+      sandboxes: [{ name: "alpha" }],
+    } as never);
+    mocks.captureOpenshellCommand.mockReturnValue({ status: 1, output: "unavailable" });
+
+    await DebugCliCommand.run(["--quick"], rootDir);
+
+    const deps = mocks.runDebugCommandWithOptions.mock.calls[0][1];
+    await expect(deps.getDefaultSandbox()).resolves.toBe("alpha");
+    await expect(deps.isSandboxKnown("alpha")).resolves.toBe(true);
   });
 
   it("maps gateway-token flags to the gateway token action", async () => {
