@@ -73,8 +73,7 @@
         "src/lib/agent/candidate.test.ts",
         "src/lib/agent/pi-lifecycle.test.ts",
         "src/lib/onboard/pi-candidate-rebuild.test.ts",
-        "test/e2e/support/pi-agent-qualification-events.test.ts",
-        "test/agents/openclaw/runtime/pi-candidate-runtime-artifacts.test.ts"
+        "test/e2e/support/pi-agent-qualification-events.test.ts"
       ]
     },
     {

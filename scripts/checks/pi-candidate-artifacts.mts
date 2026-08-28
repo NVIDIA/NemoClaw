@@ -38,11 +38,11 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-
-import ts from "typescript";
 import { isDeepStrictEqual } from "node:util";
+
 import { parse as parseYaml } from "yaml";
 
+import { CANDIDATE_QUALIFICATION_RECEIPT_DIGESTS } from "../../src/lib/agent/candidate-authority.ts";
 import { validateCandidateContract } from "../../tools/managed-images/validate-candidate-contract.mts";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -136,12 +136,10 @@ const REQUIRED_ARTIFACTS = [
   "agents/pi/pi-runtime/package.json",
   "agents/pi/policy-additions.yaml",
   "agents/pi/start.sh",
-  PI_CANDIDATE_AUTHORITY_PATH,
   ...Object.values(PI_QUALIFICATION_RECEIPT_PATHS),
 ] as const;
 
 type PiArtifactSources = Readonly<{
-  candidateAuthority: string;
   dependencyReview: string;
   dockerfile: string;
   dockerfileBase: string;
@@ -354,32 +352,7 @@ function verifyPiQualificationReceipts(sources: PiArtifactSources): string[] {
   const expectedDigests = receipts
     .map(({ contents }) => createHash("sha256").update(contents, "utf8").digest("hex"))
     .sort();
-  const authoritySource = ts.createSourceFile(
-    PI_CANDIDATE_AUTHORITY_PATH,
-    sources.candidateAuthority,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
-  let publishedDigests: string[] = [];
-  const visitAuthority = (node: ts.Node): void => {
-    if (
-      ts.isPropertyAssignment(node) &&
-      node.name.getText(authoritySource) === "pi" &&
-      ts.isCallExpression(node.initializer) &&
-      node.initializer.expression.getText(authoritySource) === "Object.freeze"
-    ) {
-      const array = node.initializer.arguments[0];
-      if (array && ts.isArrayLiteralExpression(array)) {
-        publishedDigests = array.elements.flatMap((element) =>
-          ts.isStringLiteral(element) && /^[a-f0-9]{64}$/u.test(element.text) ? [element.text] : [],
-        );
-      }
-    }
-    ts.forEachChild(node, visitAuthority);
-  };
-  visitAuthority(authoritySource);
-  publishedDigests.sort();
+  const publishedDigests = [...CANDIDATE_QUALIFICATION_RECEIPT_DIGESTS.pi].sort();
   if (!isDeepStrictEqual(publishedDigests, expectedDigests)) {
     failures.push(
       `${PI_CANDIDATE_AUTHORITY_PATH}: accepted digests must match the exact Pi qualification receipts`,
@@ -666,7 +639,6 @@ function main(): void {
     process.exit(1);
   }
   const failures = verifyPiCandidateArtifacts({
-    candidateAuthority: readRepoFile(PI_CANDIDATE_AUTHORITY_PATH),
     dependencyReview: readRepoFile("agents/pi/dependency-review.md"),
     dockerfile: readRepoFile("agents/pi/Dockerfile"),
     dockerfileBase: readRepoFile("agents/pi/Dockerfile.base"),
