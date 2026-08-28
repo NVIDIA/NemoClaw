@@ -173,15 +173,16 @@ process.exit(2);
     writeHermesRegistry();
     process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
     process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
+    const names = archive === "declared" ? ["memories"] : ["memories", "sessions"];
+    const archiveResult = spawnSync("tar", ["-cf", "-", "-C", hermesDir, ...names], {
+      encoding: null,
+    });
+    expect(archiveResult.status).toBe(0);
+    expect(Buffer.isBuffer(archiveResult.stdout)).toBe(true);
+    const archiveBytes = archiveResult.stdout as Buffer;
     const captureStateDirectories = vi.fn(
       (_request: StateDirectoryCaptureRequest, archiveFd: number) => {
-        const names = archive === "declared" ? ["memories"] : ["memories", "sessions"];
-        const result = spawnSync("tar", ["-cf", "-", "-C", hermesDir, ...names], {
-          encoding: null,
-        });
-        expect(result.status).toBe(0);
-        expect(Buffer.isBuffer(result.stdout)).toBe(true);
-        fs.writeSync(archiveFd, result.stdout as Buffer);
+        fs.writeSync(archiveFd, archiveBytes);
         return { outcome: "backed_up" as const };
       },
     );
