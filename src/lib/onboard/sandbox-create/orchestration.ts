@@ -71,33 +71,41 @@ function cancelRecoveryIdentity(
   };
 }
 
-function createManagedBootstrapRegistryLifecycle(input: {
+export function createOnboardCreatedSandboxRegistrationWithManagedLifecycle(input: {
   readonly sandboxName: string;
   readonly managedBootstrap: boolean;
   readonly sandboxGpuEnabled: boolean;
   readonly createdLifecycle: CreatedSandboxLifecycle;
   readonly getRecordedRegistration: () => CreatedSandboxLifecycleRegistration;
-}): CreatedSandboxLifecycle {
-  if (!input.managedBootstrap) return input.createdLifecycle;
-  const capture = input.sandboxGpuEnabled
-    ? input.createdLifecycle.capture
-    : ({ lifecycleGeneration }: Pick<SandboxEntry, "lifecycleGeneration">) => {
-        const recordedRegistration = input.getRecordedRegistration();
-        if (lifecycleGeneration !== recordedRegistration.lifecycleGeneration) {
-          throw new Error(
-            `Cannot register sandbox '${input.sandboxName}': lifecycle setup did not preserve its generation.`,
-          );
-        }
-        return recordedRegistration;
-      };
-  return {
-    ...input.createdLifecycle,
-    capture,
-    revalidate: (registration) =>
-      input.createdLifecycle.revalidate(registration, {
-        allowNotReadyWithMatchingIdentity: true,
-      }),
-  };
+  readonly createRegistration: SandboxCreateOrchestrationRuntime["createOnboardCreatedSandboxRegistration"];
+  readonly registration: Omit<
+    Parameters<SandboxCreateOrchestrationRuntime["createOnboardCreatedSandboxRegistration"]>[0],
+    "createdLifecycle"
+  >;
+}) {
+  let createdLifecycle = input.createdLifecycle;
+  if (input.managedBootstrap) {
+    const capture = input.sandboxGpuEnabled
+      ? input.createdLifecycle.capture
+      : ({ lifecycleGeneration }: Pick<SandboxEntry, "lifecycleGeneration">) => {
+          const recordedRegistration = input.getRecordedRegistration();
+          if (lifecycleGeneration !== recordedRegistration.lifecycleGeneration) {
+            throw new Error(
+              `Cannot register sandbox '${input.sandboxName}': lifecycle setup did not preserve its generation.`,
+            );
+          }
+          return recordedRegistration;
+        };
+    createdLifecycle = {
+      ...input.createdLifecycle,
+      capture,
+      revalidate: (registration) =>
+        input.createdLifecycle.revalidate(registration, {
+          allowNotReadyWithMatchingIdentity: true,
+        }),
+    };
+  }
+  return input.createRegistration({ ...input.registration, createdLifecycle });
 }
 
 /** Persist one create-attempt recovery message through the onboard session owner. */
@@ -2771,23 +2779,24 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     // Managed bootstrap can invalidate OpenShell's cached Ready state after it
     // replaces the container. Registry publication stays bound to the durable
     // sandbox identity recorded before that replacement.
-    const createdSandboxRegistryLifecycle = createManagedBootstrapRegistryLifecycle({
-      sandboxName,
-      managedBootstrap: managedBootstrap !== null,
-      sandboxGpuEnabled: effectiveSandboxGpuConfig.sandboxGpuEnabled,
-      createdLifecycle: createdSandboxLifecycle,
-      getRecordedRegistration: () =>
-        requireDurableCreatedSandboxIdentity(
-          requireVerifiedPolicyGate().lifecycleLiveIdentityFingerprint,
-        ),
-    });
-    const completeCreatedSandboxRegistration = createOnboardCreatedSandboxRegistration({
-      completion: createdSandboxCompletion,
-      createdLifecycle: createdSandboxRegistryLifecycle,
-      cleanupBuildContext,
-      manageDashboard,
-      sandboxGpuEnabled: effectiveSandboxGpuConfig.sandboxGpuEnabled,
-    });
+    const completeCreatedSandboxRegistration =
+      createOnboardCreatedSandboxRegistrationWithManagedLifecycle({
+        sandboxName,
+        managedBootstrap: managedBootstrap !== null,
+        sandboxGpuEnabled: effectiveSandboxGpuConfig.sandboxGpuEnabled,
+        createdLifecycle: createdSandboxLifecycle,
+        getRecordedRegistration: () =>
+          requireDurableCreatedSandboxIdentity(
+            requireVerifiedPolicyGate().lifecycleLiveIdentityFingerprint,
+          ),
+        createRegistration: createOnboardCreatedSandboxRegistration,
+        registration: {
+          completion: createdSandboxCompletion,
+          cleanupBuildContext,
+          manageDashboard,
+          sandboxGpuEnabled: effectiveSandboxGpuConfig.sandboxGpuEnabled,
+        },
+      });
 
     const providerPreparationInput = {
       openshellDriver: sandboxRuntimeFields.openshellDriver,

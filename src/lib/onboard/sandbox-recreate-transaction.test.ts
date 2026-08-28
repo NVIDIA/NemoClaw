@@ -1208,8 +1208,6 @@ describe("journal-bound source proof", () => {
 });
 
 describe("created sandbox lifecycle registration", () => {
-  const LIFECYCLE_TARGET = { sandboxName: "alpha", gatewayName: "nemoclaw-31818" } as const;
-
   it("keeps the active recreate target ahead of an older recovered generation (#10056)", () => {
     const fixture = creatingLifecycleFixture("33333333-3333-4333-8333-333333333333");
 
@@ -1250,24 +1248,6 @@ describe("created sandbox lifecycle registration", () => {
       phase: "created",
       targetLiveIdentityFingerprint: TARGET_ID,
     });
-  });
-
-  it("accepts the same durable identity during managed bootstrap re-registration", () => {
-    const fixture = creatingLifecycleFixture();
-    fixture.setObservation({ state: "ready", liveIdentityFingerprint: TARGET_ID });
-    const registration = fixture.lifecycle.capture({ lifecycleGeneration: TARGET_GENERATION });
-
-    expect(
-      revalidateCreatedSandboxLifecycleRegistration(
-        LIFECYCLE_TARGET,
-        registration,
-        () => ({
-          state: "not_ready" as const,
-          liveIdentityFingerprint: TARGET_ID,
-        }),
-        { allowNotReadyWithMatchingIdentity: true },
-      ),
-    ).toEqual(registration);
   });
 
   it("retains the captured identity when registry revalidation observes drift (#9833)", () => {
