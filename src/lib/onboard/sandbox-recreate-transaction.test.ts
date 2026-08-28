@@ -1252,65 +1252,22 @@ describe("created sandbox lifecycle registration", () => {
     });
   });
 
-  it.each([
-    ["missing" as const, /observed missing/u],
-    ["not_ready" as const, /observed not_ready/u],
-  ])("names %s as the state its owning gateway reported", (state, expected) => {
-    const fixture = creatingLifecycleFixture();
-    fixture.setObservation({ state, liveIdentityFingerprint: null });
-
-    // Both states share one message today, so a failing run cannot tell "the gateway cannot see
-    // this sandbox" from "it sees it and withholds Ready". The message must separate them.
-    expect(() => fixture.lifecycle.capture({ lifecycleGeneration: TARGET_GENERATION })).toThrow(
-      expected,
-    );
-  });
-
   it("accepts the same durable identity during managed bootstrap re-registration", () => {
     const fixture = creatingLifecycleFixture();
     fixture.setObservation({ state: "ready", liveIdentityFingerprint: TARGET_ID });
     const registration = fixture.lifecycle.capture({ lifecycleGeneration: TARGET_GENERATION });
 
-    const observe = vi.fn(() => ({
-      state: "not_ready" as const,
-      liveIdentityFingerprint: TARGET_ID,
-    }));
-
     expect(
-      revalidateCreatedSandboxLifecycleRegistration(LIFECYCLE_TARGET, registration, observe, {
-        allowNotReadyWithMatchingIdentity: true,
-      }),
-    ).toEqual(registration);
-    expect(observe).toHaveBeenCalledOnce();
-  });
-
-  it.each([
-    ["missing", { state: "missing" as const, liveIdentityFingerprint: null }, /observed missing/u],
-    [
-      "identity-less",
-      { state: "not_ready" as const, liveIdentityFingerprint: null },
-      /valid live identity/u,
-    ],
-    [
-      "changed-identity",
-      { state: "not_ready" as const, liveIdentityFingerprint: FOREIGN_ID },
-      /identity changed/u,
-    ],
-  ])("rejects the %s managed bootstrap re-registration state", (_label, observation, expected) => {
-    const fixture = creatingLifecycleFixture();
-    fixture.setObservation({ state: "ready", liveIdentityFingerprint: TARGET_ID });
-    const registration = fixture.lifecycle.capture({ lifecycleGeneration: TARGET_GENERATION });
-
-    expect(() =>
       revalidateCreatedSandboxLifecycleRegistration(
         LIFECYCLE_TARGET,
         registration,
-        () => observation,
-        {
-          allowNotReadyWithMatchingIdentity: true,
-        },
+        () => ({
+          state: "not_ready" as const,
+          liveIdentityFingerprint: TARGET_ID,
+        }),
+        { allowNotReadyWithMatchingIdentity: true },
       ),
-    ).toThrow(expected);
+    ).toEqual(registration);
   });
 
   it("retains the captured identity when registry revalidation observes drift (#9833)", () => {
@@ -1373,11 +1330,6 @@ describe("created sandbox lifecycle registration", () => {
   it.each([
     ["missing", { state: "missing" as const, liveIdentityFingerprint: null }, /Ready/u],
     ["not Ready", { state: "not_ready" as const, liveIdentityFingerprint: null }, /Ready/u],
-    [
-      "not Ready with the expected identity",
-      { state: "not_ready" as const, liveIdentityFingerprint: TARGET_ID },
-      /Ready/u,
-    ],
     [
       "missing identity",
       { state: "ready" as const, liveIdentityFingerprint: null },

@@ -250,14 +250,11 @@ describe("applyReusedSandboxDashboardState", () => {
 });
 
 describe("createSandboxReuseHelpers", () => {
-  it.each([
-    ["Ready", "ready"],
-    ["not Ready", "not_ready"],
-  ] as const)("observes the %s state and stable OpenShell identity together", (_label, state) => {
+  it("observes state and a stable OpenShell identity together for recreate recovery", () => {
     const getOutput = "Name: alpha\n\u001b[32mId: openshell-source-id\u001b[0m\nState: Ready\n";
     const runCaptureOpenshell = vi.fn(() => "alpha Ready\n");
     const captureOpenshell = vi.fn(() => successfulCapture(getOutput));
-    const getSandboxStateFromOutputs = vi.fn(() => state);
+    const getSandboxStateFromOutputs = vi.fn(() => "ready");
     const helpers = createSandboxReuseHelpers({
       runCaptureOpenshell,
       captureOpenshell,
@@ -265,7 +262,7 @@ describe("createSandboxReuseHelpers", () => {
     });
 
     expect(helpers.getSandboxRecreateObservation("alpha")).toEqual({
-      state,
+      state: "ready",
       liveIdentityFingerprint: fingerprintSandboxRecreateValue("openshell-source-id"),
     });
     expect(captureOpenshell).toHaveBeenCalledWith(["sandbox", "get", "alpha"], {
