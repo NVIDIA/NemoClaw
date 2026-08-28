@@ -499,6 +499,71 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     expect(host.runPortableCleanup).not.toHaveBeenCalled();
   });
 
+  it.each<[string, (directory: string, homeDir: string) => string]>([
+    [
+      "the original directory is gone",
+      (directory, homeDir) => {
+        fs.rmSync(directory, { recursive: true });
+        const preserved = path.join(homeDir, "unrelated.conf");
+        fs.writeFileSync(preserved, "preserved\n", { mode: 0o600 });
+        return preserved;
+      },
+    ],
+    [
+      "the original directory was replaced",
+      (directory, homeDir) => {
+        fs.renameSync(directory, path.join(homeDir, "original-portable"));
+        fs.mkdirSync(directory, { mode: 0o700 });
+        const preserved = path.join(directory, "replacement.conf");
+        fs.writeFileSync(preserved, "preserved\n", { mode: 0o600 });
+        return preserved;
+      },
+    ],
+  ])("retires empty pending recovery when %s (#10545)", async (_case, prepare) => {
+    const host = scope("nemoclaw-uninstall-completed-pending-recovery-");
+    completedOpenClawAuthority(host, "default");
+    const directory = abandonedPortableConfig(host, 0o700);
+    restoredDirectories.pop();
+    const configRoot = path.dirname(directory);
+    const renameSync = fs.renameSync.bind(fs);
+    let failBinding = true;
+    vi.spyOn(fs, "renameSync").mockImplementation(((source, destination) =>
+      new Map<boolean, () => void>([
+        [
+          true,
+          () => {
+            failBinding = false;
+            throw new Error("injected failure before Portable configuration binding");
+          },
+        ],
+        [false, () => renameSync(source, destination)],
+      ]).get(
+        failBinding &&
+          path.resolve(String(source)) === path.resolve(directory) &&
+          path.basename(String(destination)) === "portable",
+      )!()) as typeof fs.renameSync);
+    host.rmSync.mockImplementation((target, options) =>
+      fs.rmSync(path.resolve(String(target)), options),
+    );
+
+    const first = await uninstall(host);
+
+    expect(first.exitCode).toBe(1);
+    expect(
+      fs.readdirSync(configRoot).some((entry) => entry.startsWith(".portable-cleanup-v1-pending-")),
+    ).toBe(true);
+    const preserved = prepare(directory, host.homeDir);
+
+    const second = await uninstall(host);
+
+    expect(second.exitCode).toBe(0);
+    expect(fs.existsSync(preserved)).toBe(true);
+    expect(
+      fs.readdirSync(configRoot).some((entry) => entry.startsWith(".portable-cleanup-v1-")),
+    ).toBe(false);
+    expect(host.runPortableCleanup).not.toHaveBeenCalled();
+  });
+
   it.each<[string, (configuration: string, homeDir: string) => string]>([
     [
       "a directory at containers.conf",

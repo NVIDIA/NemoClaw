@@ -476,19 +476,22 @@ export function removeAbandonedPortableConfiguration(directory: string): string 
 
   if (recovery.phase === "pending") {
     if (recovery.snapshot.entries.length === 0) {
-      if (!snapshot.identity || !sameRecordedDirectory(snapshot.identity, recovery))
-        throw new Error("Portable configuration cleanup recovery is incomplete");
-      assertPortableConfigurationFile(directory);
-      fs.renameSync(directory, path.join(recovery.path, "portable"));
-      fsyncDirectory(recovery.path);
-      fsyncDirectory(parent);
+      if (!snapshot.identity || !sameRecordedDirectory(snapshot.identity, recovery)) {
+        recovery = renamePortableConfigurationRecovery(parent, recovery, "removed");
+      } else {
+        assertPortableConfigurationFile(directory);
+        fs.renameSync(directory, path.join(recovery.path, "portable"));
+        fsyncDirectory(recovery.path);
+        fsyncDirectory(parent);
+      }
     } else if (isDeepStrictEqual(recovery.snapshot.entries, ["portable"])) {
       const moved = readPortableAuthorityDirectory(path.join(recovery.path, "portable"), true);
       if (!moved.identity || !sameRecordedDirectory(moved.identity, recovery))
         throw new Error("Portable configuration cleanup recovery changed before binding");
       assertPortableConfigurationFile(path.join(recovery.path, "portable"));
     } else throw new Error("Portable configuration cleanup recovery changed before binding");
-    recovery = renamePortableConfigurationRecovery(parent, recovery, "bound");
+    if (recovery.phase === "pending")
+      recovery = renamePortableConfigurationRecovery(parent, recovery, "bound");
   }
   if (recovery.phase === "bound") {
     if (isDeepStrictEqual(recovery.snapshot.entries, ["portable"]))

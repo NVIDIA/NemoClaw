@@ -217,6 +217,8 @@ An unexpected entry or a mismatch in file type, ownership, link count, or cleanu
 Uninstall preserves the remaining configuration and recovery state for a rerun.
 Ordinary cleanup records durable progress under `~/.config/nemoclaw/` with a `.portable-cleanup-v1-pending-*`, `.portable-cleanup-v1-bound-*`, or `.portable-cleanup-v1-removed-*` directory.
 Rerunning full uninstall resumes that recorded phase.
+An empty `.portable-cleanup-v1-pending-*` directory contains no quarantined configuration.
+If the original directory is absent or has a different identity, full uninstall retires the empty marker and preserves any replacement `portable/` directory.
 While any `.portable-cleanup-v1-*` recovery remains, NemoClaw stops onboarding and sandbox rebuild before either operation starts.
 Portable lifecycle uninstall also stops rather than recursively removing the recovery.
 Rerun full uninstall to resume or finalize ordinary cleanup before you run another Portable lifecycle operation.
