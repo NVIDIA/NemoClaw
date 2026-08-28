@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   withProvenManagedGatewayProcess,
+  withSuccessfulPreUninstallBackup,
   writeManagedGatewayRuntimeProof,
 } from "../../../../test/support/uninstall-managed-gateway-test-support";
 
@@ -68,7 +69,9 @@ function withManagedGatewayAuthority(deps: UninstallRunDeps): UninstallRunDeps {
   });
 }
 
-function bindManagedGatewayAuthority(run: typeof runUninstallPlanBase) {
+function bindManagedGatewayAuthority<T>(
+  run: (options: UninstallRunOptions, deps: UninstallRunDeps) => T,
+) {
   return (options: UninstallRunOptions, deps: UninstallRunDeps) =>
     run(options, withManagedGatewayAuthority(deps));
 }
@@ -186,7 +189,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(port));
       vi.resetModules();
       const runPortUninstall = bindManagedGatewayAuthority(
-        (await import("./run-plan")).runUninstallPlan,
+        (await import("./run-plan")).runUninstallPlanProduction,
       );
       const shared = path.join(tmpHome, ".nemoclaw");
       const selected = path.join(shared, "gateways", String(port));
@@ -214,7 +217,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       writeScopedGatewayState(tmpHome, port);
       const calls: string[][] = [];
 
-      const result = runPortUninstall(
+      const result = await runPortUninstall(
         {
           assumeYes: true,
           deleteModels: false,
@@ -222,7 +225,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
           gatewayName: `nemoclaw-${String(port)}`,
           keepOpenShell: false,
         },
-        {
+        withSuccessfulPreUninstallBackup({
           commandExists: (command) => command === "openshell",
           env: { HOME: tmpHome, NEMOCLAW_GATEWAY_PORT: String(port) } as NodeJS.ProcessEnv,
           error: vi.fn(),
@@ -236,7 +239,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
               : ok();
           },
           runDocker: () => ok(""),
-        },
+        }),
       );
 
       expect(result.exitCode).toBe(1);
@@ -263,7 +266,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(port));
       vi.resetModules();
       const runPortUninstall = bindManagedGatewayAuthority(
-        (await import("./run-plan")).runUninstallPlan,
+        (await import("./run-plan")).runUninstallPlanProduction,
       );
       const shared = path.join(tmpHome, ".nemoclaw");
       fs.mkdirSync(path.join(shared, "gateways", String(siblingPort)), { recursive: true });
@@ -294,7 +297,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       fs.utimesSync(abandonedLock, abandonedAt, abandonedAt);
       writeScopedGatewayState(tmpHome, port);
 
-      const result = runPortUninstall(
+      const result = await runPortUninstall(
         {
           assumeYes: true,
           deleteModels: false,
@@ -302,7 +305,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
           gatewayName: "nemoclaw",
           keepOpenShell: true,
         },
-        {
+        withSuccessfulPreUninstallBackup({
           commandExists: (command) => command === "openshell",
           env: { HOME: tmpHome, NEMOCLAW_GATEWAY_PORT: String(port) } as NodeJS.ProcessEnv,
           error: vi.fn(),
@@ -319,7 +322,7 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
                 )
               : ok(),
           runDocker: () => ok(""),
-        },
+        }),
       );
 
       expect(result.exitCode).toBe(0);
