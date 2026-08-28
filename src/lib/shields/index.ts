@@ -6537,22 +6537,25 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
     //     Each operation runs independently and the result is verified.
     //     If verification fails, config remains unlocked — we do not lie about state.
     console.log(`  Locking ${target.agentName} config (${target.configPath})...`);
-    let lockResult: { chattrApplied: boolean; fileHashes: { [path: string]: string } };
-    try {
-      lockResult = lockAgentConfig(
-        sandboxName,
-        target,
-        false,
-        opts.allowLegacyHermesProtocol === true,
-        protocol,
-      );
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+    const relock = relockAndReconfirm(
+      () =>
+        lockAgentConfig(
+          sandboxName,
+          target,
+          false,
+          opts.allowLegacyHermesProtocol === true,
+          protocol,
+        ),
+      { confirm: hermesProviderLockConfirmation(sandboxName, target, protocol) },
+    );
+    if (!relock.ok || !relock.lastResult) {
+      const message = relock.error ?? "Config lock did not re-confirm after settle window";
       console.error(`  ERROR: ${message}`);
       console.error("  Config remains unlocked — manual intervention required.");
       printManualRelockRecoveryHint(sandboxName);
       return failShieldsCommand(message, opts.throwOnError);
     }
+    const lockResult = relock.lastResult;
     saveShieldsState(sandboxName, {
       chattrApplied: lockResult.chattrApplied,
       fileHashes: lockResult.fileHashes,
