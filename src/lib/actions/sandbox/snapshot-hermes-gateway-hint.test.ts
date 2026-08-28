@@ -13,12 +13,12 @@ describe("printHermesGatewayRestoreHint (#7312)", () => {
       "hermes",
       ["runtime/state.db"],
       [{ path: "runtime/state.db", strategy: "sqlite_backup" }],
-      "nemoclaw",
+      "custom-cli",
       writeLine,
     );
 
     expect(writeLine).toHaveBeenCalledTimes(1);
-    expect(writeLine.mock.calls[0][0]).toContain("clone-test gateway restart");
+    expect(writeLine.mock.calls[0][0]).toContain("custom-cli clone-test gateway restart");
   });
 
   it("does not print a restart hint for non-database Hermes state files", () => {
