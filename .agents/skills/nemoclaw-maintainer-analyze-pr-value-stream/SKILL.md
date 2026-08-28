@@ -15,7 +15,7 @@ Run the deterministic read-only analyzer for one pull request. The analyzer uses
 
 - Run from a NemoClaw checkout with authenticated `gh` access.
 - Use Node.js 22.19 or later with type stripping enabled.
-- Retained Vitest artifact timing is conditional: install this checkout’s dependencies so a local `node_modules/.bin/vitest` is available, and install `zipinfo` and `unzip`. The analyzer still returns the bounded report when these optional tools or an artifact are unavailable, with the failure recorded in `caveats`.
+- Retained Vitest artifact timing is conditional: install this checkout’s dependencies so `node_modules/vitest/vitest.mjs` is available, and install `zipinfo` and `unzip`. The analyzer still returns the bounded report when these optional tools or an artifact are unavailable, with the failure recorded in `caveats`.
 
 ## Run the analysis
 

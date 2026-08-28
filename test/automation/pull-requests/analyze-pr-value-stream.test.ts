@@ -69,7 +69,9 @@ const args = process.argv.slice(2).join(" ");
 fs.appendFileSync(process.env.VALUE_STREAM_LOG, args + "\\n");
 const scenario = process.env.VALUE_STREAM_SCENARIO;
 const sha = "a".repeat(40);
-const pull = {number:42,url:"https://example.test/pr/42",state:"OPEN",isDraft:false,createdAt:"2026-01-01T00:01:00Z",mergedAt:null,baseRefName:"main",headRefName:"topic",headRefOid:sha,commits:[{oid:sha,committedDate:"2026-01-01T00:00:00Z"}],reviews:[]};
+const review = (state,time) => ({state,submittedAt:time,author:{login:"reviewer"},commit:{oid:sha}});
+const reviews = scenario === "approval-restored" ? [review("APPROVED","2026-01-01T00:02:45Z"),review("CHANGES_REQUESTED","2026-01-01T00:03:00Z"),review("APPROVED","2026-01-01T00:03:15Z")] : scenario === "approval-revoked" ? [review("APPROVED","2026-01-01T00:02:45Z"),review("CHANGES_REQUESTED","2026-01-01T00:03:00Z")] : [];
+const pull = {number:42,url:"https://example.test/pr/42",state:scenario.startsWith("approval-") ? "MERGED" : "OPEN",isDraft:false,createdAt:"2026-01-01T00:01:00Z",mergedAt:scenario.startsWith("approval-") ? "2026-01-01T00:04:00Z" : null,baseRefName:"main",headRefName:"topic",headRefOid:sha,commits:[{oid:sha,committedDate:"2026-01-01T00:00:00Z"}],reviews};
 const run = (id) => ({id,event:"push",head_sha:sha,created_at:"2026-01-01T00:00:30Z",run_started_at:scenario === "queued" ? null : "2026-01-01T00:00:31Z",updated_at:"2026-01-01T00:03:00Z",status:scenario === "queued" ? "queued" : "completed",conclusion:scenario === "queued" ? null : "success",name:"CI PR #42"});
 let value;
 if (args.startsWith("pr view")) value = pull;
@@ -139,13 +141,22 @@ afterEach(async () => {
 
 describe("pull request value-stream analysis", () => {
   test("rejects invalid bounded input before invoking GitHub (#10542)", async () => {
+    const fake = await fakeGithub("complete");
     const result = await execa(
       process.execPath,
       ["--experimental-strip-types", "--no-warnings", analyzer, "--number", "0"],
-      { reject: false },
+      {
+        env: {
+          ...process.env,
+          PATH: fake.directory + path.delimiter + process.env.PATH,
+          VALUE_STREAM_LOG: fake.logPath,
+        },
+        reject: false,
+      },
     );
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("number must be a positive integer");
+    await expect(readFile(fake.logPath, "utf8")).resolves.toBe("");
   });
 
   test("returns a complete bounded report through mocked process boundaries (#10542)", async () => {
@@ -229,6 +240,23 @@ describe("pull request value-stream analysis", () => {
       (await run("legacy-paginated", ["--max-test-artifacts", "0"])).stdout,
     );
     expect(report.events.automationSettled).toBe("2026-01-01T00:00:20.000Z");
+  });
+
+  test("uses the restored final-head approval after a later change request (#10542)", async () => {
+    const report = JSON.parse(
+      (await run("approval-restored", ["--max-test-artifacts", "0"])).stdout,
+    );
+    expect(report.events.firstFinalHeadApproval).toBe("2026-01-01T00:03:15.000Z");
+    expect(report.elapsed.approvalDelaySeconds).toBe(35);
+    expect(report.elapsed.mergeLagAfterReadySeconds).toBe(45);
+  });
+
+  test("omits a final-head approval superseded by a change request (#10542)", async () => {
+    const report = JSON.parse(
+      (await run("approval-revoked", ["--max-test-artifacts", "0"])).stdout,
+    );
+    expect(report.events.firstFinalHeadApproval).toBeNull();
+    expect(report.elapsed.approvalDelaySeconds).toBeNull();
   });
 
   test("reports accepted artifact timing from an isolated merge directory (#10542)", async () => {

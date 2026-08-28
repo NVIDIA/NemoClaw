@@ -1015,6 +1015,28 @@ type ValueStreamMetrics = {
   last: CheckRow | null;
 };
 
+function effectiveFinalHeadApproval(pull: any): number | null {
+  const latestByReviewer = new Map<string, any>();
+  const finalHeadReviews = pull.reviews
+    .filter(
+      (review: any) =>
+        review?.commit?.oid === pull.headRefOid &&
+        typeof review?.author?.login === "string" &&
+        Number.isFinite(Date.parse(review?.submittedAt)),
+    )
+    .sort((a: any, b: any) => Date.parse(a.submittedAt) - Date.parse(b.submittedAt));
+  for (const review of finalHeadReviews) latestByReviewer.set(review.author.login, review);
+  const effectiveApprovals = [...latestByReviewer.values()].filter(
+    (review: any) => review.state === "APPROVED",
+  );
+  if (effectiveApprovals.length === 0) return null;
+  return Math.min(
+    ...effectiveApprovals.map((review: any) =>
+      parseTime(review.submittedAt, "approval submittedAt"),
+    ),
+  );
+}
+
 function calculateValueStreamMetrics(context: MetricsContext): ValueStreamMetrics {
   const {
     pull,
@@ -1026,17 +1048,7 @@ function calculateValueStreamMetrics(context: MetricsContext): ValueStreamMetric
     successful,
     waterfall,
   } = context;
-  const finalApprovals = pull.reviews.filter(
-    (review: any) =>
-      review?.state === "APPROVED" &&
-      review?.commit?.oid === pull.headRefOid &&
-      Number.isFinite(Date.parse(review?.submittedAt)),
-  );
-  finalApprovals.sort((a: any, b: any) => Date.parse(a.submittedAt) - Date.parse(b.submittedAt));
-  const approval =
-    finalApprovals.length > 0
-      ? parseTime(finalApprovals[0].submittedAt, "approval submittedAt")
-      : null;
+  const approval = effectiveFinalHeadApproval(pull);
   const machineReady = automationSettled;
   const ready =
     machineReady === null

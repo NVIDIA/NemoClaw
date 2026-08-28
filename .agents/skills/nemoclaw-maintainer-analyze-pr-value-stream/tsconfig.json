@@ -1,7 +1,0 @@
-{
-  "extends": "../../../tsconfig.cli.json",
-  "compilerOptions": {
-    "noEmit": true
-  },
-  "include": ["scripts/analyze-pr-value-stream.mts"]
-}
