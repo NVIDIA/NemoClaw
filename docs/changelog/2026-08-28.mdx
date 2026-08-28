@@ -23,8 +23,8 @@ It also improves managed local inference and adds bounded experimental planning 
 - The Hermes installer accepts `--defer-onboarding` or `NEMOCLAW_DEFER_ONBOARDING=1` only for NVIDIA-hosted inference when no supported credential and no sandbox exist.
   It installs NemoClaw and Hermes without creating a provider, sandbox, or completed onboarding state; any credential or existing sandbox keeps the normal validation and recovery path.
   Related change: [PR #10299](https://github.com/NVIDIA/NemoClaw/pull/10299).
-- Managed DGX Spark llama.cpp onboarding now recommends NVIDIA Nemotron 3 Nano 30B-A3B.
-  Meta Muse Glimmer remains available only by explicit selection, and existing Muse-owned installations are not migrated.
+- The experimental managed llama.cpp path now offers NVIDIA Nemotron 3 Nano 30B-A3B on qualified DGX Spark Arm64 and Linux x86_64 NVIDIA GPU hosts and recommends it during onboarding.
+  Meta Muse Glimmer remains available on DGX Spark only by explicit selection, and existing Muse-owned installations are not migrated.
   Local NVIDIA NIM selection now enforces the documented usable-memory limit, including the DGX Spark unified-memory cap.
   Related changes: [PR #10122](https://github.com/NVIDIA/NemoClaw/pull/10122) and [PR #10292](https://github.com/NVIDIA/NemoClaw/pull/10292).
 - `nemoclaw upgrade-sandboxes --check` now exits nonzero when it reports actionable stale, unknown-version, backup-recovery, or missing-sandbox state.
