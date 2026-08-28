@@ -331,6 +331,29 @@ function scopeHermesPortableReadyListArgs(args: string[], gatewayName: string): 
   return null;
 }
 
+function scopeHermesPortableReadyExecArgs(
+  args: string[],
+  sandboxName: string,
+  gatewayName: string,
+): string[] | null {
+  const scoped = ["sandbox", "exec", "-g", gatewayName, "--name", sandboxName, "--", "true"];
+  if (
+    args.length === 6 &&
+    args[0] === "sandbox" &&
+    args[1] === "exec" &&
+    args[2] === "--name" &&
+    args[3] === sandboxName &&
+    args[4] === "--" &&
+    args[5] === "true"
+  ) {
+    return scoped;
+  }
+  if (args.length === scoped.length && args.every((value, index) => value === scoped[index])) {
+    return scoped;
+  }
+  return null;
+}
+
 /** Route create readiness and failed-create cleanup through exact schema-5 authority. */
 export function createHermesPortableReadyRunner(
   sandboxName: string,
@@ -342,20 +365,10 @@ export function createHermesPortableReadyRunner(
       scopeHermesPortableCreatedIdentityArgs(args, gatewayName) ??
       scopeHermesPortableReadyGetArgs(args, sandboxName, gatewayName) ??
       scopeHermesPortableReadyListArgs(args, gatewayName) ??
-      (args[0] === "sandbox" &&
-        args[1] === "delete" &&
-        args.length === 3 &&
-        args[2] === sandboxName
-          ? ["sandbox", "delete", "-g", gatewayName, args[2]!]
-          : args.length === 6 &&
-              args[0] === "sandbox" &&
-              args[1] === "exec" &&
-              args[2] === "--name" &&
-              args[3] === sandboxName &&
-              args[4] === "--" &&
-              args[5] === "true"
-            ? ["sandbox", "exec", "-g", gatewayName, "--name", args[3]!, "--", "true"]
-            : null);
+      scopeHermesPortableReadyExecArgs(args, sandboxName, gatewayName) ??
+      (args[0] === "sandbox" && args[1] === "delete" && args.length === 3 && args[2] === sandboxName
+        ? ["sandbox", "delete", "-g", gatewayName, args[2]!]
+        : null);
     if (!scoped) fail("create lifecycle attempted an unsupported OpenShell command");
     return capture(scoped);
   };
