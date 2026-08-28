@@ -15,6 +15,20 @@ type ProbeSandboxRoute = NonNullable<
   Parameters<typeof createDeps>[0]["probeSandboxRoute"]
 >;
 
+const OPENAI_PROFILE_OUTPUT = JSON.stringify({
+  id: "openai",
+  credentials: [],
+  endpoints: [],
+  binaries: [],
+  inference_capable: true,
+});
+const OPENAI_PROFILE_RESULT = {
+  status: 0,
+  output: OPENAI_PROFILE_OUTPUT,
+  stdout: OPENAI_PROFILE_OUTPUT,
+  stderr: "",
+};
+
 async function runRejectedCompatibleSwitchScenario(options: {
   targetFamily: "openai" | "anthropic";
   probeSandboxRoute: ProbeSandboxRoute;
@@ -295,6 +309,8 @@ describe("runInferenceSet compatible providers", () => {
     let providerCreated = false;
     const captureOpenshell = vi.fn((args: string[]) => {
       switch (`${args[0]}:${args[1]}`) {
+        case "provider:profile":
+          return OPENAI_PROFILE_RESULT;
         case "inference:set":
           return providerCreated
             ? { status: 0, output: "", stdout: "", stderr: "" }
@@ -407,6 +423,8 @@ describe("runInferenceSet compatible providers", () => {
     let providerPresent = false;
     const captureOpenshell = vi.fn((args: string[]) => {
       switch (`${args[0]}:${args[1]}`) {
+        case "provider:profile":
+          return OPENAI_PROFILE_RESULT;
         case "provider:get": {
           const missingOutput =
             "Error: code: 'Some requested entity was not found', message: \"provider not found\"";
@@ -599,6 +617,8 @@ describe("runInferenceSet compatible providers", () => {
     let providerVersion = 1;
     const captureOpenshell = vi.fn((args: string[]) => {
       switch (`${args[0]}:${args[1]}`) {
+        case "provider:profile":
+          return OPENAI_PROFILE_RESULT;
         case "provider:get": {
           const output = [
             "Name: compatible-endpoint",

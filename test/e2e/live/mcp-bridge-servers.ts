@@ -50,6 +50,7 @@ export interface FakeMcpRequest {
 
 export interface FakeMcpHttpsServer extends StartedHttpServer {
   setSecret(secret: string): void;
+  observations: FakeMcpRequest[];
   requests: FakeMcpRequest[];
   activeLegacySessionCount(): number;
 }
@@ -781,12 +782,12 @@ export async function startFakeMcpHttpsServer(options: {
       return { cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) };
     })();
   const requests: FakeMcpRequest[] = [];
+  const observations: FakeMcpRequest[] = [];
   const server = https.createServer(tls, async (req, res) => {
     const requestUrl = new URL(req.url ?? "/", "https://fake-mcp.local");
     const requestPath = requestUrl.pathname;
     const legacySessionId = requestUrl.searchParams.get("legacySessionId") ?? "";
     const legacySession = legacySessionId ? legacySessions.get(legacySessionId) : undefined;
-    const body = await readRequestBody(req);
     const auth = Array.isArray(req.headers.authorization)
       ? req.headers.authorization.join(",")
       : (req.headers.authorization ?? "");
@@ -796,45 +797,46 @@ export async function startFakeMcpHttpsServer(options: {
     const protocolVersion = Array.isArray(req.headers["mcp-protocol-version"])
       ? req.headers["mcp-protocol-version"].join(",")
       : (req.headers["mcp-protocol-version"] ?? "");
+    const recordedObservation: FakeMcpRequest = {
+      method: req.method ?? "",
+      path: requestPath,
+      auth,
+      body: "",
+      sessionId,
+      protocolVersion,
+      ...(legacySessionId ? { legacySessionId } : {}),
+      ...(legacySession ? { legacyPhase: legacySession.phase } : {}),
+    };
+    observations.push(recordedObservation);
+    const body = await readRequestBody(req);
+    recordedObservation.body = body;
     let parsedPayload: McpRequestPayload | null = null;
     try {
       parsedPayload = JSON.parse(body) as McpRequestPayload;
     } catch {
       // The protocol error below handles malformed JSON after recording it.
     }
+    const observedRequestId = jsonRpcId(parsedPayload?.id);
+    if (observedRequestId !== undefined) recordedObservation.rpcId = observedRequestId;
+    if (typeof parsedPayload?.method === "string") {
+      recordedObservation.rpcMethod = parsedPayload.method;
+    }
     // The public quick-tunnel readiness probe uses HEAD /mcp. Keep it out of
     // the protocol request ledger so zero-upstream decoy and policy-denial
     // assertions continue to measure only attempted MCP traffic.
-    let recordedRequest: FakeMcpRequest | undefined;
-    if (req.method !== "HEAD") {
-      const requestId = jsonRpcId(parsedPayload?.id);
-      recordedRequest = {
-        method: req.method ?? "",
-        path: requestPath,
-        auth,
-        body,
-        sessionId,
-        protocolVersion,
-        ...(legacySessionId ? { legacySessionId } : {}),
-        ...(legacySession ? { legacyPhase: legacySession.phase } : {}),
-        ...(requestId !== undefined ? { rpcId: requestId } : {}),
-        ...(typeof parsedPayload?.method === "string" ? { rpcMethod: parsedPayload.method } : {}),
-      };
-      requests.push(recordedRequest);
-    }
+    const recordedRequest = req.method === "HEAD" ? undefined : recordedObservation;
+    if (recordedRequest) requests.push(recordedRequest);
     const respondJson = (status: number, payload: unknown): void => {
-      if (recordedRequest) {
-        recordedRequest.responseStatus = status;
-        recordedRequest.responseHasResult =
-          typeof payload === "object" &&
-          payload !== null &&
-          Object.prototype.hasOwnProperty.call(payload, "result") &&
-          !Object.prototype.hasOwnProperty.call(payload, "error");
-      }
+      recordedObservation.responseStatus = status;
+      recordedObservation.responseHasResult =
+        typeof payload === "object" &&
+        payload !== null &&
+        Object.prototype.hasOwnProperty.call(payload, "result") &&
+        !Object.prototype.hasOwnProperty.call(payload, "error");
       jsonResponse(res, status, payload);
     };
     const respondEmpty = (status: number, headers?: http.OutgoingHttpHeaders): void => {
-      if (recordedRequest) recordedRequest.responseStatus = status;
+      recordedObservation.responseStatus = status;
       res.writeHead(status, headers);
       res.end();
     };
@@ -1141,6 +1143,7 @@ export async function startFakeMcpHttpsServer(options: {
   await listenOnRandomPort(server);
   return {
     port: requireTcpPort(server, "fake MCP endpoint"),
+    observations,
     requests,
     activeLegacySessionCount: () => legacySessions.size,
     setSecret: (secret: string) => {

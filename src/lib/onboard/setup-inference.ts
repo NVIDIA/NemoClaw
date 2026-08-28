@@ -36,6 +36,10 @@ import type { Session } from "../state/onboard-session";
 import { createSandboxHostLocalInferenceProvenance } from "../state/registry/host-local-inference";
 import { shouldFrontOllamaWithProxy } from "./local-inference-topology";
 import { resolveModelRouterPort } from "./model-router";
+import {
+  type RoutedProviderDeps,
+  upsertRoutedProvider as upsertRoutedInferenceProvider,
+} from "./routed-inference";
 
 export { assertNoOpenShellGatewayEndpointOverride };
 
@@ -284,9 +288,11 @@ export function bindGatewayUpsertProvider(
   revalidatePolicyRequirements?: (operation: string) => void,
 ): CommonDeps["upsertProvider"] {
   return (name, type, credentialEnv, baseUrl, env) =>
-    upsertProvider(name, type, credentialEnv, baseUrl, env, gatewayName, {
-      revalidatePolicyRequirements,
-    });
+    revalidatePolicyRequirements
+      ? upsertProvider(name, type, credentialEnv, baseUrl, env, gatewayName, {
+          revalidatePolicyRequirements,
+        })
+      : upsertProvider(name, type, credentialEnv, baseUrl, env, gatewayName);
 }
 
 export function bindOpenAiProviderProfile(
@@ -304,6 +310,37 @@ export function bindOpenAiProviderProfile(
       });
     }
     return upsertProvider(name, type, ...rest);
+  };
+}
+
+export function createRoutedResumeProviderUpsert(deps: {
+  upsertProvider: SetupInferenceDeps["upsertProvider"];
+  runGatewayOpenshell: InferenceProviderProfileDeps["runOpenshell"];
+  hydrateCredentialEnv: RoutedProviderDeps["hydrateCredentialEnv"];
+  error?: CommonDeps["error"];
+  exitProcess?: CommonDeps["exitProcess"];
+}) {
+  return (
+    gatewayName: string,
+    provider: string,
+    endpointUrl: string | null,
+    credentialEnv: string | null,
+  ) => {
+    const result = upsertRoutedInferenceProvider(provider, endpointUrl, credentialEnv, {
+      upsertProvider: bindOpenAiProviderProfile(
+        bindGatewayUpsertProvider(deps.upsertProvider, gatewayName),
+        deps.runGatewayOpenshell,
+        deps.error ?? console.error,
+        deps.exitProcess ?? ((code) => process.exit(code)),
+      ),
+      hydrateCredentialEnv: deps.hydrateCredentialEnv,
+    });
+    return {
+      ok: result.ok,
+      endpointUrl: result.endpointUrl,
+      message: result.result.message,
+      status: result.result.status,
+    };
   };
 }
 
@@ -554,11 +591,20 @@ export function createSetupInference(
     hermesToolGateways: string[] = [],
     options: ProviderInferenceSetupOptions = {},
   ): Promise<SetupInferenceResult> {
+    if (sandboxName && !options.revalidatePolicyRequirements) {
+      throw new Error("Sandbox inference setup requires policy authority revalidation.");
+    }
+    const revalidatePolicyRequirements = (operation: string): void => {
+      if (!sandboxName) return;
+      options.revalidatePolicyRequirements?.(operation);
+    };
     const gatewayName = options.gatewayName ?? deps.getGatewayName();
-    const revalidatePolicyRequirements = options.revalidatePolicyRequirements ?? (() => {});
     const endpointSource =
       options.endpointSource === undefined ? "onboard" : options.endpointSource;
     const routedProvider = deps.isRoutedInferenceProvider?.(provider) === true;
+    const usesBedrockRuntimeAdapter =
+      provider === "compatible-anthropic-endpoint" && isBedrockRuntimeEndpoint(endpointUrl);
+    let shouldLogSuccessfulRoute = false;
     const withInferenceMutationLocks = <T>(operation: () => Promise<T> | T): Promise<T> =>
       deps.withGatewayRouteMutationLock(gatewayName, () => {
         if (!routedProvider) return operation();
@@ -605,8 +651,6 @@ export function createSetupInference(
         // SigV4/bearer adapter rather than the generic curl probe path. Their
         // hostname is constrained to AWS-owned suffixes by the classifier, so
         // do not apply the custom-origin curl pinning contract here.
-        const usesBedrockRuntimeAdapter =
-          provider === "compatible-anthropic-endpoint" && isBedrockRuntimeEndpoint(endpointUrl);
         const usesOnboardEndpoint = matchesOnboardEndpoint(
           provider,
           endpointUrl,
@@ -1068,7 +1112,7 @@ export function createSetupInference(
             }
           }
           revalidatePolicyRequirements("report successful inference provider setup");
-          deps.log(`  ✓ Inference route set: ${provider} / ${model}`);
+          shouldLogSuccessfulRoute = true;
           return { ok: true as const };
         } catch (error) {
           if (!hostLocalRoute || !hostLocalSelection) throw error;
@@ -1127,6 +1171,9 @@ export function createSetupInference(
         deps,
         revalidatePolicyRequirements,
       );
+      if (shouldLogSuccessfulRoute && "ok" in result) {
+        deps.log(`  ✓ Inference route set: ${provider} / ${model}`);
+      }
       return result;
     };
     return sandboxName

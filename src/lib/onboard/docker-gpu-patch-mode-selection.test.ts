@@ -162,6 +162,28 @@ describe("docker-gpu-patch CDI-first mode selection (#4948)", () => {
     ]);
   });
 
+  it("can prohibit image pulls during GPU mode probes", () => {
+    const dockerRun = vi.fn<NonNullable<DockerGpuPatchDeps["dockerRun"]>>(() => ({
+      status: 0,
+      stdout: "probe-id",
+    }));
+
+    selectDockerGpuPatchMode(
+      { image: "openshell/sandbox:abc", pullPolicy: "never" },
+      {
+        dockerCapture: vi.fn(() => ""),
+        dockerRun,
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        readDir: vi.fn(() => null),
+        readFile: vi.fn(() => null),
+      },
+    );
+
+    expect(dockerRun.mock.calls[0]?.[0]).toEqual(
+      expect.arrayContaining(["create", "--pull", "never", "openshell/sandbox:abc", "true"]),
+    );
+  });
+
   it("falls back to NVIDIA runtime when Docker rejects --gpus", () => {
     const dockerRun = vi
       .fn()
@@ -183,6 +205,130 @@ describe("docker-gpu-patch CDI-first mode selection (#4948)", () => {
       "gpus",
       "nvidia-runtime",
     ]);
+  });
+
+  it("retries a transient Docker Desktop WSL GPU-mode probe", () => {
+    const dockerRun = vi
+      .fn()
+      .mockReturnValueOnce({ status: 1, stderr: "request returned 500 Internal Server Error" })
+      .mockReturnValueOnce({ status: 0, stdout: "probe-id" });
+    const sleep = vi.fn();
+
+    const selected = selectDockerGpuPatchMode(
+      {
+        image: "openshell/sandbox:abc",
+        dockerDesktopWsl: true,
+      },
+      {
+        dockerCapture: vi.fn(() => ""),
+        dockerRun,
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        sleep,
+      },
+    );
+
+    expect(selected.mode?.kind).toBe("gpus");
+    expect(selected.attempts.map((attempt) => [attempt.mode.kind, attempt.ok])).toEqual([
+      ["gpus", false],
+      ["gpus", true],
+    ]);
+    expect(sleep).toHaveBeenCalledOnce();
+    expect(sleep).toHaveBeenCalledWith(1);
+  });
+
+  it.each([
+    "could not select device driver with capabilities: [[gpu]]",
+    "No such image: image-500:latest",
+    "invalid reference format for image-503",
+  ])("does not retry permanent Docker Desktop WSL GPU-mode failure: %s", (stderr) => {
+    const dockerRun = vi.fn(() => ({ status: 1, stderr }));
+    const sleep = vi.fn();
+
+    const selected = selectDockerGpuPatchMode(
+      {
+        image: "openshell/sandbox:abc",
+        dockerDesktopWsl: true,
+      },
+      {
+        dockerCapture: vi.fn(() => ""),
+        dockerRun,
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        sleep,
+      },
+    );
+
+    expect(selected.mode).toBeNull();
+    expect(selected.attempts.map((attempt) => attempt.mode.kind)).toEqual([
+      "gpus",
+      "nvidia-runtime",
+    ]);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("does not mutate again when probe cleanup remains ambiguous", () => {
+    const dockerRun = vi
+      .fn()
+      .mockReturnValueOnce({ status: 1, stderr: "request returned 500 Internal Server Error" })
+      .mockReturnValueOnce({ status: 0, stdout: '[{"Id":"probe-id"}]' });
+    const sleep = vi.fn();
+
+    const selected = selectDockerGpuPatchMode(
+      {
+        image: "openshell/sandbox:abc",
+        dockerDesktopWsl: true,
+      },
+      {
+        dockerCapture: vi.fn(() => ""),
+        dockerRun,
+        dockerRm: vi.fn(() => ({ status: 1, stderr: "daemon cleanup failed" })),
+        sleep,
+      },
+    );
+
+    expect(selected.mode).toBeNull();
+    expect(selected.attempts).toEqual([
+      expect.objectContaining({
+        ok: false,
+        error:
+          "request returned 500 Internal Server Error; cleanup could not confirm container removal",
+      }),
+    ]);
+    expect(dockerRun).toHaveBeenCalledTimes(2);
+    expect(dockerRun.mock.calls[1]?.[0]).toEqual([
+      "container",
+      "inspect",
+      expect.stringMatching(/^nemoclaw-gpu-probe-/),
+    ]);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("does not accept a successful probe when cleanup remains ambiguous", () => {
+    const dockerRun = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "probe-id" })
+      .mockReturnValueOnce({ status: 0, stdout: '[{"Id":"probe-id"}]' });
+
+    const selected = selectDockerGpuPatchMode(
+      {
+        image: "openshell/sandbox:abc",
+        dockerDesktopWsl: true,
+      },
+      {
+        dockerCapture: vi.fn(() => ""),
+        dockerRun,
+        dockerRm: vi.fn(() => ({ status: 1, stderr: "daemon cleanup failed" })),
+        sleep: vi.fn(),
+      },
+    );
+
+    expect(selected.mode).toBeNull();
+    expect(selected.attempts).toEqual([
+      expect.objectContaining({
+        ok: false,
+        error: "Docker GPU probe succeeded, but cleanup could not confirm container removal",
+      }),
+    ]);
+    expect(dockerRun).toHaveBeenCalledTimes(2);
   });
 
   it("probes only NVIDIA runtime for Jetson Docker GPU mode", () => {
@@ -302,7 +448,7 @@ describe("docker-gpu-patch CDI-first mode selection (#4948)", () => {
     const detectSandboxFallbackDns = vi.fn(() => null);
 
     const result = recreateOpenShellDockerSandboxWithGpu(
-      { sandboxName: "alpha", timeoutSecs: 1 },
+      { sandboxName: "alpha", timeoutSecs: 1, waitForSupervisor: false },
       {
         dockerCapture,
         readDir: host.readDir,

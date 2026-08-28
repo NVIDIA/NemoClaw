@@ -51,6 +51,7 @@ on:
       - "src/lib/security/credential-hash.ts"
       - "src/lib/state/paths.ts"
       - "src/lib/state/state-root.ts"
+      - "test/e2e/live/mcp-bridge*.ts"
       - "test/e2e/live/managed-image-activation-e2e*.ts"
       - "src/lib/tool-disclosure.ts"
       - "tools/mcp-tool-discovery-runtime/**"

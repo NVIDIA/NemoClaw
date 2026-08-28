@@ -3,10 +3,12 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { SandboxEntry } from "../../state/registry/types";
 import {
   hermesPortableCreatePolicySemanticDigest,
   hermesPortablePolicyAuthorityInternals,
   proveHermesPortableLivePolicy,
+  resolveHermesPortableExpectedPolicyBytes,
   type HermesPortablePolicyCaptureResult,
 } from "./hermes-portable-policy-authority";
 
@@ -76,6 +78,14 @@ network_policies:
         port: 443
 `);
 
+const PERSONAL_REGISTRY = {
+  name: "alpha",
+  agent: "hermes",
+  policyTier: "personal",
+  policies: ["personal-open-internet"],
+  policyPresetsFinalized: true,
+} satisfies SandboxEntry;
+
 function result(
   stdout: Buffer,
   status = 0,
@@ -125,6 +135,75 @@ describe("Hermes portable policy authority", () => {
     expect(proof.verifiedLivePolicySemanticSha256).not.toBe(proof.intendedSemanticSha256);
     expect(capture).toHaveBeenCalledTimes(2);
   });
+
+  it("accepts the exact Personal policy derived from finalized registry authority (#9211)", () => {
+    const expected = resolveHermesPortableExpectedPolicyBytes(CREATE, PERSONAL_REGISTRY);
+    const capture = vi.fn(() => result(expected.bytes));
+
+    const proof = proveHermesPortableLivePolicy({
+      gatewayName: "nemoclaw",
+      sandboxName: "alpha",
+      createPolicyBytes: CREATE,
+      finalizedRegistryEntry: PERSONAL_REGISTRY,
+      capture,
+    });
+
+    expect(expected.source).toBe("finalized-registry");
+    expect(expected.bytes.toString("utf8")).toContain("personal_open_internet");
+    expect(expected.bytes.toString("utf8")).not.toContain("inference.local");
+    expect(proof.expectedPolicySource).toBe("finalized-registry");
+    expect(proof.verifiedLivePolicySemanticSha256).toBe(proof.intendedSemanticSha256);
+  });
+
+  it("does not accept Personal policy before registry finalization (#9211)", () => {
+    const expected = resolveHermesPortableExpectedPolicyBytes(CREATE, PERSONAL_REGISTRY);
+
+    expect(() =>
+      proveHermesPortableLivePolicy({
+        gatewayName: "nemoclaw",
+        sandboxName: "alpha",
+        createPolicyBytes: CREATE,
+        finalizedRegistryEntry: { ...PERSONAL_REGISTRY, policyPresetsFinalized: undefined },
+        capture: () => result(expected.bytes),
+      }),
+    ).toThrow("base policy disagrees with create input");
+  });
+
+  it.each([
+    [
+      "a missing tier preset",
+      { ...PERSONAL_REGISTRY, policies: [] },
+      "finalized policy tier disagrees with preset authority",
+    ],
+    [
+      "an unknown preset",
+      { ...PERSONAL_REGISTRY, policyTier: "restricted", policies: ["not-a-real-preset"] },
+      "cannot compose finalized registry preset authority",
+    ],
+    [
+      "a duplicate preset",
+      {
+        ...PERSONAL_REGISTRY,
+        policies: ["personal-open-internet", "personal-open-internet"],
+      },
+      "finalized registry preset authority is invalid",
+    ],
+    [
+      "a custom policy",
+      {
+        ...PERSONAL_REGISTRY,
+        customPolicies: [{ name: "custom", content: "network_policies: {}\n" }],
+      },
+      "finalized custom policy authority is not supported",
+    ],
+  ])(
+    "rejects finalized registry authority with %s (#9211)",
+    (_label, entry, expectedMessage) => {
+      expect(() =>
+        resolveHermesPortableExpectedPolicyBytes(CREATE, entry satisfies SandboxEntry),
+      ).toThrow(`Hermes portable policy authority ${expectedMessage}`);
+    },
+  );
 
   it.each([
     {

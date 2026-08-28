@@ -34,6 +34,7 @@ export default async function prepare_isolated_pr_worktrees(input: {
     number: Integer;
     url: string;
     path: string;
+    absolutePath: string;
     commit: string;
     baseCommit: string;
     baseBranch: string;

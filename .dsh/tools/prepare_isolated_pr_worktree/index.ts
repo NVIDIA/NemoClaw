@@ -25,6 +25,7 @@ export default async function prepare_isolated_pr_worktree(input: {
   number: Integer;
   url: string;
   path: string;
+  absolutePath: string;
   commit: string;
   baseCommit: string;
   baseBranch: string;
@@ -222,6 +223,7 @@ export default async function prepare_isolated_pr_worktree(input: {
     number: item.number,
     url: item.url,
     path: relativePath,
+    absolutePath: targetPath,
     commit: item.headRefOid,
     baseCommit: item.baseRefOid,
     baseBranch: item.baseRefName,

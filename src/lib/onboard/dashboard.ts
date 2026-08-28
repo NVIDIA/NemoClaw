@@ -112,7 +112,7 @@ export interface OnboardDashboardHelpers {
   buildOrphanedSandboxRollbackMessage(
     sandboxName: string,
     err: unknown,
-    deleteSucceeded: boolean,
+    gatewayName?: string,
   ): string[];
   ensureDashboardForward(
     sandboxName: string,
@@ -300,36 +300,28 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   function buildOrphanedSandboxRollbackMessage(
     sandboxName: string,
     err: unknown,
-    deleteSucceeded: boolean,
+    gatewayName?: string,
   ): string[] {
+    const owningGateway = gatewayName?.trim();
     const lines = [
       "",
       `  Could not allocate a dashboard port for '${sandboxName}'.`,
       `  ${err instanceof Error ? err.message : String(err)}`,
+      "  NemoClaw left the sandbox running because OpenShell deletion targets a mutable name.",
     ];
-    if (deleteSucceeded) {
+    if (owningGateway) {
       lines.push(
-        "  The orphaned sandbox has been removed. Resolve the error above before retrying.",
+        "  Verify the sandbox identity, then clean up manually:",
+        `    openshell sandbox delete -g ${JSON.stringify(owningGateway)} ${JSON.stringify(sandboxName)}`,
       );
     } else {
-      lines.push("  Could not remove the orphaned sandbox. Manual cleanup:");
-      lines.push(`    openshell sandbox delete "${sandboxName}"`);
+      lines.push("  The owning OpenShell gateway is unknown. Do not delete a same-name sandbox.");
     }
     return lines;
   }
 
-  function rollbackSandboxAndExit(
-    sandboxName: string,
-    err: unknown,
-    revalidatePolicyAuthority?: (operation: string) => void,
-  ): never {
-    revalidatePolicyAuthority?.(`remove sandbox '${sandboxName}' after dashboard failure`);
-    const delResult = deps.runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
-    for (const line of buildOrphanedSandboxRollbackMessage(
-      sandboxName,
-      err,
-      delResult.status === 0,
-    )) {
+  function rollbackSandboxAndExit(sandboxName: string, err: unknown, gatewayName?: string): never {
+    for (const line of buildOrphanedSandboxRollbackMessage(sandboxName, err, gatewayName)) {
       console.error(line);
     }
     process.exit(1);
@@ -389,7 +381,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       );
     } catch (err) {
       if (!rollbackSandboxOnFailure) throw err;
-      rollbackSandboxAndExit(sandboxName, err, revalidatePolicyAuthority);
+      rollbackSandboxAndExit(sandboxName, err, options.gatewayName);
     }
 
     if (actualPort !== preferredPort) {
@@ -405,7 +397,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
             `CHAT_UI_URL=${preferredPort}. Free the port and re-run \`${deps.cliName()} onboard\`, ` +
             `or pass \`--control-ui-port <N>\` to pick a different dashboard port.`,
         );
-        rollbackSandboxAndExit(sandboxName, err, revalidatePolicyAuthority);
+        rollbackSandboxAndExit(sandboxName, err, options.gatewayName);
       }
       console.warn(`  ! Port ${preferredPort} is taken. Using port ${actualPort} instead.`);
     }
@@ -452,7 +444,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
                 `or pass \`--control-ui-port <N>\` to pick a different dashboard port.`
             : `Failed to start dashboard forward on port ${actualPort}: ${fwdDiagnostic.slice(0, 240)}`,
         );
-        rollbackSandboxAndExit(sandboxName, err, revalidatePolicyAuthority);
+        rollbackSandboxAndExit(sandboxName, err, options.gatewayName);
       }
       if (looksLikePortConflict) {
         console.warn(
@@ -478,7 +470,8 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         note: deps.note,
         rollbackOnFailure: {
           runOpenshell: deps.runOpenshell,
-          buildRollbackMessage: buildOrphanedSandboxRollbackMessage,
+          buildRollbackMessage: (name, error) =>
+            buildOrphanedSandboxRollbackMessage(name, error, options.gatewayName),
           cliName: deps.cliName,
           forwardPortsToStop: [actualPort],
           beforeMutation: revalidatePolicyAuthority,

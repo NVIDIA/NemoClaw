@@ -5,6 +5,7 @@ import { type MockInstance, vi } from "vitest";
 import type { GatewayRestartResult } from "../../src/lib/actions/sandbox/gateway-restart";
 import type { SandboxGatewayState } from "../../src/lib/actions/sandbox/gateway-state";
 import type { SandboxPolicyAuthorityInspection } from "../../src/lib/adapters/openshell/policy-authority";
+import type { OpenShellSandboxInventory } from "../../src/lib/adapters/openshell/sandbox-observer";
 import type {
   finalizePreparedRebuildImageMessagingPlan,
   RebuildImagePreflightResult,
@@ -13,6 +14,12 @@ import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/r
 import type { VersionCheckResult } from "../../src/lib/sandbox/version";
 import type { PreservedEnvFile } from "../../src/lib/state/preserved-env";
 import type { SandboxRemovalReceipt } from "../../src/lib/state/registry";
+import {
+  LIFECYCLE_GENERATION,
+  POLICY_HASH,
+  POLICY_VERSION,
+  SANDBOX_IDENTITY,
+} from "./managed-policy-receipt-fixture";
 
 export type RebuildSandbox =
   (typeof import("../../src/lib/actions/sandbox/rebuild"))["rebuildSandbox"];
@@ -82,7 +89,7 @@ export type RebuildFlowOverrides = {
   sandboxEntry?: Record<string, unknown>;
   sandboxBaseImageLabelsOutput?: string;
   sessionSandboxName?: string;
-  sandboxListOutput?: string;
+  sandboxInventory?: OpenShellSandboxInventory;
   defaultSandbox?: string | null;
   preDeleteSandboxEntry?: Record<string, unknown>;
   preDeleteDefaultSandbox?: string | null;
@@ -178,6 +185,44 @@ export type RebuildFlowHarness = {
   finalizePreparedImageSpy: MockInstance;
   session: RebuildFlowSession;
 };
+
+export function withManagedRebuildPolicyReceipt<T extends Record<string, unknown>>(
+  entry: T,
+): T {
+  if (
+    entry.policyAuthority !== "nemoclaw-managed" ||
+    Object.hasOwn(entry, "policyCreationReceipt")
+  ) {
+    return entry;
+  }
+  const gatewayName = entry.gatewayName === undefined ? "nemoclaw" : entry.gatewayName;
+  const gatewayPort = entry.gatewayPort === undefined ? 8080 : entry.gatewayPort;
+  const lifecycleGeneration =
+    entry.lifecycleGeneration === undefined ? LIFECYCLE_GENERATION : entry.lifecycleGeneration;
+  const sandboxIdentityFingerprint =
+    entry.lifecycleLiveIdentityFingerprint === undefined
+      ? SANDBOX_IDENTITY
+      : entry.lifecycleLiveIdentityFingerprint;
+  return {
+    ...entry,
+    gatewayName,
+    gatewayPort,
+    lifecycleGeneration,
+    lifecycleLiveIdentityFingerprint: sandboxIdentityFingerprint,
+    policyCreationReceipt: {
+      schemaVersion: 1,
+      origin: "sandbox-create",
+      gatewayName,
+      gatewayPort,
+      sandboxName: entry.name,
+      lifecycleGeneration,
+      sandboxIdentityFingerprint,
+      policyHash: POLICY_HASH,
+      policyVersion: POLICY_VERSION,
+    },
+  };
+}
+
 export const originalSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
 export function snapshotEnv(names: readonly string[]): () => void {
   const saved = names.map((name) => [name, process.env[name]] as const);

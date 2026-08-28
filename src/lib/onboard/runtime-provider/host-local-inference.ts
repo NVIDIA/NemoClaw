@@ -71,6 +71,8 @@ export interface HostLocalManagedInferenceInput extends HostLocalInferenceEndpoi
   readonly gpuDevices: readonly string[];
   /** Environment variable names forwarded from the current process; values are never persisted. */
   readonly environment?: readonly string[];
+  /** Exact non-secret Ollama daemon context window persisted as managed runtime authority. */
+  readonly ollamaContextLength?: number;
   readonly mounts?: readonly HostLocalInferenceMount[];
   readonly sharedMemory?: string;
   readonly ipc?: "host" | "private";

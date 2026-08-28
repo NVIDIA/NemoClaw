@@ -23,8 +23,8 @@ Adding a new token shape:
    ordinary hyphenated text. The ``\\bsk-`` branch is the canonical
    left-bounded shape; copy that form for new vendor prefixes.
 3. Add a positive test (the shape is redacted) AND a regression test (a
-   near-miss is preserved) in ``test/redact-text.test.ts``. Both must run
-   before merge; ``test/redact-text.test.ts`` is the single home for
+   near-miss is preserved) in ``test/credentials/redact-text.test.ts``. Both must run
+   before merge; ``test/credentials/redact-text.test.ts`` is the single home for
    redactor unit coverage.
 4. Document the new shape in the file-level paragraph above so reviewers
    know the catalogue surface without reading the regex.

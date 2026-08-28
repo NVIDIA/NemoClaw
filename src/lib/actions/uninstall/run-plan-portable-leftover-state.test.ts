@@ -129,6 +129,7 @@ function abandonedPortableConfig(host: ReturnType<typeof scope>, mode: number): 
 function completedOpenClawAuthority(
   host: ReturnType<typeof scope>,
   profile: "default" | "portable",
+  registryAgent: null | "openclaw" | "hermes" = null,
 ): void {
   const portable = profile === "portable";
   const uid = process.getuid?.() ?? 1001;
@@ -201,7 +202,7 @@ function completedOpenClawAuthority(
       sandboxes: {
         [sandboxName]: {
           name: sandboxName,
-          agent: null,
+          agent: registryAgent,
           dashboardPort: 18789,
           gatewayName: gateway.gatewayName,
           gatewayPort: gateway.gatewayPort,
@@ -262,6 +263,33 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     completedOpenClawAuthority(host, "default");
 
     expectOrdinaryUninstall(host);
+  });
+
+  it("completes ordinary uninstall when managed OpenClaw registration records its explicit agent (#10073)", () => {
+    const host = scope("nemoclaw-uninstall-managed-openclaw-");
+    completedOpenClawAuthority(host, "default", "openclaw");
+
+    expectOrdinaryUninstall(host);
+  });
+
+  it("reports the registry agent field and recovery when completed onboarding identity drifts (#10073)", () => {
+    const host = scope("nemoclaw-uninstall-agent-drift-");
+    completedOpenClawAuthority(host, "default", "hermes");
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const result = uninstall(host);
+
+    expect(result.exitCode).toBe(1);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('registry field "agent"'));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('sandbox "openclaw-sandbox"'));
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Restore the registry entry from trusted completed-onboarding state, then retry uninstall.",
+      ),
+    );
+    expect(host.runModelCleanup).not.toHaveBeenCalled();
+    expect(host.rmSync).not.toHaveBeenCalled();
+    expect(host.runPortableCleanup).not.toHaveBeenCalled();
   });
 
   it("refuses completed portable authority after its lifecycle receipt disappears", () => {

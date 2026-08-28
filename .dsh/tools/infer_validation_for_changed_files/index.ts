@@ -58,8 +58,8 @@ export default async function infer_validation_for_changed_files(input: {
     }
     if (/agents\/langchain-deepagents-code\/Dockerfile|corporate-ca/.test(file)) {
       [
-        "test/corporate-ca-build-tls-anchor.test.ts",
-        "test/corporate-ca-dockerfile-decode.test.ts",
+        "test/security/corporate-ca-runtime-merge.test.ts",
+        "test/install/corporate-ca-dockerfile-decode.test.ts",
         "src/lib/onboard/corporate-ca-host-anchors.test.ts",
         "src/lib/onboard/dockerfile-patch-corporate-ca.test.ts",
       ].forEach((x) => tests.add(x));

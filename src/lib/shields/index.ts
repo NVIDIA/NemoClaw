@@ -41,6 +41,7 @@ const {
 const {
   buildPolicyGetCommand,
   buildPolicySetCommand,
+  finalizePolicyMutationReceipt,
   parseCurrentPolicy,
   resolvePermissivePolicyPath,
   assertNemoClawManagedPolicy,
@@ -52,6 +53,12 @@ const {
   rejectFinalPolicySetResult: rejectFinalShieldsPolicySetResult,
 } = require("../policy");
 const { parseDuration, MAX_SECONDS, DEFAULT_SECONDS } = require("../domain/duration");
+const {
+  buildOpenshellCommand,
+}: typeof import("../adapters/openshell/command-argv") = require("../adapters/openshell/command-argv");
+const {
+  parseLiveSandboxEntries,
+}: typeof import("../runtime-recovery") = require("../runtime-recovery");
 const {
   timerMarkerPath,
   readTimerMarker,
@@ -75,9 +82,12 @@ const {
   buildDeadlineRuntimeManagedMcpPolicy,
   buildRuntimeManagedMcpPolicy,
   buildRuntimePermissivePolicy,
+  describeCanonicalPolicyReference,
   hasManagedMcpPolicyClaims,
   inspectExactManagedMcpPolicies,
   inspectProvableManagedMcpPoliciesForDeadline,
+  inspectRecordedManagedMcpPolicies,
+  serializeCanonicalPolicy,
 }: typeof import("./permissive-runtime") = require("./permissive-runtime");
 const { cleanupTempDir } = require("../onboard/temp-files");
 const { verifyShieldsLockState }: typeof import("./verify-lock") = require("./verify-lock");
@@ -132,6 +142,7 @@ const {
 }: typeof import("./mutable-config-repair") = require("./mutable-config-repair");
 const {
   HERMES_RUNTIME_STATE_MUTATION_CAPABILITY_PATH,
+  hermesRuntimeProviderPhaseBlocksMutation,
   hasActiveHermesRuntimeProviderStateMutation,
   runHermesRuntimeProviderStateMutation,
   supportsHermesRuntimeProviderStateMutation,
@@ -179,60 +190,65 @@ function externalPolicyMatchesShieldsPolicy(
   return isDeepStrictEqual(authority.inspection.effectivePolicy, requiredPolicy);
 }
 
-function canonicalPolicyValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalPolicyValue);
-  if (!isObjectRecord(value)) return value;
-  return Object.fromEntries(
-    Object.keys(value)
-      .sort()
-      .map((key) => [key, canonicalPolicyValue(value[key])]),
-  );
-}
-
 function requiredPolicyReference(requiredPolicy: Record<string, unknown>): string {
-  const digest = createHash("sha256")
-    .update(JSON.stringify(canonicalPolicyValue(requiredPolicy)), "utf8")
-    .digest("hex");
-  const policyKeys = isObjectRecord(requiredPolicy.network_policies)
-    ? Object.keys(requiredPolicy.network_policies).sort()
-    : [];
-  return `canonical JSON SHA-256 ${digest}; network policy keys: ${
-    policyKeys.length > 0 ? policyKeys.join(", ") : "(none)"
-  }`;
+  return describeCanonicalPolicyReference(requiredPolicy);
 }
 
 type ExternalPolicyRecoveryReason = "authority-drift" | "policy-mismatch";
 
 class ExternalShieldsPolicyRecoveryError extends Error {
-  constructor(readonly reason: ExternalPolicyRecoveryReason, message: string) {
+  constructor(
+    readonly reason: ExternalPolicyRecoveryReason,
+    message: string,
+    readonly recoveryArtifact?: BoundShieldsPolicyArtifact,
+  ) {
     super(message);
     this.name = "ExternalShieldsPolicyRecoveryError";
   }
+}
+
+function externalPolicyRecoveryArtifactText(
+  recoveryArtifact: BoundShieldsPolicyArtifact | undefined,
+): string {
+  return recoveryArtifact
+    ? ` Complete required policy: ${recoveryArtifact.path}.`
+    : " The complete policy handoff is unavailable; run Shields up to regenerate it only after the recorded external authority is restored.";
 }
 
 function externalPolicyRecoveryHandoff(
   sandboxName: string,
   requiredPolicy: Record<string, unknown>,
   reason: ExternalPolicyRecoveryReason,
+  recoveryArtifact?: BoundShieldsPolicyArtifact,
 ): string {
-  const cause =
-    reason === "authority-drift"
-      ? `Policy authority changed while NemoClaw verified recovery for sandbox '${sandboxName}'.`
-      : `The effective policy for sandbox '${sandboxName}' does not match the required restrictive policy.`;
+  const reference = `Required effective policy reference: ${requiredPolicyReference(requiredPolicy)}.`;
+  const artifact = externalPolicyRecoveryArtifactText(recoveryArtifact);
+  if (reason === "authority-drift") {
+    return (
+      `Policy authority changed while NemoClaw verified recovery for sandbox '${sandboxName}'. ${reference}${artifact} ` +
+      "Stop without applying the handoff or retrying Shields. Restore the recorded externally managed authority through its owning OpenShell configuration, or ask a NemoClaw maintainer for recovery direction if the authority change was intentional. NemoClaw will not change policy authority."
+    );
+  }
   return (
-    `${cause} Required effective policy reference: ${requiredPolicyReference(requiredPolicy)}. ` +
-    "The external policy authority must make the effective policy for this named sandbox match the saved restrictive snapshot and current managed MCP entries without changing policy authority. " +
-    `Then run \`${CLI_NAME} ${sandboxName} shields up\`. NemoClaw will verify the exact effective policy and lock configuration.`
+    `The effective policy for sandbox '${sandboxName}' does not match the required restrictive policy. ${reference}${artifact} ` +
+    "The external policy authority must make the effective policy for this named sandbox match the complete handoff, including current managed MCP entries. " +
+    `Then run \`${CLI_NAME} ${sandboxName} shields up\`. NemoClaw will verify the exact effective policy without changing policy authority before it completes Shields recovery.`
   );
 }
 
 function externalPolicyVerifiedHandoff(
   sandboxName: string,
   requiredPolicy: Record<string, unknown>,
+  configAlreadyLocked: boolean,
+  recoveryArtifact?: BoundShieldsPolicyArtifact,
 ): string {
+  const completion = configAlreadyLocked
+    ? `Run \`${CLI_NAME} ${sandboxName} shields up\` to commit Shields UP. Configuration is already locked; NemoClaw will reverify policy without changing policy authority.`
+    : `Run \`${CLI_NAME} ${sandboxName} shields up\` to lock configuration and commit Shields UP. NemoClaw will reverify policy without changing policy authority.`;
   return (
     `NemoClaw verified the required effective policy for sandbox '${sandboxName}' (${requiredPolicyReference(requiredPolicy)}). ` +
-    `Run \`${CLI_NAME} ${sandboxName} shields up\` to finish the config lock without changing policy authority.`
+    `${externalPolicyRecoveryArtifactText(recoveryArtifact).trimStart()} ` +
+    completion
   );
 }
 
@@ -272,6 +288,7 @@ function resolveShieldsPolicySnapshotRestoreAuthority(
   sandboxName: string,
   requiredPolicy: Record<string, unknown>,
   recorded?: PolicyMutationAuthority,
+  recoveryArtifact?: BoundShieldsPolicyArtifact,
 ): ShieldsPolicySnapshotRestoreAuthority {
   if (
     recorded?.authority === "externally-managed" &&
@@ -279,14 +296,26 @@ function resolveShieldsPolicySnapshotRestoreAuthority(
   ) {
     throw new ExternalShieldsPolicyRecoveryError(
       "policy-mismatch",
-      externalPolicyRecoveryHandoff(sandboxName, requiredPolicy, "policy-mismatch"),
+      externalPolicyRecoveryHandoff(
+        sandboxName,
+        requiredPolicy,
+        "policy-mismatch",
+        recoveryArtifact,
+      ),
+      recoveryArtifact,
     );
   }
   const authority = inspectShieldsPolicySnapshotRestoreAuthority(sandboxName, recorded);
   if (recorded && authority.authority !== recorded.authority) {
     throw new ExternalShieldsPolicyRecoveryError(
       "authority-drift",
-      externalPolicyRecoveryHandoff(sandboxName, requiredPolicy, "authority-drift"),
+      externalPolicyRecoveryHandoff(
+        sandboxName,
+        requiredPolicy,
+        "authority-drift",
+        recoveryArtifact,
+      ),
+      recoveryArtifact,
     );
   }
   if (authority.authority === "nemoclaw-managed") {
@@ -295,7 +324,13 @@ function resolveShieldsPolicySnapshotRestoreAuthority(
   if (!externalPolicyMatchesShieldsPolicy(authority, requiredPolicy)) {
     throw new ExternalShieldsPolicyRecoveryError(
       "policy-mismatch",
-      externalPolicyRecoveryHandoff(sandboxName, requiredPolicy, "policy-mismatch"),
+      externalPolicyRecoveryHandoff(
+        sandboxName,
+        requiredPolicy,
+        "policy-mismatch",
+        recoveryArtifact,
+      ),
+      recoveryArtifact,
     );
   }
   const revalidated = inspectPolicyRecoveryAuthority(
@@ -306,13 +341,25 @@ function resolveShieldsPolicySnapshotRestoreAuthority(
   if (revalidated.authority !== "externally-managed") {
     throw new ExternalShieldsPolicyRecoveryError(
       "authority-drift",
-      externalPolicyRecoveryHandoff(sandboxName, requiredPolicy, "authority-drift"),
+      externalPolicyRecoveryHandoff(
+        sandboxName,
+        requiredPolicy,
+        "authority-drift",
+        recoveryArtifact,
+      ),
+      recoveryArtifact,
     );
   }
   if (!externalPolicyMatchesShieldsPolicy(revalidated, requiredPolicy)) {
     throw new ExternalShieldsPolicyRecoveryError(
       "policy-mismatch",
-      externalPolicyRecoveryHandoff(sandboxName, requiredPolicy, "policy-mismatch"),
+      externalPolicyRecoveryHandoff(
+        sandboxName,
+        requiredPolicy,
+        "policy-mismatch",
+        recoveryArtifact,
+      ),
+      recoveryArtifact,
     );
   }
   return { authority: revalidated, policyMutationAllowed: false };
@@ -353,7 +400,12 @@ function inspectShieldsPolicyRecovery(sandboxName: string): ShieldsPolicyRecover
     }
     return {
       status: "external",
-      handoff: externalPolicyVerifiedHandoff(sandboxName, result.externalRequiredPolicy),
+      handoff: externalPolicyVerifiedHandoff(
+        sandboxName,
+        result.externalRequiredPolicy,
+        state.policyRecoveryConfigLocked === true,
+        result.externalPolicyRecoveryArtifact,
+      ),
     };
   } catch (error) {
     if (error instanceof ExternalShieldsPolicyRecoveryError) {
@@ -381,6 +433,7 @@ const INTERACTIVE_AUTO_RESTORE_RETRY_MS = 5_000;
 const INTERACTIVE_AUTO_RESTORE_MAX_ATTEMPTS =
   Math.floor(AUTO_RESTORE_COMPLETION_GRACE_MS / INTERACTIVE_AUTO_RESTORE_RETRY_MS) + 1;
 const HERMES_RUNTIME_CONFIG_GUARD = "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py";
+const HERMES_MANAGED_GATEWAY_CONTROL = "/usr/local/bin/nemoclaw-gateway-control";
 const HERMES_PYTHON = "/opt/hermes/.venv/bin/python";
 const HERMES_RESTART_SEAL_STATE = "/run/nemoclaw/hermes-restart-seal.json";
 const HERMES_CONFIG_HASH = "/etc/nemoclaw/hermes.config-hash";
@@ -400,6 +453,14 @@ const OPENCLAW_CONFIG_GUARD_TIMEOUT_MS = 6 * 60 * 1000;
 // five-second termination grace, so the host never abandons a live recovery.
 const OPENCLAW_CONFIG_GUARD_RECOVERY_TIMEOUT_MS = 26 * 60 * 1000;
 const HERMES_CONFIG_GUARD_TIMEOUT_MS = 11 * 60 * 1000;
+// #10104: a Hermes sandbox stuck in Provisioning is Docker-Running but its
+// in-container broker never starts, so the docker-state-mutation round trip
+// stalls until DOCKER_STATE_MUTATION_GUARD_TIMEOUT_MS (15min). Probe
+// OpenShell's own Phase first with a short, fail-open bound.
+const HERMES_RUNTIME_PROVIDER_PHASE_PROBE_TIMEOUT_MS = 30_000;
+const HERMES_RUNTIME_PROVIDER_RELEASE_READY_TIMEOUT_MS = 60_000;
+const HERMES_RUNTIME_PROVIDER_RELEASE_READY_POLL_MS = 250;
+const HERMES_RUNTIME_PROVIDER_MCP_RESTART_TIMEOUT_MS = 12 * 60_000;
 const MAX_SHIELDS_POLICY_ARTIFACT_BYTES = 16 * 1024 * 1024;
 
 type BoundShieldsPolicyArtifact = {
@@ -714,11 +775,11 @@ function publishShieldsDownForwardPolicy(
   }
 }
 
-function requireBoundShieldsPolicyArtifact(
+function readBoundShieldsPolicyArtifact(
   binding: BoundShieldsPolicyArtifact,
   expectedPath: string,
   label: string,
-): string {
+): Buffer {
   if (binding.path !== expectedPath || path.normalize(binding.path) !== binding.path) {
     throw new Error(`${label} path no longer matches its authority`);
   }
@@ -752,10 +813,19 @@ function requireBoundShieldsPolicyArtifact(
     ) {
       throw new Error(`${label} no longer matches its binding`);
     }
-    return binding.path;
+    return content;
   } finally {
     if (fd !== undefined) fs.closeSync(fd);
   }
+}
+
+function requireBoundShieldsPolicyArtifact(
+  binding: BoundShieldsPolicyArtifact,
+  expectedPath: string,
+  label: string,
+): string {
+  readBoundShieldsPolicyArtifact(binding, expectedPath, label);
+  return binding.path;
 }
 
 function requireShieldsDownForwardPolicy(transition: ShieldsDownTransition): string {
@@ -1530,20 +1600,107 @@ function requireHermesRuntimeProviderSandbox(sandboxName: string) {
   return sandbox;
 }
 
+// #10104: best-effort, fail-open Phase probe. Any resolution failure, ENOENT,
+// non-zero exit, or timeout collapses to null (proceed as before); only a
+// positive, non-Ready/Running phase trips the fast-fail path below.
+function probeHermesRuntimeProviderSandboxPhase(sandboxName: string): string | null {
+  try {
+    const output = runCapture(buildOpenshellCommand(["sandbox", "list"]), {
+      ignoreError: true,
+      timeout: HERMES_RUNTIME_PROVIDER_PHASE_PROBE_TIMEOUT_MS,
+    });
+    return (
+      parseLiveSandboxEntries(output).find((entry) => entry.name === sandboxName)?.phase ?? null
+    );
+  } catch {
+    return null;
+  }
+}
+
+function waitForHermesRuntimeProviderReleaseReady(sandboxName: string): void {
+  let phase = probeHermesRuntimeProviderSandboxPhase(sandboxName);
+  if (phase === null || phase === "Ready" || phase === "Running") return;
+
+  const deadline = Date.now() + HERMES_RUNTIME_PROVIDER_RELEASE_READY_TIMEOUT_MS;
+  let lastObservedPhase = phase;
+  while (Date.now() < deadline) {
+    Atomics.wait(
+      transitionPollBuffer,
+      0,
+      0,
+      Math.min(HERMES_RUNTIME_PROVIDER_RELEASE_READY_POLL_MS, deadline - Date.now()),
+    );
+    phase = probeHermesRuntimeProviderSandboxPhase(sandboxName);
+    if (phase === "Ready" || phase === "Running") return;
+    if (phase !== null) lastObservedPhase = phase;
+  }
+  throw new Error(
+    `Hermes runtime-provider state mutation released its process fence, but sandbox '${sandboxName}' did not return to Ready or Running (last observed phase '${lastObservedPhase}').`,
+  );
+}
+
+function restartHermesManagedMcpAfterProviderRelease(
+  sandboxName: string,
+  sandbox: ReturnType<typeof requireHermesRuntimeProviderSandbox>,
+): void {
+  if (Object.keys(sandbox.mcp?.bridges ?? {}).length === 0) return;
+  const nonce = randomBytes(32).toString("hex");
+  let output: string;
+  try {
+    output = privilegedSandboxExecCapture(
+      sandboxName,
+      [HERMES_MANAGED_GATEWAY_CONTROL, "restart", nonce],
+      HERMES_RUNTIME_PROVIDER_MCP_RESTART_TIMEOUT_MS,
+    );
+  } catch {
+    output = "";
+  }
+  const lines = output.split(/\r?\n/u);
+  const completion = lines[0]?.match(
+    new RegExp(`^v1 ${nonce} complete (?:ok|already-running) [0-9]+ ([1-9][0-9]*)$`, "u"),
+  );
+  if (completion === null || lines.length !== 2 || lines[1] !== `GATEWAY_PID=${completion[1]}`) {
+    throw new Error(
+      `Hermes managed MCP discovery did not restart successfully after releasing the runtime-provider process fence for sandbox '${sandboxName}'.`,
+    );
+  }
+}
+
 function runHermesProviderProtectionTransition(
   sandboxName: string,
   configTarget: AgentConfigTarget,
   targetPosture: "locked" | "mutable",
   rollback: "locked" | "mutable",
 ): void {
+  const sandbox = requireHermesRuntimeProviderSandbox(sandboxName);
+  const phase = probeHermesRuntimeProviderSandboxPhase(sandboxName);
+  if (
+    hermesRuntimeProviderPhaseBlocksMutation(
+      phase,
+      hasActiveRuntimeProviderStateMutation(sandboxName),
+    )
+  ) {
+    throw new Error(
+      `Hermes runtime-provider state mutation is unavailable because sandbox '${sandboxName}' has OpenShell phase '${phase}', not Ready or Running. Run '${CLI_NAME} ${sandboxName} status'. Resolve the reported phase, then retry.`,
+    );
+  }
   runHermesRuntimeProviderStateMutation({
     environment: process.env,
-    sandbox: requireHermesRuntimeProviderSandbox(sandboxName),
+    sandbox,
     sandboxName,
     configTarget,
     target: targetPosture,
     rollback,
   });
+  // Releasing the exact process fence resumes OpenShell PID 1 last. OpenShell
+  // then asynchronously republishes the sandbox lifecycle phase; callers must
+  // not issue route or mutation commands during that Provisioning interval.
+  waitForHermesRuntimeProviderReleaseReady(sandboxName);
+  // The fenced gateway can prove local health while OpenShell PID 1 is held,
+  // but Hermes performs network MCP discovery before exposing that health.
+  // Restart once after release so configured managed bridges are discovered
+  // with the exact supervisor/network control path live.
+  restartHermesManagedMcpAfterProviderRelease(sandboxName, sandbox);
 }
 
 function verifyHermesProviderMutablePosture(sandboxName: string, target: AgentConfigTarget): void {
@@ -1616,6 +1773,145 @@ function stateFilePath(sandboxName: string): string {
   return path.join(STATE_DIR, `shields-${sandboxName}.json`);
 }
 
+function externalPolicyRecoveryArtifactPath(sandboxName: string): string {
+  return path.join(STATE_DIR, `shields-external-policy-${sandboxName}.yaml`);
+}
+
+function publishExternalPolicyRecoveryArtifact(
+  sandboxName: string,
+  requiredPolicy: Record<string, unknown>,
+): BoundShieldsPolicyArtifact {
+  const artifactPath = externalPolicyRecoveryArtifactPath(sandboxName);
+  const content = serializeCanonicalPolicy(requiredPolicy);
+  writeShieldsFileAtomicDurable(artifactPath, content);
+  return describeBoundShieldsPolicyArtifact(
+    artifactPath,
+    content,
+    fs.lstatSync(artifactPath),
+    "External Shields policy recovery artifact",
+  );
+}
+
+function validatedExternalPolicyRecoveryArtifact(
+  sandboxName: string,
+  requiredPolicy: Record<string, unknown>,
+  binding: BoundShieldsPolicyArtifact | undefined,
+): BoundShieldsPolicyArtifact | undefined {
+  if (!binding) return undefined;
+  try {
+    requireBoundShieldsPolicyArtifact(
+      binding,
+      externalPolicyRecoveryArtifactPath(sandboxName),
+      "External Shields policy recovery artifact",
+    );
+    return isDeepStrictEqual(readShieldsPolicySnapshot(binding.path), requiredPolicy)
+      ? binding
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function restoreExternalPolicyRecoveryArtifact(
+  binding: BoundShieldsPolicyArtifact,
+  content: Buffer,
+): void {
+  writeShieldsFileAtomicDurable(binding.path, content);
+  requireBoundShieldsPolicyArtifact(
+    binding,
+    binding.path,
+    "External Shields policy recovery artifact",
+  );
+}
+
+function commitExternalPolicyRecoveryArtifactRetirement(
+  sandboxName: string,
+  commitState: () => void,
+): void {
+  const artifactPath = externalPolicyRecoveryArtifactPath(sandboxName);
+  const originalState = loadShieldsState(sandboxName);
+  const binding = originalState.externalPolicyRecoveryArtifact;
+  let content: Buffer | undefined;
+  if (binding) {
+    try {
+      content = readBoundShieldsPolicyArtifact(
+        binding,
+        artifactPath,
+        "External Shields policy recovery artifact",
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+
+  try {
+    fs.rmSync(artifactPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      commitState();
+      return;
+    }
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Could not remove external Shields policy recovery artifact '${artifactPath}': ${detail}`,
+      { cause: error },
+    );
+  }
+  try {
+    fsyncShieldsStateDirectory();
+  } catch (error) {
+    let rollbackDetail = "the artifact had no durable state binding to restore";
+    if (binding && content) {
+      try {
+        restoreExternalPolicyRecoveryArtifact(binding, content);
+        rollbackDetail = "restored its bound content";
+      } catch (rollbackError) {
+        rollbackDetail = `could not restore its bound content: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`;
+      }
+    }
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Could not make removal of external Shields policy recovery artifact '${artifactPath}' durable; ${rollbackDetail}: ${detail}`,
+      { cause: error },
+    );
+  }
+
+  try {
+    commitState();
+  } catch (error) {
+    const rollbackErrors: string[] = [];
+    let artifactRestored = false;
+    if (binding && content) {
+      try {
+        restoreExternalPolicyRecoveryArtifact(binding, content);
+        artifactRestored = true;
+      } catch (rollbackError) {
+        rollbackErrors.push(
+          `artifact restore failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+        );
+      }
+    }
+    try {
+      restoreShieldsStateSnapshot(sandboxName, originalState);
+    } catch (rollbackError) {
+      rollbackErrors.push(
+        `state restore failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+      );
+    }
+    const detail = error instanceof Error ? error.message : String(error);
+    const rollbackDetail =
+      rollbackErrors.length === 0
+        ? artifactRestored
+          ? "restored the bound artifact and Shields state"
+          : "restored Shields state; no bound artifact was available to restore"
+        : `rollback incomplete (${rollbackErrors.join("; ")})`;
+    throw new Error(
+      `Could not commit Shields state after removing external policy recovery artifact '${artifactPath}'; ${rollbackDetail}: ${detail}`,
+      { cause: error },
+    );
+  }
+}
+
 // Shields posture model:
 //   "mutable_default" — fresh sandbox, shields never configured (the default)
 //   "locked"          — shields up has been run and verified
@@ -1634,6 +1930,7 @@ interface ShieldsState {
   /** Exact generated MCP keys owned in the restrictive snapshot. */
   shieldsManagedMcpPolicyKeys?: string[];
   policyRecoveryConfigLocked?: boolean;
+  externalPolicyRecoveryArtifact?: BoundShieldsPolicyArtifact;
   chattrApplied?: boolean;
   // SHA-256 seal of each locked file, captured by `shields up` after the
   // lock verification passes. `shields status` re-hashes the same files
@@ -2400,6 +2697,12 @@ function isOptionalManagedMcpPolicyKeys(value: unknown): value is string[] | und
   return Array.isArray(value) && value.every((key) => typeof key === "string");
 }
 
+function isOptionalBoundShieldsPolicyArtifact(
+  value: unknown,
+): value is BoundShieldsPolicyArtifact | undefined {
+  return value === undefined || isBoundShieldsPolicyArtifact(value);
+}
+
 function isShieldsState(value: unknown): value is ShieldsState {
   return (
     isObjectRecord(value) &&
@@ -2411,6 +2714,7 @@ function isShieldsState(value: unknown): value is ShieldsState {
     isOptionalNullableString(value.shieldsPolicySnapshotPath) &&
     isOptionalManagedMcpPolicyKeys(value.shieldsManagedMcpPolicyKeys) &&
     isOptionalBoolean(value.policyRecoveryConfigLocked) &&
+    isOptionalBoundShieldsPolicyArtifact(value.externalPolicyRecoveryArtifact) &&
     isOptionalBoolean(value.chattrApplied) &&
     isOptionalHashMap(value.fileHashes) &&
     isOptionalString(value.updatedAt)
@@ -4353,6 +4657,7 @@ interface ShieldsPolicySnapshotRestoreOptions {
   deadlineAuthoritative?: boolean;
   expiredTimerRecovery?: boolean;
   externalVerificationOnly?: boolean;
+  persistExternalRecoveryArtifact?: boolean;
   buildPolicySet?: typeof buildPolicySetCommand;
   runPolicySet?: typeof run;
 }
@@ -4361,6 +4666,7 @@ type ShieldsPolicySnapshotRestoreResult = ReturnType<typeof run> & {
   managedMcpOmissions?: ManagedMcpPolicyOmission[];
   externalPolicyVerified?: true;
   externalRequiredPolicy?: Record<string, unknown>;
+  externalPolicyRecoveryArtifact?: BoundShieldsPolicyArtifact;
 };
 
 function applyShieldsPolicySnapshot(
@@ -4469,6 +4775,11 @@ function applyShieldsPolicySnapshot(
         },
       );
       rejectFinalShieldsPolicySetResult(result, "restore the Shields policy snapshot");
+      finalizePolicyMutationReceipt(
+        sandboxName,
+        fs.readFileSync(snapshotPath, "utf-8"),
+        policyAuthority,
+      );
       return result;
     } else {
       assertLegacyMcpPolicyRestoreSafe(
@@ -4493,13 +4804,10 @@ function applyShieldsPolicySnapshot(
     runtimePolicyPath = runtime.path;
     managedMcpOmissions = [...ownershipOmissions, ...inspection.omissions, ...runtime.omissions];
   } else {
-    const managedMcpPolicies = resolveExactManagedMcpPolicies(
-      sandboxName,
+    const managedMcpPolicies =
       policyMutationAllowed && !options.externalVerificationOnly
-        ? undefined
-        : YAML.stringify(policyAuthority.inspection.effectivePolicy),
-      policyAuthority.gatewayName,
-    );
+        ? resolveExactManagedMcpPolicies(sandboxName, undefined, policyAuthority.gatewayName)
+        : inspectRecordedManagedMcpPolicies(sandboxName);
     runtimePolicyPath = buildRuntimeManagedMcpPolicy(snapshotPath, {
       managedMcpPolicies,
       snapshotManagedPolicyKeys,
@@ -4509,10 +4817,30 @@ function applyShieldsPolicySnapshot(
   const runtimePolicyIsTemp = runtimePolicyPath !== snapshotPath;
   try {
     const externalRequiredPolicy = readShieldsPolicySnapshot(runtimePolicyPath);
+    let externalPolicyRecoveryArtifact = validatedExternalPolicyRecoveryArtifact(
+      sandboxName,
+      externalRequiredPolicy,
+      state.externalPolicyRecoveryArtifact,
+    );
+    if (
+      options.persistExternalRecoveryArtifact === true &&
+      (!policyMutationAllowed || options.externalVerificationOnly === true)
+    ) {
+      externalPolicyRecoveryArtifact = publishExternalPolicyRecoveryArtifact(
+        sandboxName,
+        externalRequiredPolicy,
+      );
+    }
     if (options.externalVerificationOnly && policyMutationAllowed) {
       throw new ExternalShieldsPolicyRecoveryError(
         "authority-drift",
-        externalPolicyRecoveryHandoff(sandboxName, externalRequiredPolicy, "authority-drift"),
+        externalPolicyRecoveryHandoff(
+          sandboxName,
+          externalRequiredPolicy,
+          "authority-drift",
+          externalPolicyRecoveryArtifact,
+        ),
+        externalPolicyRecoveryArtifact,
       );
     }
     if (!policyMutationAllowed) {
@@ -4520,6 +4848,7 @@ function applyShieldsPolicySnapshot(
         sandboxName,
         externalRequiredPolicy,
         policyAuthority,
+        externalPolicyRecoveryArtifact,
       );
       return {
         pid: process.pid,
@@ -4530,6 +4859,7 @@ function applyShieldsPolicySnapshot(
         signal: null,
         externalPolicyVerified: true,
         externalRequiredPolicy: structuredClone(externalRequiredPolicy),
+        ...(externalPolicyRecoveryArtifact ? { externalPolicyRecoveryArtifact } : {}),
       };
     }
     assertShieldsPolicyMutationAuthority(
@@ -4544,6 +4874,11 @@ function applyShieldsPolicySnapshot(
       },
     );
     rejectFinalShieldsPolicySetResult(result, "restore the Shields policy snapshot");
+    finalizePolicyMutationReceipt(
+      sandboxName,
+      fs.readFileSync(runtimePolicyPath, "utf-8"),
+      policyAuthority,
+    );
     return managedMcpOmissions.length > 0 ? { ...result, managedMcpOmissions } : result;
   } finally {
     if (runtimePolicyIsTemp) {
@@ -4654,6 +4989,7 @@ interface LockdownActivationResult {
   chattrApplied?: boolean;
   fileHashes?: { [path: string]: string };
   managedMcpOmissions?: ManagedMcpPolicyOmission[];
+  externalPolicyRecoveryArtifact?: BoundShieldsPolicyArtifact;
 }
 
 function activateLockdownFromSnapshot(
@@ -4670,13 +5006,19 @@ function activateLockdownFromSnapshot(
 
   let restoreResult: ShieldsPolicySnapshotRestoreResult;
   try {
-    restoreResult = applyShieldsPolicySnapshot(sandboxName, snapshotPath, restoreOptions);
+    restoreResult = applyShieldsPolicySnapshot(sandboxName, snapshotPath, {
+      ...restoreOptions,
+      persistExternalRecoveryArtifact: true,
+    });
   } catch (error) {
     return {
       ok: false,
       error: `policy restore preparation failed: ${
         error instanceof Error ? error.message : String(error)
       }`,
+      ...(error instanceof ExternalShieldsPolicyRecoveryError && error.recoveryArtifact
+        ? { externalPolicyRecoveryArtifact: error.recoveryArtifact }
+        : {}),
     };
   }
   const restoreStatus = typeof restoreResult.status === "number" ? restoreResult.status : 1;
@@ -4684,6 +5026,9 @@ function activateLockdownFromSnapshot(
     return {
       ok: false,
       error: `policy restore exited with status ${String(restoreStatus)}`,
+      ...(restoreResult.externalPolicyRecoveryArtifact
+        ? { externalPolicyRecoveryArtifact: restoreResult.externalPolicyRecoveryArtifact }
+        : {}),
     };
   }
 
@@ -4700,6 +5045,9 @@ function activateLockdownFromSnapshot(
     return {
       ok: false,
       error: error instanceof Error ? error.message : String(error),
+      ...(restoreResult.externalPolicyRecoveryArtifact
+        ? { externalPolicyRecoveryArtifact: restoreResult.externalPolicyRecoveryArtifact }
+        : {}),
     };
   }
   // Re-confirm the lock after a settle window. This restore feeds the
@@ -4714,6 +5062,9 @@ function activateLockdownFromSnapshot(
     return {
       ok: false,
       error: relock.error ?? "config re-lock did not re-confirm after the settle window",
+      ...(restoreResult.externalPolicyRecoveryArtifact
+        ? { externalPolicyRecoveryArtifact: restoreResult.externalPolicyRecoveryArtifact }
+        : {}),
     };
   }
   try {
@@ -4736,12 +5087,20 @@ function activateLockdownFromSnapshot(
       }`,
       chattrApplied: relock.lastResult.chattrApplied,
       fileHashes: relock.lastResult.fileHashes,
+      ...(error instanceof ExternalShieldsPolicyRecoveryError && error.recoveryArtifact
+        ? { externalPolicyRecoveryArtifact: error.recoveryArtifact }
+        : restoreResult.externalPolicyRecoveryArtifact
+          ? { externalPolicyRecoveryArtifact: restoreResult.externalPolicyRecoveryArtifact }
+          : {}),
     };
   }
   return {
     ok: true,
     chattrApplied: relock.lastResult.chattrApplied,
     fileHashes: relock.lastResult.fileHashes,
+    ...(restoreResult.externalPolicyRecoveryArtifact
+      ? { externalPolicyRecoveryArtifact: restoreResult.externalPolicyRecoveryArtifact }
+      : {}),
     ...(restoreResult.managedMcpOmissions
       ? { managedMcpOmissions: restoreResult.managedMcpOmissions }
       : {}),
@@ -4816,11 +5175,18 @@ function recoverExpiredAutoRestoreInline(
   if (!activation.ok) {
     const configLocked =
       activation.fileHashes !== undefined && typeof activation.chattrApplied === "boolean";
-    if (configLocked) {
+    if (configLocked || activation.externalPolicyRecoveryArtifact) {
       saveShieldsState(sandboxName, {
-        policyRecoveryConfigLocked: true,
-        chattrApplied: activation.chattrApplied,
-        fileHashes: activation.fileHashes,
+        ...(configLocked
+          ? {
+              policyRecoveryConfigLocked: true,
+              chattrApplied: activation.chattrApplied,
+              fileHashes: activation.fileHashes,
+            }
+          : {}),
+        ...(activation.externalPolicyRecoveryArtifact
+          ? { externalPolicyRecoveryArtifact: activation.externalPolicyRecoveryArtifact }
+          : {}),
       });
     }
     appendAuditEntry({
@@ -4841,19 +5207,22 @@ function recoverExpiredAutoRestoreInline(
     return { attempted: true, restored: false };
   }
 
-  saveShieldsState(sandboxName, {
-    shieldsDown: false,
-    shieldsDownAt: null,
-    shieldsDownTimeout: null,
-    shieldsDownReason: null,
-    shieldsDownPolicy: null,
-    policyRecoveryConfigLocked: false,
-    ...(activation.fileHashes && typeof activation.chattrApplied === "boolean"
-      ? {
-          chattrApplied: activation.chattrApplied,
-          fileHashes: activation.fileHashes,
-        }
-      : {}),
+  commitExternalPolicyRecoveryArtifactRetirement(sandboxName, () => {
+    saveShieldsState(sandboxName, {
+      shieldsDown: false,
+      shieldsDownAt: null,
+      shieldsDownTimeout: null,
+      shieldsDownReason: null,
+      shieldsDownPolicy: null,
+      policyRecoveryConfigLocked: false,
+      externalPolicyRecoveryArtifact: undefined,
+      ...(activation.fileHashes && typeof activation.chattrApplied === "boolean"
+        ? {
+            chattrApplied: activation.chattrApplied,
+            fileHashes: activation.fileHashes,
+          }
+        : {}),
+    });
   });
   if (marker?.processToken && /^[0-9a-f]{32}$/.test(marker.processToken)) {
     clearShieldsDownTransition(sandboxName, marker.processToken);
@@ -5013,6 +5382,7 @@ function applyRecoveredShieldsDownForwardPolicy(
   if (result.status !== 0) {
     throw new Error("Interrupted Shields down forward policy could not be reapplied");
   }
+  finalizePolicyMutationReceipt(sandboxName, fs.readFileSync(policyPath, "utf-8"), policyAuthority);
   requireShieldsDownForwardPolicy(completion.authority);
   assertRecoveredShieldsDownAuthority(sandboxName, completion, completion.authority.phase);
 }
@@ -5654,6 +6024,7 @@ function shieldsDownWithoutHostLock(
   }
 
   console.log(`  Applying ${policyName} policy...`);
+  const appliedPolicyDocument = fs.readFileSync(policyPathForApply, "utf-8");
   let policySetResult: ReturnType<typeof run>;
   try {
     assertShieldsPolicyMutationAuthority(
@@ -5741,6 +6112,7 @@ function shieldsDownWithoutHostLock(
   console.log(`  Unlocking ${target.agentName} config (${target.configPath})...`);
   let inferenceRouteConvergenceFailed = false;
   try {
+    finalizePolicyMutationReceipt(sandboxName, appliedPolicyDocument, policyAuthority);
     if (transition && timerAuthority) {
       assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "preparing");
     }
@@ -6139,11 +6511,18 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
     if (!activation.ok) {
       const configLocked =
         activation.fileHashes !== undefined && typeof activation.chattrApplied === "boolean";
-      if (configLocked) {
+      if (configLocked || activation.externalPolicyRecoveryArtifact) {
         saveShieldsState(sandboxName, {
-          policyRecoveryConfigLocked: true,
-          chattrApplied: activation.chattrApplied,
-          fileHashes: activation.fileHashes,
+          ...(configLocked
+            ? {
+                policyRecoveryConfigLocked: true,
+                chattrApplied: activation.chattrApplied,
+                fileHashes: activation.fileHashes,
+              }
+            : {}),
+          ...(activation.externalPolicyRecoveryArtifact
+            ? { externalPolicyRecoveryArtifact: activation.externalPolicyRecoveryArtifact }
+            : {}),
         });
       }
       console.error(`  ERROR: ${activation.error ?? "unknown restore error"}`);
@@ -6200,19 +6579,22 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
   //    captured chattrApplied + fileHashes into the persisted state so
   //    drift detection on the next `shields status` has a seal to compare
   //    against. The non-snapshot branch already persisted those above.
-  saveShieldsState(sandboxName, {
-    shieldsDown: false,
-    shieldsDownAt: null,
-    shieldsDownTimeout: null,
-    shieldsDownReason: null,
-    shieldsDownPolicy: null,
-    policyRecoveryConfigLocked: false,
-    ...(snapshotLockResult
-      ? {
-          chattrApplied: snapshotLockResult.chattrApplied,
-          fileHashes: snapshotLockResult.fileHashes,
-        }
-      : {}),
+  commitExternalPolicyRecoveryArtifactRetirement(sandboxName, () => {
+    saveShieldsState(sandboxName, {
+      shieldsDown: false,
+      shieldsDownAt: null,
+      shieldsDownTimeout: null,
+      shieldsDownReason: null,
+      shieldsDownPolicy: null,
+      policyRecoveryConfigLocked: false,
+      externalPolicyRecoveryArtifact: undefined,
+      ...(snapshotLockResult
+        ? {
+            chattrApplied: snapshotLockResult.chattrApplied,
+            fileHashes: snapshotLockResult.fileHashes,
+          }
+        : {}),
+    });
   });
   killTimer(sandboxName);
   if (timerMarker?.processToken && /^[0-9a-f]{32}$/.test(timerMarker.processToken)) {
@@ -6576,19 +6958,22 @@ function isShieldsDown(sandboxName: string, allowInlineRecovery = false): boolea
  * the live sandbox is gone, so the recorded lock seal/file-hashes no longer
  * correspond to any live image. Clearing the state prevents a stale seal from
  * blocking a fresh `shields up` and stops a freshly recreated (mutable) sandbox
- * from being reported as locked. Best-effort: a missing state file is fine.
+ * from being reported as locked. A missing state file or recovery artifact is
+ * fine; a recovery artifact that cannot be removed remains bound and blocks
+ * state cleanup.
  */
 function clearShieldsStateWithoutHostLock(sandboxName: string): void {
   validateName(sandboxName, "sandbox name");
   const timerMarker = readTimerMarker(sandboxName);
+  commitExternalPolicyRecoveryArtifactRetirement(sandboxName, () => {
+    const filePath = stateFilePath(sandboxName);
+    const stateFileExists = fs.existsSync(filePath);
+    fs.rmSync(filePath, { force: true });
+    if (stateFileExists) fsyncShieldsStateDirectory();
+  });
   killTimer(sandboxName);
   if (timerMarker?.processToken && /^[0-9a-f]{32}$/.test(timerMarker.processToken)) {
     clearShieldsDownTransition(sandboxName, timerMarker.processToken);
-  }
-  try {
-    fs.rmSync(stateFilePath(sandboxName), { force: true });
-  } catch {
-    /* best effort — absent or unreadable state is already mutable_default */
   }
 }
 

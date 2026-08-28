@@ -79,12 +79,14 @@ export type DockerGpuPatchFailureContext = {
   oldContainerId?: string | null;
   newContainerId?: string | null;
   backupContainerName?: string | null;
+  backupRemoved?: boolean;
   selectedMode?: DockerGpuPatchMode | null;
   modeAttempts?: DockerGpuPatchModeAttempt[];
   rolledBack?: boolean;
   replacementStopConfirmed?: boolean;
   replacementRemovalConfirmed?: boolean;
   replacementPresence?: "absent" | "present" | "unknown";
+  lastSandboxPhase?: string | null;
 };
 
 export type DockerGpuPatchResult = {
@@ -94,11 +96,11 @@ export type DockerGpuPatchResult = {
   originalName: string;
   backupContainerName: string;
   mode: DockerGpuPatchMode;
-  // True when the patch path also confirmed supervisor reconnect AND removed
-  // the backup container. False when the caller deferred the reconnect wait
-  // (via `waitForSupervisor: false`); the backup is still in place and the
-  // caller is responsible for calling `finalizeDockerGpuPatchBackup` after
-  // its own supervisor wait completes.
+  // True when the patch path confirmed the initial supervisor reconnect,
+  // removed the exact backup, restarted the exact replacement, and received
+  // the final OpenShell handoff acknowledgement. False means the caller used
+  // `waitForSupervisor: false`; the backup remains until the caller invokes
+  // `finalizeDockerGpuPatchBackup` after its own initial readiness check.
   backupRemoved: boolean;
 };
 

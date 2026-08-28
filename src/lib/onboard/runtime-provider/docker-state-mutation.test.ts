@@ -23,10 +23,17 @@ import {
 } from "../../../../test/helpers/docker-state-mutation-harness";
 import { createDockerOperationAuthority } from "./docker-operation-authority";
 import {
+  DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS,
+  DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_BOOTSTRAP,
   DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE,
   createDockerStateMutationOwner,
   createDockerStateMutationSurface,
 } from "./docker-state-mutation";
+
+const RUNTIME_STATE_MUTATION_CONTROLLER = path.join(
+  import.meta.dirname,
+  "../../../../scripts/runtime-state-mutation-control.py",
+);
 
 function ownerThatStopsAfterPrepare(runtime: ReturnType<typeof harness>) {
   const acquireMutationExecution = vi.fn(() => {
@@ -78,6 +85,7 @@ print(json.dumps({
     "helperProcess": json.loads(normalize_helper_stderr("acquire", 2, b"raw python error"))["code"],
     "helperProtocol": json.loads(normalize_helper_stderr("acquire", 0, b"unexpected stderr"))["code"],
     "timeout": json.loads(failure_stderr("acquire", "helper-timeout"))["code"],
+    "activateTimeoutSeconds": TIMEOUTS["activate"],
 }, separators=(",", ":")))
 `;
 
@@ -96,6 +104,99 @@ print(json.dumps({
       helperProcess: "helper-process-failed",
       helperProtocol: "helper-protocol-stderr",
       timeout: "helper-timeout",
+      activateTimeoutSeconds: DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS / 1000,
+    });
+  });
+
+  it("terminates the isolated helper process group before reporting a timeout", () => {
+    const definitionsEnd = DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE.indexOf(
+      "\nhelper = sys.argv[1]\n",
+    );
+    const definitions = DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE.slice(
+      0,
+      definitionsEnd,
+    );
+    const probe = `${definitions}
+import tempfile
+root = tempfile.mkdtemp(prefix="nemoclaw-helper-timeout-")
+helper = os.path.join(root, "helper.py")
+with open(helper, "w", encoding="utf-8") as stream:
+    stream.write("import os,time\\n")
+    stream.write("if os.fork() == 0: time.sleep(30)\\n")
+    stream.write("time.sleep(30)\\n")
+original_lstat = os.lstat
+class RootHelperMetadata:
+    st_mode = stat.S_IFREG | 0o555
+    st_uid = 0
+    st_gid = 0
+os.lstat = lambda target: RootHelperMetadata() if target == helper else original_lstat(target)
+TIMEOUTS["activate"] = 0.05
+try:
+    run_helper("activate", b"{}\\n")
+except subprocess.TimeoutExpired:
+    print("helper-timeout")
+`;
+
+    expect(
+      execFileSync("python3", ["-I", "-c", probe], {
+        encoding: "utf8",
+        timeout: 5_000,
+      }).trim(),
+    ).toBe("helper-timeout");
+  });
+
+  it("keeps activation transport alive beyond both controller readiness windows", () => {
+    const probe = String.raw`
+import importlib.util
+import json
+import sys
+
+spec = importlib.util.spec_from_file_location("runtime_state_control", sys.argv[1])
+control = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = control
+spec.loader.exec_module(control)
+print(json.dumps({
+    "activationSeconds": control.ACTIVATION_SECONDS,
+    "processStateSeconds": control.PROCESS_STATE_SECONDS,
+}, separators=(",", ":")))
+`;
+    const timing = JSON.parse(
+      execFileSync("python3", ["-I", "-c", probe, RUNTIME_STATE_MUTATION_CONTROLLER], {
+        encoding: "utf8",
+        timeout: 5_000,
+      }),
+    ) as { activationSeconds: number; processStateSeconds: number };
+
+    expect(DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS / 1000).toBeGreaterThan(
+      timing.activationSeconds * 2 + timing.processStateSeconds * 2,
+    );
+  });
+
+  it("binds the guardian recovery lineage to the exact embedded broker command", () => {
+    const probe = String.raw`
+import importlib.util
+import json
+import sys
+
+spec = importlib.util.spec_from_file_location("runtime_state_control", sys.argv[1])
+control = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = control
+spec.loader.exec_module(control)
+print(json.dumps({
+    "bootstrap": control.TRANSPORT_BROKER_BOOTSTRAP.decode("ascii"),
+    "helper": control.TRANSPORT_BROKER_HELPER_PATH.decode("ascii"),
+}, separators=(",", ":")))
+`;
+    const binding = JSON.parse(
+      execFileSync("python3", ["-I", "-c", probe, RUNTIME_STATE_MUTATION_CONTROLLER], {
+        encoding: "utf8",
+        timeout: 5_000,
+      }),
+    ) as { bootstrap: string; helper: string };
+
+    expect(binding).toEqual({
+      bootstrap: DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_BOOTSTRAP,
+      helper: "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py",
     });
   });
 
@@ -354,8 +455,8 @@ describe("Docker state mutation owner", () => {
       ["acquire", 30_000],
       ["assert", 30_000],
       ["rollback", 15 * 60_000],
-      ["activate", 5 * 60_000],
-      ["activate", 5 * 60_000],
+      ["activate", DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS],
+      ["activate", DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS],
       ["release", 5 * 60_000],
     ]);
     const acquireRequest = JSON.parse(helperCalls[0]?.[3]?.toString("utf8") ?? "null");

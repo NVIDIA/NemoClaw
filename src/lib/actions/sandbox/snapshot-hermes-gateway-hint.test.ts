@@ -13,11 +13,12 @@ describe("printHermesGatewayRestoreHint (#7312)", () => {
       "hermes",
       ["runtime/state.db"],
       [{ path: "runtime/state.db", strategy: "sqlite_backup" }],
+      "custom-cli",
       writeLine,
     );
 
     expect(writeLine).toHaveBeenCalledTimes(1);
-    expect(writeLine.mock.calls[0][0]).toContain("clone-test gateway restart");
+    expect(writeLine.mock.calls[0][0]).toContain("custom-cli clone-test gateway restart");
   });
 
   it("does not print a restart hint for non-database Hermes state files", () => {
@@ -31,6 +32,7 @@ describe("printHermesGatewayRestoreHint (#7312)", () => {
         { path: "SOUL.md", strategy: "copy" },
         { path: "runtime/state.db", strategy: "sqlite_backup" },
       ],
+      "nemoclaw",
       writeLine,
     );
 
@@ -45,6 +47,7 @@ describe("printHermesGatewayRestoreHint (#7312)", () => {
       "openclaw",
       ["openclaw.json"],
       [{ path: "openclaw.json", strategy: "copy" }],
+      "nemoclaw",
       writeLine,
     );
     printHermesGatewayRestoreHint(
@@ -52,6 +55,7 @@ describe("printHermesGatewayRestoreHint (#7312)", () => {
       undefined,
       ["runtime/state.db"],
       [{ path: "runtime/state.db", strategy: "sqlite_backup" }],
+      "nemoclaw",
       writeLine,
     );
 

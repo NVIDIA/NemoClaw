@@ -14,4 +14,19 @@ describe("blueprint runner mock fixtures", () => {
     memory.mkdirSync("/sandbox");
     expect(memory.existsSync("/sandbox")).toBe(true);
   });
+
+  it("models durable file descriptors and missing filesystem entries (#9833)", () => {
+    const { store } = createRunnerFsStore();
+    const memory = inMemoryFsMethods(store);
+
+    expect(() => memory.openSync("/missing")).toThrow(/ENOENT/u);
+    expect(() => memory.renameSync("/missing", "/renamed")).toThrow(/ENOENT/u);
+
+    memory.writeFileSync("/receipt", "complete");
+    const fd = memory.openSync("/receipt");
+    expect(() => memory.fsyncSync(fd)).not.toThrow();
+    expect(() => memory.closeSync(fd)).not.toThrow();
+    expect(() => memory.fsyncSync(fd)).toThrow(`EBADF: ${fd}`);
+    expect(() => memory.closeSync(fd)).toThrow(`EBADF: ${fd}`);
+  });
 });

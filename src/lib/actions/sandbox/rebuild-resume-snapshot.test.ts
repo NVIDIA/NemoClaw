@@ -27,6 +27,10 @@ import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import * as rebuildRoutePreflight from "./rebuild-preflight-guards";
 import * as rebuildShields from "./rebuild-shields";
 import * as rebuildUsageNotice from "./rebuild-usage-notice";
+import {
+  managedSandboxEntry,
+  SANDBOX_IDENTITY,
+} from "../../../../test/helpers/managed-policy-receipt-fixture";
 
 function cloneSession(session: Session): Session {
   return JSON.parse(JSON.stringify(session));
@@ -122,7 +126,12 @@ describe("rebuild resume snapshot repair", () => {
         attempted: false,
       }),
       vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
-        result: { status: 0, output: "alpha Ready" },
+        result: {
+          ok: true,
+          value: {
+            sandboxes: [{ name: "alpha", phase: "Ready", readiness: "ready" }],
+          },
+        },
         recoveryAttempted: false,
         recoverySucceeded: false,
       }),
@@ -142,6 +151,10 @@ describe("rebuild resume snapshot repair", () => {
       vi.spyOn(onboardSession, "releaseOnboardLock").mockImplementation(() => undefined),
       vi.spyOn(onboardSession, "markStepFailed").mockImplementation(() => loadSession()),
       vi.spyOn(registry, "getSandbox").mockReturnValue({
+        ...managedSandboxEntry("alpha", "openclaw", {
+          policyHash: "managed-policy",
+          policyVersion: 1,
+        }),
         name: "alpha",
         provider: "ollama-local",
         model: "nvidia/nemotron",
@@ -152,16 +165,21 @@ describe("rebuild resume snapshot repair", () => {
         dashboardPort: 18789,
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
-        policyAuthority: "nemoclaw-managed",
       } as never),
       vi.spyOn(registry, "updateSandbox").mockReturnValue(true),
       vi.spyOn(policyAuthority, "inspectSandboxPolicyAuthority").mockReturnValue({
-        authority: "nemoclaw-managed",
+        authority: "owner-unknown",
         effectivePolicy: {},
+        policyIdentity: { hash: "managed-policy", activeVersion: 1 },
       }),
-      vi.spyOn(policyAuthority, "inspectGlobalPolicyAuthority").mockReturnValue({
-        authority: "nemoclaw-managed",
-        effectivePolicy: {},
+      vi
+        .spyOn(policyAuthority, "inspectOpenShellSandboxIdentityFingerprint")
+        .mockReturnValue(SANDBOX_IDENTITY),
+      vi
+        .spyOn(policyAuthority, "assertOpenShellGatewayPortBinding")
+        .mockImplementation(() => undefined),
+      vi.spyOn(policyAuthority, "inspectActiveGlobalPolicy").mockReturnValue({
+        state: "absent",
       }),
       vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] } as never),
       vi.spyOn(rebuildRoutePreflight, "commitRebuildRoutePreflight").mockReturnValue({
@@ -226,8 +244,8 @@ describe("rebuild resume snapshot repair", () => {
         postRemovalDefaultSelectionRevision: 1,
       }),
       vi.spyOn(registry, "restoreSandboxEntryIfMissing").mockReturnValue(true),
-      vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined),
-      vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => undefined),
+      vi.spyOn(nim, "stopNimContainer").mockReturnValue(true),
+      vi.spyOn(nim, "stopNimContainerByName").mockReturnValue(true),
       vi.spyOn(nim, "detectGpu").mockReturnValue(null),
       vi
         .spyOn(rebuildOnboardDependencies, "preflightAuthoritativeRebuildTarget")

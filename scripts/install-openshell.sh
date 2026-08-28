@@ -155,7 +155,7 @@ if [ "$RESOLVED_CHANNEL" = "dev" ]; then
   # stable release. sourceBoundary: OpenShell owns the moving dev tag; NemoClaw
   # owns this explicit compatibility-only opt-in. whyNotSourceFix: NemoClaw
   # cannot make that upstream tag immutable. regressionTest:
-  # test/install-openshell-version-check.test.ts covers rejection without the
+  # test/install/install-openshell-version-check.test.ts covers rejection without the
   # opt-in and acceptance with it. removalCondition: remove this path when dev
   # compatibility testing ends or OpenShell publishes an independently
   # verifiable immutable development channel. See the v0.0.72 compatibility
@@ -219,7 +219,7 @@ fi
 # assets, and GHCR manifests; NemoClaw owns which exact artifacts it trusts.
 # whyNotSourceFix: NemoClaw cannot retroactively make an upstream publication
 # immutable, so it independently pins every consumed archive and supervisor.
-# regressionTest: test/install-openshell-version-check.test.ts exercises all
+# regressionTest: test/install/install-openshell-version-check.test.ts exercises all
 # nine mappings, and scripts/check-installer-hash.sh compares them with the
 # GitHub release API on every PR, main push, weekly run, and manual dispatch.
 # removalCondition: remove these entries only when NemoClaw drops that

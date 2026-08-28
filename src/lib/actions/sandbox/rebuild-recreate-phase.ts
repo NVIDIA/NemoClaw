@@ -305,7 +305,12 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     onboardError = error;
     const message = error instanceof Error ? error.message : String(error);
     const name = error instanceof Error ? error.name : "";
-    if (name !== "RebuildOnboardExit") log(`onboard() threw: ${message}`);
+    if (name !== "RebuildOnboardExit") {
+      log(`onboard() threw: ${message}`);
+      console.error(
+        `  ${_RD}Sandbox recreate error:${R} ${onboardSession.redactSensitiveText(message) ?? "Inner onboarding failed."}`,
+      );
+    }
   } finally {
     process.exit = savedExit;
     restoreRebuildBaseImageOverride();

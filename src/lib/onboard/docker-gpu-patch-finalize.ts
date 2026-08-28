@@ -9,19 +9,23 @@
 // that natively accepts NVIDIA GPU access would remove the need for the
 // post-create container recreation NemoClaw performs here. Until OpenShell
 // supports that natively, NemoClaw recreates the container with GPU access
-// and uses this module to either confirm the new container or restore the
-// pre-patch backup. Regression coverage:
+// and uses this module to either restore the pre-patch backup before commit or
+// complete the OpenShell stop / exact remove / OpenShell start handoff and
+// require OpenShell's final Ready acknowledgement. Removing the old container
+// is the irreversible commit point: later failures require a sandbox rebuild
+// rather than automatic rollback. Regression coverage:
 //   * src/lib/onboard/docker-gpu-patch-finalize.test.ts — direct unit tests
-//     for finalize success / rollback / no-op / rollback failure outcomes.
+//     for exact final handoff, terminal phase, rollback, and failure outcomes.
 //   * src/lib/onboard/docker-gpu-patch-rollback.test.ts — composed
 //     recreate-with-rollback scenarios.
-//   * src/lib/onboard/docker-gpu-sandbox-create.test.ts — composed create
+//   * src/lib/onboard/docker-gpu-sandbox-create-lifecycle.test.ts — composed create
 //     flow driving maybeApplyDuringCreate → waitForSupervisorReconnect →
 //     finalizeBackup.
 // Removal condition: when OpenShell supports native Docker-driver GPU
 // creation/reconnect, drop the NemoClaw post-create container recreation
-// and delete this module along with its callers in docker-gpu-patch.ts and
-// docker-gpu-sandbox-create.ts.
+// and delete this module along with its direct callers in
+// docker-gpu-patch-recreate.ts, docker-gpu-sandbox-create.ts, and
+// src/lib/actions/sandbox/supervisor-relaunch.ts.
 
 import { hasZeroDockerExitStatus } from "./docker-command-result";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
@@ -31,10 +35,10 @@ import {
 } from "./docker-gpu-patch-rollback";
 import { fullDockerContainerId } from "./docker-gpu-patch-clone";
 import type { DockerGpuPatchDeps, DockerGpuPatchResult } from "./docker-gpu-patch-types";
-import { waitForOpenShellSandboxLifecycleRelease } from "./docker-gpu-supervisor-reconnect";
+import { waitForOpenShellFinalHandoff } from "./docker-gpu-supervisor-reconnect";
 import {
-  OPENSHELL_MANAGED_BY_LABEL,
-  OPENSHELL_MANAGED_BY_VALUE,
+  OPENSHELL_SANDBOX_NAMESPACE_LABEL,
+  queryOpenShellDockerSandboxContainers,
 } from "./openshell-docker-sandbox-containers";
 
 export {
@@ -51,21 +55,49 @@ export type DockerGpuPatchFinalizeOptions =
       result: DockerGpuPatchResult;
       supervisorReady: true;
       sandboxName: string;
-      lifecycleReleaseTimeoutSecs: number;
+      finalHandoffTimeoutSecs: number;
     };
 
 export type DockerGpuPatchFinalizeOutcome = {
+  /** True once the old container has crossed the irreversible removal boundary. */
   backupRemoved: boolean;
   rolledBack: boolean;
   replacementStoppedForCommit?: boolean;
   replacementRestarted?: boolean;
-  lifecycleReleaseObserved?: boolean;
+  lifecycleStopAcknowledged?: boolean;
+  finalHandoffAcknowledged?: boolean;
+  lastSandboxPhase?: string | null;
   replacementStopConfirmed?: boolean;
   replacementRemovalConfirmed?: boolean;
   replacementPresence?: "absent" | "present" | "unknown";
 };
 
-function isExactOpenShellReplacement(
+const PROCESS_TREE_BOUNDED_OPENSHELL_OPTIONS = {
+  killProcessTreeOnTimeout: true,
+  killSignal: "SIGKILL",
+} as const;
+
+function runOpenShellLifecycleCommand(
+  runOpenshell: NonNullable<DockerGpuPatchDeps["runOpenshell"]>,
+  args: string[],
+  timeoutSecs: number,
+): boolean {
+  try {
+    return hasZeroDockerExitStatus(
+      runOpenshell(args, {
+        ignoreError: true,
+        ...PROCESS_TREE_BOUNDED_OPENSHELL_OPTIONS,
+        suppressOutput: true,
+        timeout: Math.max(1, Math.round(timeoutSecs * 1000)),
+      }),
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isExactRunningReplacement(
+  sandboxName: string,
   replacementContainerId: string,
   dockerRun: NonNullable<DockerGpuPatchDeps["dockerRun"]>,
   timeoutMs: number,
@@ -73,33 +105,62 @@ function isExactOpenShellReplacement(
   const expectedContainerId = fullDockerContainerId(replacementContainerId);
   if (!expectedContainerId || timeoutMs <= 0) return false;
   try {
-    const query = dockerRun(
+    const deadline = Date.now() + timeoutMs;
+    const namespace = dockerRun(
       [
-        "ps",
-        "-a",
-        "--no-trunc",
-        "--filter",
-        `id=${expectedContainerId}`,
-        "--filter",
-        `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
+        "inspect",
+        "--type",
+        "container",
         "--format",
-        "{{.ID}}",
+        `{{ index .Config.Labels "${OPENSHELL_SANDBOX_NAMESPACE_LABEL}" }}`,
+        expectedContainerId,
       ],
       {
         ignoreError: true,
         suppressOutput: true,
-        timeout: Math.max(1, Math.min(DOCKER_GPU_PATCH_TIMEOUT_MS, Math.floor(timeoutMs))),
+        timeout: Math.min(DOCKER_GPU_PATCH_TIMEOUT_MS, timeoutMs),
       },
     );
-    if (!hasZeroDockerExitStatus(query)) return false;
-    const containerIds = String(query.stdout ?? "")
-      .split(/\r?\n/u)
-      .map((line) => line.trim())
-      .filter(Boolean);
-    return (
-      containerIds.length === 1 &&
-      fullDockerContainerId(containerIds[0]) === expectedContainerId
+    const sandboxNamespace = String(namespace.stdout ?? "").trim();
+    if (
+      !hasZeroDockerExitStatus(namespace) ||
+      !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u.test(sandboxNamespace)
+    ) {
+      return false;
+    }
+    let remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) return false;
+    const containers = queryOpenShellDockerSandboxContainers(
+      sandboxName,
+      { dockerRun },
+      remainingMs,
+      sandboxNamespace,
     );
+    if (
+      !containers.ok ||
+      containers.ids.length !== 1 ||
+      fullDockerContainerId(containers.ids[0]) !== expectedContainerId
+    ) {
+      return false;
+    }
+    remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) return false;
+    const inspect = dockerRun(
+      [
+        "inspect",
+        "--type",
+        "container",
+        "--format",
+        "{{json .State.Running}}",
+        expectedContainerId,
+      ],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: Math.min(DOCKER_GPU_PATCH_TIMEOUT_MS, remainingMs),
+      },
+    );
+    return hasZeroDockerExitStatus(inspect) && String(inspect.stdout ?? "").trim() === "true";
   } catch {
     return false;
   }
@@ -119,62 +180,122 @@ export function finalizeDockerGpuPatchBackup(
     return { backupRemoved: true, rolledBack: false };
   }
   if (options.supervisorReady) {
-    // Stop the replacement before retiring the labelled backup, then start it
-    // afterward. OpenShell observes Docker lifecycle events for both containers;
-    // leaving the backup's removal as the final event can demote the already
-    // reconnected replacement back to not-ready. The final start makes the live
-    // replacement's registration authoritative while the rollback container is
-    // still retained until the destructive removal succeeds.
-    const stopResult = resolved.dockerStop(options.result.newContainerId, containerOpts);
-    if (!hasZeroDockerExitStatus(stopResult)) {
+    // Move the durable OpenShell row to Stopped before touching the exact
+    // containers. OpenShell 0.0.106 keeps Stopped stable while the Docker
+    // driver's duplicate-ID snapshot catches up with removal of the rollback
+    // container. Starting through OpenShell then owns the lifecycle fence and
+    // prevents the stopped replacement snapshot from regressing the row to
+    // Error or sticky Deleting. Backup removal remains the irreversible commit
+    // point; failures after it require a sandbox rebuild. Success is withheld
+    // until OpenShell reports Ready and Docker still proves the exact
+    // replacement is the sole running labeled container (#9531, #10153).
+    if (!deps.runOpenshell || !deps.runCaptureOpenshell) {
       return {
         backupRemoved: false,
         rolledBack: false,
         replacementStoppedForCommit: false,
+        lifecycleStopAcknowledged: false,
+        finalHandoffAcknowledged: false,
+        lastSandboxPhase: null,
       };
     }
-    const rmResult = resolved.dockerRm(options.result.backupContainerName, containerOpts);
-    const backupRemoved = hasZeroDockerExitStatus(rmResult);
-    const sandboxName = options.sandboxName;
-    const lifecycleReleaseTimeoutSecs = options.lifecycleReleaseTimeoutSecs;
-    const hasLifecycleContext =
-      sandboxName.length > 0 &&
-      Number.isFinite(lifecycleReleaseTimeoutSecs) &&
-      lifecycleReleaseTimeoutSecs > 0;
-    if (backupRemoved && hasLifecycleContext) {
-      console.log(
-        `  Waiting for OpenShell to retire the previous lifecycle record before restarting the replacement (up to ${lifecycleReleaseTimeoutSecs}s)...`,
-      );
-    }
-    const lifecycleReleaseObserved =
-      backupRemoved && hasLifecycleContext
-        ? waitForOpenShellSandboxLifecycleRelease(sandboxName, lifecycleReleaseTimeoutSecs, {
-            runOpenshell: deps.runOpenshell,
-            sleep: deps.sleep,
-            soleLabeledReplacementCorroboratesRetiringPhase: (remainingMs) =>
-              isExactOpenShellReplacement(
-                options.result.newContainerId,
-                resolved.dockerRun,
-                remainingMs,
-              ),
-          })
-        : false;
-    if (!lifecycleReleaseObserved) {
+    console.log(
+      `  Stopping the replacement through OpenShell for the final handoff (up to ${options.finalHandoffTimeoutSecs}s)...`,
+    );
+    const lifecycleStopAcknowledged = runOpenShellLifecycleCommand(
+      deps.runOpenshell,
+      ["sandbox", "stop", options.sandboxName],
+      options.finalHandoffTimeoutSecs,
+    );
+    if (!lifecycleStopAcknowledged) {
       return {
-        backupRemoved,
+        backupRemoved: false,
+        rolledBack: false,
+        replacementStoppedForCommit: false,
+        lifecycleStopAcknowledged: false,
+        finalHandoffAcknowledged: false,
+        lastSandboxPhase: null,
+      };
+    }
+    const stopResult = resolved.dockerStop(options.result.newContainerId, containerOpts);
+    if (!hasZeroDockerExitStatus(stopResult)) {
+      const replacementRestarted = runOpenShellLifecycleCommand(
+        deps.runOpenshell,
+        ["sandbox", "start", options.sandboxName],
+        options.finalHandoffTimeoutSecs,
+      );
+      return {
+        backupRemoved: false,
+        rolledBack: false,
+        replacementStoppedForCommit: false,
+        replacementRestarted,
+        lifecycleStopAcknowledged: true,
+      };
+    }
+    const rmResult = resolved.dockerRm(options.result.oldContainerId, containerOpts);
+    const backupRemoved = hasZeroDockerExitStatus(rmResult);
+    if (!backupRemoved) {
+      const replacementRestarted = runOpenShellLifecycleCommand(
+        deps.runOpenshell,
+        ["sandbox", "start", options.sandboxName],
+        options.finalHandoffTimeoutSecs,
+      );
+      return {
+        backupRemoved: false,
+        rolledBack: false,
+        replacementStoppedForCommit: true,
+        replacementRestarted,
+        lifecycleStopAcknowledged: true,
+        finalHandoffAcknowledged: false,
+        lastSandboxPhase: null,
+      };
+    }
+    console.log(
+      `  Starting the exact replacement through OpenShell to complete the final handoff (up to ${options.finalHandoffTimeoutSecs}s)...`,
+    );
+    const replacementRestarted = runOpenShellLifecycleCommand(
+      deps.runOpenshell,
+      ["sandbox", "start", options.sandboxName],
+      options.finalHandoffTimeoutSecs,
+    );
+    if (!replacementRestarted) {
+      return {
+        backupRemoved: true,
         rolledBack: false,
         replacementStoppedForCommit: true,
         replacementRestarted: false,
-        lifecycleReleaseObserved: false,
+        lifecycleStopAcknowledged: true,
+        finalHandoffAcknowledged: false,
+        lastSandboxPhase: null,
       };
     }
-    const startResult = resolved.dockerStart(options.result.newContainerId, containerOpts);
+    console.log(
+      `  Waiting for OpenShell to confirm the final replacement handoff (up to ${options.finalHandoffTimeoutSecs}s)...`,
+    );
+    const acknowledgement = waitForOpenShellFinalHandoff(
+      options.sandboxName,
+      options.finalHandoffTimeoutSecs,
+      {
+        runCaptureOpenshell: deps.runCaptureOpenshell,
+        runOpenshell: deps.runOpenshell,
+        sleep: deps.sleep,
+        replacementIsExactAndRunning: (remainingMs) =>
+          isExactRunningReplacement(
+            options.sandboxName,
+            options.result.newContainerId,
+            resolved.dockerRun,
+            remainingMs,
+          ),
+      },
+    );
     return {
-      backupRemoved,
+      backupRemoved: true,
       rolledBack: false,
       replacementStoppedForCommit: true,
-      replacementRestarted: hasZeroDockerExitStatus(startResult),
-      lifecycleReleaseObserved: true,
+      replacementRestarted: true,
+      lifecycleStopAcknowledged: true,
+      finalHandoffAcknowledged: acknowledgement.acknowledged,
+      lastSandboxPhase: acknowledgement.lastSandboxPhase,
     };
   }
   const rollback = rollbackToBackupContainer(
@@ -186,40 +307,4 @@ export function finalizeDockerGpuPatchBackup(
     resolved,
   );
   return { backupRemoved: false, ...rollback };
-}
-
-export type SupervisorReconnectOutcome =
-  | { execReady: true; backupRemoved: boolean }
-  | ({ execReady: false; error: Error } & Omit<DockerGpuPatchFinalizeOutcome, "backupRemoved">);
-
-export function reconcileSupervisorReconnect(
-  execReady: boolean,
-  refs: { newContainerId: string; backupContainerName: string; originalName: string },
-  deps: DockerGpuPatchDeps,
-): SupervisorReconnectOutcome {
-  const resolved = resolveDockerGpuPatchRollbackDeps(deps);
-  const containerOpts = {
-    ignoreError: true,
-    suppressOutput: true,
-    timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-  };
-  if (execReady) {
-    // Backup removal is best-effort here too: the supervisor probe already
-    // confirmed the new container is reachable, so a failed rm leaves a
-    // leaked backup container but the user-visible sandbox is healthy.
-    // Surface the actual rm status so callers can fold it into diagnostics
-    // alongside the deferred-finalize path in `finalizeDockerGpuPatchBackup`.
-    const rmResult = resolved.dockerRm(refs.backupContainerName, containerOpts);
-    return { execReady: true, backupRemoved: hasZeroDockerExitStatus(rmResult) };
-  }
-  const rollback = rollbackToBackupContainer(refs, resolved);
-  return {
-    execReady: false,
-    ...rollback,
-    error: new Error(
-      rollback.rolledBack
-        ? "OpenShell supervisor did not reconnect to the GPU-enabled container; pre-patch sandbox restored."
-        : "OpenShell supervisor did not reconnect to the GPU-enabled container and rollback failed; pre-patch sandbox was NOT restored.",
-    ),
-  };
 }

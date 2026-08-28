@@ -701,7 +701,10 @@ function ensureRegistryContainer(
       `Refusing to replace existing unmanaged container '${REGISTRY_CONTAINER}'. Rename or remove it and retry.`,
     );
   }
-  if (exists && networkIp && networkIp !== PORTABLE_REGISTRY_IP) {
+  const stoppedAddressUnavailable = running !== "true" && networkIp === "invalid IP";
+  if (
+    exists && networkIp && networkIp !== PORTABLE_REGISTRY_IP && !stoppedAddressUnavailable
+  ) {
     throw new Error(
       `Refusing to move managed container '${REGISTRY_CONTAINER}' from unexpected network address '${networkIp}'. Expected ${PORTABLE_REGISTRY_IP}.`,
     );

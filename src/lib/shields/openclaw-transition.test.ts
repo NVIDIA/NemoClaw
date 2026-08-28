@@ -7,7 +7,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
-import YAML from "yaml";
 import {
   createHermesUnsafeConfigHarness,
   expectHermesShieldsUpRecord,
@@ -16,9 +15,6 @@ import {
 } from "../../../test/helpers/hermes-unsafe-config-shields-harness";
 import {
   createShieldsFlowHarness,
-  externalPolicyAuthorityInspection,
-  externalPolicyMutationAuthority,
-  type ShieldsFlowHarness,
   type ShieldsFlowHarnessOptions,
 } from "../../../test/helpers/shields-flow-harness";
 import type { AgentConfigTarget } from "../sandbox/agent-config";
@@ -1367,126 +1363,5 @@ describe("Hermes Shields down unsafe config path (#8804)", () => {
     ).toMatchObject({ shieldsDown: true });
     expect(errors).toContain("Manual intervention is required");
     expect(errors).not.toContain("provisional Shields down cleared");
-  });
-});
-
-function countPolicySets(harness: ShieldsFlowHarness): number {
-  return harness.runSpy.mock.calls.filter(
-    ([command]) => Array.isArray(command) && command.includes("policy") && command.includes("set"),
-  ).length;
-}
-
-function readRestrictivePolicy(harness: ShieldsFlowHarness, sandboxName: string) {
-  const state = harness.getShieldsPosture(sandboxName, false).state;
-  return YAML.parse(fs.readFileSync(String(state.shieldsPolicySnapshotPath), "utf-8")) as Record<
-    string,
-    unknown
-  >;
-}
-
-describe("external Shields policy recovery", () => {
-  let externalTmpDir: string;
-
-  beforeEach(() => {
-    externalTmpDir = fs.mkdtempSync(`${os.tmpdir()}/nemoclaw-external-shields-recovery-`);
-    vi.stubEnv("HOME", externalTmpDir);
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-    vi.unstubAllEnvs();
-    fs.rmSync(externalTmpDir, { recursive: true, force: true });
-  });
-
-  it("locks configuration only after external authority restores the exact snapshot (#9833)", () => {
-    const sandboxName = "openclaw";
-    const harness = createShieldsFlowHarness(requireSource, externalTmpDir, {
-      confirmOpenClawInodeFlags: true,
-      initialOpenClawPosture: "locked",
-    });
-    harness.shieldsDown(sandboxName, { throwOnError: true });
-    const policySetsAfterDown = countPolicySets(harness);
-    const mismatchedExternalAuthority = {
-      authority: "externally-managed",
-      authorityRecordedNow: false,
-      gatewayName: "nemoclaw",
-      inspection: externalPolicyAuthorityInspection,
-    } as const;
-    harness.policyAuthoritySpy.mockReturnValue(mismatchedExternalAuthority);
-    harness.policyRecoveryAuthoritySpy.mockReturnValue(mismatchedExternalAuthority);
-
-    expect(() => harness.shieldsUp(sandboxName, { throwOnError: true })).toThrow(
-      "must make the effective policy",
-    );
-    expect(countPolicySets(harness)).toBe(policySetsAfterDown);
-    expect(harness.getOpenClawPosture()).toBe("mutable");
-
-    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`process exit ${String(code)}`);
-    }) as typeof process.exit);
-    expect(() => harness.shieldsStatus(sandboxName, false)).toThrow("process exit 2");
-    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
-      "must make the effective policy",
-    );
-
-    const restoredExternalAuthority = externalPolicyMutationAuthority(
-      readRestrictivePolicy(harness, sandboxName),
-    );
-    harness.policyAuthoritySpy.mockReturnValue(restoredExternalAuthority);
-    harness.policyRecoveryAuthoritySpy.mockReturnValue(restoredExternalAuthority);
-
-    harness.shieldsUp(sandboxName, { throwOnError: true });
-
-    expect(harness.isShieldsDown(sandboxName)).toBe(false);
-    expect(harness.getOpenClawPosture()).toBe("locked");
-    expect(countPolicySets(harness)).toBe(policySetsAfterDown);
-  });
-
-  it("withholds Shields success when external policy changes during config locking (#9833)", () => {
-    const sandboxName = "openclaw";
-    const harness = createShieldsFlowHarness(requireSource, externalTmpDir, {
-      confirmOpenClawInodeFlags: true,
-      initialOpenClawPosture: "locked",
-    });
-    harness.shieldsDown(sandboxName, { throwOnError: true });
-    const policySetsAfterDown = countPolicySets(harness);
-    const restoredExternalAuthority = externalPolicyMutationAuthority(
-      readRestrictivePolicy(harness, sandboxName),
-    );
-    const changedExternalAuthority = externalPolicyMutationAuthority({
-      version: 1,
-      network_policies: {},
-    });
-    harness.policyAuthoritySpy.mockReturnValue(restoredExternalAuthority);
-    harness.policyRecoveryAuthoritySpy
-      .mockReturnValueOnce(restoredExternalAuthority)
-      .mockReturnValueOnce(restoredExternalAuthority)
-      .mockReturnValue(changedExternalAuthority);
-
-    expect(() => harness.shieldsUp(sandboxName, { throwOnError: true })).toThrow(
-      "policy verification after config lock failed",
-    );
-
-    expect(harness.getOpenClawPosture()).toBe("locked");
-    expect(countPolicySets(harness)).toBe(policySetsAfterDown);
-    const errors = harness.errorSpy.mock.calls.flat().join("\n");
-    expect(errors).toContain(
-      "Config remains locked; Shields remain DOWN until policy verification succeeds.",
-    );
-    expect(errors).not.toContain("Config remains unlocked");
-    expect(harness.auditSpy).not.toHaveBeenCalledWith(
-      expect.objectContaining({ action: "shields_up" }),
-    );
-    expect(harness.getShieldsPosture(sandboxName, false).mode).toBe("locked_recovery");
-    expect(harness.isShieldsDown(sandboxName)).toBe(false);
-    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`process exit ${String(code)}`);
-    }) as typeof process.exit);
-    expect(() => harness.shieldsStatus(sandboxName, false)).toThrow("process exit 2");
-    expect(harness.getOpenClawPosture()).toBe("locked");
-    harness.policyRecoveryAuthoritySpy.mockReturnValue(restoredExternalAuthority);
-    harness.shieldsUp(sandboxName, { throwOnError: true });
-    expect(harness.isShieldsDown(sandboxName)).toBe(false);
-    expect(harness.getOpenClawPosture()).toBe("locked");
   });
 });

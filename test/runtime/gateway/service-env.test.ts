@@ -1,0 +1,1314 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import {
+  type ExecFileSyncOptionsWithStringEncoding,
+  execFileSync,
+  execSync,
+} from "node:child_process";
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { beforeAll, describe, expect, it } from "vitest";
+
+const NEMOCLAW_START_SCRIPT = join(import.meta.dirname, "..", "..", "../scripts/nemoclaw-start.sh");
+const ENTRYPOINT_ENV_WRAPPER = join(
+  import.meta.dirname,
+  "..",
+  "..",
+  "..",
+  "scripts",
+  "lib",
+  "entrypoint-env-wrapper.sh",
+);
+const RC_CLEAN_SCRIPT = join(import.meta.dirname, "..", "..", "../scripts/lib/clean_runtime_shell_env_shim.py");
+
+function rcShimWrapperHeader(): string {
+  return `export NEMOCLAW_RC_CLEAN_SCRIPT=${JSON.stringify(RC_CLEAN_SCRIPT)}`;
+}
+
+function extractRuntimeShellEnvSnippet() {
+  const src = readFileSync(NEMOCLAW_START_SCRIPT, "utf-8");
+  const start = src.indexOf("write_runtime_shell_env() {");
+  const end = src.indexOf("# cleanup_on_signal", start);
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error(
+      "Failed to extract write_runtime_shell_env from scripts/nemoclaw-start.sh — " +
+        "the runtime shell env function may have been moved or renamed",
+    );
+  }
+  return `${src.slice(start, end).trimEnd()}\nwrite_runtime_shell_env`;
+}
+
+function extractOpenClawBootstrapEnvSnippet() {
+  const src = readFileSync(NEMOCLAW_START_SCRIPT, "utf-8");
+  const entrypointStart = src.indexOf("# managed-entrypoint-env-wrapper begin");
+  const entrypointEndMarker = "# managed-entrypoint-env-wrapper end";
+  const entrypointEnd = src.indexOf(entrypointEndMarker, entrypointStart);
+  const environmentStart = src.indexOf('NEMOCLAW_CMD=("$@")');
+  const environmentEnd = src.indexOf(
+    "# Marker file the Docker HEALTHCHECK reads",
+    environmentStart,
+  );
+  const extractionFailure =
+    "Failed to extract OpenClaw bootstrap environment normalization from " +
+    "scripts/nemoclaw-start.sh";
+  expect(entrypointStart, extractionFailure).not.toBe(-1);
+  expect(entrypointEnd, extractionFailure).toBeGreaterThan(entrypointStart);
+  expect(environmentStart, extractionFailure).not.toBe(-1);
+  expect(environmentEnd, extractionFailure).toBeGreaterThan(environmentStart);
+  const entrypoint = src
+    .slice(entrypointStart, entrypointEnd + entrypointEndMarker.length)
+    .replace("/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh", ENTRYPOINT_ENV_WRAPPER);
+  return `${entrypoint}\n${src.slice(environmentStart, environmentEnd).trimEnd()}`;
+}
+
+function extractRuntimeShellEnvShimSnippet() {
+  const src = readFileSync(NEMOCLAW_START_SCRIPT, "utf-8");
+  const start = src.indexOf("ensure_runtime_shell_env_shim() {");
+  const end = src.indexOf("# ── Legacy layout migration", start);
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error(
+      "Failed to extract ensure_runtime_shell_env_shim from scripts/nemoclaw-start.sh — " +
+        "the rc shim helper may have been moved or renamed",
+    );
+  }
+  return `${src.slice(start, end).trimEnd()}\nensure_runtime_shell_env_shim`;
+}
+
+function extractToolRedirectsSnippet() {
+  const src = readFileSync(NEMOCLAW_START_SCRIPT, "utf-8");
+  const start = src.indexOf("_TOOL_REDIRECTS=(");
+  const loop = src.indexOf("for _redir", start);
+  const endMarker = "\ndone";
+  const end = src.indexOf(endMarker, loop);
+  if (start === -1 || loop === -1 || end === -1 || end <= loop) {
+    throw new Error(
+      "Failed to extract _TOOL_REDIRECTS from scripts/nemoclaw-start.sh — " +
+        "the array may have been moved or renamed",
+    );
+  }
+  return src.slice(start, end + endMarker.length);
+}
+
+function extractProxyVarsSnippet() {
+  const src = readFileSync(NEMOCLAW_START_SCRIPT, "utf-8");
+  const start = src.indexOf("PROXY_HOST=");
+  const endMarker = 'export no_proxy="$_NO_PROXY_VAL"';
+  const end = src.indexOf(endMarker, start);
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error(
+      "Failed to extract proxy configuration from scripts/nemoclaw-start.sh — " +
+        "the PROXY_HOST..no_proxy block may have been moved or renamed",
+    );
+  }
+  return src.slice(start, end + endMarker.length);
+}
+
+describe("service environment", () => {
+  describe("OpenClaw EC2 metadata discovery", () => {
+    it("overrides ambient and sandbox-create wrapper false values before startup", () => {
+      const tmpFile = join(tmpdir(), `nemoclaw-imds-bootstrap-${process.pid}.sh`);
+      try {
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          "set -- env AWS_EC2_METADATA_DISABLED=false nemoclaw-start openclaw agent",
+          extractOpenClawBootstrapEnvSnippet(),
+          'printf "%s\\n" "$AWS_EC2_METADATA_DISABLED"',
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+
+        const out = execFileSync("bash", [tmpFile], {
+          encoding: "utf-8",
+          env: { ...process.env, AWS_EC2_METADATA_DISABLED: "false" },
+        });
+        expect(out.trim()).toBe("true");
+      } finally {
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+  });
+
+  describe("start-services behavior", () => {
+    const scriptPath = join(import.meta.dirname, "..", "..", "../scripts/start-services.sh");
+
+    it("starts without messaging-related warnings", { timeout: 30000 }, () => {
+      const workspace = mkdtempSync(join(tmpdir(), "nemoclaw-services-no-key-"));
+      const sandboxName = `test-box-${String(process.pid)}-${String(Date.now())}`;
+      const pidDir = `/tmp/nemoclaw-services-${sandboxName}`;
+      const env = {
+        ...process.env,
+        SANDBOX_NAME: sandboxName,
+        TMPDIR: workspace,
+      };
+      try {
+        const result = execFileSync("bash", [scriptPath], {
+          encoding: "utf-8",
+          env,
+        });
+
+        // Messaging channels are now native to OpenClaw inside the sandbox
+        expect(result).toContain("Messaging:   via OpenClaw native channels");
+      } finally {
+        try {
+          execFileSync("bash", [scriptPath, "--stop"], { env, stdio: "ignore" });
+        } catch {
+          // Startup may fail before there is a service to stop.
+        }
+        rmSync(pidDir, { recursive: true, force: true });
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    });
+  });
+
+
+  describe("SANDBOX_NAME defaulting", () => {
+    it("start-services.sh preserves existing SANDBOX_NAME", () => {
+      const result = execSync(
+        'bash -c \'SANDBOX_NAME="${NEMOCLAW_SANDBOX:-${SANDBOX_NAME:-default}}"; export SANDBOX_NAME; bash -c "echo \\$SANDBOX_NAME"\'',
+        {
+          encoding: "utf-8",
+          env: { ...process.env, NEMOCLAW_SANDBOX: "", SANDBOX_NAME: "my-box" },
+        },
+      ).trim();
+      expect(result).toBe("my-box");
+    });
+
+    it("start-services.sh uses NEMOCLAW_SANDBOX over SANDBOX_NAME", () => {
+      const result = execSync(
+        'bash -c \'SANDBOX_NAME="${NEMOCLAW_SANDBOX:-${SANDBOX_NAME:-default}}"; export SANDBOX_NAME; bash -c "echo \\$SANDBOX_NAME"\'',
+        {
+          encoding: "utf-8",
+          env: { ...process.env, NEMOCLAW_SANDBOX: "from-env", SANDBOX_NAME: "old" },
+        },
+      ).trim();
+      expect(result).toBe("from-env");
+    });
+
+    it("start-services.sh falls back to default when both unset", () => {
+      const result = execSync(
+        'bash -c \'SANDBOX_NAME="${NEMOCLAW_SANDBOX:-${SANDBOX_NAME:-default}}"; export SANDBOX_NAME; bash -c "echo \\$SANDBOX_NAME"\'',
+        {
+          encoding: "utf-8",
+          env: { ...process.env, NEMOCLAW_SANDBOX: "", SANDBOX_NAME: "" },
+        },
+      ).trim();
+      expect(result).toBe("default");
+    });
+  });
+
+  describe("GIT_SSL_CAINFO for proxy CA trust (#2270)", () => {
+    const sandboxInitSource = `source ${JSON.stringify(join(import.meta.dirname, "..", "..", "../scripts/lib/sandbox-init.sh"))}`;
+
+    it("entrypoint exports GIT_SSL_CAINFO when SSL_CERT_FILE points to a real file", () => {
+      const scriptPath = join(import.meta.dirname, "..", "..", "../scripts/nemoclaw-start.sh");
+      const src = readFileSync(scriptPath, "utf-8");
+      const start = src.indexOf("# Git TLS CA bundle fix");
+      const end = src.indexOf("# HTTP library + NODE_USE_ENV_PROXY", start);
+      if (start === -1 || end === -1 || end <= start) {
+        throw new Error("Failed to extract SSL_CERT_FILE handling block");
+      }
+
+      const fakeDir = mkdtempSync(join(tmpdir(), "nemoclaw-git-ssl-entrypoint-"));
+      const fakeCaBundle = join(fakeDir, "ca-bundle.pem");
+      const tmpFile = join(tmpdir(), `nemoclaw-git-ssl-entrypoint-${process.pid}.sh`);
+      try {
+        writeFileSync(
+          fakeCaBundle,
+          "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n",
+        );
+        writeFileSync(
+          tmpFile,
+          [
+            "#!/usr/bin/env bash",
+            "set -euo pipefail",
+            `export SSL_CERT_FILE=${JSON.stringify(fakeCaBundle)}`,
+            src.slice(start, end),
+            'printf "%s" "${GIT_SSL_CAINFO:-}"',
+          ].join("\n"),
+          { mode: 0o700 },
+        );
+
+        const output = execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+        expect(output).toBe(fakeCaBundle);
+      } finally {
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+        try {
+          rmSync(fakeDir, { recursive: true, force: true });
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+
+    it("proxy-env.sh includes GIT_SSL_CAINFO when set", () => {
+      const fakeDataDir = mkdtempSync(join(tmpdir(), "nemoclaw-git-ssl-test-"));
+      const fakeCaBundle = join(fakeDataDir, "ca-bundle.pem");
+      const tmpFile = join(fakeDataDir, "git-ssl-env.sh");
+      try {
+        const persistBlock = extractRuntimeShellEnvSnippet();
+        // Create a fake CA bundle so the -f check passes
+        writeFileSync(
+          fakeCaBundle,
+          "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n",
+        );
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          sandboxInitSource,
+          'PROXY_HOST="10.200.0.1"',
+          'PROXY_PORT="3128"',
+          '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
+          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+          "_TOOL_REDIRECTS=()",
+          `_AXIOS_FIX_SCRIPT="/nonexistent/axios-proxy-fix.js"`,
+          // Simulate OpenShell injecting SSL_CERT_FILE and the entrypoint setting GIT_SSL_CAINFO
+          `export SSL_CERT_FILE="${fakeCaBundle}"`,
+          `export GIT_SSL_CAINFO="${fakeCaBundle}"`,
+          "set +u  # array expansion safe on macOS bash",
+          persistBlock
+            .trimEnd()
+            .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+
+        const envFile = readFileSync(join(fakeDataDir, "proxy-env.sh"), "utf-8");
+        expect(envFile).toContain("GIT_SSL_CAINFO");
+        expect(envFile).toContain(fakeCaBundle);
+      } finally {
+        try {
+          rmSync(fakeDataDir, { recursive: true, force: true });
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+
+    it("proxy-env.sh omits GIT_SSL_CAINFO when not set", () => {
+      const fakeDataDir = join(tmpdir(), `nemoclaw-git-ssl-noop-test-${process.pid}`);
+      mkdirSync(fakeDataDir, { recursive: true });
+      const tmpFile = join(tmpdir(), `nemoclaw-git-ssl-noop-env-${process.pid}.sh`);
+      try {
+        const persistBlock = extractRuntimeShellEnvSnippet();
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          sandboxInitSource,
+          'PROXY_HOST="10.200.0.1"',
+          'PROXY_PORT="3128"',
+          '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
+          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+          "_TOOL_REDIRECTS=()",
+          `_AXIOS_FIX_SCRIPT="/nonexistent/axios-proxy-fix.js"`,
+          // GIT_SSL_CAINFO intentionally NOT set
+          "set +u  # array expansion safe on macOS bash",
+          persistBlock
+            .trimEnd()
+            .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+
+        const envFile = readFileSync(join(fakeDataDir, "proxy-env.sh"), "utf-8");
+        expect(envFile).not.toContain("GIT_SSL_CAINFO");
+      } finally {
+        try {
+          rmSync(fakeDataDir, { recursive: true, force: true });
+          rmSync(tmpFile, { force: true });
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+  });
+
+  describe("runtime npm online state", () => {
+    it("entrypoint exports npm_config_offline=false and NPM_CONFIG_OFFLINE=false at PID 1", () => {
+      const src = readFileSync(NEMOCLAW_START_SCRIPT, "utf-8");
+      const start = src.indexOf("_TOOL_REDIRECTS=(");
+      const end = src.indexOf("done", src.indexOf("for _redir", start));
+      if (start === -1 || end === -1 || end <= start) {
+        throw new Error("Failed to extract _TOOL_REDIRECTS block from scripts/nemoclaw-start.sh");
+      }
+      const block = `${src.slice(start, end)}done`;
+      const tmpFile = join(tmpdir(), `nemoclaw-tool-redirects-npm-online-${process.pid}.sh`);
+      try {
+        writeFileSync(
+          tmpFile,
+          [
+            "#!/usr/bin/env bash",
+            "set -euo pipefail",
+            block,
+            'printf "npm_config_offline=%s\\n" "${npm_config_offline:-unset}"',
+            'printf "NPM_CONFIG_OFFLINE=%s\\n" "${NPM_CONFIG_OFFLINE:-unset}"',
+          ].join("\n"),
+          { mode: 0o700 },
+        );
+        const out = execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+        expect(out).toContain("npm_config_offline=false");
+        expect(out).toContain("NPM_CONFIG_OFFLINE=false");
+      } finally {
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+
+    it("a sandbox-connect shell sourcing the emitted proxy-env reports both npm offline env vars as false", () => {
+      const persistBlock = extractRuntimeShellEnvSnippet();
+      const toolRedirects = extractToolRedirectsSnippet();
+      const sandboxInitSource = `source ${JSON.stringify(join(import.meta.dirname, "..", "..", "../scripts/lib/sandbox-init.sh"))}`;
+      const fakeDataDir = mkdtempSync(join(tmpdir(), "nemoclaw-connect-npm-online-"));
+      const tmpFile = join(tmpdir(), `nemoclaw-connect-npm-online-${process.pid}.sh`);
+      try {
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          sandboxInitSource,
+          toolRedirects,
+          'PROXY_HOST="10.200.0.1"',
+          'PROXY_PORT="3128"',
+          '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
+          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+          'export OPENCLAW_GATEWAY_TOKEN="probe-token"',
+          persistBlock.replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
+          `env -i HOME=/tmp bash --noprofile --norc -c 'source ${fakeDataDir}/proxy-env.sh; printf "%s\\n" "$npm_config_offline" "$NPM_CONFIG_OFFLINE"'`,
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        const out = execFileSync("bash", [tmpFile], { encoding: "utf-8" }).trim();
+        expect(out.split("\n")).toEqual(["false", "false"]);
+      } finally {
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+        try {
+          rmSync(fakeDataDir, { recursive: true, force: true });
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+  });
+
+  describe("XDG and tool cache redirects (#804)", () => {
+    it.each([
+      { scenario: "npm cache" },
+      { scenario: "cache" },
+      { scenario: "config" },
+      { scenario: "local share" },
+      { scenario: "local state" },
+      { scenario: "runtime" },
+      { scenario: "Claude" },
+      { scenario: "npm global" },
+    ])(
+      "entrypoint pre-creates redirected dirs and restricts GNUPGHOME permissions [$scenario]",
+      ({ scenario }) => {
+        const scriptPath = join(import.meta.dirname, "..", "..", "../scripts/nemoclaw-start.sh");
+        const src = readFileSync(scriptPath, "utf-8");
+        const start = src.indexOf("# Pre-create redirected directories");
+        const end = src.indexOf("# ── Drop unnecessary Linux capabilities", start);
+        if (start === -1 || end === -1 || end <= start) {
+          throw new Error("Failed to extract redirected-directory setup block");
+        }
+
+        const fakeTmp = mkdtempSync(join(tmpdir(), "nemoclaw-tool-redirects-"));
+        const block = src.slice(start, end).replaceAll("/tmp/", `${fakeTmp}/`);
+        const tmpFile = join(tmpdir(), `nemoclaw-tool-redirects-${process.pid}.sh`);
+        try {
+          writeFileSync(
+            tmpFile,
+            [
+              "#!/usr/bin/env bash",
+              "set -euo pipefail",
+              'id() { if [ "${1:-}" = "-u" ]; then printf "1000\\n"; else command id "$@"; fi; }',
+              block,
+            ].join("\n"),
+            {
+              mode: 0o700,
+            },
+          );
+          execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+
+          const dir = (
+            {
+              "npm cache": ".npm-cache",
+              cache: ".cache",
+              config: ".config",
+              "local share": join(".local", "share"),
+              "local state": join(".local", "state"),
+              runtime: ".runtime",
+              Claude: ".claude",
+              "npm global": "npm-global",
+            } as const
+          )[scenario]!;
+          expect(lstatSync(join(fakeTmp, dir)).isDirectory()).toBe(true);
+
+          const gnupg = lstatSync(join(fakeTmp, ".gnupg"));
+          expect(gnupg.isDirectory()).toBe(true);
+          expect((gnupg.mode & 0o777).toString(8)).toBe("700");
+        } finally {
+          try {
+            unlinkSync(tmpFile);
+          } catch {
+            /* ignore */
+          }
+          try {
+            rmSync(fakeTmp, { recursive: true, force: true });
+          } catch {
+            /* ignore */
+          }
+        }
+      },
+    );
+  });
+
+  describe("proxy environment variables (#626)", () => {
+    // The proxy persistence block calls emit_sandbox_sourced_file from the
+    // shared library. Wrappers that execute the extracted block must source it.
+    const sandboxInitSource = `source ${JSON.stringify(join(import.meta.dirname, "..", "..", "../scripts/lib/sandbox-init.sh"))}`;
+
+    function extractProxyVars(env: Record<string, string> = {}) {
+      const proxyBlock = extractProxyVarsSnippet();
+      const wrapper = [
+        "#!/usr/bin/env bash",
+        proxyBlock.trimEnd(),
+        'echo "HTTP_PROXY=${HTTP_PROXY}"',
+        'echo "HTTPS_PROXY=${HTTPS_PROXY}"',
+        'echo "NO_PROXY=${NO_PROXY}"',
+        'echo "http_proxy=${http_proxy}"',
+        'echo "https_proxy=${https_proxy}"',
+        'echo "no_proxy=${no_proxy}"',
+      ].join("\n");
+      const tmpFile = join(tmpdir(), `nemoclaw-proxy-test-${process.pid}.sh`);
+      try {
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        const out = execFileSync("bash", [tmpFile], {
+          encoding: "utf-8",
+          env: { ...process.env, ...env },
+        }).trim();
+        return Object.fromEntries(
+          out.split("\n").map((l) => {
+            const idx = l.indexOf("=");
+            return [l.slice(0, idx), l.slice(idx + 1)];
+          }),
+        );
+      } finally {
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
+    let defaultProxyVars: Record<string, string>;
+    let hostOverrideProxyVars: Record<string, string>;
+    let portOverrideProxyVars: Record<string, string>;
+
+    beforeAll(() => {
+      defaultProxyVars = extractProxyVars();
+      hostOverrideProxyVars = extractProxyVars({ NEMOCLAW_PROXY_HOST: "192.168.64.1" });
+      portOverrideProxyVars = extractProxyVars({ NEMOCLAW_PROXY_PORT: "8080" });
+    });
+
+    it("sets HTTP_PROXY to default gateway address", () => {
+      const vars = defaultProxyVars;
+      expect(vars.HTTP_PROXY).toBe("http://10.200.0.1:3128");
+    });
+
+    it("sets HTTPS_PROXY to default gateway address", () => {
+      const vars = defaultProxyVars;
+      expect(vars.HTTPS_PROXY).toBe("http://10.200.0.1:3128");
+    });
+
+    it("NEMOCLAW_PROXY_HOST overrides default gateway IP", () => {
+      const vars = hostOverrideProxyVars;
+      expect(vars.HTTP_PROXY).toBe("http://192.168.64.1:3128");
+      expect(vars.HTTPS_PROXY).toBe("http://192.168.64.1:3128");
+    });
+
+    it("NEMOCLAW_PROXY_PORT overrides default proxy port", () => {
+      const vars = portOverrideProxyVars;
+      expect(vars.HTTP_PROXY).toBe("http://10.200.0.1:8080");
+      expect(vars.HTTPS_PROXY).toBe("http://10.200.0.1:8080");
+    });
+
+    it("NO_PROXY includes loopback only, not inference.local", () => {
+      const vars = defaultProxyVars;
+      const noProxy = vars.NO_PROXY.split(",");
+      expect(noProxy).toContain("localhost");
+      expect(noProxy).toContain("127.0.0.1");
+      expect(noProxy).toContain("::1");
+      expect(noProxy).not.toContain("inference.local");
+    });
+
+    it("NO_PROXY includes OpenShell gateway IP", () => {
+      const vars = defaultProxyVars;
+      expect(vars.NO_PROXY).toContain("10.200.0.1");
+    });
+
+    it("exports lowercase proxy variants for undici/gRPC compatibility", () => {
+      const vars = defaultProxyVars;
+      expect(vars.http_proxy).toBe("http://10.200.0.1:3128");
+      expect(vars.https_proxy).toBe("http://10.200.0.1:3128");
+      const noProxy = vars.no_proxy.split(",");
+      expect(noProxy).not.toContain("inference.local");
+      expect(noProxy).toContain("10.200.0.1");
+    });
+
+    it.each(["sh", "bash"])(
+      "entrypoint writes proxy-env.sh that can be sourced by %s",
+      (sourceShell) => {
+        const fakeDataDir = join(tmpdir(), `nemoclaw-data-test-${process.pid}`);
+        mkdirSync(fakeDataDir, { recursive: true });
+        const tmpFile = join(tmpdir(), `nemoclaw-proxyenv-write-test-${process.pid}.sh`);
+        try {
+          const persistBlock = extractRuntimeShellEnvSnippet();
+          const toolRedirects = extractToolRedirectsSnippet();
+          const wrapper = [
+            "#!/usr/bin/env bash",
+            sandboxInitSource,
+            toolRedirects,
+            'PROXY_HOST="10.200.0.1"',
+            'PROXY_PORT="3128"',
+            '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
+            '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+            'export OPENCLAW_GATEWAY_TOKEN="test-token-123"',
+            // Override the hardcoded path to use our temp dir
+            persistBlock
+              .trimEnd()
+              .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
+          ].join("\n");
+          writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+          execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+
+          const envFile = readFileSync(join(fakeDataDir, "proxy-env.sh"), "utf-8");
+          expect(envFile).toContain('export HTTP_PROXY="http://10.200.0.1:3128"');
+          expect(envFile).toContain('export HTTPS_PROXY="http://10.200.0.1:3128"');
+          expect(envFile).toContain("export NO_PROXY=");
+          expect(envFile).not.toContain("inference.local");
+          expect(envFile).toContain("10.200.0.1");
+          expect(envFile).toContain('export AWS_EC2_METADATA_DISABLED="true"');
+          expect(envFile).toContain("export OPENCLAW_GATEWAY_TOKEN");
+
+          const sourced = execFileSync(
+            sourceShell,
+            [
+              "-c",
+              `unset OPENCLAW_GATEWAY_TOKEN OPENCLAW_GATEWAY_URL _nemoclaw_gateway_token; . '${join(fakeDataDir, "proxy-env.sh")}'; printf 'TOKEN=[%s] TEMP=[%s]\\n' "\${OPENCLAW_GATEWAY_TOKEN-<UNSET>}" "\${_nemoclaw_gateway_token-<UNSET>}"`,
+            ],
+            { encoding: "utf-8" },
+          );
+          expect(sourced).toContain("TOKEN=[test-token-123] TEMP=[<UNSET>]");
+
+          expect(envFile).toContain("nemoclaw-configure-guard begin");
+          expect(envFile).toContain('/usr/bin/env openclaw "$@"');
+          // Tool cache redirects should be present (#804)
+          expect(envFile).toContain("npm_config_cache");
+          expect(envFile).toContain("HISTFILE");
+          expect(envFile).toContain("GIT_CONFIG_GLOBAL");
+          // XDG redirects prevent tools from writing to read-only /sandbox (#804)
+          expect(envFile).toContain("XDG_CONFIG_HOME=/tmp/.config");
+          expect(envFile).toContain("XDG_DATA_HOME=/tmp/.local/share");
+          expect(envFile).toContain("XDG_STATE_HOME=/tmp/.local/state");
+          expect(envFile).toContain("XDG_RUNTIME_DIR=/tmp/.runtime");
+          expect(envFile).toContain("GNUPGHOME=/tmp/.gnupg");
+          expect(envFile).toContain("PYTHON_HISTORY=/tmp/.python_history");
+          expect(envFile).toContain("npm_config_prefix=/tmp/npm-global");
+          // Pin npm online for connect sessions and PID 1 so a leaked
+          // build-time NPM_CONFIG_OFFLINE=true cannot force `only-if-cached`
+          // mode on dashboard-driven MCP installs, skill installers, or
+          // ad-hoc `npx -y` invocations inside the sandbox.
+          expect(envFile).toContain("npm_config_offline=false");
+          expect(envFile).toContain("NPM_CONFIG_OFFLINE=false");
+          // Permission should be 444 (hardened via emit_sandbox_sourced_file).
+          const perms = (lstatSync(join(fakeDataDir, "proxy-env.sh")).mode & 0o777).toString(8);
+          expect(perms).toBe("444");
+
+          const connectedValues = execFileSync(
+            "bash",
+            [
+              "--noprofile",
+              "--norc",
+              "-c",
+              `export AWS_EC2_METADATA_DISABLED=false; source ${JSON.stringify(join(fakeDataDir, "proxy-env.sh"))}; printf "%s|%s" "$AWS_EC2_METADATA_DISABLED" "$OPENCLAW_GATEWAY_TOKEN"`,
+            ],
+            { encoding: "utf-8" },
+          );
+          expect(connectedValues).toBe("true|test-token-123");
+        } finally {
+          try {
+            unlinkSync(tmpFile);
+          } catch {
+            /* ignore */
+          }
+          try {
+            rmSync(fakeDataDir, { recursive: true, force: true });
+          } catch {
+            /* ignore */
+          }
+        }
+      },
+    );
+
+    it.each([".bashrc", ".profile"])(
+      "removes legacy proxy-env.sh source shims from sandbox user rc files [%s]",
+      (rcName) => {
+        const fakeHome = mkdtempSync(join(tmpdir(), "nemoclaw-rc-shim-test-"));
+        const proxyEnvPath = join(fakeHome, "proxy-env.sh");
+        const tmpFile = join(fakeHome, "rc-shim-write-test.sh");
+        try {
+          writeFileSync(
+            join(fakeHome, ".bashrc"),
+            [
+              "# old bashrc",
+              "# Source runtime proxy config",
+              `[ -f ${proxyEnvPath} ] && . ${proxyEnvPath}`,
+              "export PATH=/usr/local/bin:$PATH",
+              "",
+            ].join("\n"),
+            { mode: 0o644 },
+          );
+          writeFileSync(
+            join(fakeHome, ".profile"),
+            [
+              "# old profile",
+              "# Source runtime proxy config",
+              `[ -f ${proxyEnvPath} ] && . ${proxyEnvPath}`,
+              "umask 022",
+              "",
+            ].join("\n"),
+            { mode: 0o444 },
+          );
+
+          const wrapper = [
+            "#!/usr/bin/env bash",
+            `_SANDBOX_HOME=${JSON.stringify(fakeHome)}`,
+            `_RUNTIME_SHELL_ENV_FILE=${JSON.stringify(proxyEnvPath)}`,
+            '_RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL_ENV_FILE}"',
+            rcShimWrapperHeader(),
+            extractRuntimeShellEnvShimSnippet(),
+            "ensure_runtime_shell_env_shim",
+          ].join("\n");
+          writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+          execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+
+          const rcFile = readFileSync(join(fakeHome, rcName), "utf-8");
+          expect(rcFile.toLowerCase()).not.toContain("proxy");
+          expect(rcFile).not.toContain(proxyEnvPath);
+          expect(rcFile).toContain(rcName === ".bashrc" ? "export PATH" : "umask 022");
+        } finally {
+          try {
+            unlinkSync(tmpFile);
+          } catch {
+            /* ignore */
+          }
+          try {
+            rmSync(fakeHome, { recursive: true, force: true });
+          } catch {
+            /* ignore */
+          }
+        }
+      },
+    );
+
+    it("does not follow pre-planted legacy rc cleanup temp symlinks", () => {
+      const fakeHome = mkdtempSync(join(tmpdir(), "nemoclaw-rc-shim-symlink-test-"));
+      const proxyEnvPath = join(fakeHome, "proxy-env.sh");
+      const rcPath = join(fakeHome, ".bashrc");
+      const sensitivePath = join(fakeHome, "sensitive");
+      const tmpFile = join(fakeHome, "rc-shim-symlink-test.sh");
+      try {
+        writeFileSync(
+          rcPath,
+          [
+            "# old bashrc",
+            "# Source runtime proxy config",
+            `[ -f ${proxyEnvPath} ] && . ${proxyEnvPath}`,
+            "export PATH=/usr/local/bin:$PATH",
+            "",
+          ].join("\n"),
+          { mode: 0o644 },
+        );
+        writeFileSync(sensitivePath, "SECRET\n", { mode: 0o600 });
+
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          `_SANDBOX_HOME=${JSON.stringify(fakeHome)}`,
+          `_RUNTIME_SHELL_ENV_FILE=${JSON.stringify(proxyEnvPath)}`,
+          '_RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL_ENV_FILE}"',
+          'legacy_tmp="${_SANDBOX_HOME}/.bashrc.nemoclaw-clean.$$"',
+          `ln -s ${JSON.stringify(sensitivePath)} "$legacy_tmp"`,
+          rcShimWrapperHeader(),
+          extractRuntimeShellEnvShimSnippet(),
+          "ensure_runtime_shell_env_shim",
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+
+        expect(readFileSync(sensitivePath, "utf-8")).toBe("SECRET\n");
+        const rcFile = readFileSync(rcPath, "utf-8");
+        expect(rcFile.toLowerCase()).not.toContain("proxy");
+        expect(rcFile).not.toContain(proxyEnvPath);
+        expect(rcFile).toContain("export PATH");
+      } finally {
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+        try {
+          rmSync(fakeHome, { recursive: true, force: true });
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+
+    it("cleans rc shims without shell chown/chmod on the rc path", () => {
+      const fakeHome = mkdtempSync(join(tmpdir(), "nemoclaw-rc-shim-no-path-chmod-test-"));
+      const proxyEnvPath = join(fakeHome, "proxy-env.sh");
+      const rcPath = join(fakeHome, ".bashrc");
+      const tmpFile = join(fakeHome, "rc-shim-no-path-chmod-test.sh");
+      try {
+        writeFileSync(
+          rcPath,
+          [
+            "# old bashrc",
+            "# Source runtime proxy config",
+            `[ -f ${proxyEnvPath} ] && . ${proxyEnvPath}`,
+            "",
+          ].join("\n"),
+          { mode: 0o644 },
+        );
+
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          `_SANDBOX_HOME=${JSON.stringify(fakeHome)}`,
+          `_RUNTIME_SHELL_ENV_FILE=${JSON.stringify(proxyEnvPath)}`,
+          '_RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL_ENV_FILE}"',
+          'chown() { echo "unexpected chown $*" >&2; exit 42; }',
+          'chmod() { echo "unexpected chmod $*" >&2; exit 43; }',
+          rcShimWrapperHeader(),
+          extractRuntimeShellEnvShimSnippet(),
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+
+        const rcFile = readFileSync(rcPath, "utf-8");
+        expect(rcFile.toLowerCase()).not.toContain("proxy");
+        expect(rcFile).not.toContain(proxyEnvPath);
+      } finally {
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+        try {
+          rmSync(fakeHome, { recursive: true, force: true });
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+
+    it("does not rewrite locked clean rc files", () => {
+      const fakeHome = mkdtempSync(join(tmpdir(), "nemoclaw-rc-shim-clean-locked-test-"));
+      const proxyEnvPath = join(fakeHome, "proxy-env.sh");
+      const rcPath = join(fakeHome, ".bashrc");
+      const profilePath = join(fakeHome, ".profile");
+      const tmpFile = join(tmpdir(), `rc-shim-clean-locked-test-${process.pid}.sh`);
+      try {
+        writeFileSync(rcPath, "# clean bashrc\n", { mode: 0o444 });
+        writeFileSync(profilePath, "# clean profile\n", { mode: 0o444 });
+        chmodSync(fakeHome, 0o555);
+
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          `_SANDBOX_HOME=${JSON.stringify(fakeHome)}`,
+          `_RUNTIME_SHELL_ENV_FILE=${JSON.stringify(proxyEnvPath)}`,
+          '_RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL_ENV_FILE}"',
+          rcShimWrapperHeader(),
+          extractRuntimeShellEnvShimSnippet(),
+          "ensure_runtime_shell_env_shim",
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+
+        expect(readFileSync(rcPath, "utf-8")).toBe("# clean bashrc\n");
+        expect(readFileSync(profilePath, "utf-8")).toBe("# clean profile\n");
+      } finally {
+        try {
+          chmodSync(fakeHome, 0o755);
+        } catch {
+          /* ignore */
+        }
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+        try {
+          rmSync(fakeHome, { recursive: true, force: true });
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+
+    const itOnProcFd = existsSync("/proc/self/fd") ? it : it.skip;
+    itOnProcFd("removes legacy rc shims without directory write permission", () => {
+      const fakeHome = mkdtempSync(join(tmpdir(), "nemoclaw-rc-shim-unwritable-dir-test-"));
+      const proxyEnvPath = join(fakeHome, "proxy-env.sh");
+      const rcPath = join(fakeHome, ".bashrc");
+      const profilePath = join(fakeHome, ".profile");
+      const tmpFile = join(tmpdir(), `rc-shim-unwritable-dir-test-${process.pid}.sh`);
+      try {
+        for (const rcPathToWrite of [rcPath, profilePath]) {
+          writeFileSync(
+            rcPathToWrite,
+            [
+              "# old rc",
+              "# Source runtime proxy config",
+              `[ -f ${proxyEnvPath} ] && . ${proxyEnvPath}`,
+              "export PATH=/usr/local/bin:$PATH",
+              "",
+            ].join("\n"),
+            { mode: 0o444 },
+          );
+        }
+        chmodSync(fakeHome, 0o555);
+
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          `_SANDBOX_HOME=${JSON.stringify(fakeHome)}`,
+          `_RUNTIME_SHELL_ENV_FILE=${JSON.stringify(proxyEnvPath)}`,
+          '_RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL_ENV_FILE}"',
+          rcShimWrapperHeader(),
+          extractRuntimeShellEnvShimSnippet(),
+          "ensure_runtime_shell_env_shim",
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+
+        for (const rcPathToRead of [rcPath, profilePath]) {
+          const rcFile = readFileSync(rcPathToRead, "utf-8");
+          expect(rcFile.toLowerCase()).not.toContain("proxy");
+          expect(rcFile).not.toContain(proxyEnvPath);
+          expect(rcFile).toContain("export PATH");
+        }
+      } finally {
+        try {
+          chmodSync(fakeHome, 0o755);
+        } catch {
+          /* ignore */
+        }
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+        try {
+          rmSync(fakeHome, { recursive: true, force: true });
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+
+    // Composed startup invariant: write_runtime_shell_env emits the proxy
+    // env file with mode 444, ensure_runtime_shell_env_shim then sees a
+    // foreign-owned .bashrc and must exit 0 (otherwise the entrypoint would
+    // terminate the container with exit code 1). The composed assertion
+    // proves the legacy trust-boundary file remains non-user-writable
+    // across the skip path.
+    it("composed startup leaves the proxy env file at mode 444 when the rc cleanup skips a foreign-owned rc file", () => {
+      const fakeDataDir = mkdtempSync(join(tmpdir(), "nemoclaw-rc-skip-composed-"));
+      const fakeHome = mkdtempSync(join(tmpdir(), "nemoclaw-rc-skip-home-"));
+      const proxyEnvPath = join(fakeDataDir, "proxy-env.sh");
+      const rcPath = join(fakeHome, ".bashrc");
+      const tmpFile = join(tmpdir(), `nemoclaw-rc-skip-composed-${process.pid}.sh`);
+      const isolatedSandboxInitPath = join(fakeDataDir, "sandbox-init.sh");
+      const isolatedSandboxEnv = {
+        ...process.env,
+        ISOLATED_SANDBOX_INIT: isolatedSandboxInitPath,
+        NEMOCLAW_TEST_AUTO_PAIR_LOG: join(fakeDataDir, "auto-pair.log"),
+        NEMOCLAW_TEST_GATEWAY_LOG: join(fakeDataDir, "gateway.log"),
+        PLUGIN_REFRESH_LOG: join(fakeDataDir, "nemoclaw-plugin-refresh.log"),
+      };
+      try {
+        const sandboxLibDir = join(import.meta.dirname, "..", "..", "../scripts/lib");
+        const sandboxInitFixture = readFileSync(join(sandboxLibDir, "sandbox-init.sh"), "utf-8")
+          .replaceAll("/tmp/gateway.log", '"${NEMOCLAW_TEST_GATEWAY_LOG}"')
+          .replaceAll("/tmp/auto-pair.log", '"${NEMOCLAW_TEST_AUTO_PAIR_LOG}"');
+        writeFileSync(isolatedSandboxInitPath, sandboxInitFixture, { mode: 0o600 });
+        writeFileSync(
+          join(fakeDataDir, "sandbox-rlimits.sh"),
+          readFileSync(join(sandboxLibDir, "sandbox-rlimits.sh"), "utf-8"),
+          { mode: 0o600 },
+        );
+
+        const shimLine = `[ -f ${proxyEnvPath} ] && . ${proxyEnvPath}`;
+        const originalBashrc = [
+          "# user-managed bashrc owned by a foreign uid (e.g. root)",
+          "# Source runtime proxy config",
+          shimLine,
+          "export PATH=/usr/local/bin:$PATH",
+          "",
+        ].join("\n");
+        writeFileSync(rcPath, originalBashrc, { mode: 0o644 });
+
+        const persistBlock = extractRuntimeShellEnvSnippet()
+          .trimEnd()
+          .replaceAll("/tmp/nemoclaw-proxy-env.sh", proxyEnvPath);
+        // Foreign uid that does not match the test-runner's actual file owner.
+        // Overriding `id -u` for the bash function-level shim invocation is
+        // the cheapest way to drive the "uid != owner" branch without root.
+        const foreignUid = (process.getuid?.() ?? 1000) + 99999;
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          'source "$ISOLATED_SANDBOX_INIT"',
+          'PROXY_HOST="10.200.0.1"',
+          'PROXY_PORT="3128"',
+          '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
+          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+          "_TOOL_REDIRECTS=()",
+          `_AXIOS_FIX_SCRIPT="/nonexistent/axios-proxy-fix.js"`,
+          `_SANDBOX_HOME=${JSON.stringify(fakeHome)}`,
+          `_RUNTIME_SHELL_ENV_FILE=${JSON.stringify(proxyEnvPath)}`,
+          `_RUNTIME_SHELL_ENV_SHIM="[ -f \${_RUNTIME_SHELL_ENV_FILE} ] && . \${_RUNTIME_SHELL_ENV_FILE}"`,
+          rcShimWrapperHeader(),
+          // Override `id -u` BEFORE the entrypoint snippets are sourced so the
+          // function-shadow is in place when both write_runtime_shell_env and
+          // ensure_runtime_shell_env_shim consult `$(id -u)`.
+          `id() { case "\${1:-}" in -u) echo ${foreignUid};; *) command id "$@";; esac; }`,
+          "set +u",
+          persistBlock,
+          extractRuntimeShellEnvShimSnippet(),
+          "validate_tmp_permissions " + JSON.stringify(proxyEnvPath),
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        const result = execFileSync("bash", [tmpFile], {
+          encoding: "utf-8",
+          env: isolatedSandboxEnv,
+        });
+
+        expect(result).not.toContain("[SECURITY] " + proxyEnvPath + " has unsafe permissions");
+
+        const finalMode = (lstatSync(proxyEnvPath).mode & 0o777).toString(8);
+        expect(finalMode).toBe("444");
+
+        const rcAfter = readFileSync(rcPath, "utf-8");
+        expect(rcAfter).toBe(originalBashrc);
+      } finally {
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+        try {
+          rmSync(fakeDataDir, { recursive: true, force: true });
+          rmSync(fakeHome, { recursive: true, force: true });
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+
+    it("entrypoint overwrites proxy-env.sh cleanly on repeated invocations", () => {
+      const fakeDataDir = join(tmpdir(), `nemoclaw-idempotent-test-${process.pid}`);
+      mkdirSync(fakeDataDir, { recursive: true });
+      const tmpFile = join(tmpdir(), `nemoclaw-idempotent-write-test-${process.pid}.sh`);
+      const chownLog = join(fakeDataDir, "chown.log");
+      try {
+        const persistBlock = extractRuntimeShellEnvSnippet();
+        const toolRedirects = extractToolRedirectsSnippet();
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          'id() { if [ "${1:-}" = "-u" ]; then printf "0\\n"; else command id "$@"; fi; }',
+          'chown() { printf "%s\\n" "$*" >> "$CHOWN_LOG"; }',
+          `export CHOWN_LOG=${JSON.stringify(chownLog)}`,
+          sandboxInitSource,
+          toolRedirects,
+          'PROXY_HOST="10.200.0.1"',
+          'PROXY_PORT="3128"',
+          '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
+          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+          persistBlock
+            .trimEnd()
+            .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        const runOpts: ExecFileSyncOptionsWithStringEncoding = { encoding: "utf-8" };
+        execFileSync("bash", [tmpFile], runOpts);
+        execFileSync("bash", [tmpFile], runOpts);
+        execFileSync("bash", [tmpFile], runOpts);
+
+        const envFile = readFileSync(join(fakeDataDir, "proxy-env.sh"), "utf-8");
+        // cat > overwrites the file each time, so there should be exactly one
+        // HTTP_PROXY line — no duplication from repeated runs.
+        const httpProxyCount = (envFile.match(/export HTTP_PROXY=/g) || []).length;
+        expect(httpProxyCount).toBe(1);
+        const metadataCount = (envFile.match(/export AWS_EC2_METADATA_DISABLED=/g) || []).length;
+        expect(metadataCount).toBe(1);
+        expect((lstatSync(join(fakeDataDir, "proxy-env.sh")).mode & 0o777).toString(8)).toBe("444");
+        const chownCalls = readFileSync(chownLog, "utf-8").trim().split("\n");
+        expect(chownCalls).toHaveLength(3);
+        expect(chownCalls.every((call) => /^root:root .*\/\.proxy-env\.sh\.tmp\./.test(call))).toBe(
+          true,
+        );
+      } finally {
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+        try {
+          rmSync(fakeDataDir, { recursive: true, force: true });
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+
+    it("entrypoint replaces stale proxy values on restart", () => {
+      const fakeDataDir = join(tmpdir(), `nemoclaw-replace-test-${process.pid}`);
+      mkdirSync(fakeDataDir, { recursive: true });
+      const tmpFile = join(tmpdir(), `nemoclaw-replace-write-test-${process.pid}.sh`);
+      try {
+        const persistBlock = extractRuntimeShellEnvSnippet();
+        const toolRedirects = extractToolRedirectsSnippet();
+        const makeWrapper = (host: string) =>
+          [
+            "#!/usr/bin/env bash",
+            sandboxInitSource,
+            toolRedirects,
+            `PROXY_HOST="${host}"`,
+            'PROXY_PORT="3128"',
+            '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
+            '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+            persistBlock
+              .trimEnd()
+              .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
+          ].join("\n");
+
+        writeFileSync(tmpFile, makeWrapper("10.200.0.1"), { mode: 0o700 });
+        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+        let envFile = readFileSync(join(fakeDataDir, "proxy-env.sh"), "utf-8");
+        expect(envFile).toContain("10.200.0.1");
+
+        writeFileSync(tmpFile, makeWrapper("192.168.1.99"), { mode: 0o700 });
+        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+        envFile = readFileSync(join(fakeDataDir, "proxy-env.sh"), "utf-8");
+        expect(envFile).toContain("192.168.1.99");
+        expect(envFile).not.toContain("10.200.0.1");
+      } finally {
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+        try {
+          rmSync(fakeDataDir, { recursive: true, force: true });
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+
+    it("emit_sandbox_sourced_file prevents symlink-following attack on proxy-env.sh", () => {
+      const fakeDataDir = mkdtempSync(join(tmpdir(), "nemoclaw-symlink-test-"));
+      const tmpFile = join(fakeDataDir, "symlink-write-test.sh");
+      try {
+        const persistBlock = extractRuntimeShellEnvSnippet();
+        const sensitiveFile = join(fakeDataDir, "sensitive");
+        writeFileSync(sensitiveFile, "SECRET_DATA");
+        const proxyEnvPath = join(fakeDataDir, "proxy-env.sh");
+        symlinkSync(sensitiveFile, proxyEnvPath);
+        const toolRedirects = extractToolRedirectsSnippet();
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          sandboxInitSource,
+          toolRedirects,
+          'PROXY_HOST="10.200.0.1"',
+          'PROXY_PORT="3128"',
+          '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
+          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+          persistBlock.trimEnd().replaceAll("/tmp/nemoclaw-proxy-env.sh", proxyEnvPath),
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+        const stat = lstatSync(proxyEnvPath);
+        expect(stat.isSymbolicLink()).toBe(false);
+        expect(readFileSync(sensitiveFile, "utf-8")).toBe("SECRET_DATA");
+      } finally {
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+        try {
+          rmSync(fakeDataDir, { recursive: true, force: true });
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+
+    it("overrides narrow NO_PROXY and no_proxy while sourcing proxy-env.sh in simulation", () => {
+      const fakeDataDir = mkdtempSync(join(tmpdir(), "nemoclaw-bashi-test-"));
+      try {
+        const envContent = [
+          'export HTTP_PROXY="http://10.200.0.1:3128"',
+          'export HTTPS_PROXY="http://10.200.0.1:3128"',
+          'export NO_PROXY="localhost,127.0.0.1,::1,10.200.0.1"',
+          'export http_proxy="http://10.200.0.1:3128"',
+          'export https_proxy="http://10.200.0.1:3128"',
+          'export no_proxy="localhost,127.0.0.1,::1,10.200.0.1"',
+        ].join("\n");
+        writeFileSync(join(fakeDataDir, "proxy-env.sh"), envContent);
+
+        const out = execFileSync(
+          "bash",
+          [
+            "--norc",
+            "-c",
+            [
+              'export NO_PROXY="127.0.0.1,localhost,::1"',
+              'export no_proxy="127.0.0.1,localhost,::1"',
+              `source ${JSON.stringify(join(fakeDataDir, "proxy-env.sh"))}`,
+              'echo "NO_PROXY=$NO_PROXY"',
+              'echo "no_proxy=$no_proxy"',
+            ].join("; "),
+          ],
+          { encoding: "utf-8" },
+        ).trim();
+
+        expect(out).toContain("NO_PROXY=localhost,127.0.0.1,::1,10.200.0.1");
+        expect(out).toContain("no_proxy=localhost,127.0.0.1,::1,10.200.0.1");
+      } finally {
+        try {
+          rmSync(fakeDataDir, { recursive: true, force: true });
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+
+    it("includes NODE_OPTIONS --require in proxy-env.sh when NODE_USE_ENV_PROXY=1 (#2109)", () => {
+      const fakeDataDir = join(tmpdir(), `nemoclaw-http-fix-test-${process.pid}`);
+      mkdirSync(fakeDataDir, { recursive: true });
+      const tmpFile = join(tmpdir(), `nemoclaw-http-fix-env-${process.pid}.sh`);
+      const fakeFixPath = "/tmp/nemoclaw-http-proxy-fix.js";
+      try {
+        const persistBlock = extractRuntimeShellEnvSnippet();
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          sandboxInitSource,
+          'PROXY_HOST="10.200.0.1"',
+          'PROXY_PORT="3128"',
+          '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
+          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+          "NODE_USE_ENV_PROXY=1",
+          "_TOOL_REDIRECTS=()",
+          `_PROXY_FIX_SCRIPT="${fakeFixPath}"`,
+          `_NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"`,
+          "set +u  # array expansion safe on macOS bash",
+          persistBlock
+            .trimEnd()
+            .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+
+        const envFile = readFileSync(join(fakeDataDir, "proxy-env.sh"), "utf-8");
+        expect(envFile).toContain("NODE_OPTIONS");
+        expect(envFile).toContain("--require");
+        // Preload target is the in-sandbox /tmp path; no dependency on an
+        // external /opt path (see axios-proxy-fix Bug 1 — scripts/ never
+        // made it into the optimized build context). The JS is embedded in
+        // nemoclaw-start.sh and written to /tmp at boot.
+        expect(envFile).toContain(fakeFixPath);
+      } finally {
+        try {
+          rmSync(fakeDataDir, { recursive: true, force: true });
+          rmSync(tmpFile, { force: true });
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+
+    it("omits NODE_OPTIONS from proxy-env.sh when NODE_USE_ENV_PROXY is unset (#2109)", () => {
+      const fakeDataDir = join(tmpdir(), `nemoclaw-http-noop-test-${process.pid}`);
+      mkdirSync(fakeDataDir, { recursive: true });
+      const tmpFile = join(tmpdir(), `nemoclaw-http-noop-env-${process.pid}.sh`);
+      try {
+        const persistBlock = extractRuntimeShellEnvSnippet();
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          sandboxInitSource,
+          'PROXY_HOST="10.200.0.1"',
+          'PROXY_PORT="3128"',
+          '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
+          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+          // NODE_USE_ENV_PROXY intentionally NOT set
+          "_TOOL_REDIRECTS=()",
+          `_PROXY_FIX_SCRIPT="/tmp/nemoclaw-http-proxy-fix.js"`,
+          `_NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"`,
+          "set +u  # array expansion safe on macOS bash",
+          persistBlock
+            .trimEnd()
+            .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+
+        const envFile = readFileSync(join(fakeDataDir, "proxy-env.sh"), "utf-8");
+        // Proxy preloads should NOT be injected when NODE_USE_ENV_PROXY
+        // is not 1. The Nemotron inference fix is
+        // unconditional (always needed regardless of proxy config).
+        expect(envFile).not.toContain("http-proxy-fix");
+        expect(envFile).toContain("nemotron-inference-fix");
+      } finally {
+        try {
+          rmSync(fakeDataDir, { recursive: true, force: true });
+          rmSync(tmpFile, { force: true });
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+  });
+});

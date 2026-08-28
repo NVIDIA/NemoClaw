@@ -73,11 +73,11 @@ export function vllmHostCommandCapture(options: {
           return options.computeCap;
         }
         if (!Array.isArray(options.gpuMemory)) {
-          return options.gpuMemory ?? "0, GPU-1234, 1000000, 1000000\n";
+          return (
+            options.gpuMemory ?? "0, GPU-00000000-0000-0000-0000-000000000000, 1000000, 1000000\n"
+          );
         }
-        return (
-          options.gpuMemory[Math.min(gpuMemorySample++, options.gpuMemory.length - 1)] ?? ""
-        );
+        return options.gpuMemory[Math.min(gpuMemorySample++, options.gpuMemory.length - 1)] ?? "";
       case "curl":
         return options.curl ?? '{"data":[]}';
       default:

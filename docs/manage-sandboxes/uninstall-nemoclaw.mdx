@@ -34,6 +34,14 @@ Uninstall preserves an unrelated process that uses the same port.
 | `--all-gateway-ports` | Uninstall every gateway port on the host instead of only the selected one. |
 | `--gateway <name>` | Optional consistency check; must match the name derived from `NEMOCLAW_GATEWAY_PORT`. |
 
+<AgentOnly variant="hermes">
+<Warning>
+For a non-portable Docker Hermes sandbox that uses the NemoClaw-managed image, uninstall removes its managed state volume even without `--destroy-user-data`.
+Back up required Hermes state first.
+NemoClaw removes only a volume with exact ownership labels; inspection or removal failure exits nonzero and preserves registry state for retry.
+</Warning>
+</AgentOnly>
+
 On macOS, Homebrew owns its OpenShell formula and executable links.
 Full uninstall preserves OpenShell executable paths instead of assuming NemoClaw owns them.
 When Homebrew confirms the `nvidia/openshell/openshell` formula, NemoClaw reports this separate removal command:
@@ -332,7 +340,7 @@ That flag does not override gateway-scoped preservation of the managed runtime r
 Interactive runs prompt before they remove the preserved entries, and the default answer keeps them.
 For non-interactive runs using `--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or a non-TTY shell, pass `--destroy-user-data` or set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` to acknowledge data loss and remove the preserved entries.
 
-`--yes` stays non-destructive by design and never purges preserved user data on its own.
+`--yes` never purges the preserved host-side entries listed above on its own.
 After a successful or already-absent sandbox deletion, preserving other `sandboxes.json` entries does not preserve the selected sandbox entry or its gateway registration.
 Outside portable cleanup, after uninstall confirms that no sibling gateways remain, it also removes the provider registrations and Docker image that the recorded sandboxes depend on.
 

@@ -117,24 +117,36 @@ describe("onboard session", () => {
     expect(dirStat.mode & 0o777).toBe(0o700);
   });
 
-  it.each([
-    true,
-    false,
-  ])("persists explicit observability intent when enabled=$enabled", (observabilityEnabled) => {
-    session.saveSession(
-      session.createSession({
-        observabilityEnabled,
-        observabilityRequestedExplicitly: true,
-      }),
+  it("refuses malformed persisted APF compatibility selection without replacing it (#9833)", () => {
+    session.saveSession(session.createSession({ apfInterceptorRequested: true }));
+    const malformed = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf8"));
+    malformed.apfInterceptorRequested = "true";
+    fs.writeFileSync(session.SESSION_FILE, JSON.stringify(malformed), { mode: 0o600 });
+    const refusal = /saved APF selection is invalid/u;
+    expect(() => session.loadSession()).toThrow(refusal);
+    expect(fs.readFileSync(session.SESSION_FILE, "utf8")).toContain(
+      '"apfInterceptorRequested":"true"',
     );
-    const loaded = requireLoadedSession(session.loadSession());
-    const summary = requireDebugSummary(session.summarizeForDebug());
-
-    expect(loaded.observabilityEnabled).toBe(observabilityEnabled);
-    expect(loaded.observabilityRequestedExplicitly).toBe(true);
-    expect(summary.observabilityEnabled).toBe(observabilityEnabled);
-    expect(summary.observabilityRequestedExplicitly).toBe(true);
   });
+
+  it.each([true, false])(
+    "persists explicit observability intent when enabled=$enabled",
+    (observabilityEnabled) => {
+      session.saveSession(
+        session.createSession({
+          observabilityEnabled,
+          observabilityRequestedExplicitly: true,
+        }),
+      );
+      const loaded = requireLoadedSession(session.loadSession());
+      const summary = requireDebugSummary(session.summarizeForDebug());
+
+      expect(loaded.observabilityEnabled).toBe(observabilityEnabled);
+      expect(loaded.observabilityRequestedExplicitly).toBe(true);
+      expect(summary.observabilityEnabled).toBe(observabilityEnabled);
+      expect(summary.observabilityRequestedExplicitly).toBe(true);
+    },
+  );
 
   it("defaults legacy observability intent and provenance off", () => {
     const legacy = session.createSession() as unknown as Record<string, unknown>;

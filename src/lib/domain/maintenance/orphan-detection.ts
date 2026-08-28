@@ -12,7 +12,7 @@
 /**
  * Marker prefix for the orphan summary line. install.sh greps this to keep
  * its final install summary honest — keep the grep in scripts/install.sh in
- * sync. The bash harness in test/install-orphaned-sandbox-recovery.test.ts
+ * sync. The bash harness in test/install/install-orphaned-sandbox-recovery.test.ts
  * builds its stub output from this constant and drives the real install.sh
  * grep, so drift on either side fails that suite.
  */

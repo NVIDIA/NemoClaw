@@ -6,6 +6,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  classifyManagedGatewayEndpointBinding,
+  type ManagedGatewayEndpointBinding,
   type GatewayReuseState,
   type GatewayVersionCompatibility,
   type GatewayVersionSource,
@@ -17,6 +19,7 @@ import {
   parseVersionFromText,
   stripAnsi,
 } from "../adapters/openshell/gateway-drift";
+export { classifyManagedGatewayEndpointBinding };
 import { cliName as resolveCliName } from "../onboard/branding";
 import {
   getConfiguredGatewayPort,
@@ -303,39 +306,6 @@ function getTrustedHostProcessGatewayRuntime(
     gatewayBin: trustedGatewayBin,
     runningVersion: parseVersionFromText(combinedOutput(version), `${trustedGatewayBin} --version`),
   };
-}
-
-type ManagedGatewayEndpointBinding = "match" | "mismatch" | "not-applicable" | "unknown";
-
-export function classifyManagedGatewayEndpointBinding(
-  outputs: readonly string[],
-  expectedGatewayPort: number,
-): Exclude<ManagedGatewayEndpointBinding, "not-applicable"> {
-  let observedEndpoint = false;
-  for (const output of outputs) {
-    for (const match of stripAnsi(output).matchAll(/^\s*(?:Gateway endpoint|Server):(.*)$/gm)) {
-      observedEndpoint = true;
-      const endpointText = match[1]?.trim() ?? "";
-      if (!endpointText || /\s/u.test(endpointText)) return "mismatch";
-      try {
-        const endpoint = new URL(endpointText);
-        const localProtocol = endpoint.protocol === "https:" || endpoint.protocol === "http:";
-        const localHost =
-          endpoint.hostname === "127.0.0.1" ||
-          endpoint.hostname === "localhost" ||
-          endpoint.hostname === "[::1]";
-        const endpointPort =
-          endpoint.port ||
-          (endpoint.protocol === "https:" ? "443" : endpoint.protocol === "http:" ? "80" : "");
-        if (!localProtocol || !localHost || endpointPort !== String(expectedGatewayPort)) {
-          return "mismatch";
-        }
-      } catch {
-        return "mismatch";
-      }
-    }
-  }
-  return observedEndpoint ? "match" : "unknown";
 }
 
 function observeReuseState(

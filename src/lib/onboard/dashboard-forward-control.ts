@@ -5,6 +5,7 @@ import { bestEffortForwardStopForSandbox } from "./forward-cleanup";
 
 export interface DashboardForwardOptions {
   rollbackSandboxOnFailure?: boolean;
+  gatewayName?: string;
   preserveSandboxPorts?: Array<number | string>;
   allowPortReallocation?: boolean;
   revalidatePolicyAuthority?: (operation: string) => void;

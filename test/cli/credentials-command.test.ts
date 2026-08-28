@@ -15,6 +15,7 @@ vi.mock("../../src/lib/actions/global", () => ({
   recoverNamedGatewayRuntime: vi.fn().mockResolvedValue({ recovered: true }),
 }));
 vi.mock("../../src/lib/adapters/openshell/provider-command", () => ({
+  OPENSHELL_OPERATION_TIMEOUT_MS: 30_000,
   runOpenshellProviderCommand: vi.fn(),
 }));
 

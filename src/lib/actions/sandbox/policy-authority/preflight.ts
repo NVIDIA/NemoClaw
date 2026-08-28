@@ -6,12 +6,20 @@ import YAML from "yaml";
 
 import {
   assertExternalPolicyRequirements,
+  assertObservedPolicyRequirements,
   assertRecordedPolicyAuthority,
-  inspectGlobalPolicyAuthority,
+  inspectActiveGlobalPolicy,
+  inspectOpenShellSandboxIdentityFingerprint,
   inspectSandboxPolicyAuthority,
+  assertOpenShellGatewayPortBinding,
   type SandboxPolicyAuthority,
   type SandboxPolicyAuthorityInspection,
 } from "../../../adapters/openshell/policy-authority";
+import {
+  qualifyGlobalPolicyAuthority,
+  qualifySandboxPolicyAuthority,
+} from "../../../onboard/policy-authority/preflight";
+import { parseOpenShellPolicy } from "../../../policy/merge";
 import { isPresetPolicyMap, parseNetworkPolicies } from "../../../policy/preset-parsing";
 import * as registry from "../../../state/registry";
 import { getPersistedSandboxTargetGatewayName } from "../gateway-target";
@@ -26,9 +34,12 @@ interface SandboxPolicyAuthorityPreflightOptions {
 }
 
 export type RequiredPolicy = Record<string, unknown>;
+export type RecordedPolicyAuthority = Exclude<SandboxPolicyAuthority, "owner-unknown">;
 
 export interface PolicyAuthorityInspectionDeps {
-  readonly inspectGlobalPolicyAuthority?: typeof inspectGlobalPolicyAuthority;
+  readonly assertOpenShellGatewayPortBinding?: typeof assertOpenShellGatewayPortBinding;
+  readonly inspectActiveGlobalPolicy?: typeof inspectActiveGlobalPolicy;
+  readonly inspectOpenShellSandboxIdentityFingerprint?: typeof inspectOpenShellSandboxIdentityFingerprint;
   readonly inspectSandboxPolicyAuthority?: typeof inspectSandboxPolicyAuthority;
 }
 
@@ -36,7 +47,7 @@ export interface PolicyAuthorityInspectionOptions {
   readonly gatewayName: string;
   readonly inspectLiveSource: boolean;
   readonly operation: string;
-  readonly recordedAuthority: unknown;
+  readonly recordedAuthority: SandboxPolicyAuthority | null | undefined;
   readonly requiredPolicies: readonly RequiredPolicy[];
   readonly sandboxName: string;
   readonly verifyGlobalCreatePolicy: boolean;
@@ -44,10 +55,7 @@ export interface PolicyAuthorityInspectionOptions {
 
 export function parseRequiredPolicyDocument(content: string, operation: string): RequiredPolicy {
   try {
-    const parsed: unknown = YAML.parse(content);
-    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-      return parsed as RequiredPolicy;
-    }
+    return parseOpenShellPolicy(content).policy;
   } catch {
     // The common refusal below owns invalid policy document errors.
   }
@@ -60,35 +68,70 @@ export function inspectPolicyAuthorityRequirements(
   deps: PolicyAuthorityInspectionDeps = {},
 ) {
   const inspections: SandboxPolicyAuthorityInspection[] = [];
+  const authorities: RecordedPolicyAuthority[] = [];
+  let liveInspection: SandboxPolicyAuthorityInspection | null = null;
+  const preparedRequirement = {
+    appliedPresets: [],
+    policyPath: "",
+    sourceBytes: Buffer.from(
+      YAML.stringify(options.requiredPolicies[0] ?? { version: 1, network_policies: {} }),
+    ),
+  };
   if (options.inspectLiveSource) {
-    inspections.push(
-      (deps.inspectSandboxPolicyAuthority ?? inspectSandboxPolicyAuthority)({
-        sandboxName: options.sandboxName,
-        gatewayName: options.gatewayName,
-      }),
-    );
+    const observed = (deps.inspectSandboxPolicyAuthority ?? inspectSandboxPolicyAuthority)({
+      sandboxName: options.sandboxName,
+      gatewayName: options.gatewayName,
+    });
+    if (observed.authority !== "owner-unknown") {
+      liveInspection = observed;
+      authorities.push(observed.authority);
+      if (observed.authority === "externally-managed") inspections.push(observed);
+    } else {
+      const recordedSandbox = registry.getSandbox(options.sandboxName);
+      const qualified = qualifySandboxPolicyAuthority(
+        {
+          sandboxName: options.sandboxName,
+          gatewayName: options.gatewayName,
+          liveExists: true,
+          recordedAuthorities: [options.recordedAuthority],
+          recordedSandbox,
+          readRecordedSandbox: registry.getSandbox,
+          prepareRequiredPolicy: () => preparedRequirement,
+          operation: options.operation,
+        },
+        deps,
+      );
+      liveInspection =
+        qualified.authority === "externally-managed" ? qualified.inspection : observed;
+      authorities.push(qualified.authority);
+      if (qualified.authority === "externally-managed") inspections.push(qualified.inspection);
+    }
   }
   if (options.verifyGlobalCreatePolicy) {
-    inspections.push(
-      (deps.inspectGlobalPolicyAuthority ?? inspectGlobalPolicyAuthority)({
+    const qualified = qualifyGlobalPolicyAuthority(
+      {
         gatewayName: options.gatewayName,
-      }),
+        recordedAuthority: options.inspectLiveSource ? undefined : options.recordedAuthority,
+        operation: options.operation,
+      },
+      deps,
     );
+    authorities.push(qualified.authority);
+    if (qualified.authority === "externally-managed") inspections.push(qualified.inspection);
   }
-  const [inspection, ...additionalInspections] = inspections;
-  if (!inspection) {
+  const [authority, ...additionalAuthorities] = authorities;
+  if (!authority) {
     throw new Error(`Refusing to ${options.operation}: policy authority could not be inspected.`);
   }
-  const { authority } = inspection;
-  if (options.recordedAuthority !== undefined) {
+  if (options.recordedAuthority !== undefined && options.recordedAuthority !== null) {
     assertRecordedPolicyAuthority(options.recordedAuthority, authority, options.operation);
   }
-  for (const additional of additionalInspections) {
-    assertRecordedPolicyAuthority(authority, additional.authority, options.operation);
+  for (const additional of additionalAuthorities) {
+    assertRecordedPolicyAuthority(authority, additional, options.operation);
   }
   return {
     authority,
-    liveInspection: options.inspectLiveSource ? inspection : null,
+    liveInspection,
     verifyRequirements: () => assertPolicyAuthorityRequirements(options, inspections),
   };
 }
@@ -99,7 +142,11 @@ function assertPolicyAuthorityRequirements(
 ): void {
   for (const inspection of inspections) {
     for (const requiredPolicy of options.requiredPolicies) {
-      assertExternalPolicyRequirements({
+      const assertRequirements =
+        inspection.authority === "owner-unknown"
+          ? assertObservedPolicyRequirements
+          : assertExternalPolicyRequirements;
+      assertRequirements({
         inspection,
         requiredPolicy,
         operation: options.operation,
@@ -125,7 +172,7 @@ function operationLabel(operation: string): string {
 
 function persistObservedAuthority(
   sandboxName: string,
-  authority: SandboxPolicyAuthority,
+  authority: RecordedPolicyAuthority,
   operation: string,
 ): void {
   const current = registry.getSandbox(sandboxName);
@@ -148,7 +195,7 @@ export function preflightSandboxPolicyAuthority({
   operation,
   requiredPolicyContents = [],
   sandboxName,
-}: SandboxPolicyAuthorityPreflightOptions): SandboxPolicyAuthority {
+}: SandboxPolicyAuthorityPreflightOptions): RecordedPolicyAuthority {
   const label = operationLabel(operation);
   const sandbox = registry.getSandbox(sandboxName);
   if (!sandbox) {

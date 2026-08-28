@@ -5,7 +5,7 @@ import type { AgentMcpAdapter } from "../../agent/defs";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
 import type { McpBridgeEntry } from "../../state/registry";
-import { registerAgentAdapter } from "./mcp-bridge-adapters";
+import { registerAgentAdapterAtCurrentCredentialRevision } from "./mcp-bridge-adapters";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { assertHermesMcpRuntimeIntent } from "./mcp-bridge-hermes-reconciliation";
 import {
@@ -208,18 +208,20 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     }
     recheckPolicyAuthority();
     refreshMcpProviderEnvironment(entry);
+    const entryAdapter = (entry.adapter as AgentMcpAdapter | undefined) ?? adapter;
     const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
       ...(providerResult.action === "updated"
         ? { previousRevision: previousCredentialRevision }
         : {}),
     });
     recheckPolicyAuthority();
-    registerAgentAdapter(
+    registerAgentAdapterAtCurrentCredentialRevision(
       sandboxName,
-      (entry.adapter as AgentMcpAdapter | undefined) ?? adapter,
+      entryAdapter,
       entry,
       adapterEnvValues,
-      { replaceExisting: true, credentialRevision },
+      credentialRevision,
+      { replaceExisting: true },
     );
     recheckPolicyAuthority();
     writeBridgeEntry(sandboxName, {
@@ -387,15 +389,15 @@ export async function restoreExistingMcpBridgeRuntime(
     const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry);
     const adapter = (entry.adapter as AgentMcpAdapter | undefined) ?? defaultAdapter;
     await revalidateBeforeRuntimeMutation();
-    registerAgentAdapter(
+    registerAgentAdapterAtCurrentCredentialRevision(
       sandboxName,
       adapter,
       entry,
       {},
+      credentialRevision,
       {
         replaceExisting: true,
         teardownRollback,
-        credentialRevision,
       },
     );
     if (!teardownRollback) {

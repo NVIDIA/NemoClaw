@@ -805,6 +805,7 @@ describe("runSandboxSnapshot", () => {
       f.inspectSandboxPolicyAuthorityMock.mockReturnValue({
         authority: "nemoclaw-managed",
         effectivePolicy: {},
+        policyIdentity: { hash: "managed-policy", activeVersion: 1 },
       });
     });
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -850,6 +851,10 @@ describe("runSandboxSnapshot", () => {
     f.inspectSandboxPolicyAuthorityMock.mockImplementation(() => ({
       authority: authorityChanged ? "externally-managed" : "nemoclaw-managed",
       effectivePolicy: {},
+      policyIdentity: {
+        hash: authorityChanged ? "external-policy" : "managed-policy",
+        activeVersion: 1,
+      },
     }));
     const { runSandboxSnapshot } = await import("./snapshot");
 
@@ -879,6 +884,7 @@ describe("runSandboxSnapshot", () => {
       f.inspectSandboxPolicyAuthorityMock.mockReturnValue({
         authority: "externally-managed",
         effectivePolicy: {},
+        policyIdentity: { hash: "external-policy", activeVersion: 1 },
       });
       return { applied: true, verified: true, errors: [] };
     });

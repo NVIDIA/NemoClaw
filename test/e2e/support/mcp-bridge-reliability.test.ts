@@ -1,12 +1,25 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
+import { ArtifactSink } from "../fixtures/artifacts.ts";
+import { HostCliClient } from "../fixtures/clients/host.ts";
+import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
+import { startTestProgress } from "../fixtures/progress.ts";
+import { ShellProbe } from "../fixtures/shell-probe.ts";
 import {
   isHermesRestartTransportFailure,
+  isRetryableOpenClawBaselineScopeOnboardFailure,
+  MCP_BRIDGE_TEST_REDACTION_VALUES,
+  restartBridgeWithoutHostSecret,
   retryAfterHermesRestartTransportFailure,
   retryHermesGatewayDraining,
+  retryOpenClawBaselineScopeOnboardFailure,
 } from "../live/mcp-bridge-reliability.ts";
 
 const HTTP_STATUS_MARKER = "NEMOCLAW_HERMES_MCP_HTTP_STATUS=";
@@ -37,7 +50,136 @@ const HERMES_BROKEN_PIPE = `  Effective egress that would be opened:
   \u251c\u2500\u25b6 error reading a body from connection
   \u2570\u2500\u25b6 stream closed because of a broken pipe`;
 
+async function readRestartFailureArtifacts(root: string): Promise<string> {
+  const artifactBase = path.join(root, "shell/secret-shaped-restart-mcp-restart-provider-reuse");
+  return (
+    await Promise.all(
+      ["stdout.txt", "stderr.txt", "result.json"].map((suffix) =>
+        fs.readFile(`${artifactBase}.${suffix}`, "utf8"),
+      ),
+    )
+  ).join("\n");
+}
+
 describe("MCP bridge transient classification", () => {
+  it("retries only the exact OpenClaw baseline-scope settlement failure", () => {
+    const sandboxName = "e2e-pr-exact-mcp-1";
+    const message = `OpenClaw onboarding for '${sandboxName}' is incomplete because its canonical CLI device did not receive the required baseline scopes. Resume or rerun onboarding.`;
+    const result = {
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      stdout: `policy loaded\n${message}\n`,
+      stderr: "",
+    };
+
+    expect(isRetryableOpenClawBaselineScopeOnboardFailure("openclaw", sandboxName, result)).toBe(
+      true,
+    );
+    expect(isRetryableOpenClawBaselineScopeOnboardFailure("hermes", sandboxName, result)).toBe(
+      false,
+    );
+    expect(
+      isRetryableOpenClawBaselineScopeOnboardFailure("openclaw", "other-sandbox", result),
+    ).toBe(false);
+    expect(
+      isRetryableOpenClawBaselineScopeOnboardFailure("openclaw", sandboxName, {
+        ...result,
+        exitCode: 0,
+      }),
+    ).toBe(false);
+    expect(
+      isRetryableOpenClawBaselineScopeOnboardFailure("openclaw", sandboxName, {
+        ...result,
+        stdout: message.replace("baseline scopes", "device pairing"),
+      }),
+    ).toBe(false);
+  });
+
+  it("retries the qualified OpenClaw onboarding failure exactly once", async () => {
+    const sandboxName = "e2e-pr-exact-mcp-1";
+    const initialResult = {
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      stdout: `OpenClaw onboarding for '${sandboxName}' is incomplete because its canonical CLI device did not receive the required baseline scopes. Resume or rerun onboarding.\n`,
+      stderr: "",
+    };
+    const passing = { ...initialResult, exitCode: 0, stdout: "onboarded\n" };
+    const retry = vi.fn(async () => passing);
+
+    await expect(
+      retryOpenClawBaselineScopeOnboardFailure({
+        agent: "openclaw",
+        sandboxName,
+        initialResult,
+        retry,
+      }),
+    ).resolves.toBe(passing);
+    expect(retry).toHaveBeenCalledOnce();
+  });
+
+  it("redacts every MCP fixture credential from a restart-command failure artifact", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-mcp-restart-redaction-"));
+    const progress = startTestProgress(
+      "MCP restart redaction",
+      ["run failing MCP restart", "inspect redacted failure artifacts"],
+      { logLine: () => undefined },
+    );
+    try {
+      const leakedValues = [
+        ...Object.values(MCP_BRIDGE_TEST_CREDENTIALS),
+        `${MCP_BRIDGE_TEST_CREDENTIALS.generationWindow}7`,
+      ];
+      const script = path.join(root, "nemoclaw-secret-shaped-failure");
+      await fs.writeFile(
+        script,
+        [
+          "#!/bin/sh",
+          ...leakedValues.map((value) => `printf '%s\\n' '${value}' >&2`),
+          "exit 23",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      const artifacts = new ArtifactSink(path.join(root, "artifacts"));
+      const host = new HostCliClient(
+        new ShellProbe({
+          artifacts,
+          progress,
+          redact: (text) => text,
+          signal: new AbortController().signal,
+        }),
+        { cliPath: script },
+      );
+
+      let failure: unknown;
+      try {
+        await restartBridgeWithoutHostSecret(host, "sandbox", "secret-shaped-restart");
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(MCP_BRIDGE_TEST_REDACTION_VALUES).toEqual(Object.values(MCP_BRIDGE_TEST_CREDENTIALS));
+      expect(failure).toBeInstanceOf(Error);
+      progress.phase("inspect redacted failure artifacts");
+      const failureMessage = failure instanceof Error ? failure.message : String(failure);
+      const artifactText = await readRestartFailureArtifacts(artifacts.rootDir);
+      expect(failureMessage).toContain("[REDACTED]");
+      expect(artifactText).toContain("[REDACTED]");
+      const persistedFailure = `${failureMessage}\n${artifactText}`;
+      expect(persistedFailure).not.toContain(MCP_BRIDGE_TEST_CREDENTIALS.host);
+      expect(persistedFailure).not.toContain(MCP_BRIDGE_TEST_CREDENTIALS.rotatedHost);
+      expect(persistedFailure).not.toContain(MCP_BRIDGE_TEST_CREDENTIALS.rebindHost);
+      expect(persistedFailure).not.toContain(MCP_BRIDGE_TEST_CREDENTIALS.compatibleEndpoint);
+      expect(persistedFailure).not.toContain(MCP_BRIDGE_TEST_CREDENTIALS.generationWindow);
+      expect(persistedFailure).not.toContain(`${MCP_BRIDGE_TEST_CREDENTIALS.generationWindow}7`);
+    } finally {
+      progress.stop();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("accepts only the Hermes managed-restart broken-pipe signature (#6692)", () => {
     expect(isHermesRestartTransportFailure("hermes-config", HERMES_BROKEN_PIPE)).toBe(true);
     expect(isHermesRestartTransportFailure("mcporter", HERMES_BROKEN_PIPE)).toBe(false);

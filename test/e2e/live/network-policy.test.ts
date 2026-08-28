@@ -502,9 +502,10 @@ test(
         "clear the sandbox and onboard restricted policy",
         "prove zero active presets, read-only package metadata, default denial, and the weather allowlist",
         "exercise package and SaaS policy presets",
-        "prove dry-run and per-binary Jira approval",
+        "prove Jira dry-run and per-binary denial",
         "verify hot reload inference exemption and SSRF guards",
         "exercise scoped host-gateway web fetch policy",
+        "prove per-binary Jira approval after NemoClaw policy mutations",
         "switch to permissive policy and record the contract",
       ],
     },
@@ -842,7 +843,7 @@ echo "GITHUB_GIT_OK"
     );
     expect(slackAfter).toMatch(/STATUS_200/);
 
-    progress.phase("prove dry-run and per-binary Jira approval");
+    progress.phase("prove Jira dry-run and per-binary denial");
     const atlassianBefore = await fetchStatus(
       sandbox,
       "https://api.atlassian.com/",
@@ -891,44 +892,6 @@ echo "$OUT CURL_RC_$RC"
       /CURL_STATUS_000|CURL_STATUS_403|CURL_RC_[1-9]|denied|policy|forbidden/i,
     );
     expect(curlBeforeText).toMatch(/CURL_APPCONNECT_0(\.0+)?( |$)/);
-
-    const curlApproval = await sandbox.openshell(
-      [
-        "policy",
-        "update",
-        SANDBOX_NAME,
-        "--add-endpoint",
-        "api.atlassian.com:443:read-only:rest:enforce",
-        "--binary",
-        "/usr/bin/curl",
-        "--binary",
-        "/usr/local/bin/curl",
-        "--wait",
-      ],
-      {
-        artifactName: "tc-net-08-openshell-curl-approval",
-        env: baseEnv(),
-        timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
-      },
-    );
-    expect(curlApproval.exitCode, text(curlApproval)).toBe(0);
-    await sleep(POLICY_SETTLE_MS);
-
-    const curlAfterApproval = await sandboxBash(
-      sandbox,
-      String.raw`
-set +e
-rm -f /tmp/nemoclaw-jira-curl-body
-OUT=$(curl -sS -o /tmp/nemoclaw-jira-curl-body -w 'CURL_STATUS_%{http_code}' --max-time 10 https://api.atlassian.com/oauth/token/accessible-resources 2>&1)
-RC=$?
-printf '%s CURL_RC_%s CURL_BODY_' "$OUT" "$RC"
-head -c 120 /tmp/nemoclaw-jira-curl-body 2>/dev/null || true
-printf '\n'
-`,
-      { artifactName: "tc-net-08-curl-after-approval" },
-    );
-    expect(text(curlAfterApproval)).toMatch(/CURL_STATUS_401/);
-    expect(text(curlAfterApproval)).toMatch(/Unauthorized|unauthorized/);
 
     progress.phase("verify hot reload inference exemption and SSRF guards");
     const startTimeBefore = await sandboxBash(
@@ -1034,6 +997,49 @@ NEMOCLAW_WEB_FETCH_PROBE`,
       await Promise.all([approvedServer.close(), deniedServer.close()]);
     }
 
+    // A direct OpenShell policy update intentionally invalidates NemoClaw's
+    // durable policy receipt. Keep this final among NemoClaw-owned mutations so
+    // the test proves the fail-closed ownership contract without asking a later
+    // policy-add to overwrite externally changed policy.
+    progress.phase("prove per-binary Jira approval after NemoClaw policy mutations");
+    const curlApproval = await sandbox.openshell(
+      [
+        "policy",
+        "update",
+        SANDBOX_NAME,
+        "--add-endpoint",
+        "api.atlassian.com:443:read-only:rest:enforce",
+        "--binary",
+        "/usr/bin/curl",
+        "--binary",
+        "/usr/local/bin/curl",
+        "--wait",
+      ],
+      {
+        artifactName: "tc-net-08-openshell-curl-approval",
+        env: baseEnv(),
+        timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+      },
+    );
+    expect(curlApproval.exitCode, text(curlApproval)).toBe(0);
+    await sleep(POLICY_SETTLE_MS);
+
+    const curlAfterApproval = await sandboxBash(
+      sandbox,
+      String.raw`
+set +e
+rm -f /tmp/nemoclaw-jira-curl-body
+OUT=$(curl -sS -o /tmp/nemoclaw-jira-curl-body -w 'CURL_STATUS_%{http_code}' --max-time 10 https://api.atlassian.com/oauth/token/accessible-resources 2>&1)
+RC=$?
+printf '%s CURL_RC_%s CURL_BODY_' "$OUT" "$RC"
+head -c 120 /tmp/nemoclaw-jira-curl-body 2>/dev/null || true
+printf '\n'
+`,
+      { artifactName: "tc-net-08-curl-after-approval" },
+    );
+    expect(text(curlAfterApproval)).toMatch(/CURL_STATUS_401/);
+    expect(text(curlAfterApproval)).toMatch(/Unauthorized|unauthorized/);
+
     progress.phase("switch to permissive policy and record the contract");
     const permissiveApply = await sandbox.openshell(
       ["policy", "set", "--policy", PERMISSIVE_POLICY, "--wait", SANDBOX_NAME],
@@ -1081,8 +1087,8 @@ NEMOCLAW_WEB_FETCH_PROBE`,
 // Acceptance note (`NEMOCLAW_OPENCLAW_OTEL=1`): the OTEL-enabled live
 // variant is deferred to a follow-up nightly extension to keep this
 // scenario's wall-clock to a single onboard. The OTEL suppression contract
-// is covered by `test/policy-tiers-onboard.test.ts` and
-// `test/policy-tiers-onboard-restricted-stale-otel.test.ts` against the
+// is covered by `test/runtime/policy/policy-tiers-onboard.test.ts` and
+// `test/runtime/policy/policy-tiers-onboard-restricted-stale-otel.test.ts` against the
 // real CLI through a stubbed policy API, and by the brave-enabled scenario
 // above which proves `openclaw-diagnostics-otel-local` is absent through the
 // live OpenShell `policy-list`. A regression in `requiredOpenclawOtelPolicyPresets()`

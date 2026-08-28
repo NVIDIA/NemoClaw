@@ -49,6 +49,7 @@ import type { InferenceProviderHostGpu, InferenceProviderHostState } from "./pro
 import { buildInferenceProviderMenu, type ProviderMenuChoice } from "./provider-menu";
 import {
   applyVllmInstallResumeDefaults,
+  resolveSelectedEndpointSource,
   resolveRequestedProviderSelection,
   vllmInstallRecoveryOptions,
 } from "./provider-selection";
@@ -271,6 +272,26 @@ function requireSelectedProvider(
     deps.exitProcess(1);
   }
   return selected;
+}
+
+function routeUnreachableInteractiveWindowsOllama(
+  selected: ProviderMenuChoice,
+  options: readonly ProviderMenuChoice[],
+  input: {
+    selectedFromInteractiveMenu: boolean;
+    isWindowsHostOllama: boolean;
+    windowsOllamaReachable: boolean;
+  },
+): ProviderMenuChoice {
+  if (
+    !input.selectedFromInteractiveMenu ||
+    selected.key !== "ollama" ||
+    !input.isWindowsHostOllama ||
+    input.windowsOllamaReachable
+  ) {
+    return selected;
+  }
+  return options.find((option) => option.key === "start-windows-ollama") ?? selected;
 }
 
 function assertVllmGpuProviderSelection(
@@ -968,6 +989,7 @@ export function createSetupNim(
             isWindowsHostOllama,
             ollamaRunning,
             windowsHostOllamaSupported: windowsHostOllamaDockerRequirement.supported,
+            windowsHostOllamaReachable: windowsOllamaReachable,
             hermesProviderAvailable,
             preferManagedVllmDefault: gpu?.platform === "spark",
             ...recordedProviderReaders,
@@ -1003,6 +1025,11 @@ export function createSetupNim(
         }
 
         selected = requireSelectedProvider(selected, deps);
+        selected = routeUnreachableInteractiveWindowsOllama(selected, options, {
+          selectedFromInteractiveMenu,
+          isWindowsHostOllama,
+          windowsOllamaReachable,
+        });
         assertVllmGpuProviderSelection(selected, recoveredFromSandbox, deps);
         if (selected.key !== "hermesProvider") {
           hermesAuthMethod = null;
@@ -1304,9 +1331,12 @@ export function createSetupNim(
       recoveredRegistryRoute.endpointUrl === endpointUrl;
     const endpointSource = recoveredRegistryRouteMatches
       ? (recoveredRegistryRoute.endpointSource ?? null)
-      : endpointPinnedAddresses || endpointTrustedPrivateCapability
-        ? "onboard"
-        : null;
+      : resolveSelectedEndpointSource({
+          provider,
+          endpointUrl,
+          hasPinnedAddresses: Boolean(endpointPinnedAddresses),
+          hasTrustedPrivateCapability: Boolean(endpointTrustedPrivateCapability),
+        });
     await maybePromptForSupportedInferenceInputCapability(deps, agent, selectedModel);
     return {
       model: selectedModel,

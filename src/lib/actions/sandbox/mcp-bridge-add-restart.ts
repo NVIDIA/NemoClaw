@@ -19,7 +19,7 @@ import {
   assertAgentMcpConfigMutationAllowed,
   assertAgentMcpMutationRuntimeCapability,
   inspectAgentAdapterRegistration,
-  registerAgentAdapter,
+  registerAgentAdapterAtCurrentCredentialRevision,
   unregisterAgentAdapter,
 } from "./mcp-bridge-adapters";
 import { type McpBridgeAddOptions, McpBridgeError } from "./mcp-bridge-contracts";
@@ -100,7 +100,7 @@ function assertPreparedMcpAddResourcesAbsent(
   adapter: AgentMcpAdapter,
   entry: McpBridgeEntry,
   target: McpBridgeTargetValidation,
-  policyAuthority: "nemoclaw-managed" | "externally-managed",
+  policyAuthority: "nemoclaw-managed" | "externally-managed" | "owner-unknown",
 ): void {
   const adapterInspection = inspectAgentAdapterRegistration(sandboxName, adapter, entry);
   if (adapterInspection.state !== "absent") {
@@ -132,7 +132,7 @@ function assertPreparedMcpAddResourcesAbsent(
       `MCP add preflight for '${entry.server}' found an existing policy ownership record '${entry.policyName}'. The durable add manifest was preserved without claiming it.`,
     );
   }
-  if (policyAuthority === "externally-managed") return;
+  if (policyAuthority !== "nemoclaw-managed") return;
   const policyContent = buildMcpBridgePolicyYaml(
     entry.server,
     entry.url,
@@ -507,19 +507,8 @@ async function addMcpBridgeUnlocked(
     if (policyAuthority === "nemoclaw-managed") {
       applyGeneratedPolicy(sandboxName, entry, target);
     }
-    if (Object.hasOwn(adapterEnvValues, entry.env[0])) {
-      // OpenShell 0.0.106 can miss a credential update published before the
-      // bound policy generation. Republish while that policy is active and
-      // before the first readiness exec; the exact provider identity is
-      // rechecked before and after this update-only mutation.
-      upsertMcpProvider(entry.providerName ?? "", options.env, {
-        allowExisting: true,
-        expectedProviderId: entry.providerId,
-        prepareMutation: recheckPolicyAuthority,
-        requireExisting: true,
-      });
-    }
-    const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
+    let refreshedAfterObservedAbsence = false;
+    let credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
       ...(providerResult.action === "updated"
         ? {
             previousRevision: previousCredentialRevision,
@@ -529,6 +518,7 @@ async function addMcpBridgeUnlocked(
       // If the credential remains available, republish it after observing an
       // absence; otherwise, a hostless recovery advances the provider revision.
       refreshAfterObservedAbsence: () => {
+        refreshedAfterObservedAbsence = true;
         // invalidState: OpenShell 0.0.106 can coalesce a no-field provider
         // refresh without publishing the credential into fresh sandbox execs.
         // sourceBoundary: OpenShell owns provider revision projection.
@@ -553,18 +543,40 @@ async function addMcpBridgeUnlocked(
         }
       },
     });
+    if (Object.hasOwn(adapterEnvValues, entry.env[0]) && !refreshedAfterObservedAbsence) {
+      // OpenShell 0.0.106 polls provider state every ten seconds. First prove
+      // the pre-republish generation is installed, then republish while the
+      // bound policy is active and require a different observed revision.
+      // This prevents a quick series of reads from accepting an intermediate
+      // generation while the final credential-bearing update is still queued.
+      upsertMcpProvider(entry.providerName ?? "", options.env, {
+        allowExisting: true,
+        expectedProviderId: entry.providerId,
+        requireExisting: true,
+      });
+      credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
+        previousRevision: credentialRevision,
+      });
+    }
     // The adapter was proven absent above, so cleanup is safe even when a
     // command commits config and then fails during its runtime reload.
     adapterMutationAttempted = true;
     recheckPolicyAuthority();
-    registerAgentAdapter(sandboxName, adapter, entry, adapterEnvValues, {
+    registerAgentAdapterAtCurrentCredentialRevision(
+      sandboxName,
+      adapter,
+      entry,
+      adapterEnvValues,
+      credentialRevision,
+      {
       // An exact adapter entry is evidence of a post-commit process death.
       // Replacing it is idempotent and, for Hermes, re-verifies runtime reload.
-      // Mcporter must project the same live revision OpenShell will recognize
-      // at egress; its canonical, unversioned placeholder is not sufficient.
-      replaceExisting: resumingPreflightedAdd && adapterInspection.state === "registered",
-      credentialRevision,
-    });
+      // The wait above already proved the same revision stable in consecutive
+      // fresh execs, so repeating reconciliation here can outlive the caller's
+      // bounded provider-synchronization contract.
+        replaceExisting: resumingPreflightedAdd && adapterInspection.state === "registered",
+      },
+    );
     if (adapter === "hermes-config") assertHermesMcpRuntimeIntent(sandboxName);
     const { addState: _completedAddState, ...committedEntry } = entry;
     recheckPolicyAuthority();

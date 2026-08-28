@@ -137,10 +137,10 @@ run_dcode() {
 #     * OpenShell credential placeholders are allowed only when the complete
 #       value names the same valid env key, either canonically or with an
 #       OpenShell `v<digits>_` revision prefix. Any other occurrence is refused.
-# - Regression: test/langchain-deepagents-code-secret-pattern-parity.test.ts
+# - Regression: test/agents/deepagents/langchain-deepagents-code-secret-pattern-parity.test.ts
 #   pins the canonical TOKEN_PREFIX_PATTERNS, CONTEXT_PATTERNS, and
 #   SECRET_BLOCK_PATTERNS fingerprints (source + flags), while
-#   test/langchain-deepagents-code-image-credentials.test.ts feeds the shared
+#   test/agents/deepagents/langchain-deepagents-code-image-credentials.test.ts feeds the shared
 #   positive corpus through this wrapper. Any canonical change trips the parity
 #   gate and forces this matcher (and its samples) to update.
 #   The live no-network acceptance clause is covered by
@@ -677,7 +677,7 @@ assert_no_codex_auth_credentials
 #   canonical TypeScript filters or a full TOML parser without adding a process
 #   and dependency. It therefore reads only known generated sections and exact
 #   quoted scalars; arrays, inline comments, and other forms are not accepted.
-# - Regression: test/dcode-wrapper-identity.test.ts covers malformed scalars,
+# - Regression: test/agents/deepagents/dcode-wrapper-identity.test.ts covers malformed scalars,
 #   terminal controls, oversized and secret-shaped metadata, and unsafe endpoint
 #   forms. The composed startup/status handoff has a separate integration test.
 # - Removal condition: replace these local readers/filters when upstream dcode

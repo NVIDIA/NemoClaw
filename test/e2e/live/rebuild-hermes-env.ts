@@ -15,6 +15,18 @@ export interface RebuildHermesBaseReusePlan {
   childEnv: NodeJS.ProcessEnv;
 }
 
+/** Supply the current Discord credential when rebuild replaces the legacy provider. */
+export function buildRebuildHermesRecreateEnv(
+  discordBotToken: string,
+  baseImageEnv: NodeJS.ProcessEnv = {},
+): NodeJS.ProcessEnv {
+  return {
+    ...baseImageEnv,
+    DISCORD_BOT_TOKEN: discordBotToken,
+    NEMOCLAW_REBUILD_VERBOSE: "1",
+  };
+}
+
 /** Select the normal lane's exact phase 1 image under a test-owned local alias. */
 export function planRebuildHermesBaseReuse(
   staleBaseMode: boolean,

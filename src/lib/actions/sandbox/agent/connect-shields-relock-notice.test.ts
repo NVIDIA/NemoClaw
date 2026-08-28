@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ShieldsAutoRestoreReadResult } from "../../../shields/audit";
 import {
   type ConnectShieldsRelockNoticeState,
+  formatConnectShieldsRelockNotice,
   pollConnectShieldsRelockNotice,
   startConnectShieldsRelockWatcher,
 } from "./connect-shields-relock-notice";
@@ -96,5 +97,22 @@ describe("connected-session Shields auto-relock notice", () => {
     vi.advanceTimersByTime(2_000);
     expect(readRecent).toHaveBeenCalledTimes(2);
     vi.useRealTimers();
+  });
+});
+
+describe("connected-session Shields auto-relock notice line endings", () => {
+  it("ends every line with CRLF when the connect child owns the terminal (#9710)", () => {
+    const notice = formatConnectShieldsRelockNotice("alpha beta", 20, true);
+
+    expect(notice.split("\n").length - 1).toBe(3);
+    expect(notice.match(/\r\n/g)).toHaveLength(3);
+    expect(/[^\r]\n/.test(notice)).toBe(false);
+  });
+
+  it("ends every line with a bare LF when stderr is a file or pipe (#9710)", () => {
+    const notice = formatConnectShieldsRelockNotice("alpha beta", 20, false);
+
+    expect(notice.split("\n").length - 1).toBe(3);
+    expect(notice).not.toContain("\r");
   });
 });

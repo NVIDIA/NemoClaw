@@ -84,7 +84,7 @@ Bounded partial results set `truncated` to `true` and include a redacted `detail
 
 ## Verify Credential Resolution
 
-Provider presence and metadata cannot prove that OpenShell rewrites `openshell:resolve:env:KEY` when a request leaves the sandbox.
+Provider presence and metadata cannot prove that OpenShell rewrites the recorded resolver placeholder when a request leaves the sandbox.
 `mcp status <server>` requests a differential wire-level credential-resolution probe by default.
 
 Before sending probe traffic, NemoClaw verifies exact generated policy, expected provider attachment, provider ID, `nemoclaw-mcp-v1` type, valid resource version, and exactly one matching credential key.
@@ -189,6 +189,11 @@ It never detaches the provider from other sandboxes.
 
 `rebuild` preserves providers that match the recorded ID and credential-key metadata and the active `nemoclaw-mcp-v1` type.
 It removes adapter entries and exact owned policies, then detaches providers before replacing the sandbox.
+Before changing each managed adapter, a fresh sandbox process must expose a revision-scoped OpenShell credential placeholder for that adapter.
+If an observation is absent, unscoped, or unavailable, NemoClaw leaves the affected adapter and every provider unchanged.
+It attempts to restore adapter entries prepared earlier in the operation and reports rollback failures.
+It does not substitute the provider resource version for the credential revision.
+Follow the reported [credential-revision recovery](../../reference/troubleshoot-mcp-servers#rebuild-or-destroy-cannot-prove-a-credential-revision), then retry rebuild.
 Restoration applies the credential-free policy, reattaches each provider, applies the endpoint-bound policy, waits for credential readiness, and restores adapters.
 For a trusted-private entry, the restored policy uses the recorded exact address pins and does not widen them from current DNS answers.
 Public entries continue to resolve and validate their endpoint addresses during restoration.
@@ -209,6 +214,10 @@ A later `mcp restart` can retry an incomplete post-rebuild restore.
 ## Destroy a Sandbox with MCP State
 
 Destroy removes adapter entries and exact owned policies, then detaches providers that match recorded metadata before asking OpenShell to delete the sandbox.
+Before changing each managed adapter, a fresh sandbox process must expose a revision-scoped OpenShell credential placeholder for that adapter.
+If an observation is absent, unscoped, or unavailable, NemoClaw leaves the affected adapter and every provider unchanged.
+It attempts to restore adapter entries prepared earlier in the operation and reports rollback failures.
+Follow the reported [credential-revision recovery](../../reference/troubleshoot-mcp-servers#rebuild-or-destroy-cannot-prove-a-credential-revision), then retry destroy.
 If deletion is refused, NemoClaw attempts to restore previous MCP state, reports rollback failures, and preserves recovery state.
 Provider deletion and registry cleanup happen only after OpenShell confirms the sandbox is gone.
 

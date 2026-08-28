@@ -5,7 +5,10 @@ import os from "node:os";
 import path from "node:path";
 
 import { dockerRemoveVolumesByPrefix } from "../../adapters/docker/volume";
-import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
+import {
+  OPENSHELL_HEAVY_TIMEOUT_MS,
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+} from "../../adapters/openshell/timeouts";
 import { DASHBOARD_PORT } from "../../core/ports";
 import { stopOpenShellGatewayUserService } from "../../onboard/docker-driver-gateway-service";
 import {
@@ -29,7 +32,9 @@ import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup
 export type DestroyRunOpenshell = (
   args: string[],
   opts?: Record<string, unknown>,
-) => { status: number | null; stdout?: string; stderr?: string };
+) => { error?: Error; status: number | null; stdout?: string; stderr?: string };
+
+export const SANDBOX_DESTROY_TIMEOUT_MS = OPENSHELL_HEAVY_TIMEOUT_MS;
 
 const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
 

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
 import path from "node:path";
 
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
@@ -11,14 +10,17 @@ import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
-import { type FakeDockerApi, startFakeDockerApi } from "./messaging-providers-helpers.ts";
+import {
+  type FakeDockerApi,
+  runDiscordGatewayClient,
+  startFakeDockerApi,
+} from "./messaging-providers-helpers.ts";
 import {
   cleanupSandbox,
   expectExitZero,
   phase6Env,
   resultText,
   runSecondaryCleanup,
-  sandboxNode,
   sandboxSh,
   sandboxShWithArgs,
   shellQuote,
@@ -32,23 +34,6 @@ export const PAIRING_USER = {
 };
 
 export const DISCORD_DM_CHANNEL = process.env.NEMOCLAW_DISCORD_DM_CHANNEL ?? "1199988877766655554";
-
-export function assertDiscordGatewayCapture(captureFile: string, expectedToken: string): void {
-  const rows = fs
-    .readFileSync(captureFile, "utf8")
-    .trim()
-    .split(/\n+/)
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
-  const identify = rows.filter((row) => row.event === "identify").at(-1);
-  expect(identify, "fake Discord Gateway did not capture IDENTIFY").toBeTruthy();
-  expect(identify).not.toHaveProperty("token");
-  expect(JSON.stringify(rows), "fake Discord Gateway capture persisted raw token").not.toContain(
-    expectedToken,
-  );
-  expect(identify?.tokenMatchesExpected, "Discord token rewrite").toBe(true);
-  expect(identify?.tokenLooksPlaceholder, "Discord placeholder leaked").toBe(false);
-}
 
 export function pairingEnv(options: {
   sandboxName: string;
@@ -210,16 +195,17 @@ export async function applyFakePolicy(options: {
   redactions: string[];
   artifactName: string;
 }): Promise<void> {
+  const policyHost = "host.openshell.internal";
   const methods = options.protocol === "rest" ? ["GET", "POST"] : ["GET", "WEBSOCKET_TEXT"];
   const args = [
     "policy",
     "update",
     options.sandboxName,
     "--add-endpoint",
-    `host.openshell.internal:${options.api.port}:read-write:${options.protocol}:enforce:${options.rewrite},allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
+    `${policyHost}:${options.api.port}:read-write:${options.protocol}:enforce:${options.rewrite},allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
   ];
   for (const method of methods)
-    args.push("--add-allow", `host.openshell.internal:${options.api.port}:${method}:/**`);
+    args.push("--add-allow", `${policyHost}:${options.api.port}:${method}:/**`);
   args.push("--binary", "/usr/local/bin/node", "--binary", "/usr/bin/node", "--wait");
   const result = await options.host.command("openshell", args, {
     artifactName: options.artifactName,
@@ -243,7 +229,7 @@ node --import tsx "$7" "$policy_file" "$3" "$4" "$5" "$6"
       options.host.openshellCommandPath,
       options.sandboxName,
       options.providerName,
-      "host.openshell.internal",
+      policyHost,
       String(options.api.port),
       options.protocol,
       path.join(REPO_ROOT, "test/e2e/fixtures/hermes-discord-policy-binding.ts"),
@@ -369,23 +355,19 @@ console.log("DISCORD_PAIRING_E2E_RESULT " + JSON.stringify({ code: result.code, 
 NODE
 `.replace("__LOAD_CONVERSATION_RUNTIME_SOURCE__", LOAD_CONVERSATION_RUNTIME_SOURCE);
 
-// Source-of-truth boundary: the Slack live probe owns only validation for its
-// localized fake API port and proxy environment because those values are injected
-// by the Vitest harness before the probe opens direct Node socket/http clients.
-// Invalid state: a malformed fake port or proxy env, or a proxy destination other
-// than the NemoClaw/OpenShell gateway proxy emitted by scripts/nemoclaw-start.sh,
-// would otherwise hide the real pairing failure behind a low-level network error
-// or route the fake Slack websocket through an unexpected host. Source-fix
-// constraint: do not change global sandbox proxy generation for this probe; fail
-// closed here before network access. Support tests cover malformed values and an
-// unexpected-but-valid HTTP proxy host. Remove this localized parser once the
-// Slack probe delegates Socket Mode/REST traffic to a shared fake-provider client
-// instead of hand-rolled sockets.
+// Source-of-truth boundary: the Slack live probe validates its localized fake API
+// ports, proxy environment, and the revision-scoped credential references issued
+// to the sandbox before it opens direct Node socket/http clients. Invalid state
+// would otherwise hide the real pairing failure behind a low-level network error,
+// route the fake Slack websocket through an unexpected host, or send a credential
+// reference that OpenShell must reject for an endpoint-bound provider. Remove this
+// localized parser once the Slack probe delegates Socket Mode/REST traffic to a
+// shared fake-provider client instead of hand-rolled sockets.
 export const SLACK_PROBE_INPUT_VALIDATION_SOURCE = String.raw`
-function parseFakeSlackPort() {
-  const raw = process.env.FAKE_SLACK_API_PORT || "";
+function parseFakeSlackPort(envKey = "FAKE_SLACK_API_PORT") {
+  const raw = process.env[envKey] || "";
   const port = Number(raw);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("FAKE_SLACK_API_PORT must be an integer in 1..65535");
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(envKey + " must be an integer in 1..65535");
   return port;
 }
 function parseProxyTarget() {
@@ -403,6 +385,14 @@ function parseProxyTarget() {
   if (parsed.hostname !== "10.200.0.1" || port !== 3128) throw new Error("unexpected HTTP proxy for Slack pairing probe");
   return { host: parsed.hostname, port };
 }
+function parseManagedCredentialReference(name) {
+  if (name !== "SLACK_APP_TOKEN" && name !== "SLACK_BOT_TOKEN") throw new Error("unexpected Slack credential reference name");
+  const value = process.env[name] || "";
+  if (!new RegExp("^openshell:resolve:env:v[0-9]{1,20}_" + name + "$").test(value)) {
+    throw new Error(name + " must be the revision-scoped OpenShell credential reference issued to the sandbox");
+  }
+  return value;
+}
 `;
 
 export const SLACK_PAIRING_SCRIPT = String.raw`
@@ -411,12 +401,13 @@ set -a
 [ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh
 set +a
 fake_slack_api_port="$1"
-slack_pairing_user="$2"
+fake_slack_websocket_port="$2"
+slack_pairing_user="$3"
 : "${"$"}{OPENCLAW_HOME:?OPENCLAW_HOME missing}"
 : "${"$"}{OPENCLAW_STATE_DIR:?OPENCLAW_STATE_DIR missing}"
 : "${"$"}{OPENCLAW_CONFIG_PATH:?OPENCLAW_CONFIG_PATH missing}"
 : "${"$"}{OPENCLAW_OAUTH_DIR:?OPENCLAW_OAUTH_DIR missing}"
-exec env HOME=/sandbox PATH="/usr/local/bin:/usr/bin:/bin:${"$"}{PATH:-}" OPENCLAW_HOME="$OPENCLAW_HOME" OPENCLAW_STATE_DIR="$OPENCLAW_STATE_DIR" OPENCLAW_CONFIG_PATH="$OPENCLAW_CONFIG_PATH" OPENCLAW_OAUTH_DIR="$OPENCLAW_OAUTH_DIR" HTTP_PROXY="${"$"}{HTTP_PROXY:-}" HTTPS_PROXY="${"$"}{HTTPS_PROXY:-}" http_proxy="${"$"}{http_proxy:-}" https_proxy="${"$"}{https_proxy:-}" NO_PROXY="${"$"}{NO_PROXY:-}" no_proxy="${"$"}{no_proxy:-}" NODE_OPTIONS="${"$"}{NODE_OPTIONS:-}" FAKE_SLACK_API_HOST="host.openshell.internal" FAKE_SLACK_API_PORT="$fake_slack_api_port" SLACK_PAIRING_USER="$slack_pairing_user" node --input-type=module <<'NODE'
+exec env HOME=/sandbox PATH="/usr/local/bin:/usr/bin:/bin:${"$"}{PATH:-}" OPENCLAW_HOME="$OPENCLAW_HOME" OPENCLAW_STATE_DIR="$OPENCLAW_STATE_DIR" OPENCLAW_CONFIG_PATH="$OPENCLAW_CONFIG_PATH" OPENCLAW_OAUTH_DIR="$OPENCLAW_OAUTH_DIR" HTTP_PROXY="${"$"}{HTTP_PROXY:-}" HTTPS_PROXY="${"$"}{HTTPS_PROXY:-}" http_proxy="${"$"}{http_proxy:-}" https_proxy="${"$"}{https_proxy:-}" NO_PROXY="${"$"}{NO_PROXY:-}" no_proxy="${"$"}{no_proxy:-}" NODE_OPTIONS="${"$"}{NODE_OPTIONS:-}" FAKE_SLACK_API_HOST="host.openshell.internal" FAKE_SLACK_API_PORT="$fake_slack_api_port" FAKE_SLACK_WEBSOCKET_PORT="$fake_slack_websocket_port" SLACK_PAIRING_USER="$slack_pairing_user" node --input-type=module <<'NODE'
 __LOAD_CONVERSATION_RUNTIME_SOURCE__
 import crypto from "node:crypto";
 import http from "node:http";
@@ -454,11 +445,20 @@ function decodeServerFrame(buffer) {
 }
 function receiveSlackSocketEvent() {
   const host = "host.openshell.internal";
-  const port = parseFakeSlackPort();
+  const port = parseFakeSlackPort("FAKE_SLACK_WEBSOCKET_PORT");
   const proxy = parseProxyTarget();
+  const appToken = parseManagedCredentialReference("SLACK_APP_TOKEN");
   return new Promise((resolve, reject) => {
     const socket = proxy ? net.createConnection({ host: proxy.host, port: proxy.port }) : net.createConnection({ host, port });
-    const timer = setTimeout(() => { socket.destroy(); reject(new Error("timed out waiting for fake Slack Socket Mode event")); }, 30000);
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      reject(error);
+    };
+    const timer = setTimeout(() => fail(new Error("timed out waiting for fake Slack Socket Mode event")), 30000);
     let handshake = Buffer.alloc(0);
     let framed = Buffer.alloc(0);
     let upgraded = false;
@@ -482,14 +482,12 @@ function receiveSlackSocketEvent() {
         if (end === -1) return;
         const statusLine = handshake.slice(0, end).toString("latin1").split("\r\n")[0] || "";
         if (!statusLine.includes("101")) {
-          clearTimeout(timer);
-          socket.destroy();
-          reject(new Error("fake Slack websocket upgrade failed: " + statusLine));
+          fail(new Error("fake Slack websocket upgrade failed: " + statusLine));
           return;
         }
         upgraded = true;
         framed = Buffer.concat([framed, handshake.slice(end + 4)]);
-        socket.write(encodeClientText(JSON.stringify({ type: "socket_mode_client_hello", token: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN" })));
+        socket.write(encodeClientText(JSON.stringify({ type: "socket_mode_client_hello", token: appToken })));
       } else {
         framed = Buffer.concat([framed, chunk]);
       }
@@ -497,9 +495,14 @@ function receiveSlackSocketEvent() {
         const frame = decodeServerFrame(framed);
         if (!frame) break;
         framed = framed.slice(frame.totalLength);
+        if (frame.opcode === 8) {
+          fail(new Error("fake Slack websocket closed before the Socket Mode event"));
+          return;
+        }
         if (frame.opcode !== 1) continue;
         const envelope = JSON.parse(frame.payload.toString("utf8"));
         socket.write(encodeClientText(JSON.stringify({ envelope_id: envelope.envelope_id })));
+        settled = true;
         clearTimeout(timer);
         socket.end();
         socket.destroy();
@@ -507,13 +510,14 @@ function receiveSlackSocketEvent() {
         return;
       }
     });
-    socket.on("error", (error) => { clearTimeout(timer); reject(error); });
+    socket.on("error", fail);
+    socket.on("close", () => fail(new Error("fake Slack websocket closed before the Socket Mode event")));
   });
 }
 function postPairingReply(text, channel) {
   const host = "host.openshell.internal";
   const port = parseFakeSlackPort();
-  const token = "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN";
+  const token = parseManagedCredentialReference("SLACK_BOT_TOKEN");
   const data = new URLSearchParams({ token, channel, text }).toString();
   return new Promise((resolve, reject) => {
     const req = http.request({
@@ -598,11 +602,16 @@ export async function issuePairingRequest(options: {
   channel: PairingChannel;
   redactions: string[];
   fakeSlackPort?: string;
+  fakeSlackWebSocketPort?: string;
 }): Promise<ShellProbeResult> {
   const script = options.channel === "slack" ? SLACK_PAIRING_SCRIPT : DISCORD_PAIRING_SCRIPT;
   const args =
     options.channel === "slack"
-      ? [options.fakeSlackPort ?? "", PAIRING_USER.slack]
+      ? [
+          options.fakeSlackPort ?? "",
+          options.fakeSlackWebSocketPort ?? "",
+          PAIRING_USER.slack,
+        ]
       : [PAIRING_USER.discord, DISCORD_DM_CHANNEL];
   return sandboxShWithArgs(options.sandbox, options.sandboxName, script, args, {
     artifactName: `${options.channel}-issue-pairing-request`,
@@ -703,208 +712,18 @@ export async function approveAndAssertPairing(options: {
   }
 }
 
-// Ported from test/e2e/lib/discord-gateway-proof.sh run_fake_discord_gateway_node_client.
-// Keep the request framing as raw source so CRLF sequences remain JavaScript
-// escapes inside the sandbox node heredoc rather than literal line breaks.
-// Source-of-truth boundary: the Discord Gateway proof owns validation for its
-// localized sandbox HTTP proxy env because it opens a raw Node socket to the fake
-// gateway. Invalid state: malformed proxy env, non-HTTP proxies, invalid ports,
-// or proxy destinations other than the NemoClaw/OpenShell gateway proxy would
-// hide handshake failures behind low-level network errors or route the proof
-// through an unexpected host. Source-fix constraint: keep global sandbox proxy
-// generation unchanged; fail closed here before network access. Remove this
-// parser once the proof uses a shared fake-provider websocket client.
-export const DISCORD_GATEWAY_PROOF_SOURCE = String.raw`
-import crypto from "node:crypto";
-import net from "node:net";
-
-const host = "host.openshell.internal";
-const port = Number(process.env.FAKE_DISCORD_GATEWAY_PORT);
-const identifyToken = "openshell:resolve:env:DISCORD_BOT_TOKEN";
-const results = [];
-
-function finish(message) {
-  if (message) results.push(message);
-  console.log(results.join("\n"));
-  process.exit(0);
-}
-
-function encodeClientText(payload) {
-  const body = Buffer.from(payload, "utf8");
-  const mask = crypto.randomBytes(4);
-  const masked = Buffer.alloc(body.length);
-  for (let i = 0; i < body.length; i += 1) masked[i] = body[i] ^ mask[i % 4];
-  if (body.length < 126) {
-    return Buffer.concat([Buffer.from([0x81, 0x80 | body.length]), mask, masked]);
-  }
-  if (body.length <= 0xffff) {
-    const header = Buffer.alloc(4);
-    header[0] = 0x81;
-    header[1] = 0x80 | 126;
-    header.writeUInt16BE(body.length, 2);
-    return Buffer.concat([header, mask, masked]);
-  }
-  const header = Buffer.alloc(10);
-  header[0] = 0x81;
-  header[1] = 0x80 | 127;
-  header.writeBigUInt64BE(BigInt(body.length), 2);
-  return Buffer.concat([header, mask, masked]);
-}
-
-function encodeClientClose(code) {
-  const body = Buffer.alloc(2);
-  body.writeUInt16BE(code, 0);
-  const mask = crypto.randomBytes(4);
-  for (let i = 0; i < body.length; i += 1) body[i] ^= mask[i % 4];
-  return Buffer.concat([Buffer.from([0x88, 0x80 | 2]), mask, body]);
-}
-
-function decodeFrame(buffer) {
-  if (buffer.length < 2) return null;
-  const opcode = buffer[0] & 0x0f;
-  let payloadLength = buffer[1] & 0x7f;
-  let offset = 2;
-  if (payloadLength === 126) {
-    if (buffer.length < 4) return null;
-    payloadLength = buffer.readUInt16BE(2);
-    offset = 4;
-  } else if (payloadLength === 127) {
-    if (buffer.length < 10) return null;
-    payloadLength = Number(buffer.readBigUInt64BE(2));
-    offset = 10;
-  }
-  if (buffer.length < offset + payloadLength) return null;
-  return {
-    opcode,
-    payload: buffer.slice(offset, offset + payloadLength),
-    totalLength: offset + payloadLength,
-  };
-}
-
-function parseProxyTarget() {
-  const raw = process.env.HTTP_PROXY || process.env.http_proxy || "";
-  if (!raw) return null;
-  let parsed;
-  try {
-    parsed = new URL(raw);
-  } catch {
-    throw new Error("HTTP proxy for Discord Gateway proof is malformed");
-  }
-  if (parsed.protocol !== "http:") throw new Error("Discord Gateway proof only supports HTTP proxies");
-  const proxyPort = Number(parsed.port || "80");
-  if (!Number.isInteger(proxyPort) || proxyPort < 1 || proxyPort > 65535) throw new Error("HTTP proxy port for Discord Gateway proof is invalid");
-  if (parsed.hostname !== "10.200.0.1" || proxyPort !== 3128) throw new Error("unexpected HTTP proxy for Discord Gateway proof");
-  return { host: parsed.hostname, port: proxyPort };
-}
-
-const proxy = parseProxyTarget();
-const socket = proxy
-  ? net.createConnection({ host: proxy.host, port: proxy.port })
-  : net.createConnection({ host, port });
-const timer = setTimeout(() => {
-  try { socket.destroy(); } catch {}
-  finish("TIMEOUT");
-}, 20000);
-let handshake = Buffer.alloc(0);
-let framed = Buffer.alloc(0);
-let upgraded = false;
-let sawReady = false;
-
-socket.on("connect", () => {
-  const key = crypto.randomBytes(16).toString("base64");
-  const requestTarget = proxy
-    ? "http://" + host + ":" + port + "/gateway?v=10&encoding=json"
-    : "/gateway?v=10&encoding=json";
-  socket.write([
-    "GET " + requestTarget + " HTTP/1.1",
-    "Host: " + host + ":" + port,
-    "Upgrade: websocket",
-    "Connection: Upgrade",
-    "Sec-WebSocket-Key: " + key,
-    "Sec-WebSocket-Version: 13",
-    "\r\n",
-  ].join("\r\n"));
-});
-
-socket.on("data", (chunk) => {
-  if (!upgraded) {
-    handshake = Buffer.concat([handshake, chunk]);
-    const end = handshake.indexOf("\r\n\r\n");
-    if (end === -1) return;
-    const statusLine = handshake.slice(0, end).toString("latin1").split("\r\n")[0] || "";
-    if (!statusLine.includes("101")) {
-      clearTimeout(timer);
-      finish("HTTP_" + statusLine);
-    }
-    upgraded = true;
-    results.push("UPGRADE");
-    framed = Buffer.concat([framed, handshake.slice(end + 4)]);
-  } else {
-    framed = Buffer.concat([framed, chunk]);
-  }
-
-  while (framed.length > 0) {
-    const frame = decodeFrame(framed);
-    if (!frame) break;
-    framed = framed.slice(frame.totalLength);
-    if (frame.opcode === 1) {
-      const message = JSON.parse(frame.payload.toString("utf8"));
-      if (message.op === 10) {
-        results.push("HELLO");
-        socket.write(encodeClientText(JSON.stringify({
-          op: 2,
-          d: {
-            token: identifyToken,
-            intents: 0,
-            properties: { os: "linux", browser: "nemoclaw-e2e", device: "nemoclaw-e2e" },
-          },
-        })));
-        results.push("IDENTIFY_SENT_PLACEHOLDER");
-      } else if (message.op === 0 && message.t === "READY") {
-        sawReady = true;
-        results.push("READY");
-        socket.write(encodeClientText(JSON.stringify({ op: 1, d: message.s ?? null })));
-      } else if (message.op === 11) {
-        results.push("HEARTBEAT_ACK");
-        socket.write(encodeClientClose(1000));
-        clearTimeout(timer);
-        finish();
-      }
-    } else if (frame.opcode === 8) {
-      const code = frame.payload.length >= 2 ? frame.payload.readUInt16BE(0) : 0;
-      clearTimeout(timer);
-      finish("CLOSE_" + code);
-    }
-  }
-});
-
-socket.on("error", (error) => {
-  clearTimeout(timer);
-  finish("ERROR " + error.message);
-});
-socket.on("close", () => {
-  clearTimeout(timer);
-  if (!sawReady) finish("CLOSED");
-});
-`;
-
 export async function runDiscordGatewayProof(options: {
   sandbox: SandboxClient;
   sandboxName: string;
   port: string;
   redactions: string[];
-}): Promise<ShellProbeResult> {
-  return sandboxNode(
-    options.sandbox,
-    options.sandboxName,
-    DISCORD_GATEWAY_PROOF_SOURCE,
-    { FAKE_DISCORD_GATEWAY_PORT: options.port },
-    {
-      artifactName: "discord-gateway-proof",
-      redactionValues: options.redactions,
-      timeoutMs: 60_000,
-    },
-  );
+}): Promise<string> {
+  return runDiscordGatewayClient(options.sandbox, {
+    sandboxName: options.sandboxName,
+    port: options.port,
+    identifyToken: { kind: "revisioned-discord-env" },
+    redactionValues: options.redactions,
+  });
 }
 
 export async function writePairingArtifacts(

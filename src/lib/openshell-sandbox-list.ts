@@ -1,16 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { stripAnsi } from "./adapters/openshell/client";
 import {
   detectOpenShellStateRpcPreflightIssue,
-  detectOpenShellStateRpcResultIssue,
   printOpenShellStateRpcIssue,
 } from "./adapters/openshell/gateway-drift";
+import { createCliOpenShellSandboxObserver } from "./adapters/openshell/sandbox-observer-cli";
+import {
+  namedOpenShellGateway,
+  selectedOpenShellGateway,
+  type OpenShellSandboxInventory,
+  type OpenShellSandboxObserver,
+  type OpenShellSandboxResult,
+} from "./adapters/openshell/sandbox-observer";
 import { captureOpenshell } from "./adapters/openshell/runtime";
 import { recoverNamedGatewayRuntime } from "./gateway-runtime-action";
 
-type SandboxListResult = ReturnType<typeof captureOpenshell>;
+type SandboxListResult = OpenShellSandboxResult<OpenShellSandboxInventory>;
 
 export type SandboxListPreflightContext = {
   action: string;
@@ -25,24 +31,21 @@ export type SandboxListRecoveryResult = {
 
 export type CaptureSandboxListWithGatewayRecoveryOptions = {
   gatewayName?: string;
+  observer?: OpenShellSandboxObserver;
 };
 
-export function isRecoverableSandboxListGatewayFailure(
-  result: SandboxListResult,
-  options: CaptureSandboxListWithGatewayRecoveryOptions = {},
-): boolean {
-  if (result.status === 0 || detectOpenShellStateRpcResultIssue(result, options)) {
-    return false;
-  }
-  const output = stripAnsi(String(result.output || ""));
-  return /Connection refused|client error \(Connect\)|tcp connect error|No active gateway|No gateway configured|Status:\s*Disconnected/i.test(
-    output,
-  );
+function isRecoverableObservedSandboxListGatewayFailure(result: SandboxListResult): boolean {
+  return !result.ok && result.error.kind === "transport" && result.error.reason === "unreachable";
 }
 
 export async function captureSandboxListWithGatewayRecovery(
   options: CaptureSandboxListWithGatewayRecoveryOptions = {},
 ): Promise<SandboxListRecoveryResult> {
+  const observer =
+    options.observer ??
+    createCliOpenShellSandboxObserver({
+      capture: captureOpenshell,
+    });
   const recoveryOptions: Parameters<typeof recoverNamedGatewayRuntime>[0] = {
     recoverableStates: ["missing_named", "named_unhealthy", "named_unreachable", "connected_other"],
   };
@@ -50,29 +53,45 @@ export async function captureSandboxListWithGatewayRecovery(
     recoveryOptions.gatewayName = options.gatewayName;
   }
 
-  // An explicit target must be proven healthy and active before an unscoped
-  // `sandbox list` can be trusted. OpenShell otherwise leaves a failed select
-  // on the current sibling gateway, whose successful list would be unsafe
-  // evidence for destructive recovery decisions (#6114).
+  const target = options.gatewayName
+    ? namedOpenShellGateway(options.gatewayName)
+    : selectedOpenShellGateway();
   let targetRecoveryAttempted = false;
+  // Installer retirement can remove the named gateway. Recover it before inventory
+  // so a missing-gateway command error cannot bypass bounded recovery.
   if (options.gatewayName) {
     const targetRecovery = await recoverNamedGatewayRuntime(recoveryOptions);
     targetRecoveryAttempted = targetRecovery.attempted === true;
     if (!targetRecovery.recovered) {
       return {
-        result: { status: 1, output: "" },
-        recoveryAttempted: targetRecovery.attempted === true,
+        result: {
+          ok: false,
+          error: {
+            kind: "transport",
+            reason: "unreachable",
+            message: "OpenShell could not reach the selected gateway.",
+          },
+        },
+        recoveryAttempted: targetRecoveryAttempted,
         recoverySucceeded: false,
       };
     }
   }
 
-  const initial = captureOpenshell(["sandbox", "list"]);
-  if (!isRecoverableSandboxListGatewayFailure(initial, options)) {
+  const initial = await observer.listSandboxes({ target });
+  if (!isRecoverableObservedSandboxListGatewayFailure(initial)) {
     return {
       result: initial,
       recoveryAttempted: targetRecoveryAttempted,
       recoverySucceeded: targetRecoveryAttempted,
+    };
+  }
+
+  if (options.gatewayName && targetRecoveryAttempted) {
+    return {
+      result: initial,
+      recoveryAttempted: true,
+      recoverySucceeded: true,
     };
   }
 
@@ -82,7 +101,7 @@ export async function captureSandboxListWithGatewayRecovery(
   }
 
   return {
-    result: captureOpenshell(["sandbox", "list"]),
+    result: await observer.listSandboxes({ target }),
     recoveryAttempted: true,
     recoverySucceeded: true,
   };
@@ -91,24 +110,28 @@ export async function captureSandboxListWithGatewayRecovery(
 export async function captureSandboxListWithGatewayPreflightOrExit(
   context: SandboxListPreflightContext,
   options: CaptureSandboxListWithGatewayRecoveryOptions = {},
-): Promise<SandboxListResult> {
-  const preflightIssue = detectOpenShellStateRpcPreflightIssue(options);
+): Promise<OpenShellSandboxInventory> {
+  const preflightOptions = options.gatewayName ? { gatewayName: options.gatewayName } : {};
+  const preflightIssue = detectOpenShellStateRpcPreflightIssue(preflightOptions);
   if (preflightIssue) {
     printOpenShellStateRpcIssue(preflightIssue, context);
     process.exit(1);
   }
 
   const recovery = await captureSandboxListWithGatewayRecovery(options);
-  const resultIssue = detectOpenShellStateRpcResultIssue(recovery.result, options);
-  if (resultIssue) {
-    printOpenShellStateRpcIssue(resultIssue, context);
+  if (!recovery.result.ok && recovery.result.error.kind === "schema") {
+    printOpenShellStateRpcIssue({ kind: "protobuf_mismatch", drift: null, output: "" }, context);
     process.exit(1);
   }
-  if (recovery.result.status !== 0) {
+  if (!recovery.result.ok) {
     printSandboxListFailureWithRecoveryContext(recovery);
-    process.exit(recovery.result.status || 1);
+    process.exit(
+      recovery.result.error.kind === "command" && recovery.result.error.reason === "invalid_request"
+        ? 2
+        : 1,
+    );
   }
-  return recovery.result;
+  return recovery.result.value;
 }
 
 /**
@@ -120,10 +143,13 @@ export async function captureSandboxListWithGatewayPreflightOrExit(
  * but a down or unreachable gateway is non-fatal — its empty output makes the
  * sandbox report as unobserved instead of triggering a gateway start.
  */
-export function captureNamedGatewaySandboxListReadOnly(
+export async function captureNamedGatewaySandboxListReadOnly(
   context: SandboxListPreflightContext,
   gatewayName: string,
-): SandboxListResult {
+  observer: OpenShellSandboxObserver = createCliOpenShellSandboxObserver({
+    capture: captureOpenshell,
+  }),
+): Promise<OpenShellSandboxInventory> {
   const options: CaptureSandboxListWithGatewayRecoveryOptions = { gatewayName };
   const preflightIssue = detectOpenShellStateRpcPreflightIssue(options);
   if (preflightIssue) {
@@ -131,19 +157,34 @@ export function captureNamedGatewaySandboxListReadOnly(
     process.exit(1);
   }
 
-  const result = captureOpenshell(["sandbox", "list", "-g", gatewayName], { ignoreError: true });
-  const resultIssue = detectOpenShellStateRpcResultIssue(result, options);
-  if (resultIssue) {
-    printOpenShellStateRpcIssue(resultIssue, context);
+  const result = await observer.listSandboxes({ target: namedOpenShellGateway(gatewayName) });
+  if (result.ok) return result.value;
+  if (result.error.kind === "transport" && result.error.reason === "unreachable") {
+    return { sandboxes: [] };
+  }
+  if (result.error.kind === "schema") {
+    printOpenShellStateRpcIssue({ kind: "protobuf_mismatch", drift: null, output: "" }, context);
     process.exit(1);
   }
-  return result;
+  console.error("  Failed to query running sandboxes from OpenShell.");
+  console.error(`  ${result.error.message}`);
+  process.exit(
+    result.error.kind === "command" && result.error.reason === "invalid_request" ? 2 : 1,
+  );
 }
 
 export function printSandboxListFailureWithRecoveryContext(
   recoveryResult: SandboxListRecoveryResult,
 ): void {
   console.error("  Failed to query running sandboxes from OpenShell.");
+  if (!recoveryResult.result.ok) {
+    const error = recoveryResult.result.error;
+    const reason = "reason" in error ? error.reason : "none";
+    console.error(
+      `  OpenShell sandbox inventory error: kind=${error.kind}; reason=${reason}; gateway recovery attempted=${recoveryResult.recoveryAttempted ? "yes" : "no"}.`,
+    );
+    console.error(`  ${error.message}`);
+  }
   if (recoveryResult.recoveryAttempted) {
     if (recoveryResult.recoverySucceeded) {
       console.error(

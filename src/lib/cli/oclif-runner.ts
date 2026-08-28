@@ -9,11 +9,13 @@ import {
 } from "@oclif/core";
 
 import { CLI_NAME } from "./branding";
+import { PUBLIC_HELP_SANDBOX_NAME_PROPERTY } from "./public-help";
 
 export interface OclifCommandRunOptions {
   rootDir: string;
   error?: (message?: string) => void;
   exit?: (code: number) => never;
+  publicSandboxName?: string;
 }
 
 function getOclifExitCode(error: unknown): number | null {
@@ -66,12 +68,13 @@ function formatOclifError(error: unknown): string {
   return String(error).trim();
 }
 
-function applyBrandedBin(config: OclifConfig): void {
+function applyBrandedBin(config: OclifConfig, publicSandboxName?: string): void {
   const pjson = {
     ...config.pjson,
     oclif: {
       ...config.pjson.oclif,
       bin: CLI_NAME,
+      [PUBLIC_HELP_SANDBOX_NAME_PROPERTY]: publicSandboxName,
     },
   };
   // config.runCommand() calls Command.run(), which reloads from the root
@@ -97,7 +100,7 @@ export async function runOclifCommandById(
   opts: OclifCommandRunOptions,
 ): Promise<void> {
   const config = await OclifConfig.load(opts.rootDir);
-  applyBrandedBin(config);
+  applyBrandedBin(config, opts.publicSandboxName);
   const errorLine = opts.error ?? console.error;
   const exit = opts.exit ?? ((code: number) => process.exit(code));
   const originalArgv = process.argv;
@@ -151,7 +154,7 @@ export async function runOclifCommandById(
 
 export async function runOclifArgv(args: string[], opts: OclifCommandRunOptions): Promise<void> {
   const config = await OclifConfig.load(opts.rootDir);
-  applyBrandedBin(config);
+  applyBrandedBin(config, opts.publicSandboxName);
   const errorLine = opts.error ?? console.error;
   const originalArgv = process.argv;
   // oclif's parse-error help renderer consults process.argv, not just the

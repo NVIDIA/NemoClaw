@@ -44,6 +44,7 @@ describe("sandbox policy authority preflight", () => {
           },
         },
       },
+      policyIdentity: { hash: "external-policy", activeVersion: 1 },
     });
 
     expect(
@@ -68,6 +69,7 @@ describe("sandbox policy authority preflight", () => {
     vi.spyOn(policyAuthority, "inspectSandboxPolicyAuthority").mockReturnValue({
       authority: "externally-managed",
       effectivePolicy: { network_policies: {} },
+      policyIdentity: { hash: "external-policy", activeVersion: 1 },
     });
 
     expect(() =>
@@ -88,6 +90,7 @@ describe("sandbox policy authority preflight", () => {
     vi.spyOn(policyAuthority, "inspectSandboxPolicyAuthority").mockReturnValue({
       authority: "externally-managed",
       effectivePolicy: { network_policies: {} },
+      policyIdentity: { hash: "external-policy", activeVersion: 1 },
     });
 
     expect(() =>
@@ -121,6 +124,7 @@ describe("sandbox policy authority preflight", () => {
     vi.spyOn(policyAuthority, "inspectSandboxPolicyAuthority").mockReturnValue({
       authority: "externally-managed",
       effectivePolicy: { network_policies: {} },
+      policyIdentity: { hash: "external-policy", activeVersion: 1 },
     });
 
     expect(() =>
@@ -139,6 +143,7 @@ describe("sandbox policy authority preflight", () => {
     vi.spyOn(policyAuthority, "inspectSandboxPolicyAuthority").mockReturnValue({
       authority: "nemoclaw-managed",
       effectivePolicy: {},
+      policyIdentity: { hash: "managed-policy", activeVersion: 1 },
     });
 
     expect(

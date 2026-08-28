@@ -29,6 +29,7 @@ vi.mock("@oclif/core", async (importOriginal) => {
 import * as receiptAuthority from "../onboard/experimental/hermes-portable-receipt";
 import { NemoClawCommand } from "./nemoclaw-oclif-command";
 import { runOclifArgv, runOclifCommandById } from "./oclif-runner";
+import { PUBLIC_HELP_SANDBOX_NAME_PROPERTY } from "./public-help";
 
 function makeConfig() {
   const rootPlugin = {
@@ -64,10 +65,15 @@ class RunnerUnsupportedCommand extends NemoClawCommand {
 }
 
 function useHermesPortableAuthority(): void {
-  vi.spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthority").mockReturnValue({
+  const authority = {
     kind: "hermes",
     snapshot: { receipt: { phase: "active" } } as never,
-  });
+  } as const;
+  vi.spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthority").mockReturnValue(authority);
+  vi.spyOn(
+    receiptAuthority,
+    "inspectPortableAgentReceiptAuthorityForClassification",
+  ).mockReturnValue(authority);
 }
 
 describe("Hermes portable command admission through both oclif runners", () => {
@@ -166,7 +172,10 @@ describe("runOclifArgv", () => {
       ]);
     });
 
-    await runOclifArgv(["sandbox", "channels", "start", "--help"], { rootDir: "/repo" });
+    await runOclifArgv(["sandbox", "channels", "start", "--help"], {
+      rootDir: "/repo",
+      publicSandboxName: "alpha",
+    });
 
     expect(process.argv).toEqual(["/usr/bin/node", "/repo/bin/nemoclaw.js", "alpha", "status"]);
 
@@ -180,6 +189,14 @@ describe("runOclifArgv", () => {
     expect(config.pjson.oclif.bin).toBe("nemoclaw");
     expect(config.options.pjson.oclif.bin).toBe("nemoclaw");
     expect(config.plugins.get("root")?.pjson.oclif.bin).toBe("nemoclaw");
+    expect((config.pjson.oclif as Record<string, unknown>)[PUBLIC_HELP_SANDBOX_NAME_PROPERTY]).toBe(
+      "alpha",
+    );
+    expect(
+      (config.plugins.get("root")?.pjson.oclif as Record<string, unknown>)[
+        PUBLIC_HELP_SANDBOX_NAME_PROPERTY
+      ],
+    ).toBe("alpha");
   });
 
   it("delegates ordinary native-route failures to oclif's handler and restores argv", async () => {
@@ -244,7 +261,7 @@ describe("runOclifArgv", () => {
     // delegate to oclif's handler, which performs the graceful exit 0.
     // This mocks handleOclif to assert delegation; the runtime counterpart
     // (real `nemoclaw sandbox --help` → exit 0 through the actual binary) is
-    // locked by test/exit-code-user-error-surfaces.test.ts
+    // locked by test/cli/exit-code-user-error-surfaces.test.ts
     // ("a native-route --help stays a clean exit 0").
     class ExitError extends Error {
       oclif = { exit: 0 };
@@ -290,7 +307,10 @@ describe("runOclifCommandById", () => {
       expect(process.argv).toEqual(["/usr/bin/node", "/repo/bin/nemoclaw.js", "list", "--json"]);
     });
 
-    await runOclifCommandById("list", ["--json"], { rootDir: "/repo" });
+    await runOclifCommandById("list", ["--json"], {
+      rootDir: "/repo",
+      publicSandboxName: "alpha",
+    });
 
     expect(process.argv).toEqual(["/usr/bin/node", "/repo/bin/nemoclaw.js", "alpha", "status"]);
     expect(loadMock).toHaveBeenCalledWith("/repo");
@@ -299,6 +319,14 @@ describe("runOclifCommandById", () => {
     expect(config.pjson.oclif.bin).toBe("nemoclaw");
     expect(config.options.pjson.oclif.bin).toBe("nemoclaw");
     expect(config.plugins.get("root")?.pjson.oclif.bin).toBe("nemoclaw");
+    expect((config.pjson.oclif as Record<string, unknown>)[PUBLIC_HELP_SANDBOX_NAME_PROPERTY]).toBe(
+      "alpha",
+    );
+    expect(
+      (config.plugins.get("root")?.pjson.oclif as Record<string, unknown>)[
+        PUBLIC_HELP_SANDBOX_NAME_PROPERTY
+      ],
+    ).toBe("alpha");
   });
 
   it("formats oclif flag parse errors and exits with the oclif exit code", async () => {

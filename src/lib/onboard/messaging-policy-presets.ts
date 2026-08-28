@@ -11,6 +11,10 @@ const REQUIRED_POLICY_PRESETS_BY_MESSAGING_CHANNEL =
 
 const ALL_POLICY_PRESETS_BY_MESSAGING_CHANNEL = listMessagingPolicyPresetsByChannel();
 
+const REPOSITORY_MESSAGING_POLICY_PRESETS = new Set(
+  Object.values(ALL_POLICY_PRESETS_BY_MESSAGING_CHANNEL).flatMap((presets) => presets),
+);
+
 function normalizedNames(values: string[] | null | undefined): string[] {
   if (!Array.isArray(values)) return [];
   const names: string[] = [];
@@ -59,9 +63,9 @@ export function requiredMessagingChannelPolicyPresets(
 // or a recorded resume set). We intentionally merge *all* of a channel's
 // presets, not just the create-time `requiredAtCreate` ones: `requiredAtCreate`
 // governs whether a preset is injected into the boot policy at sandbox-create
-// time (only Slack today), while finalization applies any newly-merged preset
+// time (Discord and Slack today), while finalization applies any newly-merged preset
 // to the live gateway itself. Using only the create-time-required set here drops
-// every other channel's preset (Discord, Telegram, WhatsApp, Teams, WeChat) from
+// every other channel's preset (Telegram, WhatsApp, Teams, WeChat) from
 // the persisted selection, so `policy-list` shows them unapplied even though the
 // channel was configured during onboard. See #5967.
 export function mergeEnabledMessagingChannelPolicyPresets(
@@ -91,6 +95,30 @@ export function allMessagingChannelPolicyPresets(channels: string[] | null | und
     }
   }
   return all;
+}
+
+// An array means the caller knows the complete enabled-channel set. Remove only
+// repository-owned messaging presets outside that set; null preserves an
+// unknown selection, and a custom preset with the same name keeps user intent.
+export function pruneInactiveMessagingPolicyPresets(
+  selectedPresets: string[],
+  enabledChannels: string[] | null | undefined,
+  customPresetNames?: ReadonlySet<string> | null,
+): string[] {
+  if (!Array.isArray(enabledChannels)) {
+    return selectedPresets;
+  }
+
+  const activePresets = new Set(allMessagingChannelPolicyPresets(enabledChannels));
+  const customPresets = new Set(normalizedNames(customPresetNames ? [...customPresetNames] : []));
+  return selectedPresets.filter((preset) => {
+    const name = preset.trim().toLowerCase();
+    return (
+      customPresets.has(name) ||
+      !REPOSITORY_MESSAGING_POLICY_PRESETS.has(name) ||
+      activePresets.has(name)
+    );
+  });
 }
 
 /**

@@ -14,9 +14,18 @@ import type {
 import {
   createCachedHostLocalInferenceSetupResolver,
   handleProviderInferenceState,
+  type ProviderInferenceStateOptions,
 } from "./provider-inference";
-import { baseOptions, baseSelection, createDeps } from "./provider-inference.test-support";
+import {
+  baseOptions,
+  baseSelection,
+  createDeps,
+  type Agent,
+  type Gpu,
+  type Host,
+} from "./provider-inference.test-support";
 
+type TestProviderInferenceOptions = ProviderInferenceStateOptions<Gpu, Agent, Host>;
 const PROBE_IMAGE = `quay.io/curl/curl@sha256:${"b".repeat(64)}`;
 const NIM_IMAGE = `nvcr.io/nim/meta/llama@sha256:${"d".repeat(64)}`;
 const MANAGED_IMAGE = `nvcr.io/nvidia/vllm@sha256:${"c".repeat(64)}`;
@@ -29,7 +38,6 @@ const receiptWriter = {
   targetSha256: "1".repeat(64),
   writeExact: (value: string) => value,
 };
-
 function publishedManagedReceipt(
   service: "nim" | "vllm",
   model: string,
@@ -235,6 +243,25 @@ function llamaCppLifecycleSelection(
 }
 
 describe("provider inference host-local startup selection", () => {
+  it("does not require host-local application support for a hosted candidate provider", () => {
+    const resolver = vi.fn();
+    const resolve = createCachedHostLocalInferenceSetupResolver({
+      resolver,
+      application: "pi",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      acceleration: "cpu",
+      requireToolCalling: null,
+      freshRequireToolCalling: true,
+      allowPublishedResume: false,
+      recover: false,
+      recordToolCallingRequirement: vi.fn(),
+    });
+
+    expect(resolve("pi-sandbox")).toEqual({});
+    expect(resolver).not.toHaveBeenCalled();
+  });
+
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
     "dispatches a published %s llama.cpp route through the common lifecycle exactly once",
     async (application) => {
@@ -409,40 +436,32 @@ describe("provider inference host-local startup selection", () => {
     async ({ application, service }) => {
       const model = "qwen3.5-9b";
       const provider = service === "ollama" ? "ollama-local" : "vllm-local";
-      const setupNim = vi.fn(async (...args: unknown[]) => {
-        const selection = {
-          ...baseSelection,
-          provider,
-          model,
-          acceleration: "nvidia-gpu" as const,
-          endpointUrl: null,
-          credentialEnv: null,
-          preferredInferenceApi: "openai-completions",
-        };
-        const revalidatePolicyRequirements = args[8] as
-          | ((
-              route: {
-                provider: string;
-                model: string;
-                endpointUrl: string | null;
-                credentialEnv: string | null;
-                preferredInferenceApi: string | null;
-              },
-              operation: string,
-            ) => void)
-          | undefined;
-        revalidatePolicyRequirements?.(
-          {
+      const setupNim = vi.fn<TestProviderInferenceOptions["deps"]["setupNim"]>(
+        async (
+          _gpu,
+          _sandboxName,
+          _agent,
+          _allowRecordedProviderRecovery,
+          _gatewayName,
+          _assertRouteCompatible,
+          _canProbeRoute,
+          _recoverySessionId,
+          revalidatePolicyRequirements,
+        ) => {
+          const selection = {
+            ...baseSelection,
             provider,
             model,
+            acceleration: "nvidia-gpu" as const,
             endpointUrl: null,
             credentialEnv: null,
             preferredInferenceApi: "openai-completions",
-          },
-          "install managed local runtime",
-        );
-        return selection;
-      });
+          };
+          expect(revalidatePolicyRequirements).toBeTypeOf("function");
+          revalidatePolicyRequirements!(selection, "install managed local runtime");
+          return selection;
+        },
+      );
       const resolver = vi.fn((input: HostLocalInferenceStartupSelectionInput) =>
         hostLocalStartupSelection(input, service),
       );
@@ -502,7 +521,7 @@ describe("provider inference host-local startup selection", () => {
         expect.objectContaining({
           provider,
           hostLocalInferenceRouteOnly: true,
-          operation: "finish successful inference configuration",
+          operation: "record successful inference configuration",
         }),
       );
       expect(result).toMatchObject({
@@ -1261,6 +1280,7 @@ describe("provider inference host-local startup selection", () => {
       allowPublishedResume: true,
       recover: true,
     });
+    expect(calls.repair).not.toHaveBeenCalled();
     const setupCall = calls.setupInference.mock.calls[0] as unknown as readonly unknown[];
     expect(setupCall[7]).toEqual(
       expect.objectContaining({

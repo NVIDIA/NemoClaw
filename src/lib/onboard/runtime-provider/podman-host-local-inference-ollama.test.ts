@@ -58,6 +58,7 @@ function managedOllamaFixture(
     containerPort: 11434,
     imageRef: `docker.io/ollama/ollama@sha256:${"1".repeat(64)}`,
     environment: [],
+    ollamaContextLength: 64_000,
     model: "qwen3-vl:4b",
     networkListenerIp: inputListenerIp,
     hostPort: 11434,
@@ -74,11 +75,14 @@ function managedOllamaFixture(
   return { assertCurrent, harness, input, operation };
 }
 
-function prepareManagedOllama(fixture: ReturnType<typeof managedOllamaFixture>) {
+function prepareManagedOllama(
+  fixture: ReturnType<typeof managedOllamaFixture>,
+  input: HostLocalManagedInferenceInput = fixture.input,
+) {
   return prepareHostLocalInferenceStartup(fixture.operation, {
     application: "hermes",
     service: "ollama",
-    managed: fixture.input,
+    managed: input,
     receiptWriter: fixture.harness.writer,
   });
 }
@@ -146,6 +150,20 @@ describe("Podman managed Ollama lifecycle", () => {
     expect(() => prepareManagedOllama(fixture)).toThrow("managed Ollama model acquisition");
   });
 
+  it.each([63_999, 64_001])(
+    "rejects unsupported managed Ollama context length %i before Podman run (#9211)",
+    (ollamaContextLength) => {
+      const fixture = managedOllamaFixture();
+
+      expect(() =>
+        prepareManagedOllama(fixture, { ...fixture.input, ollamaContextLength }),
+      ).toThrow(
+        "Podman managed Ollama context length is invalid",
+      );
+      expect(fixture.harness.events.some((event) => event.startsWith("podman:run "))).toBe(false);
+    },
+  );
+
   it("creates and rolls back a receipt-owned runtime for fresh Portable Hermes (#9596)", () => {
     const fixture = managedOllamaFixture();
     const { assertCurrent, harness, input } = fixture;
@@ -182,6 +200,12 @@ describe("Podman managed Ollama lifecycle", () => {
     expect(harness.events).toContainEqual(
       expect.stringContaining(`--publish ${PORTABLE_HOST_GATEWAY_IP}:11434:11434`),
     );
+    expect(harness.events).toContainEqual(
+      expect.stringContaining("--env OLLAMA_CONTEXT_LENGTH"),
+    );
+    expect(harness.state.capturedEnvironmentValues).toContainEqual({
+      OLLAMA_CONTEXT_LENGTH: "64000",
+    });
     const ready = harness.events.findIndex((event) => event.includes("/api/tags"));
     const pull = harness.events.findIndex((event) => event.includes("ollama pull qwen3-vl:4b"));
     const inference = harness.events.findIndex((event) => event.includes("/v1/chat/completions"));

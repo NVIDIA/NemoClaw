@@ -6,6 +6,7 @@ import path from "node:path";
 import { vi } from "vitest";
 import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
 import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
+import { managedPolicyInspection } from "./managed-policy-receipt-fixture";
 import {
   agentDefs,
   agentRuntime,
@@ -50,6 +51,7 @@ import {
   sandboxVersion,
   shields,
   sourceSandboxGateway,
+  withManagedRebuildPolicyReceipt,
 } from "./rebuild-flow-harness";
 
 export {
@@ -107,9 +109,17 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   );
   vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
     result: {
-      status: 0,
-      output: overrides.sandboxListOutput ?? (overrides.staleRecovery ? "" : "alpha Ready"),
+      ok: true,
+      value:
+        overrides.sandboxInventory ??
+        (overrides.staleRecovery
+          ? { sandboxes: [] }
+          : {
+              sandboxes: [{ name: "alpha", phase: "Ready", readiness: "ready" }],
+            }),
     },
+    recoveryAttempted: false,
+    recoverySucceeded: false,
   });
   vi.spyOn(gatewayState, "getReconciledSandboxGatewayState").mockResolvedValue(
     overrides.reconciledSandboxGatewayState ?? {
@@ -240,7 +250,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const customOpenClawPluginProvenance = modelsCustomOpenClawImage
     ? { openclawImagePluginInstalls: [] }
     : {};
-  const currentSandboxEntry = {
+  const currentSandboxEntry = withManagedRebuildPolicyReceipt({
     name: "alpha",
     provider: "ollama-local",
     model: "nvidia/nemotron",
@@ -255,26 +265,41 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     policyAuthority: "nemoclaw-managed" as const,
     ...customOpenClawPluginProvenance,
     ...(overrides.sandboxEntry ?? {}),
-  };
+  });
   const recordedPolicyAuthority = (currentSandboxEntry as Record<string, unknown>)
     .policyAuthority;
   const policyAuthorityInspection =
     overrides.policyAuthorityInspection ??
-    ({
-      authority:
-        recordedPolicyAuthority === "externally-managed"
-          ? "externally-managed"
-          : "nemoclaw-managed",
-      effectivePolicy: {},
-    } as const);
+    (recordedPolicyAuthority === "externally-managed"
+      ? ({
+          authority: "externally-managed",
+          effectivePolicy: {},
+          policyIdentity: { hash: "external-policy", activeVersion: 1 },
+        } as const)
+      : managedPolicyInspection());
   const inspectGlobalPolicyAuthoritySpy = vi
-    .spyOn(policyAuthority, "inspectGlobalPolicyAuthority")
-    .mockReturnValue(policyAuthorityInspection);
+    .spyOn(policyAuthority, "inspectActiveGlobalPolicy")
+    .mockReturnValue(
+      policyAuthorityInspection.authority === "externally-managed"
+        ? { state: "active", inspection: policyAuthorityInspection }
+        : { state: "absent" },
+    );
   const inspectSandboxPolicyAuthoritySpy = vi
     .spyOn(policyAuthority, "inspectSandboxPolicyAuthority")
     .mockReturnValue(policyAuthorityInspection);
+  vi.spyOn(policyAuthority, "assertOpenShellGatewayPortBinding").mockImplementation(
+    () => undefined,
+  );
+  vi.spyOn(policyAuthority, "inspectOpenShellSandboxIdentityFingerprint").mockImplementation(
+    () =>
+      String(
+        (currentSandboxEntry as Record<string, unknown>).lifecycleLiveIdentityFingerprint ?? "",
+      ),
+  );
   vi.spyOn(sandboxRecreateProbe, "observeSandboxPresenceOnGateway").mockReturnValue(
-    overrides.staleRecovery || overrides.sandboxListOutput === "" ? "missing" : "present",
+    overrides.staleRecovery || overrides.sandboxInventory?.sandboxes.length === 0
+      ? "missing"
+      : "present",
   );
   const readCurrentSandboxEntry = () => structuredClone(currentSandboxEntry);
   vi.spyOn(registry, "getSandbox").mockImplementation(readCurrentSandboxEntry);

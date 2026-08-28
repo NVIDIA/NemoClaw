@@ -43,7 +43,7 @@ describe("CLI dispatch", () => {
     const r = setup.runLogs("alpha logs --help");
 
     expect(r.code).toBe(0);
-    expect(r.out).toContain("$ nemoclaw sandbox logs <name>");
+    expect(r.out).toContain("$ nemoclaw alpha logs");
     expect(r.out).toContain("--follow");
     expect(r.out).toContain("--tail");
     expect(r.out).toContain("--since");
