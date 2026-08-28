@@ -19,6 +19,7 @@ const TRUSTED_V00106_TEMPLATE_DIGESTS = [
   "e7d51536442b217e3d5e77c4ba3b7c25e6a74898bf22523f7fb58627d34329cb",
   "18175cf47a0fece8ce75e5d523185062c7a7c913a3f4ceafbba4a7ca4df7c69b",
   "293f45ea1d54e1531c3a070123c04b47f972f29504bd8902a44ab71acdfe6cca",
+  "ee3db19d06d34a625bff9e0ab021f095ce97eadf5f7a98fc60def62af87577ad",
 ] as const;
 const tempDirs: string[] = [];
 
@@ -161,6 +162,10 @@ describe("installer Homebrew formula reuse trust", () => {
       'if [ "$RESOLVED_CHANNEL" = "dev" ]; then\n      SANDBOX_LIBC="musl"',
     );
     expectTrustedTemplate(prospectiveTemplate, TRUSTED_V00106_TEMPLATE_DIGESTS[4]);
+    expectTrustedTemplate(
+      restoreFlatInstallTestPaths(prospectiveTemplate),
+      TRUSTED_V00106_TEMPLATE_DIGESTS[5],
+    );
   });
 
   it("rejects an unlisted template", () => {
