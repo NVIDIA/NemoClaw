@@ -216,13 +216,17 @@ export class ShellProbe {
     const startedAtMs = Date.now();
     const commandOutputObserver =
       options.onOutput === this.progress.onOutput ? undefined : options.onOutput;
+    const commandEnv: NodeJS.ProcessEnv = {
+      ...(process.env.PATH === undefined ? {} : { PATH: process.env.PATH }),
+      ...(options.env ?? {}),
+    };
     const child = spawnObservedChild(command, args, {
       activityLabel: `command: ${activityName}`,
       progress: this.progress,
       spawn: {
         cwd: options.cwd,
         detached: true,
-        env: { ...(options.env ?? {}) },
+        env: commandEnv,
         stdio: ["ignore", "pipe", "pipe"],
       },
     });

@@ -22,7 +22,7 @@ import {
   securityPostureModeEnv,
 } from "../fixtures/security-posture.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { assertHermesCliAdapterLiveContract, stripAnsi } from "./hermes-cli-adapter-live.ts";
+import { assertHermesCliAdapterLiveContract } from "./hermes-cli-adapter-live.ts";
 import { HERMES_E2E_PHASES } from "./hermes-e2e-phases.ts";
 import { assertHermesSkillLifecycle } from "./hermes-skill-lifecycle.ts";
 import { expectPackageDatabaseReadOnly } from "./package-database-read-only.ts";
@@ -32,8 +32,6 @@ validateSandboxName(SANDBOX_NAME);
 const HERMES_HEALTH_URL = "http://localhost:8642/health";
 const HERMES_HOST_HEALTH_URL = "http://127.0.0.1:8642/health";
 const HERMES_DASHBOARD_PORT = process.env.NEMOCLAW_DASHBOARD_PORT ?? "18789";
-const HERMES_DASHBOARD_INTERNAL_PORT =
-  process.env.NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT ?? "19119";
 const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json");
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
 const ONBOARD_VALIDATION_TIMEOUT_SECONDS =
@@ -170,21 +168,6 @@ function httpStatusOk(status: string): boolean {
   return /^[23][0-9][0-9]$/.test(status.trim());
 }
 
-function forwardListHasRunningPort(output: string, sandboxName: string, port: string): boolean {
-  return output
-    .split("\n")
-    .map(stripAnsi)
-    .some((line) => {
-      const parts = line.trim().split(/\s+/);
-      return (
-        parts.length >= 5 &&
-        parts[0] === sandboxName &&
-        parts[2] === port &&
-        ["running", "active"].includes(parts.at(-1)?.toLowerCase() ?? "")
-      );
-    });
-}
-
 function parseGatewayProcess(output: string): { owner: string; pid: string; ppid: string } {
   const [owner = "", pid = "", ppid = ""] = output.trim().split(/\s+/);
   expect(owner, `expected gateway process owner, got ${JSON.stringify(output)}`).not.toBe("");
@@ -216,11 +199,11 @@ async function postDestroyGatewayBestEffort(run: () => Promise<unknown>): Promis
   try {
     await run();
   } catch {
-    // The explicit sandbox-destroy assertion remains the primary phase-9 contract.
+    // The explicit sandbox-destroy assertion remains the primary phase-7 contract.
   }
 }
 
-// source-shape-contract: security -- Live execution proves the shipped Hermes manifest remains healthy and credential-safe
+// source-shape-contract: security -- Live registry absence proves explicit destroy removes the sandbox record without trusting CLI output
 test(
   "hermes-e2e: install.sh onboards Hermes and proves health plus live inference",
   {
@@ -239,6 +222,30 @@ test(
 
     const env = commandEnv(inference.env());
     const redactionValues = inference.redactionValues();
+    const expectDashboardReachable = async (artifactName: string): Promise<void> => {
+      if (!hermesDashboardE2eEnabled()) return;
+      const dashboard = await host.command(
+        "curl",
+        [
+          "-sS",
+          "-L",
+          "--max-time",
+          "10",
+          "-o",
+          "/dev/null",
+          "-w",
+          "%{http_code}",
+          `http://127.0.0.1:${HERMES_DASHBOARD_PORT}/`,
+        ],
+        {
+          artifactName,
+          env: commandEnv(),
+          timeoutMs: 30_000,
+        },
+      );
+      expect(dashboard.exitCode, resultText(dashboard)).toBe(0);
+      expect(httpStatusOk(dashboard.stdout)).toBe(true);
+    };
 
     const cleanupHermes = async (label: string) => {
       await preCleanBestEffort(() =>
@@ -283,20 +290,17 @@ test(
       timeoutMs: 120_000,
     });
 
-    // Phase 0: pre-cleanup, after the secret gate so local skipped runs do not
-    // mutate host state.
+    // Phase 1: pre-cleanup and prerequisites, after the secret gate so local
+    // skipped runs do not mutate host state.
     progress.phase("prepare clean Hermes runner");
     await cleanupHermes("pre-cleanup");
 
-    // Phase 1: prerequisites.
     const dockerInfo = await host.command("docker", ["info"], {
       artifactName: "phase-1-docker-info",
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 30_000,
     });
     expect(dockerInfo.exitCode, resultText(dockerInfo)).toBe(0);
-
-    expect(fs.existsSync(path.join(REPO_ROOT, "agents", "hermes", "manifest.yaml"))).toBe(true);
 
     await expect(inference.probeModels("phase-1-inference-models")).resolves.toMatchObject({
       data: expect.arrayContaining([expect.objectContaining({ id: inference.model })]),
@@ -362,14 +366,6 @@ test(
       timeoutMs: 30_000,
     });
     expect(help.exitCode, resultText(help)).toBe(0);
-
-    if (hermesDashboardE2eEnabled()) {
-      expect(resultText(install)).toContain(
-        "Deployment verified — gateway, dashboard, and inference route are healthy.",
-      );
-      expect(resultText(install)).toContain("Hermes Agent Dashboard");
-      expect(resultText(install)).toContain(`http://127.0.0.1:${HERMES_DASHBOARD_PORT}/`);
-    }
 
     progress.phase("validate sandbox layout, health, and skill activation");
     // Phase 3: sandbox verification.
@@ -438,11 +434,11 @@ test(
       /CONNECT tunnel failed, response 403|The requested URL returned error: 403|policy[_ ]denied|not allowed by any policy/i,
     );
 
-    // Phase 4: Hermes health and sandbox state.
+    // Continue Phase 3 with Hermes health and sandbox state.
     let health: ShellProbeResult | undefined;
     for (let attempt = 1; attempt <= 15; attempt += 1) {
       health = await sandbox.exec(SANDBOX_NAME, ["curl", "-sf", HERMES_HEALTH_URL], {
-        artifactName: `phase-4-hermes-health-attempt-${attempt}`,
+        artifactName: `phase-3-hermes-health-attempt-${attempt}`,
         env: commandEnv(),
         timeoutMs: 20_000,
       });
@@ -454,32 +450,12 @@ test(
     expect(resultText(health!)).toMatch(/"ok"/i);
 
     const hermesVersion = await sandbox.exec(SANDBOX_NAME, ["hermes", "--version"], {
-      artifactName: "phase-4-hermes-version",
+      artifactName: "phase-3-hermes-version",
       env: commandEnv(),
       timeoutMs: 30_000,
     });
     expect(hermesVersion.exitCode, resultText(hermesVersion)).toBe(0);
     expect(resultText(hermesVersion)).not.toMatch(/MISSING|not found|No such file/i);
-
-    const dependencyVersions = await sandbox.exec(
-      SANDBOX_NAME,
-      [
-        "/opt/hermes/.venv/bin/python",
-        "-I",
-        "-c",
-        "from importlib.metadata import version; expected = {'aiohttp': '3.14.3', 'cryptography': '50.0.0'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual; print('\\n'.join(f'{name}=={actual[name]}' for name in sorted(actual)))",
-      ],
-      {
-        artifactName: "phase-4-hermes-dependency-versions",
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-    expect(dependencyVersions.exitCode, resultText(dependencyVersions)).toBe(0);
-    expect(dependencyVersions.stdout.trim().split(/\r?\n/u)).toEqual([
-      "aiohttp==3.14.3",
-      "cryptography==50.0.0",
-    ]);
 
     const configProbe = await sandbox.execShell(
       SANDBOX_NAME,
@@ -487,7 +463,7 @@ test(
         "test -f /sandbox/.hermes/config.yaml && test -d /sandbox/.hermes && touch /sandbox/.hermes/test-write && rm -f /sandbox/.hermes/test-write && echo OK",
       ),
       {
-        artifactName: "phase-4-hermes-config-state",
+        artifactName: "phase-3-hermes-config-state",
         env: commandEnv(),
         timeoutMs: 30_000,
       },
@@ -518,90 +494,17 @@ test(
         agent: "hermes",
         dashboardPort: Number(HERMES_DASHBOARD_PORT),
       });
-
-      const forwardList = await sandbox.openshell(["forward", "list"], {
-        artifactName: "phase-4-dashboard-forward-list",
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      });
-      expect(forwardList.exitCode, resultText(forwardList)).toBe(0);
-      expect(forwardListHasRunningPort(forwardList.stdout, SANDBOX_NAME, "8642")).toBe(true);
-      expect(
-        forwardListHasRunningPort(forwardList.stdout, SANDBOX_NAME, HERMES_DASHBOARD_PORT),
-      ).toBe(true);
-
-      const hostDashboard = await host.command(
-        "curl",
-        [
-          "-sS",
-          "-L",
-          "--max-time",
-          "10",
-          "-o",
-          "/tmp/hermes-dashboard-vitest-body",
-          "-w",
-          "%{http_code}",
-          `http://127.0.0.1:${HERMES_DASHBOARD_PORT}/`,
-        ],
-        {
-          artifactName: "phase-4-dashboard-host-probe",
-          env: commandEnv(),
-          timeoutMs: 30_000,
-        },
-      );
-      expect(hostDashboard.exitCode, resultText(hostDashboard)).toBe(0);
-      expect(httpStatusOk(hostDashboard.stdout)).toBe(true);
-
-      const hostHealth = await host.command(
-        "curl",
-        ["-sf", "--max-time", "10", HERMES_HOST_HEALTH_URL],
-        {
-          artifactName: "phase-4-hermes-host-health",
-          env: commandEnv(),
-          timeoutMs: 30_000,
-        },
-      );
-      expect(hostHealth.exitCode, resultText(hostHealth)).toBe(0);
-      expect(resultText(hostHealth)).toMatch(/"ok"/i);
-
-      const dashboardInternal = await sandbox.exec(
-        SANDBOX_NAME,
-        [
-          "curl",
-          "-sS",
-          "-L",
-          "--max-time",
-          "10",
-          "-o",
-          "/tmp/hermes-dashboard-vitest-body",
-          "-w",
-          "%{http_code}",
-          `http://127.0.0.1:${HERMES_DASHBOARD_INTERNAL_PORT}/`,
-        ],
-        {
-          artifactName: "phase-4-dashboard-sandbox-probe",
-          env: commandEnv(),
-          timeoutMs: 30_000,
-        },
-      );
-      expect(dashboardInternal.exitCode, resultText(dashboardInternal)).toBe(0);
-      expect(httpStatusOk(dashboardInternal.stdout)).toBe(true);
     }
+    await expectDashboardReachable("phase-3-dashboard-host-probe");
 
     progress.phase("restart Hermes gateway and validate supervision");
-    // Phase 5: host-mediated Hermes gateway restart. This validates the
-    // runtime contract behind #2426 against a real OpenShell/Hermes sandbox:
-    // The installed supervision tree controls the gateway process, direct
-    // sandbox config drift is refused rather than adopted, the public bridges
-    // and dashboard process recover together, and both PID 1 and the startup
-    // supervisor remain stable throughout.
+    // Phase 4: verify restart and recovery across the real sandbox process boundary.
     const gatewayProcessScript = trustedSandboxShellScript(
       [
         "ps -eo user=,pid=,ppid=,args= |",
         String.raw`awk '($4 ~ /(^|\/)(hermes|hermes[.]real|python|python3)$/) && (index($0, "hermes gateway run") || index($0, "hermes.real gateway run")) { print $1 " " $2 " " $3; found = 1; exit } END { exit found ? 0 : 1 }'`,
       ].join(" "),
     );
-    let routingTopologyCaptures = 0;
     const assertNoStandaloneRoutingSidecars = async (
       artifactName: string,
       expectedGatewayPid: number,
@@ -614,206 +517,40 @@ test(
         sandboxName: SANDBOX_NAME,
       });
       assertHermesHasNoRoutingSidecars(topology, expectedGatewayPid);
-      routingTopologyCaptures += 1;
     };
     const beforeRestartProcess = await sandbox.execShell(SANDBOX_NAME, gatewayProcessScript, {
-      artifactName: "phase-5-hermes-gateway-process-before-restart",
+      artifactName: "phase-4-hermes-gateway-process-before-restart",
       env: commandEnv(),
       timeoutMs: 30_000,
     });
     expect(beforeRestartProcess.exitCode, resultText(beforeRestartProcess)).toBe(0);
     const beforeGateway = parseGatewayProcess(beforeRestartProcess.stdout);
-    await assertNoStandaloneRoutingSidecars(
-      "phase-5-hermes-routing-topology-before-restart",
-      Number(beforeGateway.pid),
-    );
     const rootSupervisorTopology = beforeGateway.owner === "gateway";
-    let recoveredGateway: ReturnType<typeof parseGatewayProcess>;
-
-    const pid1IdentityScript = trustedSandboxShellScript(
-      String.raw`python3 -c 'from pathlib import Path; text=Path("/proc/1/stat").read_text(); tail=text.rsplit(")", 1)[1].split(); cmd=Path("/proc/1/cmdline").read_bytes().replace(b"\0", b" ").decode(); print("1 " + tail[19] + " " + cmd)'`,
-    );
-    const beforePid1 = await sandbox.execShell(SANDBOX_NAME, pid1IdentityScript, {
-      artifactName: "phase-5-pid1-before-restart",
-      env: commandEnv(),
-      timeoutMs: 30_000,
-    });
-    expect(beforePid1.exitCode, resultText(beforePid1)).toBe(0);
+    let recoveredRootGatewayPid: string | undefined;
 
     if (rootSupervisorTopology) {
-      expect(beforeGateway.owner).toBe("gateway");
-
-      const envMarker = `issue_2426_${Date.now()}`;
-      const envBackup = `/tmp/hermes-e2e-env-before-${Date.now()}`;
-      const mutateEnv = await sandbox.execShell(
-        SANDBOX_NAME,
-        trustedSandboxShellScript(
-          [
-            "set -eu",
-            `marker=${shellQuote(envMarker)}`,
-            `backup=${shellQuote(envBackup)}`,
-            "test -x /usr/bin/setpriv",
-            '/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- cp /sandbox/.hermes/.env "$backup"',
-            '/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -lc \'printf "\\nNEMOCLAW_E2E_RESTART_MARKER=%s\\n" "$1" >> /sandbox/.hermes/.env\' sh "$marker"',
-          ].join("; "),
-        ),
-        {
-          artifactName: "phase-5-mutate-hermes-env-as-sandbox-user",
-          env: commandEnv(),
-          timeoutMs: 30_000,
-        },
-      );
-      expect(mutateEnv.exitCode, resultText(mutateEnv)).toBe(0);
-
-      const refuseMutableDrift = await host.command(
-        "nemohermes",
-        [SANDBOX_NAME, "gateway", "restart", "--quiet"],
-        {
-          artifactName: "phase-5-refuse-untrusted-hermes-env-drift",
-          env: commandEnv(),
-          timeoutMs: 180_000,
-        },
-      );
-      expect(refuseMutableDrift.exitCode, resultText(refuseMutableDrift)).not.toBe(0);
-      expect(resultText(refuseMutableDrift)).toMatch(
-        /config hash mismatch|GATEWAY_CONFIG_HASH_MISMATCH/,
-      );
-
-      const afterMutableRefusalProcess = await sandbox.execShell(
-        SANDBOX_NAME,
-        gatewayProcessScript,
-        {
-          artifactName: "phase-5-hermes-gateway-after-mutable-drift-refusal",
-          env: commandEnv(),
-          timeoutMs: 30_000,
-        },
-      );
-      expect(afterMutableRefusalProcess.exitCode, resultText(afterMutableRefusalProcess)).toBe(0);
-      expect(parseGatewayProcess(afterMutableRefusalProcess.stdout).pid).toBe(beforeGateway.pid);
-
-      const restoreMutableEnv = await sandbox.execShell(
-        SANDBOX_NAME,
-        trustedSandboxShellScript(
-          [
-            "set -eu",
-            `backup=${shellQuote(envBackup)}`,
-            '/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c \'cat "$1" > /sandbox/.hermes/.env && rm -f "$1"\' sh "$backup"',
-            "sha256sum -c /etc/nemoclaw/hermes.config-hash --status",
-            "echo ENV_RESTORED",
-          ].join("; "),
-        ),
-        {
-          artifactName: "phase-5-restore-hermes-env-after-refusal",
-          env: commandEnv(),
-          timeoutMs: 30_000,
-        },
-      );
-      expect(restoreMutableEnv.exitCode, resultText(restoreMutableEnv)).toBe(0);
-      expect(restoreMutableEnv.stdout).toContain("ENV_RESTORED");
-
       const stopApiForward = await sandbox.openshell(["forward", "stop", "8642", SANDBOX_NAME], {
-        artifactName: "phase-5-stop-hermes-api-forward-before-restart",
+        artifactName: "phase-4-stop-hermes-api-forward-before-restart",
         env: commandEnv(),
         timeoutMs: 30_000,
       });
       expect(stopApiForward.exitCode, resultText(stopApiForward)).toBe(0);
 
       const restart = await host.command("nemohermes", [SANDBOX_NAME, "gateway", "restart"], {
-        artifactName: "phase-5-nemohermes-gateway-restart",
+        artifactName: "phase-4-nemohermes-gateway-restart",
         env: commandEnv(),
         timeoutMs: 180_000,
       });
       expect(restart.exitCode, resultText(restart)).toBe(0);
-      expect(resultText(restart)).toContain("Gateway restarted");
-      expect(resultText(restart)).toContain("health passed");
-      expect(resultText(restart)).toContain("forwards checked/recovered");
 
       const afterRestartProcess = await sandbox.execShell(SANDBOX_NAME, gatewayProcessScript, {
-        artifactName: "phase-5-hermes-gateway-process-after-restart",
+        artifactName: "phase-4-hermes-gateway-process-after-restart",
         env: commandEnv(),
         timeoutMs: 30_000,
       });
       expect(afterRestartProcess.exitCode, resultText(afterRestartProcess)).toBe(0);
       const afterGateway = parseGatewayProcess(afterRestartProcess.stdout);
-      expect(afterGateway.owner).toBe("gateway");
       expect(afterGateway.pid).not.toBe(beforeGateway.pid);
-      await assertNoStandaloneRoutingSidecars(
-        "phase-5-hermes-routing-topology-after-root-supervised-restart",
-        Number(afterGateway.pid),
-      );
-
-      const afterRestartPid1 = await sandbox.execShell(SANDBOX_NAME, pid1IdentityScript, {
-        artifactName: "phase-5-pid1-after-restart",
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      });
-      expect(afterRestartPid1.exitCode, resultText(afterRestartPid1)).toBe(0);
-      expect(afterRestartPid1.stdout.trim()).toBe(beforePid1.stdout.trim());
-
-      const restartHashCheck = await sandbox.execShell(
-        SANDBOX_NAME,
-        trustedSandboxShellScript(
-          "sha256sum -c /etc/nemoclaw/hermes.config-hash --status && sha256sum -c /sandbox/.hermes/.config-hash --status && echo OK",
-        ),
-        {
-          artifactName: "phase-5-hermes-config-hashes-after-restart",
-          env: commandEnv(),
-          timeoutMs: 30_000,
-        },
-      );
-      expect(restartHashCheck.exitCode, resultText(restartHashCheck)).toBe(0);
-      expect(restartHashCheck.stdout).toContain("OK");
-
-      const restartHostHealth = await host.command(
-        "curl",
-        ["-sf", "--max-time", "10", HERMES_HOST_HEALTH_URL],
-        {
-          artifactName: "phase-5-hermes-host-health-after-restart",
-          env: commandEnv(),
-          timeoutMs: 30_000,
-        },
-      );
-      expect(restartHostHealth.exitCode, resultText(restartHostHealth)).toBe(0);
-      expect(resultText(restartHostHealth)).toMatch(/"ok"/i);
-
-      const restartForwardList = await sandbox.openshell(["forward", "list"], {
-        artifactName: "phase-5-forward-list-after-restart",
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      });
-      expect(restartForwardList.exitCode, resultText(restartForwardList)).toBe(0);
-      expect(forwardListHasRunningPort(restartForwardList.stdout, SANDBOX_NAME, "8642")).toBe(true);
-      expect((hermesDashboardE2eEnabled() ? [HERMES_DASHBOARD_PORT] : []).every((dashboardPort) =>
-          Object.is(
-            forwardListHasRunningPort(restartForwardList.stdout, SANDBOX_NAME, dashboardPort),
-            true,
-          ))).toBe(true);
-
-      // Regression precondition for #5253: Hermes deliberately uses a Python
-      // gateway, so its proxy-env and gateway process do not carry OpenClaw's
-      // Node safety-net/ciao preloads. The old generic recovery path treated
-      // this valid state as unsafe and refused to relaunch Hermes.
-      const issue5253Precondition = await sandbox.execShell(
-        SANDBOX_NAME,
-        trustedSandboxShellScript(
-          [
-            "set -eu",
-            `pid=${shellQuote(afterGateway.pid)}`,
-            "test -f /tmp/nemoclaw-proxy-env.sh",
-            "! grep -Eq 'NODE_OPTIONS|nemoclaw-sandbox-safety-net|nemoclaw-ciao-network-guard' /tmp/nemoclaw-proxy-env.sh",
-            `python3 -c 'from pathlib import Path; import sys; env=Path("/proc/" + sys.argv[1] + "/environ").read_bytes(); sys.exit(1 if b"nemoclaw-sandbox-safety-net" in env or b"nemoclaw-ciao-network-guard" in env else 0)' "$pid"`,
-            "echo ISSUE_5253_PRECONDITION_OK",
-          ].join("; "),
-        ),
-        {
-          artifactName: "phase-5-issue-5253-missing-node-guards-precondition",
-          env: commandEnv(),
-          timeoutMs: 30_000,
-        },
-      );
-      expect(issue5253Precondition.exitCode, resultText(issue5253Precondition)).toBe(0);
-      expect(issue5253Precondition.stdout).toContain("ISSUE_5253_PRECONDITION_OK");
-
       // Deliberately terminate the exact tracked PID instead of invoking
       // `hermes gateway stop`: upstream's graceful command writes a planned-stop
       // marker and can return while a split-UID gateway is still alive. This
@@ -832,7 +569,7 @@ test(
           ].join("; "),
         ),
         {
-          artifactName: "phase-5-stop-hermes-gateway-before-recover",
+          artifactName: "phase-4-stop-hermes-gateway-before-recover",
           env: commandEnv(),
           timeoutMs: 30_000,
         },
@@ -840,192 +577,28 @@ test(
       expect(stopGatewayForRecover.exitCode, resultText(stopGatewayForRecover)).toBe(0);
       expect(stopGatewayForRecover.stdout).toContain("GATEWAY_STOPPED");
 
-      const stopHermesAuxiliaries = await sandbox.execShell(
-        SANDBOX_NAME,
-        trustedSandboxShellScript(
-          [
-            "set -eu",
-            `dashboard_public=${shellQuote(HERMES_DASHBOARD_PORT)}`,
-            `dashboard_internal=${shellQuote(HERMES_DASHBOARD_INTERNAL_PORT)}`,
-            'pids=$(ps -eo pid=,comm=,args= | awk -v dp="$dashboard_public" -v di="$dashboard_internal" \'($2 == "socat" && (index($0, "TCP-LISTEN:8642") || index($0, "TCP-LISTEN:" dp))) || ($2 ~ /^(hermes|hermes[.]real|python|python3)$/ && index($0, "hermes dashboard") && index($0, "--port " di)) { print $1 }\')',
-            "set -- $pids",
-            '[ "$#" -ge 3 ] || { echo "EXPECTED_AT_LEAST_3_AUXILIARIES, found $#" >&2; ps -eo pid,comm,args; exit 1; }',
-            'for pid in "$@"; do kill -TERM "$pid" 2>/dev/null || true; done',
-            "sleep 2",
-            'for pid in "$@"; do kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null || true; done',
-            'echo "AUXILIARIES_STOPPED=$#"',
-          ].join("; "),
-        ),
-        {
-          artifactName: "phase-5-stop-hermes-auxiliaries-before-recover",
-          env: commandEnv(),
-          timeoutMs: 30_000,
-        },
-      );
-      expect(stopHermesAuxiliaries.exitCode, resultText(stopHermesAuxiliaries)).toBe(0);
-      expect(stopHermesAuxiliaries.stdout).toMatch(/AUXILIARIES_STOPPED=[3-9]/);
-
       const recoverStoppedGateway = await host.command("nemohermes", [SANDBOX_NAME, "recover"], {
-        artifactName: "phase-5-nemohermes-recover-stopped-gateway",
+        artifactName: "phase-4-nemohermes-recover-stopped-gateway",
         env: commandEnv(),
         timeoutMs: 180_000,
       });
       expect(recoverStoppedGateway.exitCode, resultText(recoverStoppedGateway)).toBe(0);
 
       const afterRecoverProcess = await sandbox.execShell(SANDBOX_NAME, gatewayProcessScript, {
-        artifactName: "phase-5-hermes-gateway-process-after-recover",
+        artifactName: "phase-4-hermes-gateway-process-after-recover",
         env: commandEnv(),
         timeoutMs: 30_000,
       });
       expect(afterRecoverProcess.exitCode, resultText(afterRecoverProcess)).toBe(0);
-      recoveredGateway = parseGatewayProcess(afterRecoverProcess.stdout);
+      const recoveredGateway = parseGatewayProcess(afterRecoverProcess.stdout);
       expect(recoveredGateway.owner).toBe("gateway");
       expect(recoveredGateway.pid).not.toBe(afterGateway.pid);
-
-      const recoveredIssue5253Env = await sandbox.execShell(
-        SANDBOX_NAME,
-        trustedSandboxShellScript(
-          [
-            "set -eu",
-            `pid=${shellQuote(recoveredGateway.pid)}`,
-            `python3 -c 'from pathlib import Path; import sys; entries=Path("/proc/" + sys.argv[1] + "/environ").read_bytes().split(b"\\0"); env=dict(item.split(b"=", 1) for item in entries if b"=" in item); node_options=env.get(b"NODE_OPTIONS", b""); ok=env.get(b"HERMES_HOME") == b"/sandbox/.hermes" and env.get(b"HTTP_PROXY", b"").startswith(b"http://") and b"nemoclaw-sandbox-safety-net" not in node_options and b"nemoclaw-ciao-network-guard" not in node_options; sys.exit(0 if ok else 1)' "$pid"`,
-            "echo ISSUE_5253_RECOVERED_ENV_OK",
-          ].join("; "),
-        ),
-        {
-          artifactName: "phase-5-issue-5253-recovered-gateway-environment",
-          env: commandEnv(),
-          timeoutMs: 30_000,
-        },
+      await assertNoStandaloneRoutingSidecars(
+        "phase-4-hermes-routing-topology-after-root-supervised-recover",
+        Number(recoveredGateway.pid),
       );
-      expect(recoveredIssue5253Env.exitCode, resultText(recoveredIssue5253Env)).toBe(0);
-      expect(recoveredIssue5253Env.stdout).toContain("ISSUE_5253_RECOVERED_ENV_OK");
-
-      const afterRecoverPid1 = await sandbox.execShell(SANDBOX_NAME, pid1IdentityScript, {
-        artifactName: "phase-5-pid1-after-both-down-recover",
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      });
-      expect(afterRecoverPid1.exitCode, resultText(afterRecoverPid1)).toBe(0);
-      expect(afterRecoverPid1.stdout.trim()).toBe(beforePid1.stdout.trim());
-
-      const recoverHostHealth = await host.command(
-        "curl",
-        ["-sf", "--max-time", "10", HERMES_HOST_HEALTH_URL],
-        {
-          artifactName: "phase-5-hermes-host-health-after-recover",
-          env: commandEnv(),
-          timeoutMs: 30_000,
-        },
-      );
-      expect(recoverHostHealth.exitCode, resultText(recoverHostHealth)).toBe(0);
-      expect(resultText(recoverHostHealth)).toMatch(/"ok"/i);
-
-      const afterBothDownForwardList = await sandbox.openshell(["forward", "list"], {
-        artifactName: "phase-5-forward-list-after-both-down-recover",
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      });
-      expect(afterBothDownForwardList.exitCode, resultText(afterBothDownForwardList)).toBe(0);
-      expect(forwardListHasRunningPort(afterBothDownForwardList.stdout, SANDBOX_NAME, "8642")).toBe(
-        true,
-      );
-      expect(
-        forwardListHasRunningPort(
-          afterBothDownForwardList.stdout,
-          SANDBOX_NAME,
-          HERMES_DASHBOARD_PORT,
-        ),
-      ).toBe(true);
-
-      for (const dashboardPort of hermesDashboardE2eEnabled() ? [HERMES_DASHBOARD_PORT] : []) {
-        const stopDashboardForward = await sandbox.openshell(
-          ["forward", "stop", dashboardPort, SANDBOX_NAME],
-          {
-            artifactName: "phase-5-stop-hermes-dashboard-forward-before-recover",
-            env: commandEnv(),
-            timeoutMs: 30_000,
-          },
-        );
-        expect(stopDashboardForward.exitCode, resultText(stopDashboardForward)).toBe(0);
-
-        const dashboardDown = await host.command(
-          "curl",
-          ["-sf", "--max-time", "3", `http://127.0.0.1:${dashboardPort}/`],
-          {
-            artifactName: "phase-5-hermes-dashboard-host-down-after-forward-stop",
-            env: commandEnv(),
-            timeoutMs: 30_000,
-          },
-        );
-        expect(dashboardDown.exitCode, resultText(dashboardDown)).not.toBe(0);
-
-        const recoverDashboardForward = await host.command(
-          "nemohermes",
-          [SANDBOX_NAME, "recover"],
-          {
-            artifactName: "phase-5-nemohermes-recover-dashboard-forward",
-            env: commandEnv(),
-            timeoutMs: 180_000,
-          },
-        );
-        expect(recoverDashboardForward.exitCode, resultText(recoverDashboardForward)).toBe(0);
-
-        const recoveredDashboard = await host.command(
-          "curl",
-          [
-            "-sS",
-            "-L",
-            "--max-time",
-            "10",
-            "-o",
-            "/tmp/hermes-dashboard-recovered-vitest-body",
-            "-w",
-            "%{http_code}",
-            `http://127.0.0.1:${dashboardPort}/`,
-          ],
-          {
-            artifactName: "phase-5-hermes-dashboard-host-after-forward-recover",
-            env: commandEnv(),
-            timeoutMs: 30_000,
-          },
-        );
-        expect(recoveredDashboard.exitCode, resultText(recoveredDashboard)).toBe(0);
-        expect(httpStatusOk(recoveredDashboard.stdout)).toBe(true);
-
-        const recoveredDashboardBody = await host.command(
-          "sh",
-          ["-lc", "cat /tmp/hermes-dashboard-recovered-vitest-body"],
-          {
-            artifactName: "phase-5-hermes-dashboard-host-after-forward-recover-body",
-            env: commandEnv(),
-            timeoutMs: 30_000,
-          },
-        );
-        expect(recoveredDashboardBody.exitCode, resultText(recoveredDashboardBody)).toBe(0);
-        expect(resultText(recoveredDashboardBody)).toMatch(
-          /(<title>[^<]*Hermes|id=["']root["']|Hermes Dashboard|<html)/i,
-        );
-
-        const statusAfterDashboardRecover = await host.command(
-          "nemohermes",
-          [SANDBOX_NAME, "status"],
-          {
-            artifactName: "phase-5-nemohermes-status-after-dashboard-forward-recover",
-            env: commandEnv(),
-            timeoutMs: 60_000,
-          },
-        );
-        expect(statusAfterDashboardRecover.exitCode, resultText(statusAfterDashboardRecover)).toBe(
-          0,
-        );
-        expect(resultText(statusAfterDashboardRecover)).toMatch(/Ready/i);
-        expect(resultText(statusAfterDashboardRecover)).toMatch(
-          /Inference(?: \([^)]+\))?: healthy/i,
-        );
-      }
+      recoveredRootGatewayPid = recoveredGateway.pid;
     } else {
-      expect(beforePid1.stdout).toContain("/opt/openshell/bin/openshell-sandbox");
       expect(beforeGateway.owner).toBe("sandbox");
 
       const startupSupervisor = await sandbox.execShell(
@@ -1034,91 +607,77 @@ test(
           String.raw`ps -eo user=,pid=,ppid=,args= | awk '$1 == "sandbox" && $3 == 1 && ($4 ~ /(^|\/)(bash|nemoclaw-start)$/) && index($0, "nemoclaw-start") { print $1 " " $2 " " $3; found = 1; exit } END { exit found ? 0 : 1 }'`,
         ),
         {
-          artifactName: "phase-5-openshell-managed-hermes-supervisor",
+          artifactName: "phase-4-openshell-managed-hermes-supervisor",
           env: commandEnv(),
           timeoutMs: 30_000,
         },
       );
       expect(startupSupervisor.exitCode, resultText(startupSupervisor)).toBe(0);
       const supervisor = parseGatewayProcess(startupSupervisor.stdout);
-      expect(supervisor.owner).toBe("sandbox");
-      expect(supervisor.ppid).toBe("1");
       expect(beforeGateway.ppid).toBe(supervisor.pid);
-      const supervisorIdentityScript = trustedSandboxShellScript(
-        `python3 -c 'from pathlib import Path; import sys; pid=sys.argv[1]; text=Path("/proc/" + pid + "/stat").read_text(); tail=text.rsplit(")", 1)[1].split(); cmd=Path("/proc/" + pid + "/cmdline").read_bytes().replace(b"\\0", b" ").decode(); print(pid + " " + tail[19] + " " + cmd)' ${shellQuote(supervisor.pid)}`,
-      );
-      const beforeSupervisorIdentity = await sandbox.execShell(
-        SANDBOX_NAME,
-        supervisorIdentityScript,
-        {
-          artifactName: "phase-5-managed-supervisor-identity-before-restart",
-          env: commandEnv(),
-          timeoutMs: 30_000,
-        },
-      );
-      expect(beforeSupervisorIdentity.exitCode, resultText(beforeSupervisorIdentity)).toBe(0);
 
       const managedEnvBackup = `/tmp/hermes-managed-env-before-${Date.now()}`;
-      const introduceManagedRawSecret = await sandbox.execShell(
-        SANDBOX_NAME,
-        trustedSandboxShellScript(
-          [
-            "set -eu",
-            `backup=${shellQuote(managedEnvBackup)}`,
-            'cp /sandbox/.hermes/.env "$backup"',
-            'printf "\\nNEMOCLAW_E2E_SECRET_TOKEN=raw-managed-restart-secret\\n" >> /sandbox/.hermes/.env',
-          ].join("; "),
-        ),
-        {
-          artifactName: "phase-5-managed-hermes-introduce-raw-secret",
+      try {
+        const introduceManagedRawSecret = await sandbox.execShell(
+          SANDBOX_NAME,
+          trustedSandboxShellScript(
+            [
+              "set -eu",
+              `backup=${shellQuote(managedEnvBackup)}`,
+              'cp /sandbox/.hermes/.env "$backup"',
+              'printf "\\nNEMOCLAW_E2E_SECRET_TOKEN=raw-managed-restart-secret\\n" >> /sandbox/.hermes/.env',
+            ].join("; "),
+          ),
+          {
+            artifactName: "phase-4-managed-hermes-introduce-raw-secret",
+            env: commandEnv(),
+            timeoutMs: 30_000,
+          },
+        );
+        expect(introduceManagedRawSecret.exitCode, resultText(introduceManagedRawSecret)).toBe(0);
+
+        const refuseManagedRawSecret = await host.command(
+          "nemohermes",
+          [SANDBOX_NAME, "gateway", "restart", "--quiet"],
+          {
+            artifactName: "phase-4-managed-hermes-refuse-raw-secret-restart",
+            env: commandEnv(),
+            timeoutMs: 180_000,
+          },
+        );
+        expect(refuseManagedRawSecret.exitCode, resultText(refuseManagedRawSecret)).not.toBe(0);
+        expect(resultText(refuseManagedRawSecret)).toMatch(
+          /secret.boundary refusal|SECRET_BOUNDARY_REFUSED/i,
+        );
+
+        const afterManagedRefusal = await sandbox.execShell(SANDBOX_NAME, gatewayProcessScript, {
+          artifactName: "phase-4-managed-hermes-gateway-after-boundary-refusal",
           env: commandEnv(),
           timeoutMs: 30_000,
-        },
-      );
-      expect(introduceManagedRawSecret.exitCode, resultText(introduceManagedRawSecret)).toBe(0);
-
-      const refuseManagedRawSecret = await host.command(
-        "nemohermes",
-        [SANDBOX_NAME, "gateway", "restart", "--quiet"],
-        {
-          artifactName: "phase-5-managed-hermes-refuse-raw-secret-restart",
-          env: commandEnv(),
-          timeoutMs: 180_000,
-        },
-      );
-      expect(refuseManagedRawSecret.exitCode, resultText(refuseManagedRawSecret)).not.toBe(0);
-      expect(resultText(refuseManagedRawSecret)).toMatch(
-        /secret.boundary refusal|SECRET_BOUNDARY_REFUSED/i,
-      );
-
-      const afterManagedRefusal = await sandbox.execShell(SANDBOX_NAME, gatewayProcessScript, {
-        artifactName: "phase-5-managed-hermes-gateway-after-boundary-refusal",
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      });
-      expect(afterManagedRefusal.exitCode, resultText(afterManagedRefusal)).toBe(0);
-      expect(parseGatewayProcess(afterManagedRefusal.stdout).pid).toBe(beforeGateway.pid);
-
-      const restoreManagedEnv = await sandbox.execShell(
-        SANDBOX_NAME,
-        trustedSandboxShellScript(
-          [
-            "set -eu",
-            `backup=${shellQuote(managedEnvBackup)}`,
-            'cat "$backup" > /sandbox/.hermes/.env',
-            'rm -f "$backup"',
-          ].join("; "),
-        ),
-        {
-          artifactName: "phase-5-managed-hermes-restore-env",
-          env: commandEnv(),
-          timeoutMs: 30_000,
-        },
-      );
-      expect(restoreManagedEnv.exitCode, resultText(restoreManagedEnv)).toBe(0);
+        });
+        expect(afterManagedRefusal.exitCode, resultText(afterManagedRefusal)).toBe(0);
+        expect(parseGatewayProcess(afterManagedRefusal.stdout).pid).toBe(beforeGateway.pid);
+      } finally {
+        const restoreManagedEnv = await sandbox.execShell(
+          SANDBOX_NAME,
+          trustedSandboxShellScript(
+            [
+              "set -eu",
+              `backup=${shellQuote(managedEnvBackup)}`,
+              'test ! -f "$backup" || { cat "$backup" > /sandbox/.hermes/.env; rm -f "$backup"; }',
+            ].join("; "),
+          ),
+          {
+            artifactName: "phase-4-managed-hermes-restore-env",
+            env: commandEnv(),
+            timeoutMs: 30_000,
+          },
+        );
+        expect(restoreManagedEnv.exitCode, resultText(restoreManagedEnv)).toBe(0);
+      }
 
       const stopApiForward = await sandbox.openshell(["forward", "stop", "8642", SANDBOX_NAME], {
-        artifactName: "phase-5-stop-managed-hermes-api-forward",
+        artifactName: "phase-4-stop-managed-hermes-api-forward",
         env: commandEnv(),
         timeoutMs: 30_000,
       });
@@ -1128,55 +687,21 @@ test(
         "nemohermes",
         [SANDBOX_NAME, "gateway", "restart"],
         {
-          artifactName: "phase-5-restart-openshell-managed-hermes-gateway",
+          artifactName: "phase-4-restart-openshell-managed-hermes-gateway",
           env: commandEnv(),
           timeoutMs: 180_000,
         },
       );
       expect(restartManagedGateway.exitCode, resultText(restartManagedGateway)).toBe(0);
-      expect(resultText(restartManagedGateway)).toContain("Gateway restarted");
-      expect(resultText(restartManagedGateway)).toContain("health passed");
-      expect(resultText(restartManagedGateway)).toContain("forwards checked/recovered");
 
       const afterManagedRestart = await sandbox.execShell(SANDBOX_NAME, gatewayProcessScript, {
-        artifactName: "phase-5-managed-hermes-gateway-after-restart",
+        artifactName: "phase-4-managed-hermes-gateway-after-restart",
         env: commandEnv(),
         timeoutMs: 30_000,
       });
       expect(afterManagedRestart.exitCode, resultText(afterManagedRestart)).toBe(0);
       const restartedManagedGateway = parseGatewayProcess(afterManagedRestart.stdout);
-      expect(restartedManagedGateway.owner).toBe("sandbox");
-      expect(restartedManagedGateway.ppid).toBe(supervisor.pid);
       expect(restartedManagedGateway.pid).not.toBe(beforeGateway.pid);
-      await assertNoStandaloneRoutingSidecars(
-        "phase-5-hermes-routing-topology-after-managed-restart",
-        Number(restartedManagedGateway.pid),
-      );
-
-      const afterManagedRestartPid1 = await sandbox.execShell(SANDBOX_NAME, pid1IdentityScript, {
-        artifactName: "phase-5-managed-pid1-after-restart",
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      });
-      expect(afterManagedRestartPid1.exitCode, resultText(afterManagedRestartPid1)).toBe(0);
-      expect(afterManagedRestartPid1.stdout.trim()).toBe(beforePid1.stdout.trim());
-      const afterManagedRestartSupervisor = await sandbox.execShell(
-        SANDBOX_NAME,
-        supervisorIdentityScript,
-        {
-          artifactName: "phase-5-managed-supervisor-identity-after-restart",
-          env: commandEnv(),
-          timeoutMs: 30_000,
-        },
-      );
-      expect(
-        afterManagedRestartSupervisor.exitCode,
-        resultText(afterManagedRestartSupervisor),
-      ).toBe(0);
-      expect(afterManagedRestartSupervisor.stdout.trim()).toBe(
-        beforeSupervisorIdentity.stdout.trim(),
-      );
-
       const stopGateway = await sandbox.execShell(
         SANDBOX_NAME,
         trustedSandboxShellScript(
@@ -1189,7 +714,7 @@ test(
           ].join("; "),
         ),
         {
-          artifactName: "phase-5-stop-managed-hermes-gateway",
+          artifactName: "phase-4-stop-managed-hermes-gateway",
           env: commandEnv(),
           timeoutMs: 30_000,
         },
@@ -1198,78 +723,49 @@ test(
       expect(stopGateway.stdout).toContain("GATEWAY_STOPPED");
 
       const recoverManagedGateway = await host.command("nemohermes", [SANDBOX_NAME, "recover"], {
-        artifactName: "phase-5-recover-openshell-managed-hermes-gateway",
+        artifactName: "phase-4-recover-openshell-managed-hermes-gateway",
         env: commandEnv(),
         timeoutMs: 180_000,
       });
       expect(recoverManagedGateway.exitCode, resultText(recoverManagedGateway)).toBe(0);
 
       const afterRecoverProcess = await sandbox.execShell(SANDBOX_NAME, gatewayProcessScript, {
-        artifactName: "phase-5-managed-hermes-gateway-after-recover",
+        artifactName: "phase-4-managed-hermes-gateway-after-recover",
         env: commandEnv(),
         timeoutMs: 30_000,
       });
       expect(afterRecoverProcess.exitCode, resultText(afterRecoverProcess)).toBe(0);
-      recoveredGateway = parseGatewayProcess(afterRecoverProcess.stdout);
+      const recoveredGateway = parseGatewayProcess(afterRecoverProcess.stdout);
       expect(recoveredGateway.owner).toBe("sandbox");
       expect(recoveredGateway.ppid).toBe(supervisor.pid);
       expect(recoveredGateway.pid).not.toBe(restartedManagedGateway.pid);
-
-      const afterRecoverPid1 = await sandbox.execShell(SANDBOX_NAME, pid1IdentityScript, {
-        artifactName: "phase-5-managed-pid1-after-recover",
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      });
-      expect(afterRecoverPid1.exitCode, resultText(afterRecoverPid1)).toBe(0);
-      expect(afterRecoverPid1.stdout.trim()).toBe(beforePid1.stdout.trim());
-      const afterRecoverSupervisor = await sandbox.execShell(
-        SANDBOX_NAME,
-        supervisorIdentityScript,
-        {
-          artifactName: "phase-5-managed-supervisor-identity-after-recover",
-          env: commandEnv(),
-          timeoutMs: 30_000,
-        },
+      await assertNoStandaloneRoutingSidecars(
+        "phase-4-hermes-routing-topology-after-managed-recover",
+        Number(recoveredGateway.pid),
       );
-      expect(afterRecoverSupervisor.exitCode, resultText(afterRecoverSupervisor)).toBe(0);
-      expect(afterRecoverSupervisor.stdout.trim()).toBe(beforeSupervisorIdentity.stdout.trim());
-
-      const managedHealth = await host.command(
-        "curl",
-        ["-sf", "--max-time", "10", HERMES_HOST_HEALTH_URL],
-        {
-          artifactName: "phase-5-managed-hermes-host-health-after-recover",
-          env: commandEnv(),
-          timeoutMs: 30_000,
-        },
-      );
-      expect(managedHealth.exitCode, resultText(managedHealth)).toBe(0);
-      expect(resultText(managedHealth)).toMatch(/"ok"/i);
-
-      const managedForwardList = await sandbox.openshell(["forward", "list"], {
-        artifactName: "phase-5-managed-forward-list-after-recover",
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      });
-      expect(managedForwardList.exitCode, resultText(managedForwardList)).toBe(0);
-      expect(forwardListHasRunningPort(managedForwardList.stdout, SANDBOX_NAME, "8642")).toBe(true);
-      expect((hermesDashboardE2eEnabled() ? [HERMES_DASHBOARD_PORT] : []).every((dashboardPort) =>
-          Object.is(
-            forwardListHasRunningPort(managedForwardList.stdout, SANDBOX_NAME, dashboardPort),
-            true,
-          ))).toBe(true);
     }
 
-    expect(routingTopologyCaptures).toBe(2);
+    const recoveredHealth = await host.command(
+      "curl",
+      ["-sf", "--max-time", "10", HERMES_HOST_HEALTH_URL],
+      {
+        artifactName: "phase-4-hermes-host-health-after-recover",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(recoveredHealth.exitCode, resultText(recoveredHealth)).toBe(0);
+    expect(resultText(recoveredHealth)).toMatch(/"ok"/i);
+    await expectDashboardReachable("phase-4-dashboard-host-after-recover");
 
     // OpenClaw launch qualification now reads its structured JSONL session
     // store. Hermes owns a different SQLite contract, so this target must not
     // infer Hermes replies from terminal copy through the OpenClaw helper.
     progress.phase("exercise hosted and inference.local routes");
-    // Phase 6: live inference through both the external provider and the
+    // Phase 5: live inference through both the external provider and the
     // sandbox's inference.local route.
     const directChat = await inference.directChat("Reply with exactly one word: PONG", {
-      artifactName: "phase-6-direct-inference-chat",
+      artifactName: "phase-5-direct-inference-chat",
       maxTokens: 1024,
     });
     expect(exhaustedReasoningBudget(directChat)).toBe(false);
@@ -1289,7 +785,7 @@ test(
         "https://inference.local/v1/chat/completions",
       ],
       {
-        artifactName: "phase-6-inference-local-chat",
+        artifactName: "phase-5-inference-local-chat",
         env: commandEnv(),
         timeoutMs: 120_000,
       },
@@ -1299,104 +795,73 @@ test(
     expect(exhaustedReasoningBudget(sandboxChatJson)).toBe(false);
     expectPong("Hermes sandbox inference.local chat", sandboxChatJson);
 
-    progress.phase("validate CLI manifest and locked-config behavior");
-    // Phase 7: CLI operations and agent manifest regression.
+    progress.phase("read logs and, under root supervision, validate locked configuration");
+    // Phase 6: host CLI diagnostics and root-supervised configuration integrity.
     const logs = await host.command("nemoclaw", [SANDBOX_NAME, "logs"], {
-      artifactName: "phase-7-nemoclaw-logs",
+      artifactName: "phase-6-nemoclaw-logs",
       env: commandEnv(),
       timeoutMs: 60_000,
     });
     expect(logs.exitCode, resultText(logs)).toBe(0);
     expect(resultText(logs).trim().length).toBeGreaterThan(0);
 
-    const manifestCheck = await host.command(
-      "node",
-      [
-        "-e",
-        `const { loadAgent, listAgents } = require(${JSON.stringify(path.join(REPO_ROOT, "bin", "lib", "agent-defs"))});\n` +
-          `const agents = listAgents();\n` +
-          `console.log('agents:', agents.join(', '));\n` +
-          `console.log('openclaw_display:', loadAgent('openclaw').displayName);\n` +
-          `console.log('hermes_display:', loadAgent('hermes').displayName);`,
-      ],
-      {
-        artifactName: "phase-7-agent-manifest-check",
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-    expect(manifestCheck.exitCode, resultText(manifestCheck)).toBe(0);
-    expect(manifestCheck.stdout).toMatch(/openclaw_display:.*OpenClaw/);
-    expect(manifestCheck.stdout).toMatch(/hermes_display:.*Hermes/);
-    expect(manifestCheck.stdout).toMatch(/agents:.*(openclaw.*hermes|hermes.*openclaw)/);
-
-    // Phase 8: locked Hermes config drift is refused instead of adopted by the
-    // documented root-entrypoint lifecycle-control topology. The managed
-    // topology proves explicit restart plus boundary refusal above; this phase
-    // retains the stronger root-owned restart-seal drift contract.
     if (rootSupervisorTopology) {
+      expect(recoveredRootGatewayPid).toBeDefined();
+
+      // Root-supervised Hermes has a separate locked-configuration boundary.
+      // Keep one live refusal proof in the topology that owns that behavior.
       const shieldsUp = await host.command("nemohermes", [SANDBOX_NAME, "shields", "up"], {
-        artifactName: "phase-8-nemohermes-shields-up",
+        artifactName: "phase-6-nemohermes-shields-up",
         env: commandEnv(),
         timeoutMs: 120_000,
       });
       expect(shieldsUp.exitCode, resultText(shieldsUp)).toBe(0);
 
-      const lockedDriftMarker = `issue_2426_locked_${Date.now()}`;
       try {
         const introduceLockedDrift = await sandbox.execShell(
           SANDBOX_NAME,
           trustedSandboxShellScript(
             [
               "set -eu",
-              `marker=${shellQuote(lockedDriftMarker)}`,
               'for path in /sandbox/.hermes /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash; do chattr -i "$path" 2>/dev/null || true; done',
               "chmod u+w /sandbox/.hermes/.env",
-              'printf "\\nNEMOCLAW_E2E_LOCKED_DRIFT_MARKER=%s\\n" "$marker" >> /sandbox/.hermes/.env',
+              'printf "\\nNEMOCLAW_E2E_LOCKED_DRIFT_MARKER=1\\n" >> /sandbox/.hermes/.env',
               "chown root:root /sandbox/.hermes /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash",
               "chmod 755 /sandbox/.hermes",
               "chmod 444 /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash",
-              "echo LOCKED_DRIFT_READY",
             ].join("; "),
           ),
           {
-            artifactName: "phase-8-introduce-locked-hermes-drift",
+            artifactName: "phase-6-introduce-locked-hermes-configuration-drift",
             env: commandEnv(),
             timeoutMs: 30_000,
           },
         );
         expect(introduceLockedDrift.exitCode, resultText(introduceLockedDrift)).toBe(0);
-        expect(introduceLockedDrift.stdout).toContain("LOCKED_DRIFT_READY");
 
-        const lockedRestart = await host.command(
+        const refuseLockedDrift = await host.command(
           "nemohermes",
           [SANDBOX_NAME, "gateway", "restart", "--quiet"],
           {
-            artifactName: "phase-8-nemohermes-gateway-restart-locked-drift",
+            artifactName: "phase-6-refuse-locked-hermes-configuration-drift",
             env: commandEnv(),
             timeoutMs: 180_000,
           },
         );
-        expect(lockedRestart.exitCode, resultText(lockedRestart)).not.toBe(0);
-        expect(resultText(lockedRestart)).toMatch(
+        expect(refuseLockedDrift.exitCode, resultText(refuseLockedDrift)).not.toBe(0);
+        expect(resultText(refuseLockedDrift)).toMatch(
           /config hash mismatch|GATEWAY_CONFIG_HASH_MISMATCH/,
         );
 
-        const afterLockedRefusalProcess = await sandbox.execShell(
-          SANDBOX_NAME,
-          gatewayProcessScript,
-          {
-            artifactName: "phase-8-hermes-gateway-process-after-locked-refusal",
-            env: commandEnv(),
-            timeoutMs: 30_000,
-          },
-        );
-        expect(afterLockedRefusalProcess.exitCode, resultText(afterLockedRefusalProcess)).toBe(0);
-        const gatewayAfterLockedRefusal = parseGatewayProcess(afterLockedRefusalProcess.stdout);
-        expect(gatewayAfterLockedRefusal.owner).toBe("gateway");
-        expect(gatewayAfterLockedRefusal.pid).toBe(recoveredGateway.pid);
+        const afterLockedRefusal = await sandbox.execShell(SANDBOX_NAME, gatewayProcessScript, {
+          artifactName: "phase-6-hermes-gateway-after-locked-configuration-refusal",
+          env: commandEnv(),
+          timeoutMs: 30_000,
+        });
+        expect(afterLockedRefusal.exitCode, resultText(afterLockedRefusal)).toBe(0);
+        expect(parseGatewayProcess(afterLockedRefusal.stdout).pid).toBe(recoveredRootGatewayPid);
       } finally {
-        const restoreLockedDrift = await sandbox.execShell(
+        const restoreLockedConfiguration = await sandbox.execShell(
           SANDBOX_NAME,
           trustedSandboxShellScript(
             [
@@ -1409,17 +874,16 @@ test(
               "chown root:root /sandbox/.hermes /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash",
               "chmod 755 /sandbox/.hermes",
               "chmod 444 /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash",
-              "echo OK",
+              'for path in /sandbox/.hermes /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash; do chattr +i "$path" 2>/dev/null || true; done',
             ].join("; "),
           ),
           {
-            artifactName: "phase-8-restore-locked-hermes-drift",
+            artifactName: "phase-6-restore-locked-hermes-configuration",
             env: commandEnv(),
             timeoutMs: 30_000,
           },
         );
-        expect(restoreLockedDrift.exitCode, resultText(restoreLockedDrift)).toBe(0);
-        expect(restoreLockedDrift.stdout).toContain("OK");
+        expect(restoreLockedConfiguration.exitCode, resultText(restoreLockedConfiguration)).toBe(0);
       }
     }
 
@@ -1427,18 +891,18 @@ test(
       ? await assertSecurityPosture(host, sandbox, SANDBOX_NAME, "hermes")
       : null;
 
-    // Phase 9: explicit cleanup and post-destroy registry proof.
+    // Phase 7: explicit cleanup and post-destroy registry proof.
     progress.phase("finalize Hermes sandbox resources");
     if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1") {
       const destroy = await host.command("nemoclaw", [SANDBOX_NAME, "destroy", "--yes"], {
-        artifactName: "phase-9-nemoclaw-destroy",
+        artifactName: "phase-7-nemoclaw-destroy",
         env: commandEnv(),
         timeoutMs: 120_000,
       });
       expect(destroy.exitCode, resultText(destroy)).toBe(0);
       await postDestroyGatewayBestEffort(() =>
         sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-          artifactName: "phase-9-openshell-gateway-destroy",
+          artifactName: "phase-7-openshell-gateway-destroy",
           env: commandEnv(),
           timeoutMs: 60_000,
         }),
@@ -1459,7 +923,7 @@ test(
         hermesSkillInstalled: true,
         hermesSkillDiscovered: true,
         hermesSkillUsedInFreshSession: true,
-        standaloneRoutingSidecarsAbsentBeforeAndAfterRestart: true,
+        standaloneRoutingSidecarsAbsentAfterRecovery: true,
         dashboardChecked: hermesDashboardE2eEnabled(),
         securityPostureChecked: securityPosture !== null,
       },

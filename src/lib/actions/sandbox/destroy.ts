@@ -627,6 +627,7 @@ async function destroySandboxUnlocked(
   try {
     destructiveResult = await executeSandboxDestroy({
       cleanupShieldsArtifacts: cleanupShieldsDestroyArtifacts,
+      cliName: CLI_NAME,
       force: normalized.force === true,
       getSandbox: registry.getSandbox,
       listSandboxes: registry.listSandboxes,

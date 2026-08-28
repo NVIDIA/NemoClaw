@@ -18,6 +18,7 @@ import {
   assertExpectedOpenShellGatewayProcessIdentity,
   classifyWindowsMxcOpenClawStartupObservation,
   classifyWindowsMxcForwardHealthObservation,
+  createWindowsMxcOpenShellAttachmentObservationRequest,
   createWindowsMxcQualificationFailure,
   normalizeReportedVersion,
   observeWindowsMxcForwardHealthReadiness,
@@ -46,17 +47,24 @@ function fixture(): { readonly environment: NodeJS.ProcessEnv; readonly root: st
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mxc-contract-"));
   roots.push(root);
   const artifactDirectory = path.join(root, "evidence");
+  const distributionDirectory = path.join(root, "packages");
+  const openShellRoot = path.join(root, "openshell");
+  const mxcRoot = path.join(root, "mxc");
   const openClawRoot = path.join(root, "openclaw");
   fs.mkdirSync(artifactDirectory, { recursive: true });
+  fs.mkdirSync(distributionDirectory, { recursive: true });
+  fs.mkdirSync(openShellRoot, { recursive: true });
+  fs.mkdirSync(mxcRoot, { recursive: true });
   fs.mkdirSync(path.join(openClawRoot, "node"), { recursive: true });
   fs.mkdirSync(path.join(openClawRoot, "runtime"), { recursive: true });
   const paths = {
-    cli: path.join(root, "openshell.exe"),
+    artifact: path.join(distributionDirectory, "openshell.zip"),
+    cli: path.join(openShellRoot, "openshell.exe"),
     entry: path.join(openClawRoot, "runtime", "openclaw.mjs"),
-    gateway: path.join(root, "openshell-gateway.exe"),
+    gateway: path.join(openShellRoot, "openshell-gateway.exe"),
     node: path.join(openClawRoot, "node", "node.exe"),
-    relay: path.join(root, "openshell-supervisor-relay.exe"),
-    wxc: path.join(root, "wxc-exec.exe"),
+    relay: path.join(openShellRoot, "openshell-supervisor-relay.exe"),
+    wxc: path.join(mxcRoot, "wxc-exec.exe"),
   };
   for (const [name, file] of Object.entries(paths)) fs.writeFileSync(file, name, "utf8");
   return {
@@ -73,6 +81,9 @@ function fixture(): { readonly environment: NodeJS.ProcessEnv; readonly root: st
         sha256WindowsOpenClawArtifactTree(openClawRoot),
       NEMOCLAW_WINDOWS_MXC_OPENCLAW_ROOT: openClawRoot,
       NEMOCLAW_WINDOWS_MXC_OPENCLAW_VERSION: "2026.7.1",
+      NEMOCLAW_WINDOWS_MXC_OPENSHELL_DISTRIBUTION_ARTIFACT: paths.artifact,
+      NEMOCLAW_WINDOWS_MXC_OPENSHELL_DISTRIBUTION_ROOT: openShellRoot,
+      NEMOCLAW_WINDOWS_MXC_OPENSHELL_DISTRIBUTION_SHA256: sha256File(paths.artifact),
       NEMOCLAW_WINDOWS_MXC_OPENSHELL_CLI: paths.cli,
       NEMOCLAW_WINDOWS_MXC_OPENSHELL_CLI_SHA256: sha256File(paths.cli),
       NEMOCLAW_WINDOWS_MXC_OPENSHELL_GATEWAY: paths.gateway,
@@ -81,6 +92,7 @@ function fixture(): { readonly environment: NodeJS.ProcessEnv; readonly root: st
       NEMOCLAW_WINDOWS_MXC_OPENSHELL_RELAY_SHA256: sha256File(paths.relay),
       NEMOCLAW_WINDOWS_MXC_OPENSHELL_REVISION: "b".repeat(40),
       NEMOCLAW_WINDOWS_MXC_OPENSHELL_VERSION: "0.0.12",
+      NEMOCLAW_WINDOWS_MXC_ROOT: mxcRoot,
       NEMOCLAW_WINDOWS_MXC_WXC_EXEC: paths.wxc,
       NEMOCLAW_WINDOWS_MXC_WXC_EXEC_SHA256: sha256File(paths.wxc),
       NEMOCLAW_WINDOWS_MXC_WORK_ROOT: root,
@@ -275,11 +287,63 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
 
     expect(parsed.openClaw.version).toBe("2026.7.1");
     expect(parsed.openShell.packageVersion).toBe("0.0.12");
+    expect(parsed.expected.openShellDistributionSha256).toBe(
+      environment.NEMOCLAW_WINDOWS_MXC_OPENSHELL_DISTRIBUTION_SHA256,
+    );
     expect(parsed.expected.openClawArtifactTreeSha256).toBe(
       environment.NEMOCLAW_WINDOWS_MXC_OPENCLAW_ARTIFACT_TREE_SHA256,
     );
     expect(parsed.expected.wxcExecSha256).toBe(environment.NEMOCLAW_WINDOWS_MXC_WXC_EXEC_SHA256);
     expect(parsed.declaredHostPreparation).toBe("wxc-host-prep-prepare-system-drive");
+  });
+
+  it("projects exact separate OpenShell and MXC roots into attachment observation input (#8178)", () => {
+    const { environment, root } = fixture();
+    const gatewayConfigPath = path.join(root, "gateway.toml");
+    fs.writeFileSync(gatewayConfigPath, "[gateway]\n", "utf8");
+    const parsed = parseWindowsMxcOpenClawQualificationEnvironment(environment);
+
+    expect(
+      createWindowsMxcOpenShellAttachmentObservationRequest(parsed, gatewayConfigPath),
+    ).toEqual({
+      contractVersion: 2,
+      providerId: "mxc",
+      mode: "attach-existing",
+      observedDistribution: {
+        version: "0.0.12",
+        revision: "b".repeat(40),
+      },
+      observedGateway: { driver: "mxc", backend: "process_container" },
+      installation: {
+        distributionArtifactPath: parsed.openShell.distributionArtifactPath,
+        distributionRoot: parsed.openShell.distributionRoot,
+        mxcRoot: parsed.mxc.root,
+        cliPath: parsed.openShell.cliPath,
+        gatewayPath: parsed.openShell.gatewayPath,
+        wxcExecPath: parsed.mxc.wxcExecPath,
+        gatewayConfigPath: fs.realpathSync(gatewayConfigPath),
+      },
+    });
+  });
+
+  it("rejects OpenShell and MXC executables outside their declared roots (#8178)", () => {
+    const { environment, root } = fixture();
+    const outsideCli = path.join(root, "outside-openshell.exe");
+    fs.writeFileSync(outsideCli, "cli", "utf8");
+    environment.NEMOCLAW_WINDOWS_MXC_OPENSHELL_CLI = outsideCli;
+
+    expect(() => parseWindowsMxcOpenClawQualificationEnvironment(environment)).toThrow(
+      /OpenShell CLI must be a child of the OpenShell distribution root/u,
+    );
+
+    const second = fixture();
+    const outsideWxc = path.join(second.root, "outside-wxc-exec.exe");
+    fs.writeFileSync(outsideWxc, "wxc", "utf8");
+    second.environment.NEMOCLAW_WINDOWS_MXC_WXC_EXEC = outsideWxc;
+
+    expect(() => parseWindowsMxcOpenClawQualificationEnvironment(second.environment)).toThrow(
+      /wxc-exec must be a child of the MXC root/u,
+    );
   });
 
   it("rejects an OpenClaw executable outside the staged artifact root (#8178)", () => {
@@ -363,6 +427,18 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
 
     expect(() => assertExactArtifactIdentities(parsed)).toThrow(
       /openShellCliSha256 does not match the expected exact identity/u,
+    );
+  });
+
+  it("rejects substitution of the original OpenShell distribution artifact (#8178)", () => {
+    const { environment } = fixture();
+    const parsed = parseWindowsMxcOpenClawQualificationEnvironment(environment);
+    assertExactArtifactIdentities(parsed);
+
+    fs.writeFileSync(parsed.openShell.distributionArtifactPath, "replacement", "utf8");
+
+    expect(() => assertExactArtifactIdentities(parsed)).toThrow(
+      /openShellDistributionSha256 does not match the expected exact identity/u,
     );
   });
 

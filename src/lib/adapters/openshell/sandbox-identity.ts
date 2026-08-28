@@ -64,13 +64,18 @@ function isStrictSandboxListJsonRow(value: unknown): value is OpenShellSandboxLi
 export function parseStrictOpenShellSandboxListJson(
   output: string,
 ): readonly OpenShellSandboxListJsonRow[] | null {
+  const rows = parseOpenShellSandboxListJson(output);
+  return rows && rows.every(isStrictSandboxListJsonRow) ? rows : null;
+}
+
+function parseOpenShellSandboxListJson(output: string): readonly unknown[] | null {
   let rows: unknown;
   try {
     rows = JSON.parse(output);
   } catch {
     return null;
   }
-  return Array.isArray(rows) && rows.every(isStrictSandboxListJsonRow) ? rows : null;
+  return Array.isArray(rows) ? rows : null;
 }
 
 export function parseOpenShellSandboxId(output: string): string | null {
@@ -117,8 +122,25 @@ type CreatedOpenShellSandboxIdentityInput = {
 
 type CreatedOpenShellSandboxIdentityObservation =
   | { readonly state: "matched"; readonly sandboxId: string }
-  | { readonly state: "pending" }
-  | { readonly state: "invalid" };
+  | { readonly state: "pending"; readonly sandboxId: string | null }
+  | {
+      readonly state: "invalid";
+      readonly diagnostic:
+        | "selector-execution-timeout"
+        | "selector-execution-not-found"
+        | "selector-execution-permission"
+        | "selector-execution-nonzero"
+        | "selector-execution-buffer-limit"
+        | "selector-execution-resource-unavailable"
+        | "selector-execution-other-code"
+        | "selector-execution-uncoded-error"
+        | "selector-execution-non-error"
+        | "selector-output-malformed"
+        | "selector-output-ambiguous"
+        | "selector-row-malformed"
+        | "selector-identity-mismatch"
+        | "selector-metadata-malformed";
+    };
 
 function assertCreateAttemptNonce(createAttemptNonce: string): void {
   if (!/^[0-9a-f]{62}$/u.test(createAttemptNonce)) {
@@ -126,10 +148,63 @@ function assertCreateAttemptNonce(createAttemptNonce: string): void {
   }
 }
 
-function createdIdentityError(sandboxName: string): Error {
+function createdIdentityError(sandboxName: string, diagnostic = "settlement-incomplete"): Error {
   return new Error(
-    `OpenShell did not return the exact created identity for sandbox '${sandboxName}'.`,
+    `OpenShell did not return the exact created identity for sandbox '${sandboxName}'. Diagnostic class: ${diagnostic}.`,
   );
+}
+
+function hasIncompleteCreatedIdentityMetadata(row: Record<string, unknown>): boolean {
+  const incomplete = (value: unknown): boolean => value === undefined || value === null;
+  const resourceVersionValid =
+    incomplete(row.resource_version) ||
+    (typeof row.resource_version === "number" && Number.isFinite(row.resource_version));
+  const createdAtValid = incomplete(row.created_at) || typeof row.created_at === "string";
+  const phaseValid =
+    incomplete(row.phase) || (typeof row.phase === "string" && row.phase.length > 0);
+  const policyVersionValid =
+    incomplete(row.current_policy_version) ||
+    (typeof row.current_policy_version === "number" && Number.isFinite(row.current_policy_version));
+  return (
+    resourceVersionValid &&
+    createdAtValid &&
+    phaseValid &&
+    policyVersionValid &&
+    [row.resource_version, row.created_at, row.phase, row.current_policy_version].some(incomplete)
+  );
+}
+
+function classifySelectorExecutionError(
+  error: unknown,
+):
+  | "selector-execution-timeout"
+  | "selector-execution-not-found"
+  | "selector-execution-permission"
+  | "selector-execution-nonzero"
+  | "selector-execution-buffer-limit"
+  | "selector-execution-resource-unavailable"
+  | "selector-execution-other-code"
+  | "selector-execution-uncoded-error"
+  | "selector-execution-non-error" {
+  if (!error || typeof error !== "object") return "selector-execution-non-error";
+  const candidate = error as { readonly code?: unknown; readonly message?: unknown };
+  if (candidate.code === "ETIMEDOUT") return "selector-execution-timeout";
+  if (candidate.code === "ENOENT") return "selector-execution-not-found";
+  if (candidate.code === "EACCES" || candidate.code === "EPERM") {
+    return "selector-execution-permission";
+  }
+  if (candidate.code === "ENOBUFS") return "selector-execution-buffer-limit";
+  if (candidate.code === "EAGAIN") return "selector-execution-resource-unavailable";
+  if (
+    typeof candidate.message === "string" &&
+    /^Command failed with status \d+$/u.test(candidate.message)
+  ) {
+    return "selector-execution-nonzero";
+  }
+  if ("code" in candidate) return "selector-execution-other-code";
+  return typeof candidate.message === "string"
+    ? "selector-execution-uncoded-error"
+    : "selector-execution-non-error";
 }
 
 function observeCreatedOpenShellSandboxId(
@@ -159,22 +234,38 @@ function observeCreatedOpenShellSandboxId(
         killProcessTreeOnTimeout: true,
       },
     );
-  } catch {
-    return { state: "invalid" };
+  } catch (error) {
+    return { state: "invalid", diagnostic: classifySelectorExecutionError(error) };
   }
-  const rows = parseStrictOpenShellSandboxListJson(output);
-  if (!rows) return { state: "invalid" };
-  if (rows.length === 0) return { state: "pending" };
-  if (rows.length !== 1) return { state: "invalid" };
+  const rows = parseOpenShellSandboxListJson(output);
+  if (!rows) return { state: "invalid", diagnostic: "selector-output-malformed" };
+  if (rows.length === 0) return { state: "pending", sandboxId: null };
+  if (rows.length !== 1) {
+    return { state: "invalid", diagnostic: "selector-output-ambiguous" };
+  }
   const row = rows[0];
-  if (
-    !row ||
-    row.name !== input.sandboxName ||
-    row.labels[NEMOCLAW_CREATE_ATTEMPT_LABEL] !== input.createAttemptNonce
-  ) {
-    return { state: "invalid" };
+  if (!row || typeof row !== "object" || Array.isArray(row)) {
+    return { state: "invalid", diagnostic: "selector-row-malformed" };
   }
-  return { state: "matched", sandboxId: row.id };
+  const candidate = row as Record<string, unknown>;
+  const labels = candidate.labels;
+  if (
+    !isOpenShellSandboxId(candidate.id) ||
+    candidate.name !== input.sandboxName ||
+    !labels ||
+    typeof labels !== "object" ||
+    Array.isArray(labels) ||
+    !Object.values(labels as Record<string, unknown>).every((label) => typeof label === "string") ||
+    (labels as Record<string, string>)[NEMOCLAW_CREATE_ATTEMPT_LABEL] !== input.createAttemptNonce
+  ) {
+    return { state: "invalid", diagnostic: "selector-identity-mismatch" };
+  }
+  if (!isStrictSandboxListJsonRow(candidate)) {
+    return hasIncompleteCreatedIdentityMetadata(candidate)
+      ? { state: "pending", sandboxId: candidate.id }
+      : { state: "invalid", diagnostic: "selector-metadata-malformed" };
+  }
+  return { state: "matched", sandboxId: candidate.id };
 }
 
 export function resolveCreatedOpenShellSandboxId(
@@ -185,14 +276,20 @@ export function resolveCreatedOpenShellSandboxId(
     input,
     CREATED_IDENTITY_SETTLEMENT_TIMEOUT_MS,
   );
-  if (observation.state !== "matched") throw createdIdentityError(input.sandboxName);
+  if (observation.state !== "matched") {
+    throw createdIdentityError(
+      input.sandboxName,
+      observation.state === "invalid" ? observation.diagnostic : "settlement-pending",
+    );
+  }
   return observation.sandboxId;
 }
 
 /**
  * Settle the nonce-owned identity after OpenShell reports the create Ready.
- * Only an empty selector result is retryable; malformed, ambiguous, or
- * mismatched results remain terminal before any post-create effect.
+ * An empty selector result or the one exact nonce-owned row with incomplete
+ * publication metadata is retryable. Malformed, ambiguous, or mismatched
+ * identity results remain terminal before any post-create effect.
  */
 export function settleCreatedOpenShellSandboxId(input: {
   readonly sandboxName: string;
@@ -212,6 +309,8 @@ export function settleCreatedOpenShellSandboxId(input: {
   }
 
   let previousNowMs = startedAt;
+  let pendingSandboxId: string | null = null;
+  let diagnostic = "settlement-incomplete";
   const readNow = (): number => {
     const currentNowMs = now();
     if (!Number.isFinite(currentNowMs) || currentNowMs < previousNowMs) {
@@ -226,15 +325,28 @@ export function settleCreatedOpenShellSandboxId(input: {
     if (remainingMs <= 0) break;
 
     const observation = observeCreatedOpenShellSandboxId(input, remainingMs);
-    if (observation.state === "matched") return observation.sandboxId;
-    if (observation.state === "invalid") break;
+    if (observation.state === "matched") {
+      if (pendingSandboxId && observation.sandboxId !== pendingSandboxId) break;
+      return observation.sandboxId;
+    }
+    if (observation.state === "invalid") {
+      diagnostic = observation.diagnostic;
+      break;
+    }
+    if (observation.sandboxId === null) {
+      if (pendingSandboxId) break;
+    } else if (pendingSandboxId && observation.sandboxId !== pendingSandboxId) {
+      break;
+    } else {
+      pendingSandboxId = observation.sandboxId;
+    }
 
     const remainingAfterReadMs = Math.floor(deadlineMs - readNow());
     if (remainingAfterReadMs <= 0) break;
     input.sleep(Math.min(CREATED_IDENTITY_SETTLEMENT_INTERVAL_MS, remainingAfterReadMs));
   }
 
-  throw createdIdentityError(input.sandboxName);
+  throw createdIdentityError(input.sandboxName, diagnostic);
 }
 
 /**

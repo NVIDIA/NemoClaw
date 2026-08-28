@@ -334,9 +334,6 @@ describe("initial sandbox policy real preset merge", () => {
     const prepared = prepareInitialSandboxCreatePolicy(
       repoPath("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
       [],
-      // A sandbox name is required now that the OpenClaw Discord preset binds
-      // its credential: {sandboxName}-discord-bridge cannot be materialized
-      // without one. Onboard and snapshot restore both supply it.
       {
         agentName: "openclaw",
         additionalPresets: ["discord"],
@@ -365,18 +362,22 @@ describe("initial sandbox policy real preset merge", () => {
       method: "DELETE",
       path: "/api/v*/guilds/*",
     });
-    const credentialEndpoints = (policy.network_policies?.discord?.endpoints ?? []).filter(
-      (endpoint) =>
-        endpoint.host === "discord.com" ||
-        endpoint.host === "gateway.discord.gg" ||
-        endpoint.host === "*.discord.gg",
+  });
+
+  it("keeps create-time messaging presets unbound until the channel is configured (#10273)", () => {
+    const prepared = prepareInitialSandboxCreatePolicy(
+      repoPath("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+      [],
+      {
+        agentName: "openclaw",
+        additionalPresets: ["discord"],
+        sandboxName: "discord-egress",
+      },
     );
-    expect(credentialEndpoints).toHaveLength(3);
-    expect(credentialEndpoints.map((endpoint) => endpoint.credential_binding?.provider)).toEqual([
-      "openclaw-discord-discord-bridge",
-      "openclaw-discord-discord-bridge",
-      "openclaw-discord-discord-bridge",
-    ]);
+    const endpoints = readPreparedPolicy(prepared).network_policies?.discord?.endpoints ?? [];
+
+    expect(endpoints.length).toBeGreaterThan(0);
+    expect(endpoints.every((endpoint) => endpoint.credential_binding === undefined)).toBe(true);
   });
 
   it.each(shippingPolicyCases)(

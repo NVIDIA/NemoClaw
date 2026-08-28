@@ -17,7 +17,7 @@ import {
   POLICY_VERSION,
   SANDBOX_ID,
   SANDBOX_IDENTITY,
-} from "./managed-policy-receipt-fixture";
+} from "../../helpers/managed-policy-receipt-fixture";
 
 const requireForTest = createRequire(import.meta.url);
 const YAML = requireForTest("yaml");

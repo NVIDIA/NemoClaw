@@ -772,41 +772,6 @@ node --import tsx "$5" "$policy_file" "$3" host.openshell.internal "$4" rest
   expectExitZero(binding, `bind ${api.kind} fake REST policy credential`);
 }
 
-export async function applyWebSocketRewritePolicy(
-  host: HostCliClient,
-  api: FakeDockerApi,
-  env: NodeJS.ProcessEnv,
-  redactionValues: string[],
-): Promise<void> {
-  const result = await runHost(
-    host,
-    "openshell",
-    [
-      "policy",
-      "update",
-      SANDBOX_NAME,
-      "--add-endpoint",
-      `host.openshell.internal:${api.port}:read-write:websocket:enforce:websocket-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
-      "--add-allow",
-      `host.openshell.internal:${api.port}:GET:/**`,
-      "--add-allow",
-      `host.openshell.internal:${api.port}:WEBSOCKET_TEXT:/**`,
-      "--binary",
-      "/usr/local/bin/node",
-      "--binary",
-      "/usr/bin/node",
-      "--wait",
-    ],
-    {
-      artifactName: `apply-${api.kind}-websocket-policy`,
-      env,
-      redactionValues,
-      timeoutMs: 120_000,
-    },
-  );
-  expectExitZero(result, `apply ${api.kind} fake WebSocket policy`);
-}
-
 export function lastJsonLine(
   file: string,
   predicate: (row: Record<string, unknown>) => boolean,

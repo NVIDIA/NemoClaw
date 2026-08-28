@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   isLifecycleLockHeld: vi.fn(),
   inspect: vi.fn(),
   inspectClassification: vi.fn(),
+  inspectRequalification: vi.fn(),
   readRegistry: vi.fn(),
   buildOpenShellCommandAuthority: vi.fn(),
   buildOpenShellEnv: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock("../../state/mcp-lifecycle-lock-acquisition", () => ({
 vi.mock("./hermes-portable-receipt", () => ({
   inspectPortableAgentReceiptAuthority: mocks.inspect,
   inspectPortableAgentReceiptAuthorityForClassification: mocks.inspectClassification,
+  inspectPortableAgentReceiptAuthorityForRequalification: mocks.inspectRequalification,
 }));
 vi.mock("./hermes-portable-lifecycle", () => ({
   assertHermesPortableSandboxLifecycleAuthority: mocks.assertHermesAuthority,
@@ -52,6 +54,7 @@ import {
   assertHermesPortableAgentLifecycleAuthority,
   inspectPortableAgentReceiptDisposition,
   qualifyPortableAgentLifecycleAuthority,
+  qualifyHermesPortableOperatingCommandAuthority,
   recoverPortableAgentSandboxLifecycle,
   requalifyPortableAgentSandboxAuthority,
   requireHermesPortableActiveLifecycleAuthority,
@@ -116,6 +119,7 @@ describe("portable agent lifecycle dispatch", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.inspectClassification.mockImplementation((...args) => mocks.inspect(...args));
+    mocks.inspectRequalification.mockImplementation((...args) => mocks.inspect(...args));
     mocks.buildOpenShellEnv.mockImplementation(
       (env: NodeJS.ProcessEnv, authority: Record<string, string>) => ({
         PATH: env.PATH,
@@ -155,10 +159,15 @@ describe("portable agent lifecycle dispatch", () => {
   });
 
   it("routes probe-only schema migration to the exact Hermes lifecycle owner (#10423)", () => {
-    mocks.inspect.mockReturnValue(hermes("active"));
-    mocks.readRegistry.mockReturnValue(hermesRegistryEntry({ provider: "ollama-local" }));
+    const receiptAuthority = hermes("active");
+    const entry = hermesRegistryEntry({ provider: "ollama-local" });
+    mocks.inspectClassification.mockReturnValue(receiptAuthority);
+    mocks.inspectRequalification.mockReturnValue(receiptAuthority);
+    mocks.readRegistry.mockReturnValue(entry);
     mocks.requalifyHermes.mockReturnValue({ kind: "migrated" });
 
+    const classified = qualifyPortableAgentLifecycleAuthority("alpha", lifecycleAuthorityDeps);
+    expect(classified).toEqual({ ...hermesDisposition("active"), entry });
     expect(
       requalifyPortableAgentSandboxAuthority("alpha", {
         ...lifecycleAuthorityDeps,
@@ -174,6 +183,8 @@ describe("portable agent lifecycle dispatch", () => {
       }),
       expect.objectContaining({ stateDir: "/state" }),
     );
+    expect(mocks.inspectClassification).toHaveBeenCalledWith("alpha", expect.any(String));
+    expect(mocks.inspectRequalification).toHaveBeenCalledWith("alpha", "/state");
     expect(mocks.recoverOpenClaw).not.toHaveBeenCalled();
   });
 
@@ -220,6 +231,31 @@ describe("portable agent lifecycle dispatch", () => {
       HOME: "/home/test",
     });
     expect(assertCurrent).toHaveBeenCalledOnce();
+  });
+
+  it("retains one operation-local schema-6 command generation for recovery (#10423)", () => {
+    const historical = hermes("active").snapshot.receipt;
+    const current = { ...historical, socketAuthority: { dev: "current" } };
+    const assertCurrent = vi.fn();
+    mocks.inspect.mockReturnValue({
+      kind: "hermes",
+      snapshot: { receipt: historical, successor: { receipt: { schemaVersion: 6 } } },
+    });
+    mocks.qualifyOperatingAuthority.mockReturnValue({ receipt: current, assertCurrent });
+
+    const qualified = qualifyHermesPortableOperatingCommandAuthority(
+      "alpha",
+      { HOME: "/home/test" },
+      "/state",
+    );
+    qualified.assertCurrent();
+
+    expect(qualified).toMatchObject({
+      env: { HOME: "/home/test" },
+      executablePath: "/usr/bin/openshell",
+    });
+    expect(mocks.qualifyOperatingAuthority).toHaveBeenCalledOnce();
+    expect(assertCurrent).toHaveBeenCalledTimes(2);
   });
 
   it("permits an incomplete receipt without a registry row and rejects active absence (#9203)", () => {
