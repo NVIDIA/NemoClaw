@@ -46,8 +46,12 @@ export function shouldApplyVmDnsMonkeypatch(
   return platform === "darwin" || env.NEMOCLAW_FORCE_VM_DNS_MONKEYPATCH === "1";
 }
 
-function dockerDriverGatewayStateDir(env: NodeJS.ProcessEnv, homeDir: string): string {
-  return resolveDockerDriverGatewayStateDir(env, homeDir);
+function dockerDriverGatewayStateDir(
+  env: NodeJS.ProcessEnv,
+  homeDir: string,
+  gatewayPort?: number | null,
+): string {
+  return resolveDockerDriverGatewayStateDir(env, homeDir, gatewayPort ?? undefined);
 }
 
 export function parseSandboxIdFromGetOutput(output: string): string | null {
@@ -270,7 +274,7 @@ function buildGuestInitPatch(
 
 export function applyOpenShellVmDnsMonkeypatch(
   sandboxName: string,
-  entry: Pick<SandboxEntry, "openshellDriver"> | null | undefined,
+  entry: Pick<SandboxEntry, "gatewayPort" | "openshellDriver"> | null | undefined,
   deps: {
     capture?: CaptureFn;
     env?: NodeJS.ProcessEnv;
@@ -297,7 +301,9 @@ export function applyOpenShellVmDnsMonkeypatch(
     return fail("could not resolve OpenShell sandbox id");
   }
 
-  const stateDir = deps.stateDir ?? dockerDriverGatewayStateDir(env, deps.homeDir ?? os.homedir());
+  const stateDir =
+    deps.stateDir ??
+    dockerDriverGatewayStateDir(env, deps.homeDir ?? os.homedir(), entry?.gatewayPort);
   const stateDirPath = path.resolve(stateDir);
   const stateDirReal = realpathIfPresent(stateDirPath);
   if (!stateDirReal) {

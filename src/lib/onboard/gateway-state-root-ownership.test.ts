@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   buildDockerDriverGatewayConfigToml,
@@ -40,6 +40,20 @@ describe("managed gateway state root ownership", () => {
     }
   });
 
+  it("rejects a pre-created directory that is not owner-private", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-public-gateway-root-"));
+    const stateDir = path.join(root, "gateway");
+    try {
+      fs.mkdirSync(stateDir, { mode: 0o755 });
+      fs.chmodSync(stateDir, 0o755);
+
+      expect(() => ensureManagedGatewayStateRoot(target(stateDir))).toThrow(/mode 0700/);
+      expect(fs.existsSync(path.join(stateDir, MANAGED_GATEWAY_STATE_ROOT_MARKER))).toBe(false);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   it("marks an empty dedicated directory and binds it to one gateway", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-owned-gateway-root-"));
     const stateDir = path.join(root, "gateway");
@@ -53,6 +67,30 @@ describe("managed gateway state root ownership", () => {
       expect(fs.statSync(path.join(stateDir, MANAGED_GATEWAY_STATE_ROOT_MARKER)).mode & 0o777).toBe(
         0o600,
       );
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects a marker path replaced while its descriptor is being read", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-replaced-gateway-marker-"));
+    const stateDir = path.join(root, "gateway");
+    const markerPath = path.join(stateDir, MANAGED_GATEWAY_STATE_ROOT_MARKER);
+    const displacedPath = path.join(stateDir, "opened-marker.json");
+    try {
+      ensureManagedGatewayStateRoot(target(stateDir));
+      const markerContents = fs.readFileSync(markerPath);
+      const originalReadSync = fs.readSync.bind(fs);
+      const readSpy = vi.spyOn(fs, "readSync").mockImplementationOnce(((...args: unknown[]) => {
+        fs.renameSync(markerPath, displacedPath);
+        fs.writeFileSync(markerPath, markerContents, { mode: 0o600 });
+        return Reflect.apply(originalReadSync, fs, args);
+      }) as typeof fs.readSync);
+      try {
+        expect(managedGatewayStateRootOwnershipFailure(target(stateDir))).toMatch(/read safely/);
+      } finally {
+        readSpy.mockRestore();
+      }
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
     }

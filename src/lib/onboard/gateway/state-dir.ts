@@ -4,12 +4,14 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { type OpenRegularFile, openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { DEFAULT_GATEWAY_PORT } from "../../core/ports";
 
 export { DEFAULT_GATEWAY_PORT } from "../../core/ports";
 
 export const BASE_GATEWAY_STATE_DIR_NAME = "openshell-docker-gateway";
 export const MANAGED_GATEWAY_STATE_ROOT_MARKER = ".nemoclaw-managed-gateway-state.json";
+const MANAGED_GATEWAY_STATE_ROOT_MARKER_MAX_BYTES = 4096;
 
 export class UnsafeGatewayStateDirectoryError extends Error {
   constructor(message: string) {
@@ -78,10 +80,8 @@ function stateRootMarkerOwnershipFailure(target: ManagedGatewayStateRootTarget):
   const stateDir = path.resolve(target.stateDir);
   const markerPath = path.join(stateDir, MANAGED_GATEWAY_STATE_ROOT_MARKER);
   let directory: fs.Stats;
-  let marker: fs.Stats;
   try {
     directory = fs.lstatSync(stateDir);
-    marker = fs.lstatSync(markerPath);
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "ENOENT"
       ? "the managed gateway state root marker is missing"
@@ -95,34 +95,48 @@ function stateRootMarkerOwnershipFailure(target: ManagedGatewayStateRootTarget):
   ) {
     return "the gateway state directory is not an owner-controlled real directory with mode 0700";
   }
-  if (
-    !marker.isFile() ||
-    marker.isSymbolicLink() ||
-    marker.nlink !== 1 ||
-    marker.uid !== directory.uid ||
-    (marker.mode & 0o077) !== 0
-  ) {
-    return "the managed gateway state root marker is not a private owned regular file";
-  }
-  let parsed: unknown;
+  let markerFile: OpenRegularFile;
   try {
-    parsed = JSON.parse(fs.readFileSync(markerPath, "utf8"));
-  } catch {
-    return "the managed gateway state root marker is not valid JSON";
+    markerFile = openRegularFileNoFollow(markerPath);
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT"
+      ? "the managed gateway state root marker is missing"
+      : "the managed gateway state root marker cannot be inspected safely";
   }
-  const expected = expectedStateRootMarker(target);
-  if (
-    !parsed ||
-    typeof parsed !== "object" ||
-    Array.isArray(parsed) ||
-    (parsed as typeof expected).schemaVersion !== 1 ||
-    (parsed as typeof expected).gatewayName !== expected.gatewayName ||
-    (parsed as typeof expected).gatewayPort !== expected.gatewayPort ||
-    (parsed as typeof expected).stateDir !== expected.stateDir
-  ) {
-    return "the managed gateway state root marker does not identify the selected gateway and directory";
+  try {
+    const marker = markerFile.stat();
+    if (
+      !marker.isFile() ||
+      marker.nlink !== 1 ||
+      marker.uid !== directory.uid ||
+      (marker.mode & 0o077) !== 0
+    ) {
+      return "the managed gateway state root marker is not a private owned regular file";
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(
+        markerFile.readBytes(MANAGED_GATEWAY_STATE_ROOT_MARKER_MAX_BYTES).toString("utf8"),
+      );
+    } catch {
+      return "the managed gateway state root marker cannot be read safely as valid JSON";
+    }
+    const expected = expectedStateRootMarker(target);
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed) ||
+      (parsed as typeof expected).schemaVersion !== 1 ||
+      (parsed as typeof expected).gatewayName !== expected.gatewayName ||
+      (parsed as typeof expected).gatewayPort !== expected.gatewayPort ||
+      (parsed as typeof expected).stateDir !== expected.stateDir
+    ) {
+      return "the managed gateway state root marker does not identify the selected gateway and directory";
+    }
+    return null;
+  } finally {
+    markerFile.close();
   }
-  return null;
 }
 
 /** Reserve or safely adopt an explicitly configured gateway root before onboarding writes it. */
@@ -157,14 +171,21 @@ export function ensureManagedGatewayStateRoot(
       "Unsafe gateway state directory: refusing to adopt an existing nonempty directory without valid NemoClaw-managed gateway configuration.",
     );
   }
+  let markerFile: OpenRegularFile | null = null;
   try {
-    fs.writeFileSync(
-      markerPath,
+    markerFile = openRegularFileNoFollow(markerPath, {
+      create: true,
+      mode: 0o600,
+      writable: true,
+    });
+    markerFile.replaceUtf8(
       `${JSON.stringify(expectedStateRootMarker({ ...target, stateDir }), null, 2)}\n`,
-      { encoding: "utf8", flag: "wx", mode: 0o600 },
+      0o600,
     );
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  } finally {
+    markerFile?.close();
   }
   const failure = stateRootMarkerOwnershipFailure({ ...target, stateDir });
   if (failure) throw new Error(`Unsafe gateway state directory: ${failure}.`);

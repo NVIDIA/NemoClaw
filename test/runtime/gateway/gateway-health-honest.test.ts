@@ -47,7 +47,7 @@ test("reports a crashed Docker-driver gateway instead of reporting it healthy (#
   const openshellBin = path.join(binDir, "openshell");
   const dockerBin = path.join(binDir, "docker");
   fs.mkdirSync(binDir);
-  fs.mkdirSync(stateDir);
+  fs.mkdirSync(stateDir, { mode: 0o700 });
   writeExecutable(
     gatewayBin,
     `#!/usr/bin/env bash

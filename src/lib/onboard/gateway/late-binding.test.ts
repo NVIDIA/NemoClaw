@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
+import * as gatewayBinding from "../gateway-binding";
 import { createDockerDriverGatewayStart } from "./docker-driver-start";
 import { createGatewayRecoveryOrchestration } from "./recovery";
 import { createGatewayRegistration } from "./registration";
@@ -90,6 +95,8 @@ describe("gateway lifecycle late binding", () => {
   it("uses the current binding for Docker-driver reachability", async () => {
     let name = "initial";
     let port = 9000;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-start-boundary-"));
+    const stateDir = path.join(root, "gateway");
     const verifyReachability = vi.fn(async () => undefined);
     const managedStart = vi.fn(
       async (
@@ -104,9 +111,16 @@ describe("gateway lifecycle late binding", () => {
     const dockerDriverGatewayEnv = {
       startPackageManagedDockerDriverGatewayWithEnvOverride: managedStart,
     } as unknown as typeof import("../docker-driver-gateway-env");
-    const ensureManagedGatewayStateRoot = vi.fn();
-    const resolveGatewayStateDirForPort = vi.fn(() => "/tmp/gateway");
-    const getDockerDriverGatewayEnv = vi.fn(() => ({ OPENSHELL_SERVER_PORT: String(port) }));
+    const getDockerDriverGatewayEnv = vi.fn(() => {
+      expect(
+        gatewayBinding.managedGatewayStateRootOwnershipFailure({
+          gatewayName: name,
+          gatewayPort: port,
+          stateDir: process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR ?? "",
+        }),
+      ).toBeNull();
+      return { OPENSHELL_SERVER_PORT: String(port) };
+    });
     const start = createDockerDriverGatewayStart({
       SUPPORTED_OPENSHELL_FALLBACK_VERSION: "0.0.0",
       checkGatewayPortAvailable: async () => ({ ok: true }),
@@ -121,11 +135,7 @@ describe("gateway lifecycle late binding", () => {
       }),
       dockerDriverGatewayEnv,
       envInt: (_name, fallback) => fallback,
-      gatewayBinding: {
-        ensureManagedGatewayStateRoot,
-        resolveGatewayCompatContainerName: (value: number) => `gateway-${value}`,
-        resolveGatewayStateDirForPort,
-      } as unknown as typeof import("../gateway-binding"),
+      gatewayBinding,
       gatewayName: () => name,
       gatewayPort: () => port,
       getDockerDriverGatewayEndpoint: () => "https://127.0.0.1",
@@ -137,7 +147,7 @@ describe("gateway lifecycle late binding", () => {
         unverifiedPids: [],
       }),
       getDockerDriverGatewayRuntimeDrift: () => null,
-      getDockerDriverGatewayStateDir: () => "/tmp/gateway",
+      getDockerDriverGatewayStateDir: () => stateDir,
       getInstalledOpenshellVersion: () => "0.0.0",
       isDockerDriverGatewayHttpReady: async () => true,
       isDockerDriverGatewayProcessAlive: () => false,
@@ -157,26 +167,37 @@ describe("gateway lifecycle late binding", () => {
 
     name = "resumed";
     port = 9777;
-    vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", "/tmp/gateway");
+    vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", stateDir);
     try {
       await start.startDockerDriverGateway();
+
+      expect(managedStart).toHaveBeenCalledWith(
+        expect.objectContaining({ gatewayName: "resumed" }),
+      );
+      expect(verifyReachability).toHaveBeenCalledWith(
+        false,
+        expect.objectContaining({ port: 9777 }),
+      );
+      expect(
+        gatewayBinding.managedGatewayStateRootOwnershipFailure({
+          gatewayName: "resumed",
+          gatewayPort: 9777,
+          stateDir,
+        }),
+      ).toBeNull();
+
+      const unsafeStateDir = path.join(root, "operator-data");
+      fs.mkdirSync(unsafeStateDir, { mode: 0o700 });
+      fs.writeFileSync(path.join(unsafeStateDir, "keep.txt"), "keep\n", { mode: 0o600 });
+      vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", unsafeStateDir);
+
+      await expect(start.startDockerDriverGateway()).rejects.toThrow(/refusing to adopt/);
+      expect(fs.readFileSync(path.join(unsafeStateDir, "keep.txt"), "utf8")).toBe("keep\n");
+      expect(getDockerDriverGatewayEnv).toHaveBeenCalledTimes(1);
+      expect(managedStart).toHaveBeenCalledTimes(1);
     } finally {
       vi.unstubAllEnvs();
+      fs.rmSync(root, { force: true, recursive: true });
     }
-
-    expect(managedStart).toHaveBeenCalledWith(expect.objectContaining({ gatewayName: "resumed" }));
-    expect(verifyReachability).toHaveBeenCalledWith(false, expect.objectContaining({ port: 9777 }));
-    expect(ensureManagedGatewayStateRoot).toHaveBeenCalledWith(
-      { gatewayName: "resumed", gatewayPort: 9777, stateDir: "/tmp/gateway" },
-      expect.objectContaining({ isLegacyManagedState: expect.any(Function) }),
-    );
-    expect(resolveGatewayStateDirForPort).toHaveBeenCalledWith({
-      configured: "/tmp/gateway",
-      home: expect.any(String),
-      port: 9777,
-    });
-    expect(ensureManagedGatewayStateRoot.mock.invocationCallOrder[0]).toBeLessThan(
-      getDockerDriverGatewayEnv.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
-    );
   });
 });

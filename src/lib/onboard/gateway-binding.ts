@@ -20,11 +20,7 @@
  */
 
 import type { GatewayReuseState } from "../state/gateway";
-import {
-  BASE_GATEWAY_STATE_DIR_NAME,
-  DEFAULT_GATEWAY_PORT,
-  resolveGatewayStateDirName,
-} from "./gateway/state-dir";
+import { DEFAULT_GATEWAY_PORT } from "./gateway/state-dir";
 
 export {
   BASE_GATEWAY_STATE_DIR_NAME,

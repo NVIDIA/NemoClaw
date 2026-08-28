@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { waitUntil } from "../core/wait";
-import { resolveGatewayStateDirForPort } from "./gateway/state-dir";
+import { DEFAULT_GATEWAY_PORT, resolveGatewayStateDirForPort } from "./gateway/state-dir";
 import {
   gatewayIdForStateDir,
   hasStateScopedSandboxNamespace,
@@ -125,11 +125,12 @@ function defaultCommandExists(command: string, env: NodeJS.ProcessEnv): boolean 
 export function resolveDockerDriverGatewayStateDir(
   env: NodeJS.ProcessEnv = process.env,
   homeDir: string = env.HOME || os.homedir(),
+  gatewayPort: number = DEFAULT_GATEWAY_PORT,
 ): string {
   return resolveGatewayStateDirForPort({
     configured: env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
     home: homeDir,
-    port: 8080,
+    port: gatewayPort,
   });
 }
 
