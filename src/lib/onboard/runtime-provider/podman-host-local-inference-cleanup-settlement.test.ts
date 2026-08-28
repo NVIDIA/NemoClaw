@@ -277,7 +277,9 @@ describe("Podman inference disposable-probe cleanup settlement", () => {
     const harness = createPodmanHostLocalInferenceTestHarness();
     harness.state.probeNetworkDriftBeforeRemoval = true;
 
-    expect(() => operationRuntime(harness).startManaged(harness.input, harness.writer)).toThrow();
+    expect(() => operationRuntime(harness).startManaged(harness.input, harness.writer)).toThrow(
+      "Podman inference network identity or name changed after qualification.",
+    );
     expect(harness.events.some((event) => event === `podman:rm --force ${"c".repeat(64)}`)).toBe(
       false,
     );
