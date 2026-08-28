@@ -43,6 +43,8 @@ import ts from "typescript";
 import { isDeepStrictEqual } from "node:util";
 import { parse as parseYaml } from "yaml";
 
+import { validateCandidateContract } from "../../tools/managed-images/validate-candidate-contract.mts";
+
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const MANAGED_IMAGE_CONTRACT_PATH = "src/lib/onboard/managed-image/contract.ts";
 const PI_PACKAGE = "@earendil-works/pi-coding-agent";
@@ -61,13 +63,7 @@ const MANAGED_INFERENCE_POLICY = "managed_inference";
 const MANAGED_INFERENCE_HOST = "inference.local";
 const MANAGED_INFERENCE_PORT = 443;
 const MANAGED_INFERENCE_PROTOCOL = "rest";
-const APPROVED_ENDPOINT_FIELDS = [
-  "enforcement",
-  "host",
-  "port",
-  "protocol",
-  "rules",
-];
+const APPROVED_ENDPOINT_FIELDS = ["enforcement", "host", "port", "protocol", "rules"];
 const APPROVED_INFERENCE_RULE_FIELDS = ["allow"];
 const APPROVED_INFERENCE_ALLOW_FIELDS = ["method", "path"];
 const APPROVED_INFERENCE_ROUTES = [
@@ -343,49 +339,14 @@ function verifyCohortSeparation(workflow: string): string[] {
 export function verifyPiQualificationReceipts(sources: PiArtifactSources): string[] {
   const failures: string[] = [];
   const receipts = Object.entries(sources.qualificationReceipts).flatMap(([platform, contents]) => {
+    const receiptPlatform = platform as keyof typeof PI_QUALIFICATION_RECEIPT_PATHS;
     try {
-      const contract = asRecord(JSON.parse(contents) as unknown);
-      const source = asRecord(contract.source);
-      const digest = contract.digest;
-      const expectedImage = "ghcr.io/nvidia/nemoclaw/pi-sandbox";
-      const expectedContractKeys = [
-        "agent",
-        "capabilityContractVersion",
-        "contractVersion",
-        "digest",
-        "image",
-        "platform",
-        "reference",
-        "source",
-        "startupProfileContractVersion",
-      ];
-      const expectedSourceKeys = ["cohort", "release", "repository", "revision"];
-      if (
-        !isDeepStrictEqual(Object.keys(contract).sort(), expectedContractKeys) ||
-        !isDeepStrictEqual(Object.keys(source).sort(), expectedSourceKeys) ||
-        contract.contractVersion !== 1 ||
-        contract.agent !== "pi" ||
-        contract.platform !== platform ||
-        contract.image !== expectedImage ||
-        typeof digest !== "string" ||
-        !/^sha256:[a-f0-9]{64}$/u.test(digest) ||
-        contract.reference !== `${expectedImage}@${digest}` ||
-        source.repository !== "NVIDIA/NemoClaw" ||
-        typeof source.revision !== "string" ||
-        !/^[a-f0-9]{40}$/u.test(source.revision) ||
-        typeof source.release !== "string" ||
-        !/^v[0-9]+(?:[.][0-9]+){1,3}(?:[-.][0-9A-Za-z][0-9A-Za-z.-]*)?$/u.test(source.release) ||
-        typeof source.cohort !== "string" ||
-        !/^ghrun-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$/u.test(source.cohort) ||
-        contract.startupProfileContractVersion !== 1 ||
-        contract.capabilityContractVersion !== 1
-      ) {
-        throw new Error("qualification receipt failed exact contract validation");
-      }
+      const contract = validateCandidateContract(JSON.parse(contents) as unknown, receiptPlatform);
+      if (contract.agent !== "pi") throw new Error("qualification receipt agent must be pi");
       return [{ platform, contents, contract }];
     } catch (error) {
       failures.push(
-        `${PI_QUALIFICATION_RECEIPT_PATHS[platform as keyof typeof PI_QUALIFICATION_RECEIPT_PATHS]}: ${error instanceof Error ? error.message : String(error)}`,
+        `${PI_QUALIFICATION_RECEIPT_PATHS[receiptPlatform]}: ${error instanceof Error ? error.message : String(error)}`,
       );
       return [];
     }

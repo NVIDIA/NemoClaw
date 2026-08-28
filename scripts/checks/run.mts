@@ -55,8 +55,8 @@ export const CHECKS: readonly CheckCommand[] = [
   },
   {
     name: "pi-candidate-artifacts",
-    command: TSX,
-    args: ["scripts/checks/pi-candidate-artifacts.mts"],
+    command: "node",
+    args: ["--experimental-strip-types", "scripts/checks/pi-candidate-artifacts.mts"],
   },
   {
     name: "no-defaulted-dependent-flags",
