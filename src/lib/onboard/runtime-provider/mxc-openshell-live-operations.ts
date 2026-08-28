@@ -12,9 +12,10 @@ import type {
   RuntimeProviderNativeArtifactVerifyAndCreateOutcome,
 } from "./contract";
 import type { MxcOpenShellAttachmentReceipt } from "./mxc-openshell-attachment";
-import type {
-  MxcOpenShellCreateRequest,
-  MxcOpenShellRequestScopedOperations,
+import {
+  requireIssuedMxcOpenShellCreateRequest,
+  type MxcOpenShellCreateRequest,
+  type MxcOpenShellRequestScopedOperations,
 } from "./mxc-openshell-create-request";
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
@@ -47,6 +48,32 @@ export interface MxcOpenShellLiveCommandResult {
   readonly status: number | null;
   readonly stdout: string;
   readonly stderr: string;
+}
+
+export type MxcOpenShellLiveFailureOperation =
+  | "create"
+  | "readiness"
+  | "inspect"
+  | "list"
+  | "delete"
+  | "confirm";
+
+export type MxcOpenShellLiveFailureClass =
+  | "boundary-error"
+  | "identity-drift"
+  | "invalid-output"
+  | "nonzero-exit"
+  | "timeout"
+  | "unknown-result";
+
+export interface MxcOpenShellLiveFailureRecord {
+  readonly contractVersion: 1;
+  readonly providerId: "mxc";
+  readonly operation: MxcOpenShellLiveFailureOperation;
+  readonly errorClass: MxcOpenShellLiveFailureClass;
+  readonly sandboxName: string;
+  readonly lifecycleGeneration: string;
+  readonly sandboxId?: string;
 }
 
 export type MxcOpenShellVerifiedCreateResult =
@@ -84,6 +111,8 @@ export interface MxcOpenShellLiveHostBoundary {
     readonly sandboxId: string;
     readonly command: MxcOpenShellLiveCommand;
   }): Promise<MxcOpenShellLiveCommandResult>;
+  /** Record only bounded operation and identity evidence; never command output or environment. */
+  recordFailure(record: MxcOpenShellLiveFailureRecord): void;
 }
 
 export interface MxcOpenShellLiveOperationsInput {
@@ -95,7 +124,11 @@ export interface MxcOpenShellLiveOperationsInput {
 }
 
 export class MxcOpenShellLiveOperationsError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly operation?: MxcOpenShellLiveFailureOperation,
+    readonly errorClass?: MxcOpenShellLiveFailureClass,
+  ) {
     super(`Inactive OpenShell MXC live operation failed: ${message}`);
     this.name = "MxcOpenShellLiveOperationsError";
   }
@@ -256,35 +289,68 @@ function deleteCommand(
   });
 }
 
-function parseJson(result: MxcOpenShellLiveCommandResult, label: string): unknown {
+function parseJson(
+  result: MxcOpenShellLiveCommandResult,
+  label: string,
+  operation: MxcOpenShellLiveFailureOperation,
+): unknown {
+  if (result.status === null) {
+    throw new MxcOpenShellLiveOperationsError(`${label} timed out`, operation, "timeout");
+  }
+  if (result.status !== 0) {
+    throw new MxcOpenShellLiveOperationsError(
+      `${label} returned a nonzero status`,
+      operation,
+      "nonzero-exit",
+    );
+  }
   if (
-    result.status !== 0 ||
     Buffer.byteLength(result.stdout, "utf8") > MAX_OUTPUT_BYTES ||
     Buffer.byteLength(result.stderr, "utf8") > MAX_OUTPUT_BYTES
   ) {
-    throw new MxcOpenShellLiveOperationsError(`${label} was not proven`);
+    throw new MxcOpenShellLiveOperationsError(
+      `${label} output is invalid`,
+      operation,
+      "invalid-output",
+    );
   }
   try {
     return JSON.parse(result.stdout) as unknown;
   } catch {
-    throw new MxcOpenShellLiveOperationsError(`${label} returned invalid JSON`);
+    throw new MxcOpenShellLiveOperationsError(
+      `${label} returned invalid JSON`,
+      operation,
+      "invalid-output",
+    );
   }
 }
 
-function record(value: unknown, label: string): Record<string, unknown> {
+function record(
+  value: unknown,
+  label: string,
+  operation: MxcOpenShellLiveFailureOperation,
+): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new MxcOpenShellLiveOperationsError(`${label} is invalid`);
+    throw new MxcOpenShellLiveOperationsError(`${label} is invalid`, operation, "invalid-output");
   }
   return value as Record<string, unknown>;
 }
 
-function sandboxRecord(value: unknown, label: string): SandboxRecord {
-  const input = record(value, label);
-  const labels = record(input.labels, `${label} labels`);
+function sandboxRecord(
+  value: unknown,
+  label: string,
+  operation: MxcOpenShellLiveFailureOperation,
+): SandboxRecord {
+  const input = record(value, label, operation);
+  const labels = record(input.labels, `${label} labels`, operation);
   const parsedLabels: Record<string, string> = {};
   for (const [name, entry] of Object.entries(labels)) {
     if (typeof entry !== "string") {
-      throw new MxcOpenShellLiveOperationsError(`${label} labels are invalid`);
+      throw new MxcOpenShellLiveOperationsError(
+        `${label} labels are invalid`,
+        operation,
+        "invalid-output",
+      );
     }
     parsedLabels[name] = entry;
   }
@@ -295,7 +361,11 @@ function sandboxRecord(value: unknown, label: string): SandboxRecord {
     typeof input.phase !== "string" ||
     typeof input.workspace !== "string"
   ) {
-    throw new MxcOpenShellLiveOperationsError(`${label} identity is invalid`);
+    throw new MxcOpenShellLiveOperationsError(
+      `${label} identity is invalid`,
+      operation,
+      "invalid-output",
+    );
   }
   return cloneAndDeepFreeze({
     id: input.id,
@@ -312,13 +382,22 @@ function requireRequestIdentity(
   policy: MxcOpenShellLivePolicyBinding,
   request: MxcOpenShellCreateRequest,
   workspace: string,
+  operation: MxcOpenShellLiveFailureOperation,
 ): void {
   if (sandbox.name !== request.sandboxName || sandbox.workspace !== workspace) {
-    throw new MxcOpenShellLiveOperationsError("sandbox name or workspace identity drifted");
+    throw new MxcOpenShellLiveOperationsError(
+      "sandbox name or workspace identity drifted",
+      operation,
+      "identity-drift",
+    );
   }
   for (const [name, value] of Object.entries(labelsFor(attachment, policy, request))) {
     if (sandbox.labels[name] !== value) {
-      throw new MxcOpenShellLiveOperationsError("sandbox lifecycle authority drifted");
+      throw new MxcOpenShellLiveOperationsError(
+        "sandbox lifecycle authority drifted",
+        operation,
+        "identity-drift",
+      );
     }
   }
 }
@@ -364,6 +443,54 @@ function retainedOutcome(
   });
 }
 
+function reportFailure(
+  recordFailure: (record: MxcOpenShellLiveFailureRecord) => void,
+  request: MxcOpenShellCreateRequest,
+  operation: MxcOpenShellLiveFailureOperation,
+  error: unknown,
+  sandboxId?: string,
+): void {
+  const recordedOperation =
+    error instanceof MxcOpenShellLiveOperationsError && error.operation
+      ? error.operation
+      : operation;
+  const errorClass =
+    error instanceof MxcOpenShellLiveOperationsError && error.errorClass
+      ? error.errorClass
+      : "boundary-error";
+  try {
+    recordFailure(
+      cloneAndDeepFreeze({
+        contractVersion: 1,
+        providerId: "mxc",
+        operation: recordedOperation,
+        errorClass,
+        sandboxName: request.sandboxName,
+        lifecycleGeneration: request.lifecycleGeneration,
+        ...(sandboxId === undefined ? {} : { sandboxId }),
+      }),
+    );
+  } catch {
+    // Diagnostics must not replace the conservative lifecycle outcome.
+  }
+}
+
+async function runHostCommand(
+  run: MxcOpenShellLiveHostBoundary["run"],
+  input: Parameters<MxcOpenShellLiveHostBoundary["run"]>[0],
+  operation: MxcOpenShellLiveFailureOperation,
+): Promise<MxcOpenShellLiveCommandResult> {
+  try {
+    return await run(input);
+  } catch {
+    throw new MxcOpenShellLiveOperationsError(
+      "trusted host command failed",
+      operation,
+      "boundary-error",
+    );
+  }
+}
+
 /**
  * Adapt one qualified installation and trusted Windows host boundary to request-scoped OpenShell
  * operations. This remains dormant: it neither registers MXC nor supplies an accepted package,
@@ -381,7 +508,8 @@ export function createMxcOpenShellLiveOperations(
   if (
     typeof value.boundary?.verifyAndRunCreate !== "function" ||
     typeof value.boundary.run !== "function" ||
-    typeof value.boundary.deleteExact !== "function"
+    typeof value.boundary.deleteExact !== "function" ||
+    typeof value.boundary.recordFailure !== "function"
   ) {
     throw new MxcOpenShellLiveOperationsError("a trusted live host boundary is required");
   }
@@ -389,11 +517,13 @@ export function createMxcOpenShellLiveOperations(
   const verifyAndRunCreate = value.boundary.verifyAndRunCreate.bind(value.boundary);
   const run = value.boundary.run.bind(value.boundary);
   const deleteExact = value.boundary.deleteExact.bind(value.boundary);
+  const recordFailure = value.boundary.recordFailure.bind(value.boundary);
 
   const operations: MxcOpenShellRequestScopedOperations = {
     verifyAndCreate: async (
       request: MxcOpenShellCreateRequest,
     ): Promise<RuntimeProviderNativeArtifactVerifyAndCreateOutcome> => {
+      requireIssuedMxcOpenShellCreateRequest(request);
       try {
         const result = await verifyAndRunCreate({
           attachment,
@@ -407,85 +537,185 @@ export function createMxcOpenShellLiveOperations(
         if (result.status === "create-rejected") {
           return { status: "not-created", reason: "create-rejected" } as const;
         }
-        if (result.status === "unknown" || result.command.status !== 0) {
+        if (result.status === "unknown") {
+          reportFailure(
+            recordFailure,
+            request,
+            "create",
+            new MxcOpenShellLiveOperationsError(
+              "sandbox creation result is unknown",
+              "create",
+              "unknown-result",
+            ),
+          );
           return { status: "unknown" } as const;
         }
-        const sandbox = sandboxRecord(parseJson(result.command, "sandbox creation"), "sandbox");
-        requireRequestIdentity(sandbox, attachment, policy, request, workspace);
+        if (result.command.status !== 0) {
+          reportFailure(
+            recordFailure,
+            request,
+            "create",
+            new MxcOpenShellLiveOperationsError(
+              "sandbox creation did not complete",
+              "create",
+              result.command.status === null ? "timeout" : "nonzero-exit",
+            ),
+          );
+          return { status: "unknown" } as const;
+        }
+        const sandbox = sandboxRecord(
+          parseJson(result.command, "sandbox creation", "create"),
+          "sandbox",
+          "create",
+        );
+        requireRequestIdentity(sandbox, attachment, policy, request, workspace, "create");
         return createdOutcome(request);
-      } catch {
+      } catch (error) {
+        reportFailure(recordFailure, request, "create", error);
         return { status: "unknown" } as const;
       }
     },
     verifyReadiness: async (request: MxcOpenShellCreateRequest) => {
-      const result = await run({
-        attachment,
-        command: inspectCommand(attachment, gatewayName, workspace, request.sandboxName),
-      });
-      const sandbox = sandboxRecord(parseJson(result, "sandbox readiness"), "sandbox");
-      requireRequestIdentity(sandbox, attachment, policy, request, workspace);
-      return readinessEvidence(request, sandbox.phase === "Ready");
+      requireIssuedMxcOpenShellCreateRequest(request);
+      try {
+        const result = await runHostCommand(
+          run,
+          {
+            attachment,
+            command: inspectCommand(attachment, gatewayName, workspace, request.sandboxName),
+          },
+          "readiness",
+        );
+        const sandbox = sandboxRecord(
+          parseJson(result, "sandbox readiness", "readiness"),
+          "sandbox",
+          "readiness",
+        );
+        requireRequestIdentity(sandbox, attachment, policy, request, workspace, "readiness");
+        return readinessEvidence(request, sandbox.phase === "Ready");
+      } catch (error) {
+        reportFailure(recordFailure, request, "readiness", error);
+        throw error;
+      }
     },
     recoverCreate: async (
       request: MxcOpenShellCreateRequest,
     ): Promise<RuntimeProviderNativeArtifactRecoveryOutcome> => {
-      const inspected = await run({
-        attachment,
-        command: inspectCommand(attachment, gatewayName, workspace, request.sandboxName),
-      });
+      requireIssuedMxcOpenShellCreateRequest(request);
       let candidate: SandboxRecord | undefined;
-      if (inspected.status === 0) {
-        candidate = sandboxRecord(parseJson(inspected, "sandbox recovery inspection"), "sandbox");
-      } else {
-        const before = await run({
-          attachment,
-          command: listCommand(attachment, gatewayName, workspace, request),
-        });
-        const listed = parseJson(before, "sandbox recovery listing");
-        if (!Array.isArray(listed)) {
-          throw new MxcOpenShellLiveOperationsError("sandbox recovery listing is invalid");
-        }
-        const matches = listed.map((entry, index) =>
-          sandboxRecord(entry, `sandbox recovery item ${index}`),
-        );
-        if (matches.length === 0) return { status: "absent" };
-        if (matches.length !== 1) {
-          throw new MxcOpenShellLiveOperationsError("sandbox recovery identity is ambiguous");
-        }
-        candidate = matches[0]!;
-      }
       try {
-        requireRequestIdentity(candidate, attachment, policy, request, workspace);
-      } catch {
-        return retainedOutcome(request);
+        const inspected = await runHostCommand(
+          run,
+          {
+            attachment,
+            command: inspectCommand(attachment, gatewayName, workspace, request.sandboxName),
+          },
+          "inspect",
+        );
+        if (inspected.status === 0) {
+          candidate = sandboxRecord(
+            parseJson(inspected, "sandbox recovery inspection", "inspect"),
+            "sandbox",
+            "inspect",
+          );
+        } else {
+          const before = await runHostCommand(
+            run,
+            {
+              attachment,
+              command: listCommand(attachment, gatewayName, workspace, request),
+            },
+            "list",
+          );
+          const listed = parseJson(before, "sandbox recovery listing", "list");
+          if (!Array.isArray(listed)) {
+            throw new MxcOpenShellLiveOperationsError(
+              "sandbox recovery listing is invalid",
+              "list",
+              "invalid-output",
+            );
+          }
+          const matches = listed.map((entry, index) =>
+            sandboxRecord(entry, `sandbox recovery item ${index}`, "list"),
+          );
+          if (matches.length === 0) return { status: "absent" };
+          if (matches.length !== 1) {
+            throw new MxcOpenShellLiveOperationsError(
+              "sandbox recovery identity is ambiguous",
+              "list",
+              "identity-drift",
+            );
+          }
+          candidate = matches[0]!;
+        }
+        try {
+          requireRequestIdentity(candidate, attachment, policy, request, workspace, "inspect");
+        } catch (error) {
+          reportFailure(recordFailure, request, "inspect", error, candidate.id);
+          return retainedOutcome(request);
+        }
+        let removed: MxcOpenShellLiveCommandResult;
+        try {
+          removed = await deleteExact({
+            attachment,
+            request,
+            sandboxId: candidate.id,
+            command: deleteCommand(attachment, gatewayName, workspace, request.sandboxName),
+          });
+        } catch {
+          const error = new MxcOpenShellLiveOperationsError(
+            "exact sandbox deletion failed",
+            "delete",
+            "boundary-error",
+          );
+          reportFailure(recordFailure, request, "delete", error, candidate.id);
+          return retainedOutcome(request);
+        }
+        if (removed.status !== 0) {
+          const error = new MxcOpenShellLiveOperationsError(
+            "exact sandbox deletion did not complete",
+            "delete",
+            removed.status === null ? "timeout" : "nonzero-exit",
+          );
+          reportFailure(recordFailure, request, "delete", error, candidate.id);
+          return retainedOutcome(request);
+        }
+        const after = await runHostCommand(
+          run,
+          {
+            attachment,
+            command: listCommand(attachment, gatewayName, workspace, request),
+          },
+          "confirm",
+        );
+        const relisted = parseJson(after, "sandbox recovery confirmation", "confirm");
+        if (!Array.isArray(relisted)) {
+          throw new MxcOpenShellLiveOperationsError(
+            "sandbox recovery confirmation is invalid",
+            "confirm",
+            "invalid-output",
+          );
+        }
+        if (relisted.length !== 0) {
+          const error = new MxcOpenShellLiveOperationsError(
+            "sandbox recovery confirmation found retained resources",
+            "confirm",
+            "unknown-result",
+          );
+          reportFailure(recordFailure, request, "confirm", error, candidate.id);
+          return retainedOutcome(request);
+        }
+        return cloneAndDeepFreeze({
+          status: "removed",
+          authoritySha256: request.authoritySha256,
+          providerHandle: request.providerHandle,
+          sandboxName: request.sandboxName,
+          lifecycleGeneration: request.lifecycleGeneration,
+        });
+      } catch (error) {
+        reportFailure(recordFailure, request, "inspect", error, candidate?.id);
+        throw error;
       }
-      const removed = await deleteExact({
-        attachment,
-        request,
-        sandboxId: candidate.id,
-        command: deleteCommand(attachment, gatewayName, workspace, request.sandboxName),
-      });
-      if (removed.status !== 0) {
-        return retainedOutcome(request);
-      }
-      const after = await run({
-        attachment,
-        command: listCommand(attachment, gatewayName, workspace, request),
-      });
-      const relisted = parseJson(after, "sandbox recovery confirmation");
-      if (!Array.isArray(relisted)) {
-        throw new MxcOpenShellLiveOperationsError("sandbox recovery confirmation is invalid");
-      }
-      if (relisted.length !== 0) {
-        return retainedOutcome(request);
-      }
-      return cloneAndDeepFreeze({
-        status: "removed",
-        authoritySha256: request.authoritySha256,
-        providerHandle: request.providerHandle,
-        sandboxName: request.sandboxName,
-        lifecycleGeneration: request.lifecycleGeneration,
-      });
     },
   };
   return Object.freeze(operations);

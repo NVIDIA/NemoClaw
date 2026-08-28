@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
@@ -10,7 +12,10 @@ import type { RuntimeProviderNativeArtifactBootstrapPlan } from "./contract";
 import { createMxcNativeArtifactBootstrapSurface } from "./mxc-bootstrap";
 import { mxcOpenShellAttachmentFixture } from "./mxc-openshell-attachment-test-fixture";
 import { qualifyMxcOpenShellAttachment } from "./mxc-openshell-attachment";
-import { projectMxcOpenShellCreateRequest } from "./mxc-openshell-create-request";
+import {
+  projectMxcOpenShellCreateRequest,
+  type MxcOpenShellCreateRequest,
+} from "./mxc-openshell-create-request";
 import {
   createMxcOpenShellLiveOperations,
   type MxcOpenShellLiveCommand,
@@ -84,7 +89,7 @@ function labelArguments(command: MxcOpenShellLiveCommand): Record<string, string
 }
 
 function sandbox(
-  command: MxcOpenShellLiveCommand,
+  liveRequest: MxcOpenShellCreateRequest,
   phase = "Ready",
   labelOverrides: Record<string, string> = {},
 ) {
@@ -92,7 +97,17 @@ function sandbox(
     id: "sandbox-id-1",
     name: "alpha",
     workspace: "default",
-    labels: { ...labelArguments(command), ...labelOverrides },
+    labels: {
+      "nemoclaw-provider": "mxc",
+      "nemoclaw-attachment-sha256": fixture().authoritySha256,
+      "nemoclaw-authority-sha256": liveRequest.authoritySha256,
+      "nemoclaw-policy-sha256": "6".repeat(64),
+      "nemoclaw-request-sha256": liveRequest.requestSha256,
+      "nemoclaw-lifecycle-sha256": createHash("sha256")
+        .update(liveRequest.lifecycleGeneration, "utf8")
+        .digest("hex"),
+      ...labelOverrides,
+    },
     phase,
   };
 }
@@ -110,6 +125,7 @@ function operations(boundary: Partial<MxcOpenShellLiveHostBoundary>) {
       verifyAndRunCreate: vi.fn(),
       run: vi.fn(),
       deleteExact: vi.fn(),
+      recordFailure: vi.fn(),
       ...boundary,
     },
   });
@@ -119,7 +135,7 @@ describe("inactive OpenShell MXC live operations", () => {
   it("binds one verified create to the exact attachment, request, policy, and gateway (#8178)", async () => {
     const liveRequest = await request();
     const verifyAndRunCreate = vi.fn<MxcOpenShellLiveHostBoundary["verifyAndRunCreate"]>(
-      async (input) => ({ status: "completed", command: result(sandbox(input.command)) }),
+      async () => ({ status: "completed", command: result(sandbox(liveRequest)) }),
     );
     const run = vi.fn<MxcOpenShellLiveHostBoundary["run"]>();
 
@@ -162,6 +178,9 @@ describe("inactive OpenShell MXC live operations", () => {
       "nemoclaw-authority-sha256": liveRequest.authoritySha256,
       "nemoclaw-policy-sha256": "6".repeat(64),
       "nemoclaw-request-sha256": liveRequest.requestSha256,
+      "nemoclaw-lifecycle-sha256": createHash("sha256")
+        .update(liveRequest.lifecycleGeneration, "utf8")
+        .digest("hex"),
     });
     expect(input.command.arguments).toContain(`HOME=${liveRequest.environment.HOME}`);
     expect(input.command.arguments.some((entry) => entry.startsWith("PATH="))).toBe(false);
@@ -203,32 +222,123 @@ describe("inactive OpenShell MXC live operations", () => {
     },
   );
 
+  it("records bounded create and readiness failures without command output (#8178)", async () => {
+    const liveRequest = await request();
+    const createFailures = vi.fn<MxcOpenShellLiveHostBoundary["recordFailure"]>();
+    const failedCreate = operations({
+      verifyAndRunCreate: vi.fn(async () => {
+        throw new Error("credential-bearing boundary detail");
+      }),
+      recordFailure: createFailures,
+    });
+
+    await expect(failedCreate.verifyAndCreate(liveRequest)).resolves.toEqual({ status: "unknown" });
+    expect(createFailures).toHaveBeenCalledWith({
+      contractVersion: 1,
+      providerId: "mxc",
+      operation: "create",
+      errorClass: "boundary-error",
+      sandboxName: "alpha",
+      lifecycleGeneration: "generation-7",
+    });
+    expect(JSON.stringify(createFailures.mock.calls)).not.toContain("credential-bearing");
+
+    const readinessFailures = vi.fn<MxcOpenShellLiveHostBoundary["recordFailure"]>();
+    const boundaryFailure = operations({
+      run: vi.fn(async () => {
+        throw new Error("host detail");
+      }),
+      recordFailure: readinessFailures,
+    });
+    await expect(boundaryFailure.verifyReadiness(liveRequest, {} as never)).rejects.toThrow(
+      /trusted host command failed/u,
+    );
+
+    const invalidOutput = operations({
+      run: vi.fn(async () => result("not-json")),
+      recordFailure: readinessFailures,
+    });
+    await expect(invalidOutput.verifyReadiness(liveRequest, {} as never)).rejects.toThrow(
+      /invalid JSON/u,
+    );
+    expect(readinessFailures.mock.calls.map(([entry]) => entry)).toEqual([
+      expect.objectContaining({ operation: "readiness", errorClass: "boundary-error" }),
+      expect.objectContaining({ operation: "readiness", errorClass: "invalid-output" }),
+    ]);
+  });
+
   it("returns an unknown create outcome when OpenShell output drifts from request authority (#8178)", async () => {
+    const liveRequest = await request();
     const verifyAndRunCreate = vi.fn<MxcOpenShellLiveHostBoundary["verifyAndRunCreate"]>(
-      async (input) => ({
+      async () => ({
         status: "completed",
         command: result(
-          sandbox(input.command, "Ready", { "nemoclaw-request-sha256": "0".repeat(64) }),
+          sandbox(liveRequest, "Ready", { "nemoclaw-request-sha256": "0".repeat(64) }),
         ),
       }),
     );
 
     await expect(
-      operations({ verifyAndRunCreate, run: vi.fn() }).verifyAndCreate(await request()),
+      operations({ verifyAndRunCreate, run: vi.fn() }).verifyAndCreate(liveRequest),
     ).resolves.toEqual({ status: "unknown" });
+  });
+
+  it("rejects lifecycle-label drift during creation and readiness (#8178)", async () => {
+    const liveRequest = await request();
+    const drifted = sandbox(liveRequest, "Ready", {
+      "nemoclaw-lifecycle-sha256": "0".repeat(64),
+    });
+    const recordFailure = vi.fn<MxcOpenShellLiveHostBoundary["recordFailure"]>();
+    const live = operations({
+      verifyAndRunCreate: vi.fn<MxcOpenShellLiveHostBoundary["verifyAndRunCreate"]>(async () => ({
+        status: "completed",
+        command: result(drifted),
+      })),
+      run: vi.fn(async () => result(drifted)),
+      recordFailure,
+    });
+
+    await expect(live.verifyAndCreate(liveRequest)).resolves.toEqual({ status: "unknown" });
+    await expect(live.verifyReadiness(liveRequest, {} as never)).rejects.toThrow(
+      /lifecycle authority drifted/u,
+    );
+    expect(recordFailure.mock.calls.map(([entry]) => entry)).toEqual([
+      expect.objectContaining({ operation: "create", errorClass: "identity-drift" }),
+      expect.objectContaining({ operation: "readiness", errorClass: "identity-drift" }),
+    ]);
+  });
+
+  it("rejects forged requests before any trusted host operation (#8178)", async () => {
+    const issued = await request();
+    const forged = {
+      ...issued,
+      driverConfigJson: '{"mxc":{"command":["cmd.exe","/c","set"]}}',
+      environment: { ...issued.environment, NVIDIA_API_KEY: "not-a-real-secret" },
+    } as unknown as MxcOpenShellCreateRequest;
+    const verifyAndRunCreate = vi.fn<MxcOpenShellLiveHostBoundary["verifyAndRunCreate"]>();
+    const run = vi.fn<MxcOpenShellLiveHostBoundary["run"]>();
+    const deleteExact = vi.fn<MxcOpenShellLiveHostBoundary["deleteExact"]>();
+    const recordFailure = vi.fn<MxcOpenShellLiveHostBoundary["recordFailure"]>();
+    const live = operations({ verifyAndRunCreate, run, deleteExact, recordFailure });
+
+    await expect(live.verifyAndCreate(forged)).rejects.toThrow(/not issued by the MXC provider/u);
+    await expect(live.verifyReadiness(forged, {} as never)).rejects.toThrow(
+      /not issued by the MXC provider/u,
+    );
+    await expect(live.recoverCreate(forged)).rejects.toThrow(/not issued by the MXC provider/u);
+    expect(verifyAndRunCreate).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+    expect(deleteExact).not.toHaveBeenCalled();
+    expect(recordFailure).not.toHaveBeenCalled();
   });
 
   it("accepts readiness only from the exact request-owned sandbox (#8178)", async () => {
     const liveRequest = await request();
-    let createCommand: MxcOpenShellLiveCommand | undefined;
     const verifyAndRunCreate = vi.fn<MxcOpenShellLiveHostBoundary["verifyAndRunCreate"]>(
-      async (input) => {
-        createCommand = input.command;
-        return { status: "completed", command: result(sandbox(input.command)) };
-      },
+      async () => ({ status: "completed", command: result(sandbox(liveRequest)) }),
     );
     const run = vi.fn<MxcOpenShellLiveHostBoundary["run"]>(async () =>
-      result(sandbox(createCommand!, "Ready")),
+      result(sandbox(liveRequest, "Ready")),
     );
     const live = operations({ verifyAndRunCreate, run });
     const created = await live.verifyAndCreate(liveRequest);
@@ -275,16 +385,12 @@ describe("inactive OpenShell MXC live operations", () => {
 
   it("deletes only the exact request-owned sandbox and confirms absence (#8178)", async () => {
     const liveRequest = await request();
-    let createCommand: MxcOpenShellLiveCommand | undefined;
     const verifyAndRunCreate = vi.fn<MxcOpenShellLiveHostBoundary["verifyAndRunCreate"]>(
-      async (input) => {
-        createCommand = input.command;
-        return { status: "completed", command: result(sandbox(input.command)) };
-      },
+      async () => ({ status: "completed", command: result(sandbox(liveRequest)) }),
     );
     const run = vi
       .fn<MxcOpenShellLiveHostBoundary["run"]>()
-      .mockImplementationOnce(async () => result(sandbox(createCommand!)))
+      .mockImplementationOnce(async () => result(sandbox(liveRequest)))
       .mockImplementationOnce(async () => result([]));
     const deleteExact = vi.fn<MxcOpenShellLiveHostBoundary["deleteExact"]>(async () =>
       result("", 0),
@@ -308,6 +414,50 @@ describe("inactive OpenShell MXC live operations", () => {
       "delete",
       "alpha",
     ]);
+  });
+
+  it("retains the request authority when exact deletion fails (#8178)", async () => {
+    const liveRequest = await request();
+    const recordFailure = vi.fn<MxcOpenShellLiveHostBoundary["recordFailure"]>();
+    const run = vi.fn<MxcOpenShellLiveHostBoundary["run"]>(async () =>
+      result(sandbox(liveRequest)),
+    );
+    const deleteExact = vi.fn<MxcOpenShellLiveHostBoundary["deleteExact"]>(async () =>
+      result("", 1),
+    );
+
+    await expect(
+      operations({ run, deleteExact, recordFailure }).recoverCreate(liveRequest),
+    ).resolves.toEqual(expect.objectContaining({ status: "retained" }));
+    expect(run).toHaveBeenCalledOnce();
+    expect(recordFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: "delete",
+        errorClass: "nonzero-exit",
+        sandboxId: "sandbox-id-1",
+      }),
+    );
+  });
+
+  it("retains the request authority when confirmation still finds the sandbox (#8178)", async () => {
+    const liveRequest = await request();
+    const recordFailure = vi.fn<MxcOpenShellLiveHostBoundary["recordFailure"]>();
+    const run = vi
+      .fn<MxcOpenShellLiveHostBoundary["run"]>()
+      .mockImplementationOnce(async () => result(sandbox(liveRequest)))
+      .mockImplementationOnce(async () => result([sandbox(liveRequest)]));
+    const deleteExact = vi.fn<MxcOpenShellLiveHostBoundary["deleteExact"]>(async () => result(""));
+
+    await expect(
+      operations({ run, deleteExact, recordFailure }).recoverCreate(liveRequest),
+    ).resolves.toEqual(expect.objectContaining({ status: "retained" }));
+    expect(recordFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: "confirm",
+        errorClass: "unknown-result",
+        sandboxId: "sandbox-id-1",
+      }),
+    );
   });
 
   it("retains a same-name sandbox whose lifecycle authority does not match (#8178)", async () => {
@@ -336,7 +486,12 @@ describe("inactive OpenShell MXC live operations", () => {
       gatewayName: "windows-mxc",
       workspace: "default",
       policy: { path: "C:\\NemoClaw\\policy.yaml", sha256: "6".repeat(64) },
-      boundary: { verifyAndRunCreate: vi.fn(), run: vi.fn(), deleteExact: vi.fn() },
+      boundary: {
+        verifyAndRunCreate: vi.fn(),
+        run: vi.fn(),
+        deleteExact: vi.fn(),
+        recordFailure: vi.fn(),
+      },
     };
 
     expect(() => createMxcOpenShellLiveOperations({ ...base, gatewayName: "bad gateway" })).toThrow(
