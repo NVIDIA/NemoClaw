@@ -160,6 +160,7 @@ function runWorkflowShellStep(
 type SdkPackageLocatorFixture = Readonly<{
   artifactFailureRunId?: number;
   artifactsByRunId?: Readonly<Record<string, unknown>>;
+  required?: boolean;
   runs: readonly unknown[];
   step: WorkflowStep;
   workflowRunFailure?: boolean;
@@ -180,7 +181,7 @@ function runSdkPackageLocator(fixture: SdkPackageLocatorFixture): Readonly<{
     mkdirSync(fakeBin);
     writeFileSync(
       join(inspectorDirectory, "prepare-ci-npm-install.mts"),
-      'process.stdout.write(JSON.stringify({ required: true, artifactName: "reviewed-sdk.tgz" }));\n',
+      `process.stdout.write(JSON.stringify({ required: ${String(fixture.required ?? true)}, artifactName: "reviewed-sdk.tgz" }));\n`,
     );
     writeFileSync(join(workflowDirectory, "openshell-sdk-package-pr.yaml"), "name: test\n");
     writeFileSync(join(fakeBin, "seq"), "#!/bin/sh\nprintf '1\\n'\n", { mode: 0o755 });
@@ -672,6 +673,20 @@ describe("pull request and main workflow contracts", () => {
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }
+  });
+
+  it("skips SDK package lookup when the trusted inspector reports no archive is required", () => {
+    const { githubOutput, result } = runSdkPackageLocator({
+      required: false,
+      runs: [],
+      step: requiredWorkflowStep(
+        prWorkflow.jobs["openshell-sdk-package"],
+        "Locate exact base-controlled SDK package run",
+      ),
+    });
+
+    expect(result).toMatchObject({ status: 0, stderr: "" });
+    expect(githubOutput).toBe("required=false\n");
   });
 
   it("explains how to recover when the exact SDK package artifact expired", () => {
