@@ -571,6 +571,7 @@ function resolveInitialSandboxCreatePolicy(
       agent: policyAgent,
       sandboxName: options.sandboxName,
       excludedBaselineKeys: baselineExclusions.map((exclusion) => exclusion.key),
+      credentialBoundMessagingChannels: activeMessagingChannels,
     });
     if (mergedPolicy.missingPresets.length > 0) {
       throw new Error(

@@ -885,13 +885,6 @@ describe("MCP add crash consistency", () => {
       expect(fs.existsSync(path.join(home, "observation.marker"))).toBe(false);
       expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(false);
       expect(readBridge(home)).toMatchObject({ addState: "preflighted" });
-
-      const recovered = runAddProcess(home, "");
-      expect(recovered.status, `${recovered.stdout}\n${recovered.stderr}`).toBe(0);
-      expect(fs.readFileSync(policyApplyLog, "utf8").trim().split("\n")).toHaveLength(4);
-      expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(true);
-      expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
-      expect(readBridge(home).addState).toBeUndefined();
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

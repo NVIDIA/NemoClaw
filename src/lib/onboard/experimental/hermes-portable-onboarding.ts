@@ -9,6 +9,8 @@ import type { AgentDefinition } from "../../agent/defs";
 import { normalizeInferenceSelection, type InferenceSelection } from "../../inference/selection";
 import {
   fingerprintOpenShellSandboxLiveIdentity,
+  NEMOCLAW_CREATE_ATTEMPT_LABEL,
+  NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH,
   parseOpenShellSandboxId,
 } from "../../adapters/openshell/sandbox-identity";
 import {
@@ -143,8 +145,13 @@ export interface HermesPortableOnboardingDeps<T> {
   readonly observeSandbox: (timeoutBudgetMs?: number) => HermesPortableSandboxObservation;
   readonly delaySandboxReadyPublicationPoll?: (milliseconds: number) => Promise<void>;
   readonly readSandboxReadyPublicationClockMs?: () => number;
-  readonly createSandbox: (createArgv: readonly string[], buildContextPath: string) => Promise<T>;
+  readonly createSandbox: (
+    createArgv: readonly string[],
+    buildContextPath: string,
+    effectivePolicySourcePath: string,
+  ) => Promise<T>;
   readonly readRegistry: () => SandboxEntry | null;
+  readonly revalidatePendingCreateRegistry?: () => SandboxEntry;
   readonly compareAndSetRegistryGatewayPort: (
     name: string,
     expected: SandboxEntry,
@@ -251,6 +258,63 @@ export function createHermesPortableReadyCapture(
   };
 }
 
+const CREATE_ATTEMPT_SELECTOR_PREFIX = `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=`;
+
+function scopeHermesPortableCreatedIdentityArgs(
+  args: string[],
+  gatewayName: string,
+): string[] | null {
+  if (
+    args.length !== 10 ||
+    args[0] !== "sandbox" ||
+    args[1] !== "list" ||
+    args[2] !== "-g" ||
+    args[3] !== gatewayName ||
+    args[4] !== "--selector" ||
+    args[6] !== "--output" ||
+    args[7] !== "json" ||
+    args[8] !== "--limit" ||
+    args[9] !== "2"
+  ) {
+    return null;
+  }
+  const selector = args[5]!;
+  if (!selector.startsWith(CREATE_ATTEMPT_SELECTOR_PREFIX)) return null;
+  const nonce = selector.slice(CREATE_ATTEMPT_SELECTOR_PREFIX.length);
+  if (nonce.length !== NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH || !/^[0-9a-f]+$/u.test(nonce)) {
+    return null;
+  }
+  return [
+    "sandbox",
+    "list",
+    "-g",
+    gatewayName,
+    "--selector",
+    `${CREATE_ATTEMPT_SELECTOR_PREFIX}${nonce}`,
+    "--output",
+    "json",
+    "--limit",
+    "2",
+  ];
+}
+
+function scopeHermesPortableReadyGetArgs(
+  args: string[],
+  sandboxName: string,
+  gatewayName: string,
+): string[] | null {
+  if (args[0] !== "sandbox" || args[1] !== "get" || (args.length !== 3 && args.length !== 5)) {
+    return null;
+  }
+  if (args.length === 3 && args[2] === sandboxName) {
+    return ["sandbox", "get", "-g", gatewayName, sandboxName];
+  }
+  if (args.length === 5 && args[2] === "-g" && args[3] === gatewayName && args[4] === sandboxName) {
+    return ["sandbox", "get", "-g", gatewayName, sandboxName];
+  }
+  return null;
+}
+
 /** Route create readiness and failed-create cleanup through exact schema-5 authority. */
 export function createHermesPortableReadyRunner(
   sandboxName: string,
@@ -259,24 +323,24 @@ export function createHermesPortableReadyRunner(
 ): (args: string[], options?: Record<string, unknown>) => HermesPortableOpenShellResult {
   return (args) => {
     const scoped =
-      args[0] === "sandbox" && args[1] === "list" && args.length === 2
+      scopeHermesPortableCreatedIdentityArgs(args, gatewayName) ??
+      scopeHermesPortableReadyGetArgs(args, sandboxName, gatewayName) ??
+      (args[0] === "sandbox" && args[1] === "list" && args.length === 2
         ? ["sandbox", "list", "-g", gatewayName]
-        : args[0] === "sandbox" && args[1] === "get" && args.length === 3 && args[2] === sandboxName
-          ? ["sandbox", "get", "-g", gatewayName, args[2]!]
-          : args[0] === "sandbox" &&
-              args[1] === "delete" &&
-              args.length === 3 &&
-              args[2] === sandboxName
-            ? ["sandbox", "delete", "-g", gatewayName, args[2]!]
-            : args.length === 6 &&
-                args[0] === "sandbox" &&
-                args[1] === "exec" &&
-                args[2] === "--name" &&
-                args[3] === sandboxName &&
-                args[4] === "--" &&
-                args[5] === "true"
-              ? ["sandbox", "exec", "-g", gatewayName, "--name", args[3]!, "--", "true"]
-              : null;
+        : args[0] === "sandbox" &&
+            args[1] === "delete" &&
+            args.length === 3 &&
+            args[2] === sandboxName
+          ? ["sandbox", "delete", "-g", gatewayName, args[2]!]
+          : args.length === 6 &&
+              args[0] === "sandbox" &&
+              args[1] === "exec" &&
+              args[2] === "--name" &&
+              args[3] === sandboxName &&
+              args[4] === "--" &&
+              args[5] === "true"
+            ? ["sandbox", "exec", "-g", gatewayName, "--name", args[3]!, "--", "true"]
+            : null);
     if (!scoped) fail("create lifecycle attempted an unsupported OpenShell command");
     return capture(scoped);
   };
@@ -1143,13 +1207,38 @@ export async function runHermesPortableOnboardingTransaction<T>(
       );
       if (reservation.kind === "conflict") return reservation;
       if (reservation.kind === "owned") {
-        return admittedRouteReservation &&
-          isCurrentSandboxInferenceRouteReservation(admittedRouteReservation, entry)
-          ? { kind: "missing" }
-          : {
+        if (
+          !admittedRouteReservation ||
+          !isCurrentSandboxInferenceRouteReservation(admittedRouteReservation, entry)
+        ) {
+          return {
+            kind: "conflict",
+            detail: "the inference route reservation changed after admission",
+          };
+        }
+        if (entry?.pendingPolicyVerification !== undefined) {
+          if (committedRegistryEntry || !deps.revalidatePendingCreateRegistry) {
+            return {
               kind: "conflict",
-              detail: "the inference route reservation changed after admission",
+              detail: "the verified create checkpoint lacks current transaction authority",
             };
+          }
+          try {
+            const revalidated = deps.revalidatePendingCreateRegistry();
+            if (!isDeepStrictEqual(revalidated, entry)) {
+              return {
+                kind: "conflict",
+                detail: "the verified create checkpoint changed during revalidation",
+              };
+            }
+          } catch {
+            return {
+              kind: "conflict",
+              detail: "the verified create checkpoint lacks current transaction authority",
+            };
+          }
+        }
+        return { kind: "missing" };
       }
       if (reservation.kind === "missing") {
         return admittedRouteReservation
@@ -1375,6 +1464,7 @@ export async function runHermesPortableOnboardingTransaction<T>(
             buildContext,
           ),
           buildContext.buildContextPath,
+          snapshot.receipt.policy.sourcePath,
         );
         buildContext.assertCurrent();
         input.buildContext.assertCurrentSource();
@@ -1558,14 +1648,45 @@ export interface HermesPortableOnboardingFromOnboardInput<T> {
     readyCapture: ReturnType<typeof createHermesPortableReadyCapture>,
     readyRunner: ReturnType<typeof createHermesPortableReadyRunner>,
     buildContextPath: string,
+    effectivePolicySourcePath: string,
   ) => Promise<T>;
   readonly readRegistry: () => SandboxEntry | null;
+  readonly revalidatePendingCreateRegistry?: HermesPortableOnboardingDeps<T>["revalidatePendingCreateRegistry"];
   readonly compareAndSetRegistryGatewayPort: HermesPortableOnboardingDeps<T>["compareAndSetRegistryGatewayPort"];
   readonly registerSandbox: HermesPortableOnboardingDeps<T>["registerSandbox"];
   readonly sourceRoot: string;
   readonly buildContextSettings: HermesPortableBuildContextSettings;
   readonly cleanupTemporaryPolicy?: () => boolean;
   readonly createPolicySourceBytes?: Buffer;
+}
+
+interface RunHermesPortableOnboardCreateInput<T> {
+  readonly argv: readonly string[];
+  readonly buildContextPath: string;
+  readonly effectivePolicySourcePath: string;
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly captureOpenShell: ReturnType<typeof createHermesPortableOpenShellCapture>;
+  readonly readyRunner: ReturnType<typeof createHermesPortableReadyRunner>;
+  readonly createSandbox: HermesPortableOnboardingFromOnboardInput<T>["createSandbox"];
+}
+
+/** Carry one receipt-owned create source through the outer generic create gate. */
+export function runHermesPortableOnboardCreate<T>(
+  input: RunHermesPortableOnboardCreateInput<T>,
+): Promise<T> {
+  const verifiedArgv = rewriteHermesPortableCreatePolicyArgv(
+    input.argv,
+    input.effectivePolicySourcePath,
+    input.effectivePolicySourcePath,
+  );
+  return input.createSandbox(
+    verifiedArgv,
+    createHermesPortableReadyCapture(input.sandboxName, input.gatewayName, input.captureOpenShell),
+    input.readyRunner,
+    input.buildContextPath,
+    input.effectivePolicySourcePath,
+  );
 }
 
 /** Assemble the existing onboarding transaction without changing its lifecycle fence. */
@@ -1586,6 +1707,7 @@ export async function runHermesPortableOnboardingFromOnboard<T>(
     openshellArgv,
     createSandbox,
     readRegistry,
+    revalidatePendingCreateRegistry,
     compareAndSetRegistryGatewayPort,
     registerSandbox,
     sourceRoot,
@@ -1665,14 +1787,19 @@ export async function runHermesPortableOnboardingFromOnboard<T>(
       capturePolicy: captureOpenShell,
       observeSandbox: (timeoutBudgetMs) =>
         observeHermesPortableSandbox(sandboxName, gatewayName, captureOpenShell, timeoutBudgetMs),
-      createSandbox: (argv, buildContextPath) =>
-        createSandbox(
+      createSandbox: (argv, buildContextPath, effectivePolicySourcePath) =>
+        runHermesPortableOnboardCreate({
           argv,
-          createHermesPortableReadyCapture(sandboxName, gatewayName, captureOpenShell),
-          readyRunner,
           buildContextPath,
-        ),
+          effectivePolicySourcePath,
+          sandboxName,
+          gatewayName,
+          captureOpenShell,
+          readyRunner,
+          createSandbox,
+        }),
       readRegistry,
+      ...(revalidatePendingCreateRegistry ? { revalidatePendingCreateRegistry } : {}),
       compareAndSetRegistryGatewayPort,
       registerSandbox,
       ...(cleanupTemporaryPolicy ? { cleanupTemporaryPolicy } : {}),
