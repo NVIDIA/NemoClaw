@@ -127,7 +127,7 @@ For a local Docker-driver sandbox whose container still uses the legacy keepaliv
 
 NemoClaw keeps the previous container available throughout the replacement health, OpenShell readiness, state restoration, gateway restart, and settle checks.
 Before recreation, NemoClaw backs up the state directories and files declared by the agent manifest.
-NemoClaw waits for OpenShell to re-register the exact replacement before it restores state.
+NemoClaw waits for OpenShell to re-register the replacement before it restores state.
 After state restoration, it restarts the gateway in that replacement and reruns the managed health and settle checks.
 It commits only after the replacement identity, state restoration, gateway restart, and settle check pass.
 NemoClaw removes the temporary state backup after a successful restore or rollback.
@@ -155,7 +155,7 @@ Linux infrastructure can publish the same evidence with `$$nemoclaw <sandbox-nam
 The lease has a fixed 24-hour lifetime that repeated launches do not extend.
 Leaving the agent with `/exit` does not revoke it, and users do not refresh it manually.
 
-During the lease, `launch` still verifies the owning OpenShell gateway, exact live sandbox identity, registry and agent configuration, effective policy, inference route, required forwards, and semantic runtime health.
+During the lease, `launch` still verifies the owning OpenShell gateway, live sandbox identity, registry and agent configuration, effective policy, inference route, required forwards, and semantic runtime health.
 <AgentOnly variant="openclaw,hermes">
 Configured inference must return HTTP 2xx from the semantic `inference.local` probe, which is stricter than the HTTP 200–499 reachability diagnostic used by ordinary `connect`.
 </AgentOnly>
@@ -169,7 +169,7 @@ A failed request rejects launch readiness and identifies the inference request a
 
 For OpenClaw, `connect --probe-only` settles the existing allowlisted pairing flow before it publishes a credential-free pairing qualification with the lease.
 The readiness evidence binds the OpenClaw version and trusted registry and agent manifest configuration.
-Its pairing qualification binds the canonical CLI client, exact paired device identity, required operator role and scopes, owning OpenShell gateway, sandbox lifecycle identity, and fixed lease epoch.
+Its pairing qualification binds the canonical CLI client, paired device identity, required operator role and scopes, owning OpenShell gateway, sandbox lifecycle identity, and fixed lease epoch.
 Before lease acceptance, `launch` makes a bounded, read-only observation of the current OpenClaw-owned pairing state through the owning OpenShell gateway.
 It skips the complete pairing approval pass only when the qualification still matches exactly and no relevant allowlisted request is pending.
 Any missing, unreadable, malformed, ambiguous, or changed observation runs the complete pairing approval pass.
@@ -252,7 +252,7 @@ It refuses a symbolic link, non-regular file, or non-executable file at the rece
 
 On every `ollama-local` completion path, the command verifies the authenticated proxy on port `11435`.
 It also requires HTTP 2xx from `https://inference.local/v1/models` before it reports success.
-If Ollama does not become healthy within 30 seconds, the command identifies the exact receipt-bound executable and its `serve` argument, then tells you to retry recovery.
+If Ollama does not become healthy within 30 seconds, the command identifies the receipt-bound executable and its `serve` argument, then tells you to retry recovery.
 An Ollama startup or route failure exits non-zero and prints the available recovery guidance.
 </AgentOnly>
 
@@ -382,7 +382,7 @@ The rerun takes one of these actions:
 
 A mount-free journal written before NemoClaw bound host-mount identity remains resumable.
 An older journal for a rebuild with one or more host mounts stops as incompatible, even when the visible mount settings are unchanged, because it cannot prove the original host source identity.
-Preserve the live sandbox, onboarding session, printed backup, exact error, and the sandbox name, gateway, and journal phase from the `Journaled replacement` diagnostic.
+Preserve the live sandbox, onboarding session, printed backup, error, and the sandbox name, gateway, and journal phase from the `Journaled replacement` diagnostic.
 Do not change the target settings, edit the session, or delete the same-name sandbox.
 Ask a NemoClaw maintainer to review that retained recovery state before taking another recovery action.
 
@@ -421,11 +421,11 @@ If every state directory fails, NemoClaw stops before deleting the original sand
 `rebuild --force` can continue when no state directory was preserved or a manifest-declared state file failed.
 NemoClaw restores any entries captured in the partial backup; if nothing usable was captured, it recreates the sandbox from recorded registry metadata without restoring prior sandbox state.
 Use this recovery path only when losing the state that could not be backed up is acceptable.
-When a sandbox with managed MCP servers cannot run a pre-mutation no-op, explicit `--force` uses its complete registry entries plus the exact live generated policies and provider identities to preserve MCP intent without scrubbing the unreachable in-sandbox adapter.
+When a sandbox with managed MCP servers cannot run a pre-mutation no-op, explicit `--force` uses its complete registry entries plus the live generated policies and provider identities to preserve MCP intent without scrubbing the unreachable in-sandbox adapter.
 Every bridge entry must record the adapter for the sandbox's recorded agent.
 The registered policy must match the policy NemoClaw generates for that adapter, server name, endpoint URL, and resolved addresses.
 NemoClaw rechecks that read-only snapshot immediately before deletion and stops if the target, registry, policy, provider, or recorded gateway changed.
-NemoClaw sends the delete request and every deletion-confirmation lookup to the sandbox's exact recorded gateway.
+NemoClaw sends the delete request and every deletion-confirmation lookup to the sandbox's recorded gateway.
 Across every rebuild path, NemoClaw does not attempt to stop the local NIM through the delete attempt, and cleanup is attempted on a best-effort basis only after deletion is positively confirmed.
 After a nonzero delete, an explicit missing result converges as deleted.
 A `Ready` or `Running` result triggers an attempt to restore prepared MCP state and any shields lockdown that rebuild temporarily opened.

@@ -106,14 +106,14 @@ runner.run = (command) => {
     return { status: 0, stdout: "No sandboxes found.\n" };
   }
   return cmd.includes("sandbox get") && cmd.includes("my-assistant")
-    ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
 };
 runner.runCapture = (command) => {
   const cmd = _n(command);
   const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
   if (createdIdentity !== null) return createdIdentity;
-  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return sandboxRecreated ? ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10)) : sandboxDeleted ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
+  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return sandboxRecreated ? ["my-assistant", "Id: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID].join(String.fromCharCode(10)) : sandboxDeleted ? "" : ["my-assistant", "Id: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID].join(String.fromCharCode(10));
   if (cmd.includes("sandbox list")) {
     return sandboxRecreated ? "my-assistant Ready" : sandboxDeleted ? "" : "my-assistant NotReady";
   }
@@ -177,7 +177,7 @@ const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry,
   sessionId: "session-owner",
   getSandbox: registry.getSandbox,
   removeSandbox,
-  sourceSandboxId: "sbx-4f2a91c0d7",
+  sourceSandboxId: fixtureMocks.ONBOARD_CREATED_SANDBOX_ID,
 });
 
 const preflight = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"))});
