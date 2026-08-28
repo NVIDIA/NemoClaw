@@ -3475,14 +3475,7 @@ Containers with explicit DNS settings or host networking keep their existing DNS
 Ordinary Linux GPU onboarding uses native OpenShell GPU injection and stops on failure by default.
 Unset, `auto`, and `0` all preserve this native-only confinement boundary.
 `NEMOCLAW_DOCKER_GPU_PATCH=fallback` is the explicit operator authorization for one bounded retry.
-With that control set, NemoClaw retries exactly once through the compatibility path after one of these conditions:
-
-- Sandbox creation rejects the native `--gpu` flag before progress. NemoClaw captures redacted diagnostics and proves that the sandbox and its labeled containers are absent. It does not delete the sandbox by name.
-- The exact OpenShell-managed container labeled for the sandbox records a host runtime GPU-injection error.
-- An explicit `nvidia-smi` driver proof fails while that container's immutable host configuration confirms that no GPU was attached.
-
-For the host runtime and driver-proof conditions, NemoClaw retries only after cleanup proves that the sandbox and its labeled containers are absent.
-If the managed runtime requires provider-owned cleanup, NemoClaw stops before the compatibility retry.
+With that control set, if sandbox creation rejects the native GPU flag before progress, the exact OpenShell-managed container labeled for that sandbox records a host runtime GPU-injection error, or an explicit `nvidia-smi` driver proof fails while that container's immutable host configuration confirms that no GPU was attached, NemoClaw captures redacted diagnostics, deletes the incomplete sandbox, verifies that no OpenShell-managed Docker container labeled for that sandbox remains, and retries exactly once through the compatibility path.
 Free-form build/list text and sandbox-reported CUDA output never independently authorize the broader retry.
 Without corroborating host evidence, onboarding fails closed even when `fallback` is set and directs the operator to clean up and explicitly select compatibility with `NEMOCLAW_DOCKER_GPU_PATCH=1` if desired.
 Before the authorized retry, NemoClaw warns that the legacy GPU compatibility envelope recreates the OpenShell-managed Docker container and may relax container confinement compared with native injection.
