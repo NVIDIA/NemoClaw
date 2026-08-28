@@ -72,6 +72,7 @@ const baseSandboxEntry = {
 export type StatusFlowHarnessOptions = {
   currentModel?: string;
   currentProvider?: string;
+  gatewayPresets?: string[] | null;
   routeDrift?: SandboxStatusRouteDrift | null;
   inferenceHealth?: ProviderHealthStatus | null;
   servingProcessHealth?: ServingProcessHealth | null;
@@ -270,7 +271,9 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
     container: null,
   });
   vi.spyOn(nim, "shouldShowNimLine").mockReturnValue(true);
-  vi.spyOn(policy, "getAppliedPresets").mockReturnValue(["npm", "telegram"]);
+  vi.spyOn(policy, "getGatewayPresets").mockReturnValue(
+    options.gatewayPresets === undefined ? ["npm", "telegram"] : options.gatewayPresets,
+  );
   const checkAgentVersionSpy = vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue(
     options.versionCheck ?? {
       sandboxVersion: "0.1.0",

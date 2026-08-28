@@ -96,11 +96,19 @@ describe("bounded rebuild policy handoff", () => {
     const withHandoff = writeRebuildPolicyHandoff(published, policy);
     const handoffPath = path.join(backupPath, withHandoff.rebuildPolicyHandoff!.file);
     expect(readRebuildPolicyHandoff(withHandoff)).toBe(policy);
-    expect(fs.statSync(handoffPath).mode & 0o777).toBe(0o600);
-
-    fs.writeFileSync(handoffPath, `${policy}  raced: {}\n`);
-    expect(readRebuildPolicyHandoff(withHandoff)).toBeNull();
-    fs.writeFileSync(handoffPath, policy);
+    const descriptor = fs.openSync(handoffPath, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW);
+    try {
+      expect(fs.fstatSync(descriptor).mode & 0o777).toBe(0o600);
+      fs.ftruncateSync(descriptor, 0);
+      fs.writeSync(descriptor, `${policy}  raced: {}\n`, 0, "utf8");
+      fs.fsyncSync(descriptor);
+      expect(readRebuildPolicyHandoff(withHandoff)).toBeNull();
+      fs.ftruncateSync(descriptor, 0);
+      fs.writeSync(descriptor, policy, 0, "utf8");
+      fs.fsyncSync(descriptor);
+    } finally {
+      fs.closeSync(descriptor);
+    }
 
     expect(clearRebuildPolicyHandoff(withHandoff)).toBe(true);
     expect(fs.existsSync(handoffPath)).toBe(false);

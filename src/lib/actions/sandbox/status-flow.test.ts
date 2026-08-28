@@ -59,6 +59,8 @@ describe("showSandboxStatus flow", () => {
         agent: "hermes",
         agentDisplayName: "Hermes",
         portableLifecyclePhase: phase,
+        policies: ["npm", "telegram"],
+        policiesAvailable: true,
       });
       expect(harness.collectSandboxStatusSnapshotSpy).not.toHaveBeenCalled();
       expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
@@ -253,6 +255,7 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("Serving process (openclaw gateway):");
     expect(output).toContain("not checked");
     expect(output).toContain("Host GPU: yes");
+    expect(output).toContain("Policies: npm, telegram");
     expect(output).toContain("last CUDA proof failed: cuInit");
     expect(output).toContain("CUDA initialization failed");
     expect(output).toContain("SSH sessions: 2");
@@ -268,6 +271,16 @@ describe("showSandboxStatus flow", () => {
     expect(harness.getActiveSandboxSessionsSpy).toHaveBeenCalledWith("alpha", expect.any(Object));
     expect(harness.getSandboxDockerRuntimeSpy).toHaveBeenCalledWith("alpha");
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("reports unavailable live policy instead of an empty policy set", async () => {
+    const harness = createStatusFlowHarness({ gatewayPresets: null });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("Policies: unavailable");
+    expect(output).not.toContain("Policies: none");
   });
 
   it("reports zero SSH sessions as 'none' without connection-negative language (#7805)", async () => {

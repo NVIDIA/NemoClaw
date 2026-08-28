@@ -11,7 +11,7 @@ import type { ProviderHealthStatus } from "../../inference/health";
 import * as nim from "../../inference/nim";
 import { getEffectiveReasoningEffort } from "../../inference/selection";
 import { buildSshForwardHintLines } from "../../onboard/ssh-forward-hint";
-import { getAppliedPresets } from "../../policy";
+import { getGatewayPresets } from "../../policy";
 import * as sandboxVersion from "../../sandbox/version";
 import * as shields from "../../shields";
 import type { SandboxEntry, SandboxGpuProofResult } from "../../state/registry";
@@ -331,7 +331,10 @@ export function printSandboxDetails(context: SandboxStatusTextContext): SandboxS
   console.log(
     `    OpenShell: ${sb.openshellVersion || "unknown"} (${sb.openshellDriver || "unknown"})`,
   );
-  console.log(`    Policies: ${getAppliedPresets(sandboxName).join(", ") || "none"}`);
+  const livePolicies = getGatewayPresets(sandboxName);
+  console.log(
+    `    Policies: ${livePolicies === null ? "unavailable" : livePolicies.join(", ") || "none"}`,
+  );
   const agentExitCode = printAgentHarness(context);
   printActiveSessions(sandboxName);
   printShieldsPosture(sandboxName);

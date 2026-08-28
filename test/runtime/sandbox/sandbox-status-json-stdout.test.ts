@@ -48,11 +48,32 @@ describe("sandbox status JSON", () => {
   it("does not expose removed policy shadow fields", async () => {
     const report = await getSandboxStatusReport("alpha", {
       getSandbox: () => ({ name: "alpha", agent: "openclaw" }),
-      getAppliedPresets: () => ["npm"],
+      getGatewayPresets: () => ["npm"],
       reconcile: async () => ({ state: "missing", output: "" }),
     });
     expect(report.policies).toEqual(["npm"]);
+    expect(report.policiesAvailable).toBe(true);
     expect(report).not.toHaveProperty("baselineExclusions");
     expect(report).not.toHaveProperty("baselineExclusionTransition");
+  });
+
+  it("distinguishes unavailable live policy from a verified empty policy", async () => {
+    const base = {
+      getSandbox: () => ({ name: "alpha", agent: "openclaw" }),
+      reconcile: async () => ({ state: "missing" as const, output: "" }),
+    };
+    const unavailable = await getSandboxStatusReport("alpha", {
+      ...base,
+      getGatewayPresets: () => null,
+    });
+    const empty = await getSandboxStatusReport("alpha", {
+      ...base,
+      getGatewayPresets: () => [],
+    });
+
+    expect(unavailable.policies).toEqual([]);
+    expect(unavailable.policiesAvailable).toBe(false);
+    expect(empty.policies).toEqual([]);
+    expect(empty.policiesAvailable).toBe(true);
   });
 });

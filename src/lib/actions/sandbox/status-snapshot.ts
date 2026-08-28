@@ -29,7 +29,7 @@ import {
   normalizeDcodeAutoApprovalMode,
 } from "../../onboard/dcode-auto-approval";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
-import { getAppliedPresets } from "../../policy";
+import { getGatewayPresets } from "../../policy";
 import { redact } from "../../security/redact";
 import * as registry from "../../state/registry";
 import {
@@ -176,6 +176,8 @@ export interface SandboxStatusReport {
   openshellDriver: string;
   openshellVersion: string;
   policies: string[];
+  /** False when the live OpenShell policy could not be read or parsed. */
+  policiesAvailable: boolean;
   failureLayer: SandboxStatusFailureLayer | null;
   terminalRuntimeHealth: TerminalRuntimeOomProbeResult | null;
   /**
@@ -293,7 +295,7 @@ interface CollectSandboxStatusSnapshotDeps {
   recoverSandboxProcesses?: RecoverSandboxProcesses;
   reconcile?: ReconcileSandboxGatewayState;
   getSandboxStatusPreflightImpl?: typeof getSandboxStatusPreflight;
-  getAppliedPresets?: typeof getAppliedPresets;
+  getGatewayPresets?: typeof getGatewayPresets;
 }
 
 function sanitizedStatusDetail(error: unknown): string {
@@ -718,7 +720,7 @@ async function buildSandboxStatusReport(
   );
   const sandboxGpuEnabled = sb ? (sb.sandboxGpuEnabled ?? sb.gpuEnabled === true) : false;
   const hostMounts = normalizeSandboxStatusHostMounts(sb?.hostMounts);
-  const policies = sb ? (deps.getAppliedPresets ?? getAppliedPresets)(sandboxName) : [];
+  const livePolicies = sb ? (deps.getGatewayPresets ?? getGatewayPresets)(sandboxName) : [];
   const agent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
   return {
     schemaVersion: 1,
@@ -751,7 +753,8 @@ async function buildSandboxStatusReport(
     hostMounts,
     openshellDriver: (sb && sb.openshellDriver) || "unknown",
     openshellVersion: (sb && sb.openshellVersion) || "unknown",
-    policies,
+    policies: livePolicies ?? [],
+    policiesAvailable: livePolicies !== null,
     failureLayer: effectivePreflight.failureLayer,
     terminalRuntimeHealth,
     dockerPaused: !!dockerRuntime?.paused,
