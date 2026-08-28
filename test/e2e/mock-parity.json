@@ -405,7 +405,9 @@
     },
     {
       "live": "test/e2e/live/gpu-e2e.test.ts",
+      "liveSources": ["test/e2e/live/gpu-e2e-helpers.ts"],
       "fast": [
+        "test/e2e/support/gpu-e2e-helpers.test.ts",
         "test/e2e/support/managed-image-cohort-contract.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
         "test/e2e/support/stock-managed-image-workflow-boundary.test.ts",
