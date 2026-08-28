@@ -21,6 +21,9 @@ describe("agent base image provisioning", () => {
         validateImage?: (imageRef: string) => boolean;
       };
 
+      dockerCaptureMock
+        .mockReturnValueOnce("nemoclaw-hermes-mcp-runtime-ok")
+        .mockReturnValueOnce("nemoclaw-security-inventory-ok");
       expect(options.validateImage?.("hermes-base:test")).toBe(true);
       const [probeArgs, probeOptions] = dockerCaptureMock.mock.calls[0] as [string[], object];
       expect(probeArgs.slice(0, -1)).toEqual([
@@ -49,12 +52,38 @@ describe("agent base image provisioning", () => {
       expect(probeArgs.at(-1)).not.toContain("assert ");
       expect(probeArgs.at(-1)).toContain('print("nemoclaw-hermes-mcp-runtime-ok")');
       expect(probeOptions).toEqual({ ignoreError: true, timeout: 20_000 });
+      expect(dockerCaptureMock.mock.calls[1]?.[0]).toEqual(
+        expect.arrayContaining([
+          "--network",
+          "none",
+          "--cap-drop",
+          "ALL",
+          "--read-only",
+          "hermes-base:test",
+          expect.stringContaining("nemoclaw-security-inventory-ok"),
+        ]),
+      );
 
       dockerCaptureMock.mockReturnValue("");
       expect(options.validateImage?.("hermes-base:stale")).toBe(false);
 
       dockerCaptureMock.mockReturnValue("nemoclaw-hermes-mcp-runtime-ok\nunexpected-output");
       expect(options.validateImage?.("hermes-base:unexpected-output")).toBe(false);
+    });
+  });
+
+  it("rejects a Hermes base that passes its runtime probe but lacks the security inventory", () => {
+    withMockedDocker(({ ensureAgentBaseImage, dockerCaptureMock, resolveSandboxBaseImageMock }) => {
+      ensureAgentBaseImage(makeAgent());
+      const options = resolveSandboxBaseImageMock.mock.calls[0]?.[0] as {
+        validateImage?: (imageRef: string) => boolean;
+      };
+      dockerCaptureMock
+        .mockReturnValueOnce("nemoclaw-hermes-mcp-runtime-ok")
+        .mockReturnValueOnce("");
+
+      expect(options.validateImage?.("hermes-base:stale-inventory")).toBe(false);
+      expect(dockerCaptureMock).toHaveBeenCalledTimes(2);
     });
   });
 
