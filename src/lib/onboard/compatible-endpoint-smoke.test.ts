@@ -157,12 +157,14 @@ ambient_proxy_enabled = ${options.ambientProxyResponses === undefined ? "False" 
 denial_bytes = ${denialBody}
 inference_request_tokens = []
 direct_request_count = []
+direct_request_urls = []
 ambient_proxy_request_count = []
 direct_error = ${options.directError === undefined ? "None" : JSON.stringify(options.directError)}
 
 def emit_request_evidence():
     print("INFERENCE_REQUEST_TOKENS=" + ",".join(str(value) for value in inference_request_tokens))
     print("DIRECT_REQUEST_COUNT=" + str(len(direct_request_count)))
+    print("DIRECT_REQUEST_URLS=" + ",".join(direct_request_urls))
     print("AMBIENT_PROXY_REQUEST_COUNT=" + str(len(ambient_proxy_request_count)))
 
 atexit.register(emit_request_evidence)
@@ -192,6 +194,7 @@ class FakeOpener:
             )
             return FakeResponse(200, responses.pop(0))
         direct_request_count.append(1)
+        direct_request_urls.append(request.full_url)
         if direct_error == "connection-refused":
             raise urllib.error.URLError(ConnectionRefusedError(errno.ECONNREFUSED, "refused"))
         if direct_error == "dns":
@@ -574,6 +577,25 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(result.stdout).toContain("AMBIENT_PROXY_REQUEST_COUNT=0");
     expect(result.stdout).toContain("INFERENCE_REQUEST_TOKENS=512,512");
     expect(result.stdout).toContain("DIRECT_REQUEST_COUNT=1");
+  });
+
+  it("executes the provider-neutral proof for receipt-owned llama.cpp authority (#10423)", () => {
+    const result = runProviderNeutralScript({
+      authority: {
+        service: "llama-cpp",
+        directHostPort: 18_080,
+        directHealthPath: "/health",
+        toolCallingRequired: true,
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
+    expect(result.stdout).toContain("INFERENCE_REQUEST_TOKENS=512,512");
+    expect(result.stdout).toContain("DIRECT_REQUEST_COUNT=1");
+    expect(result.stdout).toContain(
+      "DIRECT_REQUEST_URLS=http://host.openshell.internal:18080/v1/chat/completions",
+    );
   });
 
   it("fails after one larger-budget attempt when output remains reasoning-only", () => {
