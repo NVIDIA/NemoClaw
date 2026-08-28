@@ -24,11 +24,10 @@ Daily release labels coordinate release work. They do not classify issues and th
 
 ## Release-Prep Docs
 
-Use one cumulative documentation PR for all merged changes selected for the release. Each push to
-`main` refreshes the same managed PR with an independently reviewed cumulative patch. The PR title
-names the next patch tag after the latest release tag. The PR body names both tags and defines the
-development and release-cutoff procedure. The publisher creates a merge commit, fast-forwards the
-branch, and never force-pushes. Continue that PR when one exists.
+Use one cumulative documentation PR for all merged changes selected for the release. The canonical
+[documentation automation contract](../../../../docs/AUTOMATION.md#post-merge-documentation-catch-up)
+owns its creation, refresh, coverage boundary, branch ownership, and recovery behavior. Continue
+that PR when one exists.
 If no managed PR exists and only release documentation remains, use one direct documentation-only PR.
 
 That PR must include all required user documentation and one canonical
@@ -38,7 +37,7 @@ skill has already produced a plan whose candidate lacks the entry or another req
 change, merge the documentation PR and generate a new plan for the resulting candidate.
 
 A push that changes only `docs/**`, `fern/docs.yml`, or `fern/assets/**` does not start
-`Docs / Post-Merge Catch-Up`. Merging the cumulative docs PR therefore does not start a final model
+`Docs / Author Post-Merge Catch-Up`. Merging the cumulative docs PR therefore does not start a final model
 run or create an empty-patch receipt.
 
 Before tag confirmation, show the maintainer:

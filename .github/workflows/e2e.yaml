@@ -5227,11 +5227,11 @@ jobs:
             # runtime changed, contaminating later OpenShell jobs on this self-hosted runner.
             # sourceBoundary: daemon mutation uses only immutable root-owned workflow_sha
             # code; the PR test cannot replace the helper or its root-owned snapshot state.
-            # whyNotSourceFix: production must fail closed when GPU attachment is ambiguous;
-            # this fixture needs a real no-GPU partial container on an nvidia-default runner.
+            # whyNotSourceFix: the compatibility retry must prove its explicit GPU envelope
+            # without inheriting an NVIDIA daemon default from this managed runner.
             # regressionTest: hermes-gpu-startup-workflow-boundary requires this same-step trap.
-            # removalCondition: remove the daemon fixture when OpenShell can create a provably
-            # GPU-unattached partial sandbox without consulting Docker's default runtime.
+            # removalCondition: remove the daemon fixture when the GPU runner supplies an
+            # isolated runc-default Docker daemon for this compatibility qualification.
             restore_docker_default_runtime() {
               local command_status=$?
               local restore_status=0
@@ -5251,9 +5251,9 @@ jobs:
               exit "$command_status"
             }
 
-            # OpenShell leaves Runtime unset after the wrapper strips --gpu, so Docker
-            # otherwise substitutes its daemon default. Force runc only within this
-            # trap-guarded process so production can prove the partial container has no GPU.
+            # Force runc only within this trap-guarded process. The wrapper rejects native
+            # create before progress, and the compatibility retry must add GPU access
+            # explicitly instead of inheriting the managed runner's NVIDIA daemon default.
             trap restore_docker_default_runtime EXIT
             trap 'exit 130' INT
             trap 'exit 143' TERM
