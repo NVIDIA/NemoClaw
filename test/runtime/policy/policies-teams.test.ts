@@ -155,10 +155,14 @@ describe("Teams policy preset", () => {
     const teamsLogin = parsed.network_policies.teams.endpoints.find(
       (endpoint: { host?: string }) => endpoint.host === "login.microsoftonline.com",
     );
+    const teamsBotLogin = parsed.network_policies.teams.endpoints.find(
+      (endpoint: { host?: string }) => endpoint.host === "login.botframework.com",
+    );
 
     expect(teamsLogin.credential_binding).toEqual({
       provider: "hermes-outlook-teams-bridge",
     });
+    expect(teamsBotLogin.credential_binding).toEqual(teamsLogin.credential_binding);
     expect(outlookLogin.credential_binding).toEqual(teamsLogin.credential_binding);
   });
 
