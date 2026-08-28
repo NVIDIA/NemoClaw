@@ -60,14 +60,6 @@ type Approval = {
   rangeStartTag: string;
   targetReleaseTag: string;
 };
-function targetReleaseTag(rangeStartTag: string): string {
-  const match = /^v(\d+)[.](\d+)[.](\d+)$/u.exec(rangeStartTag);
-  if (!match) fail("review range start tag cannot produce a release target");
-  return nextPatchReleaseTag(
-    rangeStartTag,
-    "review range start tag cannot produce a release target",
-  );
-}
 function approvedPatch(directory: string, repository: string, mainSha: string): Approval {
   const patch = readBoundedFile(path.join(directory, "docs.patch"), 5_242_880, true);
   let value: unknown;
@@ -90,7 +82,10 @@ function approvedPatch(directory: string, repository: string, mainSha: string): 
     review.outcome !== "approved" ||
     typeof review.rangeStartTag !== "string" ||
     typeof review.targetReleaseTag !== "string" ||
-    targetReleaseTag(review.rangeStartTag) !== review.targetReleaseTag
+    nextPatchReleaseTag(
+      review.rangeStartTag,
+      "review range start tag cannot produce a release target",
+    ) !== review.targetReleaseTag
   )
     fail("review does not approve the exact patch and release target for this main commit");
   return {
@@ -239,6 +234,12 @@ function requireSamePull(expected: Pull | undefined, observed: Pull | undefined)
 }
 function pullTitle(target: string): string {
   return `docs: prepare ${target} documentation`;
+}
+function managedBranchIdentity(branch: string, commitSha: string): string {
+  return `managed documentation branch ${branch} at ${commitSha}`;
+}
+function orphanRecoveryUrl(repository: string): string {
+  return `https://github.com/${repository}/blob/main/docs/AUTOMATION.md#recover-an-orphaned-managed-branch`;
 }
 function pullBody(repository: string, rangeStart: string, target: string): string {
   return `## Release target
@@ -469,6 +470,9 @@ export async function publishDocumentation(input: {
       if (reconciled?.object?.sha !== commitSha) throw error;
     }
 
+    console.error(
+      `${managedBranchIdentity(branch, commitSha)} was created; if publication stops before draft PR creation, follow ${orphanRecoveryUrl(repository)}`,
+    );
     requireSamePull(undefined, await checkpoint(repository, mainSha, request));
     let pull: Pull;
     try {
@@ -488,7 +492,7 @@ export async function publishDocumentation(input: {
         } | null;
         if (!matching.length && orphaned?.object?.sha === commitSha)
           fail(
-            `managed documentation branch ${branch} at ${commitSha} remains without a draft PR; PR creation failed: ${failureDiagnostic(error)}; follow https://github.com/${repository}/blob/main/docs/AUTOMATION.md#recover-an-orphaned-managed-branch`,
+            `${managedBranchIdentity(branch, commitSha)} remains without a draft PR; PR creation failed: ${failureDiagnostic(error)}; follow ${orphanRecoveryUrl(repository)}`,
           );
         throw error;
       }

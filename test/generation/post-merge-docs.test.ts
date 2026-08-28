@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { nextPatchReleaseTag } from "../../tools/post-merge-docs/contract.mts";
 import { publishDocumentation, type Request } from "../../tools/post-merge-docs/publish.mts";
@@ -421,6 +421,9 @@ function runnerTools(
   };
   return { state, tools };
 }
+beforeEach(() => {
+  vi.spyOn(console, "error").mockImplementation(() => undefined);
+});
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
@@ -429,6 +432,9 @@ afterEach(() => {
 });
 
 describe("post-merge documentation publisher", () => {
+  it("increments a canonical release tag", () => {
+    expect(nextPatchReleaseTag("v1.2.3")).toBe("v1.2.4");
+  });
   it.each(["v01.2.3", "v1.02.3", "v1.2.003"])("rejects non-canonical release tag %s", (tag) => {
     expect(() => nextPatchReleaseTag(tag)).toThrow("cannot produce a release target");
   });
@@ -491,6 +497,9 @@ describe("post-merge documentation publisher", () => {
     await expect(publish(value, api)).rejects.toThrow(
       `managed documentation branch ${api.branch} at ${api.commitSha} remains without a draft PR`,
     );
+    expect(console.error).toHaveBeenCalledWith(
+      `managed documentation branch ${api.branch} at ${api.commitSha} was created; if publication stops before draft PR creation, follow https://github.com/NVIDIA/NemoClaw/blob/main/docs/AUTOMATION.md#recover-an-orphaned-managed-branch`,
+    );
     expect(api.branchRef?.object.sha).toBe(api.commitSha);
     expect(api.openPulls[0]?.head.ref).not.toBe(api.branch);
   });
@@ -527,6 +536,19 @@ describe("post-merge documentation publisher", () => {
     fs.writeFileSync(reviewFile, JSON.stringify(review));
     const api = new FakeGitHub(value);
     await expect(publish(value, api, approved)).rejects.toThrow("release target");
+    expect(api.request).not.toHaveBeenCalled();
+  });
+  it("preserves the publisher diagnostic for an invalid review range tag", async () => {
+    const value = emptyFixture();
+    const approved = artifact(value);
+    const reviewFile = path.join(approved, "review.json");
+    const review = JSON.parse(fs.readFileSync(reviewFile, "utf8"));
+    review.rangeStartTag = "v01.0.0";
+    fs.writeFileSync(reviewFile, JSON.stringify(review));
+    const api = new FakeGitHub(value);
+    await expect(publish(value, api, approved)).rejects.toThrow(
+      "review range start tag cannot produce a release target",
+    );
     expect(api.request).not.toHaveBeenCalled();
   });
   it.each(["src/bad.ts", "fern/package.json", "fern/.npmrc", "fern/components/CustomFooter.tsx"])(
@@ -807,6 +829,14 @@ describe("post-merge documentation runner", () => {
     const api = new FakeGitHub(value);
     await publish(value, api, approved);
     expect(writeCount(api)).toBe(0);
+  });
+  it("preserves the runner diagnostic for an invalid range tag", () => {
+    const input = runnerFixture("review", "v01.2.3");
+    const { state, tools } = runnerTools(input);
+    expect(() => executePostMergeDocs(input.env, tools)).toThrow(
+      "RANGE_START_TAG cannot produce a release target",
+    );
+    expect(state.deleted).toBe(true);
   });
   it("rejects an independent review denial and deletes the sandbox", () => {
     const input = runnerFixture("review");

@@ -10,5 +10,7 @@ removal. GitHub exposes it only to the author job's `Configure isolated inferenc
 cleanup removes the gateway runtime copy. Sandboxes, artifacts, and the publisher do not receive the
 secret.
 
-[`contract.mts`](contract.mts) validates this separation. The
+The [workflow](../../.github/workflows/post-merge-docs.yaml) enforces where the secret is exposed,
+and [`run.mts`](run.mts) constructs the credential-free sandbox inputs. [`contract.mts`](contract.mts)
+validates approved documentation paths, release metadata, and bounded artifact reads. The
 [documentation contributor guide](../../docs/CONTRIBUTING.md) describes the workflow's contributor-facing behavior.

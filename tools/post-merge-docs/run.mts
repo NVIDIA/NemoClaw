@@ -58,12 +58,6 @@ function exactSha(value: string | undefined, name: string): string {
   return SHA.test(sha) ? sha : fail(`${name} must be a full commit SHA`);
 }
 
-function targetReleaseTag(rangeStartTag: string): string {
-  const match = /^v(\d+)[.](\d+)[.](\d+)$/u.exec(rangeStartTag);
-  if (!match) fail("RANGE_START_TAG cannot produce a release target");
-  return nextPatchReleaseTag(rangeStartTag, "RANGE_START_TAG cannot produce a release target");
-}
-
 function git(repository: string, args: readonly string[]): string {
   return execFileSync("git", ["-C", repository, ...args], {
     encoding: "utf8",
@@ -345,7 +339,10 @@ function exportArtifact(env: NodeJS.ProcessEnv, tools: OpenShellTools): void {
       patchSha256: createHash("sha256").update(patch).digest("hex"),
       rangeStartTag: required(env.RANGE_START_TAG, "RANGE_START_TAG"),
       repository: required(env.GITHUB_REPOSITORY, "GITHUB_REPOSITORY"),
-      targetReleaseTag: targetReleaseTag(required(env.RANGE_START_TAG, "RANGE_START_TAG")),
+      targetReleaseTag: nextPatchReleaseTag(
+        required(env.RANGE_START_TAG, "RANGE_START_TAG"),
+        "RANGE_START_TAG cannot produce a release target",
+      ),
       version: 2,
     })}\n`,
   );

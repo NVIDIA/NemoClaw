@@ -57,11 +57,24 @@ workflow-owned draft, or mark it ready for review to transfer ownership to maint
 ### Recover an Orphaned Managed Branch
 
 If draft PR creation fails after branch creation, the publisher reports the exact branch and commit.
-Recover only that reported branch:
+It also logs that pair immediately after branch creation so a cancelled or timed-out run retains the
+recovery identity. Recover only that branch:
 
 1. Cancel and wait for other in-progress `Docs / Author Post-Merge Catch-Up` runs. Do not start
    another run during recovery.
-2. Set `ORPHAN_BRANCH` and `ORPHAN_COMMIT` to the exact branch and commit from the error.
+2. Set `ORPHAN_BRANCH` and `ORPHAN_COMMIT` to the exact branch and commit from the error or branch
+   creation log. If cancellation occurred before that log appeared, copy the cancelled run's
+   triggering `main` commit and read the deterministic branch tip:
+
+   ```bash
+   TRIGGER_MAIN=<cancelled-run-main-commit>
+   [[ "$TRIGGER_MAIN" =~ ^[0-9a-f]{40}$ ]]
+   ORPHAN_BRANCH="automation/post-merge-docs-${TRIGGER_MAIN:0:12}"
+   ORPHAN_COMMIT="$(gh api "/repos/NVIDIA/NemoClaw/git/ref/heads/$ORPHAN_BRANCH" --jq .object.sha)"
+   [[ "$ORPHAN_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+   ```
+
+   Stop if GitHub reports that the branch does not exist.
 3. Recheck for an attached PR and delete the ref only if its SHA still matches:
 
    ```bash
