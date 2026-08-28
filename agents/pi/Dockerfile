@@ -125,12 +125,12 @@ COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
-# Reassert the npm-private brace-expansion fix for the exact final filesystem.
+# Reassert the npm-private brace-expansion fix for the final filesystem.
 # hadolint ignore=DL3059
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
-# Reassert the npm-private ip-address fix for the exact final filesystem. When
+# Reassert the npm-private ip-address fix for the final filesystem. When
 # onboarding supplied a corporate CA, use it for the registry-backed download.
 # hadolint ignore=DL3059
 RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \

@@ -4,7 +4,7 @@
 # Activation and Qualification
 
 Use this reference when a candidate provider becomes production-selectable. Treat exported values
-from `src/lib/onboard/runtime-provider/activation.ts` as the exact contract for the commit under
+from `src/lib/onboard/runtime-provider/activation.ts` as the contract for the commit under
 review.
 
 ## Separate Registration from Activation
@@ -63,9 +63,9 @@ authority to these immutable identities:
 
 - protected repository and producer workflow;
 - same-repository open PR and candidate repository;
-- exact latest PR commit SHA and exact base SHA;
-- exact workflow run ID, run attempt, and job ID;
-- artifact ID, bounded artifact name, and exact SHA-256 digest; and
+- latest PR commit SHA and base SHA;
+- workflow run ID, run attempt, and job ID;
+- artifact ID, bounded artifact name, and SHA-256 digest; and
 - qualification ID and provider ID.
 
 The activation declaration's expected source must equal the protected authority source, including
