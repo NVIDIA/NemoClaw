@@ -214,6 +214,7 @@ function requireRuntime(
   receipt: ManagedHostLocalInferenceReceipt,
   sandbox: HostLocalInferenceLifecycleSandbox,
   options: HostLocalInferenceLifecycleOptions,
+  authorityMode: "current" | "published-recovery" = "current",
 ): {
   readonly runtime: HostLocalInferenceRuntime;
   readonly assertAuthority: () => void;
@@ -225,13 +226,16 @@ function requireRuntime(
     acceleration,
   });
   operation.assertAuthority();
+  const currentEngineMatchesReceipt =
+    operation.engine.authorityId === receipt.engineAuthority.authorityId &&
+    operation.bindingSha256 === receipt.engineAuthority.bindingSha256;
   if (
     receipt.providerId !== provider.identity.id ||
     receipt.engineAuthority.providerId !== provider.identity.id ||
     operation.providerId !== provider.identity.id ||
+    operation.engine.operation !== receipt.engineAuthority.operation ||
     operation.engine.engineId !== receipt.engineAuthority.engineId ||
-    operation.engine.authorityId !== receipt.engineAuthority.authorityId ||
-    operation.bindingSha256 !== receipt.engineAuthority.bindingSha256
+    (authorityMode === "current" && !currentEngineMatchesReceipt)
   ) {
     fail("receipt differs from the operation-scoped provider engine authority");
   }
@@ -285,11 +289,12 @@ function prepare(
   serialized: string,
   mode: PreparedHostLocalInferenceAuthority["mode"],
   options: HostLocalInferenceLifecycleOptions,
+  authorityMode: "current" | "published-recovery" = "current",
 ): PreparedHostLocalInferenceAuthority | null {
   const receipt = parseManagedReceipt(serialized, sandbox);
   if (!receipt) return null;
   const sandboxAuthority = captureSandboxAuthority(provider, sandbox, serialized, receipt);
-  const required = requireRuntime(provider, receipt, sandbox, options);
+  const required = requireRuntime(provider, receipt, sandbox, options, authorityMode);
   const { runtime } = required;
   const reproved =
     mode === "destroy" ? runtime.prepareDestroy(receipt) : runtime.preserveForRebuild(receipt);
@@ -357,6 +362,25 @@ export function prepareSandboxHostLocalInferenceDestroyAuthority(
   const serialized = sandbox.hostLocalInferenceReceipt;
   return typeof serialized === "string"
     ? prepare(provider, sandbox, serialized, "destroy", options)
+    : null;
+}
+
+/**
+ * Re-prove an immutable published runtime while its product owner separately
+ * qualifies the current execution endpoint. Ordinary lifecycle callers remain
+ * bound to the original operation authority.
+ */
+export function prepareHermesPortableHostLocalInferencePublishedRecoveryAuthority(
+  provider: RuntimeProviderBundle,
+  sandbox: HostLocalInferenceLifecycleSandbox,
+  options: HostLocalInferenceLifecycleOptions = {},
+): PreparedHostLocalInferenceAuthority | null {
+  if (sandbox.agent !== "hermes" || sandbox.provider !== "ollama-local") {
+    fail("published inference requalification is restricted to Hermes Portable Ollama");
+  }
+  const serialized = sandbox.hostLocalInferenceReceipt;
+  return typeof serialized === "string"
+    ? prepare(provider, sandbox, serialized, "destroy", options, "published-recovery")
     : null;
 }
 

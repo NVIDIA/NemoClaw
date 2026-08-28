@@ -17,7 +17,7 @@ import {
   POLICY_VERSION,
   SANDBOX_ID,
   SANDBOX_IDENTITY,
-} from "./managed-policy-receipt-fixture";
+} from "../../helpers/managed-policy-receipt-fixture";
 
 const requireForTest = createRequire(import.meta.url);
 const YAML = requireForTest("yaml");
@@ -1238,7 +1238,9 @@ exit 0
         "        port: 443\n" +
         "        access: full\n";
 
-      const result = policies.mergePresetNamesIntoPolicy(current, ["slack"]);
+      const result = policies.mergePresetNamesIntoPolicy(current, ["slack"], {
+        sandboxName: "slack-preset",
+      });
 
       expect(result.appliedPresets).toEqual(["slack"]);
       expect(result.missingPresets).toEqual([]);

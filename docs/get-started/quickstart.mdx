@@ -50,9 +50,10 @@ Review the [Prerequisites](prerequisites) before you begin.
     Choose an inference provider and model, then provide its credential when prompted.
     Press Enter to accept the suggested `my-assistant` sandbox name.
     For a first run, skip optional web search and messaging setup, then accept the suggested network policy tier.
-    With the OpenShell Docker driver, stock OpenClaw onboarding normally uses the release's managed-image digest.
-    If registry or catalog availability prevents resolution, it builds the shipped repository Dockerfile instead; it never selects an unpinned `:latest` image.
+    With the OpenShell Docker driver, stock OpenClaw onboarding normally uses the release's exact managed-image digest.
+    If registry or catalog availability prevents resolution, stock onboarding stops before sandbox creation and does not build a shipped Dockerfile.
     Invalid or inconsistent catalog evidence fails closed before sandbox creation.
+    An explicit `nemoclaw onboard --from <Dockerfile>` remains a separate custom-image path.
 
     <Note>
       The installer can display `Run express install with these settings? [Y/n]:` before the agent-selection prompt on DGX Spark, qualifying DGX Station, or Windows Subsystem for Linux (WSL) hosts.
@@ -68,9 +69,14 @@ Review the [Prerequisites](prerequisites) before you begin.
 
   <Step title="Confirm the Sandbox Is Ready">
     Wait for the ready summary, then check the sandbox state.
-    Before it prints this summary, default-profile OpenClaw onboarding waits for exactly one matching local CLI operator device.
-    It verifies the required baseline scopes and confirms that no pairing request for the same device remains pending.
-    If this bounded readiness check does not settle, NemoClaw keeps onboarding resumable and tells you to resume or rerun onboarding.
+    Before it prints this summary, ordinary fresh OpenClaw onboarding waits for exactly one matching local CLI operator device.
+    The in-sandbox auto-pair watcher is the only component that approves this device's baseline scope upgrade.
+    The host runs one bounded warm-up only when the canonical device is pairing-only, then observes the same device without sending another approval.
+    Onboarding verifies the exact paired and token scopes and confirms that no same-device request remains pending.
+    Onboarding reports whether settlement failed because of an unavailable pairing, failed warm-up, missing request, persistent pending request, stopped watcher, policy rejection, approval timeout, or approval failure.
+    The failure message omits device identifiers, request identifiers, public keys, tokens, and child command output.
+    If this bounded readiness check does not settle, NemoClaw keeps onboarding resumable.
+    Run `nemoclaw onboard --resume` after you correct the reported condition.
 
     ```bash
     nemoclaw my-assistant status

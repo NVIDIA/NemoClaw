@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: E2E / Rootless Podman CPU
+name: E2E / Rootless Podman CPU Qualification
 
 run-name: "Podman CPU proof PR #${{ github.event.pull_request.number }} commit ${{ github.event.pull_request.head.sha }}"
 
@@ -52,7 +52,7 @@ concurrency:
 
 jobs:
   portable-cpu-delegation:
-    name: Delegation / Ubuntu 22.04
+    name: Portable CPU delegation admission on Ubuntu 22.04
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     env:
@@ -116,7 +116,7 @@ jobs:
           retention-days: 14
 
   podman-cpu-lifecycle:
-    name: Lifecycle / Docker Disabled
+    name: Rootless Podman CPU lifecycle with Docker disabled
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     env:

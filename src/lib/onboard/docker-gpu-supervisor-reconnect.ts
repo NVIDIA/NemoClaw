@@ -73,14 +73,6 @@ export type DockerGpuSupervisorReconnectDeps = {
   errorPhaseDebouncePolls?: number;
 };
 
-type DockerLifecycleReleaseDeps = Pick<
-  DockerGpuSupervisorReconnectDeps,
-  "runOpenshell" | "sleep"
-> & {
-  /** Corroborates a retiring lifecycle row with the stopped exact replacement. */
-  soleLabeledReplacementCorroboratesRetiringPhase?: (remainingMs: number) => boolean;
-};
-
 type DockerFinalHandoffDeps = Required<
   Pick<DockerGpuSupervisorReconnectDeps, "runCaptureOpenshell" | "runOpenshell">
 > &
@@ -104,59 +96,6 @@ const PROCESS_TREE_BOUNDED_OPENSHELL_OPTIONS = {
   killSignal: "SIGKILL",
 } as const;
 
-/**
- * Wait for OpenShell to retire the pre-replacement lifecycle record before
- * restarting the replacement. A retiring Error or Deleting row is accepted
- * only with an identity-bound Docker corroboration.
- */
-export function waitForOpenShellSandboxLifecycleRelease(
-  sandboxName: string,
-  timeoutSecs: number,
-  deps: DockerLifecycleReleaseDeps,
-): boolean {
-  if (!deps.runOpenshell) return false;
-  const sleep = deps.sleep ?? defaultSleep;
-  const deadline = Date.now() + Math.max(1, Math.round(timeoutSecs)) * 1000;
-  const maxAttempts = Math.max(1, Math.ceil(Math.max(1, Math.round(timeoutSecs)) / 2) + 1);
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) break;
-    const result = deps.runOpenshell(["sandbox", "list"], {
-      ignoreError: true,
-      ...PROCESS_TREE_BOUNDED_OPENSHELL_OPTIONS,
-      suppressOutput: true,
-      timeout: Math.min(DOCKER_GPU_PATCH_TIMEOUT_MS, remainingMs),
-    });
-    if (hasZeroDockerExitStatus(result)) {
-      const output = String(result.stdout ?? "").trim();
-      const entries = parseLiveSandboxEntries(output);
-      const sandboxPresent = entries.some((entry) => entry.name === sandboxName);
-      const retiring = entries.some(
-        (entry) =>
-          entry.name === sandboxName && (entry.phase === "Error" || entry.phase === "Deleting"),
-      );
-      const corroborated =
-        retiring &&
-        deadline - Date.now() > 0 &&
-        deps.soleLabeledReplacementCorroboratesRetiringPhase?.(deadline - Date.now()) === true;
-      const explicitEmptyList = output === "No sandboxes found" || output === "No sandboxes found.";
-      if (
-        explicitEmptyList ||
-        corroborated ||
-        (entries.some((entry) => entry.phase !== null) && !sandboxPresent)
-      ) {
-        return true;
-      }
-    }
-    const remainingBeforeSleepMs = deadline - Date.now();
-    if (attempt < maxAttempts && remainingBeforeSleepMs > 0) {
-      sleep(Math.min(2, remainingBeforeSleepMs / 1000));
-    }
-  }
-  return false;
-}
-
 function exactReplacementIsRunning(
   callback: DockerFinalHandoffDeps["replacementIsExactAndRunning"],
   remainingMs: number,
@@ -172,7 +111,7 @@ function exactReplacementIsRunning(
 /**
  * Confirm the final Docker replacement handoff through OpenShell and Docker.
  *
- * The final replacement start is the authoritative lifecycle event. Success
+ * The preceding OpenShell start is the authoritative lifecycle event. Success
  * requires both an OpenShell Ready row with a working sandbox exec and a
  * bounded Docker proof that the exact transaction-owned replacement is the
  * sole running labeled container. Deleting is terminal after that start.
@@ -255,19 +194,6 @@ function defaultSleep(seconds: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, seconds) * 1000);
 }
 
-const ANSI_RE = /\x1b\[[0-9;]*m/g;
-
-function parseSandboxListFailurePhase(output: string, sandboxName: string): string | null {
-  if (typeof output !== "string" || !output.includes(sandboxName)) return null;
-  for (const line of output.replace(ANSI_RE, "").split(/\r?\n/)) {
-    const cols = line.trim().split(/\s+/);
-    if (cols[0] === sandboxName) {
-      return cols.find((col) => TERMINAL_SANDBOX_FAILURE_PHASES.has(col)) ?? null;
-    }
-  }
-  return null;
-}
-
 function sandboxListShowsErrorPhase(
   sandboxName: string,
   runCaptureOpenshell: RunCaptureOpenshellFn,
@@ -279,7 +205,12 @@ function sandboxListShowsErrorPhase(
       suppressOutput: true,
       timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
     });
-    return parseSandboxListFailurePhase(list, sandboxName) !== null;
+    return parseLiveSandboxEntries(list).some(
+      (entry) =>
+        entry.name === sandboxName &&
+        entry.phase !== null &&
+        TERMINAL_SANDBOX_FAILURE_PHASES.has(entry.phase),
+    );
   } catch {
     return false;
   }

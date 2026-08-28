@@ -5,7 +5,6 @@ import type { ArtifactSink } from "./artifacts.ts";
 import { type ChildProcessProgress, spawnObservedChild } from "./observed-child-process.ts";
 import { superviseChild } from "./shell/supervisor.ts";
 import type { TrustedShellCommand } from "./shell/trusted-command.ts";
-import { resolveLiveE2eWorkloadSourceEnv } from "./workload-source-env.ts";
 
 /**
  * Fixture-flavoured host shell probe.
@@ -217,13 +216,17 @@ export class ShellProbe {
     const startedAtMs = Date.now();
     const commandOutputObserver =
       options.onOutput === this.progress.onOutput ? undefined : options.onOutput;
+    const commandEnv: NodeJS.ProcessEnv = {
+      ...(process.env.PATH === undefined ? {} : { PATH: process.env.PATH }),
+      ...(options.env ?? {}),
+    };
     const child = spawnObservedChild(command, args, {
       activityLabel: `command: ${activityName}`,
       progress: this.progress,
       spawn: {
         cwd: options.cwd,
         detached: true,
-        env: resolveLiveE2eWorkloadSourceEnv({ ...(options.env ?? {}) }),
+        env: commandEnv,
         stdio: ["ignore", "pipe", "pipe"],
       },
     });

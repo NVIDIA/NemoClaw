@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: E2E / Standard Target
+name: E2E / Run Standard Target
 
 on:
   workflow_call:
@@ -22,6 +22,12 @@ on:
         required: true
         type: string
       managed_image_catalog:
+        required: true
+        type: string
+      managed_image_revision:
+        required: true
+        type: string
+      managed_image_receipt:
         required: true
         type: string
       credential_boundary:
@@ -101,14 +107,16 @@ permissions:
 
 jobs:
   run:
-    name: Run / ${{ inputs.credential_boundary }}
+    name: ${{ inputs.credential_boundary }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout_minutes }}
     env:
       E2E_JOB: "1"
+      E2E_MANAGED_IMAGE_REVISION: ${{ inputs.managed_image_revision }}
       E2E_TARGET_ID: ${{ inputs.target_id }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.candidate_sha }}
+      E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ inputs.managed_image_receipt }}
       NEMOCLAW_E2E_CORRELATION_ID: ${{ inputs.risk_signal_correlation_id }}
       NEMOCLAW_E2E_RISK_SIGNAL_EXPECTED_SHA: ${{ inputs.risk_signal_expected_sha }}
       NEMOCLAW_LLAMA_CPP_QUALIFICATION_HEAD_SHA: ${{ inputs.candidate_sha }}

@@ -1,13 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const START_SCRIPT = path.join(import.meta.dirname, "..", "../../..", "scripts", "nemoclaw-start.sh");
+import { settleOrdinaryOpenClawPairing } from "../../../../src/lib/onboard/machine/finalization-deps";
+import { createCanonicalCliFixture } from "./auto-pair-settlement-fixture";
+
+const START_SCRIPT = path.join(
+  import.meta.dirname,
+  "..",
+  "../../..",
+  "scripts",
+  "nemoclaw-start.sh",
+);
 const APPROVAL_POLICY_DIR = path.join(import.meta.dirname, "..", "../../..", "scripts", "lib");
 
 function startScriptHeredoc(src: string, marker: string): string {
@@ -23,12 +32,23 @@ function trustedApprovalPolicyFile(tmpDir: string): string {
   return helperPath;
 }
 
-function autoPairPythonScript(src: string, tmpDir: string): string {
-  return startScriptHeredoc(src, "PYAUTOPAIR")
+function autoPairPythonScript(
+  src: string,
+  tmpDir: string,
+  options: { realTime?: boolean } = {},
+): string {
+  const statusPath = path.join(tmpDir, "auto-pair-status.json");
+  fs.writeFileSync(statusPath, "", { mode: 0o600 });
+  const script = startScriptHeredoc(src, "PYAUTOPAIR")
     .replace(
       "APPROVAL_POLICY_FILE = '/usr/local/lib/nemoclaw/openclaw_device_approval_policy.py'",
       `APPROVAL_POLICY_FILE = ${JSON.stringify(trustedApprovalPolicyFile(tmpDir))}`,
     )
+    .replace(
+      "STATUS_PATH = '/tmp/nemoclaw-auto-pair-status.json'",
+      `STATUS_PATH = ${JSON.stringify(statusPath)}`,
+    );
+  const simulatedTimeScript = script
     .replaceAll("time.time()", "_nemoclaw_test_time()")
     .replaceAll("time.sleep(", "_nemoclaw_test_sleep(")
     .replace(
@@ -39,10 +59,243 @@ _nemoclaw_test_time = lambda: _nemoclaw_test_clock[0]
 def _nemoclaw_test_sleep(seconds): _nemoclaw_test_clock.__setitem__(0, _nemoclaw_test_clock[0] + min(max(float(seconds), 0), 0.25))
 `,
     );
+  return options.realTime ? script : simulatedTimeScript;
 }
+
+type SettlementDeps = NonNullable<Parameters<typeof settleOrdinaryOpenClawPairing>[1]>;
+type RaceTiming = "watcher-first" | "host-first";
 
 describe("nemoclaw-start initial CLI auto-pair bootstrap (#6113)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it.each([
+    ["watcher settles before the host observes the request", "watcher-first"],
+    ["host observes the request before the watcher settles", "host-first"],
+  ] as const)(
+    "keeps the watcher as the only scope approver when %s (#10269)",
+    async (_label, timing: RaceTiming) => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-single-approver-"));
+      const fakeOpenclaw = path.join(tmpDir, "openclaw");
+      const stateDir = path.join(tmpDir, "state");
+      const phaseFile = path.join(tmpDir, "phase");
+      const listLog = path.join(tmpDir, "list.log");
+      const approvalLog = path.join(tmpDir, "approvals.log");
+      const requestId = "scope-upgrade";
+      const canonicalCli = createCanonicalCliFixture(stateDir);
+      const pairingOnlyCli = {
+        ...canonicalCli,
+        scopes: ["operator.pairing"],
+        approvedScopes: ["operator.pairing"],
+        tokens: {
+          operator: {
+            role: "operator",
+            revokedAtMs: null,
+            scopes: ["operator.pairing"],
+          },
+        },
+      };
+      const pendingRequest = {
+        requestId,
+        deviceId: canonicalCli.deviceId,
+        publicKey: canonicalCli.publicKey,
+        clientId: "cli",
+        clientMode: "cli",
+        role: "operator",
+        roles: ["operator"],
+        scopes: ["operator.write"],
+        isRepair: false,
+      };
+      const pairingOnlyList = JSON.stringify({ pending: [], paired: [pairingOnlyCli] });
+      const pendingList = JSON.stringify({
+        pending: [pendingRequest],
+        paired: [pairingOnlyCli],
+      });
+      const settledList = JSON.stringify({ pending: [], paired: [canonicalCli] });
+      fs.writeFileSync(phaseFile, "pairing-only");
+      fs.writeFileSync(
+        fakeOpenclaw,
+        `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
+  printf 'list\n' >> ${JSON.stringify(listLog)}
+  phase="$(cat ${JSON.stringify(phaseFile)})"
+  if [ "$phase" = "pairing-only" ]; then printf '%s\n' ${JSON.stringify(pairingOnlyList)}
+  elif [ "$phase" = "scope-upgrade-pending" ]; then printf '%s\n' ${JSON.stringify(pendingList)}
+  else printf '%s\n' ${JSON.stringify(settledList)}; fi
+  exit 0
+fi
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
+  printf 'watcher:%s\n' "$3" >> ${JSON.stringify(approvalLog)}
+  [ "$3" = ${JSON.stringify(requestId)} ] || exit 7
+  printf 'settled' > ${JSON.stringify(phaseFile)}
+  printf '{}\n'
+  exit 0
+fi
+echo "unexpected: $*" >&2
+exit 2
+`,
+        { mode: 0o755 },
+      );
+
+      let watcher: ReturnType<typeof spawn> | undefined;
+      let watcherOutput = "";
+      let hostApprovalAttempts = 0;
+      let warmupRuns = 0;
+      let reportPendingObserved = () => {};
+      const pendingObserved = new Promise<void>((resolve) => {
+        reportPendingObserved = resolve;
+      });
+      const waitFor = async (predicate: () => boolean, label: string) => {
+        const deadline = Date.now() + 5_000;
+        while (!predicate()) {
+          expect(Date.now(), `Timed out waiting for ${label}.`).toBeLessThan(deadline);
+          await new Promise<void>((resolve) => setTimeout(resolve, 10));
+        }
+      };
+      const startWatcher = () => {
+        const child = spawn(
+          "python3",
+          ["-u", "-c", autoPairPythonScript(src, tmpDir, { realTime: true })],
+          {
+            env: {
+              ...process.env,
+              OPENCLAW_BIN: fakeOpenclaw,
+              OPENCLAW_STATE_DIR: stateDir,
+              NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "6",
+              NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "0.05",
+              NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "0.05",
+              NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "1",
+            },
+            stdio: ["ignore", "pipe", "pipe"],
+          },
+        );
+        child.stdout?.on("data", (chunk) => {
+          watcherOutput += String(chunk);
+        });
+        child.stderr?.on("data", (chunk) => {
+          watcherOutput += String(chunk);
+        });
+        return child;
+      };
+      const timingStrategy = {
+        "watcher-first": {
+          prepare: async () => {
+            watcher = startWatcher();
+            await waitFor(() => fs.existsSync(listLog), "the watcher's first observation");
+          },
+          afterWarmup: async () => {
+            await waitFor(
+              () => fs.readFileSync(phaseFile, "utf-8").trim() === "settled",
+              "the watcher to settle before host observation",
+            );
+          },
+          afterSettlementStarted: async () => {},
+        },
+        "host-first": {
+          prepare: async () => {},
+          afterWarmup: async () => {},
+          afterSettlementStarted: async () => {
+            await pendingObserved;
+            watcher = startWatcher();
+          },
+        },
+      } satisfies Record<
+        RaceTiming,
+        {
+          prepare(): Promise<void>;
+          afterWarmup(): Promise<void>;
+          afterSettlementStarted(): Promise<void>;
+        }
+      >;
+
+      try {
+        await timingStrategy[timing].prepare();
+
+        const target = {
+          gatewayName: "nemoclaw",
+          lifecycleGeneration: "generation-1",
+          lifecycleLiveIdentityFingerprint: "fingerprint-1",
+          stateDirectory: stateDir,
+          version: "2026.7.1",
+        };
+        const deps: SettlementDeps & { runApproval(): void } = {
+          getTarget: () => target,
+          observePairing: () => {
+            const state = fs.readFileSync(phaseFile, "utf-8").trim() as
+              | "pairing-only"
+              | "scope-upgrade-pending"
+              | "settled";
+            const reportState = {
+              "pairing-only": () => {},
+              "scope-upgrade-pending": reportPendingObserved,
+              settled: () => {},
+            };
+            reportState[state]();
+            return { state, deviceIdentitySha256: canonicalCli.deviceId };
+          },
+          runWarmup: async () => {
+            warmupRuns += 1;
+            fs.writeFileSync(phaseFile, "scope-upgrade-pending");
+            await timingStrategy[timing].afterWarmup();
+            return "request-issued" as const;
+          },
+          readWatcherStatus: () => ({
+            schemaVersion: 1 as const,
+            state: "approval-completed" as const,
+            watcherActive: true,
+          }),
+          withSandboxLock: async (_name, operation) => operation(),
+          withGatewayLock: async (_name, operation) => operation(),
+          now: () => performance.now(),
+          sleep: async () => {
+            await new Promise<void>((resolve) => setTimeout(resolve, 10));
+          },
+          // The current state machine ignores this legacy dependency. Keeping
+          // it in the harness makes the test fail against the two-owner design.
+          runApproval: () => {
+            hostApprovalAttempts += 1;
+            fs.appendFileSync(approvalLog, `host:${requestId}\n`);
+            fs.writeFileSync(phaseFile, "settled");
+          },
+        };
+
+        const settlement = settleOrdinaryOpenClawPairing("alpha", deps);
+        await timingStrategy[timing].afterSettlementStarted();
+
+        await expect(settlement).resolves.toEqual({ kind: "settled" });
+        const approvalReceipt = `[auto-pair] approved request=${requestId} client=cli mode=cli`;
+        await waitFor(
+          () => watcherOutput.includes(approvalReceipt),
+          "the watcher approval receipt",
+        );
+        expect(warmupRuns).toBe(1);
+        expect(hostApprovalAttempts).toBe(0);
+        expect(fs.readFileSync(phaseFile, "utf-8").trim()).toBe("settled");
+        expect(fs.readFileSync(approvalLog, "utf-8").trim().split("\n")).toEqual([
+          `watcher:${requestId}`,
+        ]);
+        const publishedStatus = JSON.parse(
+          fs.readFileSync(path.join(tmpDir, "auto-pair-status.json"), "utf-8"),
+        ) as Record<string, unknown>;
+        expect(Object.keys(publishedStatus).sort()).toEqual(["schemaVersion", "state"]);
+        expect(publishedStatus.schemaVersion).toBe(1);
+        expect(["approval-completed", "canonical-settled"]).toContain(publishedStatus.state);
+        expect(watcherOutput).toContain(approvalReceipt);
+      } finally {
+        watcher?.kill("SIGTERM");
+        const watcherClosed =
+          watcher?.exitCode === null
+            ? new Promise<void>((resolve) => watcher?.once("close", () => resolve()))
+            : Promise.resolve();
+        await Promise.race([
+          watcherClosed,
+          new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
+        ]);
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
 
   it("approves an initial CLI pairing request when device list is itself gated (#6113)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-bootstrap-"));
@@ -643,13 +896,7 @@ exit 2
     40_000,
   );
 
-  it("drops a permanently-failing gated approve to slow-mode instead of 1s-looping to the deadline (#6113)", () => {
-    // cv #6330 item 2: the fast->slow transition must be reached even when the
-    // gated list/approve path keeps failing and `continue`s. With a near-zero
-    // FAST_DEADLINE the first iteration must emit the slow-mode transition
-    // (proving the check runs before the failure `continue`), and the watcher
-    // must exit within the short deadline rather than busy-polling at 1s.
-    // (`_env_seconds` rejects a literal 0 as non-positive, so use a tiny value.)
+  it("keeps a permanently failing gated approval in fast mode until the watcher deadline (#10269)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-permfail-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const stateDir = path.join(tmpDir, "state");
@@ -708,7 +955,6 @@ exit 2
           ...process.env,
           OPENCLAW_BIN: fakeOpenclaw,
           OPENCLAW_STATE_DIR: stateDir,
-          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "0.01",
           NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "1",
           NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
         },
@@ -716,9 +962,9 @@ exit 2
       });
 
       expect(run.status).toBe(0);
-      // The transition fired on the permanently-failing gated path (loop-top check).
+      expect(run.stdout).not.toContain("entering slow-mode");
       expect(run.stdout).toContain(
-        "[auto-pair] fast-mode deadline reached; switching to slow-mode",
+        '[auto-pair-status] {"schemaVersion":1,"state":"approval-failed"}',
       );
       expect(run.stdout).toContain(
         "[auto-pair] initial CLI approve failed request=request-1: gateway permanently unavailable",
@@ -816,7 +1062,6 @@ printf '%s\\n' '{"pending":[],"paired":[]}'
           ...process.env,
           OPENCLAW_BIN: fakeOpenclaw,
           NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "1",
-          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "0.0001",
           NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
         },
         timeout: 10_000,
@@ -859,7 +1104,6 @@ printf '%s\\n' ${JSON.stringify(response)}
           ...process.env,
           OPENCLAW_BIN: fakeOpenclaw,
           NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "1",
-          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "0.0001",
           NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
         },
         timeout: 10_000,
@@ -1007,7 +1251,7 @@ printf '%s\n' ${JSON.stringify(response)}
     },
   );
 
-  it("enters slow mode for a paired CLI record when all pending request IDs are malformed (#9844)", () => {
+  it("does not treat an incomplete paired CLI record as the canonical baseline (#10269)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-malformed-pending-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const approvalMarker = path.join(tmpDir, "approval-called");
@@ -1039,9 +1283,8 @@ printf '%s\n' '{"pending":[{"requestId":"--help","clientId":"cli","clientMode":"
         "[auto-pair] stage=validation rejected reason=malformed-request-id",
       );
       expect(run.stdout).toContain("[auto-pair] loopback CLI pairing bootstrap completed");
-      expect(run.stdout).toContain(
-        "[auto-pair] devices paired (1); entering slow-mode approvals=0",
-      );
+      expect(run.stdout).not.toContain("entering slow-mode");
+      expect(run.stdout).toContain('[auto-pair-status] {"schemaVersion":1,"state":"stopped"}');
       expect(run.stdout).not.toContain("--help");
       expect(fs.existsSync(approvalMarker)).toBe(false);
     } finally {

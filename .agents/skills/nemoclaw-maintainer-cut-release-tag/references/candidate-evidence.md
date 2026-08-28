@@ -104,7 +104,7 @@ fi
 ```
 
 Read documentation coverage from Git history and GitHub PR state. Do not require another
-`Docs / Post-Merge Catch-Up` run after the cumulative docs PR merges.
+`Docs / Author Post-Merge Catch-Up` run after the cumulative docs PR merges.
 
 First, list every open managed docs PR. Preserve this JSON for the release brief.
 

@@ -350,7 +350,10 @@ describe("agents/hermes/generate-config.ts", () => {
       expect(config.tts).toEqual({ provider: "fixture-audio", use_gateway: true });
       expect(envFile).toContain("FIXTURE_AUDIO_GATEWAY_URL=https://matrix.example.test/audio\n");
       expect(config.platforms.telegram).toBeUndefined();
-      expect(envFile).not.toContain("TELEGRAM_BOT_TOKEN=");
+      // build-env.ts derives this line from the plan's credential bindings at
+      // image-build time, independently of the manifest render. Cleanup only
+      // removes keys the plan owns.
+      expect(envFile).toContain("TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN");
     },
     testTimeout(15_000),
   );
@@ -895,7 +898,7 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.platforms.discord).toEqual({ enabled: true });
     expectRemotePlatformToolsets(config.platform_toolsets.discord);
     expect(JSON.stringify(config)).not.toContain("DISCORD_BOT_TOKEN");
-    expect(envFile).toContain("DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN\n");
+    expect(envFile).not.toContain("DISCORD_BOT_TOKEN=");
     expect(envFile).not.toContain("DISCORD_PROXY=");
     expect(envFile).not.toContain("NEMOCLAW_DISCORD_FACADE_URL");
     expect(envFile).toContain("NEMOCLAW_DISCORD_GUILD_IDS=1491590992753590594\n");
@@ -997,12 +1000,10 @@ describe("agents/hermes/generate-config.ts", () => {
     });
     expectRemotePlatformToolsets(config.platform_toolsets.telegram);
     expectRemotePlatformToolsets(config.platform_toolsets.slack);
-    expect(envFile).toContain("TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN\n");
+    expect(envFile).not.toContain("TELEGRAM_BOT_TOKEN=");
     expect(envFile).toContain("TELEGRAM_ALLOWED_USERS=123456789\n");
-    expect(envFile).toContain("SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN\n");
-    expect(envFile).toContain("SLACK_APP_TOKEN=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN\n");
-    expect(envFile).not.toContain("SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN\n");
-    expect(envFile).not.toContain("SLACK_APP_TOKEN=openshell:resolve:env:SLACK_APP_TOKEN\n");
+    expect(envFile).not.toContain("SLACK_BOT_TOKEN=");
+    expect(envFile).not.toContain("SLACK_APP_TOKEN=");
     expect(envFile).toContain("SLACK_ALLOWED_USERS=U0123456789,U09ABCDEFGH\n");
     expect(envFile).toContain("SLACK_ALLOWED_CHANNELS=C012AB3CD,C987ZY6XW\n");
   });
@@ -1187,7 +1188,7 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.telegram).toEqual({ require_mention: true });
     expect(config.platforms.telegram).toEqual({ enabled: true });
     expectRemotePlatformToolsets(config.platform_toolsets.telegram);
-    expect(envFile).toContain("TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN\n");
+    expect(envFile).not.toContain("TELEGRAM_BOT_TOKEN=");
   });
 
   it("ignores the OpenClaw Kimi model-specific setup for Hermes output", () => {

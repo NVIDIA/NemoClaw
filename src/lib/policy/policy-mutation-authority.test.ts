@@ -54,7 +54,9 @@ import {
   applyPermissivePolicy,
   applyPresetContent,
   excludeBaselineEntry,
+  inspectPolicyMutationAuthority,
   inspectPolicyRecoveryAuthority,
+  recheckPolicyMutationAuthority,
   removePreset,
   restoreBaselineEntry,
 } from "./index";
@@ -203,6 +205,10 @@ describe("PolicyMutationAuthority", () => {
   });
 
   it("rotates the receipt after a matching policy mutation (#9833)", () => {
+    mocks.captureSandboxBasePolicy.mockImplementation(
+      () => `Version: 2\nHash: updated\nStatus: Effective\n---\n${liveBasePolicy}`,
+    );
+
     expect(
       applyPresetContent(SANDBOX, "weather", WEATHER_PRESET, {
         custom: { sourcePath: "/tmp/weather.yaml" },
@@ -262,14 +268,31 @@ describe("PolicyMutationAuthority", () => {
     expect(reportedErrors()).toContain("policy creation receipt");
   });
 
-  it("refuses a stale policy identity before mutation (#9833)", () => {
+  it("refuses a stable out-of-band policy update before mutation (#9833)", () => {
     livePolicyHash = "policy-external-change";
+    liveBasePolicy = `${BASE_POLICY}
+  external_approval:
+    endpoints:
+      - host: approved.example.com
+        port: 443
+`;
 
-    expect(applyPresetContent(SANDBOX, "weather", WEATHER_PRESET, { nonFatal: true })).toBe(false);
+    const result = applyPresetContent(SANDBOX, "weather", WEATHER_PRESET, { nonFatal: true });
+    expect(result).toBe(false);
 
-    expect(mocks.runCapture).not.toHaveBeenCalled();
     expect(mocks.run).not.toHaveBeenCalled();
-    expect(reportedErrors()).toContain("does not match the live sandbox policy");
+    expect(mocks.compareAndSetSandboxPolicyCreationReceipt).not.toHaveBeenCalled();
+    expect(reportedErrors()).toContain("creation receipt does not match the live sandbox policy");
+  });
+
+  it("refuses live policy drift between inspection and mutation (#9833)", () => {
+    const recorded = inspectPolicyMutationAuthority(SANDBOX, "apply a policy preset");
+    livePolicyHash = "policy-concurrent-change";
+
+    expect(() =>
+      recheckPolicyMutationAuthority(SANDBOX, "apply a policy preset", recorded),
+    ).toThrow(/creation receipt does not match the live sandbox policy/u);
+    expect(mocks.run).not.toHaveBeenCalled();
   });
 
   it("refuses a registry receipt that changes during live verification (#9833)", () => {

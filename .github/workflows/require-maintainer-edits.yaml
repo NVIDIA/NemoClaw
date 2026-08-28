@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Governance / Fork PRs
+name: Governance / Require Maintainer Edits for Fork PRs
 
 # pull_request_target runs in the base repo context. This workflow is safe for
 # fork PRs because it never checks out or executes pull request code; it only
@@ -19,7 +19,6 @@ concurrency:
 
 jobs:
   require-maintainer-edits:
-    name: Require maintainer edits
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
