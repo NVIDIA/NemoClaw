@@ -56,12 +56,7 @@ public routes, and anchors. Use the [style and structure contract](STYLE.md) for
 [automation contract](AUTOMATION.md) when the change affects generated pages, navigation, routes, or
 the changelog.
 
-Keep procedures testable:
-
-1. State the outcome and prerequisites.
-2. Give ordered actions.
-3. State the expected result.
-4. Add troubleshooting only when it helps the same task.
+Follow the [procedure structure](STYLE.md#procedure-structure) for operational steps.
 
 Do not describe unsupported behavior as canonical NemoClaw functionality. Do not add speculative
 pages or duplicate a procedure to improve discoverability; add navigation or a link instead.
@@ -82,9 +77,8 @@ Use `npm run docs:live` only when the change needs visual inspection. Follow any
 validation required by [the automation contract](AUTOMATION.md) for generated variants, routes, or
 changelog changes.
 
-Commit and push normally so Git hooks run. If hooks were skipped or unavailable, commit the changes,
-run `git fetch origin main`, then run `npm run validate:pr`. This command compares committed changes
-with `origin/main`; it does not validate uncommitted changes.
+Follow the root contributor guide's [validation procedure](../CONTRIBUTING.md#validate-the-change)
+for Git hooks and PR-level validation.
 
 Documentation-only changes do not require `npm test` or `npm run check` unless they alter generated
 runtime behavior, test infrastructure, or another repository-wide contract. Run focused tests when
