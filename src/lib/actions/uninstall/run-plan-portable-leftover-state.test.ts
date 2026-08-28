@@ -263,11 +263,15 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     const host = scope("nemoclaw-uninstall-completed-openclaw-");
     completedOpenClawAuthority(host, "default");
     const directory = abandonedPortableConfig(host, 0o700);
+    restoredDirectories.pop();
+    host.rmSync.mockImplementation((target, options) => {
+      const resolvedTarget = path.resolve(String(target));
+      expect(resolvedTarget.startsWith(`${host.homeDir}${path.sep}`)).toBe(true);
+      fs.rmSync(resolvedTarget, options);
+    });
 
     await expectOrdinaryUninstall(host);
-    expect(host.rmSync.mock.calls.map(([target]) => String(target))).toContain(
-      path.dirname(directory),
-    );
+    expect(fs.existsSync(directory)).toBe(false);
   });
 
   it("refuses uninstall when an unexpected Portable configuration file remains after ordinary onboarding (#10545)", async () => {
@@ -279,6 +283,8 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     const result = await uninstall(host);
 
     expect(result.exitCode).toBe(1);
+    expect(fs.existsSync(path.join(directory, "containers.conf"))).toBe(true);
+    expect(fs.existsSync(path.join(directory, "unexpected.conf"))).toBe(true);
     expect(host.runModelCleanup).not.toHaveBeenCalled();
     expect(host.rmSync).not.toHaveBeenCalled();
     expect(host.runPortableCleanup).not.toHaveBeenCalled();
