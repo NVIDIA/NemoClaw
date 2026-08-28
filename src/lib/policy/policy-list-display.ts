@@ -2,6 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { formatPresetProvenanceSuffix, type PresetProvenanceContext } from "./preset-provenance";
+import { getTier } from "./tiers";
+
+/** Resolve display provenance once at the policy-list boundary. */
+export function resolvePolicyListProvenanceContext(
+  tierName: string | null | undefined,
+  agentName: string | null | undefined,
+): PresetProvenanceContext {
+  const normalizedTierName = tierName?.trim().toLowerCase() || null;
+  return {
+    tierName: normalizedTierName,
+    tier: normalizedTierName ? getTier(normalizedTierName) : null,
+    agentName,
+  };
+}
 
 interface PolicyListPresetRowOptions {
   preset: { name: string; description: string };
