@@ -89,8 +89,9 @@ export function checkTerminalAgentVersion(
     // manifests. Keep this boundary aligned with terminal-smoke.ts; convert it
     // to an argv-form allowlist before accepting custom/user manifests here.
     // The timeout prevents a hung command from wedging onboarding.
+    const shell = agent.name === "pi" ? "bash" : "sh";
     result = runCaptureOpenshell(
-      ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", agent.versionCommand],
+      ["sandbox", "exec", "-n", sandboxName, "--", shell, "-lc", agent.versionCommand],
       { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
     );
   } catch {

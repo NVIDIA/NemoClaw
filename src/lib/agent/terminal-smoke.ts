@@ -83,6 +83,21 @@ export function buildAgentSmokeArgs(
       command,
     ];
   }
+  if (agent.name === "pi") {
+    return [
+      "sandbox",
+      "exec",
+      "-n",
+      sandboxName,
+      ...(gatewayName ? ["-g", gatewayName] : []),
+      "--",
+      "bash",
+      "-lc",
+      smokeRunner(false),
+      "nemoclaw-agent-smoke",
+      command,
+    ];
+  }
   return [
     "sandbox",
     "exec",
