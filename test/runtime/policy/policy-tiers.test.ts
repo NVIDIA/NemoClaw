@@ -12,12 +12,7 @@
 
 import { describe, expect, it } from "vitest";
 import * as policies from "../../../src/lib/policy";
-import {
-  getTier,
-  listTiers,
-  resolveTierPresets,
-  tierIncludesPolicyPreset,
-} from "../../../src/lib/policy/tiers";
+import { getTier, listTiers, resolveTierPresets } from "../../../src/lib/policy/tiers";
 
 interface TierPreset {
   name: string;
@@ -117,20 +112,6 @@ describe("tiers", () => {
 
     it("returns null for an unknown tier", () => {
       expect(getTier("nonexistent")).toBeNull();
-    });
-  });
-
-  describe("tierIncludesPolicyPreset", () => {
-    it("checks an already-resolved tier without loading tier configuration", () => {
-      expect(
-        tierIncludesPolicyPreset({ presets: [{ name: "BrAvE" }] }, " BRAVE "),
-      ).toBe(true);
-    });
-
-    it("rejects an empty preset name and a missing or empty membership", () => {
-      expect(tierIncludesPolicyPreset({ presets: [] }, "brave")).toBe(false);
-      expect(tierIncludesPolicyPreset({ presets: [{ name: "brave" }] }, " ")).toBe(false);
-      expect(tierIncludesPolicyPreset(null, "brave")).toBe(false);
     });
   });
 

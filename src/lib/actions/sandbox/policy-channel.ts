@@ -61,10 +61,7 @@ import {
   listBaselineEntryKeys,
   renderBaselineEntryScope,
 } from "../../policy/baseline-exclusion";
-import {
-  formatPolicyListPresetRow,
-  resolvePolicyListProvenanceContext,
-} from "../../policy/policy-list-display";
+import { formatPolicyListPresetRow } from "../../policy/policy-list-display";
 import type { PolicyObject } from "../../policy/preset-parsing";
 import { shellQuote } from "../../runner";
 import {
@@ -535,10 +532,10 @@ export function listSandboxPolicies(sandboxName: string) {
   // array of matched preset names when reachable (possibly empty).
   const gatewayPresets = policies.getGatewayPresets(sandboxName);
 
-  const provenanceContext = resolvePolicyListProvenanceContext(
-    sandboxEntry?.policyTier ?? null,
-    sandboxEntry?.agent ?? null,
-  );
+  const provenanceContext = {
+    tierName: sandboxEntry?.policyTier ?? null,
+    agentName: sandboxEntry?.agent ?? null,
+  };
 
   console.log("");
   console.log(`  Policy presets for sandbox '${sandboxName}':`);

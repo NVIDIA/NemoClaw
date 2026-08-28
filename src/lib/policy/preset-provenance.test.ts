@@ -44,13 +44,6 @@ const { TIER_FIXTURES } = vi.hoisted(() => {
 
 vi.mock("./tiers", () => ({
   getTier: (name: string): FakeTier | undefined => TIER_FIXTURES[name],
-  tierIncludesPolicyPreset: (
-    tier: FakeTier | null | undefined,
-    presetName: string,
-  ): boolean => {
-    const name = presetName.trim().toLowerCase();
-    return tier?.presets.some((preset) => preset.name === name) ?? false;
-  },
 }));
 
 import {
@@ -59,21 +52,13 @@ import {
   formatPresetProvenanceTag,
 } from "./preset-provenance";
 
-function tierContext(tierName: string, agentName?: string) {
-  return {
-    tierName,
-    tier: TIER_FIXTURES[tierName.trim().toLowerCase()],
-    ...(agentName ? { agentName } : {}),
-  };
-}
-
 describe("classifyPresetProvenance", () => {
   it("gives current tier-name matches precedence over fallback sources", () => {
-    expect(classifyPresetProvenance("npm", tierContext("balanced"))).toEqual({
+    expect(classifyPresetProvenance("npm", { tierName: "balanced" })).toEqual({
       source: "tier",
       tier: "balanced",
     });
-    expect(classifyPresetProvenance("brave", tierContext("balanced"))).toEqual({
+    expect(classifyPresetProvenance("brave", { tierName: "balanced" })).toEqual({
       source: "tier",
       tier: "balanced",
     });
@@ -90,7 +75,7 @@ describe("classifyPresetProvenance", () => {
     // Application history is not persisted, so the display can only infer
     // provenance from the current tier. Keep that limitation explicit until
     // the policy registry stores per-preset source history.
-    expect(classifyPresetProvenance(shadowingCustomPreset.name, tierContext("balanced"))).toEqual({
+    expect(classifyPresetProvenance(shadowingCustomPreset.name, { tierName: "balanced" })).toEqual({
       source: "tier",
       tier: "balanced",
     });
@@ -98,7 +83,7 @@ describe("classifyPresetProvenance", () => {
   });
 
   it("classifies tier-default presets under the Open tier too", () => {
-    expect(classifyPresetProvenance("slack", tierContext("open"))).toEqual({
+    expect(classifyPresetProvenance("slack", { tierName: "open" })).toEqual({
       source: "tier",
       tier: "open",
     });
@@ -106,21 +91,24 @@ describe("classifyPresetProvenance", () => {
 
   it("classifies openclaw-pricing as agent-sourced for openclaw sandboxes", () => {
     expect(
-      classifyPresetProvenance("openclaw-pricing", tierContext("balanced", "openclaw")),
+      classifyPresetProvenance("openclaw-pricing", {
+        tierName: "balanced",
+        agentName: "openclaw",
+      }),
     ).toEqual({ source: "agent", agent: "openclaw" });
   });
 
   it("classifies openclaw-diagnostics-otel-local as openclaw-agent-sourced on openclaw sandboxes", () => {
     expect(
-      classifyPresetProvenance(
-        "openclaw-diagnostics-otel-local",
-        tierContext("balanced", "openclaw"),
-      ),
+      classifyPresetProvenance("openclaw-diagnostics-otel-local", {
+        tierName: "balanced",
+        agentName: "openclaw",
+      }),
     ).toEqual({ source: "agent", agent: "openclaw" });
   });
 
   it("classifies nous-* gateway presets as hermes-agent-sourced on hermes sandboxes", () => {
-    expect(classifyPresetProvenance("nous-web", tierContext("open", "hermes"))).toEqual(
+    expect(classifyPresetProvenance("nous-web", { tierName: "open", agentName: "hermes" })).toEqual(
       {
         source: "agent",
         agent: "hermes",
@@ -134,13 +122,19 @@ describe("classifyPresetProvenance", () => {
 
   it("does not label openclaw-only presets as agent-sourced on hermes sandboxes", () => {
     expect(
-      classifyPresetProvenance("openclaw-pricing", tierContext("open", "hermes")),
+      classifyPresetProvenance("openclaw-pricing", {
+        tierName: "open",
+        agentName: "hermes",
+      }),
     ).toEqual({ source: "user" });
   });
 
   it("does not label hermes-only presets as agent-sourced on openclaw sandboxes", () => {
     expect(
-      classifyPresetProvenance("nous-web", tierContext("balanced", "openclaw")),
+      classifyPresetProvenance("nous-web", {
+        tierName: "balanced",
+        agentName: "openclaw",
+      }),
     ).toEqual({ source: "user" });
   });
 
@@ -152,7 +146,7 @@ describe("classifyPresetProvenance", () => {
   });
 
   it("falls back to user-source for non-tier, non-agent presets", () => {
-    expect(classifyPresetProvenance("custom-private", tierContext("balanced"))).toEqual({
+    expect(classifyPresetProvenance("custom-private", { tierName: "balanced" })).toEqual({
       source: "user",
     });
   });
@@ -167,14 +161,14 @@ describe("classifyPresetProvenance", () => {
   it("normalises preset, tier, and agent casing", () => {
     expect(
       classifyPresetProvenance("OPENCLAW-PRICING", {
-        ...tierContext(" BALANCED "),
+        tierName: " BALANCED ",
         agentName: "OpenClaw",
       }),
     ).toEqual({
       source: "agent",
       agent: "openclaw",
     });
-    expect(classifyPresetProvenance("NPM", tierContext(" BALANCED "))).toEqual({
+    expect(classifyPresetProvenance("NPM", { tierName: " BALANCED " })).toEqual({
       source: "tier",
       tier: "balanced",
     });
@@ -207,28 +201,28 @@ describe("formatPresetProvenanceSuffix", () => {
     expect(
       formatPresetProvenanceSuffix(
         "npm",
-        tierContext("balanced"),
+        { tierName: "balanced" },
         { active: true, inRegistry: true, inGateway: true },
       ),
     ).toBe(" [from balanced tier]");
     expect(
       formatPresetProvenanceSuffix(
         "npm",
-        tierContext("balanced"),
+        { tierName: "balanced" },
         { active: true, inRegistry: false, inGateway: true },
       ),
     ).toBe(" [source unverified]");
     expect(
       formatPresetProvenanceSuffix(
         "npm",
-        tierContext("balanced"),
+        { tierName: "balanced" },
         { active: true, inRegistry: true, inGateway: null },
       ),
     ).toBe(" [source unverified (gateway unreachable)]");
     expect(
       formatPresetProvenanceSuffix(
         "npm",
-        tierContext("balanced"),
+        { tierName: "balanced" },
         { active: false, inRegistry: true, inGateway: false },
       ),
     ).toBe("");
