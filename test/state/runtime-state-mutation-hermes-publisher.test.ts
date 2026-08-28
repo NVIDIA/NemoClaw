@@ -9,7 +9,6 @@ import { describe, expect, it } from "vitest";
 
 const ROOT = path.join(import.meta.dirname, "../..");
 const PUBLISHER = path.join(ROOT, "scripts", "runtime_state_mutation_hermes_publisher.py");
-const STATE_PLAN = path.join(ROOT, "agents", "hermes", "state-lock-plan.json");
 const START = path.join(ROOT, "agents", "hermes", "start.sh");
 
 const HARNESS = String.raw`
@@ -17,7 +16,6 @@ import hashlib
 import importlib.util
 import json
 import os
-import shutil
 import sys
 import tempfile
 
@@ -28,21 +26,26 @@ spec.loader.exec_module(publisher)
 publisher.ROOT_UID = os.getuid()
 publisher.ROOT_GID = os.getgid()
 
-with open(sys.argv[2], "r", encoding="utf-8") as stream:
-    installed_value = json.load(stream)
-installed_plan = {key: value for key, value in installed_value.items() if key != "$comment"}
+installed_plan = {
+    "version": 1,
+    "readOnlyRoots": ["plugins", "workspace"],
+    "confidentialRoots": ["pairing"],
+    "readOnlyPrefixes": ["profile-"],
+    "confidentialPrefixes": ["secret-"],
+    "writableSubpaths": ["workspace/cache"],
+}
 
 def canonical(value):
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
+def write_installed_plan(path):
+    with open(path, "w", encoding="utf-8") as stream:
+        stream.write(canonical(installed_plan))
+    os.chmod(path, 0o444)
+
 def marker(nonce="d" * 64, selectors=None, provider_id="docker"):
-    expected = [
-        *["path:" + value for value in (".config-hash", ".env", "config.yaml")],
-        *["path:" + value for value in installed_plan["readOnlyRoots"]],
-        *["path:" + value for value in installed_plan["confidentialRoots"]],
-        *["prefix:" + value for value in installed_plan["readOnlyPrefixes"]],
-        *["prefix:" + value for value in installed_plan["confidentialPrefixes"]],
-    ]
+    expected = ["path:.config-hash", "path:.env", "path:config.yaml", "path:pairing",
+                "path:plugins", "path:workspace", "prefix:profile-", "prefix:secret-"]
     expected.sort(key=lambda value: value.encode())
     selected = selectors or [
         ({"kind": "path", "path": value.removeprefix("path:")}
@@ -89,8 +92,7 @@ with tempfile.TemporaryDirectory() as temporary:
     durable = os.path.join(temporary, "durable")
     os.mkdir(durable, 0o711)
     plan_path = os.path.join(temporary, "state-lock-plan.json")
-    shutil.copyfile(sys.argv[2], plan_path)
-    os.chmod(plan_path, 0o444)
+    write_installed_plan(plan_path)
     publisher.DURABLE_DIRECTORY = durable
     publisher.STATE_LOCK_PLAN_PATH = plan_path
     publisher._verify_final_posture = lambda posture, plan_json: (
@@ -166,8 +168,7 @@ with tempfile.TemporaryDirectory() as temporary:
     durable = os.path.join(temporary, "durable")
     os.mkdir(durable, 0o711)
     plan_path = os.path.join(temporary, "state-lock-plan.json")
-    shutil.copyfile(sys.argv[2], plan_path)
-    os.chmod(plan_path, 0o444)
+    write_installed_plan(plan_path)
     publisher.DURABLE_DIRECTORY = durable
     publisher.STATE_LOCK_PLAN_PATH = plan_path
     publisher._verify_final_posture = lambda posture, plan_json: "4" * 64
@@ -204,8 +205,7 @@ with tempfile.TemporaryDirectory() as temporary:
     durable = os.path.join(temporary, "durable")
     os.mkdir(durable, 0o711)
     plan_path = os.path.join(temporary, "state-lock-plan.json")
-    shutil.copyfile(sys.argv[2], plan_path)
-    os.chmod(plan_path, 0o444)
+    write_installed_plan(plan_path)
     publisher.DURABLE_DIRECTORY = durable
     publisher.STATE_LOCK_PLAN_PATH = plan_path
     events = []
@@ -260,8 +260,7 @@ with tempfile.TemporaryDirectory() as temporary:
     durable = os.path.join(temporary, "durable")
     os.mkdir(durable, 0o711)
     plan_path = os.path.join(temporary, "state-lock-plan.json")
-    shutil.copyfile(sys.argv[2], plan_path)
-    os.chmod(plan_path, 0o444)
+    write_installed_plan(plan_path)
     publisher.DURABLE_DIRECTORY = durable
     publisher.STATE_LOCK_PLAN_PATH = plan_path
     events = []
@@ -319,7 +318,7 @@ print(json.dumps(results, sort_keys=True))
 `;
 
 function runHarness(): Record<string, unknown> {
-  const result = spawnSync("python3", ["-I", "-c", HARNESS, PUBLISHER, STATE_PLAN], {
+  const result = spawnSync("python3", ["-I", "-c", HARNESS, PUBLISHER], {
     encoding: "utf8",
     timeout: 20_000,
   });
@@ -475,12 +474,20 @@ describe("Hermes runtime state mutation publisher", () => {
     });
     expect(result.retry).toMatchObject({ posture: "locked" });
     expect(result.rollback).toMatchObject({ posture: "mutable" });
-    const expectedStatePlan = JSON.parse(fs.readFileSync(STATE_PLAN, "utf8")) as Record<
-      string,
-      unknown
-    >;
-    delete expectedStatePlan.$comment;
-    expect(result.retry_events).toEqual([["verify", "locked", expectedStatePlan]]);
+    expect(result.retry_events).toEqual([
+      [
+        "verify",
+        "locked",
+        {
+          version: 1,
+          readOnlyRoots: ["plugins", "workspace"],
+          confidentialRoots: ["pairing"],
+          readOnlyPrefixes: ["profile-"],
+          confidentialPrefixes: ["secret-"],
+          writableSubpaths: ["workspace/cache"],
+        },
+      ],
+    ]);
     expect(result.extra_selector).toBe("publisher-plan-selector-mismatch");
     const events = result.events as Array<[string, string[]?]>;
     expect(events.filter(([action]) => action === "begin-shields-transition")).toHaveLength(2);

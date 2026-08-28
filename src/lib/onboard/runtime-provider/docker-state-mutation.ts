@@ -75,6 +75,16 @@ const HELPER_TRANSPORT_COMMAND_TIMEOUT_MS = 15_000;
 const HELPER_TRANSPORT_RESPONSE_ALLOWANCE_MS = 30_000;
 const HELPER_TRANSPORT_POLL_MS = 250;
 const HELPER_TRANSPORT_ROOT = "/run/nemoclaw/runtime-state-mutation";
+const HELPER_TRANSPORT_SESSION_PRESENT_STATUS = 75;
+const HELPER_TRANSPORT_SESSION_INSPECTION_FAILED_STATUS = 76;
+const HELPER_TRANSPORT_SESSION_ABSENT_SCRIPT = `import os,sys
+try:
+ os.lstat(sys.argv[1])
+except FileNotFoundError:
+ raise SystemExit(0)
+except Exception:
+ raise SystemExit(${HELPER_TRANSPORT_SESSION_INSPECTION_FAILED_STATUS})
+raise SystemExit(${HELPER_TRANSPORT_SESSION_PRESENT_STATUS})`;
 export const DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_BOOTSTRAP =
   "import base64,sys,zlib;source=zlib.decompress(base64.b64decode(sys.argv.pop(1)),-15);exec(compile(source,'<nemoclaw-state-mutation-transport>','exec'))";
 const MAX_HELPER_TRANSPORT_BYTES = 128 * 1024;
@@ -1366,6 +1376,27 @@ function helperTransportBrokerCommand(
   });
 }
 
+function helperTransportSessionAbsentCommand(
+  runtimeId: string,
+  transactionId: string,
+): PersistedEngineLifecycleExactCommand {
+  return Object.freeze({
+    args: Object.freeze([
+      "container",
+      "exec",
+      "--user",
+      "root",
+      runtimeId,
+      HELPER_PYTHON_PATH,
+      "-I",
+      "-c",
+      HELPER_TRANSPORT_SESSION_ABSENT_SCRIPT,
+      helperTransportSessionPath(transactionId),
+    ]),
+    targetIndex: 4,
+  });
+}
+
 function helperTransportCopyToCommand(
   runtimeId: string,
   hostPath: string,
@@ -1547,7 +1578,22 @@ function finishReleasedHelperTransport(
     requireCurrentEngineAuthority(options, bindingSha256);
     return result;
   };
-  if (!probeHelperTransport(capture, options, transactionId)) return;
+  const sessionAbsent = (): boolean => {
+    const result = capture(
+      helperTransportSessionAbsentCommand(options.runtimeId, transactionId),
+      HELPER_TRANSPORT_COMMAND_TIMEOUT_MS,
+    );
+    if (result.error || result.stderr.length !== 0) {
+      fail("root helper transport release cleanup verification failed");
+    }
+    if (result.status === 0) return true;
+    if (result.status === HELPER_TRANSPORT_SESSION_PRESENT_STATUS) return false;
+    fail("root helper transport release cleanup verification failed");
+  };
+  if (sessionAbsent()) return;
+  if (!probeHelperTransport(capture, options, transactionId)) {
+    fail("root helper transport release cleanup remains incomplete");
+  }
   withHelperTransportHostDirectory(options.hostTransportRoot, (temporary) => {
     const resumed = path.join(temporary, "resumed");
     writePrivateTransportFile(resumed, Buffer.from(`${transactionId}\n`, "ascii"));
@@ -1563,6 +1609,13 @@ function finishReleasedHelperTransport(
       "root helper transport release finalization",
     );
   });
+  const deadline = Date.now() + HELPER_TRANSPORT_COMMAND_TIMEOUT_MS;
+  while (!sessionAbsent()) {
+    if (Date.now() >= deadline) {
+      fail("root helper transport release cleanup remains incomplete");
+    }
+    Atomics.wait(helperTransportPoll, 0, 0, HELPER_TRANSPORT_POLL_MS);
+  }
 }
 
 function parseHelperTransportResult(
@@ -2581,8 +2634,8 @@ export function createContainerStateMutationOwner(
             proof,
             completedLedgerSha256,
           );
+          finishReleasedHelperTransport(options, bindingSha256, record.transactionId);
         });
-        finishReleasedHelperTransport(options, bindingSha256, record.transactionId);
         options.lifecycleStore.retire(record.transactionId, completedLedgerSha256);
         return;
       }
@@ -2628,9 +2681,9 @@ export function createContainerStateMutationOwner(
             activatedProof,
             completedLedgerSha256,
           );
+          finishReleasedHelperTransport(options, bindingSha256, record.transactionId);
         },
       );
-      finishReleasedHelperTransport(options, bindingSha256, record.transactionId);
       options.lifecycleStore.retire(record.transactionId, completedLedgerSha256);
     },
 
@@ -2669,8 +2722,8 @@ export function createContainerStateMutationOwner(
             recoveredProof,
             completed.resultSha256 as string,
           );
+          finishReleasedHelperTransport(options, bindingSha256, record.transactionId);
         });
-        finishReleasedHelperTransport(options, bindingSha256, record.transactionId);
         options.lifecycleStore.retire(record.transactionId, record.resultSha256);
         return null;
       }
@@ -2786,11 +2839,11 @@ function requireExistingSurfaceAuthority(
   );
 }
 
-function createSurfaceOwner(
+function createSurfaceOwnerOptions(
   input: RuntimeProviderStateMutationContext,
   options: ContainerStateMutationSurfaceOptions,
   phase: "acquire" | "existing",
-): ContainerStateMutationOwner {
+): ContainerStateMutationOwnerOptions {
   requireSurfaceContext(input, options.providerId);
 
   const authority = options.createAuthority(input);
@@ -2806,7 +2859,7 @@ function createSurfaceOwner(
     input.sandboxName,
     options.providerDisplayName,
   );
-  return createContainerStateMutationOwner({
+  return {
     providerId: options.providerId,
     providerDisplayName: options.providerDisplayName,
     engineOperation: options.engineOperation,
@@ -2822,6 +2875,50 @@ function createSurfaceOwner(
     authority,
     engineAuthorityStore,
     lifecycleStore: createFilePersistedEngineLifecycleStore(stateDir),
+  };
+}
+
+function createSurfaceOwner(
+  input: RuntimeProviderStateMutationContext,
+  options: ContainerStateMutationSurfaceOptions,
+  phase: "acquire" | "existing",
+): ContainerStateMutationOwner {
+  return createContainerStateMutationOwner(createSurfaceOwnerOptions(input, options, phase));
+}
+
+function retireReleasedSurfaceStateMutations(
+  input: RuntimeProviderStateMutationContext,
+  options: ContainerStateMutationSurfaceOptions,
+  lifecycleStore: PersistedEngineLifecycleStore,
+): void {
+  let cleanup:
+    | {
+        readonly ownerOptions: ContainerStateMutationOwnerOptions;
+        readonly bindingSha256: string;
+      }
+    | undefined;
+  lifecycleStore.retireReleasedStateMutations(input.sandboxName, (record) => {
+    if (options.providerId !== DOCKER_PROVIDER_ID) return;
+    if (!cleanup) {
+      const ownerOptions = createSurfaceOwnerOptions(input, options, "existing");
+      cleanup = {
+        ownerOptions,
+        bindingSha256: operationBindingSha256(ownerOptions.authority.engine),
+      };
+    }
+    const targetRuntime = record.resources.find(
+      (resource) => resource.role === "target",
+    )?.runtimeId;
+    if (targetRuntime !== cleanup.ownerOptions.runtimeId) {
+      fail(
+        `released state mutation target does not match the exact labeled ${options.providerDisplayName} runtime`,
+      );
+    }
+    finishReleasedHelperTransport(
+      cleanup.ownerOptions,
+      cleanup.bindingSha256,
+      record.transactionId,
+    );
   });
 }
 
@@ -2834,7 +2931,7 @@ function recoverSurface(
     input.environment,
   );
   const lifecycleStore = createFilePersistedEngineLifecycleStore(stateDir);
-  lifecycleStore.retireReleasedStateMutations(input.sandboxName);
+  retireReleasedSurfaceStateMutations(input, options, lifecycleStore);
   if (!hasActivePersistedEngineStateMutationTarget(lifecycleStore, input.sandboxName)) {
     return null;
   }
@@ -2885,7 +2982,7 @@ export function createContainerStateMutationSurface(
       input.environment,
     );
     const lifecycleStore = createFilePersistedEngineLifecycleStore(stateDir);
-    lifecycleStore.retireReleasedStateMutations(input.sandboxName);
+    retireReleasedSurfaceStateMutations(input, options, lifecycleStore);
     if (hasActivePersistedEngineStateMutationTarget(lifecycleStore, input.sandboxName)) {
       fail("OpenShell sandbox already has one unfinished state mutation");
     }

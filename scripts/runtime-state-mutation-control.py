@@ -94,7 +94,6 @@ ACTIVATION_CLEANUP_NAME = "activation-cleanup.json"
 STARTUP_CANDIDATE_NAME = "startup-complete.json"
 STARTUP_RETRY_ACK_NAME = "retry-ack.json"
 STARTUP_RELEASE_ACK_NAME = "release-ack.json"
-STARTUP_RELEASE_ACK_PENDING_NAME = ".release-ack.json.pending"
 RELEASED_RECEIPT_NAME = "released.json"
 PUBLISHER_MODULE_PATH = (
     "/usr/local/lib/nemoclaw/runtime_state_mutation_hermes_publisher.py"
@@ -2230,7 +2229,6 @@ def _cleanup_startup_candidate_directory(marker: dict[str, object]) -> None:
                     STARTUP_CANDIDATE_NAME,
                     STARTUP_RETRY_ACK_NAME,
                     STARTUP_RELEASE_ACK_NAME,
-                    STARTUP_RELEASE_ACK_PENDING_NAME,
                 )
                 and not name.startswith(f".{STARTUP_CANDIDATE_NAME}.")
                 and not name.startswith(f".{STARTUP_RETRY_ACK_NAME}.")

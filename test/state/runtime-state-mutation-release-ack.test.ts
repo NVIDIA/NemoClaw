@@ -41,6 +41,7 @@ start = control.ProcessReference(
 fence = control.FenceProof(start, start, (), (os.geteuid(),))
 marker = {"transactionId": "c" * 64, "nonce": "b" * 64}
 release_payload = b'{"release":"exact"}\n'
+pending_release_ack_name = ".release-ack.json.pending"
 
 def code(operation):
     try:
@@ -109,7 +110,7 @@ with tempfile.TemporaryDirectory() as root:
         payload = control._canonical_protocol_payload(expected)
         write_at(
             directory_fd,
-            control.STARTUP_RELEASE_ACK_PENDING_NAME,
+            pending_release_ack_name,
             payload,
         )
         results["pendingIgnored"] = (
@@ -117,7 +118,7 @@ with tempfile.TemporaryDirectory() as root:
             is None
         )
         os.rename(
-            control.STARTUP_RELEASE_ACK_PENDING_NAME,
+            pending_release_ack_name,
             control.STARTUP_RELEASE_ACK_NAME,
             src_dir_fd=directory_fd,
             dst_dir_fd=directory_fd,
@@ -201,7 +202,7 @@ with tempfile.TemporaryDirectory() as root:
         )
         write_at(
             directory_fd,
-            control.STARTUP_RELEASE_ACK_PENDING_NAME,
+            pending_release_ack_name,
             payload,
         )
     finally:

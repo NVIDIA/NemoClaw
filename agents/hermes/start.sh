@@ -52,18 +52,6 @@ nemoclaw_runtime_state_mutation_gate() {
     "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER" "$action" >/dev/null
 }
 
-nemoclaw_runtime_state_mutation_acknowledge_release() {
-  if [ "$EUID" -eq 0 ]; then
-    "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_SETPRIV" \
-      --reuid=sandbox --regid=sandbox --init-groups -- \
-      "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_PYTHON" -I \
-      "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER" acknowledge >/dev/null
-    return
-  fi
-  "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_PYTHON" -I \
-    "$NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER" acknowledge >/dev/null
-}
-
 nemoclaw_runtime_state_mutation_retry_exec() {
   local status
   if nemoclaw_runtime_state_mutation_gate restart; then
@@ -118,7 +106,7 @@ nemoclaw_runtime_state_mutation_checkpoint() {
   fi
   kill -STOP "$$"
   if nemoclaw_runtime_state_mutation_gate resume; then
-    if nemoclaw_runtime_state_mutation_acknowledge_release; then
+    if nemoclaw_runtime_state_mutation_gate acknowledge; then
       # The acknowledgement helper stops itself after publishing. The root
       # controller resumes that exact child, then this parent stops only after
       # Bash has reaped it and observed success.
