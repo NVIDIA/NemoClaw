@@ -77,6 +77,7 @@ export type HermesShieldsProviderConsumerHarness = {
   lifecycleGateSpy: MockInstance;
   registrySpy: MockInstance;
   routeSpy: MockInstance;
+  runCaptureSpy: MockInstance;
   runSpy: MockInstance;
   shields: typeof import("../../src/lib/shields/index");
   spies: MockInstance[];
@@ -270,8 +271,13 @@ export function createHermesShieldsProviderConsumerHarness(
     .spyOn(verifyLock, "verifyShieldsLockState")
     .mockReturnValue({ issues: [] });
   const runSpy = vi.spyOn(runner, "run").mockReturnValue({ status: 0 });
+  // #10104: default to an empty `sandbox list` capture (no matching row, so
+  // the runtime-provider phase probe resolves to null and fails open) so
+  // every existing scenario proceeds exactly as before this spy existed.
+  const runCaptureSpy = vi.spyOn(runner, "runCapture").mockReturnValue("");
   spies.push(
     runSpy,
+    runCaptureSpy,
     vi.spyOn(runner, "validateName").mockImplementation((value: unknown) => String(value)),
     vi
       .spyOn(policy, "buildPolicySetCommand")
@@ -285,8 +291,12 @@ export function createHermesShieldsProviderConsumerHarness(
       .spyOn(policy, "inspectPolicyMutationAuthority")
       .mockReturnValue(managedPolicyMutationAuthority),
     vi
+      .spyOn(policy, "inspectPolicyRecoveryAuthority")
+      .mockReturnValue(managedPolicyMutationAuthority),
+    vi
       .spyOn(policy, "recheckPolicyMutationAuthority")
       .mockReturnValue(managedPolicyMutationAuthority),
+    vi.spyOn(policy, "finalizePolicyMutationReceipt").mockImplementation(() => undefined),
     registrySpy,
     vi
       .spyOn(privilegedExec, "privilegedSandboxExecArgv")
@@ -335,6 +345,11 @@ export function createHermesShieldsProviderConsumerHarness(
       ) {
         return `${SEALED_PLAN_HELP}\n`;
       }
+      const gatewayControlIndex = command.indexOf("/usr/local/bin/nemoclaw-gateway-control");
+      if (gatewayControlIndex >= 0 && command[gatewayControlIndex + 1] === "restart") {
+        const nonce = String(command[gatewayControlIndex + 2]);
+        return `v1 ${nonce} complete ok 10 11\nGATEWAY_PID=11\n`;
+      }
       if (command[0] === "stat" && command.at(-1) === hermesProviderConsumerTarget.configDir) {
         return "3770 sandbox:sandbox\n";
       }
@@ -363,6 +378,7 @@ export function createHermesShieldsProviderConsumerHarness(
     lifecycleGateSpy,
     registrySpy,
     routeSpy,
+    runCaptureSpy,
     runSpy,
     shields,
     spies,

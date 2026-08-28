@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   assertGeneratedPolicyMutationSafe: vi.fn(),
   assertNoProviderCredentialCollisions: vi.fn(),
   assertProviderRecoverable: vi.fn(),
+  attachProvider: vi.fn(),
   bridgeState: vi.fn(),
   detachProvider: vi.fn(),
   discardSafeIncompleteAdds: vi.fn(),
@@ -20,11 +21,13 @@ const mocks = vi.hoisted(() => ({
   inspectExactDestroyProvider: vi.fn(),
   preflightEntryTargets: vi.fn(),
   removeGeneratedPolicy: vi.fn(),
+  refreshProviderEnvironment: vi.fn(),
   restoreRuntime: vi.fn(),
   rollbackScrubbedAdapters: vi.fn(),
   scrubAdapter: vi.fn(),
   setBridgeState: vi.fn(),
   waitForDetachedCredential: vi.fn(),
+  waitForAttachedCredential: vi.fn(),
 }));
 
 vi.mock("./mcp-bridge-adapter-teardown", () => ({
@@ -48,8 +51,11 @@ vi.mock("./mcp-bridge-provider", () => ({
   assertMcpProviderRecoverable: mocks.assertProviderRecoverable,
   assertNoProviderCredentialCollisions: mocks.assertNoProviderCredentialCollisions,
   assertNoRegisteredProviderCredentialCollisions: vi.fn(),
+  attachProvider: mocks.attachProvider,
   detachProvider: mocks.detachProvider,
   preflightMcpEntryTargets: mocks.preflightEntryTargets,
+  refreshMcpProviderEnvironment: mocks.refreshProviderEnvironment,
+  waitForAttachedMcpCredential: mocks.waitForAttachedCredential,
   waitForDetachedMcpCredential: mocks.waitForDetachedCredential,
 }));
 
@@ -73,33 +79,38 @@ vi.mock("./mcp-bridge-state", () => ({
 const { prepareMcpBridgesForRebuild, restoreMcpBridgesAfterRebuild } =
   await import("./mcp-bridge-rebuild");
 
-const entry: McpBridgeEntry = {
-  server: "github",
-  agent: "openclaw",
-  adapter: "mcporter",
-  url: "https://mcp.example.test/mcp",
-  env: ["GITHUB_TOKEN"],
-  providerName: "alpha-mcp-github",
-  providerId: "provider-1",
-  policyName: "mcp-bridge-github",
-  addedAt: "2026-08-20T00:00:00.000Z",
-};
-
-const sandbox: SandboxEntry = {
-  name: "alpha",
-  agent: "openclaw",
-  policyAuthority: "externally-managed",
-  mcp: { bridges: { github: entry } },
-};
+let entry: McpBridgeEntry;
+let sandbox: SandboxEntry;
 
 describe("MCP rebuild policy authority", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    entry = {
+      server: "github",
+      agent: "openclaw",
+      adapter: "mcporter",
+      url: "https://mcp.example.test/mcp",
+      env: ["GITHUB_TOKEN"],
+      providerName: "alpha-mcp-github",
+      providerId: "provider-1",
+      policyName: "mcp-bridge-github",
+      addedAt: "2026-08-20T00:00:00.000Z",
+    };
+    sandbox = {
+      name: "alpha",
+      agent: "openclaw",
+      policyAuthority: "externally-managed",
+      mcp: { bridges: { github: entry } },
+    };
     mocks.getSandboxOrThrow.mockReturnValue(sandbox);
     mocks.bridgeState.mockImplementation((current: SandboxEntry) => current.mcp?.bridges ?? {});
     mocks.discardSafeIncompleteAdds.mockResolvedValue(sandbox);
     mocks.detachProvider.mockReturnValue("detached");
     mocks.rollbackScrubbedAdapters.mockReturnValue([]);
+    mocks.scrubAdapter.mockImplementation((_name, _sandbox, current: McpBridgeEntry) => ({
+      ...current,
+      credentialRevision: "v1",
+    }));
   });
 
   it("preserves externally managed policy while preparing adapter and provider state (#9833)", async () => {
@@ -137,6 +148,44 @@ describe("MCP rebuild policy authority", () => {
     expect(mocks.scrubAdapter).not.toHaveBeenCalled();
     expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
     expect(mocks.detachProvider).not.toHaveBeenCalled();
+  });
+
+  it("compensates completed provider and adapter teardown without mutating policy (#9833)", async () => {
+    const second = {
+      ...entry,
+      server: "gitlab",
+      env: ["GITLAB_TOKEN"],
+      providerName: "alpha-mcp-gitlab",
+      providerId: "provider-2",
+      policyName: "mcp-bridge-gitlab",
+    };
+    sandbox.mcp = { bridges: { github: entry, gitlab: second } };
+    const refusal = new PolicyAuthorityRefusalError("policy authority changed");
+    const validatePolicyAuthority = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(refusal);
+
+    await expect(prepareMcpBridgesForRebuild("alpha", validatePolicyAuthority)).rejects.toBe(
+      refusal,
+    );
+
+    expect(mocks.attachProvider).toHaveBeenCalledExactlyOnceWith("alpha", entry);
+    expect(mocks.refreshProviderEnvironment).toHaveBeenCalledExactlyOnceWith(entry);
+    expect(mocks.waitForAttachedCredential).toHaveBeenCalledExactlyOnceWith("alpha", entry);
+    expect(mocks.rollbackScrubbedAdapters).toHaveBeenCalledWith(
+      "alpha",
+      sandbox,
+      expect.arrayContaining([
+        expect.objectContaining({ server: "github", credentialRevision: "v1" }),
+        expect.objectContaining({ server: "gitlab", credentialRevision: "v1" }),
+      ]),
+    );
+    expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+    expect(mocks.restoreRuntime).not.toHaveBeenCalled();
   });
 
   it("revalidates between registry recovery and runtime restoration (#9833)", async () => {

@@ -4,6 +4,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { runOpenshellProviderCommand } from "../adapters/openshell/provider-command";
+import {
+  checkOpenAiInferenceProviderProfile,
+  OPENAI_GATEWAY_PROVIDER_TYPE,
+} from "../adapters/openshell/provider-profile";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { CLI_NAME } from "../cli/branding";
 import {
@@ -142,6 +146,20 @@ function ensureBundledProviderProfile(type: string): CredentialsAddResult | null
   ]);
 }
 
+function ensureCredentialProviderProfile(type: string): CredentialsAddResult | null {
+  if (type.toLowerCase() !== OPENAI_GATEWAY_PROVIDER_TYPE) {
+    return ensureBundledProviderProfile(type);
+  }
+  const profile = checkOpenAiInferenceProviderProfile({
+    runOpenshell: (args, options) =>
+      runOpenshellProviderCommand(args, {
+        ...options,
+        timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+      }),
+  });
+  return profile.ok ? null : fail(profile.messages);
+}
+
 export async function runCredentialsAddAction(
   input: CredentialsAddInput,
 ): Promise<CredentialsAddResult> {
@@ -251,7 +269,7 @@ export async function runCredentialsAddAction(
     return fail(recoveryFailureLines);
   }
 
-  const providerProfileFailure = ensureBundledProviderProfile(type);
+  const providerProfileFailure = ensureCredentialProviderProfile(type);
   if (providerProfileFailure) return providerProfileFailure;
 
   let importedCredentialKeys: string[] | null = null;

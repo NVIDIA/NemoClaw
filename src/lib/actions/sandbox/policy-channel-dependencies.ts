@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/policy-authority";
 import { runOpenshell as defaultRunOpenshell } from "../../adapters/openshell/runtime";
 import {
   isPolicyAuthorityRefusalError,
@@ -22,9 +23,14 @@ type MessagingProviderUpsertOptions = {
 };
 
 type LegacyOnboardProvidersModule = {
-  isMessagingProviderBindingConflict(
-    error: unknown,
-  ): error is Error & { readonly mutatedProviderNames: readonly string[] };
+  isMessagingProviderBindingConflict(error: unknown): error is Error & {
+    readonly mutatedProviderNames: readonly string[];
+    readonly createdProviderNames?: readonly string[];
+  };
+  isMessagingProviderMutationFailure(error: unknown): error is Error & {
+    readonly mutatedProviderNames: readonly string[];
+    readonly createdProviderNames: readonly string[];
+  };
   upsertMessagingProviders(
     tokenDefs: MessagingProviderTokenDefinition[],
     run: typeof defaultRunOpenshell,
@@ -34,6 +40,9 @@ type LegacyOnboardProvidersModule = {
 
 type RebuildModule = typeof import("./rebuild");
 type StopModule = typeof import("./stop");
+type SetupInferenceModule = typeof import("../../onboard/setup-inference");
+type SandboxProviderCleanupModule = typeof import("../../onboard/sandbox-provider-cleanup");
+type PolicyModule = typeof import("../../policy");
 type GooglechatWebhookLifecycleModule =
   typeof import("../../messaging/channels/googlechat/tunnel/lifecycle");
 type GooglechatTunnelRuntimeDeps =
@@ -47,6 +56,12 @@ type GooglechatWebhookProxy = Pick<
   "readGooglechatWebhookProxyState" | "startGooglechatWebhookProxy" | "stopGooglechatWebhookProxy"
 >;
 
+function gatewayRunner(gatewayName: string): typeof defaultRunOpenshell {
+  const { createGatewayScopedOpenshellRunner } =
+    require("../../onboard/setup-inference") as SetupInferenceModule;
+  return createGatewayScopedOpenshellRunner(defaultRunOpenshell, gatewayName);
+}
+
 /**
  * Injectable, late-bound boundary around provider registration and rebuild
  * orchestration. Focused tests replace these methods with `vi.spyOn` without
@@ -58,18 +73,59 @@ export const policyChannelDependencies = {
   isPolicyAuthorityRefusalError,
   preflightSandboxPolicyAuthority,
   runOpenshell: (...args: Parameters<typeof defaultRunOpenshell>) => defaultRunOpenshell(...args),
-  isMessagingProviderBindingConflict(
-    error: unknown,
-  ): error is Error & { readonly mutatedProviderNames: readonly string[] } {
+  deleteMessagingProviderWithRecovery(
+    providerName: string,
+    sandboxName: string,
+    gatewayName: string,
+  ): ReturnType<SandboxProviderCleanupModule["deleteProviderWithRecovery"]> {
+    const cleanup =
+      require("../../onboard/sandbox-provider-cleanup") as SandboxProviderCleanupModule;
+    return cleanup.deleteProviderWithRecovery(providerName, {
+      allowedSandboxes: [sandboxName],
+      runOpenshell: gatewayRunner(gatewayName),
+    });
+  },
+  revalidateChannelProviderPolicyAuthority(sandboxName: string, gatewayName: string): void {
+    const policy = require("../../policy") as PolicyModule;
+    const operation = `change messaging providers for sandbox '${sandboxName}'`;
+    const authority = policy.inspectPolicyMutationAuthority(sandboxName, operation, gatewayName);
+    policy.assertNemoClawManagedPolicy(authority, operation);
+    policy.recheckPolicyMutationAuthority(sandboxName, operation, authority);
+  },
+  runGatewayOpenshell(
+    gatewayName: string,
+    args: Parameters<typeof defaultRunOpenshell>[0],
+    options?: Parameters<typeof defaultRunOpenshell>[1],
+  ): ReturnType<typeof defaultRunOpenshell> {
+    return gatewayRunner(gatewayName)(args, options);
+  },
+  inspectMessagingProviderAttachmentTarget(sandboxName: string, gatewayName: string): string {
+    return inspectOpenShellSandboxIdentityFingerprint({
+      sandboxName,
+      gatewayName,
+    });
+  },
+  isMessagingProviderBindingConflict(error: unknown): error is Error & {
+    readonly mutatedProviderNames: readonly string[];
+    readonly createdProviderNames?: readonly string[];
+  } {
     const providers = require("../../onboard/providers") as LegacyOnboardProvidersModule;
     return providers.isMessagingProviderBindingConflict(error);
   },
+  isMessagingProviderMutationFailure(error: unknown): error is Error & {
+    readonly mutatedProviderNames: readonly string[];
+    readonly createdProviderNames: readonly string[];
+  } {
+    const providers = require("../../onboard/providers") as LegacyOnboardProvidersModule;
+    return providers.isMessagingProviderMutationFailure(error);
+  },
   upsertMessagingProviders(
     tokenDefs: MessagingProviderTokenDefinition[],
+    gatewayName: string,
     options?: MessagingProviderUpsertOptions,
   ): string[] {
     const providers = require("../../onboard/providers") as LegacyOnboardProvidersModule;
-    return providers.upsertMessagingProviders(tokenDefs, defaultRunOpenshell, options);
+    return providers.upsertMessagingProviders(tokenDefs, gatewayRunner(gatewayName), options);
   },
   rebuildSandbox(
     sandboxName: Parameters<RebuildModule["rebuildSandbox"]>[0],

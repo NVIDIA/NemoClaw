@@ -11,21 +11,16 @@ import { assertExitZero as expectExitZero, resultText } from "../fixtures/client
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import {
-  readJsonFile,
-  readJsonFileOr,
-  restoreFile,
-  snapshotFile,
-  writeJsonFile,
-} from "../fixtures/file-state.ts";
+import { readJsonFile, readJsonFileOr, restoreFile, snapshotFile } from "../fixtures/file-state.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { createOldBaseBuildContext } from "./rebuild-openclaw-old-base-context.ts";
+import { createLegacyOpenClawOpenShellWrapper } from "./rebuild-openclaw-old-openshell-wrapper.ts";
 
 // The contract stays intentionally local to this live test: build an older
-// OpenClaw base image, create a sandbox from it through the real OpenShell CLI,
-// seed workspace/policy/gateway-token state, run the real `nemoclaw rebuild`,
-// and verify the rebuilt sandbox preserved state while rotating secrets.
+// OpenClaw base image, recreate the sandbox from it through NemoClaw, seed
+// workspace/policy/gateway-token state, run the real `nemoclaw rebuild`, and
+// verify the rebuilt sandbox preserved state while rotating secrets.
 //
 // Simplicity boundary: no new registry, fixture family, or migration ledger.
 
@@ -207,67 +202,6 @@ async function configureGatewayInferenceRoute(
   );
 }
 
-function seedRegistryAndSession(dashboardPort: number): void {
-  // The legacy rebuild regression requires an intentionally old OpenClaw sandbox
-  // that NemoClaw cannot create through the normal onboard path because current
-  // blueprints reject versions below min_openclaw_version. Create that sandbox
-  // through OpenShell, then upsert only this test-owned registry/session entry
-  // so `nemoclaw <name> rebuild --yes` exercises the user-visible rebuild
-  // boundary. Remove this local seeding once a first-class old-version lifecycle
-  // fixture/profile exists.
-  const registry = readJsonFileOr<{
-    sandboxes?: Record<string, Record<string, unknown>>;
-    defaultSandbox?: string;
-  }>(REGISTRY_FILE, {});
-  registry.sandboxes = registry.sandboxes ?? {};
-  registry.sandboxes[SANDBOX_NAME] = {
-    name: SANDBOX_NAME,
-    createdAt: new Date().toISOString(),
-    model: DEFAULT_MODEL,
-    provider: "compatible-endpoint",
-    gpuEnabled: false,
-    policies: [],
-    policyTier: null,
-    agent: null,
-    agentVersion: OLD_OPENCLAW_VERSION,
-    dashboardPort,
-    // This test creates an old NemoClaw-managed runtime directly through
-    // OpenShell. Record the managed-image provenance explicitly so rebuild
-    // does not have to guess whether an omitted legacy value meant `--from`.
-    fromDockerfile: null,
-  };
-  registry.defaultSandbox = SANDBOX_NAME;
-  writeJsonFile(REGISTRY_FILE, registry);
-
-  const now = new Date().toISOString();
-  const complete = { status: "complete", startedAt: now, completedAt: now, error: null };
-  const pending = { status: "pending", startedAt: null, completedAt: null, error: null };
-  const session = readJsonFileOr<Record<string, unknown>>(SESSION_FILE, {});
-  Object.assign(session, {
-    sandboxName: SANDBOX_NAME,
-    status: "complete",
-    resumable: true,
-    lastCompletedStep: "inference",
-    failure: null,
-    provider: "compatible-endpoint",
-    model: DEFAULT_MODEL,
-    credentialEnv: "COMPATIBLE_API_KEY",
-    endpointUrl: HOSTED_ENDPOINT_URL,
-    agent: null,
-    steps: {
-      preflight: complete,
-      gateway: complete,
-      sandbox: pending,
-      provider_selection: complete,
-      inference: complete,
-      openclaw: pending,
-      agent_setup: pending,
-      policies: pending,
-    },
-  });
-  writeJsonFile(SESSION_FILE, session);
-}
-
 function registrySandbox(): Record<string, unknown> {
   const data = readJsonFileOr<{ sandboxes?: Record<string, Record<string, unknown>> }>(
     REGISTRY_FILE,
@@ -381,6 +315,8 @@ test(
       oldBaseTag: OLD_BASE_TAG,
       preservedBoundaries: [
         "docker build Dockerfile.base with old OPENCLAW_VERSION",
+        "test-only OpenShell wrapper patches only the generated sandbox create context",
+        "real OpenShell CLI and driver binaries remain authoritative",
         "openshell sandbox create/exec/policy",
         "real nemoclaw onboard and rebuild CLI",
         "workspace marker, registry/session files, backup manifest, config hash",
@@ -512,48 +448,75 @@ test(
       fs.rmSync(oldBaseBuildContext, { recursive: true, force: true });
     }
 
-    // Phase 3: create an OpenShell sandbox from the old base image.
+    // Phase 3: recreate the sandbox through NemoClaw so the old runtime keeps
+    // an exact policy-creation receipt bound to its new immutable sandbox ID.
+    // Direct OpenShell creation cannot truthfully establish NemoClaw ownership.
     progress.phase("create the old OpenClaw sandbox");
-    const oldDockerfileDir = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-openclaw-"));
-    const oldDockerfile = path.join(oldDockerfileDir, "Dockerfile");
-    fs.writeFileSync(
-      oldDockerfile,
+    const realOpenShellComponentsResult = await host.command(
+      "bash",
       [
-        `FROM ${OLD_BASE_TAG}`,
-        "USER sandbox",
-        "WORKDIR /sandbox",
-        "RUN mkdir -p /sandbox/.openclaw/workspace /sandbox/.openclaw && echo '{}' > /sandbox/.openclaw/openclaw.json",
-        '["/bin/bash"]',
-      ]
-        .map((line, index) => (index === 4 ? `CMD ${line}` : line))
-        .join("\n"),
-      "utf8",
+        "-lc",
+        'for name in openshell openshell-gateway openshell-sandbox; do command -v "$name"; done',
+      ],
+      {
+        artifactName: "phase-3-real-openshell-components",
+        env: dockerContextEnv(),
+        timeoutMs: 30_000,
+      },
     );
-    try {
-      const createOldSandbox = await sandbox.openshell(
-        [
-          "sandbox",
-          "create",
-          "--name",
-          SANDBOX_NAME,
-          "--from",
-          oldDockerfile,
-          "--gateway",
-          "nemoclaw",
-          "--no-tty",
-          "--",
-          "true",
-        ],
-        {
-          artifactName: "phase-3-create-old-openclaw-sandbox",
-          env: dockerContextEnv(),
-          timeoutMs: 10 * 60_000,
-        },
-      );
-      expectExitZero(createOldSandbox, "openshell sandbox create old OpenClaw sandbox");
-    } finally {
-      fs.rmSync(oldDockerfileDir, { recursive: true, force: true });
-    }
+    expectExitZero(realOpenShellComponentsResult, "resolve real OpenShell component paths");
+    const realOpenShellComponents = realOpenShellComponentsResult.stdout
+      .split(/\r?\n/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+    expect(realOpenShellComponents).toHaveLength(3);
+    const [realOpenShell, realOpenShellGateway, realOpenShellSandbox] = realOpenShellComponents;
+    expect(
+      path.isAbsolute(realOpenShell),
+      `OpenShell CLI path must be absolute: ${realOpenShell}`,
+    ).toBe(true);
+    expect(
+      path.isAbsolute(realOpenShellGateway),
+      `OpenShell gateway path must be absolute: ${realOpenShellGateway}`,
+    ).toBe(true);
+    expect(
+      path.isAbsolute(realOpenShellSandbox),
+      `OpenShell sandbox path must be absolute: ${realOpenShellSandbox}`,
+    ).toBe(true);
+    const oldOpenShellWrapper = createLegacyOpenClawOpenShellWrapper({
+      root: artifacts.pathFor("phase-3-old-openshell-wrapper"),
+      realOpenShell,
+      baseImage: OLD_BASE_TAG,
+      openClawVersion: OLD_OPENCLAW_VERSION,
+    });
+    const createOldSandbox = await host.command(
+      "node",
+      [CLI_ENTRYPOINT, "onboard", "--non-interactive"],
+      {
+        artifactName: "phase-3-onboard-old-openclaw-sandbox",
+        env: cliEnv(apiKey, {
+          NEMOCLAW_RECREATE_SANDBOX: "1",
+          NEMOCLAW_SANDBOX_BASE_IMAGE_REF: OLD_BASE_TAG,
+          NEMOCLAW_OPENSHELL_GATEWAY_BIN: realOpenShellGateway,
+          NEMOCLAW_OPENSHELL_SANDBOX_BIN: realOpenShellSandbox,
+          PATH: `${oldOpenShellWrapper.directory}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+        }),
+        redactionValues: [apiKey],
+        timeoutMs: ONBOARD_TIMEOUT_MS,
+      },
+    );
+    expectExitZero(createOldSandbox, "nemoclaw onboard old OpenClaw sandbox");
+    const oldOpenShellWrapperLog = fs.readFileSync(oldOpenShellWrapper.logFile, "utf8");
+    expect(oldOpenShellWrapperLog).toContain(`patch sandbox create BASE_IMAGE=${OLD_BASE_TAG}`);
+    expect(oldOpenShellWrapperLog).toContain(
+      `patch sandbox create OPENCLAW_VERSION=${OLD_OPENCLAW_VERSION}`,
+    );
+    expect(oldOpenShellWrapperLog).toContain(
+      "patch sandbox create NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1",
+    );
+    expect(oldOpenShellWrapperLog).toContain(
+      `patch sandbox create min_openclaw_version=${OLD_OPENCLAW_VERSION}`,
+    );
     await waitForSandboxReady(sandbox);
 
     const oldVersion = await sandbox.exec(SANDBOX_NAME, ["openclaw", "--version"], {
@@ -564,9 +527,8 @@ test(
     expectExitZero(oldVersion, "old openclaw --version");
     expect(resultText(oldVersion)).toContain(OLD_OPENCLAW_VERSION);
 
-    // Phase 4: seed workspace state, an existing gateway token, and registry /
-    // resume-session state so `nemoclaw <name> rebuild --yes` drives the same
-    // user-visible rebuild path as the former shell test.
+    // Phase 4: seed workspace state and an existing gateway token while keeping
+    // the registry and resume-session state written by the old-image onboard.
     progress.phase("seed persistent state policy and registry metadata");
     const markerWrite = await sandbox.exec(
       SANDBOX_NAME,
@@ -627,16 +589,24 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
     const preRebuildConfigHash = preHashResult.stdout.trim();
     expect(preRebuildConfigHash).toContain("openclaw.json");
 
-    seedRegistryAndSession(phase1DashboardPort as number);
     const sessionAfterSeed = readJsonFileOr<Record<string, unknown>>(SESSION_FILE, {});
     const seededSteps = sessionAfterSeed.steps as Record<string, { status?: string }> | undefined;
     const seededSandbox = registrySandbox();
+    expect(seededSandbox.dashboardPort).toBe(phase1DashboardPort);
+    expect(seededSandbox.policyAuthority).toBe("nemoclaw-managed");
+    expect(seededSandbox.policyCreationReceipt).toMatchObject({
+      schemaVersion: 1,
+      origin: "sandbox-create",
+      sandboxName: SANDBOX_NAME,
+    });
     await artifacts.writeJson("phase-4-registry-session-summary.json", {
       registry: {
         name: seededSandbox.name,
         provider: seededSandbox.provider,
         agentVersion: seededSandbox.agentVersion,
         dashboardPort: seededSandbox.dashboardPort,
+        policyAuthority: seededSandbox.policyAuthority,
+        hasPolicyCreationReceipt: seededSandbox.policyCreationReceipt !== undefined,
         policyCount: Array.isArray(seededSandbox.policies) ? seededSandbox.policies.length : 0,
       },
       session: {

@@ -30,7 +30,7 @@
 //         canonicalisation, agent-scope refusal, leading-dash session id
 //         rejection, download-failure cleanup, the remote cleanup warning on
 //         a non-zero `rm -f` exit, and JSON manifest shape.
-//       * E2E (stub openshell): `test/sandbox-sessions-export-cli.test.ts`
+//       * E2E (stub openshell): `test/runtime/sandbox/sandbox-sessions-export-cli.test.ts`
 //         exercises the full CLI through dispatch with a fake openshell
 //         binary, proving the `exec tar`, `download`, and `exec rm` wire
 //         calls happen in the expected order.
@@ -342,7 +342,7 @@ async function exportSandboxSessionsUnlocked(
 //         path shape, atomic chmod-then-rename finalisation, the
 //         `--agent hermes` no-op alias, refusal of OpenClaw-only options,
 //         and the remote cleanup warning on a non-zero `rm -f` exit.
-//       * E2E (stub openshell): `test/sandbox-sessions-export-cli.test.ts`
+//       * E2E (stub openshell): `test/runtime/sandbox/sandbox-sessions-export-cli.test.ts`
 //         exercises the dispatch through the public CLI with a fake
 //         openshell binary, proving the `exec hermes sessions export`,
 //         `download`, and `exec rm` wire calls happen in the expected order.

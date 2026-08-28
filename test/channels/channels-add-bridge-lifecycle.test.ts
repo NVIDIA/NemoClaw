@@ -218,6 +218,7 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
           providerType: "google-chat-bridge",
         },
       ],
+      "nemoclaw",
       expect.objectContaining({
         bestEffort: true,
         requireExactBindings: true,

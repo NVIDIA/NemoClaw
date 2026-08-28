@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { assertExitZero } from "../fixtures/clients/command.ts";
+import type { HostCliClient } from "../fixtures/clients/host.ts";
+import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
 import {
   type HermesMcpCommandResult,
   isHermesGatewayDrainingResponse,
@@ -9,6 +13,9 @@ import {
 const ANSI_ESCAPE = /\u001b\[[0-9;]*m/gu;
 const HERMES_GATEWAY_DRAINING_RETRIES = 3;
 const HERMES_GATEWAY_DRAINING_RETRY_DELAY_MS = 5_000;
+export const MCP_BRIDGE_TEST_REDACTION_VALUES = Object.values(MCP_BRIDGE_TEST_CREDENTIALS);
+const OPENCLAW_BASELINE_SCOPE_CAUSE =
+  "its canonical CLI device did not receive the required baseline scopes";
 const HERMES_RESTART_TRANSPORT_FAILURE_SUFFIX = [
   `Error: x code: 'Unknown error', message: "h2 protocol error: error reading a body`,
   `| from connection", source: hyper::Error(Body, Error { kind: Io(Custom`,
@@ -43,6 +50,56 @@ function normalizeHermesTransportDiagnostic(diagnostic: string): string {
     .map((line) => line.trim().replace(/\s+/gu, " "))
     .filter(Boolean)
     .join("\n");
+}
+
+export function isRetryableOpenClawBaselineScopeOnboardFailure(
+  agent: string,
+  sandboxName: string,
+  result: {
+    exitCode: number | null;
+    signal: NodeJS.Signals | null;
+    timedOut: boolean;
+    stdout: string;
+    stderr: string;
+  },
+): boolean {
+  if (
+    agent !== "openclaw" ||
+    result.exitCode === null ||
+    result.exitCode === 0 ||
+    result.signal !== null ||
+    result.timedOut
+  ) {
+    return false;
+  }
+  const expected = `OpenClaw onboarding for '${sandboxName}' is incomplete because ${OPENCLAW_BASELINE_SCOPE_CAUSE}. Resume or rerun onboarding.`;
+  return `${result.stdout}\n${result.stderr}`
+    .replace(ANSI_ESCAPE, "")
+    .split(/\r?\n/u)
+    .some((line) => line.trim() === expected);
+}
+
+export async function retryOpenClawBaselineScopeOnboardFailure<
+  T extends {
+    exitCode: number | null;
+    signal: NodeJS.Signals | null;
+    timedOut: boolean;
+    stdout: string;
+    stderr: string;
+  },
+>(options: {
+  agent: string;
+  sandboxName: string;
+  initialResult: T;
+  retry: () => Promise<T>;
+}): Promise<T> {
+  return isRetryableOpenClawBaselineScopeOnboardFailure(
+    options.agent,
+    options.sandboxName,
+    options.initialResult,
+  )
+    ? options.retry()
+    : options.initialResult;
 }
 
 export function isHermesRestartTransportFailure(adapter: string, diagnostic: string): boolean {
@@ -95,4 +152,18 @@ export async function retryHermesGatewayDraining<T extends HermesMcpCommandResul
     result = await options.retry(attempt);
   }
   return result;
+}
+
+export async function restartBridgeWithoutHostSecret(
+  host: HostCliClient,
+  sandboxName: string,
+  artifactPrefix: string,
+): Promise<void> {
+  const restart = await host.nemoclaw([sandboxName, "mcp", "restart", "fake"], {
+    artifactName: `${artifactPrefix}-mcp-restart-provider-reuse`,
+    env: buildAvailabilityProbeEnv(),
+    redactionValues: MCP_BRIDGE_TEST_REDACTION_VALUES,
+    timeoutMs: 12 * 60_000,
+  });
+  assertExitZero(restart, `${artifactPrefix} mcp restart without host secret`);
 }

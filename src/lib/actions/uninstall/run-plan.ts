@@ -72,7 +72,13 @@ import {
   registryEntryGatewayPort,
   withRegistryLockAt,
 } from "../../state/gateway-registry";
-import { stopHermesForwardWatchers } from "./hermes-forward-watcher-cleanup";
+import {
+  managedHermesStateVolumeContext,
+  type ManagedHermesStateVolumeContext,
+  removeManagedHermesStateVolumes,
+  requiresManagedHermesStateVolume,
+  stopHermesForwardWatchers,
+} from "./hermes-uninstall-cleanup";
 import {
   stopBedrockRuntimeAdapter,
   stopHttpsPinRuntimeAdapter,
@@ -1364,13 +1370,24 @@ function removeNemoclawOpenShellGatewayEnv(
   }
 }
 
-function selectedRegistrySandboxNames(paths: UninstallPaths, runtime: UninstallRuntime): string[] {
+interface SelectedRegistrySandboxState {
+  managedHermesStateVolumes: ManagedHermesStateVolumeContext[];
+  names: string[];
+}
+
+function selectedRegistrySandboxState(
+  paths: UninstallPaths,
+  runtime: UninstallRuntime,
+): SelectedRegistrySandboxState {
   const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
   const home = path.dirname(sharedRoot);
   const registryFile = path.join(paths.nemoclawStateDir, "sandboxes.json");
-  if (!pathEntryExists(registryFile, runtime)) return [];
+  if (!pathEntryExists(registryFile, runtime)) {
+    return { managedHermesStateVolumes: [], names: [] };
+  }
   const registry = readGatewayRegistryFile(home, registryFile);
-  if (!registry) return [];
+  if (!registry) return { managedHermesStateVolumes: [], names: [] };
+  const managedHermesStateVolumes: ManagedHermesStateVolumeContext[] = [];
   const names: string[] = [];
   for (const [name, entry] of Object.entries(registry.sandboxes)) {
     const entryPort = registryEntryGatewayPort(entry);
@@ -1385,8 +1402,14 @@ function selectedRegistrySandboxNames(paths: UninstallPaths, runtime: UninstallR
       );
     }
     names.push(name);
+    managedHermesStateVolumes.push(managedHermesStateVolumeContext(name, entry));
   }
-  return names.sort();
+  return {
+    managedHermesStateVolumes: managedHermesStateVolumes.sort((left, right) =>
+      left.sandboxName.localeCompare(right.sandboxName),
+    ),
+    names: names.sort(),
+  };
 }
 
 function writeRegistryAtomic(
@@ -2788,6 +2811,7 @@ function executeOpenShellResourceCleanup(
   runtime: UninstallRuntime,
   scopedToSelectedGateway: boolean,
   sandboxNames: readonly string[],
+  managedHermesStateVolumes: readonly ManagedHermesStateVolumeContext[],
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
 ): boolean {
@@ -2836,6 +2860,23 @@ function executeOpenShellResourceCleanup(
     return false;
   }
   if (
+    !portableRuntimeCleanup &&
+    !externallySupervised &&
+    !scopedToSelectedGateway &&
+    managedHermesStateVolumes.some(requiresManagedHermesStateVolume) &&
+    dockerIsAvailable(runtime)
+  ) {
+    // An unreachable gateway can leave a stopped sandbox container attached to the state volume.
+    removeDockerContainers(runtime);
+  }
+  if (
+    !portableRuntimeCleanup &&
+    !externallySupervised &&
+    !removeManagedHermesStateVolumes(managedHermesStateVolumes, runtime)
+  ) {
+    return false;
+  }
+  if (
     scopedToSelectedGateway &&
     !finishScopedOpenShellCleanup(paths, options, runtime, sandboxNames, externallySupervised)
   ) {
@@ -2879,6 +2920,7 @@ function executePlan(
   sharedRegistryMustBePreserved: boolean,
   otherGatewayPorts: readonly number[],
   sandboxNames: readonly string[],
+  managedHermesStateVolumes: readonly ManagedHermesStateVolumeContext[],
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
   portableRetirementEntries: ReturnType<typeof portableRetirementPreservationEntries>,
@@ -3024,6 +3066,7 @@ function executePlan(
           runtime,
           scopedToSelectedGateway,
           sandboxNames,
+          managedHermesStateVolumes,
           teardownAuthority,
           false,
         )
@@ -3198,7 +3241,16 @@ function completePortablePlan(
   if (!portable) return { ok: true };
   if (!ok) return { ok };
   if (
-    !executeOpenShellResourceCleanup(paths, options, runtime, scoped, sandboxNames, authority, true)
+    !executeOpenShellResourceCleanup(
+      paths,
+      options,
+      runtime,
+      scoped,
+      sandboxNames,
+      [],
+      authority,
+      true,
+    )
   )
     return { ok: false };
   runtime.log(
@@ -3300,10 +3352,13 @@ export function runUninstallPlan(
   const externallySupervised = isExternallySupervised(teardownAuthority);
   let gatewayInspection = inspectOtherGatewayEnvironments(paths, runtime);
   let { otherGatewayEnvironmentsRemain: scopedToSelectedGateway } = gatewayInspection;
-  let sandboxNames: string[] = [];
+  let selectedSandboxState: SelectedRegistrySandboxState = {
+    managedHermesStateVolumes: [],
+    names: [],
+  };
   if (scopedToSelectedGateway) {
     try {
-      sandboxNames = selectedRegistrySandboxNames(paths, runtime);
+      selectedSandboxState = selectedRegistrySandboxState(paths, runtime);
     } catch (error) {
       runtime.error(error instanceof Error ? error.message : String(error));
       return { exitCode: 1, plan };
@@ -3320,7 +3375,7 @@ export function runUninstallPlan(
       gatewayInspection = boundaryInspection;
       scopedToSelectedGateway = true;
       try {
-        sandboxNames = selectedRegistrySandboxNames(paths, runtime);
+        selectedSandboxState = selectedRegistrySandboxState(paths, runtime);
       } catch (error) {
         runtime.error(error instanceof Error ? error.message : String(error));
         return { exitCode: 1, plan };
@@ -3329,6 +3384,14 @@ export function runUninstallPlan(
         "A sibling gateway appeared during uninstall preparation; switching to gateway-scoped cleanup.",
       );
       reportOtherGatewayEnvironments(boundaryInspection, runtime);
+    }
+  }
+  if (!scopedToSelectedGateway) {
+    try {
+      selectedSandboxState = selectedRegistrySandboxState(paths, runtime);
+    } catch (error) {
+      runtime.error(error instanceof Error ? error.message : String(error));
+      return { exitCode: 1, plan };
     }
   }
   let portableRuntimeCleanup = false;
@@ -3363,7 +3426,8 @@ export function runUninstallPlan(
       scopedToSelectedGateway,
       gatewayInspection.sharedRegistryMustBePreserved,
       gatewayInspection.otherGatewayPorts,
-      sandboxNames,
+      selectedSandboxState.names,
+      selectedSandboxState.managedHermesStateVolumes,
       teardownAuthority,
       portableRuntimeCleanup,
       portableRetirementEntries,

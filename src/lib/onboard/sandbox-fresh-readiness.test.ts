@@ -145,16 +145,16 @@ describe("fresh sandbox executable readiness", () => {
 
     await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow("process.exit:1");
 
-    expect(deps.runOpenshell).toHaveBeenCalledWith(
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
-      expect.objectContaining({ ignoreError: true }),
+      expect.anything(),
     );
     expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
       backupPath: null,
     });
   });
 
-  it("removes a fresh sandbox when sandbox get omits a durable ID (#9050)", async () => {
+  it("preserves a fresh sandbox when sandbox get omits a durable ID (#9050)", async () => {
     const deps = createDeps();
     vi.mocked(deps.runOpenshell).mockImplementation(
       createSequencedOpenShellRunner([
@@ -169,9 +169,9 @@ describe("fresh sandbox executable readiness", () => {
       ["sandbox", "exec", "--name", "alpha", "--", "true"],
       expect.anything(),
     );
-    expect(deps.runOpenshell).toHaveBeenCalledWith(
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
-      expect.objectContaining({ ignoreError: true, suppressOutput: true }),
+      expect.anything(),
     );
     expect(console.error).toHaveBeenCalledWith(
       "  NemoClaw could not verify that sandbox 'alpha' returned a durable ID and accepted commands.",
@@ -196,9 +196,9 @@ describe("fresh sandbox executable readiness", () => {
       ["sandbox", "exec", "--name", "alpha", "--", "true"],
       expect.anything(),
     );
-    expect(deps.runOpenshell).toHaveBeenCalledWith(
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
-      expect.objectContaining({ ignoreError: true }),
+      expect.anything(),
     );
   });
 
@@ -231,9 +231,9 @@ describe("fresh sandbox executable readiness", () => {
     expect(identityOptions?.timeout).toBeLessThanOrEqual(500);
     expect(executableOptions?.timeout).toBeGreaterThan(0);
     expect(executableOptions?.timeout).toBeLessThanOrEqual(500);
-    expect(deps.runOpenshell).toHaveBeenCalledWith(
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
-      expect.objectContaining({ ignoreError: true }),
+      expect.anything(),
     );
     expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
       backupPath: null,

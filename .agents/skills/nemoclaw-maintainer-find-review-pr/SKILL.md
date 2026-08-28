@@ -41,8 +41,8 @@ If no PRs remain, report that result and stop.
 
 For each PR, search its body for issue references. Match these patterns without case sensitivity:
 
-- `Fixes #NNN`, `Closes #NNN`, `Resolves #NNN`
-- `Related Issue` / `Linked Issue` section containing `#NNN`
+- `Fixes #NNN`, `Closes #NNN`, `Resolves #NNN`, `Refs #NNN`, `Relates to #NNN`, or `Part of #NNN`
+- `Related issues` / `Linked issues` section containing `#NNN`
 - Issue number in the PR title, such as a `(#NNN)` suffix
 - Branch name containing an issue number, such as `fix/something-NNN`
 

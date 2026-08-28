@@ -5,9 +5,11 @@ import { expect } from "vitest";
 
 import { expectNoSandboxDelete } from "./rebuild-delete-assertions";
 import type { RebuildFlowHarness } from "./rebuild-flow-dcode-harness";
+import { managedSandboxEntry } from "./managed-policy-receipt-fixture";
 
 export function makeDcodeSandboxEntry(): Record<string, unknown> {
   return {
+    ...managedSandboxEntry("alpha", "langchain-deepagents-code"),
     name: "alpha",
     agent: "langchain-deepagents-code",
     agentVersion: "0.1.12",

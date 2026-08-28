@@ -921,11 +921,27 @@ async function applyChannelAddToGatewayAndRegistry(
   try {
     // bestEffort: failures throw (instead of process.exit inside the helper)
     // so a partial add can be torn down below before exiting.
-    policyChannelDependencies.upsertMessagingProviders(tokenDefs, {
+    const providerNames = policyChannelDependencies.upsertMessagingProviders(tokenDefs, gatewayName, {
       bestEffort: true,
       revalidatePolicyRequirements: () => prepareMutation?.(),
       requireExactBindings: true,
     });
+    for (const providerName of providerNames) {
+      prepareMutation?.();
+      revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName);
+      const attached = policyChannelDependencies.runGatewayOpenshell(
+        gatewayName,
+        ["sandbox", "provider", "attach", "-g", gatewayName, sandboxName, providerName],
+        { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      if (attached.status !== 0) {
+        throw new Error(
+          `OpenShell did not attach messaging provider '${providerName}' to sandbox '${sandboxName}'.`,
+        );
+      }
+      prepareMutation?.();
+      revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName);
+    }
   } catch (err) {
     console.error(
       `  ✗ Failed to register '${channelName}' providers with the gateway: ${
@@ -1016,10 +1032,14 @@ async function applyChannelRemoveToGatewayAndRegistry(
   options.prepareCleanup?.();
   if (gatewayReachable) {
     for (const name of providerNames) {
-      const result = runOpenshell(["sandbox", "provider", "detach", sandboxName, name], {
-        ignoreError: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      const result = policyChannelDependencies.runGatewayOpenshell(
+        gatewayName,
+        ["sandbox", "provider", "detach", sandboxName, name],
+        {
+          ignoreError: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
       if (result.status !== 0) {
         const output = `${result.stdout || ""}${result.stderr || ""}`;
         if (!/\bNotFound\b|not found|not attached/i.test(output)) {
@@ -1810,10 +1830,14 @@ async function rollbackChannelAdd(
           token,
           providerType: snapshot.staticProviderType ?? MESSAGING_CREDENTIAL_PROVIDER_TYPE,
         }));
-        policyChannelDependencies.upsertMessagingProviders(priorTokenDefs, {
-          bestEffort: true,
-          requireExactBindings: true,
-        });
+        policyChannelDependencies.upsertMessagingProviders(
+          priorTokenDefs,
+          getSandboxTargetGatewayName(sandboxName),
+          {
+            bestEffort: true,
+            requireExactBindings: true,
+          },
+        );
       } catch (err) {
         console.error(
           `  ${YW}⚠${R} Failed to restore gateway providers for '${canonical}': ${
@@ -2002,8 +2026,11 @@ export function applyChannelPresetIfAvailable(
                 expectedExistingNetworkPolicyContent: options.expectedExistingNetworkPolicyContent,
               }
             : {}),
+          includeMessagingCredentialBindings: true,
         })
-      : policies.applyPreset(sandboxName, channelName);
+      : policies.applyPreset(sandboxName, channelName, {
+          includeMessagingCredentialBindings: true,
+        });
     if (!applied) {
       console.error(
         `  ${YW}⚠${R} Cannot enable channel '${channelName}': policy preset failed to apply.`,

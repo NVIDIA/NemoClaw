@@ -69,6 +69,7 @@ export interface OnboardCommandOptions {
   resume: boolean;
   fresh: boolean;
   recreateSandbox: boolean;
+  apfInterceptorRequested: boolean | null;
   fromDockerfile: string | null;
   sandboxName: string | null;
   hostMounts?: import("../state/registry/types").SandboxHostMount[];
@@ -443,6 +444,24 @@ function withPortableDefault(
   return requested === true || profile !== null;
 }
 
+function resolveOnboardToolDisclosure(
+  flags: OnboardFlags,
+  experimentalProfile: ExperimentalOnboardProfile | null,
+  resume: boolean,
+  deps: ResolveOnboardOptionsDeps,
+): ToolDisclosure | null {
+  if (experimentalProfile && flags["tool-disclosure"] === undefined) {
+    // The hosted installer exports the generic default. Fresh Portable owns
+    // direct disclosure, while resume keeps the recorded sandbox selection.
+    return resume ? null : "direct";
+  }
+  try {
+    return resolveToolDisclosureRequest(flags["tool-disclosure"], deps.env);
+  } catch (error) {
+    fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 export function resolveOnboardOptions(
   flags: OnboardFlags,
   deps: ResolveOnboardOptionsDeps,
@@ -453,12 +472,7 @@ export function resolveOnboardOptions(
   const servingProfileProvenance = resolveServingProfileLifecycle(flags, deps, resume);
   const vllmGpuDevice = resolveVllmGpuDevice(flags["vllm-gpu-device"], resume, deps);
   validateObservabilityAgent(flags.observability, agent, deps);
-  let toolDisclosure: ToolDisclosure | null;
-  try {
-    toolDisclosure = resolveToolDisclosureRequest(flags["tool-disclosure"], deps.env);
-  } catch (error) {
-    fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
-  }
+  const toolDisclosure = resolveOnboardToolDisclosure(flags, experimentalProfile, resume, deps);
   const hostMounts = resolveHostMounts(flags["host-mount"], experimentalProfile, deps);
   return {
     tempManagedRuntime: flags["temp-managed-runtime"] === true,
@@ -472,6 +486,7 @@ export function resolveOnboardOptions(
     resume,
     fresh: resume ? false : withPortableDefault(flags.fresh, experimentalProfile),
     recreateSandbox: flags["recreate-sandbox"] === true,
+    apfInterceptorRequested: flags["apf-interceptor"] === true ? true : null,
     fromDockerfile: resolveFileOption("--from", flags.from, deps, true),
     sandboxName: flags.name ?? null,
     ...(hostMounts.length > 0 ? { hostMounts } : {}),

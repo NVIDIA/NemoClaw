@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { dockerRmi } from "../../adapters/docker/image";
-import {
-  detectOpenShellStateRpcResultIssue,
-  printOpenShellStateRpcIssue,
-} from "../../adapters/openshell/gateway-drift";
+import { printOpenShellStateRpcIssue } from "../../adapters/openshell/gateway-drift";
 import type { SandboxPolicyAuthority } from "../../adapters/openshell/policy-authority";
 import { loadAgent } from "../../agent/defs";
 import {
@@ -34,7 +31,6 @@ import {
   captureSandboxListWithGatewayRecovery,
   printSandboxListFailureWithRecoveryContext,
 } from "../../openshell-sandbox-list";
-import { parseLiveSandboxNames } from "../../runtime-recovery";
 import {
   parseContentAddressedSandboxBaseImageId,
   type SandboxBaseImageResolutionMetadata,
@@ -169,28 +165,25 @@ export async function resolveRebuildLiveState(
   const liveRecovery = await captureSandboxListWithGatewayRecovery({
     gatewayName: recordedGateway,
   });
-  const isLive = liveRecovery.result;
-  log(
-    `openshell sandbox list exit=${isLive.status}, output=${(isLive.output || "").substring(0, 200)}`,
-  );
-  const liveListIssue = detectOpenShellStateRpcResultIssue(isLive, {
-    gatewayName: recordedGateway,
-  });
-  if (liveListIssue) {
-    printOpenShellStateRpcIssue(liveListIssue, {
-      action: `rebuilding sandbox '${sandboxName}'`,
-      command: `${CLI_NAME} ${sandboxName} rebuild`,
-    });
+  const observed = liveRecovery.result;
+  if (!observed.ok && observed.error.kind === "schema") {
+    printOpenShellStateRpcIssue(
+      { kind: "protobuf_mismatch", drift: null, output: "" },
+      {
+        action: `rebuilding sandbox '${sandboxName}'`,
+        command: `${CLI_NAME} ${sandboxName} rebuild`,
+      },
+    );
     bail("OpenShell gateway schema mismatch.");
     return null;
   }
-  if (isLive.status !== 0) {
+  if (!observed.ok) {
     printSandboxListFailureWithRecoveryContext(liveRecovery);
-    bail("Failed to query running sandboxes from OpenShell.", isLive.status || 1);
+    bail("Failed to query running sandboxes from OpenShell.", 1);
     return null;
   }
 
-  const liveNames = parseLiveSandboxNames(isLive.output || "");
+  const liveNames = new Set(observed.value.sandboxes.map((sandbox) => sandbox.name));
   log(`Live sandboxes: ${Array.from(liveNames).join(", ") || "(none)"}`);
   if (liveNames.has(sandboxName)) return { staleRecovery: false, staleRegistrySnapshot: null };
 

@@ -31,10 +31,16 @@ saved restrictive policy snapshot and refuses to set policy. The external
 policy authority must make the effective policy for the named sandbox match the
 saved restrictive snapshot and current managed MCP entries without changing
 policy authority. `shields status` identifies that required policy by its
-canonical JSON SHA-256 digest and network policy keys. Then run
-`nemoclaw <sandbox> shields up`. NemoClaw verifies the exact effective policy
-and locks configuration. If policy changes during the lock, NemoClaw records
-the verified config lock and keeps Shields down until policy recovery succeeds.
+canonical JSON SHA-256 digest and network policy keys. The first status can
+report no artifact. Run `nemoclaw <sandbox> shields up` once to create and
+report the complete recovery artifact. The artifact contains no credential
+values. It contains the saved restrictive policy and current managed MCP policy
+entries, which may include credential bindings. Apply the artifact as the exact
+policy through the external authority; do not reconstruct it from the digest
+or key list. Then rerun `nemoclaw <sandbox> shields up`. NemoClaw verifies the
+exact effective policy and locks configuration. If policy changes during the
+lock, NemoClaw records the verified config lock and keeps Shields down until
+policy recovery succeeds.
 
 A legacy sandbox record retains the first qualified `policyAuthority` after a later operation fails.
 An inspection that cannot determine authority does not change the record.
