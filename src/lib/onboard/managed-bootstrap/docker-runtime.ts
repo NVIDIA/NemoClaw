@@ -1,13 +1,27 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  prepareDockerBuildEnvironment,
+  type PreparedDockerBuildEnvironment,
+  warnIfDockerBuildEnvironmentCleanupFailed,
+} from "../../adapters/docker/client-isolation";
+import {
+  dockerCapture as defaultDockerCapture,
+  dockerRun as defaultDockerRun,
+} from "../../adapters/docker/command";
+import { dockerRm as defaultDockerRm } from "../../adapters/docker/container";
 import { dockerImageInspect } from "../../adapters/docker/inspect";
 import { dockerPullWithProgressWatchdog } from "../../adapters/docker/pull";
 import { hasZeroDockerExitStatus } from "../docker-command-result";
 import { createDockerGpuDiagnosticRedactor } from "../docker-gpu-diagnostic-redaction";
 import { detectTegraDeviceGroupGids } from "../docker-gpu-jetson-groups";
 import { buildDockerGpuMode, selectDockerGpuPatchMode } from "../docker-gpu-patch-mode";
-import type { DockerGpuPatchMode, DockerGpuPatchModeAttempt } from "../docker-gpu-patch-types";
+import type {
+  DockerGpuPatchDeps,
+  DockerGpuPatchMode,
+  DockerGpuPatchModeAttempt,
+} from "../docker-gpu-patch-types";
 import { renderCompatibilityFallbackCreateArgs } from "../docker-gpu-route";
 import {
   createDockerGpuSandboxCreatePatch,
@@ -67,28 +81,66 @@ function managedBootstrapImageReference(
   return `${input.image.repository}@${input.image.manifestDigest}`;
 }
 
-async function prepareDockerManagedBootstrapGpuProbeImage(image: string): Promise<void> {
-  const inspected = dockerImageInspect(image, {
-    ignoreError: true,
-    suppressOutput: true,
-    timeout: MANAGED_BOOTSTRAP_IMAGE_INSPECT_TIMEOUT_MS,
+async function prepareDockerManagedBootstrapGpuProbeImage(
+  image: string,
+  dockerClientEnv: NodeJS.ProcessEnv,
+): Promise<void> {
+  const prepared = prepareDockerBuildEnvironment({
+    env: dockerClientEnv,
+    allowCredentialIsolation: true,
   });
-  if (hasZeroDockerExitStatus(inspected)) return;
+  try {
+    const inspected = dockerImageInspect(image, {
+      env: prepared.env,
+      ignoreError: true,
+      suppressOutput: true,
+      timeout: MANAGED_BOOTSTRAP_IMAGE_INSPECT_TIMEOUT_MS,
+    });
+    if (hasZeroDockerExitStatus(inspected)) return;
 
-  console.log("  Pulling managed sandbox image before Docker GPU mode selection...");
-  const pulled = await dockerPullWithProgressWatchdog(image, {
-    maxTimeoutMs: MANAGED_BOOTSTRAP_IMAGE_PULL_MAX_TIMEOUT_MS,
-  });
-  if (pulled.status === 0 && !pulled.timedOut && !pulled.error) return;
+    console.log("  Pulling managed sandbox image before Docker GPU mode selection...");
+    if (prepared.isolatedCredentialConfig) {
+      console.log(
+        "  Docker Desktop credential helper is unavailable in this WSL session; using an isolated credential-free config for the managed sandbox image pull.",
+      );
+    }
+    const pulled = await dockerPullWithProgressWatchdog(image, {
+      maxTimeoutMs: MANAGED_BOOTSTRAP_IMAGE_PULL_MAX_TIMEOUT_MS,
+      env: prepared.env,
+    });
+    if (pulled.status === 0 && !pulled.timedOut && !pulled.error) return;
+    const reason = pulled.timedOut
+      ? pulled.timeoutKind === "stall"
+        ? "stalled without progress"
+        : "exceeded the 30-minute safety limit"
+      : pulled.error
+        ? `could not start (${pulled.error.message})`
+        : `exited with status ${String(pulled.status)}`;
+    throw new Error(
+      `Docker managed sandbox image pull failed before GPU mode selection: ${reason}.`,
+    );
+  } finally {
+    warnIfDockerBuildEnvironmentCleanupFailed(
+      prepared.cleanup(),
+      `managed sandbox image '${image}'`,
+    );
+  }
+}
 
-  const reason = pulled.timedOut
-    ? pulled.timeoutKind === "stall"
-      ? "stalled without progress"
-      : "exceeded the 30-minute safety limit"
-    : pulled.error
-      ? `could not start (${pulled.error.message})`
-      : `exited with status ${String(pulled.status)}`;
-  throw new Error(`Docker managed sandbox image pull failed before GPU mode selection: ${reason}.`);
+function withDockerClientEnvDeps(
+  deps: DockerGpuPatchDeps,
+  prepared: PreparedDockerBuildEnvironment,
+): DockerGpuPatchDeps {
+  const capture = deps.dockerCapture ?? defaultDockerCapture;
+  const run = deps.dockerRun ?? defaultDockerRun;
+  const remove = deps.dockerRm ?? defaultDockerRm;
+  const withEnv = (opts: Record<string, unknown> = {}) => ({ ...opts, env: prepared.env });
+  return {
+    ...deps,
+    dockerCapture: (args, opts = {}) => capture(args, withEnv(opts)),
+    dockerRun: (args, opts = {}) => run(args, withEnv(opts)),
+    dockerRm: (containerName, opts = {}) => remove(containerName, withEnv(opts)),
+  };
 }
 
 function selectedDockerMode(
@@ -99,22 +151,38 @@ function selectedDockerMode(
   if (input.route !== "compatibility" || !input.sandboxGpuConfig.sandboxGpuEnabled) {
     return buildDockerGpuMode("startup-command");
   }
-  const selection = selectDockerGpuPatchMode(
-    {
-      image: managedBootstrapImageReference(input),
-      device: input.sandboxGpuConfig.sandboxGpuDevice,
-      backend,
-      dockerDesktopWsl,
-      ...(dockerDesktopWsl ? { pullPolicy: "never" as const } : {}),
-    },
-    input.dependencies,
-  );
-  if (selection.mode) return selection.mode;
-  const message =
-    backend === "jetson"
-      ? "Docker did not accept the Jetson NVIDIA runtime GPU mode for managed bootstrap."
-      : "Docker did not accept a compatibility GPU mode for managed bootstrap.";
-  throw new Error(`${message}${formatDockerGpuModeFailureDetails(selection.attempts)}`);
+  const prepared = prepareDockerBuildEnvironment({
+    env: input.dockerClientEnv,
+    allowCredentialIsolation: true,
+  });
+  try {
+    if (prepared.isolatedCredentialConfig) {
+      console.log(
+        "  Docker Desktop credential helper is unavailable in this WSL session; using an isolated credential-free config for GPU mode probes.",
+      );
+    }
+    const selection = selectDockerGpuPatchMode(
+      {
+        image: managedBootstrapImageReference(input),
+        device: input.sandboxGpuConfig.sandboxGpuDevice,
+        backend,
+        dockerDesktopWsl,
+        ...(dockerDesktopWsl ? { pullPolicy: "never" as const } : {}),
+      },
+      withDockerClientEnvDeps(input.dependencies as DockerGpuPatchDeps, prepared),
+    );
+    if (selection.mode) return selection.mode;
+    const message =
+      backend === "jetson"
+        ? "Docker did not accept the Jetson NVIDIA runtime GPU mode for managed bootstrap."
+        : "Docker did not accept a compatibility GPU mode for managed bootstrap.";
+    throw new Error(`${message}${formatDockerGpuModeFailureDetails(selection.attempts)}`);
+  } finally {
+    warnIfDockerBuildEnvironmentCleanupFailed(
+      prepared.cleanup(),
+      `GPU mode probes for managed sandbox image '${managedBootstrapImageReference(input)}'`,
+    );
+  }
 }
 
 export function formatDockerGpuModeFailureDetails(
@@ -233,7 +301,10 @@ function createDockerLifecycle(
         input.route === "compatibility" &&
         input.sandboxGpuConfig.sandboxGpuEnabled
       ) {
-        await prepareDockerManagedBootstrapGpuProbeImage(managedBootstrapImageReference(input));
+        await prepareDockerManagedBootstrapGpuProbeImage(
+          managedBootstrapImageReference(input),
+          input.dockerClientEnv,
+        );
       }
       const mode = preselectedMode ?? selectedDockerMode(input, dockerDesktopWsl);
       const replacementOptions = dockerReplacementOptions(mode, input);
