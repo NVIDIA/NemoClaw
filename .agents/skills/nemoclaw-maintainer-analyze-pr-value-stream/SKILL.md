@@ -15,7 +15,7 @@ Run the deterministic read-only analyzer for one pull request. The analyzer uses
 
 - Run from a NemoClaw checkout with authenticated `gh` access.
 - Use Node.js 22.19 or later with type stripping enabled.
-- Install `zipinfo` and `unzip` only when the analysis reads retained Vitest artifacts.
+- Retained Vitest artifact timing is conditional: install this checkout’s dependencies so a local `node_modules/.bin/vitest` is available, and install `zipinfo` and `unzip`. The analyzer still returns the bounded report when these optional tools or an artifact are unavailable, with the failure recorded in `caveats`.
 
 ## Run the analysis
 
@@ -52,7 +52,7 @@ Report these fields first:
 3. `elapsed.approvalDelaySeconds` and `elapsed.mergeLagAfterReadySeconds`.
 4. `waterfall.runsTruncated` and all applicable `caveats`.
 
-Do not describe a fallback branch timestamp as exact. Do not claim causal attribution from the counterfactual approval calculation. A truncated run set is incomplete evidence.
+Do not describe a fallback branch timestamp as exact. Do not claim causal attribution from the counterfactual approval calculation. A truncated run set is incomplete evidence. Treat null timing fields as queued or otherwise not yet observed. Treat artifact failure caveats as status evidence, not test timing evidence.
 
 ## Trust boundaries
 

@@ -78,10 +78,10 @@ export type ValueStreamReport = {
       conclusion: string | null;
       url: string;
       createdAt: string;
-      startedAt: string;
+      startedAt: string | null;
       completedAt: string | null;
       offsetSeconds: number;
-      queueSeconds: number;
+      queueSeconds: number | null;
       durationSeconds: number | null;
       jobs: {
         id: number;
@@ -93,9 +93,9 @@ export type ValueStreamReport = {
         runnerGroup: string | null;
         labels: string[];
         createdAt: string;
-        startedAt: string;
+        startedAt: string | null;
         completedAt: string | null;
-        offsetSeconds: number;
+        offsetSeconds: number | null;
         queueSeconds: number | null;
         durationSeconds: number | null;
         testRun: {
@@ -121,9 +121,9 @@ export type ValueStreamReport = {
           name: string;
           status: string;
           conclusion: string | null;
-          startedAt: string;
+          startedAt: string | null;
           completedAt: string | null;
-          offsetSeconds: number;
+          offsetSeconds: number | null;
           durationSeconds: number | null;
         }[];
       }[];
@@ -230,6 +230,8 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
     return time;
   };
   const iso = (time: number): string => new Date(time).toISOString();
+  const optionalTime = (value: unknown, label: string): number | null =>
+    value === null ? null : parseTime(value, label);
   const seconds = (start: number, end: number): number =>
     Math.max(0, Math.round((end - start) / 1000));
   const offsetSeconds = (origin: number, time: number): number =>
@@ -507,7 +509,14 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
             durationSeconds: Math.max(0, Math.round(row.duration / 1000)),
           })),
       };
-    } catch {
+    } catch (error: unknown) {
+      const code =
+        typeof error === "object" && error !== null && "code" in error ? error.code : null;
+      artifactCaveats.add(
+        code === "ENOENT"
+          ? "Artifact timing unavailable because a required local Vitest or ZIP tool was not available."
+          : "Artifact timing processing failed or the retained artifact did not satisfy its bounded validation contract.",
+      );
       return null;
     } finally {
       if (temporaryDirectory !== null)
@@ -515,6 +524,7 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
     }
   };
   let testArtifactsRead = 0;
+  const artifactCaveats = new Set<string>();
   const waterfall = [];
   for (let index = 0; index < waterfallRuns.length; index += 4) {
     const batch = await Promise.all(
@@ -583,6 +593,9 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
               );
             }
           } catch {
+            artifactCaveats.add(
+              "Artifact timing inventory was unavailable after the bounded GitHub read attempt failed.",
+            );
             artifactsByName = new Map();
           }
         }
@@ -591,7 +604,7 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
           if (!Number.isSafeInteger(job?.id) || !Array.isArray(job?.steps))
             throw new Error("workflow job did not match the waterfall contract");
           const jobCreated = parseTime(job.created_at, "job createdAt");
-          const jobStarted = parseTime(job.started_at, "job startedAt");
+          const jobStarted = optionalTime(job.started_at, "job startedAt");
           const jobCompleted =
             job.completed_at === null ? null : parseTime(job.completed_at, "job completedAt");
           let testRun = null;
@@ -601,12 +614,16 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
             if (artifact !== undefined) {
               testArtifactsRead += 1;
               testRun = await readTestRun(run.id, pull.headRefOid, Number(match[1]), artifact);
+              if (testRun === null)
+                artifactCaveats.add(
+                  "Artifact timing was unavailable after a bounded processing attempt was rejected or exhausted.",
+                );
             }
           }
           const steps = job.steps.map((step: any) => {
             if (!Number.isSafeInteger(step?.number))
               throw new Error("workflow step did not match the waterfall contract");
-            const stepStarted = parseTime(step.started_at, "step startedAt");
+            const stepStarted = optionalTime(step.started_at, "step startedAt");
             const stepCompleted =
               step.completed_at === null ? null : parseTime(step.completed_at, "step completedAt");
             return {
@@ -615,10 +632,13 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
               status: String(step.status ?? "").slice(0, 40),
               conclusion:
                 step.conclusion === null ? null : String(step.conclusion ?? "").slice(0, 40),
-              startedAt: iso(stepStarted),
+              startedAt: stepStarted === null ? null : iso(stepStarted),
               completedAt: stepCompleted === null ? null : iso(stepCompleted),
-              offsetSeconds: offsetSeconds(headObserved, stepStarted),
-              durationSeconds: stepCompleted === null ? null : seconds(stepStarted, stepCompleted),
+              offsetSeconds: stepStarted === null ? null : offsetSeconds(headObserved, stepStarted),
+              durationSeconds:
+                stepStarted === null || stepCompleted === null
+                  ? null
+                  : seconds(stepStarted, stepCompleted),
             };
           });
           const normalizedJob = {
@@ -634,26 +654,30 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
                 : String(job.runner_group_name ?? "").slice(0, 200),
             labels: job.labels.slice(0, 20).map((label: any) => String(label).slice(0, 100)),
             createdAt: iso(jobCreated),
-            startedAt: iso(jobStarted),
+            startedAt: jobStarted === null ? null : iso(jobStarted),
             completedAt: jobCompleted === null ? null : iso(jobCompleted),
-            offsetSeconds: offsetSeconds(headObserved, jobStarted),
-            queueSeconds: jobCreated <= jobStarted ? seconds(jobCreated, jobStarted) : null,
-            durationSeconds: jobCompleted === null ? null : seconds(jobStarted, jobCompleted),
+            offsetSeconds: jobStarted === null ? null : offsetSeconds(headObserved, jobStarted),
+            queueSeconds:
+              jobStarted !== null && jobCreated <= jobStarted
+                ? seconds(jobCreated, jobStarted)
+                : null,
+            durationSeconds:
+              jobStarted === null || jobCompleted === null
+                ? null
+                : seconds(jobStarted, jobCompleted),
             testRun,
             steps,
           };
           jobs.push(normalizedJob);
         }
-        const earliestJobStart =
-          jobs.length > 0
-            ? Math.min(
-                ...jobs.map((job: any) => parseTime(job.startedAt, "normalized job startedAt")),
-              )
-            : parseTime(runDetails.run_started_at, "workflow startedAt");
-        const runStarted = Math.min(
-          parseTime(runDetails.run_started_at, "workflow startedAt"),
-          earliestJobStart,
-        );
+        const jobStarts = jobs
+          .map((job: any) => optionalTime(job.startedAt, "normalized job startedAt"))
+          .filter((started: number | null): started is number => started !== null);
+        const reportedRunStart = optionalTime(runDetails.run_started_at, "workflow startedAt");
+        const runStarted =
+          reportedRunStart === null && jobStarts.length === 0
+            ? null
+            : Math.min(...jobStarts, ...(reportedRunStart === null ? [] : [reportedRunStart]));
         const runCompleted =
           runDetails.status === "completed"
             ? parseTime(runDetails.updated_at, "workflow completedAt")
@@ -670,11 +694,12 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
               : String(runDetails.conclusion ?? "").slice(0, 40),
           url: String(runDetails.html_url ?? "").slice(0, 500),
           createdAt: iso(runCreated),
-          startedAt: iso(runStarted),
+          startedAt: runStarted === null ? null : iso(runStarted),
           completedAt: runCompleted === null ? null : iso(runCompleted),
           offsetSeconds: offsetSeconds(headObserved, runCreated),
-          queueSeconds: seconds(runCreated, runStarted),
-          durationSeconds: runCompleted === null ? null : seconds(runStarted, runCompleted),
+          queueSeconds: runStarted === null ? null : seconds(runCreated, runStarted),
+          durationSeconds:
+            runStarted === null || runCompleted === null ? null : seconds(runStarted, runCompleted),
           jobs,
         };
       }),
@@ -725,21 +750,32 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
       "all successful exact-head check runs observed before merge; required-check configuration was unavailable";
   }
   const terminalLimit = merged ?? Date.now();
-  const successful = checks.filter((check: any) => {
+  const eligible = (check: any): boolean => {
     const completed = Date.parse(check?.completed_at);
-    const conclusion = String(check?.conclusion ?? "").toUpperCase();
-    const selected = requiredNames.size === 0 || requiredNames.has(check?.name);
     return (
-      selected &&
-      conclusion === "SUCCESS" &&
+      String(check?.conclusion ?? "").toUpperCase() === "SUCCESS" &&
       Number.isFinite(completed) &&
       completed >= headObserved &&
       completed <= terminalLimit
     );
-  });
+  };
+  let successful: any[];
+  let requiredChecksComplete = true;
+  if (requiredNames.size > 0) {
+    successful = [];
+    for (const name of requiredNames) {
+      const latest = checks
+        .filter((check: any) => check?.name === name)
+        .sort((a: any, b: any) => Date.parse(b?.created_at) - Date.parse(a?.created_at))[0];
+      if (latest === undefined || !eligible(latest)) requiredChecksComplete = false;
+      else successful.push(latest);
+    }
+  } else {
+    successful = checks.filter(eligible);
+  }
   successful.sort((a: any, b: any) => Date.parse(a.completed_at) - Date.parse(b.completed_at));
   const automationSettled =
-    successful.length > 0
+    requiredChecksComplete && successful.length > 0
       ? parseTime(successful[successful.length - 1].completed_at, "last check completedAt")
       : null;
   const finalApprovals = pull.reviews.filter(
@@ -863,7 +899,12 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
       "The pull request has not merged, so total lead time, merge lag, and approval-discounted lead time are incomplete.",
     );
   if (automationSettled === null)
-    caveats.push("No selected successful exact-head check completed in the measured window.");
+    caveats.push(
+      requiredNames.size > 0
+        ? "Automation is not settled because at least one configured required check is absent, pending, or unsuccessful on the exact head."
+        : "No selected successful exact-head check completed in the measured window.",
+    );
+  caveats.push(...artifactCaveats);
   return {
     measuredAt: new Date().toISOString(),
     repository,
