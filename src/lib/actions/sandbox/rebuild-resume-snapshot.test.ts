@@ -24,6 +24,7 @@ import { rebuildSandbox } from "./rebuild";
 import * as rebuildImagePreflight from "./rebuild-custom-image-preflight";
 import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import * as rebuildRoutePreflight from "./rebuild-preflight-guards";
+import * as rebuildRecreateJournal from "./rebuild-recreate-journal";
 import * as rebuildShields from "./rebuild-shields";
 import * as rebuildUsageNotice from "./rebuild-usage-notice";
 import * as policyGet from "./policy-get";
@@ -62,6 +63,11 @@ describe("rebuild resume snapshot repair", () => {
 
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    spies.push(
+      vi.spyOn(rebuildRecreateJournal, "recordRebuildRecoveryBackup").mockImplementation(
+        () => undefined,
+      ),
+    );
 
     session = onboardSession.createSession({
       sandboxName: "alpha",
