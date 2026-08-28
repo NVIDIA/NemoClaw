@@ -22,9 +22,10 @@ import {
   assertNemoClawPolicyCreationReceiptMatches,
   parseNemoClawPolicyCreationReceipt,
   parseOpenShellPolicy,
+  withoutProviderComposedPolicies,
 } from "../../policy/merge";
 import type { SelectedDockerGpuRoute } from "../docker-gpu-route";
-import { isOpenShellNativeGpuBaselineEnrichment } from "../sandbox-gpu-route-policy";
+import { isOpenShellGpuBaselineEnrichment } from "../sandbox-gpu-route-policy";
 import type { VerifiedSandboxPolicyBoundary, VerifiedSandboxPolicyRegistration } from "../types";
 
 export interface CreatedSandboxPolicyReceiptInput {
@@ -63,6 +64,7 @@ export function pendingSandboxPolicyVerificationForBoundary(
     sandboxName: boundary.sandboxName,
     lifecycleGeneration: boundary.lifecycleGeneration,
     sandboxIdentityFingerprint: boundary.lifecycleLiveIdentityFingerprint,
+    ...(boundary.createAttemptNonce ? { createAttemptNonce: boundary.createAttemptNonce } : {}),
     route: boundary.route,
   };
   const registration = boundary.registration;
@@ -101,6 +103,7 @@ export function verifiedSandboxPolicyBoundaryFromPendingCheckpoint(
     gatewayPort: checkpoint.gatewayPort,
     lifecycleGeneration: checkpoint.lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
+    ...(checkpoint.createAttemptNonce ? { createAttemptNonce: checkpoint.createAttemptNonce } : {}),
     route: checkpoint.route,
   };
   if (checkpoint.policyAuthority === "nemoclaw-managed") {
@@ -131,6 +134,19 @@ function refusal(reason: string): never {
   throw new PolicyAuthorityRefusalError(
     `Cannot record NemoClaw policy ownership: ${reason}. The sandbox remains owner-unknown and policy mutation is disabled.`,
   );
+}
+
+function basePolicyFromEffectivePolicy(
+  policy: ReturnType<typeof parseOpenShellPolicy>["policy"],
+): ReturnType<typeof parseOpenShellPolicy>["policy"] {
+  const networkPolicies = policy.network_policies;
+  if (!networkPolicies || typeof networkPolicies !== "object" || Array.isArray(networkPolicies)) {
+    return policy;
+  }
+  return {
+    ...policy,
+    network_policies: withoutProviderComposedPolicies(networkPolicies as never),
+  };
 }
 
 function waitForCreatedSandboxPolicyReadiness(
@@ -209,6 +225,10 @@ export function verifyCreatedSandboxPolicyCreationReceipt(
   } catch {
     refusal("the live base policy could not be compared");
   }
+  const observedBasePolicy = basePolicyFromEffectivePolicy(before.effectivePolicy);
+  if (!isDeepStrictEqual(observedBasePolicy, liveBasePolicy)) {
+    refusal("the policy evidence changed during receipt verification");
+  }
   const after = inspectSandboxPolicyAuthority({
     sandboxName: input.sandboxName,
     gatewayName: input.gatewayName,
@@ -225,8 +245,8 @@ export function verifyCreatedSandboxPolicyCreationReceipt(
   if (
     !isDeepStrictEqual(intendedPolicy, liveBasePolicy) &&
     !(
-      input.route === "native" &&
-      isOpenShellNativeGpuBaselineEnrichment(intendedPolicy, liveBasePolicy)
+      input.route !== "none" &&
+      isOpenShellGpuBaselineEnrichment(intendedPolicy, liveBasePolicy, input.route)
     )
   ) {
     refusal("the live base policy does not match the policy supplied by this create transaction");
@@ -355,12 +375,16 @@ export function verifyCreatedSandboxPolicyRegistration(
   return verifyReadOnlyPolicyBoundary(input, deps, "externally-managed");
 }
 
-/** Revalidate one in-memory gate result against the exact live policy identity. */
-export function revalidateCreatedSandboxPolicyRegistration(
-  input: Omit<CreatedSandboxPolicyRegistrationInput, "plannedAuthority"> & {
-    readonly registration: VerifiedSandboxPolicyRegistration;
-  },
-  deps: CreatedSandboxPolicyReceiptDeps = {},
+type CreatedSandboxPolicyRevalidationInput = Omit<
+  CreatedSandboxPolicyRegistrationInput,
+  "plannedAuthority"
+> & {
+  readonly registration: VerifiedSandboxPolicyRegistration;
+};
+
+function revalidateCreatedSandboxPolicyRegistrationInternal(
+  input: CreatedSandboxPolicyRevalidationInput,
+  deps: CreatedSandboxPolicyReceiptDeps,
 ): VerifiedSandboxPolicyRegistration {
   assertOpenShellGatewayPortBinding({
     gatewayName: input.gatewayName,
@@ -389,10 +413,11 @@ export function revalidateCreatedSandboxPolicyRegistration(
         policyHash: before.policyIdentity.hash,
         policyVersion: before.policyIdentity.activeVersion,
       });
-    } catch {
+    } catch (error) {
       throw new PolicyAuthorityRefusalError(
         `Refusing to ${input.operation}: the NemoClaw policy creation receipt no longer matches the live sandbox policy.`,
         "owner-unknown",
+        { cause: error },
       );
     }
     return registration;
@@ -418,4 +443,12 @@ export function revalidateCreatedSandboxPolicyRegistration(
     sandboxName: input.sandboxName,
   });
   return registration;
+}
+
+/** Revalidate one in-memory gate result against the exact live policy identity. */
+export function revalidateCreatedSandboxPolicyRegistration(
+  input: CreatedSandboxPolicyRevalidationInput,
+  deps: CreatedSandboxPolicyReceiptDeps = {},
+): VerifiedSandboxPolicyRegistration {
+  return revalidateCreatedSandboxPolicyRegistrationInternal(input, deps);
 }
