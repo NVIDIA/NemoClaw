@@ -1,20 +1,33 @@
-/**
- * Analyze one pull request from the earliest observable branch push through merge, separate approval delay from machine-controlled time, and test the latest revision against a target. Uses bounded authenticated GitHub reads; branch-push time falls back to commit time when no push workflow run is retained.
- */
-export default async function analyze_pr_value_stream(input: {
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { execFile } from "node:child_process";
+import { chmod, mkdir as fsMkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
+import { pathToFileURL } from "node:url";
+
+const execFileAsync = promisify(execFile);
+const MAX_GH_OUTPUT = 10_000_000;
+const MAX_JSON_OUTPUT = 4_000_000;
+
+type Input = {
   workdir: string;
-  number: Integer;
+  number: number;
   repository?: string;
   targetMinutes?: number;
-  maxRunPages?: Integer;
-  maxCheckPages?: Integer;
-  maxAutomationRuns?: Integer;
-  maxTestArtifacts?: Integer;
-  topTestsPerShard?: Integer;
-}): Promise<{
+  maxRunPages?: number;
+  maxCheckPages?: number;
+  maxAutomationRuns?: number;
+  maxTestArtifacts?: number;
+  topTestsPerShard?: number;
+};
+
+export type ValueStreamReport = {
   measuredAt: string;
   repository: string;
-  number: Integer;
+  number: number;
   url: string;
   state: string;
   headSha: string;
@@ -44,7 +57,7 @@ export default async function analyze_pr_value_stream(input: {
   };
   automation: {
     readinessBasis: string;
-    checksConsidered: Integer;
+    checksConsidered: number;
     firstCheckCreatedAt: string | null;
     triggerDelaySeconds: number | null;
     longestRunnerQueue: { name: string; seconds: number } | null;
@@ -53,14 +66,14 @@ export default async function analyze_pr_value_stream(input: {
   };
   waterfall: {
     origin: string;
-    runsAvailable: Integer;
-    runsIncluded: Integer;
+    runsAvailable: number;
+    runsIncluded: number;
     runsTruncated: boolean;
     runs: {
-      id: Integer;
+      id: number;
       name: string;
       event: string;
-      attempt: Integer;
+      attempt: number;
       status: string;
       conclusion: string | null;
       url: string;
@@ -71,7 +84,7 @@ export default async function analyze_pr_value_stream(input: {
       queueSeconds: number;
       durationSeconds: number | null;
       jobs: {
-        id: Integer;
+        id: number;
         name: string;
         status: string;
         conclusion: string | null;
@@ -87,9 +100,9 @@ export default async function analyze_pr_value_stream(input: {
         durationSeconds: number | null;
         testRun: {
           artifact: string;
-          tests: Integer;
-          timedTests: Integer;
-          files: Integer;
+          tests: number;
+          timedTests: number;
+          files: number;
           startedAt: string;
           completedAt: string;
           offsetSeconds: number;
@@ -104,7 +117,7 @@ export default async function analyze_pr_value_stream(input: {
           }[];
         } | null;
         steps: {
-          number: Integer;
+          number: number;
           name: string;
           status: string;
           conclusion: string | null;
@@ -117,9 +130,76 @@ export default async function analyze_pr_value_stream(input: {
     }[];
   };
   bottlenecks: { name: string; seconds: number; owner: string }[];
-  revisions: Integer;
+  revisions: number;
   caveats: string[];
+};
+
+type GithubCliInput = { workdir: string; args: string[] };
+
+function redactDiagnostic(value: string): string {
+  return value
+    .replace(/(authorization\s*:)[^\r\n]*/giu, "$1 [REDACTED]")
+    .replace(/((?:token|key|secret|password)\s*=)[^\s]*/giu, "$1[REDACTED]")
+    .replace(/\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]+/giu, "[REDACTED]")
+    .replace(/\b(?:gh[opusr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b/gu, "[REDACTED]")
+    .replace(/\/(?:home|Users)\/[^/\s]+/gu, "/[HOME]")
+    .slice(0, 4_000);
+}
+
+async function runGithubCli(input: GithubCliInput): Promise<{ stdout: string }> {
+  try {
+    const result = await execFileAsync("gh", input.args, {
+      cwd: input.workdir,
+      encoding: "utf8",
+      maxBuffer: MAX_GH_OUTPUT,
+      timeout: 120_000,
+    });
+    return { stdout: result.stdout };
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`GitHub read failed: ${redactDiagnostic(message)}`);
+  }
+}
+
+async function summarizeRequiredChecks(input: {
+  workdir: string;
+  repo: string;
+  number: number;
+  limit: number;
+}): Promise<{
+  summary: { protectionReadable: boolean };
+  items: { matches: { name: string }[] }[];
 }> {
+  try {
+    const pr = JSON.parse(
+      (
+        await runGithubCli({
+          workdir: input.workdir,
+          args: ["pr", "view", String(input.number), "--repo", input.repo, "--json", "baseRefName"],
+        })
+      ).stdout,
+    );
+    if (typeof pr?.baseRefName !== "string") throw new Error("base branch was unavailable");
+    const endpoint = `repos/${input.repo}/branches/${encodeURIComponent(pr.baseRefName)}/protection/required_status_checks`;
+    const payload = JSON.parse(
+      (await runGithubCli({ workdir: input.workdir, args: ["api", endpoint] })).stdout,
+    );
+    const names = [
+      ...(Array.isArray(payload?.contexts) ? payload.contexts : []),
+      ...(Array.isArray(payload?.checks) ? payload.checks.map((check: any) => check?.context) : []),
+    ]
+      .filter((name): name is string => typeof name === "string")
+      .slice(0, input.limit);
+    return {
+      summary: { protectionReadable: true },
+      items: names.map((name) => ({ matches: [{ name }] })),
+    };
+  } catch {
+    return { summary: { protectionReadable: false }, items: [] };
+  }
+}
+
+export async function analyzePrValueStream(input: Input): Promise<ValueStreamReport> {
   if (!Number.isSafeInteger(input.number) || input.number < 1)
     throw new Error("number must be a positive integer");
   const repository = input.repository ?? "NVIDIA/NemoClaw";
@@ -154,7 +234,7 @@ export default async function analyze_pr_value_stream(input: {
     Math.max(0, Math.round((end - start) / 1000));
   const offsetSeconds = (origin: number, time: number): number =>
     Math.round((time - origin) / 1000);
-  const pullResult = await tools.run_github_cli({
+  const pullResult = await runGithubCli({
     workdir: input.workdir,
     args: [
       "pr",
@@ -195,7 +275,7 @@ export default async function analyze_pr_value_stream(input: {
   const branch = encodeURIComponent(pull.headRefName);
   const runs: any[] = [];
   for (let page = 1; page <= maxRunPages; page += 1) {
-    const result = await tools.run_github_cli({
+    const result = await runGithubCli({
       workdir: input.workdir,
       args: [
         "api",
@@ -259,13 +339,13 @@ export default async function analyze_pr_value_stream(input: {
           : 1,
     );
   const shardJobName = /^cli-test-shards \(([1-9]|1[0-2])\)$/u;
-  const shellQuote = (value: string): string => "'" + value.replaceAll("'", "'\"'\"'") + "'";
   const readTestRun = async (
     runId: number,
     headSha: string,
     shard: number,
     artifact: any,
   ): Promise<any | null> => {
+    let temporaryDirectory: string | null = null;
     try {
       if (
         !Number.isSafeInteger(artifact?.id) ||
@@ -278,6 +358,13 @@ export default async function analyze_pr_value_stream(input: {
         artifact?.workflow_run_head_sha !== headSha
       )
         return null;
+      temporaryDirectory = await mkdtemp(path.join(tmpdir(), "nemoclaw-value-stream-"));
+      const zipPath = path.join(temporaryDirectory, "artifact.zip");
+      const blobDirectory = path.join(temporaryDirectory, "blobs");
+      const reporterPath = path.join(temporaryDirectory, "reporter.mjs");
+      const summaryPath = path.join(temporaryDirectory, "summary.json");
+      await chmod(temporaryDirectory, 0o700);
+      await fsMkdir(blobDirectory, { mode: 0o700 });
       const reporter = [
         'import { writeFileSync } from "node:fs";',
         "export default class ShardTimingReporter {",
@@ -292,62 +379,81 @@ export default async function analyze_pr_value_stream(input: {
         "  onTestRunEnd() { this.rows.sort((a, b) => b.duration - a.duration || a.name.localeCompare(b.name)); writeFileSync(process.env.DSH_TEST_SUMMARY, JSON.stringify({ tests: this.tests, timedTests: this.timedTests, files: this.files.size, start: this.start, end: this.end, rows: this.rows.slice(0, Number(process.env.DSH_TOP_TESTS)) })); }",
         "}",
       ].join("\n");
-      const script = [
-        "set -euo pipefail",
-        "umask 077",
-        "tmp=$(mktemp -d)",
-        'cleanup() { rm -rf -- "$tmp"; }',
-        "trap cleanup EXIT HUP INT TERM",
-        "zip=$tmp/artifact.zip",
-        "blobdir=$tmp/blobs",
-        'mkdir "$blobdir"',
-        "printf '%s\n' " + shellQuote(reporter) + ' > "$tmp/reporter.mjs"',
-        "gh api " +
-          shellQuote("repos/" + repository + "/actions/artifacts/" + artifact.id + "/zip") +
-          ' | { dd of="$zip" bs=1000000 count=25 iflag=fullblock status=none; extra=$(dd bs=1 count=1 iflag=fullblock status=none | base64 -w0); [ -z "$extra" ]; }',
-        'compressed=$(stat -c %s "$zip")',
-        '[ "$compressed" -eq ' + String(artifact.size_in_bytes) + " ]",
-        'entry=$(zipinfo -1 "$zip")',
-        '[ "$(printf \'%s\\n\' "$entry" | wc -l)" -eq 1 ]',
-        "printf '%s\\n' \"$entry\" | grep -Eq '^blob-[A-Za-z0-9._-]+\\.json$'",
-        "line=$(zipinfo -l \"$zip\" | awk '/^-/{print; found++} END {if (found != 1) exit 1}')",
-        "mode=$(printf '%s\\n' \"$line\" | awk '{print $1}')",
-        "expanded=$(printf '%s\\n' \"$line\" | awk '{print $4}')",
-        'case "$mode" in -*) ;; *) exit 1 ;; esac',
-        "case \"$expanded\" in ''|*[!0-9]*) exit 1 ;; esac",
-        '[ "$expanded" -le 100000000 ]',
-        'unzip -p "$zip" "$entry" | { dd of="$blobdir/$entry" bs=1000000 count=100 iflag=fullblock status=none; extra=$(dd bs=1 count=1 iflag=fullblock status=none | base64 -w0); [ -z "$extra" ]; }',
-        '[ "$(stat -c %s "$blobdir/$entry")" -eq "$expanded" ]',
-        "common=$(git rev-parse --path-format=absolute --git-common-dir)",
-        "primary=${common%/.git}",
-        "owner=$PWD",
-        'if [ ! -x "$owner/node_modules/.bin/vitest" ]; then owner=$primary; fi',
-        '[ -x "$owner/node_modules/.bin/vitest" ]',
-        "summary=$tmp/summary.json",
-        "set +e",
-        '(cd "$owner" && DSH_TEST_SUMMARY="$summary" DSH_TOP_TESTS=' +
-          String(topTestsPerShard) +
-          ' ./node_modules/.bin/vitest --merge-reports="$blobdir" --reporter="$tmp/reporter.mjs") >/dev/null 2>"$tmp/vitest.stderr"',
-        "set -e",
-        '[ -f "$summary" ]',
-        '[ "$(stat -c %s "$summary")" -le 5000000 ]',
-        'cat "$summary"',
-      ].join("\n");
-      const result = await tools.bash({
-        workdir: input.workdir,
-        command: script,
-        description: "Merge bounded Vitest shard artifact",
-        timeoutMs: 120_000,
+      await writeFile(reporterPath, reporter, { mode: 0o600 });
+      const download = await execFileAsync(
+        "gh",
+        ["api", "repos/" + repository + "/actions/artifacts/" + artifact.id + "/zip"],
+        { cwd: input.workdir, encoding: "buffer", maxBuffer: 25_000_001, timeout: 120_000 },
+      );
+      if (!Buffer.isBuffer(download.stdout) || download.stdout.length !== artifact.size_in_bytes)
+        return null;
+      await writeFile(zipPath, download.stdout, { mode: 0o600 });
+      const inventory = await execFileAsync("zipinfo", ["-l", zipPath], {
+        encoding: "utf8",
+        maxBuffer: 100_000,
+        timeout: 30_000,
       });
+      const entries = inventory.stdout.split("\n").filter((line) => /^[-dlcbps]/u.test(line));
+      if (entries.length !== 1) return null;
+      const fields = entries[0].trim().split(/\s+/u);
+      const entryName = fields.at(-1);
+      const expanded = Number(fields[3]);
       if (
-        result.kind !== "foreground" ||
-        result.exitCode !== 0 ||
-        result.timedOut ||
-        result.stdout.truncated ||
-        result.stdout.text.length > 5_000_000
+        !fields[0].startsWith("-") ||
+        !entryName ||
+        !/^blob-[A-Za-z0-9._-]+\.json$/u.test(entryName) ||
+        !Number.isSafeInteger(expanded) ||
+        expanded < 0 ||
+        expanded > 100_000_000
       )
         return null;
-      const summary = JSON.parse(result.stdout.text);
+      const extracted = await execFileAsync("unzip", ["-p", zipPath, entryName], {
+        encoding: "buffer",
+        maxBuffer: 100_000_001,
+        timeout: 60_000,
+      });
+      if (!Buffer.isBuffer(extracted.stdout) || extracted.stdout.length !== expanded) return null;
+      await writeFile(path.join(blobDirectory, entryName), extracted.stdout, { mode: 0o600 });
+      const common = (
+        await execFileAsync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
+          cwd: input.workdir,
+          encoding: "utf8",
+          maxBuffer: 100_000,
+          timeout: 30_000,
+        })
+      ).stdout.trim();
+      const primary = common.endsWith(path.sep + ".git") ? path.dirname(common) : input.workdir;
+      let owner = input.workdir;
+      let vitest = path.join(owner, "node_modules", ".bin", "vitest");
+      try {
+        await stat(vitest);
+      } catch {
+        owner = primary;
+        vitest = path.join(owner, "node_modules", ".bin", "vitest");
+        await stat(vitest);
+      }
+      try {
+        await execFileAsync(
+          vitest,
+          ["--merge-reports=" + blobDirectory, "--reporter=" + reporterPath],
+          {
+            cwd: owner,
+            encoding: "utf8",
+            maxBuffer: 1_000_000,
+            timeout: 120_000,
+            env: {
+              ...process.env,
+              DSH_TEST_SUMMARY: summaryPath,
+              DSH_TOP_TESTS: String(topTestsPerShard),
+            },
+          },
+        );
+      } catch {
+        /* Vitest can exit nonzero after it writes a complete merge summary. */
+      }
+      const summaryInfo = await stat(summaryPath);
+      if (summaryInfo.size > 5_000_000) return null;
+      const summary = JSON.parse(await readFile(summaryPath, "utf8"));
       if (
         !Number.isSafeInteger(summary?.tests) ||
         !Number.isSafeInteger(summary?.timedTests) ||
@@ -403,6 +509,9 @@ export default async function analyze_pr_value_stream(input: {
       };
     } catch {
       return null;
+    } finally {
+      if (temporaryDirectory !== null)
+        await rm(temporaryDirectory, { recursive: true, force: true });
     }
   };
   let testArtifactsRead = 0;
@@ -410,7 +519,7 @@ export default async function analyze_pr_value_stream(input: {
   for (let index = 0; index < waterfallRuns.length; index += 4) {
     const batch = await Promise.all(
       waterfallRuns.slice(index, index + 4).map(async (run: any) => {
-        const runResult = await tools.run_github_cli({
+        const runResult = await runGithubCli({
           workdir: input.workdir,
           args: [
             "api",
@@ -426,7 +535,7 @@ export default async function analyze_pr_value_stream(input: {
           !Number.isSafeInteger(runDetails?.run_attempt)
         )
           throw new Error("workflow run did not match the exact-head waterfall contract");
-        const jobsResult = await tools.run_github_cli({
+        const jobsResult = await runGithubCli({
           workdir: input.workdir,
           args: [
             "api",
@@ -448,7 +557,7 @@ export default async function analyze_pr_value_stream(input: {
         let artifactsByName = new Map<string, any>();
         if (shardJobs.length > 0 && maxTestArtifacts > 0) {
           try {
-            const artifactsResult = await tools.run_github_cli({
+            const artifactsResult = await runGithubCli({
               workdir: input.workdir,
               args: [
                 "api",
@@ -574,7 +683,7 @@ export default async function analyze_pr_value_stream(input: {
   }
   const checks: any[] = [];
   for (let page = 1; page <= maxCheckPages; page += 1) {
-    const result = await tools.run_github_cli({
+    const result = await runGithubCli({
       workdir: input.workdir,
       args: [
         "api",
@@ -598,7 +707,7 @@ export default async function analyze_pr_value_stream(input: {
   let requiredNames = new Set<string>();
   let readinessBasis = "all successful exact-head check runs observed before merge";
   try {
-    const configured = await tools.summarize_nemoclaw_required_checks({
+    const configured = await summarizeRequiredChecks({
       workdir: input.workdir,
       repo: repository,
       number: input.number,
@@ -818,4 +927,60 @@ export default async function analyze_pr_value_stream(input: {
     revisions: commits.length,
     caveats,
   };
+}
+
+function parseArguments(argv: string[]): Input {
+  const allowed = new Set([
+    "workdir",
+    "number",
+    "repository",
+    "target-minutes",
+    "max-run-pages",
+    "max-check-pages",
+    "max-automation-runs",
+    "max-test-artifacts",
+    "top-tests-per-shard",
+  ]);
+  const values = new Map<string, string>();
+  for (let index = 0; index < argv.length; index += 2) {
+    const key = argv[index];
+    const value = argv[index + 1];
+    if (!key?.startsWith("--") || value === undefined)
+      throw new Error("arguments must use --name value pairs");
+    const name = key.slice(2);
+    if (!allowed.has(name)) throw new Error(`unknown argument: --${name}`);
+    if (values.has(name)) throw new Error(`argument appears more than once: --${name}`);
+    values.set(name, value);
+  }
+  const number = Number(values.get("number"));
+  const numeric = (name: string): number | undefined =>
+    values.has(name) ? Number(values.get(name)) : undefined;
+  return {
+    workdir: values.get("workdir") ?? process.cwd(),
+    number,
+    repository: values.get("repository"),
+    targetMinutes: numeric("target-minutes"),
+    maxRunPages: numeric("max-run-pages"),
+    maxCheckPages: numeric("max-check-pages"),
+    maxAutomationRuns: numeric("max-automation-runs"),
+    maxTestArtifacts: numeric("max-test-artifacts"),
+    topTestsPerShard: numeric("top-tests-per-shard"),
+  };
+}
+
+async function main(): Promise<void> {
+  const report = await analyzePrValueStream(parseArguments(process.argv.slice(2)));
+  const output = `${JSON.stringify(report, null, 2)}\n`;
+  if (Buffer.byteLength(output) > MAX_JSON_OUTPUT)
+    throw new Error("value-stream JSON exceeded the 4 MB output bound");
+  process.stdout.write(output);
+}
+
+const invokedPath = process.argv[1];
+if (invokedPath && import.meta.url === pathToFileURL(path.resolve(invokedPath)).href) {
+  main().catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`analyze-pr-value-stream: ${message.slice(0, 4000)}\n`);
+    process.exitCode = 1;
+  });
 }
