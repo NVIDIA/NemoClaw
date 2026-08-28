@@ -7,6 +7,7 @@ import { listMessagingCredentialMetadata } from "../messaging/channels";
 import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../messaging/provider-profile";
 import { type ChannelDef, getChannelTokenKeys } from "../sandbox/channels";
 import * as braveProviderProfile from "./brave-provider-profile";
+import type { ExtraPlaceholderCredentialSources } from "./extra-placeholder-keys";
 import {
   bridgeProviderNamesForChannel,
   collectMessagingBridgeTokenDefs,
@@ -21,6 +22,14 @@ export interface MessagingTokenDef {
   envKey: string;
   token: string | null;
   providerType?: string;
+  additionalCredentials?: Array<{ envKey: string; token: string | null }>;
+}
+
+export function hasConfiguredMessagingCredential(tokenDef: MessagingTokenDef): boolean {
+  return [
+    tokenDef.token,
+    ...(tokenDef.additionalCredentials?.map((credential) => credential.token) ?? []),
+  ].some((token) => typeof token === "string" && token.trim().length > 0);
 }
 
 type MessagingCredentialDef = MessagingTokenDef & {
@@ -44,8 +53,9 @@ export interface CreateSandboxMessagingPrepInput {
   getCredential(envKey: string): string | null;
   normalizeCredentialValue(value: unknown): string;
   registerExtraPlaceholderProviders(
-    sandboxName: string,
     messagingTokenDefs: MessagingTokenDef[],
+    log?: (message: string) => void,
+    sources?: ExtraPlaceholderCredentialSources,
   ): string[];
   getMessagingChannelForEnvKey(envKey: string): string | null;
   providerExistsInGateway(name: string): boolean;
@@ -146,7 +156,7 @@ export function prepareCreateSandboxMessaging(
       disabledChannelNames,
       messagingTokenDefs,
       extraPlaceholderKeys: [],
-      hasMessagingTokens: messagingTokenDefs.some(({ token }) => !!token),
+      hasMessagingTokens: messagingTokenDefs.some(hasConfiguredMessagingCredential),
       reusableMessagingProviders: [],
       reusableMessagingChannels: [],
       missingBridgeChannels: [],
@@ -186,10 +196,15 @@ export function prepareCreateSandboxMessaging(
   );
 
   const extraPlaceholderKeys = input.registerExtraPlaceholderProviders(
-    input.sandboxName,
     messagingTokenDefs,
+    undefined,
+    {
+      env: input.env,
+      getCredential: input.getCredential,
+      normalizeCredentialValue: input.normalizeCredentialValue,
+    },
   );
-  const hasMessagingTokens = messagingTokenDefs.some(({ token }) => !!token);
+  const hasMessagingTokens = messagingTokenDefs.some(hasConfiguredMessagingCredential);
   const reusableMessagingProviders: string[] = reusableWebSearchProvider
     ? [webSearchProviderName]
     : [];

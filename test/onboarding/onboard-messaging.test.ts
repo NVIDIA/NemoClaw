@@ -509,13 +509,14 @@ const { createSandbox } = require(${onboardPath});
       const registryPath = JSON.stringify(path.join(repoRoot, "src/lib/state/registry.ts"));
       const preflightPath = JSON.stringify(path.join(repoRoot, "src/lib/onboard/preflight.ts"));
       const credentialsPath = JSON.stringify(path.join(repoRoot, "src/lib/credentials/store.ts"));
+      const telegramCredentialKeys = [
+        "TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN_AGENT_A", "TELEGRAM_BOT_TOKEN_AGENT_B",
+      ];
       const providerCredentialKeys = {
-        "compatible-endpoint": "COMPATIBLE_API_KEY",
-        "my-assistant-extra-telegram-bot-token-agent-a": "TELEGRAM_BOT_TOKEN_AGENT_A",
-        "my-assistant-extra-telegram-bot-token-agent-b": "TELEGRAM_BOT_TOKEN_AGENT_B",
-        "my-assistant-slack-app": "SLACK_APP_TOKEN",
-        "my-assistant-slack-bridge": "SLACK_BOT_TOKEN",
-        "my-assistant-telegram-bridge": "TELEGRAM_BOT_TOKEN",
+        "compatible-endpoint": ["COMPATIBLE_API_KEY"],
+        "my-assistant-slack-app": ["SLACK_APP_TOKEN"],
+        "my-assistant-slack-bridge": ["SLACK_BOT_TOKEN"],
+        "my-assistant-telegram-bridge": telegramCredentialKeys,
       };
       const expectedProviders = Object.keys(providerCredentialKeys).sort();
       const rawGatewayCredential = "gateway-only-provider-secret";
@@ -527,14 +528,13 @@ const fixtureMocks = require(${onboardScriptMocksPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const childProcess = require("node:child_process"), { EventEmitter } = require("node:events");
 const commands = [], credentialKeys = ${JSON.stringify(providerCredentialKeys)}; let registered = null;
-const providers = Object.keys(credentialKeys), revisions = new Map(providers.map((name) => [name, 1]));
+const providers = Object.keys(credentialKeys), revisions = new Map(providers.map((name) => [name, 1])), providerGetCounts = new Map();
 const rawGatewayCredential = ${JSON.stringify(rawGatewayCredential)}, gatewaySecrets = new Map(providers.map((name) => [name, rawGatewayCredential]));
 registry.registerSandbox({ name: "my-assistant", messaging: { schemaVersion: 1, plan: ${messagingPlanLiteral(["slack", "telegram", "whatsapp"])} } });
-registry.addExtraProvider("my-assistant-extra-telegram-bot-token-agent-a"); registry.addExtraProvider("my-assistant-extra-telegram-bot-token-agent-b");
 runner.run = (command, opts = {}) => {
   const normalized = _n(command); commands.push({ command: normalized, env: opts.env || null });
   const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false); if (profileResult !== null) return profileResult;
-  const providerGet = normalized.match(/provider get -g nemoclaw ([^ ]+)$/)?.[1]; if (providerGet === process.env.NEMOCLAW_TEST_FAIL_PROVIDER) return { status: 2, stderr: "transport unavailable" };
+  const providerGet = normalized.match(/provider get -g nemoclaw ([^ ]+)$/)?.[1]; if (providerGet) providerGetCounts.set(providerGet, (providerGetCounts.get(providerGet) || 0) + 1); if (providerGet === process.env.NEMOCLAW_TEST_FAIL_PROVIDER && providerGetCounts.get(providerGet) >= 4) return { status: 2, stderr: "transport unavailable" };
   if (providerGet && revisions.has(providerGet)) return { status: 0, stdout: "Name: " + providerGet + "\nType: " + (providerGet === "compatible-endpoint" ? "openai" : "nemoclaw-mcp-v1") + "\nCredential keys: " + credentialKeys[providerGet] + "\nConfig keys: " + (providerGet === "compatible-endpoint" ? "OPENAI_BASE_URL" : "<none>") + "\n" };
   const refresh = normalized.match(/provider update -g nemoclaw ([^ ]+)$/)?.[1];
   if (refresh && gatewaySecrets.has(refresh)) { if (refresh === process.env.NEMOCLAW_TEST_FAIL_PROVIDER) return { status: 1 }; revisions.set(refresh, revisions.get(refresh) + 1); return { status: 0 }; }
@@ -589,7 +589,7 @@ const { createSandbox } = require(${onboardPath});
             NEMOCLAW_NON_INTERACTIVE: "1",
             NEMOCLAW_TEST_FAIL_PROVIDER: failedProvider || "",
             ...Object.fromEntries(
-              [...Object.values(providerCredentialKeys), "GITHUB_TOKEN"].map((key) => [key, ""]),
+              [...Object.values(providerCredentialKeys).flat(), "GITHUB_TOKEN"].map((key) => [key, ""]),
             ),
           },
         });
@@ -608,7 +608,7 @@ const { createSandbox } = require(${onboardPath});
       const refreshedProviders = providerRefreshes
         .map(({ entry }: { entry: CommandEntry }) => providerName(entry.command))
         .sort();
-      const denied = runScenario("my-assistant-extra-telegram-bot-token-agent-b");
+      const denied = runScenario("my-assistant-telegram-bridge");
       assert.equal(denied.status, 1);
       const deniedPayload = parseStdoutJson(denied.stdout);
       const deniedCommands = (deniedPayload.commands as CommandEntry[]).map(
@@ -656,7 +656,7 @@ const { createSandbox } = require(${onboardPath});
       assert.deepEqual(deniedPayload.temporaryCreateSources, []);
       assert.match(
         deniedPayload.error,
-        /did not confirm messaging provider 'my-assistant-extra-telegram-bot-token-agent-b' before sandbox creation/,
+        /did not confirm messaging provider 'my-assistant-telegram-bridge' before sandbox creation/,
       );
       const combinedOutput = result.stdout + result.stderr + denied.stdout + denied.stderr;
       assert.equal(

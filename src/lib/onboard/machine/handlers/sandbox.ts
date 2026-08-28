@@ -332,6 +332,7 @@ export interface SandboxStateOptions<
       webSearchConfig: WebSearchConfig | null;
       agent: Agent;
       requiredBindings: readonly CheckpointProviderBinding[];
+      replaceExisting?: boolean;
       revalidatePolicyRequirements?(operation: string): void;
     }): Promise<readonly CheckpointProviderBinding[]>;
     promptValidatedSandboxName(agent: Agent): Promise<string>;
@@ -1413,12 +1414,20 @@ class SandboxStateFlow<
     providerName: string,
   ): boolean {
     if (state.session?.stagedCredentialProviders.includes(providerName)) return true;
+    if (!state.sandboxName) return false;
+    return this.ownsDeletedSandboxRecreate(state, state.sandboxName);
+  }
+
+  private ownsDeletedSandboxRecreate(
+    state: SandboxStepState<WebSearchConfig>,
+    sandboxName: string,
+  ): boolean {
     const handoff = this.options.recreateJournalTargetIntentFingerprint;
     const recreate = state.session?.checkpoint?.sandboxRecreate;
     return Boolean(
       handoff &&
       recreate &&
-      recreate.sandboxName === state.sandboxName &&
+      recreate.sandboxName === sandboxName &&
       recreate.targetIntentFingerprint === handoff &&
       sandboxRecreatePhaseReached(recreate.phase, "deleted"),
     );
@@ -1620,6 +1629,7 @@ class SandboxStateFlow<
     checkpoint: OnboardCheckpoint | null,
     session: Session | null,
     force = false,
+    replaceExisting = false,
     verifiedPolicyRevalidation?: (operation: string) => void,
   ): Promise<void> {
     if (
@@ -1677,6 +1687,7 @@ class SandboxStateFlow<
           webSearchConfig,
           agent: this.options.agent,
           requiredBindings,
+          ...(replaceExisting ? { replaceExisting: true } : {}),
           revalidatePolicyRequirements,
         });
         const stagedProviderNames = new Set<string>();
@@ -1719,6 +1730,7 @@ class SandboxStateFlow<
     requiredBindings: readonly CheckpointProviderBinding[],
     registryAuthoritySnapshot: RegistryMessagingAuthority,
     force: boolean,
+    replaceExisting: boolean,
     verifiedPolicyRevalidation?: (operation: string) => void,
   ): Promise<void> {
     if (state.selectedMessagingChannels.length === 0) return;
@@ -1739,6 +1751,7 @@ class SandboxStateFlow<
         state.session?.checkpoint ?? null,
         state.session,
         force,
+        replaceExisting,
         verifiedPolicyRevalidation,
       );
     };
@@ -1756,6 +1769,7 @@ class SandboxStateFlow<
     messagingProviderBindings: readonly CheckpointProviderBinding[],
     registryMessagingAuthority: RegistryMessagingAuthority,
     forceMessagingProviderRegistration: boolean,
+    replaceExistingMessagingProviders: boolean,
     verifiedPolicyRevalidation?: (operation: string) => void,
   ): Promise<SandboxStepState<WebSearchConfig>> {
     await this.registerCompletedCredentialProviders(
@@ -1767,6 +1781,7 @@ class SandboxStateFlow<
       "web_search_provider",
       state.session?.checkpoint ?? null,
       state.session,
+      false,
       false,
       verifiedPolicyRevalidation,
     );
@@ -1781,6 +1796,7 @@ class SandboxStateFlow<
       messagingProviderBindings,
       registryMessagingAuthority,
       forceMessagingProviderRegistration,
+      replaceExistingMessagingProviders,
       verifiedPolicyRevalidation,
     );
     nextState = this.checkpointProviderEffectGroup(
@@ -2586,6 +2602,7 @@ class SandboxStateFlow<
           messagingCredentialBaseline,
           messaging.plan,
         ),
+        this.ownsDeletedSandboxRecreate(nextState, requestedSandboxName),
         verifiedPolicyRevalidation,
       );
     // A create-time policy with credential bindings cannot be installed before

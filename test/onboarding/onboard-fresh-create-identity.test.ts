@@ -46,6 +46,15 @@ describe("fresh create identity", () => {
     },
     {
       title:
+        "rejects pre-resolved nondefault agent intent before credential reads or sandbox inspection (#9833)",
+      apfInterceptorRequested: true,
+      provider: null,
+      model: null,
+      agent: null,
+      expectedOutcome: "resolved-agent-refusal" as const,
+    },
+    {
+      title:
         "registers providerless APF only after identity, policy, and checkpoint verification (#9833)",
       apfInterceptorRequested: true,
       provider: null,
@@ -599,6 +608,13 @@ if (${JSON.stringify(
 	    recreate: false,
 	    toolDisclosure: "progressive",
 	    observabilityEnabled: false,
+	    ...(${JSON.stringify(expectedOutcome === "resolved-agent-refusal")}
+	      ? {
+	          resolved: {
+	            policy: { options: { agentName: "hermes" } },
+	          },
+	        }
+	      : {}),
 	  };
 	  try {
 	    const sandboxName = await createSandbox(...createArgs);
@@ -1053,6 +1069,7 @@ if (${JSON.stringify(
         "managed-provider": assertManagedProviderCreation,
         "provider-refusal": assertProviderBackedApfRefusal,
         "unsupported-agent-refusal": assertUnsupportedAgentRefusal,
+        "resolved-agent-refusal": assertUnsupportedAgentRefusal,
         "providerless-apf": assertProviderlessApfCreation,
         "post-create-authority-refusal": assertPostCreateAuthorityRefusal,
         "post-create-runner-refusal": assertPostCreateRunnerRefusal,

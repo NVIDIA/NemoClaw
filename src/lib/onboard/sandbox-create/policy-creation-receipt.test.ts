@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as openshellRuntimeModule from "../../adapters/openshell/runtime";
+import { parseOpenShellPolicy } from "../../policy/merge";
 import {
   type CreatedSandboxPolicyReceiptDeps,
   pendingSandboxPolicyVerificationForBoundary,
@@ -15,6 +16,8 @@ import {
 } from "./policy-creation-receipt";
 
 const POLICY = "version: 1\nnetwork_policies:\n  github:\n    endpoints: []\n";
+const REPLACEMENT_POLICY =
+  "version: 1\nnetwork_policies:\n  github:\n    endpoints:\n      - host: replacement.example\n";
 const NATIVE_GPU_POLICY = `version: 1
 filesystem_policy:
   include_workdir: true
@@ -40,6 +43,18 @@ const ENRICHED_NATIVE_GPU_POLICY = NATIVE_GPU_POLICY.replace(
     - /dev/nvidia0
 `,
 );
+const PROXY_ONLY_NATIVE_GPU_POLICY = NATIVE_GPU_POLICY.replace(
+  "    - /dev/urandom\n",
+  "    - /dev/urandom\n    - /proc\n",
+);
+const COMPATIBILITY_GPU_POLICY = NATIVE_GPU_POLICY.replace(
+  "  read_write:\n    - /tmp\n",
+  "  read_write:\n    - /tmp\n    - /proc\n",
+);
+const ENRICHED_COMPATIBILITY_GPU_POLICY = COMPATIBILITY_GPU_POLICY.replace(
+  "    - /proc\n",
+  "    - /proc\n    - /dev/nvidiactl\n    - /dev/nvidia0\n",
+);
 const INPUT = {
   sandboxName: "alpha",
   gatewayName: "nemoclaw",
@@ -48,6 +63,21 @@ const INPUT = {
   lifecycleLiveIdentityFingerprint: "b".repeat(64),
   policySourcePath: "/private/policy.yaml",
   route: "none" as const,
+};
+const MANAGED_REGISTRATION = {
+  policyAuthority: "nemoclaw-managed" as const,
+  policyCreationReceipt: {
+    schemaVersion: 1 as const,
+    origin: "sandbox-create" as const,
+    gatewayName: INPUT.gatewayName,
+    gatewayPort: INPUT.gatewayPort,
+    sandboxName: INPUT.sandboxName,
+    lifecycleGeneration: INPUT.lifecycleGeneration,
+    sandboxIdentityFingerprint: INPUT.lifecycleLiveIdentityFingerprint,
+    policyHash: "sha256:effective",
+    policyVersion: 4,
+  },
+  observedPolicyAuthority: "owner-unknown" as const,
 };
 
 function metadata(overrides: Partial<Record<string, unknown>> = {}): {
@@ -229,14 +259,18 @@ describe("created sandbox policy receipt", () => {
     const captureOpenshell = vi
       .spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
       .mockReturnValueOnce(gatewayInfo())
-      .mockReturnValueOnce(metadata())
+      .mockReturnValueOnce(
+        metadata({ policy: parseOpenShellPolicy("version: 1\nnetwork_policies: {}\n").policy }),
+      )
       .mockReturnValueOnce({
         status: 0,
         output: "version: 1\nnetwork_policies: {}\n",
         stdout: "version: 1\nnetwork_policies: {}\n",
         stderr: "",
       })
-      .mockReturnValueOnce(metadata());
+      .mockReturnValueOnce(
+        metadata({ policy: parseOpenShellPolicy("version: 1\nnetwork_policies: {}\n").policy }),
+      );
     expect(() =>
       verifyCreatedSandboxPolicyCreationReceipt(INPUT, {
         readFile: vi.fn(() => POLICY) as never,
@@ -247,50 +281,86 @@ describe("created sandbox policy receipt", () => {
     expect(captureOpenshell).toHaveBeenCalledTimes(4);
   });
 
-  it("binds the documented native-GPU policy enrichment to the create receipt (#9833)", () => {
-    vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
-      .mockReturnValueOnce(gatewayInfo())
-      .mockReturnValueOnce(metadata())
-      .mockReturnValueOnce({
-        status: 0,
-        output: ENRICHED_NATIVE_GPU_POLICY,
-        stdout: ENRICHED_NATIVE_GPU_POLICY,
-        stderr: "",
-      })
-      .mockReturnValueOnce(metadata());
+  it.each([
+    {
+      route: "native" as const,
+      intendedPolicy: NATIVE_GPU_POLICY,
+      livePolicy: ENRICHED_NATIVE_GPU_POLICY,
+    },
+    {
+      route: "native" as const,
+      intendedPolicy: NATIVE_GPU_POLICY,
+      livePolicy: PROXY_ONLY_NATIVE_GPU_POLICY,
+    },
+    {
+      route: "compatibility" as const,
+      intendedPolicy: COMPATIBILITY_GPU_POLICY,
+      livePolicy: ENRICHED_COMPATIBILITY_GPU_POLICY,
+    },
+  ])(
+    "binds documented $route-GPU policy enrichment to the create receipt (#9833)",
+    ({ route, intendedPolicy, livePolicy }) => {
+      vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+        .mockReturnValueOnce(gatewayInfo())
+        .mockReturnValueOnce(
+          metadata({ policy: parseOpenShellPolicy(livePolicy).policy }),
+        )
+        .mockReturnValueOnce({
+          status: 0,
+          output: livePolicy,
+          stdout: livePolicy,
+          stderr: "",
+        })
+        .mockReturnValueOnce(
+          metadata({ policy: parseOpenShellPolicy(livePolicy).policy }),
+        );
 
-    expect(
-      verifyCreatedSandboxPolicyCreationReceipt(
-        { ...INPUT, route: "native" },
-        {
-          readFile: vi.fn(() => NATIVE_GPU_POLICY) as never,
-          inspectPolicyReadiness: readyPolicy,
-          sleep: vi.fn(),
-        },
-      ),
-    ).toMatchObject({
-      policyHash: "sha256:effective",
-      policyVersion: 4,
-    });
-  });
+      expect(
+        verifyCreatedSandboxPolicyCreationReceipt(
+          { ...INPUT, route },
+          {
+            readFile: vi.fn(() => intendedPolicy) as never,
+            inspectPolicyReadiness: readyPolicy,
+            sleep: vi.fn(),
+          },
+        ),
+      ).toMatchObject({
+        policyHash: "sha256:effective",
+        policyVersion: 4,
+      });
+    },
+  );
 
   it.each([
     {
-      label: "the create route does not use native GPU injection",
+      label: "the create route does not use GPU injection",
       input: INPUT,
       livePolicy: ENRICHED_NATIVE_GPU_POLICY,
     },
     {
-      label: "the live policy contains an arbitrary added path",
+      label: "the native live policy contains an arbitrary added path",
       input: { ...INPUT, route: "native" as const },
       livePolicy: ENRICHED_NATIVE_GPU_POLICY.replace("/dev/nvidia0", "/home"),
+    },
+    {
+      label: "the proxy-only native live policy contains a GPU device path",
+      input: { ...INPUT, route: "native" as const },
+      livePolicy: PROXY_ONLY_NATIVE_GPU_POLICY.replace(
+        "  read_write:\n    - /tmp\n",
+        "  read_write:\n    - /tmp\n    - /dev/nvidia0\n",
+      ),
+    },
+    {
+      label: "the compatibility live policy contains an arbitrary added path",
+      input: { ...INPUT, route: "compatibility" as const },
+      livePolicy: ENRICHED_COMPATIBILITY_GPU_POLICY.replace("/dev/nvidia0", "/home"),
     },
   ])("refuses native-GPU policy enrichment when $label (#9833)", ({ input, livePolicy }) => {
     vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
       .mockReturnValueOnce(gatewayInfo())
-      .mockReturnValueOnce(metadata())
+      .mockReturnValueOnce(metadata({ policy: parseOpenShellPolicy(livePolicy).policy }))
       .mockReturnValueOnce({ status: 0, output: livePolicy, stdout: livePolicy, stderr: "" })
-      .mockReturnValueOnce(metadata());
+      .mockReturnValueOnce(metadata({ policy: parseOpenShellPolicy(livePolicy).policy }));
 
     expect(() =>
       verifyCreatedSandboxPolicyCreationReceipt(input, {
@@ -381,6 +451,27 @@ describe("created sandbox policy receipt", () => {
     expect(sleep).toHaveBeenCalledExactlyOnceWith(1);
   });
 
+  it("refuses replacement policy bytes between stable identity observations (#9833)", () => {
+    vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValueOnce(gatewayInfo())
+      .mockReturnValueOnce(metadata())
+      .mockReturnValueOnce({
+        status: 0,
+        output: REPLACEMENT_POLICY,
+        stdout: REPLACEMENT_POLICY,
+        stderr: "",
+      })
+      .mockReturnValueOnce(metadata());
+
+    expect(() =>
+      verifyCreatedSandboxPolicyCreationReceipt(INPUT, {
+        readFile: vi.fn(() => REPLACEMENT_POLICY) as never,
+        inspectPolicyReadiness: readyPolicy,
+        sleep: vi.fn(),
+      }),
+    ).toThrow(/policy evidence changed during receipt verification/u);
+  });
+
   it("fails closed when the exact sandbox never activates the policy version (#9833)", () => {
     vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
       .mockReturnValueOnce(gatewayInfo())
@@ -466,6 +557,42 @@ describe("created sandbox policy receipt", () => {
         { readFile: vi.fn(() => POLICY) as never },
       ),
     ).toBe(registration);
+  });
+
+  it("does not expose receipt refresh through the registration revalidation API (#9833)", () => {
+    const replacementMetadata = metadata({
+      hash: "sha256:replacement",
+      active_version: 5,
+    });
+    vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValueOnce(gatewayInfo())
+      .mockReturnValueOnce(replacementMetadata);
+
+    expect(() =>
+      revalidateCreatedSandboxPolicyRegistration(
+        {
+          ...INPUT,
+          route: "native",
+          operation: "continue verified sandbox creation",
+          registration: MANAGED_REGISTRATION,
+        },
+        readyReadOnlyPolicyDeps(),
+      ),
+    ).toThrow(/creation receipt no longer matches/u);
+  });
+
+  it("does not refresh a managed receipt outside its verified create transaction (#9833)", () => {
+    vi.spyOn(openshellRuntimeModule, "captureResolvedOpenshell")
+      .mockReturnValueOnce(gatewayInfo())
+      .mockReturnValueOnce(metadata({ hash: "sha256:replacement", active_version: 5 }));
+
+    expect(() =>
+      revalidateCreatedSandboxPolicyRegistration({
+        ...INPUT,
+        operation: "mutate a completed sandbox",
+        registration: MANAGED_REGISTRATION,
+      }),
+    ).toThrow(/creation receipt no longer matches/u);
   });
 
   it.each(READ_ONLY_REGISTRATION_CASES)(

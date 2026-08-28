@@ -848,7 +848,8 @@ async function applyChannelAddToGatewayAndRegistry(
   sandboxName: string,
   channelName: string,
   acquired: Record<string, string>,
-): Promise<boolean> {
+  applyPolicyAfterAttachment?: () => boolean,
+): Promise<boolean | null> {
   const sandboxAgent = registry.getSandbox(sandboxName)?.agent;
   const staticProviderType = staticMessagingProviderTypeForChannel(channelName, sandboxAgent);
   const tokenDefs: MessagingTokenDef[] = Object.entries(acquired).map(([envKey, token]) => ({
@@ -899,23 +900,66 @@ async function applyChannelAddToGatewayAndRegistry(
     console.error(`  ${gatewayStartGuidance(gatewayName)}`);
     process.exit(1);
   }
+  policyChannelDependencies.revalidateChannelProviderPolicyAuthority(sandboxName, gatewayName);
   try {
     // bestEffort: failures throw (instead of process.exit inside the helper)
     // so a partial add can be torn down below before exiting.
-    policyChannelDependencies.upsertMessagingProviders(tokenDefs, {
-      bestEffort: true,
-      requireExactBindings: true,
-    });
+    const providerNames = policyChannelDependencies.upsertMessagingProviders(
+      tokenDefs,
+      gatewayName,
+      {
+        bestEffort: true,
+        requireExactBindings: true,
+      },
+    );
+    for (const providerName of providerNames) {
+      revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName);
+      const attached = runOpenshell(
+        ["sandbox", "provider", "attach", "-g", gatewayName, sandboxName, providerName],
+        { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      if (attached.status !== 0) {
+        throw new Error(
+          `OpenShell did not attach messaging provider '${providerName}' to sandbox '${sandboxName}'.`,
+        );
+      }
+      revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName);
+    }
+    if (applyPolicyAfterAttachment && !applyPolicyAfterAttachment()) {
+      return null;
+    }
   } catch (err) {
     console.error(
       `  ✗ Failed to register '${channelName}' providers with the gateway: ${
         err instanceof Error ? err.message : String(err)
       }`,
     );
-    if (policyChannelDependencies.isMessagingProviderBindingConflict(err)) {
-      if (err.mutatedProviderNames.length > 0) {
+    if (
+      policyChannelDependencies.isMessagingProviderBindingConflict(err) ||
+      policyChannelDependencies.isMessagingProviderMutationFailure(err)
+    ) {
+      const createdProviderNames = [...(err.createdProviderNames ?? [])];
+      const createdProviders = new Set(createdProviderNames);
+      const cleanupFailures = createdProviderNames.filter((providerName) => {
+        const result = policyChannelDependencies.runGatewayOpenshell(
+          gatewayName,
+          ["provider", "delete", providerName],
+          { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+        );
+        const output = `${result.stdout || ""}${result.stderr || ""}`;
+        return result.status !== 0 && !/\bNotFound\b|not found/i.test(output);
+      });
+      const updatedProviderNames = err.mutatedProviderNames.filter(
+        (providerName) => !createdProviders.has(providerName),
+      );
+      if (updatedProviderNames.length > 0) {
         console.error(
-          `  ${YW}⚠${R} Provider state changed before the identity conflict; inspect ${err.mutatedProviderNames.join(", ")} before retrying.`,
+          `  ${YW}⚠${R} Updated provider state remains for ${updatedProviderNames.join(", ")}; resolve the conflicting provider, then rerun '${CLI_NAME} ${sandboxName} channels add ${channelName}'.`,
+        );
+      }
+      if (cleanupFailures.length > 0) {
+        console.error(
+          `  ${YW}⚠${R} Could not remove newly created providers ${cleanupFailures.join(", ")}; rerun '${CLI_NAME} ${sandboxName} channels remove ${channelName}'.`,
         );
       }
       process.exit(1);
@@ -934,6 +978,40 @@ async function applyChannelAddToGatewayAndRegistry(
     process.exit(1);
   }
   return true;
+}
+
+export function revalidateMessagingProviderAttachmentTarget(
+  sandboxName: string,
+  gatewayName: string,
+): void {
+  const expected = registry.getSandbox(sandboxName);
+  const lifecycleGeneration = expected?.lifecycleGeneration;
+  const expectedFingerprint = expected?.lifecycleLiveIdentityFingerprint;
+  if (
+    !expected ||
+    typeof lifecycleGeneration !== "string" ||
+    typeof expectedFingerprint !== "string" ||
+    (expected.gatewayName && expected.gatewayName !== gatewayName)
+  ) {
+    throw new Error(
+      `Sandbox '${sandboxName}' has incomplete lifecycle identity for messaging provider attachment.`,
+    );
+  }
+  const liveFingerprint = policyChannelDependencies.inspectMessagingProviderAttachmentTarget(
+    sandboxName,
+    gatewayName,
+  );
+  const confirmed = registry.getSandbox(sandboxName);
+  if (
+    liveFingerprint !== expectedFingerprint ||
+    confirmed?.lifecycleGeneration !== lifecycleGeneration ||
+    confirmed.lifecycleLiveIdentityFingerprint !== expectedFingerprint ||
+    (confirmed.gatewayName && confirmed.gatewayName !== gatewayName)
+  ) {
+    throw new Error(
+      `Sandbox '${sandboxName}' changed before messaging provider attachment completed.`,
+    );
+  }
 }
 
 // Remove a channel's bridge providers from the gateway and drop it from the
@@ -958,9 +1036,9 @@ async function applyChannelRemoveToGatewayAndRegistry(
       ...bridgeProviderNamesForChannel(sandboxName, channelName),
     ]),
   ];
+  const gatewayName = getSandboxTargetGatewayName(sandboxName);
 
   if (providerNames.length > 0) {
-    const gatewayName = getSandboxTargetGatewayName(sandboxName);
     const recovery = await recoverNamedGatewayRuntime({ gatewayName });
     if (!recovery.recovered) {
       console.error(
@@ -984,10 +1062,14 @@ async function applyChannelRemoveToGatewayAndRegistry(
   const detachFailures: Array<{ name: string; output: string }> = [];
   if (gatewayReachable) {
     for (const name of providerNames) {
-      const result = runOpenshell(["sandbox", "provider", "detach", sandboxName, name], {
-        ignoreError: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      const result = policyChannelDependencies.runGatewayOpenshell(
+        gatewayName,
+        ["sandbox", "provider", "detach", sandboxName, name],
+        {
+          ignoreError: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
       if (result.status !== 0) {
         const output = `${result.stdout || ""}${result.stderr || ""}`;
         if (!/\bNotFound\b|not found|not attached/i.test(output)) {
@@ -1021,12 +1103,13 @@ async function applyChannelRemoveToGatewayAndRegistry(
     const detachFailedSet = new Set(detachFailures.map((f) => f.name));
     for (const name of providerNames) {
       if (detachFailedSet.has(name)) continue;
-      const result = runOpenshell(["provider", "delete", name], {
-        ignoreError: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      if (result.status !== 0) {
-        const output = `${result.stdout || ""}${result.stderr || ""}`;
+      const result = policyChannelDependencies.deleteMessagingProviderWithRecovery(
+        name,
+        sandboxName,
+        gatewayName,
+      );
+      if (!result.ok) {
+        const output = `${result.stdout}${result.stderr}`;
         if (!/\bNotFound\b|not found/i.test(output)) {
           deleteFailures.push({ name, output: output.trim() });
         }
@@ -1414,6 +1497,7 @@ async function addSandboxChannelUnlocked(
     await applyChannelAddToGatewayAndRegistry(sandboxName, canonical, {});
     if (!MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan)) {
       console.error(`  ${YW}⚠${R} Could not persist messaging plan for '${sandboxName}'.`);
+      removeChannelPresetIfPresent(sandboxName, canonical);
       process.exit(1);
     }
     console.log("");
@@ -1451,37 +1535,36 @@ async function addSandboxChannelUnlocked(
     const existing = getCredential(key);
     if (existing != null) priorCreds[key] = existing;
   }
-  // Register every provider before credentials or durable channel state are
-  // saved. Exact-binding preflight can then reject the complete set without
-  // leaving a partial add behind. Credentials still persist before the policy
-  // and rebuild steps, so choosing "rebuild later" keeps the queued token.
+  // Register providers before credentials or durable channel state are saved.
+  // OpenShell requires credential providers to be attached before their policy
+  // bindings can be applied, so rollback both effects when policy application fails.
   const registeredBridge = await applyChannelAddToGatewayAndRegistry(
     sandboxName,
     canonical,
     acquired,
+    () =>
+      applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
+        disclosedPresetState,
+      }),
   );
-  if (registeredBridge) {
-    console.log(`  ${G}✓${R} Registered ${canonical} bridge with the OpenShell gateway.`);
-  }
-  persistChannelTokens(acquired);
-
-  if (
-    !applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
-      disclosedPresetState,
-    })
-  ) {
+  if (registeredBridge === null) {
     await rollbackChannelAdd(sandboxName, channelDef, canonical, {
       wasAlreadyEnabled,
       priorCreds,
     });
     process.exit(1);
   }
+  if (registeredBridge) {
+    console.log(`  ${G}✓${R} Registered ${canonical} bridge with the OpenShell gateway.`);
+  }
+  persistChannelTokens(acquired);
 
   if (!MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan)) {
     console.error(`  ${YW}⚠${R} Could not persist messaging plan for '${sandboxName}'.`);
-    console.error(
-      "  Earlier gateway or policy side effects may already have run, but durable channel state was not saved.",
-    );
+    await rollbackChannelAdd(sandboxName, channelDef, canonical, {
+      wasAlreadyEnabled,
+      priorCreds,
+    });
     process.exit(1);
   }
 
@@ -1528,9 +1611,13 @@ async function rollbackChannelAdd(
           token,
           providerType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
         }));
-        policyChannelDependencies.upsertMessagingProviders(priorTokenDefs, {
-          bestEffort: true,
-        });
+        policyChannelDependencies.upsertMessagingProviders(
+          priorTokenDefs,
+          getSandboxTargetGatewayName(sandboxName),
+          {
+            bestEffort: true,
+          },
+        );
       } catch (err) {
         console.error(
           `  ${YW}⚠${R} Failed to restore gateway providers for '${canonical}': ${
@@ -1546,6 +1633,7 @@ async function rollbackChannelAdd(
     `  ${YW}⚠${R} Rolling back '${canonical}' bridge registration to keep messaging plan and policy state aligned.`,
   );
   clearChannelTokens(channel);
+  removeChannelPresetIfPresent(sandboxName, canonical);
   const result = await applyChannelRemoveToGatewayAndRegistry(
     sandboxName,
     canonical,
@@ -1711,39 +1799,37 @@ function syncSessionPolicyPresetsWithRegistry(
 // Mirror of applyChannelPresetIfAvailable. When the channel-named built-in
 // preset is currently applied to the sandbox, un-apply it so `policy-list`
 // no longer reports it active and the L7 proxy stops allow-listing the
-// channel's upstream API (defense-in-depth: bridge is gone, egress to
-// api.telegram.org / discord.com / slack.com should follow). Warns but does
-// not abort the remove flow — the bridge teardown has already succeeded;
-// the operator can run `policy-remove <channel>` manually if cleanup falters.
-export function removeChannelPresetIfPresent(sandboxName: string, channelName: string): void {
+// channel's upstream API. Removal marks the channel disabled before this
+// policy release, so a later provider failure remains retryable.
+export function removeChannelPresetIfPresent(sandboxName: string, channelName: string): boolean {
   const builtinPresets = new Set(policies.listPresets().map((p) => p.name));
   if (!builtinPresets.has(channelName)) {
     syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "remove");
-    return;
+    return true;
   }
   if (!policies.getAppliedPresets(sandboxName).includes(channelName)) {
     syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "remove");
-    return;
+    return true;
   }
   try {
     const removed = policies.removePreset(sandboxName, channelName);
     if (!removed) {
-      console.error(
-        `  ${YW}⚠${R} Channel '${channelName}' bridge removed but its policy preset failed to un-apply.`,
-      );
+      console.error(`  ${YW}⚠${R} Channel '${channelName}' policy preset failed to un-apply.`);
       console.error(
         `    Run manually after rebuild with: ${CLI_NAME} ${sandboxName} policy remove ${channelName}`,
       );
-    } else {
-      syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "remove");
-      refreshSandboxPolicyContextFile(sandboxName);
+      return false;
     }
+    syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "remove");
+    refreshSandboxPolicyContextFile(sandboxName);
+    return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  ${YW}⚠${R} Failed to remove '${channelName}' policy preset: ${msg}`);
     console.error(
       `    Run manually after rebuild with: ${CLI_NAME} ${sandboxName} policy remove ${channelName}`,
     );
+    return false;
   }
 }
 
@@ -1841,15 +1927,47 @@ async function removeSandboxChannelUnlocked(
     process.exit(1);
   }
 
+  const configuredChannels = registry.getConfiguredMessagingChannelsFromEntry(registryEntry);
+  if (
+    registryEntry?.messaging?.plan &&
+    configuredChannels.includes(canonical) &&
+    !registry.getDisabledChannels(sandboxName).includes(canonical)
+  ) {
+    const disabledPlan = await persistManifestChannelDisabledPlan(sandboxName, canonical, true);
+    if (!disabledPlan) {
+      console.error(`  Could not mark '${canonical}' disabled before removing it.`);
+      process.exit(1);
+    }
+  }
+
+  if (!removeChannelPresetIfPresent(sandboxName, canonical)) {
+    console.error(
+      `  ${YW}⚠${R} Channel '${canonical}' remains disabled while policy cleanup is incomplete.`,
+    );
+    console.error(
+      `  Resolve the policy error, then re-run: ${CLI_NAME} ${sandboxName} channels remove ${canonical}`,
+    );
+    process.exit(1);
+  }
+  const teardown = await applyChannelRemoveToGatewayAndRegistry(sandboxName, canonical, tokenKeys, {
+    bestEffort: true,
+  });
+  if (!teardown.ok) {
+    console.error(
+      `  ${YW}⚠${R} Channel '${canonical}' remains disabled while ${teardown.residual.join(", ")} cleanup is incomplete.`,
+    );
+    console.error(
+      `  Resolve the gateway error, then re-run: ${CLI_NAME} ${sandboxName} channels remove ${canonical}`,
+    );
+    process.exit(1);
+  }
   clearChannelTokens(channel);
-  await applyChannelRemoveToGatewayAndRegistry(sandboxName, canonical, tokenKeys);
   if (tokenKeys.length > 0) {
     console.log(`  ${G}✓${R} Removed ${canonical} bridge from the OpenShell gateway.`);
   } else {
     console.log(`  ${G}✓${R} Removed ${canonical} channel.`);
   }
 
-  removeChannelPresetIfPresent(sandboxName, canonical);
   if (!(await persistManifestChannelRemovePlan(sandboxName, canonical))) {
     console.error(`  ${YW}⚠${R} Could not persist messaging plan for '${sandboxName}'.`);
     process.exit(1);

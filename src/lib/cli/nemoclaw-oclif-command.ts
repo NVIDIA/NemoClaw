@@ -115,16 +115,21 @@ export abstract class NemoClawCommand extends Command {
     const sandboxName = await this.resolveLifecycleSandboxName(portablePolicy);
     if (!sandboxName) return await super._run<T>();
     if (this.isInteractiveConnect(commandId)) return await super._run<T>();
+    const runLocked = () => {
+      if (typeof commandId === "string" && portablePolicy?.rawSandboxName) {
+        assertHermesPortableCommandSupported(commandId, sandboxName, this.argv);
+      }
+      if (typeof commandId === "string") {
+        assertSandboxCommandAllowedByQuarantine(commandId, sandboxName, this.argv);
+      }
+      return super._run<T>();
+    };
     const runWithLifecycleFence = () =>
-      withMcpLifecycleLock(sandboxName, () => {
-        if (typeof commandId === "string" && portablePolicy?.rawSandboxName) {
-          assertHermesPortableCommandSupported(commandId, sandboxName, this.argv);
-        }
-        if (typeof commandId === "string") {
-          assertSandboxCommandAllowedByQuarantine(commandId, sandboxName, this.argv);
-        }
-        return super._run<T>();
-      });
+      commandId === "sandbox:destroy"
+        ? withMcpLifecycleLock(sandboxName, runLocked, {
+            recoverAbandonedExpiredTimer: true,
+          })
+        : withMcpLifecycleLock(sandboxName, runLocked);
     if (
       this.isProbeOnlyConnect(commandId) &&
       hasHermesPortableReceiptCandidate(sandboxName, defaultPortableDemoStateDir(process.env))
