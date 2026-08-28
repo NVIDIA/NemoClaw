@@ -354,7 +354,7 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
       "#!/usr/bin/env bash",
       "set -euo pipefail",
       'case "${1:-}" in',
-      `  */nemoclaw-cli.tar) printf '%s  %s\\n' '${"0".repeat(64)}' "$1" ;;`,
+      `  package-lock.json|*/nemoclaw-cli.tar) printf '%s  %s\\n' '${"0".repeat(64)}' "$1" ;;`,
       `  *) printf '%s  %s\\n' '${lockfileSha256}' "$1" ;;`,
       "esac",
       "",
@@ -923,8 +923,18 @@ describe("exact-commit CLI artifact workflow boundary", () => {
         .replace("tar --no-same-owner --no-same-permissions", "tar")
         .replace("sandbox-name.cjs", "missing-boundary.cjs")
         .replace(
+          'lockfile_sha256="$(sha256_file package-lock.json)"',
+          [
+            '# lockfile_sha256="$(sha256_file package-lock.json)"',
+            'lockfile_sha256="$(openssl dgst -sha256 -r package-lock.json | cut -d " " -f 1)"',
+          ].join("\n        "),
+        )
+        .replace(
           'actual_payload_sha256="$(sha256_file "$payload")"',
-          'actual_payload_sha256="$(sha256sum "$payload" | awk \'{print $1}\')"',
+          [
+            '# actual_payload_sha256="$(sha256_file "$payload")"',
+            'actual_payload_sha256="$(openssl dgst -sha256 -r "$payload" | cut -d " " -f 1)"',
+          ].join("\n        "),
         )
         .replace('[[ "$actual_payload_sha256" == "$PAYLOAD_SHA256" ]]', '[[ -s "$payload" ]]');
       fs.writeFileSync(actionPath, source);
@@ -934,8 +944,8 @@ describe("exact-commit CLI artifact workflow boundary", () => {
           "CLI artifact restore action must match its immutable workflow pin",
           'CLI artifact payload verification must contain tar --no-same-owner --no-same-permissions -xf "$payload" -C "$restore_dir"',
           "CLI artifact payload verification must contain sandbox-name.cjs",
-          'CLI artifact payload verification must contain actual_payload_sha256="$(sha256_file "$payload")"',
-          "CLI artifact payload verification must hash files through the pinned Node.js binary stream",
+          "CLI artifact payload verification must assign lockfile_sha256 exactly once through the Node.js binary stream",
+          "CLI artifact payload verification must assign actual_payload_sha256 exactly once through the Node.js binary stream",
           'CLI artifact payload verification must contain [[ "$actual_payload_sha256" == "$PAYLOAD_SHA256" ]]',
         ]),
       );
