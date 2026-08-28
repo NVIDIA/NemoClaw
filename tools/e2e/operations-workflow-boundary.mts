@@ -16,6 +16,7 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const DEFAULT_ADVISOR_PATH = join(REPO_ROOT, ".github", "workflows", "pr-review-advisor.yaml");
 const META_JOBS = new Set([
+  "package-openshell-sdk",
   "native-runtime-qualification-podman-toolchain",
   "native-runtime-qualification-producer-plan",
   "release-qualification",
@@ -494,6 +495,10 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         jobName === "base-image-publication" &&
         step.name === "Check out trusted E2E workflow" &&
         step.with?.ref === "${{ github.workflow_sha }}";
+      const trustedOpenShellSdkPackageCheckout =
+        jobName === "package-openshell-sdk" &&
+        step.name === "Check out trusted OpenShell SDK package verifier" &&
+        step.with?.ref === "${{ github.workflow_sha }}";
       const trustedManagedImageRuntimeCheckout =
         jobName === "managed-image-protected-runtime" &&
         step.name === "Checkout trusted protected runtime qualification" &&
@@ -569,6 +574,7 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
         trustedRelevantE2eCheckout ||
         trustedLaunchableLaneCheckout ||
         trustedPublicationCheckout ||
+        trustedOpenShellSdkPackageCheckout ||
         trustedManagedImageMultiarchResolverCheckout ||
         trustedManagedImageRuntimeCheckout ||
         trustedLlamaCppPlanCheckout ||
