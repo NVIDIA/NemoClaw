@@ -51,6 +51,7 @@ export function baseAptSecurityFunctions(architecture: DebianArchitecture): stri
       '    perl) if [[ "${perl_installed:-0}" == "1" ]]; then printf "5.44.0-1nemoclaw1"; else printf "5.40.1-6"; fi ;;',
       '    vim-common|vim-tiny) printf "2:9.2.0858-1" ;;',
       '    libssh2-1t64) printf "1.11.1-1+deb13u1+nemoclaw2" ;;',
+      '    libssl3t64) printf "3.5.7-1~deb13u2" ;;',
       '    nemoclaw-python3.13-htmlparser-fix) printf "3.13.5-2+deb13u4+nemoclaw1" ;;',
       "    *) return 64 ;;",
       "  esac",
