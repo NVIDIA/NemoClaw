@@ -423,18 +423,19 @@ function runnerTools(
     delete: () => (state.deleted = true),
   };
   const commands: Record<string, string> = { bash: "export", node: "agent" };
+  const run: OpenShellTools["run"] = (_command, args, options) => {
+    for (const name of credentials) expect(options.env).not.toHaveProperty(name);
+    const executable = path.basename(args[args.indexOf("--") + 1] ?? "");
+    const stage = commands[executable] ?? args[1];
+    expect(stage).not.toBe(failure);
+    return String(handlers[stage](args) ?? "");
+  };
   const tools: OpenShellTools = {
-    run: (_command, args, options) => {
-      for (const name of credentials) expect(options.env).not.toHaveProperty(name);
-      const executable = path.basename(args[args.indexOf("--") + 1] ?? "");
-      const stage = commands[executable] ?? args[1];
-      expect(stage).not.toBe(failure);
-      return String(handlers[stage](args) ?? "");
-    },
+    run: vi.fn(run),
     start: () => undefined,
     wait: async () => undefined,
   };
-  return { state, tools };
+  return { run, state, tools };
 }
 beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -932,4 +933,44 @@ describe("post-merge documentation runner", () => {
       expect(state.deleted).toBe(true);
     },
   );
+  it("attempts named cleanup and reports its failure when sandbox listing fails", () => {
+    const input = runnerFixture("author");
+    const { run, tools } = runnerTools(input);
+    tools.run = vi
+      .fn<OpenShellTools["run"]>()
+      .mockImplementationOnce(run)
+      .mockImplementationOnce(run)
+      .mockImplementationOnce(run)
+      .mockImplementationOnce(run)
+      .mockImplementationOnce(() => {
+        throw new Error("list failed");
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("delete failed");
+      });
+    expect(() => executePostMergeDocs(input.env, tools)).toThrow(
+      "Failed to delete OpenShell sandbox docs-author: delete failed; sandbox listing also failed: list failed",
+    );
+    expect(vi.mocked(tools.run).mock.calls.some(([, args]) => args[1] === "delete")).toBe(true);
+  });
+  it("preserves the primary failure when named sandbox cleanup also fails", () => {
+    const input = runnerFixture("author");
+    const { run, tools } = runnerTools(input);
+    tools.run = vi
+      .fn<OpenShellTools["run"]>()
+      .mockImplementationOnce(run)
+      .mockImplementationOnce(() => {
+        throw new Error("agent failed");
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("list failed");
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("delete failed");
+      });
+    expect(() => executePostMergeDocs(input.env, tools)).toThrow("agent failed");
+    expect(console.error).toHaveBeenCalledWith(
+      "Failed to delete OpenShell sandbox docs-author: delete failed; sandbox listing also failed: list failed",
+    );
+  });
 });

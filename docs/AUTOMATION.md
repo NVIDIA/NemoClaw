@@ -79,6 +79,9 @@ That policy owns the documentation coverage evidence, maintainer decision, and t
 Repository npm scripts use the Fern CLI version pinned in `fern/fern.config.json`. Run
 `npm run docs:deps` to print that version.
 
+Before publishing a preview, authenticate Fern with permission to publish to the selected staging instance.
+Repository automation supplies `FERN_TOKEN`; local contributors can use that variable or another Fern-supported authentication method.
+
 Run `npm run docs:preview:watch` to publish a branch preview and watch `docs/` and `fern/` for
 changes. The current branch name becomes the preview ID. The default instance is
 `nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw`. Override it with

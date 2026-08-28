@@ -353,13 +353,24 @@ export function executePostMergeDocs(
   tools: OpenShellTools = defaultOpenShellTools,
 ): void {
   prepare(env);
+  const sandboxName = required(env.SANDBOX_NAME, "SANDBOX_NAME");
+  let primaryFailure: unknown;
+  let failed = false;
   try {
     create(env, tools);
     run(env, tools);
     exportArtifact(env, tools);
-  } finally {
-    deleteOpenShellSandbox(env, required(env.SANDBOX_NAME, "SANDBOX_NAME"), tools);
+  } catch (error) {
+    failed = true;
+    primaryFailure = error;
   }
+  try {
+    deleteOpenShellSandbox(env, sandboxName, tools);
+  } catch (error) {
+    if (!failed) throw error;
+    console.error(error instanceof Error ? error.message : String(error));
+  }
+  if (failed) throw primaryFailure;
 }
 
 export function configurePostMergeDocs(
