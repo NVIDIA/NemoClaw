@@ -2,11 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { setTimeout as sleep } from "node:timers/promises";
-import { cleanupWhenOpenShellAvailable } from "../fixtures/cleanup-resources.ts";
+import {
+  assertCleanupSucceededOrAbsent,
+  cleanupWhenOpenShellAvailable,
+  registerSandboxCleanupUnlessKept,
+} from "../fixtures/cleanup-resources.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { type E2ETargetFixtures, expect } from "../fixtures/e2e-test.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import {
+  hermesSlackCredentialFingerprintScanCommand,
+  hermesSlackCredentialFingerprints,
+  hermesSlackCredentialScanScript,
+} from "./hermes-slack-credential-transport.ts";
+import { assertHermesSlackApiProof } from "./hermes-slack-proof.ts";
 import {
   runSecondaryCleanup as bestEffortLifecycleCleanup,
   CLI,
@@ -22,9 +32,24 @@ import {
   trackPreinstallSandboxCleanup,
 } from "./phase6-messaging-helpers.ts";
 
-const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes-slack";
+const HERMES_SLACK_E2E_SANDBOX_NAME = "e2e-hermes-slack";
+
+export function assertHermesSlackSandboxName(sandboxName: string): void {
+  if (sandboxName !== HERMES_SLACK_E2E_SANDBOX_NAME) {
+    throw new Error(
+      `Hermes Slack live test is destructive and only accepts sandbox name ${HERMES_SLACK_E2E_SANDBOX_NAME}; got ${sandboxName}`,
+    );
+  }
+}
+
+const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? HERMES_SLACK_E2E_SANDBOX_NAME;
+assertHermesSlackSandboxName(SANDBOX_NAME);
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN ?? "xoxb-test-hermes-slack-token";
 const SLACK_APP_TOKEN = process.env.SLACK_APP_TOKEN ?? "xapp-test-hermes-slack-app-token";
+const SLACK_CREDENTIAL_FINGERPRINTS = hermesSlackCredentialFingerprints([
+  SLACK_BOT_TOKEN,
+  SLACK_APP_TOKEN,
+]);
 export const LIVE_TIMEOUT_MS = 70 * 60_000;
 const INSTALL_TIMEOUT_MS = 60 * 60_000;
 const HERMES_HEALTH_URL = "http://localhost:8642/health";
@@ -125,46 +150,45 @@ async function cleanupHermesSlackProvider(options: {
       timeoutMs: 60_000,
     },
   );
-  if (
-    result.exitCode === 0 ||
-    /\bNotFound\b|provider[^\n]*(?:not found|does not exist)|no such provider/i.test(
-      resultText(result),
-    )
-  ) {
-    return;
-  }
-  expectExitZero(result, `cleanup OpenShell provider ${options.provider}`);
+  assertCleanupSucceededOrAbsent(
+    result,
+    /\bNotFound\b|provider[^\n]*(?:not found|does not exist)|no (?:such )?provider/i,
+    `cleanup OpenShell provider ${options.provider}`,
+  );
 }
 
-async function hostSlackTokenStdin(options: {
+export function assertHermesSlackCredentialFingerprintScanResult(result: {
+  readonly files?: string;
+  readonly processes?: string;
+}): void {
+  expect(result.files, "raw Slack token absent from selected files and logs").toBe("OK");
+  expect(result.processes, "raw Slack token absent from process arguments").toBe("OK");
+}
+
+async function scanHermesSlackCredentialFingerprints(options: {
   host: HostCliClient;
   apiKey: string;
   artifactName: string;
-  remoteCommand: string;
   timeoutMs?: number;
 }): Promise<ShellProbeResult> {
-  const script = [
-    "set -euo pipefail",
-    "ssh_config=$(mktemp)",
-    "trap 'rm -f \"$ssh_config\"' EXIT",
-    `${shellQuote(options.host.openshellCommandPath)} sandbox ssh-config ${shellQuote(SANDBOX_NAME)} >"$ssh_config"`,
-    [
-      'printf "%s\\n%s\\n" "$SLACK_BOT_TOKEN" "$SLACK_APP_TOKEN"',
-      "|",
-      "ssh",
-      '-F "$ssh_config"',
-      "-o StrictHostKeyChecking=no",
-      "-o UserKnownHostsFile=/dev/null",
-      "-o ConnectTimeout=10",
-      "-o LogLevel=ERROR",
-      shellQuote(`openshell-${SANDBOX_NAME}.default`),
-      shellQuote(options.remoteCommand),
-    ].join(" "),
-  ].join("\n");
+  const scanEnv = hermesSlackEnv(options.apiKey);
+  delete scanEnv.SLACK_APP_TOKEN;
+  delete scanEnv.SLACK_BOT_TOKEN;
+  const script = hermesSlackCredentialScanScript({
+    credentialFingerprints: SLACK_CREDENTIAL_FINGERPRINTS,
+    openshellCommandPath: options.host.openshellCommandPath,
+    remoteCommand: hermesSlackCredentialFingerprintScanCommand([
+      "/sandbox/.hermes/config.yaml",
+      "/sandbox/.hermes/.env",
+      "/tmp/nemoclaw-start.log",
+      "/tmp/gateway.log",
+    ]),
+    sandboxName: SANDBOX_NAME,
+  });
 
   return options.host.command("bash", ["-lc", script], {
     artifactName: options.artifactName,
-    env: hermesSlackEnv(options.apiKey),
+    env: scanEnv,
     redactionValues: redactions(options.apiKey),
     timeoutMs: options.timeoutMs ?? 60_000,
   });
@@ -237,6 +261,70 @@ type HermesSlackE2EFixtures = E2ETargetFixtures & {
   skip: (note?: string) => never;
 };
 
+export function registerHermesSlackCleanup(
+  { cleanup, host, sandbox }: Pick<HermesSlackE2EFixtures, "cleanup" | "host" | "sandbox">,
+  options: {
+    apiKey: string;
+    env: NodeJS.ProcessEnv;
+    keepSandbox: boolean;
+    redactionValues: string[];
+    sandboxName: string;
+  },
+): void {
+  assertHermesSlackSandboxName(options.sandboxName);
+  registerSandboxCleanupUnlessKept(options.keepSandbox, () => {
+    const gatewayCleanupOptions = {
+      artifactName: "cleanup-hermes-slack-openshell-gateway-destroy",
+      env: options.env,
+      redactionValues: options.redactionValues,
+      timeoutMs: 120_000,
+    };
+    cleanup.trackGateway(
+      {
+        cleanupGatewayRegistration: (name: string) =>
+          cleanupWhenOpenShellAvailable(
+            host,
+            {
+              artifactName: "cleanup-hermes-slack-probe-openshell-gateway",
+              env: options.env,
+              redactionValues: options.redactionValues,
+              timeoutMs: 30_000,
+            },
+            () => host.cleanupGatewayRegistration(name, gatewayCleanupOptions),
+          ),
+      },
+      "nemoclaw",
+      gatewayCleanupOptions,
+    );
+    for (const provider of [
+      `${options.sandboxName}-slack-app`,
+      `${options.sandboxName}-slack-bridge`,
+    ]) {
+      cleanup.trackDisposable(`delete OpenShell provider ${provider}`, () =>
+        cleanupWhenOpenShellAvailable(
+          host,
+          {
+            artifactName: `cleanup-hermes-slack-probe-openshell-provider-${provider}`,
+            env: options.env,
+            redactionValues: options.redactionValues,
+            timeoutMs: 30_000,
+          },
+          () => cleanupHermesSlackProvider({ host, apiKey: options.apiKey, provider }),
+        ),
+      );
+    }
+    trackPreinstallSandboxCleanup(
+      cleanup,
+      host,
+      sandbox,
+      options.sandboxName,
+      options.env,
+      options.redactionValues,
+      "cleanup-hermes-slack",
+    );
+  });
+}
+
 export async function runHermesSlackE2E({
   artifacts,
   cleanup,
@@ -250,51 +338,15 @@ export async function runHermesSlackE2E({
   const env = hermesSlackEnv(apiKey);
   const redactionValues = redactions(apiKey);
 
-  const gatewayCleanupOptions = {
-    artifactName: "cleanup-hermes-slack-openshell-gateway-destroy",
-    env,
-    redactionValues,
-    timeoutMs: 120_000,
-  };
-  cleanup.trackGateway(
+  registerHermesSlackCleanup(
+    { cleanup, host, sandbox },
     {
-      cleanupGatewayRegistration: (name: string) =>
-        cleanupWhenOpenShellAvailable(
-          host,
-          {
-            artifactName: "cleanup-hermes-slack-probe-openshell-gateway",
-            env,
-            redactionValues,
-            timeoutMs: 30_000,
-          },
-          () => host.cleanupGatewayRegistration(name, gatewayCleanupOptions),
-        ),
+      apiKey,
+      env,
+      keepSandbox: process.env.NEMOCLAW_E2E_KEEP_SANDBOX === "1",
+      redactionValues,
+      sandboxName: SANDBOX_NAME,
     },
-    "nemoclaw",
-    gatewayCleanupOptions,
-  );
-  for (const provider of [`${SANDBOX_NAME}-slack-app`, `${SANDBOX_NAME}-slack-bridge`]) {
-    cleanup.trackDisposable(`delete OpenShell provider ${provider}`, () =>
-      cleanupWhenOpenShellAvailable(
-        host,
-        {
-          artifactName: `cleanup-hermes-slack-probe-openshell-provider-${provider}`,
-          env,
-          redactionValues,
-          timeoutMs: 30_000,
-        },
-        () => cleanupHermesSlackProvider({ host, apiKey, provider }),
-      ),
-    );
-  }
-  trackPreinstallSandboxCleanup(
-    cleanup,
-    host,
-    sandbox,
-    SANDBOX_NAME,
-    env,
-    redactionValues,
-    "cleanup-hermes-slack",
   );
 
   await artifacts.target.declare({
@@ -556,38 +608,17 @@ PY`,
   expectExitZero(secretBoundaryProbe, "Hermes Slack secret-boundary scan");
   expect(secretBoundaryProbe.stdout.trim()).toBe("OK");
 
-  const tokenFileHits = await hostSlackTokenStdin({
+  const tokenScan = await scanHermesSlackCredentialFingerprints({
     host,
     apiKey,
-    artifactName: "phase-4-token-file-hits",
-    remoteCommand:
-      "grep -Fq -f - /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /tmp/nemoclaw-start.log /tmp/gateway.log 2>/dev/null && echo LEAK || echo OK",
+    artifactName: "phase-4-token-fingerprint-scan",
   });
-  expectExitZero(tokenFileHits, "raw Slack token file/log scan");
-  expect(tokenFileHits.stdout.trim()).toBe("OK");
-
-  const processScan = await hostSlackTokenStdin({
-    host,
-    apiKey,
-    artifactName: "phase-4-token-process-scan",
-    remoteCommand: String.raw`python3 -c 'import pathlib, sys
-raw_tokens = {line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")}
-cmdlines = []
-for path in pathlib.Path("/proc").glob("[0-9]*/cmdline"):
-    try:
-        cmdlines.append(path.read_bytes().replace(b"\0", b"\n").decode("utf-8", "replace"))
-    except Exception:
-        pass
-text = "\n".join(cmdlines)
-if not text:
-    print("EMPTY")
-elif any(token in text for token in raw_tokens):
-    print("LEAK")
-else:
-    print("OK")'`,
-  });
-  expectExitZero(processScan, "raw Slack token process scan");
-  if (processScan.stdout.trim() !== "EMPTY") expect(processScan.stdout.trim()).toBe("OK");
+  expectExitZero(tokenScan, "raw Slack credential fingerprint scan");
+  const tokenScanResult = JSON.parse(tokenScan.stdout.trim()) as {
+    files?: string;
+    processes?: string;
+  };
+  assertHermesSlackCredentialFingerprintScanResult(tokenScanResult);
 
   progress.phase("validate Hermes-scoped Slack policy");
   const policy = await host.command(
@@ -640,7 +671,7 @@ done`,
   expectExitZero(bridgeResidue, "Hermes Slack bridge residue probe");
   expect(resultText(bridgeResidue).trim()).toBe("");
 
-  progress.phase("exercise Slack API through credential aliases");
+  progress.phase("exercise Slack API egress with credential placeholders");
   const slackProbe = await sandboxShWithArgs(
     sandbox,
     SANDBOX_NAME,
@@ -656,8 +687,9 @@ import sys
 import urllib.error
 import urllib.request
 
-# Verified: this probe crosses the credential-rewrite boundary, so the proxy
-# chain has to be trusted, not just reachable.
+# This probe sends the revision-scoped placeholders through permitted Slack
+# provider egress. Upstream authentication responses prove reachability; the
+# messaging-providers target owns capture-based credential-rewrite proof.
 TLS_CONTEXT = ssl.create_default_context()
 INJECTED_RE = re.compile(r"^openshell:resolve:env:(v[0-9]+_)?(SLACK_BOT_TOKEN|SLACK_APP_TOKEN)$")
 
@@ -750,14 +782,8 @@ PY`,
   );
   const slackProbeText = resultText(slackProbe);
   await artifacts.writeText("phase-6-slack-python-probe.txt", slackProbeText);
-  if (/^TIMEOUT/m.test(slackProbeText)) {
-    skip("Slack API timed out");
-    return;
-  }
+  assertHermesSlackApiProof(slackProbeText);
   expectExitZero(slackProbe, "Slack Python API probe");
-  expect(slackProbeText).toMatch(/^OK auth\.test:/m);
-  expect(slackProbeText).toMatch(/^OK apps\.connections\.open:/m);
-  expect(slackProbeText).not.toMatch(/^(FAIL|ERROR)/m);
 
   if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1") {
     progress.phase("remove Hermes Slack sandbox");
@@ -818,7 +844,7 @@ PY`,
       rawTokensAbsentFromFilesLogsAndProcesses: true,
       hermesScopedSlackPolicy: true,
       noLegacyDecodeBridgeResidue: true,
-      slackPythonAliasEgress: true,
+      slackPythonProviderEgress: true,
       cleanupVerified: process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1",
     },
   });

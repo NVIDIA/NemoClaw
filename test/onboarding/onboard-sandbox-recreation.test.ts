@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { beforeEach, describe, it, vi } from "vitest";
-import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
+import { ONBOARD_CREATED_SANDBOX_ID, writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 import { type CommandEntry, onboardScriptMocksPath } from "../helpers/onboard-split-context";
 
 beforeEach(() => {
@@ -61,7 +61,7 @@ runner.run = (command) => {
 	  if (cmd.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:8080";
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
 	  // Existing sandbox that is NOT ready
-	  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
+	  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID].join(String.fromCharCode(10));
 	  if (cmd.includes("sandbox list")) return _deleted ? "" : "my-assistant NotReady";
 	  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
 	  return "";
@@ -69,7 +69,7 @@ runner.run = (command) => {
 	registry.getSandbox = () => fixtureMocks.managedSandboxPolicyReceiptFixture({
 	  name: "my-assistant",
 	  toolDisclosure: "progressive",
-	}, { sandboxId: "sbx-4f2a91c0d7" });
+	}, { sandboxId: fixtureMocks.ONBOARD_CREATED_SANDBOX_ID });
 childProcess.spawn = () => {
   throw new Error("unexpected sandbox create");
 };
@@ -137,7 +137,7 @@ const { createSandbox } = require(${onboardPath});
 	const fixtureMocks = require(${onboardScriptMocksPath});
 	fixtureMocks.mockStandaloneGatewayTeardownAuthority();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-let _deleted = false; let _sandboxId = "sbx-4f2a91c0d7";
+let _deleted = false; let _sandboxId = fixtureMocks.ONBOARD_CREATED_SANDBOX_ID;
 const registry = require(${registryPath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
@@ -154,7 +154,7 @@ const commands = []; let registeredSandbox = null;
     reference: "openshell/sandbox-from:source",
     shared: false,
   },
-	}, { sandboxId: "sbx-4f2a91c0d7" });
+	}, { sandboxId: fixtureMocks.ONBOARD_CREATED_SANDBOX_ID });
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
   const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
@@ -268,7 +268,9 @@ const { createSandbox } = require(${onboardPath});
         ),
         "must defer source image retirement until replacement registration is proven",
       );
-      const sourceFingerprint = createHash("sha256").update("sbx-4f2a91c0d7").digest("hex");
+      const sourceFingerprint = createHash("sha256")
+        .update(ONBOARD_CREATED_SANDBOX_ID)
+        .digest("hex");
       const replacementFingerprint = createHash("sha256").update("sbx-8e6b10fd33").digest("hex");
       assert.match(payload.registeredSandbox?.lifecycleGeneration ?? "", /^[0-9a-f-]{36}$/);
       assert.equal(
@@ -309,7 +311,7 @@ const { createSandbox } = require(${onboardPath});
 	const fixtureMocks = require(${onboardScriptMocksPath});
 	fixtureMocks.mockStandaloneGatewayTeardownAuthority();
 	const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-	let _deleted = false; let _sandboxId = "sbx-4f2a91c0d7";
+	let _deleted = false; let _sandboxId = fixtureMocks.ONBOARD_CREATED_SANDBOX_ID;
 const registry = require(${registryPath});
 const sandboxState = require(${sandboxStatePath});
 const childProcess = require("node:child_process");
@@ -349,7 +351,7 @@ runner.run = (command) => {
 	const sourceSandbox = fixtureMocks.managedSandboxPolicyReceiptFixture({
 	  name: "my-assistant",
 	  gpuEnabled: false,
-	}, { sandboxId: "sbx-4f2a91c0d7" });
+	}, { sandboxId: fixtureMocks.ONBOARD_CREATED_SANDBOX_ID });
 	registry.getSandbox = () => sourceSandbox;
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
 	  sandboxName: "my-assistant",
@@ -495,7 +497,7 @@ const { createSandbox } = require(${onboardPath});
 	const fixtureMocks = require(${onboardScriptMocksPath});
 	fixtureMocks.mockStandaloneGatewayTeardownAuthority();
 	const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-	let _deleted = false; let _sandboxId = "sbx-4f2a91c0d7";
+	let _deleted = false; let _sandboxId = fixtureMocks.ONBOARD_CREATED_SANDBOX_ID;
 const registry = require(${registryPath});
 const sandboxState = require(${sandboxStatePath});
 const childProcess = require("node:child_process");
@@ -535,7 +537,7 @@ runner.run = (command) => {
 	const sourceSandbox = fixtureMocks.managedSandboxPolicyReceiptFixture({
 	  name: "my-assistant",
 	  gpuEnabled: false,
-	}, { sandboxId: "sbx-4f2a91c0d7" });
+	}, { sandboxId: fixtureMocks.ONBOARD_CREATED_SANDBOX_ID });
 	registry.getSandbox = () => sourceSandbox;
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
 	  sandboxName: "my-assistant",
@@ -649,7 +651,7 @@ const { createSandbox } = require(${onboardPath});
 	const fixtureMocks = require(${onboardScriptMocksPath});
 	fixtureMocks.mockStandaloneGatewayTeardownAuthority();
 	const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-	let _deleted = false; let _sandboxId = "sbx-4f2a91c0d7";
+	let _deleted = false; let _sandboxId = fixtureMocks.ONBOARD_CREATED_SANDBOX_ID;
 const registry = require(${registryPath});
 const sandboxState = require(${sandboxStatePath});
 const childProcess = require("node:child_process");
@@ -694,7 +696,7 @@ runner.run = (command) => {
 	const sourceSandbox = fixtureMocks.managedSandboxPolicyReceiptFixture({
 	  name: "my-assistant",
 	  gpuEnabled: false,
-	}, { sandboxId: "sbx-4f2a91c0d7" });
+	}, { sandboxId: fixtureMocks.ONBOARD_CREATED_SANDBOX_ID });
 	registry.getSandbox = () => sourceSandbox;
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
 	  sandboxName: "my-assistant",
@@ -827,7 +829,7 @@ const { createSandbox } = require(${onboardPath});
 	const fixtureMocks = require(${onboardScriptMocksPath});
 	fixtureMocks.mockStandaloneGatewayTeardownAuthority();
 	const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-	let _deleted = false; let _sandboxId = "sbx-4f2a91c0d7";
+	let _deleted = false; let _sandboxId = fixtureMocks.ONBOARD_CREATED_SANDBOX_ID;
 const registry = require(${registryPath});
 const onboardSession = require(${sessionModulePath});
 const childProcess = require("node:child_process");
@@ -873,7 +875,7 @@ runner.run = (command, opts = {}) => {
 	  gpuEnabled: false,
 	  policies: ["npm"],
 	  policyTier: "balanced",
-	}, { sandboxId: "sbx-4f2a91c0d7" });
+	}, { sandboxId: fixtureMocks.ONBOARD_CREATED_SANDBOX_ID });
 	registry.getSandbox = () => sourceSandbox;
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
 	  sandboxName: "my-assistant",
@@ -1011,7 +1013,7 @@ runner.run = (command, opts = {}) => {
     return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
   }
   return cmd.includes("sandbox get") && cmd.includes("my-assistant")
-    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
+    ? { status: 0, stdout: Buffer.from("my-assistant\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\n"), stderr: Buffer.alloc(0) }
     : { status: 0 };
 };
 runner.runFile = (file, args = [], opts = {}) => {
@@ -1022,7 +1024,7 @@ runner.runFile = (file, args = [], opts = {}) => {
 	  const cmd = _n(command);
 	  if (cmd.includes("gateway info")) return "Gateway endpoint: http://127.0.0.1:8080";
 	  if (cmd.includes("policy get") && cmd.includes("--output json")) return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
-	  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
+	  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return _deleted ? "" : ["my-assistant", "Id: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID].join(String.fromCharCode(10));
 	  if (cmd.includes("sandbox list")) return _deleted ? "" : "my-assistant Ready";
 	  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
 	  return "";
@@ -1030,7 +1032,7 @@ runner.runFile = (file, args = [], opts = {}) => {
 	registry.getSandbox = () => fixtureMocks.managedSandboxPolicyReceiptFixture({
 	  name: "my-assistant",
 	  toolDisclosure: "progressive",
-	}, { sandboxId: "sbx-4f2a91c0d7" });
+	}, { sandboxId: fixtureMocks.ONBOARD_CREATED_SANDBOX_ID });
 
 // Mock prompt to return "y" (reuse)
 credentials.prompt = async () => "y";
@@ -1132,7 +1134,7 @@ const { createSandbox } = require(${onboardPath});
 	const fixtureMocks = require(${onboardScriptMocksPath});
 	fixtureMocks.mockStandaloneGatewayTeardownAuthority();
 	const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-	let _deleted = false; let _sandboxId = "sbx-4f2a91c0d7";
+	let _deleted = false; let _sandboxId = fixtureMocks.ONBOARD_CREATED_SANDBOX_ID;
 const registry = require(${registryPath});
 const credentials = require(${credentialsPath});
 const childProcess = require("node:child_process");
@@ -1194,7 +1196,7 @@ runner.runFile = (file, args = [], opts = {}) => {
 	const sourceSandbox = fixtureMocks.managedSandboxPolicyReceiptFixture({
 	  name: "my-assistant",
 	  toolDisclosure: "progressive",
-	}, { sandboxId: "sbx-4f2a91c0d7" });
+	}, { sandboxId: fixtureMocks.ONBOARD_CREATED_SANDBOX_ID });
 	registry.getSandbox = () => sourceSandbox;
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
 	  sandboxName: "my-assistant",
@@ -1314,7 +1316,7 @@ const { createSandbox } = require(${onboardPath});
 	const fixtureMocks = require(${onboardScriptMocksPath});
 	fixtureMocks.mockStandaloneGatewayTeardownAuthority();
 	const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-	let _deleted = false; let _sandboxId = "sbx-4f2a91c0d7";
+	let _deleted = false; let _sandboxId = fixtureMocks.ONBOARD_CREATED_SANDBOX_ID;
 const registry = require(${registryPath});
 const credentials = require(${credentialsPath});
 const childProcess = require("node:child_process");
@@ -1360,7 +1362,7 @@ runner.run = (command, opts = {}) => {
 	const sourceSandbox = fixtureMocks.managedSandboxPolicyReceiptFixture({
 	  name: "my-assistant",
 	  toolDisclosure: "progressive",
-	}, { sandboxId: "sbx-4f2a91c0d7" });
+	}, { sandboxId: fixtureMocks.ONBOARD_CREATED_SANDBOX_ID });
 	registry.getSandbox = () => sourceSandbox;
 	const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
 	  sandboxName: "my-assistant",

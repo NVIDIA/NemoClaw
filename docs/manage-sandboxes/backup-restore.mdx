@@ -124,16 +124,16 @@ NemoClaw computes versions (`v1`, `v2`, through `vN`) from timestamp order, so `
 `snapshot create` requires shields to be down.
 Snapshot creation and restore share the per-sandbox transition lock with the shields auto-restore timer.
 
-If a timed shields-down window expires during snapshot work, the deadline gate blocks new mutations and waits for the exact snapshot owner to finish without signaling it.
+If a timed shields-down window expires during snapshot work, the deadline gate blocks new mutations and waits for the snapshot owner to finish without signaling it.
 Snapshot work does not bypass recovery for an expired shields-down window.
 <AgentOnly variant="openclaw,hermes">
-Follow [Timed Shields Windows](../configure-sandboxes/understand-runtime-changes#timed-shields-windows) to correct state-directory failures or complete exact-generation recovery before you rerun `$$nemoclaw <name> snapshot create`.
+Follow [Timed Shields Windows](../configure-sandboxes/understand-runtime-changes#timed-shields-windows) to correct state-directory failures or complete generation recovery before you rerun `$$nemoclaw <name> snapshot create`.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 If a state-directory failure prevents gate publication, normal mutation-lock acquisition also fails.
 If recovery reports a state-directory failure, correct it and run `$$nemoclaw <name> shields status`.
-Durable containment or retained exact gates keep new mutations blocked until you complete exact-generation recovery.
-If the command reports exact-generation recovery guidance, stop all NemoClaw processes for the sandbox and follow that guidance before you rerun `$$nemoclaw <name> snapshot create`.
+Durable containment or retained gates keep new mutations blocked until you complete generation recovery.
+If the command reports generation recovery guidance, stop all NemoClaw processes for the sandbox and follow that guidance before you rerun `$$nemoclaw <name> snapshot create`.
 </AgentOnly>
 
 Tag a snapshot with a human-readable label:
@@ -155,8 +155,8 @@ Restore the latest snapshot:
 $$nemoclaw my-assistant snapshot restore
 ```
 
-Pass an exact version, name, or timestamp to select a specific snapshot.
-Use the exact timestamp from `snapshot list`; a timestamp prefix does not select a snapshot.
+Pass a version, name, or timestamp to select a specific snapshot.
+Use the complete timestamp from `snapshot list`; a timestamp prefix does not select a snapshot.
 
 ```bash
 $$nemoclaw my-assistant snapshot restore v3
@@ -202,7 +202,7 @@ NemoClaw assigns the destination a new lifecycle generation instead of copying t
 
 If the destination is not Ready with the same valid identity, the restore exits nonzero before registration or state restore.
 The OpenShell sandbox remains created but unregistered, so `--force` cannot select it for deletion.
-Run the exact owner-scoped deletion command printed by the failure:
+Run the owner-scoped deletion command printed by the failure:
 
 ```bash
 openshell sandbox delete -g '<owning-gateway>' '<destination>'
@@ -309,7 +309,7 @@ If a sandbox is not running and its container cannot be started this way, start 
 For each eligible sandbox, `backup-all` holds one lifecycle transaction through the complete backup.
 Within that transaction, it starts a stopped container when required, opens a 30-minute shields-down window when the sandbox starts with Shields up, copies sandbox state, restores the previous Shields state, and returns any container it started to the stopped state.
 A sandbox that starts with Shields down remains down.
-If the timer expires during the transaction, the deadline gate blocks new mutations and waits for the exact backup owner to finish without signaling it.
+If the timer expires during the transaction, the deadline gate blocks new mutations and waits for the backup owner to finish without signaling it.
 An initial lock or unlock failure marks that sandbox as failed, and `backup-all` continues with the next sandbox.
 NemoClaw attempts to restore the previous Shields state before it processes the next sandbox, including when the backup fails.
 If lockdown cannot be restored, `backup-all` stops and does not process the remaining sandboxes.

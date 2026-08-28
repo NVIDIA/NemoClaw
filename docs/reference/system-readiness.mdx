@@ -75,7 +75,7 @@ Apply these checks in order:
 1. Reject an unknown schema major version.
 2. Require `schemaVersion` `1.1.0` or later within schema major 1.
 3. Compare the leading `X.Y.Z` release identity in `nemoclawVersion` with the scenario minimum.
-4. If the scenario supplies an expected source revision, require an exact `sourceRevision` match.
+4. If the scenario supplies an expected source revision, require a `sourceRevision` match.
 5. If `nemoclawVersion` has a Git revision suffix, require it to match `sourceRevision`.
 6. Require `status: "supported"` and retain the producer identity in the admission receipt.
 
@@ -140,7 +140,7 @@ Each capability uses `present`, `absent`, or `unknown`.
 | `host.platform.wsl_native_docker` | Native Docker Engine inside WSL. |
 | `host.platform.wsl_gpu_passthrough` | Docker Desktop GPU passthrough proof. |
 | `host.platform.dgx_spark` | DGX Spark identity on ARM64 with an available NVIDIA GPU. |
-| `host.platform.n1x` | N1x identity from the trusted FastOS marker and exact NVIDIA display PCI device on Linux ARM64 with an available NVIDIA GPU. This capability does not promote the Deferred platform status. |
+| `host.platform.n1x` | N1x identity from the trusted FastOS marker and NVIDIA display PCI device on Linux ARM64 with an available NVIDIA GPU. This capability does not promote the Deferred platform status. |
 | `host.platform.dgx_station` | Qualified DGX Station GB300 identity, Linux ARM64 runtime, Ubuntu 24.04, hardware, and software profile. |
 
 If the combined platform capability is absent and no more specific platform qualification finding applies, the blocking `host.platform.unsupported` finding identifies an unsupported host and runtime combination.
@@ -153,7 +153,7 @@ The read-only `host probe` command does not pull or start the container-backed W
 Onboarding can run the bounded proof only after its current host and gateway readiness checks admit the run.
 
 DGX Station qualification fails closed.
-The `host.platform.dgx_station` capability is `present` only when the host runs Linux ARM64 on Ubuntu 24.04, reports an effective NVIDIA GPU, and the product identity, an exact display-class PCI device with NVIDIA vendor ID (`0x10de`) and GB300 device ID (`0x31c2` or `0x31c3`), and the software profile all qualify.
+The `host.platform.dgx_station` capability is `present` only when the host runs Linux ARM64 on Ubuntu 24.04, reports an effective NVIDIA GPU, and the product identity, a display-class PCI device with NVIDIA vendor ID (`0x10de`) and GB300 device ID (`0x31c2` or `0x31c3`), and the software profile all qualify.
 If `/etc/dgx-release` is absent, NemoClaw uses the qualified `generic-ubuntu` profile.
 If the marker exists, NemoClaw reads it only when it is a nonempty regular non-symlink file of at most 4096 bytes, owned by UID and GID 0, and not writable by group or other users.
 Invalid marker metadata, invalid contents, or another known mismatch produce an `unqualified` qualification and the blocking `host.platform.dgx_station_unqualified` finding.
@@ -261,7 +261,7 @@ It omits the gateway state directory, removes process environments, redacts cred
 
 Managed gateway metadata is reusable only when its endpoint is bound to loopback on the configured gateway port.
 A legacy Docker proxy is accepted only when the active cluster container and its published host port establish the same target.
-For a direct Linux host-process gateway, version comparison runs only against an independently resolved binary whose exact path matches the listener's kernel-backed executable identity.
+For a direct Linux host-process gateway, version comparison runs only against an independently resolved binary whose path matches the listener's kernel-backed executable identity.
 For a package service, the validated systemd `ExecStart` or official Homebrew formula binary must match the live executable before NemoClaw runs that trusted binary's version command.
 NemoClaw samples the listener executable on both sides of identity checks and samples an external listener on both sides of its health request.
 A PID, executable, service, or listener change during that interval makes the result inconclusive instead of combining evidence from different processes.
@@ -338,7 +338,7 @@ They reject an exit-zero response that contains empty or error-only daemon data.
 
 `host probe` observes the host and does not run remediation.
 Repeated runs do not change filesystem, service, Docker image or container, gateway, provider, credential, policy, or sandbox state.
-Read-only child processes receive a replacement environment containing only exact system variables, the selected OpenShell gateway, its validated local TLS directory when present, and a supported local Unix Docker socket when configured.
+Read-only child processes receive a replacement environment containing only system variables, the selected OpenShell gateway, its validated local TLS directory when present, and a supported local Unix Docker socket when configured.
 Ambient provider, OpenShell, sandbox, and gateway credentials are not forwarded to those children.
 A future command that changes the host must use a separate mutating mode.
 That mode cannot run with `--json` probing.
