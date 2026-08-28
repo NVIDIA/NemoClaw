@@ -676,16 +676,16 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       },
       {
         id: "publication",
-        name: "Select complete base and managed-image publication",
-        if: MANAGED_SOURCE_CONDITION,
+        name: "Select base and optional managed-image publication",
         env: {
           EXPECTED_SHA: "${{ steps.publication_mode.outputs.expected_sha }}",
           GITHUB_TOKEN: "${{ github.token }}",
           PUBLICATION_HISTORY_ALLOW_NON_HEAD:
             "${{ steps.publication_mode.outputs.allow_non_head }}",
-          REQUIRE_MANAGED_IMAGE_PUBLICATION: "1",
+          REQUIRE_MANAGED_IMAGE_PUBLICATION:
+            "${{ steps.select_pr_source.outputs.workload_source == 'local-dockerfile' && '0' || '1' }}",
           SELECT_NEAREST_SUCCESSFUL_PUBLICATION:
-            "${{ steps.publication_mode.outputs.select_nearest_successful }}",
+            "${{ steps.select_pr_source.outputs.workload_source == 'local-dockerfile' && '0' || steps.publication_mode.outputs.select_nearest_successful }}",
         },
         shell: "bash",
         run: [
@@ -702,7 +702,6 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       },
       {
         name: "Download immutable Deep Agents Code base contract",
-        if: MANAGED_SOURCE_CONDITION,
         env: {
           GITHUB_TOKEN: "${{ github.token }}",
           PUBLICATION_HEAD_SHA: "${{ steps.publication.outputs.head_sha }}",
@@ -714,7 +713,6 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
       {
         id: "validate_dcode_base",
         name: "Validate immutable Deep Agents Code base",
-        if: MANAGED_SOURCE_CONDITION,
         env: {
           PUBLICATION_HEAD_SHA: "${{ steps.publication.outputs.head_sha }}",
           PUBLICATION_RUN_ATTEMPT: "${{ steps.publication.outputs.run_attempt }}",

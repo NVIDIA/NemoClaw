@@ -181,14 +181,13 @@ jobs:
           printf 'workload_source=%s\n' "$workload_source" >>"$GITHUB_OUTPUT"
 
       - id: publication
-        name: Select complete base and managed-image publication
-        if: ${{ inputs.pr_number == '' || steps.select_pr_source.outputs.workload_source == 'managed-image' }}
+        name: Select base and optional managed-image publication
         env:
           EXPECTED_SHA: ${{ steps.publication_mode.outputs.expected_sha }}
           GITHUB_TOKEN: ${{ github.token }}
           PUBLICATION_HISTORY_ALLOW_NON_HEAD: ${{ steps.publication_mode.outputs.allow_non_head }}
-          REQUIRE_MANAGED_IMAGE_PUBLICATION: "1"
-          SELECT_NEAREST_SUCCESSFUL_PUBLICATION: ${{ steps.publication_mode.outputs.select_nearest_successful }}
+          REQUIRE_MANAGED_IMAGE_PUBLICATION: ${{ steps.select_pr_source.outputs.workload_source == 'local-dockerfile' && '0' || '1' }}
+          SELECT_NEAREST_SUCCESSFUL_PUBLICATION: ${{ steps.select_pr_source.outputs.workload_source == 'local-dockerfile' && '0' || steps.publication_mode.outputs.select_nearest_successful }}
         shell: bash
         run: |
           set -euo pipefail
@@ -201,7 +200,6 @@ jobs:
           node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds "$wait_seconds" --poll-seconds 30
 
       - name: Download immutable Deep Agents Code base contract
-        if: ${{ inputs.pr_number == '' || steps.select_pr_source.outputs.workload_source == 'managed-image' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PUBLICATION_HEAD_SHA: ${{ steps.publication.outputs.head_sha }}
@@ -211,7 +209,6 @@ jobs:
 
       - id: validate_dcode_base
         name: Validate immutable Deep Agents Code base
-        if: ${{ inputs.pr_number == '' || steps.select_pr_source.outputs.workload_source == 'managed-image' }}
         env:
           PUBLICATION_HEAD_SHA: ${{ steps.publication.outputs.head_sha }}
           PUBLICATION_RUN_ATTEMPT: ${{ steps.publication.outputs.run_attempt }}
