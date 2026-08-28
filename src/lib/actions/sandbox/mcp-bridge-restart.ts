@@ -4,7 +4,6 @@
 import type { AgentMcpAdapter } from "../../agent/defs";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import { assertHermesPortableCommandUnavailable } from "../../onboard/experimental/portable-agent-lifecycle";
-import { republishCurrentPolicyDocument } from "../../policy";
 import type { McpBridgeEntry } from "../../state/registry";
 import { registerAgentAdapterAtCurrentCredentialRevision } from "./mcp-bridge-adapters";
 import { McpBridgeError } from "./mcp-bridge-contracts";
@@ -251,24 +250,7 @@ export async function restoreExistingMcpBridgeRuntime(
     }
     const adapter = (entry.adapter as AgentMcpAdapter | undefined) ?? defaultAdapter;
     refreshMcpProviderEnvironment(entry);
-    const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
-      ...(options.applyPolicy === false
-        ? {
-            refreshAfterObservedAbsence: () => {
-              if (
-                !republishCurrentPolicyDocument(
-                  sandboxName,
-                  `refresh MCP credential projection for '${entry.server}'`,
-                )
-              ) {
-                throw new McpBridgeError(
-                  `Could not safely republish the current sandbox policy while restoring MCP server '${entry.server}'.`,
-                );
-              }
-            },
-          }
-        : {}),
-    });
+    const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry);
     registerAgentAdapterAtCurrentCredentialRevision(
       sandboxName,
       adapter,

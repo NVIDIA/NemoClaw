@@ -129,6 +129,9 @@ export type RebuildFlowOverrides = {
     entries: Array<Record<string, unknown>>;
     detachedProviderEntries: Array<Record<string, unknown>>;
     scrubbedAdapterEntries: Array<Record<string, unknown>>;
+    policyHandoff?: string;
+    revalidateBeforeDelete?: () => Promise<void>;
+    assertDeleteEdgeUnchanged?: () => void;
   };
 };
 

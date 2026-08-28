@@ -329,7 +329,7 @@ describe("rebuild destroy phase", () => {
     },
   );
 
-  it("refuses sandbox deletion when read-only MCP state drifts at the delete edge (#7062)", async () => {
+  it("refuses sandbox deletion and invokes recovery when MCP state drifts at the delete edge", async () => {
     const revalidateBeforeDelete = vi.fn().mockRejectedValue(new Error("live policy drifted"));
     mocks.prepareMcpForRebuild.mockResolvedValue({
       entries: [{}],
@@ -356,13 +356,13 @@ describe("rebuild destroy phase", () => {
         onDeleted: vi.fn(),
       }),
     ).rejects.toThrow(
-      "Failed to revalidate read-only MCP recovery before sandbox deletion: live policy drifted",
+      "Failed to revalidate MCP recovery before sandbox deletion: live policy drifted",
     );
 
     expect(revalidateBeforeDelete).toHaveBeenCalledOnce();
     expect(mocks.runOpenshell).not.toHaveBeenCalled();
     expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
-    expect(mocks.reattachMcpAfterDeleteFailure).not.toHaveBeenCalled();
+    expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith("alpha", [], []);
     expect(mocks.stopNimContainer).not.toHaveBeenCalled();
     expect(mocks.stopNimContainerByName).not.toHaveBeenCalled();
     expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);

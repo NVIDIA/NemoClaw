@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -412,6 +413,7 @@ async function rebuildSandboxUnlocked(
         return;
       }
 
+      let preservedMcpPolicyHandoff = false;
       const mcpPreparation = await runRebuildDestroyPhase({
         sandboxName,
         sandboxEntry,
@@ -422,7 +424,21 @@ async function rebuildSandboxUnlocked(
         log,
         bail,
         relockShieldsIfNeeded,
-        validateAfterMcpPreparation: async () => {
+        validateAfterMcpPreparation: async (preparation) => {
+          if (preparation.policyHandoff !== undefined) {
+            try {
+              fs.writeFileSync(backup.policySourcePath, preparation.policyHandoff, {
+                mode: 0o600,
+              });
+              preservedMcpPolicyHandoff = true;
+            } catch {
+              return {
+                ok: false,
+                message:
+                  "The complete live OpenShell policy could not be retained after MCP teardown.",
+              };
+            }
+          }
           const providerReconfigure = recreateOptions.rebuildProviderReconfigure;
           if (providerReconfigure && !hydrateCredentialEnv(providerReconfigure.credentialEnv)) {
             return {
@@ -461,12 +477,17 @@ async function rebuildSandboxUnlocked(
               recreateOptions.managedWorkloadRebuild,
             ) ?? revalidateRebuildRouteBeforeDelete(routePreflightReceipt);
           if (!validation.ok) return validation;
+          // Live MCP teardown temporarily removes credential-bound rules from
+          // the source sandbox. Its preparation returned the complete
+          // pre-teardown OpenShell document above and independently revalidates
+          // the stripped source policy. Do not overwrite that handoff with the
+          // temporary teardown state at the delete edge.
+          if (preservedMcpPolicyHandoff) return validation;
           return captureRebuildPolicySource(sandboxName, backup.policySourcePath)
             ? validation
             : {
                 ok: false,
-                message:
-                  "The current OpenShell policy became unavailable before sandbox deletion.",
+                message: "The current OpenShell policy became unavailable before sandbox deletion.",
               };
         },
         onDeleted: () => {

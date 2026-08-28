@@ -41,7 +41,9 @@ export interface RebuildDestroyPhaseInput {
   bail: RebuildBail;
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
   force?: boolean;
-  validateAfterMcpPreparation?: () => Promise<RebuildDeleteValidationResult>;
+  validateAfterMcpPreparation?: (
+    preparation: McpRebuildPreparation,
+  ) => Promise<RebuildDeleteValidationResult>;
   validateAtDeleteEdge?: () => RebuildDeleteValidationResult;
   onDeleted: () => void;
   onDeleteStateAmbiguous?: () => void;
@@ -285,7 +287,7 @@ export async function runRebuildDestroyPhase(
       if (validateAfterMcpPreparation) {
         let validation: RebuildDeleteValidationResult;
         try {
-          validation = await validateAfterMcpPreparation();
+          validation = await validateAfterMcpPreparation(preparation);
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
           log(`Unexpected DCode replacement validation failure: ${redactFull(detail)}`);
@@ -332,10 +334,17 @@ export async function runRebuildDestroyPhase(
       await mcpPreparation.revalidateBeforeDelete?.();
       mcpPreparation.assertDeleteEdgeUnchanged?.();
     } catch (error) {
+      const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
+        sandboxName,
+        rebuildDetachedMcpProviderEntries,
+        rebuildScrubbedMcpAdapterEntries,
+      );
       relockShieldsIfNeeded(true);
       const detail = error instanceof Error ? error.message : String(error);
       bail(
-        `Failed to revalidate read-only MCP recovery before sandbox deletion: ${redactFull(detail)}`,
+        mcpRecoveryFailure
+          ? `Failed to revalidate MCP recovery before sandbox deletion: ${redactFull(detail)} MCP provider recovery also failed: ${mcpRecoveryFailure}`
+          : `Failed to revalidate MCP recovery before sandbox deletion: ${redactFull(detail)}`,
       );
       return null;
     }

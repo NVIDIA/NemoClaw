@@ -32,12 +32,12 @@ const testState = vi.hoisted(() => {
     executeSandboxExecCommand: vi.fn(),
     failProviderDelete: null as string | null,
     failProviderDetach: null as string | null,
+    getSandboxPolicy: vi.fn(),
     getLiveSandboxPolicyEntryDigest: vi.fn(),
     getPresetContentGatewayState: vi.fn(),
     home,
     originalEnv,
     policyApplyCalls: 0,
-    republishCurrentPolicyDocument: vi.fn(),
     removedPolicyKeys: new Set<string>(),
     providers: new Map<
       string,
@@ -51,7 +51,6 @@ const testState = vi.hoisted(() => {
     runOpenshellProviderCommand: vi.fn(),
     stopNimContainer: vi.fn(),
     stopNimContainerByName: vi.fn(),
-    suppressCredentialUntilPolicyRepublish: false,
     warnUnpreservedUserManagedFiles: vi.fn(),
   };
 });
@@ -74,11 +73,11 @@ vi.mock("../../src/lib/gateway-runtime-action", () => ({
   recoverNamedGatewayRuntime: testState.recoverNamedGatewayRuntime,
 }));
 
-vi.mock("../../src/lib/policy", () => ({
+vi.mock("../../src/lib/policy", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/lib/policy")>()),
   applyPresetContent: testState.applyPresetContent,
   getLiveSandboxPolicyEntryDigest: testState.getLiveSandboxPolicyEntryDigest,
   getPresetContentGatewayState: testState.getPresetContentGatewayState,
-  republishCurrentPolicyDocument: testState.republishCurrentPolicyDocument,
   removePreset: testState.removePreset,
 }));
 
@@ -86,6 +85,10 @@ vi.mock("../../src/lib/actions/sandbox/process-recovery", () => ({
   executeGatewaySupervisorAction: testState.executeGatewaySupervisorAction,
   executeSandboxCommand: testState.executeSandboxCommand,
   executeSandboxExecCommand: testState.executeSandboxExecCommand,
+}));
+
+vi.mock("../../src/lib/actions/sandbox/policy-get", () => ({
+  getSandboxPolicy: testState.getSandboxPolicy,
 }));
 
 vi.mock("../../src/lib/actions/sandbox/rebuild-flow-helpers", async (importOriginal) => ({
@@ -204,7 +207,6 @@ beforeEach(() => {
   testState.adapterCalls.length = 0;
   testState.adapterRegistered = true;
   testState.policyApplyCalls = 0;
-  testState.suppressCredentialUntilPolicyRepublish = false;
   testState.removedPolicyKeys.clear();
   testState.failProviderDelete = null;
   testState.failProviderDetach = null;
@@ -234,9 +236,17 @@ beforeEach(() => {
     testState.removedPolicyKeys.add(policyName.replaceAll("-", "_"));
     return true;
   });
-  testState.republishCurrentPolicyDocument.mockImplementation(() => {
-    testState.suppressCredentialUntilPolicyRepublish = false;
-    return true;
+  testState.getSandboxPolicy.mockImplementation(() => {
+    const entries = ["mcp_bridge_github", "mcp_bridge_slack"].filter(
+      (key) => !testState.removedPolicyKeys.has(key),
+    );
+    return {
+      raw: "",
+      yaml:
+        entries.length === 0
+          ? "version: 1\nnetwork_policies: {}\n"
+          : `version: 1\nnetwork_policies:\n${entries.map((key) => `  ${key}: {}`).join("\n")}\n`,
+    };
   });
   testState.runOpenshell.mockReturnValue({ status: 0, stdout: "", stderr: "" });
   testState.resolveHostAddresses.mockImplementation(async (host: string) => [{ address: host }]);
@@ -349,13 +359,11 @@ beforeEach(() => {
     const encoded = command.match(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d/)?.[1] ?? "";
     const proof = encoded ? Buffer.from(encoded, "base64").toString("utf8") : command;
     const isRevisionObservation = proof.includes("printf '%s\\n' absent");
-    const credentialRevision = testState.suppressCredentialUntilPolicyRepublish
-      ? null
-      : findObservedCredentialRevision(
-          proof,
-          testState.attachedProviders,
-          testState.providers,
-        );
+    const credentialRevision = findObservedCredentialRevision(
+      proof,
+      testState.attachedProviders,
+      testState.providers,
+    );
     return {
       status:
         isNoopProbe ||
@@ -1074,10 +1082,26 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     const preparation = await bridge.prepareMcpBridgesForRebuild("alpha");
 
     expect(preparation.entries).toEqual([bridgeEntries.github]);
+    expect(preparation.policyHandoff).toContain("mcp_bridge_github");
     expect(testState.removePreset).toHaveBeenCalledWith(
       "alpha",
       "mcp-bridge-github",
       expect.objectContaining({ presetContent: expect.any(String) }),
+    );
+    await expect(preparation.revalidateBeforeDelete?.()).resolves.toBeUndefined();
+  });
+
+  it("rejects a host policy edit that lands after the bounded rebuild handoff", async () => {
+    registerAlphaGithubBridge();
+
+    const preparation = await bridge.prepareMcpBridgesForRebuild("alpha");
+    testState.getSandboxPolicy.mockReturnValue({
+      raw: "",
+      yaml: "version: 1\nnetwork_policies:\n  concurrent_host_edit: {}\n",
+    });
+
+    await expect(preparation.revalidateBeforeDelete?.()).rejects.toThrow(
+      /OpenShell policy changed while preparing MCP teardown/u,
     );
   });
 
@@ -1236,29 +1260,6 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect([...testState.attachedProviders]).toContain("alpha-mcp-github");
     expect(testState.adapterRegistered).toBe(true);
     expect(testState.policyApplyCalls).toBe(0);
-  });
-
-  it("republishes the preserved rebuild policy only when an attached credential is absent", async () => {
-    testState.suppressCredentialUntilPolicyRepublish = true;
-    testState.attachedProviders.delete("alpha-mcp-github");
-    testState.adapterRegistered = false;
-    registry.registerSandbox({
-      name: "alpha",
-      agent: "openclaw",
-      gatewayName: "nemoclaw",
-      mcp: { bridges: { github: bridgeEntries.github } },
-    });
-
-    await bridge.restoreMcpBridgesAfterRebuild("alpha", [bridgeEntries.github]);
-
-    expect(testState.republishCurrentPolicyDocument).toHaveBeenCalledOnce();
-    expect(testState.republishCurrentPolicyDocument).toHaveBeenCalledWith(
-      "alpha",
-      "refresh MCP credential projection for 'github'",
-    );
-    expect(testState.applyPresetContent).not.toHaveBeenCalled();
-    expect([...testState.attachedProviders]).toContain("alpha-mcp-github");
-    expect(testState.adapterRegistered).toBe(true);
   });
 
   it.each([

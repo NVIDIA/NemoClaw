@@ -75,12 +75,23 @@ describe("rebuildSandbox flow: lifecycle", () => {
       createdAt: "2026-06-01T00:00:00.000Z",
       updatedAt: "2026-06-01T00:00:00.000Z",
     };
+    const completePolicy = [
+      "version: 1",
+      "network_policies:",
+      "  durable_user_policy: {}",
+      "  mcp_bridge_github:",
+      "    endpoints:",
+      "      - credential_binding:",
+      "          provider: nemoclaw-mcp-alpha-github",
+      "",
+    ].join("\n");
     const harness = createRebuildFlowHarness({
       applyPreset: () => true,
       sandboxEntry: {},
       mcpPreparation: {
         entries: [mcpEntry],
         detachedProviderEntries: [mcpEntry],
+        policyHandoff: completePolicy,
       },
       onboard: (_session, options) => {
         innerBackupMarker = process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
@@ -88,23 +99,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
         recreatedPolicy = fs.readFileSync(rebuildPolicySourcePath, "utf8");
       },
     });
-    vi.mocked(policyGet.getSandboxPolicy)
-      .mockReset()
-      .mockReturnValueOnce({
-        yaml: [
-          "version: 1",
-          "network_policies:",
-          "  durable_user_policy: {}",
-          "  mcp_bridge_github:",
-          "    endpoints:",
-          "      - credential_binding:",
-          "          provider: nemoclaw-mcp-alpha-github",
-          "",
-        ].join("\n"),
-      })
-      .mockReturnValue({
-        yaml: "version: 1\nnetwork_policies:\n  durable_user_policy: {}\n",
-      });
+    vi.mocked(policyGet.getSandboxPolicy).mockReset().mockReturnValue({ yaml: completePolicy });
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes", "--verbose"], { throwOnError: true }),
@@ -133,10 +128,10 @@ describe("rebuildSandbox flow: lifecycle", () => {
       }),
     );
     expect(innerBackupMarker).toBe("1");
-    expect(policyGet.getSandboxPolicy).toHaveBeenCalledTimes(2);
+    expect(policyGet.getSandboxPolicy).toHaveBeenCalledOnce();
     expect(recreatedPolicy).toContain("durable_user_policy");
-    expect(recreatedPolicy).not.toContain("mcp_bridge_github");
-    expect(recreatedPolicy).not.toContain("nemoclaw-mcp-alpha-github");
+    expect(recreatedPolicy).toContain("mcp_bridge_github");
+    expect(recreatedPolicy).toContain("nemoclaw-mcp-alpha-github");
     expect(rebuildPolicySourcePath).toBeDefined();
     expect(fs.existsSync(path.dirname(rebuildPolicySourcePath!))).toBe(false);
     expect(process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP).toBe("0");

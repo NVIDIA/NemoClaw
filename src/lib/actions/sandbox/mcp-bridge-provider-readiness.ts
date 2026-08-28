@@ -225,7 +225,7 @@ export function waitForAttachedMcpCredential(
   );
   if (!ready) {
     throw new McpBridgeError(
-      `OpenShell did not synchronize the expected credential revision for placeholder '${envName}' into sandbox '${sandboxName}' after provider attachment or update (last bounded observation: ${describeMcpCredentialRevisionAttempt(lastAttempt)}; post-policy refresh attempted: ${refreshedAfterObservedAbsence ? "yes" : "no"}).`,
+      `OpenShell did not synchronize the expected credential revision for placeholder '${envName}' into sandbox '${sandboxName}' after provider attachment or update (last bounded observation: ${describeMcpCredentialRevisionAttempt(lastAttempt)}; post-absence provider refresh attempted: ${refreshedAfterObservedAbsence ? "yes" : "no"}).`,
     );
   }
   if (attachedRevision === undefined) {

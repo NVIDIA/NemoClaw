@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
+
+import YAML from "yaml";
+
 import type { McpBridgeEntry } from "../../state/registry";
+import * as policies from "../../policy";
 import {
   rollbackScrubbedMcpAdapters,
   scrubManagedMcpAdapterOrThrow,
@@ -16,6 +21,7 @@ import {
 import {
   assertGeneratedPolicyMutationSafe,
   assertGeneratedPolicyRegistrationMutationSafe,
+  buildMcpBridgePolicyKey,
   removeGeneratedPolicy,
 } from "./mcp-bridge-policy";
 import {
@@ -39,15 +45,49 @@ import {
   setBridgeState,
 } from "./mcp-bridge-state";
 import { assertAuthenticatedBridgeEntry, validateSandboxName } from "./mcp-bridge-validation";
+import { getSandboxPolicy } from "./policy-get";
 
 export interface McpRebuildPreparation {
   entries: McpBridgeEntry[];
   detachedProviderEntries: McpBridgeEntry[];
   scrubbedAdapterEntries: McpScrubbedAdapterEntry[];
-  /** Full read-only target, policy, provider, and registry proof before delete. */
+  /** Complete live OpenShell policy captured immediately before MCP teardown. */
+  policyHandoff?: string;
+  /** Full target, policy, provider, and registry proof before delete. */
   revalidateBeforeDelete?: () => Promise<void>;
   /** Final synchronous registry-only proof immediately before delete. */
   assertDeleteEdgeUnchanged?: () => void;
+}
+
+function policyDocumentsMatch(left: string, right: string): boolean {
+  try {
+    return isDeepStrictEqual(YAML.parse(left), YAML.parse(right));
+  } catch {
+    return false;
+  }
+}
+
+function policyWithoutManagedMcpEntries(
+  policyHandoff: string,
+  entries: readonly McpBridgeEntry[],
+): string {
+  return entries.reduce(
+    (policy, entry) =>
+      policies.removePresetFromPolicy(policy, `  ${buildMcpBridgePolicyKey(entry.server)}: {}\n`),
+    policyHandoff,
+  );
+}
+
+function assertMcpTeardownPolicyUnchanged(
+  sandboxName: string,
+  expectedTeardownPolicy: string,
+): void {
+  const currentPolicy = getSandboxPolicy(sandboxName).yaml;
+  if (!currentPolicy || !policyDocumentsMatch(currentPolicy, expectedTeardownPolicy)) {
+    throw new McpBridgeError(
+      `OpenShell policy changed while preparing MCP teardown for sandbox '${sandboxName}'. Refusing sandbox deletion.`,
+    );
+  }
 }
 
 export { prepareMcpBridgesForExecUnavailableRebuild } from "./mcp-bridge-rebuild-exec-unavailable";
@@ -133,6 +173,18 @@ export async function prepareMcpBridgesForRebuild(
   assertMcpAdapterTeardownRuntimeCapabilities(sandboxName, sandbox, entries);
   for (const entry of entries) assertMcpProviderRecoverable(entry);
   assertNoProviderCredentialCollisions(sandboxName, entries);
+  // This is the bounded replacement handoff, not a durable NemoClaw policy
+  // record. Capture OpenShell immediately before the internal teardown
+  // mutations so the replacement receives the complete operator-owned
+  // document, including the MCP rules that must be removed temporarily from
+  // the still-running source sandbox before provider detach.
+  const policyHandoff = getSandboxPolicy(sandboxName).yaml;
+  if (!policyHandoff) {
+    throw new McpBridgeError(
+      `Could not capture the live OpenShell policy before MCP teardown for sandbox '${sandboxName}'.`,
+    );
+  }
+  const expectedTeardownPolicy = policyWithoutManagedMcpEntries(policyHandoff, entries);
   const detached: McpBridgeEntry[] = [];
   const scrubbedAdapters: McpScrubbedAdapterEntry[] = [];
   const removedPolicies: McpBridgeEntry[] = [];
@@ -166,6 +218,7 @@ export async function prepareMcpBridgesForRebuild(
       // reattached if sandbox deletion later aborts.
       detached.push(entry);
     }
+    assertMcpTeardownPolicyUnchanged(sandboxName, expectedTeardownPolicy);
   } catch (error) {
     const rollbackFailures: string[] = [];
     let runtimeRestored = false;
@@ -195,6 +248,10 @@ export async function prepareMcpBridgesForRebuild(
     entries,
     detachedProviderEntries: detached,
     scrubbedAdapterEntries: scrubbedAdapters,
+    policyHandoff,
+    revalidateBeforeDelete: async () => {
+      assertMcpTeardownPolicyUnchanged(sandboxName, expectedTeardownPolicy);
+    },
   };
 }
 
