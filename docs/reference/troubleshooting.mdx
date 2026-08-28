@@ -485,7 +485,7 @@ openshell gateway list
 If this happened after the deprecated global `$$nemoclaw stop`, read the command's final status line.
 Without a resolved sandbox name, the command releases a gateway only when a valid, explicitly set `NEMOCLAW_GATEWAY_PORT` selects it.
 `Host services stopped; managed gateway not released.` means the command stopped scoped host services but intentionally left the gateway listener running.
-After `openshell gateway list` confirms the exact target port, rerun the deprecated full stop with that scope only when you intend to release that gateway:
+After `openshell gateway list` confirms the target port, rerun the deprecated full stop with that scope only when you intend to release that gateway:
 
 ```bash
 NEMOCLAW_GATEWAY_PORT=9000 $$nemoclaw stop
@@ -687,7 +687,7 @@ When no service manager owns the gateway, NemoClaw runs it standalone.
 Before it offers the state move in that case, the gateway runtime checks the recorded process and scans current gateway process identities for the runtime namespace tied to the selected state directory.
 It withholds the move unless that scan establishes that the standalone gateway state is unused.
 
-When NemoClaw prints the state move, run the exact commands it prints:
+When NemoClaw prints the state move, run the commands it prints:
 
 1. Stop the owning gateway service, when the printed chain includes that step.
 2. Create the printed `.incompatible` archive with owner-only access.
@@ -839,7 +839,7 @@ $$nemoclaw onboard
 This reachability check uses a disposable Docker probe and does not create or replace a sandbox.
 If Docker GPU compatibility recreation fails later, follow [GPU routing or compatibility patch failed](#gpu-routing-or-compatibility-patch-failed).
 That path can restore the pre-patch sandbox.
-If its diagnostics report manual cleanup, use only the printed exact-container command.
+If its diagnostics report manual cleanup, use only the printed container command.
 That command targets the failed replacement and preserves the restored sandbox.
 
 <AgentOnly variant="openclaw">
@@ -857,14 +857,14 @@ For the version-pinned plugin workflow, refer to [Install OpenClaw Plugins](../m
 If the sandbox is unreachable or the managed runtime paths are present, NemoClaw retains the existing generic gateway-log and host OpenShell-log guidance because the base-only failure is not proven.
 
 A custom image without the managed runtime can fail while NemoClaw starts the sandbox container.
-NemoClaw reports exit code 127 without assigning a cause unless captured logs contain the exact `env` error for missing `nemoclaw-start`.
+NemoClaw reports exit code 127 without assigning a cause unless captured logs contain the `env` error for missing `nemoclaw-start`.
 When that error is present, the failure output identifies the missing managed startup command and gives the same rebuild guidance.
 If NemoClaw saves pre-rollback diagnostics, the reported directory contains the captured container logs.
 If rollback succeeds, NemoClaw restores and starts the pre-patch sandbox container.
 It does not print a sandbox deletion command for the restored sandbox.
-If the failed replacement container remains, NemoClaw prints an exact-container Docker cleanup command.
-If NemoClaw cannot confirm whether the replacement remains but retains its validated exact ID, it prints the same target-safe command.
-Without a validated exact ID, it reports cleanup as unknown and prints no deletion command.
+If the failed replacement container remains, NemoClaw prints a container-specific Docker cleanup command.
+If NemoClaw cannot confirm whether the replacement remains but retains its validated ID, it prints the same target-safe command.
+Without a validated ID, it reports cleanup as unknown and prints no deletion command.
 If rollback fails, sandbox and container state can be uncertain.
 If NemoClaw reports a diagnostics directory, inspect it.
 Inspect the diagnostics before removing any container.
@@ -949,7 +949,7 @@ Recover the sandbox with `$$nemoclaw <name> recover`.
 
 If the watchdog reports `health probe inconclusive`, the probe itself could not run inside the sandbox.
 An inconclusive probe leaves the gateway untouched and preserves the current not-serving count, whether the watchdog is counting since launch or since the last serving response.
-If `curl` is missing, the watchdog reports this exact diagnostic:
+If `curl` is missing, the watchdog reports this diagnostic:
 
 ```text
 [gateway-watchdog] curl is unavailable; serving watchdog disabled (#7377)
@@ -1192,7 +1192,7 @@ When the submission finishes, NemoClaw removes that directory, whether or not th
 If cleanup fails, NemoClaw reports the directory that still holds the policy instead of reporting the submission result.
 
 When NemoClaw reports this directory, do not retry the policy operation.
-Use Bash to enter and validate the exact path from the error before you remove its contents:
+Use Bash to enter and validate the path from the error before you remove its contents:
 
 ```bash
 cleanup_retained_policy() {
@@ -1203,7 +1203,7 @@ cleanup_retained_policy() {
     return 1
   fi
   platform_tmp_root=${platform_tmp_root%/}
-  IFS= read -r -p 'Enter the exact temporary policy directory from the error: ' retained_policy_dir
+  IFS= read -r -p 'Enter the temporary policy directory from the error: ' retained_policy_dir
   python3 - "$platform_tmp_root" "$retained_policy_dir" <<'PY'
 import os
 import re
@@ -1319,7 +1319,7 @@ It fails if the directory contains anything else.
 It intentionally leaves the empty directory because deleting it later by pathname would reintroduce a directory-replacement race.
 Continue only after the procedure reports that the retained policy material was removed.
 Do not remove the empty directory by pathname.
-If validation or cleanup fails, preserve the exact path and complete error message for support.
+If validation or cleanup fails, preserve the path and complete error message for support.
 Do not use another removal command on that path.
 
 After temporary-directory cleanup, treat the gateway state as unknown because the cleanup error replaced the submission result.
@@ -1381,7 +1381,7 @@ The [failed-session recovery steps](#previous-onboarding-session-failed) provide
   Preserve the original unconfirmed error and the complete `policy list` output for support.
 - If `policy list` reports no disagreement for the unconfirmed mutation, compare the live preset set with the selection in the failed session.
   Resume only if the live policy still requires the unconfirmed addition or removal to match that selection.
-  Otherwise, start fresh onboarding and select the exact preset set that `policy list` reports as active.
+  Otherwise, start fresh onboarding and select the preset set that `policy list` reports as active.
 
 ### Previous onboarding session failed
 
@@ -1486,7 +1486,7 @@ $$nemoclaw onboard --experimental-profile portable --fresh
 <AgentOnly variant="openclaw">
 
 OpenClaw resume does not repeat completed non-secret sandbox, web search, messaging, or resource choices.
-Resume also reuses registered web search and messaging credentials when the same onboarding session recorded their successful OpenShell registration and OpenShell still reports the exact expected name, type, and credential keys.
+Resume also reuses registered web search and messaging credentials when the same onboarding session recorded their successful OpenShell registration and OpenShell still reports the recorded name and type and the same credential-key set.
 If the session lacks that registration receipt, the provider is missing, or its binding does not match, interactive resume requests the credential again; non-interactive resume preserves the completed choice, reports the required environment variable, and exits so you can export it before retrying `$$nemoclaw onboard --resume`.
 
 </AgentOnly>
@@ -1735,7 +1735,7 @@ On a direct-container deployment, first confirm that the sandbox is running:
 $$nemoclaw <name> status
 ```
 
-When `recover` repairs a stopped built-in gateway, NemoClaw repeats the recovery action only for these exact transient results:
+When `recover` repairs a stopped built-in gateway, NemoClaw repeats the recovery action only for these transient results:
 
 - Status `1` with blank stdout and exactly one stderr line: `SUPERVISOR_NOT_RUNNING`, `SUPERVISOR_DISCOVERY_PENDING`, `PRIVILEGED_CONTROL_UNAVAILABLE`, or `GATEWAY_HEALTH_TIMEOUT`.
 - Status `1` with blank stdout and exactly one stderr line, `SUPERVISOR_BUSY`.
@@ -1763,7 +1763,7 @@ To bypass that trusted recreation while troubleshooting, run `NEMOCLAW_DISABLE_S
 If recovery stops after 3 `SUPERVISOR_BUSY` results, or if `gateway restart` reports `SUPERVISOR_BUSY`, wait for the active request to finish and retry the command.
 If recovery exhausts the transition bound after status `137` or the Docker restart result, wait for the container to finish restarting and retry the command.
 If the error mentions `SUPERVISOR_NOT_RUNNING` and trusted recreation could not proceed, `SUPERVISOR_REBUILD_REQUIRED`, a missing `nemoclaw-gateway-control` helper, or a missing managed controller, the sandbox image may predate the current lifecycle contract.
-An exact `SUPERVISOR_UNAVAILABLE` result instead means the managed controller refused the current supervisor state rather than guessing which same-UID process is the gateway.
+A `SUPERVISOR_UNAVAILABLE` result instead means the managed controller refused the current supervisor state rather than guessing which same-UID process is the gateway.
 The current recovery action and any managed settle confirmation stop immediately.
 If `recover` reports this result, follow its host-side `gateway restart` guidance.
 If restart also reports `SUPERVISOR_UNAVAILABLE`, or the image is incompatible, rebuild the image:
@@ -1789,7 +1789,7 @@ If the command says shields are up, run `$$nemoclaw <name> shields down` before 
 
 ### A Hermes command reports that runtime provider state mutation owns direct-container execution
 
-A current managed Hermes image on the Docker driver can report this retryable refusal while an exact Shields provider fence is active:
+A current managed Hermes image on the Docker driver can report this retryable refusal while a Shields provider fence is active:
 
 ```text
 Runtime provider state mutation owns direct-container execution for sandbox '<name>'; retry after the provider fence is released.
@@ -1812,7 +1812,7 @@ Use the status result as follows:
 
 Hermes can also log `[SECURITY] Hermes startup held by an active runtime state mutation.` before it reads mutable state.
 Do not kill or manually restart the held entrypoint.
-Run `$$nemoclaw <name> shields status` from the host so NemoClaw can recover the exact retained target and authenticate the startup release.
+Run `$$nemoclaw <name> shields status` from the host so NemoClaw can recover the retained target and authenticate the startup release.
 If recovery still fails, preserve the owner-only lifecycle ledger and the complete error for diagnosis instead of removing a marker or changing in-sandbox permissions.
 
 ### Hermes startup reports `HERMES_CONFIG_MUTATION_ORPHANED`
@@ -1923,14 +1923,14 @@ For more information about the interpreter requirement, refer to [Prerequisites]
 If NemoClaw reports that it removed the incomplete snapshot, install or repair `python3` at an accepted location.
 Then rerun the complete command.
 
-If cleanup fails, treat the exact reported directory as retained until you confirm that it is absent.
+If cleanup fails, treat the reported directory as retained until you confirm that it is absent.
 
 <Warning title="Retained Incomplete Snapshot">
 A retained incomplete snapshot can contain unsanitized credentials.
 The directory must remain owner-only.
 You must not restore, copy, or share the directory.
-You must remove the directory only by the exact path that NemoClaw reports.
-You must confirm that the exact path no longer exists before you rerun the complete command.
+You must remove the directory only by the path that NemoClaw reports.
+You must confirm that the path no longer exists before you rerun the complete command.
 </Warning>
 
 ### Sandbox shows as stopped
@@ -2453,7 +2453,7 @@ It does not cover the inference probe.
 
 For a newly created OpenClaw or Hermes sandbox, `Ready` is not the final acceptance signal.
 Within this same budget, NemoClaw also requires OpenShell to return a durable sandbox ID and accept `openshell sandbox exec --name <sandbox> -- true`.
-NemoClaw keeps waiting only when OpenShell returns its exact `sandbox is not ready` response.
+NemoClaw keeps waiting only when OpenShell returns its `sandbox is not ready` response.
 A missing or malformed ID, or another command failure, stops the wait.
 Ordinary onboarding then follows the failed-creation cleanup path.
 Portable OpenClaw onboarding preserves the sandbox as described below.
@@ -2480,16 +2480,16 @@ If cleanup fails, NemoClaw instead reports that the failed sandbox could not be 
 
 <AgentOnly variant="openclaw">
 
-Portable OpenClaw onboarding preserves the sandbox when NemoClaw cannot verify its exact runtime identity.
+Portable OpenClaw onboarding preserves the sandbox when NemoClaw cannot verify its runtime identity.
 It does not start dashboard forwarding on this failure path.
 Inspect the preserved sandbox with the status commands below, then follow the recovery guidance from `$$nemoclaw <name> status`.
 
 </AgentOnly>
 
 The failure path also differs when NemoClaw recreates an OpenShell-managed Docker runtime immediately before this wait.
-NemoClaw pins the exact OpenShell sandbox ID before recreation.
-Within the same deadline, NemoClaw requires two consecutive `Ready` observations that each confirm the exact ID and successful command execution.
-It retries only OpenShell's exact `sandbox is not ready` response.
+NemoClaw pins the OpenShell sandbox ID before recreation.
+Within the same deadline, NemoClaw requires two consecutive `Ready` observations that each confirm the ID and successful command execution.
+It retries only OpenShell's `sandbox is not ready` response.
 If the deadline expires, the ID changes, or another probe fails, NemoClaw preserves diagnostics and attempts to restore the pre-recreation Docker container.
 If restoration fails, NemoClaw reports that the sandbox and container state is uncertain.
 NemoClaw does not start dashboard or other host forwarding, and it does not delete a sandbox by its mutable name.
@@ -2835,7 +2835,7 @@ $$nemoclaw <sandbox> doctor --fix
 
 `$$nemoclaw <sandbox> doctor` reports the drift as a `Config permissions` warning, and `--fix` restores `2770/660`.
 Restarting the sandbox repairs the same drift automatically when the config tree passes its safety checks, and NemoClaw's own `rebuild` re-applies the contract after its post-upgrade `openclaw doctor --fix` step.
-For a persisted root-owned `700/600` tree, startup reclaims ownership only when both fixed config files have that exact posture under the expected sandbox-owned parent.
+For a persisted root-owned `700/600` tree, startup reclaims ownership only when both fixed config files have that posture under the expected sandbox-owned parent.
 Other root-owned layouts, links, mounts, and ambiguous metadata fail closed so startup cannot mistake a shields-locked or unsafe tree for mutable drift.
 If startup reports `[SECURITY] Refusing mutable config permission normalization`, NemoClaw stops startup without following or modifying the unsafe target; safe permission repairs completed before detection are not rolled back.
 Rebuild with the current image and trusted host-side configuration instead of repairing the tree recursively.
@@ -2930,7 +2930,7 @@ https
 NODE
 ```
 
-Any HTTP status from these probes means the Node process reached the endpoint; the exact status can vary by unauthenticated path.
+Any HTTP status from these probes means the Node process reached the endpoint; the status can vary by unauthenticated path.
 If the Node REST probe works but the Discord channel is still unhealthy, investigate the native gateway path instead of widening the preset.
 Check the gateway logs and blocked-request output with `openshell term`, and look for `gateway.discord.gg` connection or WebSocket upgrade failures.
 
@@ -3395,7 +3395,7 @@ Run `fix-coredns.sh` to point CoreDNS at the container gateway IP instead, then 
 After building a new sandbox image, `k3s` inside the gateway container sometimes fails to pull it even though the image exists on the host.
 Remove the gateway registration, then resume onboarding.
 If a privileged host gateway remains, do not use a host-wide process match.
-Verify its live owner, exact gateway name and port, command line, PID file, runtime marker, and loaded sandbox namespace immediately before you stop it.
+Verify its live owner, gateway name and port, command line, PID file, runtime marker, and loaded sandbox namespace immediately before you stop it.
 
 ```bash
 openshell gateway remove nemoclaw
@@ -3417,7 +3417,7 @@ Recent NVIDIA Container Toolkit installs configure the Docker daemon for Contain
 If no `nvidia.com/gpu` CDI spec has been generated on the host yet, gateway start fails with `Docker responded with status code 500: CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all`.
 Outside Station Express, the standard NemoClaw installer detects this gap before onboarding, first tries to enable the NVIDIA CDI refresh systemd units, and can fall back to generating the spec directly with `nvidia-ctk`.
 Station Express never falls back to direct CDI generation.
-The generic Ubuntu, Colossus BaseOS, and exact AI Developer Tools paths require the packaged refresh lifecycle to work; if it fails or omits `nvidia.com/gpu=all`, inspect `nvidia-cdi-refresh.service`, repair it, and rerun the printed exact-commit install command.
+The generic Ubuntu, Colossus BaseOS, and AI Developer Tools paths require the packaged refresh lifecycle to work; if it fails or omits `nvidia.com/gpu=all`, inspect `nvidia-cdi-refresh.service`, repair it, and rerun the printed install command pinned to that commit.
 Other factory-runtime profiles stop when the CDI device is missing without enabling or restarting the refresh units.
 If you run `$$nemoclaw onboard` directly, preflight prints the manual remediation instead.
 The native Linux fix is the same on Docker hosts whose `docker info` advertises a non-empty `CDISpecDirs`.
@@ -3462,10 +3462,10 @@ Do not set `fallback`, `1`, or another legacy nonzero value for a portable run.
 | --- | --- | --- |
 | Native `--gpu` is rejected, host runtime evidence identifies GPU injection failure, or an explicit driver proof fails and host configuration confirms no GPU attachment | Ordinary Linux native attempt | The default native-only route stops. Retry with `NEMOCLAW_DOCKER_GPU_PATCH=fallback` only if you explicitly accept one bounded compatibility retry, or use `=1` to select compatibility before creation. |
 | `Cleanup could not be proven safe` | Native-to-compatibility handoff | Run the printed sandbox deletion command, verify both the gateway row and OpenShell-managed Docker containers labeled for that sandbox are absent, then rerun onboarding. |
-| The patched container exits or the compatibility attempt fails | Compatibility recreation | Inspect the saved diagnostics and the rollback outcome, then repair the NVIDIA Container Toolkit/CDI configuration. Keep the sandbox when the pre-patch container was restored. Use only an exact-container cleanup command printed after rollback. If no command was printed, inspect the sandbox and its labeled containers before removing anything. Then rerun onboarding. |
+| The patched container exits or the compatibility attempt fails | Compatibility recreation | Inspect the saved diagnostics and the rollback outcome, then repair the NVIDIA Container Toolkit/CDI configuration. Keep the sandbox when the pre-patch container was restored. Use only a container-specific cleanup command printed after rollback. If no command was printed, inspect the sandbox and its labeled containers before removing anything. Then rerun onboarding. |
 | A recreated container inherits only a loopback DNS stub and no usable upstream | Compatibility DNS fallback | Repair the host's `systemd-resolved` upstream configuration, then rerun onboarding. |
 
-For bridge-networked compatibility recreation without an explicit container DNS setting, NemoClaw selects a usable IPv4 upstream from `systemd-resolved` and probes that exact `--dns` path before it stops the original container.
+For bridge-networked compatibility recreation without an explicit container DNS setting, NemoClaw selects a usable IPv4 upstream from `systemd-resolved` and probes that `--dns` path before it stops the original container.
 If the probe confirms that the resolver is unreachable, recreation stops and leaves the original container in place.
 An IPv6-only upstream list does not become a compatibility override; NemoClaw preserves Docker's default resolver path instead.
 Containers with explicit DNS settings or host networking keep their existing DNS path and do not use the fallback probe.
@@ -3475,7 +3475,7 @@ Containers with explicit DNS settings or host networking keep their existing DNS
 Ordinary Linux GPU onboarding uses native OpenShell GPU injection and stops on failure by default.
 Unset, `auto`, and `0` all preserve this native-only confinement boundary.
 `NEMOCLAW_DOCKER_GPU_PATCH=fallback` is the explicit operator authorization for one bounded retry.
-With that control set, if sandbox creation rejects the native GPU flag before progress, the exact OpenShell-managed container labeled for that sandbox records a host runtime GPU-injection error, or an explicit `nvidia-smi` driver proof fails while that container's immutable host configuration confirms that no GPU was attached, NemoClaw captures redacted diagnostics, deletes the incomplete sandbox, verifies that no OpenShell-managed Docker container labeled for that sandbox remains, and retries exactly once through the compatibility path.
+With that control set, if sandbox creation rejects the native GPU flag before progress, the OpenShell-managed container labeled for that sandbox records a host runtime GPU-injection error, or an explicit `nvidia-smi` driver proof fails while that container's immutable host configuration confirms that no GPU was attached, NemoClaw captures redacted diagnostics, deletes the incomplete sandbox, verifies that no OpenShell-managed Docker container labeled for that sandbox remains, and retries exactly once through the compatibility path.
 Free-form build/list text and sandbox-reported CUDA output never independently authorize the broader retry.
 Without corroborating host evidence, onboarding fails closed even when `fallback` is set and directs the operator to clean up and explicitly select compatibility with `NEMOCLAW_DOCKER_GPU_PATCH=1` if desired.
 Before the authorized retry, NemoClaw warns that the legacy GPU compatibility envelope recreates the OpenShell-managed Docker container and may relax container confinement compared with native injection.
@@ -3511,9 +3511,9 @@ Use `NEMOCLAW_DOCKER_GPU_PATCH=0` only for troubleshooting because it bypasses t
 After compatibility recreation starts, onboarding keeps the pre-patch container as a rollback backup until the replacement passes the Ready, direct GPU, and applicable local-inference checks.
 If a later check fails, onboarding prints failure diagnostics and attempts to restore the pre-patch container before it exits.
 When rollback succeeds, the pre-patch sandbox remains available.
-If the failed replacement may remain and NemoClaw retains its validated exact container ID, it prints only an exact-container `docker rm -f` command.
-When a replacement is not stably running, the failure diagnostic includes its exact runtime ID, inspected state, and a bounded redacted log tail when available.
-If replacement cleanup cannot be confirmed without a validated exact ID, onboarding reports cleanup as unknown and prints no deletion command.
+If the failed replacement may remain and NemoClaw retains its validated container ID, it prints only a container-specific `docker rm -f` command.
+When a replacement is not stably running, the failure diagnostic includes its runtime ID, inspected state, and a bounded redacted log tail when available.
+If replacement cleanup cannot be confirmed without a validated ID, onboarding reports cleanup as unknown and prints no deletion command.
 When rollback fails, onboarding reports that the sandbox and container state is uncertain and prints no deletion command.
 A diagnostic bundle captured before rollback records cleanup as pending and contains no deletion command.
 Inspect the diagnostics, the sandbox, and its labeled Docker containers before removing anything.
@@ -3665,7 +3665,7 @@ OLLAMA_CONTEXT_LENGTH=16384 ollama serve
 
 Hermes requires at least `64000` tokens.
 During onboarding, NemoClaw verifies the loaded model's actual `context_length` through Ollama's `/api/ps` endpoint.
-Resumed onboarding and sandbox rebuilds warm the exact recorded Ollama model and repeat this check before reusing its route.
+Resumed onboarding and sandbox rebuilds warm the recorded Ollama model and repeat this check before reusing its route.
 Resume stops when that recorded model is missing, Ollama is unreachable, model warm-up fails, or the runtime context cannot be verified.
 If you set `NEMOCLAW_CONTEXT_WINDOW` above `64000`, the loaded model must provide at least that larger value.
 If the runtime value is below the requirement, NemoClaw queries Ollama's `/api/show` endpoint for the selected model's native context window.
@@ -3873,7 +3873,7 @@ The error and file state identify the required recovery:
 | --- | --- | --- |
 | cgroups v2 is unavailable; the root file is missing | The host does not expose the cgroups v2 controller file at the expected mount. | Ask an administrator to boot or configure the Linux host with a cgroups v2 mount. |
 | Any controller file exists but is unreadable, or its read fails | The current user cannot read the existing hierarchy boundary. | Stop before changing delegation. Ask an administrator to restore read and directory-traversal access or correct the AppArmor, SELinux, or other Linux Security Module (LSM) policy that denied the read. Then run the classification command again. |
-| Any controller file is malformed | The file does not contain the bounded, space-separated controller names supplied by the kernel, so the hierarchy result is inconclusive. | Stop before changing delegation. Ask an administrator to inspect the cgroup filesystem and active security tooling for that exact file. Run the classification command again only after the file contains kernel-provided controller names. |
+| Any controller file is malformed | The file does not contain the bounded, space-separated controller names supplied by the kernel, so the hierarchy result is inconclusive. | Stop before changing delegation. Ask an administrator to inspect the cgroup filesystem and active security tooling for that file. Run the classification command again only after the file contains kernel-provided controller names. |
 | The kernel hierarchy does not expose `cpu`; the root file is readable | The root `cgroup.controllers` file does not contain the `cpu` controller. | Ask an administrator to enable the `cpu` controller in the host's kernel cgroup hierarchy. |
 | systemd did not expose `cpu`; the per-user-slice file is missing or does not contain `cpu` | The current user's `user-UID.slice` ancestor does not receive the `cpu` controller. | Apply all three named systemd drop-ins below. |
 | systemd did not delegate `cpu`; the user-manager file is missing or does not contain `cpu` | The current user's manager does not receive the `cpu` controller. | Apply all three named systemd drop-ins below. |
@@ -4107,19 +4107,19 @@ if [ "$creation_failed" != "0" ]; then
 fi
 ```
 
-If a creation command fails, do not reload systemd. Ask the administrator to inspect all three drop-in paths and their directories. Use the final value printed for every `*_created` record and its matching `device:inode` record. The initial `0` records describe only the state before creation starts; always route recovery from the final printed values. Do not search for staging names. Use only an exact `*_staging_dir_path` printed before its atomic `mkdir` attempt.
+If a creation command fails, do not reload systemd. Ask the administrator to inspect all three drop-in paths and their directories. Use the final value printed for every `*_created` record and its matching `device:inode` record. The initial `0` records describe only the state before creation starts; always route recovery from the final printed values. Do not search for staging names. Use only a `*_staging_dir_path` printed before its atomic `mkdir` attempt.
 
 Choose the cleanup route that matches the final records:
 
 - If any final `*_created` value is `0` but the same command printed its matching `*_id` afterward, that file or directory receipt was interrupted between its identity and final commit records. Retain that identity and replace the matching final `*_created` value with `1`. The general cleanup will require the path type and identity to match that record before removal.
-- If any final `*_drop_in_dir_created` or `*_staging_dir_created` value is `unrecorded`, do not treat a missing identity as proof of absence and do not enter the general partial cleanup. Complete [Recover an Unrecorded Drop-In Directory](#recover-an-unrecorded-drop-in-directory) for each exact recorded intent, replace each resolved final value with `0`, and leave its identity empty. Enter the general partial cleanup only after every final `*_created` value is `0` or `1`.
+- If any final `*_drop_in_dir_created` or `*_staging_dir_created` value is `unrecorded`, do not treat a missing identity as proof of absence and do not enter the general partial cleanup. Complete [Recover an Unrecorded Drop-In Directory](#recover-an-unrecorded-drop-in-directory) for each recorded intent, replace each resolved final value with `0`, and leave its identity empty. Enter the general partial cleanup only after every final `*_created` value is `0` or `1`.
 - Otherwise, when every final `*_created` value is `0` or `1` and every final `0` has an empty identity, go directly to [Clean Up a Partial Drop-In Creation](#clean-up-a-partial-drop-in-creation).
 
 #### Recover an Unrecorded Drop-In Directory
 
-If the final directory record is `created=unrecorded`, the procedure recorded an exact creation intent but did not commit a creation identity. The interruption can occur before `mkdir`, during it, or before its identity record. Do not treat the initial `created=0` record as proof that the directory was pre-existing. Do not use the general partial-creation cleanup until this state is resolved.
+If the final directory record is `created=unrecorded`, the procedure recorded a creation intent but did not commit a creation identity. The interruption can occur before `mkdir`, during it, or before its identity record. Do not treat the initial `created=0` record as proof that the directory was pre-existing. Do not use the general partial-creation cleanup until this state is resolved.
 
-Establish an exclusive host-configuration maintenance window with the administrator. Pause package operations and all other changes under `/etc/systemd/system` and `/etc/systemd/user` for the command's duration. Set `unrecorded_directory` to the exact recorded drop-in-directory path or unpredictable staging intent. The command accepts only those six exact paths, validates each staging name without scanning for basenames, requires the expected type and metadata, requires an empty directory, and binds removal to two matching identity reads.
+Establish an exclusive host-configuration maintenance window with the administrator. Pause package operations and all other changes under `/etc/systemd/system` and `/etc/systemd/user` for the command's duration. Set `unrecorded_directory` to the recorded drop-in-directory path or unpredictable staging intent. The command accepts only those six paths, validates each staging name without scanning for basenames, requires the expected type and metadata, requires an empty directory, and binds removal to two matching identity reads.
 
 ```bash
 unrecorded_directory="<exact-directory-from-identity-recording-error>"
@@ -4558,7 +4558,7 @@ Delegate=cpu memory pids
 CPUWeight=100
 ```
 
-Record all rollback lines from the creation command in the administrator's change record, including each file's last `created` value, each published file's `device:inode` value, and all three directory creation records. They identify the exact files and any directories created by this procedure and contain no credentials. Rollback must use those recorded values. If a required value is lost, do not use the removal command below; ask the administrator to inspect and remove the configuration through the host's normal change-management process.
+Record all rollback lines from the creation command in the administrator's change record, including each file's last `created` value, each published file's `device:inode` value, and all three directory creation records. They identify the files and any directories created by this procedure and contain no credentials. Rollback must use those recorded values. If a required value is lost, do not use the removal command below; ask the administrator to inspect and remove the configuration through the host's normal change-management process.
 
 The administrator's `sudo` policy can request authentication. NemoClaw never receives that credential.
 
@@ -5063,7 +5063,7 @@ systemctl --user start podman.socket
 
 These commands do not enable the socket for later user sessions.
 
-Then use the exact socket path from the NemoClaw failure to require a real server response:
+Then use the socket path from the NemoClaw failure to require a real server response:
 
 ```bash
 podman --remote \

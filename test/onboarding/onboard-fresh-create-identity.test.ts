@@ -46,6 +46,15 @@ describe("fresh create identity", () => {
     },
     {
       title:
+        "rejects pre-resolved nondefault agent intent before credential reads or sandbox inspection (#9833)",
+      apfInterceptorRequested: true,
+      provider: null,
+      model: null,
+      agent: null,
+      expectedOutcome: "resolved-agent-refusal" as const,
+    },
+    {
+      title:
         "registers providerless APF only after identity, policy, and checkpoint verification (#9833)",
       apfInterceptorRequested: true,
       provider: null,
@@ -599,6 +608,13 @@ if (${JSON.stringify(
 	    recreate: false,
 	    toolDisclosure: "progressive",
 	    observabilityEnabled: false,
+	    ...(${JSON.stringify(expectedOutcome === "resolved-agent-refusal")}
+	      ? {
+	          resolved: {
+	            policy: { options: { agentName: "hermes" } },
+	          },
+	        }
+	      : {}),
 	  };
 	  try {
 	    const sandboxName = await createSandbox(...createArgs);
@@ -771,10 +787,21 @@ if (${JSON.stringify(
         assertSuccessfulCreation();
         assert.equal(payload.registeredSandbox.policyAuthority, "externally-managed");
         assert.equal(payload.registeredSandbox.policyCreationReceipt, undefined);
-        assert.doesNotMatch(payload.createCommand, /(?:^|\s)--policy(?:\s|$)/u);
+        assert.deepEqual(payload.registeredSandbox.appliedPolicies ?? [], []);
+        assert.doesNotMatch(payload.createCommand, /(?:^|\s)--policy(?:=|\s)/u);
         assert.doesNotMatch(payload.createCommand, /(?:^|\s)--provider(?:\s|$)/u);
         assert.equal(payload.credentialReadCalls, 0);
         assert.deepEqual(providerExposureCommands, []);
+        const createIndex = payload.commandNames.findIndex((command: string) =>
+          command.includes("sandbox create"),
+        );
+        const deferredEffectIndexes = payload.commandNames
+          .map((command: string, index: number) => ({ command, index }))
+          .filter(({ command }: { command: string }) =>
+            /provider (?:profile import|create)|sandbox provider attach/u.test(command),
+          )
+          .map(({ index }: { index: number }) => index);
+        assert.ok(deferredEffectIndexes.every((index: number) => index > createIndex));
       };
       const assertPostCreateAuthorityRefusal = () => {
         assert.equal(payload.sandboxName, null);
@@ -1053,6 +1080,7 @@ if (${JSON.stringify(
         "managed-provider": assertManagedProviderCreation,
         "provider-refusal": assertProviderBackedApfRefusal,
         "unsupported-agent-refusal": assertUnsupportedAgentRefusal,
+        "resolved-agent-refusal": assertUnsupportedAgentRefusal,
         "providerless-apf": assertProviderlessApfCreation,
         "post-create-authority-refusal": assertPostCreateAuthorityRefusal,
         "post-create-runner-refusal": assertPostCreateRunnerRefusal,

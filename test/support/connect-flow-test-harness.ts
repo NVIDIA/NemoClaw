@@ -32,6 +32,7 @@ requireDist(connectModulePath);
 delete require.cache[requireDist.resolve(connectModulePath)];
 
 export type ConnectHarness = {
+  assertHermesPortableOperatingCommandCurrentSpy: MockInstance;
   applyVmDnsMonkeypatchSpy: MockInstance;
   captureOpenshellSpy: MockInstance;
   captureResolvedOpenshellSpy: MockInstance;
@@ -47,6 +48,7 @@ export type ConnectHarness = {
   inspectLaunchReadinessSpy: MockInstance;
   launchReadinessMutationGateSpy: MockInstance;
   publishLaunchReadinessSpy: MockInstance;
+  recoverHermesPortableOllamaInferenceSpy: MockInstance;
   settlePortablePairingSpy: MockInstance;
   preflightVllmSpy: MockInstance;
   probeLocalProviderHealthSpy: MockInstance;
@@ -76,6 +78,23 @@ export type ConnectHarnessOptions = {
     string | { status?: number | null; output?: string | null; stderr?: string | null }
   >;
   hermesConfig?: ConfigObject;
+  hermesInferenceRecoveryFailure?:
+    | "authority-drift"
+    | "runtime-restoration-unproved"
+    | "registry-restoration-unproved"
+    | "recovery-failed";
+  hermesInferenceRecoveryPhase?:
+    | "REGISTRY_PREPARATION_AUTHORITY"
+    | "REGISTRY_PREPARATION_START_DISPATCH"
+    | "REGISTRY_PREPARATION_SETTLEMENT_CURRENTNESS"
+    | "REGISTRY_PREPARATION_NETWORK_INSPECTION"
+    | "REGISTRY_PREPARATION_PINNED_REGISTRY_INSPECTION"
+    | "REGISTRY_PREPARATION_PENDING_DEADLINE"
+    | "REGISTRY_PREPARATION_POSTCONDITION"
+    | "RUNTIME_AUTHORITY"
+    | "LIFECYCLE_AUTHORITY"
+    | "PRIVATE_PUBLICATION_AUTHORITY"
+    | "EXACT_RUNTIME_INSPECTION";
   registryEntry?: Partial<SandboxEntry>;
   registryEntries?: Array<Partial<SandboxEntry> & Pick<SandboxEntry, "name">>;
   sessionAgent?: unknown;
@@ -162,6 +181,12 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const agentRuntime = requireDist("../../src/lib/agent/runtime.js");
   const dns = requireDist("../../src/lib/actions/dns/index.js");
   const gatewayState = requireDist("../../src/lib/actions/sandbox/gateway-state.js");
+  const hermesInferenceRecovery = requireDist(
+    "../../src/lib/actions/sandbox/probe/hermes-portable-inference-recovery.js",
+  );
+  const hermesOllamaInference = requireDist(
+    "../../src/lib/onboard/experimental/hermes-portable-ollama-inference.js",
+  );
   const processRecovery = requireDist("../../src/lib/actions/sandbox/process-recovery.js");
   const autoPairApproval = requireDist("../../src/lib/actions/sandbox/auto-pair-approval.js");
   const connectVllmPreflight = requireDist(
@@ -217,6 +242,16 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     },
     executablePath: "/usr/bin/openshell",
   });
+  const assertHermesPortableOperatingCommandCurrentSpy = vi.fn();
+  vi.spyOn(gatewayState, "qualifyHermesPortableOperatingCommandAuthority").mockReturnValue({
+    assertCurrent: assertHermesPortableOperatingCommandCurrentSpy,
+    env: {
+      HOME: "/home/test",
+      XDG_CONFIG_HOME: "/home/test/.config",
+      XDG_RUNTIME_DIR: "/run/user/1000",
+    },
+    executablePath: "/usr/bin/openshell",
+  });
   vi.spyOn(gatewayState, "assertHermesPortableLifecycleForConnect").mockImplementation(
     () => undefined,
   );
@@ -262,6 +297,26 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
       expected,
       portableAuthorityDeps(),
     )) as never);
+  const recoverHermesPortableOllamaInferenceSpy = vi
+    .spyOn(hermesInferenceRecovery, "recoverHermesPortableInferenceForConnectProbe")
+    .mockImplementation(((input: { verifyRoute: () => unknown }) => {
+      if (options.hermesInferenceRecoveryPhase) {
+        throw new hermesOllamaInference.HermesPortableOllamaRecoveryPhaseError(
+          options.hermesInferenceRecoveryPhase,
+        );
+      }
+      if (options.hermesInferenceRecoveryFailure === "recovery-failed") {
+        throw new Error("nested recovery diagnostic canary");
+      }
+      if (options.hermesInferenceRecoveryFailure) {
+        throw new hermesOllamaInference.HermesPortableOllamaRecoveryError(
+          options.hermesInferenceRecoveryFailure,
+          "nested recovery diagnostic canary",
+        );
+      }
+      input.verifyRoute();
+      return "reused";
+    }) as never);
   const requalifyPortableAgentAuthoritySpy = vi
     .spyOn(gatewayState, "requalifyPortableAgentSandboxAuthority")
     .mockReturnValue({ kind: "not-hermes" });
@@ -333,6 +388,14 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
           (options.agentName === "hermes"
             ? "Gateway inference:\n  Provider: ollama-local\n  Model: qwen3-vl:4b\n"
             : "Provider: unknown\nModel: unknown\n"),
+      };
+    }
+    if (argv[0] === "forward" && argv[1] === "list") {
+      const sandboxName = String(registryEntries[0]?.name ?? "alpha");
+      const port = String(registryEntries[0]?.dashboardPort ?? 18_789);
+      return {
+        status: 0,
+        output: `SANDBOX BIND PORT PID STATUS\n${sandboxName} 127.0.0.1 ${port} 12345 running`,
       };
     }
     if (
@@ -481,6 +544,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   spawnSyncSpy.mockClear();
 
   return {
+    assertHermesPortableOperatingCommandCurrentSpy,
     applyVmDnsMonkeypatchSpy,
     captureOpenshellSpy,
     captureResolvedOpenshellSpy,
@@ -496,6 +560,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     inspectLaunchReadinessSpy,
     launchReadinessMutationGateSpy,
     publishLaunchReadinessSpy,
+    recoverHermesPortableOllamaInferenceSpy,
     preflightVllmSpy,
     probeLocalProviderHealthSpy,
     probeOllamaAuthProxyHealthSpy,
