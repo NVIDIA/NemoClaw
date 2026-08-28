@@ -43,6 +43,20 @@ function createInput(
 }
 
 describe("prepareCreateSandboxMessaging", () => {
+  it("does not read messaging credentials when no channel is enabled (#9833)", () => {
+    const getValidatedMessagingTokenByEnvKey = vi.fn(() => "secret-value");
+
+    const result = prepareCreateSandboxMessaging(
+      createInput({
+        enabledChannels: [],
+        getValidatedMessagingTokenByEnvKey,
+      }),
+    );
+
+    expect(getValidatedMessagingTokenByEnvKey).not.toHaveBeenCalled();
+    expect(result.messagingTokenDefs).toEqual([]);
+  });
+
   it("filters token definitions and reuses missing-token providers with matching bindings", () => {
     const registerExtraPlaceholderProviders = vi.fn(() => ["SLACK_BOT_TOKEN_AGENT_A"]);
     const providerMatchesGatewayCredential = vi.fn(
@@ -77,9 +91,30 @@ describe("prepareCreateSandboxMessaging", () => {
       "nemoclaw-mcp-v1",
       "SLACK_BOT_TOKEN",
     );
-    expect(registerExtraPlaceholderProviders).toHaveBeenCalledWith(
-      "demo",
-      result.messagingTokenDefs,
+  });
+
+  it("reattaches an exact durable provider when rebuild resumes without channel prompts", () => {
+    const providerMatchesGatewayCredential = vi.fn(
+      (name: string, type: string, credentialKey: string) =>
+        name === "demo-discord-bridge" &&
+        type === "nemoclaw-mcp-v1" &&
+        credentialKey === "DISCORD_BOT_TOKEN",
+    );
+
+    const result = prepareCreateSandboxMessaging(
+      createInput({
+        enabledChannels: null,
+        requireExactProviderBinding: true,
+        providerMatchesGatewayCredential,
+      }),
+    );
+
+    expect(result.reusableMessagingProviders).toContain("demo-discord-bridge");
+    expect(result.reusableMessagingChannels).toContain("discord");
+    expect(providerMatchesGatewayCredential).toHaveBeenCalledWith(
+      "demo-discord-bridge",
+      "nemoclaw-mcp-v1",
+      "DISCORD_BOT_TOKEN",
     );
   });
 
@@ -323,10 +358,6 @@ describe("prepareCreateSandboxMessaging", () => {
       token: "brv-store",
       providerType: "brave",
     });
-    expect(registerExtraPlaceholderProviders).toHaveBeenCalledWith(
-      "demo",
-      result.messagingTokenDefs,
-    );
   });
 
   it("adds a per-sandbox Tavily provider with credential-store precedence", () => {

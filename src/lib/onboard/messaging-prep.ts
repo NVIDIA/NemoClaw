@@ -7,6 +7,7 @@ import { listMessagingCredentialMetadata } from "../messaging/channels";
 import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../messaging/provider-profile";
 import { type ChannelDef, getChannelTokenKeys } from "../sandbox/channels";
 import * as braveProviderProfile from "./brave-provider-profile";
+import type { ExtraPlaceholderCredentialSources } from "./extra-placeholder-keys";
 import {
   bridgeProviderNamesForChannel,
   collectMessagingBridgeTokenDefs,
@@ -21,6 +22,14 @@ export interface MessagingTokenDef {
   envKey: string;
   token: string | null;
   providerType?: string;
+  additionalCredentials?: Array<{ envKey: string; token: string | null }>;
+}
+
+export function hasConfiguredMessagingCredential(tokenDef: MessagingTokenDef): boolean {
+  return [
+    tokenDef.token,
+    ...(tokenDef.additionalCredentials?.map((credential) => credential.token) ?? []),
+  ].some((token) => typeof token === "string" && token.trim().length > 0);
 }
 
 type MessagingCredentialDef = MessagingTokenDef & {
@@ -44,8 +53,9 @@ export interface CreateSandboxMessagingPrepInput {
   getCredential(envKey: string): string | null;
   normalizeCredentialValue(value: unknown): string;
   registerExtraPlaceholderProviders(
-    sandboxName: string,
     messagingTokenDefs: MessagingTokenDef[],
+    log?: (message: string) => void,
+    sources?: ExtraPlaceholderCredentialSources,
   ): string[];
   getMessagingChannelForEnvKey(envKey: string): string | null;
   providerExistsInGateway(name: string): boolean;
@@ -97,7 +107,6 @@ export function prepareCreateSandboxMessaging(
       return {
         name: credential.providerNameTemplate.replaceAll("{sandboxName}", input.sandboxName),
         envKey: credential.providerEnvKey,
-        token: input.getValidatedMessagingTokenByEnvKey(input.channels, credential.providerEnvKey),
         providerType: staticProviderType ?? MESSAGING_CREDENTIAL_PROVIDER_TYPE,
         retainWhileDisabled: staticProviderType !== null,
       };
@@ -107,7 +116,11 @@ export function prepareCreateSandboxMessaging(
         !enabledEnvKeys ||
         enabledEnvKeys.has(envKey) ||
         (retainWhileDisabled && disabledEnvKeys.has(envKey)),
-    );
+    )
+    .map((definition) => ({
+      ...definition,
+      token: input.getValidatedMessagingTokenByEnvKey(input.channels, definition.envKey),
+    }));
   const messagingTokenDefs: MessagingTokenDef[] = messagingCredentialDefs
     .filter(({ envKey }) => !disabledEnvKeys.has(envKey))
     .map(({ retainWhileDisabled: _retainWhileDisabled, ...definition }) => definition);
@@ -143,7 +156,7 @@ export function prepareCreateSandboxMessaging(
       disabledChannelNames,
       messagingTokenDefs,
       extraPlaceholderKeys: [],
-      hasMessagingTokens: messagingTokenDefs.some(({ token }) => !!token),
+      hasMessagingTokens: messagingTokenDefs.some(hasConfiguredMessagingCredential),
       reusableMessagingProviders: [],
       reusableMessagingChannels: [],
       missingBridgeChannels: [],
@@ -183,16 +196,21 @@ export function prepareCreateSandboxMessaging(
   );
 
   const extraPlaceholderKeys = input.registerExtraPlaceholderProviders(
-    input.sandboxName,
     messagingTokenDefs,
+    undefined,
+    {
+      env: input.env,
+      getCredential: input.getCredential,
+      normalizeCredentialValue: input.normalizeCredentialValue,
+    },
   );
-  const hasMessagingTokens = messagingTokenDefs.some(({ token }) => !!token);
+  const hasMessagingTokens = messagingTokenDefs.some(hasConfiguredMessagingCredential);
   const reusableMessagingProviders: string[] = reusableWebSearchProvider
     ? [webSearchProviderName]
     : [];
   const reusableMessagingChannels: string[] = [];
 
-  if (input.enabledChannels != null) {
+  if (input.enabledChannels != null || input.requireExactProviderBinding === true) {
     for (const {
       name,
       envKey,
@@ -203,7 +221,11 @@ export function prepareCreateSandboxMessaging(
       const channel = input.getMessagingChannelForEnvKey(envKey);
       if (!channel) continue;
       const channelDisabled = disabledChannelNames.has(channel);
-      if (!input.enabledChannels.includes(channel) && !(channelDisabled && retainWhileDisabled)) {
+      if (
+        input.enabledChannels != null &&
+        !input.enabledChannels.includes(channel) &&
+        !(channelDisabled && retainWhileDisabled)
+      ) {
         continue;
       }
       if (channelDisabled && !retainWhileDisabled) continue;
@@ -231,10 +253,10 @@ export function prepareCreateSandboxMessaging(
   // The name carries the channel but not the agent, and onboard can recreate a
   // sandbox name under a different agent, so match the gateway binding against
   // the selected profile rather than accepting any provider with that name.
-  if (input.enabledChannels != null) {
+  if (input.enabledChannels != null || input.requireExactProviderBinding === true) {
     for (const profile of bridgeProfiles) {
       const channel = profile.channelId;
-      if (!input.enabledChannels.includes(channel)) continue;
+      if (input.enabledChannels != null && !input.enabledChannels.includes(channel)) continue;
       if (disabledChannelNames.has(channel)) continue;
       for (const name of bridgeProviderNamesForChannel(input.sandboxName, channel, [profile])) {
         if (messagingTokenDefs.some((def) => def.name === name && def.token)) continue;

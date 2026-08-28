@@ -1255,7 +1255,6 @@ describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIM
     const workspace = onboardProcessWorkspace("nemoclaw-onboard-ollama-validation-");
     const { root: tmpDir } = workspace;
     const fakeBin = workspace.binDir;
-
     writeAlwaysOkCurl(fakeBin, OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE);
 
     const script = String.raw`
@@ -1312,6 +1311,7 @@ reportChildScenario(async () => {
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_CONTEXT_WINDOW: "",
+        NEMOCLAW_TEST_NO_SLEEP: "1",
       },
     });
 

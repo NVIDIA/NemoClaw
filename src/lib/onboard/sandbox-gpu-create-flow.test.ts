@@ -127,10 +127,10 @@ const PORTABLE_RUNTIME_AUTHORITY: CheckpointPortableRuntimeAuthority = {
 
 type OpenShellResult = ReturnType<SandboxGpuCreateFlowDeps["runOpenshell"]>;
 
-function readySandboxGetResult(): OpenShellResult {
+function readySandboxGetResult(sandboxId = "alpha-sandbox-id"): OpenShellResult {
   return {
     status: 0,
-    stdout: "Name: alpha\nId: alpha-sandbox-id\nState: Ready\n",
+    stdout: `Name: alpha\nId: ${sandboxId}\nState: Ready\n`,
     stderr: "",
   };
 }
@@ -353,8 +353,9 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     const deps = createDeps();
     const adapterOverride = {} as never;
     deps.createManagedBootstrapAdapter = vi.fn(() => adapterOverride);
+    deps.runOpenshell = vi.fn(() => readySandboxGetResult("alpha-sandbox-id"));
     vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
-      args[1] === "get" ? "ID: mxc-alpha\n" : "alpha Ready",
+      args[1] === "get" ? "ID: alpha-sandbox-id\n" : "alpha Ready",
     );
     recoverUnfinished.mockRejectedValueOnce(new Error("unfinished recovery failed"));
 
@@ -492,10 +493,8 @@ describe("runSandboxGpuCreateFlow proof authorization", () => {
       "openshell sandbox exec denied by policy",
     );
     expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
-    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
-      ["sandbox", "delete", "alpha"],
-      expect.anything(),
-    );
+    const calls = vi.mocked(deps.runOpenshell).mock.calls;
+    expect(calls.flat()).not.toContain("delete");
   });
 
   it("does not let sandbox-controlled CUDA output authorize compatibility fallback (#6110)", async () => {
@@ -1236,7 +1235,6 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
   it("streams native and compatibility attempts through direct argv without a shell (#6110)", async () => {
     failNativeCreate();
     const input = createInput();
-
     await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
       route: "compatibility",
     });
@@ -1316,7 +1314,7 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
     expect(input.sandboxGpuConfig.sandboxGpuProof).toBeNull();
   });
 
-  it("validates the full compatibility command before deleting native state (#6110)", async () => {
+  it("validates the full compatibility command before proving native state absent (#6110)", async () => {
     const input = createInput();
     input.compatibilityPolicyPath = null;
     failNativeCreate();
@@ -1347,7 +1345,7 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
     const deps = createDeps();
     await expectFlowExit(input, deps);
     expect(deps.openshellArgv).toHaveBeenCalledOnce();
-    expect(deps.runOpenshell).toHaveBeenCalledWith(
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
       expect.anything(),
     );

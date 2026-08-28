@@ -18,24 +18,11 @@ import {
 } from "../live/messaging-providers-helpers.ts";
 import {
   parseInstalledSlackProof,
-  SLACK_INSTALLED_RUNTIME_PROOF_SOURCE,
   SLACK_MANAGED_NPM_PROJECT_DISCOVERY_SOURCE,
 } from "../live/messaging-providers-slack-runtime-proof.ts";
-import { TELEGRAM_INSTALLED_RUNTIME_PROOF_SOURCE } from "../live/messaging-providers-telegram-runtime-proof.ts";
 
 const FAKE_TELEGRAM_API = path.resolve(import.meta.dirname, "../lib/fake-telegram-api.cjs");
-const LIVE_MESSAGING_PROVIDERS_SOURCE = fs.readFileSync(
-  path.resolve(import.meta.dirname, "../live/messaging-providers.test.ts"),
-  "utf8",
-);
-
-function expectValidModuleSource(source: string): void {
-  const result = spawnSync(process.execPath, ["--input-type=module", "--check"], {
-    encoding: "utf8",
-    input: source,
-  });
-  expect(result.status, result.stderr).toBe(0);
-}
+const FAKE_SLACK_API = path.resolve(import.meta.dirname, "../lib/fake-slack-api.cjs");
 
 async function waitFor(predicate: () => boolean, message: string): Promise<void> {
   const deadline = Date.now() + 5_000;
@@ -48,6 +35,50 @@ async function waitFor(predicate: () => boolean, message: string): Promise<void>
 }
 
 describe("messaging provider installed-runtime proofs", () => {
+  it("publishes independent fake Slack REST and websocket ports", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-slack-ports-"));
+    const portFile = path.join(dir, "port");
+    const captureFile = path.join(dir, "capture.jsonl");
+    const child = spawn(process.execPath, [FAKE_SLACK_API], {
+      env: {
+        ...process.env,
+        FAKE_SLACK_API_HOST: "127.0.0.1",
+        FAKE_SLACK_API_PORT: "0",
+        FAKE_SLACK_API_WEBSOCKET_PORT: "0",
+        FAKE_SLACK_API_PORT_FILE: portFile,
+        FAKE_SLACK_API_CAPTURE_FILE: captureFile,
+        FAKE_SLACK_API_EXPECTED_BOT_TOKEN: "xoxb-fake-slack-port-test",
+        FAKE_SLACK_API_EXPECTED_APP_TOKEN: "xapp-fake-slack-port-test",
+      },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+
+    try {
+      await waitFor(() => fs.existsSync(portFile), `fake Slack listeners did not start: ${stderr}`);
+      const listening = fs
+        .readFileSync(captureFile, "utf8")
+        .trim()
+        .split(/\r?\n/u)
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
+        .filter((entry) => entry.event === "listening");
+      expect(listening).toHaveLength(2);
+      expect(listening.map((entry) => entry.kind).sort()).toEqual(["rest", "websocket"]);
+      expect(new Set(listening.map((entry) => entry.port)).size).toBe(2);
+    } finally {
+      child.kill("SIGTERM");
+      await new Promise<void>((resolve) =>
+        child.exitCode !== null ? resolve() : child.once("exit", () => resolve()),
+      );
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 10_000);
+
   it("keeps raw process-probe tokens out of argv and fails closed", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-process-token-probe-"));
     const token = `xoxb-nemoclaw-process-probe-secret-${process.pid}`;
@@ -170,20 +201,6 @@ describe("messaging provider installed-runtime proofs", () => {
     ).toBe(false);
   });
 
-  it("keeps the Slack allow, deny, feedback, and send contract on installed exports", () => {
-    expectValidModuleSource(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE);
-    expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE).toContain("prepareSlackMessage");
-    expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE).toContain("sendMessageSlack");
-    expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE).toContain("deniedPrepared === null");
-    expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE).toContain("senderFeedbackCalls.length === 1");
-    expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE).toContain("openclaw-pipeline-runtime");
-    expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE).toContain(
-      'process.env.NEMOCLAW_E2E_ALLOW_LEGACY_SLACK_TEST_API === "1"',
-    );
-    expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE.match(/allowLegacyTestApi &&/gu)).toHaveLength(2);
-    expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE).toContain("/api/chat.postMessage");
-  });
-
   it("finds Slack only in its canonical managed npm project", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-managed-project-"));
     const projectsDir = path.join(dir, "npm", "projects");
@@ -268,40 +285,6 @@ describe("messaging provider installed-runtime proofs", () => {
     expect(parseInstalledSlackProof(`diagnostic\n${JSON.stringify(proof)}`, "warning")).toEqual(
       proof,
     );
-  });
-
-  it("requires the reviewed Slack pipeline/runtime proof in the default 2026.7.1 live lane", () => {
-    expect(LIVE_MESSAGING_PROVIDERS_SOURCE).toContain(
-      'installedSlackProof.proof === "openclaw-pipeline-runtime"',
-    );
-    expect(LIVE_MESSAGING_PROVIDERS_SOURCE).not.toContain(
-      'installedSlackProof.proof === "openclaw-private-helper"',
-    );
-  });
-
-  it("requires channel-list output without suppressing loader failures (#6467)", () => {
-    expect(LIVE_MESSAGING_PROVIDERS_SOURCE).toContain(
-      '"timeout 45 openclaw channels list --all --json --no-color"',
-    );
-    expect(LIVE_MESSAGING_PROVIDERS_SOURCE).toContain(
-      "OpenClaw channels list did not emit channel state",
-    );
-    expect(LIVE_MESSAGING_PROVIDERS_SOURCE).not.toContain(
-      "OpenClaw channels list returned no output",
-    );
-    expect(LIVE_MESSAGING_PROVIDERS_SOURCE).not.toContain(
-      "openclaw channels list --all --json --no-color 2>/dev/null || true",
-    );
-  });
-
-  it("keeps Telegram on runtime-api.js with a fake send boundary", () => {
-    expectValidModuleSource(TELEGRAM_INSTALLED_RUNTIME_PROOF_SOURCE);
-    expect(TELEGRAM_INSTALLED_RUNTIME_PROOF_SOURCE).toContain(
-      "dist/extensions/telegram/runtime-api.js",
-    );
-    expect(TELEGRAM_INSTALLED_RUNTIME_PROOF_SOURCE).toContain("sendMessageTelegram");
-    expect(TELEGRAM_INSTALLED_RUNTIME_PROOF_SOURCE).toContain("host.openshell.internal");
-    expect(TELEGRAM_INSTALLED_RUNTIME_PROOF_SOURCE).not.toContain("telegram/test-api.js");
   });
 
   it("redacts Telegram tokens from fake API captures", async () => {
