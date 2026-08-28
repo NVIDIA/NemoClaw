@@ -772,19 +772,15 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
   }
   if (
     cloudOnboard.env?.E2E_MANAGED_IMAGE_REVISION !==
-    "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}"
+    "${{ needs.base-image-publication.outputs.managed_image_revision }}"
   ) {
-    errors.push(
-      "cloud-onboard must use the selected managed-image revision when no exact PR catalog is present",
-    );
+    errors.push("cloud-onboard must use the selected managed-image revision");
   }
   if (
     live.env?.E2E_MANAGED_IMAGE_REVISION !==
-      "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}"
+    "${{ needs.base-image-publication.outputs.managed_image_revision }}"
   ) {
-    errors.push(
-      "live stock onboarding must use the selected managed-image revision when no exact PR catalog is present",
-    );
+    errors.push("live stock onboarding must use the selected managed-image revision");
   }
   for (const jobName of [
     "catalogue-standard",
@@ -799,17 +795,9 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     }
     if (
       catalogue.with?.managed_image_revision !==
-      "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}"
+      "${{ needs.base-image-publication.outputs.managed_image_revision }}"
     ) {
-      errors.push(
-        `${jobName} must use the selected managed-image revision when no exact PR catalog is present`,
-      );
-    }
-    if (
-      catalogue.with?.managed_image_catalog !==
-      "${{ needs.generate-matrix.outputs.managed_image_catalog }}"
-    ) {
-      errors.push(`${jobName} must pass the selected exact PR managed-image catalog`);
+      errors.push(`${jobName} must use the selected managed-image revision`);
     }
   }
   if (
@@ -872,9 +860,9 @@ const STOCK_ONBOARDING_CATALOGUE_JOBS = [
 ] as const;
 
 const MANAGED_IMAGE_REVISION_EXPRESSION =
-  "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}";
+  "${{ needs.base-image-publication.outputs.managed_image_revision }}";
 const MANAGED_IMAGE_RECEIPT_EXPRESSION =
-  "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}";
+  "${{ needs.base-image-publication.outputs.managed_image_receipt }}";
 
 /** Require publication success and one exact cohort revision for every stock onboarding job. */
 export function validateStockOnboardingPublicationBoundary(
