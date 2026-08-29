@@ -134,12 +134,15 @@ export function createHermesPortableForwardRecoveryFixture({
 
 export function configureMissingHermesForwardCapture(
   harness: ConnectHarness,
-  options: { readonly afterStart?: () => void } = {},
+  options: {
+    readonly afterStart?: () => void;
+    readonly initialStatus?: "dead" | "missing";
+  } = {},
 ): { readonly isRunning: () => boolean } {
-  let forwardRunning = false;
+  let forwardStatus: "dead" | "missing" | "running" = options.initialStatus ?? "missing";
   const captureResolved = harness.captureResolvedOpenshellSpy.getMockImplementation()!;
   harness.spawnSyncSpy.mockImplementation(((command: unknown) => ({
-    status: String(command) === process.execPath && !forwardRunning ? 1 : 0,
+    status: String(command) === process.execPath && forwardStatus !== "running" ? 1 : 0,
     signal: null,
   })) as never);
   harness.captureResolvedOpenshellSpy.mockImplementation(((
@@ -150,21 +153,22 @@ export function configureMissingHermesForwardCapture(
     if (argv[0] === "forward" && argv[1] === "list") {
       return {
         status: 0,
-        output: forwardRunning
-          ? "SANDBOX BIND PORT PID STATUS\nalpha 127.0.0.1 18789 12345 running"
-          : "SANDBOX BIND PORT PID STATUS",
+        output:
+          forwardStatus === "missing"
+            ? "SANDBOX BIND PORT PID STATUS"
+            : `SANDBOX BIND PORT PID STATUS\nalpha 127.0.0.1 18789 12345 ${forwardStatus}`,
       };
     }
     if (argv[0] === "forward" && argv[1] === "stop") {
-      forwardRunning = false;
+      forwardStatus = "missing";
       return { status: 0, output: "" };
     }
     if (argv[0] === "forward" && argv[1] === "start") {
-      forwardRunning = true;
+      forwardStatus = "running";
       options.afterStart?.();
       return { status: 0, output: "" };
     }
     return captureResolved(args, captureOptions);
   }) as never);
-  return { isRunning: () => forwardRunning };
+  return { isRunning: () => forwardStatus === "running" };
 }

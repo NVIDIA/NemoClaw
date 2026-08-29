@@ -268,6 +268,32 @@ describe("Hermes Portable connect composition", () => {
     );
   });
 
+  it("restores an exact dead forward once before launch-readiness publication (#10423)", async () => {
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      portableReceiptDisposition: { kind: "hermes", phase: "active" },
+      portableRecoveryResult: { kind: "already-running" },
+    });
+    configureMissingHermesForwardCapture(harness, { initialStatus: "dead" });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    const mutations = harness.captureResolvedOpenshellSpy.mock.calls
+      .filter(
+        ([args]) =>
+          Array.isArray(args) &&
+          args[0] === "forward" &&
+          ["start", "stop"].includes(String(args[1])),
+      )
+      .map(([args]) => (args as string[])[1]);
+    expect(mutations).toEqual(["stop", "start"]);
+    expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
+    expect(harness.logSpy.mock.calls.flat().join("\n")).toMatch(
+      /forwardAction=restored result=ready/,
+    );
+  });
+
   it("stops before publication when the owning gateway forward list is malformed", async () => {
     const harness = createConnectHarness({
       agentName: "hermes",
