@@ -149,8 +149,9 @@ export function liveE2eManagedImageCatalog(
 function readExactManagedImageCatalog(catalogPath: string): ManagedImageContractCatalog {
   let descriptor: number | null = null;
   try {
-    // lgtm[js/insecure-temporary-file] Read-only no-follow open; the inode/type/size
-    // checks and descriptor read below make an environment-selected catalog race-safe.
+    // This is a read-only no-follow open. The inode/type/size checks and descriptor
+    // read below make an environment-selected catalog race-safe.
+    // lgtm[js/insecure-temporary-file]
     descriptor = fs.openSync(catalogPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
     const metadata = fs.fstatSync(descriptor);
     const pathMetadata = fs.lstatSync(catalogPath);
