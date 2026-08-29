@@ -51,7 +51,7 @@
       "src/lib/inference/local.ts": 22,
       "src/lib/inference/onboard-probes.ts": 21,
       "src/lib/inference/vllm.ts": 21,
-      "src/lib/onboard.ts": 202,
+      "src/lib/onboard.ts": 201,
       "src/lib/onboard/machine/handlers/sandbox.ts": 21,
       "src/lib/policy/index.ts": 23,
       "src/lib/sandbox/config.ts": 22,
