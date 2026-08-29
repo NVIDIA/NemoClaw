@@ -90,7 +90,7 @@ export function buildAgentSmokeArgs(
     sandboxName,
     ...(gatewayName ? ["-g", gatewayName] : []),
     "--",
-    "sh",
+    "/bin/sh",
     "-lc",
     smokeRunner(true),
     "nemoclaw-agent-smoke",

@@ -733,7 +733,7 @@ describe("handleAgentSetup guards", () => {
         "nemoclaw",
         "--no-tty",
         "--",
-        "sh",
+        "/bin/sh",
         "-lc",
         expect.stringContaining("NEMOCLAW_AGENT_BINARY_CHECK"),
       ],

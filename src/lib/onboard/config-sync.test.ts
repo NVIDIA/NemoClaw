@@ -77,9 +77,9 @@ describe("sandbox config sync helpers", () => {
       openshellArgv: (args) => ["openshell", ...args],
     });
 
-    expect(() =>
-      syncConfig("spark-box", "provider", "model", revalidateSandboxIdentity),
-    ).toThrow("sandbox identity changed");
+    expect(() => syncConfig("spark-box", "provider", "model", revalidateSandboxIdentity)).toThrow(
+      "sandbox identity changed",
+    );
 
     expect(revalidateSandboxIdentity).toHaveBeenCalledExactlyOnceWith(
       "synchronize OpenClaw config in sandbox 'spark-box'",
@@ -95,7 +95,7 @@ describe("sandbox config sync helpers", () => {
       "spark-box",
       "--no-tty",
       "--",
-      "bash",
+      "/bin/bash",
       "-s",
     ]);
   });

@@ -32,6 +32,7 @@ describe("terminal agent smoke command invocation", () => {
     const args = buildAgentSmokeArgs("probe-box", agent("hermes"), "hermes --version");
 
     expect(args).toContain("-lc");
+    expect(args).toContain("/bin/sh");
     expect(args).not.toContain(DCODE_MANAGED_EXEC_LAUNCHER);
     expect(args.at(-1)).toBe("hermes --version");
   });

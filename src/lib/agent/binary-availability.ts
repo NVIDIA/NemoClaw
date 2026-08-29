@@ -55,7 +55,7 @@ export function verifyAgentBinaryAvailable(
       ...(gatewayName ? ["-g", gatewayName] : []),
       "--no-tty",
       "--",
-      "sh",
+      "/bin/sh",
       "-lc",
       script,
     ],

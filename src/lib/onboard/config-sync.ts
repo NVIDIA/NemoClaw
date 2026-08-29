@@ -38,7 +38,7 @@ export function createNemoClawConfigSync(deps: NemoClawConfigSyncDeps) {
 
 /** Run config sync without allocating the interactive sandbox terminal transport. */
 export function sandboxConfigSyncArgs(sandboxName: string): string[] {
-  return ["sandbox", "exec", "-n", sandboxName, "--no-tty", "--", "bash", "-s"];
+  return ["sandbox", "exec", "-n", sandboxName, "--no-tty", "--", "/bin/bash", "-s"];
 }
 
 // Write `~/.nemoclaw/config.json` and normalize OpenClaw config-dir perms
