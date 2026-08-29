@@ -364,6 +364,12 @@ describe("destroySandbox retained recovery flow", () => {
       expect(harness.resolveRetainedSandboxRecoverySpy).toHaveBeenCalledOnce();
       expect(harness.resolveRetainedSandboxRecoverySpy).toHaveBeenCalledWith(matchingRecovery);
       expect(harness.resolveRetainedSandboxRecoverySpy).not.toHaveBeenCalledWith(olderRecovery);
+      expect(harness.selectGatewaySpy).toHaveBeenCalledWith(
+        "alpha",
+        matchingRecovery.gatewayName,
+        harness.runOpenshellSpy,
+      );
+      expect(harness.gatewayPinsAtSandboxList).toEqual([matchingRecovery.gatewayName]);
       expect(exitSpy).not.toHaveBeenCalled();
     },
   );

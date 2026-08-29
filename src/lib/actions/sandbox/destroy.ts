@@ -670,7 +670,9 @@ async function destroySandboxUnlocked(
     }
   };
   let destroyPreflight: ReturnType<typeof prepareSandboxDestroy>;
-  destroyPreflight = abortPreparedCleanupOnError(() => prepareSandboxDestroy(sandboxName));
+  destroyPreflight = abortPreparedCleanupOnError(() =>
+    prepareSandboxDestroy(sandboxName, retainedRecoveryAuthority?.gatewayName),
+  );
   const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } = destroyPreflight;
   if (retainedRecoveryAuthority && !sandboxConfirmedAbsent) {
     console.error(
