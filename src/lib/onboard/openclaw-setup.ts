@@ -45,11 +45,10 @@ export async function disableOpenClawWebSearchForFreshReuse(
   sandboxName: string,
   webSearchConfig: WebSearchSelection,
   deps: OpenClawWebSearchReuseDeps = defaultWebSearchReuseDeps,
-): Promise<boolean> {
-  if (webSearchConfig?.fetchEnabled === true) return false;
-  if (deps.readEnabled(sandboxName) !== true) return false;
+): Promise<void> {
+  if (webSearchConfig?.fetchEnabled === true) return;
+  if (deps.readEnabled(sandboxName) !== true) return;
   await deps.disable(sandboxName);
-  return true;
 }
 
 export interface OpenclawSetupDeps {
@@ -61,7 +60,7 @@ export interface OpenclawSetupDeps {
   run(argv: string[], options: Record<string, unknown>): unknown;
   openshellArgv(args: string[]): string[];
   cleanupTempDir(file: string, prefix: string): void;
-  reconcileWebSearch(sandboxName: string, webSearchConfig: WebSearchSelection): Promise<unknown>;
+  reconcileWebSearch(sandboxName: string, webSearchConfig: WebSearchSelection): Promise<void>;
 }
 
 export function createOpenclawSetup(deps: OpenclawSetupDeps) {

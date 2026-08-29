@@ -15,7 +15,7 @@ describe("OpenClaw sandbox setup", () => {
     fs.writeFileSync(scriptFile, "set -e\n", { mode: 0o600 });
     const run = vi.fn();
     const cleanupTempDir = vi.fn();
-    const reconcileWebSearch = vi.fn(async () => false);
+    const reconcileWebSearch = vi.fn(async () => undefined);
     try {
       const setup = createOpenclawSetup({
         step: vi.fn(),
@@ -67,7 +67,7 @@ describe("OpenClaw sandbox setup", () => {
         run: vi.fn(),
         openshellArgv: (args) => ["/usr/bin/openshell", ...args],
         cleanupTempDir: vi.fn(),
-        reconcileWebSearch: vi.fn(async () => false),
+        reconcileWebSearch: vi.fn(async () => undefined),
       });
 
       await expect(
@@ -88,12 +88,10 @@ describe("fresh OpenClaw reuse web search reconciliation", () => {
   it("disables stale live web search when fresh re-onboard selects disabled (#10404)", async () => {
     const disable = vi.fn(async () => undefined);
 
-    await expect(
-      disableOpenClawWebSearchForFreshReuse("alpha", null, {
-        readEnabled: () => true,
-        disable,
-      }),
-    ).resolves.toBe(true);
+    await disableOpenClawWebSearchForFreshReuse("alpha", null, {
+      readEnabled: () => true,
+      disable,
+    });
 
     expect(disable).toHaveBeenCalledExactlyOnceWith("alpha");
   });
@@ -101,12 +99,10 @@ describe("fresh OpenClaw reuse web search reconciliation", () => {
   it("leaves an already-disabled live config unchanged (#10404)", async () => {
     const disable = vi.fn(async () => undefined);
 
-    await expect(
-      disableOpenClawWebSearchForFreshReuse("alpha", null, {
-        readEnabled: () => false,
-        disable,
-      }),
-    ).resolves.toBe(false);
+    await disableOpenClawWebSearchForFreshReuse("alpha", null, {
+      readEnabled: () => false,
+      disable,
+    });
 
     expect(disable).not.toHaveBeenCalled();
   });
@@ -114,12 +110,10 @@ describe("fresh OpenClaw reuse web search reconciliation", () => {
   it("leaves a config without a stale enabled flag unchanged (#10404)", async () => {
     const disable = vi.fn(async () => undefined);
 
-    await expect(
-      disableOpenClawWebSearchForFreshReuse("alpha", null, {
-        readEnabled: () => undefined,
-        disable,
-      }),
-    ).resolves.toBe(false);
+    await disableOpenClawWebSearchForFreshReuse("alpha", null, {
+      readEnabled: () => undefined,
+      disable,
+    });
 
     expect(disable).not.toHaveBeenCalled();
   });
@@ -128,13 +122,11 @@ describe("fresh OpenClaw reuse web search reconciliation", () => {
     const readEnabled = vi.fn(() => true);
     const disable = vi.fn(async () => undefined);
 
-    await expect(
-      disableOpenClawWebSearchForFreshReuse(
-        "alpha",
-        { fetchEnabled: true },
-        { readEnabled, disable },
-      ),
-    ).resolves.toBe(false);
+    await disableOpenClawWebSearchForFreshReuse(
+      "alpha",
+      { fetchEnabled: true },
+      { readEnabled, disable },
+    );
 
     expect(readEnabled).not.toHaveBeenCalled();
     expect(disable).not.toHaveBeenCalled();
