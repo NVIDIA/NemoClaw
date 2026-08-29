@@ -397,7 +397,7 @@ async function readLifecycle(
       githubRead: input.githubRead,
       endpoint: "repos/" + input.repository + "/issues/" + input.number + "/timeline",
       projection:
-        "[.[] | {id,event,created_at,actor:(.actor.login // null),commit_id,label:(.label.name // null),requested_reviewer:(.requested_reviewer.login // null),rename}]",
+        "[.[] | {id,event,created_at,actor:(.actor.login // null),commit_id,label:(.label.name // null),requested_reviewer:(.requested_reviewer.login // null),requested_team:(.requested_team.slug // null),rename}]",
       label: "pull request timeline",
     }),
     readPages({
@@ -437,7 +437,7 @@ function renderTrace(input: {
   addMetadata(events, metadata, 2, 1, "Author activity", input.pull.author?.login ?? "author");
   addMetadata(events, metadata, 3, 1, "Feedback and reviews", "Comments and reviews");
   addMetadata(events, metadata, 4, 1, "PR readiness", "Observed readiness path");
-  addMetadata(events, metadata, 5, 1, "PR counters", "Active revision");
+  addMetadata(events, metadata, 5, 1, "PR counters", "Current revision ordinal");
   addMetadata(events, metadata, 5, 2, "PR counters", "Open review requests");
   let lifecycleEvents = 0;
   const instant = (entry: Parameters<typeof addInstant>[1]): void => {
@@ -512,17 +512,23 @@ function renderTrace(input: {
         actor: row.actor ?? null,
         label: row.label ?? null,
         requestedReviewer: row.requested_reviewer ?? null,
+        requestedTeam: row.requested_team ?? null,
         renameFrom: row.rename?.from ?? null,
         renameTo: row.rename?.to ?? null,
       },
     });
   }
-  const openRequests = new Map<string, { at: number; id: number | null }>();
+  const openRequests = new Map<string, { at: number; id: number | null; tid: number }>();
+  let nextRequestTrack = 2;
   for (const row of input.lifecycle.timeline) {
-    const reviewer = row?.requested_reviewer;
+    const reviewer = row?.requested_reviewer ?? row?.requested_team;
     const at = optionalTime(row?.created_at);
     if (typeof reviewer !== "string" || at === null) continue;
-    if (row.event === "review_requested") openRequests.set(reviewer, { at, id: row.id ?? null });
+    if (row.event === "review_requested") {
+      const tid = nextRequestTrack++;
+      openRequests.set(reviewer, { at, id: row.id ?? null, tid });
+      addMetadata(events, metadata, 3, tid, "Feedback and reviews", "Review request: " + reviewer);
+    }
     if (row.event !== "review_request_removed") continue;
     const request = openRequests.get(reviewer);
     if (request === undefined) continue;
@@ -532,7 +538,7 @@ function renderTrace(input: {
       start: request.at,
       end: at,
       pid: 3,
-      tid: 2,
+      tid: request.tid,
       args: {
         reviewer,
         requestEventId: request.id,
@@ -564,7 +570,7 @@ function renderTrace(input: {
       start: request.at,
       end: observedEnd,
       pid: 3,
-      tid: 2,
+      tid: request.tid,
       args: { reviewer, requestEventId: request.id, terminalState: "open" },
     });
   for (const review of validateArray(input.pull.reviews ?? [], "pull request reviews")) {
@@ -645,7 +651,7 @@ function renderTrace(input: {
     return firstRun ? parseTime(firstRun.created_at, "workflow createdAt") : commit.authoredAt;
   });
   for (const [index, at] of revisionStarts.entries())
-    addCounter(events, "Active revision", at, index + 1, 5, 1);
+    addCounter(events, "Current revision ordinal", at, index + 1, 5, 1);
   for (const [index, commit] of input.commits.entries()) {
     const pid = 1_000 + index;
     addSpan(events, {
@@ -699,7 +705,7 @@ function renderTrace(input: {
       );
       if (firstFeedback) {
         addSpan(events, {
-          name: "Waiting for actionable feedback",
+          name: "Waiting for inline feedback",
           category: "author.waiting-for-feedback",
           start: pushed,
           end: firstFeedback.at,

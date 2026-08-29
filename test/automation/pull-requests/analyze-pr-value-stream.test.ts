@@ -97,7 +97,7 @@ const run = (id) => ({id,event:"push",head_sha:sha,created_at:"2026-01-01T00:00:
 let value;
 if (args.startsWith("pr view")) { const calls=fs.readFileSync(process.env.VALUE_STREAM_LOG,"utf8").match(/^pr view /gmu).length; value = (scenario === "head-race" && calls > 1) || (scenario === "final-head-race" && calls > 1) ? {...pull,headRefOid:"b".repeat(40)} : pull; }
 else if (args.includes("required_status_checks")) value = scenario === "wrong-app" || scenario === "app-status-denied" ? {contexts:[],checks:[{context:"required-a",app_id:7}]} : scenario === "any-app" || scenario === "early-check" ? {contexts:[],checks:[{context:"required-a",app_id:-1}]} : scenario.startsWith("legacy-") ? {contexts:["legacy-required"],checks:[]} : {contexts:["required-a", "required-b"],checks:[]};
-else if (args.includes("issues/42/timeline")) value = [{id:41,event:"assigned",created_at:"2026-01-01T00:01:05Z",actor:"author",commit_id:null,label:null,requested_reviewer:null,rename:null},{id:44,event:"review_requested",created_at:"2026-01-01T00:01:15Z",actor:"author",commit_id:null,label:null,requested_reviewer:"reviewer",rename:null},{id:45,event:"review_request_removed",created_at:"2026-01-01T00:01:45Z",actor:"author",commit_id:null,label:null,requested_reviewer:"reviewer",rename:null}];
+else if (args.includes("issues/42/timeline")) value = [{id:41,event:"assigned",created_at:"2026-01-01T00:01:05Z",actor:"author",commit_id:null,label:null,requested_reviewer:null,requested_team:null,rename:null},{id:44,event:"review_requested",created_at:"2026-01-01T00:01:15Z",actor:"author",commit_id:null,label:null,requested_reviewer:"reviewer",requested_team:null,rename:null},{id:46,event:"review_requested",created_at:"2026-01-01T00:01:25Z",actor:"author",commit_id:null,label:null,requested_reviewer:null,requested_team:"maintainers",rename:null},{id:45,event:"review_request_removed",created_at:"2026-01-01T00:01:45Z",actor:"author",commit_id:null,label:null,requested_reviewer:"reviewer",requested_team:null,rename:null},{id:47,event:"review_request_removed",created_at:"2026-01-01T00:01:55Z",actor:"author",commit_id:null,label:null,requested_reviewer:null,requested_team:"maintainers",rename:null}];
 else if (args.includes("issues/42/comments")) value = [{id:42,created_at:"2026-01-01T00:01:10Z",updated_at:"2026-01-01T00:01:10Z",user:"reviewer",html_url:""}];
 else if (args.includes("pulls/42/comments")) value = [{id:43,created_at:"2026-01-01T00:01:20Z",updated_at:"2026-01-01T00:01:20Z",user:"reviewer",path:"src/example.ts",line:1,commit_id:sha,html_url:"",in_reply_to_id:null}];
 else if (args.includes("actions/runs?")) value = scenario === "fallback" ? [] : scenario === "truncated" ? [run(11),run(12)] : [run(11)];
@@ -215,7 +215,7 @@ describe("pull request value-stream analysis", () => {
           ph: "X",
         }),
         expect.objectContaining({
-          name: "Active revision",
+          name: "Current revision ordinal",
           cat: "pr.counter",
           ph: "C",
           args: { value: 1 },
