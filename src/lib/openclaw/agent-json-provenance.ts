@@ -237,10 +237,10 @@ function parseLogPrefixedJsonDocs(raw: string): unknown[] {
       continue;
     }
     if (depth > 0 && char === '"') inString = true;
-    else if (char === "{") {
+    else if (char === "{" || char === "[") {
       if (depth === 0) start = index;
       depth += 1;
-    } else if (depth > 0 && char === "}") {
+    } else if (depth > 0 && (char === "}" || char === "]")) {
       depth -= 1;
       if (depth === 0 && start !== null) {
         try {
@@ -256,7 +256,7 @@ function parseLogPrefixedJsonDocs(raw: string): unknown[] {
   return docs;
 }
 
-function parseOpenClawJsonDocs(raw: string): unknown[] {
+export function parseOpenClawJsonDocuments(raw: string): unknown[] {
   try {
     const parsed = JSON.parse(raw) as unknown;
     return Array.isArray(parsed) ? parsed : [parsed];
@@ -278,7 +278,7 @@ function dedupe(lines: string[]): string[] {
 }
 
 export function openClawAgentJsonProvenanceLines(raw: string): string[] {
-  const docs = parseOpenClawJsonDocs(raw);
+  const docs = parseOpenClawJsonDocuments(raw);
   if (docs.length === 0) return [];
   return dedupe([
     ...collectUntrustedChildProvenance(raw, docs),
@@ -394,7 +394,7 @@ function turnMetaMarkers(meta: UnknownRecord): string[] {
 export function openClawAgentIncompleteTurnSignal(
   raw: string,
 ): OpenClawIncompleteTurnSignal | null {
-  const docs = parseOpenClawJsonDocs(raw);
+  const docs = parseOpenClawJsonDocuments(raw);
   if (docs.length === 0) return null;
   const meta = finalAgentResponseMetaRecord(docs);
   if (!meta) return null;

@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { containsToolCallStructure } from "../../helpers/e2e-answer-assertions.ts";
+import { parseOpenClawJsonDocuments } from "../../../src/lib/openclaw/agent-json-provenance.ts";
+import {
+  containsToolCallOutput,
+  containsToolCallStructure,
+} from "../../helpers/e2e-answer-assertions.ts";
 
 export interface OpenClawAgentJsonDocument {
   [key: string]: unknown;
@@ -35,55 +39,7 @@ function openClawAgentJsonDocuments(value: unknown): OpenClawAgentJsonDocument[]
 }
 
 export function parseOpenClawAgentJsonDocuments(raw: string): OpenClawAgentJsonDocument[] {
-  try {
-    return openClawAgentJsonDocuments(JSON.parse(raw) as unknown);
-  } catch {
-    // OpenClaw has emitted both complete JSON documents and log-prefixed
-    // streams. Keep this compatibility parser local to the E2E fixture layer.
-  }
-
-  const documents: OpenClawAgentJsonDocument[] = [];
-  let start = -1;
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let index = 0; index < raw.length; index += 1) {
-    const character = raw[index];
-    if (start < 0) {
-      if (character === "{" || character === "[") {
-        start = index;
-        depth = 1;
-      }
-      continue;
-    }
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (character === "\\") escaped = true;
-      else if (character === '"') inString = false;
-      continue;
-    }
-    if (character === '"') {
-      inString = true;
-      continue;
-    }
-    if (character === "{" || character === "[") depth += 1;
-    else if (character === "}" || character === "]") depth -= 1;
-    if (depth !== 0) continue;
-
-    try {
-      documents.push(
-        ...openClawAgentJsonDocuments(JSON.parse(raw.slice(start, index + 1)) as unknown),
-      );
-    } catch {
-      // A balanced log fragment is not necessarily JSON. Resume scanning at
-      // the next top-level object instead of retrying every candidate suffix.
-    } finally {
-      start = -1;
-      inString = false;
-      escaped = false;
-    }
-  }
-  return documents;
+  return openClawAgentJsonDocuments(parseOpenClawJsonDocuments(raw));
 }
 
 function collectOpenClawAssistantText(
@@ -114,11 +70,13 @@ function collectOpenClawAssistantText(
 }
 
 export function parseOpenClawAgentText(raw: string): string {
+  if (containsToolCallOutput(raw)) return "";
   const documents = parseOpenClawAgentJsonDocuments(raw);
   if (documents.some(containsToolCallStructure)) return "";
   const parts: string[] = [];
   for (const document of documents) {
     collectOpenClawAssistantText(document, parts, new Set());
   }
-  return parts.join("\n");
+  const reply = parts.join("\n");
+  return containsToolCallOutput(reply) ? "" : reply;
 }

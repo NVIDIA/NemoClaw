@@ -126,12 +126,30 @@ describe("OpenClaw agent-output fixture", () => {
     ).toBe("");
     expect(
       parseOpenClawAgentText(
+        JSON.stringify({ output: { name: "read", param: { value: 56 }, payload: { text: "56" } } }),
+      ),
+    ).toBe("");
+    expect(
+      parseOpenClawAgentText(
         JSON.stringify({ response: { type: "function", payload: { text: "56" } } }),
       ),
     ).toBe("");
     expect(
       parseOpenClawAgentText(
         JSON.stringify({ response: { function: { name: "read" }, payload: { text: "56" } } }),
+      ),
+    ).toBe("");
+  });
+
+  it("rejects serialized and trailing malformed tool-call output", () => {
+    expect(
+      parseOpenClawAgentText(
+        JSON.stringify({ payloads: [{ text: '{"name":"read","input":{"value":56}}' }] }),
+      ),
+    ).toBe("");
+    expect(
+      parseOpenClawAgentText(
+        `${JSON.stringify({ payloads: [{ text: "56" }] })}\n{"name":"read","input":{"value":56`,
       ),
     ).toBe("");
   });
