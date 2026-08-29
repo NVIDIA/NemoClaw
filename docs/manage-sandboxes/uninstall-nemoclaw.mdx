@@ -224,7 +224,11 @@ Also verify that `~/.nemoclaw/` contains neither `portable-uninstall-retirement.
 Verify that `~/.nemoclaw/hermes-portable-lifecycle/` and `~/.nemoclaw/portable-demo-lifecycle/` are absent or empty.
 Also verify that `~/.nemoclaw/` contains no `hermes-portable-uninstall-transaction.json`, `portable-uninstall-retirement.json`, or entry whose name starts with `.portable-uninstall-retirement`.
 </AgentOnly>
-Confirm that those checks find no lifecycle evidence and that full uninstall completed without a Portable lifecycle error.
+Confirm that the file checks find no lifecycle evidence.
+Only a standard unscoped full uninstall can confirm that Portable lifecycle state is absent.
+It must not use `--keep-openshell`, switch to gateway-scoped cleanup, or operate with an externally supervised OpenShell gateway.
+Confirm that it completes without a Portable lifecycle error.
+An uninstall in any of those excluded modes does not authorize repair or deletion.
 Only then may you repair or remove a path that you know an earlier Portable attempt abandoned before rerunning Portable onboarding.
 If lifecycle state is unreadable, ambiguous, or contradictory, keep the preserved path unchanged and resolve the reported lifecycle error before onboarding.
 Portable onboarding validates the path's ownership, type, and permissions and stops when it finds unsafe state.
