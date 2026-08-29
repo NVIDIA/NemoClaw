@@ -127,6 +127,7 @@ type ExportInput = {
   repository: string;
   number: number;
   report: unknown;
+  pullSnapshot: unknown;
   githubRead: GithubRead;
   trackTemporaryPath?: (path: string, cleanup?: () => Promise<void>) => void;
   releaseTemporaryPath?: (path: string) => void;
@@ -946,7 +947,9 @@ export async function cleanupLifetimeStaging(
 }
 
 export async function exportLifetimeTrace(input: ExportInput): Promise<LifetimeArtifacts> {
-  const pull = await readPull(input);
+  const pull = input.pullSnapshot as any;
+  if (pull?.number !== input.number || typeof pull?.url !== "string")
+    throw new Error("shared pull request snapshot did not match the lifetime trace contract");
   const expectedHead = (input.report as { headSha?: unknown }).headSha;
   if (typeof expectedHead !== "string" || pull.headRefOid !== expectedHead)
     throw new Error("pull request head changed during lifetime analysis");

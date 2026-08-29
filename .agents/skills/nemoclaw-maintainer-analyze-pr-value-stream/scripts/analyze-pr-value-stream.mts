@@ -340,7 +340,7 @@ async function readPullContext(input: AnalysisOptions): Promise<PullContext> {
       "--repo",
       input.repository,
       "--json",
-      "number,url,state,isDraft,createdAt,mergedAt,baseRefName,headRefName,headRefOid,commits,reviews",
+      "number,url,state,isDraft,createdAt,mergedAt,updatedAt,author,baseRefName,headRefName,headRefOid,commits,reviews",
     ],
   });
   const pull = JSON.parse(result.stdout);
@@ -1400,8 +1400,11 @@ function assembleValueStreamReport(context: ReportAssemblyContext): ValueStreamR
   };
 }
 
-async function collectValueStreamReport(input: AnalysisOptions): Promise<ValueStreamReport> {
-  const pullContext = await readPullContext(input);
+async function collectValueStreamReport(
+  input: AnalysisOptions,
+  snapshot?: PullContext,
+): Promise<ValueStreamReport> {
+  const pullContext = snapshot ?? (await readPullContext(input));
   const runs = await readWorkflowRuns(input, pullContext.pull.headRefName);
   const timeline = selectRevisionTimeline({
     pull: pullContext.pull,
@@ -1493,12 +1496,14 @@ function parseArguments(argv: string[]): Input {
 async function main(): Promise<void> {
   const input = parseArguments(process.argv.slice(2));
   const normalized = normalizeAnalysisInput(input);
-  const report = await collectValueStreamReport(normalized);
+  const pullContext = await readPullContext(normalized);
+  const report = await collectValueStreamReport(normalized, pullContext);
   report.lifetime = await exportLifetimeTrace({
     workdir: normalized.workdir,
     repository: normalized.repository,
     number: normalized.number,
     report,
+    pullSnapshot: pullContext.pull,
     githubRead: async (args) => runGithubCli({ workdir: normalized.workdir, args }),
     trackTemporaryPath: trackArtifactDirectory,
     releaseTemporaryPath: releaseTrackedPath,
