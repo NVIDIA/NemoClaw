@@ -16,11 +16,13 @@ const GATE = path.join(
 const HARNESS = String.raw`
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import signal
 import sys
 import tempfile
+from contextlib import redirect_stderr
 
 spec = importlib.util.spec_from_file_location("runtime_state_startup_gate", sys.argv[1])
 gate = importlib.util.module_from_spec(spec)
@@ -95,6 +97,21 @@ with tempfile.TemporaryDirectory() as root:
     }
     write(os.path.join(durable, gate.PERMIT_NAME), permit, 0o444)
     results["admitted"] = gate._run("admit")
+    gate._capture_parent = lambda: {**start, "pid": 42}
+    invalid_stderr = io.StringIO()
+    with redirect_stderr(invalid_stderr):
+        results["invalid_status"] = gate.main(["admit"])
+    results["invalid_stderr"] = invalid_stderr.getvalue().strip()
+    gate._capture_parent = lambda: start
+    os.chmod(os.path.join(durable, gate.PERMIT_NAME), 0o600)
+    with open(os.path.join(durable, gate.PERMIT_NAME), "wb") as stream:
+        stream.write(b"{\n")
+    os.chmod(os.path.join(durable, gate.PERMIT_NAME), 0o444)
+    malformed_stderr = io.StringIO()
+    with redirect_stderr(malformed_stderr):
+        results["malformed_status"] = gate.main(["admit"])
+    results["malformed_stderr"] = malformed_stderr.getvalue().strip()
+    write(os.path.join(durable, gate.PERMIT_NAME), permit, 0o444)
 
     orphan = os.path.join(candidate_directory, ".startup-complete.json.91.interrupted")
     with open(orphan, "wb") as stream:
@@ -248,6 +265,14 @@ describe("runtime state mutation startup gate", () => {
       tampered_release: "release-candidate-mismatch",
       symlink_directory: "unsafe-directory",
       invalid_present_directory: "gate-directory-invalid",
+      invalid_status: 76,
+      invalid_stderr:
+        "runtime-state-mutation-startup-gate: invalid-state " +
+        `code=gate-start-mismatch transaction=${"c".repeat(64)}`,
+      malformed_status: 76,
+      malformed_stderr:
+        "runtime-state-mutation-startup-gate: invalid-state " +
+        "code=gate-receipt-invalid transaction=unknown",
       candidate: {
         schemaVersion: 1,
         protocol: "nemoclaw-runtime-state-mutation-startup-complete-v1",

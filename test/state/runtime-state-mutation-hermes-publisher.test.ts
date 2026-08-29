@@ -353,6 +353,10 @@ function createEntrypointGateFixture(temporary: string): EntrypointGateFixture {
       "  admit)",
       '    printf "admit\\n" >> "$NEMOCLAW_TEST_TRACE"',
       '    if [ "$NEMOCLAW_TEST_GATE_MODE" = "deny" ]; then exit 1; fi',
+      '    if [ "$NEMOCLAW_TEST_GATE_MODE" = "invalid" ]; then',
+      '      printf "%s\\n" "runtime-state-mutation-startup-gate: invalid-state code=gate-receipt-invalid transaction=${NEMOCLAW_TEST_TRANSACTION}" >&2',
+      "      exit 76",
+      "    fi",
       "    exit 10",
       "    ;;",
       "  checkpoint)",
@@ -446,7 +450,7 @@ async function waitForStoppedProcess(pid: number, description: string): Promise<
 
 function entrypointGateEnvironment(
   fixture: EntrypointGateFixture,
-  gateMode: "allow" | "deny",
+  gateMode: "allow" | "deny" | "invalid",
 ): NodeJS.ProcessEnv {
   return {
     ...process.env,
@@ -456,6 +460,7 @@ function entrypointGateEnvironment(
     NEMOCLAW_TEST_GATE_MODE: gateMode,
     NEMOCLAW_TEST_RELEASE: fixture.releasePath,
     NEMOCLAW_TEST_TRACE: fixture.tracePath,
+    NEMOCLAW_TEST_TRANSACTION: "c".repeat(64),
   };
 }
 
@@ -629,6 +634,31 @@ describe("Hermes runtime state mutation publisher", () => {
 
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("Runtime state mutation startup gate failed");
+      expect(readEntrypointTrace(fixture.tracePath)).toEqual(["admit"]);
+      expect(fs.existsSync(fixture.acknowledgePath)).toBe(false);
+    } finally {
+      fs.rmSync(temporary, { force: true, recursive: true });
+    }
+  });
+
+  it("fails closed with stable host recovery guidance for invalid gate state (#10155)", () => {
+    const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-entrypoint-invalid-"));
+    const fixture = createEntrypointGateFixture(temporary);
+    try {
+      const result = spawnSync("bash", [fixture.harnessPath], {
+        encoding: "utf8",
+        env: entrypointGateEnvironment(fixture, "invalid"),
+        timeout: 5_000,
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        "invalid-state code=gate-receipt-invalid transaction=" + "c".repeat(64),
+      );
+      expect(result.stderr).toContain(
+        "Run 'nemoclaw <sandbox-name> shields status' on the host",
+      );
+      expect(result.stderr).not.toContain("held by an active runtime state mutation");
       expect(readEntrypointTrace(fixture.tracePath)).toEqual(["admit"]);
       expect(fs.existsSync(fixture.acknowledgePath)).toBe(false);
     } finally {

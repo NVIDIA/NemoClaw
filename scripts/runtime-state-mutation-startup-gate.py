@@ -90,6 +90,16 @@ RETRY_KEYS = (
 class GateError(RuntimeError):
     """A fixed, non-sensitive startup-gate refusal."""
 
+    def __init__(self, code: str, transaction_id: str | None = None) -> None:
+        super().__init__(code)
+        self.code = code
+        self.transaction_id = transaction_id
+
+    def with_transaction(self, transaction_id: str) -> GateError:
+        if self.transaction_id is not None:
+            return self
+        return GateError(self.code, transaction_id)
+
 
 def _fail(code: str) -> NoReturn:
     raise GateError(code)
@@ -392,41 +402,46 @@ def _binding(raw: bytes, protocol: str, keys: tuple[str, ...]) -> dict[str, obje
     if value["schemaVersion"] != SCHEMA_VERSION or value["protocol"] != protocol:
         _fail("gate-receipt-invalid")
     transaction_id = _hex(value["transactionId"], "gate-receipt-invalid")
-    nonce = _hex(value["nonce"], "gate-receipt-invalid")
-    expected_directory = f"{HANDOFF_ROOT}/{nonce}"
-    if value["candidateDirectory"] != expected_directory:
-        _fail("gate-receipt-invalid")
-    start = _process_reference(value["start"], "gate-receipt-invalid")
-    if _canonical(start) != _canonical(_capture_parent()):
-        _fail("gate-start-mismatch")
-    if protocol == PERMIT_PROTOCOL:
-        protocol_binding: dict[str, object] = {
-            "markerSha256": _hex(value["markerSha256"], "gate-receipt-invalid")
+    try:
+        nonce = _hex(value["nonce"], "gate-receipt-invalid")
+        expected_directory = f"{HANDOFF_ROOT}/{nonce}"
+        if value["candidateDirectory"] != expected_directory:
+            _fail("gate-receipt-invalid")
+        start = _process_reference(value["start"], "gate-receipt-invalid")
+        if _canonical(start) != _canonical(_capture_parent()):
+            _fail("gate-start-mismatch")
+        if protocol == PERMIT_PROTOCOL:
+            protocol_binding: dict[str, object] = {
+                "markerSha256": _hex(value["markerSha256"], "gate-receipt-invalid")
+            }
+        elif protocol == RELEASE_PROTOCOL:
+            protocol_binding = {
+                "checkpointSha256": _hex(value["checkpointSha256"], "gate-receipt-invalid")
+            }
+        else:
+            checkpoint = value["checkpointSha256"]
+            protocol_binding = {
+                "permitSha256": _hex(value["permitSha256"], "gate-receipt-invalid"),
+                "checkpointSha256": (
+                    None
+                    if checkpoint is None
+                    else _hex(checkpoint, "gate-receipt-invalid")
+                ),
+            }
+        normalized = {
+            "schemaVersion": SCHEMA_VERSION,
+            "protocol": protocol,
+            "transactionId": transaction_id,
+            "nonce": nonce,
+            **protocol_binding,
+            "start": start,
+            "candidateDirectory": expected_directory,
         }
-    elif protocol == RELEASE_PROTOCOL:
-        protocol_binding = {
-            "checkpointSha256": _hex(value["checkpointSha256"], "gate-receipt-invalid")
-        }
-    else:
-        checkpoint = value["checkpointSha256"]
-        protocol_binding = {
-            "permitSha256": _hex(value["permitSha256"], "gate-receipt-invalid"),
-            "checkpointSha256": (
-                None if checkpoint is None else _hex(checkpoint, "gate-receipt-invalid")
-            ),
-        }
-    normalized = {
-        "schemaVersion": SCHEMA_VERSION,
-        "protocol": protocol,
-        "transactionId": transaction_id,
-        "nonce": nonce,
-        **protocol_binding,
-        "start": start,
-        "candidateDirectory": expected_directory,
-    }
-    if raw != _canonical(normalized) + b"\n":
-        _fail("gate-receipt-invalid")
-    return normalized
+        if raw != _canonical(normalized) + b"\n":
+            _fail("gate-receipt-invalid")
+        return normalized
+    except GateError as error:
+        raise error.with_transaction(transaction_id) from None
 
 
 def _read_binding(
@@ -708,17 +723,20 @@ def _run(action: str) -> str:
             _fail("activation-release-missing")
         return "inactive"
     assert directory_fd is not None
+    transaction_id: str | None = None
     try:
         released = _read_binding(
             directory_fd, RELEASE_NAME, RELEASE_PROTOCOL, RELEASE_KEYS
         )
         if released is not None:
+            transaction_id = str(released["transactionId"])
             _verify_release_candidate(released)
             if action == "acknowledge":
                 return _prepare_release_ack(released)
             return "released"
         retry = _read_binding(directory_fd, RETRY_NAME, RETRY_PROTOCOL, RETRY_KEYS)
         if retry is not None:
+            transaction_id = str(retry["transactionId"])
             retry_payload = _verify_retry_binding(directory_fd, retry)
             if action == "admit":
                 _publish_retry_ack(retry, retry_payload)
@@ -729,12 +747,17 @@ def _run(action: str) -> str:
         permit = _read_binding(directory_fd, PERMIT_NAME, PERMIT_PROTOCOL, PERMIT_KEYS)
         if permit is None:
             _fail("activation-not-permitted")
+        transaction_id = str(permit["transactionId"])
         if action == "checkpoint":
             _publish_candidate(permit)
             return "activation-ready"
         if action in ("restart", "resume"):
             _fail("activation-not-released")
         return "permitted"
+    except GateError as error:
+        if transaction_id is None:
+            raise
+        raise error.with_transaction(transaction_id) from None
     finally:
         os.close(directory_fd)
 
@@ -767,9 +790,21 @@ def main(argv: list[str] | None = None) -> int:
             "retry": 12,
             "retry-wait": 75,
         }[state]
-    except (GateError, OSError):
-        print("runtime-state-mutation-startup-gate: held", file=sys.stderr)
-        return 75
+    except GateError as error:
+        transaction_id = error.transaction_id or "unknown"
+        print(
+            "runtime-state-mutation-startup-gate: invalid-state "
+            f"code={error.code} transaction={transaction_id}",
+            file=sys.stderr,
+        )
+        return 76
+    except OSError:
+        print(
+            "runtime-state-mutation-startup-gate: invalid-state "
+            "code=gate-io-error transaction=unknown",
+            file=sys.stderr,
+        )
+        return 76
 
 
 if __name__ == "__main__":

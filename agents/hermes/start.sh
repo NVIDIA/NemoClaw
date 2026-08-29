@@ -80,6 +80,11 @@ while :; do
       printf '%s\n' '[SECURITY] Hermes startup held by an active runtime state mutation.' >&2
       /bin/sleep 1 || true
       ;;
+    76)
+      printf '%s\n' '[SECURITY] Hermes startup refused invalid runtime state mutation state.' >&2
+      printf '%s\n' "[SECURITY] Run 'nemoclaw <sandbox-name> shields status' on the host to recover the retained transition." >&2
+      exit 1
+      ;;
     *)
       printf '%s\n' '[SECURITY] Runtime state mutation startup gate failed.' >&2
       exit 1
