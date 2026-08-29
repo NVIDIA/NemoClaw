@@ -19,7 +19,15 @@ function createHarness() {
     },
     tiers: {
       resolveTierPresets: vi.fn(() => [{ name: "local-inference" }, { name: "npm" }]),
-      getTier: vi.fn(() => ({})),
+      getTier: vi.fn((tierName: string) => ({
+        name: tierName,
+        label: tierName,
+        description: "test tier",
+        presets: [
+          { name: "local-inference", access: "read" as const },
+          { name: "npm", access: "read" as const },
+        ],
+      })),
     },
     localInferenceProviders: ["ollama-local", "vllm-local"],
     step: vi.fn(),

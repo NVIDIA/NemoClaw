@@ -610,10 +610,7 @@ export function reconcileCreatedHermesCredentialEnvironment(
     deps.revalidatePolicyAuthority(
       `reconciling Hermes messaging credentials for sandbox '${input.sandboxName}'`,
     );
-    const reconciliation = deps.reconcileCredentialEnv(
-      input.plan,
-      deps.revalidatePolicyAuthority,
-    );
+    const reconciliation = deps.reconcileCredentialEnv(input.plan, deps.revalidatePolicyAuthority);
     deps.revalidatePolicyAuthority(
       `confirming Hermes messaging credential reconciliation for sandbox '${input.sandboxName}'`,
     );
@@ -2619,10 +2616,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             sandboxName,
             message,
             ...(exactIdentity ? { sandboxIdentityFingerprint: exactIdentity } : {}),
-            recoveryContext: retainedSandboxRecoveryContext(
-              verifiedPolicyGate,
-              createAttemptNonce,
-            ),
+            recoveryContext: retainedSandboxRecoveryContext(verifiedPolicyGate, createAttemptNonce),
           },
           onboardSession.markRetainedSandboxRecovery,
         ),
@@ -3085,6 +3079,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           {
             sandboxName,
             sandboxWasLiveDefault,
+            gatewayPort: GATEWAY_PORT,
             runtimeFields: sandboxRuntimeFields,
             messagingProviders,
             liveExists,

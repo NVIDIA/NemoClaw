@@ -39,6 +39,7 @@ describe("ordinary managed sandbox completion", () => {
           {
             sandboxName: "alpha",
             sandboxWasLiveDefault: false,
+            gatewayPort: 8080,
             runtimeFields: { openshellDriver } as SandboxEntry,
             messagingProviders: ["alpha-slack", "alpha-slack"],
             liveExists: true,
@@ -106,6 +107,7 @@ describe("new sandbox cancellation recovery", () => {
         {
           sandboxName: "new-sandbox",
           sandboxWasLiveDefault: false,
+          gatewayPort: 8080,
           runtimeFields: { openshellDriver: "docker" } as never,
           messagingProviders: [],
           liveExists: false,

@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { DEFAULT_GATEWAY_PORT } from "../../core/ports";
+import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../../core/ports";
 
-export { DEFAULT_GATEWAY_PORT };
+export { DEFAULT_GATEWAY_PORT, GATEWAY_PORT };
 
 /** Gateway registration name used for the default gateway port. */
 export const BASE_GATEWAY_NAME = "nemoclaw";

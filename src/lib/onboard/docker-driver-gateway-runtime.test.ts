@@ -82,7 +82,7 @@ describe("docker-driver gateway runtime helpers", () => {
     try {
       withEnv(
         {
-          NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir,
+          NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: `  ${stateDir}  `,
           NEMOCLAW_OPENSHELL_GATEWAY_BIN: gatewayBin,
           NEMOCLAW_OPENSHELL_SANDBOX_BIN: sandboxBin,
           OPENSHELL_DOCKER_NETWORK_NAME: "custom-openshell-docker",
@@ -93,6 +93,9 @@ describe("docker-driver gateway runtime helpers", () => {
           });
 
           expect(helpers.getDockerDriverGatewayStateDir()).toBe(path.resolve(stateDir));
+          expect(helpers.getDockerDriverGatewayPidFile()).toBe(
+            path.join(path.resolve(stateDir), "openshell-gateway.pid"),
+          );
           expect(helpers.resolveOpenShellGatewayBinary()).toBe(path.resolve(gatewayBin));
           expect(helpers.resolveOpenShellSandboxBinary()).toBe(path.resolve(sandboxBin));
 
@@ -108,12 +111,35 @@ describe("docker-driver gateway runtime helpers", () => {
           expect(env.OPENSHELL_DB_URL).toBe(
             `sqlite:${path.join(path.resolve(stateDir), "openshell.db")}`,
           );
+          helpers.rememberDockerDriverGatewayPid(4242);
+          writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDir, {
+            desiredEnv: {},
+            endpoint: "https://127.0.0.1:18080",
+            pid: 4242,
+          });
+          helpers.clearDockerDriverGatewayRuntimeFiles();
+          expect(fs.existsSync(path.join(stateDir, "openshell-gateway.pid"))).toBe(false);
+          expect(fs.existsSync(getDockerDriverGatewayRuntimeMarkerPath(stateDir))).toBe(false);
         },
       );
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it.each([
+    ["relative", "relative-gateway-state"],
+    ["shared root", path.join(os.homedir(), ".local", "state", "nemoclaw")],
+  ])(
+    "rejects a %s state-directory override through the binding owner",
+    (_scenario, configured) => {
+      withEnv({ NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: configured }, () => {
+        expect(() => makeHelpers().helpers.getDockerDriverGatewayStateDir()).toThrow(
+          /absolute dedicated gateway state directory|shared NemoClaw state root/,
+        );
+      });
+    },
+  );
 
   it("uses the moving dev supervisor image for an explicit or detected dev runtime", () => {
     const explicit = makeHelpers({ shouldUseOpenshellDevChannel: () => true });

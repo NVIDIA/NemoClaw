@@ -6,15 +6,20 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { DEFAULT_GATEWAY_PORT, resolveGatewayStateDirForPort } from "./gateway/state-dir";
+
 export const DOCKER_DRIVER_GATEWAY_RUNTIME_MARKER_VERSION = 1;
 
 export function resolveDockerDriverGatewayStateDir(
   env: NodeJS.ProcessEnv = process.env,
   homeDir: string = env.HOME || os.homedir(),
+  gatewayPort: number = DEFAULT_GATEWAY_PORT,
 ): string {
-  const configured = env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
-  if (configured && configured.trim()) return path.resolve(configured.trim());
-  return path.join(homeDir, ".local", "state", "nemoclaw", "openshell-docker-gateway");
+  return resolveGatewayStateDirForPort({
+    configured: env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+    home: homeDir,
+    port: gatewayPort,
+  });
 }
 
 export function resolveDockerDriverGatewayPidFile(

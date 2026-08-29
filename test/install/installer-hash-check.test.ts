@@ -11,6 +11,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  INSTALLER_HASH_SUPERVISOR_MANIFEST_DIGESTS,
   V0099_ASSET_DIGESTS,
   V0099_CHECKSUM_MANIFESTS,
   V00101_ASSET_DIGESTS,
@@ -19,11 +20,9 @@ import {
   V00103_ASSET_DIGESTS,
   V00103_CHECKSUM_MANIFESTS,
   V00103_SANDBOX_BUILD_DIGESTS,
-  V00103_SUPERVISOR_MANIFEST_DIGEST,
   V00106_ASSET_DIGESTS,
   V00106_CHECKSUM_MANIFESTS,
   V00106_SANDBOX_BUILD_DIGESTS,
-  V00106_SUPERVISOR_MANIFEST_DIGEST,
 } from "../helpers/openshell-release-fixtures";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
@@ -33,10 +32,6 @@ const INSTALLER_TEMPLATE = fs.readFileSync(
 );
 const BREV_TEMPLATE = fs.readFileSync(
   path.join(REPO_ROOT, "scripts/brev-launchable-ci-cpu.sh"),
-  "utf8",
-);
-const SUPERVISOR_RUNTIME_TEMPLATE = fs.readFileSync(
-  path.join(REPO_ROOT, "src/lib/onboard/docker-driver-gateway-runtime.ts"),
   "utf8",
 );
 const ASSET_DIGESTS = new Map([
@@ -76,7 +71,10 @@ const ASSET_DIGESTS = new Map([
 ]);
 const FORMULA_ASSET = "openshell.rb";
 const FORMULA_DIGEST = ASSET_DIGESTS.get(FORMULA_ASSET)!;
-const SYNTHETIC_SUPERVISOR_MANIFEST_DIGEST = `sha256:${"c".repeat(64)}`;
+const SYNTHETIC_SUPERVISOR_MANIFEST_DIGEST =
+  INSTALLER_HASH_SUPERVISOR_MANIFEST_DIGESTS.get("9.9.9")!;
+const SYNTHETIC_SUPERVISOR_RUNTIME_TEMPLATE_SHA256 =
+  "c3c9df4f5764d4997881b5e2bd2989345b93db97f449fe611a9df75de17a9e2a";
 const SYNTHETIC_SANDBOX_BUILD_DIGESTS = ["a".repeat(64), "b".repeat(64)] as const;
 const ASSETS = [...ASSET_DIGESTS.keys()].filter((asset) => asset !== FORMULA_ASSET);
 const INSTALLER_ASSETS = [...ASSETS, FORMULA_ASSET];
@@ -550,7 +548,7 @@ ${manifests}
       manifestDigest: "${SYNTHETIC_SUPERVISOR_MANIFEST_DIGEST}",
       required: false,
       runtimeTemplateSha256: [
-        "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
+        "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
       ],
     },
     version: "9.9.9",
@@ -565,6 +563,15 @@ const removeFirstReleaseFormula = (source: string): string =>
     /    formula: \{\n      asset: "openshell\.rb",\n      sha256: "[a-f0-9]{64}",\n      url: "https:\/\/github\.com\/NVIDIA\/OpenShell\/releases\/download\/v0\.0\.72\/openshell\.rb",\n    \},/u,
     "    formula: undefined as never,",
   );
+const trustSyntheticSupervisorRuntimeTemplate = (source: string): string => {
+  const marker = "      runtimeTemplateSha256: [\n";
+  const result = source.replaceAll(
+    marker,
+    `${marker}        "${SYNTHETIC_SUPERVISOR_RUNTIME_TEMPLATE_SHA256}",\n`,
+  );
+  assert.notEqual(result, source, "synthetic supervisor runtime trust anchors");
+  return result;
+};
 const PARSER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> = {
   "allowlisted-alternate-version": trustAlternateRelease,
   "duplicate-trusted-release": (source) =>
@@ -767,29 +774,15 @@ function renderBrevTemplate(openshellVersion: string, pinFunction: string): stri
 }
 
 function renderSupervisorRuntime(openshellVersion: string): string {
-  const hasManifestIdentity = SUPERVISOR_RUNTIME_TEMPLATE.includes(
-    `  "${openshellVersion}": "sha256:`,
-  );
-  const manifestDigest =
-    openshellVersion === "0.0.103"
-      ? V00103_SUPERVISOR_MANIFEST_DIGEST
-      : openshellVersion === "0.0.106"
-        ? V00106_SUPERVISOR_MANIFEST_DIGEST
-        : openshellVersion === "9.9.9"
-          ? SYNTHETIC_SUPERVISOR_MANIFEST_DIGEST
-          : undefined;
-  expect(
-    hasManifestIdentity || manifestDigest,
-    `supervisor fixture ${openshellVersion}`,
-  ).toBeTruthy();
-  return hasManifestIdentity
-    ? SUPERVISOR_RUNTIME_TEMPLATE
-    : SUPERVISOR_RUNTIME_TEMPLATE.replace(
-        "const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = {\n",
-        `const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = {
-  "${openshellVersion}": "${manifestDigest}",
-`,
-      );
+  assert(INSTALLER_HASH_SUPERVISOR_MANIFEST_DIGESTS.has(openshellVersion));
+  const pins = [...INSTALLER_HASH_SUPERVISOR_MANIFEST_DIGESTS]
+    .filter(([version]) => version !== "9.9.9" || openshellVersion === version)
+    .map(([version, digest]) => `  "${version}": "${digest}",`)
+    .join("\n");
+  return `const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = {
+${pins}
+};
+`;
 }
 
 function createFixture(
@@ -815,9 +808,14 @@ function createFixture(
     "utf8",
   );
   fs.writeFileSync(path.join(scriptsDir, "check-installer-hash.sh"), checker);
-  fs.copyFileSync(
-    path.join(REPO_ROOT, "scripts", "checks", "extract-installer-pins.mts"),
+  fs.writeFileSync(
     path.join(checksDir, "extract-installer-pins.mts"),
+    trustSyntheticSupervisorRuntimeTemplate(
+      fs.readFileSync(
+        path.join(REPO_ROOT, "scripts", "checks", "extract-installer-pins.mts"),
+        "utf8",
+      ),
+    ),
   );
 
   fs.writeFileSync(
@@ -972,9 +970,11 @@ function runFixture(
   );
   const parserSource = fs.readFileSync(trustedParserPath, "utf8");
   const mutateParser = PARSER_MUTATIONS[mode];
-  const parserResult = mutateParser?.(parserSource) ?? parserSource;
-  expect(parserResult === parserSource, `parser mutation ${mode}`).toBe(mutateParser === undefined);
-  fs.writeFileSync(trustedParserPath, parserResult);
+  const mutatedParserSource = mutateParser?.(parserSource) ?? parserSource;
+  expect(mutatedParserSource === parserSource, `parser mutation ${mode}`).toBe(
+    mutateParser === undefined,
+  );
+  fs.writeFileSync(trustedParserPath, trustSyntheticSupervisorRuntimeTemplate(mutatedParserSource));
   fs.writeFileSync(
     targetChecker,
     trustedChecker

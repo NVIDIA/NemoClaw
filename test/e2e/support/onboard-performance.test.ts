@@ -11,6 +11,7 @@ import {
 } from "../fixtures/onboard-performance.ts";
 import {
   buildOpenClawFirstTurnLatencyEvidence,
+  extractOpenClawAgentText,
   extractOpenClawAgentDurationEvidence,
   extractOpenClawAgentPayloadText,
 } from "../live/agent-turn-latency-helpers.ts";
@@ -471,6 +472,14 @@ describe("onboard performance evidence", () => {
         `progress\n${JSON.stringify({ result: { payloads: [{ text: "NEMOCLAW_E2E_READY_6002" }] } })}`,
       ),
     ).toBe("NEMOCLAW_E2E_READY_6002");
+  });
+
+  it("finds OpenClaw agent text in a later JSON envelope", () => {
+    expect(
+      extractOpenClawAgentText(
+        `leading output\n${JSON.stringify({ status: "starting" })}\n${JSON.stringify({ response: { text: "NVIDIA" } })}`,
+      ),
+    ).toBe("NVIDIA");
   });
 
   it("joins top-level agent-output payload fragments", () => {

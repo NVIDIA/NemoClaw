@@ -23,30 +23,32 @@ import type { GatewayReuseState } from "../state/gateway";
 import {
   BASE_GATEWAY_COMPAT_CONTAINER_NAME,
   BASE_GATEWAY_NAME,
-  BASE_GATEWAY_STATE_DIR_NAME,
-  DEFAULT_GATEWAY_PORT,
   isDefaultGatewayPort,
   resolveGatewayCompatContainerName,
   resolveGatewayName,
-  resolveGatewayStateDirName,
 } from "./gateway-binding/identity";
+import { DEFAULT_GATEWAY_PORT } from "./gateway/state-dir";
 
 export {
   BASE_GATEWAY_COMPAT_CONTAINER_NAME,
   BASE_GATEWAY_NAME,
-  BASE_GATEWAY_STATE_DIR_NAME,
   isDefaultGatewayPort,
   resolveGatewayCompatContainerName,
   resolveGatewayName,
-  resolveGatewayStateDirName,
 };
 
-/**
- * Resolve the OpenShell gateway registration name for a gateway port. The
- * default port keeps the bare `nemoclaw` name for backward compatibility; any
- * other port gets a `nemoclaw-<port>` name so its lifecycle commands
- * (add/select/remove/start/destroy) never target another sandbox's gateway.
- */
+export {
+  assertManagedGatewayStateDirectoryParentTrusted,
+  BASE_GATEWAY_STATE_DIR_NAME,
+  ensureManagedGatewayStateRoot,
+  isManagedGatewayStateRootReservation,
+  managedGatewayStateRootOwnershipFailure,
+  MANAGED_GATEWAY_STATE_ROOT_MARKER,
+  resolveGatewayStateDirForPort,
+  resolveGatewayStateDirName,
+  UnsafeGatewayStateDirectoryError,
+} from "./gateway/state-dir";
+
 /** Resolve the gateway port encoded by a canonical NemoClaw gateway name. */
 export function resolveGatewayPortFromName(gatewayName: string): number | null {
   if (gatewayName === BASE_GATEWAY_NAME) {
@@ -160,12 +162,6 @@ export function resolveCoreOnboardGatewayBinding(options: {
   return { name, port };
 }
 
-/**
- * Resolve the Docker-driver gateway state directory leaf name for a gateway
- * port. The state dir holds the gateway pid file and runtime marker, so a
- * per-port leaf keeps each sandbox's marker isolated — a second onboard cannot
- * overwrite the first sandbox's marker or clobber its pid file.
- */
 /**
  * Resolve the Docker-driver gateway compatibility container name for a gateway
  * port. A per-port container name prevents the second onboard's
