@@ -155,11 +155,21 @@ describe("resolveSettleMs", () => {
     expect(resolveSettleMs()).toBe(10_000);
   });
 
-  it("clamps a negative env value to 0", () => {
+  it.each(["0", "-500", "0.5", "   ", "invalid"])(
+    "keeps the production settle window for a non-positive or invalid env value (%s)",
+    (value) => {
+      delete process.env.VITEST;
+      process.env.NODE_ENV = "production";
+      process.env.NEMOCLAW_SHIELDS_SETTLE_MS = value;
+      expect(resolveSettleMs()).toBe(750);
+    },
+  );
+
+  it("honours the minimum positive integer env value", () => {
     delete process.env.VITEST;
     process.env.NODE_ENV = "production";
-    process.env.NEMOCLAW_SHIELDS_SETTLE_MS = "-500";
-    expect(resolveSettleMs()).toBe(0);
+    process.env.NEMOCLAW_SHIELDS_SETTLE_MS = "1";
+    expect(resolveSettleMs()).toBe(1);
   });
 
   it("honours a valid in-range env value", () => {

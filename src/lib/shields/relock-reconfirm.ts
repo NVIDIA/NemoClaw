@@ -33,7 +33,6 @@ export { waitForHermesInferenceRouteConvergence } from "./inference-convergence"
 
 const DEFAULT_MAX_ATTEMPTS = 3;
 const DEFAULT_SETTLE_MS = 750;
-const MIN_SETTLE_MS = 0;
 const MAX_SETTLE_MS = 10_000;
 
 /** Result of a single `lockAgentConfig` call: apply + verify. */
@@ -70,9 +69,9 @@ export interface RelockReconfirmResult {
 /**
  * Resolve the settle window (ms) between applying a lock and re-confirming it.
  *
- * Reads `NEMOCLAW_SHIELDS_SETTLE_MS`, defaulting to 750ms and clamping to
- * [0, 10000]. Returns 0 only under Vitest so suites don't incur real blocking
- * waits.
+ * Reads `NEMOCLAW_SHIELDS_SETTLE_MS`, defaulting to 750ms. Positive values are
+ * capped at 10000ms; invalid or non-positive values use the default. Returns 0
+ * only under Vitest so suites don't incur real blocking waits.
  */
 export function resolveSettleMs(): number {
   // VITEST is the precise test signal (Vitest always sets it). Do NOT key off
@@ -82,14 +81,18 @@ export function resolveSettleMs(): number {
     return 0;
   }
   const raw = process.env.NEMOCLAW_SHIELDS_SETTLE_MS;
-  if (raw === undefined || raw === "") {
+  if (raw === undefined || raw.trim() === "") {
     return DEFAULT_SETTLE_MS;
   }
   const parsed = Number(raw);
   if (!Number.isFinite(parsed)) {
     return DEFAULT_SETTLE_MS;
   }
-  return Math.min(MAX_SETTLE_MS, Math.max(MIN_SETTLE_MS, Math.trunc(parsed)));
+  const settleMs = Math.trunc(parsed);
+  if (settleMs <= 0) {
+    return DEFAULT_SETTLE_MS;
+  }
+  return Math.min(MAX_SETTLE_MS, settleMs);
 }
 
 /**
