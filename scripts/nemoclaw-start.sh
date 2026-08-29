@@ -1610,23 +1610,23 @@ try:
 
     channels = config.get("channels") if isinstance(config, dict) else None
     channel = channels.get("openclaw-weixin") if isinstance(channels, dict) else None
-    if not isinstance(channel, dict) or channel.get("enabled") is not True:
+    if not isinstance(channel, dict) or channel.get("enabled") is False:
         raise SystemExit(0)
 
     accounts = channel.get("accounts")
     if not isinstance(accounts, dict):
-        fail("active WeChat configuration has no account registry")
+        raise SystemExit(0)
 
     account_ids = []
     for account_id, account in accounts.items():
-        if isinstance(account, dict) and account.get("enabled") is False:
+        if not isinstance(account, dict) or account.get("enabled") is False:
             continue
         if not safe_account_id(account_id):
             fail("active WeChat configuration contains an unsafe account id")
         account_ids.append(account_id)
 
     if not account_ids:
-        fail("active WeChat configuration has no enabled account")
+        raise SystemExit(0)
 
     runtime_placeholder = os.environ.get(env_key, "")
     if not scoped_re.fullmatch(runtime_placeholder):
@@ -2042,8 +2042,13 @@ if updated != config:
 
 channels = updated.get("channels") if isinstance(updated, dict) else None
 wechat = channels.get("openclaw-weixin") if isinstance(channels, dict) else None
-if isinstance(wechat, dict) and wechat.get("enabled") is True:
-    print("wechat-active=1")
+if isinstance(wechat, dict) and wechat.get("enabled") is not False:
+    accounts = wechat.get("accounts")
+    if isinstance(accounts, dict) and any(
+        isinstance(account, dict) and account.get("enabled") is not False
+        for account in accounts.values()
+    ):
+        print("wechat-active=1")
 if refreshed:
     print("refreshed=" + ",".join(sorted(refreshed)))
 for warning in warnings:

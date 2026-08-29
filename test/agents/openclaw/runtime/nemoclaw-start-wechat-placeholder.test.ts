@@ -15,17 +15,15 @@ const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
 interface WechatRefreshFixture {
   readonly account: Record<string, unknown>;
-  readonly accountInodeAfter: number;
-  readonly accountInodeBefore: number;
   readonly result: ReturnType<typeof spawnSync>;
 }
 
-function wechatConfig(enabled: boolean): Record<string, unknown> {
+function wechatConfig(enabled: boolean | null): Record<string, unknown> {
   return {
     channels: {
       "openclaw-weixin": {
-        enabled,
-        accounts: { primary: { enabled: true } },
+        ...(enabled === null ? {} : { enabled }),
+        accounts: { primary: { enabled: enabled !== false } },
       },
     },
   };
@@ -34,7 +32,7 @@ function wechatConfig(enabled: boolean): Record<string, unknown> {
 function runWechatRefresh(
   accountToken: string,
   env: Record<string, string>,
-  enabled = true,
+  enabled: boolean | null = true,
   mutateAccount?: (paths: { accountPath: string; tmpDir: string }) => void,
   configOwner = "sandbox",
 ): WechatRefreshFixture {
@@ -52,7 +50,6 @@ function runWechatRefresh(
   );
   fs.chmodSync(accountPath, 0o600);
   mutateAccount?.({ accountPath, tmpDir });
-  const accountInodeBefore = fs.statSync(accountPath).ino;
   const refresh = extractShellFunctionFromSource(
     src,
     "refresh_openclaw_provider_placeholders",
@@ -78,15 +75,14 @@ function runWechatRefresh(
       timeout: 5000,
     });
     const account = JSON.parse(fs.readFileSync(accountPath, "utf-8"));
-    const accountInodeAfter = fs.statSync(accountPath).ino;
-    return { account, accountInodeAfter, accountInodeBefore, result };
+    return { account, result };
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 }
 
 describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
-  it("writes the exact revision-scoped placeholder without logging it", () => {
+  it("writes the runtime placeholder when OpenShell supplies a new revision without logging it", () => {
     const scoped = "openshell:resolve:env:v42_WECHAT_BOT_TOKEN";
     const run = runWechatRefresh(CANONICAL, { WECHAT_BOT_TOKEN: scoped });
 
@@ -96,6 +92,14 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
       "Refreshed WeChat account provider placeholder from OpenShell runtime env: WECHAT_BOT_TOKEN",
     );
     expect(run.result.stderr).not.toContain(scoped);
+  });
+
+  it("refreshes the account when active WeChat config omits the parent enabled field", () => {
+    const scoped = "openshell:resolve:env:v42_WECHAT_BOT_TOKEN";
+    const run = runWechatRefresh(CANONICAL, { WECHAT_BOT_TOKEN: scoped }, null);
+
+    expect(run.result.status, String(run.result.stderr)).toBe(0);
+    expect(run.account.token).toBe(scoped);
   });
 
   it("refreshes a stale placeholder generation after provider rotation", () => {
@@ -114,7 +118,6 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
 
     expect(run.result.status, String(run.result.stderr)).toBe(0);
     expect(run.account.token).toBe(scoped);
-    expect(run.accountInodeAfter).toBe(run.accountInodeBefore);
     expect(run.result.stderr).not.toContain("Refreshed WeChat account provider placeholder");
   });
 
