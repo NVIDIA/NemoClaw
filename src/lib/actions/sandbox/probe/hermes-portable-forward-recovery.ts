@@ -96,7 +96,8 @@ function isSupportedForwardRow(parts: readonly string[]): boolean {
     /^\d+$/u.test(pidValue) &&
     Number.isSafeInteger(pid) &&
     pid > 0 &&
-    (isLiveSandboxForwardStatus(status.toLowerCase()) || status.toLowerCase() === "stopped")
+    (isLiveSandboxForwardStatus(status.toLowerCase()) ||
+      ["dead", "stopped"].includes(status.toLowerCase()))
   );
 }
 

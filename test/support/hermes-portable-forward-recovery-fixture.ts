@@ -22,6 +22,7 @@ function forwardList(records: ReadonlyMap<number, ForwardRecord>): string {
 export function createHermesPortableForwardRecoveryFixture({
   ports = [18_789],
   active = [],
+  dead = [],
   running = [],
   stopped = [],
   occupied = [],
@@ -35,6 +36,7 @@ export function createHermesPortableForwardRecoveryFixture({
 }: {
   ports?: readonly number[];
   active?: readonly number[];
+  dead?: readonly number[];
   running?: readonly number[];
   stopped?: readonly number[];
   occupied?: readonly number[];
@@ -49,6 +51,9 @@ export function createHermesPortableForwardRecoveryFixture({
   const records = new Map<number, ForwardRecord>();
   for (const port of active) {
     records.set(port, { owner: "alpha", reachable: true, status: "active" });
+  }
+  for (const port of dead) {
+    records.set(port, { owner: "alpha", reachable: false, status: "dead" });
   }
   for (const port of running) {
     records.set(port, { owner: "alpha", reachable: true, status: "running" });

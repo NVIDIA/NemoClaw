@@ -57,8 +57,11 @@ describe("Hermes Portable probe-only forward recovery", () => {
     expect(fixture.rollbackCalls).toEqual([]);
   });
 
-  it("restores an exact stopped forward", () => {
-    const fixture = createRecoveryFixture({ stopped: [18_789] });
+  it.each([
+    ["stopped", { stopped: [18_789] }],
+    ["dead after the host session ends", { dead: [18_789] }],
+  ])("restores an exact %s forward", (_state, options) => {
+    const fixture = createRecoveryFixture(options);
 
     expect(recoverHermesPortableLaunchForwards(fixture.input)).toEqual({
       kind: "restored",
@@ -103,6 +106,7 @@ describe("Hermes Portable probe-only forward recovery", () => {
 
   it.each([
     ["active PID", "alpha 127.0.0.1 18789 not-a-pid active"],
+    ["dead PID", "alpha 127.0.0.1 18789 not-a-pid dead"],
     ["bind", "alpha not-an-address 18789 12345 running"],
     ["port", "alpha 127.0.0.1 70000 12345 running"],
     ["status", "alpha 127.0.0.1 18789 12345 uncertain"],
