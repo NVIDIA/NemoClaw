@@ -327,17 +327,20 @@ describe("uninstall across every gateway port (#7791)", () => {
     expect(error).toHaveBeenCalledWith(expect.stringContaining("host fence release failed"));
   });
 
-  it("binds each child pass to its own gateway port and drops the sweep request", () => {
+  it("binds each child pass to its own gateway port and drops selected-only state", () => {
     const env = {
       HOME: "/home/tester",
       NEMOCLAW_GATEWAY_PORT: "8080",
+      NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: "/srv/nemoclaw/selected-gateway",
       [ALL_GATEWAY_PORTS_ENV]: "1",
     } as NodeJS.ProcessEnv;
 
     const childEnv = uninstallChildEnv(env, 9000);
 
     expect(childEnv.NEMOCLAW_GATEWAY_PORT).toBe("9000");
+    expect(childEnv.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR).toBeUndefined();
     expect(childEnv[ALL_GATEWAY_PORTS_ENV]).toBeUndefined();
+    expect(env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR).toBe("/srv/nemoclaw/selected-gateway");
   });
 
   it.each([

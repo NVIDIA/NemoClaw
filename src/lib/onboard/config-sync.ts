@@ -1,14 +1,39 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-
 import type { ProviderSelectionConfig } from "../inference/config";
-import { cleanupTempDir, secureTempFile } from "./temp-files";
 
 export interface RunSandboxConfigSyncDeps {
   getSelectionConfig: () => ProviderSelectionConfig | null;
   runConnectScript: (sandboxName: string, scriptContent: string) => void;
+}
+
+export interface NemoClawConfigSyncDeps {
+  getProviderSelectionConfig(provider: string, model: string): ProviderSelectionConfig | null;
+  run(argv: string[], options: Record<string, unknown>): unknown;
+  openshellArgv(args: string[]): string[];
+}
+
+const skipPolicyRequirementRevalidation = (_operation: string): void => undefined;
+
+export function createNemoClawConfigSync(deps: NemoClawConfigSyncDeps) {
+  return function syncNemoClawConfigInSandbox(
+    sandboxName: string,
+    provider: string,
+    model: string,
+    revalidatePolicyRequirements: (operation: string) => void = skipPolicyRequirementRevalidation,
+  ): void {
+    runSandboxConfigSync(sandboxName, {
+      getSelectionConfig: () => deps.getProviderSelectionConfig(provider, model),
+      runConnectScript: (name, scriptContent) => {
+        revalidatePolicyRequirements(`synchronize OpenClaw config in sandbox '${name}'`);
+        deps.run(deps.openshellArgv(sandboxConfigSyncArgs(name)), {
+          stdio: ["pipe", "ignore", "inherit"],
+          input: scriptContent,
+        });
+      },
+    });
+  };
 }
 
 /** Run config sync without allocating the interactive sandbox terminal transport. */
@@ -25,13 +50,7 @@ export function runSandboxConfigSync(sandboxName: string, deps: RunSandboxConfig
   if (!selectionConfig) return;
   const sandboxConfig = { ...selectionConfig, onboardedAt: new Date().toISOString() };
   const script = buildSandboxConfigSyncScript(sandboxConfig);
-  const scriptFile = writeSandboxConfigSyncFile(script);
-  try {
-    const scriptContent = fs.readFileSync(scriptFile, "utf-8");
-    deps.runConnectScript(sandboxName, scriptContent);
-  } finally {
-    cleanupTempDir(scriptFile, "nemoclaw-sync");
-  }
+  deps.runConnectScript(sandboxName, script);
 }
 
 export function buildSandboxConfigSyncScript(selectionConfig: ProviderSelectionConfig): string {
@@ -68,10 +87,4 @@ if [ -d "$config_dir" ]; then
 fi
 exit
 `.trim();
-}
-
-export function writeSandboxConfigSyncFile(script: string): string {
-  const scriptFile = secureTempFile("nemoclaw-sync", ".sh");
-  fs.writeFileSync(scriptFile, `${script}\n`, { mode: 0o600 });
-  return scriptFile;
 }

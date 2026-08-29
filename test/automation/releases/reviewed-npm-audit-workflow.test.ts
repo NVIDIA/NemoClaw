@@ -54,10 +54,13 @@ function writeProductionSourceGraph(
   root: string,
   packageRecord: Readonly<Record<string, unknown>>,
   additionalPackageRecords: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {},
+  optional = false,
 ): Readonly<{ sourceLock: string; sourcePackage: string }> {
   const source = path.join(root, "source");
   const manifest = {
-    dependencies: { "fixture-package": "1.0.0" },
+    ...(optional
+      ? { optionalDependencies: { "fixture-package": "1.0.0" } }
+      : { dependencies: { "fixture-package": "1.0.0" } }),
     name: "source-graph-fixture",
     private: true,
     version: "1.0.0",
@@ -124,6 +127,15 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
       registryOrigin: "https://registry.npmjs.org/",
       schemaVersion: 2,
       severityThreshold: "high",
+      sourceNestedShrinkwrapPackages: [],
+      sourceRegistryPackage: {
+        artifactName: "reviewed-package-1.0.0.tgz",
+        integrity: "sha512-reviewedintegrity",
+        label: "reviewed package 1.0.0",
+        packageSpec: "@example/reviewed@1.0.0",
+        tarballUrl: "https://npm.pkg.github.com/download/@example/reviewed/1.0.0/reviewed",
+      },
+      sourceRegistryPackagesWithoutIntegrity: [],
     };
 
     expect(() => parseAuditConfig(JSON.stringify(config))).toThrow(
@@ -131,17 +143,56 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     );
   });
 
-  it("pins the reviewed archive graph to the first tar release outside the advisory", () => {
+  // source-shape-contract: security -- One reviewed package field prevents a second package identity from bypassing the credential-isolation workflow
+  it("rejects the removed plural source-registry package shape", () => {
     const configFile = path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json");
-    const config = parseAuditConfig(fs.readFileSync(configFile, "utf-8"));
+    const config = JSON.parse(fs.readFileSync(configFile, "utf-8")) as Record<string, unknown>;
+    config.sourceRegistryPackages = [config.sourceRegistryPackage];
+    delete config.sourceRegistryPackage;
 
-    expect(config.archiveTarVersion).toBe("7.5.21");
-    expect(reviewedArchiveGraphManifest(config.archiveTarVersion)).toEqual({
-      name: "nemoclaw-reviewed-production-graph",
-      overrides: { tar: "7.5.21" },
-      private: true,
-      version: "1.0.0",
-    });
+    expect(() => parseAuditConfig(JSON.stringify(config))).toThrow(
+      "ci/reviewed-npm-audit.json is invalid",
+    );
+  });
+
+  // source-shape-contract: security -- Exact package specifications must fail before malformed reviewed identities can authorize dependency installation
+  it("rejects malformed reviewed source package specifications", () => {
+    const configFile = path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json");
+    const readConfig = () =>
+      JSON.parse(fs.readFileSync(configFile, "utf-8")) as {
+        sourceRegistryPackage: { packageSpec: string };
+        sourceRegistryPackagesWithoutIntegrity: Array<{ packageSpec: string }>;
+      };
+
+    let config = readConfig();
+    config.sourceRegistryPackage.packageSpec = "@nvidia/openshell-sdk@latest";
+    expect(() => parseAuditConfig(JSON.stringify(config))).toThrow(
+      "ci/reviewed-npm-audit.json is invalid",
+    );
+
+    config = readConfig();
+    config.sourceRegistryPackage.packageSpec = "@nvidia/openshell-sdk@01.2.3";
+    expect(() => parseAuditConfig(JSON.stringify(config))).toThrow(
+      "ci/reviewed-npm-audit.json is invalid",
+    );
+
+    config = readConfig();
+    config.sourceRegistryPackage.packageSpec = "@nvidia/openshell-sdk@1.2.3-01";
+    expect(() => parseAuditConfig(JSON.stringify(config))).toThrow(
+      "ci/reviewed-npm-audit.json is invalid",
+    );
+
+    config = readConfig();
+    config.sourceRegistryPackage.packageSpec = "@nvidia/openshell-sdk@1.2.3-foo..bar";
+    expect(() => parseAuditConfig(JSON.stringify(config))).toThrow(
+      "ci/reviewed-npm-audit.json is invalid",
+    );
+
+    config = readConfig();
+    config.sourceRegistryPackagesWithoutIntegrity[0]!.packageSpec = "not-an-exact-spec";
+    expect(() => parseAuditConfig(JSON.stringify(config))).toThrow(
+      "ci/reviewed-npm-audit.json is invalid",
+    );
   });
 
   it("rejects an affected tar release for the reviewed archive graph", () => {
@@ -377,6 +428,122 @@ esac
         ),
       ).toThrow(
         "reviewed npm lock package must use the reviewed registry: node_modules/fixture-package",
+      );
+      expect(installCalled).toBe(false);
+      expect(fs.existsSync(destination)).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts one exact package identity from an approved additional registry", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-reviewed-registry-"));
+    const destination = path.join(root, "materialized");
+    const integrity = "sha512-fixture";
+    const tarballUrl = "https://npm.pkg.github.com/download/fixture-package/1.0.0/revision";
+    const { sourceLock, sourcePackage } = writeProductionSourceGraph(
+      root,
+      {
+        integrity,
+        optional: true,
+        resolved: tarballUrl,
+        version: "1.0.0",
+      },
+      {},
+      true,
+    );
+    let installCalled = false;
+    try {
+      expect(
+        materializeSourceGraph(
+          sourcePackage,
+          sourceLock,
+          destination,
+          "https://registry.npmjs.org",
+          () => {
+            installCalled = true;
+          },
+          {
+            integrity,
+            label: "reviewed fixture package",
+            packageSpec: "fixture-package@1.0.0",
+            tarballUrl,
+          },
+        ),
+      ).toBe(destination);
+      expect(installCalled).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts one exact package without registry integrity metadata", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-without-integrity-"));
+    const destination = path.join(root, "materialized");
+    const tarballUrl = "https://registry.npmjs.org/fixture-package/-/fixture-package-1.0.0.tgz";
+    const { sourceLock, sourcePackage } = writeProductionSourceGraph(
+      root,
+      { optional: true, resolved: tarballUrl, version: "1.0.0" },
+      {},
+      true,
+    );
+    let installCalled = false;
+    try {
+      expect(
+        materializeSourceGraph(
+          sourcePackage,
+          sourceLock,
+          destination,
+          "https://registry.npmjs.org",
+          () => {
+            installCalled = true;
+          },
+          undefined,
+          [],
+          [
+            {
+              label: "reviewed fixture package without integrity",
+              packageSpec: "fixture-package@1.0.0",
+              tarballUrl,
+            },
+          ],
+        ),
+      ).toBe(destination);
+      expect(installCalled).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects drift from an approved additional-registry package identity", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-registry-drift-"));
+    const destination = path.join(root, "materialized");
+    const tarballUrl = "https://npm.pkg.github.com/download/fixture-package/1.0.0/revision";
+    const { sourceLock, sourcePackage } = writeProductionSourceGraph(root, {
+      integrity: "sha512-fixture",
+      resolved: tarballUrl,
+      version: "1.0.0",
+    });
+    let installCalled = false;
+    try {
+      expect(() =>
+        materializeSourceGraph(
+          sourcePackage,
+          sourceLock,
+          destination,
+          "https://registry.npmjs.org",
+          () => {
+            installCalled = true;
+          },
+          {
+            integrity: "sha512-another-value",
+            label: "reviewed fixture package",
+            packageSpec: "fixture-package@1.0.0",
+            tarballUrl,
+          },
+        ),
+      ).toThrow(
+        "reviewed npm lock package does not match its approved registry identity: node_modules/fixture-package",
       );
       expect(installCalled).toBe(false);
       expect(fs.existsSync(destination)).toBe(false);

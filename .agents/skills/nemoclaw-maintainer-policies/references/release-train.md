@@ -52,7 +52,7 @@ Before tag confirmation, show the maintainer:
 
 The maintainer must choose to proceed, create or update a docs PR for the uncovered range, or stop.
 Record a proceed decision in the signed release brief. A current-main plan requires the release
-entry. An accepted urgent QA qualification may use an exact historical ancestor and must bind its
+entry. An accepted urgent QA qualification may use an historical ancestor and must bind its
 explicit release-entry exception into the signed release brief. Do not create a separate exception
 record.
 
@@ -66,14 +66,14 @@ At cutoff:
 2. Confirm each is intended for the release.
 3. List open PRs and issues still carrying the target label as post-tag stragglers.
 4. Complete [Release-Prep Docs](#release-prep-docs) for the intended release range.
-5. Generate the immutable release plan with the exact `--version vX.Y.Z` to capture `origin/main`.
-   For accepted urgent QA qualification, select an exact historical ancestor with `--candidate` and
+5. Generate the immutable release plan with the `--version vX.Y.Z` to capture `origin/main`.
+   For accepted urgent QA qualification, select an historical ancestor with `--candidate` and
    bind a nonblank `--exception` reason.
 6. Show the candidate's documentation coverage and required image evidence. If the maintainer
    requests documentation work, complete [Release-Prep Docs](#release-prep-docs), merge that PR,
    generate a new plan, and show the evidence for the new candidate.
 7. Show the newest full E2E context and record the maintainer's focused, full, or proceed decision.
-8. Build the Markdown release brief from the exact range and evidence.
+8. Build the Markdown release brief from the range and evidence.
 9. Cut the release tag only with the plan's explicit maintainer confirmation.
 
 Merges may continue after planning. Keep the planned candidate when it remains an ancestor of
@@ -82,14 +82,14 @@ Regenerate the plan only when the intended range, version, or candidate changes.
 
 ## Required Image Evidence
 
-Before confirmation, require a successful exact-candidate E2E `base-image-publication` job. Its
+Before confirmation, require a successful candidate E2E `base-image-publication` job. Its
 checked-in verifier selects the newest applicable image-changing commit in first-parent history,
 requires every managed publisher, and validates the immutable Deep Agents Code base contract.
 Record the E2E workflow and aggregate-job URLs and the run attempt; do not repeat its publisher
 queries in the tag skill.
 
 The general E2E decision cannot waive required image evidence. A successful `Release
-qualification` aggregate does not replace the exact-candidate result.
+qualification` aggregate does not replace the candidate result.
 
 ## General E2E Decision
 
@@ -119,9 +119,9 @@ decision, or required image evidence. Do not maintain a separate exception schem
 
 ## Signed Release Brief
 
-Create `../nemoclaw-release-vX.Y.Z/release-brief.md` from the exact plan range. Include:
+Create `../nemoclaw-release-vX.Y.Z/release-brief.md` from the plan range. Include:
 
-- exact range, commit and risky-file counts, risky areas, and suggested QA focus from the handoff
+- range, commit and risky-file counts, risky areas, and suggested QA focus from the handoff
   helper;
 - the complete canonical release entry and its path;
 - the latest included cumulative docs PR, coverage commit, later commits and PRs, changed-path
@@ -131,7 +131,7 @@ Create `../nemoclaw-release-vX.Y.Z/release-brief.md` from the exact plan range. 
 - the maintainer's E2E decision; and
 - `Exceptions: None` or the plain-language exception reason.
 
-Pass that exact Markdown to `release:cut` with `--message-file`. It becomes the signed annotated tag
+Pass that Markdown to `release:cut` with `--message-file`. It becomes the signed annotated tag
 message and is the release evidence record. Do not create a separate exception file.
 
 Require the full confirmation phrase from the plan. After the script reads the remote tag back and

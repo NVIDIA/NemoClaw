@@ -6,12 +6,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   buildSandboxConfigSyncScript,
+  createNemoClawConfigSync,
+  runSandboxConfigSync,
   sandboxConfigSyncArgs,
-  writeSandboxConfigSyncFile,
 } from "./config-sync";
 
 const itUnix = process.platform === "win32" ? it.skip : it;
@@ -56,6 +57,36 @@ function modeBits(file: string): number {
 }
 
 describe("sandbox config sync helpers", () => {
+  it("revalidates policy authority immediately before sandbox execution", () => {
+    const run = vi.fn();
+    const revalidatePolicyRequirements = vi.fn(() => {
+      throw new Error("policy authority changed");
+    });
+    const syncConfig = createNemoClawConfigSync({
+      getProviderSelectionConfig: () => ({
+        endpointType: "custom",
+        endpointUrl: "https://inference.local/v1",
+        ncpPartner: null,
+        model: "model",
+        profile: "inference-local",
+        credentialEnv: "OPENAI_API_KEY",
+        provider: "provider",
+        providerLabel: "Provider",
+      }),
+      run,
+      openshellArgv: (args) => ["openshell", ...args],
+    });
+
+    expect(() =>
+      syncConfig("spark-box", "provider", "model", revalidatePolicyRequirements),
+    ).toThrow("policy authority changed");
+
+    expect(revalidatePolicyRequirements).toHaveBeenCalledExactlyOnceWith(
+      "synchronize OpenClaw config in sandbox 'spark-box'",
+    );
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("uses noninteractive sandbox exec for stdin scripts", () => {
     expect(sandboxConfigSyncArgs("spark-box")).toEqual([
       "sandbox",
@@ -69,73 +100,20 @@ describe("sandbox config sync helpers", () => {
     ]);
   });
 
-  it("writes provider selection to the managed sandbox home without rewriting OpenClaw config", () => {
-    const script = buildSandboxConfigSyncScript({
-      endpointType: "custom",
-      endpointUrl: "https://inference.local/v1",
-      ncpPartner: null,
-      model: "nemotron-3-nano:30b",
-      profile: "inference-local",
-      credentialEnv: "OPENAI_API_KEY",
-      provider: "compatible-endpoint",
-      providerLabel: "Other OpenAI-compatible endpoint",
-    });
-
-    expect(script).toMatch(/nemoclaw_dir="\/sandbox\/\.nemoclaw"/);
-    expect(script).not.toContain("${HOME");
-    expect(script).toMatch(/mkdir -p -m 700 "\$nemoclaw_dir"/);
-    expect(script).toMatch(/nemoclaw_dir_uid="\$\(stat -c '%u' "\$nemoclaw_dir"/);
-    expect(script).toMatch(/current_uid="\$\(id -u/);
-    expect(script).toMatch(
-      /if \[ -n "\$nemoclaw_dir_uid" \] && \[ "\$nemoclaw_dir_uid" = "\$current_uid" \]; then/,
-    );
-    expect(script).toMatch(/chmod 700 "\$nemoclaw_dir"/);
-    expect(script).toMatch(/cat > "\$nemoclaw_config"/);
-    expect(script).toMatch(/chmod 600 "\$nemoclaw_config"/);
-    expect(script).not.toMatch(/^chmod 700 ~\/\.nemoclaw$/m);
-    expect(script).toContain('"model": "nemotron-3-nano:30b"');
-    expect(script).toContain('"credentialEnv": "OPENAI_API_KEY"');
-    expect(script).not.toMatch(/cat > ~\/\.openclaw\/openclaw\.json/);
-    expect(script).not.toMatch(/openclaw models set/);
-    expect(script).toMatch(/config_dir=\/sandbox\/\.openclaw/);
-    expect(script).toMatch(/chmod -R g\+rwX,o-rwx "\$config_dir"/);
-    expect(script).toMatch(/find "\$config_dir" -type d -exec chmod g\+s \{\} \+/);
-    expect(script).toMatch(/chmod 2770 "\$config_dir"/);
-    expect(script).toMatch(
-      /chmod 660 "\$config_dir\/openclaw\.json" "\$config_dir\/\.config-hash"/,
-    );
-    expect(script).toMatch(/\[ "\$config_dir_owner" != "root" \]/);
-    expect(script).toMatch(/^\s*exit$/m);
-  });
-
-  it("keeps Bedrock Runtime adapter credentials out of sandbox selection config", () => {
-    const script = buildSandboxConfigSyncScript({
-      endpointType: "custom",
-      endpointUrl: "https://inference.local/v1",
-      ncpPartner: null,
-      model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
-      profile: "inference-local",
-      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-      provider: "compatible-anthropic-endpoint",
-      providerLabel: "Other Anthropic-compatible endpoint",
-    });
-
-    expect(script).toContain('"endpointUrl": "https://inference.local/v1"');
-    expect(script).toContain('"credentialEnv": "COMPATIBLE_ANTHROPIC_API_KEY"');
-    expect(script).not.toContain("NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN");
-    expect(script).not.toContain("AWS_BEARER_TOKEN_BEDROCK");
-    expect(script).not.toContain("adapter-token");
-    expect(script).not.toContain("bedrock-bearer");
-    expect(script).not.toContain("bedrock-runtime.us-east-1.amazonaws.com");
-  });
-
-  itUnix("tightens user-owned NemoClaw config dirs and files", () => {
+  itUnix("writes provider selection and tightens managed config permissions", () => {
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sync-home-"));
     try {
       const nemoclawDir = path.join(homeDir, ".nemoclaw");
+      const openclawDir = path.join(homeDir, ".openclaw");
+      const nestedOpenclawDir = path.join(openclawDir, "nested");
+      const openclawConfig = path.join(openclawDir, "openclaw.json");
+      const openclawHash = path.join(openclawDir, ".config-hash");
       fs.mkdirSync(nemoclawDir, { mode: 0o755 });
       fs.chmodSync(nemoclawDir, 0o755);
-      const script = buildSandboxConfigSyncScript({
+      fs.mkdirSync(nestedOpenclawDir, { recursive: true, mode: 0o755 });
+      fs.writeFileSync(openclawConfig, "existing OpenClaw config\n", { mode: 0o644 });
+      fs.writeFileSync(openclawHash, "existing hash\n", { mode: 0o644 });
+      const selection = {
         endpointType: "custom",
         endpointUrl: "https://inference.local/v1",
         ncpPartner: null,
@@ -144,12 +122,47 @@ describe("sandbox config sync helpers", () => {
         credentialEnv: "OPENAI_API_KEY",
         provider: "compatible-endpoint",
         providerLabel: "Other OpenAI-compatible endpoint",
-      });
+      } as const;
+      const script = buildSandboxConfigSyncScript(selection);
 
       runConfigSyncScript(script, homeDir, "1234");
 
+      expect(JSON.parse(fs.readFileSync(path.join(nemoclawDir, "config.json"), "utf8"))).toEqual(
+        selection,
+      );
       expect(modeBits(nemoclawDir)).toBe(0o700);
       expect(modeBits(path.join(nemoclawDir, "config.json"))).toBe(0o600);
+      expect(fs.readFileSync(openclawConfig, "utf8")).toBe("existing OpenClaw config\n");
+      expect(fs.readFileSync(openclawHash, "utf8")).toBe("existing hash\n");
+      expect(fs.statSync(openclawDir).mode & 0o7777).toBe(0o2770);
+      expect(fs.statSync(nestedOpenclawDir).mode & 0o7777).toBe(0o2770);
+      expect(modeBits(openclawConfig)).toBe(0o660);
+      expect(modeBits(openclawHash)).toBe(0o660);
+    } finally {
+      fs.rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  itUnix("keeps credential values out of sandbox selection config", () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sync-home-"));
+    try {
+      const selection = {
+        endpointType: "custom",
+        endpointUrl: "https://inference.local/v1",
+        ncpPartner: null,
+        model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
+        profile: "inference-local",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        provider: "compatible-anthropic-endpoint",
+        providerLabel: "Other Anthropic-compatible endpoint",
+      } as const;
+      const script = buildSandboxConfigSyncScript(selection);
+
+      runConfigSyncScript(script, homeDir, "1234");
+
+      expect(
+        JSON.parse(fs.readFileSync(path.join(homeDir, ".nemoclaw", "config.json"), "utf8")),
+      ).toEqual(selection);
     } finally {
       fs.rmSync(homeDir, { recursive: true, force: true });
     }
@@ -180,23 +193,34 @@ describe("sandbox config sync helpers", () => {
     }
   });
 
-  it("writes sandbox sync scripts to a mkdtemp-backed temp file", () => {
-    const scriptFile = writeSandboxConfigSyncFile("echo test");
+  itUnix("passes the generated script directly to the sandbox executor", () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sync-home-"));
+    const runConnectScript = vi.fn();
+    const selection = {
+      endpointType: "custom",
+      endpointUrl: "https://inference.local/v1",
+      ncpPartner: null,
+      model: "model",
+      profile: "inference-local",
+      credentialEnv: "OPENAI_API_KEY",
+      provider: "provider",
+      providerLabel: "Provider",
+    } as const;
     try {
-      expect(scriptFile).toMatch(/nemoclaw-sync.*\.sh$/);
-      expect(fs.readFileSync(scriptFile, "utf8")).toBe("echo test\n");
-      const parentDir = path.dirname(scriptFile);
-      expect(parentDir).not.toBe(os.tmpdir());
-      expect(parentDir).toContain("nemoclaw-sync");
-      if (process.platform !== "win32") {
-        const stat = fs.statSync(scriptFile);
-        expect(stat.mode & 0o777).toBe(0o600);
-      }
+      runSandboxConfigSync("spark-box", {
+        getSelectionConfig: () => selection,
+        runConnectScript,
+      });
+
+      expect(runConnectScript).toHaveBeenCalledTimes(1);
+      const [sandboxName, script] = runConnectScript.mock.calls[0]!;
+      expect(sandboxName).toBe("spark-box");
+      runConfigSyncScript(script, homeDir, "1234");
+      expect(
+        JSON.parse(fs.readFileSync(path.join(homeDir, ".nemoclaw", "config.json"), "utf8")),
+      ).toMatchObject({ ...selection, onboardedAt: expect.any(String) });
     } finally {
-      const parentDir = path.dirname(scriptFile);
-      if (parentDir !== os.tmpdir() && path.basename(parentDir).startsWith("nemoclaw-sync-")) {
-        fs.rmSync(parentDir, { recursive: true, force: true });
-      }
+      fs.rmSync(homeDir, { recursive: true, force: true });
     }
   });
 });
