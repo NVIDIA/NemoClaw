@@ -60,7 +60,7 @@ function candidateBundle() {
 function attachmentObservation(): MxcOpenShellAttachmentObservationRequest {
   const source = mxcOpenShellAttachmentFixture().observation;
   return {
-    contractVersion: 2,
+    contractVersion: 3,
     providerId: "mxc",
     mode: "attach-existing",
     observedDistribution: {

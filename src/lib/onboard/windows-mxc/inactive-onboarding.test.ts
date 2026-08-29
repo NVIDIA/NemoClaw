@@ -20,7 +20,7 @@ vi.mock("./native-host-facts", () => ({
 
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../runtime-provider/current";
 import type { MxcNativeArtifactControlPlane } from "../runtime-provider/mxc-bootstrap-operations";
-import { mxcOpenShellAttachmentFixture } from "../runtime-provider/mxc-openshell-attachment-test-fixture";
+import { mxcOpenShellV0_0_24QualificationFixture } from "../runtime-provider/mxc-openshell-attachment-test-fixture";
 import { MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION } from "../runtime-provider/mxc-openshell-attachment";
 import type { MxcOpenShellAttachmentObservationRequest } from "../runtime-provider/mxc-openshell-observer";
 import { encodeManagedStartupProfile } from "../managed-startup/profile";
@@ -69,7 +69,7 @@ function controlPlane(): MxcNativeArtifactControlPlane {
 }
 
 function observationRequest(): MxcOpenShellAttachmentObservationRequest {
-  const observed = mxcOpenShellAttachmentFixture("0.0.24").observation;
+  const observed = mxcOpenShellV0_0_24QualificationFixture().observation;
   return {
     contractVersion: MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
     providerId: "mxc",
@@ -92,7 +92,7 @@ function observationRequest(): MxcOpenShellAttachmentObservationRequest {
 }
 
 function acceptedDigests(): Map<string, string> {
-  const observed = mxcOpenShellAttachmentFixture("0.0.24").observation;
+  const observed = mxcOpenShellV0_0_24QualificationFixture().observation;
   return new Map([
     ["C:\\OpenShell\\packages\\openshell-0.0.24.zip", observed.distribution.sha256],
     [observed.cliPath, observed.components.cliSha256],
@@ -105,13 +105,12 @@ function acceptedDigests(): Map<string, string> {
 function onboardingInput(
   bootstrapControlPlane: MxcNativeArtifactControlPlane,
 ): MxcWindowsInactiveOnboardingInput {
-  const attachment = mxcOpenShellAttachmentFixture("0.0.24");
   const workload = nativeArtifactWorkloadReceiptFixture(
     encodeManagedStartupProfile(managedStartupE2eProfile("openclaw")),
   );
   return {
     installation: {
-      openshellAttachmentAuthority: attachment.authority,
+      openshellDistributionAuthority: mxcOpenShellV0_0_24QualificationFixture().authority,
       attachmentObservation: observationRequest(),
       bootstrapControlPlane,
     },

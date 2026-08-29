@@ -5,13 +5,19 @@ import { describe, expect, it } from "vitest";
 
 import {
   MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
+  MXC_OPENSHELL_DISTRIBUTION_AUTHORITY_CONTRACT_VERSION,
+  MXC_OPENSHELL_V0_0_24_QUALIFICATION_PROFILE_ID,
   MxcOpenShellAttachmentError,
+  createMxcOpenShellDistributionAuthority,
   qualifyMxcOpenShellAttachment,
+  resolveMxcOpenShellDistributionAuthority,
   type MxcOpenShellAttachmentObservation,
+  type MxcOpenShellDistributionProfileId,
 } from "./mxc-openshell-attachment";
 import {
   MXC_OPENSHELL_ATTACHMENT_TEST_DIGESTS as DIGESTS,
   mxcOpenShellAttachmentFixture,
+  mxcOpenShellV0_0_24QualificationFixture,
 } from "./mxc-openshell-attachment-test-fixture";
 
 describe("inactive OpenShell MXC installation attachment", () => {
@@ -23,6 +29,8 @@ describe("inactive OpenShell MXC installation attachment", () => {
       contractVersion: MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
       providerId: "mxc",
       mode: "attach-existing",
+      acceptance: "qualification",
+      distributionProfileId: "test-fixture",
       acceptedIdentitySha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
     });
     expect(Object.isFrozen(authority)).toBe(true);
@@ -30,6 +38,8 @@ describe("inactive OpenShell MXC installation attachment", () => {
       contractVersion: MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
       providerId: "mxc",
       mode: "attach-existing",
+      acceptance: "qualification",
+      distributionProfileId: "test-fixture",
       authoritySha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
       distribution: {
         version: "0.0.21",
@@ -61,6 +71,47 @@ describe("inactive OpenShell MXC installation attachment", () => {
     });
     expect(Object.isFrozen(receipt)).toBe(true);
     expect(Object.isFrozen(receipt.components.gateway)).toBe(true);
+  });
+
+  it("resolves the pinned v0.0.24 profile as qualification-only provider authority (#10583)", () => {
+    const { authority, observation } = mxcOpenShellV0_0_24QualificationFixture();
+
+    expect(authority).toEqual({
+      contractVersion: MXC_OPENSHELL_DISTRIBUTION_AUTHORITY_CONTRACT_VERSION,
+      providerId: "mxc",
+      profileId: MXC_OPENSHELL_V0_0_24_QUALIFICATION_PROFILE_ID,
+      acceptance: "qualification",
+      acceptedIdentitySha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    });
+    expect(Object.isFrozen(authority)).toBe(true);
+    expect(
+      qualifyMxcOpenShellAttachment(
+        resolveMxcOpenShellDistributionAuthority(authority),
+        observation,
+      ),
+    ).toMatchObject({
+      acceptance: "qualification",
+      distributionProfileId: MXC_OPENSHELL_V0_0_24_QUALIFICATION_PROFILE_ID,
+      distribution: {
+        version: "0.0.24",
+        revision: "e1b48323e4efcb560900508bdcd76d2b5d216678",
+      },
+    });
+  });
+
+  it("rejects unknown and caller-constructed distribution authority before observation (#10583)", () => {
+    expect(() =>
+      createMxcOpenShellDistributionAuthority(
+        "openshell-observed-locally" as MxcOpenShellDistributionProfileId,
+      ),
+    ).toThrow(/distribution profile is not provider-owned/u);
+
+    const authority = createMxcOpenShellDistributionAuthority(
+      MXC_OPENSHELL_V0_0_24_QUALIFICATION_PROFILE_ID,
+    );
+    expect(() => resolveMxcOpenShellDistributionAuthority({ ...authority })).toThrow(
+      /distribution authority is not provider-owned/u,
+    );
   });
 
   it.each([

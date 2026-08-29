@@ -18,7 +18,7 @@ vi.mock("./native-host-facts", () => ({
 
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../runtime-provider/current";
 import type { MxcNativeArtifactControlPlane } from "../runtime-provider/mxc-bootstrap-operations";
-import { mxcOpenShellAttachmentFixture } from "../runtime-provider/mxc-openshell-attachment-test-fixture";
+import { mxcOpenShellV0_0_24QualificationFixture } from "../runtime-provider/mxc-openshell-attachment-test-fixture";
 import { MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION } from "../runtime-provider/mxc-openshell-attachment";
 import type { MxcOpenShellAttachmentObservationRequest } from "../runtime-provider/mxc-openshell-observer";
 import { attachMxcWindowsExistingInstallation } from "./existing-installation";
@@ -36,7 +36,7 @@ function controlPlane(): MxcNativeArtifactControlPlane {
 }
 
 function observationRequest(
-  observed = mxcOpenShellAttachmentFixture("0.0.24").observation,
+  observed = mxcOpenShellV0_0_24QualificationFixture().observation,
 ): MxcOpenShellAttachmentObservationRequest {
   return {
     contractVersion: MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
@@ -62,7 +62,7 @@ function observationRequest(
   };
 }
 
-function acceptedDigests(observed = mxcOpenShellAttachmentFixture("0.0.24").observation) {
+function acceptedDigests(observed = mxcOpenShellV0_0_24QualificationFixture().observation) {
   return new Map<string, string>([
     ["C:\\OpenShell\\packages\\openshell-0.0.24.zip", observed.distribution.sha256],
     [observed.cliPath, observed.components.cliSha256],
@@ -80,7 +80,7 @@ describe("inactive native Windows OpenShell MXC existing-installation compositio
   });
 
   it("retains the qualified receipt without entering runtime selection (#8178)", async () => {
-    const attachment = mxcOpenShellAttachmentFixture("0.0.24");
+    const attachment = mxcOpenShellV0_0_24QualificationFixture();
     const digests = acceptedDigests(attachment.observation);
     const bootstrapControlPlane = controlPlane();
     nativeBoundary.observeHostFacts.mockReturnValue({
@@ -93,14 +93,16 @@ describe("inactive native Windows OpenShell MXC existing-installation compositio
     );
 
     const result = await attachMxcWindowsExistingInstallation({
-      openshellAttachmentAuthority: attachment.authority,
+      openshellDistributionAuthority: attachment.authority,
       attachmentObservation: observationRequest(attachment.observation),
       bootstrapControlPlane,
     });
 
     expect(result.attachmentReceipt).toMatchObject({
-      contractVersion: 2,
+      contractVersion: 3,
       providerId: "mxc",
+      acceptance: "qualification",
+      distributionProfileId: "openshell-v0-0-24-qualification",
       distribution: { root: "C:\\OpenShell" },
       components: {
         wxcExec: {
@@ -123,7 +125,7 @@ describe("inactive native Windows OpenShell MXC existing-installation compositio
   });
 
   it("rejects WSL before observing installation files (#8178)", async () => {
-    const attachment = mxcOpenShellAttachmentFixture("0.0.24");
+    const attachment = mxcOpenShellV0_0_24QualificationFixture();
     nativeBoundary.observeHostFacts.mockReturnValue({
       platform: "linux",
       nativeArchitecture: "x64",
@@ -132,7 +134,7 @@ describe("inactive native Windows OpenShell MXC existing-installation compositio
 
     await expect(
       attachMxcWindowsExistingInstallation({
-        openshellAttachmentAuthority: attachment.authority,
+        openshellDistributionAuthority: attachment.authority,
         attachmentObservation: observationRequest(attachment.observation),
         bootstrapControlPlane: controlPlane(),
       }),
@@ -141,7 +143,7 @@ describe("inactive native Windows OpenShell MXC existing-installation compositio
   });
 
   it("rejects an unqualified architecture before observing installation files (#8178)", async () => {
-    const attachment = mxcOpenShellAttachmentFixture("0.0.24");
+    const attachment = mxcOpenShellV0_0_24QualificationFixture();
     nativeBoundary.observeHostFacts.mockReturnValue({
       platform: "win32",
       nativeArchitecture: "arm64",
@@ -150,7 +152,7 @@ describe("inactive native Windows OpenShell MXC existing-installation compositio
 
     await expect(
       attachMxcWindowsExistingInstallation({
-        openshellAttachmentAuthority: attachment.authority,
+        openshellDistributionAuthority: attachment.authority,
         attachmentObservation: observationRequest(attachment.observation),
         bootstrapControlPlane: controlPlane(),
       }),
@@ -158,24 +160,17 @@ describe("inactive native Windows OpenShell MXC existing-installation compositio
     expect(nativeBoundary.observeFileDigest).not.toHaveBeenCalled();
   });
 
-  it("rejects a caller-constructed attachment authority before provider composition (#8178)", async () => {
-    const attachment = mxcOpenShellAttachmentFixture("0.0.24");
-    const digests = acceptedDigests(attachment.observation);
-    nativeBoundary.observeHostFacts.mockReturnValue({
-      platform: "win32",
-      nativeArchitecture: "x64",
-      release: "10.0.28120.2760",
-    });
-    nativeBoundary.observeFileDigest.mockImplementation(async (filePath: string) =>
-      digests.get(filePath)!,
-    );
+  it("rejects a caller-constructed distribution authority before host observation (#10583)", async () => {
+    const authority = mxcOpenShellV0_0_24QualificationFixture().authority;
 
     await expect(
       attachMxcWindowsExistingInstallation({
-        openshellAttachmentAuthority: { ...attachment.authority },
-        attachmentObservation: observationRequest(attachment.observation),
+        openshellDistributionAuthority: { ...authority },
+        attachmentObservation: observationRequest(),
         bootstrapControlPlane: controlPlane(),
       }),
-    ).rejects.toThrow(/accepted identity authority is not provider-owned/u);
+    ).rejects.toThrow(/distribution authority is not provider-owned/u);
+    expect(nativeBoundary.observeHostFacts).not.toHaveBeenCalled();
+    expect(nativeBoundary.observeFileDigest).not.toHaveBeenCalled();
   });
 });
