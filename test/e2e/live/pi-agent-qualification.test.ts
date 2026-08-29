@@ -458,7 +458,7 @@ test(
       ],
       {
         artifactName: "pi-log-credential-absence",
-        env,
+        env: { ...env, NEMOCLAW_CLI_BIN: host.commandPath },
         redactionValues: inference.redactionValues(),
         timeoutMs: 60_000,
       },
