@@ -1214,12 +1214,13 @@ RUN /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip \
     && venv_links="$(cat "$venv_links_file")" \
     && rm -f "$venv_links_file" \
     && expected_venv_links="$(printf '%s\n' \
-        'bin/python -> /usr/bin/python3' \
+        'bin/python -> /usr/bin/python3.13' \
         'bin/python3 -> python' \
         'bin/python3.13 -> python' \
         "lib/python3.13/site-packages/certifi/cacert.pem -> $SSL_CERT_FILE" \
         'lib64 -> lib')" \
-    && test "$venv_links" = "$expected_venv_links" \
+    && { test "$venv_links" = "$expected_venv_links" \
+        || { echo "ERROR: Hermes virtual environment link inventory mismatch" >&2; exit 1; }; } \
     && test "$(readlink -e /opt/hermes/.venv/bin/python)" = "/usr/bin/python3.13" \
     && test "$(readlink -e /opt/hermes/.venv/bin/python3)" = "/usr/bin/python3.13" \
     && test "$(readlink -e /opt/hermes/.venv/bin/python3.13)" = "/usr/bin/python3.13" \
