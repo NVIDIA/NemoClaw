@@ -63,6 +63,7 @@ describe("interactive PTY driver", () => {
       expect(result.timedOut).toBe(false);
       expect(result.exitCode).toBe(0);
       expect(result.firedTriggers).toContain("NEMOCLAW_PI_INTERACTIVE_OK");
+      expect(result.visibleOutput).toContain("NEMOCLAW_PI_INTERACTIVE_OK");
     } finally {
       progress.stop();
     }

@@ -31,6 +31,7 @@ export interface InteractiveCommandRule {
 export interface InteractiveCommandResult {
   readonly exitCode: number;
   readonly output: string;
+  readonly visibleOutput: string;
   readonly firedTriggers: readonly string[];
   readonly timedOut: boolean;
 }
@@ -167,6 +168,47 @@ if exit_code is None:
 sys.exit(exit_code)
 `;
 
+export function stripInteractiveTerminalSequences(value: string): string {
+  let visible = "";
+  let index = 0;
+  while (index < value.length) {
+    if (value.charCodeAt(index) !== 27) {
+      visible += value[index];
+      index += 1;
+      continue;
+    }
+    index += 1;
+    if (index >= value.length) break;
+    if (value[index] === "[") {
+      index += 1;
+      while (index < value.length && !(value[index]! >= "@" && value[index]! <= "~")) index += 1;
+      index += 1;
+      continue;
+    }
+    if (value[index] === "]") {
+      index += 1;
+      while (index < value.length) {
+        if (value.charCodeAt(index) === 7) {
+          index += 1;
+          break;
+        }
+        if (
+          value.charCodeAt(index) === 27 &&
+          index + 1 < value.length &&
+          value.charCodeAt(index + 1) === 92
+        ) {
+          index += 2;
+          break;
+        }
+        index += 1;
+      }
+      continue;
+    }
+    index += 1;
+  }
+  return visible;
+}
+
 function resolvePython(): string {
   return process.env.NEMOCLAW_E2E_PYTHON3_BIN || "python3";
 }
@@ -268,6 +310,7 @@ export function driveInteractiveCommand(
       resolve({
         exitCode: timedOut ? 124 : (code ?? 1),
         output,
+        visibleOutput: stripInteractiveTerminalSequences(output),
         firedTriggers,
         timedOut,
       });
