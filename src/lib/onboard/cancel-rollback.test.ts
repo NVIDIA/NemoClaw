@@ -316,4 +316,11 @@ describe("buildCancelRollbackMessage", () => {
     expect(message).not.toContain("openshell sandbox delete");
     expect(message).not.toContain("cannot delete it by immutable identity");
   });
+
+  it("does not refer to an undisplayed create-attempt label", () => {
+    const message = buildCancelRollbackMessage("sb", SANDBOX_FINGERPRINT).join("\n");
+
+    expect(message).toContain("preserve the displayed fingerprint");
+    expect(message).not.toContain("displayed create-attempt label");
+  });
 });

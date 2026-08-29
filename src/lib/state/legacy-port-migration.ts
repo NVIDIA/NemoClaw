@@ -742,6 +742,17 @@ function acquireDirectoryLock(home: string, lock: string): string {
   throw migrationError(`could not acquire ${lock}`);
 }
 
+function assertOnboardStateUnlocked(home: string, stateRoots: readonly string[]): void {
+  for (const stateRoot of stateRoots) {
+    const activeLock = path.join(stateRoot, "onboard.lock");
+    if (lstatNoFollow(home, activeLock)) {
+      throw migrationError(
+        `onboarding lock ${activeLock} is present; finish or stop that run before migrating state`,
+      );
+    }
+  }
+}
+
 /**
  * Partition pre-segregation state into the selected non-default gateway root.
  * Registry rows move only when their persisted canonical gateway identity is
@@ -783,6 +794,7 @@ export function migrateLegacyPortState(
     if (staleIntentDirectoriesExist) {
       const lock = acquireDirectoryLock(home, migrationLock);
       try {
+        assertOnboardStateUnlocked(home, [sharedRoot]);
         removeStaleMigrationIntentDirectories(home, sharedRoot);
       } finally {
         fs.rmSync(lock, { recursive: true, force: true });
@@ -811,6 +823,10 @@ export function migrateLegacyPortState(
   const lock = acquireDirectoryLock(home, migrationLock);
   const registryLocks: string[] = [];
   try {
+    // Onboard writers recheck the migration lock after claiming onboard.lock.
+    // Checking both roots while this lock is held closes the opposite side of
+    // the handshake and serializes session/recovery state with partitioning.
+    assertOnboardStateUnlocked(home, [sharedRoot, selectedRoot]);
     removeStaleMigrationIntentDirectories(home, sharedRoot);
     registryLocks.push(acquireDirectoryLock(home, `${legacyRegistryFile}.lock`));
     const pendingIntent = readMigrationIntent(home, sharedRoot);
@@ -874,12 +890,6 @@ export function migrateLegacyPortState(
         : [];
     let moveSession = false;
     if (sessionBelongsToSelected) {
-      const activeLock = path.join(sharedRoot, "onboard.lock");
-      if (lstatNoFollow(home, activeLock)) {
-        throw migrationError(
-          `legacy onboarding lock ${activeLock} is present; finish or stop that run first`,
-        );
-      }
       moveSession = preflightMovePath(
         home,
         legacySessionFile,

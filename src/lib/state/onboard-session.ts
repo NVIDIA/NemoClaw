@@ -14,7 +14,7 @@ import path from "node:path";
 import type { SandboxPolicyAuthority } from "../adapters/openshell/policy-authority";
 import { isErrnoException } from "../core/errno";
 import { isObjectRecord, type JsonObject, type JsonValue } from "../core/json-types";
-import { GATEWAY_PORT } from "../core/ports";
+import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
 import {
   parseServingProfileProvenance,
   type ServingProfileProvenance,
@@ -82,6 +82,10 @@ export const SESSION_DIR = nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
 export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
 export const RETAINED_SANDBOX_RECOVERY_FILE = retainedSandboxRecoveryFile(SESSION_DIR);
+const LEGACY_STATE_MIGRATION_LOCK = path.join(
+  nemoclawStateRoot(process.env.HOME || "/tmp", DEFAULT_GATEWAY_PORT),
+  ".gateway-state-migration.lock",
+);
 const SAFE_VLLM_INSTALL_MODEL = /^[A-Za-z0-9._:/-]+$/;
 
 export class InvalidPersistedPolicyAuthorityError extends Error {}
@@ -1660,6 +1664,13 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
     try {
       heldLockDirectory = openPinnedSessionDirectory();
       assertOnboardLockOwned();
+      // Legacy-port migration holds its lock before checking every onboard
+      // writer lock. Recheck here after atomically claiming onboard.lock so
+      // either the writer or the migrator wins, never both.
+      if (fs.existsSync(LEGACY_STATE_MIGRATION_LOCK)) {
+        releaseOnboardLock();
+        return { acquired: false, lockFile: LOCK_FILE, stale: false };
+      }
     } catch (error) {
       heldLockFd = null;
       if (heldLockDirectory !== null) fs.closeSync(heldLockDirectory.descriptor);

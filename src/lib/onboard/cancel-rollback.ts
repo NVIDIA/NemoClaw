@@ -80,7 +80,10 @@ export function buildCancelRollbackMessage(
     "  Shared inference providers are gateway configuration and are not sandbox cleanup targets.",
     ...(sandboxIdentityFingerprint
       ? [
-          `  Run '${cliName()} ${sandboxName} destroy'. If OpenShell confirms the retained sandbox absent, destroy removes only verified residual containers and can clear the matching recovery record. If it is still live, give the displayed create-attempt label to an OpenShell administrator for identity-bound removal.`,
+          `  Run '${cliName()} ${sandboxName} destroy'. If OpenShell confirms the retained sandbox absent, destroy removes only verified residual containers and can clear the matching recovery record.`,
+          recoveryContext
+            ? "  If it is still live, give the displayed create-attempt label to an OpenShell administrator for identity-bound removal."
+            : "  If it is still live, preserve the displayed fingerprint and ask an OpenShell administrator for identity-bound removal.",
         ]
       : [
           "  NemoClaw cannot clear this recovery record until an OpenShell administrator establishes the exact sandbox identity.",

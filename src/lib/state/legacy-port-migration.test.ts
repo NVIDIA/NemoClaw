@@ -409,6 +409,26 @@ describe("legacy non-default gateway state migration", () => {
     expect(fs.existsSync(path.join(selected, "credentials.json"))).toBe(true);
   });
 
+  it.each([
+    ["shared", (shared: string, _selected: string) => shared],
+    ["selected", (_shared: string, selected: string) => selected],
+  ])("refuses recovery-only migration while the %s onboarding lock is present", (_scope, root) => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const selected = path.join(shared, "gateways", "9123");
+    const recoveryFile = path.join(shared, "retained-sandbox-recovery.json");
+    recordRecovery(recoveryFile, "port-box", 9123, "d");
+    const before = fs.readFileSync(recoveryFile, "utf8");
+    fs.mkdirSync(root(shared, selected), { recursive: true });
+    fs.writeFileSync(path.join(root(shared, selected), "onboard.lock"), "active writer");
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
+      /onboarding lock .* is present/u,
+    );
+    expect(fs.readFileSync(recoveryFile, "utf8")).toBe(before);
+    expect(fs.existsSync(path.join(selected, "retained-sandbox-recovery.json"))).toBe(false);
+  });
+
   it.each(
     ["ollama-proxy-token", "ollama-proxy-port", "ollama-auth-proxy.pid"],
   )("keeps host-shared Ollama proxy state out of a non-default gateway migration [%s]", (entry) => {

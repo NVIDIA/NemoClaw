@@ -762,6 +762,7 @@ describe("CLI dispatch", () => {
       ].join("\n"),
       { mode: 0o755 },
     );
+    fs.writeFileSync(path.join(localBin, "docker"), LIVE_DOCKER_IDENTITY, { mode: 0o755 });
 
     const r = runWithEnv("alpha destroy --yes", {
       HOME: home,
