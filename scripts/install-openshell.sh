@@ -967,14 +967,18 @@ case "$OS" in
     esac
     ;;
   Linux)
+    SANDBOX_LIBC="gnu"
+    if [ "$RESOLVED_CHANNEL" = "dev" ]; then
+      SANDBOX_LIBC="musl"
+    fi
     case "$ARCH_LABEL" in
       x86_64)
         ASSETS+=("openshell-gateway-x86_64-unknown-linux-gnu.tar.gz")
-        ASSETS+=("openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz")
+        ASSETS+=("openshell-sandbox-x86_64-unknown-linux-${SANDBOX_LIBC}.tar.gz")
         ;;
       aarch64)
         ASSETS+=("openshell-gateway-aarch64-unknown-linux-gnu.tar.gz")
-        ASSETS+=("openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz")
+        ASSETS+=("openshell-sandbox-aarch64-unknown-linux-${SANDBOX_LIBC}.tar.gz")
         ;;
     esac
     CHECKSUM_FILES+=("openshell-gateway-checksums-sha256.txt")

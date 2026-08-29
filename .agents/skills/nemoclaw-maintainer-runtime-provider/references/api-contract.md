@@ -26,7 +26,7 @@ surfaces:
 | `bootstrap` | Optional for a candidate. Binds provider-owned create, readiness, and create-recovery operations for its workload type. |
 | `snapshot` | Optional for a candidate. Implements versioned preflight, capture, restore validation, and restore. |
 | `recovery` | Optional for a candidate. Reconciles one persisted sandbox with its runtime. |
-| `cleanup` | Optional for a candidate. Prepares destroy, plans owned-workload cleanup, and performs exact removal. |
+| `cleanup` | Optional for a candidate. Prepares destroy, plans owned-workload cleanup, and performs removal. |
 | `containerEngine` | Optional for a candidate. Declares operation-scoped engine identities. |
 
 Every surface must exist. An optional unsupported surface must use `supported: false` and include a
@@ -69,7 +69,7 @@ decision. Do not put the provider behavior in generic gateway code.
 
 The workload profile declares the accepted immutable workload identity. `acceptsReceipt()` must
 validate the receipt kind, platform, and contract versions. Do not accept a tag when the active
-contract requires an exact digest.
+contract requires a digest.
 
 A supported host-local inference surface lists unique accepted services. `createOperation()`
 returns a provider-owned `HostLocalInferenceOperation`. Keep credentials out of runtime receipts
@@ -124,11 +124,11 @@ provider from a command name, socket, image, or resource name.
 
 Cleanup must:
 
-1. capture exact destroy and workload ownership authority;
+1. capture destroy and workload ownership authority;
 2. detach provider bindings and report every failure;
 3. produce a side-effect-free retain, remove, or block plan;
 4. revalidate the same authority before mutation; and
-5. return the exact engine and immutable reference for removal results.
+5. return the engine and immutable reference for removal results.
 
 Block destructive cleanup when authority is missing, ambiguous, reused, or drifted.
 

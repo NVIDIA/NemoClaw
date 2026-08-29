@@ -66,7 +66,6 @@ const { bestEffortForwardStop } = require("./onboard/forward-cleanup");
 const {
   buildCompatibleEndpointSandboxSmokeCommand,
   buildCompatibleEndpointSandboxSmokeScript,
-  shouldRunCompatibleEndpointSandboxSmoke,
   verifyCompatibleEndpointSandboxSmoke,
 }: typeof import("./onboard/compatible-endpoint-smoke") = require("./onboard/compatible-endpoint-smoke");
 const {
@@ -3595,7 +3594,6 @@ module.exports = {
   readRecordedNimContainer,
   readRecordedEndpointUrl,
   isInferenceRouteReady,
-  shouldRunCompatibleEndpointSandboxSmoke,
   isNonInteractive,
   isOpenclawReady,
   arePolicyPresetsApplied,

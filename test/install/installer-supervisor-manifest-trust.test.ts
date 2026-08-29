@@ -122,6 +122,27 @@ function selectOpenShellV00103(): {
   return { blueprint, brevInstaller, installer, supervisorRuntime };
 }
 
+function selectSharedGatewayStateResolver(source: string): string {
+  const localResolver = `  function getDockerDriverGatewayStateDir(): string {
+    const configured = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
+    if (configured && configured.trim()) return path.resolve(configured.trim());
+    const dir = gatewayBinding.resolveGatewayStateDirName(currentGatewayPort());
+    return path.join(os.homedir(), ".local", "state", "nemoclaw", dir);
+  }`;
+  const sharedResolver = `  function getDockerDriverGatewayStateDir(): string {
+    return gatewayBinding.resolveGatewayStateDirForPort({
+      configured: process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+      home: os.homedir(),
+      port: currentGatewayPort(),
+    });
+  }`;
+  const prospective = source.includes(sharedResolver)
+    ? source
+    : source.replace(localResolver, sharedResolver);
+  expect(prospective, "shared gateway state resolver").toContain(sharedResolver);
+  return prospective;
+}
+
 type RunOptions = {
   candidateParserBypass?: boolean;
   selectV00103?: boolean;
@@ -202,6 +223,15 @@ function runParser(options: RunOptions = {}) {
 describe("OpenShell supervisor manifest trust", () => {
   it("accepts the selected base-trusted OpenShell 0.0.106 supervisor identity (#6256)", () => {
     const result = runParser();
+
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  // source-shape-contract: security -- Exact prospective supervisor runtime bytes must be base-authorized before trusted CI can admit the dependent state-resolver change
+  it("accepts the prospective shared gateway state resolver template (#10544)", () => {
+    const prospective = selectSharedGatewayStateResolver(SUPERVISOR_RUNTIME_TEMPLATE);
+    expect(prospective).toContain("gatewayBinding.resolveGatewayStateDirForPort({");
+    const result = runParser({ transformSupervisor: () => prospective });
 
     expect(result.status, result.stderr).toBe(0);
   });

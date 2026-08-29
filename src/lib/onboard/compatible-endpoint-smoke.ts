@@ -88,24 +88,6 @@ function nonNegativeInt(value: number | undefined, fallback: number): number {
 }
 
 /**
- * Returns whether onboarding should validate the compatible endpoint through
- * the OpenClaw sandbox instead of only checking host-side configuration.
- */
-export function shouldRunCompatibleEndpointSandboxSmoke(
-  provider: string | null | undefined,
-  messagingChannels: string[] | null | undefined,
-  agent: CompatibleEndpointSmokeAgent = null,
-): boolean {
-  const agentName = agent?.name || "openclaw";
-  return (
-    agentName === "openclaw" &&
-    provider === "compatible-endpoint" &&
-    Array.isArray(messagingChannels) &&
-    messagingChannels.length > 0
-  );
-}
-
-/**
  * Converts child-process output into text for diagnostics without assuming
  * whether Node returned strings, buffers, nulls, or primitive values.
  */
@@ -132,21 +114,20 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
   /** Recheck policy authority after the sandbox proof and before success output. */
   beforeSuccess?: () => void;
 }): void {
+  const agentName = options.agent?.name || "openclaw";
   if (
     options.forceCanonicalRoute !== true &&
-    !shouldRunCompatibleEndpointSandboxSmoke(
-      options.provider,
-      options.messagingChannels,
-      options.agent,
-    )
+    (agentName !== "openclaw" || options.provider !== "compatible-endpoint")
   ) {
     return;
   }
 
+  const hasMessagingChannels =
+    Array.isArray(options.messagingChannels) && options.messagingChannels.length > 0;
   console.log(
     options.forceCanonicalRoute
       ? "  Verifying provider-neutral inference through the sandbox runtime..."
-      : "  Verifying compatible endpoint through the messaging sandbox...",
+      : "  Verifying compatible endpoint through the sandbox runtime...",
   );
 
   const providerResult = options.runOpenshell(["provider", "get", options.provider], {
@@ -168,9 +149,7 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
         : `  Compatible endpoint provider '${options.provider}' is missing from the OpenShell gateway.`,
     );
     console.error(
-      options.forceCanonicalRoute
-        ? "  The sandbox inference.local route cannot reach the selected model provider."
-        : "  The sandbox would start Telegram, but agent turns would fail before reaching the model.",
+      "  The sandbox inference.local route cannot reach the selected model provider.",
     );
     if (providerDetails) {
       console.error(`  ${compactText(options.redact(providerDetails)).slice(0, 800)}`);
@@ -235,7 +214,9 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
         : "  Compatible endpoint sandbox smoke check failed.",
     );
     if (!options.forceCanonicalRoute) {
-      console.error("  Telegram provider startup is not the root cause; inference.local failed.");
+      console.error(
+        "  Messaging setup is not the root cause; the sandbox inference.local route failed.",
+      );
     }
     if (smokeOutput) console.error(`  ${compactText(options.redact(smokeOutput)).slice(0, 1200)}`);
     process.exit(smokeResult.status || 1);
