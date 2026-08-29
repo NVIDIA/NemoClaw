@@ -8,7 +8,10 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { BASE_APT_SECURITY_FUNCTIONS } from "../../helpers/base-apt-security-functions";
-import { stageFixedParser, useRealPatchedParser } from "../../helpers/python-parser-security-fixture";
+import {
+  stageFixedParser,
+  useRealPatchedParser,
+} from "../../helpers/python-parser-security-fixture";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const HERMES_DOCKERFILE_BASE = path.join(ROOT, "agents", "hermes", "Dockerfile.base");
@@ -539,23 +542,26 @@ describe("Hermes share mount package parity (#2947)", () => {
   it.each([
     { expectedChecksum: "0".repeat(64), name: "checksum mismatch" },
     { archiveReplacement: "checksum-valid malformed archive\n", name: "malformed archive" },
-  ])("does not retry a Hermes archive $name (#9815)", ({ archiveReplacement, expectedChecksum }) => {
-    const { calls, result, targetRoot, tmp } = runHermesArchiveLayer(
-      ["http:200"],
-      expectedChecksum,
-      archiveReplacement,
-    );
-    try {
-      expect(result.status).not.toBe(0);
-      expect(calls).toEqual(["curl http:200"]);
-      expect(result.stderr).toContain(
-        "Hermes archive download outcome=passed-first-attempt attempt=1/3",
+  ])(
+    "does not retry a Hermes archive $name (#9815)",
+    ({ archiveReplacement, expectedChecksum }) => {
+      const { calls, result, targetRoot, tmp } = runHermesArchiveLayer(
+        ["http:200"],
+        expectedChecksum,
+        archiveReplacement,
       );
-      expect(fs.existsSync(path.join(targetRoot, "pyproject.toml"))).toBe(false);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
+      try {
+        expect(result.status).not.toBe(0);
+        expect(calls).toEqual(["curl http:200"]);
+        expect(result.stderr).toContain(
+          "Hermes archive download outcome=passed-first-attempt attempt=1/3",
+        );
+        expect(fs.existsSync(path.join(targetRoot, "pyproject.toml"))).toBe(false);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("requests gnupg, procps, e2fsprogs, and openssh-sftp-server from the Hermes base apt layer", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
@@ -719,7 +725,7 @@ describe("Hermes share mount package parity (#2947)", () => {
           'case "$#" in',
           '  1) [ "$1" = "--version" ] || exit 64 ;;',
           '  2) [ "$1" = "acp" ] && [ "$2" = "--check" ] || exit 64 ;;',
-          '  *) exit 64 ;;',
+          "  *) exit 64 ;;",
           "esac",
           "",
         ].join("\n"),
@@ -782,6 +788,7 @@ describe("Hermes share mount package parity (#2947)", () => {
     const sandboxHome = path.join(tmp, "sandbox");
     const lockedRuntime = path.join(tmp, "agent-browser-runtime");
     const npmCallLog = path.join(tmp, "npm-calls.log");
+    const browserExecutionMarker = path.join(tmp, "browser-executed");
     const metadataMarker = path.join(sandboxHome, ".npm", "exact-packument");
     const archiveMarker = path.join(sandboxHome, ".npm", "locked-archive");
 
@@ -810,7 +817,22 @@ describe("Hermes share mount package parity (#2947)", () => {
       );
       fs.writeFileSync(
         browserToolPath,
-        "\n".repeat(956) +
+        [
+          "import os",
+          "",
+          "_BROWSER_PASSTHROUGH_KEYS = ()",
+          "",
+          "def _build_browser_env() -> dict:",
+          "    from tools.environments.local import hermes_subprocess_env",
+          "",
+          "    env = hermes_subprocess_env(inherit_credentials=False)",
+          "    for _key in _BROWSER_PASSTHROUGH_KEYS:",
+          "        if _key in os.environ:",
+          "            env[_key] = os.environ[_key]",
+          "    return env",
+          "",
+        ].join("\n") +
+          "\n".repeat(900) +
           [
             "# Pinned to match scripts/install.sh / scripts/install.ps1's",
             '# "agent-browser@^0.26.0" managed install so a git-clone install resolving',
@@ -836,6 +858,40 @@ describe("Hermes share mount package parity (#2947)", () => {
         .split("\n")
         .find((line) => line.startsWith("AGENT_BROWSER_NPX_SPEC ="));
       expect(patchedSpec).toBe('AGENT_BROWSER_NPX_SPEC = "agent-browser@0.26.0"');
+      const runtimeEnvironment = spawnSync(
+        "python3",
+        [
+          "-c",
+          [
+            "import importlib.util, json, pathlib, sys, types",
+            "path = pathlib.Path(sys.argv[1])",
+            'tools = types.ModuleType("tools")',
+            'environments = types.ModuleType("tools.environments")',
+            'local = types.ModuleType("tools.environments.local")',
+            'local.hermes_subprocess_env = lambda **_kwargs: {"npm_config_offline": "false", "retained": "yes"}',
+            "tools.environments = environments",
+            "environments.local = local",
+            'sys.modules["tools"] = tools',
+            'sys.modules["tools.environments"] = environments',
+            'sys.modules["tools.environments.local"] = local',
+            'spec = importlib.util.spec_from_file_location("browser_tool", path)',
+            "module = importlib.util.module_from_spec(spec)",
+            "spec.loader.exec_module(module)",
+            "print(json.dumps(module._build_browser_env(), sort_keys=True))",
+          ].join("; "),
+          browserToolPath,
+        ],
+        { encoding: "utf-8" },
+      );
+      expect(runtimeEnvironment.status, runtimeEnvironment.stderr).toBe(0);
+      const patchedRuntimeEnvironment = JSON.parse(runtimeEnvironment.stdout) as Record<
+        string,
+        string
+      >;
+      expect(patchedRuntimeEnvironment).toEqual({
+        npm_config_offline: "true",
+        retained: "yes",
+      });
 
       fs.writeFileSync(
         fakePython,
@@ -865,8 +921,8 @@ describe("Hermes share mount package parity (#2947)", () => {
           'case "$*" in',
           '  "cache add agent-browser@0.26.0")',
           '    mkdir -p "$npm_config_cache"',
-          '    : > "$npm_config_cache/exact-packument"',
-          '    : > "$npm_config_cache/locked-archive"',
+          '    printf "exact\\n" > "$npm_config_cache/exact-packument"',
+          '    printf "locked\\n" > "$npm_config_cache/locked-archive"',
           "    ;;",
           '  "view agent-browser@0.26.0 dist.integrity")',
           '    [ "${npm_config_offline:-}" = "true" ]',
@@ -882,6 +938,7 @@ describe("Hermes share mount package parity (#2947)", () => {
         fakeNpx,
         [
           "#!/bin/sh",
+          "set -eu",
           '[ "$HOME" = "$EXPECTED_HOME" ]',
           '[ "${npm_config_offline:-}" = "true" ]',
           '[ "$npm_config_registry" = "https://registry.npmjs.org/" ]',
@@ -891,9 +948,10 @@ describe("Hermes share mount package parity (#2947)", () => {
           '[ -f "$npm_config_globalconfig" ]',
           '[ "$npm_config_ignore_scripts" = "true" ]',
           'printf "npx %s\\n" "$*" >> "$NPM_CALL_LOG"',
-          '[ -f "$npm_config_cache/exact-packument" ]',
-          '[ -f "$npm_config_cache/locked-archive" ]',
+          '[ "$(cat "$npm_config_cache/exact-packument" 2>/dev/null)" = "exact" ]',
+          '[ "$(cat "$npm_config_cache/locked-archive" 2>/dev/null)" = "locked" ]',
           '[ "$*" = "--ignore-scripts --prefer-offline -y agent-browser@0.26.0 --version" ]',
+          ': > "$BROWSER_EXECUTION_MARKER"',
           "printf 'agent-browser 0.26.0\\n'",
           "",
         ].join("\n"),
@@ -926,10 +984,7 @@ describe("Hermes share mount package parity (#2947)", () => {
           "npm_config_cache=/sandbox/.npm",
           `npm_config_cache=${JSON.stringify(path.join(sandboxHome, ".npm"))}`,
         )
-        .replaceAll(
-          "/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- ",
-          "",
-        )
+        .replaceAll("/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- ", "")
         .replaceAll("/opt/hermes/.venv/bin/python", fakePython)
         .replaceAll("/usr/local/bin/node", process.execPath)
         .replaceAll("/usr/local/bin/npm", fakeNpm)
@@ -945,6 +1000,7 @@ describe("Hermes share mount package parity (#2947)", () => {
         EXPECTED_HOME: sandboxHome,
         EXPECTED_RUNTIME: lockedRuntime,
         NPM_CALL_LOG: npmCallLog,
+        BROWSER_EXECUTION_MARKER: browserExecutionMarker,
       };
       const rejected = spawnSync("bash", [commandScript], {
         encoding: "utf-8",
@@ -978,7 +1034,44 @@ describe("Hermes share mount package parity (#2947)", () => {
       ]);
       expect(fs.existsSync(metadataMarker)).toBe(true);
       expect(fs.existsSync(archiveMarker)).toBe(true);
+      expect(fs.existsSync(browserExecutionMarker)).toBe(true);
       expect(fs.existsSync(lockedRuntime)).toBe(false);
+
+      const runtimeNpxEnvironment = {
+        PATH: "/usr/bin:/bin",
+        HOME: sandboxHome,
+        EXPECTED_HOME: sandboxHome,
+        EXPECTED_RUNTIME: lockedRuntime,
+        NPM_CALL_LOG: npmCallLog,
+        BROWSER_EXECUTION_MARKER: browserExecutionMarker,
+        npm_config_cache: path.join(sandboxHome, ".npm"),
+        npm_config_registry: "https://registry.npmjs.org/",
+        npm_config_userconfig: path.join(lockedRuntime, "npm-userconfig"),
+        npm_config_globalconfig: path.join(lockedRuntime, "npm-globalconfig"),
+        npm_config_ignore_scripts: "true",
+        ...patchedRuntimeEnvironment,
+      };
+      fs.mkdirSync(lockedRuntime);
+      fs.writeFileSync(path.join(lockedRuntime, "npm-userconfig"), "", { mode: 0o400 });
+      fs.writeFileSync(path.join(lockedRuntime, "npm-globalconfig"), "", { mode: 0o400 });
+      fs.rmSync(browserExecutionMarker);
+      fs.rmSync(archiveMarker);
+      const missingCache = spawnSync(
+        fakeNpx,
+        ["--ignore-scripts", "--prefer-offline", "-y", "agent-browser@0.26.0", "--version"],
+        { encoding: "utf-8", env: runtimeNpxEnvironment },
+      );
+      expect(missingCache.status).not.toBe(0);
+      expect(fs.existsSync(browserExecutionMarker)).toBe(false);
+
+      fs.writeFileSync(archiveMarker, "tampered\n");
+      const tamperedCache = spawnSync(
+        fakeNpx,
+        ["--ignore-scripts", "--prefer-offline", "-y", "agent-browser@0.26.0", "--version"],
+        { encoding: "utf-8", env: runtimeNpxEnvironment },
+      );
+      expect(tamperedCache.status).not.toBe(0);
+      expect(fs.existsSync(browserExecutionMarker)).toBe(false);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

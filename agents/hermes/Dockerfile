@@ -258,6 +258,7 @@ RUN grep -Fq 'from tools.lazy_deps import install_specs' /opt/hermes/hermes_cli/
     && grep -Fq 'outcome = install_specs(missing, timeout=120)' /opt/hermes/hermes_cli/memory_setup.py \
     && grep -Fqx '  - "hindsight-client==0.6.1"' /opt/hermes/plugins/memory/hindsight/plugin.yaml \
     && grep -Fqx 'AGENT_BROWSER_NPX_SPEC = "agent-browser@0.26.0"' /opt/hermes/tools/browser_tool.py \
+    && grep -Fqx '    env["npm_config_offline"] = "true"' /opt/hermes/tools/browser_tool.py \
     && install -o sandbox -g sandbox -m 0400 /dev/null \
         /tmp/nemoclaw-agent-browser-userconfig \
     && install -o sandbox -g sandbox -m 0400 /dev/null \

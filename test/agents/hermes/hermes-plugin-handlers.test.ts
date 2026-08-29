@@ -22,6 +22,81 @@ function runPython(script: string): string {
 }
 
 describe("Hermes NemoClaw plugin handlers", () => {
+  it("uses only the migrated Hermes home when no explicit home is set", () => {
+    const output = runPython(`
+import importlib.util
+import io
+import json
+import os
+import pathlib
+import sys
+import types
+
+plugin_path = pathlib.Path(sys.argv[1])
+yaml_stub = types.ModuleType("yaml")
+yaml_stub.safe_load = lambda *_args, **_kwargs: {}
+sys.modules.setdefault("yaml", yaml_stub)
+spec = importlib.util.spec_from_file_location("hermes_plugin", plugin_path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+os.environ.pop("HERMES_HOME", None)
+dotenv_by_path = {
+    "/sandbox/.hermes/.env": "NEMOCLAW_TEST_VALUE=current\\n",
+    "/sandbox/.hermes-data/.env": "NEMOCLAW_TEST_VALUE=legacy\\n",
+}
+opened = []
+def fake_open(path, *_args, **_kwargs):
+    opened.append(path)
+    return io.StringIO(dotenv_by_path[path])
+module.open = fake_open
+module.os.path.exists = lambda path: path in dotenv_by_path
+
+loaded_homes = []
+hermes_cli = types.ModuleType("hermes_cli")
+env_loader = types.ModuleType("hermes_cli.env_loader")
+env_loader.load_hermes_dotenv = lambda *, hermes_home: loaded_homes.append(hermes_home)
+hermes_cli.env_loader = env_loader
+sys.modules["hermes_cli"] = hermes_cli
+sys.modules["hermes_cli.env_loader"] = env_loader
+
+module._get_sandbox_info = lambda: {
+    "agent": "hermes",
+    "model": "nemotron",
+    "provider": "nvidia",
+    "base_url": "http://localhost:8642/v1",
+    "gateway": "running",
+    "port": 8642,
+}
+module._active_managed_gateway_services = lambda: []
+module._broker_mode_enabled = lambda: False
+
+value = module._get_env_value("NEMOCLAW_TEST_VALUE")
+module._load_hermes_dotenv()
+context = module._build_nemoclaw_agent_context()
+print(json.dumps({
+    "value": value,
+    "opened": opened,
+    "loaded_homes": loaded_homes,
+    "context": context,
+}))
+`);
+
+    const result = JSON.parse(output) as {
+      value: string;
+      opened: string[];
+      loaded_homes: string[];
+      context: string;
+    };
+
+    expect(result.value).toBe("current");
+    expect(result.opened).toContain("/sandbox/.hermes/.env");
+    expect(result.opened).not.toContain("/sandbox/.hermes-data/.env");
+    expect(result.loaded_homes).toEqual(["/sandbox/.hermes"]);
+    expect(result.context).toContain("Parent Hermes sandbox config lives under /sandbox/.hermes");
+    expect(result.context).not.toContain(".hermes-data");
+  });
+
   it("uses only allocated ASCII API ports from the supervisor or marker (#8543)", () => {
     const output = runPython(`
 import importlib.util

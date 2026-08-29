@@ -118,7 +118,9 @@ integrity. The base image caches the exact-version packument and archive, then
 reads its integrity without network access and requires it to match the reviewed
 lockfile. The network-disabled `npx` execution verifies the cached archive and
 exact version. The final image inherits that immutable source and cache boundary
-and repeats only the network-disabled version probe.
+and repeats only the network-disabled version probe. The patched browser
+subprocess environment also forces npm offline mode, so a missing runtime cache
+fails closed instead of contacting the registry.
 
 No new supported integration is introduced. Optional upstream features remain
 subject to their existing NVIDIA/NemoClaw product and policy gates.
