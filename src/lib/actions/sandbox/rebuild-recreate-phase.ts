@@ -281,6 +281,8 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   }
   const restoreRebuildBaseImageOverride =
     pinRebuildAgentBaseImageForRecreate(rebuildBaseImagePreflight);
+  const savedExitCode = process.exitCode;
+  process.exitCode = undefined;
   try {
     await rebuildOnboardDependencies.onboard({
       ...recreateOptions,
@@ -293,7 +295,17 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         : {}),
       recreateJournalTargetIntentFingerprint: recreateJournal.targetIntentFingerprint,
     });
-    log("onboard() returned successfully");
+    const returnedExitCode = process.exitCode;
+    if (typeof returnedExitCode === "number" && returnedExitCode !== 0) {
+      onboardFailed = true;
+      onboardExitCode = returnedExitCode;
+      log(`onboard() returned with exit code ${returnedExitCode}`);
+      console.error(
+        `  ${_RD}Sandbox recreate error:${R} Inner onboarding completed with exit code ${returnedExitCode}.`,
+      );
+    } else {
+      log("onboard() returned successfully");
+    }
   } catch (error) {
     onboardFailed = true;
     const message = error instanceof Error ? error.message : String(error);
@@ -306,6 +318,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     }
   } finally {
     process.exit = savedExit;
+    process.exitCode = savedExitCode;
     restoreRebuildBaseImageOverride();
     restoreAmbientRecreateEnv();
     if (previousSandboxName === undefined) delete process.env.NEMOCLAW_SANDBOX_NAME;

@@ -464,6 +464,32 @@ describe("runRebuildRecreatePhase handoff", () => {
     }
   });
 
+  it("treats a nonzero inner onboarding result as recreate failure (#10394)", async () => {
+    const previousExitCode = process.exitCode;
+    const observedExitCodes: Array<typeof process.exitCode> = [];
+    const input = makeInput();
+    try {
+      process.exitCode = 23;
+      vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async () => {
+        observedExitCodes.push(process.exitCode);
+        process.exitCode = 7;
+      });
+
+      await expect(runRebuildRecreatePhase(input)).rejects.toThrow(
+        "bail: Recreate failed (stale-sandbox recovery).",
+      );
+
+      expect(observedExitCodes).toEqual([undefined]);
+      expect(process.exitCode).toBe(23);
+      expect(input.onCreated).not.toHaveBeenCalled();
+      expect(input.registryRollback.restoreForRetry).toHaveBeenCalledOnce();
+      expect(input.bail).toHaveBeenCalledWith("Recreate failed (stale-sandbox recovery).", 7);
+      expect(input.log).toHaveBeenCalledWith("onboard() returned with exit code 7");
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
   it("retains enabled observability through inner onboard failure, recovery, and bail", async () => {
     const checkpoints: Array<[string, boolean]> = [];
     vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async (options) => {
