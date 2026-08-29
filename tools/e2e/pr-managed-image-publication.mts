@@ -34,6 +34,7 @@ const PUBLIC_PULL_REQUEST_METADATA_PATH =
 const REUSABLE_NON_IMAGE_PATHS = [
   /^ci\/test-file-size-budget[.]json$/u,
   /^[.]github\/actions\/restore-e2e-cli-artifact\/action[.]yaml$/u,
+  /^[.]github\/actions\/setup-native-podman-e2e\/action[.]yaml$/u,
   /^[.]github\/workflows\/e2e(?:-standard-profile)?[.]yaml$/u,
   /^scripts\/install[.]sh$/u,
   /^scripts\/checks\/run-managed-image-openshell-e2e[.]ts$/u,

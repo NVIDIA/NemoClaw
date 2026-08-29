@@ -124,6 +124,7 @@ on:
       managedImagePublicationReuseAllowed([
         "ci/test-file-size-budget.json",
         ".github/actions/restore-e2e-cli-artifact/action.yaml",
+        ".github/actions/setup-native-podman-e2e/action.yaml",
         ".github/workflows/e2e-standard-profile.yaml",
         ".github/workflows/e2e.yaml",
         "scripts/install.sh",
