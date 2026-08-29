@@ -2,10 +2,68 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 
-import { validateChromeTrace } from "./validate-chrome-trace.mts";
+type ValidatedEvent = {
+  name?: unknown;
+  ph?: unknown;
+  ts?: unknown;
+  dur?: unknown;
+  pid?: unknown;
+  tid?: unknown;
+};
+
+export async function validateChromeTrace(
+  file: string,
+): Promise<{ events: number; tracks: number }> {
+  const payload = JSON.parse(await readFile(file, "utf8")) as { traceEvents?: unknown };
+  if (!Array.isArray(payload.traceEvents)) throw new Error("traceEvents must be an array");
+  const tracks = new Map<string, { ts: number; dur: number; name: string }[]>();
+  const metadata = new Set<string>();
+  for (const raw of payload.traceEvents as ValidatedEvent[]) {
+    if (typeof raw.name !== "string" || !["M", "i", "X"].includes(String(raw.ph)))
+      throw new Error("trace event used an unsupported Chrome trace phase");
+    if (!Number.isSafeInteger(raw.pid) || !Number.isSafeInteger(raw.tid))
+      throw new Error("trace event pid and tid must be safe integers");
+    if (raw.ph === "M") {
+      const key = raw.name + ":" + raw.pid + ":" + raw.tid;
+      if (metadata.has(key)) throw new Error("duplicate trace metadata event " + key);
+      metadata.add(key);
+      continue;
+    }
+    if (!Number.isSafeInteger(raw.ts))
+      throw new Error("timed trace event must have a safe timestamp");
+    if (raw.ph !== "X") continue;
+    if (!Number.isSafeInteger(raw.dur) || Number(raw.dur) < 0)
+      throw new Error("complete trace event must have a nonnegative safe duration");
+    const key = raw.pid + ":" + raw.tid;
+    const track = tracks.get(key) ?? [];
+    track.push({ ts: Number(raw.ts), dur: Number(raw.dur), name: raw.name });
+    tracks.set(key, track);
+  }
+  for (const [key, events] of tracks) {
+    events.sort((left, right) => left.ts - right.ts || right.dur - left.dur);
+    const stack: typeof events = [];
+    for (const event of events) {
+      while (stack.length > 0 && event.ts >= stack.at(-1)!.ts + stack.at(-1)!.dur) stack.pop();
+      if (stack.length > 0 && event.ts + event.dur > stack.at(-1)!.ts + stack.at(-1)!.dur)
+        throw new Error("crossing complete events on trace track " + key);
+      stack.push(event);
+    }
+  }
+  return { events: payload.traceEvents.length, tracks: tracks.size };
+}
 
 const MAX_PAGES = 10;
 const MAX_REVISIONS = 250;
@@ -249,23 +307,27 @@ async function readPull(input: ExportInput): Promise<any> {
 
 async function readRuns(
   input: ExportInput,
-  branch: string,
-  commitIds: Set<string>,
-): Promise<{ rows: Run[]; truncated: boolean }> {
-  const collection = await readPages({
-    githubRead: input.githubRead,
-    endpoint: "repos/" + input.repository + "/actions/runs?branch=" + encodeURIComponent(branch),
-    projection:
-      "[.workflow_runs[] | {id,event,head_sha,created_at,run_started_at,updated_at,status,conclusion,name,html_url}]",
-    label: "workflow runs",
+  commits: Commit[],
+): Promise<{ rows: Run[]; truncated: false }> {
+  const groups = await mapBounded(commits, async (commit) => {
+    const collection = await readPages({
+      githubRead: input.githubRead,
+      endpoint:
+        "repos/" + input.repository + "/actions/runs?head_sha=" + encodeURIComponent(commit.oid),
+      projection:
+        "[.workflow_runs[] | {id,event,head_sha,created_at,run_started_at,updated_at,status,conclusion,name,html_url}]",
+      label: "workflow runs",
+    });
+    if (collection.truncated)
+      throw new Error("workflow history exceeded the bounded lifetime pages for " + commit.oid);
+    return collection.rows.filter(
+      (run) => run?.head_sha === commit.oid && Number.isSafeInteger(run?.id),
+    );
   });
-  if (collection.truncated) throw new Error("workflow history exceeded the bounded lifetime pages");
-  const rows = collection.rows.filter(
-    (run) => commitIds.has(run?.head_sha) && Number.isSafeInteger(run?.id),
-  );
+  const rows = [...new Map(groups.flat().map((run) => [run.id, run])).values()];
   if (rows.length > MAX_WORKFLOW_RUNS)
     throw new Error("lifetime workflow history exceeded " + MAX_WORKFLOW_RUNS + " runs");
-  return { rows: rows as Run[], truncated: collection.truncated };
+  return { rows: rows as Run[], truncated: false };
 }
 
 async function readJobs(input: ExportInput, runs: Run[]): Promise<any[]> {
@@ -722,6 +784,39 @@ async function acquirePublicationLock(lock: string): Promise<string> {
   throw new Error("timed out waiting for active lifetime artifact publication lock: " + lock);
 }
 
+async function recoverInterruptedPublication(destination: string): Promise<void> {
+  const parent = path.dirname(destination);
+  const prefix = "." + path.basename(destination) + "-staging-";
+  const backups = (await readdir(parent))
+    .filter((entry) => entry.startsWith(prefix) && entry.endsWith("-previous"))
+    .map((entry) => path.join(parent, entry));
+  let destinationExists = true;
+  try {
+    await stat(destination);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    destinationExists = false;
+  }
+  if (!destinationExists && backups.length === 1) {
+    try {
+      await rename(backups[0], destination);
+      return;
+    } catch (error) {
+      throw new Error(
+        "failed to restore interrupted lifetime artifact publication from " +
+          backups[0] +
+          ": " +
+          String(error),
+      );
+    }
+  }
+  if (!destinationExists && backups.length > 1)
+    throw new Error(
+      "multiple interrupted lifetime artifact backups require recovery: " + backups.join(", "),
+    );
+  await Promise.all(backups.map((backup) => rm(backup, { recursive: true, force: true })));
+}
+
 export async function publishStagedDirectory(input: {
   staging: string;
   destination: string;
@@ -738,6 +833,7 @@ export async function publishStagedDirectory(input: {
   const backup = input.staging + "-previous";
   let movedPrevious = false;
   try {
+    await recoverInterruptedPublication(input.destination);
     await input.validate?.();
     try {
       await rename(input.destination, backup);
@@ -766,11 +862,7 @@ export async function exportLifetimeTrace(input: ExportInput): Promise<LifetimeA
   if (typeof expectedHead !== "string" || pull.headRefOid !== expectedHead)
     throw new Error("pull request head changed during lifetime analysis");
   const commits = normalizeCommits(pull);
-  const runsCollection = await readRuns(
-    input,
-    pull.headRefName,
-    new Set(commits.map((commit) => commit.oid)),
-  );
+  const runsCollection = await readRuns(input, commits);
   const [jobs, externalChecks, lifecycle] = await Promise.all([
     readJobs(input, runsCollection.rows),
     readExternalChecks(input, commits),

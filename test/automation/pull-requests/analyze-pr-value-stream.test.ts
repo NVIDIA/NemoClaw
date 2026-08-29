@@ -22,8 +22,8 @@ import { cleanupArtifactDirectory } from "../../../.agents/skills/nemoclaw-maint
 import {
   publishStagedDirectory,
   reclaimStalePublicationLock,
+  validateChromeTrace,
 } from "../../../.agents/skills/nemoclaw-maintainer-analyze-pr-value-stream/scripts/export-pr-lifetime-trace.mts";
-import { validateChromeTrace } from "../../../.agents/skills/nemoclaw-maintainer-analyze-pr-value-stream/scripts/validate-chrome-trace.mts";
 
 const root = path.resolve(import.meta.dirname, "../../..");
 const analyzer = path.join(
@@ -467,6 +467,24 @@ describe("pull request value-stream analysis", () => {
     await expect(readFile(path.join(destination, "manifest.json"), "utf8")).resolves.toBe(
       "complete",
     );
+  });
+
+  test("recovers a complete artifact set stranded by interrupted publication (#10542)", async () => {
+    const publicationRoot = await mkdtemp(path.join(tmpdir(), "value-stream-recover-"));
+    temporaryDirectories.push(publicationRoot);
+    const destination = path.join(publicationRoot, "pr-42");
+    const backup = path.join(publicationRoot, ".pr-42-staging-interrupted-previous");
+    const staging = path.join(publicationRoot, "replacement");
+    await Promise.all([mkdir(backup), mkdir(staging)]);
+    await Promise.all([
+      writeFile(path.join(backup, "manifest.json"), "prior"),
+      writeFile(path.join(staging, "manifest.json"), "replacement"),
+    ]);
+    await publishStagedDirectory({ staging, destination, lock: destination + ".lock" });
+    await expect(readFile(path.join(destination, "manifest.json"), "utf8")).resolves.toBe(
+      "replacement",
+    );
+    await expect(stat(backup)).rejects.toThrow();
   });
 
   test("validates freshness after publication lock contention (#10542)", async () => {
