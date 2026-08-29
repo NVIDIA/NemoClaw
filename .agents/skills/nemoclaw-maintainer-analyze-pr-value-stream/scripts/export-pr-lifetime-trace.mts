@@ -957,10 +957,8 @@ async function acquirePublicationLock(
     const candidate = lock + ".candidate-" + token;
     await mkdir(candidate);
     track?.(candidate, async () => {
-      if (await lockOwnershipMatches(candidate, token))
-        await rm(candidate, { recursive: true, force: true });
-      else if (await lockOwnershipMatches(lock, token))
-        await rm(lock, { recursive: true, force: true });
+      await rm(candidate, { recursive: true, force: true });
+      if (await lockOwnershipMatches(lock, token)) await rm(lock, { recursive: true, force: true });
     });
     try {
       const startIdentity = await processStartIdentity(process.pid);
