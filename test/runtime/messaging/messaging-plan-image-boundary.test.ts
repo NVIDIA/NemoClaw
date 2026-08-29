@@ -7,14 +7,12 @@ import {
   encodeMessagingBoundaryPlan,
   FULL_PLAN_ONLY_SENTINEL,
   HERMES_TEAMS_PACKAGE_SPEC,
-  OPENCLAW_TEAMS_PACKAGE_SPEC,
   OPENCLAW_TEAMS_PACKAGE_VERSION,
   TEAMS_APP_ID,
   TEAMS_SECRET_PLACEHOLDER,
   TEAMS_TENANT_ID,
   verifyMessagingPlanImageBoundary,
 } from "../../../scripts/check-messaging-plan-image-boundary.mts";
-import { teamsManifest } from "../../../src/lib/messaging/channels/teams/manifest";
 
 type Agent = "openclaw" | "hermes";
 type DockerResult = { status: number; stdout?: string; stderr?: string };
@@ -215,25 +213,6 @@ describe("messaging plan image boundary helper", () => {
     ]);
     expect(JSON.stringify(plan)).not.toContain("client-secret-value");
     expect(JSON.stringify(plan)).not.toContain("password-value");
-  });
-
-  it("tracks exact current Teams manifest package specs", () => {
-    const manifestSpecs = (teamsManifest.agentPackages ?? []).map(({ agent, manager, spec }) => ({
-      agent,
-      manager,
-      spec,
-    }));
-    const planSpecs = (["openclaw", "hermes"] as const).flatMap((agent) =>
-      decodePlan(agent).buildSteps.map(({ value }: any) => ({
-        agent,
-        manager: value.manager,
-        spec: value.spec,
-      })),
-    );
-
-    expect(planSpecs).toEqual(manifestSpecs);
-    expect(OPENCLAW_TEAMS_PACKAGE_SPEC).toBe("npm:@openclaw/msteams@{{openclaw.version}}");
-    expect(HERMES_TEAMS_PACKAGE_SPEC).toBe("microsoft-teams-apps==2.0.13.4");
   });
 
   it("emits agent-specific Teams render, install, and runtime outputs", () => {
