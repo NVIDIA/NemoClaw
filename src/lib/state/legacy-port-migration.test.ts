@@ -215,6 +215,54 @@ describe("legacy non-default gateway state migration", () => {
     expect(fs.existsSync(path.join(shared, "gateways", "9123"))).toBe(false);
   });
 
+  it("refuses an older published intent that omitted retained recovery", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const migration = path.join(shared, ".gateway-state-migration");
+    const legacyRegistry = path.join(shared, "sandboxes.json");
+    const recoveryFile = path.join(shared, "retained-sandbox-recovery.json");
+    writeJson(legacyRegistry, {
+      defaultSandbox: "default-box",
+      sandboxes: {
+        "default-box": { name: "default-box", gatewayName: "nemoclaw", gatewayPort: 8080 },
+        "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+      },
+    });
+    writeJson(path.join(migration, "intent.json"), {
+      version: 1,
+      gatewayPort: 9123,
+      selectedSandboxNames: ["port-box"],
+      sandboxBackupNames: [],
+      moveSession: false,
+      bundleEntries: [],
+      warnAmbiguousSession: false,
+      rewriteLegacyRegistry: true,
+    });
+    writeJson(path.join(migration, "selected-registry.json"), {
+      defaultSandbox: "port-box",
+      sandboxes: {
+        "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+      },
+    });
+    writeJson(path.join(migration, "remaining-registry.json"), {
+      defaultSandbox: "default-box",
+      sandboxes: {
+        "default-box": { name: "default-box", gatewayName: "nemoclaw", gatewayPort: 8080 },
+      },
+    });
+    recordRecovery(recoveryFile, "port-box", 9123, "f");
+    const registryBefore = fs.readFileSync(legacyRegistry, "utf8");
+    const recoveryBefore = fs.readFileSync(recoveryFile, "utf8");
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
+      /intent predates retained recovery partitioning/,
+    );
+    expect(fs.readFileSync(legacyRegistry, "utf8")).toBe(registryBefore);
+    expect(fs.readFileSync(recoveryFile, "utf8")).toBe(recoveryBefore);
+    expect(fs.existsSync(migration)).toBe(true);
+    expect(fs.existsSync(path.join(shared, "gateways", "9123"))).toBe(false);
+  });
+
   it("preflights backup collisions before publishing the selected registry", () => {
     const home = makeHome();
     const shared = path.join(home, ".nemoclaw");

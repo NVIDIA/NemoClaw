@@ -489,6 +489,17 @@ function readMigrationIntent(home: string, sharedRoot: string): LegacyPortMigrat
       }
     }
   }
+  if (
+    selectedRecovery === null &&
+    readRetainedRecoveryDocument(
+      home,
+      retainedSandboxRecoveryFile(sharedRoot),
+    )?.unresolved.some((record) => record.gatewayPort === gatewayPort)
+  ) {
+    throw migrationError(
+      "published migration intent predates retained recovery partitioning; retained recovery remains safely in the shared root",
+    );
+  }
 
   return {
     intentDir,
