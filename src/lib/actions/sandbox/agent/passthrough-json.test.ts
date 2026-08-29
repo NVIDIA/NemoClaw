@@ -57,7 +57,6 @@ describe("runAgentJsonPassthrough", () => {
         getOpenshellBinary: () => "/usr/local/bin/openshell",
         stdinIsTty: () => false,
         runDispatch,
-        completedReply: () => true,
       }),
     ).rejects.toThrow("__exit:0");
 
@@ -93,7 +92,6 @@ describe("runAgentJsonPassthrough", () => {
         getOpenshellBinary: () => "/usr/local/bin/openshell",
         stdinIsTty: () => false,
         runDispatch,
-        completedReply: () => true,
       }),
     ).rejects.toThrow(/__exit:/);
 
@@ -119,7 +117,6 @@ describe("runAgentJsonPassthrough", () => {
         getOpenshellBinary: () => "/usr/local/bin/openshell",
         stdinIsTty: () => false,
         runDispatch,
-        completedReply: () => true,
       }),
     ).rejects.toThrow(/__exit:/);
 
@@ -145,7 +142,6 @@ describe("runAgentJsonPassthrough", () => {
         getOpenshellBinary: () => "openshell",
         stdinIsTty: () => false,
         runDispatch,
-        completedReply: () => true,
       }),
     ).rejects.toThrow("__exit:1");
 
@@ -184,7 +180,6 @@ describe("runAgentJsonPassthrough", () => {
         getOpenshellBinary: () => "/usr/local/bin/openshell",
         stdinIsTty: () => false,
         runDispatch,
-        completedReply: () => true,
       }),
     ).rejects.toThrow("__exit:0");
 
@@ -213,7 +208,6 @@ describe("runAgentJsonPassthrough", () => {
           throw new SyntaxError("Unexpected token in OpenClaw JSON output");
         },
         runDispatch,
-        completedReply: () => true,
       }),
     ).rejects.toThrow("__exit:7");
 
@@ -248,7 +242,6 @@ describe("runAgentJsonPassthrough", () => {
         getGatewayName: () => "nemoclaw-8081",
         getOpenshellBinary: () => "openshell",
         runDispatch,
-        completedReply: () => true,
         stdinIsTty: () => false,
       }),
     ).rejects.toThrow("__exit:0");
@@ -282,7 +275,6 @@ describe("runAgentJsonPassthrough", () => {
         getGatewayName: () => null,
         getOpenshellBinary: () => "openshell",
         runDispatch,
-        completedReply: () => true,
         stdinIsTty: () => true,
       }),
     ).rejects.toThrow("__exit:0");
@@ -319,7 +311,6 @@ describe("runAgentJsonPassthrough", () => {
         getGatewayName: () => null,
         getOpenshellBinary: () => "openshell",
         runDispatch,
-        completedReply: () => true,
         stdinIsTty: () => false,
       }),
     ).rejects.toThrow("__exit:1");
@@ -366,7 +357,6 @@ describe("runAgentJsonPassthrough", () => {
         getGatewayName: () => null,
         getOpenshellBinary: () => "openshell",
         runDispatch,
-        completedReply: () => true,
         stdinIsTty: () => false,
       }),
     ).rejects.toThrow("__exit:1");
@@ -401,7 +391,6 @@ describe("runAgentJsonPassthrough", () => {
         getGatewayName: () => null,
         getOpenshellBinary: () => "openshell",
         runDispatch,
-        completedReply: () => true,
         stdinIsTty: () => false,
       }),
     ).rejects.toThrow("__exit:1");
@@ -431,7 +420,6 @@ describe("runAgentJsonPassthrough", () => {
         getGatewayName: () => null,
         getOpenshellBinary: () => "openshell",
         runDispatch,
-        completedReply: () => true,
         stdinIsTty: () => false,
       }),
     ).rejects.toThrow("__exit:0");
@@ -462,7 +450,6 @@ describe("runAgentJsonPassthrough", () => {
         getGatewayName: () => null,
         getOpenshellBinary: () => "openshell",
         runDispatch,
-        completedReply: () => true,
         stdinIsTty: () => false,
       }),
     ).rejects.toThrow("__exit:0");
@@ -503,7 +490,6 @@ describe("runAgentJsonPassthrough", () => {
         getGatewayName: () => null,
         getOpenshellBinary: () => "openshell",
         runDispatch,
-        completedReply: () => true,
         stdinIsTty: () => false,
       }),
     ).rejects.toThrow("__exit:0");
@@ -529,7 +515,6 @@ describe("runAgentJsonPassthrough", () => {
         getGatewayName: () => null,
         getOpenshellBinary: () => "openshell",
         runDispatch,
-        completedReply: () => true,
         stdinIsTty: () => false,
       }),
     ).rejects.toThrow("__exit:7");
