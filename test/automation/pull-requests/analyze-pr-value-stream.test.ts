@@ -491,6 +491,9 @@ describe("pull request value-stream analysis", () => {
     const manifest = await readFile(path.join(destination, "manifest.json"), "utf8");
     await expect(readFile(path.join(destination, "summary.json"), "utf8")).resolves.toBe(manifest);
     await expect(readFile(path.join(destination, "trace.json"), "utf8")).resolves.toBe(manifest);
+    expect(
+      (await readdir(publicationRoot)).filter((entry) => entry.includes(".lock.candidate-")),
+    ).toEqual([]);
   });
 
   test("restores a completed lifetime artifact set when staged publication fails (#10542)", async () => {
@@ -548,7 +551,7 @@ describe("pull request value-stream analysis", () => {
         lock: destination + ".lock",
       }),
     ).rejects.toThrow(
-      `inspect each manifest.json, then rename exactly one complete candidate to the destination without deleting the others: ${first}, ${second}`,
+      `for each candidate, verify summary.json and trace.json exist and match the byte sizes in manifest.json; then rename exactly one verified candidate to the destination without deleting the others: ${first}, ${second}`,
     );
     await expect(Promise.all([stat(first), stat(second)])).resolves.toHaveLength(2);
   });

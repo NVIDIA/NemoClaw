@@ -1026,7 +1026,7 @@ async function recoverInterruptedPublication(
     throw new Error(
       "multiple interrupted lifetime artifact backups require recovery; destination " +
         destination +
-        "; inspect each manifest.json, then rename exactly one complete candidate to the destination without deleting the others: " +
+        "; for each candidate, verify summary.json and trace.json exist and match the byte sizes in manifest.json; then rename exactly one verified candidate to the destination without deleting the others: " +
         backups.join(", "),
     );
   await requirePublicationLockOwnership(lock, token);
