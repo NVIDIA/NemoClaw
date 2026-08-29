@@ -82,61 +82,6 @@ export async function cleanupBraveNemoClawSandbox(host: HostCliClient): Promise<
   ).toBe(true);
 }
 
-function firstJsonObject(output: string): unknown {
-  for (let start = output.indexOf("{"); start >= 0; start = output.indexOf("{", start + 1)) {
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    for (let index = start; index < output.length; index += 1) {
-      const char = output[index];
-      if (inString) {
-        if (escaped) escaped = false;
-        else if (char === "\\") escaped = true;
-        else if (char === '"') inString = false;
-        continue;
-      }
-      if (char === '"') inString = true;
-      else if (char === "{") depth += 1;
-      else if (char === "}") {
-        depth -= 1;
-        if (depth === 0) {
-          try {
-            return JSON.parse(output.slice(start, index + 1));
-          } catch {
-            break;
-          }
-        }
-      }
-    }
-  }
-  return undefined;
-}
-
-function collectAssistantText(value: unknown): string[] {
-  if (typeof value === "string" && value.trim()) return [value.trim()];
-  if (!value || typeof value !== "object") return [];
-  if (Array.isArray(value)) return value.flatMap(collectAssistantText);
-  const record = value as Record<string, unknown>;
-  const texts: string[] = [];
-  for (const key of [
-    "result",
-    "payloads",
-    "messages",
-    "choices",
-    "message",
-    "delta",
-    "content",
-    "text",
-  ]) {
-    if (key in record) texts.push(...collectAssistantText(record[key]));
-  }
-  return texts;
-}
-
-export function extractOpenClawAgentText(output: string): string {
-  return collectAssistantText(firstJsonObject(output))[0] ?? "";
-}
-
 export function assertDockerAvailable(
   result: ShellProbeResult,
   skip: (note?: string) => never,
@@ -192,6 +137,26 @@ export async function onboardBrave(
   }
   if (!onboard) throw new Error("onboard command did not run");
   return onboard;
+}
+
+export async function reuseBraveSandboxWithWebSearchDisabled(
+  host: HostCliClient,
+  inferenceKey: string,
+): Promise<ShellProbeResult> {
+  return await host.command(
+    "node",
+    [CLI_ENTRYPOINT, "onboard", "--fresh", "--non-interactive", "--yes-i-accept-third-party-software"],
+    {
+      artifactName: "phase-5-reonboard-brave-disabled-reuse",
+      cwd: REPO_ROOT,
+      env: commandEnv({
+        NEMOCLAW_RECREATE_SANDBOX: "0",
+        NVIDIA_INFERENCE_API_KEY: inferenceKey,
+      }),
+      redactionValues: [inferenceKey],
+      timeoutMs: 20 * 60_000,
+    },
+  );
 }
 
 export function assertBraveConfig(configText: string): string {

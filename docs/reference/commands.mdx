@@ -673,14 +673,19 @@ When existing sandboxes were created with OpenShell earlier than `0.0.37`, the i
 For scripted installs, set `NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1` to allow the automatic path to prepare the current CLI without replacing OpenShell, back up every registered sandbox with the current state manifest, retire an installed gateway whose OpenShell version is outside the current release's supported range, install the supported OpenShell release, and recover the existing sandboxes.
 The installer reads that supported range from the prepared current source and stops without retiring the gateway if the installed version is unknown or the range is missing or invalid.
 When the installed OpenShell version is already supported, the installer keeps the running gateway through the host update.
-On Linux, if installed OpenShell lifecycle commands cannot retire the gateway, the installer checks a verified NemoClaw-managed gateway PID file for any configured gateway port.
-For the default gateway on port `8080`, the installer first checks a verified active `nemoclaw-openshell-gateway.service`, then checks the PID file.
+On Linux and macOS, if installed OpenShell lifecycle commands cannot retire the gateway, the installer uses verified NemoClaw-managed service or PID-file evidence for the supported recovery path.
+For the default gateway on port `8080`, Linux recovery first checks a verified active `nemoclaw-openshell-gateway.service`, while macOS recovery first checks a verified active Homebrew gateway service.
+Both paths then check a verified NemoClaw-managed gateway PID file for any configured gateway port.
+When a macOS PID file names a process that is no longer running, the installer removes the stale PID file only after `lsof` reports no listener and no diagnostic output.
+If `lsof` is unavailable, reports permission or other diagnostics, or produces inconsistent listener results, the installer stops before retiring the gateway and preserves the PID file, OpenShell registration, and sandbox backups.
 After either fallback confirms the gateway process is stopped, the installer tries to remove the selected OpenShell registration and warns if onboarding must replace a stale registration.
 If neither fallback can verify and stop the process, the installer stops after backup with every sandbox backup preserved.
 If any registered sandbox cannot be backed up, the installer aborts before it changes the gateway.
 After the automatic path retires an out-of-range gateway, it forces installation of the OpenShell version pinned by the prepared source before recovery.
 This mandatory installation applies to source and managed install modes and cannot remain deferred after gateway retirement.
 If the forced installation fails, the installer does not stage a gateway service or start recovery, preserves the backups, and tells you to rerun with `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1`.
+On macOS, if the verified Homebrew installation does not resolve executable OpenShell CLI and gateway binaries, the installer also stops before recovery and preserves the backups and prepared recovery state.
+It does not fall back to a stale user-local OpenShell binary.
 When the registry contains a pre-fingerprint OpenClaw or Hermes entry with no recorded custom-image evidence, an interactive install asks you to confirm that the listed sandbox used a NemoClaw-managed image.
 For a non-interactive install, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to the JSON array of names printed by the installer, such as `["my-assistant","preserve-hermes"]`, only after verifying every named sandbox used a managed image.
 The confirmation permits those legacy entries to recover onto the current managed image, but it does not override recorded custom-image evidence.
@@ -1422,6 +1427,12 @@ If Ollama does not become healthy within 30 seconds, the command identifies the 
 The command does not take over a system service or an unrelated user-managed Ollama daemon.
 </AgentOnly>
 
+<AgentOnly variant="hermes">
+For an active Portable Hermes sandbox, `connect --probe-only` can resume only the stopped Ollama runner named by the published receipt.
+The `recover` command uses the same inference recovery path, but ordinary `connect` does not.
+Follow [Recover Portable Published Ollama](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#recover-portable-published-ollama) for authority checks, route proof, rollback, and failure handling.
+</AgentOnly>
+
 Before reading or changing the live OpenShell gateway inference route, `connect` verifies the shared provider and sandbox metadata.
 When the live route differs and the metadata is compatible, `connect` warns and re-points the route to the target sandbox's recorded provider and model.
 Refer to [Use Shared Gateway Routes](../inference/manage-inference/use-shared-gateway-routes) for provider-global identity, route drift, and hard-error recovery.
@@ -1955,6 +1966,9 @@ Before it reports success, every completion path verifies the authenticated prox
 </AgentOnly>
 
 <AgentOnly variant="hermes">
+
+For a published receipt-owned Portable Ollama runner, `recover` uses the same inference recovery path as [`connect --probe-only`](#$$nemoclaw-name-connect).
+Follow [Recover Portable Published Ollama](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#recover-portable-published-ollama) for authority checks, route proof, rollback, and failure handling.
 
 For an active Portable Hermes receipt, `recover` starts only the exact receipt-owned Podman container when it is stopped.
 If authenticated health is not ready after that start, recovery launches the receipt-owned `nemoclaw-start` command once and waits for authenticated Hermes health.
@@ -4284,7 +4298,7 @@ For a remote server, connect through SSH and run `openshell term` on that server
 
 Start optional host auxiliary services.
 This is the cloudflared tunnel when `cloudflared` is installed, which exposes the dashboard with a public URL.
-Channel messaging (Telegram, Discord, Slack) is not started here; it is configured during `$$nemoclaw onboard` and runs through OpenShell-managed constructs.
+Channel messaging is not started here; it is configured during `$$nemoclaw onboard` and runs through OpenShell-managed constructs.
 
 ```bash
 $$nemoclaw tunnel start
@@ -4706,8 +4720,9 @@ That directory contains NemoClaw-owned Docker-driver gateway configuration and S
 Uninstall preserves it when the managed or externally supervised gateway process remains because that process depends on the state.
 When another gateway-port environment remains, uninstall removes only the selected gateway port's subdirectory of that directory and keeps the other ports' subdirectories.
 Run `$$nemoclaw uninstall --all-gateway-ports` to remove every gateway port on the host.
-Keep a declared external gateway state directory outside that NemoClaw-owned path.
-Uninstall does not otherwise target the declared external directory.
+Keep an externally supervised lifecycle authority's declared `stateDir` outside that NemoClaw-owned path.
+Uninstall preserves that externally supervised directory.
+This differs from a managed `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` override, which successful managed cleanup removes unless `--keep-openshell` or portable cleanup applies.
 
 | Flag | Effect |
 |---|---|
@@ -4734,6 +4749,21 @@ $$nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models] [--destroy-use
 `NEMOCLAW_GATEWAY_PORT` selects the gateway instance and state root to uninstall.
 Port `8080` selects `nemoclaw` and the shared `~/.nemoclaw/` root; a non-default port selects `nemoclaw-<port>` and `~/.nemoclaw/gateways/<port>/`.
 For example, `NEMOCLAW_GATEWAY_PORT=9123 $$nemoclaw uninstall` selects `nemoclaw-9123`.
+If onboarding also set `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR`, pass its original resolved absolute directory to uninstall so configuration, namespace, process, and state cleanup target that exact directory.
+Use the dedicated gateway state directory created for that port, not a shared or parent directory.
+Onboarding rejects relative overrides, the shared NemoClaw state root or its parents, and existing nonempty directories without valid NemoClaw-managed gateway configuration.
+Let onboarding create the directory when possible. Every existing ancestor, from its containing directory to the filesystem root, must be a real directory owned by the current user or root and must not be group- or world-writable. If the state directory already exists, it must be an owner-controlled, non-symbolic-link directory with mode `0700`.
+If onboarding stops immediately after reserving that directory, uninstall removes the marker-only reservation only while the selected gateway port is free. Gateway configuration, a runtime marker, or a PID file moves cleanup to the managed-gateway checks instead. A port-bound marked gateway with valid generated configuration can be retired after the port is free and a complete process scan proves that no live process claims its state; a listener or unproven process preserves the directory. Inspect and stop the listener or matching gateway process, then rerun uninstall after the port is free.
+Onboarding holds an exclusive lifecycle lock from reservation through gateway initialization. If uninstall reports that onboarding owns the state directory, wait for onboarding to finish and rerun uninstall; the reservation is preserved.
+Successful managed cleanup recursively removes that directory and all contents; portable cleanup and `--keep-openshell` preserve it.
+Before cleanup, uninstall validates port-bound state-root ownership and exact live process identity. A marked, stopped gateway can instead use a free port plus a complete process-absence scan; pre-marker gateways can use their owner-private generated configuration as the legacy ownership proof only with live process identity.
+
+```bash
+NEMOCLAW_GATEWAY_PORT=<port> \
+NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="<original-absolute-path>" \
+  $$nemoclaw uninstall
+```
+
 The compatibility `--gateway` flag cannot select another instance: when present, it must match the name derived from `NEMOCLAW_GATEWAY_PORT`, or uninstall exits before cleanup.
 Default-port uninstall removes NemoClaw-managed entries in `openshell/gateway.env`.
 For a NemoClaw-managed authority, it also removes only NemoClaw's marked Linux gateway unit.
@@ -4808,6 +4838,9 @@ The sweep enumerates the default state root and the non-default roots under `~/.
 When the sweep finds more than one port, it confirms once against the resulting port list, then uninstalls each other port before the port `NEMOCLAW_GATEWAY_PORT` selects.
 When it finds only the selected port, it uses the standard uninstall confirmation without a port list and runs that port once.
 Each port runs as its own uninstall so that every port-scoped value, including the state root, registry file, gateway name, and Docker resource names, resolves from that port rather than from the calling environment.
+An ambient `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` applies only to the currently selected port, which runs last.
+Child passes for other ports use their default per-port gateway state directories.
+If another port with a custom directory fails, rerun `NEMOCLAW_GATEWAY_PORT=<failed-port> NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="<original-absolute-path>" $$nemoclaw uninstall`.
 Outside portable cleanup, the selected port runs last so its pass can remove the shared host resources once no other environment remains.
 `--delete-models`, `--destroy-user-data`, and `--keep-openshell` apply to every port, subject to the portable preservation contract; `--gateway` remains a check against the selected port only.
 A failure to enumerate the gateway state roots safely stops the sweep before any port uninstall begins.
@@ -5339,10 +5372,10 @@ Set them before running `$$nemoclaw onboard`.
 | `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH` | `1` to enable; disabled by default | This setting explicitly opts into the Linux gateway compatibility container for an older host ABI or a diagnostic run; use it only on a trusted local host because it uses host networking and mounts the Docker socket read-only even though the socket still exposes the privileged Docker API; prefer OpenShell 0.0.106's directly supported glibc 2.39+ path; see [Gateway Compatibility Container](/user-guide/openclaw/security/security-controls/gateway-authentication-controls#gateway-compatibility-container) for the container boundary and removal conditions. |
 | `NEMOCLAW_OPENSHELL_GATEWAY_BIN` | path | Advanced override for the `openshell-gateway` binary used by Linux Docker-driver startup. For the default port, the installer accepts the binary under an absolute `XDG_BIN_HOME` when set, otherwise `~/.local/bin/openshell-gateway`; it also accepts `/usr/local/bin/openshell-gateway` or `/usr/bin/openshell-gateway`. Another path fails service staging. The macOS Homebrew service uses the formula's binary. Defaults to the binary next to `openshell`, then common install paths. |
 | `NEMOCLAW_OPENSHELL_SANDBOX_BIN` | path | Advanced override for the `openshell-sandbox` binary used by Linux Docker-driver startup. The macOS Homebrew service uses the formula's driver layout. Defaults to the binary next to `openshell`, then common install paths. |
-| `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` | path | Advanced override for the Linux Docker-driver gateway SQLite state directory and standalone-fallback PID file. Defaults to `~/.local/state/nemoclaw/openshell-docker-gateway`. |
+| `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` | path | Advanced override for the Linux Docker-driver gateway SQLite state directory and standalone-fallback PID file. Use a dedicated absolute directory; onboarding rejects relative paths, the shared NemoClaw state root or its parents, and existing nonempty directories without valid managed gateway configuration. Let onboarding create it when possible; its containing directory must be owned by the current user or root without group or world write access, and a pre-created state directory must be owner-controlled, non-symbolic, and mode `0700`. Pass the original resolved absolute value with `NEMOCLAW_GATEWAY_PORT` when uninstalling that gateway. Port `8080` defaults to `~/.local/state/nemoclaw/openshell-docker-gateway`; non-default ports default to `~/.local/state/nemoclaw/openshell-docker-gateway-<port>`. |
 | `NEMOCLAW_AUTO_FIX_FIREWALL` | `1` to enable | Opts in to automatic UFW remediation when Linux Docker-driver sandbox containers cannot reach the host gateway after a proven TCP failure. NemoClaw runs `sudo -n` only, validates the narrow Docker bridge subnet → gateway IP:port rule before invoking UFW, re-probes after applying it, and otherwise falls back to the printed manual command. |
 <AgentOnly variant="openclaw,hermes">
-| `NEMOCLAW_WECHAT_QUIET` | `1` to enable | Silences the `[wechat]` diagnostic lines printed during the host-side WeChat QR login (poll status, IDC redirects, swallowed gateway errors), which are visible by default while the experimental WeChat path stabilizes; set `1` once the flow is reliable in your environment. |
+| `NEMOCLAW_WECHAT_QUIET` | `1` to enable | Silences `[wechat]` poll diagnostics, including status updates and recoverable errors, during the host-side WeChat QR login. Host-side IDC redirect notices remain visible. |
 </AgentOnly>
 
 <AgentOnly variant="openclaw">

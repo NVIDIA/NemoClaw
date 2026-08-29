@@ -257,6 +257,11 @@
       "category": "security"
     },
     {
+      "file": "test/runtime/gateway/gateway-health-honest.test.ts",
+      "test": "reports a crashed Docker-driver gateway instead of reporting it healthy (#3111)",
+      "category": "compatibility"
+    },
+    {
       "file": "test/runtime/policy/repro-5978-policy-denial-hint.test.ts",
       "test": "prints only once when the file is sourced twice in one login shell",
       "category": "compatibility"
