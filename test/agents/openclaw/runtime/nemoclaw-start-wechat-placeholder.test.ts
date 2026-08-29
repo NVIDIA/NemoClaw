@@ -228,6 +228,31 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
     expect(run.configHash).toBe("");
   });
 
+  it("rejects an unsafe WeChat account before updating another provider", () => {
+    const telegramCanonical = "openshell:resolve:env:TELEGRAM_BOT_TOKEN";
+    const run = runWechatRefresh(
+      CANONICAL,
+      {
+        TELEGRAM_BOT_TOKEN: "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN",
+        WECHAT_BOT_TOKEN: "openshell:resolve:env:v42_WECHAT_BOT_TOKEN",
+      },
+      true,
+      ({ accountPath, configPath }) => {
+        fs.chmodSync(accountPath, 0o640);
+        const config = JSON.parse(fs.readFileSync(configPath, "utf-8")) as OpenClawTestConfig;
+        config.channels.telegram = {
+          accounts: { default: { botToken: telegramCanonical } },
+        };
+        fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+      },
+    );
+
+    expect(run.result.status).toBe(1);
+    expect(run.account.token).toBe(CANONICAL);
+    expect(run.config.channels.telegram?.accounts.default.botToken).toBe(telegramCanonical);
+    expect(run.configHash).toBe("");
+  });
+
   it("leaves the account untouched while the channel is stopped", () => {
     const run = runWechatRefresh(CANONICAL, {}, false);
 
