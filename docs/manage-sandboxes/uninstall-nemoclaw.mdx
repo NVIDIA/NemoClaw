@@ -214,7 +214,9 @@ This preservation also applies with `--destroy-user-data`.
 This path covers incomplete or absent onboarding and an absent state directory.
 It also covers completed ordinary onboarding after an earlier Portable attempt.
 Ambient content at that path does not establish Portable lifecycle authority or block ordinary uninstall.
-Inspect or remove the preserved path before a later Portable onboarding attempt.
+Before a later Portable onboarding attempt, inspect the preserved path.
+Do not delete it merely because uninstall preserved it.
+Portable onboarding validates the path's ownership, type, and permissions and stops when it finds unsafe state.
 Uninstall still stops before cleanup for an unknown Portable uninstall artifact in lifecycle state or a completed Portable onboarding session whose lifecycle receipt is missing.
 It records the initial lifecycle receipts and sandbox registry state for comparison.
 NemoClaw first acquires the process-bound portable host lock at `~/.nemoclaw-portable-host.lock`.
