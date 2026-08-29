@@ -21,8 +21,8 @@ const MCP_BRIDGE_ALREADY_ABSENT =
 
 /** Prepare a sandbox name exclusively owned by this isolated qualification job. */
 export async function prepareOwnedSandboxForOnboard(
-  host: HostCliClient,
-  sandbox: SandboxClient,
+  host: Pick<HostCliClient, "cleanupSandbox">,
+  sandbox: Pick<SandboxClient, "cleanupSandbox">,
   cleanup: CleanupRegistry,
   sandboxName: string,
 ): Promise<void> {
