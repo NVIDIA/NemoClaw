@@ -396,6 +396,122 @@ describe("Hermes Portable connect composition", () => {
     ).toBe(false);
   });
 
+  it("restores a recovered Ollama runtime when forward settlement fails", async () => {
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      portableReceiptDisposition: { kind: "hermes", phase: "active" },
+      portableRecoveryResult: { kind: "already-running" },
+    });
+    let ollamaRunning = false;
+    harness.recoverHermesPortableOllamaInferenceSpy.mockImplementation(((input: {
+      verifyRoute: () => unknown;
+      prepareProbeDependency?: () => { release: () => void; rollback: () => void };
+    }) => {
+      ollamaRunning = true;
+      try {
+        input.verifyRoute();
+        input.prepareProbeDependency?.().release();
+        return "recovered";
+      } catch (error) {
+        ollamaRunning = false;
+        throw error;
+      }
+    }) as never);
+    let forwardStarted = false;
+    const forward = configureMissingHermesForwardCapture(harness, {
+      afterStart: () => {
+        forwardStarted = true;
+      },
+    });
+    const captureForward = harness.captureResolvedOpenshellSpy.getMockImplementation()!;
+    harness.captureResolvedOpenshellSpy.mockImplementation(((args: unknown, options: unknown) => {
+      const argv = Array.isArray(args) ? args : [];
+      return forwardStarted && forward.isRunning() && argv[0] === "forward" && argv[1] === "list"
+        ? { status: 0, output: "malformed canary" }
+        : captureForward(args, options);
+    }) as never);
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(forward.isRunning()).toBe(false);
+    expect(ollamaRunning).toBe(false);
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+  });
+
+  it("restores prepared forwards when Ollama finalization fails", async () => {
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      portableReceiptDisposition: { kind: "hermes", phase: "active" },
+      portableRecoveryResult: { kind: "already-running" },
+    });
+    let ollamaRunning = false;
+    harness.recoverHermesPortableOllamaInferenceSpy.mockImplementation(((input: {
+      verifyRoute: () => unknown;
+      prepareProbeDependency?: () => { rollback: () => void };
+    }) => {
+      ollamaRunning = true;
+      input.verifyRoute();
+      const dependency = input.prepareProbeDependency?.();
+      dependency?.rollback();
+      ollamaRunning = false;
+      throw new Error("finalization canary");
+    }) as never);
+    const forward = configureMissingHermesForwardCapture(harness);
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(forward.isRunning()).toBe(false);
+    expect(ollamaRunning).toBe(false);
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).not.toContain("finalization canary");
+  });
+
+  it("reports forward restoration uncertainty after restoring Ollama", async () => {
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      portableReceiptDisposition: { kind: "hermes", phase: "active" },
+      portableRecoveryResult: { kind: "already-running" },
+    });
+    let ollamaRunning = false;
+    harness.recoverHermesPortableOllamaInferenceSpy.mockImplementation(((input: {
+      verifyRoute: () => unknown;
+      prepareProbeDependency?: () => { rollback: () => void };
+    }) => {
+      ollamaRunning = true;
+      input.verifyRoute();
+      const dependency = input.prepareProbeDependency?.();
+      harness.assertHermesPortableOperatingCommandCurrentSpy.mockImplementation(() => {
+        throw new Error("rollback authority canary");
+      });
+      try {
+        dependency?.rollback();
+      } catch (error) {
+        ollamaRunning = false;
+        throw error;
+      }
+      throw new Error("expected rollback failure");
+    }) as never);
+    const forward = configureMissingHermesForwardCapture(harness);
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(forward.isRunning()).toBe(true);
+    expect(ollamaRunning).toBe(false);
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+    const output = harness.errorSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("returned to a stopped state");
+    expect(output).not.toContain("rollback authority canary");
+  });
+
   it("stops before publication when the owning gateway forward list is malformed", async () => {
     const harness = createConnectHarness({
       agentName: "hermes",
