@@ -4,6 +4,7 @@
 import { containsToolCallStructure } from "../../helpers/e2e-answer-assertions.ts";
 
 export interface OpenClawAgentJsonDocument {
+  [key: string]: unknown;
   payloads?: Array<{ text?: unknown }>;
   result?: { meta?: unknown; payloads?: Array<{ text?: unknown }> };
 }
@@ -102,6 +103,7 @@ function collectOpenClawAssistantText(value: unknown): string[] {
     if (typeof candidate !== "object") return;
 
     const record = candidate as Record<string, unknown>;
+    if (["user", "tool", "function"].includes(String(record.role))) return;
     for (const key of OPENCLAW_TEXT_KEYS) collect(record[key]);
     for (const key of OPENCLAW_CONTAINER_KEYS) collect(record[key]);
   };

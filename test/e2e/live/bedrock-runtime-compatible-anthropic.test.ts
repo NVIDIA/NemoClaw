@@ -29,8 +29,8 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { testHomeEnvironment } from "../fixtures/environment-profiles.ts";
-import { parseOpenClawBroadAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { parseOpenClawBroadAgentText } from "../fixtures/openclaw-agent-output.ts";
 import type { TestProgress, TestProgressCapability } from "../fixtures/progress.ts";
 import { summarizeSandboxSnapshot } from "./bedrock-runtime-compatible-anthropic-artifacts.ts";
 import {
@@ -789,6 +789,7 @@ function parseChatContent(raw: string): string {
     choice?.message?.content ?? choice?.message?.reasoning_content ?? choice?.text ?? "";
   return typeof content === "string" ? content.trim() : "";
 }
+
 
 async function assertOpenClawConfig(sandbox: SandboxClient, home: string): Promise<void> {
   const output = await sandbox.exec(

@@ -38,7 +38,6 @@ import {
   startFakeOpenAiCompatibleServer,
 } from "../fixtures/fake-openai-compatible.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
-import { parseOpenClawBroadAgentText } from "../fixtures/openclaw-agent-output.ts";
 import {
   inferenceResponseModel,
   inferenceSetAttemptCount,
@@ -46,6 +45,7 @@ import {
   writeInferenceSwitchRetryEvidence,
 } from "../fixtures/inference-switch-retry.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { parseOpenClawBroadAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { runBoundedRetry } from "../fixtures/retry-policy.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
@@ -729,6 +729,7 @@ async function checkSandboxInference(
   }
   throw new Error(`Sandbox inference.local did not work after switch: ${lastFailure}`);
 }
+
 
 async function checkOpenClawAgentTurn(
   host: HostCliClient,

@@ -13,7 +13,6 @@ import {
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import { parseOpenClawBroadAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 
 export function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -268,5 +267,3 @@ export async function cleanupMessagingState(
   );
   await stopGatewayRuntime(host, "cleanup-openshell-gateway-runtime-nemoclaw");
 }
-
-export { parseOpenClawBroadAgentText as parseOpenClawAgentText };

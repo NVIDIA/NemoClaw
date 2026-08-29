@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { parseOpenClawAgentText } from "../live/messaging-compatible-endpoint-helpers.ts";
+import { parseOpenClawBroadAgentText as parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { COMPAT_AGENT_PROMPT, COMPAT_AGENT_REPLY } from "./messaging-endpoint-classifiers.ts";
 
 describe("messaging-compatible-endpoint live test local classifiers", () => {

@@ -10,7 +10,6 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
-import { parseOpenClawBroadAgentTextParts } from "../fixtures/openclaw-agent-output.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
@@ -81,10 +80,6 @@ export async function cleanupBraveNemoClawSandbox(host: HostCliClient): Promise<
       ),
     `cleanup Brave sandbox ${SANDBOX_NAME}: ${output}`,
   ).toBe(true);
-}
-
-export function extractOpenClawAgentText(output: string): string {
-  return parseOpenClawBroadAgentTextParts(output)[0] ?? "";
 }
 
 export function assertDockerAvailable(

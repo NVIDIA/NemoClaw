@@ -89,6 +89,29 @@ describe("OpenClaw agent-output fixture", () => {
     ).toBe('Use {braces} and "quotes".\nSecond reply.');
   });
 
+  it("extracts Brave response text without accepting echoed user or tool content", () => {
+    expect(
+      parseOpenClawBroadAgentText(
+        JSON.stringify({
+          messages: [
+            { role: "user", content: "SEARCH_TOKEN" },
+            { role: "tool", content: "SEARCH_TOKEN" },
+            { role: "assistant", content: "ASSISTANT_RESULT" },
+          ],
+          response: { text: "BRAVE_RESULT" },
+        }),
+      ),
+    ).toBe("ASSISTANT_RESULT\nBRAVE_RESULT");
+  });
+
+  it("rejects structured tool-call records as reply evidence", () => {
+    expect(
+      parseOpenClawBroadAgentText(
+        JSON.stringify({ messages: [{ type: "tool_use", text: "56", input: {} }] }),
+      ),
+    ).toBe("");
+  });
+
   it("fails closed in linear time for a long incomplete brace-rich stream", () => {
     expect(parseOpenClawAgentJsonDocuments("{".repeat(10_000))).toEqual([]);
   });

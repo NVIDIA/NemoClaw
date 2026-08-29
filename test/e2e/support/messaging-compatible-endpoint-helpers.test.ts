@@ -10,10 +10,10 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import type { HostCliClient } from "../fixtures/clients/host.ts";
+import { parseOpenClawBroadAgentText as parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import {
   cleanupMessagingState,
   cleanupOwnedGatewayRuntimeStrict,
-  parseOpenClawAgentText,
   stopGatewayRuntime,
 } from "../live/messaging-compatible-endpoint-helpers.ts";
 
