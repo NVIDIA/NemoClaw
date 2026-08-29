@@ -183,6 +183,18 @@ export function dockerDaemonReceiptMount(
   return `type=volume,src=${receipt.volumeName},dst=${path.posix.dirname(destination)},readonly`;
 }
 
+export function cleanupDockerHostReceiptBestEffort(receiptPath: string, tempPrefix: string): void {
+  try {
+    cleanupTempDir(receiptPath, tempPrefix);
+  } catch (error) {
+    console.warn(
+      `  ⚠ Managed-startup shared state is finalized, but its protected host receipt could not be removed (${receiptPath}): ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
 /** Remove a verified receipt. Failures remain visible but do not undo a safe state transition. */
 export function cleanupDockerDaemonReceiptBestEffort(
   receipt: DockerDaemonReceipt,
@@ -190,15 +202,7 @@ export function cleanupDockerDaemonReceiptBestEffort(
   dockerRun: DockerRun,
   dockerOptions: Record<string, unknown>,
 ): void {
-  try {
-    cleanupTempDir(receipt.hostPath, tempPrefix);
-  } catch (error) {
-    console.warn(
-      `  ⚠ Managed-startup shared state is finalized, but its protected host receipt could not be removed (${receipt.hostPath}): ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
+  cleanupDockerHostReceiptBestEffort(receipt.hostPath, tempPrefix);
   cleanupVolumeBestEffort(receipt.volumeName, dockerRun, dockerOptions);
 }
 

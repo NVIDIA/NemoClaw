@@ -73,8 +73,7 @@ function fixture(
         return { status: 0 };
       case "cp": {
         const daemonTransfer =
-          args[1] === "-a" &&
-          String(args[3]).includes("nemoclaw-managed-startup-receipt-seed");
+          args[1] === "-a" && String(args[3]).includes("nemoclaw-managed-startup-receipt-seed");
         switch (daemonTransfer) {
           case true:
             return {
@@ -88,8 +87,7 @@ function fixture(
             const present =
               (sourcePath === MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY &&
                 state === "committed") ||
-              (sourcePath === MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY &&
-                state === "pending");
+              (sourcePath === MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY && state === "pending");
             events.push(`copy:${path.basename(sourcePath)}:${present ? "present" : "absent"}`);
             return present ? copyPresentReceipt(destination) : copyMissingReceipt(sourcePath);
           }

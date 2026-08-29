@@ -94,9 +94,9 @@ export interface ManagedStartupSharedTransactionOptions {
   /** Test seam. Production always retains the root:root defaults. */
   readonly trustedGid?: number;
   /**
-   * Immutable copied-receipt helper seam. The host copy is mounted read-only
-   * at a fixed path, so ownership may reflect the Docker CLI user instead of
-   * container root.
+   * Immutable copied-receipt helper seam. The Docker client preserves source
+   * metadata in a daemon volume, so ownership may reflect the Docker CLI user
+   * instead of container root.
    */
   readonly readOnlyReceipt?: boolean;
   /** One-attempt identity for managed bootstrap; null for legacy root application. */

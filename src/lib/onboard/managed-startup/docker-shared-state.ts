@@ -12,13 +12,6 @@ import {
   DOCKER_GPU_PATCH_TIMEOUT_MS,
 } from "../docker-gpu-patch-constants";
 import type { DockerGpuPatchDeps, DockerGpuPatchResult } from "../docker-gpu-patch-types";
-import {
-  cleanupDockerDaemonReceiptBestEffort,
-  dockerDaemonReceiptMount,
-  protectedDockerReceiptDetail,
-  transferDockerReceiptToDaemon,
-  type DockerDaemonReceipt,
-} from "./docker-receipt-transfer";
 import { cleanupTempDir, secureTempFile } from "../temp-files";
 import type { DockerManagedStartupTransaction } from "./docker-root-apply";
 import { MANAGED_STARTUP_RUNTIME_EXECUTABLE } from "./image-runtime";
@@ -61,7 +54,7 @@ function commandDetail(result: {
     .slice(-800);
 }
 
-function cleanupHostReceiptBestEffort(receiptPath: string): void {
+function cleanupReceiptBestEffort(receiptPath: string): void {
   try {
     cleanupTempDir(receiptPath, RECEIPT_TEMP_PREFIX);
   } catch (error) {
@@ -71,15 +64,6 @@ function cleanupHostReceiptBestEffort(receiptPath: string): void {
       }`,
     );
   }
-}
-
-function cleanupReceiptBestEffort(receipt: DockerDaemonReceipt, deps: DockerGpuPatchDeps): void {
-  cleanupDockerDaemonReceiptBestEffort(
-    receipt,
-    RECEIPT_TEMP_PREFIX,
-    deps.dockerRun ?? defaultDockerRun,
-    DOCKER_MUTATION_OPTIONS,
-  );
 }
 
 function transactionCommand(action: "commit" | "rollback", agent: string): string[] {
@@ -116,15 +100,13 @@ function quiesceManagedStartupContainer(
 function copyManagedStartupReceipt(
   transaction: DockerManagedStartupTransaction,
   deps: DockerGpuPatchDeps,
-): DockerDaemonReceipt {
+): string {
   const dockerRun = deps.dockerRun ?? defaultDockerRun;
   const receiptPath = secureTempFile(RECEIPT_TEMP_PREFIX);
-  let copied = false;
   try {
     const copy = dockerRun(
       [
         "cp",
-        "-a",
         `${transaction.containerId}:${MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY}`,
         receiptPath,
       ],
@@ -135,27 +117,19 @@ function copyManagedStartupReceipt(
         `Could not copy the managed-startup rollback receipt from the failed container: ${commandDetail(copy)}`,
       );
     }
-    copied = true;
-    return transferDockerReceiptToDaemon(
-      {
-        image: transaction.image,
-        receiptPath,
-        destinations: [MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY],
-        dockerOptions: DOCKER_MUTATION_OPTIONS,
-        dockerRun,
-      },
-    );
+    if (receiptPath.includes(",") || /[\r\n\0]/u.test(receiptPath)) {
+      throw new Error("Managed-startup rollback receipt path is unsafe for a Docker bind mount");
+    }
+    return receiptPath;
   } catch (error) {
-    // Keep a copied receipt when daemon staging fails: it is the only recovery
-    // authority available while the shared-state transaction remains pending.
-    if (!copied) cleanupHostReceiptBestEffort(receiptPath);
+    cleanupReceiptBestEffort(receiptPath);
     throw error;
   }
 }
 
 function rollbackManagedStartupSharedState(
   transaction: DockerManagedStartupTransaction,
-  receipt: DockerDaemonReceipt,
+  receiptPath: string,
   deps: DockerGpuPatchDeps,
 ): void {
   const dockerRun = deps.dockerRun ?? defaultDockerRun;
@@ -186,7 +160,7 @@ function rollbackManagedStartupSharedState(
         "--volumes-from",
         transaction.containerId,
         "--mount",
-        dockerDaemonReceiptMount(receipt, MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY),
+        `type=bind,src=${receiptPath},dst=${MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY},readonly`,
         "--entrypoint",
         "/usr/local/bin/node",
         transaction.image,
@@ -198,12 +172,14 @@ function rollbackManagedStartupSharedState(
     if (!hasZeroDockerExitStatus(helper)) {
       throw new Error(
         `Immutable managed-startup helper could not restore and verify shared state: ${commandDetail(helper)}. ` +
-          protectedDockerReceiptDetail(receipt),
+          `Protected receipt retained at ${receiptPath}`,
       );
     }
     restored = true;
   } finally {
-    if (restored) cleanupReceiptBestEffort(receipt, deps);
+    if (restored) {
+      cleanupReceiptBestEffort(receiptPath);
+    }
   }
 }
 
@@ -243,9 +219,9 @@ export function finalizeDockerManagedStartupSharedState(
     // Preserve a verified rollback source before commit deletes the
     // container-local receipt. If Docker loses the exec acknowledgement after
     // deletion, this copy still makes the cutover reversible.
-    let receipt: DockerDaemonReceipt;
+    let receiptPath: string;
     try {
-      receipt = copyManagedStartupReceipt(transaction, deps);
+      receiptPath = copyManagedStartupReceipt(transaction, deps);
     } catch (error) {
       try {
         quiesceManagedStartupContainer(transaction, deps);
@@ -275,21 +251,21 @@ export function finalizeDockerManagedStartupSharedState(
       DOCKER_MUTATION_OPTIONS,
     );
     if (hasZeroDockerExitStatus(commit)) {
-      cleanupReceiptBestEffort(receipt, deps);
+      cleanupReceiptBestEffort(receiptPath);
       return { supervisorReady: true, failure: null };
     }
     const failure = new Error(
       `OpenShell supervisor reconnected, but managed shared-state commit failed: ${commandDetail(commit)}`,
     );
     quiesceManagedStartupContainer(transaction, deps);
-    rollbackManagedStartupSharedState(transaction, receipt, deps);
+    rollbackManagedStartupSharedState(transaction, receiptPath, deps);
     if (!input.patchResult) removeFailedUnbackedContainer(transaction, deps);
     return { supervisorReady: false, failure };
   }
 
   quiesceManagedStartupContainer(transaction, deps);
-  const receipt = copyManagedStartupReceipt(transaction, deps);
-  rollbackManagedStartupSharedState(transaction, receipt, deps);
+  const receiptPath = copyManagedStartupReceipt(transaction, deps);
+  rollbackManagedStartupSharedState(transaction, receiptPath, deps);
   if (!input.patchResult) removeFailedUnbackedContainer(transaction, deps);
   return { supervisorReady: false, failure: null };
 }

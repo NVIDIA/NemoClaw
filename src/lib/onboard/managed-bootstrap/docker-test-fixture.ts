@@ -418,10 +418,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
           const source = String(args[sourceIndex] ?? "");
           const destination = String(args[sourceIndex + 1] ?? "");
           const copyIntoContainer = () => {
-            if (
-              args[1] === "-a" &&
-              destination.includes("nemoclaw-managed-startup-receipt-seed")
-            ) {
+            if (args[1] === "-a" && destination.includes("nemoclaw-managed-startup-receipt-seed")) {
               return ok();
             }
             events.push("stage:envelope");

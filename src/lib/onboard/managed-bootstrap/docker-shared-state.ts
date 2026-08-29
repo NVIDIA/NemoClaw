@@ -24,12 +24,13 @@ import {
 import { isImmutableDockerImageId } from "../openshell-docker-sandbox-containers";
 import {
   cleanupDockerDaemonReceiptBestEffort,
+  cleanupDockerHostReceiptBestEffort,
   dockerDaemonReceiptMount,
   protectedDockerReceiptDetail,
   transferDockerReceiptToDaemon,
   type DockerDaemonReceipt,
 } from "../managed-startup/docker-receipt-transfer";
-import { cleanupTempDir, secureTempFile } from "../temp-files";
+import { secureTempFile } from "../temp-files";
 
 const RECEIPT_TEMP_PREFIX = "nemoclaw-managed-startup-receipt";
 const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
@@ -232,18 +233,6 @@ function commandDetail(result: {
   )}`
     .trim()
     .slice(-800);
-}
-
-function cleanupHostReceiptBestEffort(receiptPath: string): void {
-  try {
-    cleanupTempDir(receiptPath, RECEIPT_TEMP_PREFIX);
-  } catch (error) {
-    console.warn(
-      `  ⚠ Managed-startup shared state is finalized, but its protected host receipt could not be removed (${receiptPath}): ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
 }
 
 function cleanupReceiptBestEffort(receipt: DockerDaemonReceipt, deps: DockerGpuPatchDeps): void {
@@ -456,7 +445,7 @@ function copyManagedStartupReceiptAt(
     );
     if (!hasZeroDockerExitStatus(copy)) {
       if (allowAbsent && isExactMissingReceiptCopy(transaction, sourcePath, copy)) {
-        cleanupHostReceiptBestEffort(receiptPath);
+        cleanupDockerHostReceiptBestEffort(receiptPath, RECEIPT_TEMP_PREFIX);
         return null;
       }
       throw new Error(
@@ -464,25 +453,23 @@ function copyManagedStartupReceiptAt(
       );
     }
     copied = true;
-    return transferDockerReceiptToDaemon(
-      {
-        image: transaction.image,
-        receiptPath,
-        destinations:
-          sourcePath === MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY
-            ? [
-                MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
-                MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
-              ]
-            : [sourcePath],
-        dockerOptions: DOCKER_MUTATION_OPTIONS,
-        dockerRun,
-      },
-    );
+    return transferDockerReceiptToDaemon({
+      image: transaction.image,
+      receiptPath,
+      destinations:
+        sourcePath === MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY
+          ? [
+              MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
+              MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
+            ]
+          : [sourcePath],
+      dockerOptions: DOCKER_MUTATION_OPTIONS,
+      dockerRun,
+    });
   } catch (error) {
     // Keep a copied receipt when daemon staging fails: it is the only recovery
     // authority available while the shared-state transaction remains pending.
-    if (!copied) cleanupHostReceiptBestEffort(receiptPath);
+    if (!copied) cleanupDockerHostReceiptBestEffort(receiptPath, RECEIPT_TEMP_PREFIX);
     throw error;
   }
 }
