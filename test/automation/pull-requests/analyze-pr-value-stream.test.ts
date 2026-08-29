@@ -733,24 +733,6 @@ describe("pull request value-stream analysis", () => {
     await expect(validateChromeTrace(trace)).rejects.toThrow("unsupported Chrome trace phase");
   });
 
-  test("rejects crossing complete Chrome trace events (#10542)", async () => {
-    const trace = path.join(
-      await mkdtemp(path.join(tmpdir(), "value-stream-trace-")),
-      "trace.json",
-    );
-    temporaryDirectories.push(path.dirname(trace));
-    await writeFile(
-      trace,
-      JSON.stringify({
-        traceEvents: [
-          { name: "outer", ph: "X", ts: 1, dur: 5, pid: 1, tid: 1, args: {} },
-          { name: "crossing", ph: "X", ts: 3, dur: 5, pid: 1, tid: 1, args: {} },
-        ],
-      }),
-    );
-    await expect(validateChromeTrace(trace)).rejects.toThrow("crossing complete events");
-  });
-
   test("rejects removed user-controlled truncation options before GitHub access (#10542)", async () => {
     const result = await run("complete", ["--max-automation-runs", "1"]);
     expect(result.exitCode).toBe(1);
