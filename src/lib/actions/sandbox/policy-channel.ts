@@ -151,7 +151,7 @@ function withSandboxMutationLockUnlessPreview<T>(
  * Internal composition dependencies for channel mutation.
  *
  * The Google Chat capability is intentionally absent from the public CLI
- * composition. The live E2E entrypoint supplies it directly so environment
+ * composition. The channels stop/start live E2E helper supplies it directly so environment
  * variables and predictable sandbox names cannot enable non-interactive
  * audience enrollment in ordinary production execution.
  */

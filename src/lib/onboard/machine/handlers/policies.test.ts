@@ -65,6 +65,30 @@ describe("handlePoliciesState", () => {
     });
   });
 
+  it("passes an empty messaging selection to the compatible endpoint smoke (#10405)", async () => {
+    const { deps, calls } = createDeps({
+      getActiveSandbox: vi.fn(() => ({
+        messaging: null,
+        policyAuthority: "nemoclaw-managed" as const,
+      })),
+    });
+
+    await handlePoliciesState({
+      ...baseOptions(deps),
+      provider: "compatible-endpoint",
+      selectedMessagingChannels: [],
+    });
+
+    expect(calls.smoke).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "compatible-endpoint",
+        messagingChannels: [],
+        agent: null,
+      }),
+    );
+    expect(calls.complete).toHaveBeenCalledOnce();
+  });
+
   it("uses recorded messaging channels when no active selection exists", async () => {
     const session = createSession({ messagingPlan: makeMessagingPlan({ channels: ["slack"] }) });
     const { deps, calls, setSession } = createDeps({

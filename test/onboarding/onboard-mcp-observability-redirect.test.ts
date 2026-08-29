@@ -17,7 +17,7 @@ describe("onboard managed MCP recreation redirect", () => {
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "redirect.js");
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin, { readySandboxGet: true });
+    writeOkOpenshell(fakeBin);
 
     const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
@@ -33,11 +33,17 @@ const runner = require(${runnerPath});
 const registry = require(${registryPath});
 const fixtureMocks = require(${mocksPath});
 const normalize = (command) => (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
-runner.run = () => ({ status: 0 });
+const existingSandbox = fixtureMocks.createCreatedSandboxFixture({
+  sandboxName: "alpha",
+  lifecycleState: "created",
+});
+existingSandbox.installRuntimeObservation();
+const sandboxCommand = (command) => Array.isArray(command) ? command : normalize(command).split(/\s+/u);
+runner.run = (command) => existingSandbox.run(sandboxCommand(command)) ?? { status: 0 };
 runner.runCapture = (command) => {
   const value = normalize(command);
-  if (value.includes("sandbox get --gateway nemoclaw alpha")) return "alpha";
-  if (value.includes("sandbox list")) return "alpha Ready";
+  const sandboxResult = existingSandbox.run(sandboxCommand(command));
+  if (sandboxResult !== null) return sandboxResult.status === 0 ? sandboxResult.stdout.toString() : "";
   if (value.includes("/usr/local/bin/dcode identity")) {
     return "Route: inference\nProvider: provider\nModel: openai:model\nEndpoint: https://inference.local/v1";
   }
@@ -66,7 +72,7 @@ registry.getSandbox = () => fixtureMocks.managedSandboxPolicyReceiptFixture({
       }
     }
   }
-});
+}, { sandboxId: existingSandbox.state.sandboxId });
 registry.getDefault = () => null;
 const { createSandbox } = require(${onboardPath});
 createSandbox(
