@@ -561,7 +561,6 @@ test(
       resultText(inference),
     ).toBe(true);
 
-
     progress.phase("recreate and restart sandbox container with legacy keepalive");
     // ── Assert #6635 legacy Docker restart recovery ────────────────
     // Existing sandboxes may still persist the historical keepalive. Recreate
@@ -707,6 +706,5 @@ test(
       containsAnswer(parseOpenClawAgentText(legacyInference.stdout), "42"),
       resultText(legacyInference),
     ).toBe(true);
-
   },
 );

@@ -265,8 +265,8 @@ export function parseOpenClawJsonDocuments(raw: string): unknown[] {
     // Invalid state: upstream OpenClaw has emitted log-prefixed/non-clean JSON
     // framing for `openclaw agent --json`. Source boundary: OpenClaw owns the
     // emitter/framing; NemoClaw only consumes the stream to keep provenance
-    // visible. Source-fix constraint: repair framing upstream rather than patching
-    // or forking OpenClaw in this host wrapper. Tests cover balanced candidates
+    // visible. Source-fix constraint: do not patch or fork OpenClaw from this
+    // host-wrapper PR. Regression tests cover log-prefixed balanced candidates
     // and provenance extraction. Removal condition: supported OpenClaw versions
     // guarantee stable clean JSON framing on stdout.
   }
@@ -352,29 +352,6 @@ export function openClawAgentResponseRecord(doc: unknown): UnknownRecord | null 
     return doc;
   }
   return null;
-}
-
-function payloadHasConversationalText(value: unknown): boolean {
-  if (typeof value === "string") {
-    return value.trim().length > 0 && !/["{](?:type|tool_calls?|function|input_schema)["}]*\s*:/u.test(value);
-  }
-  if (!isObjectRecord(value)) return false;
-  const role = String(value.role).replaceAll("_", "-").toLowerCase();
-  if (["tool", "toolresult", "tool-result", "function"].includes(role)) return false;
-  if (["tool_use", "tool_result", "tool-result", "function"].includes(String(value.type))) return false;
-  return [value.text, value.content].some(payloadHasConversationalText);
-}
-
-/** Return true only when the final parsed record carries a conversational payload. */
-export function openClawAgentHasCompletedReply(raw: string): boolean {
-  const final = parseOpenClawJsonDocuments(raw).at(-1);
-  if (!isObjectRecord(final)) return false;
-  const response = openClawAgentResponseRecord(final);
-  return Boolean(
-    response &&
-      Array.isArray(response.payloads) &&
-      response.payloads.some(payloadHasConversationalText),
-  );
 }
 
 /** The declared run-metadata record from an agent response envelope. */
