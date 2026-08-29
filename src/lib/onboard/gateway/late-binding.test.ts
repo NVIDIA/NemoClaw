@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
@@ -101,7 +100,7 @@ describe("gateway lifecycle late binding", () => {
   it("admits proven pre-marker state and rejects unproven custom roots before startup", async () => {
     let name = "initial";
     let port = 9000;
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-start-boundary-"));
+    const root = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-gateway-start-boundary-"));
     const stateDir = path.join(root, "gateway");
     const verifyReachability = vi.fn(async () => undefined);
     const managedStart = vi.fn(
@@ -234,7 +233,7 @@ describe("gateway lifecycle late binding", () => {
       vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", writableStateDir);
 
       await expect(start.startDockerDriverGateway()).rejects.toThrow(
-        /parent is not a trusted real directory/,
+        /ancestor .* is not a trusted real directory/,
       );
       expect(
         fs.existsSync(

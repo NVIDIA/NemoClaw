@@ -4,12 +4,15 @@
 import {
   acquireProcessBoundLockAt,
   type ProcessBoundLockHandle,
+  ProcessBoundLockContentionError,
   releaseProcessBoundLock,
 } from "../../state/registry/lock";
 import {
   assertManagedGatewayStateDirectoryParentTrusted,
   managedGatewayStateLifecycleLockPath,
 } from "./state-dir";
+
+export { managedGatewayStateLifecycleLockPath } from "./state-dir";
 
 function acquireManagedGatewayStateLifecycleLockWithRetries(
   stateDir: string,
@@ -28,8 +31,9 @@ export function tryAcquireManagedGatewayStateLifecycleLock(
 ): ProcessBoundLockHandle | null {
   try {
     return acquireManagedGatewayStateLifecycleLockWithRetries(stateDir, 1);
-  } catch {
-    return null;
+  } catch (error) {
+    if (error instanceof ProcessBoundLockContentionError) return null;
+    throw error;
   }
 }
 

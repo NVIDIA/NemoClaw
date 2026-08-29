@@ -90,22 +90,27 @@ function currentUid(): number {
 }
 
 function stateRootParentOwnershipFailure(stateDir: string): string | null {
-  const parentDir = path.dirname(path.resolve(stateDir));
-  let parent: fs.Stats;
-  try {
-    parent = fs.lstatSync(parentDir);
-  } catch {
-    return "the gateway state directory's parent cannot be inspected";
+  const uid = currentUid();
+  let ancestor = path.dirname(path.resolve(stateDir));
+  while (true) {
+    let inspected: fs.Stats;
+    try {
+      inspected = fs.lstatSync(ancestor);
+    } catch {
+      return `the gateway state directory's ancestor '${ancestor}' cannot be inspected`;
+    }
+    if (
+      !inspected.isDirectory() ||
+      inspected.isSymbolicLink() ||
+      (inspected.uid !== uid && inspected.uid !== 0) ||
+      (inspected.mode & 0o022) !== 0
+    ) {
+      return `the gateway state directory's ancestor '${ancestor}' is not a trusted real directory owned by the current user or root without group or world write access`;
+    }
+    const parent = path.dirname(ancestor);
+    if (parent === ancestor) return null;
+    ancestor = parent;
   }
-  if (
-    !parent.isDirectory() ||
-    parent.isSymbolicLink() ||
-    (parent.uid !== currentUid() && parent.uid !== 0) ||
-    (parent.mode & 0o022) !== 0
-  ) {
-    return "the gateway state directory's parent is not a trusted real directory without group or world write access";
-  }
-  return null;
 }
 
 export function assertManagedGatewayStateDirectoryParentTrusted(stateDir: string): void {
@@ -184,10 +189,13 @@ export function ensureManagedGatewayStateRoot(
   options: { isLegacyManagedState?: () => boolean } = {},
 ): void {
   const stateDir = path.resolve(target.stateDir);
+  assertManagedGatewayStateDirectoryParentTrusted(stateDir);
   if (!fs.existsSync(stateDir)) {
     fs.mkdirSync(stateDir, { mode: 0o700, recursive: true });
     fs.chmodSync(stateDir, 0o700);
   }
+  // Recheck after creation so a changed ancestor never becomes the authority
+  // for subsequent marker, TLS, configuration, or cleanup writes.
   assertManagedGatewayStateDirectoryParentTrusted(stateDir);
   const markerPath = path.join(stateDir, MANAGED_GATEWAY_STATE_ROOT_MARKER);
   if (fs.existsSync(markerPath)) {

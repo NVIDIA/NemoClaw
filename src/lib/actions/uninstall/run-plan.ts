@@ -49,6 +49,7 @@ import {
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE,
 } from "../../onboard/docker-driver-gateway-service";
 import {
+  assertManagedGatewayStateDirectoryParentTrusted,
   isManagedGatewayStateRootReservation,
   managedGatewayStateRootOwnershipFailure,
   resolveGatewayName,
@@ -3095,10 +3096,21 @@ function prepareOpenShellCleanup(
   portableRuntimeCleanup: boolean,
 ): OpenShellCleanupDisposition {
   const configuredStateDir = runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim();
-  const stateLifecycleLock = configuredStateDir
-    ? tryAcquireManagedGatewayStateLifecycleLock(paths.selectedGatewayLocalStateDir)
-    : undefined;
-  if (stateLifecycleLock === null) {
+  let stateLifecycleLock:
+    | Exclude<ReturnType<typeof tryAcquireManagedGatewayStateLifecycleLock>, null>
+    | undefined;
+  try {
+    stateLifecycleLock = configuredStateDir
+      ? (tryAcquireManagedGatewayStateLifecycleLock(paths.selectedGatewayLocalStateDir) ??
+        undefined)
+      : undefined;
+  } catch (error) {
+    runtime.warn(
+      `Unable to validate and lock the configured gateway state directory; it was preserved: ${formatError(error)}. Correct the reported path, ownership, permissions, or lock state, then rerun uninstall.`,
+    );
+    return "blocked";
+  }
+  if (configuredStateDir && !stateLifecycleLock) {
     runtime.warn(
       "The configured gateway state directory is owned by an active onboarding lifecycle; preserving it. Wait for onboarding to finish, then rerun uninstall.",
     );
@@ -3127,6 +3139,14 @@ function prepareOpenShellCleanup(
     if (!(runtime.isPortFree ?? isHostPortFree)(GATEWAY_PORT)) {
       runtime.warn(
         `No gateway resources were created, but gateway port ${String(GATEWAY_PORT)} has a listener. The unused configured gateway state reservation was preserved; inspect and stop the listener, then rerun uninstall after the port is free.`,
+      );
+      return "blocked";
+    }
+    try {
+      assertManagedGatewayStateDirectoryParentTrusted(paths.selectedGatewayLocalStateDir);
+    } catch (error) {
+      runtime.warn(
+        `The configured gateway state reservation became unsafe before removal and was preserved: ${formatError(error)}. Correct the reported path, ownership, or permissions, then rerun uninstall.`,
       );
       return "blocked";
     }

@@ -23,6 +23,7 @@ import type { GatewayReuseState } from "../state/gateway";
 import { DEFAULT_GATEWAY_PORT } from "./gateway/state-dir";
 
 export {
+  assertManagedGatewayStateDirectoryParentTrusted,
   BASE_GATEWAY_STATE_DIR_NAME,
   ensureManagedGatewayStateRoot,
   isManagedGatewayStateRootReservation,
