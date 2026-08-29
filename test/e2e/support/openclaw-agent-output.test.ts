@@ -132,6 +132,15 @@ describe("OpenClaw agent-output fixture", () => {
     expect(
       parseOpenClawAgentText(
         JSON.stringify({
+          event: "progress",
+          status: "ok",
+          result: { payloads: [{ text: "UNTRUSTED_GATEWAY_PROGRESS" }], meta: {} },
+        }),
+      ),
+    ).toBe("");
+    expect(
+      parseOpenClawAgentText(
+        JSON.stringify({
           type: "tool_result",
           tool_call_id: "call-1",
           data: { payloads: [{ text: "UNTRUSTED_TOOL" }], meta: {} },

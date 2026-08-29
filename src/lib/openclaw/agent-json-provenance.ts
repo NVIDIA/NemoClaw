@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isObjectRecord, type UnknownRecord } from "../core/json-types";
-import { redactFull } from "../security/redact";
+import { redactFullWithUrls } from "../security/redact";
 
 const FAILURE_STATUS_VALUES = new Set(["error", "errored", "failed", "failure"]);
 const UNTRUSTED_CHILD_BEGIN = "BEGIN_UNTRUSTED_CHILD_RESULT";
@@ -35,10 +35,9 @@ function snippet(value: string, limit = 300): string {
 }
 
 function redactProvenanceDetail(value: string): string {
-  return redactFull(value.replace(PEM_PRIVATE_KEY_PATTERN, "<REDACTED_PRIVATE_KEY>")).replace(
-    SECRET_KV_PATTERN,
-    "$1=<REDACTED>",
-  );
+  return redactFullWithUrls(
+    value.replace(PEM_PRIVATE_KEY_PATTERN, "<REDACTED_PRIVATE_KEY>"),
+  ).replace(SECRET_KV_PATTERN, "$1=<REDACTED>");
 }
 
 function strings(value: unknown): string[] {
@@ -336,6 +335,7 @@ export function openClawAgentResponseRecord(doc: unknown): UnknownRecord | null 
 
   const result = doc.result;
   if (
+    !Object.hasOwn(doc, "event") &&
     typeof doc.status === "string" &&
     isObjectRecord(result) &&
     (!Object.hasOwn(result, "payloads") || Array.isArray(result.payloads)) &&

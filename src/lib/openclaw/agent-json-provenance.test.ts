@@ -53,6 +53,13 @@ describe("openClawAgentResponseRecord", () => {
         meta: {},
       }),
     ).toBeNull();
+    expect(
+      openClawAgentResponseRecord({
+        event: "progress",
+        status: "ok",
+        result: { payloads: [{ text: "untrusted" }], meta: {} },
+      }),
+    ).toBeNull();
   });
 });
 
@@ -157,6 +164,39 @@ describe("openClawAgentJsonProvenanceLines", () => {
     expect(lines[0]).not.toContain(rawBearer);
     expect(lines[0]).not.toContain(rawPassword);
     expect(lines[0]).not.toContain(rawPrivateKey);
+  });
+
+  it("redacts URL credentials in failed tools and untrusted child excerpts", () => {
+    const credential = "service-user:service-password";
+    const credentialUrl = `https://${credential}@example.invalid/path`;
+    const childPayload = [
+      "<<<BEGIN_UNTRUSTED_CHILD_RESULT>>>",
+      credentialUrl,
+      "<<<END_UNTRUSTED_CHILD_RESULT>>>",
+    ].join("\n");
+    const lines = openClawAgentJsonProvenanceLines(
+      JSON.stringify({
+        messages: [
+          {
+            role: "toolResult",
+            toolCallId: "call_url_secret",
+            toolName: "fetch",
+            isError: true,
+            stderr: credentialUrl,
+          },
+          { role: "user", content: childPayload },
+        ],
+      }),
+    );
+    const failure = lines.find((line) => line.includes("failed tool result"));
+    const childExcerpt = lines.find((line) => line.includes("untrusted child excerpt"));
+
+    expect(failure).toBeDefined();
+    expect(childExcerpt).toBeDefined();
+    expect(failure).toContain("https://example.invalid/path");
+    expect(childExcerpt).toContain("https://example.invalid/path");
+    expect(failure).not.toContain(credential);
+    expect(childExcerpt).not.toContain(credential);
   });
 
   it("sanitizes and redacts untrusted failed tool labels", () => {
