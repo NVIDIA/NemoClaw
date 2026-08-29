@@ -150,6 +150,13 @@ case "\${TEST_GROUP_DATABASE:-regular}" in
   *) exit 2 ;;
 esac
 set +e
+if [ "\${TEST_RETRY_AFTER_MEMBERSHIP_FAILURE:-0}" = "1" ]; then
+  export TEST_USERMOD_NOOP=1
+  /usr/local/lib/nemoclaw/jetson-device-group-bootstrap.sh "$@"
+  first_status=$?
+  unset TEST_USERMOD_NOOP
+  [ "$first_status" -ne 0 ] || exit 2
+fi
 /usr/local/lib/nemoclaw/jetson-device-group-bootstrap.sh "$@"
 status=$?
 set -e
@@ -433,5 +440,21 @@ suite("Jetson device-group bootstrap", () => {
     );
     expect(run.after.supervisorArgv).toBeNull();
     expect(run.after.memberships).toBe(run.before.memberships);
+  });
+
+  it("reuses an exact generated group when retrying a failed membership handoff (#7610)", () => {
+    const run = runBootstrap(["--device-group-gids", "110", "--", SUPERVISOR], {
+      environment: { TEST_RETRY_AFTER_MEMBERSHIP_FAILURE: "1" },
+    });
+
+    expect(run.status, run.stderr).toBe(0);
+    expect(run.stdout).toBe("SUPERVISOR_EXECUTED\n");
+    expect(run.after.groupAddLog).toBe("--gid 110 nemoclaw_gpu_110\n");
+    expect(run.after.usermodLog).toBe(
+      "--append --groups nemoclaw_gpu_110 sandbox\n" +
+        "--append --groups nemoclaw_gpu_110 sandbox\n",
+    );
+    expect(run.after.memberships.trim().split(/\s+/)).toEqual(["1000", "44", "110"]);
+    expect(run.after.supervisorArgv).toEqual(Buffer.from([0]));
   });
 });

@@ -55,7 +55,7 @@ for gid in "${gids[@]}"; do
       fail "device group record is invalid"
     fi
     case "$group_name" in
-      video | render) ;;
+      video | render | "nemoclaw_gpu_$gid") ;;
       *) fail "existing device group is not approved" ;;
     esac
     create_group=0
