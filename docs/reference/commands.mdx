@@ -1429,8 +1429,9 @@ The command does not take over a system service or an unrelated user-managed Oll
 </AgentOnly>
 
 <AgentOnly variant="hermes">
-For an active Portable Hermes sandbox, `connect --probe-only` can resume only the stopped Ollama runner named by the published receipt.
-The `recover` command uses the same inference recovery path, but ordinary `connect` does not.
+For an active Portable Hermes sandbox with the `ollama-local` provider, `connect --probe-only` can resume only the stopped Ollama runner named by the published receipt.
+For another configured provider, including a descriptor-backed compatible endpoint, `connect --probe-only` verifies the recorded route without Ollama recovery.
+The `recover` command uses the same Ollama inference recovery path, but ordinary `connect` does not.
 Follow [Recover Portable Published Ollama](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#recover-portable-published-ollama) for authority checks, route proof, rollback, and failure handling.
 </AgentOnly>
 
