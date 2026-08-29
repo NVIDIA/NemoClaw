@@ -107,6 +107,10 @@ fetch("https://example.com/").then(() => {
 
 validateSandboxName(SANDBOX_NAME);
 
+function piSandboxShellCommand(script: string): string[] {
+  return ["/bin/bash", "-lc", trustedSandboxShellScript(script)];
+}
+
 function qualificationEnv(
   inference: E2EInferenceAdapter,
   guard: DockerBuildGuard,
@@ -163,9 +167,9 @@ async function runReadTask(
 ): Promise<{ assistantText: string; eventCount: number; toolCallId: string }> {
   const remotePath = `/sandbox/.nemoclaw-pi-${phase}.txt`;
   const token = `NEMOCLAW_PI_${phase.toUpperCase().replaceAll("-", "_")}_${randomBytes(8).toString("hex").toUpperCase()}`;
-  const seed = await sandbox.execShell(
+  const seed = await sandbox.exec(
     SANDBOX_NAME,
-    trustedSandboxShellScript(
+    piSandboxShellCommand(
       `umask 077; printf '%s\\n' ${shellQuote(token)} > ${shellQuote(remotePath)}; sync`,
     ),
     {
@@ -215,9 +219,9 @@ async function runReadTask(
 }
 
 async function sessionInventory(sandbox: SandboxClient, env: NodeJS.ProcessEnv, phase: string) {
-  const result = await sandbox.execShell(
+  const result = await sandbox.exec(
     SANDBOX_NAME,
-    trustedSandboxShellScript(
+    piSandboxShellCommand(
       "find /sandbox/.pi/agent/sessions -type f -name '*.jsonl' -print0 | sort -z | xargs -0 -r sha256sum",
     ),
     { artifactName: `pi-${phase}-session-inventory`, env, timeoutMs: 30_000 },
@@ -232,9 +236,9 @@ async function readPiInferenceEvidence(
   env: NodeJS.ProcessEnv,
   expectedModel: string,
 ): Promise<{ api: string; model: string; route: string }> {
-  const result = await sandbox.execShell(
+  const result = await sandbox.exec(
     SANDBOX_NAME,
-    trustedSandboxShellScript("cat /sandbox/.pi/agent/models.json"),
+    piSandboxShellCommand("cat /sandbox/.pi/agent/models.json"),
     { artifactName: "pi-managed-inference-config", env, timeoutMs: 30_000 },
   );
   expect(result.exitCode, resultText(result)).toBe(0);
