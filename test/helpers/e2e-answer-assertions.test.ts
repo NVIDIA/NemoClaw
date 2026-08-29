@@ -36,6 +36,8 @@ describe("E2E answer assertions", () => {
     '{"type":"tool_result","tool_call_id":"call-1","content":"56"}',
     '{"role":"tool","content":"56"}',
     '{"role":"function","content":"56"}',
+    '{"role":"toolResult","content":"56"',
+    'The answer is 56.\n{"role":"tool-result","content":"56"',
     '{"type":"tool_result","tool_call_id":"call-1","content":"56"',
     '{"response":{"name":"read","input":{"value":56}}}',
     '{"response":{"name":"read","input":{"value":56}',

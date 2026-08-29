@@ -286,38 +286,12 @@ export function openClawAgentJsonProvenanceLines(raw: string): string[] {
   ]);
 }
 
-// Turn-level completion markers (#8796).
+// Read completion markers only from the response envelope's `meta` record.
+// Tool results and tool-call arguments are untrusted and can contain the same
+// fields. Reading them could retry a completed turn and repeat its side effects.
 //
-// Read ONLY from the run-metadata record the envelope declares, never from
-// arbitrary descendants. Tool results and tool-call arguments are untrusted
-// data: a successful turn whose tool output merely CONTAINS
-// {"replayInvalid": true} must not be reported as a failure, because callers
-// would then retry a turn that already completed and repeat its side effects.
-//
-// Accepted paths, from the OpenClaw 2026.7.1 type declarations
-// (dist/types-*.d.ts, dist/agent-runtime-*.d.ts):
-//   EmbeddedAgentRunResult = { payloads?, meta: EmbeddedAgentRunMeta, ... }
-//   agentCommandInternal() -> { payloads, meta: EmbeddedAgentRunMeta & ... }
-// so run metadata is a sibling of `payloads`, reachable only in a local
-// `{ payloads, meta }` response or a gateway
-// `{ status, result: { payloads, meta } }` response. Tool results live under
-// `result.messages[].content` and are therefore never consulted.
-//
-// The markers themselves, all declared on EmbeddedAgentRunMeta:
-//   replayInvalid?: boolean
-//   livenessState?: "working" | "paused" | "blocked" | "abandoned"
-//   timeoutPhase?: "queue" | "preflight" | "provider" | "post_turn" | "gateway_draining"
-//   error?: { kind: ... | "incomplete_turn" | ... }
-//
-// `timeoutPhase` marks a run whose deadline fired (#8723). It is optional and
-// absent from a turn that answered, so its presence is the marker and any phase
-// value counts; the declared phases are recorded above as documentation, not as
-// an allowlist, so a phase added upstream is still classified as a timeout
-// instead of being reported as a success.
-//
-// `livenessState` is deliberately not a timeout marker. Two identical timed-out
-// runs reported `blocked` and `working`, so only `abandoned` stays tied to the
-// abandonment case it was added for.
+// Treat any nonempty `timeoutPhase` as incomplete so new phases fail closed.
+// Treat only `livenessState: "abandoned"` as incomplete.
 const ABANDONED_LIVENESS_VALUE = "abandoned";
 // Compared after `normalized()`, which lowercases and maps `_` to `-`.
 const INCOMPLETE_TURN_ERROR_KIND = "incomplete-turn";

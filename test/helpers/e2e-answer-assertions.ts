@@ -56,11 +56,14 @@ export function containsToolCallOutput(text: string): boolean {
     /"tool_calls"\s*:\s*(?!null\b|\[\s*\])/u.test(jsonLike) ||
     /"type"\s*:\s*"(?:function|tool_use)"/u.test(jsonLike) ||
     (/"name"\s*:/u.test(jsonLike) && /"description"\s*:/u.test(jsonLike));
-  const containsToolType =
-    /"type"\s*:\s*"(?:function|tool_use|tool_result|tool-result)"/u.test(jsonLike);
+  const containsToolType = /"type"\s*:\s*"(?:function|tool_use|tool_result|tool-result)"/u.test(
+    jsonLike,
+  );
+  const containsToolRole = /"role"\s*:\s*"(?:function|tool|tool[_-]?result)"/iu.test(jsonLike);
   return (
     /^tool[ _-]?calls?\s*:/iu.test(trimmed) ||
     containsToolType ||
+    containsToolRole ||
     containsJsonToolField ||
     containsStructuredToolOutput(trimmed)
   );

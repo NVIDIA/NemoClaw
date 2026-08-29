@@ -236,6 +236,11 @@ describe("OpenClaw agent-output fixture", () => {
         `${JSON.stringify({ payloads: [{ text: "56" }], meta: {} })}\n{"name":"read","input":{"value":56`,
       ),
     ).toBe("");
+    expect(
+      parseOpenClawAgentText(
+        `${JSON.stringify({ payloads: [{ text: "56" }], meta: {} })}\n{"role":"toolResult","content":"56"`,
+      ),
+    ).toBe("");
   });
 
   it("accepts an assistant reply with null or empty tool metadata", () => {
