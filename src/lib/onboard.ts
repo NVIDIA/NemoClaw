@@ -376,9 +376,7 @@ const {
   ...onboardPromptHelpers
 }: typeof import("./onboard/prompt-helpers") = require("./onboard/prompt-helpers");
 const providerRecovery: typeof import("./onboard/provider-recovery") = require("./onboard/provider-recovery");
-const {
-  createOpenclawSetup,
-}: typeof import("./onboard/openclaw-setup") = require("./onboard/openclaw-setup");
+const openclawSetup: typeof import("./onboard/openclaw-setup") = require("./onboard/openclaw-setup");
 const {
   createWebSearchFlowHelpers,
 }: typeof import("./onboard/web-search-flow") = require("./onboard/web-search-flow");
@@ -2589,7 +2587,7 @@ function syncNemoClawConfigInSandbox(sandboxName: string, provider: string, mode
   });
 }
 
-const setupOpenclaw = createOpenclawSetup({
+const setupOpenclaw = openclawSetup.createOpenclawSetup({
   step,
   agentProductName,
   getProviderSelectionConfig,
@@ -2598,6 +2596,7 @@ const setupOpenclaw = createOpenclawSetup({
   run,
   openshellArgv,
   cleanupTempDir,
+  reconcileWebSearch: openclawSetup.disableOpenClawWebSearchForFreshReuse,
 });
 
 const {

@@ -64,6 +64,7 @@ function baseOptions(
     sandboxName: "my-assistant",
     model: "model",
     provider: "provider",
+    webSearchConfig: null,
     resume: false,
     session: createSession(),
     hermesAuthMethod: null,
@@ -254,6 +255,7 @@ describe("handleAgentSetupState", () => {
       "my-assistant",
       "model",
       "provider",
+      null,
       undefined,
     );
     expect(calls.syncConfig).not.toHaveBeenCalled();

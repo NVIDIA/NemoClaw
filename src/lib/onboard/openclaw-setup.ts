@@ -3,7 +3,54 @@
 
 import fs from "node:fs";
 
+import {
+  configSet,
+  extractDotpath,
+  readSandboxConfig,
+  resolveAgentConfig,
+} from "../sandbox/config";
 import { sandboxConfigSyncArgs } from "./config-sync";
+
+type WebSearchSelection = { fetchEnabled?: boolean } | null;
+
+interface OpenClawWebSearchReuseDeps {
+  readEnabled(sandboxName: string): unknown;
+  disable(sandboxName: string): Promise<void>;
+}
+
+const defaultWebSearchReuseDeps: OpenClawWebSearchReuseDeps = {
+  readEnabled: (sandboxName) => {
+    const target = resolveAgentConfig(sandboxName);
+    if (target.agentName !== "openclaw") {
+      throw new Error(
+        `Cannot reconcile OpenClaw web search for '${sandboxName}': the sandbox runs '${target.agentName}'.`,
+      );
+    }
+    return extractDotpath(readSandboxConfig(sandboxName, target), "tools.web.search.enabled");
+  },
+  disable: (sandboxName) =>
+    configSet(sandboxName, {
+      key: "tools.web.search.enabled",
+      value: "false",
+      restart: true,
+    }),
+};
+
+/**
+ * A fresh onboarding can reuse an already-ready sandbox. The image generator
+ * does not run again on that path, so explicitly apply a newly disabled web
+ * search choice to the live OpenClaw config through its guarded config writer.
+ */
+export async function disableOpenClawWebSearchForFreshReuse(
+  sandboxName: string,
+  webSearchConfig: WebSearchSelection,
+  deps: OpenClawWebSearchReuseDeps = defaultWebSearchReuseDeps,
+): Promise<boolean> {
+  if (webSearchConfig?.fetchEnabled === true) return false;
+  if (deps.readEnabled(sandboxName) !== true) return false;
+  await deps.disable(sandboxName);
+  return true;
+}
 
 export interface OpenclawSetupDeps {
   step(n: number, total: number, msg: string): void;
@@ -14,6 +61,7 @@ export interface OpenclawSetupDeps {
   run(argv: string[], options: Record<string, unknown>): unknown;
   openshellArgv(args: string[]): string[];
   cleanupTempDir(file: string, prefix: string): void;
+  reconcileWebSearch(sandboxName: string, webSearchConfig: WebSearchSelection): Promise<unknown>;
 }
 
 export function createOpenclawSetup(deps: OpenclawSetupDeps) {
@@ -21,6 +69,7 @@ export function createOpenclawSetup(deps: OpenclawSetupDeps) {
     sandboxName: string,
     model: string,
     provider: string,
+    webSearchConfig: WebSearchSelection,
     revalidatePolicyRequirements?: (operation: string) => void,
   ): Promise<void> {
     deps.step(7, 8, `Setting up ${deps.agentProductName()} inside sandbox`);
@@ -44,6 +93,7 @@ export function createOpenclawSetup(deps: OpenclawSetupDeps) {
       }
     }
 
+    await deps.reconcileWebSearch(sandboxName, webSearchConfig);
     revalidatePolicyRequirements?.(`publish OpenClaw setup for sandbox '${sandboxName}'`);
     console.log(`  ✓ ${deps.agentProductName()} gateway launched inside sandbox`);
   };
