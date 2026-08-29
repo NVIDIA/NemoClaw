@@ -2728,7 +2728,10 @@ To discard the quarantined settings, upgrade the CLI and run `$$nemoclaw <name> 
 ### `openclaw channels add` or `remove` is blocked inside the sandbox
 
 This is expected.
-The messaging channel list is frozen into the sandbox's container image when the image is built during `$$nemoclaw onboard` or `$$nemoclaw rebuild` (the selected channel names are passed to the `docker build` as `NEMOCLAW_MESSAGING_CHANNELS_B64` and written into agent config such as `/sandbox/.openclaw/openclaw.json` for OpenClaw or `/sandbox/.hermes/.env` for Hermes).
+NemoClaw freezes the messaging channel list into the sandbox image during `$$nemoclaw onboard` or `$$nemoclaw rebuild`.
+NemoClaw compiles the selected channel configuration into `NEMOCLAW_MESSAGING_PLAN_B64` for that build.
+The build applies the selected agent configuration to `/sandbox/.openclaw/openclaw.json` for OpenClaw or `/sandbox/.hermes/.env` for Hermes, writes reduced runtime metadata to `/usr/local/share/nemoclaw/messaging-runtime-plan.json`, and removes the full build plan from the runtime environment.
+Credential bindings remain OpenShell credential placeholders, so raw messaging credentials do not enter the sandbox image or agent configuration.
 Changes made inside the running sandbox do not persist across rebuilds, so `openclaw channels` commands that mutate the config are intercepted.
 NemoClaw's sandbox entrypoint installs a guard that intercepts `openclaw channels <add|remove>` and prints an actionable error pointing at the host-side commands below, instead of letting the call fail deep in the binary with a raw `EACCES` trace.
 
