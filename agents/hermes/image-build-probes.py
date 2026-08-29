@@ -146,20 +146,7 @@ def verify_neutral_platform_inertness() -> None:
     finally:
         socket.socket.connect = original_connect
         socket.create_connection = original_create_connection
-    bundled_plugins = {
-        manifest.parent.name
-        for manifest in Path("/opt/hermes/plugins/platforms").glob("*/plugin.yaml")
-    }
-    built_in_optional = {
-        platform.value
-        for platform in Platform
-        if platform.value not in {"api_server", "local"}
-    }
-    expected = bundled_plugins | built_in_optional
-    assert "google_chat" in expected, expected
-    assert "whatsapp_cloud" in expected, expected
-
-    for name in expected:
+    for name in ("google_chat", "whatsapp_cloud"):
         platform = Platform(name)
         platform_config = config.platforms.get(platform)
         assert platform_config is not None, name

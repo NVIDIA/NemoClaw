@@ -28,6 +28,12 @@ const securityDependenciesPatch = fs.readFileSync(
   path.join(root, "agents/hermes/security-dependencies.patch"),
   "utf8",
 );
+const agentBrowserLock = JSON.parse(
+  fs.readFileSync(
+    path.join(root, "agents/hermes/agent-browser-runtime/package-lock.json"),
+    "utf8",
+  ),
+);
 const hindsightProbeRequirementsPath = path.join(
   root,
   "agents/hermes/hindsight-client-probe-requirements.txt",
@@ -132,6 +138,31 @@ describe("Hermes 0.20.6 dependency review", () => {
     expect(securityDependenciesPatch).toContain('+  - "hindsight-client==0.6.1"');
     expect(securityDependenciesPatch).not.toContain("diff --git a/uv.lock");
     expect(securityDependenciesPatch).not.toContain("diff --git a/pyproject.toml");
+    expect(Object.keys(agentBrowserLock.packages).sort()).toEqual([
+      "",
+      "node_modules/agent-browser",
+    ]);
+    expect(agentBrowserLock.packages[""].dependencies).toEqual({
+      "agent-browser": "0.26.0",
+    });
+    expect(agentBrowserLock.packages["node_modules/agent-browser"]).toMatchObject({
+      version: "0.26.0",
+      resolved: "https://registry.npmjs.org/agent-browser/-/agent-browser-0.26.0.tgz",
+      integrity:
+        "sha512-pdqSfjwbFSp+qnwlb2g23e9wXveIOfMi19xpPA9xZUbzEAUp6W4YBZj6Ybj8z4M7WkcbGDDYc+oDIHDt9R3EDQ==",
+    });
+    expect(dockerfileBase).toContain("/usr/local/bin/npm ci");
+    expect(dockerfileBase).toContain("--prefix /tmp/nemoclaw-agent-browser-runtime");
+    expect(dockerfileBase).toContain("--ignore-scripts --no-audit --no-fund");
+    expect(dockerfile).toContain("--include=tools/browser_tool.py");
+    expect(dockerfile).toContain("--prefix /scripts/agent-browser-runtime");
+    expect(dockerfile).toContain(
+      "ADD --checksum=sha256:a20c97b37910b6550d5ea50fbcc2d4187defe58cd57070b73863d069419c9440 https://files.pythonhosted.org/packages/77/c1/6e422f34e569cf8e18df68d1939c81c099d2b61e4f7d9621c8a77560799c/pydantic_settings-2.14.2-py3-none-any.whl /pydantic_settings-2.14.2-py3-none-any.whl",
+    );
+    expect(dockerfile).toContain(
+      "--agent hermes --phase managed-image-capability-union; \\\n    fi \\\n    && /opt/hermes/.venv/bin/python -I -c",
+    );
+    expect(review).toContain("`pydantic-settings==2.14.2`");
 
     for (const installedVersion of [
       "'agent-client-protocol': '0.9.0'",

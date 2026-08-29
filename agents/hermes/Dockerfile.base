@@ -446,6 +446,7 @@ RUN pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}" \
 # intentionally hostile security-test fixtures. Remove them in the extraction
 # RUN so their bytes never enter a published image layer.
 COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies.patch
+COPY agents/hermes/agent-browser-runtime/package.json agents/hermes/agent-browser-runtime/package-lock.json /tmp/nemoclaw-agent-browser-runtime/
 COPY agents/hermes/whatsapp-proxy.patch /tmp/hermes-whatsapp-proxy.patch
 COPY scripts/checks/download-hermes-source-archive.sh /tmp/nemoclaw-download-hermes-source-archive.sh
 RUN mkdir -p /opt/hermes \
@@ -620,19 +621,28 @@ ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}" \
     HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
 
 # Hermes 0.20.6 removed agent-browser from its root dependency graph. Prove
-# that the patched source selects the exact npx fallback, warm the sandbox
-# user's cache, then prove the cached package works without network access.
+# that the patched source selects the exact npx fallback, seed the sandbox
+# user's cache from the reviewed lockfile, then prove the cached package works
+# without network access.
 RUN HOME=/sandbox \
         /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
         /opt/hermes/.venv/bin/python -c \
-        'from tools import browser_tool; assert browser_tool.AGENT_BROWSER_NPX_SPEC == "agent-browser@0.26.0"; assert browser_tool._find_agent_browser() == browser_tool.NPX_AGENT_BROWSER_SENTINEL; assert browser_tool.warm_agent_browser_npx_cache()'
+        'from tools import browser_tool; assert browser_tool.AGENT_BROWSER_NPX_SPEC == "agent-browser@0.26.0"; assert browser_tool._find_agent_browser() == browser_tool.NPX_AGENT_BROWSER_SENTINEL'
+RUN chown -R sandbox:sandbox /tmp/nemoclaw-agent-browser-runtime \
+    && HOME=/sandbox npm_config_cache=/sandbox/.npm \
+        /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        /usr/local/bin/npm ci \
+            --prefix /tmp/nemoclaw-agent-browser-runtime \
+            --ignore-scripts --no-audit --no-fund \
+    && rm -rf /tmp/nemoclaw-agent-browser-runtime/node_modules
 RUN --network=none agent_browser_version="$( \
-        HOME=/sandbox npm_config_offline=true \
+        HOME=/sandbox npm_config_cache=/sandbox/.npm npm_config_offline=true \
             /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
             /usr/local/bin/npx --ignore-scripts --prefer-offline -y \
             agent-browser@0.26.0 --version \
     )" \
-    && test "${agent_browser_version}" = 'agent-browser 0.26.0'
+    && test "${agent_browser_version}" = 'agent-browser 0.26.0' \
+    && rm -rf /tmp/nemoclaw-agent-browser-runtime
 
 RUN /usr/local/bin/hermes --version \
     && /usr/local/bin/hermes acp --check \

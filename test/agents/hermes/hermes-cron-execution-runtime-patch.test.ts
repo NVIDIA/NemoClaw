@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -11,9 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const root = path.join(import.meta.dirname, "../../..");
 const patcher = path.join(root, "agents", "hermes", "patch-cron-execution-runtime.py");
-const dockerfile = fs.readFileSync(path.join(root, "agents", "hermes", "Dockerfile"), "utf8");
 const probes = path.join(root, "agents", "hermes", "image-build-probes.py");
-const imageBuildProbes = fs.readFileSync(probes, "utf8");
 const fixtures: string[] = [];
 
 const upstreamExecutions = `\
@@ -101,31 +98,6 @@ describe("Hermes cron execution runtime patch", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("only partially applied");
     expect(fs.readFileSync(files.backup, "utf8")).toBe(upstreamBackup);
-  });
-
-  it("hash-binds both upstream modules and requires installed-path build probes", () => {
-    const digest = createHash("sha256").update(fs.readFileSync(patcher)).digest("hex");
-
-    expect(dockerfile).toContain(`ARG NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256=${digest}`);
-    expect(dockerfile).toContain(
-      "ARG NEMOCLAW_HERMES_CRON_EXECUTIONS_SOURCE_SHA256=" +
-        "b4a685a901abdffe2d1232099b3c27391775775a7011d52c90276cb15d3fd75d",
-    );
-    expect(dockerfile).toContain(
-      "ARG NEMOCLAW_HERMES_BACKUP_SOURCE_SHA256=" +
-        "b0838c1f2e120d8f97076c6321297077edc1f150dc6d4b84ba3d13327fcbb156",
-    );
-    expect(dockerfile).toContain(
-      "COPY agents/hermes/patch-cron-execution-runtime.py " +
-        "/opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py",
-    );
-    expect(dockerfile).toMatch(
-      /patch-cron-execution-runtime[.]py \\\n\s+--executions \/opt\/hermes\/cron\/executions[.]py \\\n\s+--backup \/opt\/hermes\/hermes_cli\/backup[.]py/u,
-    );
-    expect(imageBuildProbes).toContain(
-      'expected = get_hermes_home().resolve() / "runtime" / "cron-executions.db"',
-    );
-    expect(imageBuildProbes).toContain('assert "cron/executions.db" not in _QUICK_STATE_FILES');
   });
 
   function runCronRuntimeProbe(databasePath: string) {

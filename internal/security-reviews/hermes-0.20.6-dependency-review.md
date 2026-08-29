@@ -98,6 +98,12 @@ The base build verifies the selected installed versions with package metadata
 and runs `uv pip check`. The existing hash-locked multipart and Hindsight
 compatibility probes remain unchanged.
 
+The managed Microsoft Teams capability union also carries the reviewed
+`pydantic-settings==2.14.2` wheel because the selected base does not contain
+that required dependency. Its SHA-256 is
+`a20c97b37910b6550d5ea50fbcc2d4187defe58cd57070b73863d069419c9440`.
+The offline union install must succeed before its package-version probe runs.
+
 The broad 0.19.0 dependency patch is no longer carried forward. Hermes 0.20.6
 already routes memory-provider installation through `tools.lazy_deps.install_specs`
 and already contains the selected security versions. The source patch changes
@@ -107,8 +113,11 @@ separately hash-verified offline 0.6.1 probe.
 
 Hermes 0.20.6 resolves agent-browser through an npx fallback instead of the
 root dependency graph. The source patch changes `agent-browser@^0.26.0` to
-`agent-browser@0.26.0`. The base build warms that package in the sandbox user's
-npx cache and verifies the cached version without network access.
+`agent-browser@0.26.0`. A reviewed npm lockfile binds the package archive and
+integrity. The base and final image seed the sandbox user's cache with
+`npm ci --ignore-scripts`, then verify the cached version without network
+access. The final image reapplies the exact source pin when its selected base
+predates that patch.
 
 No new supported integration is introduced. Optional upstream features remain
 subject to their existing NVIDIA/NemoClaw product and policy gates.
@@ -119,11 +128,10 @@ The Mac authoring checks prove exact source selection, patch applicability,
 contract updates, and deterministic repository changes. They do not prove the
 Linux image, OpenShell sandbox, upgrade recovery, or canonical end-to-end path.
 The trusted manual PR plan is defined by `.github/workflows/e2e.yaml` and
-`tools/e2e/target-catalogue.mts`. For this migration it includes `cloud-onboard`,
-`managed-image-multiarch-startup`, `security-posture`, `hermes-e2e`,
-`hermes-inference-switch`, `onboard-repair`, and `onboard-resume`. Brev may
+`tools/e2e/target-catalogue.mts`. Its authenticated result is the authoritative
+required-job set; this review does not maintain a second partial list. Brev may
 produce background shadow evidence, but it is nonqualifying and cannot replace
-any of these results or a supported scenario receipt.
+the trusted plan or a supported scenario receipt.
 
 Unresolved upgrade-created high-impact concerns: `0` in the authored source
 diff. Qualification remains pending the required authenticated CI evidence.

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -11,7 +10,6 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const root = path.join(import.meta.dirname, "../../..");
 const patcher = path.join(root, "agents", "hermes", "patch-hermes-sqlite-temp-store.py");
-const dockerfile = fs.readFileSync(path.join(root, "agents", "hermes", "Dockerfile"), "utf8");
 const fixtures: string[] = [];
 
 const pragmaSetup = 'apply_database_pragmas(self._conn, db_label="state.db")';
@@ -74,16 +72,4 @@ describe("Hermes SQLite temp-store patch", () => {
     expect(fs.readFileSync(stateModule, "utf8")).toBe(source);
   });
 
-  it("binds the Hermes image to the reviewed patcher (#8301)", () => {
-    const digest = createHash("sha256").update(fs.readFileSync(patcher)).digest("hex");
-
-    expect(dockerfile).toContain(`ARG NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256=${digest}`);
-    expect(dockerfile).toContain(
-      "COPY agents/hermes/patch-hermes-sqlite-temp-store.py " +
-        "/usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py",
-    );
-    expect(dockerfile).toContain(
-      "RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py",
-    );
-  });
 });

@@ -86,7 +86,7 @@ function extractAgentBrowserCacheCommands(dockerfile: string): string {
   return dockerfile
     .slice(warmStart, runtimeGuard)
     .replace(/^RUN\s+/, "")
-    .replace(/\nRUN\s+--network=none\s+/, "\n")
+    .replace(/\nRUN\s+(?:--network=none\s+)?/gu, "\n")
     .replace(/\\\n/g, " ")
     .trim();
 }
@@ -765,21 +765,32 @@ describe("Hermes share mount package parity (#2947)", () => {
     }
   });
 
-  it("pins and prewarms the Hermes 0.20.6 agent-browser npx fallback", () => {
+  it("seeds the exact Hermes agent-browser fallback from its lock before offline use", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-agent-browser-"));
     const fixtureRoot = path.join(tmp, "source");
     const pluginPath = path.join(fixtureRoot, "plugins", "memory", "hindsight", "plugin.yaml");
     const browserToolPath = path.join(fixtureRoot, "tools", "browser_tool.py");
     const fakePython = path.join(tmp, "python");
+    const fakeNpm = path.join(tmp, "npm");
     const fakeNpx = path.join(tmp, "npx");
     const sandboxHome = path.join(tmp, "sandbox");
-    const warmMarker = path.join(sandboxHome, ".agent-browser-cache-warmed");
+    const lockedRuntime = path.join(tmp, "agent-browser-runtime");
+    const cacheMarker = path.join(sandboxHome, ".npm", "locked-seed");
 
     try {
       fs.mkdirSync(path.dirname(pluginPath), { recursive: true });
       fs.mkdirSync(path.dirname(browserToolPath), { recursive: true });
       fs.mkdirSync(sandboxHome);
+      fs.mkdirSync(lockedRuntime);
+      fs.copyFileSync(
+        path.join(ROOT, "agents", "hermes", "agent-browser-runtime", "package.json"),
+        path.join(lockedRuntime, "package.json"),
+      );
+      fs.copyFileSync(
+        path.join(ROOT, "agents", "hermes", "agent-browser-runtime", "package-lock.json"),
+        path.join(lockedRuntime, "package-lock.json"),
+      );
       fs.writeFileSync(
         pluginPath,
         [
@@ -829,10 +840,23 @@ describe("Hermes share mount package parity (#2947)", () => {
           "#!/bin/sh",
           '[ "$1" = "-c" ]',
           'case "$2" in',
-          '  *\"agent-browser@0.26.0\"*NPX_AGENT_BROWSER_SENTINEL*warm_agent_browser_npx_cache*) ;;',
+          '  *\"agent-browser@0.26.0\"*NPX_AGENT_BROWSER_SENTINEL*) ;;',
           "  *) exit 64 ;;",
           "esac",
-          ': > "$HOME/.agent-browser-cache-warmed"',
+          "",
+        ].join("\n"),
+        { mode: 0o700 },
+      );
+      fs.writeFileSync(
+        fakeNpm,
+        [
+          "#!/bin/sh",
+          '[ "$HOME" = "$EXPECTED_HOME" ]',
+          '[ "$*" = "ci --prefix $EXPECTED_RUNTIME --ignore-scripts --no-audit --no-fund" ]',
+          'grep -Fq \'"agent-browser": "0.26.0"\' "$EXPECTED_RUNTIME/package-lock.json"',
+          'grep -Fq \'"integrity": "sha512-pdqSfjwbFSp+qnwlb2g23e9wXveIOfMi19xpPA9xZUbzEAUp6W4YBZj6Ybj8z4M7WkcbGDDYc+oDIHDt9R3EDQ=="\' "$EXPECTED_RUNTIME/package-lock.json"',
+          'mkdir -p "$npm_config_cache" "$EXPECTED_RUNTIME/node_modules"',
+          ': > "$npm_config_cache/locked-seed"',
           "",
         ].join("\n"),
         { mode: 0o700 },
@@ -843,7 +867,7 @@ describe("Hermes share mount package parity (#2947)", () => {
           "#!/bin/sh",
           '[ "$HOME" = "$EXPECTED_HOME" ]',
           '[ "${npm_config_offline:-}" = "true" ]',
-          '[ -f "$HOME/.agent-browser-cache-warmed" ]',
+          '[ -f "$npm_config_cache/locked-seed" ]',
           '[ "$*" = "--ignore-scripts --prefer-offline -y agent-browser@0.26.0 --version" ]',
           "printf 'agent-browser 0.26.0\\n'",
           "",
@@ -852,23 +876,32 @@ describe("Hermes share mount package parity (#2947)", () => {
       );
 
       const command = extractAgentBrowserCacheCommands(dockerfile)
+        .replaceAll("/tmp/nemoclaw-agent-browser-runtime", lockedRuntime)
+        .replaceAll(`chown -R sandbox:sandbox ${lockedRuntime}`, "true")
         .replaceAll("HOME=/sandbox", `HOME=${JSON.stringify(sandboxHome)}`)
+        .replaceAll(
+          "npm_config_cache=/sandbox/.npm",
+          `npm_config_cache=${JSON.stringify(path.join(sandboxHome, ".npm"))}`,
+        )
         .replaceAll(
           "/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- ",
           "",
         )
         .replaceAll("/opt/hermes/.venv/bin/python", fakePython)
+        .replaceAll("/usr/local/bin/npm", fakeNpm)
         .replaceAll("/usr/local/bin/npx", fakeNpx);
       const ran = spawnSync("bash", ["-euo", "pipefail", "-c", command], {
         encoding: "utf-8",
-        env: { PATH: "/usr/bin:/bin", EXPECTED_HOME: sandboxHome },
+        env: {
+          PATH: "/usr/bin:/bin",
+          EXPECTED_HOME: sandboxHome,
+          EXPECTED_RUNTIME: lockedRuntime,
+        },
       });
 
       expect(ran.status, ran.stderr).toBe(0);
-      expect(fs.existsSync(warmMarker)).toBe(true);
-      expect(fs.existsSync(path.join(fixtureRoot, "node_modules", ".bin", "agent-browser"))).toBe(
-        false,
-      );
+      expect(fs.existsSync(cacheMarker)).toBe(true);
+      expect(fs.existsSync(lockedRuntime)).toBe(false);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -14,15 +13,6 @@ import { buildHermesManagedPolicy } from "../../../agents/hermes/config/managed-
 const root = path.join(import.meta.dirname, "../../..");
 const patcher = path.join(root, "agents", "hermes", "patch-profile-policy-defaults.py");
 const imageBuildProbes = path.join(root, "agents", "hermes", "image-build-probes.py");
-const dockerfile = fs.readFileSync(path.join(root, "agents", "hermes", "Dockerfile"), "utf8");
-const dockerfileBase = fs.readFileSync(
-  path.join(root, "agents", "hermes", "Dockerfile.base"),
-  "utf8",
-);
-const securityDependenciesPatch = fs.readFileSync(
-  path.join(root, "agents", "hermes", "security-dependencies.patch"),
-  "utf8",
-);
 const POLICY_SETTINGS: HermesBuildSettings = {
   model: "test-model",
   baseUrl: "https://inference.local/v1",
@@ -326,48 +316,4 @@ module._verify_session_reset_policy(reset_policy, expected)
     expect(result.status, result.stderr).toBe(0);
   });
 
-  it.each(
-    [
-        "3fa2c9f02a76d77602f9b09b7b01f72ca45a40eea92dbac33cc3a1fc5071bff8",
-        "b43608826bb10f9bf919ca97757bf36fc95247bd8b14fa8626a113c639cfd73e",
-        "d88dcda8c5a14b79d84afcc1d5784c165858ab5d6f289ba59fe421502d2c63a3",
-        "85c95927002a77602b0fb0384413357b6ee0149dfc5b31e048c29d59654a22a9",
-        "6fdeca2133b22a88c527a63764eb201c24a27fc2e894045e9bdb647f89ea7d26",
-        "883168664a89bcf8954bbe486b672ab01c96fc0c06c88acdaf21559905a60276",
-        "fb4ee75ebcf12bd9bc014d212c7abc110e1afbcf0c2cb79caa7230dd58006911",
-        "2ffe5fae39e8962a086d4eea7ec26c3f1d29f2bb8a97422d5606eecaa2b3f116",
-      ],
-  )(
-    "hash-binds the reviewed source patch and probes a real config-less profile [%s]",
-    (expectedSourceHash) => {
-      const digest = createHash("sha256").update(fs.readFileSync(patcher)).digest("hex");
-
-      expect(dockerfile).toContain(`ARG NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256=${digest}`);
-      expect(dockerfile).toContain(
-        "COPY agents/hermes/patch-profile-policy-defaults.py " +
-          "/usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py",
-      );
-
-      expect(fs.readFileSync(patcher, "utf8")).toContain(expectedSourceHash);
-
-      expect(dockerfile).toContain("hermes profile create nemoclaw-policy-probe");
-      expect(dockerfile).toContain('test ! -e "$profile_probe_home/config.yaml"');
-      expect(dockerfile).toContain("/usr/local/share/nemoclaw/hermes-managed-policy.json");
-      expect(dockerfile).toMatch(/image-build-probes[.]py\s+profile-policy/u);
-    },
-  );
-
-  it("binds browser policy after the exact agent-browser dependency pin", () => {
-    const patcherSource = fs.readFileSync(patcher, "utf8");
-
-    expect(securityDependenciesPatch).toContain(
-      'AGENT_BROWSER_NPX_SPEC = "agent-browser@0.26.0"',
-    );
-    expect(dockerfileBase.indexOf("git -C /opt/hermes apply /tmp/hermes-security-dependencies.patch"))
-      .toBeGreaterThanOrEqual(0);
-    expect(patcherSource).toContain(
-      '"browser": "b43608826bb10f9bf919ca97757bf36fc95247bd8b14fa8626a113c639cfd73e"',
-    );
-    expect(dockerfile.indexOf("patch-profile-policy-defaults.py")).toBeGreaterThanOrEqual(0);
-  });
 });

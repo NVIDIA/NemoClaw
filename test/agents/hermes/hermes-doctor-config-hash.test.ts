@@ -52,35 +52,25 @@ runpy.run_path(script, run_name="__main__")
 }
 
 describe("Hermes doctor and config hash boundary", () => {
-  it("detects a remaining session preview patcher during Hermes upgrades (#5254)", () => {
+  it("detects a retained Hermes 0.20.6 adapter during upgrades (#5254)", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-preview-guard-"));
     const hermesBin = path.join(tmp, "usr", "local", "bin", "hermes");
-    const wrapper = path.join(tmp, "usr", "local", "lib", "nemoclaw", "hermes-wrapper.py");
-    const previewPatcher = path.join(
-      tmp,
-      "usr",
-      "local",
-      "lib",
-      "nemoclaw",
-      "patch-hermes-session-list-preview.py",
-    );
+    const adapter = path.join(tmp, "usr", "local", "share", "nemoclaw", "adapter.json");
     const command = dockerRunCommandBetween(
       dockerfile,
       'RUN hermes_version_output="$(/usr/local/bin/hermes --version)"',
       "# Validate the versioned adapter",
     )
       .replaceAll("/usr/local/bin/hermes", hermesBin)
-      .replaceAll("/usr/local/lib/nemoclaw/hermes-wrapper.py", wrapper)
-      .replaceAll("/usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py", previewPatcher);
+      .replaceAll("/usr/local/share/nemoclaw/hermes-cli-adapter-v1.json", adapter);
     try {
       fs.mkdirSync(path.dirname(hermesBin), { recursive: true });
-      fs.mkdirSync(path.dirname(wrapper), { recursive: true });
+      fs.mkdirSync(path.dirname(adapter), { recursive: true });
       fs.writeFileSync(hermesBin, "#!/usr/bin/env bash\nprintf 'hermes v0.20.0\\n'\n", {
         mode: 0o755,
       });
-      fs.writeFileSync(wrapper, "# wrapper fixture without resumed oneshot marker\n");
-      fs.writeFileSync(previewPatcher, "EXPECTED_OCCURRENCES = 6\n");
+      fs.writeFileSync(adapter, '{"commands":["resumed_oneshot"]}\n');
 
       const result = spawnSync("bash", ["-c", ["set -euo pipefail", command].join("\n")], {
         encoding: "utf-8",
@@ -113,7 +103,6 @@ describe("Hermes doctor and config hash boundary", () => {
       libDir,
       "patch-hermes-discord-recovery-permissions.py",
     );
-    const profilePolicyPatcherPath = path.join(libDir, "patch-hermes-profile-policy-defaults.py");
     const managedPolicyReaderPath = path.join(libDir, "managed_policy.py");
     const mcpCredentialBoundaryPath = path.join(
       libDir,
@@ -154,10 +143,8 @@ describe("Hermes doctor and config hash boundary", () => {
         path.join(libDir, "sandbox-init.sh"),
         path.join(libDir, "gateway-supervisor.sh"),
         path.join(libDir, "validate-hermes-env-secret-boundary.py"),
-        path.join(libDir, "patch-hermes-session-list-preview.py"),
         path.join(libDir, "patch-hermes-sqlite-temp-store.py"),
         discordRecoveryPatcherPath,
-        profilePolicyPatcherPath,
         managedPolicyReaderPath,
         langfuseCredentialPatcherPath,
         path.join(libDir, "seed-hermes-dashboard-config.py"),
@@ -229,7 +216,6 @@ describe("Hermes doctor and config hash boundary", () => {
       expect(mode(path.join(libDir, "finalize-tirith-marker.py"))).toBe("755");
       expect(mode(mcpConfigTransactionPath)).toBe("755");
       expect(mode(discordRecoveryPatcherPath)).toBe("755");
-      expect(mode(profilePolicyPatcherPath)).toBe("755");
       expect(mode(managedPolicyReaderPath)).toBe("444");
       expect(mode(langfuseCredentialPatcherPath)).toBe("444");
       expect(mode(mcpCredentialBoundaryPath)).toBe("444");

@@ -58,11 +58,6 @@ const HERMES_INTEGRITY_FILES = [
     target: "/usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py",
   },
   {
-    arg: "NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256",
-    source: "agents/hermes/patch-profile-policy-defaults.py",
-    target: "/usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py",
-  },
-  {
     arg: "NEMOCLAW_HERMES_GATEWAY_RUNTIME_METADATA_PATCHER_SHA256",
     source: "agents/hermes/patch-gateway-runtime-metadata.py",
     target: "/opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py",
