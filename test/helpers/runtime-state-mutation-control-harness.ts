@@ -693,6 +693,44 @@ results["supervisor_identity_drift"] = fence_drift(1)
 results["start_identity_drift"] = fence_drift(10)
 results["startup_support_identity_drift"] = fence_drift(75)
 
+def supervisor_refresh(selected):
+    control._capture_process = lambda pid: {
+        1: selected,
+        10: start,
+        75: stdout_drain,
+        76: stderr_drain,
+    }.get(pid)
+    control.os.readlink = lambda path: (
+        "mnt:[401]"
+        if path == control.MOUNT_NAMESPACE_PATH
+        else real_readlink(path)
+    )
+    try:
+        return code(lambda: real_prove_fence_shape(fence, "mnt:[401]"))
+    finally:
+        control.os.readlink = real_readlink
+
+refreshed_pid1 = process(
+    1,
+    "T",
+    0,
+    pid1.start_identity,
+    root_uid,
+    (control.OPENSHELL_ARGV0, b"--refreshed-status"),
+    pid1.proc_inode,
+)
+replaced_pid1 = process(
+    1,
+    "T",
+    0,
+    "101",
+    root_uid,
+    (control.OPENSHELL_ARGV0,),
+    102,
+)
+results["refreshed_supervisor"] = supervisor_refresh(refreshed_pid1)
+results["replaced_supervisor"] = supervisor_refresh(replaced_pid1)
+
 hold_events = []
 control._prove_fence_shape = lambda _fence, _mount: (pid1, start)
 control._stop_reference = lambda reference: hold_events.append(["stop", reference.pid])
@@ -714,6 +752,13 @@ control.PROCESS_STATE_SECONDS = 0
 results["running_supervisor_hold"] = code(lambda: real_hold_exact_processes(fence, "mnt:[401]", activation))
 control.PROCESS_STATE_SECONDS = 5
 control._prove_fence_shape = lambda _fence, _mount: (stopped_pid1, start)
+control._capture_process = lambda pid: stopped_pid1 if pid == 1 else {
+    10: start,
+    75: stdout_drain,
+    76: stderr_drain,
+    77: gateway,
+    78: auxiliary,
+}.get(pid)
 control._recapture_reference = lambda reference, _code="fenced-process-drift": stopped_pid1 if reference.pid == 1 else {
     10: start,
     75: stdout_drain,
@@ -1138,7 +1183,7 @@ def state_process(original):
         original.proc_inode,
     )
 by_release_pid = {
-    1: pid1,
+    1: refreshed_pid1,
     10: start,
     75: stdout_drain,
     76: stderr_drain,
@@ -1150,6 +1195,9 @@ control._prove_fence_shape = lambda _fence, _mount: (
     state_process(start),
 )
 control._recapture_reference = lambda reference, _code="fenced-process-drift": state_process(
+    by_release_pid[reference.pid]
+)
+control._recapture_supervisor = lambda reference: state_process(
     by_release_pid[reference.pid]
 )
 def resume_reference(reference):

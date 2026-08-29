@@ -131,6 +131,11 @@ describe("runtime state mutation controller", () => {
     ]);
   });
 
+  it("retains the same OpenShell supervisor across mutable argv metadata (#9485)", () => {
+    expect(harnessResult.refreshed_supervisor).toBe("ok");
+    expect(harnessResult.replaced_supervisor).toBe("supervisor-identity-drift");
+  });
+
   it("publishes, rolls an activated fence back, and recovers every durable phase (#7744)", () => {
     expect(harnessResult).toMatchObject({
       publish: "published",
@@ -242,6 +247,7 @@ describe("runtime state mutation controller", () => {
   });
 
   it("records release intent before resuming exact writers and waits for parent acknowledgement (#10155)", () => {
+    const sigcont = harnessResult.sigcont as number;
     expect(harnessResult).toMatchObject({
       release: "activation-proven",
       released_marker: true,
@@ -259,7 +265,7 @@ describe("runtime state mutation controller", () => {
       ["resume", 77],
       ["resume", 78],
       ["resume", 10],
-      ["resume", 1],
+      ["signal", 1, sigcont],
       ["release-ack"],
       ["parent-ack-health"],
     ]);
@@ -276,7 +282,7 @@ describe("runtime state mutation controller", () => {
       ["resume", 76],
       ["resume", 77],
       ["resume", 10],
-      ["resume", 1],
+      ["signal", 1, sigcont],
       ["release-ack"],
       ["parent-ack-health"],
     ]);

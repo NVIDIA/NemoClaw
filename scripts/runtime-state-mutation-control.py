@@ -2661,11 +2661,19 @@ def _process_has_reference_identity(
     process: ProcessIdentity, reference: ProcessReference
 ) -> bool:
     return bool(
-        process.pid == reference.pid
-        and process.start_identity == reference.start_identity
+        _process_has_kernel_task_reference(process, reference)
         and process.parent_pid == reference.parent_pid
         and process.uids == reference.uids
         and _process_command_sha256(process.command) == reference.command_sha256
+    )
+
+
+def _process_has_kernel_task_reference(
+    process: ProcessIdentity, reference: ProcessReference
+) -> bool:
+    return bool(
+        process.pid == reference.pid
+        and process.start_identity == reference.start_identity
         and process.proc_device == reference.proc_device
         and process.proc_inode == reference.proc_inode
     )
@@ -2677,6 +2685,22 @@ def _recapture_reference(
     process = _capture_process(reference.pid)
     if process is None or not _process_matches_reference(process, reference):
         _fail(code)
+    return process
+
+
+def _recapture_supervisor(reference: ProcessReference) -> ProcessIdentity:
+    process = _capture_process(reference.pid)
+    # PID 1 can refresh its displayed argv suffix while it remains the same
+    # kernel task. Revalidate the fixed OpenShell supervisor semantics instead
+    # of treating that mutable display metadata as task replacement. Start
+    # time and procfs identity still bind the original task and fail closed on
+    # a real replacement.
+    if (
+        process is None
+        or not _process_has_kernel_task_reference(process, reference)
+        or not _is_openshell_supervisor(process)
+    ):
+        _fail("supervisor-identity-drift")
     return process
 
 
@@ -2704,9 +2728,7 @@ def _discover_fence(expected_mount_namespace: str) -> FenceProof:
     supervisor_reference = _process_reference(supervisor)
     start_reference = _process_reference(start)
     support_references = tuple(_process_reference(process) for process in support)
-    second_supervisor = _recapture_reference(
-        supervisor_reference, "supervisor-identity-drift"
-    )
+    second_supervisor = _recapture_supervisor(supervisor_reference)
     second_writers = _capture_writer_processes(writer_uids)
     second_starts = [
         process
@@ -2813,7 +2835,7 @@ def _stop_reference(reference: ProcessReference) -> None:
 def _wait_for_host_stopped_supervisor(reference: ProcessReference) -> ProcessIdentity:
     deadline = time.monotonic() + PROCESS_STATE_SECONDS
     while True:
-        process = _recapture_reference(reference, "supervisor-identity-drift")
+        process = _recapture_supervisor(reference)
         if process.state in ("T", "t"):
             return process
         remaining = deadline - time.monotonic()
@@ -2919,7 +2941,7 @@ def _prove_fence_shape(
         or fence.writer_uids != _supported_writer_uids()
     ):
         _fail("supervisor-identity-drift")
-    supervisor = _recapture_reference(fence.supervisor, "supervisor-identity-drift")
+    supervisor = _recapture_supervisor(fence.supervisor)
     start = _recapture_reference(fence.start, "start-process-identity-drift")
     support = tuple(
         _recapture_reference(reference, "startup-support-identity-drift")
@@ -3882,7 +3904,7 @@ def _wait_for_activation(
 ) -> ActivationProof:
     deadline = time.monotonic() + ACTIVATION_SECONDS
     while True:
-        _recapture_reference(fence.supervisor, "supervisor-identity-drift")
+        _recapture_supervisor(fence.supervisor)
         gateway, _tree = _activation_tree(fence)
         if gateway is not None:
             try:
@@ -3943,7 +3965,7 @@ def _freeze_activation(
 def _wait_for_startup_checkpoint(marker: dict[str, object], fence: FenceProof) -> str:
     deadline = time.monotonic() + ACTIVATION_SECONDS
     while True:
-        supervisor = _recapture_reference(fence.supervisor, "supervisor-identity-drift")
+        supervisor = _recapture_supervisor(fence.supervisor)
         start = _recapture_reference(fence.start, "start-process-identity-drift")
         selected = _read_startup_candidate(marker, fence, required=False)
         if selected is not None and start.state in ("T", "t"):
@@ -4260,6 +4282,21 @@ def _resume_reference(reference: ProcessReference) -> ProcessIdentity:
     return _wait_for_reference_running(reference)
 
 
+def _resume_supervisor(reference: ProcessReference) -> ProcessIdentity:
+    process = _recapture_supervisor(reference)
+    if process.state in ("T", "t"):
+        _signal_exact_process(process, signal.SIGCONT)
+    deadline = time.monotonic() + PROCESS_STATE_SECONDS
+    while True:
+        process = _recapture_supervisor(reference)
+        if process.state not in ("T", "t"):
+            return process
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            _fail("process-state-timeout")
+        time.sleep(min(POLL_SECONDS, remaining))
+
+
 def _prove_released_activation(
     marker: dict[str, object], fence: FenceProof, activation: ActivationProof
 ) -> None:
@@ -4273,7 +4310,7 @@ def _prove_released_activation(
     start = _recapture_reference(fence.start, "start-process-identity-drift")
     if start.state in ("T", "t"):
         _fail("start-process-stopped")
-    supervisor = _recapture_reference(fence.supervisor, "supervisor-identity-drift")
+    supervisor = _recapture_supervisor(fence.supervisor)
     if supervisor.state in ("T", "t"):
         _fail("supervisor-process-stopped")
     service_reference = next(
@@ -4298,7 +4335,7 @@ def _prove_parent_acknowledged_activation(
     start = _recapture_reference(fence.start, "start-process-identity-drift")
     if start.state not in ("T", "t"):
         _fail("activation-release-parent-running")
-    supervisor = _recapture_reference(fence.supervisor, "supervisor-identity-drift")
+    supervisor = _recapture_supervisor(fence.supervisor)
     if supervisor.state in ("T", "t"):
         _fail("supervisor-process-stopped")
     service_reference = next(
@@ -4338,7 +4375,7 @@ def _release_activation_hold(durable_fd: int, marker: dict[str, object]) -> None
     # Resume the exact pinned OpenShell supervisor last. Until the proven
     # workload is live, keeping PID 1 stopped prevents it from advertising a
     # transient Ready state or admitting unrelated sandbox commands.
-    _resume_reference(fence.supervisor)
+    _resume_supervisor(fence.supervisor)
     _wait_for_startup_release_ack(marker, fence, release_payload)
     _prove_parent_acknowledged_activation(marker, fence, activation)
 
