@@ -9,12 +9,18 @@ const mocks = vi.hoisted(() => ({
   confirmRebuildIntent: vi.fn(),
   countActiveSessions: vi.fn(),
   getSandbox: vi.fn(),
+  listRetainedRecovery: vi.fn(),
   prepareTargets: vi.fn(),
 }));
 
 vi.mock("../../state/registry", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/registry")>()),
   getSandbox: mocks.getSandbox,
+}));
+
+vi.mock("../../state/onboard-session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/onboard-session")>()),
+  listRetainedSandboxRecoveryRecords: mocks.listRetainedRecovery,
 }));
 
 vi.mock("./mcp-bridge-state", async (importOriginal) => ({
@@ -47,9 +53,39 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe("rebuild retained sandbox recovery preflight (#10547)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getSandbox.mockReturnValue({ name: "alpha", openshellDriver: "docker" });
+    mocks.listRetainedRecovery.mockReturnValue([
+      {
+        recordId: "f".repeat(64),
+        sandboxName: "alpha",
+      },
+    ]);
+  });
+
+  it("stops before session probes, confirmation, MCP checks, or target preparation", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(runRebuildPreflightPhase("alpha", ["--yes"])).resolves.toBeNull();
+
+    expect(mocks.bail).toHaveBeenCalledWith(
+      "Retained sandbox recovery blocks rebuild for 'alpha'.",
+      1,
+    );
+    expect(error.mock.calls.flat().join("\n")).toContain("alpha destroy --yes");
+    expect(mocks.countActiveSessions).not.toHaveBeenCalled();
+    expect(mocks.assertMcpDestroyNotPending).not.toHaveBeenCalled();
+    expect(mocks.confirmRebuildIntent).not.toHaveBeenCalled();
+    expect(mocks.prepareTargets).not.toHaveBeenCalled();
+  });
+});
+
 describe("rebuild baseline transition preflight (#7194)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.listRetainedRecovery.mockReturnValue([]);
     mocks.getSandbox.mockReturnValue({
       name: "alpha",
       baselineExclusionTransition: {
@@ -84,6 +120,7 @@ describe("rebuild baseline transition preflight (#7194)", () => {
 describe("rebuild MCP destroy marker preflight (#7794)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.listRetainedRecovery.mockReturnValue([]);
     mocks.getSandbox.mockReturnValue({
       name: "alpha",
       agent: "openclaw",

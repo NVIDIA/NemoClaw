@@ -121,6 +121,7 @@ describe("destroySandbox flow", () => {
         switch (`${String(argv[0])}:${String(argv[1])}`) {
           case "sandbox:delete":
             trace.push("delete");
+            harness.setSandboxPresent(false);
             return { status: 0, stdout: "", stderr: "" };
           case "sandbox:list":
             trace.push("list");
@@ -177,6 +178,7 @@ describe("destroySandbox flow", () => {
           switch (`${String(argv[0])}:${String(argv[1])}`) {
             case "sandbox:delete":
               crossedDeleteBoundary = true;
+              harness.setSandboxPresent(false);
               return { status: 0, stdout: "", stderr: "" };
             case "sandbox:list":
               return {
@@ -992,7 +994,13 @@ describe("destroySandbox flow", () => {
 
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
-    expect(trace.slice(-2)).toEqual([`probe:${String(identityProbeCalls)}`, "delete"]);
+    const deleteIndex = trace.indexOf("delete");
+    expect(deleteIndex).toBeGreaterThan(0);
+    expect(trace[deleteIndex - 1]).toMatch(/^probe:/u);
+    expect(trace.slice(deleteIndex + 1)).toEqual([
+      `probe:${String(identityProbeCalls - 1)}`,
+      `probe:${String(identityProbeCalls)}`,
+    ]);
   });
 
   it("preserves provider and registry ownership when runtime authority is unknown", async () => {
