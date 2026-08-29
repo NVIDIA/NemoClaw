@@ -84,10 +84,10 @@ interface SessionStateComplete {
   >;
 }
 
-interface SessionStatePostVerify {
-  status: "in_progress";
+interface SessionStateRetryableFailure {
+  status: "failed";
   resumable: true;
-  machine: { state: "post_verify" };
+  machine: { state: "failed" };
 }
 
 interface MutableSessionState extends Record<string, unknown> {
@@ -598,7 +598,7 @@ test(
     );
     expect(unavailableResumeText).not.toContain(`Sandbox '${SANDBOX_NAME}' created`);
 
-    const paused = readSession<SessionStatePostVerify>(SESSION_FILE);
+    const paused = readSession<SessionStateRetryableFailure>(SESSION_FILE);
     await artifacts.writeJson("phase-3-5-session-route-unavailable.json", {
       status: paused.status,
       resumable: paused.resumable,
@@ -606,7 +606,7 @@ test(
     });
     expect(paused.status).toBe("failed");
     expect(paused.resumable).toBe(true);
-    expect(paused.machine.state).toBe("post_verify");
+    expect(paused.machine.state).toBe("failed");
 
     fake = await startFakeOpenAiCompatibleServer({
       apiKey: FAKE_COMPATIBLE_AUTH_VALUE,

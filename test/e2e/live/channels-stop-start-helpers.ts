@@ -661,6 +661,31 @@ async function readOpenClawChannelState(
   return JSON.parse(result.stdout.trim()) as OpenClawChannelConfigState;
 }
 
+const HERMES_RUNTIME_ALIAS_PROCESS_PROBE = String.raw`
+import glob
+import re
+import sys
+from pathlib import Path
+
+pattern = re.compile(sys.argv[1].encode())
+for candidate in glob.glob("/proc/[0-9]*/environ"):
+    try:
+        values = Path(candidate).read_bytes().split(b"\0")
+    except OSError:
+        continue
+    if any(pattern.fullmatch(value) for value in values):
+        raise SystemExit(0)
+raise SystemExit(1)
+`.trim();
+
+function hermesRuntimeAliasProbe(channel: "wechat" | "teams", renderedConfigProbe: string): string {
+  const targetEnvKey = channel === "wechat" ? "WEIXIN_TOKEN" : "TEAMS_CLIENT_SECRET";
+  const processProbe = `python3 -c ${shellQuote(HERMES_RUNTIME_ALIAS_PROCESS_PROBE)} ${shellQuote(
+    hermesRevisionScopedCredentialLinePattern(channel),
+  )}`;
+  return `${renderedConfigProbe} && ! grep -qE "^[[:space:]]*(export[[:space:]]+)?${targetEnvKey}=" /sandbox/.hermes/.env && ${processProbe}`;
+}
+
 async function hermesChannelIsActive(
   sandbox: import("../fixtures/clients/sandbox.ts").SandboxClient,
   channel: string,
@@ -680,7 +705,10 @@ async function hermesChannelIsActive(
       'grep -Eq "^TELEGRAM_ALLOWED_USERS=.+$" /sandbox/.hermes/.env && ! grep -qE "^[[:space:]]*(export[[:space:]]+)?TELEGRAM_BOT_TOKEN=" /sandbox/.hermes/.env',
     discord:
       'grep -Eq "^DISCORD_ALLOWED_USERS=.+$" /sandbox/.hermes/.env && ! grep -qE "^[[:space:]]*(export[[:space:]]+)?DISCORD_BOT_TOKEN=" /sandbox/.hermes/.env',
-    wechat: `grep -Eq "${hermesRevisionScopedCredentialLinePattern("wechat")}" /sandbox/.hermes/.env`,
+    wechat: hermesRuntimeAliasProbe(
+      "wechat",
+      'grep -Eq "^WEIXIN_ALLOWED_USERS=.+$" /sandbox/.hermes/.env',
+    ),
     // Slack renders no token line: OpenShell binds SLACK_* to the policy
     // endpoint and injects revision-scoped placeholders, and Hermes loads .env
     // with override=True, so a rendered line would shadow them. The allowlist
@@ -691,7 +719,10 @@ async function hermesChannelIsActive(
     // supplied, so the live sealed .env is where that derivation is proven.
     whatsapp:
       'grep -Eq "^WHATSAPP_ENABLED=true$" /sandbox/.hermes/.env && grep -Eq "^WHATSAPP_MODE=bot$" /sandbox/.hermes/.env && grep -Eq "^WHATSAPP_DM_POLICY=allowlist$" /sandbox/.hermes/.env && grep -Eq "^WHATSAPP_ALLOWED_USERS=.+$" /sandbox/.hermes/.env',
-    teams: `grep -Eq "${hermesRevisionScopedCredentialLinePattern("teams")}" /sandbox/.hermes/.env`,
+    teams: hermesRuntimeAliasProbe(
+      "teams",
+      'grep -Eq "^TEAMS_ALLOWED_USERS=.+$" /sandbox/.hermes/.env',
+    ),
     // The access token exists only in the live process environment. A rendered
     // line would shadow the revision-scoped placeholder OpenShell injects.
     googlechat:
@@ -1046,6 +1077,12 @@ export async function runChannelsStopStartTarget({
     redactionValues: redactions,
     timeoutMs: 60_000,
   });
+  registerChannelsStopStartProviderCleanup(cleanup, host, {
+    agent: AGENT,
+    env,
+    redactions,
+    sandboxName: SANDBOX_NAME,
+  });
   trackSandboxCleanup(
     cleanup,
     host,
@@ -1055,12 +1092,6 @@ export async function runChannelsStopStartTarget({
     redactions,
     `cleanup-channels-stop-start-${AGENT}`,
   );
-  registerChannelsStopStartProviderCleanup(cleanup, host, {
-    agent: AGENT,
-    env,
-    redactions,
-    sandboxName: SANDBOX_NAME,
-  });
   await precleanSandbox(
     host,
     SANDBOX_NAME,
