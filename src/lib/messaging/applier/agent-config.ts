@@ -52,6 +52,7 @@ export async function applyAgentConfigAtOpenShell(
   options: {
     readonly runOpenshell: MessagingOpenShellRunner;
     readonly runHook?: MessagingHookApplyRunner;
+    readonly removeDisabledEnvLines?: boolean;
   },
 ): Promise<{
   readonly appliedTargets: readonly string[];
@@ -74,12 +75,13 @@ export async function applyAgentConfigAtOpenShell(
 
   const enabledRender = filterEnabledPlanEntries(plan, plan.agentRender);
   const disabledChannelIds = new Set(plan.disabledChannels);
-  const disabledJsonRender = plan.agentRender.filter(
-    (entry): entry is SandboxMessagingJsonRenderPlan =>
-      entry.kind === "json-fragment" && disabledChannelIds.has(entry.channelId),
+  const disabledRender = plan.agentRender.filter(
+    (entry) =>
+      disabledChannelIds.has(entry.channelId) &&
+      (entry.kind === "json-fragment" || options.removeDisabledEnvLines === true),
   );
 
-  const renderByTarget = groupRenderByTarget([...enabledRender, ...disabledJsonRender]);
+  const renderByTarget = groupRenderByTarget([...enabledRender, ...disabledRender]);
   const targets: [string, SandboxMessagingAgentRenderPlan[]][] = [
     ...renderByTarget,
     ...migrationOnlyEnvTargets(plan, new Set(renderByTarget.keys())).map(
@@ -95,22 +97,30 @@ export async function applyAgentConfigAtOpenShell(
     const existing = readSandboxFile(plan.sandboxName, resolvedTarget, options.runOpenshell);
     // Nothing rendered and no file on disk: no migration to perform.
     if (!kind && existing === undefined) continue;
+    const enabledTargetRender = enabledRender.filter((entry) => entry.target === target);
+    const disabledTargetRender = disabledRender.filter((entry) => entry.target === target);
     const contents =
       kind === "json-fragment"
         ? applyJsonFragments(
             plan,
             existing,
-            render.filter(
+            enabledTargetRender.filter(
               (entry): entry is SandboxMessagingJsonRenderPlan =>
-                isJsonRender(entry) && !disabledChannelIds.has(entry.channelId),
+                isJsonRender(entry),
             ),
-            render.filter(
+            disabledTargetRender.filter(
               (entry): entry is SandboxMessagingJsonRenderPlan =>
-                isJsonRender(entry) && disabledChannelIds.has(entry.channelId),
+                isJsonRender(entry),
             ),
             resolvedTarget,
           )
-        : applyEnvLines(plan, existing, render.filter(isEnvLinesRender));
+        : applyEnvLines(
+            plan,
+            existing,
+            enabledTargetRender.filter(isEnvLinesRender),
+            [],
+            disabledTargetRender.filter(isEnvLinesRender),
+          );
     writeSandboxFile(plan.sandboxName, resolvedTarget, contents, options.runOpenshell);
     appliedTargets.push(resolvedTarget);
   }
@@ -127,6 +137,30 @@ export async function applyAgentConfigAtOpenShell(
     appliedHooks,
     unresolvedTemplateRefs: uniqueStrings(enabledRender.flatMap((render) => render.templateRefs)),
   };
+}
+
+/** Apply only one disabled channel's manifest-owned config removal before its plan is discarded. */
+export async function removeChannelAgentConfigAtOpenShell(
+  plan: SandboxMessagingPlan,
+  channelId: string,
+  options: { readonly runOpenshell: MessagingOpenShellRunner },
+): ReturnType<typeof applyAgentConfigAtOpenShell> {
+  const channel = plan.channels.find((entry) => entry.channelId === channelId);
+  if (!channel) {
+    throw new Error(`Messaging channel '${channelId}' is absent from its removal plan.`);
+  }
+  return applyAgentConfigAtOpenShell(
+    {
+      ...plan,
+      channels: [{ ...channel, active: false, disabled: true }],
+      disabledChannels: [channel.channelId],
+      credentialBindings: plan.credentialBindings.filter(
+        (entry) => entry.channelId === channel.channelId,
+      ),
+      agentRender: plan.agentRender.filter((entry) => entry.channelId === channel.channelId),
+    },
+    { ...options, removeDisabledEnvLines: true },
+  );
 }
 
 /**
@@ -476,6 +510,7 @@ function applyEnvLines(
   existing: string | undefined,
   render: readonly SandboxMessagingEnvLinesRenderPlan[],
   additionalLines: readonly string[] = [],
+  removedRender: readonly SandboxMessagingEnvLinesRenderPlan[] = [],
 ): string {
   const desired = new Map<string, string>();
   const rawDesiredLines: string[] = [];
@@ -494,6 +529,14 @@ function applyEnvLines(
     if (!key) throw new Error("Messaging runtime credential alias line is invalid.");
     desired.set(key, line);
   }
+  const removedKeys = new Set(
+    removedRender.flatMap((entry) =>
+      entry.lines.flatMap((line) => {
+        const key = readEnvLineKey(line);
+        return key ? [key] : [];
+      }),
+    ),
+  );
   const stale = staleCredentialEnvKeys(plan, new Set(desired.keys()));
 
   const written = new Set<string>();
@@ -502,6 +545,7 @@ function applyEnvLines(
     .filter((line, index, lines) => line.length > 0 || index < lines.length - 1)
     .flatMap((line) => {
       const key = readEnvLineKey(line);
+      if (key !== null && removedKeys.has(key)) return [];
       if (key !== null && stale.has(key)) return [];
       if (!key || !desired.has(key)) return [line];
       written.add(key);

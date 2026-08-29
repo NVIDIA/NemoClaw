@@ -9,6 +9,7 @@ import {
   applyAgentConfigAtOpenShell as applyAgentConfigPlanAtOpenShell,
   listHookRequests as listPlanHookRequests,
   reconcileCredentialEnvAtOpenShell as reconcileCredentialEnvPlanAtOpenShell,
+  removeChannelAgentConfigAtOpenShell as removeChannelAgentConfigPlanAtOpenShell,
 } from "./agent-config";
 import {
   applyHealthChecks as applyPlanHealthChecks,
@@ -157,6 +158,14 @@ export class MessagingSetupApplier {
     options: { readonly runOpenshell: MessagingOpenShellRunner },
   ): { readonly changed: boolean; readonly target?: string } {
     return reconcileCredentialEnvPlanAtOpenShell(plan, options);
+  }
+
+  static removeChannelAgentConfigAtOpenShell(
+    plan: SandboxMessagingPlan,
+    channelId: string,
+    options: { readonly runOpenshell: MessagingOpenShellRunner },
+  ): ReturnType<typeof removeChannelAgentConfigPlanAtOpenShell> {
+    return removeChannelAgentConfigPlanAtOpenShell(plan, channelId, options);
   }
 
   static applyCredentialsAtOpenShell(
