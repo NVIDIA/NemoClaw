@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   openClawAgentResponseRecord,
+  openClawAgentHasCompletedReply,
   openClawAgentIncompleteTurnSignal,
   openClawAgentJsonProvenanceLines,
   parseOpenClawJsonDocuments,
@@ -57,6 +58,34 @@ describe("openClawAgentResponseRecord", () => {
 });
 
 describe("openClawAgentJsonProvenanceLines", () => {
+  it("accepts only assistant conversational completion payloads", () => {
+    expect(
+      openClawAgentHasCompletedReply(
+        JSON.stringify({ payloads: [{ role: "assistant", text: "42" }], meta: {} }),
+      ),
+    ).toBe(true);
+    expect(
+      [
+        { role: "user", text: "echoed prompt" },
+        { role: "system", text: "system prompt" },
+        { role: "assistant", text: JSON.stringify({ name: "read", parameters: { path: "x" } }) },
+        { role: "assistant", text: JSON.stringify({ name: "read", input: { path: "x" } }) },
+        { role: "assistant", text: `tool_call: {"name":"read","param":` },
+      ].map((payload) =>
+        openClawAgentHasCompletedReply(JSON.stringify({ payloads: [payload], meta: {} })),
+      ),
+    ).toEqual([false, false, false, false, false]);
+    expect(
+      openClawAgentHasCompletedReply(
+        JSON.stringify({
+          payloads: [{ role: "assistant", text: "done" }],
+          messages: [{ tool_calls: [{ name: "read" }] }],
+          meta: {},
+        }),
+      ),
+    ).toBe(false);
+  });
+
   it("returns no provenance for plain successful assistant payloads", () => {
     expect(
       openClawAgentJsonProvenanceLines(JSON.stringify({ result: { payloads: [{ text: "42" }] } })),
