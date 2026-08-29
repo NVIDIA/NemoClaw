@@ -32,6 +32,10 @@ describe("parseOpenClawJsonDocuments", () => {
   it("ignores malformed and incomplete candidates", () => {
     expect(parseOpenClawJsonDocuments('progress {not-json}\n{"text":"incomplete"')).toEqual([]);
   });
+
+  it("fails closed in linear time for a long incomplete brace-rich stream", () => {
+    expect(parseOpenClawJsonDocuments("{".repeat(10_000))).toEqual([]);
+  });
 });
 
 describe("openClawAgentResponseRecord", () => {

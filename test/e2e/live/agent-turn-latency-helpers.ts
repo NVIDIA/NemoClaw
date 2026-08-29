@@ -3,7 +3,10 @@
 
 import path from "node:path";
 
-import { openClawAgentResponseRecord } from "../../../src/lib/openclaw/agent-json-provenance.ts";
+import {
+  openClawAgentResponseRecord,
+  parseOpenClawJsonDocuments,
+} from "../../../src/lib/openclaw/agent-json-provenance.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -16,7 +19,6 @@ import { expect } from "../fixtures/e2e-test.ts";
 import type { E2EInferenceAdapter } from "../fixtures/inference-adapter.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
-import { parseOpenClawAgentJsonDocuments } from "../fixtures/openclaw-agent-output.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
@@ -182,7 +184,7 @@ export function extractOpenClawAgentDurationEvidence(
   output: string,
 ): OpenClawAgentDurationEvidence {
   let malformed = false;
-  for (const document of parseOpenClawAgentJsonDocuments(output)) {
+  for (const document of parseOpenClawJsonDocuments(output)) {
     const meta = openClawAgentResponseRecord(document)?.meta;
     if (meta === undefined) continue;
     if (!meta || typeof meta !== "object" || Array.isArray(meta)) {

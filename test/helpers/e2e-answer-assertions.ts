@@ -12,12 +12,13 @@ export function containsToolCallStructure(value: unknown): boolean {
 
   const record = value as Record<string, unknown>;
   const role = String(record.role).replaceAll("_", "-").toLowerCase();
+  const type = String(record.type).replaceAll("_", "-").toLowerCase();
   if (
     role === "tool" ||
     role === "function" ||
     role === "toolresult" ||
     role === "tool-result" ||
-    ["tool_use", "tool_result", "tool-result", "function"].includes(String(record.type)) ||
+    ["tool-use", "tool-result", "toolresult", "function"].includes(type) ||
     record.tool_call_id != null ||
     record.toolCallId != null ||
     record.function != null ||
@@ -54,9 +55,8 @@ export function containsToolCallOutput(text: string): boolean {
     /"(?:arguments|input|input_schema|param|parameters|tool_use)"\s*:/u.test(jsonLike) ||
     /"(?:function|function_call)"\s*:\s*(?!null\b)/u.test(jsonLike) ||
     /"tool_calls"\s*:\s*(?!null\b|\[\s*\])/u.test(jsonLike) ||
-    /"type"\s*:\s*"(?:function|tool_use)"/u.test(jsonLike) ||
     (/"name"\s*:/u.test(jsonLike) && /"description"\s*:/u.test(jsonLike));
-  const containsToolType = /"type"\s*:\s*"(?:function|tool_use|tool_result|tool-result)"/u.test(
+  const containsToolType = /"type"\s*:\s*"(?:function|tool[_-]?use|tool[_-]?result)"/iu.test(
     jsonLike,
   );
   const containsToolRole = /"role"\s*:\s*"(?:function|tool|tool[_-]?result)"/iu.test(jsonLike);

@@ -34,6 +34,7 @@ describe("E2E answer assertions", () => {
     '{"name":"read","input":{"expected":56}}',
     '{"type":"tool_use","name":"calculator","input":{"expected":56}}',
     '{"type":"tool_result","tool_call_id":"call-1","content":"56"}',
+    '{"type":"toolResult","content":"56"}',
     '{"role":"tool","content":"56"}',
     '{"role":"function","content":"56"}',
     '{"role":"toolResult","content":"56"',

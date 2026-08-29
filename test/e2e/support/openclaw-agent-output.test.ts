@@ -4,10 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
-import {
-  parseOpenClawAgentJsonDocuments,
-  parseOpenClawAgentText,
-} from "../fixtures/openclaw-agent-output.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 
 describe("OpenClaw agent-output fixture", () => {
   it("rejects echoed user messages as agent-response evidence", () => {
@@ -195,6 +192,11 @@ describe("OpenClaw agent-output fixture", () => {
     ).toBe("");
     expect(
       parseOpenClawAgentText(
+        JSON.stringify({ payloads: [{ type: "toolResult", content: "56" }], meta: {} }),
+      ),
+    ).toBe("");
+    expect(
+      parseOpenClawAgentText(
         JSON.stringify({ messages: [{ role: "tool-result", content: "56" }] }),
       ),
     ).toBe("");
@@ -265,7 +267,12 @@ describe("OpenClaw agent-output fixture", () => {
     ).toBe("42");
   });
 
-  it("fails closed in linear time for a long incomplete brace-rich stream", () => {
-    expect(parseOpenClawAgentJsonDocuments("{".repeat(10_000))).toEqual([]);
+  it.each([
+    ["timeout phase", { timeoutPhase: "provider" }],
+    ["abandoned liveness", { livenessState: "abandoned" }],
+    ["invalid replay", { replayInvalid: true }],
+    ["incomplete-turn error", { error: { kind: "incomplete_turn" } }],
+  ])("rejects reply evidence with declared %s metadata", (_label, meta) => {
+    expect(parseOpenClawAgentText(JSON.stringify({ payloads: [{ text: "56" }], meta }))).toBe("");
   });
 });
