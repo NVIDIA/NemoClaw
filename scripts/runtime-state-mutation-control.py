@@ -200,6 +200,8 @@ class ProcessIdentity:
     command: tuple[bytes, ...]
     proc_device: int
     proc_inode: int
+    executable_device: int
+    executable_inode: int
 
     def identity_key(self) -> tuple[object, ...]:
         return (
@@ -210,6 +212,8 @@ class ProcessIdentity:
             self.command,
             self.proc_device,
             self.proc_inode,
+            self.executable_device,
+            self.executable_inode,
         )
 
     def kernel_task_key(self) -> tuple[object, ...]:
@@ -219,6 +223,9 @@ class ProcessIdentity:
             self.proc_device,
             self.proc_inode,
         )
+
+    def executable_key(self) -> tuple[int, int]:
+        return (self.executable_device, self.executable_inode)
 
 
 @dataclass(frozen=True)
@@ -230,6 +237,8 @@ class ProcessReference:
     command_sha256: str
     proc_device: int
     proc_inode: int
+    executable_device: int
+    executable_inode: int
 
 
 @dataclass(frozen=True)
@@ -886,6 +895,8 @@ PROCESS_REFERENCE_KEYS = (
     "commandSha256",
     "procDevice",
     "procInode",
+    "executableDevice",
+    "executableInode",
 )
 
 FENCE_KEYS = ("supervisor", "start", "startSupport", "writerUids")
@@ -965,6 +976,8 @@ def _process_reference(process: ProcessIdentity) -> ProcessReference:
         _process_command_sha256(process.command),
         process.proc_device,
         process.proc_inode,
+        process.executable_device,
+        process.executable_inode,
     )
 
 
@@ -977,6 +990,8 @@ def _process_reference_payload(reference: ProcessReference) -> dict[str, object]
         "commandSha256": reference.command_sha256,
         "procDevice": str(reference.proc_device),
         "procInode": str(reference.proc_inode),
+        "executableDevice": str(reference.executable_device),
+        "executableInode": str(reference.executable_inode),
     }
 
 
@@ -997,7 +1012,14 @@ def _process_reference_from_value(value: object, code: str) -> ProcessReference:
     command_sha256 = _hex_digest(reference["commandSha256"], code)
     proc_device = _decimal_identity(reference["procDevice"], code)
     proc_inode = _decimal_identity(reference["procInode"], code)
-    if proc_device == "0" or proc_inode == "0":
+    executable_device = _decimal_identity(reference["executableDevice"], code)
+    executable_inode = _decimal_identity(reference["executableInode"], code)
+    if (
+        proc_device == "0"
+        or proc_inode == "0"
+        or executable_device == "0"
+        or executable_inode == "0"
+    ):
         _fail(code)
     return ProcessReference(
         pid,
@@ -1007,6 +1029,8 @@ def _process_reference_from_value(value: object, code: str) -> ProcessReference:
         command_sha256,
         int(proc_device, 10),
         int(proc_inode, 10),
+        int(executable_device, 10),
+        int(executable_inode, 10),
     )
 
 
@@ -2509,12 +2533,15 @@ def _assert_private_procfs() -> None:
 
 def _capture_process(pid: int) -> ProcessIdentity | None:
     process_path = os.path.join(PROC_ROOT, str(pid))
+    executable_path = os.path.join(process_path, "exe")
     try:
         before = os.stat(process_path, follow_symlinks=False)
+        executable_before = os.stat(executable_path)
         first_stat = _read_proc_file(os.path.join(process_path, "stat"))
         status = _read_proc_file(os.path.join(process_path, "status"))
         command_raw = _read_proc_file(os.path.join(process_path, "cmdline"))
         second_stat = _read_proc_file(os.path.join(process_path, "stat"))
+        executable_after = os.stat(executable_path)
         after = os.stat(process_path, follow_symlinks=False)
     except (FileNotFoundError, ProcessLookupError):
         return None
@@ -2527,6 +2554,7 @@ def _capture_process(pid: int) -> ProcessIdentity | None:
     if (
         not stat.S_ISDIR(before.st_mode)
         or _stable_stat(before) != _stable_stat(after)
+        or not _same_filesystem_object(executable_before, executable_after)
         or (parent, start) != (second_parent, second_start)
     ):
         _fail("raced-writer-process")
@@ -2539,6 +2567,8 @@ def _capture_process(pid: int) -> ProcessIdentity | None:
         tuple(part for part in command_raw.split(b"\0") if part),
         before.st_dev,
         before.st_ino,
+        executable_after.st_dev,
+        executable_after.st_ino,
     )
 
 
@@ -2665,6 +2695,16 @@ def _process_has_reference_identity(
         and process.parent_pid == reference.parent_pid
         and process.uids == reference.uids
         and _process_command_sha256(process.command) == reference.command_sha256
+        and _process_has_reference_executable(process, reference)
+    )
+
+
+def _process_has_reference_executable(
+    process: ProcessIdentity, reference: ProcessReference
+) -> bool:
+    return bool(
+        process.executable_device == reference.executable_device
+        and process.executable_inode == reference.executable_inode
     )
 
 
@@ -2693,11 +2733,12 @@ def _recapture_supervisor(reference: ProcessReference) -> ProcessIdentity:
     # PID 1 can refresh its displayed argv suffix while it remains the same
     # kernel task. Revalidate the fixed OpenShell supervisor semantics instead
     # of treating that mutable display metadata as task replacement. Start
-    # time and procfs identity still bind the original task and fail closed on
-    # a real replacement.
+    # time and procfs identity still bind the original task. The executable
+    # identity rejects an exec replacement that forges the expected argv0.
     if (
         process is None
         or not _process_has_kernel_task_reference(process, reference)
+        or not _process_has_reference_executable(process, reference)
         or not _is_openshell_supervisor(process)
     ):
         _fail("supervisor-identity-drift")
@@ -2776,9 +2817,13 @@ def _signal_exact_process(process: ProcessIdentity, requested_signal: int) -> No
         # The full process reference was authenticated before opening the
         # pidfd. Recheck only immutable kernel task identity here: parent,
         # credentials, and argv can change on the same task between the two
-        # observations. The pidfd remains bound to that task, while a real PID
-        # replacement changes its start time or procfs inode and fails closed.
-        if current.kernel_task_key() != process.kernel_task_key():
+        # observations. The pidfd remains bound to that task. A real PID
+        # replacement changes its start time or procfs inode, while an exec
+        # replacement changes its executable identity; both fail closed.
+        if (
+            current.kernel_task_key() != process.kernel_task_key()
+            or current.executable_key() != process.executable_key()
+        ):
             _fail("writer-pid-reused")
         try:
             signal.pidfd_send_signal(pidfd, requested_signal)

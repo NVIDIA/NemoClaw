@@ -37,6 +37,8 @@ start = control.ProcessReference(
     "a" * 64,
     12,
     13,
+    14,
+    15,
 )
 fence = control.FenceProof(start, start, (), (os.geteuid(),))
 marker = {"transactionId": "c" * 64, "nonce": "b" * 64}
@@ -100,6 +102,8 @@ with tempfile.TemporaryDirectory() as root:
                 "commandSha256": "a" * 64,
                 "procDevice": "12",
                 "procInode": "13",
+                "executableDevice": "14",
+                "executableInode": "15",
             },
         }
         assert expected == control._startup_release_ack_payload(
@@ -144,6 +148,8 @@ with tempfile.TemporaryDirectory() as root:
             ),
             14,
             15,
+            16,
+            17,
         )
         publisher_scans = {"count": 0}
         publisher_signals = []
@@ -164,6 +170,8 @@ with tempfile.TemporaryDirectory() as root:
                 (control.NEMOCLAW_START_PATH,),
                 start.proc_device,
                 start.proc_inode,
+                start.executable_device,
+                start.executable_inode,
             )
         control._recapture_reference = recapture
         def signal_publisher(selected, requested):

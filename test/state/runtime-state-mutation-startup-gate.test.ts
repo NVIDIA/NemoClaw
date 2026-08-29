@@ -37,6 +37,8 @@ start = {
     "commandSha256": "a" * 64,
     "procDevice": "22",
     "procInode": "33",
+    "executableDevice": "44",
+    "executableInode": "55",
 }
 gate._capture_parent = lambda: start
 
@@ -220,6 +222,8 @@ describe("runtime state mutation startup gate", () => {
       commandSha256: "a".repeat(64),
       procDevice: "22",
       procInode: "33",
+      executableDevice: "44",
+      executableInode: "55",
     };
     expect(value).toMatchObject({
       uses_o_path_when_available: true,

@@ -170,7 +170,9 @@ def status_value(action, acquire, provider_handle=None, activation_handle=None, 
 def parse(action, value):
     return control._parse_request(action, control._json_bytes(value) + b"\n")
 
-def process(pid, state, parent, start, uid, command, inode):
+def process(pid, state, parent, start, uid, command, inode, executable_inode=None):
+    if executable_inode is None:
+        executable_inode = 10_000 + inode
     return control.ProcessIdentity(
         pid,
         state,
@@ -180,6 +182,8 @@ def process(pid, state, parent, start, uid, command, inode):
         command,
         91,
         inode,
+        81,
+        executable_inode,
     )
 
 root_uid = control.ROOT_UID
@@ -282,6 +286,16 @@ replacement_task = process(
     start.command,
     start.proc_inode + 1,
 )
+same_task_executable_replacement = process(
+    start.pid,
+    start.state,
+    start.parent_pid,
+    start.start_identity,
+    1001,
+    start.command,
+    start.proc_inode,
+    start.executable_inode + 1,
+)
 real_pidfd_open = getattr(control.os, "pidfd_open", None)
 real_pidfd_send_signal = getattr(control.signal, "pidfd_send_signal", None)
 real_os_close = control.os.close
@@ -305,6 +319,14 @@ try:
         lambda: real_signal_exact_process(start, signal.SIGSTOP)
     )
     results["replacement_task_signal_events"] = list(pidfd_signal_events)
+    pidfd_signal_events.clear()
+    control._capture_process = lambda _pid: same_task_executable_replacement
+    results["same_task_executable_replacement_signal"] = code(
+        lambda: real_signal_exact_process(start, signal.SIGSTOP)
+    )
+    results["same_task_executable_replacement_signal_events"] = list(
+        pidfd_signal_events
+    )
 finally:
     control._capture_process = real_capture_process
     if real_pidfd_open is None:
@@ -728,8 +750,19 @@ replaced_pid1 = process(
     (control.OPENSHELL_ARGV0,),
     102,
 )
+exec_replaced_pid1 = process(
+    1,
+    "T",
+    0,
+    pid1.start_identity,
+    root_uid,
+    (control.OPENSHELL_ARGV0, b"--forged-status"),
+    pid1.proc_inode,
+    pid1.executable_inode + 1,
+)
 results["refreshed_supervisor"] = supervisor_refresh(refreshed_pid1)
 results["replaced_supervisor"] = supervisor_refresh(replaced_pid1)
+results["exec_replaced_supervisor"] = supervisor_refresh(exec_replaced_pid1)
 
 hold_events = []
 control._prove_fence_shape = lambda _fence, _mount: (pid1, start)
@@ -1181,6 +1214,8 @@ def state_process(original):
         original.command,
         original.proc_device,
         original.proc_inode,
+        original.executable_device,
+        original.executable_inode,
     )
 by_release_pid = {
     1: refreshed_pid1,

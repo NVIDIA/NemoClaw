@@ -54,6 +54,8 @@ PROCESS_REFERENCE_KEYS = (
     "commandSha256",
     "procDevice",
     "procInode",
+    "executableDevice",
+    "executableInode",
 )
 PERMIT_KEYS = (
     "schemaVersion",
@@ -170,6 +172,10 @@ def _stable_stat(value: os.stat_result) -> tuple[object, ...]:
         value.st_mtime_ns,
         value.st_ctime_ns,
     )
+
+
+def _same_filesystem_object(first: os.stat_result, second: os.stat_result) -> bool:
+    return first.st_dev == second.st_dev and first.st_ino == second.st_ino
 
 
 def _read_at(
@@ -318,12 +324,15 @@ def _parse_uids(raw: bytes) -> tuple[int, int, int, int]:
 def _capture_parent() -> dict[str, object]:
     pid = os.getppid()
     process_path = f"/proc/{pid}"
+    executable_path = f"{process_path}/exe"
     try:
         before = os.stat(process_path, follow_symlinks=False)
+        executable_before = os.stat(executable_path)
         first = _read_proc_file(f"{process_path}/stat")
         status = _read_proc_file(f"{process_path}/status")
         command_raw = _read_proc_file(f"{process_path}/cmdline")
         second = _read_proc_file(f"{process_path}/stat")
+        executable_after = os.stat(executable_path)
         after = os.stat(process_path, follow_symlinks=False)
     except OSError:
         _fail("start-process-unavailable")
@@ -332,6 +341,7 @@ def _capture_parent() -> dict[str, object]:
     if (
         not stat.S_ISDIR(before.st_mode)
         or _stable_stat(before) != _stable_stat(after)
+        or not _same_filesystem_object(executable_before, executable_after)
         or (first_parent, first_start) != (second_parent, second_start)
     ):
         _fail("start-process-unavailable")
@@ -344,6 +354,8 @@ def _capture_parent() -> dict[str, object]:
         "commandSha256": _command_sha256(command),
         "procDevice": str(before.st_dev),
         "procInode": str(before.st_ino),
+        "executableDevice": str(executable_after.st_dev),
+        "executableInode": str(executable_after.st_ino),
     }
 
 
@@ -368,6 +380,8 @@ def _process_reference(value: object, code: str) -> dict[str, object]:
         "commandSha256": _hex(value["commandSha256"], code),
         "procDevice": _decimal(value["procDevice"], code),
         "procInode": _decimal(value["procInode"], code),
+        "executableDevice": _decimal(value["executableDevice"], code),
+        "executableInode": _decimal(value["executableInode"], code),
     }
 
 

@@ -54,7 +54,12 @@ describe("runtime state mutation controller", () => {
       bare_direct_start: false,
       bare_interpreted_start: false,
       acquire_fence: {
-        supervisor: { pid: 1, startIdentity: "100" },
+        supervisor: {
+          pid: 1,
+          startIdentity: "100",
+          executableDevice: "81",
+          executableInode: "10101",
+        },
         start: { pid: 10, startIdentity: "200", parentPid: 1 },
         startSupport: [
           { pid: 75, parentPid: 10 },
@@ -129,11 +134,17 @@ describe("runtime state mutation controller", () => {
       ["open", 10, 0],
       ["close", 91],
     ]);
+    expect(harnessResult.same_task_executable_replacement_signal).toBe("writer-pid-reused");
+    expect(harnessResult.same_task_executable_replacement_signal_events).toEqual([
+      ["open", 10, 0],
+      ["close", 91],
+    ]);
   });
 
-  it("retains the same OpenShell supervisor across mutable argv metadata (#9485)", () => {
+  it("retains supervisor argv refreshes but rejects same-task executable replacement (#9485)", () => {
     expect(harnessResult.refreshed_supervisor).toBe("ok");
     expect(harnessResult.replaced_supervisor).toBe("supervisor-identity-drift");
+    expect(harnessResult.exec_replaced_supervisor).toBe("supervisor-identity-drift");
   });
 
   it("publishes, rolls an activated fence back, and recovers every durable phase (#7744)", () => {
