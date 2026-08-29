@@ -44,10 +44,12 @@ const defaultWebSearchReuseDeps: OpenClawWebSearchReuseDeps = {
 export async function reconcileOpenClawWebSearchForReuse(
   sandboxName: string,
   webSearchConfig: WebSearchSelection,
+  revalidatePolicyRequirements?: (operation: string) => void,
   deps: OpenClawWebSearchReuseDeps = defaultWebSearchReuseDeps,
 ): Promise<void> {
   if (webSearchConfig?.fetchEnabled === true) return;
   if (deps.readEnabled(sandboxName) !== true) return;
+  revalidatePolicyRequirements?.(`disable OpenClaw web search in sandbox '${sandboxName}'`);
   await deps.disable(sandboxName);
 }
 
@@ -60,7 +62,11 @@ export interface OpenclawSetupDeps {
   run(argv: string[], options: Record<string, unknown>): unknown;
   openshellArgv(args: string[]): string[];
   cleanupTempDir(file: string, prefix: string): void;
-  reconcileWebSearch(sandboxName: string, webSearchConfig: WebSearchSelection): Promise<void>;
+  reconcileWebSearch(
+    sandboxName: string,
+    webSearchConfig: WebSearchSelection,
+    revalidatePolicyRequirements?: (operation: string) => void,
+  ): Promise<void>;
 }
 
 export function createOpenclawSetup(deps: OpenclawSetupDeps) {
@@ -92,7 +98,11 @@ export function createOpenclawSetup(deps: OpenclawSetupDeps) {
       }
     }
 
-    await deps.reconcileWebSearch(sandboxName, webSearchConfig);
+    await deps.reconcileWebSearch(
+      sandboxName,
+      webSearchConfig,
+      revalidatePolicyRequirements,
+    );
     revalidatePolicyRequirements?.(`publish OpenClaw setup for sandbox '${sandboxName}'`);
     console.log(`  ✓ ${deps.agentProductName()} gateway launched inside sandbox`);
   };

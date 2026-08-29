@@ -215,7 +215,7 @@ describe("handleAgentSetupState", () => {
     expect(calls.startStep).not.toHaveBeenCalled();
     expect(calls.setupOpenclaw).not.toHaveBeenCalled();
     expect(calls.syncConfig).toHaveBeenCalledWith("my-assistant", "provider", "model");
-    expect(calls.reconcileWebSearch).toHaveBeenCalledWith("my-assistant", null);
+    expect(calls.reconcileWebSearch).toHaveBeenCalledWith("my-assistant", null, undefined);
     expect(calls.complete).toHaveBeenCalledWith(
       "openclaw",
       expect.objectContaining({
@@ -242,16 +242,20 @@ describe("handleAgentSetupState", () => {
 
   it("reconciles disabled web search after config sync on ready resume", async () => {
     const { deps, calls } = createDeps({ isOpenclawReady: vi.fn(() => true) });
+    const revalidatePolicyRequirements = vi.fn();
 
     await handleAgentSetupState({
       ...baseOptions(deps),
       resume: true,
       webSearchConfig: { fetchEnabled: false },
+      revalidatePolicyRequirements,
     });
 
-    expect(calls.reconcileWebSearch).toHaveBeenCalledExactlyOnceWith("my-assistant", {
-      fetchEnabled: false,
-    });
+    expect(calls.reconcileWebSearch).toHaveBeenCalledExactlyOnceWith(
+      "my-assistant",
+      { fetchEnabled: false },
+      revalidatePolicyRequirements,
+    );
     expect(calls.syncConfig.mock.invocationCallOrder[0]).toBeLessThan(
       calls.reconcileWebSearch.mock.invocationCallOrder[0],
     );

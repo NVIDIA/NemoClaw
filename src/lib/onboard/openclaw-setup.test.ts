@@ -46,7 +46,7 @@ describe("OpenClaw sandbox setup", () => {
         { input: "set -e\n", stdio: ["pipe", "ignore", "inherit"] },
       );
       expect(cleanupTempDir).toHaveBeenCalledWith(scriptFile, "nemoclaw-sync");
-      expect(reconcileWebSearch).toHaveBeenCalledExactlyOnceWith("spark-box", null);
+      expect(reconcileWebSearch).toHaveBeenCalledExactlyOnceWith("spark-box", null, undefined);
     } finally {
       fs.rmSync(tempDir, { force: true, recursive: true });
     }
@@ -88,7 +88,7 @@ describe("fresh OpenClaw reuse web search reconciliation", () => {
   it("disables stale live web search when fresh re-onboard selects disabled (#10404)", async () => {
     const disable = vi.fn(async () => undefined);
 
-    await reconcileOpenClawWebSearchForReuse("alpha", null, {
+    await reconcileOpenClawWebSearchForReuse("alpha", null, undefined, {
       readEnabled: () => true,
       disable,
     });
@@ -99,7 +99,7 @@ describe("fresh OpenClaw reuse web search reconciliation", () => {
   it("leaves an already-disabled live config unchanged (#10404)", async () => {
     const disable = vi.fn(async () => undefined);
 
-    await reconcileOpenClawWebSearchForReuse("alpha", null, {
+    await reconcileOpenClawWebSearchForReuse("alpha", null, undefined, {
       readEnabled: () => false,
       disable,
     });
@@ -110,7 +110,7 @@ describe("fresh OpenClaw reuse web search reconciliation", () => {
   it("leaves a config without a stale enabled flag unchanged (#10404)", async () => {
     const disable = vi.fn(async () => undefined);
 
-    await reconcileOpenClawWebSearchForReuse("alpha", null, {
+    await reconcileOpenClawWebSearchForReuse("alpha", null, undefined, {
       readEnabled: () => undefined,
       disable,
     });
@@ -125,10 +125,32 @@ describe("fresh OpenClaw reuse web search reconciliation", () => {
     await reconcileOpenClawWebSearchForReuse(
       "alpha",
       { fetchEnabled: true },
+      undefined,
       { readEnabled, disable },
     );
 
     expect(readEnabled).not.toHaveBeenCalled();
+    expect(disable).not.toHaveBeenCalled();
+  });
+
+  it("does not mutate when policy authority changes after the live-config read (#10404)", async () => {
+    const readEnabled = vi.fn(() => true);
+    const disable = vi.fn(async () => undefined);
+    const revalidatePolicyRequirements = vi.fn(() => {
+      throw new Error("policy authority changed");
+    });
+
+    await expect(
+      reconcileOpenClawWebSearchForReuse("alpha", null, revalidatePolicyRequirements, {
+        readEnabled,
+        disable,
+      }),
+    ).rejects.toThrow("policy authority changed");
+
+    expect(readEnabled).toHaveBeenCalledExactlyOnceWith("alpha");
+    expect(revalidatePolicyRequirements).toHaveBeenCalledExactlyOnceWith(
+      "disable OpenClaw web search in sandbox 'alpha'",
+    );
     expect(disable).not.toHaveBeenCalled();
   });
 });
