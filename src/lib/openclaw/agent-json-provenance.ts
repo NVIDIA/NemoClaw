@@ -330,8 +330,8 @@ export type OpenClawIncompleteTurnSignal = {
   timeoutPhase?: string;
 };
 
-/** The declared run-metadata record from an agent response envelope. */
-function agentResponseMetaRecord(doc: unknown): UnknownRecord | null {
+/** Select a documented local or gateway OpenClaw agent-response record. */
+export function openClawAgentResponseRecord(doc: unknown): UnknownRecord | null {
   if (!isObjectRecord(doc)) return null;
 
   const result = doc.result;
@@ -341,7 +341,7 @@ function agentResponseMetaRecord(doc: unknown): UnknownRecord | null {
     (!Object.hasOwn(result, "payloads") || Array.isArray(result.payloads)) &&
     isObjectRecord(result.meta)
   ) {
-    return result.meta;
+    return result;
   }
 
   if (
@@ -349,9 +349,15 @@ function agentResponseMetaRecord(doc: unknown): UnknownRecord | null {
     (!Object.hasOwn(doc, "payloads") || Array.isArray(doc.payloads)) &&
     isObjectRecord(doc.meta)
   ) {
-    return doc.meta;
+    return doc;
   }
   return null;
+}
+
+/** The declared run-metadata record from an agent response envelope. */
+function agentResponseMetaRecord(doc: unknown): UnknownRecord | null {
+  const response = openClawAgentResponseRecord(doc);
+  return response && isObjectRecord(response.meta) ? response.meta : null;
 }
 
 /** Select the final agent response without treating JSON log records as responses. */

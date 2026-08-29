@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  openClawAgentResponseRecord,
   openClawAgentIncompleteTurnSignal,
   openClawAgentJsonProvenanceLines,
   parseOpenClawJsonDocuments,
@@ -30,6 +31,28 @@ describe("parseOpenClawJsonDocuments", () => {
 
   it("ignores malformed and incomplete candidates", () => {
     expect(parseOpenClawJsonDocuments('progress {not-json}\n{"text":"incomplete"')).toEqual([]);
+  });
+});
+
+describe("openClawAgentResponseRecord", () => {
+  it("accepts documented local and gateway response envelopes", () => {
+    const local = { payloads: [{ text: "local" }], meta: {} };
+    const gatewayResult = { payloads: [{ text: "gateway" }], meta: {} };
+    expect(openClawAgentResponseRecord(local)).toBe(local);
+    expect(openClawAgentResponseRecord({ status: "ok", result: gatewayResult })).toBe(
+      gatewayResult,
+    );
+  });
+
+  it("rejects standalone payloads and event records", () => {
+    expect(openClawAgentResponseRecord({ payloads: [{ text: "unbound" }] })).toBeNull();
+    expect(
+      openClawAgentResponseRecord({
+        event: "progress",
+        payloads: [{ text: "untrusted" }],
+        meta: {},
+      }),
+    ).toBeNull();
   });
 });
 

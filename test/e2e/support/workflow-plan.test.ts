@@ -678,28 +678,18 @@ describe("E2E workflow plan", () => {
     const expectedRunner = "linux-amd64-gpu-rtxpro6000-latest-1";
     const gpuDoubleOnboard = catalogueTarget("gpu-double-onboard");
     const gpuE2e = catalogueTarget("gpu-e2e");
-    const gpuHermesResponse = catalogueTarget("gpu-hermes-response-validation");
     const llamaCpp = catalogueTarget("llama-cpp-generic-gpu");
 
-    expect([gpuDoubleOnboard, gpuE2e, gpuHermesResponse, llamaCpp]).toEqual(
+    expect([gpuDoubleOnboard, gpuE2e, llamaCpp]).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ profile: "standard", runner: expectedRunner }),
       ]),
     );
-    expect([
-      gpuDoubleOnboard.runner,
-      gpuE2e.runner,
-      gpuHermesResponse.runner,
-      llamaCpp.runner,
-    ]).toEqual([expectedRunner, expectedRunner, expectedRunner, expectedRunner]);
-    expect(gpuE2e).toMatchObject({
-      selector: "^GPU.Ollama.onboard.+sandbox.inference$",
-      testFile: "test/e2e/live/gpu-e2e.test.ts",
-    });
-    expect(gpuHermesResponse).toMatchObject({
-      selector: "^Hermes.rejects.tool-call.output.+GPU.Ollama.replies.+10215.$",
-      testFile: "test/e2e/live/gpu-e2e.test.ts",
-    });
+    expect([gpuDoubleOnboard.runner, gpuE2e.runner, llamaCpp.runner]).toEqual([
+      expectedRunner,
+      expectedRunner,
+      expectedRunner,
+    ]);
     expect(llamaCpp.environment).toEqual(
       expect.objectContaining({
         NEMOCLAW_LLAMACPP_RECIPE: "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",

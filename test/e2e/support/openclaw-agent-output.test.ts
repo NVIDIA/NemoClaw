@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
 import {
   parseOpenClawAgentJsonDocuments,
   parseOpenClawAgentText,
@@ -22,7 +23,10 @@ describe("OpenClaw agent-output fixture", () => {
   it("accepts a log-framed agent-output payload", () => {
     expect(
       parseOpenClawAgentText(
-        `progress\n${JSON.stringify({ result: { payloads: [{ text: "NEMOCLAW_E2E_READY_6002" }] } })}`,
+        `progress\n${JSON.stringify({
+          status: "ok",
+          result: { payloads: [{ text: "NEMOCLAW_E2E_READY_6002" }], meta: {} },
+        })}`,
       ),
     ).toBe("NEMOCLAW_E2E_READY_6002");
   });
@@ -30,7 +34,10 @@ describe("OpenClaw agent-output fixture", () => {
   it("accepts a log-framed array of agent-output payloads", () => {
     expect(
       parseOpenClawAgentText(
-        `progress\n${JSON.stringify([{ payloads: [{ text: "ARRAY_REPLY" }] }])}`,
+        `progress\n${JSON.stringify([
+          { event: "progress", payloads: [{ text: "UNTRUSTED_PROGRESS" }] },
+          { payloads: [{ text: "ARRAY_REPLY" }], meta: {} },
+        ])}`,
       ),
     ).toBe("ARRAY_REPLY");
   });
@@ -40,6 +47,7 @@ describe("OpenClaw agent-output fixture", () => {
       parseOpenClawAgentText(
         JSON.stringify({
           payloads: [{ text: "NEMOCLAW_" }, { text: "E2E_READY_6002" }],
+          meta: {},
         }),
       ),
     ).toBe("NEMOCLAW_\nE2E_READY_6002");
@@ -50,6 +58,7 @@ describe("OpenClaw agent-output fixture", () => {
       parseOpenClawAgentText(
         JSON.stringify({
           payloads: [{ text: "56" }],
+          meta: {},
           tool_calls: [{ function: { name: "calculator", arguments: '{"value":56}' } }],
         }),
       ),
@@ -57,7 +66,8 @@ describe("OpenClaw agent-output fixture", () => {
     expect(
       parseOpenClawAgentText(
         JSON.stringify({
-          result: { payloads: [{ text: "56" }] },
+          status: "ok",
+          result: { payloads: [{ text: "56" }], meta: {} },
           function: { name: "calculator", parameters: { value: 56 } },
         }),
       ),
@@ -69,56 +79,75 @@ describe("OpenClaw agent-output fixture", () => {
       parseOpenClawAgentText(
         JSON.stringify({
           payloads: [{ text: "I cannot make tool calls, but the answer is 42." }],
+          meta: {},
         }),
       ),
     ).toBe("I cannot make tool calls, but the answer is 42.");
   });
 
-  it("centralizes broad legacy envelope traversal without accepting tool output", () => {
+  it("does not accept reasoning as visible reply evidence", () => {
+    const reply = parseOpenClawAgentText(
+      JSON.stringify({
+        payloads: [{ content: "Wrong answer.", reasoning_content: "42" }],
+        meta: {},
+      }),
+    );
+    expect(reply).toBe("Wrong answer.");
+    expect(containsAnswer(reply, "42")).toBe(false);
+
     expect(
       parseOpenClawAgentText(
         JSON.stringify({
-          response: {
-            choices: [
-              { message: { content: "Final reply." } },
-              { delta: { reasoning_content: "Reasoning fragment." } },
-            ],
-          },
-        }),
-      ),
-    ).toBe("Final reply.\nReasoning fragment.");
-    expect(
-      parseOpenClawAgentText(
-        JSON.stringify({
-          output: { content: "56", tool_calls: [{ name: "calculator", input: { value: 56 } }] },
+          payloads: [{ content: "56", tool_calls: [{ name: "calculator", input: { value: 56 } }] }],
+          meta: {},
         }),
       ),
     ).toBe("");
   });
 
   it("frames consecutive documents without treating braces in strings as structure", () => {
-    const first = { result: { payloads: [{ text: 'Use {braces} and "quotes".' }] } };
-    const second = { payloads: [{ text: "Second reply." }] };
+    const first = { payloads: [{ text: "UNTRUSTED_STANDALONE" }] };
+    const second = { payloads: [{ text: 'Use {braces} and "quotes".' }], meta: {} };
     expect(
       parseOpenClawAgentText(
         `progress {not-json}\n${JSON.stringify(first)}\n${JSON.stringify(second)}`,
       ),
-    ).toBe('Use {braces} and "quotes".\nSecond reply.');
+    ).toBe('Use {braces} and "quotes".');
   });
 
-  it("extracts Brave response text without accepting echoed user or tool content", () => {
+  it("rejects event and tool records containing nested reply-shaped data", () => {
     expect(
       parseOpenClawAgentText(
         JSON.stringify({
-          messages: [
+          event: "progress",
+          data: { payloads: [{ text: "UNTRUSTED_PROGRESS" }], meta: {} },
+        }),
+      ),
+    ).toBe("");
+    expect(
+      parseOpenClawAgentText(
+        JSON.stringify({
+          type: "tool_result",
+          tool_call_id: "call-1",
+          data: { payloads: [{ text: "UNTRUSTED_TOOL" }], meta: {} },
+        }),
+      ),
+    ).toBe("");
+  });
+
+  it("extracts visible payload text without accepting echoed user or tool content", () => {
+    expect(
+      parseOpenClawAgentText(
+        JSON.stringify({
+          payloads: [
             { role: "user", content: "SEARCH_TOKEN" },
             { role: "tool", content: "SEARCH_TOKEN" },
             { role: "assistant", content: "ASSISTANT_RESULT" },
           ],
-          response: { text: "BRAVE_RESULT" },
+          meta: {},
         }),
       ),
-    ).toBe("ASSISTANT_RESULT\nBRAVE_RESULT");
+    ).toBe("ASSISTANT_RESULT");
   });
 
   it("rejects structured tool-call records as reply evidence", () => {
@@ -174,12 +203,15 @@ describe("OpenClaw agent-output fixture", () => {
   it("rejects serialized and trailing malformed tool-call output", () => {
     expect(
       parseOpenClawAgentText(
-        JSON.stringify({ payloads: [{ text: '{"name":"read","input":{"value":56}}' }] }),
+        JSON.stringify({
+          payloads: [{ text: '{"name":"read","input":{"value":56}}' }],
+          meta: {},
+        }),
       ),
     ).toBe("");
     expect(
       parseOpenClawAgentText(
-        `${JSON.stringify({ payloads: [{ text: "56" }] })}\n{"name":"read","input":{"value":56`,
+        `${JSON.stringify({ payloads: [{ text: "56" }], meta: {} })}\n{"name":"read","input":{"value":56`,
       ),
     ).toBe("");
   });
@@ -188,14 +220,19 @@ describe("OpenClaw agent-output fixture", () => {
     expect(
       parseOpenClawAgentText(
         JSON.stringify({
-          choices: [{ message: { role: "assistant", content: "42", tool_calls: null } }],
+          payloads: [{ role: "assistant", content: "42", tool_calls: null }],
+          meta: {},
         }),
       ),
     ).toBe("42");
     expect(
       parseOpenClawAgentText(
         JSON.stringify({
-          choices: [{ message: { role: "assistant", content: "42", tool_calls: [] } }],
+          status: "ok",
+          result: {
+            payloads: [{ role: "assistant", content: "42", tool_calls: [] }],
+            meta: {},
+          },
         }),
       ),
     ).toBe("42");

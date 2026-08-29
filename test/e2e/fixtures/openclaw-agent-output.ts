@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { parseOpenClawJsonDocuments } from "../../../src/lib/openclaw/agent-json-provenance.ts";
+import {
+  openClawAgentResponseRecord,
+  parseOpenClawJsonDocuments,
+} from "../../../src/lib/openclaw/agent-json-provenance.ts";
 import {
   containsToolCallOutput,
   containsToolCallStructure,
@@ -13,7 +16,7 @@ export interface OpenClawAgentJsonDocument {
   result?: { meta?: unknown; payloads?: Array<{ text?: unknown }> };
 }
 
-const OPENCLAW_TEXT_KEYS = ["text", "content", "reasoning_content"] as const;
+const OPENCLAW_TEXT_KEYS = ["text", "content"] as const;
 const OPENCLAW_CONTAINER_KEYS = [
   "result",
   "payloads",
@@ -76,7 +79,10 @@ export function parseOpenClawAgentText(raw: string): string {
   if (documents.some(containsToolCallStructure)) return "";
   const parts: string[] = [];
   for (const document of documents) {
-    collectOpenClawAssistantText(document, parts, new Set());
+    const response = openClawAgentResponseRecord(document);
+    if (response && Array.isArray(response.payloads)) {
+      collectOpenClawAssistantText(response.payloads, parts, new Set());
+    }
   }
   const reply = parts.join("\n");
   return containsToolCallOutput(reply) ? "" : reply;
