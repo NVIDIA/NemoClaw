@@ -668,7 +668,7 @@ test ! -e ${JSON.stringify(MARKER_FILE)}`,
     ) as { workload?: { kind?: unknown } };
     const expectedCloneRestoreResult =
       selectedSnapshot.workload?.kind === "managed-image"
-        ? "managed-clone-rebind-required"
+        ? "managed-clone-not-available"
         : "restored";
     await artifacts.writeJson("phase-4-clone-restore-expectation.json", {
       classification: expectedCloneRestoreResult,
@@ -687,9 +687,9 @@ test ! -e ${JSON.stringify(MARKER_FILE)}`,
     expect(cloneRestoreResult).toBe(expectedCloneRestoreResult);
     progress.phase("verify the restored clone state and gateway pairing");
     switch (expectedCloneRestoreResult) {
-      case "managed-clone-rebind-required": {
+      case "managed-clone-not-available": {
         expect(resultText(cloneRestore)).toContain(
-          `restoring '${SANDBOX_NAME}' as '${CLONE_SANDBOX_NAME}' requires managed-profile clone rebind`,
+          `restoring '${SANDBOX_NAME}' into '${CLONE_SANDBOX_NAME}' is not available because '${SANDBOX_NAME}' uses a NemoClaw-managed image`,
         );
         expect(resultText(cloneRestore)).toContain(
           `Destination '${CLONE_SANDBOX_NAME}' was not changed`,

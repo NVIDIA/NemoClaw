@@ -148,9 +148,9 @@ describe("snapshot restore result classification", () => {
         exitCode: 1,
         stdout: "",
         stderr:
-          "restoring 'source' as 'clone' requires managed-profile clone rebind. Destination 'clone' was not changed. secret-output",
+          "restoring 'source' into 'clone' is not available because 'source' uses a NemoClaw-managed image. Destination 'clone' was not changed. secret-output",
       },
-      "managed-clone-rebind-required",
+      "managed-clone-not-available",
     ],
     [
       {

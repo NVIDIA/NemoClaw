@@ -183,6 +183,12 @@ After a restore that includes Hermes state databases, the CLI prints a reminder 
 Run `$$nemoclaw <name> gateway restart` to make the gateway open the restored databases.
 </AgentOnly>
 
+<Note>
+`--to` is not available for a snapshot of a sandbox that uses a NemoClaw-managed image.
+NemoClaw reports that the restore is not available and stops before it creates, deletes, or changes the destination sandbox.
+Restore that snapshot into its source sandbox without `--to`.
+</Note>
+
 To clone a snapshot into a different sandbox name, pass `--to <name>`.
 If the destination sandbox already exists, NemoClaw refuses to overwrite it unless you pass `--force`:
 

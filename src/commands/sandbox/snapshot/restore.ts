@@ -31,7 +31,10 @@ export default class SnapshotRestoreCommand extends NemoClawCommand {
     }),
   };
   static flags = {
-    to: Flags.string({ description: "Restore into another sandbox" }),
+    to: Flags.string({
+      description:
+        "Restore into another sandbox. Not available when the sandbox uses a NemoClaw-managed image.",
+    }),
     force: Flags.boolean({
       description:
         "When --to names an existing sandbox, delete it before restoring. Refuses by default.",
