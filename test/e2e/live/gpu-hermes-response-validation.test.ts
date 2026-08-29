@@ -25,7 +25,7 @@ function hermesEnv(): NodeJS.ProcessEnv {
 }
 
 test(
-  "Hermes returns semantic initial and follow-up replies through GPU Ollama (#10215)",
+  "Hermes returns conversational replies for new, resumed, and continued GPU Ollama sessions (#10215)",
   {
     timeout: TIMEOUT_MS,
     meta: {

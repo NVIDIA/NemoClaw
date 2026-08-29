@@ -268,5 +268,3 @@ export async function cleanupMessagingState(
   );
   await stopGatewayRuntime(host, "cleanup-openshell-gateway-runtime-nemoclaw");
 }
-
-export { parseOpenClawAgentText };
