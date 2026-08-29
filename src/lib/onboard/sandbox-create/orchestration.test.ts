@@ -805,6 +805,7 @@ describe("sandbox create identity checks", () => {
 
   it("removes temporary sources but preserves the sandbox after final identity failure (#9833)", async () => {
     const events: string[] = [];
+    const createAttemptNonce = "c".repeat(62);
     const revalidate = vi.fn(() => events.push("create-check"));
 
     const error = await runSandboxCreateWithIdentityVerification({
@@ -816,6 +817,7 @@ describe("sandbox create identity checks", () => {
         return "created";
       },
       ...exactIdentityBoundary(),
+      captureCreatedSandboxCreateAttemptNonce: () => createAttemptNonce,
       revalidateVerifiedCreateIdentity: () => {
         events.push("ready-check");
         throw new Error("sandbox identity changed");
@@ -826,7 +828,7 @@ describe("sandbox create identity checks", () => {
     expect(error).toBeInstanceOf(AggregateError);
     expect((error as AggregateError).message).toMatch(
       new RegExp(
-        `left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*did not run OpenShell's mutable-name deletion command.*Do not delete the sandbox by mutable sandbox name.*OpenShell administrator.*identity-bound recovery or removal procedure`,
+        `Create-attempt label: ai\\.nvidia\\.nemoclaw\\.create-attempt=${createAttemptNonce}.*left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*did not run OpenShell's mutable-name deletion command.*Do not delete the sandbox by mutable sandbox name.*OpenShell administrator.*identity-bound recovery or removal procedure`,
         "u",
       ),
     );
@@ -835,7 +837,7 @@ describe("sandbox create identity checks", () => {
         expect.objectContaining({
           message: expect.stringMatching(
             new RegExp(
-              `left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*did not run OpenShell's mutable-name deletion command.*Do not delete the sandbox by mutable sandbox name.*OpenShell administrator.*identity-bound recovery or removal procedure`,
+              `Create-attempt label: ai\\.nvidia\\.nemoclaw\\.create-attempt=${createAttemptNonce}.*left sandbox 'alpha' in place.*identity fingerprint: ${exactIdentity}.*did not run OpenShell's mutable-name deletion command.*Do not delete the sandbox by mutable sandbox name.*OpenShell administrator.*identity-bound recovery or removal procedure`,
               "u",
             ),
           ),

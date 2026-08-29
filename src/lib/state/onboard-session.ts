@@ -13,7 +13,7 @@ import path from "node:path";
 
 import { isErrnoException } from "../core/errno";
 import { isObjectRecord, type JsonObject, type JsonValue } from "../core/json-types";
-import { GATEWAY_PORT } from "../core/ports";
+import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
 import {
   parseServingProfileProvenance,
   type ServingProfileProvenance,
@@ -63,7 +63,9 @@ import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
 import {
   listRetainedSandboxRecoveryRecords as readRetainedSandboxRecoveryRecords,
   recordRetainedSandboxRecovery as writeRetainedSandboxRecovery,
+  retainedSandboxRecoveryAuthorityIsCurrent,
   retainedSandboxRecoveryFile,
+  resolveRetainedSandboxRecovery as retireRetainedSandboxRecovery,
   type RecordRetainedSandboxRecoveryInput,
   type RetainedSandboxRecoveryRecord,
   type RetainedSandboxRecoveryReason,
@@ -82,6 +84,10 @@ export const SESSION_DIR = nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
 export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
 export const RETAINED_SANDBOX_RECOVERY_FILE = retainedSandboxRecoveryFile(SESSION_DIR);
+const LEGACY_STATE_MIGRATION_LOCK = path.join(
+  nemoclawStateRoot(process.env.HOME || "/tmp", DEFAULT_GATEWAY_PORT),
+  ".gateway-state-migration.lock",
+);
 const SAFE_VLLM_INSTALL_MODEL = /^[A-Za-z0-9._:/-]+$/;
 
 export class InvalidPersistedApfInterceptorIntentError extends Error {}
@@ -1583,6 +1589,13 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
     try {
       heldLockDirectory = openPinnedSessionDirectory();
       assertOnboardLockOwned();
+      // Legacy-port migration holds its lock before checking every onboard
+      // writer lock. Recheck here after atomically claiming onboard.lock so
+      // either the writer or the migrator wins, never both.
+      if (fs.existsSync(LEGACY_STATE_MIGRATION_LOCK)) {
+        releaseOnboardLock();
+        return { acquired: false, lockFile: LOCK_FILE, stale: false };
+      }
     } catch (error) {
       heldLockFd = null;
       if (heldLockDirectory !== null) fs.closeSync(heldLockDirectory.descriptor);
@@ -1985,6 +1998,44 @@ export function recordRetainedSandboxRecovery(
   return withOwnedOnboardLock("nemoclaw retained sandbox recovery", () =>
     writeRetainedSandboxRecovery(RETAINED_SANDBOX_RECOVERY_FILE, input),
   );
+}
+
+export function retainedSandboxRecoveryMatchesSession(
+  record: RetainedSandboxRecoveryRecord,
+  session: Pick<Session, "cancellationRecovery"> | null | undefined,
+): boolean {
+  const recovery = session?.cancellationRecovery;
+  if (!recovery) return false;
+  return (
+    record.sandboxName === recovery.sandboxName &&
+    record.sandboxIdentityFingerprint === recovery.sandboxIdentityFingerprint &&
+    record.gatewayName === recovery.gatewayName &&
+    record.gatewayPort === recovery.gatewayPort &&
+    record.lifecycleGeneration === recovery.lifecycleGeneration &&
+    record.createAttemptNonce === recovery.createAttemptNonce
+  );
+}
+
+/** Clear one recovery-only session after destroy verifies the retained resources absent. */
+export function resolveRetainedSandboxRecovery(record: RetainedSandboxRecoveryRecord): boolean {
+  return withOwnedOnboardLock("nemoclaw retained sandbox recovery completion", () => {
+    if (!retainedSandboxRecoveryAuthorityIsCurrent(RETAINED_SANDBOX_RECOVERY_FILE, record)) {
+      return false;
+    }
+    const current = loadSession();
+    if (current && retainedSandboxRecoveryMatchesSession(record, current)) {
+      current.status = "failed";
+      current.resumable = false;
+      current.sandboxName = null;
+      current.cancellationRecovery = null;
+      saveSession(current);
+    }
+    // Release the recovery-only session first. If this write fails, the exact
+    // independent record remains available for a later completion attempt. If
+    // record retirement then fails, that record still blocks only the retained
+    // name while a different explicitly named onboarding run can proceed.
+    return retireRetainedSandboxRecovery(RETAINED_SANDBOX_RECOVERY_FILE, record);
+  });
 }
 
 export function markCancellationRecovery(

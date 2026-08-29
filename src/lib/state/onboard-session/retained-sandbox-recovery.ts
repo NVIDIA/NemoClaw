@@ -4,15 +4,15 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
+import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../sandbox-name-contract";
 
 const SCHEMA_VERSION = 1;
 const FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/u;
 const CREATE_ATTEMPT_NONCE_PATTERN = /^[0-9a-f]{62}$/u;
 const SAFE_EVIDENCE_PATTERN = /^[A-Za-z0-9._:@/-]{1,256}$/u;
-const NAME_MAX_LENGTH = 63;
-const NAME_VALID_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u;
 
 export function retainedSandboxRecoveryFile(sessionDirectory: string): string {
   return path.join(sessionDirectory, "retained-sandbox-recovery.json");
@@ -466,4 +466,43 @@ export function recordRetainedSandboxRecovery(
     throw new Error("Retained sandbox recovery record did not survive durable readback.");
   }
   return reread;
+}
+
+function retainedSandboxRecoveryAuthorityMatchesState(
+  state: RetainedSandboxRecoveryState,
+  expected: RetainedSandboxRecoveryRecord,
+): boolean {
+  const recorded = state.unresolved.find(
+    (candidate) => candidate.recordId === expected.recordId,
+  );
+  if (!recorded) return false;
+  if (!isDeepStrictEqual(recorded, expected)) {
+    throw new Error("Retained sandbox recovery authority changed before cleanup completed.");
+  }
+  return true;
+}
+
+/** Confirm that the exact cleanup authority is still present and unchanged. */
+export function retainedSandboxRecoveryAuthorityIsCurrent(
+  filePath: string,
+  expected: RetainedSandboxRecoveryRecord,
+): boolean {
+  return retainedSandboxRecoveryAuthorityMatchesState(loadState(filePath), expected);
+}
+
+/** Retire only the unchanged record whose external resources were verified absent. */
+export function resolveRetainedSandboxRecovery(
+  filePath: string,
+  expected: RetainedSandboxRecoveryRecord,
+): boolean {
+  const current = loadState(filePath);
+  if (!retainedSandboxRecoveryAuthorityMatchesState(current, expected)) return false;
+  writeStateFile(filePath, {
+    ...current,
+    unresolved: current.unresolved.filter((candidate) => candidate.recordId !== expected.recordId),
+  });
+  if (loadState(filePath).unresolved.some((candidate) => candidate.recordId === expected.recordId)) {
+    throw new Error("Retained sandbox recovery record remained after verified cleanup.");
+  }
+  return true;
 }

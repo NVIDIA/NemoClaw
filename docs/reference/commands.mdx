@@ -355,17 +355,31 @@ OpenClaw onboarding does not enter the `complete` state until NemoClaw proves th
 
 Before the configuration review, NemoClaw records the sandbox name and the selected provider and model as an incomplete choice. If onboarding stops at the review prompt, an interactive `--resume` run shows the prompt again. A non-interactive `--resume` run reuses the recorded choice and continues to inference setup. After you choose **Apply configuration**, NemoClaw records the choice before inference setup starts. If inference setup fails, `--resume` reuses the accepted provider, model, and sandbox name. If you choose **Exit onboarding**, onboarding exits with a nonzero status and clears those recorded choices. Run `$$nemoclaw onboard` to make new choices after exit. During a resume without terminal input, `--yes` or `NEMOCLAW_YES=1` also selects non-interactive resume behavior. For a new or fresh session, `--yes` and `NEMOCLAW_YES=1` accept supported confirmations but do not replace `--non-interactive`. If onboarding returns without reaching the final `complete` state, the command exits with status `1`. When that result is resumable, NemoClaw keeps the session `in_progress` at its last checkpoint instead of marking it failed, so correct the reported condition and run `$$nemoclaw onboard --resume`.
 
-If onboarding cannot complete after sandbox creation, NemoClaw preserves the sandbox and records its create-attempt label.
+#### Recover a retained sandbox
+
+If onboarding cannot complete after sandbox creation, NemoClaw preserves the sandbox.
+When available, NemoClaw records and prints the create-attempt label as the exact `ai.nvidia.nemoclaw.create-attempt=<value>` selector.
 When available, NemoClaw also records a durable identity fingerprint and verified policy evidence for recovery.
 Automatic and explicit resume, reuse, recreation, and fresh onboarding with that sandbox name remain blocked.
-Do not destroy the retained sandbox by name.
-Ask an OpenShell administrator to verify the exact live durable ID before using an identity-bound removal procedure.
-NemoClaw does not provide an operation to clear the recovery record, even after external removal.
-Start another onboarding run with a different name:
+When the recovery record contains a durable identity fingerprint, run `$$nemoclaw <sandbox-name> destroy` to attempt identity-bound recovery.
+
+Use the result from `destroy` to choose the next action:
+
+- If OpenShell still reports the sandbox present, `destroy` preserves the record and removes no resources. Do not delete the sandbox manually by mutable name. Give the displayed create-attempt label to an OpenShell administrator when present and ask them to remove that exact sandbox through an identity-bound procedure. Without a label, preserve the terminal output and ask the administrator to identify the exact sandbox from gateway or controller evidence.
+- After the administrator removes the exact sandbox, rerun `$$nemoclaw <sandbox-name> destroy`.
+- If OpenShell confirms the sandbox is absent, `destroy` verifies one retained recovery record and its immutable runtime identity. For Docker-backed sandboxes, it also verifies the immutable Docker sandbox identity and removes only qualified residual containers. It clears the matching recovery record only after verified cleanup.
+- If the recovery record is ambiguous or immutable runtime-identity verification fails, cleanup stops and the record remains. For Docker-backed sandboxes, a foreign container, changed Docker identity, or failed Docker probe has the same fail-closed result.
+
+If OpenShell did not return a durable identity fingerprint, `destroy` cannot complete recovery. A create-attempt label can help an OpenShell administrator identify and remove the exact sandbox, but it does not let NemoClaw retire the record without immutable identity authority. If neither a fingerprint nor a label is available, preserve the terminal output and ask the administrator to identify the exact sandbox from gateway or controller evidence. If NemoClaw reports that it could not save recovery evidence, preserve the terminal output and follow the same escalation.
+
+This fail-closed record keeps only the affected sandbox name unavailable. It is not retired from mutable-name absence alone, and this command does not accept administrator-supplied identity authority.
+To onboard another sandbox while the record remains unresolved, supply a different explicit name:
 
 ```bash
-$$nemoclaw onboard --fresh --name <new-sandbox-name>
+$$nemoclaw onboard --name <new-sandbox-name>
 ```
+
+`--fresh` alone does not clear the recovery record or permit reuse of the retained sandbox name.
 
 <AgentOnly variant="openclaw">
 
@@ -404,16 +418,10 @@ $$nemoclaw onboard --fresh --apf-interceptor --name my-apf-sandbox
 ```
 
 <Warning title="Recover an Incomplete APF Creation">
-  If post-create verification or native GPU fallback fails after OpenShell may have created the
-  sandbox, NemoClaw preserves the incomplete sandbox because automatic deletion would use its
-  mutable name. Do not destroy that sandbox by name. Retain the reported sandbox name,
-  create-attempt label, and durable identity fingerprint for comparison only. If OpenShell did not
-  return the fingerprint, recovery remains blocked until an administrator resolves the
-  create-attempt label to one exact sandbox. Ask an OpenShell administrator to obtain the exact live
-  durable ID, verify it against the fingerprint, and use an identity-bound removal procedure. This
-  onboarding mode does not support `--resume` or `--recreate-sandbox`, regardless of whether sandbox
-  creation began. After the administrator confirms identity-bound removal, repeat the original
-  command with `--fresh` and a new name.
+If post-create verification or native GPU fallback fails after OpenShell may have created the sandbox, NemoClaw preserves the incomplete sandbox because automatic deletion would use its mutable name.
+Follow the [retained-sandbox recovery procedure](#recover-a-retained-sandbox); its OpenShell-absence, immutable runtime-identity, and administrator requirements also apply to APF creation. For Docker-backed APF creation, its Docker container-identity requirement also applies.
+This onboarding mode does not support `--resume` or `--recreate-sandbox`, regardless of whether sandbox creation began.
+After destroy completes, repeat the original command with `--fresh`.
 </Warning>
 
 </AgentOnly>
@@ -496,7 +504,30 @@ The installer detects existing sandbox sessions before onboarding and prints a w
 NEMOCLAW_SINGLE_SESSION=1 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
-When existing sandboxes were created with OpenShell earlier than `0.0.37`, the installer prompts before running the automatic gateway upgrade path. For scripted installs, set `NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1` to allow the automatic path to prepare the current CLI without replacing OpenShell, back up every registered sandbox with the current state manifest, retire an installed gateway whose OpenShell version is outside the current release's supported range, install the supported OpenShell release, and recover the existing sandboxes. The installer reads that supported range from the prepared current source and stops without retiring the gateway if the installed version is unknown or the range is missing or invalid. When the installed OpenShell version is already supported, the installer keeps the running gateway through the host update. On Linux, if installed OpenShell lifecycle commands cannot retire the gateway, the installer checks a verified NemoClaw-managed gateway PID file for any configured gateway port. For the default gateway on port `8080`, the installer first checks a verified active `nemoclaw-openshell-gateway.service`, then checks the PID file. After either fallback confirms the gateway process is stopped, the installer tries to remove the selected OpenShell registration and warns if onboarding must replace a stale registration. If neither fallback can verify and stop the process, the installer stops after backup with every sandbox backup preserved. If any registered sandbox cannot be backed up, the installer aborts before it changes the gateway. After the automatic path retires an out-of-range gateway, it forces installation of the OpenShell version pinned by the prepared source before recovery. This mandatory installation applies to source and managed install modes and cannot remain deferred after gateway retirement. If the forced installation fails, the installer does not stage a gateway service or start recovery, preserves the backups, and tells you to rerun with `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1`. When the registry contains a pre-fingerprint OpenClaw or Hermes entry with no recorded custom-image evidence, an interactive install asks you to confirm that the listed sandbox used a NemoClaw-managed image. For a non-interactive install, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to the exact JSON array of names printed by the installer, such as `["my-assistant","preserve-hermes"]`, only after verifying every named sandbox used a managed image. The confirmation permits those legacy entries to recover onto the current managed image, but it does not override recorded custom-image evidence. After successful recovery, the installer skips generic onboarding. For any registered-sandbox upgrade that you already prepared manually, set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after backing up every registered sandbox and retiring the old gateway. This environment variable asserts that those steps are complete, so the installer skips the repeated backup and gateway-retirement phase before it checks whether OpenShell is installed or whether its version is in range. For a non-default gateway, preserve the selected port on the `bash` side of the install pipeline.
+When existing sandboxes were created with OpenShell earlier than `0.0.37`, the installer prompts before running the automatic gateway upgrade path.
+For scripted installs, set `NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1` to allow the automatic path to prepare the current CLI without replacing OpenShell, back up every registered sandbox with the current state manifest, retire an installed gateway whose OpenShell version is outside the current release's supported range, install the supported OpenShell release, and recover the existing sandboxes.
+The installer reads that supported range from the prepared current source and stops without retiring the gateway if the installed version is unknown or the range is missing or invalid.
+When the installed OpenShell version is already supported, the installer keeps the running gateway through the host update.
+On Linux and macOS, if installed OpenShell lifecycle commands cannot retire the gateway, the installer uses verified NemoClaw-managed service or PID-file evidence for the supported recovery path.
+For the default gateway on port `8080`, Linux recovery first checks a verified active `nemoclaw-openshell-gateway.service`, while macOS recovery first checks a verified active Homebrew gateway service.
+Both paths then check a verified NemoClaw-managed gateway PID file for any configured gateway port.
+When a macOS PID file names a process that is no longer running, the installer removes the stale PID file only after `lsof` reports no listener and no diagnostic output.
+If `lsof` is unavailable, reports permission or other diagnostics, or produces inconsistent listener results, the installer stops before retiring the gateway and preserves the PID file, OpenShell registration, and sandbox backups.
+After either fallback confirms the gateway process is stopped, the installer tries to remove the selected OpenShell registration and warns if onboarding must replace a stale registration.
+If neither fallback can verify and stop the process, the installer stops after backup with every sandbox backup preserved.
+If any registered sandbox cannot be backed up, the installer aborts before it changes the gateway.
+After the automatic path retires an out-of-range gateway, it forces installation of the OpenShell version pinned by the prepared source before recovery.
+This mandatory installation applies to source and managed install modes and cannot remain deferred after gateway retirement.
+If the forced installation fails, the installer does not stage a gateway service or start recovery, preserves the backups, and tells you to rerun with `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1`.
+On macOS, if the verified Homebrew installation does not resolve executable OpenShell CLI and gateway binaries, the installer also stops before recovery and preserves the backups and prepared recovery state.
+It does not fall back to a stale user-local OpenShell binary.
+When the registry contains a pre-fingerprint OpenClaw or Hermes entry with no recorded custom-image evidence, an interactive install asks you to confirm that the listed sandbox used a NemoClaw-managed image.
+For a non-interactive install, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to the JSON array of names printed by the installer, such as `["my-assistant","preserve-hermes"]`, only after verifying every named sandbox used a managed image.
+The confirmation permits those legacy entries to recover onto the current managed image, but it does not override recorded custom-image evidence.
+After successful recovery, the installer skips generic onboarding.
+For any registered-sandbox upgrade that you already prepared manually, set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after backing up every registered sandbox and retiring the old gateway.
+This environment variable asserts that those steps are complete, so the installer skips the repeated backup and gateway-retirement phase before it checks whether OpenShell is installed or whether its version is in range.
+For a non-default gateway, preserve the selected port on the `bash` side of the install pipeline.
 
 ```bash
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_GATEWAY_PORT=<selected-port> NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
@@ -670,7 +701,11 @@ If you enable Telegram during onboarding, the wizard can also prompt for whether
 
 </AgentOnly>
 
-If you cancel a brand-new onboarding run at the policy-tier selector or either policy-preset selector after sandbox creation, NemoClaw preserves the incomplete sandbox, registry entry, and onboarding session for identity-bound recovery. NemoClaw reports the durable sandbox identity fingerprint when it is available. It does not run OpenShell's mutable-name deletion command because the name may now identify a replacement sandbox. Do not delete the sandbox by mutable name. Shared inference providers are gateway configuration, not sandbox cleanup targets. Sandbox-scoped provider registrations or gateway-bound credentials may remain when the durable recovery record lists them. Ask an OpenShell administrator to inspect the exact sandbox identity and remove only sandbox-scoped resources whose ownership is confirmed for the retained sandbox. A credential environment name in the recovery record does not prove that its value was exposed. Rotate a credential only when identity-bound inspection proves that it was exposed or attached to a retained sandbox-scoped resource. NemoClaw stores the recovery record independently from the active onboarding session. A fresh run with a different name can proceed without clearing that record, but automatic resume, explicit `--resume`, reuse, recreation, and fresh onboarding with the retained name remain blocked. NemoClaw has no supported operation in this release to clear the recovery record, so the retained name remains unavailable even after external recovery or removal. Preserve the record as evidence. Start fresh onboarding with `--fresh` and another available sandbox name. Select the required provider, model, agent, policy, and environment inputs again because `--fresh` does not retain them.
+If you cancel a brand-new onboarding run at the policy-tier selector or either policy-preset selector after sandbox creation, NemoClaw preserves the incomplete sandbox, registry entry, and onboarding session for identity-bound recovery.
+NemoClaw reports the durable sandbox identity fingerprint when it is available.
+It does not run OpenShell's mutable-name deletion command because the name may now identify a replacement sandbox.
+Follow the [retained-sandbox recovery procedure](#recover-a-retained-sandbox) to reconcile this cancellation.
+A fresh run with a different explicit name can continue while the cancelled sandbox name remains blocked.
 
 If you run onboarding again with the same sandbox name and choose a different inference provider or model, NemoClaw detects the drift and recreates the sandbox so the running agent config matches your selection. In interactive mode, the wizard asks for confirmation before delete and recreate. In non-interactive mode, NemoClaw recreates automatically when the stored selection is readable and differs. For managed Deep Agents Code sandboxes, NemoClaw also recreates when the live `dcode identity` selection is unreadable; other agent paths continue to reuse by default when their stored selection cannot be read. Set `NEMOCLAW_RECREATE_SANDBOX=1` to force recreation even when no drift is detected.
 
@@ -1777,7 +1812,16 @@ Before changing a Docker-backed sandbox, NemoClaw inspects every container with 
 - A nonempty `openshell.ai/sandbox-workspace`
 - A nonempty `openshell.ai/sandbox-id`
 
-If the initial inspection cannot complete, more than one container matches, a matching container has conflicting or incomplete labels, or Docker returns malformed identity data, `destroy` exits before changing sandbox resources. The identity checks still apply with `--force`, `--yes`, or `NEMOCLAW_NON_INTERACTIVE=1`; those controls authorize confirmation but do not authorize an unproven container identity. NemoClaw rechecks the exact identity after read-only preflight, before provider cleanup, and synchronously at the sandbox-deletion boundary. If a later recheck detects drift or fails, `destroy` refuses sandbox deletion, restores managed MCP preparation when possible, preserves local ownership state, and reports any earlier cleanup already performed. If OpenShell reports the sandbox absent after preflight captured one matching Docker container, `destroy` rechecks and removes only that exact container ID. If Docker reports another OpenShell-managed container, removal fails, or NemoClaw cannot confirm removal, `destroy` exits nonzero and preserves the registry entry. Correct the reported Docker state, then rerun `destroy`. If Docker cannot complete the inspection, correct the reported Docker error before you rerun `destroy`. For common recovery steps, refer to [Docker is not running](troubleshooting#docker-is-not-running) and [Docker permission denied on Linux](troubleshooting#docker-permission-denied-on-linux).
+In an ordinary destroy flow, if the initial inspection cannot complete, more than one container matches, a matching container has conflicting or incomplete labels, or Docker returns malformed identity data, `destroy` exits before changing sandbox resources.
+Retained-sandbox recovery accepts multiple managed containers only when every immutable sandbox ID matches the retained recovery fingerprint.
+The identity checks still apply with `--force`, `--yes`, or `NEMOCLAW_NON_INTERACTIVE=1`; those controls authorize confirmation but do not authorize an unproven container identity.
+NemoClaw rechecks the identity after read-only preflight, before provider cleanup, and synchronously at the sandbox-deletion boundary.
+If a later recheck detects drift or fails, `destroy` refuses sandbox deletion, restores managed MCP preparation when possible, preserves local ownership state, and reports any earlier cleanup already performed.
+If OpenShell reports the sandbox absent after preflight captured one matching Docker container, `destroy` rechecks and removes only that container ID.
+If Docker reports another OpenShell-managed container, removal fails, or NemoClaw cannot confirm removal, `destroy` exits nonzero and preserves the registry entry.
+Correct the reported Docker state, then rerun `destroy`.
+If Docker cannot complete the inspection, correct the reported Docker error before you rerun `destroy`.
+For common recovery steps, refer to [Docker is not running](troubleshooting#docker-is-not-running) and [Docker permission denied on Linux](troubleshooting#docker-permission-denied-on-linux).
 
 If `destroy` reports conflicting, incomplete, or malformed identity data, inspect the matching containers:
 
