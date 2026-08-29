@@ -217,6 +217,28 @@ describe("Hermes Portable probe-only forward recovery", () => {
 describe("Hermes Portable connect composition", () => {
   const originalStdoutIsTty = process.stdout.isTTY;
 
+  const acceptedHermesReadiness = () => {
+    const entry = {
+      name: "alpha",
+      agent: "hermes",
+      provider: "ollama-local",
+      model: "qwen3-vl:4b",
+      policies: [],
+      openshellDriver: "docker",
+      gatewayName: "nemoclaw",
+      lifecycleGeneration: "generation-1",
+    } as never;
+    return {
+      entry,
+      readinessDecision: {
+        kind: "accepted" as const,
+        category: "accepted" as const,
+        agent: { name: "hermes" },
+        sb: entry,
+      },
+    };
+  };
+
   beforeEach(() => {
     process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
     Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
@@ -297,6 +319,81 @@ describe("Hermes Portable connect composition", () => {
     expect(harness.logSpy.mock.calls.flat().join("\n")).toMatch(
       /forwardAction=restored result=ready/,
     );
+  });
+
+  it.each([
+    ["missing", ["stop", "start"]],
+    ["dead", ["stop", "start"]],
+  ] as const)(
+    "restores an accepted-readiness %s forward before reporting probe success",
+    async (initialStatus, expectedMutations) => {
+      const accepted = acceptedHermesReadiness();
+      const harness = createConnectHarness({
+        agentName: "hermes",
+        sessionAgent: { name: "hermes" },
+        registryEntry: accepted.entry,
+        portableReceiptDisposition: { kind: "hermes", phase: "active" },
+        portableRecoveryResult: { kind: "already-running" },
+        readinessDecision: accepted.readinessDecision,
+      });
+      configureMissingHermesForwardCapture(harness, {
+        initialStatus,
+        afterStart: () => {
+          expect(harness.logSpy.mock.calls.flat().join("\n")).not.toContain(
+            "Probe complete: launch readiness is healthy",
+          );
+        },
+      });
+
+      await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+      const mutations = harness.captureResolvedOpenshellSpy.mock.calls
+        .filter(
+          ([args]) =>
+            Array.isArray(args) &&
+            args[0] === "forward" &&
+            ["start", "stop"].includes(String(args[1])),
+        )
+        .map(([args]) => (args as string[])[1]);
+      expect(mutations).toEqual(expectedMutations);
+      expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+      expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
+        "Probe complete: launch readiness is healthy for 'alpha'.",
+      );
+    },
+  );
+
+  it("does not report accepted readiness when forward recovery fails", async () => {
+    const accepted = acceptedHermesReadiness();
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      registryEntry: accepted.entry,
+      portableReceiptDisposition: { kind: "hermes", phase: "active" },
+      portableRecoveryResult: { kind: "already-running" },
+      readinessDecision: accepted.readinessDecision,
+    });
+    const captureResolved = harness.captureResolvedOpenshellSpy.getMockImplementation()!;
+    harness.captureResolvedOpenshellSpy.mockImplementation(((args: unknown, options: unknown) => {
+      const argv = Array.isArray(args) ? args : [];
+      return argv[0] === "forward" && argv[1] === "list"
+        ? { status: 0, output: "malformed canary" }
+        : captureResolved(args, options);
+    }) as never);
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.logSpy.mock.calls.flat().join("\n")).not.toContain(
+      "Probe complete: launch readiness is healthy",
+    );
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+    expect(
+      harness.captureResolvedOpenshellSpy.mock.calls.some(
+        ([args]) => Array.isArray(args) && ["start", "stop"].includes(String(args[1])),
+      ),
+    ).toBe(false);
   });
 
   it("stops before publication when the owning gateway forward list is malformed", async () => {

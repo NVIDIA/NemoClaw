@@ -345,25 +345,7 @@ async function runSandboxConnectProbe(
       probeTiming?.markFailureStage("forward");
       failHermesPortableForwardRecovery(sandboxName, "authority-drift");
     }
-    let forwardRecovery: ReturnType<typeof recoverHermesPortableForwardsForConnectProbe>;
-    try {
-      forwardRecovery = measure("forward", () =>
-        recoverHermesPortableForwardsForConnectProbe({
-          intent: "connect-probe-only",
-          sandboxName,
-          authority,
-          readRegistry: registry.getSandbox,
-        }),
-      );
-    } catch (error) {
-      probeTiming?.setForwardAction("failed");
-      probeTiming?.markFailureStage("forward");
-      failHermesPortableForwardRecovery(
-        sandboxName,
-        error instanceof HermesPortableForwardRecoveryError ? error.failure : "recovery-failed",
-      );
-    }
-    probeTiming?.setForwardAction(forwardRecovery.kind === "restored" ? "restored" : "verified");
+    recoverHermesPortableForwardsForConnectProbeOrExit(sandboxName, authority, probeTiming);
     console.log(
       `  Probe complete: ${agentName} passed receipt-owned authenticated health in '${sandboxName}'.`,
     );
@@ -637,6 +619,32 @@ function recoverHermesPortableForwardsForConnectProbe(
       captureRollback: capture,
     },
   });
+}
+
+function recoverHermesPortableForwardsForConnectProbeOrExit(
+  sandboxName: string,
+  authority: HermesPortableActiveLifecycleAuthority,
+  probeTiming?: ProbeTimingRecorder,
+): void {
+  let forwardRecovery: ReturnType<typeof recoverHermesPortableForwardsForConnectProbe>;
+  try {
+    const recover = () =>
+      recoverHermesPortableForwardsForConnectProbe({
+        intent: "connect-probe-only",
+        sandboxName,
+        authority,
+        readRegistry: registry.getSandbox,
+      });
+    forwardRecovery = probeTiming ? probeTiming.measure("forward", recover) : recover();
+  } catch (error) {
+    probeTiming?.setForwardAction("failed");
+    probeTiming?.markFailureStage("forward");
+    failHermesPortableForwardRecovery(
+      sandboxName,
+      error instanceof HermesPortableForwardRecoveryError ? error.failure : "recovery-failed",
+    );
+  }
+  probeTiming?.setForwardAction(forwardRecovery.kind === "restored" ? "restored" : "verified");
 }
 
 class HermesPortableInferenceRouteVerificationError extends Error {
@@ -2027,6 +2035,11 @@ async function prepareConnectSandboxWithinLifecycleFence(
           );
           probeTiming!.measure("authority", () =>
             assertHermesPortableLifecycleForConnect(sandboxName, verified, gatewayName),
+          );
+          recoverHermesPortableForwardsForConnectProbeOrExit(
+            sandboxName,
+            activeAuthority,
+            probeTiming,
           );
         }
         console.log(`  Probe complete: launch readiness is healthy for '${sandboxName}'.`);
