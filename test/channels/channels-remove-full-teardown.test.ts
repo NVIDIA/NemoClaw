@@ -6,9 +6,9 @@
 // does not re-apply the preset on rebuild, (2) wipe the channel's durable
 // state inside the sandbox so the rebuild's state_dirs backup does not
 // restore stale auth files, and (3) refuse to proceed to rebuild when the
-// in-sandbox cleanup for a QR-paired channel fails — otherwise the backup
-// would re-capture the auth blob and the channel would reconnect after
-// the rebuild.
+// in-sandbox cleanup for a channel with durable account or session state
+// fails — otherwise the backup would re-capture the auth blob and the channel
+// would reconnect after the rebuild.
 
 import assert from "node:assert/strict";
 import { type SpawnSyncReturns, spawnSync } from "node:child_process";
@@ -385,9 +385,25 @@ const ctx = module.exports;
     );
   });
 
-  it("aborts before rebuild when both exec and SSH cleanup fail for a QR channel", () => {
+  it.each([
+    {
+      label: "an in-sandbox QR channel",
+      channel: "whatsapp",
+      disabledChannels: [] as string[],
+      presetNamesApplied: ["npm", "pypi", "huggingface", "brew", "whatsapp"],
+    },
+    {
+      label: "the host-QR WeChat channel",
+      channel: "wechat",
+      disabledChannels: ["wechat"],
+      presetNamesApplied: ["npm", "pypi", "huggingface", "brew", "wechat"],
+    },
+  ])("aborts before rebuild when cleanup fails for $label", (testCase) => {
     const script = `${buildPreamble({
+      presetNamesApplied: testCase.presetNamesApplied,
       sandboxAgent: "openclaw",
+      channelInRegistry: testCase.channel,
+      disabledChannels: testCase.disabledChannels,
       sandboxExecResult: { status: 1, stdout: "", stderr: "sandbox is not running" },
       sshFallbackResult: { status: 255, stdout: "", stderr: "ssh: connect to host ... failed" },
     })}
@@ -403,7 +419,7 @@ const ctx = module.exports;
     exitCode: ctx.getExitCode(),
   });
   try {
-    await ctx.channelModule.removeSandboxChannel("test-sb", { channel: "whatsapp" });
+    await ctx.channelModule.removeSandboxChannel("test-sb", { channel: ${JSON.stringify(testCase.channel)} });
     process.stdout.write("\\n__RESULT__" + JSON.stringify(dumpState()) + "\\n");
   } catch (err) {
     if (typeof err.message === "string" && err.message.startsWith("__PROCESS_EXIT__")) {
@@ -421,7 +437,7 @@ const ctx = module.exports;
     const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
     assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
 
-    assert.equal(payload.exitCode, 1, "QR channel cleanup failure must exit non-zero");
+    assert.equal(payload.exitCode, 1, "mandatory state cleanup failure must exit non-zero");
     assert.ok(
       !payload.callOrder.includes("promptAndRebuild"),
       `rebuild must NOT be queued on cleanup failure; callOrder=${JSON.stringify(payload.callOrder)}`,
@@ -438,7 +454,7 @@ const ctx = module.exports;
     );
     assert.deepEqual(
       payload.sessionPolicyPresets,
-      ["npm", "pypi", "huggingface", "brew", "whatsapp"],
+      testCase.presetNamesApplied,
       "session.policyPresets must be unchanged on early-bail",
     );
 

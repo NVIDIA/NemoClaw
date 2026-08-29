@@ -1871,7 +1871,8 @@ async function removeSandboxChannelUnlocked(
   }
 
   const tokenKeys = getChannelTokenKeys(channel);
-  const isQrChannel = channelUsesInSandboxQrPairing(channel);
+  const requiresStateCleanupBeforeTeardown =
+    channelUsesInSandboxQrPairing(channel) || canonical === "wechat";
 
   const registryEntry = registry.getSandbox(sandboxName);
   let sessionForSandbox: ReturnType<typeof onboardSession.loadSession> = null;
@@ -1908,16 +1909,16 @@ async function removeSandboxChannelUnlocked(
     }
   }
 
-  // QR-paired channels store auth blobs inside the sandbox that survive a
-  // rebuild via the state_dirs backup. Tear those down FIRST so a cleanup
-  // failure leaves the registry/policy untouched — the operator can re-run
-  // after starting the sandbox. Bailing here is the only way to keep
-  // #3998 from recurring on cleanup error. Skip the cleanup attempt entirely
-  // when the registry/policy show no residue — `channels remove` on a
-  // never-configured/already-clean sandbox must remain a quiet no-op even
-  // when the sandbox is stopped (#4001 review).
+  // Channels with durable account or session state store auth blobs inside
+  // the sandbox that survive a rebuild via the state_dirs backup. Tear those
+  // down FIRST so a cleanup failure leaves the registry/policy untouched —
+  // the operator can re-run after starting the sandbox. Bailing here is the
+  // only way to keep #3998 from recurring on cleanup error. Skip the cleanup
+  // attempt entirely when the registry/policy show no residue. Removing a
+  // never-configured/already-clean channel must remain a quiet no-op even when
+  // the sandbox is stopped (#4001 review).
   if (
-    isQrChannel &&
+    requiresStateCleanupBeforeTeardown &&
     hasChannelResidue &&
     !clearSandboxChannelDurableState(sandboxName, canonical)
   ) {
@@ -1979,7 +1980,7 @@ async function removeSandboxChannelUnlocked(
   // Token-based channels: best-effort tidy of any leftover dir. Token
   // revocation already prevents the bot from authenticating, so a
   // failure here is a warning, not a bail.
-  if (!isQrChannel) {
+  if (!requiresStateCleanupBeforeTeardown) {
     clearSandboxChannelDurableState(sandboxName, canonical);
   }
 
