@@ -15,15 +15,31 @@ const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
 interface WechatRefreshFixture {
   readonly account: Record<string, unknown>;
+  readonly config: OpenClawTestConfig;
+  readonly configHash: string;
   readonly result: ReturnType<typeof spawnSync>;
 }
 
-function wechatConfig(enabled: boolean | null): Record<string, unknown> {
+interface OpenClawTestConfig {
+  readonly channels: Record<string, unknown> & {
+    telegram?: {
+      accounts: { default: { botToken: string } };
+    };
+  };
+}
+
+function wechatConfig(
+  enabled: boolean | null,
+  accountEnabled: boolean | null = true,
+): Record<string, unknown> {
   return {
     channels: {
       "openclaw-weixin": {
         ...(enabled === null ? {} : { enabled }),
-        accounts: { primary: { enabled: enabled !== false } },
+        accounts: {
+          primary:
+            accountEnabled === null ? {} : { enabled: enabled === false ? false : accountEnabled },
+        },
       },
     },
   };
@@ -33,8 +49,9 @@ function runWechatRefresh(
   accountToken: string,
   env: Record<string, string>,
   enabled: boolean | null = true,
-  mutateAccount?: (paths: { accountPath: string; tmpDir: string }) => void,
+  mutateAccount?: (paths: { accountPath: string; configPath: string; tmpDir: string }) => void,
   configOwner = "sandbox",
+  accountEnabled: boolean | null = true,
 ): WechatRefreshFixture {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wechat-placeholder-"));
   const openclawDir = path.join(tmpDir, ".openclaw");
@@ -42,14 +59,17 @@ function runWechatRefresh(
   const configPath = path.join(openclawDir, "openclaw.json");
   const scriptPath = path.join(tmpDir, "run.sh");
   fs.mkdirSync(path.dirname(accountPath), { recursive: true });
-  fs.writeFileSync(configPath, `${JSON.stringify(wechatConfig(enabled), null, 2)}\n`);
+  fs.writeFileSync(
+    configPath,
+    `${JSON.stringify(wechatConfig(enabled, accountEnabled), null, 2)}\n`,
+  );
   fs.writeFileSync(
     accountPath,
     `${JSON.stringify({ token: accountToken, savedAt: SAVED_AT }, null, 2)}\n`,
     { mode: 0o600 },
   );
   fs.chmodSync(accountPath, 0o600);
-  mutateAccount?.({ accountPath, tmpDir });
+  mutateAccount?.({ accountPath, configPath, tmpDir });
   const refresh = extractShellFunctionFromSource(
     src,
     "refresh_openclaw_provider_placeholders",
@@ -75,7 +95,12 @@ function runWechatRefresh(
       timeout: 5000,
     });
     const account = JSON.parse(fs.readFileSync(accountPath, "utf-8"));
-    return { account, result };
+    const config = JSON.parse(fs.readFileSync(configPath, "utf-8")) as OpenClawTestConfig;
+    const configHashPath = path.join(openclawDir, ".config-hash");
+    const configHash = fs.existsSync(configHashPath)
+      ? fs.readFileSync(configHashPath, "utf-8")
+      : "";
+    return { account, config, configHash, result };
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -97,6 +122,21 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
   it("refreshes the account when active WeChat config omits the parent enabled field", () => {
     const scoped = "openshell:resolve:env:v42_WECHAT_BOT_TOKEN";
     const run = runWechatRefresh(CANONICAL, { WECHAT_BOT_TOKEN: scoped }, null);
+
+    expect(run.result.status, String(run.result.stderr)).toBe(0);
+    expect(run.account.token).toBe(scoped);
+  });
+
+  it("refreshes the account when active WeChat config omits the account enabled field", () => {
+    const scoped = "openshell:resolve:env:v42_WECHAT_BOT_TOKEN";
+    const run = runWechatRefresh(
+      CANONICAL,
+      { WECHAT_BOT_TOKEN: scoped },
+      true,
+      undefined,
+      "sandbox",
+      null,
+    );
 
     expect(run.result.status, String(run.result.stderr)).toBe(0);
     expect(run.account.token).toBe(scoped);
@@ -163,6 +203,29 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
     expect(run.account.token).toBe(rawToken);
     expect(run.result.stderr).toContain("neither canonical nor revision-scoped");
     expect(run.result.stderr).not.toContain(rawToken);
+  });
+
+  it("rejects an invalid WeChat placeholder before updating another provider", () => {
+    const telegramCanonical = "openshell:resolve:env:TELEGRAM_BOT_TOKEN";
+    const run = runWechatRefresh(
+      CANONICAL,
+      {
+        TELEGRAM_BOT_TOKEN: "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN",
+        WECHAT_BOT_TOKEN: "openshell:resolve:env:v42_OTHER_TOKEN",
+      },
+      true,
+      ({ configPath }) => {
+        const config = JSON.parse(fs.readFileSync(configPath, "utf-8")) as OpenClawTestConfig;
+        config.channels.telegram = {
+          accounts: { default: { botToken: telegramCanonical } },
+        };
+        fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+      },
+    );
+
+    expect(run.result.status).toBe(1);
+    expect(run.config.channels.telegram?.accounts.default.botToken).toBe(telegramCanonical);
+    expect(run.configHash).toBe("");
   });
 
   it("leaves the account untouched while the channel is stopped", () => {

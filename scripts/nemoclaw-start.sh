@@ -1548,8 +1548,9 @@ refresh_openclaw_provider_placeholders() {
   # no-follow operations so its identity-bound endpoint receives the exact
   # revision-scoped placeholder without persisting the raw bot token.
   refresh_openclaw_wechat_account_placeholder() {
+    local mode="${1:-write}"
 
-    python3 -I - "$config_file" <<'PYWECHATPLACEHOLDER'
+    python3 -I - "$config_file" "$mode" <<'PYWECHATPLACEHOLDER'
 import json
 import os
 import re
@@ -1558,6 +1559,7 @@ import stat
 import sys
 
 config_file = os.path.abspath(sys.argv[1])
+mode = sys.argv[2]
 openclaw_dir = os.path.dirname(config_file)
 env_key = "WECHAT_BOT_TOKEN"
 canonical = f"openshell:resolve:env:{env_key}"
@@ -1581,6 +1583,9 @@ def safe_account_id(value):
         and not any(ord(char) < 32 or ord(char) == 127 for char in value)
     )
 
+
+if mode not in {"validate-only", "write"}:
+    fail("the refresh mode is invalid")
 
 if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
     fail("the platform cannot enforce no-follow account traversal")
@@ -1635,6 +1640,9 @@ try:
         if not runtime_placeholder.startswith("openshell:resolve:env:"):
             fail(f"{env_key} is not an OpenShell placeholder; raw credentials stay out of account files")
         fail(f"{env_key} is not the required revision-scoped OpenShell placeholder")
+
+    if mode == "validate-only":
+        raise SystemExit(0)
 
     try:
         plugin_fd = os.open("openclaw-weixin", directory_flags, dir_fd=root_fd)
@@ -1737,6 +1745,11 @@ PYWECHATPLACEHOLDER
     refresh_openclaw_wechat_account_placeholder || return $?
     return 0
   fi
+
+  # Reject an invalid WeChat runtime placeholder before the generic refresh can
+  # update openclaw.json or its hash. The write pass repeats the configuration
+  # and placeholder checks because account files can change after this preflight.
+  refresh_openclaw_wechat_account_placeholder validate-only || return $?
 
   local keys
   keys="$(
