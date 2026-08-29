@@ -306,7 +306,7 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     expect(
       createWindowsMxcOpenShellAttachmentObservationRequest(parsed, gatewayConfigPath),
     ).toEqual({
-      contractVersion: 2,
+      contractVersion: 3,
       providerId: "mxc",
       mode: "attach-existing",
       observedDistribution: {

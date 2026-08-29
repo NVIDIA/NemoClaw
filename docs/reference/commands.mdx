@@ -673,14 +673,19 @@ When existing sandboxes were created with OpenShell earlier than `0.0.37`, the i
 For scripted installs, set `NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1` to allow the automatic path to prepare the current CLI without replacing OpenShell, back up every registered sandbox with the current state manifest, retire an installed gateway whose OpenShell version is outside the current release's supported range, install the supported OpenShell release, and recover the existing sandboxes.
 The installer reads that supported range from the prepared current source and stops without retiring the gateway if the installed version is unknown or the range is missing or invalid.
 When the installed OpenShell version is already supported, the installer keeps the running gateway through the host update.
-On Linux, if installed OpenShell lifecycle commands cannot retire the gateway, the installer checks a verified NemoClaw-managed gateway PID file for any configured gateway port.
-For the default gateway on port `8080`, the installer first checks a verified active `nemoclaw-openshell-gateway.service`, then checks the PID file.
+On Linux and macOS, if installed OpenShell lifecycle commands cannot retire the gateway, the installer uses verified NemoClaw-managed service or PID-file evidence for the supported recovery path.
+For the default gateway on port `8080`, Linux recovery first checks a verified active `nemoclaw-openshell-gateway.service`, while macOS recovery first checks a verified active Homebrew gateway service.
+Both paths then check a verified NemoClaw-managed gateway PID file for any configured gateway port.
+When a macOS PID file names a process that is no longer running, the installer removes the stale PID file only after `lsof` reports no listener and no diagnostic output.
+If `lsof` is unavailable, reports permission or other diagnostics, or produces inconsistent listener results, the installer stops before retiring the gateway and preserves the PID file, OpenShell registration, and sandbox backups.
 After either fallback confirms the gateway process is stopped, the installer tries to remove the selected OpenShell registration and warns if onboarding must replace a stale registration.
 If neither fallback can verify and stop the process, the installer stops after backup with every sandbox backup preserved.
 If any registered sandbox cannot be backed up, the installer aborts before it changes the gateway.
 After the automatic path retires an out-of-range gateway, it forces installation of the OpenShell version pinned by the prepared source before recovery.
 This mandatory installation applies to source and managed install modes and cannot remain deferred after gateway retirement.
 If the forced installation fails, the installer does not stage a gateway service or start recovery, preserves the backups, and tells you to rerun with `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1`.
+On macOS, if the verified Homebrew installation does not resolve executable OpenShell CLI and gateway binaries, the installer also stops before recovery and preserves the backups and prepared recovery state.
+It does not fall back to a stale user-local OpenShell binary.
 When the registry contains a pre-fingerprint OpenClaw or Hermes entry with no recorded custom-image evidence, an interactive install asks you to confirm that the listed sandbox used a NemoClaw-managed image.
 For a non-interactive install, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to the JSON array of names printed by the installer, such as `["my-assistant","preserve-hermes"]`, only after verifying every named sandbox used a managed image.
 The confirmation permits those legacy entries to recover onto the current managed image, but it does not override recorded custom-image evidence.
