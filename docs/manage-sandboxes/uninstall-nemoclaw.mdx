@@ -214,8 +214,19 @@ This preservation also applies with `--destroy-user-data`.
 This path covers incomplete or absent onboarding and an absent state directory.
 It also covers completed ordinary onboarding after an earlier Portable attempt.
 Ambient content at that path does not establish Portable lifecycle authority or block ordinary uninstall.
-Before a later Portable onboarding attempt, inspect the preserved path.
-Do not delete it merely because uninstall preserved it.
+Before a later Portable onboarding attempt, inspect the preserved path at `~/.config/nemoclaw/portable/`.
+Preservation alone does not establish that this path is abandoned or authorize its deletion.
+<AgentOnly variant="openclaw,deepagents">
+Verify that `~/.nemoclaw/portable-demo-lifecycle/` is absent or empty.
+Also verify that `~/.nemoclaw/` contains neither `portable-uninstall-retirement.json` nor an entry whose name starts with `.portable-uninstall-retirement`.
+</AgentOnly>
+<AgentOnly variant="hermes">
+Verify that `~/.nemoclaw/hermes-portable-lifecycle/` and `~/.nemoclaw/portable-demo-lifecycle/` are absent or empty.
+Also verify that `~/.nemoclaw/` contains no `hermes-portable-uninstall-transaction.json`, `portable-uninstall-retirement.json`, or entry whose name starts with `.portable-uninstall-retirement`.
+</AgentOnly>
+Confirm that those checks find no lifecycle evidence and that full uninstall completed without a Portable lifecycle error.
+Only then may you repair or remove a path that you know an earlier Portable attempt abandoned before rerunning Portable onboarding.
+If lifecycle state is unreadable, ambiguous, or contradictory, keep the preserved path unchanged and resolve the reported lifecycle error before onboarding.
 Portable onboarding validates the path's ownership, type, and permissions and stops when it finds unsafe state.
 Uninstall still stops before cleanup for an unknown Portable uninstall artifact in lifecycle state or a completed Portable onboarding session whose lifecycle receipt is missing.
 It records the initial lifecycle receipts and sandbox registry state for comparison.
