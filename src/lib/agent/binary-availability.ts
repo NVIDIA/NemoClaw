@@ -4,7 +4,10 @@
 import { shellQuote } from "../runner";
 import type { AgentDefinition } from "./defs";
 
-type RunCaptureOpenshell = (args: string[], opts?: { ignoreError?: boolean }) => string | null;
+type RunCaptureOpenshell = (
+  args: string[],
+  opts?: { ignoreError?: boolean; includeStderr?: boolean },
+) => string | { status?: number | null; output?: string | null } | null;
 
 export type AgentBinaryAvailability =
   | { available: true }
@@ -56,9 +59,12 @@ export function verifyAgentBinaryAvailable(
       "-lc",
       script,
     ],
-    { ignoreError: true },
+    { ignoreError: true, includeStderr: true },
   );
-  const status = result?.trim() ?? "";
+  if (typeof result !== "string" && result?.status !== 0) {
+    return { available: false, reason: "unobservable", binaryPath: binaryPath || undefined };
+  }
+  const status = (typeof result === "string" ? result : result?.output)?.trim() ?? "";
   const marker = status
     .split(/\r?\n/)
     .map((line) => line.trim())

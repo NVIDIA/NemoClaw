@@ -391,10 +391,12 @@ describe("Deep Agents Code terminal onboard acceptance", () => {
     const runCaptureOpenshell = vi.fn((args: string[]) =>
       recordSuccessfulDeepAgentsRuntimeCall(args, calls),
     );
-    const captureOpenshell = vi.fn(() => ({
-      status: 97,
-      output: "NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:0",
-    }));
+    const captureOpenshell = vi
+      .fn(() => ({
+        status: 97,
+        output: "NEMOCLAW_AGENT_SMOKE_BEGIN\nNEMOCLAW_AGENT_SMOKE_EXIT:0",
+      }))
+      .mockReturnValueOnce({ status: 0, output: "NEMOCLAW_AGENT_BINARY_CHECK:ok" });
     const context = createAgentSetupContext(runCaptureOpenshell, captureOpenshell);
 
     await expectSetupExit(() =>

@@ -688,6 +688,30 @@ describe("handleAgentSetup guards", () => {
     });
   });
 
+  it("accepts a marker from a successful structured OpenShell capture", () => {
+    expect(
+      verifyAgentBinaryAvailable(
+        "alpha",
+        makeAgent({ name: "pi", binary_path: "/usr/local/bin/pi" }),
+        () => ({ status: 0, output: "NEMOCLAW_AGENT_BINARY_CHECK:ok" }),
+      ),
+    ).toEqual({ available: true });
+  });
+
+  it("rejects marker text when the structured OpenShell transport failed", () => {
+    expect(
+      verifyAgentBinaryAvailable(
+        "alpha",
+        makeAgent({ name: "pi", binary_path: "/usr/local/bin/pi" }),
+        () => ({ status: 1, output: "NEMOCLAW_AGENT_BINARY_CHECK:ok" }),
+      ),
+    ).toEqual({
+      available: false,
+      reason: "unobservable",
+      binaryPath: "/usr/local/bin/pi",
+    });
+  });
+
   it("targets the owning gateway and disables TTY allocation for the binary probe", () => {
     const runCaptureOpenshell = vi.fn(() => "NEMOCLAW_AGENT_BINARY_CHECK:ok");
 
@@ -713,7 +737,7 @@ describe("handleAgentSetup guards", () => {
         "-lc",
         expect.stringContaining("NEMOCLAW_AGENT_BINARY_CHECK"),
       ],
-      { ignoreError: true },
+      { ignoreError: true, includeStderr: true },
     );
   });
 });

@@ -50,11 +50,11 @@ export interface OnboardContext {
   step: (current: number, total: number, message: string) => void;
   runCaptureOpenshell: (
     args: string[],
-    opts?: { ignoreError?: boolean; timeout?: number },
+    opts?: { ignoreError?: boolean; includeStderr?: boolean; timeout?: number },
   ) => string | null;
   captureOpenshell?: (
     args: string[],
-    opts?: { ignoreError?: boolean; timeout?: number },
+    opts?: { ignoreError?: boolean; includeStderr?: boolean; timeout?: number },
   ) => CaptureOpenshellResult;
   openshellShellCommand: (args: string[], options?: { openshellBinary?: string }) => string;
   openshellBinary: string;
@@ -304,7 +304,7 @@ const AGENT_BINARY_OBSERVATION_DELAY_SECONDS = 1;
 function waitForAgentBinaryObservation(
   sandboxName: string,
   agent: AgentDefinition,
-  runCaptureOpenshell: OnboardContext["runCaptureOpenshell"],
+  runCaptureOpenshell: Parameters<typeof verifyAgentBinaryAvailable>[2],
   wait: (seconds: number) => void,
   gatewayName?: string,
 ) {
@@ -352,11 +352,12 @@ export async function handleAgentSetup(
     agent.name === "langchain-deepagents-code" && captureOpenshell
       ? captureOpenshell
       : runCaptureOpenshell;
+  const runBinaryCapture = captureOpenshell ?? runCaptureOpenshell;
   const waitForBinaryObservation = () =>
     waitForAgentBinaryObservation(
       sandboxName,
       agent,
-      runCaptureOpenshell,
+      runBinaryCapture,
       ctx.sleepSeconds ?? sleep,
       ctx.gatewayName,
     );

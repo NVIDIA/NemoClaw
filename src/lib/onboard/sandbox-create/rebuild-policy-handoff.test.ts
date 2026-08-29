@@ -36,7 +36,7 @@ filesystem_policy:
   read_only: [/usr, /host-read]
   read_write: [/sandbox, /host-write, /replacement-write]
 landlock:
-  compatibility: best_effort
+  compatibility: host_choice
 network_policies:
   host_edit:
     name: host_edit
@@ -61,6 +61,10 @@ network_policies:
   replacement_network:
     name: replacement_network
     endpoints: [{host: replacement.example.com, port: 443}]
+landlock:
+  compatibility: replacement_choice
+seccomp:
+  profile: replacement-default
 `;
 
     const merged = mergeReplacementPolicyAccess(live, replacement);
@@ -74,6 +78,10 @@ network_policies:
       include_workdir: false,
       read_only: ["/usr", "/replacement-read"],
       read_write: ["/sandbox", "/host-write", "/replacement-write", "/host-read"],
+    });
+    expect(policy).toMatchObject({
+      landlock: { compatibility: "host_choice" },
+      seccomp: { profile: "replacement-default" },
     });
     expect(policy.network_policies).toEqual({
       host_edit: {

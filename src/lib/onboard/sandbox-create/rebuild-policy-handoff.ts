@@ -119,6 +119,26 @@ function mergeReplacementNetworkPolicies(live: PolicyMapping, replacement: Polic
   return changed;
 }
 
+function mergeReplacementTopLevelDefaults(
+  live: PolicyMapping,
+  replacement: PolicyMapping,
+): boolean {
+  let changed = false;
+  for (const [key, value] of Object.entries(replacement)) {
+    if (
+      key === "version" ||
+      key === "filesystem_policy" ||
+      key === "network_policies" ||
+      Object.hasOwn(live, key)
+    ) {
+      continue;
+    }
+    live[key] = structuredClone(value);
+    changed = true;
+  }
+  return changed;
+}
+
 /**
  * Build one replacement-create input from OpenShell's live policy. Host edits
  * and same-name entries win; only missing current-image access is added.
@@ -131,7 +151,8 @@ export function mergeReplacementPolicyAccess(
   const replacement = parseOpenShellPolicy(replacementPolicySource).policy as PolicyMapping;
   const filesystemChanged = mergeReplacementFilesystemAccess(live, replacement);
   const networkChanged = mergeReplacementNetworkPolicies(live, replacement);
-  const changed = filesystemChanged || networkChanged;
+  const topLevelChanged = mergeReplacementTopLevelDefaults(live, replacement);
+  const changed = filesystemChanged || networkChanged || topLevelChanged;
   return changed
     ? { changed: true, source: YAML.stringify(live) }
     : { changed: false, source: livePolicySource };
