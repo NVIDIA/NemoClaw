@@ -6,7 +6,10 @@ set -euo pipefail
 
 WORKSPACE_PATH="/sandbox/.openclaw/workspace"
 BACKUP_BASE="${HOME}/.nemoclaw/backups"
-FILES=(SOUL.md USER.md IDENTITY.md AGENTS.md TOOLS.md HEARTBEAT.md POLICY.md MEMORY.md)
+BACKUP_FILES=(SOUL.md USER.md IDENTITY.md AGENTS.md TOOLS.md HEARTBEAT.md POLICY.md MEMORY.md)
+# POLICY.md is backed up for inspection only. NemoClaw regenerates it from the managed
+# policy, so uploading a saved copy can reintroduce drift.
+RESTORE_FILES=(SOUL.md USER.md IDENTITY.md AGENTS.md TOOLS.md HEARTBEAT.md MEMORY.md)
 DIRS=(memory)
 
 RED='\033[0;31m'
@@ -95,7 +98,7 @@ do_backup() {
   info "Backing up workspace from sandbox '${sandbox}'..."
 
   local count=0
-  for f in "${FILES[@]}"; do
+  for f in "${BACKUP_FILES[@]}"; do
     if openshell sandbox download "$sandbox" "${WORKSPACE_PATH}/${f}" "${dest}/" 2>/dev/null; then
       count=$((count + 1))
     else
@@ -135,7 +138,7 @@ do_restore() {
   info "Restoring workspace to sandbox '${sandbox}' from ${src}..."
 
   local count=0
-  for f in "${FILES[@]}"; do
+  for f in "${RESTORE_FILES[@]}"; do
     if [ -f "${src}/${f}" ]; then
       if openshell sandbox upload "$sandbox" "${src}/${f}" "${WORKSPACE_PATH}/"; then
         count=$((count + 1))

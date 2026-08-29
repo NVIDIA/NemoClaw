@@ -186,6 +186,8 @@ Restore the most recent backup or a specific timestamp:
 ./scripts/backup-workspace.sh restore my-assistant 20260320-120000
 ```
 
+The helper saves `POLICY.md` during a backup but never uploads it during a restore, for the same reason as the manual flow above.
+
 Verify the saved files:
 
 ```bash

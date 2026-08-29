@@ -112,7 +112,12 @@ Set `NEMOCLAW_MINIMAL_BOOTSTRAP=1` before onboarding to skip default workspace t
 | `AGENTS.md` | Behavioral rules, memory conventions, safety guidelines, and session workflow. |
 | `TOOLS.md` | Records workspace-specific tool guidance and operational notes. |
 | `HEARTBEAT.md` | Defines recurring heartbeat checks when heartbeat processing is enabled. |
-| `POLICY.md` | Redacted summary of the sandbox's active policy context. NemoClaw renders this file, not OpenClaw: it refreshes automatically when a preset is added or removed and once at the end of onboarding, and can be refreshed on demand with `$$nemoclaw <name> policy explain --write`. |
+
+Three more entries can appear in the same directory without being seeded templates.
+
+| File | Purpose |
+|---|---|
+| `POLICY.md` | Redacted summary of the sandbox's active policy context. NemoClaw renders this file separately from the seeded templates: it refreshes automatically when a preset is added or removed and once at the end of onboarding, and can be refreshed on demand with `$$nemoclaw <name> policy explain --write`. |
 | `MEMORY.md` | Curated long-term memory distilled from daily notes. OpenClaw creates this file when it first stores long-term memory. |
 | `memory/` | Directory of daily note files (`YYYY-MM-DD.md`) for session continuity. OpenClaw creates this directory when it first stores a daily note. |
 
