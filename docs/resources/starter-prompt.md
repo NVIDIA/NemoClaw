@@ -220,7 +220,7 @@ Choices:
 ## Messaging During Initial Onboarding
 
 For OpenClaw or Hermes, ask before the first sandbox build: "Do you want to configure a messaging channel during onboarding?"
-Choices: No, Telegram, Discord, Slack, WhatsApp, WeChat (experimental).
+Before offering choices, read the selected agent's current **Enable Channels During Onboarding** page and present every channel in that picker; do not rely on a copied channel list.
 Skip messaging for Deep Agents.
 Configure one channel at a time, then ask whether to add another.
 Collect messaging before policy selection so the first image includes channel configuration and matching network presets.
@@ -230,6 +230,8 @@ Collect messaging before policy selection so the first image includes channel co
 - Slack requires `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`; optional settings include allowed users and channels.
 - WhatsApp uses documented allowed IDs for non-interactive selection, followed by QR pairing after startup.
 - WeChat requires an interactive QR handshake; explain the limitation before installation and never leave an unsupported UI waiting.
+- Microsoft Teams is experimental and requires `MSTEAMS_APP_ID`, `MSTEAMS_APP_PASSWORD`, and `MSTEAMS_TENANT_ID`, plus a public HTTPS messaging endpoint ending in `/api/messages`; optional settings include an Entra user allowlist, webhook port, and mention mode.
+- Google Chat is experimental and requires service-account JSON. Follow the selected agent's setup page: OpenClaw uses an interactive public `/googlechat` webhook enrollment, while Hermes requires a Google Cloud project ID, complete Pub/Sub subscription name, and email sender allowlist.
 
 Collect messaging secrets through the reviewed helper and URL-specific SSH flow.
 Do not manually set `NEMOCLAW_MESSAGING_PLAN_B64`; NemoClaw compiles the selected messaging configuration into this derived sandbox image build artifact and removes the full plan from the runtime environment.

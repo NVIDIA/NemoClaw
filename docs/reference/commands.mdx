@@ -926,7 +926,24 @@ If Ollama does not become healthy within 30 seconds, the command identifies the 
 The command does not take over a system service or an unrelated user-managed Ollama daemon.
 </AgentOnly>
 
-Before reading or changing the live OpenShell gateway inference route, `connect` verifies the shared provider and sandbox metadata. When the live route differs and the metadata is compatible, `connect` warns and re-points the route to the target sandbox's recorded provider and model. Refer to [Use Shared Gateway Routes](../inference/manage-inference/use-shared-gateway-routes) for provider-global identity, route drift, and hard-error recovery. Use `$$nemoclaw inference set --provider <provider> --model <model>` to make an intentional compatible route change outside the connect flow. Before it opens SSH, `connect` probes `https://inference.local/v1/models` from inside the sandbox with the selected agent's trusted CA and proxy context. HTTP `200` through `499` confirms that the route is reachable. When the probe returns a recognized broken result, `connect` attempts DNS or route repair and verifies the route again. When the initial probe cannot return a trusted result, `connect` fails closed before health-driven repair and before opening SSH. It prints a bounded, redacted last-probe detail and points you to `$$nemoclaw <name> doctor`. If the sandbox is registered locally but missing from a healthy gateway, `connect` preserves the registry entry and points you to `rebuild --yes`, `onboard`, or `destroy` instead of deleting the metadata needed for recovery.
+<AgentOnly variant="hermes">
+For an active Portable Hermes sandbox with a published receipt-owned Ollama runner, only `connect --probe-only` can resume the exact stopped runner.
+An ordinary `connect` does not recover it.
+The probe verifies an already-running exact runner without restarting it, refuses missing, replaced, or drifted authority instead of selecting an alternate runtime, and reports success only after the final in-sandbox inference route passes.
+If recovery changed a stopped runner and a later check fails, NemoClaw restores the prior stopped state.
+When it cannot prove that restoration, preserve the current Portable state and do not run another recovery probe or `launch` until you inspect the recorded runtime and registry authority.
+</AgentOnly>
+
+Before reading or changing the live OpenShell gateway inference route, `connect` verifies the shared provider and sandbox metadata.
+When the live route differs and the metadata is compatible, `connect` warns and re-points the route to the target sandbox's recorded provider and model.
+Refer to [Use Shared Gateway Routes](../inference/manage-inference/use-shared-gateway-routes) for provider-global identity, route drift, and hard-error recovery.
+Use `$$nemoclaw inference set --provider <provider> --model <model>` to make an intentional compatible route change outside the connect flow.
+Before it opens SSH, `connect` probes `https://inference.local/v1/models` from inside the sandbox with the selected agent's trusted CA and proxy context.
+HTTP `200` through `499` confirms that the route is reachable.
+When the probe returns a recognized broken result, `connect` attempts DNS or route repair and verifies the route again.
+When the initial probe cannot return a trusted result, `connect` fails closed before health-driven repair and before opening SSH.
+It prints a bounded, redacted last-probe detail and points you to `$$nemoclaw <name> doctor`.
+If the sandbox is registered locally but missing from a healthy gateway, `connect` preserves the registry entry and points you to `rebuild --yes`, `onboard`, or `destroy` instead of deleting the metadata needed for recovery.
 
 After a host reboot, the OpenShell gateway rotates its SSH host keys. `connect` detects the resulting identity drift, prunes stale `openshell-*` entries from `~/.ssh/known_hosts`, and retries automatically. You no longer need to re-run `$$nemoclaw onboard` after a reboot in this case.
 
@@ -1257,7 +1274,17 @@ For a portable experimental-profile sandbox with the recorded `ollama-local` pro
 
 <AgentOnly variant="hermes">
 
-For an active Portable Hermes receipt, `recover` starts only the exact receipt-owned Podman container when it is stopped. It waits for the existing in-container `nemoclaw-start` supervisor to establish authenticated Hermes health and never launches another detached `nemoclaw-start` process. If a container or OpenShell identity check, reconnect check, or health check later fails after recovery started the container, NemoClaw stops that exact container. It then requires Podman to report the container as `exited` and OpenShell to report `Error` or `Stopped`. If NemoClaw cannot prove that rollback, the command reports both the recovery failure and the rollback failure.
+For a published receipt-owned Portable Ollama runner, `recover` uses the same exact-runtime recovery contract as [`connect --probe-only`](#$$nemoclaw-name-connect).
+It verifies an already-running runner without restarting it, resumes only the exact stopped runner, and requires the final in-sandbox inference route to pass.
+It does not select an alternate runtime, model, network, or provider.
+If rollback to the prior stopped state cannot be proved after a failure, do not run another recovery probe or `launch` until you inspect the recorded Portable authority.
+
+For an active Portable Hermes receipt, `recover` starts only the exact receipt-owned Podman container when it is stopped.
+If authenticated health is not ready after that start, recovery launches the receipt-owned `nemoclaw-start` command once and waits for authenticated Hermes health.
+For an already-running container, recovery does not launch the startup command, does not stop the container, and only waits for authenticated health.
+If a container or OpenShell identity check, reconnect check, or health check later fails after recovery started the container, NemoClaw stops that exact container.
+It then requires Podman to report the container as `exited` and OpenShell to report `Error` or `Stopped`.
+If NemoClaw cannot prove that rollback, the command reports both the recovery failure and the rollback failure.
 
 `recover` re-evaluates the documented Hermes secret boundary against `/sandbox/.hermes/.env` and the supervisor runtime environment on every run, including when the gateway is already healthy. If the file contains raw secret-shaped values (for example a pasted Telegram, Discord, or Slack bot token in place of the expected `openshell:resolve:env:<name>` placeholder), the command exits non-zero and prints the offending key. The direct root-entrypoint supervisor stops a running gateway after this refusal, while the managed controller refuses before signaling the observed child. Replace each flagged value with the `openshell:resolve:env:<name>` placeholder and re-run. The direct root-entrypoint supervisor verifies the strict root-owned config hash. The managed controller verifies that strict hash when both Hermes config inputs are root-owned and locked. Mutable config under the managed topology has no durable root-owned hash anchor and retains the same trust and time-of-check/time-of-use limits as managed cold start. If the boundary validator or supervisor helper is missing, recovery fails closed, names the sandbox, explains that `/sandbox/.hermes/.env` could not be re-evaluated, and leaves an otherwise healthy gateway untouched. Rebuild an older sandbox image with `$$nemoclaw <name> rebuild --yes` before retrying.
 
@@ -2806,7 +2833,9 @@ For a remote server, connect through SSH and run `openshell term` on that server
 
 ### `$$nemoclaw tunnel start`
 
-Start optional host auxiliary services. This is the cloudflared tunnel when `cloudflared` is installed, which exposes the dashboard with a public URL. Channel messaging (Telegram, Discord, Slack) is not started here; it is configured during `$$nemoclaw onboard` and runs through OpenShell-managed constructs.
+Start optional host auxiliary services.
+This is the cloudflared tunnel when `cloudflared` is installed, which exposes the dashboard with a public URL.
+Channel messaging is not started here; it is configured during `$$nemoclaw onboard` and runs through OpenShell-managed constructs.
 
 ```bash
 $$nemoclaw tunnel start
