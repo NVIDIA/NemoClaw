@@ -37,6 +37,15 @@ describe("terminal agent smoke command invocation", () => {
     expect(args.at(-1)).toBe("hermes --version");
   });
 
+  it("uses Bash for Pi's exact resource-limit login profile", () => {
+    const args = buildAgentSmokeArgs("probe-box", agent("pi"), "pi --version");
+
+    expect(args).toContain("/bin/bash");
+    expect(args).toContain("-lc");
+    expect(args.at(-3)).toContain('/bin/bash -lc "$1"');
+    expect(args.at(-1)).toBe("pi --version");
+  });
+
   it("pins every smoke exec to the owning OpenShell gateway (#8942)", () => {
     const capture = vi.fn((_args: string[]) => ({
       status: 0,

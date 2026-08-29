@@ -34,6 +34,11 @@ export function verifyAgentBinaryAvailable(
 ): AgentBinaryAvailability {
   const executable = agentExecutableName(agent);
   const binaryPath = typeof agent.binary_path === "string" ? agent.binary_path.trim() : "";
+  // Pi's fail-closed login profile verifies nproc as well as nofile. Ubuntu's
+  // /bin/sh cannot inspect nproc, so it intentionally rejects that profile
+  // before the binary probe runs. Bash is the image's declared login-shell
+  // boundary and can enforce both limits.
+  const shellPath = agent.name === "pi" ? "/bin/bash" : "/bin/sh";
   const script = binaryPath
     ? [
         `if [ -x ${shellQuote(binaryPath)} ]; then echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}ok`)}; exit 0; fi`,
@@ -56,7 +61,7 @@ export function verifyAgentBinaryAvailable(
       ...(gatewayName ? ["-g", gatewayName] : []),
       "--no-tty",
       "--",
-      "/bin/sh",
+      shellPath,
       "-lc",
       script,
     ],
