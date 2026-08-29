@@ -150,10 +150,67 @@ export function reconcileCredentialEnvAtOpenShell(
   const existing = readSandboxFile(plan.sandboxName, target, options.runOpenshell);
   if (existing === undefined) return { changed: false };
 
-  const contents = applyEnvLines(plan, existing, render);
+  const runtimeAliasLines = readRuntimeCredentialAliasLines(plan, options.runOpenshell);
+  const contents = applyEnvLines(plan, existing, render, runtimeAliasLines);
   if (contents === existing) return { changed: false };
   writeSandboxFile(plan.sandboxName, target, contents, options.runOpenshell);
   return { changed: true, target };
+}
+
+const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/u;
+
+/**
+ * A direct OpenShell exec receives revision-scoped provider placeholders even
+ * when the selected OCI runtime isolates it from the long-running workload's
+ * process namespace. Capture only validated placeholders and map cross-key
+ * aliases as manifest data; raw credential values are rejected before write.
+ */
+function readRuntimeCredentialAliasLines(
+  plan: SandboxMessagingPlan,
+  runOpenshell: MessagingOpenShellRunner,
+): string[] {
+  const aliases = filterEnabledPlanEntries(plan, plan.runtimeSetup?.envAliases ?? []).filter(
+    (alias) => typeof alias.targetEnvKey === "string",
+  );
+  const lines: string[] = [];
+  for (const alias of aliases) {
+    const targetEnvKey = alias.targetEnvKey as string;
+    if (!ENV_KEY_PATTERN.test(alias.envKey) || !ENV_KEY_PATTERN.test(targetEnvKey)) {
+      throw new Error("Messaging runtime credential alias contains an invalid environment key.");
+    }
+    const result = runOpenshell(
+      [
+        "sandbox",
+        "exec",
+        "--name",
+        plan.sandboxName,
+        "--",
+        "sh",
+        "-c",
+        `printf '%s' "\${${alias.envKey}-}"`,
+      ],
+      { suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    if ((result.status ?? 0) !== 0) {
+      throw new Error(
+        `Failed to inspect messaging runtime credential alias '${alias.envKey}'.`,
+      );
+    }
+    const value = String(result.stdout ?? "");
+    if (value.length === 0) continue;
+    if (
+      value.length > 512 ||
+      /[\0\r\n]/u.test(value) ||
+      !new RegExp(alias.match, "u").test(value) ||
+      !isProviderPlaceholderForEnvKey(value, alias.envKey)
+    ) {
+      throw new Error(
+        `Messaging runtime credential alias '${alias.envKey}' did not resolve to a provider placeholder.`,
+      );
+    }
+    lines.push(`${targetEnvKey}=${value}`);
+  }
+  return lines;
 }
 
 function hookRequestsForPhases(
@@ -418,6 +475,7 @@ function applyEnvLines(
   plan: SandboxMessagingPlan,
   existing: string | undefined,
   render: readonly SandboxMessagingEnvLinesRenderPlan[],
+  additionalLines: readonly string[] = [],
 ): string {
   const desired = new Map<string, string>();
   const rawDesiredLines: string[] = [];
@@ -430,6 +488,11 @@ function applyEnvLines(
         rawDesiredLines.push(line);
       }
     }
+  }
+  for (const line of additionalLines) {
+    const key = readEnvLineKey(line);
+    if (!key) throw new Error("Messaging runtime credential alias line is invalid.");
+    desired.set(key, line);
   }
   const stale = staleCredentialEnvKeys(plan, new Set(desired.keys()));
 

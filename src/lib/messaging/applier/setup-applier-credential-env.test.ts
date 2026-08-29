@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createBuiltInChannelManifestRegistry,
@@ -56,8 +56,25 @@ function buildHermesTelegramPlan(
   });
 }
 
+async function buildHermesWechatPlan(): Promise<SandboxMessagingPlan> {
+  vi.stubEnv("WECHAT_ACCOUNT_ID", "wechat-account");
+  vi.stubEnv("WECHAT_BASE_URL", "https://ilinkai.wechat.com");
+  vi.stubEnv("WECHAT_ALLOWED_IDS", "wxid-operator");
+  return planner().buildPlan({
+    sandboxName: "demo",
+    agent: "hermes",
+    workflow: "rebuild",
+    isInteractive: false,
+    configuredChannels: ["wechat"],
+    credentialAvailability: { WECHAT_BOT_TOKEN: true },
+  });
+}
+
 /** An in-memory sandbox filesystem behind the `cat`/write calls the applier makes. */
-function sandboxFiles(seed: Readonly<Record<string, string>>): {
+function sandboxFiles(
+  seed: Readonly<Record<string, string>>,
+  runtimeEnv: Readonly<Record<string, string>> = {},
+): {
   readonly files: Record<string, string>;
   readonly writes: string[];
   readonly runOpenshell: MessagingOpenShellRunner;
@@ -65,6 +82,9 @@ function sandboxFiles(seed: Readonly<Record<string, string>>): {
   const files: Record<string, string> = { ...seed };
   const writes: string[] = [];
   const runOpenshell: MessagingOpenShellRunner = (args, options) => {
+    const script = args.includes("sh") ? String(args.at(-1)) : "";
+    const envProbe = /printf '%s' "[$][{]([A-Za-z_][A-Za-z0-9_]*)-[}]"/u.exec(script)?.[1];
+    const envProbeResult = envProbe ? { status: 0, stdout: runtimeEnv[envProbe] ?? "" } : null;
     const target = String(args.at(-1));
     const reading = args.includes("cat") && options?.input === undefined;
     const written = options?.input;
@@ -73,19 +93,24 @@ function sandboxFiles(seed: Readonly<Record<string, string>>): {
       writes.push(target);
       return { status: 0 };
     };
-    return written !== undefined
-      ? write(written)
-      : reading
-        ? {
-            status: files[target] === undefined ? 1 : 0,
-            stdout: files[target] ?? "",
-          }
-        : { status: 1 };
+    return (
+      envProbeResult ??
+      (written !== undefined
+        ? write(written)
+        : reading
+          ? {
+              status: files[target] === undefined ? 1 : 0,
+              stdout: files[target] ?? "",
+            }
+          : { status: 1 })
+    );
   };
   return { files, writes, runOpenshell };
 }
 
 describe("MessagingSetupApplier credential env cleanup", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   it("drops a stale credential env line written in the export form", async () => {
     const plan = await buildHermesTelegramPlan();
     const { files, runOpenshell } = sandboxFiles({
@@ -198,6 +223,41 @@ describe("MessagingSetupApplier credential env cleanup", () => {
     });
 
     expect(result).toEqual({ changed: false });
+    expect(writes).toEqual([]);
+  });
+
+  it("persists a validated cross-key runtime alias from a credential-bearing exec", async () => {
+    const plan = await buildHermesWechatPlan();
+    const placeholder = "openshell:resolve:env:v222_WECHAT_BOT_TOKEN";
+    const { files, writes, runOpenshell } = sandboxFiles(
+      {
+        [HERMES_ENV_PATH]: ["WEIXIN_ACCOUNT_ID=wechat-account", "OPERATOR_OWNED=keep-me", ""].join(
+          "\n",
+        ),
+      },
+      { WECHAT_BOT_TOKEN: placeholder },
+    );
+
+    const result = MessagingSetupApplier.reconcileCredentialEnvAtOpenShell(plan, {
+      runOpenshell,
+    });
+
+    expect(result).toEqual({ changed: true, target: HERMES_ENV_PATH });
+    expect(writes).toEqual([HERMES_ENV_PATH]);
+    expect(files[HERMES_ENV_PATH] ?? "").toContain(`WEIXIN_TOKEN=${placeholder}\n`);
+    expect(files[HERMES_ENV_PATH] ?? "").toContain("OPERATOR_OWNED=keep-me");
+  });
+
+  it("rejects a non-placeholder runtime alias value before writing Hermes state", async () => {
+    const plan = await buildHermesWechatPlan();
+    const { writes, runOpenshell } = sandboxFiles(
+      { [HERMES_ENV_PATH]: "WEIXIN_ACCOUNT_ID=wechat-account\n" },
+      { WECHAT_BOT_TOKEN: "raw-token-shaped-value" },
+    );
+
+    expect(() =>
+      MessagingSetupApplier.reconcileCredentialEnvAtOpenShell(plan, { runOpenshell }),
+    ).toThrow("did not resolve to a provider placeholder");
     expect(writes).toEqual([]);
   });
 });
