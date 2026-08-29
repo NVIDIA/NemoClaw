@@ -219,7 +219,39 @@ function removeTimerAuthorizationProof(
 interface ClearTimerMarkerResult {
   cleared: boolean;
   retainedPath?: string;
+  retryRequired?: boolean;
   warning?: string;
+}
+
+function fsyncTimerArtifactDirectory(artifactPath: string): void {
+  const directoryFd = fs.openSync(path.dirname(artifactPath), "r");
+  try {
+    fs.fsyncSync(directoryFd);
+  } finally {
+    fs.closeSync(directoryFd);
+  }
+}
+
+function restoreTimerArtifactAfterDurabilityFailure(
+  sourcePath: string,
+  expected: ShieldsTimerMarker,
+): string | null {
+  try {
+    fs.writeFileSync(sourcePath, `${JSON.stringify(expected)}\n`, {
+      flag: "wx",
+      mode: 0o600,
+    });
+    const artifactFd = fs.openSync(sourcePath, "r");
+    try {
+      fs.fsyncSync(artifactFd);
+    } finally {
+      fs.closeSync(artifactFd);
+    }
+    fsyncTimerArtifactDirectory(sourcePath);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
 }
 
 function clearTimerMarker(sandboxName: string): ClearTimerMarkerResult {
@@ -272,19 +304,20 @@ function clearTimerMarkerGeneration(
     try {
       fs.unlinkSync(quarantinePath);
       removeTimerAuthorizationProof(sandboxName, expected.processToken, stateDir);
-      const directoryFd = fs.openSync(path.dirname(markerPath), "r");
-      try {
-        fs.fsyncSync(directoryFd);
-      } finally {
-        fs.closeSync(directoryFd);
-      }
+      fsyncTimerArtifactDirectory(markerPath);
       return { cleared: true };
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       if (!fs.existsSync(quarantinePath)) {
+        const restoreFailure = restoreTimerArtifactAfterDurabilityFailure(sourcePath, expected);
+        const retainedPath = fs.existsSync(sourcePath) ? sourcePath : undefined;
         return {
           cleared: false,
-          warning: `Removed completed Shields timer recovery artifact '${sourcePath}', but could not confirm durable cleanup: ${detail}`,
+          ...(retainedPath ? { retainedPath } : {}),
+          retryRequired: true,
+          warning: restoreFailure
+            ? `Removed completed Shields timer recovery artifact '${sourcePath}', but could not confirm durable cleanup or restore it for retry: ${detail}; ${restoreFailure}`
+            : `Could not confirm durable cleanup for completed Shields timer recovery artifact '${sourcePath}'; restored it for an explicit retry: ${detail}`,
         };
       }
       try {

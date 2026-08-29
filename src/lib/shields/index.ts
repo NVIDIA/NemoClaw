@@ -66,7 +66,6 @@ const {
   clearTimerMarkerGeneration,
   sameTimerMarkerGeneration,
   hasExactTimerAuthorizationProof,
-  isShieldsTimerDeadlineAbandoned,
   isShieldsTimerMarkerAbandoned,
   isProcessAlive,
   readProcessStartIdentity,
@@ -2362,7 +2361,15 @@ function inspectCompletedAbandonedAutoRestoreMarker(
     return null;
   }
   const marker = candidate.marker;
-  if (!marker?.processToken || !/^[0-9a-f]{32}$/.test(marker.processToken)) return null;
+  if (!marker?.processToken || !/^[0-9a-f]{32}$/.test(marker.processToken)) {
+    if (candidate.quarantined) {
+      throw completedAutoRestoreRecoveryError(
+        sandboxName,
+        "Completed auto-restore cleanup found a quarantined artifact without a usable process token",
+      );
+    }
+    return null;
+  }
   if (!isShieldsTimerMarkerAbandoned(marker)) {
     if (candidate.quarantined) {
       throw completedAutoRestoreRecoveryError(
@@ -2432,10 +2439,12 @@ function withCompletedAbandonedAutoRestoreFence<T>(
         for (const artifactPath of candidate.artifactPaths) {
           const result = clearTimerMarkerGeneration(sandboxName, marker, stateDir, artifactPath);
           if (result.warning) console.warn(`  ${result.warning}`);
-          if (result.retainedPath) {
+          if (result.retryRequired || result.retainedPath) {
             throw completedAutoRestoreRecoveryError(
               sandboxName,
-              `Completed auto-restore cleanup retained '${result.retainedPath}' for retry`,
+              result.retainedPath
+                ? `Completed auto-restore cleanup retained '${result.retainedPath}' for retry`
+                : "Completed auto-restore cleanup could not confirm durable removal and requires an explicit retry",
             );
           }
         }

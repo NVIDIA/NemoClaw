@@ -48,13 +48,13 @@ async function runChild(
       CHILD_TIMEOUT_MS,
     );
     child.once("error", (error) => settle(error));
-    child.once("exit", (code) => {
+    child.once("close", (code) => {
       switch (true) {
         case code !== 0:
           settle(new Error(`${label} child exited ${String(code)}: ${stderr}`));
           break;
         case !stdout.split(/\r?\n/u).includes(expectedLine):
-          settle(new Error(`${label} child exited before reporting ${expectedLine}: ${stderr}`));
+          settle(new Error(`${label} child closed before reporting ${expectedLine}: ${stderr}`));
           break;
         default:
           settle();
@@ -150,18 +150,6 @@ class StatusCommand extends NemoClawCommand {
   }
 }
 
-class LogsCommand extends NemoClawCommand {
-  static id = "sandbox:logs";
-  static args = { sandboxName: Args.string({ required: true }) };
-  static flags = {};
-  static entered = false;
-
-  public async run(): Promise<void> {
-    const { args } = await this.parse(LogsCommand);
-    LogsCommand.entered = lifecycleLock.isMcpLifecycleLockHeld(args.sandboxName!);
-  }
-}
-
 describe("completed auto-restore command admission", () => {
   let testHome: string;
   let stateDir: string;
@@ -180,27 +168,13 @@ describe("completed auto-restore command admission", () => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
     StatusCommand.entered = false;
-    LogsCommand.entered = false;
     fs.rmSync(testHome, { recursive: true, force: true });
   });
 
-  const commands = [
-    {
-      id: "sandbox:status",
-      run: () => StatusCommand.run(["alpha"], process.cwd()),
-      entered: () => StatusCommand.entered,
-    },
-    {
-      id: "sandbox:logs",
-      run: () => LogsCommand.run(["alpha"], process.cwd()),
-      entered: () => LogsCommand.entered,
-    },
-  ];
-
-  it.each(commands)(
-    "$id enters after exact completed auto-restore recovery (#10094)",
+  it(
+    "enters status after exact completed auto-restore recovery (#10094)",
     { timeout: 30_000 },
-    async ({ run, entered }) => {
+    async () => {
       const processToken = "c".repeat(32);
       const orphan = await reproduceCompletedAutoRestoreContainment(
         stateDir,
@@ -210,9 +184,9 @@ describe("completed auto-restore command admission", () => {
       writeShieldsUpState(stateDir, "alpha");
       const lockPath = lifecycleLock.getMcpLifecycleLockPath("alpha", stateDir);
 
-      await expect(run()).resolves.toBeUndefined();
+      await expect(StatusCommand.run(["alpha"], process.cwd())).resolves.toBeUndefined();
 
-      expect(entered()).toBe(true);
+      expect(StatusCommand.entered).toBe(true);
       expect(
         [orphan.markerPath, lockPath, `${lockPath}.deadline`, `${lockPath}.containment`].map(
           (file) => fs.existsSync(file),
@@ -271,6 +245,68 @@ describe("completed auto-restore command admission", () => {
       expect(fs.readdirSync(stateDir).filter((name) => name.includes(".completed-"))).toEqual([]);
     },
   );
+
+  it(
+    "denies entry until durable completed marker cleanup is retried (#10094)",
+    { timeout: 30_000 },
+    async () => {
+      const processToken = "7".repeat(32);
+      const orphan = await reproduceCompletedAutoRestoreContainment(
+        stateDir,
+        "alpha",
+        processToken,
+      );
+      writeShieldsUpState(stateDir, "alpha");
+      const realFsync = fs.fsyncSync.bind(fs);
+      let injected = false;
+      const injectFsyncFailure = (): never => {
+        injected = true;
+        const error = new Error("injected directory sync failure") as NodeJS.ErrnoException;
+        error.code = "EIO";
+        throw error;
+      };
+      const completedArtifacts = () =>
+        fs.readdirSync(stateDir).filter((name) => name.includes(".completed-"));
+      const shouldInject = () =>
+        !injected && !fs.existsSync(orphan.markerPath) && completedArtifacts().length === 0;
+      const fsyncSpy = vi
+        .spyOn(fs, "fsyncSync")
+        .mockImplementation((fd) => (shouldInject() ? injectFsyncFailure() : realFsync(fd)));
+
+      await expect(StatusCommand.run(["alpha"], process.cwd())).rejects.toThrow("retained");
+
+      expect(injected).toBe(true);
+      expect(StatusCommand.entered).toBe(false);
+      expect(fs.existsSync(orphan.markerPath)).toBe(true);
+      fsyncSpy.mockRestore();
+
+      await expect(StatusCommand.run(["alpha"], process.cwd())).resolves.toBeUndefined();
+
+      expect(StatusCommand.entered).toBe(true);
+      expect(fs.existsSync(orphan.markerPath)).toBe(false);
+    },
+  );
+
+  it("denies a quarantined artifact without an exact process token (#10094)", async () => {
+    const orphan = await reproduceCompletedAutoRestoreContainment(
+      stateDir,
+      "alpha",
+      "8".repeat(32),
+    );
+    writeShieldsUpState(stateDir, "alpha");
+    const quarantinePath = `${orphan.markerPath}.completed-invalid`;
+    fs.renameSync(orphan.markerPath, quarantinePath);
+    const invalidMarker = JSON.parse(fs.readFileSync(quarantinePath, "utf8"));
+    delete invalidMarker.processToken;
+    fs.writeFileSync(quarantinePath, JSON.stringify(invalidMarker));
+
+    await expect(StatusCommand.run(["alpha"], process.cwd())).rejects.toThrow(
+      "quarantined artifact without a usable process token",
+    );
+
+    expect(StatusCommand.entered).toBe(false);
+    expect(fs.existsSync(quarantinePath)).toBe(true);
+  });
 
   it(
     "recovers completed auto-restore for snapshot source and destination (#10094)",

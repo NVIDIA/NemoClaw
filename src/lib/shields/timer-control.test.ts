@@ -107,4 +107,34 @@ describe("timer marker generation cleanup", () => {
     expect(clearTimerMarkerGeneration("alpha", expected)).toEqual({ cleared: true });
     fs.rmSync(home, { recursive: true, force: true });
   });
+
+  it("restores the exact artifact and requires retry when directory sync fails", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "timer-marker-fsync-failure-"));
+    vi.stubEnv("HOME", home);
+    const expected = marker("alpha", "d".repeat(32));
+    const markerPath = timerMarkerPath("alpha");
+    fs.mkdirSync(path.dirname(markerPath), { recursive: true });
+    fs.writeFileSync(markerPath, JSON.stringify(expected));
+    const realFsync = fs.fsyncSync.bind(fs);
+    let injected = false;
+    const injectFsyncFailure = (): never => {
+      injected = true;
+      const error = new Error("injected directory sync failure") as NodeJS.ErrnoException;
+      error.code = "EIO";
+      throw error;
+    };
+    vi.spyOn(fs, "fsyncSync").mockImplementation((fd) =>
+      injected ? realFsync(fd) : injectFsyncFailure(),
+    );
+
+    expect(clearTimerMarkerGeneration("alpha", expected)).toMatchObject({
+      cleared: false,
+      retainedPath: markerPath,
+      retryRequired: true,
+      warning: expect.stringContaining("restored it for an explicit retry"),
+    });
+    expect(readTimerMarker("alpha")).toEqual(expected);
+    expect(clearTimerMarkerGeneration("alpha", expected)).toEqual({ cleared: true });
+    fs.rmSync(home, { recursive: true, force: true });
+  });
 });
