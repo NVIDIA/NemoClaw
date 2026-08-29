@@ -70,12 +70,14 @@ function buildPreamble({
   presetNamesApplied = ["npm", "pypi", "huggingface", "brew", "whatsapp"],
   sandboxAgent = "openclaw",
   channelInRegistry = "whatsapp",
+  disabledChannels = [] as string[],
   sandboxExecResult = { status: 0, stdout: "NEMOCLAW_CHANNEL_CLEAR_OK", stderr: "" },
   sshFallbackResult = null as { status: number; stdout: string; stderr: string } | null,
 }: {
   presetNamesApplied?: string[];
   sandboxAgent?: MessagingAgentId;
   channelInRegistry?: string;
+  disabledChannels?: string[];
   sandboxExecResult?: { status: number; stdout: string; stderr: string } | null;
   sshFallbackResult?: { status: number; stdout: string; stderr: string } | null;
 } = {}): string {
@@ -87,6 +89,7 @@ function buildPreamble({
         sandboxName: "test-sb",
         agent: sandboxAgent,
         channels: channelInRegistry ? [channelInRegistry] : [],
+        disabledChannels,
       }),
     );
   return String.raw`
@@ -201,6 +204,48 @@ module.exports = {
 }
 
 describe("channels remove full teardown (#3998)", () => {
+  it("clears OpenClaw WeChat account state before rebuilding", () => {
+    const script = `${buildPreamble({
+      presetNamesApplied: ["npm", "pypi", "huggingface", "brew", "wechat"],
+      sandboxAgent: "openclaw",
+      channelInRegistry: "wechat",
+      disabledChannels: ["wechat"],
+    })}
+const ctx = module.exports;
+(async () => {
+  try {
+    await ctx.channelModule.removeSandboxChannel("test-sb", { channel: "wechat" });
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({
+      sandboxExecCalls: ctx.sandboxExecCalls,
+      callOrder: ctx.callOrder,
+      exitCode: ctx.getExitCode(),
+    }) + "\\n");
+  } catch (err) {
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    assert.ok(marker >= 0, `no __RESULT__ marker:\n${result.stdout}`);
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    assert.equal(payload.exitCode, null, "WeChat removal must complete before rebuild");
+
+    const cleanup = payload.sandboxExecCalls.find((call: { command: string }) =>
+      call.command.startsWith("rm -rf"),
+    );
+    assert.ok(cleanup, "WeChat removal must clear its managed state");
+    assert.ok(cleanup.command.includes("/sandbox/.openclaw/wechat"));
+    assert.ok(cleanup.command.includes("/sandbox/.openclaw/openclaw-weixin"));
+    assert.ok(
+      payload.callOrder.indexOf("clearedSandboxState") <
+        payload.callOrder.indexOf("promptAndRebuild"),
+      "WeChat account state must be cleared before rebuild",
+    );
+  });
+
   it.each(["openclaw", "hermes"] as const)(
     "strips '%s' session.policyPresets and clears the in-sandbox whatsapp state dir",
     (sandboxAgent) => {

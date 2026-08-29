@@ -25,6 +25,7 @@ import {
   openClawChannelIsActive,
   openClawChannelIsInert,
   openClawChannelStateProbeScript,
+  openClawWechatAccountStateProbeScript,
 } from "./channels-stop-start-config-state.ts";
 import {
   channelPlanStateErrors,
@@ -972,6 +973,23 @@ print(json.dumps({
   });
 }
 
+async function expectOpenClawWechatAccountStateRemoved(
+  sandbox: import("../fixtures/clients/sandbox.ts").SandboxClient,
+  redactions: string[],
+): Promise<void> {
+  const script = openClawWechatAccountStateProbeScript();
+  const result = await sandboxSh(sandbox, SANDBOX_NAME, `python3 -c ${shellQuote(script)}`, {
+    artifactName: `config-channel-${AGENT}-wechat-account-state-after-remove`,
+    redactionValues: redactions,
+  });
+  expectExitZero(result, "read OpenClaw WeChat account state after-remove");
+  expect(JSON.parse(result.stdout.trim()), "OpenClaw WeChat account state removed").toEqual({
+    accountDirectoryPresent: false,
+    accountRegistryPresent: false,
+    accountRootPresent: false,
+  });
+}
+
 export const CHANNELS_STOP_START_TEST_NAME = `${AGENT} channels stop/start preserves credentials and validates runtime config lifecycle`;
 
 export async function runChannelsStopStartTarget({
@@ -1130,6 +1148,9 @@ export async function runChannelsStopStartTarget({
     if (AGENT === "openclaw") {
       const state = await readOpenClawChannelState(sandbox, channel, "after-remove", redactions);
       expect(openClawChannelIsInert(state), `OpenClaw ${channel} config removed`).toBe(true);
+      if (channel === "wechat") {
+        await expectOpenClawWechatAccountStateRemoved(sandbox, redactions);
+      }
     } else {
       await expectHermesChannelConfigRemoved(sandbox, channel, redactions);
     }

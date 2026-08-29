@@ -707,6 +707,7 @@
     {
       "live": "test/e2e/live/channels-stop-start.test.ts",
       "liveSources": [
+        "test/e2e/live/channels-stop-start-config-state.ts",
         "test/e2e/live/channels-stop-start-googlechat-proof.ts",
         "test/e2e/live/channels-stop-start-helpers.ts",
         "test/e2e/live/channels-stop-start-plan-state.ts"

@@ -1705,6 +1705,9 @@ function getSandboxChannelStatePaths(agent: AgentDefinition, channelName: string
   if (paths.length === 0 && stateDirs.has(channelName)) {
     paths.push(`${configDir}/${channelName}`);
   }
+  if (agent.name === "openclaw" && channelName === "wechat") {
+    paths.push(`${configDir}/openclaw-weixin`);
+  }
   return paths;
 }
 
