@@ -19,6 +19,15 @@ export const MCP_MUTATION_TIMEOUT_MS: Record<McpAdapter, number> = {
 const MCP_BRIDGE_ALREADY_ABSENT =
   /No MCP servers are registered|No MCP server '.+' is registered|MCP server '.+' not found/iu;
 
+function buildOwnedSandboxCleanupEnv(): NodeJS.ProcessEnv {
+  return {
+    ...buildAvailabilityProbeEnv(),
+    // Bind trusted administrator cleanup to the gateway NemoClaw initialized.
+    // ShellProbe otherwise forwards only PATH, which hides gateway metadata.
+    OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY?.trim() || "nemoclaw",
+  };
+}
+
 /** Prepare a sandbox name exclusively owned by this isolated qualification job. */
 export async function prepareOwnedSandboxForOnboard(
   host: Pick<HostCliClient, "bestEffortCleanupSandbox" | "cleanupSandbox">,
@@ -26,6 +35,7 @@ export async function prepareOwnedSandboxForOnboard(
   cleanup: CleanupRegistry,
   sandboxName: string,
 ): Promise<void> {
+  const openshellCleanupEnv = buildOwnedSandboxCleanupEnv();
   cleanup.trackSandbox(host, sandboxName, {
     artifactName: "cleanup-destroy-sandbox",
     timeoutMs: 15 * 60_000,
@@ -37,6 +47,7 @@ export async function prepareOwnedSandboxForOnboard(
   cleanup.trackDisposable(`delete owned OpenShell sandbox ${sandboxName}`, () =>
     sandbox.cleanupSandbox(sandboxName, {
       artifactName: "cleanup-delete-openshell-sandbox",
+      env: openshellCleanupEnv,
       timeoutMs: 15 * 60_000,
     }),
   );
@@ -50,6 +61,7 @@ export async function prepareOwnedSandboxForOnboard(
   });
   await sandbox.cleanupSandbox(sandboxName, {
     artifactName: "precleanup-delete-openshell-sandbox",
+    env: openshellCleanupEnv,
     timeoutMs: 15 * 60_000,
   });
   await host.cleanupSandbox(sandboxName, {

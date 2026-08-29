@@ -36,6 +36,16 @@ describe("MCP bridge owned-sandbox cleanup", () => {
       "openshell:precleanup-delete-openshell-sandbox",
       "host:precleanup-destroy-sandbox",
     ]);
+    expect(sandbox.cleanupSandbox).toHaveBeenNthCalledWith(
+      1,
+      "e2e-mcp-bridge",
+      expect.objectContaining({
+        env: expect.objectContaining({
+          HOME: expect.any(String),
+          OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY?.trim() || "nemoclaw",
+        }),
+      }),
+    );
 
     const result = await cleanup.runAll();
 
@@ -47,6 +57,16 @@ describe("MCP bridge owned-sandbox cleanup", () => {
       "openshell:cleanup-delete-openshell-sandbox",
       "host:cleanup-destroy-sandbox",
     ]);
+    expect(sandbox.cleanupSandbox).toHaveBeenNthCalledWith(
+      2,
+      "e2e-mcp-bridge",
+      expect.objectContaining({
+        env: expect.objectContaining({
+          HOME: expect.any(String),
+          OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY?.trim() || "nemoclaw",
+        }),
+      }),
+    );
   });
 
   it("still attempts NemoClaw reconciliation when administrator deletion fails", async () => {
