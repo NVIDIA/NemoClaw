@@ -764,6 +764,11 @@ async function lockOwnershipMatches(lock: string, token: string): Promise<boolea
   }
 }
 
+async function requirePublicationLockOwnership(lock: string, token: string): Promise<void> {
+  if (!(await lockOwnershipMatches(lock, token)))
+    throw new Error("lifetime artifact publication lock ownership changed: " + lock);
+}
+
 async function acquirePublicationLock(lock: string): Promise<string> {
   for (let attempt = 0; attempt < 300; attempt += 1) {
     try {
@@ -835,6 +840,7 @@ export async function publishStagedDirectory(input: {
   try {
     await recoverInterruptedPublication(input.destination);
     await input.validate?.();
+    await requirePublicationLockOwnership(input.lock, token);
     try {
       await rename(input.destination, backup);
       movedPrevious = true;
@@ -842,12 +848,16 @@ export async function publishStagedDirectory(input: {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
     try {
+      await requirePublicationLockOwnership(input.lock, token);
       await rename(input.staging, input.destination);
     } catch (error) {
       if (movedPrevious) await rename(backup, input.destination);
       throw error;
     }
-    if (movedPrevious) await rm(backup, { recursive: true, force: true });
+    if (movedPrevious) {
+      await requirePublicationLockOwnership(input.lock, token);
+      await rm(backup, { recursive: true, force: true });
+    }
   } finally {
     clearInterval(heartbeat);
     if (await lockOwnershipMatches(input.lock, token))

@@ -514,6 +514,36 @@ describe("pull request value-stream analysis", () => {
     );
   });
 
+  test("prevents a displaced publisher from replacing newer artifacts (#10542)", async () => {
+    const publicationRoot = await mkdtemp(path.join(tmpdir(), "value-stream-fence-"));
+    temporaryDirectories.push(publicationRoot);
+    const destination = path.join(publicationRoot, "pr-42");
+    const first = path.join(publicationRoot, "first");
+    const second = path.join(publicationRoot, "second");
+    const lock = destination + ".lock";
+    await Promise.all([mkdir(first), mkdir(second)]);
+    await Promise.all([
+      writeFile(path.join(first, "manifest.json"), "first"),
+      writeFile(path.join(second, "manifest.json"), "second"),
+    ]);
+    let resumeFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => {
+      resumeFirst = resolve;
+    });
+    const firstPublication = publishStagedDirectory({
+      staging: first,
+      destination,
+      lock,
+      validate: () => firstBlocked,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(await reclaimStalePublicationLock(lock, Date.now() + 6 * 60 * 1_000)).toBe(true);
+    await publishStagedDirectory({ staging: second, destination, lock });
+    resumeFirst();
+    await expect(firstPublication).rejects.toThrow("lock ownership changed");
+    await expect(readFile(path.join(destination, "manifest.json"), "utf8")).resolves.toBe("second");
+  });
+
   test("reclaims stale publication locks but preserves active locks (#10542)", async () => {
     const publicationRoot = await mkdtemp(path.join(tmpdir(), "value-stream-lock-"));
     temporaryDirectories.push(publicationRoot);
