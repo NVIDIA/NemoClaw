@@ -1403,6 +1403,34 @@ async function acquireDeadlineFence(
   }
 }
 
+function synchronousTimerAuthorityIsCurrent(
+  sandboxName: string,
+  takeoverToken: string,
+  stateDir: string,
+  options: McpLifecycleDeadlineFenceSyncOptions,
+): boolean {
+  if (options.completedAutoRestoreRecovery) {
+    try {
+      options.completedAutoRestoreRecovery.assertAuthority();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return readShieldsTimerTakeoverToken(sandboxName, stateDir) === takeoverToken;
+}
+
+function assertSynchronousTimerAuthority(
+  sandboxName: string,
+  takeoverToken: string,
+  stateDir: string,
+  options: McpLifecycleDeadlineFenceSyncOptions,
+): void {
+  if (!synchronousTimerAuthorityIsCurrent(sandboxName, takeoverToken, stateDir, options)) {
+    throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
+  }
+}
+
 function acquireDeadlineFenceSync(
   sandboxName: string,
   takeoverToken: string,
@@ -1422,9 +1450,7 @@ function acquireDeadlineFenceSync(
   let notifiedGeneration: string | null = null;
   const corruptTracker: CorruptGenerationTracker = { generation: null, firstSeenAt: 0 };
   for (;;) {
-    if (readShieldsTimerTakeoverToken(sandboxName, options.stateDir) !== takeoverToken) {
-      throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
-    }
+    assertSynchronousTimerAuthority(sandboxName, takeoverToken, options.stateDir, options);
     const containmentPath = committedContainmentPath(lockPath);
     if (mcpLifecycleLockPathExistsSync(containmentPath)) {
       if (options.throwOnCommittedContainment) {
@@ -1455,7 +1481,9 @@ function acquireDeadlineFenceSync(
     const token = crypto.randomUUID();
     const owner = createMcpLifecycleLockOwner(sandboxName, token, takeoverToken);
     if (writeMcpLifecycleLockCandidateAndLinkSync(deadlinePath, owner)) {
-      if (readShieldsTimerTakeoverToken(sandboxName, options.stateDir) === takeoverToken) {
+      if (
+        synchronousTimerAuthorityIsCurrent(sandboxName, takeoverToken, options.stateDir, options)
+      ) {
         return { lockPath: deadlinePath, token };
       }
       safelyReleaseMcpLifecycleLockSync(deadlinePath, token);
@@ -1520,9 +1548,7 @@ async function clearDeadlineProtectedPath(
   let notifiedGeneration: string | null = null;
 
   for (;;) {
-    if (readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken) {
-      throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
-    }
+    assertSynchronousTimerAuthority(sandboxName, takeoverToken, stateDir, options);
     const observed = await readMcpLifecycleLockObservation(targetPath);
     if (!observed) return;
 
@@ -1624,9 +1650,7 @@ function clearDeadlineProtectedPathSync(
   let notifiedGeneration: string | null = null;
 
   for (;;) {
-    if (readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken) {
-      throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
-    }
+    assertSynchronousTimerAuthority(sandboxName, takeoverToken, stateDir, options);
     const observed = readMcpLifecycleLockObservationSync(targetPath);
     if (!observed) return;
 
@@ -1663,9 +1687,7 @@ function clearDeadlineProtectedPathSync(
     if ((decision.kind === "reap" || decision.kind === "contain") && exactLocalOwner) {
       const confirmed = readMcpLifecycleLockObservationSync(targetPath);
       if (!sameLockGeneration(observed, confirmed)) continue;
-      if (readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken) {
-        throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
-      }
+      assertSynchronousTimerAuthority(sandboxName, takeoverToken, stateDir, options);
       const lifecyclePath = targetPath.endsWith(".reaper")
         ? targetPath.slice(0, -".reaper".length)
         : targetPath;
@@ -1748,9 +1770,7 @@ async function publishDeadlineMainOwner(
         stateDir,
         options,
       );
-      if (readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken) {
-        throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
-      }
+      assertSynchronousTimerAuthority(sandboxName, takeoverToken, stateDir, options);
       const candidateToken = crypto.randomUUID();
       pendingCandidateToken = candidateToken;
       const timerOwner = createMcpLifecycleLockOwner(sandboxName, candidateToken, takeoverToken);
@@ -1766,7 +1786,7 @@ async function publishDeadlineMainOwner(
         continue;
       }
     } catch (error) {
-      if (readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken) {
+      if (!synchronousTimerAuthorityIsCurrent(sandboxName, takeoverToken, stateDir, options)) {
         throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
       }
       const message = error instanceof Error ? error.message : String(error);
@@ -1786,13 +1806,13 @@ async function publishDeadlineMainOwner(
           notifiedError = message;
         }
         while (
-          readShieldsTimerTakeoverToken(sandboxName, stateDir) === takeoverToken &&
+          synchronousTimerAuthorityIsCurrent(sandboxName, takeoverToken, stateDir, options) &&
           ((await mcpLifecycleLockPathExists(committedContainmentPath(lockPath))) ||
             (await deadlineMainStillPresent(lockPath)))
         ) {
           await sleep(pollIntervalMs);
         }
-        if (readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken) {
+        if (!synchronousTimerAuthorityIsCurrent(sandboxName, takeoverToken, stateDir, options)) {
           throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
         }
         continue;
@@ -1852,9 +1872,7 @@ function publishDeadlineMainOwnerSync(
         stateDir,
         options,
       );
-      if (readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken) {
-        throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
-      }
+      assertSynchronousTimerAuthority(sandboxName, takeoverToken, stateDir, options);
       const candidateToken = crypto.randomUUID();
       pendingCandidateToken = candidateToken;
       const timerOwner = createMcpLifecycleLockOwner(sandboxName, candidateToken, takeoverToken);
@@ -1864,7 +1882,7 @@ function publishDeadlineMainOwnerSync(
       pendingCandidateToken = null;
       notifiedError = null;
     } catch (error) {
-      if (readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken) {
+      if (!synchronousTimerAuthorityIsCurrent(sandboxName, takeoverToken, stateDir, options)) {
         throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
       }
       if (
@@ -1890,13 +1908,13 @@ function publishDeadlineMainOwnerSync(
           throw failure;
         }
         while (
-          readShieldsTimerTakeoverToken(sandboxName, stateDir) === takeoverToken &&
+          synchronousTimerAuthorityIsCurrent(sandboxName, takeoverToken, stateDir, options) &&
           (mcpLifecycleLockPathExistsSync(committedContainmentPath(lockPath)) ||
             deadlineMainStillPresentSync(lockPath))
         ) {
           sleepSync(pollIntervalMs);
         }
-        if (readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken) {
+        if (!synchronousTimerAuthorityIsCurrent(sandboxName, takeoverToken, stateDir, options)) {
           throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
         }
         continue;
@@ -2036,9 +2054,7 @@ export function withMcpLifecycleDeadlineFenceSync<T>(
     const context = new Map(inherited ?? []);
     context.set(lockPath, activeLease);
     try {
-      if (readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken) {
-        throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
-      }
+      assertSynchronousTimerAuthority(sandboxName, takeoverToken, stateDir, options);
       return heldLocks.run(context, operation);
     } finally {
       activeLease.active = false;

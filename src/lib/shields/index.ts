@@ -67,10 +67,12 @@ const {
   sameTimerMarkerGeneration,
   hasExactTimerAuthorizationProof,
   isShieldsTimerDeadlineAbandoned,
+  isShieldsTimerMarkerAbandoned,
   isProcessAlive,
   readProcessStartIdentity,
   processInspectionDeadlineAfter,
   processInspectionDeadlineReached,
+  readShieldsTimerRecoveryCandidate,
   verifyTimerMarkerIdentity,
   killTimer,
 } = require("./timer-control");
@@ -2321,38 +2323,90 @@ function inspectExpiredAutoRestoreMarker(sandboxName: string): TimerMarker | nul
   return isExactLiveFutureTimerAuthority(marker) ? null : marker;
 }
 
+type CompletedAutoRestoreMarker = {
+  marker: TimerMarker & { processToken: string };
+  markerPath: string;
+  quarantined: boolean;
+};
+
+function completedAutoRestoreRecoveryError(sandboxName: string, detail: string): Error {
+  return new Error(
+    `${detail} for sandbox '${sandboxName}'. Rerun ${CLI_NAME} ${sandboxName} shields status. Do not modify lifecycle-lock or timer files while recovery may be active.`,
+  );
+}
+
 function inspectCompletedAbandonedAutoRestoreMarker(
   sandboxName: string,
   stateDir = STATE_DIR,
-): (TimerMarker & { processToken: string }) | null {
+): CompletedAutoRestoreMarker | null {
+  let candidate: ReturnType<typeof readShieldsTimerRecoveryCandidate>;
+  try {
+    candidate = readShieldsTimerRecoveryCandidate(sandboxName, stateDir);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw completedAutoRestoreRecoveryError(
+      sandboxName,
+      `Completed auto-restore cleanup artifacts are ambiguous: ${detail}`,
+    );
+  }
+  if (!candidate) return null;
   const state = loadShieldsState(sandboxName, stateDir);
-  if (state._isCorrupt || state.shieldsDown !== false) return null;
-  const marker = readTimerMarker(sandboxName, stateDir);
-  if (!marker?.processToken || !/^[0-9a-f]{32}$/.test(marker.processToken)) return null;
-  if (!isShieldsTimerDeadlineAbandoned(sandboxName, stateDir)) return null;
-  if (fs.existsSync(shieldsDownTransitionPath(sandboxName, marker.processToken, stateDir))) {
+  if (state._isCorrupt || state.shieldsDown !== false) {
+    if (candidate.quarantined) {
+      throw completedAutoRestoreRecoveryError(
+        sandboxName,
+        "Completed auto-restore cleanup cannot confirm that Shields are UP",
+      );
+    }
     return null;
   }
-  return marker as TimerMarker & { processToken: string };
+  const marker = candidate.marker;
+  if (!marker?.processToken || !/^[0-9a-f]{32}$/.test(marker.processToken)) return null;
+  if (!isShieldsTimerMarkerAbandoned(marker)) {
+    if (candidate.quarantined) {
+      throw completedAutoRestoreRecoveryError(
+        sandboxName,
+        "Completed auto-restore cleanup cannot prove that the timer owner is abandoned",
+      );
+    }
+    return null;
+  }
+  if (fs.existsSync(shieldsDownTransitionPath(sandboxName, marker.processToken, stateDir))) {
+    if (candidate.quarantined) {
+      throw completedAutoRestoreRecoveryError(
+        sandboxName,
+        "Completed auto-restore cleanup found a remaining Shields transition",
+      );
+    }
+    return null;
+  }
+  return {
+    ...candidate,
+    marker: marker as TimerMarker & { processToken: string },
+  };
 }
 
 function withCompletedAbandonedAutoRestoreFence<T>(
   sandboxName: string,
-  marker: TimerMarker & { processToken: string },
+  candidate: CompletedAutoRestoreMarker,
   operation: () => T,
   stateDir: string,
 ): T {
+  const marker = candidate.marker;
   const assertCompletedAuthority = () => {
     const currentState = loadShieldsState(sandboxName, stateDir);
+    const currentCandidate = readShieldsTimerRecoveryCandidate(sandboxName, stateDir);
     if (
       currentState._isCorrupt ||
       currentState.shieldsDown !== false ||
       fs.existsSync(shieldsDownTransitionPath(sandboxName, marker.processToken, stateDir)) ||
-      !sameTimerMarkerGeneration(readTimerMarker(sandboxName, stateDir), marker) ||
-      !isShieldsTimerDeadlineAbandoned(sandboxName, stateDir)
+      currentCandidate?.markerPath !== candidate.markerPath ||
+      !sameTimerMarkerGeneration(currentCandidate?.marker ?? null, marker) ||
+      !isShieldsTimerMarkerAbandoned(marker)
     ) {
-      throw new Error(
-        `Completed auto-restore recovery authority changed for sandbox '${sandboxName}'. Rerun \`${CLI_NAME} ${sandboxName} shields status\`. Do not modify lifecycle-lock or timer files while recovery may be active.`,
+      throw completedAutoRestoreRecoveryError(
+        sandboxName,
+        "Completed auto-restore recovery authority changed",
       );
     }
   };
@@ -2371,8 +2425,19 @@ function withCompletedAbandonedAutoRestoreFence<T>(
         assertAuthority: assertCompletedAuthority,
       },
       onReleased: () => {
-        const result = clearTimerMarkerGeneration(sandboxName, marker, stateDir);
+        const result = clearTimerMarkerGeneration(
+          sandboxName,
+          marker,
+          stateDir,
+          candidate.markerPath,
+        );
         if (result.warning) console.warn(`  ${result.warning}`);
+        if (result.retainedPath) {
+          throw completedAutoRestoreRecoveryError(
+            sandboxName,
+            `Completed auto-restore cleanup retained '${result.retainedPath}' for retry`,
+          );
+        }
       },
     },
   );
@@ -2385,20 +2450,22 @@ function recoverCompletedAutoRestoreBeforeCommand(
   validateName(sandboxName, "sandbox name");
   let recovered = false;
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const marker = inspectCompletedAbandonedAutoRestoreMarker(sandboxName, stateDir);
-    if (!marker) return recovered;
-    withCompletedAbandonedAutoRestoreFence(sandboxName, marker, () => undefined, stateDir);
+    const candidate = inspectCompletedAbandonedAutoRestoreMarker(sandboxName, stateDir);
+    if (!candidate) return recovered;
+    withCompletedAbandonedAutoRestoreFence(sandboxName, candidate, () => undefined, stateDir);
     recovered = true;
-    const remaining = readTimerMarker(sandboxName, stateDir);
+    const remaining = readShieldsTimerRecoveryCandidate(sandboxName, stateDir);
     if (!remaining) return true;
-    if (!sameTimerMarkerGeneration(remaining, marker)) {
-      throw new Error(
-        `Completed auto-restore cleanup found replacement timer authority for sandbox '${sandboxName}'. Rerun \`${CLI_NAME} ${sandboxName} shields status\`. Do not modify lifecycle-lock or timer files while recovery may be active.`,
+    if (!sameTimerMarkerGeneration(remaining.marker, candidate.marker)) {
+      throw completedAutoRestoreRecoveryError(
+        sandboxName,
+        "Completed auto-restore cleanup found replacement timer authority",
       );
     }
   }
-  throw new Error(
-    `Completed auto-restore timer cleanup did not finish for sandbox '${sandboxName}'. Rerun \`${CLI_NAME} ${sandboxName} shields status\`. Do not modify lifecycle-lock or timer files while recovery may be active.`,
+  throw completedAutoRestoreRecoveryError(
+    sandboxName,
+    "Completed auto-restore timer cleanup did not finish",
   );
 }
 

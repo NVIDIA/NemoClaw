@@ -131,6 +131,13 @@ try {
   };
 }
 
+function writeShieldsUpState(stateDir: string, sandboxName: string): void {
+  fs.writeFileSync(
+    path.join(stateDir, `shields-${sandboxName}.json`),
+    JSON.stringify({ shieldsDown: false, updatedAt: new Date().toISOString() }),
+  );
+}
+
 class StatusCommand extends NemoClawCommand {
   static id = "sandbox:status";
   static args = { sandboxName: Args.string({ required: true }) };
@@ -200,10 +207,7 @@ describe("completed auto-restore command admission", () => {
         "alpha",
         processToken,
       );
-      fs.writeFileSync(
-        path.join(stateDir, "shields-alpha.json"),
-        JSON.stringify({ shieldsDown: false, updatedAt: new Date().toISOString() }),
-      );
+      writeShieldsUpState(stateDir, "alpha");
       const lockPath = lifecycleLock.getMcpLifecycleLockPath("alpha", stateDir);
 
       await expect(run()).resolves.toBeUndefined();
@@ -220,10 +224,7 @@ describe("completed auto-restore command admission", () => {
   it("denies command entry for an ambiguous live timer owner (#10094)", async () => {
     const processToken = "d".repeat(32);
     const orphan = await reproduceCompletedAutoRestoreContainment(stateDir, "alpha", processToken);
-    fs.writeFileSync(
-      path.join(stateDir, "shields-alpha.json"),
-      JSON.stringify({ shieldsDown: false, updatedAt: new Date().toISOString() }),
-    );
+    writeShieldsUpState(stateDir, "alpha");
     const marker = JSON.parse(fs.readFileSync(orphan.markerPath, "utf8"));
     marker.pid = process.pid;
     fs.writeFileSync(orphan.markerPath, JSON.stringify(marker));
@@ -247,10 +248,7 @@ describe("completed auto-restore command admission", () => {
         "alpha",
         processToken,
       );
-      fs.writeFileSync(
-        path.join(stateDir, "shields-alpha.json"),
-        JSON.stringify({ shieldsDown: false, updatedAt: new Date().toISOString() }),
-      );
+      writeShieldsUpState(stateDir, "alpha");
       const realUnlink = fs.unlinkSync.bind(fs);
       let injected = false;
       const injectUnlinkFailure = (): never => {
@@ -270,6 +268,126 @@ describe("completed auto-restore command admission", () => {
       expect(injected).toBe(true);
       expect(StatusCommand.entered).toBe(true);
       expect(fs.existsSync(orphan.markerPath)).toBe(false);
+      expect(fs.readdirSync(stateDir).filter((name) => name.includes(".completed-"))).toEqual([]);
+    },
+  );
+
+  it(
+    "recovers completed auto-restore for snapshot source and destination (#10094)",
+    { timeout: 30_000 },
+    async () => {
+      const source = await reproduceCompletedAutoRestoreContainment(
+        stateDir,
+        "alpha",
+        "1".repeat(32),
+      );
+      const destination = await reproduceCompletedAutoRestoreContainment(
+        stateDir,
+        "beta",
+        "2".repeat(32),
+      );
+      writeShieldsUpState(stateDir, "alpha");
+      writeShieldsUpState(stateDir, "beta");
+      const { recoverCompletedAutoRestoreForSnapshotRestore } =
+        await import("../../src/lib/actions/sandbox/snapshot");
+
+      expect(recoverCompletedAutoRestoreForSnapshotRestore(["beta", "alpha"], stateDir)).toEqual([
+        "alpha",
+        "beta",
+      ]);
+
+      const recoveryPaths = [
+        ["alpha", source.markerPath],
+        ["beta", destination.markerPath],
+      ].flatMap(([sandboxName, markerPath]) => {
+        const lockPath = lifecycleLock.getMcpLifecycleLockPath(sandboxName, stateDir);
+        return [markerPath, lockPath, `${lockPath}.deadline`, `${lockPath}.containment`];
+      });
+      expect(recoveryPaths.map((file) => fs.existsSync(file))).toEqual(
+        recoveryPaths.map(() => false),
+      );
+    },
+  );
+
+  it("keeps snapshot restore denied for an ambiguous live timer owner (#10094)", async () => {
+    const orphan = await reproduceCompletedAutoRestoreContainment(
+      stateDir,
+      "alpha",
+      "3".repeat(32),
+    );
+    writeShieldsUpState(stateDir, "alpha");
+    const marker = JSON.parse(fs.readFileSync(orphan.markerPath, "utf8"));
+    marker.pid = process.pid;
+    fs.writeFileSync(orphan.markerPath, JSON.stringify(marker));
+    const { recoverCompletedAutoRestoreForSnapshotRestore } =
+      await import("../../src/lib/actions/sandbox/snapshot");
+    const operation = vi.fn();
+
+    recoverCompletedAutoRestoreForSnapshotRestore(["alpha"], stateDir);
+    expect(() =>
+      lifecycleLock.withMcpLifecycleLockSync("alpha", operation, {
+        stateDir,
+        pollIntervalMs: 5,
+        timeoutMs: 25,
+        corruptLockGraceMs: 1,
+      }),
+    ).toThrow("containment is active");
+    expect(operation).not.toHaveBeenCalled();
+    expect(fs.existsSync(orphan.markerPath)).toBe(true);
+  });
+
+  it(
+    "retries a retained completed marker quarantine on the next command (#10094)",
+    { timeout: 30_000 },
+    async () => {
+      const processToken = "4".repeat(32);
+      const orphan = await reproduceCompletedAutoRestoreContainment(
+        stateDir,
+        "alpha",
+        processToken,
+      );
+      writeShieldsUpState(stateDir, "alpha");
+      const proofPath = path.join(
+        stateDir,
+        `shields-timer-authorization-alpha-${processToken}.json`,
+      );
+      fs.writeFileSync(proofPath, "retained proof");
+      const realUnlink = fs.unlinkSync.bind(fs);
+      const realLink = fs.linkSync.bind(fs);
+      const denyUnlink = (): never => {
+        const error = new Error("injected quarantine unlink failure") as NodeJS.ErrnoException;
+        error.code = "EACCES";
+        throw error;
+      };
+      const denyLink = (): never => {
+        const error = new Error("injected marker restore failure") as NodeJS.ErrnoException;
+        error.code = "EACCES";
+        throw error;
+      };
+      const unlinkSpy = vi
+        .spyOn(fs, "unlinkSync")
+        .mockImplementation((target) =>
+          String(target).includes(".completed-") ? denyUnlink() : realUnlink(target),
+        );
+      const linkSpy = vi
+        .spyOn(fs, "linkSync")
+        .mockImplementation((source, destination) =>
+          String(source).includes(".completed-") ? denyLink() : realLink(source, destination),
+        );
+
+      await expect(StatusCommand.run(["alpha"], process.cwd())).rejects.toThrow("retained");
+      expect(StatusCommand.entered).toBe(false);
+      expect(fs.existsSync(orphan.markerPath)).toBe(false);
+      expect(fs.readdirSync(stateDir).filter((name) => name.includes(".completed-"))).toHaveLength(
+        1,
+      );
+      unlinkSpy.mockRestore();
+      linkSpy.mockRestore();
+
+      await expect(StatusCommand.run(["alpha"], process.cwd())).resolves.toBeUndefined();
+
+      expect(StatusCommand.entered).toBe(true);
+      expect(fs.existsSync(proofPath)).toBe(false);
       expect(fs.readdirSync(stateDir).filter((name) => name.includes(".completed-"))).toEqual([]);
     },
   );

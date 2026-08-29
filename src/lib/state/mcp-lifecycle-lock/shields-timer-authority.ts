@@ -25,6 +25,12 @@ export interface ShieldsTimerMarker {
   leaseOwnerStartIdentity?: string;
 }
 
+export interface ShieldsTimerRecoveryCandidate {
+  marker: ShieldsTimerMarker;
+  markerPath: string;
+  quarantined: boolean;
+}
+
 function isShieldsTimerMarker(value: unknown): value is ShieldsTimerMarker {
   if (!isObjectRecord(value)) return false;
   const pid = value.pid;
@@ -101,6 +107,59 @@ export function readShieldsTimerMarkerFile(markerPath: string): ShieldsTimerMark
   } catch {
     return null;
   }
+}
+
+function completedTimerMarkerPrefix(markerPath: string): string {
+  return `${path.basename(markerPath)}.completed-`;
+}
+
+export function hasShieldsTimerRecoveryArtifact(
+  sandboxName: string,
+  stateDir = resolveNemoclawStateDir(),
+): boolean {
+  try {
+    const markerPath = shieldsTimerMarkerPath(sandboxName, stateDir);
+    if (fs.existsSync(markerPath)) return true;
+    const prefix = completedTimerMarkerPrefix(markerPath);
+    return fs.readdirSync(path.dirname(markerPath)).some((name) => name.startsWith(prefix));
+  } catch {
+    return false;
+  }
+}
+
+export function readShieldsTimerRecoveryCandidate(
+  sandboxName: string,
+  stateDir = resolveNemoclawStateDir(),
+): ShieldsTimerRecoveryCandidate | null {
+  const markerPath = shieldsTimerMarkerPath(sandboxName, stateDir);
+  const prefix = completedTimerMarkerPrefix(markerPath);
+  let quarantinePaths: string[];
+  try {
+    quarantinePaths = fs
+      .readdirSync(path.dirname(markerPath))
+      .filter((name) => name.startsWith(prefix))
+      .map((name) => path.join(path.dirname(markerPath), name))
+      .sort();
+  } catch (error) {
+    const errno = error as NodeJS.ErrnoException;
+    if (errno.code !== "ENOENT") throw error;
+    quarantinePaths = [];
+  }
+  const candidates = [...(fs.existsSync(markerPath) ? [markerPath] : []), ...quarantinePaths];
+  if (candidates.length === 0) return null;
+  if (candidates.length !== 1) {
+    throw new Error(`Multiple Shields timer recovery artifacts exist for sandbox '${sandboxName}'`);
+  }
+  const candidatePath = candidates[0];
+  const marker = readShieldsTimerMarkerFile(candidatePath);
+  if (!marker || marker.sandboxName !== sandboxName) {
+    throw new Error(`Invalid Shields timer recovery artifact '${candidatePath}'`);
+  }
+  return {
+    marker,
+    markerPath: candidatePath,
+    quarantined: candidatePath !== markerPath,
+  };
 }
 
 export function readShieldsTimerTakeoverToken(
@@ -207,9 +266,21 @@ export function isShieldsTimerDeadlineAbandoned(
   now = Date.now(),
   probes: ShieldsTimerLivenessProbes = LOCAL_TIMER_LIVENESS_PROBES,
 ): boolean {
-  if (!isShieldsTimerDeadlineExpired(sandboxName, stateDir, now)) return false;
   const marker = readShieldsTimerMarker(sandboxName, stateDir);
   if (!marker) return false;
+  return isShieldsTimerMarkerAbandoned(marker, now, probes);
+}
+
+export function isShieldsTimerMarkerAbandoned(
+  marker: ShieldsTimerMarker,
+  now = Date.now(),
+  probes: ShieldsTimerLivenessProbes = LOCAL_TIMER_LIVENESS_PROBES,
+): boolean {
+  if (typeof marker.processToken !== "string" || !/^[0-9a-f]{32}$/.test(marker.processToken)) {
+    return false;
+  }
+  const restoreAtMs = new Date(marker.restoreAt).getTime();
+  if (!Number.isFinite(restoreAtMs) || restoreAtMs > now) return false;
   const recorded = marker.timerProcessStartIdentity;
   if (typeof recorded === "string" && recorded.length > 0) {
     const observed = probes.readProcessStartIdentity

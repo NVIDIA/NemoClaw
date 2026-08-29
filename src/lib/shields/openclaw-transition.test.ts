@@ -509,7 +509,7 @@ describe("OpenClaw shields flow rollback and recovery", () => {
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
     const lifecycleLock = requireSource(
-      "../state/mcp-lifecycle-lock.js"
+      "../state/mcp-lifecycle-lock.js",
     ) as typeof import("../state/mcp-lifecycle-lock.js");
     const lockPath = lifecycleLock.getMcpLifecycleLockPath(sandboxName, stateDir);
     const deadlinePath = `${lockPath}.deadline`;
@@ -578,28 +578,32 @@ describe("OpenClaw shields flow rollback and recovery", () => {
     vi.stubEnv("HOME", tmpDir);
   });
 
-  it("retires an orphaned completed auto-restore generation and containment (#10094)", {
-    timeout: 30_000,
-  }, () => {
-    const harness = createHarness();
-    const paths = writeCompletedAutoRestoreOrphanFixture();
-    const status = () =>
-      harness.shieldsStatus("openclaw", true, {
-        verifyLockState: () => ({ ok: true, issues: [] }),
-        verifyStateLockPlan: () => [],
-      });
+  it(
+    "retires an orphaned completed auto-restore generation and containment (#10094)",
+    {
+      timeout: 30_000,
+    },
+    () => {
+      const harness = createHarness();
+      const paths = writeCompletedAutoRestoreOrphanFixture();
+      const status = () =>
+        harness.shieldsStatus("openclaw", true, {
+          verifyLockState: () => ({ ok: true, issues: [] }),
+          verifyStateLockPlan: () => [],
+        });
 
-    status();
-    status();
+      status();
+      status();
 
-    expect(harness.logSpy).toHaveBeenCalledWith("  Shields: UP (lockdown active)");
-    expect(Object.values(paths).map((file) => fs.existsSync(file))).toEqual([
-      false,
-      false,
-      false,
-      false,
-    ]);
-  });
+      expect(harness.logSpy).toHaveBeenCalledWith("  Shields: UP (lockdown active)");
+      expect(Object.values(paths).map((file) => fs.existsSync(file))).toEqual([
+        false,
+        false,
+        false,
+        false,
+      ]);
+    },
+  );
 
   it("preserves completed containment for a live ambiguous timer PID", () => {
     const harness = createHarness();
@@ -629,7 +633,7 @@ describe("OpenClaw shields flow rollback and recovery", () => {
     });
 
     expect(() => harness.shieldsStatus("openclaw")).toThrow(
-      "Rerun `nemoclaw openclaw shields status`. Do not modify lifecycle-lock or timer files",
+      "Rerun nemoclaw openclaw shields status. Do not modify lifecycle-lock or timer files",
     );
     expect(fs.existsSync(paths.lockPath)).toBe(true);
     expect(fs.existsSync(paths.containmentPath)).toBe(true);

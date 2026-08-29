@@ -2,15 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 
 import {
   isShieldsTimerDeadlineAbandoned,
+  isShieldsTimerMarkerAbandoned,
   readShieldsTimerMarker,
   readShieldsTimerMarkerFile,
+  readShieldsTimerRecoveryCandidate,
   readShieldsTimerTakeoverToken,
   readTimerProcessStartIdentity,
   type ShieldsTimerMarker,
@@ -215,6 +217,7 @@ function removeTimerAuthorizationProof(
 
 interface ClearTimerMarkerResult {
   cleared: boolean;
+  retainedPath?: string;
   warning?: string;
 }
 
@@ -267,17 +270,18 @@ function clearTimerMarkerGeneration(
   sandboxName: string,
   expected: ShieldsTimerMarker,
   stateDir?: string,
+  sourcePath = timerMarkerPath(sandboxName, stateDir),
 ): ClearTimerMarkerResult {
   const markerPath = timerMarkerPath(sandboxName, stateDir);
-  const quarantinePath = `${markerPath}.completed-${String(process.pid)}-${Date.now().toString(16)}`;
+  const quarantinePath = `${markerPath}.completed-${String(process.pid)}-${randomUUID()}`;
   try {
-    fs.renameSync(markerPath, quarantinePath);
+    fs.renameSync(sourcePath, quarantinePath);
   } catch (error) {
     const errno = error as NodeJS.ErrnoException;
     if (errno.code === "ENOENT") return { cleared: false };
     return {
       cleared: false,
-      warning: `Failed to claim shields timer marker '${markerPath}': ${errno.message}`,
+      warning: `Failed to claim shields timer recovery artifact '${sourcePath}': ${errno.message}`,
     };
   }
 
@@ -297,40 +301,42 @@ function clearTimerMarkerGeneration(
       if (!fs.existsSync(quarantinePath)) {
         return {
           cleared: false,
-          warning: `Removed completed Shields timer marker '${markerPath}', but could not confirm durable cleanup: ${detail}`,
+          warning: `Removed completed Shields timer recovery artifact '${sourcePath}', but could not confirm durable cleanup: ${detail}`,
         };
       }
       try {
-        fs.linkSync(quarantinePath, markerPath);
+        fs.linkSync(quarantinePath, sourcePath);
         fs.unlinkSync(quarantinePath);
         return {
           cleared: false,
-          warning: `Could not remove completed Shields timer marker '${markerPath}'; restored it for retry: ${detail}`,
+          warning: `Could not remove completed Shields timer recovery artifact '${sourcePath}'; restored it for retry: ${detail}`,
         };
       } catch (restoreError) {
         const restoreDetail =
           restoreError instanceof Error ? restoreError.message : String(restoreError);
         return {
           cleared: false,
-          warning: `Could not remove completed Shields timer marker '${markerPath}' or restore it; retained '${quarantinePath}' for recovery: ${detail}; ${restoreDetail}`,
+          retainedPath: quarantinePath,
+          warning: `Could not remove completed Shields timer recovery artifact '${sourcePath}' or restore it; retained '${quarantinePath}' for recovery: ${detail}; ${restoreDetail}`,
         };
       }
     }
   }
 
   try {
-    fs.linkSync(quarantinePath, markerPath);
+    fs.linkSync(quarantinePath, sourcePath);
     fs.unlinkSync(quarantinePath);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     return {
       cleared: false,
-      warning: `Shields timer authority changed while retiring completed marker '${markerPath}'; retained '${quarantinePath}' for recovery: ${detail}`,
+      retainedPath: quarantinePath,
+      warning: `Shields timer authority changed while retiring completed artifact '${sourcePath}'; retained '${quarantinePath}' for recovery: ${detail}`,
     };
   }
   return {
     cleared: false,
-    warning: `Shields timer authority changed while retiring completed marker '${markerPath}'`,
+    warning: `Shields timer authority changed while retiring completed artifact '${sourcePath}'`,
   };
 }
 
@@ -511,6 +517,7 @@ export {
   clearTimerMarkerGeneration,
   hasExactTimerAuthorizationProof,
   isShieldsTimerDeadlineAbandoned,
+  isShieldsTimerMarkerAbandoned,
   isProcessAlive,
   killTimer,
   processInspectionDeadlineAfter,
@@ -519,6 +526,7 @@ export {
   readProcessStartIdentity,
   readProcessState,
   readTimerMarker,
+  readShieldsTimerRecoveryCandidate,
   removeTimerAuthorizationProof,
   timerAuthoritySha256,
   timerAuthorizationProofPath,
