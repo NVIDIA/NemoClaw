@@ -1543,10 +1543,10 @@ refresh_openclaw_provider_placeholders() {
   local hash_file="/sandbox/.openclaw/.config-hash"
   [ -f "$config_file" ] || return 0
 
-  # The Tencent WeChat plugin reads its credential from a separate account
-  # file, outside openclaw.json. Refresh that file through descriptor-relative,
-  # no-follow operations so its identity-bound endpoint receives the exact
-  # revision-scoped placeholder without persisting the raw bot token.
+  # The Tencent WeChat plugin reads its credential from a separate account file.
+  # Store the revision-scoped OpenShell placeholder in that file through
+  # descriptor-relative, no-follow operations. Do not write the raw bot token
+  # to disk.
   refresh_openclaw_wechat_account_placeholder() {
 
     python3 -I - "$config_file" <<'PYWECHATPLACEHOLDER'
