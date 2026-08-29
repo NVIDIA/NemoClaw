@@ -209,7 +209,7 @@ The legacy `default` namespace is not isolated across gateways, so it cannot sat
 Scoped uninstall stops before it deletes a sandbox, registry row, or gateway registration and preserves the selected gateway's runtime evidence and local state.
 Because the supported OpenShell Podman schema does not expose `sandbox_namespace`, scoped Podman uninstall fails closed before signaling and preserves the gateway runtime evidence and local state.
 Full uninstall detects Portable ownership only from durable lifecycle state.
-When no Portable lifecycle receipt or retirement record exists, full uninstall preserves `~/.config/nemoclaw/portable/` unchanged and completes ordinary cleanup.
+When no Portable lifecycle receipt, retirement record, or contradictory Portable lifecycle state exists, full uninstall preserves `~/.config/nemoclaw/portable/` unchanged and completes ordinary cleanup.
 This preservation also applies with `--destroy-user-data`.
 This path covers incomplete or absent onboarding and an absent state directory.
 It also covers completed ordinary onboarding after an earlier Portable attempt.
