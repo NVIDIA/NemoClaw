@@ -1740,6 +1740,15 @@ function clearSandboxChannelDurableState(sandboxName: string, channelName: strin
   if (!sentinelSeen(result)) {
     result = executeSandboxCommand(sandboxName, cmd);
   }
+  if (
+    !sentinelSeen(result) &&
+    agent.name === "openclaw" &&
+    channelName === "wechat" &&
+    policyChannelDependencies.clearStoppedDockerSandboxChannelState(sandboxName, paths)
+  ) {
+    console.log(`  ${G}✓${R} Cleared stopped-sandbox '${channelName}' channel state.`);
+    return true;
+  }
   if (!sentinelSeen(result)) {
     console.error(
       `  ${YW}⚠${R} Could not clear in-sandbox '${channelName}' channel state at ${paths.join(", ")}.`,
@@ -1911,8 +1920,10 @@ async function removeSandboxChannelUnlocked(
 
   // Channels with durable account or session state store auth blobs inside
   // the sandbox that survive a rebuild via the state_dirs backup. Tear those
-  // down FIRST so a cleanup failure leaves the registry/policy untouched —
-  // the operator can re-run after starting the sandbox. Bailing here is the
+  // down FIRST so a cleanup failure leaves the registry/policy untouched.
+  // OpenClaw WeChat can additionally recover through a stopped Docker volume
+  // helper because the same missing account file may block its entrypoint.
+  // Bailing here is the
   // only way to keep #3998 from recurring on cleanup error. Skip the cleanup
   // attempt entirely when the registry/policy show no residue. Removing a
   // never-configured/already-clean channel must remain a quiet no-op even when
@@ -1926,7 +1937,7 @@ async function removeSandboxChannelUnlocked(
       `  Refusing to proceed: '${canonical}' session state is still inside the sandbox.`,
     );
     console.error(
-      `    Start the sandbox, then re-run: ${CLI_NAME} ${sandboxName} channels remove ${canonical}`,
+      `    Restore sandbox lifecycle access, then re-run: ${CLI_NAME} ${sandboxName} channels remove ${canonical}`,
     );
     process.exit(1);
   }

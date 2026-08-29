@@ -34,6 +34,7 @@ type LegacyOnboardProvidersModule = {
 };
 
 type RebuildModule = typeof import("./rebuild");
+type PrivilegedExecModule = typeof import("../../sandbox/privileged-exec");
 type SetupInferenceModule = typeof import("../../onboard/setup-inference");
 type SandboxProviderCleanupModule = typeof import("../../onboard/sandbox-provider-cleanup");
 type PolicyModule = typeof import("../../policy");
@@ -64,6 +65,10 @@ function gatewayRunner(gatewayName: string): typeof runOpenshell {
  * onboarding and rebuild modules at policy-channel import time.
  */
 export const policyChannelDependencies = {
+  clearStoppedDockerSandboxChannelState(sandboxName: string, paths: readonly string[]): boolean {
+    const cleanup = require("../../sandbox/privileged-exec") as PrivilegedExecModule;
+    return cleanup.clearStoppedDockerSandboxChannelState(sandboxName, paths);
+  },
   deleteMessagingProviderWithRecovery(
     providerName: string,
     sandboxName: string,

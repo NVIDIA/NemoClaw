@@ -121,6 +121,8 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
 
     expect(run.result.status, String(run.result.stderr)).toBe(0);
     expect(run.account.token).toBe(scoped);
+    expect(run.config).toEqual(wechatConfig(true));
+    expect(run.result.stderr).not.toContain(scoped);
   });
 
   it("leaves an already-current placeholder untouched", () => {
@@ -130,18 +132,6 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
     expect(run.result.status, String(run.result.stderr)).toBe(0);
     expect(run.account.token).toBe(scoped);
     expect(run.result.stderr).not.toContain("Refreshed WeChat account provider placeholder");
-  });
-
-  it("refreshes a stale account placeholder without mutating openclaw.json", () => {
-    const scoped = "openshell:resolve:env:v51_WECHAT_BOT_TOKEN";
-    const run = runWechatRefresh("openshell:resolve:env:v42_WECHAT_BOT_TOKEN", {
-      WECHAT_BOT_TOKEN: scoped,
-    });
-
-    expect(run.result.status, String(run.result.stderr)).toBe(0);
-    expect(run.account.token).toBe(scoped);
-    expect(run.config).toEqual(wechatConfig(true));
-    expect(run.result.stderr).not.toContain(scoped);
   });
 
   it.each([

@@ -73,6 +73,7 @@ function buildPreamble({
   disabledChannels = [] as string[],
   sandboxExecResult = { status: 0, stdout: "NEMOCLAW_CHANNEL_CLEAR_OK", stderr: "" },
   sshFallbackResult = null as { status: number; stdout: string; stderr: string } | null,
+  stoppedDockerCleanupResult = false,
 }: {
   presetNamesApplied?: string[];
   sandboxAgent?: MessagingAgentId;
@@ -80,6 +81,7 @@ function buildPreamble({
   disabledChannels?: string[];
   sandboxExecResult?: { status: number; stdout: string; stderr: string } | null;
   sshFallbackResult?: { status: number; stdout: string; stderr: string } | null;
+  stoppedDockerCleanupResult?: boolean;
 } = {}): string {
   const j = (p: string) =>
     JSON.stringify(path.join(repoRoot, "src", "lib", p.replace(/\.js$/, ".ts")));
@@ -174,6 +176,12 @@ policies.removePreset = (sandboxName, presetName) => {
 };
 
 const callOrder = [];
+const stoppedDockerCleanupCalls = [];
+const policyChannelDeps = require(${j("actions/sandbox/policy-channel-dependencies.js")});
+policyChannelDeps.policyChannelDependencies.clearStoppedDockerSandboxChannelState = (sandboxName, paths) => {
+  stoppedDockerCleanupCalls.push({ sandboxName, paths });
+  return ${JSON.stringify(stoppedDockerCleanupResult)};
+};
 const origLog = console.log;
 console.log = (...args) => {
   const line = args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
@@ -198,6 +206,7 @@ module.exports = {
   registryUpdates,
   sessionStore,
   callOrder,
+  stoppedDockerCleanupCalls,
   getExitCode: () => exitCode,
 };
 `;
@@ -382,6 +391,58 @@ const ctx = module.exports;
     assert.ok(
       payload.callOrder.includes("promptAndRebuild"),
       `rebuild must be queued after SSH-recovered cleanup; callOrder=${JSON.stringify(payload.callOrder)}`,
+    );
+  });
+
+  it("recovers WeChat removal offline when a missing account file blocks startup", () => {
+    const script = `${buildPreamble({
+      presetNamesApplied: ["npm", "pypi", "huggingface", "brew", "wechat"],
+      sandboxAgent: "openclaw",
+      channelInRegistry: "wechat",
+      disabledChannels: ["wechat"],
+      sandboxExecResult: { status: 1, stdout: "", stderr: "startup failed: account missing" },
+      sshFallbackResult: { status: 255, stdout: "", stderr: "sandbox is not running" },
+      stoppedDockerCleanupResult: true,
+    })}
+const ctx = module.exports;
+(async () => {
+  try {
+    await ctx.channelModule.removeSandboxChannel("test-sb", { channel: "wechat" });
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({
+      stoppedDockerCleanupCalls: ctx.stoppedDockerCleanupCalls,
+      removedPresets: ctx.removedPresets,
+      registryUpdates: ctx.registryUpdates,
+      callOrder: ctx.callOrder,
+      exitCode: ctx.getExitCode(),
+    }) + "\\n");
+  } catch (err) {
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    assert.ok(marker >= 0, `no __RESULT__ marker:\n${result.stdout}`);
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+
+    assert.equal(payload.exitCode, null, "offline WeChat recovery must complete removal");
+    assert.deepEqual(payload.stoppedDockerCleanupCalls, [
+      {
+        sandboxName: "test-sb",
+        paths: ["/sandbox/.openclaw/wechat", "/sandbox/.openclaw/openclaw-weixin"],
+      },
+    ]);
+    assert.deepEqual(payload.removedPresets, [{ sandboxName: "test-sb", presetName: "wechat" }]);
+    assert.ok(payload.registryUpdates.length > 0, "persisted messaging plan must be removed");
+    assert.ok(
+      !JSON.stringify(payload.registryUpdates.at(-1)).includes('"wechat"'),
+      "final persisted messaging plan must omit WeChat",
+    );
+    assert.ok(
+      payload.callOrder.includes("promptAndRebuild"),
+      `rebuild must be queued after offline cleanup; callOrder=${JSON.stringify(payload.callOrder)}`,
     );
   });
 

@@ -16,9 +16,8 @@ const dockerRunPath = require.resolve("../adapters/docker/run");
 const portableLifecyclePath = require.resolve("../onboard/experimental/portable-demo-lifecycle");
 const registryPath = require.resolve("../state/registry");
 const lifecycleGenerationPath = require.resolve("../state/registry/lifecycle-generation");
-const persistedLifecyclePath = require.resolve(
-  "../onboard/runtime-provider/persisted-engine-lifecycle",
-);
+const persistedLifecyclePath =
+  require.resolve("../onboard/runtime-provider/persisted-engine-lifecycle");
 const statePathsPath = require.resolve("../state/paths");
 const transitionLockPath = require.resolve("../shields/transition-lock");
 const { containerNameMatchesSandbox, selectDirectSandboxContainer } = require(helperPath);
@@ -31,6 +30,10 @@ function restoreRequireCacheEntry(modulePath: string, priorEntry: unknown): void
 function withPrivilegedExecMocks<T>(
   deps: {
     dockerCapture: (args: readonly string[], options?: { timeout?: number }) => string;
+    dockerRun?: (
+      args: readonly string[],
+      options?: { timeout?: number },
+    ) => { status: number; stdout: string; stderr: string; error: null };
     getSandbox: (name: string) => {
       name?: string;
       lifecycleGeneration?: string;
@@ -74,7 +77,11 @@ function withPrivilegedExecMocks<T>(
     id: dockerRunPath,
     filename: dockerRunPath,
     loaded: true,
-    exports: { dockerCapture: deps.dockerCapture },
+    exports: {
+      dockerCapture: deps.dockerCapture,
+      dockerRun:
+        deps.dockerRun ?? (() => ({ status: 0, stdout: "", stderr: "", error: null }) as const),
+    },
   } as any;
   requireCache[portableLifecyclePath] = {
     id: portableLifecyclePath,
@@ -169,6 +176,95 @@ describe("privileged sandbox exec routing", () => {
     expect(
       selectDirectSandboxContainer("demo", "abc123\topenshell-default--demo-2026\n", ["demo"]),
     ).toBe("abc123");
+  });
+
+  it("clears stopped OpenClaw WeChat state through an isolated immutable-image helper", () => {
+    const containerId = "a".repeat(64);
+    const imageId = `sha256:${"b".repeat(64)}`;
+    const results = [
+      {
+        status: 0,
+        stdout: `${containerId}\t${imageId}\tfalse\n`,
+        stderr: "",
+        error: null,
+      },
+      { status: 0, stdout: "", stderr: "", error: null },
+      {
+        status: 0,
+        stdout: `${containerId}\t${imageId}\tfalse\n`,
+        stderr: "",
+        error: null,
+      },
+    ];
+    const runDocker = vi.fn(
+      (_args: readonly string[]) => results.shift() as (typeof results)[number],
+    );
+
+    withPrivilegedExecMocks(
+      {
+        dockerCapture: () => `${containerId}\topenshell-alpha\n`,
+        dockerRun: runDocker,
+        getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+      },
+      ({ clearStoppedDockerSandboxChannelState }) => {
+        expect(
+          clearStoppedDockerSandboxChannelState("alpha", [
+            "/sandbox/.openclaw/wechat",
+            "/sandbox/.openclaw/openclaw-weixin",
+          ]),
+        ).toBe(true);
+      },
+    );
+
+    const helperArgv = runDocker.mock.calls[1]?.[0];
+    expect(runDocker).toHaveBeenCalledTimes(3);
+    expect(helperArgv).toEqual(
+      expect.arrayContaining([
+        "run",
+        "--network",
+        "none",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--cap-add",
+        "DAC_OVERRIDE",
+        "--volumes-from",
+        `${containerId}:rw`,
+        imageId,
+      ]),
+    );
+    expect(helperArgv).not.toContain("start");
+    expect(helperArgv?.at(-1)).toContain(
+      "rm -rf -- /sandbox/.openclaw/wechat /sandbox/.openclaw/openclaw-weixin",
+    );
+  });
+
+  it("refuses a broader OpenClaw cleanup path before Docker discovery", () => {
+    const captureDocker = vi.fn(() => "");
+    const runDocker = vi.fn((_args: readonly string[]) => {
+      return { status: 0, stdout: "", stderr: "", error: null } as const;
+    });
+
+    withPrivilegedExecMocks(
+      {
+        dockerCapture: captureDocker,
+        dockerRun: runDocker,
+        getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+      },
+      ({ clearStoppedDockerSandboxChannelState }) => {
+        expect(
+          clearStoppedDockerSandboxChannelState("alpha", [
+            "/sandbox/.openclaw/.",
+            "/sandbox/.openclaw/openclaw-weixin",
+          ]),
+        ).toBe(false);
+      },
+    );
+
+    expect(captureDocker).not.toHaveBeenCalled();
+    expect(runDocker).not.toHaveBeenCalled();
   });
 
   it("rejects ambiguous labeled running containers", () => {
@@ -567,7 +663,9 @@ describe("privileged sandbox exec routing", () => {
           refusal = error;
         }
         expect(refusal).toBeInstanceOf(Error);
-        expect(String(refusal)).toMatch(/container identity changed.*refusing privileged execution/i);
+        expect(String(refusal)).toMatch(
+          /container identity changed.*refusing privileged execution/i,
+        );
         expect(isPinnedSandboxContainerIdentityChangedError(refusal)).toBe(true);
       },
     );

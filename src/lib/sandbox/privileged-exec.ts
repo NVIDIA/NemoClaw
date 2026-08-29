@@ -4,9 +4,10 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { dockerCapture } from "../adapters/docker/run";
+import { dockerCapture, dockerRun } from "../adapters/docker/run";
 import { resolveSandboxContainerOwner } from "../domain/sandbox/container-owner";
 import { resolvePortableDemoPrivilegedExecTarget } from "../onboard/experimental/portable-demo-lifecycle";
+import { isImmutableDockerImageId } from "../onboard/openshell-docker-sandbox-containers";
 import {
   createFilePersistedEngineLifecycleStore,
   hasActivePersistedEngineStateMutationTarget,
@@ -28,6 +29,20 @@ type LabeledSandboxContainer = {
 };
 
 const DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS = 5000;
+const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
+const OFFLINE_WECHAT_STATE_PATHS = new Set([
+  "/sandbox/.openclaw/wechat",
+  "/sandbox/.openclaw/openclaw-weixin",
+]);
+const OFFLINE_WECHAT_CLEANUP_COMMAND =
+  "rm -rf -- /sandbox/.openclaw/wechat /sandbox/.openclaw/openclaw-weixin && " +
+  "test ! -e /sandbox/.openclaw/wechat && test ! -e /sandbox/.openclaw/openclaw-weixin";
+const OFFLINE_DOCKER_OPERATION_OPTIONS = {
+  encoding: "utf-8",
+  ignoreError: true,
+  suppressOutput: true,
+  timeout: 30_000,
+} as const;
 const SANITIZED_PRIVILEGED_ENV = [
   "BASH_ENV=",
   "ENV=",
@@ -46,6 +61,18 @@ const SANITIZED_PRIVILEGED_ENV = [
   "PYTHONSTARTUP=",
   "PYTHONUSERBASE=",
   "RUBYOPT=",
+] as const;
+const NEUTRALIZED_OFFLINE_HELPER_ENV = [
+  "--env",
+  "LD_AUDIT=",
+  "--env",
+  "LD_LIBRARY_PATH=",
+  "--env",
+  "LD_PRELOAD=",
+  "--env",
+  "BASH_ENV=",
+  "--env",
+  "ENV=",
 ] as const;
 
 class DirectSandboxFallbackUnavailableError extends Error {
@@ -184,6 +211,117 @@ function findDirectSandboxContainer(sandboxName: string): string | null {
     );
   }
   return selectDirectSandboxContainer(sandboxName, output, names);
+}
+
+function findStoppedDirectSandboxContainer(sandboxName: string): string | null {
+  const names = registeredSandboxNames(sandboxName);
+  const output = dockerCapture(
+    [
+      "ps",
+      "-a",
+      "--no-trunc",
+      "--filter",
+      `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
+      "--filter",
+      `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`,
+      "--format",
+      "{{.ID}}\t{{.Names}}",
+    ],
+    { timeout: DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS },
+  );
+  const candidates = parseLabeledSandboxContainers(output);
+  const selected = selectDirectSandboxContainer(sandboxName, output, names);
+  if (/-nemoclaw-gpu-backup-\d+$/u.test(candidates[0]?.name ?? "")) return null;
+  return selected;
+}
+
+type InspectedStoppedContainer = {
+  readonly id: string;
+  readonly image: string;
+  readonly running: boolean;
+};
+
+function inspectStoppedContainer(containerId: string): InspectedStoppedContainer | null {
+  const result = dockerRun(
+    ["inspect", "--format", "{{.Id}}\t{{.Image}}\t{{.State.Running}}", containerId],
+    OFFLINE_DOCKER_OPERATION_OPTIONS,
+  );
+  if (result.status !== 0 || typeof result.stdout !== "string") return null;
+  const [id, image, running, ...unexpected] = result.stdout.trim().split("\t");
+  if (
+    unexpected.length > 0 ||
+    !id ||
+    !FULL_CONTAINER_ID_RE.test(id) ||
+    !image ||
+    !isImmutableDockerImageId(image) ||
+    (running !== "true" && running !== "false")
+  ) {
+    return null;
+  }
+  return { id, image, running: running === "true" };
+}
+
+/** Clear OpenClaw WeChat state without starting a failed Docker sandbox. */
+function clearStoppedDockerSandboxChannelState(
+  sandboxName: string,
+  paths: readonly string[],
+): boolean {
+  const entry = readSandboxEntry(sandboxName);
+  if (normalizeDriver(entry?.openshellDriver) !== "docker") return false;
+  if (
+    paths.length !== OFFLINE_WECHAT_STATE_PATHS.size ||
+    new Set(paths).size !== paths.length ||
+    paths.some((path) => !OFFLINE_WECHAT_STATE_PATHS.has(path))
+  ) {
+    return false;
+  }
+
+  try {
+    return withPrivilegedSandboxExecutionLease(sandboxName, "offline WeChat state cleanup", () => {
+      const containerId = findStoppedDirectSandboxContainer(sandboxName);
+      if (!containerId) return false;
+      const inspected = inspectStoppedContainer(containerId);
+      if (!inspected || inspected.running || inspected.id !== containerId) return false;
+      const cleared = dockerRun(
+        [
+          "run",
+          "--rm",
+          "--pull",
+          "never",
+          "--network",
+          "none",
+          "--read-only",
+          "--user",
+          "0:0",
+          "--security-opt",
+          "no-new-privileges",
+          "--cap-drop",
+          "ALL",
+          "--cap-add",
+          "DAC_OVERRIDE",
+          "--pids-limit",
+          "64",
+          ...NEUTRALIZED_OFFLINE_HELPER_ENV,
+          "--volumes-from",
+          `${inspected.id}:rw`,
+          "--entrypoint",
+          "/usr/bin/env",
+          inspected.image,
+          "-i",
+          "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+          "/bin/sh",
+          "-c",
+          OFFLINE_WECHAT_CLEANUP_COMMAND,
+        ],
+        OFFLINE_DOCKER_OPERATION_OPTIONS,
+      );
+      if (cleared.status !== 0) return false;
+      const confirmed = inspectStoppedContainer(containerId);
+      return confirmed?.id === inspected.id && !confirmed.running;
+    });
+  } catch {
+    return false;
+  }
 }
 
 function missingDirectContainerError(sandboxName: string, driver: string | null): Error {
@@ -336,6 +474,7 @@ function privilegedSandboxExecArgv(
 }
 
 export {
+  clearStoppedDockerSandboxChannelState,
   containerNameMatchesSandbox,
   isDirectSandboxFallbackUnavailableError,
   isPinnedSandboxContainerIdentityChangedError,
