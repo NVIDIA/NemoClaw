@@ -774,6 +774,52 @@ function renderTrace(input: {
       },
     });
   }
+  const lifetimeJobs = new Map(input.jobs.map((job, index) => [job.id, { job, index }]));
+  for (const run of validateArray(input.report?.waterfall?.runs ?? [], "waterfall runs")) {
+    for (const reportJob of validateArray(run?.jobs ?? [], "waterfall jobs")) {
+      const matched = lifetimeJobs.get(reportJob?.id);
+      if (!matched || reportJob?.testRun === null || reportJob?.testRun === undefined) continue;
+      const commitIndex = input.commits.findIndex(
+        (commit) => commit.oid === matched.job.run.head_sha,
+      );
+      const pid = 1_000 + Math.max(0, commitIndex);
+      for (const [testIndex, test] of validateArray(
+        reportJob.testRun.slowTests ?? [],
+        "slow test timings",
+      ).entries()) {
+        const tid = 2_000_000 + matched.index * 1_000 + testIndex;
+        addMetadata(
+          events,
+          metadata,
+          pid,
+          tid,
+          "Revision " + matched.job.run.head_sha.slice(0, 8),
+          matched.job.name + " / slow tests",
+        );
+        const start = optionalTime(test?.startedAt);
+        const duration = Number(test?.durationSeconds);
+        addSpan(events, {
+          name: boundedText(test?.name, 500) || "Slow test",
+          category: "ci.test.slow",
+          start,
+          end:
+            start === null || !Number.isFinite(duration) || duration < 0
+              ? null
+              : start + duration * 1_000,
+          pid,
+          tid,
+          args: {
+            file: boundedText(test?.file, 500),
+            state: boundedText(test?.state, 100),
+            jobId: reportJob.id,
+            runId: matched.job.run.id,
+            artifact: boundedText(reportJob.testRun.artifact, 500),
+            selection: "bounded slowest tests",
+          },
+        });
+      }
+    }
+  }
   for (const [jobIndex, job] of input.jobs.entries()) {
     const commitIndex = input.commits.findIndex((commit) => commit.oid === job.run.head_sha);
     const pid = 1_000 + Math.max(0, commitIndex);

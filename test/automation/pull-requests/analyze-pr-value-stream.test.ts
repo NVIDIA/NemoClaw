@@ -403,6 +403,26 @@ describe("pull request value-stream analysis", () => {
     });
     expect(testRun.durationSeconds).toBeGreaterThanOrEqual(0);
     expect(testRun.slowTests).toHaveLength(1);
+    const trace = JSON.parse(
+      await readFile(
+        path.join(result.directory, ".nemoclaw-maintainer/pr-value-stream/pr-42/trace.json"),
+        "utf8",
+      ),
+    );
+    expect(trace.traceEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "sample",
+          cat: "ci.test.slow",
+          ph: "X",
+          args: expect.objectContaining({
+            file: expect.stringMatching(/sample\.test\.ts$/u),
+            artifact: "cli-blob-report-1",
+            selection: "bounded slowest tests",
+          }),
+        }),
+      ]),
+    );
   });
 
   test("removes the artifact directory when analysis is terminated (#10542)", async () => {
