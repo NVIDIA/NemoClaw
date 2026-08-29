@@ -69,13 +69,22 @@ function extractHermesIntegrityCommand(dockerfile: string): string {
 
 function extractHermesRuntimeGuard(dockerfile: string): string {
   const guardStart = dockerfile.indexOf("RUN /usr/local/bin/hermes --version");
-  const nextRun = dockerfile.indexOf("\nRUN chmod -R", guardStart);
+  const nextRun = dockerfile.indexOf("\nRUN test -r", guardStart);
   expect(guardStart).toBeGreaterThanOrEqual(0);
   expect(nextRun).toBeGreaterThan(guardStart);
   return dockerfile
     .slice(guardStart, nextRun)
     .replace(/^RUN\s+/, "")
     .replace(/\\\n/g, " ");
+}
+
+function expectReadableVenvBeforeSandboxProbe(dockerfile: string): void {
+  const permissionStep = dockerfile.indexOf("RUN chmod -R a+rX /opt/hermes/.venv");
+  const sandboxProbe = dockerfile.indexOf(
+    "/usr/local/bin/uv pip install \\\n        --python /opt/hermes/.venv/bin/python",
+  );
+  expect(permissionStep).toBeGreaterThanOrEqual(0);
+  expect(sandboxProbe).toBeGreaterThan(permissionStep);
 }
 
 function runLoggedShell(command: string, tmp: string, functionDefs: string[] = []) {
@@ -369,6 +378,11 @@ function runHermesInstallLayer(
 }
 
 describe("Hermes share mount package parity (#2947)", () => {
+  it("makes the virtual environment readable before the sandbox-user lazy-package probe (#8613)", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
+    expectReadableVenvBeforeSandboxProbe(dockerfile);
+  });
+
   it.each([
     {
       input: { version: "2026.7.20" },

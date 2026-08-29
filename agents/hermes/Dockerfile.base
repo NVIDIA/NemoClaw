@@ -569,6 +569,10 @@ RUN printf '%s\n' \
         "import multipart; assert multipart.__version__ == '0.0.32', multipart.__version__" \
     && rm -rf /root/.cache/uv
 
+# The offline lazy-package probe runs as the sandbox user. Make the finalized
+# virtual environment readable before that unprivileged build-time check.
+RUN chmod -R a+rX /opt/hermes/.venv
+
 # Keep official-package compatibility separate from the final image's offline
 # lazy-installer contract. BuildKit verifies both reviewed PyPI artifacts before
 # any build command can consume them. Install only those hash-locked wheels into
@@ -624,8 +628,7 @@ RUN /usr/local/bin/hermes --version \
     && /opt/hermes/.venv/bin/python -c \
         'import mcp; from tools import mcp_tool; assert getattr(mcp_tool, "_MCP_AVAILABLE", False), "Hermes MCP client runtime is unavailable"; assert getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False), "Hermes MCP Streamable HTTP runtime is unavailable"'
 
-RUN chmod -R a+rX /opt/hermes/.venv \
-    && test -r /opt/hermes/.venv/pyvenv.cfg \
+RUN test -r /opt/hermes/.venv/pyvenv.cfg \
     && su -s /bin/sh sandbox -c '/opt/hermes/.venv/bin/python3 -c "import urllib.request"'
 
 # Reject build-only paths before the base image can be published.
