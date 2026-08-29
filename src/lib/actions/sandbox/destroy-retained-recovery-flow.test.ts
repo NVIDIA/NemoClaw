@@ -17,6 +17,7 @@ function retainedRecoveryRecord(sandboxId = "sb-alpha"): RetainedSandboxRecovery
     recordId: "f".repeat(64),
     sandboxName: "alpha",
     sandboxIdentityFingerprint: createHash("sha256").update(sandboxId).digest("hex"),
+    identityWasUnavailable: false,
     gatewayName: "nemoclaw-19080",
     gatewayPort: 19080,
     lifecycleGeneration: "generation-alpha",
