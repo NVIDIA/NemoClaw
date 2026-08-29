@@ -489,21 +489,18 @@ describe("pull request value-stream analysis", () => {
     );
   });
 
-  test("removes an interrupted backup before publishing replacement artifacts (#10542)", async () => {
+  test("restores an interrupted backup when replacement publication fails (#10542)", async () => {
     const publicationRoot = await mkdtemp(path.join(tmpdir(), "value-stream-recover-"));
     temporaryDirectories.push(publicationRoot);
     const destination = path.join(publicationRoot, "pr-42");
     const backup = path.join(publicationRoot, ".pr-42-staging-interrupted-previous");
-    const staging = path.join(publicationRoot, "replacement");
-    await Promise.all([mkdir(backup), mkdir(staging)]);
-    await Promise.all([
-      writeFile(path.join(backup, "manifest.json"), "prior"),
-      writeFile(path.join(staging, "manifest.json"), "replacement"),
-    ]);
-    await publishStagedDirectory({ staging, destination, lock: destination + ".lock" });
-    await expect(readFile(path.join(destination, "manifest.json"), "utf8")).resolves.toBe(
-      "replacement",
-    );
+    const staging = path.join(publicationRoot, "missing-replacement");
+    await mkdir(backup);
+    await writeFile(path.join(backup, "manifest.json"), "prior");
+    await expect(
+      publishStagedDirectory({ staging, destination, lock: destination + ".lock" }),
+    ).rejects.toThrow();
+    await expect(readFile(path.join(destination, "manifest.json"), "utf8")).resolves.toBe("prior");
     await expect(stat(backup)).rejects.toThrow();
   });
 

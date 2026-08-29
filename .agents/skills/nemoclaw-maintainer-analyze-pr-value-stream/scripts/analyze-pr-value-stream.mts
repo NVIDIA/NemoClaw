@@ -166,7 +166,7 @@ async function runGithubCli(input: GithubCliInput): Promise<{ stdout: string }> 
 
 type RequiredCheck = { name: string; appId: number | null; legacy: boolean };
 
-const artifactDirectories = new Set<string>();
+const artifactDirectories = new Map<string, (() => Promise<void>) | undefined>();
 const artifactAbortController = new AbortController();
 const cancellationSignals = ["SIGINT", "SIGTERM"] as const;
 let cancellationHandlersInstalled = false;
@@ -184,8 +184,8 @@ async function handleCancellation(signal: (typeof cancellationSignals)[number]):
   artifactAbortController.abort();
   const retained: string[] = [];
   await Promise.all(
-    [...artifactDirectories].map(async (directory) => {
-      const caveat = await cleanupArtifactDirectory(directory);
+    [...artifactDirectories].map(async ([directory, cleanup]) => {
+      const caveat = await cleanupArtifactDirectory(directory, cleanup);
       if (caveat !== null) retained.push(caveat);
       else artifactDirectories.delete(directory);
     }),
@@ -200,8 +200,8 @@ function releaseTrackedPath(path: string): void {
   if (artifactDirectories.size === 0 && cancellationHandlersInstalled) removeCancellationHandlers();
 }
 
-function trackArtifactDirectory(directory: string): void {
-  artifactDirectories.add(directory);
+function trackArtifactDirectory(directory: string, cleanup?: () => Promise<void>): void {
+  artifactDirectories.set(directory, cleanup);
   if (cancellationHandlersInstalled) return;
   for (const signal of cancellationSignals) process.on(signal, handleCancellation);
   cancellationHandlersInstalled = true;

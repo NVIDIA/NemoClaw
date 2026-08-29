@@ -130,7 +130,7 @@ type ExportInput = {
   number: number;
   report: unknown;
   githubRead: GithubRead;
-  trackTemporaryPath?: (path: string) => void;
+  trackTemporaryPath?: (path: string, cleanup?: () => Promise<void>) => void;
   releaseTemporaryPath?: (path: string) => void;
 };
 
@@ -864,11 +864,14 @@ export async function publishStagedDirectory(input: {
   destination: string;
   lock: string;
   validate?: () => Promise<void>;
-  track?: (path: string) => void;
+  track?: (path: string, cleanup?: () => Promise<void>) => void;
   release?: (path: string) => void;
 }): Promise<void> {
   const token = await acquirePublicationLock(input.lock);
-  input.track?.(input.lock);
+  input.track?.(input.lock, async () => {
+    if (await lockOwnershipMatches(input.lock, token))
+      await rm(input.lock, { recursive: true, force: true });
+  });
   const heartbeat = setInterval(() => {
     void utimes(input.lock, new Date(), new Date()).catch(() => undefined);
   }, PUBLICATION_LOCK_STALE_MS / 3);
