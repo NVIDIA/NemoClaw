@@ -13,6 +13,7 @@ import {
 } from "../docker-gpu-patch-constants";
 import type { DockerGpuPatchDeps, DockerGpuPatchResult } from "../docker-gpu-patch-types";
 import { cleanupTempDir, secureTempFile } from "../temp-files";
+import { withDockerManagedStartupReceiptVolume } from "./docker-receipt-volume";
 import type { DockerManagedStartupTransaction } from "./docker-root-apply";
 import { MANAGED_STARTUP_RUNTIME_EXECUTABLE } from "./image-runtime";
 import {
@@ -117,9 +118,6 @@ function copyManagedStartupReceipt(
         `Could not copy the managed-startup rollback receipt from the failed container: ${commandDetail(copy)}`,
       );
     }
-    if (receiptPath.includes(",") || /[\r\n\0]/u.test(receiptPath)) {
-      throw new Error("Managed-startup rollback receipt path is unsafe for a Docker bind mount");
-    }
     return receiptPath;
   } catch (error) {
     cleanupReceiptBestEffort(receiptPath);
@@ -135,39 +133,49 @@ function rollbackManagedStartupSharedState(
   const dockerRun = deps.dockerRun ?? defaultDockerRun;
   let restored = false;
   try {
-    const helper = dockerRun(
-      [
-        "run",
-        "--rm",
-        "--pull",
-        "never",
-        "--network",
-        "none",
-        "--read-only",
-        "--user",
-        "0:0",
-        "--security-opt",
-        "no-new-privileges",
-        "--cap-drop",
-        "ALL",
-        "--cap-add",
-        "CHOWN",
-        "--cap-add",
-        "DAC_OVERRIDE",
-        "--cap-add",
-        "FOWNER",
-        ...NEUTRALIZED_PROCESS_INJECTION_ENV,
-        "--volumes-from",
-        transaction.containerId,
-        "--mount",
-        `type=bind,src=${receiptPath},dst=${MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY},readonly`,
-        "--entrypoint",
-        "/usr/local/bin/node",
-        transaction.image,
-        ...transactionCommand("rollback", transaction.agent),
-        "--read-only-receipt",
-      ],
-      DOCKER_MUTATION_OPTIONS,
+    const helper = withDockerManagedStartupReceiptVolume(
+      {
+        image: transaction.image,
+        options: DOCKER_MUTATION_OPTIONS,
+        receiptDirectory: MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
+        receiptPath,
+      },
+      { dockerRun },
+      (receiptMount) =>
+        dockerRun(
+          [
+            "run",
+            "--rm",
+            "--pull",
+            "never",
+            "--network",
+            "none",
+            "--read-only",
+            "--user",
+            "0:0",
+            "--security-opt",
+            "no-new-privileges",
+            "--cap-drop",
+            "ALL",
+            "--cap-add",
+            "CHOWN",
+            "--cap-add",
+            "DAC_OVERRIDE",
+            "--cap-add",
+            "FOWNER",
+            ...NEUTRALIZED_PROCESS_INJECTION_ENV,
+            "--volumes-from",
+            transaction.containerId,
+            "--mount",
+            receiptMount,
+            "--entrypoint",
+            "/usr/local/bin/node",
+            transaction.image,
+            ...transactionCommand("rollback", transaction.agent),
+            "--read-only-receipt",
+          ],
+          DOCKER_MUTATION_OPTIONS,
+        ),
     );
     if (!hasZeroDockerExitStatus(helper)) {
       throw new Error(

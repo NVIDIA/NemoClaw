@@ -354,10 +354,13 @@ export function fixture(options: DockerFixtureOptions = {}) {
     (args: readonly string[], commandOptions?: Record<string, unknown>) => {
       switch (args[0]) {
         case "create": {
+          const name = String(args[args.indexOf("--name") + 1] ?? "");
+          if (name.startsWith("nemoclaw-managed-startup-receipt-seed-")) {
+            return ok(name);
+          }
           events.push("create:replacement");
           const source =
             original ?? failFixture("original disappeared before replacement creation");
-          const name = String(args[args.indexOf("--name") + 1] ?? "");
           const entrypoint = String(args[args.indexOf("--entrypoint") + 1] ?? "");
           const imageIndex = args.indexOf(IMAGE);
           const dockerOptions = args.slice(0, imageIndex);
@@ -412,6 +415,13 @@ export function fixture(options: DockerFixtureOptions = {}) {
           const sourceIndex = args[1] === "-a" ? 2 : 1;
           const source = String(args[sourceIndex] ?? "");
           const destination = String(args[sourceIndex + 1] ?? "");
+          if (
+            args[1] === "-a" &&
+            !source.includes(":") &&
+            destination.startsWith("nemoclaw-managed-startup-receipt-seed-")
+          ) {
+            return ok();
+          }
           const copyIntoContainer = () => {
             events.push("stage:envelope");
             expect(args).toEqual(["cp", "-", `${NEW_ID}:/`]);
@@ -453,6 +463,14 @@ export function fixture(options: DockerFixtureOptions = {}) {
           };
           return source.includes(":") ? copyFromContainer() : copyIntoContainer();
         }
+        case "rm":
+          if (String(args[2] ?? "").startsWith("nemoclaw-managed-startup-receipt-seed-")) {
+            return ok();
+          }
+          break;
+        case "volume":
+          if (args[1] === "create" || args[1] === "rm") return ok(String(args[2] ?? ""));
+          break;
         case "run":
           switch (true) {
             case args.includes("--shared-state-transaction-status"):

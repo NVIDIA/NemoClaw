@@ -69,6 +69,10 @@ function fixture(
       case "cp": {
         const source = String(args[2] ?? "");
         const destination = String(args[3] ?? "");
+        switch (source.startsWith(`${CONTAINER_ID}:`)) {
+          case false:
+            return { status: 0 };
+        }
         const sourcePath = source.slice(`${CONTAINER_ID}:`.length);
         const present =
           (sourcePath === MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY &&
@@ -95,6 +99,29 @@ function fixture(
             throw new Error(`Unexpected Docker command: ${args.join(" ")}`);
         }
       }
+      case "create": {
+        const isReceiptSeed = String(args[args.indexOf("--name") + 1] ?? "").startsWith(
+          "nemoclaw-managed-startup-receipt-seed-",
+        );
+        switch (isReceiptSeed) {
+          case true:
+            return { status: 0 };
+        }
+        break;
+      }
+      case "rm":
+        switch (String(args[2] ?? "").startsWith("nemoclaw-managed-startup-receipt-seed-")) {
+          case true:
+            return { status: 0 };
+        }
+        break;
+      case "volume":
+        switch (args[1]) {
+          case "create":
+          case "rm":
+            return { status: 0 };
+        }
+        break;
       case "exec":
         switch (args.includes("--commit-shared-state-transaction")) {
           case true:
@@ -105,8 +132,9 @@ function fixture(
             throw new Error("Unexpected Docker commit command");
         }
       default:
-        throw new Error(`Unexpected Docker command: ${args.join(" ")}`);
+        break;
     }
+    throw new Error(`Unexpected Docker command: ${args.join(" ")}`);
   });
   return {
     commands,
@@ -146,7 +174,7 @@ describe("Docker managed-bootstrap shared-state rollback authority", () => {
     expect(statusCommand).toContainEqual(
       expect.stringMatching(
         new RegExp(
-          `^type=bind,src=.+,dst=${MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY},readonly$`,
+          `^type=volume,src=nemoclaw-managed-startup-receipt-[a-f0-9]+,dst=${MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY},readonly,volume-nocopy$`,
           "u",
         ),
       ),
@@ -175,7 +203,7 @@ describe("Docker managed-bootstrap shared-state rollback authority", () => {
     expect(rollbackCommand).toContainEqual(
       expect.stringMatching(
         new RegExp(
-          `^type=bind,src=.+,dst=${MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY},readonly$`,
+          `^type=volume,src=nemoclaw-managed-startup-receipt-[a-f0-9]+,dst=${MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY},readonly,volume-nocopy$`,
           "u",
         ),
       ),
@@ -238,12 +266,21 @@ describe("Docker managed-bootstrap shared-state rollback authority", () => {
     const rollbackCommand = fake.commands.find((args) =>
       args.includes("--rollback-shared-state-transaction"),
     );
-    expect(rollbackCommand).toContain(
-      "type=bind,src=" +
-        preservedReceiptPath +
-        ",dst=" +
-        MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY +
-        ",readonly",
+    expect(fake.commands).toContainEqual(
+      expect.arrayContaining([
+        "cp",
+        "-a",
+        `${preservedReceiptPath}${path.sep}.`,
+        expect.stringMatching(/^nemoclaw-managed-startup-receipt-seed-[a-f0-9]+:/u),
+      ]),
+    );
+    expect(rollbackCommand).toContainEqual(
+      expect.stringMatching(
+        new RegExp(
+          `^type=volume,src=nemoclaw-managed-startup-receipt-[a-f0-9]+,dst=${MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY},readonly,volume-nocopy$`,
+          "u",
+        ),
+      ),
     );
     expect(fake.deps.dockerRm).not.toHaveBeenCalled();
   });

@@ -103,6 +103,8 @@ describe("Docker managed-startup shared-state finalization", () => {
   it("uses the preserved pre-commit receipt after a lost commit acknowledgement", () => {
     const calls: string[] = [];
     let receiptPath = "";
+    let seedName = "";
+    let volumeName = "";
     const dockerRun = vi
       .fn()
       .mockImplementationOnce((args: readonly string[]) => {
@@ -113,6 +115,29 @@ describe("Docker managed-startup shared-state finalization", () => {
       .mockImplementationOnce(() => {
         calls.push("commit-lost-ack");
         return { status: 1, stderr: "daemon acknowledgement lost" };
+      })
+      .mockImplementationOnce((args: readonly string[]) => {
+        calls.push("volume-create");
+        volumeName = String(args[2]);
+        return { status: 0 };
+      })
+      .mockImplementationOnce((args: readonly string[]) => {
+        calls.push("seed-create");
+        seedName = String(args[2]);
+        expect(args).toContain(
+          `type=volume,src=${volumeName},dst=/run/nemoclaw/managed-startup-shared-rollback-receipt-v1,volume-nocopy`,
+        );
+        return { status: 0 };
+      })
+      .mockImplementationOnce((args: readonly string[]) => {
+        calls.push("upload");
+        expect(args).toEqual([
+          "cp",
+          "-a",
+          `${receiptPath}${path.sep}.`,
+          `${seedName}:/run/nemoclaw/managed-startup-shared-rollback-receipt-v1`,
+        ]);
+        return { status: 0 };
       })
       .mockImplementationOnce((args: readonly string[]) => {
         calls.push("rollback-helper");
@@ -148,7 +173,7 @@ describe("Docker managed-startup shared-state finalization", () => {
           "new",
           "--mount",
           expect.stringMatching(
-            /^type=bind,src=.+,dst=\/run\/nemoclaw\/managed-startup-shared-rollback-receipt-v1,readonly$/u,
+            /^type=volume,src=nemoclaw-managed-startup-receipt-[a-f0-9]+,dst=\/run\/nemoclaw\/managed-startup-shared-rollback-receipt-v1,readonly,volume-nocopy$/u,
           ),
           "--entrypoint",
           "/usr/local/bin/node",
@@ -159,6 +184,16 @@ describe("Docker managed-startup shared-state finalization", () => {
           "openclaw",
           "--read-only-receipt",
         ]);
+        return { status: 0 };
+      })
+      .mockImplementationOnce((args: readonly string[]) => {
+        calls.push("seed-remove");
+        expect(args).toEqual(["rm", "-f", seedName]);
+        return { status: 0 };
+      })
+      .mockImplementationOnce((args: readonly string[]) => {
+        calls.push("volume-remove");
+        expect(args).toEqual(["volume", "rm", volumeName]);
         return { status: 0 };
       });
     const dockerStop = vi.fn(() => {
@@ -172,7 +207,17 @@ describe("Docker managed-startup shared-state finalization", () => {
     );
     expect(outcome.supervisorReady).toBe(false);
     expect(outcome.failure?.message).toContain("commit failed");
-    expect(calls).toEqual(["copy", "commit-lost-ack", "stop", "rollback-helper"]);
+    expect(calls).toEqual([
+      "copy",
+      "commit-lost-ack",
+      "stop",
+      "volume-create",
+      "seed-create",
+      "upload",
+      "rollback-helper",
+      "seed-remove",
+      "volume-remove",
+    ]);
     expect(fs.existsSync(path.dirname(receiptPath))).toBe(false);
   });
 
@@ -217,7 +262,23 @@ describe("Docker managed-startup shared-state finalization", () => {
       return { status: 0 };
     });
     const dockerRun = vi.fn((args: readonly string[]) => {
-      calls.push(args[0] === "cp" ? "copy" : "rollback-helper");
+      const command =
+        args[0] === "volume" && args[1] === "create"
+          ? "volume-create"
+          : args[0] === "create"
+            ? "seed-create"
+            : args[0] === "cp" && args[1] === "-a"
+              ? "upload"
+              : args[0] === "cp"
+                ? "copy"
+                : args[0] === "run"
+                  ? "rollback-helper"
+                  : args[0] === "rm"
+                    ? "seed-remove"
+                    : args[0] === "volume" && args[1] === "rm"
+                      ? "volume-remove"
+                      : `unexpected:${args.join(" ")}`;
+      calls.push(command);
       return { status: 0 };
     });
 
@@ -227,7 +288,16 @@ describe("Docker managed-startup shared-state finalization", () => {
         { dockerRun, dockerStop },
       ),
     ).toEqual({ supervisorReady: false, failure: null });
-    expect(calls).toEqual(["stop", "copy", "rollback-helper"]);
+    expect(calls).toEqual([
+      "stop",
+      "copy",
+      "volume-create",
+      "seed-create",
+      "upload",
+      "rollback-helper",
+      "seed-remove",
+      "volume-remove",
+    ]);
   });
 
   it("stops a live workload when pre-commit receipt preservation fails", () => {
@@ -253,10 +323,15 @@ describe("Docker managed-startup shared-state finalization", () => {
         receiptPath = String(args[2]);
         return { status: 0 };
       })
+      .mockImplementationOnce(() => ({ status: 0 }))
+      .mockImplementationOnce(() => ({ status: 0 }))
+      .mockImplementationOnce(() => ({ status: 0 }))
       .mockImplementationOnce(() => ({
         status: 1,
         stderr: "receipt verification failed",
-      }));
+      }))
+      .mockImplementationOnce(() => ({ status: 0 }))
+      .mockImplementationOnce(() => ({ status: 0 }));
 
     try {
       expect(() =>

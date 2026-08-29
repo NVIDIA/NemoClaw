@@ -14,6 +14,7 @@ import {
   DOCKER_GPU_PATCH_TIMEOUT_MS,
 } from "../docker-gpu-patch-constants";
 import type { DockerGpuPatchDeps, DockerGpuPatchResult } from "../docker-gpu-patch-types";
+import { withDockerManagedStartupReceiptVolume } from "../managed-startup/docker-receipt-volume";
 import { MANAGED_STARTUP_RUNTIME_EXECUTABLE } from "../managed-startup/image-runtime";
 import { MANAGED_STARTUP_AGENTS, type ManagedStartupAgent } from "../managed-startup/profile";
 import {
@@ -162,45 +163,55 @@ function verifyCopiedManagedStartupReceipt(
     throw new Error("Managed bootstrap copied-receipt identity is incomplete.");
   }
   const dockerRun = deps.dockerRun ?? defaultDockerRun;
-  const result = dockerRun(
-    [
-      "run",
-      "--rm",
-      "--pull",
-      "never",
-      "--network",
-      "none",
-      "--read-only",
-      "--user",
-      "0:0",
-      "--security-opt",
-      "no-new-privileges",
-      "--cap-drop",
-      "ALL",
-      // docker cp can leave the protected 0700/0400 receipt owned by the
-      // invoking host UID. Restore only DAC_OVERRIDE so the root verifier can
-      // read that copy and its write probe reaches the read-only bind mount;
-      // every other capability remains dropped.
-      "--cap-add",
-      "DAC_OVERRIDE",
-      ...NEUTRALIZED_PRE_ENTRYPOINT_ENV,
-      "--mount",
-      transactionReceiptMount(receiptPath, receiptDirectory),
-      "--entrypoint",
-      CLEAN_NODE_ENTRYPOINT,
-      transaction.image,
-      ...CLEAN_NODE_ARGV,
-      MANAGED_STARTUP_RUNTIME_EXECUTABLE,
-      "--shared-state-transaction-status",
-      "--agent",
-      transaction.agent,
-      "--profile-fingerprint",
-      profileFingerprint,
-      "--bootstrap-identity",
-      transaction.bootstrapIdentity,
-      "--read-only-receipt",
-    ],
-    DOCKER_MUTATION_OPTIONS,
+  const result = withDockerManagedStartupReceiptVolume(
+    {
+      image: transaction.image,
+      options: DOCKER_MUTATION_OPTIONS,
+      receiptDirectory,
+      receiptPath,
+    },
+    { dockerRun },
+    (receiptMount) =>
+      dockerRun(
+        [
+          "run",
+          "--rm",
+          "--pull",
+          "never",
+          "--network",
+          "none",
+          "--read-only",
+          "--user",
+          "0:0",
+          "--security-opt",
+          "no-new-privileges",
+          "--cap-drop",
+          "ALL",
+          // docker cp can leave the protected 0700/0400 receipt owned by the
+          // invoking host UID. Restore only DAC_OVERRIDE so the root verifier can
+          // read that copy and its write probe reaches the read-only volume;
+          // every other capability remains dropped.
+          "--cap-add",
+          "DAC_OVERRIDE",
+          ...NEUTRALIZED_PRE_ENTRYPOINT_ENV,
+          "--mount",
+          receiptMount,
+          "--entrypoint",
+          CLEAN_NODE_ENTRYPOINT,
+          transaction.image,
+          ...CLEAN_NODE_ARGV,
+          MANAGED_STARTUP_RUNTIME_EXECUTABLE,
+          "--shared-state-transaction-status",
+          "--agent",
+          transaction.agent,
+          "--profile-fingerprint",
+          profileFingerprint,
+          "--bootstrap-identity",
+          transaction.bootstrapIdentity,
+          "--read-only-receipt",
+        ],
+        DOCKER_MUTATION_OPTIONS,
+      ),
   );
   if (!hasZeroDockerExitStatus(result)) {
     throw new Error(
@@ -423,10 +434,6 @@ function isExactMissingReceiptCopy(
   ].some((pattern) => pattern.test(detail));
 }
 
-function transactionReceiptMount(receiptPath: string, receiptDirectory: string): string {
-  return `type=bind,src=${receiptPath},dst=${receiptDirectory},readonly`;
-}
-
 function copyManagedStartupReceiptAt(
   transaction: DockerManagedBootstrapSharedStateTransaction,
   sourcePath: string,
@@ -449,9 +456,6 @@ function copyManagedStartupReceiptAt(
       throw new Error(
         `Could not copy the managed-startup rollback receipt from the failed container: ${commandDetail(copy)}`,
       );
-    }
-    if (receiptPath.includes(",") || /[\r\n\0]/u.test(receiptPath)) {
-      throw new Error("Managed-startup rollback receipt path is unsafe for a Docker bind mount");
     }
     return receiptPath;
   } catch (error) {
@@ -497,44 +501,54 @@ function rollbackManagedStartupSharedState(
     // validator cannot drift from the image contract. After dropping every
     // capability, rollback retains only CHOWN for original ownership,
     // DAC_OVERRIDE for owner-restricted state, and FOWNER for original modes.
-    const helper = dockerRun(
-      [
-        "run",
-        "--rm",
-        "--pull",
-        "never",
-        "--network",
-        "none",
-        "--read-only",
-        "--user",
-        "0:0",
-        "--security-opt",
-        "no-new-privileges",
-        "--cap-drop",
-        "ALL",
-        "--cap-add",
-        "CHOWN",
-        "--cap-add",
-        "DAC_OVERRIDE",
-        "--cap-add",
-        "FOWNER",
-        // Hermes keeps its shared state root setgid. FSETID lets this isolated
-        // helper restore that bit after CHOWN changes the directory group.
-        "--cap-add",
-        "FSETID",
-        ...NEUTRALIZED_PRE_ENTRYPOINT_ENV,
-        "--volumes-from",
-        transaction.containerId,
-        "--mount",
-        `type=bind,src=${receiptPath},dst=${MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY},readonly`,
-        "--entrypoint",
-        CLEAN_NODE_ENTRYPOINT,
-        transaction.image,
-        ...CLEAN_NODE_ARGV,
-        ...transactionCommand("rollback", transaction),
-        "--read-only-receipt",
-      ],
-      DOCKER_MUTATION_OPTIONS,
+    const helper = withDockerManagedStartupReceiptVolume(
+      {
+        image: transaction.image,
+        options: DOCKER_MUTATION_OPTIONS,
+        receiptDirectory: MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
+        receiptPath,
+      },
+      { dockerRun },
+      (receiptMount) =>
+        dockerRun(
+          [
+            "run",
+            "--rm",
+            "--pull",
+            "never",
+            "--network",
+            "none",
+            "--read-only",
+            "--user",
+            "0:0",
+            "--security-opt",
+            "no-new-privileges",
+            "--cap-drop",
+            "ALL",
+            "--cap-add",
+            "CHOWN",
+            "--cap-add",
+            "DAC_OVERRIDE",
+            "--cap-add",
+            "FOWNER",
+            // Hermes keeps its shared state root setgid. FSETID lets this isolated
+            // helper restore that bit after CHOWN changes the directory group.
+            "--cap-add",
+            "FSETID",
+            ...NEUTRALIZED_PRE_ENTRYPOINT_ENV,
+            "--volumes-from",
+            transaction.containerId,
+            "--mount",
+            receiptMount,
+            "--entrypoint",
+            CLEAN_NODE_ENTRYPOINT,
+            transaction.image,
+            ...CLEAN_NODE_ARGV,
+            ...transactionCommand("rollback", transaction),
+            "--read-only-receipt",
+          ],
+          DOCKER_MUTATION_OPTIONS,
+        ),
     );
     if (!hasZeroDockerExitStatus(helper)) {
       throw new DockerManagedStartupSharedStateRestoreError(
@@ -591,8 +605,8 @@ export function finalizeDockerManagedStartupSharedState(
   assertValidManagedStartupTransaction(transaction);
   if (input.supervisorReady) {
     // Preserve and validate an explicit writable-layer receipt before logical
-    // commit. The helper receives the copy read-only and does not delete it;
-    // this keeps rollback possible when Docker loses the helper acknowledgement.
+    // commit. The helper receives a temporary daemon copy read-only while the
+    // protected host receipt remains available if Docker loses acknowledgement.
     // --volumes-from exposes shared mounts only; it cannot expose this
     // container-local transaction directory to an immutable helper.
     let receiptPath: string;
