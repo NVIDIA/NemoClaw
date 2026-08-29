@@ -48,7 +48,19 @@ export * from "./sandbox-base-image/source-identity";
 export * from "./sandbox-base-image/types";
 
 const BUILD_FAILURE_DIAGNOSTIC_LIMIT = 8_000;
-const BUILD_FAILURE_TRUNCATED_SUFFIX = "\n[diagnostic truncated]";
+const BUILD_FAILURE_TRUNCATED_PREFIX = "[diagnostic truncated]\n";
+
+function retainBuildDiagnosticTails(streams: readonly string[]): string {
+  let remaining = BUILD_FAILURE_DIAGNOSTIC_LIMIT - (streams.length - 1);
+  return streams
+    .map((stream, index) => {
+      const budget = Math.floor(remaining / (streams.length - index));
+      const tail = stream.slice(-budget);
+      remaining -= tail.length;
+      return tail;
+    })
+    .join("\n");
+}
 
 /**
  * Combine stderr + stdout from a captured `dockerBuild` failure and pass them
@@ -72,17 +84,21 @@ export function formatBuildFailureDiagnostics(buildResult: {
     .filter((text) => text.length > 0);
   if (streams.length === 0) return "";
 
-  let diagnostics = redact(redactFull(stripVTControlCharacters(streams.join("\n"))));
-  for (const [prefix, replacement] of [
-    [process.env.HOME, "~"],
-    [os.homedir(), "~"],
-    [os.tmpdir(), "<tmp>"],
-  ] as const) {
-    if (!prefix || prefix === path.parse(prefix).root) continue;
-    diagnostics = diagnostics.replaceAll(prefix, replacement);
-  }
+  const sanitizedStreams = streams.map((stream) => {
+    let diagnostics = redact(redactFull(stripVTControlCharacters(stream)));
+    for (const [prefix, replacement] of [
+      [process.env.HOME, "~"],
+      [os.homedir(), "~"],
+      [os.tmpdir(), "<tmp>"],
+    ] as const) {
+      if (!prefix || prefix === path.parse(prefix).root) continue;
+      diagnostics = diagnostics.replaceAll(prefix, replacement);
+    }
+    return diagnostics;
+  });
+  const diagnostics = sanitizedStreams.join("\n");
   return diagnostics.length > BUILD_FAILURE_DIAGNOSTIC_LIMIT
-    ? `${diagnostics.slice(0, BUILD_FAILURE_DIAGNOSTIC_LIMIT)}${BUILD_FAILURE_TRUNCATED_SUFFIX}`
+    ? `${BUILD_FAILURE_TRUNCATED_PREFIX}${retainBuildDiagnosticTails(sanitizedStreams)}`
     : diagnostics;
 }
 
