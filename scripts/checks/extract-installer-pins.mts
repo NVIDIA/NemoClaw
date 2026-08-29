@@ -347,11 +347,12 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     // The first template came from the downstream 0.0.106 pin. The second authorizes its
     // fail-before-download strings preflight. The third authorizes repair when an existing formula
     // has an invalid checksum or its release formula is unavailable. The fourth preserves that
-    // template after installer tests moved under test/install. The next four authorize those
-    // same transitions after macOS install selection became method-bound and fail-closed. Per the
-    // intentional two-step trust rollout in check-installer-hash.sh, the final four authorize the
-    // exact tested follow-up templates before the installer can select the MUSL development
-    // sandbox while preserving stable GNU, both before and after that macOS selection change.
+    // template after installer tests moved under test/install. Following the intentional two-step
+    // trust rollout in check-installer-hash.sh, the fifth authorizes the dev-channel installer
+    // template, which selects a MUSL sandbox while retaining the GNU gateway. The sixth preserves
+    // that dev-channel template with the historical flat installer-test paths. The seventh
+    // authorizes the exact successor template after macOS install selection becomes method-bound
+    // and fail-closed.
     // Homebrew owns the formula source state, so NemoClaw cannot correct it there; the installer
     // verifies the trusted release formula before reuse. installer-homebrew-formula-reuse-trust.test.ts
     // and installer-hash-check.test.ts lock the template and trust transitions. Remove the repair
@@ -361,14 +362,9 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
       "e850e927aab619d52c5de72967137569d65dd7fa669920c7c5b558f0770140d1",
       "e7d51536442b217e3d5e77c4ba3b7c25e6a74898bf22523f7fb58627d34329cb",
       "18175cf47a0fece8ce75e5d523185062c7a7c913a3f4ceafbba4a7ca4df7c69b",
-      "139ad73792b019048b1d3bd9a8a7fbac56a354643aa1a4606115bdf1cc271fea",
-      "1846d9051f4c588d0961d83107066521e436643ec95c13c0be43f298971139f1",
-      "77d3abb360880c96a63424c4850ddb2e8db81b126bb7474a3b24fcde7844a3dd",
-      "03215130365310e907390ceeb685088db6e75b963adf80c9c939de670381797c",
       "293f45ea1d54e1531c3a070123c04b47f972f29504bd8902a44ab71acdfe6cca",
       "ee3db19d06d34a625bff9e0ab021f095ce97eadf5f7a98fc60def62af87577ad",
       "4b45161017a5936331300e982168160575701632711328cbbb97480eb087fb51",
-      "65d9d9f8867103975d22f60596b1cf7a803a583f53a59df65c84855695a30b6a",
     ],
     manifests: [
       {
