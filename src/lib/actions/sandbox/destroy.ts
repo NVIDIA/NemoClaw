@@ -91,9 +91,33 @@ function selectRetainedSandboxRecoveryAuthority(
   sandbox: registry.SandboxEntry | null,
   records: readonly RetainedSandboxRecoveryRecord[],
 ): RetainedSandboxRecoveryRecord | null {
+  const candidates = records.filter(
+    (record) =>
+      record.sandboxName === sandboxName && record.sandboxIdentityFingerprint !== null,
+  );
+  if (!sandbox) {
+    // Once resource cleanup has removed the registry row, a retry must still
+    // select the lone durable record so the later Docker proof can confirm
+    // absence and retire it. Multiple records continue to require immutable
+    // Docker evidence so the mutable name never chooses between authorities.
+    if (candidates.length === 1) return candidates[0]!;
+    if (candidates.length === 0) return null;
+    const observation = observeDestroyContainerIdentity(sandboxName);
+    const observedMatches = candidates.filter((record) => {
+      const verdict = classifyDestroyContainerIdentity(
+        sandboxName,
+        observation,
+        record.sandboxIdentityFingerprint!,
+      );
+      return (
+        verdict.status === "recovery" ||
+        (verdict.status === "clear" && verdict.identity !== null)
+      );
+    });
+    return observedMatches.length === 1 ? observedMatches[0]! : null;
+  }
+
   const matchesRegistryAuthority = (record: RetainedSandboxRecoveryRecord): boolean => {
-    if (record.sandboxIdentityFingerprint === null) return false;
-    if (!sandbox) return true;
     const pending = sandbox.pendingPolicyVerification;
     if (pending) {
       return (
@@ -112,24 +136,7 @@ function selectRetainedSandboxRecoveryAuthority(
       record.sandboxIdentityFingerprint === sandbox.lifecycleLiveIdentityFingerprint
     );
   };
-  const matching = records.filter(
-    (record) => record.sandboxName === sandboxName && matchesRegistryAuthority(record),
-  );
-  if (!sandbox && matching.length > 1) {
-    const observation = observeDestroyContainerIdentity(sandboxName);
-    const observedMatches = matching.filter((record) => {
-      const verdict = classifyDestroyContainerIdentity(
-        sandboxName,
-        observation,
-        record.sandboxIdentityFingerprint!,
-      );
-      return (
-        verdict.status === "recovery" ||
-        (verdict.status === "clear" && verdict.identity !== null)
-      );
-    });
-    return observedMatches.length === 1 ? observedMatches[0]! : null;
-  }
+  const matching = candidates.filter(matchesRegistryAuthority);
   return matching.length === 1 ? matching[0]! : null;
 }
 

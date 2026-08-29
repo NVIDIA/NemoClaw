@@ -257,7 +257,7 @@ describe("destroySandbox retained recovery flow", () => {
   );
 
   it(
-    "does not report success when retained recovery retirement loses authority (#10547)",
+    "fails closed and then retires the lone record after recovery authority loss (#10547)",
     { timeout: 30_000 },
     async () => {
       const recovery = retainedRecoveryRecord();
@@ -275,7 +275,12 @@ describe("destroySandbox retained recovery flow", () => {
         },
         retainedRecoveryRecords: [recovery],
       });
-      harness.resolveRetainedSandboxRecoverySpy.mockReturnValue(false);
+      harness.resolveRetainedSandboxRecoverySpy
+        .mockImplementation(() => {
+          harness.setRetainedRecoveryRecords([]);
+          return true;
+        })
+        .mockReturnValueOnce(false);
 
       await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
         "process.exit(1)",
@@ -295,6 +300,35 @@ describe("destroySandbox retained recovery flow", () => {
       ).toBe(false);
       expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
       expect(exitSpy).toHaveBeenCalledWith(1);
+
+      const exactRemovalCallsAfterFailure = harness.dockerRunSpy.mock.calls.filter(
+        ([args]) => Array.isArray(args) && args[0] === "rm" && args[1] === "-f",
+      ).length;
+      harness.setRegistryEntryPresent(false);
+      harness.setSandboxPresent(false);
+      harness.setDockerIdentityResult({ status: 0, stdout: "" });
+      exitSpy.mockClear();
+      harness.logSpy.mockClear();
+
+      await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+      expect(harness.resolveRetainedSandboxRecoverySpy).toHaveBeenCalledTimes(2);
+      expect(harness.resolveRetainedSandboxRecoverySpy).toHaveBeenLastCalledWith(recovery);
+      expect(
+        harness.dockerRunSpy.mock.calls.filter(
+          ([args]) => Array.isArray(args) && args[0] === "rm" && args[1] === "-f",
+        ),
+      ).toHaveLength(exactRemovalCallsAfterFailure);
+      expect(
+        harness.logSpy.mock.calls.some(([message]) =>
+          String(message).includes("Sandbox 'alpha' destroyed"),
+        ),
+      ).toBe(true);
+      expect(exitSpy).not.toHaveBeenCalled();
+
+      harness.logSpy.mockClear();
+      await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+      expect(harness.resolveRetainedSandboxRecoverySpy).toHaveBeenCalledTimes(2);
     },
   );
 
