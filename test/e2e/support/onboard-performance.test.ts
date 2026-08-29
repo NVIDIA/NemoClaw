@@ -9,10 +9,8 @@ import {
   readColdOnboardPerformanceBudget,
   readOnboardTraceWindow,
 } from "../fixtures/onboard-performance.ts";
-import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import {
   buildOpenClawFirstTurnLatencyEvidence,
-  extractOpenClawAgentText,
   extractOpenClawAgentDurationEvidence,
 } from "../live/agent-turn-latency-helpers.ts";
 
@@ -454,42 +452,6 @@ describe("onboard performance evidence", () => {
     expect(() => maximumOutputSilenceMs({ startedAtMs: 5_000, finishedAtMs: 1_000 }, [])).toThrow(
       "onboard output window is invalid",
     );
-  });
-
-  it("rejects echoed user messages as first-agent-response evidence", () => {
-    expect(
-      parseOpenClawAgentText(
-        JSON.stringify({
-          messages: [{ role: "user", content: "Reply with exactly: NEMOCLAW_E2E_READY_6002" }],
-        }),
-      ),
-    ).toBe("");
-  });
-
-  it("accepts a framed OpenClaw agent-output payload", () => {
-    expect(
-      parseOpenClawAgentText(
-        `progress\n${JSON.stringify({ result: { payloads: [{ text: "NEMOCLAW_E2E_READY_6002" }] } })}`,
-      ),
-    ).toBe("NEMOCLAW_E2E_READY_6002");
-  });
-
-  it("finds OpenClaw agent text in a later JSON envelope", () => {
-    expect(
-      extractOpenClawAgentText(
-        `leading output\n${JSON.stringify({ status: "starting" })}\n${JSON.stringify({ response: { text: "NVIDIA" } })}`,
-      ),
-    ).toBe("NVIDIA");
-  });
-
-  it("joins top-level agent-output payload fragments", () => {
-    expect(
-      parseOpenClawAgentText(
-        JSON.stringify({
-          payloads: [{ text: "NEMOCLAW_" }, { text: "E2E_READY_6002" }],
-        }),
-      ),
-    ).toBe("NEMOCLAW_\nE2E_READY_6002");
   });
 
   it("records OpenClaw internal-agent duration with an explicit availability state", () => {

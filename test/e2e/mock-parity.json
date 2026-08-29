@@ -146,7 +146,7 @@
         "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/full-e2e-inference-probe.test.ts",
         "test/e2e/support/launch-agent-turn.test.ts",
-        "test/e2e/support/onboard-performance.test.ts",
+        "test/e2e/support/openclaw-agent-output.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/helpers/e2e-answer-assertions.test.ts"
@@ -187,6 +187,7 @@
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
         "test/e2e/support/workflow-e2e-progress.test.ts",
         "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
+        "test/e2e/support/openclaw-agent-output.test.ts",
         "test/helpers/e2e-answer-assertions.test.ts",
         "test/install/installer-hash-check.test.ts",
         "test/e2e-runtime/runner.test.ts"
@@ -316,6 +317,7 @@
         "test/e2e/support/agent-turn-latency-progress.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/openclaw-agent-output.test.ts",
         "test/helpers/e2e-answer-assertions.test.ts"
       ]
     },
@@ -338,7 +340,7 @@
         "src/lib/onboard/policy-resume-selection.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/onboard-performance.test.ts"
+        "test/e2e/support/brave-search-config.test.ts"
       ]
     },
     {
@@ -430,6 +432,19 @@
         "test/e2e/support/stock-managed-image-workflow-boundary.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/gpu-hermes-response-validation.test.ts",
+      "liveSources": [
+        "test/e2e/live/gpu-e2e-helpers.ts",
+        "test/e2e/live/hermes-cli-adapter-live.ts"
+      ],
+      "fast": [
+        "test/e2e/support/gpu-e2e-helpers.test.ts",
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/helpers/e2e-answer-assertions.test.ts"
       ]
     },
     {

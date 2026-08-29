@@ -13,9 +13,7 @@ function containsToolCallValue(value: unknown): boolean {
   if (record.type === "tool_use" || "function" in record || "tool_calls" in record) return true;
   if (
     typeof record.name === "string" &&
-    ["arguments", "description", "input", "input_schema", "parameters"].some(
-      (key) => key in record,
-    )
+    ["arguments", "description", "input", "input_schema", "parameters"].some((key) => key in record)
   ) {
     return true;
   }
@@ -32,10 +30,18 @@ function containsStructuredToolOutput(text: string): boolean {
 }
 
 function containsToolCallOutput(text: string): boolean {
+  const trimmed = text.trim();
+  const jsonLike = trimmed.replace(/^```(?:json)?\s*/iu, "");
+  const containsJsonToolField =
+    /^[{[]/u.test(jsonLike) &&
+    (/(?:"(?:function|arguments|parameters|param|input|input_schema|tool_use|tool_calls)")\s*:/u.test(
+      jsonLike,
+    ) ||
+      (/"name"\s*:/u.test(jsonLike) && /"description"\s*:/u.test(jsonLike)));
   return (
-    /\btool[ _-]?calls?\b/i.test(text) ||
-    /"(?:function|arguments|parameters|param|input|input_schema|tool_use)"\s*:/u.test(text) ||
-    containsStructuredToolOutput(text)
+    /^tool[ _-]?calls?\s*:/iu.test(trimmed) ||
+    containsJsonToolField ||
+    containsStructuredToolOutput(trimmed)
   );
 }
 

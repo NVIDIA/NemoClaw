@@ -16,6 +16,15 @@ interface HermesCliAdapterLiveOptions {
   sandboxName: string;
 }
 
+type HermesFollowUpReplyOptions = Omit<HermesCliAdapterLiveOptions, "host">;
+
+interface HermesFollowUpReplyEvidence {
+  continuePrompt: string;
+  resumePrompt: string;
+  seedPrompt: string;
+  seedSessionId: string;
+}
+
 export function stripAnsi(value: string): string {
   return value.replace(/\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g, "");
 }
@@ -30,13 +39,12 @@ export function onlyNewHermesSessionId(before: Set<string>, after: Set<string>):
   return created[0];
 }
 
-export async function assertHermesCliAdapterLiveContract({
+export async function assertHermesFollowUpReplies({
   env,
-  host,
   redactionValues,
   sandbox,
   sandboxName,
-}: HermesCliAdapterLiveOptions): Promise<void> {
+}: HermesFollowUpReplyOptions): Promise<HermesFollowUpReplyEvidence> {
   const runHermesCli = async (args: string[], artifactName: string, timeoutMs = 6 * 60_000) => {
     const result = await sandbox.exec(sandboxName, ["hermes", ...args], {
       artifactName,
@@ -67,10 +75,7 @@ export async function assertHermesCliAdapterLiveContract({
       beforeActivityArtifact,
     );
     const result = await runHermesCli(args, runArtifact);
-    expect(
-      containsAnswer(stripAnsi(result.stdout), "56"),
-      resultText(result),
-    ).toBe(true);
+    expect(containsAnswer(stripAnsi(result.stdout), "56"), resultText(result)).toBe(true);
     const afterText = await listDefaultSessionsText(afterArtifact);
     const after = hermesSessionIds(afterText);
     expect([...after].filter((id) => !before.has(id))).toEqual([]);
@@ -87,10 +92,7 @@ export async function assertHermesCliAdapterLiveContract({
   const issue5254Marker = `NEMOCLAW_5254_${Date.now()}`;
   const beforeSeedSessions = await listDefaultSessions("phase-4-issue-5254-sessions-before-seed");
   const seedPrompt = `Remember this exact token: ${issue5254Marker}. Reply with acknowledged.`;
-  const seedResult = await runHermesCli(
-    ["-z", seedPrompt],
-    "phase-4-issue-5254-seed-oneshot",
-  );
+  const seedResult = await runHermesCli(["-z", seedPrompt], "phase-4-issue-5254-seed-oneshot");
   expect(containsAnswer(stripAnsi(seedResult.stdout), "acknowledged"), resultText(seedResult)).toBe(
     true,
   );
@@ -118,7 +120,32 @@ export async function assertHermesCliAdapterLiveContract({
     "phase-4-issue-5254-continue-oneshot",
     "phase-4-issue-5254-sessions-after-continue",
   );
-  const exportPath = `/tmp/nemoclaw-issue-5254-${issue5254Marker}.jsonl`;
+  return { continuePrompt, resumePrompt, seedPrompt, seedSessionId };
+}
+
+export async function assertHermesCliAdapterLiveContract({
+  env,
+  host,
+  redactionValues,
+  sandbox,
+  sandboxName,
+}: HermesCliAdapterLiveOptions): Promise<void> {
+  const runHermesCli = async (args: string[], artifactName: string, timeoutMs = 6 * 60_000) => {
+    const result = await sandbox.exec(sandboxName, ["hermes", ...args], {
+      artifactName,
+      env,
+      redactionValues,
+      timeoutMs,
+    });
+    expect(result.exitCode, resultText(result)).toBe(0);
+    return result;
+  };
+  const listDefaultSessions = async (artifactName: string) =>
+    hermesSessionIds(resultText(await runHermesCli(["sessions", "list"], artifactName, 60_000)));
+
+  const { continuePrompt, resumePrompt, seedPrompt, seedSessionId } =
+    await assertHermesFollowUpReplies({ env, redactionValues, sandbox, sandboxName });
+  const exportPath = `/tmp/nemoclaw-issue-5254-${Date.now()}.jsonl`;
   await exportHermesSession(
     sandbox,
     sandboxName,

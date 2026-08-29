@@ -6,29 +6,61 @@ export interface OpenClawAgentJsonDocument {
   result?: { meta?: unknown; payloads?: Array<{ text?: unknown }> };
 }
 
+function openClawAgentJsonDocuments(value: unknown): OpenClawAgentJsonDocument[] {
+  const values = Array.isArray(value) ? value : [value];
+  return values.filter(
+    (entry): entry is OpenClawAgentJsonDocument =>
+      typeof entry === "object" && entry !== null && !Array.isArray(entry),
+  );
+}
+
 export function parseOpenClawAgentJsonDocuments(raw: string): OpenClawAgentJsonDocument[] {
   try {
-    const parsed = JSON.parse(raw) as OpenClawAgentJsonDocument | OpenClawAgentJsonDocument[];
-    return Array.isArray(parsed) ? parsed : [parsed];
+    return openClawAgentJsonDocuments(JSON.parse(raw) as unknown);
   } catch {
     // OpenClaw has emitted both complete JSON documents and log-prefixed
     // streams. Keep this compatibility parser local to the E2E fixture layer.
   }
 
   const documents: OpenClawAgentJsonDocument[] = [];
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
   for (let index = 0; index < raw.length; index += 1) {
-    if (raw[index] !== "{") continue;
-    for (let end = index + 1; end <= raw.length; end += 1) {
-      try {
-        const parsed = JSON.parse(raw.slice(index, end)) as
-          | OpenClawAgentJsonDocument
-          | OpenClawAgentJsonDocument[];
-        documents.push(...(Array.isArray(parsed) ? parsed : [parsed]));
-        index = end - 1;
-        break;
-      } catch {
-        // Keep extending the candidate slice until it becomes valid JSON.
+    const character = raw[index];
+    if (start < 0) {
+      if (character === "{") {
+        start = index;
+        depth = 1;
       }
+      continue;
+    }
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      continue;
+    }
+    if (character === "{") depth += 1;
+    else if (character === "}") depth -= 1;
+    if (depth !== 0) continue;
+
+    try {
+      documents.push(
+        ...openClawAgentJsonDocuments(JSON.parse(raw.slice(start, index + 1)) as unknown),
+      );
+    } catch {
+      // A balanced log fragment is not necessarily JSON. Resume scanning at
+      // the next top-level object instead of retrying every candidate suffix.
+    } finally {
+      start = -1;
+      inString = false;
+      escaped = false;
     }
   }
   return documents;

@@ -35,11 +35,17 @@ describe("E2E answer assertions", () => {
     '{"type":"tool_use","name":"calculator","input":{"expected":56}}',
     '{"response":{"name":"read","input":{"value":56}}}',
     '{"response":{"name":"read","input":{"value":56}',
+    '{"name":"read","description":"Returns 56"',
     '{"name":"calculator","input_schema":{"type":"object","default":56}}\nextra output',
     '{"type":"tool_use","name":"calculator","input":{"default":56}}\nextra output',
+    '```json\n{"name":"read","description":"Returns 56"',
     "Tool call: read returned 56",
   ])("rejects tool-call output containing the expected answer: %s (#10215)", (output) => {
     expect(containsAnswer(output, "56"), output).toBe(false);
+  });
+
+  it("accepts conversational replies that mention tool-call capability (#10215)", () => {
+    expect(containsAnswer("I cannot make tool calls, but the answer is 42.", "42")).toBe(true);
   });
 
   it("matches deterministic reply tokens split by streaming whitespace", () => {
