@@ -713,7 +713,7 @@ describe("runSandboxDoctor flow", () => {
   });
 
   it.each(["openclaw", "hermes"] as const)(
-    "keeps serving-process health explicitly unchecked for the %s gateway (#7003)",
+    "pins %s health to the recorded gateway and leaves serving-process health unchecked (#7003)",
     async (agent) => {
       const harness = createDoctorHarness();
       harness.loadAgentSpy.mockReturnValue({
@@ -743,6 +743,10 @@ describe("runSandboxDoctor flow", () => {
       const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
 
       expect(harness.loadAgentSpy).toHaveBeenCalledWith(agent);
+      expect(harness.probeSandboxInferenceGatewayHealthSpy).toHaveBeenCalledWith("alpha", {
+        gatewayName: "nemoclaw-19080",
+      });
+      expect(harness.probeSandboxInferenceGatewayHealthSpy).toHaveBeenCalledOnce();
       expect(report?.checks).toContainEqual(
         expect.objectContaining({
           group: "Inference",
@@ -951,10 +955,16 @@ describe("runSandboxDoctor flow", () => {
       gatewayName: "nemoclaw-19080",
     });
     expect(harness.captureOpenShellSpy).toHaveBeenCalledWith(
-      ["sandbox", "list"],
+      ["sandbox", "list", "-g", "nemoclaw-19080"],
       expect.any(Object),
     );
-    expect(harness.probeSandboxInferenceGatewayHealthSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.captureOpenShellSpy).toHaveBeenCalledWith(
+      ["inference", "get", "-g", "nemoclaw-19080"],
+      expect.any(Object),
+    );
+    expect(harness.probeSandboxInferenceGatewayHealthSpy).toHaveBeenCalledWith("alpha", {
+      gatewayName: "nemoclaw-19080",
+    });
     expect(harness.executeSandboxCommandForVerificationSpy).toHaveBeenCalled();
     expect(harness.buildToolScopeChecksSpy).toHaveBeenCalledWith(
       "alpha",

@@ -591,10 +591,15 @@ async function autoCreateSandboxFromSource(
     releaseCloneHostLocalReservation();
     failUnregisteredSnapshotClone(dstName, sourceGatewayName);
   }
+  const {
+    policyAuthority: _sourcePolicyAuthority,
+    policyCreationReceipt: _sourcePolicyCreationReceipt,
+    ...cloneSourceEntry
+  } = srcEntry as SandboxEntry;
   try {
     registry.registerSandbox(
       {
-        ...srcEntry,
+        ...cloneSourceEntry,
         name: dstName,
         createdAt: new Date().toISOString(),
         policies: [],
@@ -829,10 +834,9 @@ function reconcilePendingSnapshotClone(
     return "removed";
   }
 
-  const get = captureOpenshell(
-    ["sandbox", "get", "-g", sourceGatewayName, targetSandbox],
-    { ignoreError: true },
-  );
+  const get = captureOpenshell(["sandbox", "get", "-g", sourceGatewayName, targetSandbox], {
+    ignoreError: true,
+  });
   if (get.status !== 0) {
     throw new SnapshotCommandError(
       `Cannot reconcile pending clone '${targetSandbox}' because its live identity could not be read.`,
@@ -1820,6 +1824,7 @@ async function runSnapshotRestoreUnlocked(
         registry.getSandbox(targetSandbox)?.agent,
         result.restoredFiles,
         resolvedSnapshot?.stateFiles ?? [],
+        CLI_NAME,
       );
     } else {
       console.error(`  Restore failed.`);

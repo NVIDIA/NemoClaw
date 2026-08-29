@@ -32,13 +32,19 @@ const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN ?? "xoxb-fake-slack-pairing-
 const SLACK_APP_TOKEN = process.env.SLACK_APP_TOKEN ?? "xapp-fake-slack-pairing-e2e";
 const LIVE_TIMEOUT_MS = 55 * 60_000;
 
-function assertSlackCapture(captureFile: string, expectedCode: string, expectedUser: string): void {
-  const rows = fs
-    .readFileSync(captureFile, "utf8")
-    .trim()
-    .split(/\n+/)
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
+function assertSlackCapture(
+  captureFiles: string[],
+  expectedCode: string,
+  expectedUser: string,
+): void {
+  const rows = captureFiles.flatMap((captureFile) =>
+    fs
+      .readFileSync(captureFile, "utf8")
+      .trim()
+      .split(/\n+/)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>),
+  );
   const ws = rows
     .filter(
       (row) => row.event === "websocket-message" && row.messageType === "socket_mode_client_hello",
@@ -154,7 +160,15 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
   });
 
   progress.phase("route Slack API and websocket traffic through managed policies");
-  const fakeSlack = await startFakeSlackApi(
+  const fakeSlackRest = await startFakeSlackApi(
+    host,
+    cleanup,
+    env,
+    SLACK_BOT_TOKEN,
+    SLACK_APP_TOKEN,
+    redactions,
+  );
+  const fakeSlackWebSocket = await startFakeSlackApi(
     host,
     cleanup,
     env,
@@ -165,7 +179,7 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
   await applyFakePolicy({
     host,
     sandboxName: SANDBOX_NAME,
-    api: fakeSlack,
+    api: fakeSlackRest,
     protocol: "rest",
     rewrite: "request-body-credential-rewrite",
     providerName: `${SANDBOX_NAME}-slack-bridge`,
@@ -176,7 +190,7 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
   await applyFakePolicy({
     host,
     sandboxName: SANDBOX_NAME,
-    api: fakeSlack,
+    api: fakeSlackWebSocket,
     protocol: "websocket",
     rewrite: "websocket-credential-rewrite",
     providerName: `${SANDBOX_NAME}-slack-app`,
@@ -191,11 +205,16 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
     sandboxName: SANDBOX_NAME,
     channel: "slack",
     redactions,
-    fakeSlackPort: fakeSlack.port,
+    fakeSlackPort: fakeSlackRest.port,
+    fakeSlackWebSocketPort: fakeSlackWebSocket.port,
   });
   expectExitZero(issue, "Slack pairing request creation");
   const code = extractPairingCode(resultText(issue), "PAIRING_E2E_RESULT");
-  assertSlackCapture(fakeSlack.captureFile, code, PAIRING_USER.slack);
+  assertSlackCapture(
+    [fakeSlackRest.captureFile, fakeSlackWebSocket.captureFile],
+    code,
+    PAIRING_USER.slack,
+  );
   await writePairingArtifacts(artifacts, "slack", { code, user: PAIRING_USER.slack });
 
   progress.phase("approve the Slack code through connect-shell");

@@ -8,6 +8,7 @@ import { parseSandboxMessagingPlan } from "../plan-validation";
 import {
   applyAgentConfigAtOpenShell as applyAgentConfigPlanAtOpenShell,
   listHookRequests as listPlanHookRequests,
+  reconcileCredentialEnvAtOpenShell as reconcileCredentialEnvPlanAtOpenShell,
 } from "./agent-config";
 import {
   applyHealthChecks as applyPlanHealthChecks,
@@ -149,6 +150,13 @@ export class MessagingSetupApplier {
     readonly unresolvedTemplateRefs: readonly string[];
   }> {
     return applyAgentConfigPlanAtOpenShell(plan, options);
+  }
+
+  static reconcileCredentialEnvAtOpenShell(
+    plan: SandboxMessagingPlan,
+    options: { readonly runOpenshell: MessagingOpenShellRunner },
+  ): { readonly changed: boolean; readonly target?: string } {
+    return reconcileCredentialEnvPlanAtOpenShell(plan, options);
   }
 
   static applyCredentialsAtOpenShell(

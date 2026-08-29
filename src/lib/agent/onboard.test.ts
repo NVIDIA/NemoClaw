@@ -307,6 +307,7 @@ describe("agent setup session boundaries", () => {
   function createAgentSetupContext(
     runCaptureOpenshell: OnboardContext["runCaptureOpenshell"] = vi.fn(() => ""),
     timing: Pick<OnboardContext, "now" | "sleepSeconds"> = {},
+    policyRequirements: Pick<OnboardContext, "revalidatePolicyRequirements"> = {},
   ) {
     return {
       context: {
@@ -319,6 +320,7 @@ describe("agent setup session boundaries", () => {
         recordStepFailed: vi.fn(async () => undefined),
         skippedStepMessage: vi.fn(),
         ...timing,
+        ...policyRequirements,
       },
     };
   }
@@ -428,6 +430,50 @@ describe("agent setup session boundaries", () => {
       model: "model-x",
     });
     expect(context.recordStepFailed).not.toHaveBeenCalled();
+  });
+
+  it("refuses completion when policy authority changes during the gateway wait (#9833)", async () => {
+    let nowMs = 0;
+    const sleepSeconds = vi.fn((seconds: number) => {
+      nowMs += seconds * 1000;
+    });
+    const runCaptureOpenshell = vi
+      .fn<OnboardContext["runCaptureOpenshell"]>(() => "ok")
+      .mockReturnValueOnce("NEMOCLAW_AGENT_BINARY_CHECK:ok")
+      .mockReturnValueOnce("");
+    const refuseCompletion = () => {
+      throw new Error("policy authority changed");
+    };
+    const policyChecks = new Map([
+      ["record completed agent setup for sandbox 'sandbox-x'", refuseCompletion],
+    ]);
+    const revalidatePolicyRequirements = vi.fn((operation: string) =>
+      policyChecks.get(operation)?.(),
+    );
+    const { context } = createAgentSetupContext(
+      runCaptureOpenshell,
+      { now: () => nowMs, sleepSeconds },
+      { revalidatePolicyRequirements },
+    );
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await expect(
+      handleAgentSetup(
+        "sandbox-x",
+        "model-x",
+        "provider-x",
+        makeAgent({
+          healthProbe: { url: "http://127.0.0.1:19000/", port: 19000, timeout_seconds: 1 },
+        }),
+        false,
+        null,
+        context,
+      ),
+    ).rejects.toThrow("policy authority changed");
+
+    expect(sleepSeconds).toHaveBeenCalledWith(0.25);
+    expect(context.recordStepComplete).not.toHaveBeenCalled();
+    expect(logSpy.mock.calls.flat().join("\n")).not.toContain("gateway is healthy");
   });
 
   it("records gateway failure when the configured deadline expires", async () => {

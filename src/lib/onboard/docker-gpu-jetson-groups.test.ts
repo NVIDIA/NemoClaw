@@ -5,7 +5,13 @@ import fs from "node:fs";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { detectTegraDeviceGroupGids, detectTegraGpuDevicePaths } from "./docker-gpu-jetson-groups";
+import {
+  detectTegraDeviceGroupGids,
+  detectTegraGpuDevicePaths,
+  JETSON_DEVICE_GROUP_BOOTSTRAP,
+  normalizeTegraGpuDevicePaths,
+  resolveJetsonDeviceGroupBootstrap,
+} from "./docker-gpu-jetson-groups";
 
 describe("detectTegraGpuDevicePaths", () => {
   it("returns existing non-symlink character devices when nvmap anchors detection (#7610)", () => {
@@ -38,6 +44,15 @@ describe("detectTegraGpuDevicePaths", () => {
             : { isCharacterDevice: true, isSymbolicLink: false },
       }),
     ).toEqual([]);
+  });
+
+  it("rejects device-policy paths outside the bounded Tegra set (#7610)", () => {
+    expect(() => normalizeTegraGpuDevicePaths(["/dev/nvmap", "/dev/input/event0"])).toThrow(
+      "Jetson GPU device paths are invalid or excessive",
+    );
+    expect(
+      normalizeTegraGpuDevicePaths(["/dev/dri/renderD128", "/dev/nvmap", "/dev/nvmap"]),
+    ).toEqual(["/dev/dri/renderD128", "/dev/nvmap"]);
   });
 });
 
@@ -97,6 +112,15 @@ describe("detectTegraDeviceGroupGids", () => {
     } finally {
       lstat.mockRestore();
     }
+  });
+
+  it("requires nvmap before accepting an unrelated render group (#7610)", () => {
+    expect(
+      detectTegraDeviceGroupGids({
+        listDevicePaths: () => ["/dev/dri/renderD128"],
+        statDeviceAccess: () => ({ gid: 104, mode: 0o660 }),
+      }),
+    ).toEqual([]);
   });
 
   it("rejects regular files and symlinks before reading their group", () => {
@@ -163,5 +187,45 @@ describe("detectTegraDeviceGroupGids", () => {
       lstat.mockRestore();
       readdir.mockRestore();
     }
+  });
+});
+
+describe("resolveJetsonDeviceGroupBootstrap", () => {
+  const supervisorArgv = ["/opt/openshell/bin/openshell-sandbox", "--workdir", "/sandbox"];
+
+  it("wraps only the exact OpenClaw supervisor with normalized group IDs (#7610)", () => {
+    expect(
+      resolveJetsonDeviceGroupBootstrap({
+        agent: "openclaw",
+        deviceGroupGids: ["44", "110"],
+        supervisorArgv,
+      }),
+    ).toEqual({
+      deviceGroupGids: ["44", "110"],
+      supervisorArgv: [
+        JETSON_DEVICE_GROUP_BOOTSTRAP,
+        "--device-group-gids",
+        "44,110",
+        "--",
+        ...supervisorArgv,
+      ],
+    });
+    expect(
+      resolveJetsonDeviceGroupBootstrap({
+        agent: "hermes",
+        deviceGroupGids: ["44"],
+        supervisorArgv,
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects a different OpenClaw launch authority (#7610)", () => {
+    expect(() =>
+      resolveJetsonDeviceGroupBootstrap({
+        agent: "openclaw",
+        deviceGroupGids: ["44"],
+        supervisorArgv: ["/tmp/openshell-sandbox"],
+      }),
+    ).toThrow("requires the OpenShell supervisor entrypoint");
   });
 });

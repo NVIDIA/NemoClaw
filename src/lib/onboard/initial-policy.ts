@@ -24,7 +24,10 @@ import {
   isStationGb300ProductName,
   type StationProfile,
 } from "../readiness/station-qualification";
-import { detectTegraGpuDevicePaths } from "./docker-gpu-jetson-groups";
+import {
+  detectTegraGpuDevicePaths,
+  normalizeTegraGpuDevicePaths,
+} from "./docker-gpu-jetson-groups";
 import {
   allMessagingChannelPolicyPresets,
   requiredMessagingChannelPolicyPresets,
@@ -37,6 +40,8 @@ import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 export type InitialSandboxPolicy = {
   policyPath: string;
   appliedPresets: string[];
+  /** Exact provider names referenced by credential-bound endpoints in this policy. */
+  credentialBindingProviders?: string[];
   sourceBytes?: Buffer;
   cleanup?: () => boolean;
   cleanupExact?: () => boolean;
@@ -232,7 +237,7 @@ export function buildDirectGpuPolicyYaml(
       }
     }
   }
-  const jetsonGpuDevicePaths = [...new Set(options.jetsonGpuDevicePaths ?? [])];
+  const jetsonGpuDevicePaths = normalizeTegraGpuDevicePaths(options.jetsonGpuDevicePaths ?? []);
   if (jetsonGpuDevicePaths.length > 0) {
     if (
       !fsPolicy.read_only.includes(JETSON_GPU_LIBRARY_ROOT) &&
@@ -382,6 +387,32 @@ export function getNetworkPolicyNames(policyContent: string): Set<string> | null
   }
 }
 
+function getCredentialBindingProviders(policyContent: string): string[] {
+  const parsed = YAML.parse(policyContent);
+  if (!isObjectRecord(parsed) || !isObjectRecord(parsed.network_policies)) return [];
+
+  const providers = new Set<string>();
+  for (const policy of Object.values(parsed.network_policies)) {
+    if (!isObjectRecord(policy) || !Array.isArray(policy.endpoints)) continue;
+    for (const endpoint of policy.endpoints) {
+      if (!isObjectRecord(endpoint) || endpoint.credential_binding === undefined) continue;
+      const binding = endpoint.credential_binding;
+      if (
+        !isObjectRecord(binding) ||
+        typeof binding.provider !== "string" ||
+        binding.provider.length === 0 ||
+        binding.provider.trim() !== binding.provider
+      ) {
+        throw new Error(
+          "Cannot prepare sandbox create policy; a credential binding has no exact provider name.",
+        );
+      }
+      providers.add(binding.provider);
+    }
+  }
+  return [...providers];
+}
+
 function filterHermesInactiveMessagingPolicies(
   policyContent: string,
   activeMessagingChannels: string[],
@@ -469,12 +500,16 @@ function resolveInitialSandboxCreatePolicy(
             .every(Boolean)
       : undefined;
   const exactCleanupResult = () => (exactCleanup ? { cleanupExact: buildExactCleanup() } : {});
-  const result = (appliedPresets: string[]): InitialSandboxPolicy => ({
-    ...effectivePolicy,
-    appliedPresets,
-    cleanup: buildCleanup(),
-    ...exactCleanupResult(),
-  });
+  const result = (appliedPresets: string[]): InitialSandboxPolicy => {
+    const credentialBindingProviders = getCredentialBindingProviders(basePolicy);
+    return {
+      ...effectivePolicy,
+      appliedPresets,
+      ...(credentialBindingProviders.length > 0 ? { credentialBindingProviders } : {}),
+      cleanup: buildCleanup(),
+      ...exactCleanupResult(),
+    };
+  };
   const cleanupOnError = () => {
     for (const cleanup of [...cleanupFns].reverse()) {
       try {
@@ -564,6 +599,7 @@ function resolveInitialSandboxCreatePolicy(
       agent: policyAgent,
       sandboxName: options.sandboxName,
       excludedBaselineKeys: baselineExclusions.map((exclusion) => exclusion.key),
+      credentialBoundMessagingChannels: activeMessagingChannels,
     });
     if (mergedPolicy.missingPresets.length > 0) {
       throw new Error(

@@ -17,11 +17,45 @@ import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
   type RuntimeProviderBundle,
   type RuntimeProviderDoctorCheck,
+  type RuntimeProviderNativeArtifactBootstrapSurface,
   type RuntimeProviderWorkloadProfile,
 } from "./contract";
+import { createMxcNativeArtifactBootstrapSurface } from "./mxc-bootstrap";
+import {
+  createMxcNativeArtifactBootstrapOperations,
+  type MxcNativeArtifactControlPlane,
+} from "./mxc-bootstrap-operations";
+import {
+  qualifyMxcOpenShellAttachment,
+  type MxcOpenShellAttachmentAuthority,
+  type MxcOpenShellAttachmentObservation,
+  type MxcOpenShellAttachmentReceipt,
+} from "./mxc-openshell-attachment";
+import {
+  observeMxcOpenShellAttachment,
+  type MxcOpenShellAttachmentObservationRequest,
+  type MxcOpenShellFileDigestObserver,
+} from "./mxc-openshell-observer";
 
 export interface MxcRuntimeProviderOptions {
   readonly hostFacts: WindowsMxcHostFacts;
+  readonly openshellAttachmentAuthority: MxcOpenShellAttachmentAuthority;
+  readonly openshellObservation: MxcOpenShellAttachmentObservation;
+  readonly bootstrapControlPlane: MxcNativeArtifactControlPlane;
+}
+
+export interface MxcExistingInstallationRuntimeProviderOptions {
+  readonly hostFacts: WindowsMxcHostFacts;
+  readonly openshellAttachmentAuthority: MxcOpenShellAttachmentAuthority;
+  readonly attachmentObservation: MxcOpenShellAttachmentObservationRequest;
+  readonly bootstrapControlPlane: MxcNativeArtifactControlPlane;
+  /** Trusted native boundary; Windows composition must reject reparse points and identity drift. */
+  readonly observeFileDigest: MxcOpenShellFileDigestObserver;
+}
+
+export interface MxcExistingInstallationRuntimeProviderAttachment {
+  readonly provider: RuntimeProviderBundle;
+  readonly attachmentReceipt: MxcOpenShellAttachmentReceipt;
 }
 
 const MXC_PROVIDER_ID = "mxc";
@@ -44,23 +78,40 @@ function unsupported(reason: string) {
   return { providerId: MXC_PROVIDER_ID, supported: false as const, reason };
 }
 
-function inspectMxcHost(hostFacts: WindowsMxcHostFacts): RuntimeProviderDoctorCheck {
+function inspectMxcHost(
+  hostFacts: WindowsMxcHostFacts,
+  qualifyAttachment: () => ReturnType<typeof qualifyMxcOpenShellAttachment>,
+): RuntimeProviderDoctorCheck {
   const assessment = assessWindowsMxcProcessContainerCandidate(hostFacts);
-  if (assessment.candidate) {
+  if (!assessment.candidate) {
+    return {
+      group: "Host",
+      label: "OpenShell MXC process_container candidate",
+      status: "fail",
+      detail: assessment.detail,
+    };
+  }
+  try {
+    const attachment = qualifyAttachment();
     return {
       group: "Host",
       label: "OpenShell MXC process_container candidate",
       status: "info",
-      detail: `Windows x64 build ${assessment.windowsBuild} meets the inactive host floor.`,
-      hint: "MXC remains unavailable until the OpenShell package and live E2E gates pass.",
+      detail:
+        `Windows x64 build ${assessment.windowsBuild} and OpenShell ${attachment.distribution.version} ` +
+        "match the inactive attachment contract.",
+      hint:
+        "This check does not enable MXC. Maintainers must qualify the accepted OpenShell " +
+        "distribution and required live E2E coverage before adding production selection.",
+    };
+  } catch (error) {
+    return {
+      group: "Host",
+      label: "OpenShell MXC process_container candidate",
+      status: "fail",
+      detail: error instanceof Error ? error.message : "OpenShell attachment validation failed.",
     };
   }
-  return {
-    group: "Host",
-    label: "OpenShell MXC process_container candidate",
-    status: "fail",
-    detail: assessment.detail,
-  };
 }
 
 function acceptsNativeArtifactReceipt(receipt: SandboxWorkloadReceipt | undefined): boolean {
@@ -81,11 +132,19 @@ function acceptsNativeArtifactReceipt(receipt: SandboxWorkloadReceipt | undefine
  */
 export function createMxcRuntimeProviderBundle({
   hostFacts,
+  openshellAttachmentAuthority,
+  openshellObservation,
+  bootstrapControlPlane,
 }: MxcRuntimeProviderOptions): RuntimeProviderBundle {
   const lifecycleReason =
-    "OpenShell MXC process_container lifecycle termination has not passed live E2E.";
+    "OpenShell MXC direct start and stop of an existing sandbox are not qualified.";
   const cleanupReason =
-    "OpenShell MXC exact workload termination and orphan cleanup are not qualified.";
+    "OpenShell MXC does not expose an immutable resource handle for exact destructive cleanup.";
+  const qualifyAttachment = () =>
+    qualifyMxcOpenShellAttachment(openshellAttachmentAuthority, openshellObservation);
+  const bootstrap = createMxcNativeArtifactBootstrapSurface(
+    createMxcNativeArtifactBootstrapOperations(bootstrapControlPlane),
+  );
   return {
     identity: {
       contractVersion: RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
@@ -112,7 +171,7 @@ export function createMxcRuntimeProviderBundle({
     preflightDoctor: {
       providerId: MXC_PROVIDER_ID,
       supported: true,
-      inspectHost: () => inspectMxcHost(hostFacts),
+      inspectHost: () => inspectMxcHost(hostFacts, qualifyAttachment),
       preflightLifecycle: () => ({ exitCode: 1, message: lifecycleReason }),
     },
     gateway: {
@@ -137,9 +196,17 @@ export function createMxcRuntimeProviderBundle({
     stateMutation: unsupported(
       "The MXC runtime provider state mutation surface remains disabled until lifecycle and cleanup pass live E2E.",
     ),
-    bootstrap: unsupported(
-      "The OpenShell MXC driver does not expose a per-sandbox native artifact launch contract.",
-    ),
+    bootstrap: {
+      ...bootstrap,
+      run: async (input) => {
+        qualifyAttachment();
+        return bootstrap.run(input);
+      },
+      recover: async (input) => {
+        qualifyAttachment();
+        return bootstrap.recover(input);
+      },
+    },
     snapshot: unsupported("OpenShell MXC snapshot and restore are unavailable."),
     recovery: unsupported(
       "OpenShell MXC gateway-restart reconciliation and orphan recovery are unavailable.",
@@ -149,4 +216,51 @@ export function createMxcRuntimeProviderBundle({
       "MXC has no container-engine operations; OpenShell owns the MXC control plane.",
     ),
   };
+}
+
+/** Observe one existing installation and retain its exact attachment receipt. */
+export async function attachMxcRuntimeProviderBundleFromExistingInstallation({
+  hostFacts,
+  openshellAttachmentAuthority,
+  attachmentObservation,
+  bootstrapControlPlane,
+  observeFileDigest,
+}: MxcExistingInstallationRuntimeProviderOptions): Promise<MxcExistingInstallationRuntimeProviderAttachment> {
+  const observeAndQualify = async () => {
+    const observation = await observeMxcOpenShellAttachment(
+      attachmentObservation,
+      observeFileDigest,
+    );
+    const attachmentReceipt = qualifyMxcOpenShellAttachment(
+      openshellAttachmentAuthority,
+      observation,
+    );
+    return { observation, attachmentReceipt };
+  };
+  const initialAttachment = await observeAndQualify();
+  const candidate = createMxcRuntimeProviderBundle({
+    hostFacts,
+    openshellAttachmentAuthority,
+    openshellObservation: initialAttachment.observation,
+    bootstrapControlPlane,
+  });
+  const bootstrap = candidate.bootstrap as RuntimeProviderNativeArtifactBootstrapSurface;
+  const provider: RuntimeProviderBundle = {
+    ...candidate,
+    bootstrap: {
+      ...bootstrap,
+      run: async (input) => {
+        await observeAndQualify();
+        return bootstrap.run(input);
+      },
+      recover: async (input) => {
+        await observeAndQualify();
+        return bootstrap.recover(input);
+      },
+    },
+  };
+  return Object.freeze({
+    provider,
+    attachmentReceipt: initialAttachment.attachmentReceipt,
+  });
 }

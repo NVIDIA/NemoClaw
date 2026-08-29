@@ -23,11 +23,11 @@
       "live": "test/e2e/live/llama-cpp-dgx-spark-qualification.test.ts",
       "fast": [
         "test/e2e/support/llama-cpp-dgx-spark-qualification-workflow.test.ts",
-        "test/llama-cpp-dgx-spark-qualification-contract.test.ts",
-        "test/llama-cpp-dgx-spark-qualification-plan.test.ts",
-        "test/llama-cpp-dgx-spark-qualification-runner.test.ts",
-        "test/llama-cpp-image.test.ts",
-        "test/pr-risk-plan.test.ts"
+        "test/inference/llama/llama-cpp-dgx-spark-qualification-contract.test.ts",
+        "test/inference/llama/llama-cpp-dgx-spark-qualification-plan.test.ts",
+        "test/inference/llama/llama-cpp-dgx-spark-qualification-runner.test.ts",
+        "test/inference/llama/llama-cpp-image.test.ts",
+        "test/automation/pull-requests/pr-risk-plan.test.ts"
       ]
     },
     {
@@ -43,9 +43,9 @@
       "fast": [
         "test/e2e/support/base-image-publication.test.ts",
         "test/e2e/support/managed-image-multiarch-startup-helpers.test.ts",
-        "test/managed-image-publication-workflow.test.ts",
-        "test/pr-risk-plan.test.ts",
-        "test/protected-managed-image-contract.test.ts"
+        "test/inference/managed/managed-image-publication-workflow.test.ts",
+        "test/automation/pull-requests/pr-risk-plan.test.ts",
+        "test/platform/images/protected-managed-image-contract.test.ts"
       ]
     },
     {
@@ -54,8 +54,8 @@
         "src/lib/inference/nim.test.ts",
         "src/lib/onboard/sandbox-gpu-create-flow.test.ts",
         "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
-        "test/managed-image-protected-runtime-contract.test.ts",
-        "test/pr-risk-plan.test.ts"
+        "test/inference/managed/managed-image-protected-runtime-contract.test.ts",
+        "test/automation/pull-requests/pr-risk-plan.test.ts"
       ]
     },
     {
@@ -63,8 +63,8 @@
       "fast": [
         "src/lib/onboard/command.test.ts",
         "src/lib/onboard/sandbox-workload-preparation.test.ts",
-        "test/managed-image-publication-workflow.test.ts",
-        "test/onboard-managed-image-buildless-e2e.test.ts"
+        "test/inference/managed/managed-image-publication-workflow.test.ts",
+        "test/onboarding/onboard-managed-image-buildless-e2e.test.ts"
       ]
     },
     {
@@ -74,7 +74,7 @@
         "src/lib/agent/pi-lifecycle.test.ts",
         "src/lib/onboard/pi-candidate-rebuild.test.ts",
         "test/e2e/support/pi-agent-qualification-events.test.ts",
-        "test/pi-candidate-runtime-artifacts.test.ts"
+        "test/agents/openclaw/runtime/pi-candidate-runtime-artifacts.test.ts"
       ]
     },
     {
@@ -95,7 +95,7 @@
         "test/e2e/support/native-runtime-qualification-case-helpers.test.ts",
         "test/e2e/support/native-runtime-qualification-producer-workflow.test.ts",
         "test/e2e/support/native-runtime-qualification.test.ts",
-        "test/install-native-runtime-qualification.test.ts"
+        "test/install/install-native-runtime-qualification.test.ts"
       ]
     },
     {
@@ -113,6 +113,9 @@
         "test/e2e/support/hermes-gpu-startup-integrity.test.ts",
         "test/e2e/support/hermes-gpu-startup-proof.test.ts",
         "test/e2e/support/hermes-workflow-boundary.test.ts",
+        "test/e2e/support/managed-image-cohort-contract.test.ts",
+        "test/e2e/support/managed-image-receipt.test.ts",
+        "test/e2e/support/stock-managed-image-workflow-boundary.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -123,10 +126,10 @@
         "nemoclaw/src/blueprint/runner-identity.test.ts",
         "nemoclaw/src/blueprint/runtime-identity.test.ts",
         "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",
-        "test/blueprint-runtime-identity-lifecycle.test.ts",
+        "test/onboarding/blueprint-runtime-identity-lifecycle.test.ts",
         "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/onboard-timeout-contract.test.ts",
-        "test/onboard-inference-gateway-scope.test.ts"
+        "test/onboarding/onboard-inference-gateway-scope.test.ts"
       ]
     },
     {
@@ -151,53 +154,62 @@
         "src/lib/actions/sandbox/launch-readiness.test.ts",
         "src/lib/state/launch-readiness-lease.test.ts",
         "test/e2e/support/launch-agent-turn.test.ts",
-        "test/launch-readiness-forward-observation.test.ts"
+        "test/e2e-runtime/launch-readiness-forward-observation.test.ts"
       ]
     },
     {
       "live": "test/e2e/live/bootstrap-install-smoke.test.ts",
       "fast": [
-        "test/brev-launchable-ci-cpu-checksum.test.ts",
+        "test/automation/e2e/brev-launchable-ci-cpu-checksum.test.ts",
         "test/e2e/support/e2e-live-target-gating.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
         "test/e2e/support/workflow-e2e-progress.test.ts",
         "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
-        "test/installer-hash-check.test.ts",
-        "test/runner.test.ts"
+        "test/e2e/support/openclaw-agent-assertion.test.ts",
+        "test/install/installer-hash-check.test.ts",
+        "test/e2e-runtime/runner.test.ts"
       ]
     },
     {
       "live": "test/e2e/live/launchable-smoke.test.ts",
       "fast": [
-        "test/brev-launchable-ci-cpu-checksum.test.ts",
+        "test/automation/e2e/brev-launchable-ci-cpu-checksum.test.ts",
         "test/e2e/support/e2e-live-target-gating.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
         "test/e2e/support/workflow-e2e-progress.test.ts",
         "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
-        "test/installer-hash-check.test.ts",
-        "test/runner.test.ts"
+        "test/install/installer-hash-check.test.ts",
+        "test/e2e-runtime/runner.test.ts"
       ]
     },
     {
       "live": "test/e2e/live/gateway-guard-recovery.test.ts",
       "fast": [
         "src/lib/actions/sandbox/supervisor-relaunch.test.ts",
+        "src/lib/onboard/docker-gpu-patch-finalize.test.ts",
+        "src/lib/onboard/docker-gpu-supervisor-reconnect.test.ts",
         "src/lib/onboard/docker-startup-command-patch.test.ts",
         "src/lib/sandbox/privileged-exec.test.ts",
-        "test/managed-gateway-control.test.ts",
-        "test/nemoclaw-start-guard-recovery.test.ts",
+        "test/inference/managed/managed-gateway-control.test.ts",
+        "test/agents/openclaw/runtime/nemoclaw-start-guard-recovery.test.ts",
         "test/e2e/support/gateway-guard-legacy-keepalive-fixture.test.ts",
-        "test/process-recovery/process-recovery-supervisor-relaunch.test.ts"
+        "test/e2e/support/managed-image-cohort-contract.test.ts",
+        "test/e2e/support/managed-image-receipt.test.ts",
+        "test/e2e/support/stock-managed-image-workflow-boundary.test.ts",
+        "test/process-recovery/process-recovery-supervisor-relaunch.test.ts",
+        "test/onboarding/docker-final-handoff-lifecycle.test.ts"
       ]
     },
     {
       "live": "test/e2e/live/network-policy.test.ts",
       "fast": [
-        "test/validate-blueprint.test.ts",
+        "test/channels/channels-add-preset.test.ts",
+        "test/runtime/policy/policy-channel-agent-resolution.test.ts",
+        "test/onboarding/validate-blueprint.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -207,11 +219,18 @@
       "fast": ["test/e2e/support/openshell-gateway-auth-source-contract-helpers.test.ts"]
     },
     {
+      "live": "test/e2e/live/external-gateway-health.test.ts",
+      "fast": [
+        "test/e2e/support/external-gateway-health-workflow-boundary.test.ts",
+        "test/install/reviewed-npm-archive.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/openshell-credential-generation-window.test.ts",
       "fast": [
-        "test/openshell-credential-generation-window.test.ts",
-        "test/mcp-artifact-secret-scan.test.ts",
-        "test/mcp-agent-matrix-artifact-proof.test.ts",
+        "test/credentials/openshell-credential-generation-window.test.ts",
+        "test/mcp/mcp-artifact-secret-scan.test.ts",
+        "test/mcp/mcp-agent-matrix-artifact-proof.test.ts",
         "test/e2e/support/mcp-workflow-boundary.test.ts"
       ]
     },
@@ -244,7 +263,7 @@
         "src/lib/onboard/machine/handlers/sandbox-resume.test.ts",
         "src/lib/onboard/managed-startup-image-runtime-handoff.test.ts",
         "src/lib/onboard/sandbox-create-plan.test.ts",
-        "test/onboard-extra-provider-reconciliation.test.ts",
+        "test/onboarding/onboard-extra-provider-reconciliation.test.ts",
         "test/e2e/support/corporate-ca-workload-kind.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -263,9 +282,9 @@
         "src/lib/onboard/sandbox-create-plan.test.ts",
         "src/lib/onboard/sandbox-gpu-create-flow.test.ts",
         "src/lib/onboard/sandbox-readiness-tracing.test.ts",
-        "test/onboard-extra-provider-reconciliation.test.ts",
+        "test/onboarding/onboard-extra-provider-reconciliation.test.ts",
         "test/e2e/support/corporate-ca-workload-kind.test.ts",
-        "test/gateway-state.test.ts",
+        "test/runtime/gateway/gateway-state.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/onboard-timeout-contract.test.ts"
@@ -301,14 +320,24 @@
     },
     {
       "live": "test/e2e/live/brave-search.test.ts",
+      "liveSources": ["test/e2e/live/brave-search-helpers.ts"],
       "fast": [
+        "src/lib/adapters/openshell/sandbox-identity.test.ts",
+        "src/lib/actions/sandbox/rebuild-backup-phase.test.ts",
+        "src/lib/onboard/machine/handlers/agent-setup.test.ts",
+        "src/lib/onboard/openclaw-setup.test.ts",
+        "src/lib/onboard/policy-resume-selection.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/onboard-performance.test.ts"
       ]
     },
     {
       "live": "test/e2e/live/channels-add-remove.test.ts",
       "fast": [
+        "test/channels/channels-add-bridge-lifecycle.test.ts",
+        "test/channels/channels-add-preset.test.ts",
+        "test/channels/channels-remove-full-teardown.test.ts",
         "test/e2e/support/channels-add-remove-helpers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -326,6 +355,9 @@
       "fast": [
         "src/lib/onboard/initial-policy-real-policy.test.ts",
         "src/lib/onboard/managed-startup-image-runtime-handoff.test.ts",
+        "test/e2e/support/managed-image-cohort-contract.test.ts",
+        "test/e2e/support/managed-image-receipt.test.ts",
+        "test/e2e/support/stock-managed-image-workflow-boundary.test.ts",
         "test/e2e/support/corporate-ca-workload-kind.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -363,6 +395,10 @@
     {
       "live": "test/e2e/live/double-onboard.test.ts",
       "fast": [
+        "src/lib/onboard/created-sandbox-finalization.test.ts",
+        "src/lib/onboard/machine/core-flow-phases.test.ts",
+        "src/lib/onboard/machine/handlers/sandbox-route-publication.test.ts",
+        "src/lib/onboard/sandbox-registration.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -376,7 +412,12 @@
     },
     {
       "live": "test/e2e/live/gpu-e2e.test.ts",
+      "liveSources": ["test/e2e/live/gpu-e2e-helpers.ts"],
       "fast": [
+        "test/e2e/support/gpu-e2e-helpers.test.ts",
+        "test/e2e/support/managed-image-cohort-contract.test.ts",
+        "test/e2e/support/managed-image-receipt.test.ts",
+        "test/e2e/support/stock-managed-image-workflow-boundary.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -384,6 +425,11 @@
     {
       "live": "test/e2e/live/hermes-discord.test.ts",
       "fast": [
+        "src/lib/messaging/channels/discord/credential-injection.test.ts",
+        "src/lib/onboard/messaging-policy-presets.test.ts",
+        "test/channels/channels-add-preset.test.ts",
+        "test/e2e/support/hermes-discord-policy-binding.test.ts",
+        "test/onboarding/onboard-preset-diff.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -391,6 +437,9 @@
     {
       "live": "test/e2e/live/hermes-e2e.test.ts",
       "fast": [
+        "test/e2e/support/managed-image-cohort-contract.test.ts",
+        "test/e2e/support/managed-image-receipt.test.ts",
+        "test/e2e/support/stock-managed-image-workflow-boundary.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/inference-adapter.test.ts"
@@ -429,6 +478,9 @@
     {
       "live": "test/e2e/live/jetson-nvmap-gpu.test.ts",
       "fast": [
+        "test/e2e/support/managed-image-cohort-contract.test.ts",
+        "test/e2e/support/managed-image-receipt.test.ts",
+        "test/e2e/support/stock-managed-image-workflow-boundary.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -443,8 +495,18 @@
     {
       "live": "test/e2e/live/mcp-bridge.test.ts",
       "fast": [
+        "src/lib/actions/sandbox/mcp-bridge-adapter-registration.test.ts",
+        "src/lib/actions/sandbox/mcp-bridge-adapter-teardown.test.ts",
+        "src/lib/actions/sandbox/mcp-bridge-input-targets.test.ts",
+        "src/lib/actions/sandbox/mcp-bridge-provider.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/mcp-bridge-hermes-lifecycle.test.ts",
+        "test/e2e/support/mcp-bridge-onboard-env.test.ts",
+        "test/e2e/support/mcp-bridge-reliability.test.ts",
+        "test/e2e/support/mcp-bridge-tool-discovery.test.ts",
+        "test/e2e/support/mcp-provider-rewrite-probe.test.ts",
+        "test/e2e/support/mcp-workflow-boundary.test.ts"
       ]
     },
     {
@@ -457,6 +519,13 @@
     {
       "live": "test/e2e/live/messaging-providers.test.ts",
       "fast": [
+        "src/lib/messaging/channels/discord/credential-injection.test.ts",
+        "src/lib/onboard/credential-provider-registration.test.ts",
+        "src/lib/onboard/messaging-policy-presets.test.ts",
+        "src/lib/onboard/providers.test.ts",
+        "test/channels/channels-add-bridge-lifecycle.test.ts",
+        "test/e2e/support/messaging-providers-runtime-proofs.test.ts",
+        "test/runtime/messaging/messaging-build-applier.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -478,6 +547,9 @@
     {
       "live": "test/e2e/live/openclaw-discord-pairing.test.ts",
       "fast": [
+        "src/lib/messaging/channels/discord/credential-injection.test.ts",
+        "src/lib/onboard/messaging-policy-presets.test.ts",
+        "test/e2e/support/openclaw-discord-pairing-helpers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -508,6 +580,9 @@
     {
       "live": "test/e2e/live/openclaw-slack-pairing.test.ts",
       "fast": [
+        "src/lib/onboard/sandbox-create-plan.test.ts",
+        "test/e2e/support/openclaw-discord-pairing-helpers.test.ts",
+        "test/onboarding/onboard-messaging.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -586,7 +661,7 @@
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/installer-integration/install-express-prompt.test.ts",
-        "test/install-local-model-profile.test.ts"
+        "test/install/install-local-model-profile.test.ts"
       ]
     },
     {
@@ -623,9 +698,17 @@
     },
     {
       "live": "test/e2e/live/channels-stop-start.test.ts",
+      "liveSources": [
+        "test/e2e/live/channels-stop-start-googlechat-proof.ts",
+        "test/e2e/live/channels-stop-start-helpers.ts",
+        "test/e2e/live/channels-stop-start-plan-state.ts"
+      ],
       "fast": [
+        "test/e2e/support/channels-stop-start-cleanup.test.ts",
         "test/e2e/support/channels-stop-start-config-state.test.ts",
-        "test/e2e/support/channels-stop-start-googlechat-entry.test.ts",
+        "test/e2e/support/channels-stop-start-googlechat.test.ts",
+        "test/e2e/support/channels-stop-start-googlechat-proof.test.ts",
+        "test/e2e/support/channels-stop-start-plan-state.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
@@ -652,7 +735,15 @@
     },
     {
       "live": "test/e2e/live/hermes-slack-e2e.test.ts",
+      "liveSources": [
+        "test/e2e/live/hermes-slack-credential-transport.ts",
+        "test/e2e/live/hermes-slack-e2e-helpers.ts",
+        "test/e2e/live/hermes-slack-proof.ts"
+      ],
       "fast": [
+        "test/e2e/support/hermes-slack-cleanup.test.ts",
+        "test/e2e/support/hermes-slack-credential-transport.test.ts",
+        "test/e2e/support/hermes-slack-proof.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
@@ -698,6 +789,10 @@
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
         "test/e2e/support/workflow-e2e-progress.test.ts"
       ]
+    },
+    {
+      "live": "test/e2e/live/brev-workspace-cleanup.test.ts",
+      "fast": ["test/e2e/support/brev-launchable-fixture.test.ts"]
     },
     {
       "live": "test/e2e/live/whatsapp-qr-compact.test.ts",

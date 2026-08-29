@@ -34,7 +34,7 @@ describe("rebuild web-search policy normalization", () => {
     ).toEqual(["npm", "tavily"]);
   });
 
-  it("removes both built-in providers for an authoritative disable", () => {
+  it("removes both built-in providers for an authoritative disable, except a tier egress default (#10404)", () => {
     expect(
       normalizeRebuildWebSearchPolicyPresets(
         ["npm", "brave", "tavily"],
@@ -42,7 +42,37 @@ describe("rebuild web-search policy normalization", () => {
         null,
       ),
     ).toEqual(["npm"]);
+    // Balanced and Open both default `brave` as tier egress, so a rebuild that
+    // declines web search keeps it and still drops `tavily`, which neither tier
+    // defaults.
+    expect(
+      normalizeRebuildWebSearchPolicyPresets(
+        ["npm", "brave", "tavily"],
+        { name: "alpha", agent: "openclaw", policyTier: "balanced" },
+        null,
+      ),
+    ).toEqual(["npm", "brave"]);
+    expect(
+      normalizeRebuildWebSearchPolicyPresets(
+        ["npm", "brave", "tavily"],
+        { name: "alpha", agent: "openclaw", policyTier: "open" },
+        null,
+      ),
+    ).toEqual(["npm", "brave"]);
   });
+
+  it.each(["hermes", "langchain-deepagents-code"])(
+    "removes OpenClaw-only brave from a Balanced-tier %s rebuild",
+    (agent) => {
+      expect(
+        normalizeRebuildWebSearchPolicyPresets(
+          ["npm", "brave"],
+          { name: "alpha", agent, policyTier: "balanced" },
+          null,
+        ),
+      ).toEqual(["npm"]);
+    },
+  );
 
   it("preserves DCode's standalone Tavily and excludes custom names from built-in replay", () => {
     expect(
@@ -92,6 +122,63 @@ describe("rebuild web-search policy normalization", () => {
     expect(result?.policyPresets).toEqual([]);
     expect(result?.sessionPolicyPresets).toEqual([]);
     expect(result?.backupWasForceSkipped).toBe(false);
+  });
+
+  it("removes inactive built-in Hermes channel egress during rebuild", () => {
+    const customDiscordPolicy = { name: "discord", content: "network_policies: {}\n" };
+    const preparedRecoveryManifest = {
+      policyPresets: ["discord"],
+      customPolicies: [customDiscordPolicy],
+    } as never;
+
+    const result = runRebuildBackupPhase({
+      sandboxName: "alpha",
+      sandboxEntry: {
+        name: "alpha",
+        agent: "hermes",
+        policies: ["discord"],
+        customPolicies: [customDiscordPolicy],
+        policyPresetsFinalized: true,
+      },
+      staleRecovery: false,
+      preparedRecoveryManifest,
+      messagingPlan: {
+        schemaVersion: 1,
+        sandboxName: "alpha",
+        agent: "hermes",
+        workflow: "rebuild",
+        channels: [
+          {
+            channelId: "slack",
+            displayName: "Slack",
+            authMode: "token-paste",
+            active: true,
+            selected: true,
+            configured: true,
+            disabled: false,
+            inputs: [],
+            hooks: [],
+          },
+        ],
+        disabledChannels: [],
+        credentialBindings: [],
+        networkPolicy: { presets: [], entries: [] },
+        agentRender: [],
+        buildSteps: [],
+        stateUpdates: [],
+        healthChecks: [],
+      },
+      webSearchConfig: null,
+      log: vi.fn(),
+      bail: (message): never => {
+        throw new Error(message);
+      },
+      relockShieldsIfNeeded: () => true,
+    });
+
+    expect(result?.policyPresets).toEqual(["slack"]);
+    expect(result?.backupManifest).toBe(preparedRecoveryManifest);
+    expect(result?.backupManifest?.customPolicies).toEqual([customDiscordPolicy]);
   });
 
   it("records when --force skips a total backup failure", () => {

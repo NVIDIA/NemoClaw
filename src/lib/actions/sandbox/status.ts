@@ -5,7 +5,6 @@ import { printOpenShellStateRpcIssue } from "../../adapters/openshell/gateway-dr
 import { CLI_NAME } from "../../cli/branding";
 import { deferSandboxLifecycleExit, isSandboxLifecycleDeferredExit } from "../../core/process-exit";
 import { inspectManagedLlamaCppStatus } from "../../inference/llama-cpp/managed-status";
-import { parseSandboxPhase } from "../../state/gateway";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
 import * as registry from "../../state/registry";
 import { getSandboxDockerRuntime } from "./docker-health";
@@ -196,7 +195,7 @@ async function showLegacySandboxStatus(sandboxName: string): Promise<void> {
   // Resolve the docker-driver container once: reused for the paused-container
   // recovery hint (#4495) and the Docker health line below (#3975).
   const dockerRuntime = lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
-  const phase = lookup.state === "present" ? parseSandboxPhase(lookup.output || "") : null;
+  const phase = lookup.state === "present" ? (lookup.phase ?? null) : null;
   const effectivePreflight = withoutTerminalPhasePreflight(
     snapshot.postRecoveryPreflight ?? preflight,
     phase,

@@ -80,7 +80,12 @@ function isCleanFailedProbe(probe: SandboxCaptureResult): boolean {
 
 export interface ReusedSandboxDashboardForwarding {
   resolveStateForPort(effectivePort: number): HermesDashboardOnboardState;
-  ensureForState(state: HermesDashboardOnboardState, sandboxName: string): void;
+  ensureForState(
+    state: HermesDashboardOnboardState,
+    sandboxName: string,
+    rollback?: boolean,
+    revalidatePolicyAuthority?: (operation: string) => void,
+  ): void;
 }
 
 export interface ReusedSandboxDashboardStateInput {
@@ -96,9 +101,14 @@ export interface ReusedSandboxDashboardStateInput {
   gatewayPort: number;
   manageDashboard?: boolean;
   getSandbox?(sandboxName: string): SandboxEntry | null;
-  ensureDashboardForward(sandboxName: string, chatUiUrl: string): number;
+  ensureDashboardForward(
+    sandboxName: string,
+    chatUiUrl: string,
+    options?: { revalidatePolicyAuthority?: (operation: string) => void },
+  ): number;
   hermesDashboardForwarding: ReusedSandboxDashboardForwarding;
   updateSandbox?(sandboxName: string, updates: Partial<SandboxEntry>): unknown;
+  revalidatePolicyRequirements?(operation: string): void;
   updateReusedSandboxMetadata(
     sandboxName: string,
     agent: AgentDefinition | null | undefined,
@@ -107,6 +117,7 @@ export interface ReusedSandboxDashboardStateInput {
     dashboardPort: number,
     selectionVerified: boolean,
     sandboxGpuConfig: SandboxGpuConfig,
+    revalidatePolicyAuthority?: (operation: string) => void,
   ): void;
 }
 
@@ -130,19 +141,36 @@ export function applyReusedSandboxDashboardState(
       `Sandbox '${input.sandboxName}' was created without remote dashboard exposure. Re-run onboarding with NEMOCLAW_DASHBOARD_BIND=0.0.0.0 and --recreate-sandbox before opening a remote bind.`,
     );
   }
+  input.revalidatePolicyRequirements?.(
+    `restore dashboard state for sandbox '${input.sandboxName}'`,
+  );
   const dashboardPort = manageDashboard
-    ? input.ensureDashboardForward(input.sandboxName, input.chatUiUrl)
+    ? input.revalidatePolicyRequirements
+      ? input.ensureDashboardForward(input.sandboxName, input.chatUiUrl, {
+          revalidatePolicyAuthority: input.revalidatePolicyRequirements,
+        })
+      : input.ensureDashboardForward(input.sandboxName, input.chatUiUrl)
     : 0;
   const chatUiUrl = manageDashboard ? `http://127.0.0.1:${dashboardPort}` : input.chatUiUrl;
   if (manageDashboard) {
+    input.revalidatePolicyRequirements?.(`record dashboard URL for sandbox '${input.sandboxName}'`);
     input.env.CHAT_UI_URL = chatUiUrl;
   }
   const hermesDashboardState = manageDashboard
     ? input.hermesDashboardForwarding.resolveStateForPort(dashboardPort)
     : { enabled: false, config: null };
   if (manageDashboard) {
-    input.hermesDashboardForwarding.ensureForState(hermesDashboardState, input.sandboxName);
+    input.revalidatePolicyRequirements?.(
+      `restore Hermes dashboard state for sandbox '${input.sandboxName}'`,
+    );
+    input.hermesDashboardForwarding.ensureForState(
+      hermesDashboardState,
+      input.sandboxName,
+      false,
+      input.revalidatePolicyRequirements,
+    );
   }
+  input.revalidatePolicyRequirements?.(`update reused sandbox metadata for '${input.sandboxName}'`);
   input.updateReusedSandboxMetadata(
     input.sandboxName,
     input.agent,
@@ -151,6 +179,10 @@ export function applyReusedSandboxDashboardState(
     dashboardPort,
     input.selectionVerified,
     input.sandboxGpuConfig,
+    input.revalidatePolicyRequirements,
+  );
+  input.revalidatePolicyRequirements?.(
+    `record reused dashboard state for sandbox '${input.sandboxName}'`,
   );
   (input.updateSandbox ?? registry.updateSandbox)(input.sandboxName, {
     ...getHermesDashboardRegistryFields(hermesDashboardState),
@@ -158,6 +190,13 @@ export function applyReusedSandboxDashboardState(
     gatewayPort: input.gatewayPort,
   });
   return { chatUiUrl, dashboardPort, hermesDashboardState };
+}
+
+export async function restoreReusedSandboxDashboardState(
+  input: ReusedSandboxDashboardStateInput & { releaseDashboardPort(): Promise<void> },
+): Promise<ReusedSandboxDashboardStateResult> {
+  await input.releaseDashboardPort();
+  return applyReusedSandboxDashboardState(input);
 }
 
 export function createSandboxReuseHelpers(deps: SandboxReuseDeps): SandboxReuseHelpers {

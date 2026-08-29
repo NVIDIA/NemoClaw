@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Process-level driver for the uninstall confirm-prompt pty tests. Loaded by
-// test/uninstall-prompt-pty.test.ts via `tsx <driver>` under `script -qec`
+// test/install/uninstall-prompt-pty.test.ts via `tsx <driver>` under `script -qec`
 // (a pseudo-TTY), so fd 0 is a real terminal device; not picked up by
 // Vitest's discovery (lives under test/fixtures/, which is excluded from the
 // test glob).
@@ -17,7 +17,7 @@
 //   PTY_DRIVER_POISON_STDIN=1  touch `process.stdin` first, flipping fd 0
 //                              non-blocking — the exact regression condition.
 //   PTY_DRIVER_PRESERVABLE=1   pretend ~/.nemoclaw user data exists so the
-//                              second "Also remove them? [y/N]" prompt runs.
+//                              second user-data and fresh-backup prompt runs.
 //
 // Accepts and ignores argv so `bash uninstall.sh` can exec it through its
 // NEMOCLAW_NODE/NEMOCLAW_CLI_JS overrides (`internal uninstall run-plan`).

@@ -19,7 +19,7 @@ PREFIX="10-deepagents-code-tui-startup"
 TUI_TIMEOUT="${DEEPAGENTS_TUI_TIMEOUT:-90}"
 PROCESS_CLEANUP_TIMEOUT=20
 # Shell-only live check fallback for remote e2e hosts; Vitest parity coverage in
-# test/deepagents-code-tui-startup-check.test.ts pins this to secret-patterns.ts.
+# test/agents/deepagents/deepagents-code-tui-startup-check.test.ts pins this to secret-patterns.ts.
 SECRET_PATTERN='(?:nvapi-[A-Za-z0-9_-]{10,}|nvcf-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9_-]{10,}|github_pat_[A-Za-z0-9_]{30,}|sk-proj-[A-Za-z0-9_-]{10,}|sk-ant-[A-Za-z0-9_-]{10,}|sk-[A-Za-z0-9_-]{20,}|(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}|A(?:K|S)IA[A-Z0-9]{16}|hf_[A-Za-z0-9]{10,}|glpat-[A-Za-z0-9_-]{10,}|gsk_[A-Za-z0-9]{10,}|pypi-[A-Za-z0-9_-]{10,}|\bbot[0-9]{8,10}:[A-Za-z0-9_-]{35}\b|\b[0-9]{8,10}:[A-Za-z0-9_-]{35}\b|\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b|tvly-[A-Za-z0-9_-]{10,}|lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*)'
 CONTEXT_SECRET_VALUE_PATTERN='[A-Za-z0-9_.+\/=-]{10,}'
 # Pinned DCode 0.1.55 renders this exact modal title for `/agents`. Opening it

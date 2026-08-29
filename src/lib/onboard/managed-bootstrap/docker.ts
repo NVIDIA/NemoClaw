@@ -23,9 +23,12 @@ import {
 import {
   buildDockerGpuCloneRunArgs,
   dockerContainerName,
-  JETSON_DEVICE_GROUP_BOOTSTRAP,
   shouldOmitOpenShellOciImageUser,
 } from "../docker-gpu-patch-clone";
+import {
+  normalizeJetsonDeviceGroupGids,
+  resolveJetsonDeviceGroupBootstrap,
+} from "../docker-gpu-jetson-groups";
 import {
   DOCKER_GPU_PATCH_STOP_TIMEOUT_MS,
   DOCKER_GPU_PATCH_TIMEOUT_MS,
@@ -686,7 +689,6 @@ function replacementPlan(options: ManagedBootstrapReplacementOptions): {
   readonly mode: DockerGpuPatchMode;
   readonly requiredUlimits: readonly DockerUlimit[];
   readonly extraGroupGids: readonly string[];
-  readonly preserveJetsonDeviceGroupMembership: boolean;
 } {
   const allowed = new Set([
     "gpuModeArgs",
@@ -694,7 +696,6 @@ function replacementPlan(options: ManagedBootstrapReplacementOptions): {
     "gpuModeKind",
     "gpuModeLabel",
     "extraGroupGids",
-    "preserveJetsonDeviceGroupMembership",
     "requiredUlimits",
   ]);
   const unknown = Object.keys(options.values).filter((key) => !allowed.has(key));
@@ -708,11 +709,6 @@ function replacementPlan(options: ManagedBootstrapReplacementOptions): {
     throw new Error(`Managed bootstrap Docker GPU mode '${kind}' is invalid.`);
   }
   const args = exactStringArray(options.values.gpuModeArgs ?? [], "GPU mode arguments");
-  const preserveJetsonDeviceGroupMembership =
-    options.values.preserveJetsonDeviceGroupMembership ?? false;
-  if (typeof preserveJetsonDeviceGroupMembership !== "boolean") {
-    throw new Error("Managed bootstrap Docker Jetson device-group preservation must be a boolean.");
-  }
   return {
     mode: {
       kind,
@@ -720,15 +716,9 @@ function replacementPlan(options: ManagedBootstrapReplacementOptions): {
       device: String(options.values.gpuModeDevice ?? ""),
       args,
     },
-    extraGroupGids: exactStringArray(options.values.extraGroupGids ?? [], "extra group GIDs").map(
-      (value) => {
-        if (!/^\d+$/u.test(value)) {
-          throw new Error(`Managed bootstrap Docker supplementary group '${value}' is invalid.`);
-        }
-        return value;
-      },
+    extraGroupGids: normalizeJetsonDeviceGroupGids(
+      exactStringArray(options.values.extraGroupGids ?? [], "extra group GIDs"),
     ),
-    preserveJetsonDeviceGroupMembership,
     requiredUlimits: parseRequiredUlimits(options.values.requiredUlimits),
   };
 }
@@ -739,15 +729,11 @@ function replacementCommand(
   plan: ReturnType<typeof replacementPlan>,
 ): readonly string[] {
   const supervisorArgv =
-    plan.preserveJetsonDeviceGroupMembership && plan.extraGroupGids.length > 0
-      ? [
-          JETSON_DEVICE_GROUP_BOOTSTRAP,
-          "--device-group-gids",
-          plan.extraGroupGids.join(","),
-          "--",
-          ...snapshot.supervisorArgv,
-        ]
-      : snapshot.supervisorArgv;
+    resolveJetsonDeviceGroupBootstrap({
+      agent: handle.plan.profile.agent,
+      deviceGroupGids: plan.extraGroupGids,
+      supervisorArgv: snapshot.supervisorArgv,
+    })?.supervisorArgv ?? snapshot.supervisorArgv;
   return Object.freeze([
     "--agent",
     handle.plan.profile.agent,

@@ -9,9 +9,15 @@ import { bindOpenAiProviderProfile, createProviderReviewDeps } from "./setup-inf
 describe("bindOpenAiProviderProfile", () => {
   it("imports the profile immediately before an OpenAI provider upsert", () => {
     const events: string[] = [];
+    const profileEvents = ["profile-export", "profile-import"];
+    const profileResults = [
+      { status: 1, stdout: "", stderr: "provider profile not found" },
+      { status: 0, stdout: "", stderr: "" },
+    ];
+    let profileIndex = 0;
     const runOpenshell = vi.fn(() => {
-      events.push("profile");
-      return { status: 0, stdout: "", stderr: "" };
+      events.push(profileEvents[profileIndex]!);
+      return profileResults[profileIndex++]!;
     });
     const upsertProvider = vi.fn(() => {
       events.push("upsert");
@@ -36,10 +42,26 @@ describe("bindOpenAiProviderProfile", () => {
       ),
     ).toEqual({ ok: true });
 
-    expect(events).toEqual(["profile", "upsert"]);
-    expect(runOpenshell).toHaveBeenCalledWith(
+    expect(events).toEqual(["profile-export", "profile-import", "upsert"]);
+    expect(runOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["provider", "profile", "export", "openai", "--output", "json"],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: 30_000,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    expect(runOpenshell).toHaveBeenNthCalledWith(
+      2,
       ["provider", "profile", "import", "--file", expect.stringMatching(/openai\.yaml$/u)],
-      { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: 30_000,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
     );
   });
 
@@ -70,21 +92,22 @@ describe("bindOpenAiProviderProfile", () => {
   it.each([
     {
       reason: "import failure",
-      results: [{ status: 1, stdout: "", stderr: "sensitive-import-output" }],
+      results: [
+        { status: 1, stdout: "", stderr: "provider profile not found" },
+        { status: 1, stdout: "", stderr: "sensitive-import-output" },
+      ],
       expected: "could not import the checked-in 'openai' inference provider profile",
+      guidance: "OpenShell is available and authorized",
     },
     {
       reason: "export failure",
-      results: [
-        { status: 1, stdout: "", stderr: "provider profile already exists" },
-        { status: 1, stdout: "sensitive-export-output", stderr: "" },
-      ],
-      expected: "already exists but could not be read for validation",
+      results: [{ status: 1, stdout: "sensitive-export-output", stderr: "" }],
+      expected: "could not be read for validation",
+      guidance: "OpenShell is available, authorized, and the profile is readable",
     },
     {
       reason: "incompatible profile",
       results: [
-        { status: 1, stdout: "", stderr: "provider profile already exists" },
         {
           status: 0,
           stdout: JSON.stringify({
@@ -98,8 +121,9 @@ describe("bindOpenAiProviderProfile", () => {
         },
       ],
       expected: "does not match NemoClaw's endpointless inference contract",
+      guidance: "Remove the conflicting profile",
     },
-  ])("fails closed with fixed guidance for $reason", ({ results, expected }) => {
+  ])("fails closed with fixed guidance for $reason", ({ results, expected, guidance }) => {
     let resultIndex = 0;
     const runOpenshell = vi.fn(() => results[resultIndex++]!);
     const upsertProvider = vi.fn(() => ({ ok: true }));
@@ -126,6 +150,7 @@ describe("bindOpenAiProviderProfile", () => {
     expect(upsertProvider).not.toHaveBeenCalled();
     const output = error.mock.calls.flat().join("\n");
     expect(output).toContain(expected);
+    expect(output).toContain(guidance);
     expect(output).not.toMatch(/sensitive-(?:import|export|profile)-/u);
   });
 });

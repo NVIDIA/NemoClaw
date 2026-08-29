@@ -163,6 +163,23 @@ describe("CLI dispatch", () => {
     expect(r.out).not.toContain("Sandbox 'agents' does not exist");
   });
 
+  it("inference parent shows command help instead of an oclif lookup error", () => {
+    const bare = run("inference 2>&1");
+    expect(bare.code).toBe(0);
+    expect(bare.out).toContain("nemoclaw inference <get|set>");
+    expect(bare.out).not.toContain("command inference not found");
+
+    const helpFlag = run("inference --help 2>&1");
+    expect(helpFlag.code).toBe(0);
+    expect(helpFlag.out).toContain("nemoclaw inference <get|set>");
+    expect(helpFlag.out).not.toContain("command inference not found");
+
+    const helpCommand = run("inference help 2>&1");
+    expect(helpCommand.code).toBe(0);
+    expect(helpCommand.out).toContain("nemoclaw inference <get|set>");
+    expect(helpCommand.out).not.toContain("command inference not found");
+  });
+
   it("agents list exits 0 and lists global agent runtimes", () => {
     const r = run("agents list");
     expect(r.code).toBe(0);

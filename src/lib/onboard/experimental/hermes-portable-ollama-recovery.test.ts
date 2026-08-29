@@ -1,0 +1,553 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it, vi } from "vitest";
+
+import type { SandboxEntry } from "../../state/registry/types";
+import {
+  normalizeHostLocalInferenceReceipt,
+  serializeHostLocalInferenceReceipt,
+  type HostLocalInferencePreparedStartup,
+  type HostLocalInferenceReceipt,
+} from "../runtime-provider/host-local-inference";
+import type { HostLocalInferenceStartupRequest } from "../runtime-provider/host-local-inference-routing";
+import {
+  HermesPortableOllamaRecoveryError,
+  HermesPortableOllamaRecoveryPhaseError,
+  recoverHermesPortableOllamaInference,
+  rethrowHermesPortableOllamaRegistryRecoveryError,
+} from "./hermes-portable-ollama-inference";
+import {
+  PortableRegistryRecoveryPhaseError,
+  PortableRegistryRecoveryRestorationError,
+} from "./hermes-portable-ollama-authority";
+
+const GPU_DEVICE = "nvidia.com/gpu=GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+
+function publishedReceipt(): HostLocalInferenceReceipt {
+  return normalizeHostLocalInferenceReceipt({
+    schemaVersion: 2,
+    providerId: "podman",
+    service: "ollama",
+    engineAuthority: {
+      schemaVersion: 1,
+      providerId: "podman",
+      operation: "host-local-inference",
+      engineId: "podman",
+      authorityId: `podman-endpoint:${"a".repeat(64)}`,
+      bindingSha256: "b".repeat(64),
+    },
+    endpoint: {
+      host: "host.openshell.internal",
+      port: 11_434,
+      networkName: "openshell-docker",
+      networkId: "c".repeat(64),
+      networkGatewayIp: "10.89.0.1",
+      networkListenerIp: "10.89.0.2",
+      networkAuthoritySha256: "d".repeat(64),
+    },
+    inference: {
+      protocol: "openai-chat-completions",
+      model: "qwen3-vl:4b",
+      toolCallingRequired: true,
+    },
+    publication: {
+      transactionId: "e".repeat(64),
+      targetSha256: "f".repeat(64),
+      priorState: "absent",
+    },
+    runtime: {
+      kind: "container",
+      runtimeId: "a".repeat(64),
+      name: "nemoclaw-portable-ollama-alpha",
+      imageRef: `docker.io/library/ollama@sha256:${"1".repeat(64)}`,
+      probeImageRef: `quay.io/curl/curl@sha256:${"2".repeat(64)}`,
+      specSha256: "3".repeat(64),
+      launchSha256: "4".repeat(64),
+      modelDigest: `sha256:${"5".repeat(64)}`,
+      gpu: { vendor: "nvidia", devices: [GPU_DEVICE] },
+    },
+  });
+}
+
+function createHarness(initiallyRunning = false, registryInitiallyRunning = false) {
+  const receipt = publishedReceipt();
+  const serializedReceipt = serializeHostLocalInferenceReceipt(receipt);
+  const entry = {
+    name: "alpha",
+    agent: "hermes",
+    provider: "ollama-local",
+    model: "qwen3-vl:4b",
+    policies: ["personal-open-internet"],
+    openshellDriver: "docker",
+    gatewayName: "nemoclaw",
+    lifecycleGeneration: "generation-1",
+    endpointUrl: "https://inference.local/v1",
+    hostLocalInferenceReceipt: serializedReceipt,
+  } as SandboxEntry;
+  const events: string[] = [];
+  let running = initiallyRunning;
+  let registryRunning = registryInitiallyRunning;
+  let publicationState: "unpublished" | "published" = "unpublished";
+  const writeExact = vi.fn((value: string) => value);
+  const runtime = {
+    providerId: "podman",
+    authorityId: `podman-endpoint:${"a".repeat(64)}`,
+    services: ["ollama"],
+    resumeManaged: vi.fn(),
+    inspectManaged: vi.fn(() => ({ running, receipt })),
+    inspectPublishedRecoveryRestoration: vi.fn(() => ({ running, receipt })),
+    preserveForRebuild: vi.fn(() => {
+      events.push("provider-validate");
+      return receipt;
+    }),
+  };
+  const prepared: HostLocalInferencePreparedStartup = {
+    receipt,
+    rollbackPriorState: "stopped",
+    publicationState: () => publicationState,
+    validateBeforeCommit: vi.fn(() => {
+      events.push("prepared-validate");
+      return receipt;
+    }),
+    commit: vi.fn(() => {
+      events.push("commit");
+      publicationState = "published";
+      return receipt;
+    }),
+    finalizePublishedResume: vi.fn((assertPublishedAuthority) => {
+      events.push("finalize");
+      assertPublishedAuthority();
+      publicationState = "published";
+      return receipt;
+    }),
+    rollback: vi.fn(() => {
+      events.push("rollback");
+      running = false;
+      return { priorState: "stopped" as const, status: "restored" as const, receipt };
+    }),
+  };
+  const prepareStartup = vi.fn((_operation: unknown, request: HostLocalInferenceStartupRequest) => {
+    events.push("resume");
+    expect(request).toMatchObject({
+      application: "hermes",
+      service: "ollama",
+      managed: {
+        containerName: "nemoclaw-portable-ollama-alpha",
+        model: "qwen3-vl:4b",
+        gpuDevices: [GPU_DEVICE],
+        networkName: "openshell-docker",
+      },
+      resumeReceipt: receipt,
+    });
+    running = true;
+    return { prepared, receipt };
+  });
+  const assertOperating = vi.fn(() => events.push("operating"));
+  const assertRuntime = vi.fn(() => events.push("runtime"));
+  const assertPublished = vi.fn(() => {
+    events.push("publication");
+  });
+  const prepareInferenceAuthority = vi.fn((_bundle, lifecycleEntry: SandboxEntry) => {
+    expect(lifecycleEntry).toMatchObject({
+      name: "alpha",
+      agent: "hermes",
+      openshellDriver: "podman",
+      provider: "ollama-local",
+    });
+    expect(lifecycleEntry.hostLocalInferenceProvenance).toBeUndefined();
+    return {
+      serializedReceipt,
+      sandboxAuthoritySha256: "6".repeat(64),
+    };
+  });
+  const overrides = {
+    readReceipt: vi.fn(() => ({ receipt: { phase: "active" }, successor: {} })),
+    qualifyOperatingAuthority: vi.fn(() => ({ receipt: {}, assertCurrent: assertOperating })),
+    createRuntimeAuthority: vi.fn(() => ({
+      bundle: { identity: { id: "podman" } },
+      inferenceStateDir: "/state/portable-inference/alpha",
+      assertCurrent: assertRuntime,
+    })),
+    prepareInferenceAuthority,
+    requireOperation: vi.fn(() => ({ managedRuntime: runtime })),
+    preparePublishedAuthority: vi.fn(() => ({
+      receipt,
+      serializedReceipt,
+      receiptWriter: {
+        transactionId: "e".repeat(64),
+        targetSha256: "f".repeat(64),
+        writeExact,
+      },
+      assertCurrent: assertPublished,
+    })),
+    prepareRegistryRecovery: vi.fn(() => {
+      const started = !registryRunning;
+      started ? events.push("registry-start") : undefined;
+      registryRunning = started ? true : registryRunning;
+      return {
+        started,
+        assertCurrent: vi.fn(() => {
+          events.push("registry-current");
+          expect(registryRunning).toBe(true);
+        }),
+        rollback: vi.fn(() => {
+          events.push("registry-rollback");
+          registryRunning = started ? false : registryRunning;
+        }),
+        release: vi.fn(() => events.push("registry-release")),
+      };
+    }),
+    prepareStartup,
+  };
+  const input = {
+    intent: "connect-probe-only" as const,
+    sandboxName: "alpha",
+    entry,
+    env: {},
+    stateDir: "/state",
+    runGatewayOpenshell: vi.fn(),
+    readRegistry: vi.fn(() => entry),
+    verifyRoute: vi.fn(() => {
+      events.push("route");
+      return entry;
+    }),
+  };
+  return {
+    events,
+    input,
+    overrides,
+    prepared,
+    prepareStartup,
+    receipt,
+    registryRunning: () => registryRunning,
+    runtime,
+    running: () => running,
+    writeExact,
+  };
+}
+
+describe("Hermes Portable Ollama inference recovery", () => {
+  it("resumes one stopped published runtime and commits only after final route proof", () => {
+    const harness = createHarness();
+
+    expect(recoverHermesPortableOllamaInference(harness.input, harness.overrides as never)).toBe(
+      "recovered",
+    );
+
+    expect(harness.prepareStartup).toHaveBeenCalledOnce();
+    expect(harness.running()).toBe(true);
+    expect(harness.registryRunning()).toBe(true);
+    expect(harness.events[0]).toBe("operating");
+    expect(harness.events.indexOf("registry-start")).toBeLessThan(harness.events.indexOf("resume"));
+    expect(harness.events.indexOf("route")).toBeGreaterThan(
+      harness.events.indexOf("prepared-validate"),
+    );
+    expect(harness.events.indexOf("route")).toBeLessThan(harness.events.indexOf("finalize"));
+    expect(harness.prepared.commit).not.toHaveBeenCalled();
+    expect(harness.prepared.rollback).not.toHaveBeenCalled();
+    expect(harness.writeExact).not.toHaveBeenCalled();
+    expect(harness.events.at(-1)).toBe("registry-release");
+  });
+
+  it("validates an already running runtime without invoking resume", () => {
+    const harness = createHarness(true, true);
+
+    expect(recoverHermesPortableOllamaInference(harness.input, harness.overrides as never)).toBe(
+      "reused",
+    );
+
+    expect(harness.runtime.preserveForRebuild).toHaveBeenCalledOnce();
+    expect(harness.prepareStartup).not.toHaveBeenCalled();
+    expect(harness.events).toContain("route");
+    expect(harness.events).not.toContain("registry-start");
+    expect(harness.events.at(-1)).toBe("registry-release");
+  });
+
+  it("reconciles a stopped registry before validating an already running runtime", () => {
+    const harness = createHarness(true);
+
+    expect(recoverHermesPortableOllamaInference(harness.input, harness.overrides as never)).toBe(
+      "reused",
+    );
+
+    expect(harness.events).toContain("registry-start");
+    expect(harness.runtime.preserveForRebuild).toHaveBeenCalledOnce();
+    expect(harness.prepareStartup).not.toHaveBeenCalled();
+    expect(harness.registryRunning()).toBe(true);
+    expect(harness.events.at(-1)).toBe("registry-release");
+  });
+
+  it("restores the exact stopped state when final route verification fails", () => {
+    const harness = createHarness();
+    harness.input.verifyRoute.mockImplementation(() => {
+      throw new Error("route unavailable");
+    });
+
+    expect(() =>
+      recoverHermesPortableOllamaInference(harness.input, harness.overrides as never),
+    ).toThrow("route unavailable");
+
+    expect(harness.prepared.rollback).toHaveBeenCalledOnce();
+    expect(harness.prepared.commit).not.toHaveBeenCalled();
+    expect(harness.running()).toBe(false);
+    expect(harness.registryRunning()).toBe(false);
+    expect(harness.events.indexOf("rollback")).toBeLessThan(
+      harness.events.indexOf("registry-rollback"),
+    );
+  });
+
+  it("restores the exact stopped state when provider revalidation fails", () => {
+    const harness = createHarness();
+    vi.mocked(harness.prepared.validateBeforeCommit).mockImplementation(() => {
+      throw new Error("provider unavailable");
+    });
+
+    expect(() =>
+      recoverHermesPortableOllamaInference(harness.input, harness.overrides as never),
+    ).toThrow("provider unavailable");
+
+    expect(harness.prepared.rollback).toHaveBeenCalledOnce();
+    expect(harness.input.verifyRoute).not.toHaveBeenCalled();
+    expect(harness.running()).toBe(false);
+    expect(harness.registryRunning()).toBe(false);
+    expect(harness.events.indexOf("rollback")).toBeLessThan(
+      harness.events.indexOf("registry-rollback"),
+    );
+  });
+
+  it("restores the exact stopped state when final published authority changes", () => {
+    const harness = createHarness();
+    const assertCurrent = vi
+      .fn()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("published authority changed");
+      })
+      .mockImplementation(() => undefined);
+    harness.overrides.preparePublishedAuthority.mockReturnValue({
+      receipt: harness.receipt,
+      serializedReceipt: serializeHostLocalInferenceReceipt(harness.receipt),
+      receiptWriter: {
+        transactionId: "e".repeat(64),
+        targetSha256: "f".repeat(64),
+        writeExact: harness.writeExact,
+      },
+      assertCurrent,
+    });
+
+    expect(() =>
+      recoverHermesPortableOllamaInference(harness.input, harness.overrides as never),
+    ).toThrow("published authority changed");
+
+    expect(harness.input.verifyRoute).toHaveBeenCalledOnce();
+    expect(harness.prepared.finalizePublishedResume).toHaveBeenCalledOnce();
+    expect(harness.prepared.rollback).toHaveBeenCalledOnce();
+    expect(harness.writeExact).not.toHaveBeenCalled();
+    expect(harness.running()).toBe(false);
+    expect(harness.registryRunning()).toBe(false);
+  });
+
+  it("rejects Ollama registry provenance before runtime mutation", () => {
+    const harness = createHarness();
+    harness.input.entry = {
+      ...harness.input.entry,
+      hostLocalInferenceProvenance: {
+        schemaVersion: 1,
+        sandboxName: "alpha",
+        receiptSha256: "9".repeat(64),
+      },
+    } as never;
+    harness.input.readRegistry.mockReturnValue(harness.input.entry);
+
+    expect(() =>
+      recoverHermesPortableOllamaInference(harness.input, harness.overrides as never),
+    ).toThrow("Ollama registry must not contain llama.cpp provenance");
+
+    expect(harness.prepareStartup).not.toHaveBeenCalled();
+    expect(harness.running()).toBe(false);
+    expect(harness.registryRunning()).toBe(false);
+    expect(harness.events).not.toContain("registry-start");
+  });
+
+  it("is idempotent across a recovered probe and a second probe", () => {
+    const harness = createHarness();
+
+    expect(recoverHermesPortableOllamaInference(harness.input, harness.overrides as never)).toBe(
+      "recovered",
+    );
+    expect(recoverHermesPortableOllamaInference(harness.input, harness.overrides as never)).toBe(
+      "reused",
+    );
+
+    expect(harness.prepareStartup).toHaveBeenCalledOnce();
+    expect(harness.runtime.preserveForRebuild).toHaveBeenCalledOnce();
+    expect(harness.events.filter((event) => event === "registry-start")).toHaveLength(1);
+    expect(harness.events.filter((event) => event === "registry-release")).toHaveLength(2);
+  });
+
+  it("rejects registry drift before a runtime resume", () => {
+    const harness = createHarness();
+    harness.input.readRegistry.mockReturnValue({ ...harness.input.entry, model: "changed" });
+
+    expect(() =>
+      recoverHermesPortableOllamaInference(harness.input, harness.overrides as never),
+    ).toThrow("sandbox registry authority changed before recovery");
+
+    expect(harness.prepareStartup).not.toHaveBeenCalled();
+    expect(harness.running()).toBe(false);
+  });
+
+  it("restores a started registry when runtime reconstruction fails before Ollama mutation", () => {
+    const harness = createHarness();
+    harness.overrides.createRuntimeAuthority.mockImplementation(() => {
+      throw new Error("runtime authority unavailable");
+    });
+
+    let caught: unknown;
+    try {
+      recoverHermesPortableOllamaInference(harness.input, harness.overrides as never);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(HermesPortableOllamaRecoveryPhaseError);
+    expect(caught).toMatchObject({ phase: "RUNTIME_AUTHORITY" });
+    expect((caught as Error).message).not.toContain("runtime authority unavailable");
+
+    expect(harness.prepareStartup).not.toHaveBeenCalled();
+    expect(harness.registryRunning()).toBe(false);
+    expect(harness.events).toContain("registry-rollback");
+  });
+
+  it.each([
+    ["registry", "REGISTRY_PREPARATION_POSTCONDITION", 0],
+    ["runtime", "RUNTIME_AUTHORITY", 1],
+    ["lifecycle", "LIFECYCLE_AUTHORITY", 1],
+    ["private-publication", "PRIVATE_PUBLICATION_AUTHORITY", 1],
+    ["runtime-inspection", "EXACT_RUNTIME_INSPECTION", 1],
+  ] as const)(
+    "classifies the fixed %s failure boundary after rollback",
+    (owner, phase, registryRollbackCount) => {
+      const harness = createHarness();
+      const canary = "nested recovery diagnostic canary";
+      switch (owner) {
+        case "registry":
+          harness.overrides.prepareRegistryRecovery.mockImplementation(() => {
+            throw new Error(canary);
+          });
+          break;
+        case "runtime":
+          harness.overrides.createRuntimeAuthority.mockImplementation(() => {
+            throw new Error(canary);
+          });
+          break;
+        case "lifecycle":
+          harness.overrides.prepareInferenceAuthority.mockImplementation(() => {
+            throw new Error(canary);
+          });
+          break;
+        case "private-publication":
+          harness.overrides.preparePublishedAuthority.mockImplementation(() => {
+            throw new Error(canary);
+          });
+          break;
+        case "runtime-inspection":
+          harness.runtime.inspectManaged.mockImplementation(() => {
+            throw new Error(canary);
+          });
+          break;
+      }
+
+      let caught: unknown;
+      try {
+        recoverHermesPortableOllamaInference(harness.input, harness.overrides as never);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(HermesPortableOllamaRecoveryPhaseError);
+      expect(caught).toMatchObject({ phase });
+      expect((caught as Error).message).not.toContain(canary);
+      expect(harness.registryRunning()).toBe(false);
+      expect(harness.events.filter((event) => event === "registry-rollback")).toHaveLength(
+        registryRollbackCount,
+      );
+      expect(harness.prepareStartup).not.toHaveBeenCalled();
+    },
+  );
+
+  it("maps the exact registry phase without disclosing the nested diagnostic", () => {
+    let caught: unknown;
+    try {
+      rethrowHermesPortableOllamaRegistryRecoveryError(
+        Object.assign(new PortableRegistryRecoveryPhaseError("NETWORK_INSPECTION"), {
+          nestedDiagnostic: "registry phase canary",
+        }),
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(HermesPortableOllamaRecoveryPhaseError);
+    expect(caught).toMatchObject({ phase: "REGISTRY_PREPARATION_NETWORK_INSPECTION" });
+    expect((caught as Error).message).not.toContain("registry phase canary");
+  });
+
+  it("maps registry restoration uncertainty ahead of the nested phase", () => {
+    let caught: unknown;
+    try {
+      rethrowHermesPortableOllamaRegistryRecoveryError(
+        Object.assign(new PortableRegistryRecoveryRestorationError(), {
+          phase: "NETWORK_INSPECTION",
+          nestedDiagnostic: "registry restoration canary",
+        }),
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(HermesPortableOllamaRecoveryError);
+    expect(caught).toMatchObject({ failure: "registry-restoration-unproved" });
+    expect((caught as Error).message).not.toContain("registry restoration canary");
+  });
+
+  it("reports registry restoration uncertainty instead of the nested phase", () => {
+    const harness = createHarness();
+    const canary = "nested recovery diagnostic canary";
+    harness.overrides.prepareRegistryRecovery.mockReturnValue({
+      started: true,
+      assertCurrent: vi.fn(),
+      rollback: vi.fn(() => {
+        throw new Error(canary);
+      }),
+      release: vi.fn(),
+    });
+    harness.overrides.createRuntimeAuthority.mockImplementation(() => {
+      throw new Error(canary);
+    });
+
+    let caught: unknown;
+    try {
+      recoverHermesPortableOllamaInference(harness.input, harness.overrides as never);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(HermesPortableOllamaRecoveryError);
+    expect(caught).toMatchObject({ failure: "registry-restoration-unproved" });
+    expect((caught as Error).message).not.toContain(canary);
+    expect(harness.prepareStartup).not.toHaveBeenCalled();
+  });
+
+  it("rejects direct launch intent before registry or runtime mutation", () => {
+    const harness = createHarness();
+
+    expect(() =>
+      recoverHermesPortableOllamaInference(
+        { ...harness.input, intent: "launch" } as never,
+        harness.overrides as never,
+      ),
+    ).toThrow("restricted to connect --probe-only");
+
+    expect(harness.overrides.prepareRegistryRecovery).not.toHaveBeenCalled();
+    expect(harness.prepareStartup).not.toHaveBeenCalled();
+    expect(harness.registryRunning()).toBe(false);
+  });
+});

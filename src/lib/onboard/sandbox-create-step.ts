@@ -105,7 +105,6 @@ export async function runSandboxCreateStep(
     route: context.useDockerGpuPatch ? "compatibility" : "native",
     persistStartupCommand: startupCommandPatch.persistStartupCommand,
     requiredUlimits: startupCommandPatch.requiredUlimits,
-    preserveJetsonDeviceGroupMembership: startupCommandPatch.preserveJetsonDeviceGroupMembership,
     sandboxName: context.sandboxName,
     gpuDevice: context.gpuDevice,
     openshellSandboxCommand: sandboxStartupCommand,

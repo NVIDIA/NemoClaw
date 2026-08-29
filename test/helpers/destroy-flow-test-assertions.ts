@@ -3,14 +3,14 @@
 
 import { expect, type MockInstance } from "vitest";
 
+import { classifyDestroySandboxPresence } from "../../src/lib/actions/sandbox/destroy-presence";
 import {
+  createDestroyHarness,
   type DestroyHarness,
-  loadDestroySandboxPresenceClassifier,
   sandboxListJson,
 } from "./destroy-flow-test-harness";
 
 export function expectStrictSandboxPresenceClassification(): void {
-  const classifyDestroySandboxPresence = loadDestroySandboxPresenceClassifier();
   expect(
     classifyDestroySandboxPresence("alpha", {
       status: 0,
@@ -112,7 +112,10 @@ export function expectActiveTimerDestroyOrder(harness: DestroyHarness): void {
   expect(harness.events.indexOf("delete")).toBeLessThan(harness.events.indexOf("timer-cleanup"));
 }
 
-export function expectFailedHardeningStillDeletes(harness: DestroyHarness): void {
+export function expectFailedHardeningStillDeletes(
+  harness: DestroyHarness,
+  cliName = "nemoclaw",
+): void {
   expect(harness.events).toEqual(
     expect.arrayContaining(["wipe", "harden", "delete", "timer-cleanup"]),
   );
@@ -125,6 +128,15 @@ export function expectFailedHardeningStillDeletes(harness: DestroyHarness): void
   expect(warnOutput).toContain("Could not re-lock shields for 'alpha' before delete");
   expect(warnOutput).toContain("injected hardening failure");
   expect(warnOutput).toContain("Continuing with delete");
+  expect(warnOutput).toContain(
+    "retries the transition to lockdown within its seven-attempt recovery budget",
+  );
+  expect(warnOutput).toContain(
+    "Waiting for a verified live sandbox mutation owner does not consume that budget",
+  );
+  expect(warnOutput).toContain("durable containment blocks sandbox mutations");
+  expect(warnOutput).toContain(`${cliName} alpha shields status`);
+  expect(warnOutput).toContain("exact-generation recovery guidance");
 }
 
 export function expectFailedHardeningRefusesForcedCleanup(harness: DestroyHarness): void {
@@ -137,8 +149,20 @@ export function expectFailedHardeningRefusesForcedCleanup(harness: DestroyHarnes
   expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
   const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
   expect(errorOutput).toContain("shields could not be re-locked before delete");
-  expect(errorOutput).toContain("--force cannot safely discard a record whose config lock");
+  expect(errorOutput).toContain("--force cannot safely discard a record while shields recovery");
   expect(errorOutput).not.toContain("re-run with --force to remove the local sandbox record");
+  expect(errorOutput).toContain("seven-attempt auto-restore recovery can continue");
+  expect(errorOutput).toContain("durable containment blocks sandbox mutations");
+  expectShieldsRecoveryOrder(errorOutput, process.env.NEMOCLAW_INVOKED_AS ?? "nemoclaw");
+}
+
+export function expectShieldsRecoveryOrder(errorOutput: string, cliName = "nemoclaw"): void {
+  const gatewayStatusIndex = errorOutput.indexOf(`${cliName} alpha status`);
+  const shieldsStatusIndex = errorOutput.indexOf(`${cliName} alpha shields status`);
+  const retryDestroyIndex = errorOutput.indexOf("Retry destroy only after recovery permits it");
+  expect(gatewayStatusIndex).toBeGreaterThanOrEqual(0);
+  expect(shieldsStatusIndex).toBeGreaterThan(gatewayStatusIndex);
+  expect(retryDestroyIndex).toBeGreaterThan(shieldsStatusIndex);
 }
 
 export function expectFailedHardeningMcpRestore(harness: DestroyHarness): void {

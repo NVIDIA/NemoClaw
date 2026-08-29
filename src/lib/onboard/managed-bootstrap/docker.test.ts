@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { assert, describe, expect, it, vi } from "vitest";
-import { JETSON_DEVICE_GROUP_BOOTSTRAP } from "../docker-gpu-patch-clone";
+import { JETSON_DEVICE_GROUP_BOOTSTRAP } from "../docker-gpu-jetson-groups";
 import {
   MANAGED_BOOTSTRAP_IDENTITY_ENV,
   ManagedBootstrapDurableCommitCleanupPendingError,
@@ -237,7 +237,6 @@ describe("Docker managed bootstrap adapter", () => {
         replacementOptions: {
           values: {
             extraGroupGids: ["44", "110"],
-            preserveJetsonDeviceGroupMembership: true,
           },
         },
       }),
@@ -255,7 +254,7 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.events).not.toContain(`stop:${OLD_ID}`);
   });
 
-  it("rejects a non-boolean Jetson group-preservation option before replacement creation (#7610)", async () => {
+  it("rejects an invalid Jetson device group before replacement creation (#7610)", async () => {
     const fake = fixture({ agent: "openclaw" });
     const adapter = createDockerManagedBootstrapAdapter(fake.deps);
     const { handle, request } = authority("openclaw");
@@ -273,12 +272,10 @@ describe("Docker managed bootstrap adapter", () => {
         snapshot,
         request,
         replacementOptions: {
-          values: { preserveJetsonDeviceGroupMembership: "true" },
+          values: { extraGroupGids: ["0"] },
         },
       }),
-    ).rejects.toThrow(
-      "Managed bootstrap Docker Jetson device-group preservation must be a boolean.",
-    );
+    ).rejects.toThrow("invalid or excessive supplementary group IDs");
     expect(fake.events).not.toContain("create:replacement");
   });
 

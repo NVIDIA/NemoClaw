@@ -21,16 +21,13 @@ export function resolveDockerStartupCommandPatch(
   env: NodeJS.ProcessEnv = process.env,
 ): {
   persistStartupCommand: boolean;
-  preserveJetsonDeviceGroupMembership: boolean;
   requiredUlimits: readonly DockerUlimit[] | null;
 } {
   const agentName = agent?.name ?? "openclaw";
-  const preserveJetsonDeviceGroupMembership = agentName === "openclaw";
   const requiredUlimits = agentName === DCODE_AGENT_NAME ? DCODE_DOCKER_ULIMITS : null;
   if (dockerDriverGateway !== true) {
     return {
       persistStartupCommand: false,
-      preserveJetsonDeviceGroupMembership,
       requiredUlimits: null,
     };
   }
@@ -40,12 +37,11 @@ export function resolveDockerStartupCommandPatch(
   // the recreation can only fail after Ready (#9462). Portable+OpenClaw
   // persistence is owned by the portable lifecycle instead (#9176).
   if (isPortableExperimentalProfile(env)) {
-    return { persistStartupCommand: false, preserveJetsonDeviceGroupMembership, requiredUlimits };
+    return { persistStartupCommand: false, requiredUlimits };
   }
   return {
     persistStartupCommand:
       agentName === "openclaw" || agentName === "hermes" || agentName === DCODE_AGENT_NAME,
-    preserveJetsonDeviceGroupMembership,
     requiredUlimits,
   };
 }

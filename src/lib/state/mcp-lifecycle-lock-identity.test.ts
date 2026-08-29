@@ -24,7 +24,7 @@ import {
 
 const PROPERTY_RUNS = 250;
 const PROPERTY_TIMEOUT_MS = 15_000;
-// Moved from test/mcp-lifecycle-lock.test.ts. The recorded seed is kept so a
+// Moved from test/mcp/mcp-lifecycle-lock.test.ts. The recorded seed is kept so a
 // failure replays the same counterexample that suite reported.
 const SEEDED_PROPERTY_PARAMETERS = { numRuns: PROPERTY_RUNS, seed: 0x5876c0de } as const;
 const SANDBOX_NAME = "property-sandbox";

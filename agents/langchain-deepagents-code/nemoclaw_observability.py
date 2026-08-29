@@ -143,7 +143,7 @@ _ECMASCRIPT_NON_WHITESPACE_SECRET_CHAR = (
 # canonical TypeScript groups in src/lib/security/secret-patterns.ts, so these
 # expressions mirror them at NemoClaw's final span-projection boundary. Host
 # collector processors remain defense in depth, not the source fix. The parity
-# regression in test/langchain-deepagents-code-secret-pattern-parity.test.ts and
+# regression in test/agents/deepagents/langchain-deepagents-code-secret-pattern-parity.test.ts and
 # the real Relay wire assertions in validate-observability.py guard this mirror.
 # Remove it only when a shared Python artifact or upstream pre-export hook can
 # enforce the same managed redaction contract before OTLP serialization.

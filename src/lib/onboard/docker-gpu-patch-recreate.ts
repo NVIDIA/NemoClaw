@@ -12,13 +12,16 @@ import {
 } from "../adapters/docker";
 import { hasZeroDockerExitStatus } from "./docker-command-result";
 import { detectSandboxFallbackDns } from "./docker-gpu-dns-fallback";
-import { detectTegraDeviceGroupGids } from "./docker-gpu-jetson-groups";
+import {
+  detectTegraDeviceGroupGids,
+  JETSON_DEVICE_GROUP_BOOTSTRAP,
+  NEMOCLAW_MANAGED_AGENT_LABEL,
+} from "./docker-gpu-jetson-groups";
 import {
   buildDockerGpuCloneRunArgs,
   buildDockerGpuCloneRunOptions,
   dockerContainerName,
   getDockerGpuCloneFallbackDns,
-  JETSON_DEVICE_GROUP_BOOTSTRAP,
   parseDockerInspectJson,
   sameContainerId,
   validateRequiredDockerUlimits,
@@ -27,7 +30,7 @@ import {
   DOCKER_GPU_PATCH_STOP_TIMEOUT_MS,
   DOCKER_GPU_PATCH_TIMEOUT_MS,
 } from "./docker-gpu-patch-constants";
-import { reconcileSupervisorReconnect } from "./docker-gpu-patch-finalize";
+import { finalizeDockerGpuPatchBackup } from "./docker-gpu-patch-finalize";
 import { selectDockerGpuPatchMode } from "./docker-gpu-patch-mode";
 import { restoreDockerGpuPatchBackupAfterRecreateFailure } from "./docker-gpu-patch-rollback";
 import type {
@@ -160,7 +163,6 @@ export function recreateOpenShellDockerSandboxContainer(
     requiredUlimits?: readonly import("./docker-gpu-patch-types").DockerUlimit[] | null;
     expectedOldContainerId?: string | null;
     backend?: "generic" | "jetson";
-    preserveJetsonDeviceGroupMembership?: boolean;
     dockerDesktopWsl?: boolean;
     modeOverride?: DockerGpuPatchMode;
   },
@@ -264,15 +266,16 @@ export function recreateOpenShellDockerSandboxContainer(
         );
       }
     }
+    const managedAgent = inspect.Config?.Labels?.[NEMOCLAW_MANAGED_AGENT_LABEL] ?? null;
+    const shouldBootstrapJetsonGroups = managedAgent === "openclaw";
     const shouldDetectJetsonGroups =
       options.backend === "jetson" &&
-      (selection.mode.kind !== "startup-command" ||
-        options.preserveJetsonDeviceGroupMembership === true);
+      (selection.mode.kind !== "startup-command" || shouldBootstrapJetsonGroups);
     if (shouldDetectJetsonGroups) {
       const tegraGroupGids = d.detectTegraDeviceGroupGids();
       if (tegraGroupGids.length > 0) {
         cloneOptions.extraGroupGids = tegraGroupGids;
-        if (options.preserveJetsonDeviceGroupMembership === true) {
+        if (shouldBootstrapJetsonGroups) {
           const wrapperProbe = d.dockerRun(
             [
               "exec",
@@ -290,7 +293,6 @@ export function recreateOpenShellDockerSandboxContainer(
               `OpenClaw sandbox image is missing executable ${JETSON_DEVICE_GROUP_BOOTSTRAP}.`,
             );
           }
-          cloneOptions.preserveJetsonDeviceGroupMembership = true;
           console.log(
             `  ✓ Preserving the detected Jetson GPU device groups through OpenShell startup: ${tegraGroupGids.join(", ")}`,
           );
@@ -423,19 +425,40 @@ export function recreateOpenShellDockerSandboxContainer(
       options.timeoutSecs ?? DOCKER_GPU_PATCH_WAIT_SECS,
       deps,
     );
-    const reconcile = reconcileSupervisorReconnect(
-      execReady,
-      { newContainerId, backupContainerName, originalName },
-      deps,
-    );
-    if (!reconcile.execReady) {
-      context.rolledBack = reconcile.rolledBack;
-      context.replacementStopConfirmed = reconcile.replacementStopConfirmed;
-      context.replacementRemovalConfirmed = reconcile.replacementRemovalConfirmed;
-      context.replacementPresence = reconcile.replacementPresence;
-      throw reconcile.error;
+    const patchResult = result(false);
+    const finalization = execReady
+      ? finalizeDockerGpuPatchBackup(
+          {
+            result: patchResult,
+            supervisorReady: true,
+            sandboxName: options.sandboxName,
+            finalHandoffTimeoutSecs: options.timeoutSecs ?? DOCKER_GPU_PATCH_WAIT_SECS,
+          },
+          deps,
+        )
+      : finalizeDockerGpuPatchBackup({ result: patchResult, supervisorReady: false }, deps);
+    context.rolledBack = finalization.rolledBack;
+    context.backupRemoved = finalization.backupRemoved;
+    context.replacementStopConfirmed = finalization.replacementStopConfirmed;
+    context.replacementRemovalConfirmed = finalization.replacementRemovalConfirmed;
+    context.replacementPresence = finalization.replacementPresence;
+    context.lastSandboxPhase = finalization.lastSandboxPhase;
+    if (!execReady) {
+      throw new Error(
+        finalization.rolledBack
+          ? "OpenShell supervisor did not reconnect to the GPU-enabled container; pre-patch sandbox restored."
+          : "OpenShell supervisor did not reconnect to the GPU-enabled container and rollback failed; pre-patch sandbox was NOT restored.",
+      );
     }
-    return result(reconcile.backupRemoved);
+    if (finalization.finalHandoffAcknowledged) return result(true);
+    const rebuildRequired = finalization.backupRemoved
+      ? " The previous container was removed at the final handoff commit point; automatic rollback is unavailable. Rebuild the sandbox before retrying."
+      : "";
+    throw new Error(
+      finalization.lastSandboxPhase
+        ? `OpenShell did not acknowledge the final replacement handoff; last sandbox phase was ${finalization.lastSandboxPhase}.${rebuildRequired}`
+        : `OpenShell did not acknowledge the final replacement handoff.${rebuildRequired}`,
+    );
   } catch (error) {
     throw decoratePatchError(error instanceof Error ? error : new Error(String(error)), context);
   }

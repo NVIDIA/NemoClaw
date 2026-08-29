@@ -16,7 +16,7 @@ NemoClaw owns these files and settings:
 - `.github/workflows/e2e.yaml` selects the fixed target from the trusted
   workflow on `main`.
 - `tools/e2e/jetson-dispatch-client.mts` obtains a GitHub OpenID Connect (OIDC)
-  token, sends the exact candidate commit, validates responses, and writes
+  token, sends the candidate commit, validates responses, and writes
   bounded evidence.
 - `tools/e2e/jetson-dispatch-contract.mts` implements HTTP contract versions
   `1.0.0` and `2.0.0`.
@@ -59,7 +59,7 @@ The controller uses these endpoints:
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `POST` | `/v1/jobs` | Submit the exact request and receive its initial status. |
+| `POST` | `/v1/jobs` | Submit the request and receive its initial status. |
 | `GET` | `/v1/jobs/{jobId}` | Poll the queued, running, or completed status. |
 | `DELETE` | `/v1/jobs/{jobId}` | Request cancellation after a signal, deadline, or repeated poll failure. |
 | `GET` | `/v1/jobs/{jobId}/artifact` | Read the completed status, bounded log, and optional artifact archive. |
@@ -107,8 +107,7 @@ one artifact, and rejected request examples.
 The Jetson job runs automatically for each trusted push to `main` in
 `NVIDIA/NemoClaw`. A manual run requires `allow_jetson_dispatch=true` on the
 trusted `main` workflow. The manual input defaults to `false`. The workflow
-limits a manual candidate checkout to the same repository and sends the exact
-`checkout_sha` or current trusted ref commit as `candidateSha`. GitHub queues
+limits a manual candidate checkout to the same repository and sends the `checkout_sha` or current trusted ref commit as `candidateSha`. GitHub queues
 later Jetson jobs instead of canceling a running job.
 
 For a trusted main run, the publication gate exports the first-parent commit
@@ -149,7 +148,7 @@ The Jetson controller writes private files under the target artifact directory:
   service returns an archive.
 
 The workflow uploads that directory as `e2e-jetson-nvmap-gpu`, including on job
-failure. A successful proof requires the exact candidate request, a conclusion
+failure. A successful proof requires the candidate request, a conclusion
 of `success`, `cleanup: "succeeded"`, a device identity, and the artifact
 archive.
 
@@ -176,6 +175,9 @@ The test verifies these requirements:
 - `/dev/nvmap` is a character device on the host.
 - Docker reports the NVIDIA runtime.
 - NemoClaw installation completes without prompts.
+- The sandbox registry records the immutable published
+  `ghcr.io/nvidia/nemoclaw/openclaw-sandbox` digest selected for `linux/arm64`,
+  and its source revision matches the separately dispatched publication commit.
 - The installed commands resolve inside the Jetson job workspace.
 
 The live test runs `bash install.sh --non-interactive` with
@@ -189,6 +191,10 @@ A passing test requires these results:
 - `nemoclaw e2e-jetson-nvmap status` does not report a CUDA result,
   `/dev/nvmap`, or `/opt/nvidia`.
 - `/dev/nvmap` is absent from inside the sandbox, including as a symbolic link.
+
+The test writes `phase-2-published-managed-image.json` with the registry
+workload receipt, digest-qualified managed-image reference, and inspected image
+labels used to prove its agent, contracts, source revision, and platform.
 
 The test result verifies CPU-only onboarding for the named commit and Jetson
 device. It does not verify CUDA or OpenClaw Jetson device-group preservation.

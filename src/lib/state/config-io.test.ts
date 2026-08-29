@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   ConfigCorruptError,
@@ -28,6 +28,7 @@ function writeFileWithMode(filePath: string, contents: string, mode: number) {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const dir of tmpDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -66,6 +67,55 @@ describe("config-io", () => {
     const nestedDir = path.join(symlinkPath, "state");
 
     expect(() => ensureConfigDir(nestedDir)).toThrow(/symbolic link/);
+  });
+
+  it("refuses to read a config file through a symlinked config directory", () => {
+    const home = process.env.HOME || os.homedir();
+    const tmp = fs.mkdtempSync(path.join(home, ".nemoclaw-test-"));
+    tmpDirs.push(tmp);
+    const attackerDir = path.join(tmp, "attacker");
+    fs.mkdirSync(attackerDir, { mode: 0o700 });
+    writeFileWithMode(
+      path.join(attackerDir, "sandboxes.json"),
+      JSON.stringify({ sandboxes: { planted: {} } }),
+      0o600,
+    );
+    const symlinkPath = path.join(tmp, ".nemoclaw");
+    fs.symlinkSync(attackerDir, symlinkPath);
+    const plantedFile = path.join(symlinkPath, "sandboxes.json");
+
+    // The write path already refuses this exact path; the read path must agree.
+    expect(() => writeConfigFile(plantedFile, { sandboxes: {} })).toThrow(/symbolic link/);
+    expect(() => readConfigFile(plantedFile, null)).toThrow(/symbolic link/);
+  });
+
+  it("reports permission failures while checking a read path with remediation", () => {
+    const home = process.env.HOME || os.homedir();
+    const tmp = fs.mkdtempSync(path.join(home, ".nemoclaw-test-"));
+    tmpDirs.push(tmp);
+    const configDir = path.join(tmp, ".nemoclaw");
+    fs.mkdirSync(configDir, { mode: 0o700 });
+    const configFile = path.join(configDir, "sandboxes.json");
+    fs.writeFileSync(configFile, JSON.stringify({ sandboxes: {} }), { mode: 0o600 });
+
+    const realLstatSync = fs.lstatSync.bind(fs);
+    const rejectInspection = (): never => {
+      throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+    };
+    const lstatSpy = vi.spyOn(fs, "lstatSync").mockImplementation((target, options) => {
+      return path.resolve(String(target)) === path.resolve(configDir)
+        ? rejectInspection()
+        : realLstatSync(target, options as never);
+    });
+
+    try {
+      const read = () => readConfigFile(configFile, null);
+      expect(read).toThrow(ConfigPermissionError);
+      expect(read).toThrow(/Cannot read config directory/);
+      expect(read).toThrow(/sudo chown/);
+    } finally {
+      lstatSpy.mockRestore();
+    }
   });
 
   it("allows a normal directory (no symlinks)", () => {
@@ -170,6 +220,121 @@ describe("config-io", () => {
     expect(readConfigFile(file, null)).toEqual(data);
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
     expect(fs.readdirSync(dir).filter((name) => name.includes(".tmp."))).toEqual([]);
+  });
+
+  it("synchronizes replacement bytes before rename and the directory after rename", () => {
+    const dir = makeTempDir();
+    const file = path.join(dir, "config.json");
+    fs.writeFileSync(file, JSON.stringify({ durable: "prior" }), { mode: 0o600 });
+    const openSpy = vi.spyOn(fs, "openSync");
+    const syncSpy = vi.spyOn(fs, "fsyncSync");
+    const linkSpy = vi.spyOn(fs, "linkSync");
+    const renameSpy = vi.spyOn(fs, "renameSync");
+
+    writeConfigFile(file, { durable: true });
+
+    expect(openSpy).toHaveBeenCalledWith(`${file}.tmp.${String(process.pid)}`, "r");
+    expect(openSpy).toHaveBeenCalledWith(dir, fs.constants.O_RDONLY);
+    expect(syncSpy).toHaveBeenCalledTimes(3);
+    expect(syncSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      linkSpy.mock.invocationCallOrder[0]!,
+    );
+    expect(linkSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      syncSpy.mock.invocationCallOrder[1]!,
+    );
+    expect(syncSpy.mock.invocationCallOrder[1]).toBeLessThan(
+      renameSpy.mock.invocationCallOrder[0]!,
+    );
+    expect(renameSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      syncSpy.mock.invocationCallOrder[2]!,
+    );
+  });
+
+  it("replaces a stale rollback backup from a reused process ID", () => {
+    const dir = makeTempDir();
+    const file = path.join(dir, "config.json");
+    const backupFile = `${file}.rollback.${String(process.pid)}`;
+    fs.writeFileSync(file, JSON.stringify({ durable: "prior" }), { mode: 0o600 });
+    fs.writeFileSync(backupFile, JSON.stringify({ durable: "stale" }), { mode: 0o600 });
+
+    writeConfigFile(file, { durable: "replacement" });
+
+    expect(readConfigFile(file, null)).toEqual({ durable: "replacement" });
+    expect(fs.existsSync(backupFile)).toBe(false);
+  });
+
+  it("preserves the prior config when temporary-file synchronization fails", () => {
+    const dir = makeTempDir();
+    const file = path.join(dir, "config.json");
+    fs.writeFileSync(file, JSON.stringify({ durable: "prior" }), { mode: 0o600 });
+    vi.spyOn(fs, "fsyncSync").mockImplementationOnce(() => {
+      throw Object.assign(new Error("storage synchronization failed"), { code: "EIO" });
+    });
+
+    expect(() => writeConfigFile(file, { durable: "replacement" })).toThrow(
+      /storage synchronization failed/,
+    );
+    expect(readConfigFile(file, null)).toEqual({ durable: "prior" });
+    expect(fs.readdirSync(dir).filter((name) => name.includes(".tmp."))).toEqual([]);
+  });
+
+  it("removes an initial config when its directory synchronization fails", () => {
+    const dir = makeTempDir();
+    const file = path.join(dir, "config.json");
+    const syncSpy = vi.spyOn(fs, "fsyncSync");
+    syncSpy
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error("directory synchronization failed"), { code: "EIO" });
+      });
+
+    expect(() => writeConfigFile(file, { durable: true })).toThrow(
+      /directory synchronization failed/,
+    );
+    expect(syncSpy).toHaveBeenCalledTimes(3);
+    expect(readConfigFile(file, null)).toBeNull();
+  });
+
+  it("restores the prior config when replacement directory synchronization fails", () => {
+    const dir = makeTempDir();
+    const file = path.join(dir, "config.json");
+    fs.writeFileSync(file, JSON.stringify({ durable: "prior" }), { mode: 0o600 });
+    const syncSpy = vi.spyOn(fs, "fsyncSync");
+    syncSpy
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error("directory synchronization failed"), { code: "EIO" });
+      });
+
+    expect(() => writeConfigFile(file, { durable: "replacement" })).toThrow(
+      /directory synchronization failed/,
+    );
+    expect(readConfigFile(file, null)).toEqual({ durable: "prior" });
+    expect(fs.readdirSync(dir).filter((name) => name.includes(".rollback."))).toEqual([]);
+  });
+
+  it("retains the prior config backup when durability rollback fails", () => {
+    const dir = makeTempDir();
+    const file = path.join(dir, "config.json");
+    const backupFile = `${file}.rollback.${String(process.pid)}`;
+    fs.writeFileSync(file, JSON.stringify({ durable: "prior" }), { mode: 0o600 });
+    const syncSpy = vi.spyOn(fs, "fsyncSync");
+    syncSpy
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error("directory synchronization failed"), { code: "EIO" });
+      });
+    const renameSync = fs.renameSync;
+    vi.spyOn(fs, "renameSync")
+      .mockImplementationOnce(renameSync)
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error("rollback rename failed"), { code: "EIO" });
+      });
+
+    expect(() => writeConfigFile(file, { durable: "replacement" })).toThrow(AggregateError);
+    expect(readConfigFile(backupFile, null)).toEqual({ durable: "prior" });
   });
 
   it("cleans up temp files when rename fails", () => {

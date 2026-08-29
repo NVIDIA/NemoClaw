@@ -35,6 +35,7 @@ import {
 import { collectN1xIdentity } from "./platform-identity/n1x";
 
 const UNIFIED_MEMORY_GPU_TAGS = ["GB10", "Thor", "Orin", "Xavier", "Jetson", "Tegra"];
+const NIM_UNIFIED_MEMORY_UTILIZATION = 0.5;
 const NIM_STATUS_PROBE_TIMEOUT_MS = 5000;
 export const DEFAULT_NIM_HEALTH_TIMEOUT_SECONDS = 1200;
 
@@ -383,6 +384,37 @@ export function listModels(): NimModel[] {
     image: m.image,
     minGpuMemoryMB: m.minGpuMemoryMB,
   }));
+}
+
+export function nimUsableMemoryMB(
+  gpu: Pick<GpuDetection, "availableMemoryMB" | "totalMemoryMB" | "unifiedMemory">,
+): number {
+  const availableMemoryMB =
+    typeof gpu.availableMemoryMB === "number" ? gpu.availableMemoryMB : gpu.totalMemoryMB;
+  const runtimeLimitMB = gpu.unifiedMemory
+    ? Math.floor(gpu.totalMemoryMB * NIM_UNIFIED_MEMORY_UTILIZATION)
+    : gpu.totalMemoryMB;
+  return Math.min(availableMemoryMB, runtimeLimitMB);
+}
+
+export function getNimModelOptions(
+  gpu: Pick<GpuDetection, "availableMemoryMB" | "totalMemoryMB" | "unifiedMemory">,
+): { models: NimModel[]; usableMemoryMB: number } {
+  const usableMemoryMB = nimUsableMemoryMB(gpu);
+  return {
+    models: listModels().filter((model) => model.minGpuMemoryMB <= usableMemoryMB),
+    usableMemoryMB,
+  };
+}
+
+export function nimModelSelectionError(
+  modelName: string,
+  label: string,
+  gpu: Pick<GpuDetection, "availableMemoryMB" | "totalMemoryMB" | "unifiedMemory">,
+): string {
+  const model = listModels().find((entry) => entry.name === modelName);
+  if (!model) return `  Unsupported ${label}: ${modelName}`;
+  return `  ${label} does not fit this host: ${modelName} requires at least ${model.minGpuMemoryMB} MB; NIM can use ${nimUsableMemoryMB(gpu)} MB.`;
 }
 
 export function canRunNimWithMemory(totalMemoryMB: number): boolean {
@@ -987,6 +1019,17 @@ export function startNimContainerByName(
 
 export interface WaitForNimHealthOptions {
   container?: string;
+  inspectContainerState?: typeof dockerContainerInspectFormat;
+  readContainerLogs?: typeof dockerLogs;
+  runCaptureImpl?: typeof runCapture;
+}
+
+function hasNimMemoryCapacityWarning(output: string): boolean {
+  return output
+    .split("\n")
+    .some((line) =>
+      /estimated (?:gpu )?(?:memory|vram).*exceeds (?:usable|available) gpu memory/i.test(line),
+    );
 }
 
 export function waitForNimHealth(
@@ -997,12 +1040,17 @@ export function waitForNimHealth(
   const start = Date.now();
   const intervalSec = 5;
   const hostPort = Number(port);
-  const { container } = opts;
+  const {
+    container,
+    inspectContainerState = dockerContainerInspectFormat,
+    readContainerLogs = dockerLogs,
+    runCaptureImpl = runCapture,
+  } = opts;
   console.log(`  Waiting for NIM health on port ${hostPort} (timeout: ${timeout}s)...`);
 
   while ((Date.now() - start) / 1000 < timeout) {
     try {
-      const result = runCapture(
+      const result = runCaptureImpl(
         [
           "curl",
           ...buildValidatedCurlCommandArgs([
@@ -1027,19 +1075,26 @@ export function waitForNimHealth(
     // failure or OOM during model load. Without this, the wizard polls the
     // full timeout (default 1200s) against a dead container. See #3333.
     if (container) {
-      const state = dockerContainerInspectFormat("{{.State.Status}}", container, {
+      const state = inspectContainerState("{{.State.Status}}", container, {
         ignoreError: true,
         timeout: NIM_STATUS_PROBE_TIMEOUT_MS,
       });
       if (state && state !== "running" && state !== "created" && state !== "restarting") {
         console.error(`  NIM container ${container} is ${state}; aborting health wait.`);
-        const tail = dockerLogs(container, { tail: 30 });
+        const tail = readContainerLogs(container, { tail: 30 });
         if (tail) {
           console.error("  Last container output:");
           for (const line of tail.split("\n")) {
             if (line) console.error(`    ${line}`);
           }
         }
+        return false;
+      }
+      const tail = readContainerLogs(container, { tail: 30 });
+      if (hasNimMemoryCapacityWarning(tail)) {
+        console.error(
+          "  NIM reports that its estimated memory exceeds usable GPU memory. Stopping the health wait.",
+        );
         return false;
       }
     }
@@ -1052,21 +1107,29 @@ export function waitForNimHealth(
 export function stopNimContainer(
   sandboxName: string,
   { silent = false }: { silent?: boolean } = {},
-): void {
+): boolean {
   const name = containerName(sandboxName);
-  stopNimContainerByName(name, { silent });
+  return stopNimContainerByName(name, { silent });
 }
 
 export function stopNimContainerByName(
   name: string,
   { silent = false }: { silent?: boolean } = {},
-): void {
+): boolean {
   if (!silent) console.log(`  Stopping NIM container: ${name}`);
   const stdio: ["ignore", "ignore", "ignore"] | undefined = silent
     ? ["ignore", "ignore", "ignore"]
     : undefined;
   dockerStop(name, { ignoreError: true, ...(stdio && { stdio }) });
-  dockerRm(name, { ignoreError: true, ...(stdio && { stdio }) });
+  const removed = dockerRm(name, { ignoreError: true, ...(stdio && { stdio }) });
+  return removed.status === 0;
+}
+
+export function stopNimContainerByNameOrThrow(name: string): void {
+  if (stopNimContainerByName(name)) return;
+  throw new Error(
+    `Could not remove NIM container '${name}'. Refusing to continue because it may still own its credentials and port.`,
+  );
 }
 
 export function nimStatus(sandboxName: string, port?: number): NimStatus {

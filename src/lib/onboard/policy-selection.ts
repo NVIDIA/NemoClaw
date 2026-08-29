@@ -4,7 +4,11 @@
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
 import * as policies from "../policy";
 import * as tiers from "../policy/tiers";
-import { PERSONAL_OPEN_INTERNET_PRESET_NAME, PERSONAL_POLICY_TIER_NAME } from "../policy/tiers";
+import {
+  PERSONAL_OPEN_INTERNET_PRESET_NAME,
+  PERSONAL_POLICY_TIER_NAME,
+  type TierDefinition,
+} from "../policy/tiers";
 import {
   filterSetupPolicyPresetNamesForAgent,
   filterSetupPolicyPresetsForAgent,
@@ -17,6 +21,7 @@ import {
 import {
   allMessagingChannelPolicyPresets,
   mergePolicyMessagingChannels,
+  pruneInactiveMessagingPolicyPresets,
 } from "./messaging-policy-presets";
 import {
   isInactiveObservabilityPolicyPreset,
@@ -49,11 +54,6 @@ import {
 } from "./policy-tier-suppression";
 import { withPolicyApplicationTrace } from "./tracing";
 
-export {
-  isStaleBuiltinBravePolicyPreset,
-  isStaleBuiltinWebSearchPolicyPreset,
-  mergeRequiredSetupPolicyPresets,
-} from "./policy-preset-reconciliation";
 export { suppressedAgentRequiredPresets } from "./policy-tier-suppression";
 
 export type OnboardPolicyApplicationDeps = Omit<
@@ -89,7 +89,7 @@ type PoliciesApi = {
 };
 type TiersApi = {
   resolveTierPresets(tierName: string): Preset[];
-  getTier(tierName: string): unknown;
+  getTier(tierName: string): TierDefinition | null;
 };
 
 export type SetupPresetSuggestionOptions = {
@@ -122,6 +122,7 @@ export type SetupPolicySelectionOptions = {
   disabledChannels?: string[] | null;
   /** Process-local exclusions imposed by a narrower runtime route authority. */
   excludedPresets?: readonly string[];
+  revalidatePolicyRequirements?: (operation: string) => void;
 };
 
 export type SetupPolicySelectionDeps = {
@@ -250,43 +251,36 @@ export function computeSetupPresetSuggestions(
     env = process.env,
   } = options;
   const known = Array.isArray(options.knownPresetNames) ? new Set(options.knownPresetNames) : null;
-  const activeMessagingPresets = Array.isArray(enabledChannels)
-    ? new Set(allMessagingChannelPolicyPresets(enabledChannels))
-    : null;
-  const hermesAgent = typeof agent === "string" && agent.trim().toLowerCase() === "hermes";
   const supportOptions = { webSearchSupported: options.webSearchSupported };
-  const suggestions = deps.tiers
-    .resolveTierPresets(tierName)
-    .map((preset) => preset.name)
-    .filter((name) => setupPolicyPresetAppliesToAgent(name, agent))
-    // Hermes Discord egress names a sandbox-scoped credential provider. An
-    // open tier may contain the preset, but OpenShell rejects it unless the
-    // channel is active and its provider is attached to the sandbox.
-    .filter(
-      (name) =>
-        !hermesAgent ||
-        name !== "discord" ||
-        activeMessagingPresets === null ||
-        activeMessagingPresets.has(name),
-    )
-    .filter(
-      (name) =>
-        !isStaleBuiltinWebSearchPolicyPreset(name, {
-          webSearchConfig,
-          customPresetNames: options.customPresetNames,
-        }),
-    )
-    .filter(
-      (name) =>
-        !isInactiveObservabilityPolicyPreset(name, {
-          agent,
-          observabilityEnabled,
-          customPresetNames: options.customPresetNames,
-          customOwnsObservability: options.customOwnsObservability,
-        }),
-    )
-    .filter((name) => deps.policies.setupPolicyPresetSupported(name, supportOptions))
-    .filter((name) => !known || known.has(name));
+  const tier = deps.tiers.getTier(tierName);
+  const suggestions = pruneInactiveMessagingPolicyPresets(
+    deps.tiers
+      .resolveTierPresets(tierName)
+      .map((preset) => preset.name)
+      .filter((name) => setupPolicyPresetAppliesToAgent(name, agent))
+      .filter(
+        (name) =>
+          !isStaleBuiltinWebSearchPolicyPreset(name, {
+            webSearchConfig,
+            customPresetNames: options.customPresetNames,
+            tier,
+            agent,
+          }),
+      )
+      .filter(
+        (name) =>
+          !isInactiveObservabilityPolicyPreset(name, {
+            agent,
+            observabilityEnabled,
+            customPresetNames: options.customPresetNames,
+            customOwnsObservability: options.customOwnsObservability,
+          }),
+      )
+      .filter((name) => deps.policies.setupPolicyPresetSupported(name, supportOptions))
+      .filter((name) => !known || known.has(name)),
+    enabledChannels,
+    options.customPresetNames,
+  );
   const add = (name: string) => {
     if (!setupPolicyPresetAppliesToAgent(name, agent)) return;
     if (
@@ -303,6 +297,8 @@ export function computeSetupPresetSuggestions(
       isStaleBuiltinWebSearchPolicyPreset(name, {
         webSearchConfig,
         customPresetNames: options.customPresetNames,
+        tier,
+        agent,
       })
     ) {
       return;
@@ -424,6 +420,9 @@ async function setupPoliciesWithSelectionInner(
       OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
     ) === true;
   if (customOwnsObservability) {
+    options.revalidatePolicyRequirements?.(
+      `remove built-in policy attribution from sandbox '${sandboxName}'`,
+    );
     deps.policies.removeBuiltinPresetAttribution?.(
       sandboxName,
       OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
@@ -453,13 +452,13 @@ async function setupPoliciesWithSelectionInner(
   );
   const pruneUnavailablePresets = createUnavailablePolicyPresetPruner({
     disabledChannels,
+    enabledChannels,
     agent,
     observabilityEnabled,
     webSearchConfig,
     customPresetNames,
     customOwnsObservability,
   });
-  const appliedForPreservation = pruneUnavailablePresets(applied);
   const filterSupportedPresetNames = (presetNames: string[]) =>
     filterSetupPolicyPresetNamesForAgent(excludePresets(presetNames), agent).filter(
       (name) =>
@@ -509,11 +508,14 @@ async function setupPoliciesWithSelectionInner(
   if (selectedPresets !== null) {
     const resumeSelection = chosen || [];
     refuseInPlacePersonalRemoval(personalAlreadyActive, resumeSelection);
-    if (onSelection) onSelection(resumeSelection);
     requireSandboxReady(deps, sandboxName, "before");
     deps.note(`  [resume] Reapplying policy presets: ${resumeSelection.join(", ")}`);
+    options.revalidatePolicyRequirements?.(
+      `reapply recorded policy presets to sandbox '${sandboxName}'`,
+    );
     deps.syncPresetSelection(sandboxName, currentAppliedPresets, resumeSelection);
     requireSandboxReady(deps, sandboxName, "after");
+    if (onSelection) onSelection(resumeSelection);
     return resumeSelection;
   }
 
@@ -521,8 +523,16 @@ async function setupPoliciesWithSelectionInner(
   if (personalAlreadyActive && tierName !== PERSONAL_POLICY_TIER_NAME) {
     refuseInPlacePersonalRemoval(personalAlreadyActive, []);
   }
+  options.revalidatePolicyRequirements?.(`record the policy tier for sandbox '${sandboxName}'`);
   deps.setPolicyTier?.(sandboxName, tierName);
   const personalTier = tierName === PERSONAL_POLICY_TIER_NAME;
+  // The carry-forward set decides which *already applied* presets survive, so it
+  // needs the applied tier for the same provenance exemption the resume reapply
+  // above uses: `brave` on Balanced/Open is that tier's egress default, not a
+  // stale web-search leftover, so declining the web-search tool on re-onboard
+  // must not narrow it. Resolved after `tierName` so a freshly prompted tier
+  // counts too; Restricted lists no such default and still prunes. (#6844, #10404)
+  const appliedForPreservation = pruneUnavailablePresets(applied, { tierName });
   const suggestions = excludePresets(
     pruneUnavailablePresets(
       computeSetupPresetSuggestions(deps, tierName, {
@@ -549,28 +559,45 @@ async function setupPoliciesWithSelectionInner(
     let isAuthoritative = false;
 
     if (policyMode === "skip" || policyMode === "none" || policyMode === "no") {
-      const retainedPresets = ensureRequiredTierPolicyPresets(
-        tierName,
-        filterSuppressedAgentRequiredPresets(
-          excludePresets(pruneUnavailablePresets(currentAppliedPresets)),
+      const retainedPresets = mergeRequiredSetupPolicyPresets(
+        ensureRequiredTierPolicyPresets(
           tierName,
-          agent,
+          filterSuppressedAgentRequiredPresets(
+            excludePresets(pruneUnavailablePresets(currentAppliedPresets, { tierName })),
+            tierName,
+            agent,
+          ),
         ),
+        {
+          enabledChannels,
+          hermesToolGateways,
+          agent,
+          observabilityEnabled,
+          knownPresetNames: knownPresets,
+          env: deps.env,
+          tierName,
+          webSearchConfig,
+          customPresetNames,
+          customOwnsObservability,
+        },
       );
       const selectionChanged =
         retainedPresets.length !== currentAppliedPresets.length ||
         retainedPresets.some((name, index) => name !== currentAppliedPresets[index]);
       if (selectionChanged) {
         refuseInPlacePersonalRemoval(personalAlreadyActive, retainedPresets);
-        if (onSelection) onSelection(retainedPresets);
         requireSandboxReady(deps, sandboxName, "before");
         deps.note(
           personalTier
             ? "  [non-interactive] Applying the Personal tier requirement while skipping optional policy presets."
             : "  [non-interactive] Removing excluded or unavailable policy presets.",
         );
+        options.revalidatePolicyRequirements?.(
+          `apply retained policy presets to sandbox '${sandboxName}'`,
+        );
         deps.syncPresetSelection(sandboxName, currentAppliedPresets, retainedPresets);
         requireSandboxReady(deps, sandboxName, "after");
+        if (onSelection) onSelection(retainedPresets);
         return retainedPresets;
       }
       deps.note("  [non-interactive] Skipping optional policy presets.");
@@ -618,6 +645,7 @@ async function setupPoliciesWithSelectionInner(
     chosen = excludePresets(
       pruneUnavailablePresets(chosen, {
         preserveExplicitWebSearch: isAuthoritative || personalTier,
+        tierName,
       }),
     );
     chosen = ensureRequiredTierPolicyPresets(tierName, chosen);
@@ -649,11 +677,14 @@ async function setupPoliciesWithSelectionInner(
     }
 
     refuseInPlacePersonalRemoval(personalAlreadyActive, chosen);
-    if (onSelection) onSelection(chosen);
     requireSandboxReady(deps, sandboxName, "before");
     deps.note(`  [non-interactive] Applying policy presets: ${chosen.join(", ")}`);
+    options.revalidatePolicyRequirements?.(
+      `apply non-interactive policy presets to sandbox '${sandboxName}'`,
+    );
     deps.syncPresetSelection(sandboxName, currentAppliedPresets, chosen);
     requireSandboxReady(deps, sandboxName, "after");
+    if (onSelection) onSelection(chosen);
     return chosen;
   }
 
@@ -692,7 +723,6 @@ async function setupPoliciesWithSelectionInner(
   );
 
   refuseInPlacePersonalRemoval(personalAlreadyActive, interactiveChoice);
-  if (onSelection) onSelection(interactiveChoice);
   requireSandboxReady(deps, sandboxName, "before");
 
   const accessByName: Record<string, string> = {};
@@ -700,7 +730,9 @@ async function setupPoliciesWithSelectionInner(
   for (const preset of resolvedPresets) {
     if (interactiveChoiceNames.has(preset.name)) accessByName[preset.name] = preset.access;
   }
+  options.revalidatePolicyRequirements?.(`apply policy presets to sandbox '${sandboxName}'`);
   deps.syncPresetSelection(sandboxName, currentAppliedPresets, interactiveChoice, accessByName);
   requireSandboxReady(deps, sandboxName, "after");
+  if (onSelection) onSelection(interactiveChoice);
   return interactiveChoice;
 }

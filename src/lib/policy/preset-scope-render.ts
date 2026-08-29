@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isObjectRecord } from "../core/json-types";
-import { redactFull, redactUrl } from "../security/redact";
-import { URL_TOKEN_PATTERN } from "../security/redact-url";
+import { redactFullWithUrls } from "../security/redact";
 import { type PolicyValue, parseNetworkPolicies } from "./preset-parsing";
 
 type RuleScope = {
@@ -58,8 +57,7 @@ export function escapeTerminalText(value: string): string {
 
 /** Redact credential-shaped content before rendering untrusted YAML scalars. */
 function renderTerminalText(value: string): string {
-  const redactedUrls = value.replace(URL_TOKEN_PATTERN, (url) => redactUrl(url) ?? "<REDACTED>");
-  return escapeTerminalText(redactFull(redactedUrls));
+  return escapeTerminalText(redactFullWithUrls(value));
 }
 
 function toStringOrUndefined(value: PolicyValue | undefined): string | undefined {

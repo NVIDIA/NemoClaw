@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { R, YW } from "../../cli/terminal-style";
+import { isDeepStrictEqual } from "node:util";
+
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
+import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/policy-authority";
+import { R, YW } from "../../cli/terminal-style";
 import {
   type PreparedPortableDemoSandboxDestroyAuthority,
   preparePortableDemoSandboxDestroyAuthority,
@@ -35,7 +38,7 @@ import {
   removeExactDestroyContainerIdentity,
   type SandboxNameLabeledContainer,
 } from "./destroy-presence";
-import type { DestroyRunOpenshell } from "./destroy-gateway";
+import { type DestroyRunOpenshell, SANDBOX_DESTROY_TIMEOUT_MS } from "./destroy-gateway";
 import {
   finalizeMcpBridgesAfterSandboxDelete,
   McpBridgeError,
@@ -44,7 +47,7 @@ import {
   prepareMcpBridgesForDestroy,
   restoreMcpBridgesAfterDestroyAbort,
 } from "./mcp-bridge";
-import { wipeSandboxState } from "./wipe-state";
+import { SandboxWorkspaceCleanupTimeoutError, wipeSandboxState } from "./wipe-state";
 
 export function redactDestroyError(error: unknown): string {
   return redactFull(error instanceof Error ? error.message : String(error));
@@ -58,6 +61,7 @@ export { preparePortableDemoSandboxDestroyAuthority };
 
 type SandboxDestroyExecutionInput = {
   cleanupShieldsArtifacts: (sandboxName: string) => void;
+  cliName?: string;
   force: boolean;
   getSandbox?: (sandboxName: string) => SandboxEntry | null;
   listSandboxes?: () => { sandboxes: SandboxEntry[] };
@@ -74,6 +78,7 @@ type SandboxDestroyExecutionInput = {
   runtimeProviders?: RuntimeProviderBundleRegistry;
   deps?: {
     hostLocalInferenceLifecycleOptions?: HostLocalInferenceLifecycleOptions;
+    inspectOpenShellSandboxIdentityFingerprint?: typeof inspectOpenShellSandboxIdentityFingerprint;
     readTimerMarker?: typeof readTimerMarker;
     wipeSandboxState?: typeof wipeSandboxState;
   };
@@ -95,6 +100,8 @@ export type SandboxDestroyExecutionResult =
       deleteOutput: string;
       exitCode: number;
       gatewayUnreachable: boolean;
+      timedOut?: true;
+      workspaceTimeoutRequiresShieldsRecovery?: true;
       hostLocalInferenceOwnershipRequiresGateway: boolean;
       mcpOwnershipRequiresGateway: boolean;
       mcpRecoveryFailure?: string;
@@ -142,10 +149,11 @@ async function prepareMcpDestroy(
 
 function wipeAndHardenLiveSandbox(
   sandboxName: string,
-  sandboxConfirmedAbsent: boolean,
+  sandboxRuntimeConfirmedAbsent: boolean,
+  cliName: string,
   deps: NonNullable<SandboxDestroyExecutionInput["deps"]> = {},
 ): HardenedDeleteState {
-  if (sandboxConfirmedAbsent) return { hardenedForDelete: false, hardeningFailed: false };
+  if (sandboxRuntimeConfirmedAbsent) return { hardenedForDelete: false, hardeningFailed: false };
 
   // Wipe before delete while the retained volume is still mounted. The caller
   // holds the timer-bound lock across this phase and all following teardown.
@@ -204,9 +212,11 @@ function wipeAndHardenLiveSandbox(
       `  ${YW}⚠${R} Could not re-lock shields for '${sandboxName}' before delete: ${detail}`,
     );
     console.warn(
-      `  Continuing with delete — '${sandboxName}' and its unguarded config are removed together. ` +
-        "If the delete fails, the auto-restore timer keeps retrying the lock until it succeeds " +
-        "or the sandbox is deleted or rebuilt.",
+      `  Continuing with delete: '${sandboxName}' and its unguarded config are removed together. ` +
+        "If sandbox deletion fails, the auto-restore timer retries the transition to lockdown within its seven-attempt recovery budget. " +
+        "Waiting for a verified live sandbox mutation owner does not consume that budget. " +
+        "If the budget is exhausted, durable containment blocks sandbox mutations. " +
+        `Run \`${cliName} ${sandboxName} shields status\` for exact-generation recovery guidance.`,
     );
     return { hardenedForDelete: false, hardeningFailed: true, timerProcessToken };
   }
@@ -281,6 +291,7 @@ async function finalizeMcpDestroy(
 
 export async function executeSandboxDestroy({
   cleanupShieldsArtifacts,
+  cliName = "nemoclaw",
   force,
   getSandbox,
   listSandboxes,
@@ -297,10 +308,52 @@ export async function executeSandboxDestroy({
   return withTimerBoundShieldsMutationLockAsync(sandboxName, "destroy sandbox", async () => {
     type IdentityContinuity =
       | { status: "match" }
-      | { status: "changed" }
-      | { status: "ambiguous"; detail: string }
-      | { status: "probe-failed"; detail: string };
+      | { status: "changed"; subject?: string }
+      | { status: "ambiguous"; detail: string; subject?: string }
+      | { status: "probe-failed"; detail: string; subject?: string };
+    const pendingPolicyVerification = sandbox?.pendingPolicyVerification;
+    const inspectPendingPolicyVerificationContinuity = (): IdentityContinuity => {
+      if (!pendingPolicyVerification) return { status: "match" };
+      if (!getSandbox) {
+        return {
+          status: "probe-failed",
+          subject: "Pending policy verification sandbox identity",
+          detail: "an exact registry reader is unavailable",
+        };
+      }
+      const readCurrentCheckpoint = () => getSandbox(sandboxName)?.pendingPolicyVerification;
+      try {
+        if (!isDeepStrictEqual(readCurrentCheckpoint(), pendingPolicyVerification)) {
+          return { status: "changed", subject: "Pending policy verification authority" };
+        }
+        const inspectIdentity =
+          deps.inspectOpenShellSandboxIdentityFingerprint ??
+          inspectOpenShellSandboxIdentityFingerprint;
+        const liveFingerprint = inspectIdentity({
+          sandboxName,
+          gatewayName: pendingPolicyVerification.gatewayName,
+        });
+        if (
+          liveFingerprint !== pendingPolicyVerification.sandboxIdentityFingerprint ||
+          !isDeepStrictEqual(readCurrentCheckpoint(), pendingPolicyVerification)
+        ) {
+          return {
+            status: "changed",
+            subject: "Pending policy verification sandbox identity",
+          };
+        }
+        return { status: "match" };
+      } catch (error) {
+        return {
+          status: "probe-failed",
+          subject: "Pending policy verification sandbox identity",
+          detail: redactDestroyError(error),
+        };
+      }
+    };
     const inspectIdentityContinuity = (): IdentityContinuity => {
+      const pendingContinuity = inspectPendingPolicyVerificationContinuity();
+      if (pendingContinuity.status !== "match") return pendingContinuity;
       if (portableContainerAuthority) {
         try {
           portableContainerAuthority.revalidate();
@@ -330,21 +383,24 @@ export async function executeSandboxDestroy({
       continuity: Exclude<IdentityContinuity, { status: "match" }>,
       mcpRecoveryFailure?: string,
       earlierCleanupDetail = "",
-    ): SandboxDestroyExecutionResult => ({
-      ok: false,
-      deleteOutput:
-        continuity.status === "probe-failed"
-          ? `Container identity could not be inspected ${phase}: ${continuity.detail}. No sandbox delete was attempted.${earlierCleanupDetail}`
-          : continuity.status === "ambiguous"
-            ? `Container identity became ambiguous ${phase}: ${continuity.detail}. No sandbox delete was attempted.${earlierCleanupDetail}`
-            : `Container identity changed ${phase}; no sandbox delete was attempted.${earlierCleanupDetail}`,
-      exitCode: 1,
-      gatewayUnreachable: false,
-      hostLocalInferenceOwnershipRequiresGateway: false,
-      mcpOwnershipRequiresGateway: false,
-      mcpRecoveryFailure,
-      shieldsRelockRequiresGateway: false,
-    });
+    ): SandboxDestroyExecutionResult => {
+      const subject = continuity.subject ?? "Container identity";
+      return {
+        ok: false,
+        deleteOutput:
+          continuity.status === "probe-failed"
+            ? `${subject} could not be inspected ${phase}: ${continuity.detail}. No sandbox delete was attempted.${earlierCleanupDetail}`
+            : continuity.status === "ambiguous"
+              ? `${subject} became ambiguous ${phase}: ${continuity.detail}. No sandbox delete was attempted.${earlierCleanupDetail}`
+              : `${subject} changed ${phase}; no sandbox delete was attempted.${earlierCleanupDetail}`,
+        exitCode: 1,
+        gatewayUnreachable: false,
+        hostLocalInferenceOwnershipRequiresGateway: false,
+        mcpOwnershipRequiresGateway: false,
+        mcpRecoveryFailure,
+        shieldsRelockRequiresGateway: false,
+      };
+    };
     const initialContinuity = inspectIdentityContinuity();
     if (initialContinuity.status !== "match") {
       return identityRefusalResult("before destroy preparation", initialContinuity);
@@ -454,7 +510,44 @@ export async function executeSandboxDestroy({
         " Managed inference cleanup may already be partial; inspect or restart its resources before retrying.",
       );
     }
-    const hardened = wipeAndHardenLiveSandbox(sandboxName, sandboxConfirmedAbsent, deps);
+    // `expectedContainerIdentity === null` is a completed Docker identity
+    // probe with zero matching containers. `undefined` means this runtime
+    // does not use that probe (or Portable owns identity); skip hardening
+    // only when OpenShell already proved absence. A live labeled Docker
+    // identity still hardens even if the OpenShell list says absent.
+    const sandboxRuntimeConfirmedAbsent =
+      expectedContainerIdentity === null ||
+      (expectedContainerIdentity === undefined && sandboxConfirmedAbsent);
+    let hardened: HardenedDeleteState;
+    try {
+      hardened = wipeAndHardenLiveSandbox(
+        sandboxName,
+        sandboxRuntimeConfirmedAbsent,
+        cliName,
+        deps,
+      );
+    } catch (error) {
+      const mcpRecoveryFailure = await restoreMcpForAbort(notHardened);
+      const workspaceTimedOut = error instanceof SandboxWorkspaceCleanupTimeoutError;
+      const workspaceTimeoutRequiresShieldsRecovery =
+        workspaceTimedOut && (deps.readTimerMarker ?? readTimerMarker)(sandboxName) !== null;
+      return {
+        ok: false,
+        deleteOutput:
+          `${redactDestroyError(error)} No provider cleanup or sandbox deletion was attempted. ` +
+          "Managed inference cleanup may already be partial; inspect or restart its resources before retrying.",
+        exitCode: 1,
+        gatewayUnreachable: false,
+        ...(workspaceTimedOut ? { timedOut: true as const } : {}),
+        ...(workspaceTimeoutRequiresShieldsRecovery
+          ? { workspaceTimeoutRequiresShieldsRecovery: true as const }
+          : {}),
+        hostLocalInferenceOwnershipRequiresGateway: false,
+        mcpOwnershipRequiresGateway: false,
+        mcpRecoveryFailure,
+        shieldsRelockRequiresGateway: false,
+      };
+    }
     const detachProviders = (): DetachSandboxProvidersResult =>
       runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact });
     const preProviderContinuity = inspectIdentityContinuity();
@@ -489,15 +582,24 @@ export async function executeSandboxDestroy({
         ` Managed inference cleanup and workspace wipe or hardening may already have run; inspect those resources before retrying.${detachedDetail}`,
       );
     }
-    const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], {
+    const deleteArgs = pendingPolicyVerification
+      ? ["sandbox", "delete", "-g", pendingPolicyVerification.gatewayName, sandboxName]
+      : ["sandbox", "delete", sandboxName];
+    const deleteResult = runOpenshell(deleteArgs, {
       ignoreError: true,
+      killSignal: "SIGKILL",
       stdio: ["ignore", "pipe", "pipe"],
+      timeout: SANDBOX_DESTROY_TIMEOUT_MS,
     });
     const {
-      output: deleteOutput,
+      output: capturedDeleteOutput,
       alreadyGone,
       gatewayUnreachable,
+      timedOut,
     } = getSandboxDeleteOutcome(deleteResult);
+    const deleteOutput = timedOut
+      ? `OpenShell sandbox delete timed out after ${String(SANDBOX_DESTROY_TIMEOUT_MS / 1000)} seconds. Deletion could not be confirmed.`
+      : capturedDeleteOutput;
     // #7727: a failed pre-delete re-lock leaves the auto-restore timer as the
     // only authority that can lock the config again. Discarding the local
     // record here would revoke it for a sandbox the gateway never confirmed
@@ -509,6 +611,7 @@ export async function executeSandboxDestroy({
       deleteResult.status !== 0 &&
       !alreadyGone &&
       gatewayUnreachable &&
+      !timedOut &&
       force &&
       !hasMcpOwnership &&
       !hasHostLocalInferenceOwnership &&
@@ -524,6 +627,7 @@ export async function executeSandboxDestroy({
         deleteOutput,
         exitCode: deleteResult.status || 1,
         gatewayUnreachable,
+        ...(timedOut ? { timedOut: true as const } : {}),
         hostLocalInferenceOwnershipRequiresGateway:
           gatewayUnreachable && hasHostLocalInferenceOwnership,
         mcpOwnershipRequiresGateway: gatewayUnreachable && hasMcpOwnership,

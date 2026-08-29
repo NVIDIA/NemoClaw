@@ -127,6 +127,34 @@ describe("shields command flow", () => {
     );
   });
 
+  it("restores restrictive policy when receipt finalization fails (#9833)", () => {
+    const harness = createHarness();
+    harness.policyReceiptFinalizeSpy.mockImplementationOnce(() => {
+      throw new Error("policy receipt persistence failed");
+    });
+
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        timeout: "5m",
+        reason: "receipt finalization coverage",
+        throwOnError: true,
+      }),
+    ).toThrow("policy receipt persistence failed");
+
+    expect(harness.policySetBodies.map((body) => YAML.parse(body).network_policies)).toEqual([
+      {},
+      { test: {} },
+    ]);
+    expect(harness.getOpenClawPosture()).toBe("mutable");
+    expect(harness.auditSpy).not.toHaveBeenCalled();
+    const stateFiles = fs.readdirSync(path.join(tmpDir, ".nemoclaw", "state"));
+    expect(
+      stateFiles.filter((name) =>
+        /^(shields-openclaw|shields-timer-|shields-transition-openclaw)/u.test(name),
+      ),
+    ).toEqual([]);
+  });
+
   it("shieldsDown preserves an exact managed MCP policy and records its snapshot key (#7952)", {
     timeout: 15_000,
   }, () => {
@@ -686,7 +714,7 @@ describe("shields command flow", () => {
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(100);
     expect(fs.existsSync(transitionPath)).toBe(true);
     expect(harness.runSpy).toHaveBeenCalledWith(
-      ["openshell", "policy", "set"],
+      ["openshell", "policy", "set", "-g", "nemoclaw"],
       expect.objectContaining({ ignoreError: true }),
     );
   });
@@ -946,7 +974,7 @@ describe("shields command flow", () => {
       });
       expect(fs.existsSync(markerPath)).toBe(false);
       expect(harness.runSpy).toHaveBeenCalledWith(
-        ["openshell", "policy", "set"],
+        ["openshell", "policy", "set", "-g", "nemoclaw"],
         expect.objectContaining({ ignoreError: true }),
       );
       expect(harness.logSpy).toHaveBeenCalledWith("  Shields: UP (lockdown active)");
@@ -1211,7 +1239,7 @@ describe("shields command flow", () => {
     ).toMatchObject({ shieldsDown: false, shieldsDownAt: null });
     expect(fs.existsSync(markerPath)).toBe(false);
     expect(harness.runSpy).toHaveBeenCalledWith(
-      ["openshell", "policy", "set"],
+      ["openshell", "policy", "set", "-g", "nemoclaw"],
       expect.objectContaining({ ignoreError: true }),
     );
     expect(harness.logSpy).toHaveBeenCalledWith("  Shields: UP (lockdown active)");
@@ -1246,7 +1274,7 @@ describe("shields command flow", () => {
     ).toMatchObject({ shieldsDown: false, shieldsDownAt: null });
     expect(fs.existsSync(markerPath)).toBe(false);
     expect(harness.runSpy).toHaveBeenCalledWith(
-      ["openshell", "policy", "set"],
+      ["openshell", "policy", "set", "-g", "nemoclaw"],
       expect.objectContaining({ ignoreError: true }),
     );
   });
@@ -1332,7 +1360,7 @@ describe("shields command flow", () => {
     expect(fs.existsSync(containmentPath)).toBe(true);
     expect(fs.existsSync(sandboxMutationLockPath)).toBe(false);
     expect(harness.runSpy).not.toHaveBeenCalledWith(
-      ["openshell", "policy", "set"],
+      ["openshell", "policy", "set", "-g", "nemoclaw"],
       expect.anything(),
     );
   });
@@ -1385,7 +1413,7 @@ describe("shields command flow", () => {
     expect(fs.existsSync(timerMarkerPath)).toBe(true);
     expect(fs.existsSync(transitionLockPath)).toBe(true);
     expect(harness.runSpy).not.toHaveBeenCalledWith(
-      ["openshell", "policy", "set"],
+      ["openshell", "policy", "set", "-g", "nemoclaw"],
       expect.anything(),
     );
   });

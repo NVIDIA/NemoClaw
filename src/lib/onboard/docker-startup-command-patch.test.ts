@@ -102,9 +102,11 @@ describe("Docker startup-command patch", () => {
   });
 
   it("preserves Jetson device groups during startup-command recreation (#7610)", () => {
+    const inspect = inspectFixture();
+    inspect.Config!.Labels!["io.nvidia.nemoclaw.agent"] = "openclaw";
     const dockerCaptureOutput: Record<string, string> = {
       ps: "old-container-id\n",
-      inspect: JSON.stringify([inspectFixture()]),
+      inspect: JSON.stringify([inspect]),
     };
     const dockerRunDetached = vi.fn((_args: readonly string[]) => ({
       status: 0,
@@ -118,7 +120,6 @@ describe("Docker startup-command patch", () => {
         waitForSupervisor: false,
         openshellSandboxCommand: ["nemoclaw-start"],
         backend: "jetson",
-        preserveJetsonDeviceGroupMembership: true,
       },
       {
         dockerCapture: vi.fn((args: readonly string[]) => dockerCaptureOutput[args[0] ?? ""] ?? ""),
@@ -264,39 +265,39 @@ describe("Docker startup-command patch", () => {
     expect(dockerRunDetached).not.toHaveBeenCalled();
   });
 
-  it.each([
-    "different-container-id",
-    "",
-  ])("refuses to mutate when the pinned container identity is changed or empty", (expectedOldContainerId) => {
-    const dockerStop = vi.fn(() => ({ status: 0 }));
-    const dockerRename = vi.fn(() => ({ status: 0 }));
-    const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
+  it.each(["different-container-id", ""])(
+    "refuses to mutate when the pinned container identity is changed or empty",
+    (expectedOldContainerId) => {
+      const dockerStop = vi.fn(() => ({ status: 0 }));
+      const dockerRename = vi.fn(() => ({ status: 0 }));
+      const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
 
-    expect(() =>
-      recreateStartupCommandForTest(
-        {
-          sandboxName: "alpha",
-          openshellSandboxCommand: ["env", "nemoclaw-start"],
-          expectedOldContainerId,
-        },
-        {
-          dockerCapture: vi.fn((args: readonly string[]) =>
-            args[0] === "ps"
-              ? "old-container-id\n"
-              : args[0] === "inspect"
-                ? JSON.stringify([inspectFixture()])
-                : "",
-          ),
-          dockerRunDetached,
-          dockerRename,
-          dockerStop,
-        },
-      ),
-    ).toThrow("observed container differs from the pinned identity");
-    expect(dockerStop).not.toHaveBeenCalled();
-    expect(dockerRename).not.toHaveBeenCalled();
-    expect(dockerRunDetached).not.toHaveBeenCalled();
-  });
+      expect(() =>
+        recreateStartupCommandForTest(
+          {
+            sandboxName: "alpha",
+            openshellSandboxCommand: ["env", "nemoclaw-start"],
+            expectedOldContainerId,
+          },
+          {
+            dockerCapture: vi.fn((args: readonly string[]) =>
+              args[0] === "ps"
+                ? "old-container-id\n"
+                : args[0] === "inspect"
+                  ? JSON.stringify([inspectFixture()])
+                  : "",
+            ),
+            dockerRunDetached,
+            dockerRename,
+            dockerStop,
+          },
+        ),
+      ).toThrow("observed container differs from the pinned identity");
+      expect(dockerStop).not.toHaveBeenCalled();
+      expect(dockerRename).not.toHaveBeenCalled();
+      expect(dockerRunDetached).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not rename or recreate when the original container cannot be stopped", () => {
     const dockerRename = vi.fn(() => ({ status: 0 }));

@@ -16,6 +16,7 @@ export type {
 export type { SandboxCreatePlan } from "./sandbox-create-plan-materialization";
 export {
   materializeSandboxCreatePlan,
+  prepareSandboxCreatePolicy,
   validateSandboxCreateIntentBindings,
 } from "./sandbox-create-plan-materialization";
 

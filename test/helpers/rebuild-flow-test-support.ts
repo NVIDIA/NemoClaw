@@ -4,6 +4,7 @@
 import { type MockInstance, vi } from "vitest";
 import type { GatewayRestartResult } from "../../src/lib/actions/sandbox/gateway-restart";
 import type { SandboxGatewayState } from "../../src/lib/actions/sandbox/gateway-state";
+import type { OpenShellSandboxInventory } from "../../src/lib/adapters/openshell/sandbox-observer";
 import type {
   finalizePreparedRebuildImageMessagingPlan,
   RebuildImagePreflightResult,
@@ -80,7 +81,7 @@ export type RebuildFlowOverrides = {
   sandboxEntry?: Record<string, unknown>;
   sandboxBaseImageLabelsOutput?: string;
   sessionSandboxName?: string;
-  sandboxListOutput?: string;
+  sandboxInventory?: OpenShellSandboxInventory;
   defaultSandbox?: string | null;
   preDeleteSandboxEntry?: Record<string, unknown>;
   preDeleteDefaultSandbox?: string | null;

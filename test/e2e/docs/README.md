@@ -239,7 +239,7 @@ calls require a positive timeout shorter than the first heartbeat plus
 only in redacted artifacts.
 
 Audited subprocess helpers require the fixture-provided frozen, canonical
-`progress` capability. Forward that exact object unchanged instead of copying
+`progress` capability. Forward that object unchanged instead of copying
 it or constructing a look-alike or no-op adapter. A module-private brand,
 runtime registry, frozen-object check, type system, and semantic checker enforce
 this boundary.
@@ -249,12 +249,15 @@ command execution, test outcomes, or registered resource release.
 
 The retired `--emit-matrix` and `--plan-only` paths must not be reintroduced.
 
-When adding or changing a live test, update `test/e2e/mock-parity.json` with
-the fast PR-collected test that covers its mockable contract. If the behavior
-cannot be reproduced without real infrastructure, record a concise
-`liveOnlyReason` instead. The PR and `main` CLI coverage shards enforce this
-changed-file policy alongside the `e2e-support` project without requiring an
-immediate backfill of untouched tests.
+When you add or make a non-comment source change to a live E2E test or a
+`test/e2e/live/` helper, update `test/e2e/mock-parity.json`. List each changed
+helper under `liveSources` for its owning live test. If the entry has mapped
+fast tests, make a non-comment source change to at least one mapped fast test
+in the same PR. Use
+`liveOnlyReason` only when no fast test can reproduce the contract. The PR and
+`main` CLI coverage shards enforce this changed-file policy alongside the
+`e2e-support` project without requiring an immediate backfill of untouched
+tests.
 
 ## Repository Layout
 
@@ -290,7 +293,7 @@ test/e2e/
   workflow SHA, review reason, and allowed jobs, targets, and Launchable
   combination before candidate checkout.
   A trusted `main` native runtime producer run requires the executing workflow
-  commit and `workflow_sha` input to equal the exact PR-recorded base commit.
+  commit and `workflow_sha` input to equal the PR-recorded base commit.
   The producer accepts only a same-repository PR and the first workflow attempt.
   The host-side preparation step receives the long-lived `NVIDIA_API_KEY`
   repository secret in its environment. It creates runner-local registry
@@ -302,7 +305,7 @@ test/e2e/
 
   For a PR revision run, leave `jobs` and
   `targets` empty. The run selects every default-selected free-standing workflow
-  E2E except `Exact staging Brev Launchable`, every catalogue target in the
+  E2E except `staging Brev Launchable`, every catalogue target in the
   `standard` profile, all shared credential-free tests, and these
   controller-selected registry targets:
   `ubuntu-policy-custom-missing-presets-negative`,
@@ -351,7 +354,7 @@ test/e2e/
   Each macOS shard installs the pinned OpenShell formula.
   Shard 1 has a 60-minute budget for live E2E; the other shards have 30 minutes.
   WSL shard 1 has a 180-minute budget for root-required contracts and live E2E; the other shards have 90 minutes.
-  The unprivileged WSL suite excludes `test/jetson-device-group-bootstrap.test.ts`;
+  The unprivileged WSL suite excludes `test/runtime/sandbox/jetson-device-group-bootstrap.test.ts`;
   that root-dependent contract runs in Linux CI lanes with the required host facilities.
   On shard 1, the workflow runs focused macOS and WSL live E2E only when the run tests `main` and Docker is available.
   Otherwise, those live tests skip and the platform contracts remain as evidence.
@@ -366,7 +369,7 @@ test/e2e/
 - `.github/workflows/podman-cpu-proof.yaml` provides PR-only experimental runtime evidence with Docker disabled.
 - `.github/workflows/sandbox-images-and-e2e.yaml` provides reusable image build and test evidence through manual dispatch and `workflow_call`.
   `.github/workflows/e2e.yaml` selects free-standing jobs, including `whatsapp-qr-compact` and `ollama-auth-proxy`.
-- The `staging-brev-launchable` job validates the exact baked candidate in
+- The `staging-brev-launchable` job validates the baked candidate in
   preinstalled mode. Generic Brev VMs with source overlays are not a
   qualification boundary.
 - `vitest.config.ts` contains `e2e-support` for fast fixture/support tests and

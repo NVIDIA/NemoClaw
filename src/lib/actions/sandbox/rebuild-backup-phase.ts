@@ -3,20 +3,24 @@
 
 import { type WebSearchConfig, webSearchProviderForConfig } from "../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../messaging";
-import { mergeRebuildMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
+import {
+  mergeRebuildMessagingPolicyPresets,
+  pruneInactiveMessagingPolicyPresets,
+} from "../../onboard/messaging-policy-presets";
 import {
   isDcodeAgent,
   isInactiveObservabilityPolicyPreset,
   OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
   requiredObservabilityPolicyPresets,
 } from "../../onboard/observability-policy-presets";
+import { isStaleBuiltinWebSearchPolicyPreset } from "../../onboard/policy-preset-reconciliation";
 import { resolveRecreatePolicyPresets } from "../../onboard/policy-preset-persistence";
-import { isStaleBuiltinWebSearchPolicyPreset } from "../../onboard/policy-selection";
 import {
   ensureRequiredTierPolicyPresets,
   filterSuppressedAgentRequiredPresets,
 } from "../../onboard/policy-tier-suppression";
 import { parsePresetPolicyKeys } from "../../policy";
+import { getTier } from "../../policy/tiers";
 import { hasCompleteOpenClawImagePluginProvenance } from "../../state/openclaw-plugin-restore";
 import { hasAuthoritativeOpenClawImagePluginProvenance } from "../../state/sandbox";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
@@ -52,9 +56,7 @@ export function excludePolicyPresetsByName(
   excludedNames: readonly (string | undefined)[],
 ): string[] {
   const excluded = new Set(
-    excludedNames.filter(
-      (name): name is string => typeof name === "string" && name.length > 0,
-    ),
+    excludedNames.filter((name): name is string => typeof name === "string" && name.length > 0),
   );
   return presets.filter((name) => !excluded.has(name));
 }
@@ -83,14 +85,22 @@ export function normalizeRebuildWebSearchPolicyPresets(
   const selectedProvider = webSearchConfig ? webSearchProviderForConfig(webSearchConfig) : null;
   const preserveStandaloneDcodeTavily =
     selectedProvider === null && sandboxEntry.agent === "langchain-deepagents-code";
+  const normalizedTierName = sandboxEntry.policyTier?.trim().toLowerCase();
+  const tier = normalizedTierName ? getTier(normalizedTierName) : null;
   const normalized = presets.filter((name) => {
     // Exact custom content is replayed from backupManifest.customPolicies.
     // Never substitute a same-name built-in during onboard or restore.
     if (customPresetNames.has(name)) return false;
     if (preserveStandaloneDcodeTavily && name === "tavily") return true;
+    // Same provenance exemption the onboard reuse path applies: a tier's own
+    // egress default (`brave` on Balanced/Open) is not a stale web-search
+    // leftover, so rebuilding a sandbox with web search declined must not
+    // narrow it. (#10404)
     return !isStaleBuiltinWebSearchPolicyPreset(name, {
       webSearchConfig,
       customPresetNames,
+      tier,
+      agent: sandboxEntry.agent,
     });
   });
   if (
@@ -228,8 +238,19 @@ export function runRebuildBackupPhase(
     enabledChannelIds,
     disabledChannels,
   );
+  const activeMessagingPolicyPresets = input.messagingPlan
+    ? pruneInactiveMessagingPolicyPresets(
+        mergedPolicyPresets,
+        enabledChannelIds,
+        new Set(
+          (input.sandboxEntry.customPolicies ?? []).map((policy) =>
+            policy.name.trim().toLowerCase(),
+          ),
+        ),
+      )
+    : mergedPolicyPresets;
   const policyPresets = normalizeRebuildTargetPolicyPresets(
-    mergedPolicyPresets,
+    activeMessagingPolicyPresets,
     input.sandboxEntry,
     input.webSearchConfig,
   );

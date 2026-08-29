@@ -3,7 +3,31 @@
 
 import { describe, expect, it } from "vitest";
 
-import { redactForLog, redactFull, redactLogSequence, redactSensitiveText } from "./redact.js";
+import {
+  redactForLog,
+  redactFull,
+  redactFullWithUrls,
+  redactLogSequence,
+  redactSensitiveText,
+} from "./redact.js";
+
+describe("redactFullWithUrls", () => {
+  it.each([
+    [
+      "username and password",
+      "https://service-user:service-password@example.com/path",
+      "https://example.com/path",
+    ],
+    ["userinfo only", "https://service-token@example.com/path", "https://example.com/path"],
+    [
+      "malformed URL fallback",
+      "https://fallback-user:fallback-password@[not-an-ip/path",
+      "https://[not-an-ip/path",
+    ],
+  ])("fully redacts URL credentials for %s", (_case, value, expected) => {
+    expect(redactFullWithUrls(value)).toBe(expected);
+  });
+});
 
 describe("redactForLog", () => {
   it("redacts pass aliases in structured keys", () => {

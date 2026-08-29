@@ -70,7 +70,7 @@ sha256_file() {
 # and are never sourced or executed.
 # whyNotSourceFix: an upstream release cannot validate which artifacts a
 # downstream installer consumes, so this comparison must remain in NemoClaw.
-# regressionTest: test/installer-hash-check.test.ts proves download failures and
+# regressionTest: test/install/installer-hash-check.test.ts proves download failures and
 # altered checksum manifests fail closed; the workflow also runs this live.
 # removalCondition: remove this check only when the installer no longer embeds
 # release-asset digests or an equivalent independent verifier replaces it.
@@ -96,7 +96,7 @@ check_openshell_release_assets() {
   # never sourced or executed.
   # whyNotSourceFix: installers need shell-native lookup before dependencies are
   # available, and sourcing target-controlled shell here would execute PR code.
-  # regressionTest: test/installer-hash-check.test.ts covers resilient formatting
+  # regressionTest: test/install/installer-hash-check.test.ts covers resilient formatting
   # plus missing and ambiguous pins; the workflow contract pins the parser path.
   # removalCondition: replace this parser when both installers directly consume
   # one canonical machine-readable pin manifest.

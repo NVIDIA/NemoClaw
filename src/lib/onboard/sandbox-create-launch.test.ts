@@ -230,6 +230,24 @@ describe("buildSandboxRuntimeEnvArgs", () => {
 });
 
 describe("prepareSandboxCreateLaunch", () => {
+  it("removes an inherited sandbox policy when create omits caller policy (#9833)", () => {
+    const result = prepareSandboxCreateLaunch({
+      agent: null,
+      chatUiUrl: "",
+      createArgs: ["--from", "example.invalid/image", "--name", "demo"],
+      extraPlaceholderKeys: [],
+      getDashboardForwardPort: () => "",
+      hermesDashboardState: disabledHermesDashboardState,
+      openshellShellCommand: (args) => `openshell ${args.join(" ")}`,
+      buildEnv: () => ({
+        HOME: "/home/user",
+        OPENSHELL_SANDBOX_POLICY: "/tmp/inherited-policy.yaml",
+      }),
+    });
+
+    expect(result.sandboxEnv).toEqual({ HOME: "/home/user" });
+  });
+
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
     "renders one identity-bound held launch for %s without exposing the startup profile",
     (agentName) => {
@@ -563,6 +581,39 @@ describe("prepareSandboxCreateLaunch", () => {
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  it("routes bounded OpenShell probes through the process-tree timeout adapter (#10238)", () => {
+    const runCommand = vi.fn((_command: readonly string[], _options?: unknown) => {
+      return { status: 0 } as never;
+    });
+    const helpers = createOpenshellCliHelpers({
+      getCachedBinary: () => "/opt/openshell",
+      setCachedBinary: vi.fn(),
+      getGatewayPort: () => 31818,
+      getDockerDriverGatewayEndpoint: () => "http://127.0.0.1:31818",
+      runCommand,
+    });
+
+    helpers.runOpenshell(["sandbox", "list"], {
+      ignoreError: true,
+      killProcessTreeOnTimeout: true,
+      timeout: 1000,
+    });
+
+    const expectedArgv =
+      process.platform === "linux" && fs.existsSync("/usr/bin/timeout")
+        ? ["/usr/bin/timeout", "--signal=KILL", "0.75s", "/opt/openshell", "sandbox", "list"]
+        : ["/opt/openshell", "sandbox", "list"];
+    expect(runCommand).toHaveBeenCalledWith(
+      expectedArgv,
+      expect.objectContaining({
+        ignoreError: true,
+        killSignal: "SIGKILL",
+        timeout: 1000,
+      }),
+    );
+    expect(runCommand.mock.calls[0]?.[1]).not.toHaveProperty("killProcessTreeOnTimeout");
   });
 
   it("forwards the validated sandbox name into the Deep Agents Code sandbox create env", () => {

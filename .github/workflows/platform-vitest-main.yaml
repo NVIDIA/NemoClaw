@@ -75,7 +75,7 @@ jobs:
           npx vitest run --project cli \
             src/lib/onboard/preflight.test.ts \
             src/lib/onboard/preflight-ubuntu-2604.test.ts
-          npx vitest run --project integration test/platform.test.ts
+          npx vitest run --project integration test/e2e-runtime/platform.test.ts
           npx vitest run --project installer-integration \
             --testTimeout 30000 \
             test/installer-integration/install-preflight.test.ts
@@ -339,7 +339,7 @@ jobs:
           export NEMOCLAW_EXEC_TIMEOUT=60000
           export NEMOCLAW_TEST_TIMEOUT=60000
           npx vitest run --testTimeout 60000 --shard='${{ matrix.shard }}/4' \
-            --exclude test/jetson-device-group-bootstrap.test.ts
+            --exclude test/runtime/sandbox/jetson-device-group-bootstrap.test.ts
           "@
           Invoke-WslScript -Distro $env:WSL_DISTRO -User $env:WSL_TEST_USER -Script $script
 
@@ -366,10 +366,10 @@ jobs:
             scripts/lib/normalize_mutable_config_perms.py \
             /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py
           npx vitest run --project integration \
-            test/hermes-restart-config-seal-recovery.test.ts \
+            test/agents/hermes/hermes-restart-config-seal-recovery.test.ts \
             -t 'keeps the locked Hermes entry sticky-protected|lets a sandbox-group peer create state'
           npx vitest run --project integration \
-            test/nemoclaw-start-perms.test.ts \
+            test/agents/openclaw/runtime/nemoclaw-start-perms.test.ts \
             -t 'requires both fixed files to match|reclaims a root-owned collapsed config|leaves a root-owned recovery baseline untouched'
           "@
           Invoke-WslScript -Distro $env:WSL_DISTRO -User root -Script $script

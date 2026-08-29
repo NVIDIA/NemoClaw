@@ -69,6 +69,7 @@ export async function replaceNamedCredential({
   validator = null,
   allowEmpty = false,
   exitOnboardFromPrompt,
+  revalidatePolicyRequirements,
 }: {
   envName: string;
   label: string;
@@ -76,6 +77,7 @@ export async function replaceNamedCredential({
   validator?: ((value: string) => string | null) | null;
   allowEmpty?: boolean;
   exitOnboardFromPrompt: () => never;
+  revalidatePolicyRequirements?: (operation: string) => void;
 }): Promise<string | BackToSelection> {
   if (helpUrl) {
     console.log("");
@@ -96,6 +98,7 @@ export async function replaceNamedCredential({
       console.error(validationError);
       continue;
     }
+    revalidatePolicyRequirements?.(`save ${label}`);
     credentials.saveCredential(envName, key);
     process.env[envName] = key;
     console.log("");
@@ -112,6 +115,7 @@ export async function ensureNamedCredential({
   validator = null,
   allowEmpty = false,
   exitOnboardFromPrompt,
+  revalidatePolicyRequirements,
 }: {
   envName: string | null;
   label: string;
@@ -119,6 +123,7 @@ export async function ensureNamedCredential({
   validator?: ((value: string) => string | null) | null;
   allowEmpty?: boolean;
   exitOnboardFromPrompt: () => never;
+  revalidatePolicyRequirements?: (operation: string) => void;
 }): Promise<string | BackToSelection> {
   if (!envName) {
     console.error(`  Missing credential target for ${label}.`);
@@ -133,7 +138,15 @@ export async function ensureNamedCredential({
     }
     console.error(validationError);
   }
-  return replaceNamedCredential({ envName, label, helpUrl, validator, allowEmpty, exitOnboardFromPrompt });
+  return replaceNamedCredential({
+    envName,
+    label,
+    helpUrl,
+    validator,
+    allowEmpty,
+    exitOnboardFromPrompt,
+    revalidatePolicyRequirements,
+  });
 }
 
 export function createCredentialPromptHelpers(exitOnboardFromPrompt: () => never): {
@@ -143,6 +156,7 @@ export function createCredentialPromptHelpers(exitOnboardFromPrompt: () => never
     label: string,
     helpUrl?: string | null,
     validator?: ((value: string) => string | null) | null,
+    revalidatePolicyRequirements?: (operation: string) => void,
   ) => Promise<string | BackToSelection>;
   ensureNamedCredential: (
     envName: string | null,
@@ -150,15 +164,45 @@ export function createCredentialPromptHelpers(exitOnboardFromPrompt: () => never
     helpUrl?: string | null,
     validator?: ((value: string) => string | null) | null,
     allowEmpty?: boolean,
+    revalidatePolicyRequirements?: (operation: string) => void,
   ) => Promise<string | BackToSelection>;
   shouldReturnToProviderSelection: (result: unknown) => boolean;
   returningToProviderSelection: (result: unknown) => result is BackNavigationResult;
 } {
   return {
     readValue: (question) => readCredentialValue(question, exitOnboardFromPrompt),
-    replaceNamedCredential: (envName, label, helpUrl = null, validator = null) =>
-      replaceNamedCredential({ envName, label, helpUrl, validator, exitOnboardFromPrompt }),
-    ensureNamedCredential: (envName, label, helpUrl = null, validator = null, allowEmpty = false) => ensureNamedCredential({ envName, label, helpUrl, validator, allowEmpty, exitOnboardFromPrompt }),
+    replaceNamedCredential: (
+      envName,
+      label,
+      helpUrl = null,
+      validator = null,
+      revalidatePolicyRequirements,
+    ) =>
+      replaceNamedCredential({
+        envName,
+        label,
+        helpUrl,
+        validator,
+        exitOnboardFromPrompt,
+        revalidatePolicyRequirements,
+      }),
+    ensureNamedCredential: (
+      envName,
+      label,
+      helpUrl = null,
+      validator = null,
+      allowEmpty = false,
+      revalidatePolicyRequirements,
+    ) =>
+      ensureNamedCredential({
+        envName,
+        label,
+        helpUrl,
+        validator,
+        allowEmpty,
+        exitOnboardFromPrompt,
+        revalidatePolicyRequirements,
+      }),
     shouldReturnToProviderSelection: (result) =>
       shouldReturnToProviderSelection(result, exitOnboardFromPrompt),
     returningToProviderSelection: (result) =>

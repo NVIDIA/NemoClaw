@@ -51,6 +51,7 @@ Messaging channel presets are scoped to the sandbox's active agent; if an agent 
 | Workflow | Preset | Agent support |
 |----------|--------|---------------|
 | Brave Search | `brave` | OpenClaw |
+| Claude Code CLI | `claude-code` | OpenClaw and Hermes |
 | Homebrew packages | `brew` | OpenClaw and Hermes |
 | Discord messaging | `discord` | OpenClaw and Hermes |
 | GitHub and GitHub API | `github` | OpenClaw and Hermes |
@@ -60,6 +61,11 @@ Messaging channel presets are scoped to the sandbox's active agent; if an agent 
 | Jira and Atlassian Cloud | `jira` | OpenClaw and Hermes |
 | Local Ollama or vLLM through the host gateway | `local-inference` | OpenClaw and Hermes |
 | Microsoft Teams messaging (experimental) | `teams` | OpenClaw and Hermes |
+| Nous Portal audio generation and transcription | `nous-audio` | Hermes |
+| Nous Portal browser automation | `nous-browser` | Hermes |
+| Nous Portal sandboxed code execution | `nous-code` | Hermes |
+| Nous Portal image generation | `nous-image` | Hermes |
+| Nous Portal web search and crawl | `nous-web` | Hermes |
 | OpenClaw model-pricing reference fetch | `openclaw-pricing` | OpenClaw |
 | npm and Yarn packages | `npm` | OpenClaw and Hermes |
 | Microsoft 365, Outlook, and Graph API | `outlook` | OpenClaw and Hermes |
@@ -71,6 +77,12 @@ Messaging channel presets are scoped to the sandbox's active agent; if an agent 
 | Weather and geocoding APIs | `weather` | OpenClaw and Hermes |
 | WeChat (personal) iLink Bot API (experimental) | `wechat` | OpenClaw and Hermes |
 | WhatsApp Web messaging (experimental) | `whatsapp` | OpenClaw and Hermes |
+
+<Note>
+The `nous-*` presets authorize Hermes managed-tool gateway traffic; they do not configure the tools themselves.
+Select the corresponding tools during Hermes onboarding with Nous Portal OAuth.
+API-key onboarding does not enable managed tools, and `policy add <nous-preset>` only applies or restores network-policy entries for a tool that is already configured.
+</Note>
 
 Preview the endpoints before applying:
 

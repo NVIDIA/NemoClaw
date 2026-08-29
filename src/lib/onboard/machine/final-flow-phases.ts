@@ -32,6 +32,7 @@ export interface FinalOnboardFlowPhaseOptions<
 > {
   branchState: "agent_setup" | "openclaw";
   authoritativePolicyTier?: string | null;
+  revalidatePolicyRequirements?(context: Context, operation: string): void;
   agentSetupDeps: AgentSetupStateOptions<Context["agent"]>["deps"];
   policiesDeps: PoliciesStateOptions<Context["agent"], WebSearchConfig>["deps"];
   finalization: {
@@ -62,6 +63,9 @@ export function createFinalOnboardFlowPhases<
     ...options.finalizationDeps,
     persistDashboardPort: options.agentSetupDeps.persistDashboardPort,
   };
+  const revalidationFor = (context: Context) =>
+    options.revalidatePolicyRequirements?.bind(null, context) ??
+    finalizationDeps.revalidatePolicyRequirements;
   const createBranchPhase =
     options.branchState === "agent_setup" ? createAgentSetupPhase : createOpenclawSetupPhase;
   const branchSetupPhase = createBranchPhase<Context>(async (context) => {
@@ -71,10 +75,12 @@ export function createFinalOnboardFlowPhases<
       sandboxName: context.sandboxName,
       model: context.model,
       provider: context.provider,
+      webSearchConfig: context.webSearchConfig,
       resume: context.resume,
       session: context.session,
       hermesAuthMethod: context.hermesAuthMethod,
       hermesToolGateways: context.hermesToolGateways,
+      revalidatePolicyRequirements: revalidationFor(context),
       deps: options.agentSetupDeps,
     });
     return {
@@ -102,6 +108,7 @@ export function createFinalOnboardFlowPhases<
       webSearchSupported: context.webSearchSupported,
       hermesToolGateways: context.hermesToolGateways,
       agent: context.agent,
+      revalidatePolicyRequirements: revalidationFor(context),
       deps: options.policiesDeps,
     });
     return {
@@ -116,6 +123,7 @@ export function createFinalOnboardFlowPhases<
   const finalizationPhase = createFinalizationPhase<Context>(async (context) => {
     assertSandboxCreatedContext(context, "finalization");
     const webSearchEnabled = options.finalization.webSearchEnabled(context.webSearchConfig);
+    const revalidatePolicyRequirements = revalidationFor(context);
     const finalizationResult = await handleFinalizationState({
       sandboxName: context.sandboxName,
       model: context.model,
@@ -133,7 +141,7 @@ export function createFinalOnboardFlowPhases<
           : null,
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
       recreateJournalHandoff: context.recreateJournalHandoff,
-      deps: finalizationDeps,
+      deps: { ...finalizationDeps, revalidatePolicyRequirements },
     });
     return { result: finalizationResult.stateResult };
   });
@@ -158,7 +166,10 @@ export function createFinalOnboardFlowPhases<
           : null,
       portableProfileSelected: context.session?.checkpoint?.profile.value === "portable",
       recreateJournalHandoff: context.recreateJournalHandoff,
-      deps: finalizationDeps,
+      deps: {
+        ...finalizationDeps,
+        revalidatePolicyRequirements: revalidationFor(context),
+      },
     });
     return { result: postVerifyResult.stateResult };
   });

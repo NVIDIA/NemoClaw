@@ -15,6 +15,9 @@ const { LOCAL_INFERENCE_POLICY_PROVIDERS } = require("./providers") as {
 
 import { isOpenclawAgent, requiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-presets";
 
+export { webSearchProviderForConfig };
+export type { WebSearchConfig };
+
 export interface SuggestedPolicyPresetOptions {
   enabledChannels?: string[] | null;
   webSearchConfig?: WebSearchConfig | null;

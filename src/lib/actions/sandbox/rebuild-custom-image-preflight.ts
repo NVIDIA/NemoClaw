@@ -4,6 +4,11 @@
 import path from "node:path";
 
 import { dockerBuild, dockerRmi } from "../../adapters/docker";
+import {
+  prepareDockerBuildEnvironment,
+  type DockerBuildEnvironmentInput,
+  warnIfDockerBuildEnvironmentCleanupFailed,
+} from "../../adapters/docker/client-isolation";
 import { fingerprintBuildContext } from "../../adapters/fs/build-context-fingerprint";
 import type { AgentDefinition } from "../../agent/defs";
 import { createAgentSandbox } from "../../agent/onboard";
@@ -57,7 +62,7 @@ type PreflightDeps = {
   buildImage?: typeof dockerBuild;
   removeImage?: typeof dockerRmi;
   registerExitHandler?: (listener: () => void) => void;
-};
+} & RebuildImageBuildEnvironmentDeps;
 
 export type PreparedRebuildImage = FingerprintedPreparedBuildContext & {
   rebuildTarget: {
@@ -75,6 +80,10 @@ type FinalizePreparedImageDeps = {
   buildImage?: typeof dockerBuild;
   removeImage?: typeof dockerRmi;
   registerExitHandler?: (listener: () => void) => void;
+} & RebuildImageBuildEnvironmentDeps;
+
+type RebuildImageBuildEnvironmentDeps = DockerBuildEnvironmentInput & {
+  prepareBuildEnvironment?: typeof prepareDockerBuildEnvironment;
 };
 
 function resultDetail(result: {
@@ -87,6 +96,36 @@ function resultDetail(result: {
     formatBuildFailureDiagnostics(result) ||
     `docker build exited with status ${String(result.status ?? "unknown")}`
   );
+}
+
+function buildReplacementImage(
+  dockerfile: string,
+  imageTag: string,
+  buildContext: string,
+  origin: PreparedRebuildImage["origin"],
+  buildImage: typeof dockerBuild,
+  deps: RebuildImageBuildEnvironmentDeps,
+) {
+  const preparedEnvironment = (deps.prepareBuildEnvironment ?? prepareDockerBuildEnvironment)({
+    env: deps.env,
+    credentialHelperResponds: deps.credentialHelperResponds,
+    dockerContextIsDefault: deps.dockerContextIsDefault,
+    isWslHost: deps.isWslHost,
+    allowCredentialIsolation: origin === "generated",
+  });
+  try {
+    return buildImage(dockerfile, imageTag, buildContext, {
+      env: preparedEnvironment.env,
+      ignoreError: true,
+      suppressOutput: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } finally {
+    warnIfDockerBuildEnvironmentCleanupFailed(
+      preparedEnvironment.cleanup(),
+      `rebuild image '${imageTag}'`,
+    );
+  }
 }
 
 function removeTemporaryRebuildImage(
@@ -176,11 +215,14 @@ export async function preflightRebuildImage(
     });
     const contextFingerprint = fingerprintBuildContext(staged.buildCtx);
     imageTag = `nemoclaw-rebuild-preflight:${String(process.pid)}-${String(Date.now())}`;
-    const result = buildImage(staged.stagedDockerfile, imageTag, staged.buildCtx, {
-      ignoreError: true,
-      suppressOutput: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const result = buildReplacementImage(
+      staged.stagedDockerfile,
+      imageTag,
+      staged.buildCtx,
+      staged.origin,
+      buildImage,
+      deps,
+    );
     if (result.status !== 0) return { ok: false, detail: resultDetail(result) };
     imageBuilt = true;
     if (fingerprintBuildContext(staged.buildCtx) !== contextFingerprint) {
@@ -246,11 +288,14 @@ export function finalizePreparedRebuildImageMessagingPlan(
   try {
     patchMessagingPlan(prepared.stagedDockerfile, messagingPlan, preservedEnv);
     const contextFingerprint = fingerprintBuildContext(prepared.buildCtx);
-    const result = buildImage(prepared.stagedDockerfile, imageTag, prepared.buildCtx, {
-      ignoreError: true,
-      suppressOutput: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const result = buildReplacementImage(
+      prepared.stagedDockerfile,
+      imageTag,
+      prepared.buildCtx,
+      prepared.origin,
+      buildImage,
+      deps,
+    );
     if (result.status !== 0) return { ok: false, detail: resultDetail(result) };
     imageBuilt = true;
     if (fingerprintBuildContext(prepared.buildCtx) !== contextFingerprint) {

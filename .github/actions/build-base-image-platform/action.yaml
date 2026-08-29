@@ -44,10 +44,6 @@ inputs:
     description: Optional OpenClaw version build argument.
     required: false
     default: ""
-  metadata-tags:
-    description: Optional docker/metadata-action tag rules.
-    required: false
-    default: ""
 
 runs:
   using: composite
@@ -61,15 +57,6 @@ runs:
         registry: ${{ inputs.registry }}
         username: ${{ inputs.registry-username }}
         password: ${{ inputs.registry-password }}
-
-    - name: Extract metadata
-      id: meta
-      uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-      env:
-        DOCKER_METADATA_SHORT_SHA_LENGTH: 8
-      with:
-        images: ${{ inputs.registry }}/${{ inputs.image }}
-        tags: ${{ inputs.metadata-tags }}
 
     - name: Validate production Docker build args
       id: production-build-args
@@ -109,7 +96,9 @@ runs:
         context: .
         file: ${{ inputs.dockerfile }}
         platforms: ${{ inputs.platform }}
-        labels: ${{ steps.meta.outputs.labels }}
+        labels: |
+          org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          org.opencontainers.image.revision=${{ github.sha }}
         outputs: type=image,name=${{ inputs.registry }}/${{ inputs.image }},push-by-digest=true,name-canonical=true,push=true
         cache-from: type=registry,ref=${{ inputs.registry }}/${{ inputs.image }}:buildcache-${{ inputs.arch }}
         cache-to: type=registry,ref=${{ inputs.registry }}/${{ inputs.image }}:buildcache-${{ inputs.arch }},mode=max

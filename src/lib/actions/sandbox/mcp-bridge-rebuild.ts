@@ -5,6 +5,7 @@ import type { McpBridgeEntry } from "../../state/registry";
 import {
   rollbackScrubbedMcpAdapters,
   scrubManagedMcpAdapterOrThrow,
+  type McpScrubbedAdapterEntry,
 } from "./mcp-bridge-adapter-teardown";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import {
@@ -42,7 +43,7 @@ import { assertAuthenticatedBridgeEntry, validateSandboxName } from "./mcp-bridg
 export interface McpRebuildPreparation {
   entries: McpBridgeEntry[];
   detachedProviderEntries: McpBridgeEntry[];
-  scrubbedAdapterEntries: McpBridgeEntry[];
+  scrubbedAdapterEntries: McpScrubbedAdapterEntry[];
   /** Full read-only target, policy, provider, and registry proof before delete. */
   revalidateBeforeDelete?: () => Promise<void>;
   /** Final synchronous registry-only proof immediately before delete. */
@@ -133,15 +134,14 @@ export async function prepareMcpBridgesForRebuild(
   for (const entry of entries) assertMcpProviderRecoverable(entry);
   assertNoProviderCredentialCollisions(sandboxName, entries);
   const detached: McpBridgeEntry[] = [];
-  const scrubbedAdapters: McpBridgeEntry[] = [];
+  const scrubbedAdapters: McpScrubbedAdapterEntry[] = [];
   const removedPolicies: McpBridgeEntry[] = [];
   try {
     for (const entry of entries) {
       // `/sandbox` may be a retained PVC. Scrub before delete so a replacement
       // Hermes/agent cannot boot with a stale placeholder while its provider
       // is intentionally detached during recreate.
-      scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry);
-      scrubbedAdapters.push(entry);
+      scrubbedAdapters.push(scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry));
     }
     for (const entry of entries) {
       // The same-name replacement journal fingerprints this source row before
@@ -204,7 +204,7 @@ export async function prepareMcpBridgesForRebuild(
 export async function reattachMcpProvidersAfterRebuildAbort(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
-  scrubbedAdapterEntries: readonly McpBridgeEntry[] = [],
+  scrubbedAdapterEntries: readonly McpScrubbedAdapterEntry[] = [],
 ): Promise<void> {
   if (entries.length === 0 && scrubbedAdapterEntries.length === 0) return;
   await ensureSandboxGatewaySelected(sandboxName);

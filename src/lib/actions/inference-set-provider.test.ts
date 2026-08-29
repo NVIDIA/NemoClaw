@@ -2,11 +2,27 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/provider-command";
 import type { InferenceSetDeps } from "./inference-set";
 import { __test, prepareInferenceSetProviderBinding } from "./inference-set-provider";
 import type { HttpsPinProviderBinding } from "./inference-set-route-containment";
 
 const PROVIDER_ID = "11111111-2222-4333-8444-555555555555";
+const OPENAI_ENDPOINTLESS_PROFILE = JSON.stringify({
+  id: "openai",
+  credentials: [],
+  endpoints: [],
+  binaries: [],
+  inference_capable: true,
+});
+
+const OPENAI_ENDPOINTLESS_PROFILE_RESULT = {
+  status: 0,
+  stdout: OPENAI_ENDPOINTLESS_PROFILE,
+  stderr: "",
+  output: OPENAI_ENDPOINTLESS_PROFILE,
+};
+
 function binding(overrides: Partial<HttpsPinProviderBinding> = {}): HttpsPinProviderBinding {
   return {
     baseUrl: "http://host.openshell.internal:11438/route/route-a/v1",
@@ -42,7 +58,7 @@ function captureSequence(
   return vi.fn(
     (args: string[]) =>
       (args[0] === "provider" && args[1] === "profile"
-        ? { status: 0, stdout: "", stderr: "" }
+        ? OPENAI_ENDPOINTLESS_PROFILE_RESULT
         : results.shift()) ??
       (() => {
         throw new Error("unexpected OpenShell call");
@@ -76,10 +92,17 @@ describe("inference set provider binding", () => {
       "profile",
       "-g",
       "nemoclaw",
-      "import",
-      "--file",
-      expect.stringMatching(/openai\.yaml$/u),
+      "export",
+      "openai",
+      "--output",
+      "json",
     ]);
+    expect(capture.mock.calls[1][1]).toEqual({
+      ignoreError: true,
+      includeStreams: true,
+      maxBuffer: 64 * 1024,
+      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+    });
     expect(capture.mock.calls[2]).toEqual([
       [
         "provider",
@@ -121,14 +144,17 @@ describe("inference set provider binding", () => {
 
   it("stops before an OpenAI provider mutation when profile registration fails (#9895)", () => {
     const before = providerOutput({ resourceVersion: 4 });
-    const responses = new Map([
-      ["get", { status: 0, stdout: before, stderr: "", output: before }],
-      ["profile", { status: 1, stdout: "", stderr: "sensitive profile failure" }],
-    ]);
-    const capture = vi.fn((args: string[]) =>
-      responses.get(args[1]) ?? (() => {
-        throw new Error("provider mutation must not run");
-      })(),
+    const responses = [
+      { status: 0, stdout: before, stderr: "", output: before },
+      { status: 1, stdout: "", stderr: "provider profile not found" },
+      { status: 1, stdout: "", stderr: "sensitive profile failure" },
+    ];
+    const capture = vi.fn(
+      () =>
+        responses.shift() ??
+        (() => {
+          throw new Error("provider mutation must not run");
+        })(),
     ) as InferenceSetDeps["captureOpenshell"] & ReturnType<typeof vi.fn>;
 
     const mutation = prepareInferenceSetProviderBinding({
@@ -141,7 +167,7 @@ describe("inference set provider binding", () => {
     expect(() => mutation.commit()).toThrow(
       "could not import the checked-in 'openai' inference provider profile",
     );
-    expect(capture.mock.calls.map(([args]) => args[1])).toEqual(["get", "profile"]);
+    expect(capture.mock.calls.map(([args]) => args[1])).toEqual(["get", "profile", "profile"]);
   });
 
   it("does not register the OpenAI profile before an Anthropic provider mutation", () => {
@@ -282,7 +308,7 @@ describe("inference set provider binding", () => {
       return (args, opts) => {
         switch (args[1]) {
           case "profile":
-            return { status: 0, stdout: "", stderr: "", output: "" };
+            return OPENAI_ENDPOINTLESS_PROFILE_RESULT;
           case "get": {
             const output = providerOutput({ id, resourceVersion: version });
             return { status: 0, stdout: output, stderr: "", output };

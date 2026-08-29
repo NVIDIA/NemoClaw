@@ -77,6 +77,7 @@ export type PromptValidationRecovery = (
   classification: any,
   credentialEnv: any,
   helpUrl: any,
+  revalidatePolicyRequirements?: (operation: string) => void,
 ) => Promise<"credential" | "selection" | "retry" | "model">;
 
 export type ClassifyApplyFailure = (message: string) => any;

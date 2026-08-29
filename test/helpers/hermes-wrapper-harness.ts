@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Shared test harness for the Hermes CLI wrapper suites
-// (test/hermes-gateway-wrapper.test.ts and
-// test/hermes-wrapper-oneshot-routing.test.ts). Both suites drive
+// (test/agents/hermes/hermes-gateway-wrapper.test.ts and
+// test/agents/hermes/hermes-wrapper-oneshot-routing.test.ts). Both suites drive
 // agents/hermes/hermes-wrapper.py by copying it into a temp dir alongside the
 // runtime-env validator, planting stubs, and spawning it. Extracted here — a
 // non-`.test.` module — so the shared `runWrapper` helper (and its planted-PATH

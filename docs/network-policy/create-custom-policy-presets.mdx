@@ -41,7 +41,7 @@ network_policies:
       - { path: /path/to/requesting-binary }
 ```
 
-Replace `/path/to/requesting-binary` with the exact executable path reported for the blocked request in `openshell term`.
+Replace `/path/to/requesting-binary` with the executable path reported for the blocked request in `openshell term`.
 <AgentOnly variant="deepagents">
 For Deep Agents Code, OpenShell commonly reports `/usr/local/bin/dcode` or `/opt/venv/bin/python3*`.
 Authorize only the process that needs the reviewed endpoint.
@@ -71,17 +71,17 @@ NemoClaw rejects that field in files passed through `--from-file` or `--from-dir
 Use hostnames, ports, protocols, methods, paths, and binary restrictions instead.
 The only exception is the `host.openshell.internal` bridge endpoint for explicit sandbox-to-host service access.
 
-## Admit an Exact Private Host
+## Admit a Private Host
 
 Use explicit private-host trust when a custom preset targets an operator-controlled endpoint on RFC1918, carrier-grade network address translation (CGNAT), or IPv6 unique local address space.
 This flow applies to REST, WebSocket, JSON-RPC, and MCP endpoint protocols.
 
 <Warning>
-The `--trusted-private-host` option and `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` grant the custom preset access to each matching exact private host.
+The `--trusted-private-host` option and `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` grant the custom preset access to each exact matching private host.
 Review the preset, resolved addresses, requesting binaries, methods, and paths before you apply it.
 </Warning>
 
-Pass the exact endpoint host with `--from-file` or `--from-dir`:
+Pass the endpoint host with `--from-file` or `--from-dir`:
 
 ```bash
 $$nemoclaw my-assistant policy add \
@@ -98,8 +98,8 @@ As an alternative, set `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` to a comma-separated lis
 NemoClaw combines the environment list with any `--trusted-private-host` options.
 It normalizes and deduplicates environment entries and ignores entries unrelated to the custom preset batch.
 
-After schema validation, NemoClaw resolves each declared endpoint and inserts every validated address as an exact `allowed_ips` value in memory.
-An exact trusted host can return both public and supported private addresses.
+After schema validation, NemoClaw resolves each declared endpoint and inserts every validated address as an `allowed_ips` value in memory.
+A trusted host can return both public and supported private addresses.
 NemoClaw pins every canonical answer.
 If any answer is a disallowed private, reserved, or special-purpose address, validation rejects the preset instead of discarding that answer.
 The dry-run output shows the generated pins for review.
@@ -180,7 +180,7 @@ An OAuth MCP login failure such as `getaddrinfo EAI_AGAIN` is a different transp
 A direct-DNS path that bypasses the proxy is also a different problem.
 Widening this allowlist does not fix either case.
 
-Add the MCP host, exact Streamable HTTP route, required methods, and only the binary that opens the connection:
+Add the MCP host, Streamable HTTP route, required methods, and only the binary that opens the connection:
 
 ```yaml
 preset:
@@ -203,7 +203,7 @@ network_policies:
 ```
 
 Streamable HTTP clients can use `DELETE` on the same endpoint to terminate a session.
-Keep that method scoped to the exact MCP route.
+Keep that method scoped to the MCP route.
 Do not replace the route with `/**` unless the server contract requires every path.
 
 Save the file as `nemoclaw-blueprint/policies/presets/my-mcp.yaml`.

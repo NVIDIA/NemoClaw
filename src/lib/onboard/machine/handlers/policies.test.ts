@@ -25,15 +25,18 @@ describe("handlePoliciesState", () => {
 
     const result = await handlePoliciesState(baseOptions(deps));
 
-    expect(calls.smoke).toHaveBeenCalledWith({
-      sandboxName: "my-assistant",
-      provider: "provider",
-      model: "model",
-      endpointUrl: "https://example.com/v1",
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-      messagingChannels: ["telegram"],
-      agent: null,
-    });
+    expect(calls.smoke).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxName: "my-assistant",
+        provider: "provider",
+        model: "model",
+        endpointUrl: "https://example.com/v1",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        messagingChannels: ["telegram"],
+        agent: null,
+        beforeSuccess: expect.any(Function),
+      }),
+    );
     expect(calls.startStep).toHaveBeenCalledWith("policies", {
       sandboxName: "my-assistant",
       provider: "provider",
@@ -60,6 +63,30 @@ describe("handlePoliciesState", () => {
       updates: undefined,
       metadata: { state: "policies", policyPresets: ["npm"] },
     });
+  });
+
+  it("passes an empty messaging selection to the compatible endpoint smoke (#10405)", async () => {
+    const { deps, calls } = createDeps({
+      getActiveSandbox: vi.fn(() => ({
+        messaging: null,
+        policyAuthority: "nemoclaw-managed" as const,
+      })),
+    });
+
+    await handlePoliciesState({
+      ...baseOptions(deps),
+      provider: "compatible-endpoint",
+      selectedMessagingChannels: [],
+    });
+
+    expect(calls.smoke).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "compatible-endpoint",
+        messagingChannels: [],
+        agent: null,
+      }),
+    );
+    expect(calls.complete).toHaveBeenCalledOnce();
   });
 
   it("uses recorded messaging channels when no active selection exists", async () => {
@@ -106,9 +133,9 @@ describe("handlePoliciesState", () => {
         messaging: null,
         policies: ["npm", "pypi", "discord"],
       })),
-      detectUnconfiguredMessagingChannels: vi.fn(
-        (planChannels: readonly string[]) => [...planChannels],
-      ),
+      detectUnconfiguredMessagingChannels: vi.fn((planChannels: readonly string[]) => [
+        ...planChannels,
+      ]),
     });
 
     await handlePoliciesState({ ...baseOptions(deps), selectedMessagingChannels: [] });
@@ -278,62 +305,65 @@ describe("handlePoliciesState", () => {
     [null, "openclaw"],
     [{ name: "hermes" }, "hermes"],
     [{ name: "langchain-deepagents-code" }, "langchain-deepagents-code"],
-  ] as const)("reconciles stale local-inference policy for %s while retaining the real provider attachment", async (agent, expectedAgent) => {
-    const session = createSession({ policyPresets: ["local-inference", "npm"] });
-    const { deps, calls, setSession } = createDeps({
-      arePolicyPresetsApplied: vi.fn(() => true),
-    });
-    setSession(session);
+  ] as const)(
+    "reconciles stale local-inference policy for %s while retaining the real provider attachment",
+    async (agent, expectedAgent) => {
+      const session = createSession({ policyPresets: ["local-inference", "npm"] });
+      const { deps, calls, setSession } = createDeps({
+        arePolicyPresetsApplied: vi.fn(() => true),
+      });
+      setSession(session);
 
-    await handlePoliciesState({
-      ...baseOptions(deps),
-      resume: true,
-      provider: "vllm-local",
-      model: "qwen3.5-9b",
-      endpointUrl: "https://inference.local/v1",
-      credentialEnv: null,
-      hostLocalInferenceRouteOnly: true,
-      hostLocalInferenceSandboxProofAuthority: {
-        service: "vllm",
-        directHostPort: 8000,
-        directHealthPath: "/health",
-        toolCallingRequired: true,
-      },
-      agent,
-    });
-
-    expect(calls.smoke).toHaveBeenCalledWith(
-      expect.objectContaining({
+      await handlePoliciesState({
+        ...baseOptions(deps),
+        resume: true,
         provider: "vllm-local",
+        model: "qwen3.5-9b",
         endpointUrl: "https://inference.local/v1",
-        agent,
-        forceCanonicalRoute: true,
-        hostLocalInferenceProofAuthority: {
+        credentialEnv: null,
+        hostLocalInferenceRouteOnly: true,
+        hostLocalInferenceSandboxProofAuthority: {
           service: "vllm",
           directHostPort: 8000,
           directHealthPath: "/health",
           toolCallingRequired: true,
         },
-      }),
-    );
-    expect(calls.prepareResume).toHaveBeenCalledWith(
-      "my-assistant",
-      expect.objectContaining({ recordedPolicyPresets: ["npm"], agent: expectedAgent }),
-    );
-    expect(calls.setupPolicies).toHaveBeenCalledWith(
-      "my-assistant",
-      expect.objectContaining({
-        selectedPresets: ["npm"],
-        provider: null,
-        excludedPresets: ["local-inference"],
-        agent: expectedAgent,
-      }),
-    );
-    expect(calls.setupPolicies.mock.invocationCallOrder[0]).toBeLessThan(
-      calls.smoke.mock.invocationCallOrder[0],
-    );
-    expect(calls.skipped).not.toHaveBeenCalled();
-  });
+        agent,
+      });
+
+      expect(calls.smoke).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: "vllm-local",
+          endpointUrl: "https://inference.local/v1",
+          agent,
+          forceCanonicalRoute: true,
+          hostLocalInferenceProofAuthority: {
+            service: "vllm",
+            directHostPort: 8000,
+            directHealthPath: "/health",
+            toolCallingRequired: true,
+          },
+        }),
+      );
+      expect(calls.prepareResume).toHaveBeenCalledWith(
+        "my-assistant",
+        expect.objectContaining({ recordedPolicyPresets: ["npm"], agent: expectedAgent }),
+      );
+      expect(calls.setupPolicies).toHaveBeenCalledWith(
+        "my-assistant",
+        expect.objectContaining({
+          selectedPresets: ["npm"],
+          provider: null,
+          excludedPresets: ["local-inference"],
+          agent: expectedAgent,
+        }),
+      );
+      expect(calls.setupPolicies.mock.invocationCallOrder[0]).toBeLessThan(
+        calls.smoke.mock.invocationCallOrder[0],
+      );
+      expect(calls.skipped).not.toHaveBeenCalled();
+    },
+  );
 
   it("forces route-only reconciliation when only the live sandbox has stale local-inference", async () => {
     const { deps, calls } = createDeps({
@@ -369,40 +399,39 @@ describe("handlePoliciesState", () => {
     expect(calls.skipped).not.toHaveBeenCalled();
   });
 
-  it.each([
-    null,
-    { name: "hermes" },
-    { name: "langchain-deepagents-code" },
-  ] as const)("keeps the inference step recoverable when the post-policy route proof fails for %s", async (agent) => {
-    const smokeFailure = new Error("exact model route proof failed");
-    const { deps, calls } = createDeps({
-      verifyCompatibleEndpointSandboxSmoke: vi.fn(() => {
-        throw smokeFailure;
-      }),
-    });
+  it.each([null, { name: "hermes" }, { name: "langchain-deepagents-code" }] as const)(
+    "keeps the inference step recoverable when the post-policy route proof fails for %s",
+    async (agent) => {
+      const smokeFailure = new Error("exact model route proof failed");
+      const { deps, calls } = createDeps({
+        verifyCompatibleEndpointSandboxSmoke: vi.fn(() => {
+          throw smokeFailure;
+        }),
+      });
 
-    await expect(
-      handlePoliciesState({
-        ...baseOptions(deps),
-        provider: "vllm-local",
-        model: "qwen3.5-9b",
-        endpointUrl: "https://inference.local/v1",
-        credentialEnv: null,
-        hostLocalInferenceRouteOnly: true,
-        hostLocalInferenceSandboxProofAuthority: {
-          service: "vllm",
-          directHostPort: 8000,
-          directHealthPath: "/health",
-          toolCallingRequired: true,
-        },
-        agent,
-      }),
-    ).rejects.toBe(smokeFailure);
+      await expect(
+        handlePoliciesState({
+          ...baseOptions(deps),
+          provider: "vllm-local",
+          model: "qwen3.5-9b",
+          endpointUrl: "https://inference.local/v1",
+          credentialEnv: null,
+          hostLocalInferenceRouteOnly: true,
+          hostLocalInferenceSandboxProofAuthority: {
+            service: "vllm",
+            directHostPort: 8000,
+            directHealthPath: "/health",
+            toolCallingRequired: true,
+          },
+          agent,
+        }),
+      ).rejects.toBe(smokeFailure);
 
-    expect(calls.setupPolicies).toHaveBeenCalledOnce();
-    expect(calls.complete).not.toHaveBeenCalled();
-    expect(calls.recordSkip).not.toHaveBeenCalled();
-  });
+      expect(calls.setupPolicies).toHaveBeenCalledOnce();
+      expect(calls.complete).not.toHaveBeenCalled();
+      expect(calls.recordSkip).not.toHaveBeenCalled();
+    },
+  );
 
   // Regression for #4621: the sandbox is registered with only create-time/boot
   // presets, so the effective interactive selection must be written back to the
@@ -436,6 +465,171 @@ describe("handlePoliciesState", () => {
     expect(result.appliedPolicyPresets).toEqual(["dns", "github"]);
   });
 
+  it("keeps the policy step resumable when finalized registry persistence fails (#4621)", async () => {
+    const setupPolicies = vi.fn(async (_name: string, options: SetupOptions) => {
+      options.onSelection(["npm"]);
+      return ["npm"];
+    });
+    const persistPolicies = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
+    const { deps, calls } = createDeps({
+      setupPoliciesWithSelection: setupPolicies,
+      persistAppliedPolicyPresets: persistPolicies,
+    });
+
+    await expect(handlePoliciesState(baseOptions(deps))).rejects.toThrow(
+      "Failed to persist finalized policy presets for sandbox 'my-assistant'.",
+    );
+    expect(calls.complete).not.toHaveBeenCalled();
+
+    await expect(
+      handlePoliciesState({ ...baseOptions(deps), resume: true }),
+    ).resolves.toMatchObject({ appliedPolicyPresets: ["npm"] });
+    expect(setupPolicies).toHaveBeenCalledTimes(2);
+    expect(persistPolicies).toHaveBeenCalledTimes(2);
+    expect(calls.complete).toHaveBeenCalledOnce();
+  });
+
+  it("verifies external selections without recording NemoClaw preset ownership (#9833)", async () => {
+    const setupPolicies = vi.fn(async () => ["dns", "github"]);
+    const revalidatePolicyRequirements = vi.fn();
+    const verifySandboxSmoke = vi.fn((options: { beforeSuccess?: () => void }) =>
+      options.beforeSuccess?.(),
+    );
+    const { deps, calls, setSession } = createDeps({
+      getActiveSandbox: vi.fn(() => ({
+        messaging: null,
+        policyAuthority: "externally-managed" as const,
+      })),
+      setupPoliciesWithSelection: setupPolicies,
+      verifyCompatibleEndpointSandboxSmoke: verifySandboxSmoke,
+    });
+    setSession(createSession({ policyAuthority: "externally-managed" }));
+
+    const result = await handlePoliciesState({
+      ...baseOptions(deps),
+      resume: true,
+      revalidatePolicyRequirements,
+    });
+
+    expect(setupPolicies).not.toHaveBeenCalled();
+    expect(calls.prepareResume).not.toHaveBeenCalled();
+    expect(calls.persistPolicies).not.toHaveBeenCalled();
+    expect(calls.updateSession).not.toHaveBeenCalled();
+    expect(calls.recordSkip).toHaveBeenCalledWith("policies", {
+      reason: "externally_managed",
+    });
+    expect(verifySandboxSmoke).toHaveBeenCalledWith(
+      expect.objectContaining({ beforeSuccess: expect.any(Function) }),
+    );
+    expect(revalidatePolicyRequirements).toHaveBeenCalledTimes(4);
+    expect(calls.complete).toHaveBeenCalledWith(
+      "policies",
+      expect.objectContaining({ policyPresets: null }),
+    );
+    expect(result.appliedPolicyPresets).toEqual([]);
+    expect(result.stateResult).toEqual(
+      expect.objectContaining({ metadata: { state: "policies" } }),
+    );
+  });
+
+  it("refuses managed policy setup before policy mutation when authority drifts (#9833)", async () => {
+    const refusePolicyMutation = () => {
+      throw new Error("policy authority changed");
+    };
+    const policyChecks = new Map([
+      ["apply policy presets to sandbox 'my-assistant'", refusePolicyMutation],
+    ]);
+    const revalidatePolicyRequirements = vi.fn((operation: string) =>
+      policyChecks.get(operation)?.(),
+    );
+    const { deps, calls } = createDeps();
+
+    await expect(
+      handlePoliciesState({
+        ...baseOptions(deps),
+        revalidatePolicyRequirements,
+      }),
+    ).rejects.toThrow("policy authority changed");
+
+    expect(calls.setupPolicies).not.toHaveBeenCalled();
+    expect(calls.persistPolicies).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
+  });
+
+  it("uses external session authority when the registry row is missing (#9833)", async () => {
+    const { deps, calls, setSession } = createDeps({
+      getActiveSandbox: vi.fn(() => null),
+    });
+    setSession(createSession({ policyAuthority: "externally-managed" }));
+
+    await handlePoliciesState(baseOptions(deps));
+
+    expect(calls.setupPolicies).not.toHaveBeenCalled();
+    expect(calls.persistPolicies).not.toHaveBeenCalled();
+    expect(calls.complete).toHaveBeenCalledWith(
+      "policies",
+      expect.objectContaining({ policyPresets: null }),
+    );
+  });
+
+  it("refuses legacy policy state when no authority is recorded (#9833)", async () => {
+    const { deps, calls } = createDeps({
+      loadSession: () => createSession(),
+      getActiveSandbox: vi.fn(() => null),
+    });
+
+    await expect(handlePoliciesState(baseOptions(deps))).rejects.toThrow(
+      /policy authority is not recorded/u,
+    );
+
+    expect(calls.setupPolicies).not.toHaveBeenCalled();
+    expect(calls.persistPolicies).not.toHaveBeenCalled();
+  });
+
+  it("verifies the canonical host-local route under external authority (#9833)", async () => {
+    const agent = { name: "openclaw" };
+    const { deps, calls, setSession } = createDeps({
+      getActiveSandbox: vi.fn(() => ({
+        messaging: null,
+        policyAuthority: "externally-managed" as const,
+      })),
+    });
+    setSession(createSession({ policyAuthority: "externally-managed" }));
+
+    await handlePoliciesState({
+      ...baseOptions(deps),
+      provider: "vllm-local",
+      model: "qwen3.5-9b",
+      endpointUrl: "https://inference.local/v1",
+      credentialEnv: null,
+      hostLocalInferenceRouteOnly: true,
+      hostLocalInferenceSandboxProofAuthority: {
+        service: "vllm",
+        directHostPort: 8000,
+        directHealthPath: "/health",
+        toolCallingRequired: true,
+      },
+      agent,
+    });
+
+    expect(calls.smoke).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "vllm-local",
+        endpointUrl: "https://inference.local/v1",
+        agent,
+        forceCanonicalRoute: true,
+        hostLocalInferenceProofAuthority: {
+          service: "vllm",
+          directHostPort: 8000,
+          directHealthPath: "/health",
+          toolCallingRequired: true,
+        },
+      }),
+    );
+    expect(calls.setupPolicies).not.toHaveBeenCalled();
+    expect(calls.persistPolicies).not.toHaveBeenCalled();
+  });
+
   it("re-onboard carries the persisted set forward without re-adding removed defaults (#4621)", async () => {
     // A prior onboard recorded the custom "Balanced minus npm plus github" set.
     // On re-onboard the recorded set is re-applied verbatim and persisted back —
@@ -461,6 +655,48 @@ describe("handlePoliciesState", () => {
     const [, persisted] = calls.persistPolicies.mock.calls[0] as [string, string[]];
     expect(persisted).not.toContain("npm");
     expect(result.appliedPolicyPresets).toEqual(["dns", "github"]);
+  });
+
+  it("retries inactive Hermes preset removal after synchronization fails", async () => {
+    const removalFailure = new Error("policy removal failed");
+    const session = createSession({ policyPresets: ["npm", "slack"] });
+    const setupPolicies = vi
+      .fn<(_name: string, options: SetupOptions) => Promise<string[]>>()
+      .mockRejectedValueOnce(removalFailure)
+      .mockImplementationOnce(async (_name, options) => {
+        options.onSelection(["npm"]);
+        return ["npm"];
+      });
+    const { deps, calls, getSession, setSession } = createDeps({
+      getActiveSandbox: vi.fn(() => ({ messaging: null, policies: ["npm", "slack"] })),
+      detectUnconfiguredMessagingChannels: vi.fn(() => ["slack"]),
+      preparePolicyPresetResumeSelection: vi.fn((_sandboxName, options) => ({
+        policyPresets: ["npm"],
+        recordedPolicyPresetsNeedReconcile: (options.recordedPolicyPresets ?? []).includes("slack"),
+        disabledMessagingPolicyPresetApplied: false,
+        suppressedAgentRequiredPresetsLive: false,
+      })),
+      arePolicyPresetsApplied: vi.fn(() => true),
+      setupPoliciesWithSelection: setupPolicies,
+    });
+    setSession(session);
+    const options = {
+      ...baseOptions(deps),
+      resume: true,
+      selectedMessagingChannels: [],
+      agent: { name: "hermes" },
+    };
+
+    await expect(handlePoliciesState(options)).rejects.toBe(removalFailure);
+    expect(getSession().policyPresets).toEqual(["npm", "slack"]);
+    expect(calls.persistPolicies).not.toHaveBeenCalled();
+
+    await expect(handlePoliciesState(options)).resolves.toMatchObject({
+      appliedPolicyPresets: ["npm"],
+    });
+    expect(setupPolicies).toHaveBeenCalledTimes(2);
+    expect(getSession().policyPresets).toEqual(["npm"]);
+    expect(calls.persistPolicies).toHaveBeenCalledWith("my-assistant", ["npm"]);
   });
 
   it("does not finalize the registry on the resume (already-applied) branch (#4621)", async () => {

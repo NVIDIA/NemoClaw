@@ -37,8 +37,12 @@ NEMOCLAW_EXPERIMENTAL=1 $$nemoclaw onboard
 ```
 
 Select **Local NVIDIA NIM [experimental]**.
-NemoClaw filters the available models by GPU VRAM, pulls the selected image, starts the container, and waits for it to become healthy.
-On hosts with mixed NVIDIA GPU models, the preflight summary shows each detected GPU model and the total VRAM used for model selection.
+NemoClaw filters the model list against detected free GPU memory.
+If free memory is unavailable, NemoClaw uses total GPU memory.
+NemoClaw also applies runtime memory limits for the host.
+On DGX Spark, NemoClaw caps usable memory at 50 percent of total memory to match NIM's reported unified-memory limit.
+The Nemotron 3 Super catalog minimum includes NIM's reported runtime allocation.
+On hosts with mixed NVIDIA GPU models, the preflight summary shows each detected GPU model and aggregate total VRAM.
 
 On Docker 29.x and hosts that use the containerd image store, NemoClaw resolves the host-platform manifest digest before pulling a multi-architecture image when the registry publishes an index.
 It pulls `repo@digest` and retags the image locally so attestation metadata for other architectures does not block the selected platform.
@@ -59,6 +63,9 @@ When `NGC_API_KEY` or `NVIDIA_INFERENCE_API_KEY` is already exported, NemoClaw p
 ## Understand Model Detection
 
 If the NIM container exits before its health endpoint becomes ready, onboarding stops and prints the last container log lines.
+If recent NIM logs report that estimated memory exceeds usable GPU memory, onboarding ends the health wait before the 1,200-second timeout and removes the NIM container.
+After confirmed removal, onboarding selects NVIDIA Endpoints.
+If removal cannot be confirmed, onboarding stops without changing providers.
 After NIM becomes healthy, NemoClaw reads `/v1/models` and uses the served model ID for validation when it differs from the catalog name.
 NemoClaw rejects unsafe served IDs instead of writing them into sandbox configuration.
 

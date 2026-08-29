@@ -16,9 +16,17 @@ const TEGRA_GPU_DEVICE_NODES = [
   "/dev/nvgpu/igpu0/as",
   "/dev/nvgpu/igpu0/prof",
 ] as const;
+const TEGRA_GPU_DEVICE_NODE_SET = new Set<string>(TEGRA_GPU_DEVICE_NODES);
 const NVMAP_DEVICE = "/dev/nvmap";
 const READ_WRITE_PERMISSION_BITS = 0o6;
 const MAX_DOCKER_SUPPLEMENTARY_GID = 2_147_483_647;
+const MAX_JETSON_DEVICE_GROUPS = 16;
+const MAX_JETSON_GPU_DEVICE_PATHS = 32;
+
+export const NEMOCLAW_MANAGED_AGENT_LABEL = "io.nvidia.nemoclaw.agent";
+export const OPENSHELL_SANDBOX_ENTRYPOINT = "/opt/openshell/bin/openshell-sandbox";
+export const JETSON_DEVICE_GROUP_BOOTSTRAP =
+  "/usr/local/lib/nemoclaw/jetson-device-group-bootstrap.sh";
 
 type DeviceGroupAccess = {
   gid: number;
@@ -57,6 +65,22 @@ function listTegraGpuDevicePaths(): string[] {
   return [...TEGRA_GPU_DEVICE_NODES, ...discoverTegraRenderDevicePaths()];
 }
 
+export function normalizeTegraGpuDevicePaths(devicePaths: readonly string[]): string[] {
+  const normalized = [...new Set(devicePaths)];
+  if (
+    normalized.length > MAX_JETSON_GPU_DEVICE_PATHS ||
+    normalized.some(
+      (devicePath) =>
+        devicePath.length > 64 ||
+        (!TEGRA_GPU_DEVICE_NODE_SET.has(devicePath) &&
+          !/^\/dev\/dri\/renderD\d+$/u.test(devicePath)),
+    )
+  ) {
+    throw new Error("Jetson GPU device paths are invalid or excessive.");
+  }
+  return normalized.includes(NVMAP_DEVICE) ? normalized : [];
+}
+
 /**
  * Return the fixed Jetson GPU device paths that are safe to add to an
  * OpenShell filesystem policy. `/dev/nvmap` anchors detection so a host with
@@ -87,7 +111,7 @@ export function detectTegraGpuDevicePaths(
     const access = statDevicePath(devicePath);
     return access?.isCharacterDevice === true && access.isSymbolicLink === false;
   });
-  return detectedPaths.includes(NVMAP_DEVICE) ? detectedPaths : [];
+  return normalizeTegraGpuDevicePaths(detectedPaths);
 }
 
 /**
@@ -125,9 +149,14 @@ export function detectTegraDeviceGroupGids(
         return null;
       }
     });
+  const deviceAccess = new Map(
+    devicePaths.map((devicePath) => [devicePath, statAccess(devicePath)] as const),
+  );
+  if (deviceAccess.get(NVMAP_DEVICE) == null) return [];
+
   const gids = new Set<string>();
   for (const node of devicePaths) {
-    const access = statAccess(node);
+    const access = deviceAccess.get(node) ?? null;
     const gid = access?.gid ?? null;
     const groupAccessBits = access === null ? 0 : (access.mode >> 3) & READ_WRITE_PERMISSION_BITS;
     const otherAccessBits = access === null ? 0 : access.mode & READ_WRITE_PERMISSION_BITS;
@@ -143,4 +172,52 @@ export function detectTegraDeviceGroupGids(
     }
   }
   return [...gids].sort((left, right) => Number(left) - Number(right));
+}
+
+export function normalizeJetsonDeviceGroupGids(groupGids: readonly string[]): string[] {
+  const normalized = groupGids.map((gid) => String(gid).trim());
+  if (
+    normalized.length > MAX_JETSON_DEVICE_GROUPS ||
+    new Set(normalized).size !== normalized.length ||
+    normalized.some((gid) => {
+      if (!/^[1-9][0-9]*$/u.test(gid)) return true;
+      const parsed = Number(gid);
+      return !Number.isSafeInteger(parsed) || parsed > MAX_DOCKER_SUPPLEMENTARY_GID;
+    })
+  ) {
+    throw new Error("Docker clone received invalid or excessive supplementary group IDs.");
+  }
+  return normalized;
+}
+
+export type JetsonDeviceGroupBootstrapPlan = Readonly<{
+  deviceGroupGids: readonly string[];
+  supervisorArgv: readonly string[];
+}>;
+
+/**
+ * Render the only approved root bootstrap handoff for an OpenClaw managed
+ * image. The exact agent identity and supervisor entrypoint keep this launch
+ * authority closed to other images and commands.
+ */
+export function resolveJetsonDeviceGroupBootstrap(input: {
+  agent: string | null | undefined;
+  deviceGroupGids: readonly string[];
+  supervisorArgv: readonly string[];
+}): JetsonDeviceGroupBootstrapPlan | null {
+  const deviceGroupGids = Object.freeze(normalizeJetsonDeviceGroupGids(input.deviceGroupGids));
+  if (input.agent !== "openclaw" || deviceGroupGids.length === 0) return null;
+  if (input.supervisorArgv[0] !== OPENSHELL_SANDBOX_ENTRYPOINT) {
+    throw new Error("Jetson device-group bootstrap requires the OpenShell supervisor entrypoint.");
+  }
+  return Object.freeze({
+    deviceGroupGids,
+    supervisorArgv: Object.freeze([
+      JETSON_DEVICE_GROUP_BOOTSTRAP,
+      "--device-group-gids",
+      deviceGroupGids.join(","),
+      "--",
+      ...input.supervisorArgv,
+    ]),
+  });
 }

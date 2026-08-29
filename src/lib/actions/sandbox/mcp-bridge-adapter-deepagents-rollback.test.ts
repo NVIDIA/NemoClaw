@@ -69,15 +69,33 @@ describe("Deep Agents MCP config adapter rollback", () => {
     expect(rollback.legacyConfig).toEqual(legacyConfig);
   });
 
-  it("does not apply the v2 server cap to a single-entry legacy rollback", () => {
-    const managedEntries = Array.from(
-      { length: 65 },
-      (_, index): McpBridgeEntry => ({
-        ...baseEntry,
-        server: `server${String(index)}`,
-        env: [`SERVER_${String(index)}_TOKEN`],
-      }),
+  it("restores the readiness-proven revision during v2 rollback", () => {
+    const rollback = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpRegisterCommand(baseEntry, true, [baseEntry], true, "v12"),
+      { mcpServers: {} },
+      "v2",
     );
+
+    expect(rollback.status, rollback.stderr).toBe(0);
+    expect(rollback.config).toEqual({
+      mcpServers: {
+        github: {
+          type: "http",
+          url: baseEntry.url,
+          headers: {
+            Authorization: "Bearer openshell:resolve:env:v12_GITHUB_TOKEN",
+          },
+        },
+      },
+    });
+  });
+
+  it("does not apply the v2 server cap to a single-entry legacy rollback", () => {
+    const managedEntries = Array.from({ length: 65 }, (_, index): McpBridgeEntry => ({
+      ...baseEntry,
+      server: `server${String(index)}`,
+      env: [`SERVER_${String(index)}_TOKEN`],
+    }));
 
     const rollback = runDeepAgentsConfigCommand(
       buildDeepAgentsMcpRegisterCommand(managedEntries[0], true, managedEntries, true),

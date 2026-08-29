@@ -6,7 +6,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual, TextDecoder } from "node:util";
 
-import { acquireOnboardLock, normalizeSession, releaseOnboardLock } from "../state/onboard-session";
+import {
+  acquireOnboardLock,
+  assertOnboardLockOwned,
+  normalizeSession,
+  releaseOnboardLock,
+  type LockResult,
+} from "../state/onboard-session";
 import { assertHermesPortableUninstallCompleteForOnboarding } from "../state/hermes-portable-uninstall/journal";
 import {
   inspectPortableOnboardSupersession,
@@ -172,7 +178,17 @@ function verifyAuthority(
   if (!fs.readFileSync(boundary.registryFile).equals(registryBytes))
     throw new Error("Completed onboarding registry changed while normalizing");
   const row = registry.sandboxes[sandboxName];
-  const expectedAgent = identity?.agent === "openclaw" ? null : identity?.agent;
+  const matchesRegistryAgent = (agent: unknown) =>
+    agent === identity?.agent || (identity?.agent === "openclaw" && agent === null);
+  if (
+    identity &&
+    rawEntry &&
+    row &&
+    (rawEntry.agent !== row.agent || !matchesRegistryAgent(row.agent))
+  )
+    throw new Error(
+      `Completed onboarding registry field "agent" does not match trusted onboarding for sandbox ${JSON.stringify(sandboxName)}. Restore the registry entry from trusted completed-onboarding state, then retry uninstall.`,
+    );
   if (
     !identity ||
     !gateway ||
@@ -182,8 +198,6 @@ function verifyAuthority(
     row?.name !== sandboxName ||
     rawEntry.name !== sandboxName ||
     row.pendingRouteReservation === true ||
-    row.agent !== expectedAgent ||
-    rawEntry.agent !== expectedAgent ||
     row.openshellDriver !== "docker" ||
     rawEntry.openshellDriver !== "docker" ||
     row.gatewayName !== gateway.gatewayName ||
@@ -199,10 +213,13 @@ function verifyAuthority(
     throw new Error("Completed onboarding registry authority is incomplete");
   const portableStateRoot = path.join(boundary.homeDir, ".nemoclaw");
   const receiptDirectory = path.join(portableStateRoot, "portable-demo-lifecycle");
-  const configDirectory = readPortableAuthorityDirectory(
-    path.join(boundary.homeDir, ".config/nemoclaw/portable"),
-    expected === "portable",
-  );
+  const inspectConfig = expected === "portable" || recovery !== null;
+  const configDirectory = inspectConfig
+    ? readPortableAuthorityDirectory(
+        path.join(boundary.homeDir, ".config/nemoclaw/portable"),
+        expected === "portable",
+      )
+    : null;
   const receiptDirectoryBefore = readPortableAuthorityDirectory(
     receiptDirectory,
     expected === "portable",
@@ -229,11 +246,12 @@ function verifyAuthority(
   const receiptEntries = receiptDirectoryBefore.entries.filter(
     (entry) => !receiptArtifacts.has(entry),
   );
-  const configEntries = configDirectory.entries.filter((entry) => !configArtifacts.has(entry));
+  const configEntries =
+    configDirectory?.entries.filter((entry) => !configArtifacts.has(entry)) ?? [];
   if (expected === "default") {
     if (checkpoint.runtimeAuthority.kind !== "unset" || receiptEntries.length || receipts.length)
       throw new Error("Completed ordinary onboarding has portable receipt authority");
-    if (configEntries.length)
+    if (recovery !== null && configEntries.length)
       throw new Error("Completed ordinary onboarding has portable configuration authority");
   } else {
     const basename = `${createHash("sha256").update(sandboxName).digest("hex")}.json`;
@@ -270,7 +288,7 @@ function verifyAuthority(
     )
       throw new Error("Completed portable onboarding authority is incomplete");
   }
-  rejectUnknownRetirementArtifacts(boundary.homeDir, recovery);
+  rejectUnknownRetirementArtifacts(boundary.homeDir, recovery, true, false, inspectConfig);
 }
 
 function artifactDirectory(homeDir: string, root: "config" | "receipt" | "registry"): string {
@@ -286,6 +304,7 @@ function rejectUnknownRetirementArtifacts(
   recovery: PortableRetirementRecovery | null,
   required = true,
   permitAnyMode = false,
+  inspectConfig = true,
 ): void {
   const directories = new Map<string, Set<string>>([
     [path.join(homeDir, ".nemoclaw"), new Set(PORTABLE_RETIREMENT_STATE_ENTRIES)],
@@ -295,6 +314,7 @@ function rejectUnknownRetirementArtifacts(
   for (const artifact of recovery?.artifacts ?? [])
     directories.get(artifactDirectory(homeDir, artifact.root))!.add(artifact.basename);
   for (const [directory, allowed] of directories) {
+    if (!inspectConfig && directory === path.join(homeDir, ".config/nemoclaw/portable")) continue;
     if (
       readPortableAuthorityDirectory(
         directory,
@@ -457,12 +477,11 @@ async function recover(
  * - A missing state directory.
  * - A portable configuration directory abandoned by an earlier run.
  *
- * Ordinary uninstall then removes the state directory and the portable
- * configuration directory when they exist. That answer still refuses an unknown
- * portable uninstall artifact. It still requires mode 0700 on the state
- * directory and on the receipt directory, because only the leftover check reads
- * a directory whose mode NemoClaw never set. Every read refuses a directory
- * whose entries it cannot list, through a symlink, an owner other than the
+ * Ordinary uninstall preserves an ambient portable configuration directory and
+ * removes the remaining NemoClaw configuration. That answer still refuses an
+ * unknown portable uninstall artifact in lifecycle state. It still requires mode
+ * 0700 on the state directory and receipt directory. Every authority read refuses
+ * a directory whose entries it cannot list, a symlink, an owner other than the
  * current user, or an entry count above the cap.
  */
 export function hasPortableUninstallAuthority(
@@ -476,7 +495,7 @@ export function hasPortableUninstallAuthority(
   );
   const recovery = inspectPortableRetirementRecovery(boundary.homeDir);
   if (!recovery && !receiptDirectory.entries.length) {
-    rejectUnknownRetirementArtifacts(boundary.homeDir, null, false, true);
+    rejectUnknownRetirementArtifacts(boundary.homeDir, null, false, true, false);
     const sessionBytes = readPortableAuthoritySnapshot(boundary.sessionFile);
     if (sessionBytes) {
       const raw = strictJson(sessionBytes, "Onboarding session");
@@ -538,19 +557,29 @@ export async function supersedePortableRetirementAfterCompletedOnboard(
   );
 }
 
+export function printPortableOnboardLockContention(
+  displayName: string,
+  lockResult: LockResult,
+): void {
+  console.error(`  Another ${displayName} onboarding run is already in progress.`);
+  if (lockResult.holderPid) console.error(`  Lock holder PID: ${lockResult.holderPid}`);
+  if (lockResult.holderStartedAt) console.error(`  Started: ${lockResult.holderStartedAt}`);
+  console.error("  Wait for the active onboarding run to finish.");
+  console.error(
+    "  If the recorded process is no longer running, rerun this command; NemoClaw verifies stale ownership before removing its lock.",
+  );
+}
+
 export function beginPortableOnboardRetirementEntry(
   options: PortableOnboardRetirementEntryOptions,
 ) {
   const ownsOnboardLock = !options.alreadyHeld;
+  if (!ownsOnboardLock) assertOnboardLockOwned();
   const lockResult = ownsOnboardLock
     ? acquireOnboardLock(options.command)
     : { acquired: true as const };
   if (!lockResult.acquired) {
-    console.error(`  Another ${options.displayName} onboarding run is already in progress.`);
-    if (lockResult.holderPid) console.error(`  Lock holder PID: ${lockResult.holderPid}`);
-    if (lockResult.holderStartedAt) console.error(`  Started: ${lockResult.holderStartedAt}`);
-    console.error("  Wait for it to finish, or remove the stale lock if the previous run crashed:");
-    console.error(`    rm -f "${lockResult.lockFile}"`);
+    printPortableOnboardLockContention(options.displayName, lockResult);
     process.exit(1);
   }
   const boundary: PortableOnboardRetirementBoundary = {

@@ -80,7 +80,10 @@ export async function selectBedrockRuntimeCustomAnthropic(
       envName: string,
       label: string,
       helpUrl: string | null,
+      validator?: ((value: string) => string | null) | null,
+      revalidatePolicyRequirements?: (operation: string) => void,
     ) => Promise<string | BackToSelection>;
+    credentialMutationGuard?: (operation: string) => void;
   } & BedrockRuntimeDependencies,
 ): Promise<
   | { action: "not-bedrock" }
@@ -104,6 +107,8 @@ export async function selectBedrockRuntimeCustomAnthropic(
       credentialEnv,
       `${options.label} API key`,
       options.helpUrl,
+      null,
+      options.credentialMutationGuard,
     );
     if (credentialResult === options.backToSelection) {
       return { action: "retry-selection" };

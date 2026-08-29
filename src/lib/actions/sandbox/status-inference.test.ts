@@ -138,26 +138,28 @@ describe("sandbox status inference.local route health (#6192)", () => {
     expect(report.servingProcessHealth).toBeNull();
   });
 
-  it.each([
-    "nvidia-router",
-    "hermes-provider",
-  ])("probes inference.local for %s without a direct health probe (#6192)", async (provider) => {
-    const deps = snapshotDeps({
-      provider,
-      providerHealth: null,
-      routeHealth: {
-        ok: true,
-        endpoint: "https://inference.local/v1/models",
-        httpStatus: 200,
-        detail: "route reachable",
-      },
-    });
+  it.each(["nvidia-router", "hermes-provider"])(
+    "probes inference.local for %s without a direct health probe (#6192)",
+    async (provider) => {
+      const deps = snapshotDeps({
+        provider,
+        providerHealth: null,
+        routeHealth: {
+          ok: true,
+          endpoint: "https://inference.local/v1/models",
+          httpStatus: 200,
+          detail: "route reachable",
+        },
+      });
 
-    const snapshot = await collectSandboxStatusSnapshot("alpha", { deps });
+      const snapshot = await collectSandboxStatusSnapshot("alpha", { deps });
 
-    expect(deps.probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledWith("alpha");
-    expect(snapshot.inferenceHealth).toMatchObject({ ok: true, probed: true });
-  });
+      expect(deps.probeSandboxInferenceGatewayHealthImpl).toHaveBeenCalledWith("alpha", {
+        gatewayName: "nemoclaw",
+      });
+      expect(snapshot.inferenceHealth).toMatchObject({ ok: true, probed: true });
+    },
+  );
 
   it("keeps an upstream failure diagnostic when inference.local is healthy (#6192)", async () => {
     const deps = snapshotDeps({
@@ -238,6 +240,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
     expect(deps.probeSandboxInferenceInvocationImpl).toHaveBeenCalledWith(
       {
         sandboxName: "alpha",
+        gatewayName: "nemoclaw",
         provider: "openai-api",
         model: "gpt-5.2",
         preferredInferenceApi: null,
@@ -273,6 +276,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
     expect(deps.probeSandboxInferenceInvocationImpl).toHaveBeenCalledWith(
       {
         sandboxName: "alpha",
+        gatewayName: "nemoclaw",
         provider: "compatible-endpoint",
         model: "nvidia/nemotron",
         preferredInferenceApi: "openai-responses",

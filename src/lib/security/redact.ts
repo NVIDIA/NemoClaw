@@ -12,7 +12,8 @@ import type { StdioOptions } from "node:child_process";
  *
  * Two modes:
  * - `redact()` — partial (keep first 4 chars). Used by runner.ts for CLI output.
- * - `redactFull()` — full replacement. Used by debug.ts for diagnostic dumps.
+ * - `redactFull()` — full replacement for known secret patterns.
+ * - `redactFullWithUrls()` — full replacement for known patterns and URL credentials.
  * - `redactSensitiveText()` — full replacement + truncation. Used by onboard-session.ts.
  *
  * Ref: https://github.com/NVIDIA/NemoClaw/issues/2381
@@ -192,6 +193,12 @@ export function redactFull(text: string): string {
     result = result.replace(pattern, replacement);
   }
   return result;
+}
+
+/** Fully redact secret patterns and credentials embedded in URL tokens. */
+export function redactFullWithUrls(text: string): string {
+  const redactedUrls = text.replace(URL_TOKEN_PATTERN, (url) => redactUrl(url) ?? "<REDACTED>");
+  return redactFull(redactedUrls);
 }
 
 function redactStandaloneSecrets(text: string, replacement: string): string {

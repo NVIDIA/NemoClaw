@@ -36,6 +36,9 @@ import {
 } from "./ollama-user-local-runtime";
 import {
   createPortableLifecycleTimingRecorder,
+  PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_MAX_BYTES,
+  PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_MISSING_STATUS,
+  PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_PATH,
   type PortableLifecycleAttemptOutcome,
   type PortableLifecycleTimingRecorder,
 } from "./portable-demo-lifecycle-timing";
@@ -61,6 +64,22 @@ const EXEC_READY_TIMEOUT_MS = 90_000;
 const STOP_SETTLEMENT_TIMEOUT_MS = 30_000;
 const STARTUP_STOP_TIMEOUT_MS = 30_000;
 const STARTUP_TIMEOUT_MS = 90_000;
+const GATEWAY_STARTUP_TIMING_READ_TIMEOUT_MS = 1_000;
+const GATEWAY_STARTUP_TIMING_RECORD_WAIT_TIMEOUT_MS = 2_000;
+const GATEWAY_STARTUP_TIMING_RECORD_POLL_INTERVAL_MS = 100;
+const GATEWAY_STARTUP_TIMING_READ_PROGRAM = [
+  'const fs=require("node:fs");',
+  "let descriptor;",
+  'try{descriptor=fs.openSync(process.argv[1],"r");}',
+  'catch(error){process.exit(error?.code==="ENOENT"?Number(process.argv[3]):1);}',
+  "try{",
+  "const limit=Number(process.argv[2]);",
+  "const buffer=Buffer.alloc(limit);",
+  "const bytes=fs.readSync(descriptor,buffer,0,limit,0);",
+  "process.stdout.write(buffer.subarray(0,bytes));",
+  "}catch{process.exitCode=1;}",
+  "finally{try{fs.closeSync(descriptor);}catch{process.exitCode=1;}}",
+].join("");
 const OLLAMA_STARTUP_TIMEOUT_MS = 30_000;
 const PORTABLE_OLLAMA_REENROLL_ENV = "NEMOCLAW_PORTABLE_OLLAMA_REENROLL";
 const MANAGED_EXECUTABLE_CHILD_FD = 3;
@@ -160,6 +179,8 @@ export interface PortableDemoLifecycleDeps {
   now?: () => number;
   /** Diagnostic-only clock; never used for lifecycle deadlines. */
   timingNow?: () => number;
+  /** Realtime diagnostic clock used only to correlate the OpenClaw startup record. */
+  gatewayStartupEpochNow?: () => number;
   log?: (message: string) => void;
 }
 
@@ -956,13 +977,26 @@ function waitFor(
   timeoutMs: number,
   deps: Required<Pick<PortableDemoLifecycleDeps, "now" | "sleep">>,
   probe: (remainingMs: number) => boolean,
+  gatewayTiming?: Pick<
+    PortableLifecycleTimingRecorder,
+    "measureOpenClawGatewayProbe" | "measureOpenClawGatewaySleep"
+  >,
+  pollIntervalMs = POLL_INTERVAL_MS,
 ): boolean {
   const deadline = deps.now() + timeoutMs;
   do {
     const remaining = Math.max(1, deadline - deps.now());
-    if (probe(remaining)) return true;
+    const ready = gatewayTiming
+      ? gatewayTiming.measureOpenClawGatewayProbe(() => probe(remaining))
+      : probe(remaining);
+    if (ready) return true;
     if (deps.now() >= deadline) return false;
-    deps.sleep(Math.min(POLL_INTERVAL_MS, deadline - deps.now()));
+    const sleep = (): void => deps.sleep(Math.min(pollIntervalMs, deadline - deps.now()));
+    if (gatewayTiming) {
+      gatewayTiming.measureOpenClawGatewaySleep(sleep);
+    } else {
+      sleep();
+    }
   } while (deps.now() < deadline);
   return false;
 }
@@ -1275,6 +1309,7 @@ export function recoverPortableDemoSandboxLifecycle(
   const clock = deps.now ?? Date.now;
   const lifecycleTiming = createPortableLifecycleTimingRecorder({
     now: deps.timingNow,
+    epochNow: deps.gatewayStartupEpochNow,
     write: deps.log ?? console.log,
   });
   const authority = lifecycleTiming.measure("authority", () => {
@@ -1426,13 +1461,19 @@ export function recoverPortableDemoSandboxLifecycle(
     deps.launchOpenshell ??
     ((args: readonly string[]) => defaultLaunchOpenshell(openshellBinary, args, commandEnv));
   lifecycleTiming.setGatewayAction("started");
+  lifecycleTiming.beginOpenClawGatewayStartup();
   lifecycleTiming.measure("startupLaunch", () =>
     launch(openshellExecArgs(gatewayName, sandboxName, startupArgv(receipt))),
   );
   const recovered = lifecycleTiming.measure("gatewayReady", () =>
-    waitFor(STARTUP_TIMEOUT_MS, timing, (remainingMs) => {
-      return gatewayIsRunning(receipt, gatewayName, capture, remainingMs, lifecycleTiming);
-    }),
+    waitFor(
+      STARTUP_TIMEOUT_MS,
+      timing,
+      (remainingMs) => {
+        return gatewayIsRunning(receipt, gatewayName, capture, remainingMs, lifecycleTiming);
+      },
+      lifecycleTiming,
+    ),
   );
   if (!recovered) {
     lifecycleTiming.markFailureStage("gatewayReady");
@@ -1441,6 +1482,28 @@ export function recoverPortableDemoSandboxLifecycle(
       `Portable sandbox '${sandboxName}' startup did not start its agent gateway; inspect /tmp/nemoclaw-start.log inside the sandbox`,
     );
   }
+  waitFor(
+    GATEWAY_STARTUP_TIMING_RECORD_WAIT_TIMEOUT_MS,
+    timing,
+    (remainingMs) =>
+      lifecycleTiming.readOpenClawGatewayStartupTiming(
+        () =>
+          capture(
+            openshellExecArgs(gatewayName, sandboxName, [
+              "node",
+              "-e",
+              GATEWAY_STARTUP_TIMING_READ_PROGRAM,
+              PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_PATH,
+              String(PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_MAX_BYTES + 1),
+              String(PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_MISSING_STATUS),
+            ]),
+            Math.min(GATEWAY_STARTUP_TIMING_READ_TIMEOUT_MS, remainingMs),
+          ),
+        STARTUP_TIMEOUT_MS + PROBE_TIMEOUT_MS,
+      ) !== "missing",
+    undefined,
+    GATEWAY_STARTUP_TIMING_RECORD_POLL_INTERVAL_MS,
+  );
   (deps.log ?? console.log)(`  Portable demo lifecycle recovered sandbox '${sandboxName}'.`);
   lifecycleTiming.finish("recovered");
   return { kind: "recovered" };

@@ -34,21 +34,6 @@ describe("resolveDockerStartupCommandPatch", () => {
     },
   );
 
-  it("preserves Jetson device groups only for OpenClaw (#7610)", () => {
-    expect(resolveDockerStartupCommandPatch(agent("openclaw"), true, DEFAULT_ENV)).toMatchObject({
-      preserveJetsonDeviceGroupMembership: true,
-    });
-    expect(resolveDockerStartupCommandPatch(agent("hermes"), true, DEFAULT_ENV)).toMatchObject({
-      preserveJetsonDeviceGroupMembership: false,
-    });
-    expect(resolveDockerStartupCommandPatch(agent("openclaw"), false, DEFAULT_ENV)).toMatchObject({
-      preserveJetsonDeviceGroupMembership: true,
-    });
-    expect(resolveDockerStartupCommandPatch(agent("openclaw"), true, PORTABLE_ENV)).toMatchObject({
-      preserveJetsonDeviceGroupMembership: true,
-    });
-  });
-
   it("keeps the DCode ulimit contract visible under the portable profile", () => {
     expect(
       resolveDockerStartupCommandPatch(agent("langchain-deepagents-code"), true, PORTABLE_ENV)
@@ -59,12 +44,10 @@ describe("resolveDockerStartupCommandPatch", () => {
   it("stays fully disabled off the docker-driver gateway regardless of profile", () => {
     expect(resolveDockerStartupCommandPatch(agent("hermes"), false, PORTABLE_ENV)).toEqual({
       persistStartupCommand: false,
-      preserveJetsonDeviceGroupMembership: false,
       requiredUlimits: null,
     });
     expect(resolveDockerStartupCommandPatch(agent("hermes"), false, DEFAULT_ENV)).toEqual({
       persistStartupCommand: false,
-      preserveJetsonDeviceGroupMembership: false,
       requiredUlimits: null,
     });
   });

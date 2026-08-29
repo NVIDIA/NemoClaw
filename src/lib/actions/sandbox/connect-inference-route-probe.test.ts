@@ -66,6 +66,7 @@ describe("sandbox connect inference route probe argv", () => {
 
   it.each([
     null,
+    { name: "hermes" },
     { name: "langchain-deepagents-code" },
   ])("pins the probe to the owning OpenShell gateway for agent %j (#8942)", (agent) => {
     expect(

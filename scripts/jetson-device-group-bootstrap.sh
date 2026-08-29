@@ -37,16 +37,34 @@ for gid in "${gids[@]}"; do
   seen[$gid]=1
 done
 
+declare -a group_names=()
+declare -a create_groups=()
 for gid in "${gids[@]}"; do
   group_record="$(/usr/bin/getent group "$gid" || true)"
   if [ -z "$group_record" ]; then
     group_name="nemoclaw_gpu_$gid"
-    /usr/sbin/groupadd --gid "$gid" "$group_name"
+    [ -z "$(/usr/bin/getent group "$group_name" || true)" ] \
+      || fail "generated device group name already exists"
+    create_group=1
   else
-    IFS=':' read -r group_name _ resolved_gid _ <<<"$group_record"
-    if [ -z "$group_name" ] || [ "$resolved_gid" != "$gid" ]; then
+    if [[ "$group_record" == *$'\n'* ]]; then
       fail "device group record is invalid"
     fi
+    IFS=':' read -r group_name _ resolved_gid _ extra <<<"$group_record"
+    if [ -z "$group_name" ] || [ "$resolved_gid" != "$gid" ] || [ -n "$extra" ]; then
+      fail "device group record is invalid"
+    fi
+    create_group=0
+  fi
+  group_names+=("$group_name")
+  create_groups+=("$create_group")
+done
+
+for index in "${!gids[@]}"; do
+  gid="${gids[$index]}"
+  group_name="${group_names[$index]}"
+  if [ "${create_groups[$index]}" -eq 1 ]; then
+    /usr/sbin/groupadd --gid "$gid" "$group_name"
   fi
   /usr/sbin/usermod --append --groups "$group_name" sandbox
 done

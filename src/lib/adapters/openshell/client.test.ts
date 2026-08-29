@@ -17,6 +17,7 @@ import {
   stripAnsi,
   versionGte,
 } from "./client";
+import { processTreeBoundedOpenshellInvocation } from "./process-tree-timeout";
 
 interface SpawnResultSpec {
   status: number | null;
@@ -51,6 +52,21 @@ function exitWithCode(code: number): never {
 }
 
 describe("openshell helpers", () => {
+  it("wraps a synchronous Linux probe in a process-group timeout (#10238)", () => {
+    expect(
+      processTreeBoundedOpenshellInvocation(
+        "/opt/openshell",
+        ["sandbox", "list"],
+        { killProcessTreeOnTimeout: true, timeout: 1000 },
+        { platform: "linux", timeoutExecutableExists: () => true },
+      ),
+    ).toEqual({
+      binary: "/usr/bin/timeout",
+      args: ["--signal=KILL", "0.75s", "/opt/openshell", "sandbox", "list"],
+      killSignal: "SIGKILL",
+    });
+  });
+
   afterEach(() => {
     vi.unstubAllEnvs();
   });

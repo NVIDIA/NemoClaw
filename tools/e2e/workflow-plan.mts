@@ -94,8 +94,6 @@ const REGISTRY_OWNING_PATHS = [
   "nemoclaw-blueprint/",
   "src/lib/onboard/",
   "test/e2e/fixtures/",
-  "test/e2e/live/openclaw-agent-assertion.ts",
-  "test/e2e/live/personal-egress-live-proof.ts",
   "test/e2e/live/registry-targets.test.ts",
   "test/e2e/registry/",
 ] as const;

@@ -927,6 +927,9 @@ usage() {
   printf "  ${C_DIM}Options:${C_RESET}\n"
   printf "    --non-interactive    Skip prompts (uses env vars / defaults)\n"
   printf "    --yes-i-accept-third-party-software Accept the third-party software notice without prompting\n"
+  printf "    --defer-onboarding   Install Hermes without onboarding when NVIDIA inference credentials are absent\n"
+  printf "                          Use only with NEMOCLAW_AGENT=hermes, no registered sandboxes, no local model profile,\n"
+  printf "                          and the build, cloud, or routed NVIDIA hosted provider\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
   printf "    --station-deepseek   Use DeepSeek V4 Flash for DGX Station express install (interactive terminal required)\n"
   printf "    --force-station-install Bypass only the DGX release-metadata allowlist for Station GB300 express install\n"
@@ -936,6 +939,9 @@ usage() {
   printf "    NVIDIA_INFERENCE_API_KEY                API key (skips credential prompt)\n"
   printf "    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 Same as --yes-i-accept-third-party-software\n"
   printf "    NEMOCLAW_NON_INTERACTIVE=1    Same as --non-interactive\n"
+  printf "    NEMOCLAW_DEFER_ONBOARDING=1   Same as --defer-onboarding\n"
+  printf "                                  Use only with NEMOCLAW_AGENT=hermes, no registered sandboxes, no local model profile,\n"
+  printf "                                  and the build, cloud, or routed NVIDIA hosted provider\n"
   printf "    NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt Allow sudo prompts during non-interactive onboarding\n"
   printf "    NEMOCLAW_FRESH=1              Same as --fresh\n"
   printf "    NEMOCLAW_NO_EXPRESS=1         Skip the Express prompt on detected platforms\n"
@@ -1441,9 +1447,46 @@ refresh_path() {
   fi
 }
 
+prefer_homebrew_openshell() {
+  [[ "$(uname -s)" == "Darwin" ]] || return 1
+  command -v brew >/dev/null 2>&1 || return 1
+  if [[ "${1:-}" != "verified-install" ]]; then
+    macos_openshell_homebrew_gateway_service_installed || return 1
+  fi
+
+  local brew_prefix openshell_bin gateway_bin
+  brew_prefix="$(brew --prefix 2>/dev/null)" || return 1
+  [ -n "$brew_prefix" ] || return 1
+  openshell_bin="${brew_prefix%/}/bin/openshell"
+  gateway_bin="${brew_prefix%/}/bin/openshell-gateway"
+  [ -x "$openshell_bin" ] && [ -x "$gateway_bin" ] || return 1
+  export NEMOCLAW_OPENSHELL_BIN="$openshell_bin"
+  export NEMOCLAW_OPENSHELL_GATEWAY_BIN="$gateway_bin"
+  export PATH="${brew_prefix%/}/bin:$PATH"
+}
+
+observed_macos_openshell_install_method() {
+  if command -v brew >/dev/null 2>&1; then
+    printf '%s\n' "homebrew"
+  else
+    printf '%s\n' "standalone"
+  fi
+}
+
 prefer_user_local_openshell() {
   local local_bin="${XDG_BIN_HOME:-${HOME}/.local/bin}"
   local openshell_bin="${local_bin}/openshell"
+  local gateway_bin="${local_bin}/openshell-gateway"
+  if [[ "${1:-}" == "verified-install" ]]; then
+    [[ "$local_bin" == /* ]] || return 1
+    [[ -x "$openshell_bin" && -x "$gateway_bin" ]] || return 1
+    export NEMOCLAW_OPENSHELL_BIN="$openshell_bin"
+    export NEMOCLAW_OPENSHELL_GATEWAY_BIN="$gateway_bin"
+    if [[ ":$PATH:" != *":$local_bin:"* ]]; then
+      export PATH="$local_bin:$PATH"
+    fi
+    return 0
+  fi
   if [[ -x "$openshell_bin" ]]; then
     export NEMOCLAW_OPENSHELL_BIN="$openshell_bin"
     if [[ ":$PATH:" != *":$local_bin:"* ]]; then
@@ -1948,21 +1991,23 @@ NODE
 maybe_install_openshell_during_install() {
   local mode="${1:-force}"
   local explicit_openshell_bin="${NEMOCLAW_OPENSHELL_BIN:-}"
+  local platform macos_install_method="" observed_install_method=""
+  platform="$(uname -s)" || return 1
   if truthy_env "${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}"; then
     info "Deferring OpenShell CLI installation until after pre-upgrade backup."
     return 0
   fi
   if [[ "$mode" == "if-missing" ]] && command_exists openshell; then
-    if [[ "$(uname -s)" == "Darwin" ]] && command -v brew >/dev/null 2>&1 \
+    if [[ "$platform" == "Darwin" ]] && command -v brew >/dev/null 2>&1 \
       && ! macos_openshell_homebrew_gateway_service_installed; then
       info "OpenShell CLI exists but the macOS Homebrew gateway service is missing."
     else
-      if [[ "$(uname -s)" == "Darwin" ]] && ! command -v brew >/dev/null 2>&1; then
+      if [[ "$platform" == "Darwin" ]] && ! command -v brew >/dev/null 2>&1; then
         warn "Homebrew is not installed; using the standalone OpenShell gateway without reboot persistence."
       fi
-      prefer_user_local_openshell
-      # Service discovery still uses the user-local PATH, but a source-checkout
-      # caller's executable selection remains authoritative for onboarding.
+      prefer_homebrew_openshell || prefer_user_local_openshell
+      # Service discovery uses the selected OpenShell PATH, but a source-checkout
+      # caller's explicit executable selection remains authoritative for onboarding.
       if [[ "$explicit_openshell_bin" == /* && -f "$explicit_openshell_bin" && -x "$explicit_openshell_bin" ]]; then
         export NEMOCLAW_OPENSHELL_BIN="$explicit_openshell_bin"
       fi
@@ -1970,10 +2015,36 @@ maybe_install_openshell_during_install() {
       return 0
     fi
   fi
-  if ! spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"; then
+  if [[ "$platform" == "Darwin" ]]; then
+    macos_install_method="$(observed_macos_openshell_install_method)" || return 1
+  fi
+  if ! _NEMOCLAW_OPENSHELL_INSTALL_METHOD="$macos_install_method" \
+    spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"; then
     return 1
   fi
-  prefer_user_local_openshell
+  if [[ "$platform" == "Darwin" ]]; then
+    observed_install_method="$(observed_macos_openshell_install_method)" || return 1
+    [[ "$observed_install_method" == "$macos_install_method" ]] \
+      || error "The macOS OpenShell installation method changed while installation was running. The installer stopped before selecting OpenShell binaries or recovering the gateway."
+    case "$macos_install_method" in
+      homebrew)
+        # install-openshell.sh returned success only after verifying and installing
+        # the pinned formula, so this does not re-read the untrusted tap formula.
+        prefer_homebrew_openshell verified-install \
+          || error "The verified Homebrew OpenShell installation did not provide executable CLI and gateway binaries. The installer stopped before gateway recovery."
+        ;;
+      standalone)
+        prefer_user_local_openshell verified-install \
+          || error "The verified standalone OpenShell installation did not provide trusted executable user-local CLI and gateway binaries. The installer stopped before gateway recovery."
+        warn "Homebrew is not installed; using the verified standalone OpenShell gateway without reboot persistence."
+        ;;
+      *)
+        error "The macOS OpenShell installation method could not be verified. The installer stopped before selecting OpenShell binaries or recovering the gateway."
+        ;;
+    esac
+  else
+    prefer_user_local_openshell
+  fi
   install_nemoclaw_openshell_gateway_user_service
 }
 
@@ -3160,10 +3231,105 @@ EOF
   esac
 }
 
-stop_legacy_openshell_gateway_process() {
-  [ "$(uname -s)" = "Linux" ] || return 1
+trusted_macos_openshell_gateway_process() {
+  [ "$(uname -s)" = "Darwin" ] || return 1
 
-  local gateway_port runtime_dir pid_file pid gateway_exe attempt
+  local pid="$1" gateway_port="$2" expected_generation="${3:-}"
+  local gateway_name gateway_command gateway_exe gateway_lsof_output
+  local process_generation_before process_generation_after
+  local observation_diagnostics_file observation_status observation_valid
+  local user_bin_home brew_prefix trusted_brew_gateway
+  command_exists ps || return 1
+  command_exists lsof || return 1
+
+  gateway_name="$(nemoclaw_gateway_name)" || return 1
+  observation_diagnostics_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-process-observation-XXXXXX" 2>/dev/null)" \
+    || return 1
+  _cleanup_files+=("$observation_diagnostics_file")
+  observation_valid=true
+
+  observation_status=0
+  process_generation_before="$(ps -p "$pid" -o lstart= 2>"$observation_diagnostics_file")" \
+    || observation_status=$?
+  if [ "$observation_status" -ne 0 ] || [ -s "$observation_diagnostics_file" ] || [ -z "$process_generation_before" ]; then
+    observation_valid=false
+  fi
+
+  if $observation_valid; then
+    : >"$observation_diagnostics_file"
+    observation_status=0
+    gateway_command="$(ps -p "$pid" -o args= 2>"$observation_diagnostics_file")" \
+      || observation_status=$?
+    if [ "$observation_status" -ne 0 ] || [ -s "$observation_diagnostics_file" ] \
+      || [ "$gateway_command" != "openshell-gateway[nemoclaw=${gateway_name};port=${gateway_port}]" ]; then
+      observation_valid=false
+    fi
+  fi
+
+  if $observation_valid; then
+    : >"$observation_diagnostics_file"
+    observation_status=0
+    gateway_lsof_output="$(lsof -a -p "$pid" -d txt -Fn 2>"$observation_diagnostics_file")" \
+      || observation_status=$?
+    if [ "$observation_status" -ne 0 ] || [ -s "$observation_diagnostics_file" ] \
+      || [[ "$gateway_lsof_output" != "p${pid}"$'\n'* ]]; then
+      observation_valid=false
+    else
+      gateway_exe="$(printf '%s\n' "$gateway_lsof_output" | sed -n '/^n\// { s/^n//; p; }' | head -1)"
+      [ -n "$gateway_exe" ] || observation_valid=false
+    fi
+  fi
+
+  if $observation_valid; then
+    : >"$observation_diagnostics_file"
+    observation_status=0
+    process_generation_after="$(ps -p "$pid" -o lstart= 2>"$observation_diagnostics_file")" \
+      || observation_status=$?
+    if [ "$observation_status" -ne 0 ] || [ -s "$observation_diagnostics_file" ] \
+      || [ "$process_generation_after" != "$process_generation_before" ]; then
+      observation_valid=false
+    fi
+  fi
+
+  rm -f "$observation_diagnostics_file"
+  _cleanup_files=("${_cleanup_files[@]/$observation_diagnostics_file/}")
+  $observation_valid || return 1
+  if [ -n "$expected_generation" ] && [ "$process_generation_before" != "$expected_generation" ]; then
+    return 1
+  fi
+
+  user_bin_home="${XDG_BIN_HOME:-${HOME}/.local/bin}"
+  if [ "${user_bin_home#/}" = "$user_bin_home" ]; then
+    user_bin_home="${HOME}/.local/bin"
+  fi
+  case "$gateway_exe" in
+    "${user_bin_home%/}/openshell-gateway" | /usr/local/bin/openshell-gateway | /usr/bin/openshell-gateway)
+      printf '%s\n' "$process_generation_before"
+      return 0
+      ;;
+  esac
+
+  command_exists brew || return 1
+  brew_prefix="$(brew --prefix 2>/dev/null || true)"
+  [ -n "$brew_prefix" ] || return 1
+  trusted_brew_gateway="${brew_prefix%/}/opt/openshell/bin/openshell-gateway"
+  [ -e "$trusted_brew_gateway" ] || return 1
+  trusted_brew_gateway="$(cd -P "$(dirname "$trusted_brew_gateway")" 2>/dev/null && printf '%s/%s\n' "$PWD" "$(basename "$trusted_brew_gateway")")" \
+    || return 1
+  [ "$gateway_exe" = "$trusted_brew_gateway" ] || return 1
+  printf '%s\n' "$process_generation_before"
+}
+
+stop_legacy_openshell_gateway_process() {
+  local platform
+  platform="$(uname -s)"
+  case "$platform" in
+    Darwin | Linux) ;;
+    *) return 1 ;;
+  esac
+
+  local gateway_port runtime_dir pid_file pid gateway_exe listener_pids attempt process_generation
+  local listener_diagnostics_file listener_status listener_observation_valid
   gateway_port="$(resolve_nemoclaw_gateway_port)" || return 2
   if [ -n "${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR:-}" ]; then
     runtime_dir="${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR}"
@@ -3182,13 +3348,49 @@ stop_legacy_openshell_gateway_process() {
   [[ "$pid" =~ ^[1-9][0-9]*$ ]] \
     || error "Refusing to retire the legacy OpenShell gateway from an invalid PID file: ${pid_file}"
   if ! kill -0 "$pid" 2>/dev/null; then
+    if [ "$platform" = "Darwin" ]; then
+      command_exists lsof \
+        || error "Could not verify gateway port ${gateway_port} because lsof is unavailable. The PID file, OpenShell registration, and sandbox backups were preserved."
+      listener_diagnostics_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-lsof-XXXXXX" 2>/dev/null)" \
+        || error "Could not prepare gateway port verification. The PID file, OpenShell registration, and sandbox backups were preserved."
+      _cleanup_files+=("$listener_diagnostics_file")
+      listener_status=0
+      listener_pids="$(lsof -nP -iTCP:"${gateway_port}" -sTCP:LISTEN -t 2>"$listener_diagnostics_file")" \
+        || listener_status=$?
+      listener_observation_valid=false
+      # lsof uses status 1 for both no matches and some operational failures.
+      if [ ! -s "$listener_diagnostics_file" ]; then
+        case "$listener_status" in
+          0) [ -n "$listener_pids" ] && listener_observation_valid=true ;;
+          1) [ -z "$listener_pids" ] && listener_observation_valid=true ;;
+        esac
+      fi
+      rm -f "$listener_diagnostics_file"
+      _cleanup_files=("${_cleanup_files[@]/$listener_diagnostics_file/}")
+      $listener_observation_valid \
+        || error "Could not verify gateway port ${gateway_port} because lsof did not produce a conclusive listener observation. The PID file, OpenShell registration, and sandbox backups were preserved."
+      [ -z "$listener_pids" ] \
+        || error "Refusing to retire the legacy OpenShell gateway from stale PID file ${pid_file}: gateway port ${gateway_port} still has listener PID(s): $(printf '%s' "$listener_pids" | tr '\n' ' '). Stop the listener or restore the correct owned PID file, then retry; sandbox backups were preserved."
+    fi
     rm -f "$pid_file"
     return 0
   fi
 
-  gateway_exe="$(readlink "/proc/${pid}/exe" 2>/dev/null || true)"
-  [ "${gateway_exe##*/}" = "openshell-gateway" ] \
-    || error "Refusing to stop PID ${pid}: the recorded process is not openshell-gateway."
+  if [ "$platform" = "Darwin" ]; then
+    process_generation="$(trusted_macos_openshell_gateway_process "$pid" "$gateway_port")" \
+      || error "Refusing to stop PID ${pid}: the recorded macOS process is not the expected NemoClaw OpenShell gateway."
+    if ! trusted_macos_openshell_gateway_process "$pid" "$gateway_port" "$process_generation" >/dev/null; then
+      if ! kill -0 "$pid" 2>/dev/null; then
+        rm -f "$pid_file"
+        return 0
+      fi
+      error "Refusing to stop PID ${pid}: the recorded macOS process changed or could not be verified immediately before signaling. The PID file, OpenShell registration, and sandbox backups were preserved."
+    fi
+  else
+    gateway_exe="$(readlink "/proc/${pid}/exe" 2>/dev/null || true)"
+    [ "${gateway_exe##*/}" = "openshell-gateway" ] \
+      || error "Refusing to stop PID ${pid}: the recorded process is not openshell-gateway."
+  fi
 
   kill "$pid" 2>/dev/null \
     || error "Could not stop the recorded legacy OpenShell gateway process ${pid}."
@@ -3197,6 +3399,14 @@ stop_legacy_openshell_gateway_process() {
     sleep 0.2
   done
   if kill -0 "$pid" 2>/dev/null; then
+    if [ "$platform" = "Darwin" ] \
+      && ! trusted_macos_openshell_gateway_process "$pid" "$gateway_port" "$process_generation" >/dev/null; then
+      if ! kill -0 "$pid" 2>/dev/null; then
+        rm -f "$pid_file"
+        return 0
+      fi
+      error "Refusing to forcibly terminate PID ${pid}: the recorded macOS process changed or could not be verified after SIGTERM. The PID file, OpenShell registration, and sandbox backups were preserved."
+    fi
     kill -KILL "$pid" 2>/dev/null \
       || error "Could not terminate the recorded legacy OpenShell gateway process ${pid}."
     for attempt in {1..10}; do
@@ -3207,6 +3417,45 @@ stop_legacy_openshell_gateway_process() {
   kill -0 "$pid" 2>/dev/null \
     && error "The recorded legacy OpenShell gateway process ${pid} did not stop."
   rm -f "$pid_file"
+}
+
+stop_macos_openshell_gateway_user_service() {
+  [ "$(uname -s)" = "Darwin" ] || return 1
+
+  local gateway_port service_label service_path service_domain service_program
+  local brew_prefix expected_program active_service active_program
+  gateway_port="$(resolve_nemoclaw_gateway_port)" || return 1
+  [ "$gateway_port" -eq 8080 ] || return 1
+  command_exists brew || return 1
+  command_exists launchctl || return 1
+  command_exists plutil || return 1
+
+  service_label="homebrew.mxcl.openshell"
+  service_path="${HOME}/Library/LaunchAgents/${service_label}.plist"
+  [ -f "$service_path" ] || return 1
+  if [ -L "$service_path" ] || ! [ -O "$service_path" ]; then
+    error "Refusing to retire the OpenShell gateway from an untrusted macOS user service: ${service_path}"
+  fi
+
+  service_program="$(plutil -extract ProgramArguments.0 raw -o - "$service_path" 2>/dev/null || true)"
+  [ "$(plutil -extract Label raw -o - "$service_path" 2>/dev/null || true)" = "$service_label" ] \
+    || error "Refusing to retire an OpenShell gateway from a macOS user service with an unexpected label: ${service_path}"
+  brew_prefix="$(brew --prefix 2>/dev/null || true)"
+  [ -n "$brew_prefix" ] || return 1
+  expected_program="${brew_prefix%/}/opt/openshell/libexec/openshell-gateway-homebrew-service"
+  [ "$service_program" = "$expected_program" ] && [ -x "$service_program" ] \
+    || error "Refusing to retire an OpenShell gateway from a macOS user service with an untrusted executable: ${service_program:-<empty>}"
+
+  service_domain="gui/$(id -u)/${service_label}"
+  active_service="$(launchctl print "$service_domain" 2>/dev/null)" || return 1
+  active_program="$(printf '%s\n' "$active_service" | sed -n 's/^[[:space:]]*program = //p' | head -1)"
+  [ "$active_program" = "$expected_program" ] \
+    || error "Refusing to retire an OpenShell gateway from an active macOS user service with an untrusted executable: ${active_program:-<empty>}"
+  launchctl bootout "$service_domain" >/dev/null 2>&1 \
+    || error "Could not stop the trusted OpenShell Homebrew gateway user service. Run 'launchctl print ${service_domain}' for details."
+  launchctl print "$service_domain" >/dev/null 2>&1 \
+    && error "The trusted OpenShell Homebrew gateway user service remained active after the stop command."
+  return 0
 }
 
 stop_nemoclaw_openshell_gateway_user_service() {
@@ -3320,6 +3569,7 @@ preinstall_backup_and_retire_legacy_gateway() {
       openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \
         || openshell gateway destroy >/dev/null 2>&1 \
         || { { stop_nemoclaw_openshell_gateway_user_service \
+          || stop_macos_openshell_gateway_user_service \
           || stop_legacy_openshell_gateway_process; } \
           && { openshell gateway remove "$gateway_name" >/dev/null 2>&1 \
             || warn "The legacy gateway process stopped, but its OpenShell registration could not be removed; onboarding will replace the stale registration."; }; } \
@@ -3327,6 +3577,7 @@ preinstall_backup_and_retire_legacy_gateway() {
     else
       openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \
         || { { stop_nemoclaw_openshell_gateway_user_service \
+          || stop_macos_openshell_gateway_user_service \
           || stop_legacy_openshell_gateway_process; } \
           && { openshell gateway remove "$gateway_name" >/dev/null 2>&1 \
             || warn "Legacy gateway ${gateway_name} stopped, but its OpenShell registration could not be removed; onboarding will replace only that stale registration."; }; } \
@@ -3768,6 +4019,44 @@ recover_preexisting_sandboxes_before_onboard() {
   warn "One or more existing sandboxes could not be recovered automatically."
   warn "Generic onboarding will not run; review the affected sandbox and preserved backup diagnostics above."
   return 1
+}
+
+validate_deferred_hermes_onboarding_request() {
+  [[ "${DEFER_ONBOARDING:-}" == "1" ]] || return 0
+
+  if [[ "${NEMOCLAW_AGENT:-openclaw}" != "hermes" ]]; then
+    error "--defer-onboarding currently requires NEMOCLAW_AGENT=hermes."
+  fi
+  if [[ "${NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE:-}" == "1" ]]; then
+    error "--defer-onboarding does not support a local model profile."
+  fi
+  case "${NEMOCLAW_PROVIDER:-build}" in
+    build | cloud | routed) ;;
+    *)
+      error "--defer-onboarding currently supports NVIDIA hosted inference only. Use NEMOCLAW_PROVIDER=build, cloud, or routed."
+      ;;
+  esac
+}
+
+should_defer_hermes_onboarding() {
+  local registered_sandbox_count="${1:-0}"
+  local provider_key="${NEMOCLAW_PROVIDER_KEY:-}"
+  [[ "${DEFER_ONBOARDING:-}" == "1" ]] || return 1
+  [[ "${NEMOCLAW_AGENT:-openclaw}" == "hermes" ]] || return 1
+  [[ "$registered_sandbox_count" == "0" ]] || return 1
+  [[ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]] || return 1
+  [[ -z "${NVIDIA_API_KEY:-}" ]] || return 1
+
+  provider_key="${provider_key#"${provider_key%%[![:space:]]*}"}"
+  provider_key="${provider_key%"${provider_key##*[![:space:]]}"}"
+  provider_key="$(printf '%s' "$provider_key" | tr '[:upper:]' '[:lower:]')"
+  # Keep this list aligned with PROVIDER_KEY_ROUTE_VALUES in
+  # src/lib/onboard/providers.ts. These values select a route; they are not
+  # inference credentials.
+  case "$provider_key" in
+    "" | inference | cloud | nim | vllm | open-router | openrouterai | anthropiccompatible | hermes | hermes-provider | hermesprovider | nous | nous-portal | build | openrouter | openai | anthropic | gemini | ollama | llama-cpp | install-llama-cpp | custom | nim-local | routed | install-vllm | install-ollama | install-windows-ollama | start-windows-ollama) ;;
+    *) return 1 ;;
+  esac
 }
 
 run_onboard() {
@@ -4407,7 +4696,7 @@ validate_express_platform_boundary() {
   case "${1:-}" in
     "Unsupported DGX Station OS")
       if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ -n "${NEMOCLAW_PROVIDER:-}" ]; then return 0; fi
-      error "This DGX Station OS image is outside the recognized Station Express release-metadata boundary. Station Express accepts generic Ubuntu 24.04 ARM64, OTA-form DGX OS 7.2.0, 7.4.0, or 7.5.0, an explicitly qualified Station factory image, or the no-OTA DGX OS 7.6.x NVIDIA DGX GB300WS profile."
+      error "This DGX Station OS image is outside the recognized Station Express release-metadata boundary. Station Express accepts generic Ubuntu 24.04 ARM64, OTA-form DGX OS 7.2.0, 7.4.0, or 7.5.0, an explicitly qualified Station factory image, or the no-OTA DGX OS 7.6.x profile with DGX_PRETTY_NAME=\"NVIDIA DGX GB300WS\" or DGX_PRETTY_NAME=\"NVIDIA DGX Server\"."
       ;;
     "Unsupported DGX Station generation")
       if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ -n "${NEMOCLAW_PROVIDER:-}" ]; then return 0; fi
@@ -5969,6 +6258,7 @@ main() {
   # cannot be recovered from the env at error time — track it here instead.
   NON_INTERACTIVE_SOURCE=""
   ACCEPT_THIRD_PARTY_SOFTWARE=""
+  DEFER_ONBOARDING=""
   FRESH=""
   STATION_DEEPSEEK=""
   FORCE_STATION_INSTALL=""
@@ -5987,6 +6277,7 @@ main() {
         NON_INTERACTIVE_SOURCE="the --non-interactive flag"
         ;;
       --yes-i-accept-third-party-software) ACCEPT_THIRD_PARTY_SOFTWARE=1 ;;
+      --defer-onboarding) DEFER_ONBOARDING=1 ;;
       --fresh) FRESH=1 ;;
       --station-deepseek) STATION_DEEPSEEK=1 ;;
       --force-station-install) FORCE_STATION_INSTALL=1 ;;
@@ -6030,6 +6321,7 @@ main() {
     NON_INTERACTIVE_SOURCE="NEMOCLAW_NON_INTERACTIVE=1"
   fi
   ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE:-${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}}"
+  DEFER_ONBOARDING="${DEFER_ONBOARDING:-${NEMOCLAW_DEFER_ONBOARDING:-}}"
   FRESH="${FRESH:-${NEMOCLAW_FRESH:-}}"
   if [ -n "${LOCAL_MODEL_RUNTIME:-}" ]; then
     export NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1
@@ -6048,6 +6340,7 @@ main() {
     && { [ -n "${NEMOCLAW_PROVIDER:-}" ] || [ -n "${NEMOCLAW_MODEL:-}" ]; }; then
     error "The local model profile does not accept NEMOCLAW_PROVIDER or NEMOCLAW_MODEL overrides."
   fi
+  validate_deferred_hermes_onboarding_request
   # If the user explicitly accepted the third-party-software notice, treat
   # that as non-interactive intent for the rest of the run too — show_usage_notice
   # is only one of several phase-3 steps that need a TTY or --non-interactive
@@ -6100,6 +6393,10 @@ main() {
   # host prerequisite preparation before the generic Docker bootstrap.
   prepare_installer_host
 
+  # Express selection can change the provider after the initial argument
+  # validation. Recheck the deferred-onboarding scope before installation.
+  validate_deferred_hermes_onboarding_request
+
   install_nemoclaw_before_onboarding
 
   # Gate the onboarding-adjacent steps on the absolute CLI path so a stale
@@ -6126,7 +6423,9 @@ main() {
       warn "Consider destroying existing sessions with '${_CLI_BIN} <name> destroy' first."
       warn "Set NEMOCLAW_SINGLE_SESSION=1 to abort the installer when sessions are active."
     fi
-    if run_installer_host_preflight; then
+    if should_defer_hermes_onboarding "$_registered_sandbox_count"; then
+      info "NVIDIA inference credentials are absent. Hermes onboarding did not run."
+    elif run_installer_host_preflight; then
       if ! recover_preexisting_sandboxes_before_onboard "$_cli_runner"; then
         finalize_install
         return 1

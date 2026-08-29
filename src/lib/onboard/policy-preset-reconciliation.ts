@@ -2,18 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
-import { filterSetupPolicyPresetNamesForAgent } from "./agent-policy-presets";
+import {
+  filterSetupPolicyPresetNamesForAgent,
+  setupPolicyPresetAppliesToAgent,
+} from "./agent-policy-presets";
 import { mergeRequiredHermesToolGatewayPolicyPresets } from "./hermes-managed-tools";
 import {
   mergeEnabledMessagingChannelPolicyPresets,
   pruneDisabledMessagingPolicyPresets,
+  pruneInactiveMessagingPolicyPresets,
 } from "./messaging-policy-presets";
 import {
   isInactiveObservabilityPolicyPreset,
   mergeRequiredObservabilityPolicyPresets,
 } from "./observability-policy-presets";
 import { mergeRequiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-presets";
-import { classifyPresetProvenance } from "../policy/preset-provenance";
+import { getTier, type TierDefinition } from "../policy/tiers";
 import {
   ensureRequiredTierPolicyPresets,
   filterSuppressedAgentRequiredPresets,
@@ -48,6 +52,11 @@ export function mergeRequiredSetupPolicyPresets(
         customOwnsObservability: options.customOwnsObservability,
       }),
   );
+  const activeAgentPresets = pruneInactiveMessagingPolicyPresets(
+    agentFilteredPresets,
+    options.enabledChannels,
+    options.customPresetNames,
+  );
   const effectiveHermesToolGateways = (options.hermesToolGateways ?? []).filter(
     (name) =>
       !isStaleBuiltinWebSearchPolicyPreset(name, {
@@ -59,7 +68,7 @@ export function mergeRequiredSetupPolicyPresets(
     mergeRequiredOpenclawOtelPolicyPresets(
       mergeEnabledMessagingChannelPolicyPresets(
         mergeRequiredHermesToolGatewayPolicyPresets(
-          agentFilteredPresets,
+          activeAgentPresets,
           effectiveHermesToolGateways,
           options.knownPresetNames,
         ),
@@ -86,42 +95,23 @@ export function mergeRequiredSetupPolicyPresets(
   );
 }
 
-export function isStaleBuiltinBravePolicyPreset(
-  name: string,
-  options: {
-    webSearchConfig?: WebSearchConfig | null;
-    customPresetNames?: ReadonlySet<string> | null;
-    tierName?: string | null;
-    agentName?: string | null;
-  } = {},
-): boolean {
-  return isStaleBuiltinWebSearchPolicyPreset(name, options);
-}
-
 export function isStaleBuiltinWebSearchPolicyPreset(
   name: string,
   options: {
     webSearchConfig?: WebSearchConfig | null;
     customPresetNames?: ReadonlySet<string> | null;
-    tierName?: string | null;
-    agentName?: string | null;
+    tier?: TierDefinition | null;
+    agent?: string | null;
   } = {},
 ): boolean {
   if (options.customPresetNames?.has(name)) return false;
-  // brave/tavily double as a tier's default egress preset (e.g. Brave Search API
-  // host access on the Balanced/Open tiers) AND the built-in web-search provider
-  // preset. When the preset is a default of the applied tier it is a tier egress
-  // default, not a stale web-search leftover — keep it regardless of the web-search
-  // provider choice. Reuse the single provenance classifier so pruning and the
-  // policy-list display agree on WHY a preset is present, and so the exemption is
-  // scoped exactly to the applied tier (Restricted lists no such default → still
-  // pruned). classifyPresetProvenance's getTier() returns null for an unknown /
-  // non-canonical tier, so this fails safe (unknown → not "tier" → not exempt). (#6844)
+  // A preset in the recorded tier is tier egress, not stale provider state.
+  // Unknown tiers fail closed because the canonical tier lookup returns no match.
   if (
-    classifyPresetProvenance(name, {
-      tierName: options.tierName,
-      agentName: options.agentName,
-    }).source === "tier"
+    setupPolicyPresetAppliesToAgent(name, options.agent) &&
+    options.tier?.presets.some(
+      (preset) => preset.name.trim().toLowerCase() === name.trim().toLowerCase(),
+    )
   ) {
     return false;
   }
@@ -137,6 +127,7 @@ export function isStaleBuiltinWebSearchPolicyPreset(
 
 export function createUnavailablePolicyPresetPruner(options: {
   disabledChannels?: string[] | null;
+  enabledChannels?: string[] | null;
   agent?: string | null;
   observabilityEnabled?: boolean | null;
   webSearchConfig?: WebSearchConfig | null;
@@ -151,16 +142,30 @@ export function createUnavailablePolicyPresetPruner(options: {
 ) => string[] {
   // Custom and interactive selections may explicitly opt into a built-in web-search
   // preset without storing provider config. Inactive observability remains ineligible.
-  return (presetNames, pruning = {}) =>
-    pruneDisabledMessagingPolicyPresets(presetNames, options.disabledChannels).filter(
+  return (presetNames, pruning = {}) => {
+    const tierName = pruning.tierName?.trim().toLowerCase();
+    const tier = tierName ? getTier(tierName) : null;
+    // OpenClaw keeps an already-applied channel preset until disabledChannels
+    // explicitly retires it. Hermes recovery records the full enabled set, so
+    // it can also prune repository defaults that are absent from that set.
+    const enabledChannelPruned =
+      options.agent?.trim().toLowerCase() === "hermes"
+        ? pruneInactiveMessagingPolicyPresets(
+            pruneDisabledMessagingPolicyPresets(presetNames, options.disabledChannels),
+            options.enabledChannels,
+            options.customPresetNames,
+          )
+        : pruneDisabledMessagingPolicyPresets(presetNames, options.disabledChannels);
+    return enabledChannelPruned.filter(
       (name) =>
         (pruning.preserveExplicitWebSearch ||
           !isStaleBuiltinWebSearchPolicyPreset(name, {
             webSearchConfig: options.webSearchConfig,
             customPresetNames: options.customPresetNames,
-            tierName: pruning.tierName,
-            agentName: options.agent,
+            tier,
+            agent: options.agent,
           })) &&
         !isInactiveObservabilityPolicyPreset(name, options),
     );
+  };
 }

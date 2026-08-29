@@ -5,12 +5,15 @@ import os from "node:os";
 import path from "node:path";
 
 import { dockerRemoveVolumesByPrefix } from "../../adapters/docker/volume";
-import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
+import {
+  OPENSHELL_HEAVY_TIMEOUT_MS,
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+} from "../../adapters/openshell/timeouts";
 import { DASHBOARD_PORT } from "../../core/ports";
 import { stopOpenShellGatewayUserService } from "../../onboard/docker-driver-gateway-service";
 import {
   resolveGatewayPortFromName,
-  resolveGatewayStateDirName,
+  resolveGatewayStateDirForPort,
 } from "../../onboard/gateway-binding";
 import { type GatewayOwner, isExternallySupervised } from "../../onboard/gateway-ownership";
 import {
@@ -29,7 +32,9 @@ import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup
 export type DestroyRunOpenshell = (
   args: string[],
   opts?: Record<string, unknown>,
-) => { status: number | null; stdout?: string; stderr?: string };
+) => { error?: Error; status: number | null; stdout?: string; stderr?: string };
+
+export const SANDBOX_DESTROY_TIMEOUT_MS = OPENSHELL_HEAVY_TIMEOUT_MS;
 
 const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
 
@@ -49,19 +54,13 @@ export interface CleanupGatewayDeps {
 function resolvePerGatewayState(gatewayName: string): { port: number; stateDir: string } | null {
   const port = resolveGatewayPortFromName(gatewayName);
   if (port === null) return null;
-  const configured = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
-  if (configured && configured.trim()) {
-    return { port, stateDir: path.resolve(configured.trim()) };
-  }
   return {
     port,
-    stateDir: path.join(
-      os.homedir(),
-      ".local",
-      "state",
-      "nemoclaw",
-      resolveGatewayStateDirName(port),
-    ),
+    stateDir: resolveGatewayStateDirForPort({
+      configured: process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+      home: os.homedir(),
+      port,
+    }),
   };
 }
 

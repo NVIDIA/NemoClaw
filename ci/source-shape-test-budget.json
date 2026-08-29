@@ -42,21 +42,6 @@
       "category": "compatibility"
     },
     {
-      "file": "test/e2e/support/issue-9880-staging-reproduction-workflow.test.ts",
-      "test": "keeps the manual workflow read-only and non-cancelling (#9880)",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/issue-9880-staging-reproduction-workflow.test.ts",
-      "test": "exposes credentials only to their owning steps and removes Brev state (#9880)",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/issue-9880-staging-reproduction-workflow.test.ts",
-      "test": "runs one bounded prompt and always verifies workspace cleanup (#9880)",
-      "category": "security"
-    },
-    {
       "file": "test/e2e/support/larger-runner-routing-workflow-boundary.test.ts",
       "test": "keeps every candidate on standard runners when $name (#7145)",
       "category": "security"
@@ -97,137 +82,187 @@
       "category": "security"
     },
     {
-      "file": "test/growth-guardrails-workflow-boundary.test.ts",
-      "test": "runs the trusted Vitest guardrails against pull request data",
+      "file": "test/e2e/support/pr-self-hosted-llama-selector.test.ts",
+      "test": "binds trusted base publication to the generic NVIDIA GPU job",
       "category": "security"
     },
     {
-      "file": "test/hermes-runtime-config-guard-topology.test.ts",
+      "file": "test/agents/hermes/hermes-final-image-layout.test.ts",
+      "test": "pins $source to its current bytes at $target",
+      "category": "security"
+    },
+    {
+      "file": "test/agents/hermes/hermes-runtime-config-guard-topology.test.ts",
       "test": "allows the sandbox identity to create runtime state but refuses sealed configuration writes, unlinks, and renames (#7865)",
       "category": "security"
     },
     {
-      "file": "test/hermes-runtime-config-guard-topology.test.ts",
+      "file": "test/agents/hermes/hermes-runtime-config-guard-topology.test.ts",
       "test": "restores exact locked posture after root-separated repair and later failure (#7033)",
       "category": "security"
     },
     {
-      "file": "test/muse-glimmer-vllm-image-provenance.test.ts",
+      "file": "test/platform/images/muse-glimmer-vllm-image-provenance.test.ts",
       "test": "binds the checked-in provenance to the selected runtime",
       "category": "security"
     },
     {
-      "file": "test/muse-glimmer-vllm-image-provenance.test.ts",
+      "file": "test/platform/images/muse-glimmer-vllm-image-provenance.test.ts",
       "test": "rejects %s",
       "category": "security"
     },
     {
-      "file": "test/node-tar-dockerfile-contract.test.ts",
+      "file": "test/platform/images/node-tar-dockerfile-contract.test.ts",
       "test": "rejects an isolated unreviewed Deep Agents Code Node base pin",
       "category": "security"
     },
     {
-      "file": "test/openclaw-2026-6-npm-remediation.test.ts",
+      "file": "test/agents/openclaw/openclaw-2026-6-npm-remediation.test.ts",
       "test": "rebuilds a guarded core archive with the patched fs-safe package bundled",
       "category": "security"
     },
     {
-      "file": "test/openclaw-2026-6-npm-remediation.test.ts",
+      "file": "test/agents/openclaw/openclaw-2026-6-npm-remediation.test.ts",
       "test": "rebuilds a guarded plugin archive with the patched Axios graph bundled",
       "category": "security"
     },
     {
-      "file": "test/openclaw-2026-6-npm-remediation.test.ts",
+      "file": "test/agents/openclaw/openclaw-2026-6-npm-remediation.test.ts",
       "test": "replaces the reviewed bundled Axios graph with the patched graph",
       "category": "security"
     },
     {
-      "file": "test/openclaw-2026-6-npm-remediation.test.ts",
+      "file": "test/agents/openclaw/openclaw-2026-6-npm-remediation.test.ts",
       "test": "replaces the reviewed OpenClaw core tar and brace-expansion graph",
       "category": "security"
     },
     {
-      "file": "test/openclaw-lifecycle-policy.test.ts",
+      "file": "test/agents/openclaw/openclaw-lifecycle-policy.test.ts",
       "test": "cross-checks the allowlist against every production archive install boundary",
       "category": "security"
     },
     {
-      "file": "test/openclaw-locked-install.test.ts",
+      "file": "test/agents/openclaw/openclaw-locked-install.test.ts",
       "test": "fails closed on missing required packages and symlinked package roots",
       "category": "security"
     },
     {
-      "file": "test/openclaw-locked-install.test.ts",
+      "file": "test/agents/openclaw/openclaw-locked-install.test.ts",
       "test": "rejects $name even with a test-only matching lock digest",
       "category": "security"
     },
     {
-      "file": "test/openclaw-locked-install.test.ts",
+      "file": "test/agents/openclaw/openclaw-locked-install.test.ts",
       "test": "rejects any lock byte tamper before registry metadata is consulted",
       "category": "security"
     },
     {
-      "file": "test/openclaw-locked-install.test.ts",
+      "file": "test/agents/openclaw/openclaw-locked-install.test.ts",
       "test": "rejects symlinked package manifests",
       "category": "security"
     },
     {
-      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
-      "test": "requires valid sandbox names",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
-      "test": "requires distinct specialist and synthesis sandboxes",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
-      "test": "requires a synthesis matrix",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
-      "test": "requires native specialist sessions",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-workflow-contract.test.ts",
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
       "test": "executes pull request installer hash checks only from the PR base SHA",
       "category": "security"
     },
     {
-      "file": "test/release-daily-brev-image.test.ts",
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "keeps package access out of pull request controlled execution",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "derives the package and archive identity from the base-controlled decision",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "does not grant package access to pull request jobs",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "limits main package reads to dependency-install jobs",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "provides the package token only to trusted main dependency installation",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "passes only the base-packaged SDK archive to pull request dependency jobs",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "passes the verified SDK archive to %s",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/releases/release-daily-brev-image.test.ts",
       "test": "attests one daily request before the isolated dispatch job (#9799)",
       "category": "security"
     },
     {
-      "file": "test/release-lkg-brev-image.test.ts",
+      "file": "test/automation/releases/release-lkg-brev-image.test.ts",
       "test": "keeps the LKG credential on the production-only dispatch step (#9798)",
       "category": "security"
     },
     {
-      "file": "test/reviewed-hermes-platform-action.test.ts",
+      "file": "test/automation/releases/reviewed-npm-audit-workflow.test.ts",
+      "test": "rejects the removed plural source-registry package shape",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/releases/reviewed-npm-audit-workflow.test.ts",
+      "test": "rejects malformed reviewed source package specifications",
+      "category": "security"
+    },
+    {
+      "file": "test/agents/hermes/reviewed-hermes-platform-action.test.ts",
       "test": "publishes the verified native manifest digest",
       "category": "security"
     },
     {
-      "file": "test/repro-4538-raw-doctor-perms.test.ts",
+      "file": "test/e2e-runtime/repro-4538-raw-doctor-perms.test.ts",
       "test": "emitted openclaw() guard restores the contract AND preserves a nonzero exit",
       "category": "security"
     },
     {
-      "file": "test/repro-4538-raw-doctor-perms.test.ts",
+      "file": "test/e2e-runtime/repro-4538-raw-doctor-perms.test.ts",
       "test": "emitted openclaw() guard restores the contract even under an inherited `set -e`",
       "category": "security"
     },
     {
-      "file": "test/repro-4538-raw-doctor-perms.test.ts",
+      "file": "test/e2e-runtime/repro-4538-raw-doctor-perms.test.ts",
       "test": "restore helper re-asserts 2770/660 after the tree is tightened to 700/600",
       "category": "security"
     },
     {
-      "file": "test/repro-5978-policy-denial-hint.test.ts",
+      "file": "test/install/installer-homebrew-formula-reuse-trust.test.ts",
+      "test": "accepts the reviewed %s OpenShell 0.0.106 installer template",
+      "category": "security"
+    },
+    {
+      "file": "test/install/installer-supervisor-manifest-trust.test.ts",
+      "test": "accepts the prospective shared gateway state resolver template (#10544)",
+      "category": "security"
+    },
+    {
+      "file": "test/mcp/mcp-tool-discovery-image-contract.test.ts",
+      "test": "pins the reviewed image runtime artifacts exactly",
+      "category": "security"
+    },
+    {
+      "file": "test/runtime/gateway/gateway-health-honest.test.ts",
+      "test": "reports a crashed Docker-driver gateway instead of reporting it healthy (#3111)",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/runtime/policy/repro-5978-policy-denial-hint.test.ts",
       "test": "prints only once when the file is sourced twice in one login shell",
       "category": "compatibility"
     }

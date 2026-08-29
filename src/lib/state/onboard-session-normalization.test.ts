@@ -3,10 +3,43 @@
 
 import { describe, expect, it } from "vitest";
 
-import { createSession, normalizeSession } from "./onboard-session";
+import {
+  createSession,
+  filterSafeUpdates,
+  normalizeSession,
+  summarizeForDebug,
+} from "./onboard-session";
 
 type LegacySession = Omit<ReturnType<typeof createSession>, "machine"> & {
   machine?: unknown;
+};
+
+const VERIFIED_RECOVERY_RECEIPT = {
+  schemaVersion: 1 as const,
+  origin: "sandbox-create" as const,
+  gatewayName: "nemoclaw",
+  gatewayPort: 8080,
+  sandboxName: "retained-sb",
+  lifecycleGeneration: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  sandboxIdentityFingerprint: "a".repeat(64),
+  policyHash: "sha256:effective",
+  policyVersion: 4,
+};
+
+const VERIFIED_RECOVERY = {
+  reason: "retained_after_sandbox_creation_failure" as const,
+  sandboxName: VERIFIED_RECOVERY_RECEIPT.sandboxName,
+  sandboxIdentityFingerprint: VERIFIED_RECOVERY_RECEIPT.sandboxIdentityFingerprint,
+  gatewayName: VERIFIED_RECOVERY_RECEIPT.gatewayName,
+  gatewayPort: VERIFIED_RECOVERY_RECEIPT.gatewayPort,
+  lifecycleGeneration: VERIFIED_RECOVERY_RECEIPT.lifecycleGeneration,
+  verifiedEffectivePolicyIdentity: {
+    hash: VERIFIED_RECOVERY_RECEIPT.policyHash,
+    activeVersion: VERIFIED_RECOVERY_RECEIPT.policyVersion,
+  },
+  createAttemptNonce: "c".repeat(62),
+  policyCreationReceipt: VERIFIED_RECOVERY_RECEIPT,
+  recordedAt: "2026-08-27T00:00:00.000Z",
 };
 
 function requireNormalizedSession(legacy: LegacySession) {
@@ -16,6 +49,146 @@ function requireNormalizedSession(legacy: LegacySession) {
 }
 
 describe("onboard session normalization", () => {
+  it("preserves valid recovery-only cancellation state (#9833)", () => {
+    const cancellationRecovery = {
+      reason: "cancelled_after_sandbox_creation" as const,
+      sandboxName: "retained-sb",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleGeneration: "generation-1",
+      verifiedEffectivePolicyIdentity: null,
+      createAttemptNonce: "c".repeat(62),
+      policyCreationReceipt: null,
+      recordedAt: "2026-08-27T00:00:00.000Z",
+    };
+    const normalized = normalizeSession({
+      ...createSession({ sandboxName: "retained-sb" }),
+      resumable: false,
+      status: "recovery_required",
+      cancellationRecovery,
+    });
+
+    expect(normalized).toMatchObject({
+      sandboxName: "retained-sb",
+      resumable: false,
+      status: "recovery_required",
+      cancellationRecovery,
+    });
+    expect(summarizeForDebug(normalized)?.cancellationRecovery).toEqual(cancellationRecovery);
+  });
+
+  it("fails closed when saved recovery authority is incomplete (#9833)", () => {
+    const incompleteRecovery = {
+      reason: "retained_after_sandbox_creation_failure" as const,
+      sandboxName: "retained-sb",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      recordedAt: "2026-08-27T00:00:00.000Z",
+    };
+
+    expect(() =>
+      normalizeSession({
+        ...createSession({ sandboxName: "retained-sb" }),
+        resumable: false,
+        status: "recovery_required",
+        cancellationRecovery: incompleteRecovery,
+      } as unknown as Parameters<typeof normalizeSession>[0]),
+    ).toThrow(/saved recovery authority is incomplete/u);
+  });
+
+  it("preserves a policy receipt bound to the saved recovery authority (#9833)", () => {
+    expect(
+      normalizeSession({
+        ...createSession({ sandboxName: VERIFIED_RECOVERY.sandboxName }),
+        resumable: false,
+        status: "recovery_required",
+        cancellationRecovery: VERIFIED_RECOVERY,
+      })?.cancellationRecovery?.policyCreationReceipt,
+    ).toEqual(VERIFIED_RECOVERY_RECEIPT);
+  });
+
+  it.each([
+    ["gateway name", { gatewayName: "replacement-gateway" }],
+    ["gateway port", { gatewayPort: 8081 }],
+    ["sandbox name", { sandboxName: "replacement-sandbox" }],
+    ["lifecycle generation", { lifecycleGeneration: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" }],
+    ["identity fingerprint", { sandboxIdentityFingerprint: "b".repeat(64) }],
+    ["policy hash", { policyHash: "sha256:replacement" }],
+    ["policy version", { policyVersion: 5 }],
+  ])("fails closed when the recovery receipt has a mismatched %s (#9833)", (_field, mismatch) => {
+    expect(() =>
+      normalizeSession({
+        ...createSession({ sandboxName: VERIFIED_RECOVERY.sandboxName }),
+        resumable: false,
+        status: "recovery_required",
+        cancellationRecovery: {
+          ...VERIFIED_RECOVERY,
+          policyCreationReceipt: { ...VERIFIED_RECOVERY_RECEIPT, ...mismatch },
+        },
+      }),
+    ).toThrow(/saved recovery authority is incomplete/u);
+  });
+
+  it("keeps APF create intent and defaults legacy sessions to false (#9833)", () => {
+    const selected = createSession({ apfInterceptorRequested: true });
+    expect(normalizeSession(selected)?.apfInterceptorRequested).toBe(true);
+
+    const legacy = { ...selected } as Partial<typeof selected>;
+    delete legacy.apfInterceptorRequested;
+    expect(
+      normalizeSession(legacy as Parameters<typeof normalizeSession>[0])?.apfInterceptorRequested,
+    ).toBe(false);
+    expect(
+      normalizeSession({ ...selected, apfInterceptorRequested: false })?.apfInterceptorRequested,
+    ).toBe(false);
+  });
+
+  it("refuses malformed saved APF create intent instead of downgrading it (#9833)", () => {
+    const selected = createSession({ apfInterceptorRequested: true });
+    const malformed = { ...selected, apfInterceptorRequested: "true" };
+
+    expect(() =>
+      normalizeSession(malformed as unknown as Parameters<typeof normalizeSession>[0]),
+    ).toThrow(/saved APF selection is invalid/u);
+  });
+
+  it("keeps recognized, absent, and legacy null policy authority values (#9833)", () => {
+    const external = createSession({ policyAuthority: "externally-managed" });
+    expect(normalizeSession(external)?.policyAuthority).toBe("externally-managed");
+
+    const absent = { ...external } as Partial<typeof external>;
+    delete absent.policyAuthority;
+    expect(
+      normalizeSession(absent as Parameters<typeof normalizeSession>[0])?.policyAuthority,
+    ).toBeNull();
+    expect(normalizeSession({ ...external, policyAuthority: null })?.policyAuthority).toBeNull();
+  });
+
+  it("refuses an invalid saved policy authority (#9833)", () => {
+    const external = createSession({ policyAuthority: "externally-managed" });
+    const malformed = { ...external, policyAuthority: "unspecified" };
+    expect(() => normalizeSession(malformed as Parameters<typeof normalizeSession>[0])).toThrow(
+      /saved policy authority is invalid/u,
+    );
+  });
+
+  it("clears NemoClaw preset attribution for external policy authority (#9833)", () => {
+    const external = createSession({
+      policyAuthority: "externally-managed",
+      policyPresets: ["npm"],
+    });
+    expect(external.policyPresets).toBeNull();
+
+    const legacy = {
+      ...createSession({ policyAuthority: "nemoclaw-managed", policyPresets: ["npm"] }),
+      policyAuthority: "externally-managed" as const,
+    };
+    expect(normalizeSession(legacy)?.policyPresets).toBeNull();
+    expect(
+      filterSafeUpdates({ policyAuthority: "externally-managed", policyPresets: ["npm"] }),
+    ).toMatchObject({ policyAuthority: "externally-managed", policyPresets: null });
+  });
+
   it("normalizes old sessions without machine snapshots", () => {
     const legacy = createSession({
       sessionId: "legacy-session",

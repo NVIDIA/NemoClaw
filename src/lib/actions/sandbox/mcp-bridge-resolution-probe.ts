@@ -7,7 +7,8 @@
  * Provider metadata can be fully healthy while the OpenShell gateway never
  * rewrites the `openshell:resolve:env:` placeholder on egress, so every agent
  * request fails with the literal placeholder as the bearer token (see
- * NVIDIA/OpenShell#2161).
+ * NVIDIA/OpenShell#2161). Identity-bound provider credentials require the
+ * revision-scoped placeholder observed through a fresh OpenShell exec.
  *
  * The probe is differential: it sends the same idempotent MCP `initialize`
  * request twice from inside the sandbox — once with the placeholder
@@ -52,6 +53,11 @@ import type { AgentMcpAdapter } from "../../agent/defs";
 import type { McpBridgeEntry } from "../../state/registry";
 import { authorizationValue } from "./mcp-bridge-adapter-status";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
+import { observeMcpCredentialRevision } from "./mcp-bridge-provider";
+import type {
+  McpAttachedCredentialRevision,
+  McpCredentialRevisionObservation,
+} from "./mcp-bridge-provider-readiness";
 import {
   type CredentialResolutionProbeReadiness,
   credentialResolutionReadinessSkipDetail,
@@ -178,8 +184,9 @@ function curlCommand(url: string, authorization: string, httpMarker: string): st
 export function buildCredentialResolutionProbeCommand(
   entry: Pick<McpBridgeEntry, "server" | "url" | "env">,
   adapter: AgentMcpAdapter,
+  credentialRevision: McpAttachedCredentialRevision,
 ): CredentialResolutionProbeCommand | null {
-  const authorization = authorizationValue(entry);
+  const authorization = authorizationValue(entry, credentialRevision);
   if (!authorization) return null;
   // Never probe a persisted URL that no longer satisfies the current
   // authenticated-endpoint boundary: the gateway could rewrite the placeholder
@@ -366,7 +373,9 @@ export function credentialResolutionWarning(
   if (probe.httpStatus === undefined || probe.httpStatus !== probe.controlHttpStatus)
     return undefined;
   if (probe.httpStatus < 400 || probe.httpStatus >= 500) return undefined;
-  const placeholder = envName ? `openshell:resolve:env:${envName}` : "openshell:resolve:env:<KEY>";
+  const placeholder = envName
+    ? `openshell:resolve:env:vN_${envName}`
+    : "openshell:resolve:env:vN_<KEY>";
   if (probe.httpStatus === 400) {
     return `Credential resolution could not be verified: a placeholder-bearing MCP initialize probe and a deliberately-unresolvable control probe were rejected identically (HTTP 400). This is inconclusive even with a valid stored credential — the endpoint may reject the probe's initialize request itself (request validation), the '${placeholder}' placeholder may have been forwarded verbatim, or the credential may be expired or revoked. Rotate the credential with mcp restart if in doubt, and compare mcp status for the same server on a known-good host; if that host verifies, suspect this host's OpenShell placeholder rewrite (see NVIDIA/OpenShell issue 2161).`;
   }
@@ -379,13 +388,47 @@ export function probeCredentialResolution(
   entry: McpBridgeEntry,
   adapter: AgentMcpAdapter | undefined,
   readiness: CredentialResolutionProbeReadiness,
+  observedCredentialRevision?: McpCredentialRevisionObservation,
 ): CredentialResolutionProbe {
   if (!adapter) return { ok: null, detail: "MCP adapter is not declared" };
   if (entry.addState) return { ok: null, detail: "add transaction incomplete" };
-  const probeCommand = buildCredentialResolutionProbeCommand(entry, adapter);
-  if (!probeCommand) return { ok: null, detail: "no credential binding or safe endpoint to probe" };
   const readinessSkipDetail = credentialResolutionReadinessSkipDetail(readiness);
   if (readinessSkipDetail) return { ok: null, detail: readinessSkipDetail };
+  // Reject the entry before the fresh credential observation so an unsafe
+  // persisted URL cannot trigger either sandbox or endpoint traffic.
+  try {
+    if (!entry.env[0] || normalizeMcpServerUrl(entry.url) !== entry.url) {
+      return { ok: null, detail: "no credential binding or safe endpoint to probe" };
+    }
+  } catch {
+    return { ok: null, detail: "no credential binding or safe endpoint to probe" };
+  }
+  let credentialRevision = observedCredentialRevision;
+  if (credentialRevision === undefined) {
+    try {
+      credentialRevision = observeMcpCredentialRevision(sandboxName, entry);
+    } catch {
+      return {
+        ok: null,
+        detail: "probe skipped: the current OpenShell credential revision could not be observed",
+      };
+    }
+  }
+  if (credentialRevision === "absent") {
+    return {
+      ok: null,
+      detail: "probe skipped: a fresh OpenShell exec did not expose the credential placeholder",
+    };
+  }
+  if (credentialRevision === "canonical") {
+    return {
+      ok: null,
+      detail:
+        "probe skipped: a fresh OpenShell exec exposed an identityless credential placeholder instead of a revision-scoped placeholder",
+    };
+  }
+  const probeCommand = buildCredentialResolutionProbeCommand(entry, adapter, credentialRevision);
+  if (!probeCommand) return { ok: null, detail: "no credential binding or safe endpoint to probe" };
   const result = executeSandboxCommand(sandboxName, probeCommand.command);
   return classifyCredentialResolutionProbe(result, entry, probeCommand.resultMarker);
 }

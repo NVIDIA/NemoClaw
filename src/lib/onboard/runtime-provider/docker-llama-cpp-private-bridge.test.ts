@@ -14,7 +14,7 @@ import {
   type DockerLlamaCppPrivateBridgeAuthority,
 } from "./docker-llama-cpp-private-bridge";
 import {
-  createLlamaCppPrivateBridgeRequestHandler,
+  createLlamaCppPrivateBridgeServer,
   parseLlamaCppPrivateBridgeArguments,
 } from "./docker-llama-cpp-private-bridge-process";
 
@@ -326,32 +326,71 @@ async function close(server: http.Server): Promise<void> {
 async function request(
   port: number,
   input: {
-    readonly path?: string;
-    readonly method?: string;
     readonly authorization?: string | readonly string[];
+    readonly body?: string;
+    readonly eagerBody?: boolean;
+    readonly expectContinue?: boolean;
+    readonly keepAlive?: boolean;
+    readonly method?: string;
+    readonly path?: string;
   } = {},
-): Promise<{ readonly status: number; readonly headers: http.IncomingHttpHeaders }> {
+): Promise<{
+  readonly body: string;
+  readonly continued: boolean;
+  readonly headers: http.IncomingHttpHeaders;
+  readonly status: number;
+}> {
   return new Promise((resolve, reject) => {
+    const headers: http.OutgoingHttpHeaders = {
+      ...(input.authorization === undefined
+        ? {}
+        : { Authorization: input.authorization as string | string[] }),
+      ...(input.body === undefined
+        ? {}
+        : {
+            "Content-Length": Buffer.byteLength(input.body),
+            "Content-Type": "application/json",
+          }),
+      ...(input.expectContinue ? { Expect: "100-continue" } : {}),
+      ...(input.keepAlive ? { Connection: "keep-alive" } : {}),
+    };
+    let continued = false;
     const outgoing = http.request(
       {
+        headers,
         host: "127.0.0.1",
-        port,
         method: input.method ?? "GET",
         path: input.path ?? "/v1/models",
-        headers:
-          input.authorization === undefined
-            ? undefined
-            : { Authorization: input.authorization as string | string[] },
+        port,
       },
       (response) => {
-        response.resume();
-        response.once("end", () =>
-          resolve({ status: response.statusCode ?? 0, headers: response.headers }),
-        );
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk: Buffer) => chunks.push(chunk));
+        response.once("end", () => {
+          resolve({
+            body: Buffer.concat(chunks).toString("utf8"),
+            continued,
+            headers: response.headers,
+            status: response.statusCode ?? 0,
+          });
+          outgoing.destroy();
+        });
       },
     );
+    const finishBodyAfterContinue = input.eagerBody
+      ? () => undefined
+      : () => outgoing.end(input.body);
+    outgoing.once("continue", () => {
+      continued = true;
+      finishBodyAfterContinue();
+    });
     outgoing.once("error", reject);
-    outgoing.end();
+    const start = input.expectContinue
+      ? input.eagerBody
+        ? () => outgoing.end(input.body)
+        : () => outgoing.flushHeaders()
+      : () => outgoing.end(input.body);
+    start();
   });
 }
 
@@ -363,11 +402,9 @@ async function requestBridgeFixture() {
     response.end("{}\n");
   });
   const upstreamPort = await listen(upstream);
-  const bridge = http.createServer(
-    createLlamaCppPrivateBridgeRequestHandler(
-      { targetHost: "127.0.0.1", targetPort: upstreamPort },
-      API_KEY,
-    ),
+  const bridge = createLlamaCppPrivateBridgeServer(
+    { targetHost: "127.0.0.1", targetPort: upstreamPort },
+    API_KEY,
   );
   const bridgePort = await listen(bridge);
   return {
@@ -423,6 +460,232 @@ describe("llama.cpp private bridge request authentication", () => {
 
       expect([health.status, healthQuery.status, healthPost.status]).toEqual([200, 401, 401]);
       expect(runtime.receivedAuthorization).toEqual([undefined]);
+    } finally {
+      await close(runtime.bridge);
+      await close(runtime.upstream);
+    }
+  });
+
+  it("forwards an upstream rejection without acknowledging Expect: 100-continue", async () => {
+    let receivedBodyBytes = 0;
+    const rejectionBody = `${JSON.stringify({
+      error: {
+        code: "request_body_too_large",
+        message: "Request body exceeds the declared limit.",
+        type: "invalid_request_error",
+      },
+    })}\n`;
+    const upstream = http.createServer();
+    const upstreamSocketClosed = new Promise<void>((resolve) => {
+      upstream.once("connection", (socket) => socket.once("close", resolve));
+    });
+    upstream.on("checkContinue", (incoming, response) => {
+      incoming.on("data", (chunk: Buffer) => {
+        receivedBodyBytes += chunk.length;
+      });
+      response.writeHead(413, {
+        "Content-Length": Buffer.byteLength(rejectionBody),
+        "Content-Type": "application/json",
+      });
+      response.end(rejectionBody);
+    });
+    const upstreamPort = await listen(upstream);
+    const bridge = createLlamaCppPrivateBridgeServer(
+      { targetHost: "127.0.0.1", targetPort: upstreamPort },
+      API_KEY,
+    );
+    const bridgePort = await listen(bridge);
+    try {
+      const result = await request(bridgePort, {
+        authorization: `Bearer ${API_KEY}`,
+        body: "x".repeat(2 * 1024 * 1024),
+        expectContinue: true,
+        keepAlive: true,
+        method: "POST",
+        path: "/v1/chat/completions",
+      });
+
+      expect(result).toMatchObject({
+        body: rejectionBody,
+        continued: false,
+        status: 413,
+      });
+      expect(receivedBodyBytes).toBe(0);
+      await upstreamSocketClosed;
+    } finally {
+      await close(bridge);
+      await close(upstream);
+    }
+  });
+
+  it("relays an upstream 100 Continue response before forwarding the request body", async () => {
+    let receivedBody = "";
+    const upstream = http.createServer();
+    upstream.on("checkContinue", (incoming, response) => {
+      response.writeContinue();
+      incoming.setEncoding("utf8");
+      incoming.on("data", (chunk: string) => {
+        receivedBody += chunk;
+      });
+      incoming.once("end", () => {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end("{}\n");
+      });
+    });
+    const upstreamPort = await listen(upstream);
+    const bridge = createLlamaCppPrivateBridgeServer(
+      { targetHost: "127.0.0.1", targetPort: upstreamPort },
+      API_KEY,
+    );
+    const bridgePort = await listen(bridge);
+    const body = '{"model":"default"}';
+    try {
+      const result = await request(bridgePort, {
+        authorization: `Bearer ${API_KEY}`,
+        body,
+        expectContinue: true,
+        method: "POST",
+        path: "/v1/chat/completions",
+      });
+
+      expect(result).toMatchObject({ continued: true, status: 200 });
+      expect(receivedBody).toBe(body);
+    } finally {
+      await close(bridge);
+      await close(upstream);
+    }
+  });
+
+  it("holds an eagerly sent request body until the upstream server accepts it", async () => {
+    let bodyBytesBeforeContinue = -1;
+    let receivedBody = "";
+    const upstream = http.createServer();
+    upstream.on("checkContinue", (incoming, response) => {
+      incoming.setEncoding("utf8");
+      incoming.on("data", (chunk: string) => {
+        receivedBody += chunk;
+      });
+      setImmediate(() => {
+        bodyBytesBeforeContinue = Buffer.byteLength(receivedBody);
+        response.writeContinue();
+      });
+      incoming.once("end", () => {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end("{}\n");
+      });
+    });
+    const upstreamPort = await listen(upstream);
+    const bridge = createLlamaCppPrivateBridgeServer(
+      { targetHost: "127.0.0.1", targetPort: upstreamPort },
+      API_KEY,
+    );
+    const bridgePort = await listen(bridge);
+    const body = "x".repeat(2 * 1024 * 1024);
+    try {
+      const result = await request(bridgePort, {
+        authorization: `Bearer ${API_KEY}`,
+        body,
+        eagerBody: true,
+        expectContinue: true,
+        method: "POST",
+        path: "/v1/chat/completions",
+      });
+
+      expect(result).toMatchObject({ continued: true, status: 200 });
+      expect(bodyBytesBeforeContinue).toBe(0);
+      expect(receivedBody).toBe(body);
+    } finally {
+      await close(bridge);
+      await close(upstream);
+    }
+  });
+
+  it("bounds the wait for an upstream 100 Continue response", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "setTimeout", "clearInterval", "clearTimeout"] });
+    const upstream = http.createServer();
+    let acceptRequest: (() => void) | undefined;
+    const requestAccepted = new Promise<void>((resolve) => {
+      acceptRequest = resolve;
+    });
+    const upstreamSocketClosed = new Promise<void>((resolve) => {
+      upstream.once("connection", (socket) => socket.once("close", resolve));
+    });
+    upstream.on("checkContinue", () => acceptRequest?.());
+    const upstreamPort = await listen(upstream);
+    const bridge = createLlamaCppPrivateBridgeServer(
+      { targetHost: "127.0.0.1", targetPort: upstreamPort },
+      API_KEY,
+    );
+    const bridgePort = await listen(bridge);
+    try {
+      let uploadedChunks = 0;
+      let outgoing: http.ClientRequest;
+      let uploadTimer: ReturnType<typeof setInterval> | undefined;
+      let responseResult: { readonly connection: string | undefined; readonly status: number };
+      let resolveResponse: (() => void) | undefined;
+      const responseReceived = new Promise<void>((resolve) => {
+        resolveResponse = resolve;
+      });
+      const clientClosed = new Promise<void>((resolve) => {
+        outgoing = http.request(
+          {
+            headers: {
+              Authorization: `Bearer ${API_KEY}`,
+              "Content-Length": 16 * 1024 * 1024,
+              Expect: "100-continue",
+            },
+            host: "127.0.0.1",
+            method: "POST",
+            path: "/v1/chat/completions",
+            port: bridgePort,
+          },
+          (response) => {
+            responseResult = {
+              connection: response.headers.connection,
+              status: response.statusCode ?? 0,
+            };
+            response.resume();
+            response.once("end", () => resolveResponse?.());
+          },
+        );
+        outgoing.once("close", resolve);
+        outgoing.on("error", () => undefined);
+        outgoing.flushHeaders();
+        uploadTimer = setInterval(() => {
+          uploadedChunks += 1;
+          outgoing.write("x".repeat(16 * 1024));
+        }, 1_000);
+      });
+      await requestAccepted;
+
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      await responseReceived;
+      await clientClosed;
+      await upstreamSocketClosed;
+      clearInterval(uploadTimer!);
+      expect(responseResult!).toEqual({ connection: "close", status: 502 });
+      expect(outgoing!.destroyed).toBe(true);
+      expect(uploadedChunks).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+      await close(bridge);
+      await close(upstream);
+    }
+  });
+
+  it("rejects unauthenticated Expect: 100-continue without requesting the body", async () => {
+    const runtime = await requestBridgeFixture();
+    try {
+      const result = await request(runtime.bridgePort, {
+        body: "x".repeat(2 * 1024 * 1024),
+        expectContinue: true,
+        method: "POST",
+        path: "/v1/chat/completions",
+      });
+
+      expect(result).toMatchObject({ continued: false, status: 401 });
+      expect(runtime.receivedAuthorization).toEqual([]);
     } finally {
       await close(runtime.bridge);
       await close(runtime.upstream);

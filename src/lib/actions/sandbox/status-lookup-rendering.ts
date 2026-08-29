@@ -9,7 +9,7 @@ import { isTerminalSandboxPhase } from "../../state/gateway";
 import { getSandboxDockerRuntime } from "./docker-health";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 import type { SandboxGatewayState } from "./gateway-state";
-import { printGatewayLifecycleHint, printWrongGatewayActiveGuidance } from "./gateway-state";
+import { printSandboxGatewayStateHint, printWrongGatewayActiveGuidance } from "./gateway-state";
 import { getSandboxTargetGatewayName } from "./gateway-target";
 import {
   printGatewayFailureLayerHeader,
@@ -223,7 +223,7 @@ async function printUnknownGatewayLookupStatus({
     console.log(lookup.output);
   }
   await printGatewayFailureLayerHeader(sandboxName, effectivePreflight.failureLayer);
-  printGatewayLifecycleHint(lookup.output, sandboxName, console.log);
+  printSandboxGatewayStateHint(lookup, sandboxName, console.log);
   deferSandboxLifecycleExit(1);
 }
 

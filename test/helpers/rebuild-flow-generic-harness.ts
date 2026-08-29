@@ -105,9 +105,17 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   );
   vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
     result: {
-      status: 0,
-      output: overrides.sandboxListOutput ?? (overrides.staleRecovery ? "" : "alpha Ready"),
+      ok: true,
+      value:
+        overrides.sandboxInventory ??
+        (overrides.staleRecovery
+          ? { sandboxes: [] }
+          : {
+              sandboxes: [{ name: "alpha", phase: "Ready", readiness: "ready" }],
+            }),
     },
+    recoveryAttempted: false,
+    recoverySucceeded: false,
   });
   vi.spyOn(gatewayState, "getReconciledSandboxGatewayState").mockResolvedValue(
     overrides.reconciledSandboxGatewayState ?? {

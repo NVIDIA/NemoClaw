@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createHermesDashboardForwardEnsurer,
+  createHermesDashboardOnboardForwarding,
   getHermesDashboardRegistryFields,
   hasHermesDashboardDrift,
   resolveHermesDashboardOnboardState,
@@ -205,5 +206,119 @@ describe("onboard Hermes dashboard helpers", () => {
       expect.stringMatching(/set NEMOCLAW_DASHBOARD_PORT, or pass --control-ui-port <N>/i),
     );
     expect(fail.mock.calls[0]?.[0]).not.toContain("NEMOCLAW_HERMES_DASHBOARD_PORT");
+  });
+
+  it("stops Hermes dashboard forwarding when authority changes between retries (#9833)", () => {
+    const starts: string[] = [];
+    const revalidatePolicyAuthority = vi
+      .fn<(operation: string) => void>()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("policy authority changed");
+      });
+    const ensureForward = vi.fn(
+      (
+        _sandboxName: string,
+        _port: number,
+        _label: string,
+        revalidate?: (operation: string) => void,
+      ) => {
+        revalidate?.("start Hermes dashboard forward attempt 1");
+        starts.push("attempt 1");
+        revalidate?.("start Hermes dashboard forward attempt 2");
+        starts.push("attempt 2");
+        return true;
+      },
+    );
+    const ensure = createHermesDashboardForwardEnsurer({
+      state: resolveHermesDashboardOnboardState({
+        agentName: "hermes",
+        effectivePort: 18789,
+        env: { NEMOCLAW_HERMES_DASHBOARD: "1" },
+      }),
+      ensureForward,
+      note: vi.fn(),
+      rollbackSandbox: vi.fn(),
+      fail: (message): never => {
+        throw new Error(message);
+      },
+    });
+
+    expect(() => ensure("my-hermes", false, revalidatePolicyAuthority)).toThrow(
+      "policy authority changed",
+    );
+
+    expect(starts).toEqual(["attempt 1"]);
+    expect(revalidatePolicyAuthority).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops Hermes dashboard rollback when authority changes between commands (#9833)", () => {
+    const runOpenshell = vi.fn();
+    const revalidatePolicyAuthority = vi
+      .fn<(operation: string) => void>()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("policy authority changed");
+      });
+    const forwarding = createHermesDashboardOnboardForwarding({
+      agentName: "hermes",
+      env: { NEMOCLAW_HERMES_DASHBOARD: "1" },
+      ensureForward: vi.fn(() => false),
+      note: vi.fn(),
+      runOpenshell,
+      getApiForwardPort: () => "8642",
+      fail: (message): never => {
+        throw new Error(message);
+      },
+    });
+    const state = forwarding.resolveStateForPort(18789);
+
+    expect(() =>
+      forwarding.ensureForState(state, "my-hermes", true, revalidatePolicyAuthority),
+    ).toThrow("policy authority changed");
+
+    expect(runOpenshell).toHaveBeenCalledTimes(1);
+    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "8642", "my-hermes"], {
+      ignoreError: true,
+    });
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["forward", "stop", "18789", "my-hermes"],
+      expect.anything(),
+    );
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "my-hermes"],
+      expect.anything(),
+    );
+  });
+
+  it("leaves the sandbox running after Hermes dashboard rollback (#9833)", () => {
+    const runOpenshell = vi.fn();
+    const forwarding = createHermesDashboardOnboardForwarding({
+      agentName: "hermes",
+      env: { NEMOCLAW_HERMES_DASHBOARD: "1" },
+      ensureForward: vi.fn(() => false),
+      note: vi.fn(),
+      runOpenshell,
+      getApiForwardPort: () => "8642",
+      fail: (message): never => {
+        throw new Error(message);
+      },
+    });
+    const state = forwarding.resolveStateForPort(18789);
+
+    expect(() => forwarding.ensureForState(state, "my-hermes", true)).toThrow(
+      /left the sandbox running/u,
+    );
+    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "8642", "my-hermes"], {
+      ignoreError: true,
+    });
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["forward", "stop", "18789", "my-hermes"],
+      { ignoreError: true },
+    );
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "my-hermes"],
+      expect.anything(),
+    );
   });
 });

@@ -16,7 +16,7 @@ Use the reported status or lifecycle error to choose the matching remediation.
 If `mcp status <server>` reports identical placeholder and control rejections, first confirm the stored credential is valid.
 Rotate it with `mcp restart` when in doubt.
 
-For identical HTTP 401 or 403 responses, a confirmed-valid credential means the OpenShell gateway on this host is not rewriting `openshell:resolve:env:KEY` on egress.
+For identical HTTP 401 or 403 responses, a confirmed-valid credential means the OpenShell gateway on this host is not rewriting the recorded resolver placeholder on egress.
 Every agent request receives the same authentication failure even when provider, attachment, readiness, and adapter checks report healthy.
 
 This is a host-side OpenShell defect rather than a NemoClaw registration problem.
@@ -38,7 +38,32 @@ If restart reports a missing provider and the original credential is not registe
 ## Provider Uses the Legacy Generic Profile
 
 If restart or rebuild reports that the provider uses the profile-less legacy `generic` type, remove that server and add it again with the recorded credential variable exported.
-OpenShell cannot bind that provider to an MCP endpoint, and NemoClaw accepts it only for exact cleanup.
+OpenShell cannot bind that provider to an MCP endpoint, and NemoClaw accepts it only for cleanup.
+
+## Rebuild or Destroy Cannot Prove a Credential Revision
+
+If rebuild or destroy reports that it could not prove a revision-scoped credential, a fresh sandbox process did not expose the exact OpenShell credential identity required for adapter cleanup.
+NemoClaw leaves the affected adapter and every provider unchanged.
+It attempts to restore adapter entries prepared earlier in the operation and reports rollback failures.
+
+Inspect the managed server:
+
+```bash
+$$nemoclaw <sandbox> mcp status <server> --json
+```
+
+If status cannot reach the sandbox, repair the reported gateway condition first.
+Export the recorded environment variable, then restart the server to publish and verify a fresh credential revision:
+
+```bash
+export <CREDENTIAL_ENV>='replacement-value'
+$$nemoclaw <sandbox> mcp restart <server>
+unset <CREDENTIAL_ENV>
+```
+
+Run status again.
+Retry rebuild or destroy only after `provider.credentialReady` and `adapter.registered` are both `true`.
+If restart still cannot prove the revision, repair the reported OpenShell provider, policy, or adapter condition before retrying teardown.
 
 ## Add Transaction Is Incomplete
 
@@ -51,7 +76,7 @@ NemoClaw cleans only resources whose ownership it can prove and keeps the regist
 ## Agent MCP Capability Is Missing
 
 If add or restart reports that `mcporter`, the Hermes transaction helper, or Deep Agents managed MCP capability v2 is unavailable, rebuild the sandbox onto a current image before retrying.
-An existing Deep Agents v1 entry remains removable, destroyable, and eligible for rebuild teardown when NemoClaw can identify the exact registry-owned legacy entry.
+An existing Deep Agents v1 entry remains removable, destroyable, and eligible for rebuild teardown when NemoClaw can identify the registry-owned legacy entry.
 
 The rebuilt image must pass the v2 capability check before its MCP runtime is restored.
 
@@ -299,8 +324,8 @@ Install the required OpenShell build and rerun onboarding.
 NemoClaw checks inspectable installed OpenShell artifacts for `protocol: mcp` capability and does not enable managed MCP from a version number alone.
 
 For image-backed or compressed supervisors without an inspectable host artifact, the onboarding check is provisional.
-Before a credential or provider mutation, the MCP command imports or verifies the endpointless profile and loads the exact generated policy without a credential binding by using `policy set --wait`.
-After provider attachment, it applies and exact-matches the endpoint-bound policy before credential use.
+Before a credential or provider mutation, the MCP command imports or verifies the endpointless profile and loads the generated policy without a credential binding by using `policy set --wait`.
+After provider attachment, it applies and matches the endpoint-bound policy before credential use.
 
 A runtime that rejects `protocol: mcp` therefore fails closed.
 
@@ -309,7 +334,7 @@ A runtime that rejects `protocol: mcp` therefore fails closed.
 If `$$nemoclaw <sandbox> mcp add` rejects an `http://` URL, use HTTPS before you retry.
 This requirement applies to OpenClaw, Hermes, and Deep Agents Code so OpenShell forwards the bearer credential over TLS.
 
-If the endpoint resolves to RFC1918, carrier-grade network address translation (CGNAT), or IPv6 unique local addresses, add its exact host with `--trusted-private-host`.
+If the endpoint resolves to RFC1918, carrier-grade network address translation (CGNAT), or IPv6 unique local addresses, add its host with `--trusted-private-host`.
 The declared host must equal the normalized hostname from `--url`.
 NemoClaw rejects a private endpoint without that explicit declaration before provider, policy, registry, or adapter mutation.
 
@@ -334,7 +359,7 @@ See [Add an MCP Server](../manage-sandboxes/mcp-servers/add-an-mcp-server) for t
 If `mcp status <server>` reports `private address pins: drift`, review the endpoint address change before updating access.
 Status, restart, rebuild, and restore do not add the new addresses.
 
-Remove and re-add the server with the same exact trusted host to perform a new preflight and record new pins:
+Remove and re-add the server with the same trusted host to perform a new preflight and record new pins:
 
 ```bash
 export LOCAL_MCP_TOKEN='replace-with-secret-manager-value'
@@ -349,7 +374,7 @@ unset LOCAL_MCP_TOKEN
 A `CONNECT 403` after an address change can mean that OpenShell rejected a current DNS answer outside `allowed_ips`.
 Do not add a provider's complete address range or broaden the policy to bypass the denial.
 
-Cloudflare Quick Tunnels rotate public edge addresses and are not durable for exact address pinning.
+Cloudflare Quick Tunnels rotate public edge addresses and are not durable for address pinning.
 A named tunnel can keep one hostname while its resolved addresses still change.
 Use stable private DNS and a routed private HTTPS endpoint for a host-local MCP server.
 

@@ -1,9 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createShieldsFlowHarness } from "../../../test/helpers/shields-flow-harness";
 
 const NORMALIZER = "/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py";
 const NORMALIZER_WATCHDOG = ["/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "15s"];
@@ -150,5 +154,66 @@ describe("mutable OpenClaw config repair", () => {
       true,
     );
     expect(dockerExecFileSync).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("locked Shields policy recovery status", () => {
+  let homeDir: string;
+
+  beforeEach(() => {
+    homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-locked-policy-recovery-"));
+    vi.stubEnv("HOME", homeDir);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    fs.rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  it("verifies Hermes locked recovery status without mutating provider state (#9833)", () => {
+    const sandboxName = "hermes";
+    const target = {
+      agentName: "hermes",
+      configDir: "/sandbox/.hermes",
+      configFile: "config.yaml",
+      configPath: "/sandbox/.hermes/config.yaml",
+      format: "yaml",
+      sensitiveFiles: ["/sandbox/.hermes/.env"],
+      stateLockPlanInImage: true,
+    };
+    const harness = createShieldsFlowHarness(requireSource, homeDir, {
+      agentConfigTarget: target,
+      sandboxName,
+    });
+    const stateDir = path.join(homeDir, ".nemoclaw", "state");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(stateDir, `shields-${sandboxName}.json`),
+      JSON.stringify({
+        shieldsDown: true,
+        policyRecoveryConfigLocked: true,
+        chattrApplied: true,
+        fileHashes: { [target.configPath]: "a".repeat(64) },
+      }),
+    );
+    const mutationCount = harness.dockerSpawnCalls.length;
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process exit ${String(code)}`);
+    }) as typeof process.exit);
+
+    expect(() =>
+      harness.shieldsStatus(sandboxName, false, {
+        inspectPolicyRecovery: () => ({ status: "external", handoff: "policy handoff" }),
+        resolveConfig: () => target,
+        verifyLockState: () => ({ ok: true, issues: [] }),
+        verifyStateLockPlan: () => [],
+      }),
+    ).toThrow("process exit 2");
+
+    expect(harness.dockerSpawnCalls).toHaveLength(mutationCount);
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "DOWN (CONFIG LOCKED — POLICY RECOVERY REQUIRED)",
+    );
   });
 });

@@ -61,7 +61,32 @@ export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
   openRouterFeaturedModels?: NvidiaFeaturedModelSession;
   /** Attempt-wide shared-gateway guard, invoked after identity selection and before probes. */
   assertRouteCompatible?: () => GatewayRouteDiscoveryConstraints;
+  /** Receipt-bound policy check invoked immediately before provider or runtime mutations. */
+  revalidatePolicyRequirements?: (operation: string) => void;
 };
+
+/** Revalidate the current provider selection before a policy-dependent mutation. */
+export function assertSelectionMutationAuthority(
+  state: SetupNimSelectionState,
+  operation: string,
+): void {
+  state.revalidatePolicyRequirements?.(operation);
+}
+
+/** Carry the attempt's exact mutation guard through a blocking credential prompt. */
+export function credentialMutationGuardFor(
+  state: SetupNimSelectionState,
+): ((operation: string) => void) | undefined {
+  return state.revalidatePolicyRequirements;
+}
+
+export function withCredentialMutationGuard<T extends object>(
+  state: SetupNimSelectionState,
+  options: T,
+): T & { revalidatePolicyRequirements?: (operation: string) => void } {
+  const guard = credentialMutationGuardFor(state);
+  return guard ? { ...options, revalidatePolicyRequirements: guard } : options;
+}
 
 export type CloudFallbackConfig = {
   providerName: string;
@@ -216,6 +241,7 @@ type ProbeOptions = {
   extraHeaders?: readonly string[];
   capabilityCache?: OnboardInferenceCapabilityCache;
   provider?: string;
+  revalidatePolicyRequirements?: (operation: string) => void;
 };
 
 type ValidationResult =
@@ -242,6 +268,7 @@ type RemoteModelValidatorDeps = {
     credentialEnv: string,
     helpUrl: string | null,
     capabilityCache?: OnboardInferenceCapabilityCache,
+    revalidatePolicyRequirements?: (operation: string) => void,
   ) => Promise<ValidationResult>;
   validateCustomAnthropicSelection: (
     label: string,
@@ -251,6 +278,7 @@ type RemoteModelValidatorDeps = {
     helpUrl: string | null,
     options?: {
       intendedApi?: "anthropic-messages" | "openai-completions";
+      revalidatePolicyRequirements?: (operation: string) => void;
     },
   ) => Promise<ValidationResult>;
   validateAnthropicSelectionWithRetryMessage: (
@@ -260,6 +288,7 @@ type RemoteModelValidatorDeps = {
     credentialEnv: string,
     retryMessage: string,
     helpUrl: string | null,
+    revalidatePolicyRequirements?: (operation: string) => void,
   ) => Promise<ValidationResult>;
   validateOpenAiLikeSelection: (
     label: string,
@@ -335,14 +364,18 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
             "  ⚠ Reasoning mode validates Chat Completions only; tools and streaming are unverified.",
           );
         }
-        const validation = await deps.validateCustomOpenAiLikeSelection(
+        const validationArgs = [
           remoteConfig.label,
           state.endpointUrl || deps.OPENAI_ENDPOINT_URL,
           selectedModel,
           selectedCredentialEnv,
           remoteConfig.helpUrl,
           state.inferenceCapabilityCache,
-        );
+        ] as const;
+        const guard = credentialMutationGuardFor(state);
+        const validation = await (guard
+          ? deps.validateCustomOpenAiLikeSelection(...validationArgs, guard)
+          : deps.validateCustomOpenAiLikeSelection(...validationArgs));
         if (validation.ok) {
           if (validation.pinnedAddresses)
             state.endpointPinnedAddresses = validation.pinnedAddresses;
@@ -389,7 +422,7 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
           selectedModel,
           selectedCredentialEnv,
           remoteConfig.helpUrl,
-          { intendedApi },
+          withCredentialMutationGuard(state, { intendedApi }),
         );
         if (validation.ok) {
           if (validation.pinnedAddresses)
@@ -409,14 +442,18 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
 
       const retryMessage = "Please choose a provider/model again.";
       if (selected.key === "anthropic") {
-        const validation = await deps.validateAnthropicSelectionWithRetryMessage(
+        const validationArgs = [
           remoteConfig.label,
           state.endpointUrl || deps.ANTHROPIC_ENDPOINT_URL,
           selectedModel,
           selectedCredentialEnv,
           retryMessage,
           remoteConfig.helpUrl,
-        );
+        ] as const;
+        const guard = credentialMutationGuardFor(state);
+        const validation = await (guard
+          ? deps.validateAnthropicSelectionWithRetryMessage(...validationArgs, guard)
+          : deps.validateAnthropicSelectionWithRetryMessage(...validationArgs));
         if (validation.ok) {
           state.preferredInferenceApi = validation.api;
           return "selected";
@@ -434,7 +471,7 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
         selectedCredentialEnv,
         retryMessage,
         remoteConfig.helpUrl,
-        {
+        withCredentialMutationGuard(state, {
           provider: state.provider,
           requireResponsesToolCalling: deps.shouldRequireResponsesToolCalling(state.provider),
           skipResponsesProbe: deps.shouldSkipResponsesProbe(state.provider),
@@ -442,7 +479,7 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
           extraHeaders:
             deps.getProbeExtraHeaders?.(state.provider) ?? getProbeExtraHeaders(state.provider),
           capabilityCache: state.inferenceCapabilityCache,
-        },
+        }),
       );
       if (validation.ok) {
         state.preferredInferenceApi = validation.api;

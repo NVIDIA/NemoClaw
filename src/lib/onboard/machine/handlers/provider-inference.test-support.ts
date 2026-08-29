@@ -97,6 +97,7 @@ export function createDeps(
       requiredEndpointUrl: null,
       requiredInferenceApi: null,
     })),
+    preflightPolicyRequirements: vi.fn(),
     setupNim: vi.fn(async () => ({ ...baseSelection })),
     setupInference: vi.fn<
       ProviderInferenceStateOptions<Gpu, Agent, Host>["deps"]["setupInference"]
@@ -155,6 +156,7 @@ export function createDeps(
     deps: {
       checkGatewayRouteCompatibility: calls.checkGatewayRouteCompatibility,
       preflightGatewayRouteDiscovery: calls.preflightGatewayRouteDiscovery,
+      preflightPolicyRequirements: calls.preflightPolicyRequirements,
       getSandboxRecoveryAuthority: (): "missing" => "missing",
       withGatewayRouteMutationLock: async <T>(
         _gatewayName: string,

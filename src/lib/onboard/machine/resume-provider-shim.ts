@@ -27,7 +27,10 @@ export type ResumeProviderShimDeps = {
   isRoutedInferenceProvider: ResumeProviderRecoveryDeps["isRoutedInferenceProvider"];
   replaceNamedCredential: ResumeProviderRecoveryDeps["replaceNamedCredential"];
   /** Recover an exact gateway-scoped managed runtime; false means no managed owner state exists. */
-  resumeManagedLlamaCppRuntime?: (sandboxName: string) => Promise<boolean>;
+  resumeManagedLlamaCppRuntime?: (
+    sandboxName: string,
+    revalidatePolicyRequirements?: (operation: string) => void,
+  ) => Promise<boolean>;
 };
 
 export function createResumeProviderShim(deps: ResumeProviderShimDeps) {
@@ -35,16 +38,18 @@ export function createResumeProviderShim(deps: ResumeProviderShimDeps) {
     async ensureManagedLlamaCppResumeReady(
       provider: string | null | undefined,
       sandboxName: string | null | undefined,
+      revalidatePolicyRequirements?: (operation: string) => void,
     ): Promise<boolean> {
       if (provider !== "llama-cpp-local" || !sandboxName || !deps.resumeManagedLlamaCppRuntime) {
         return false;
       }
-      return deps.resumeManagedLlamaCppRuntime(sandboxName);
+      return deps.resumeManagedLlamaCppRuntime(sandboxName, revalidatePolicyRequirements);
     },
     async ensureResumeProviderReady(
       gatewayName: string,
       provider: string | null | undefined,
       credentialEnv: string | null | undefined,
+      revalidatePolicyRequirements?: (operation: string) => void,
     ): Promise<ResumeProviderRecoveryResult> {
       return ensureResumeProviderReadyImpl(provider, credentialEnv, {
         remoteProviderConfig: onboardProviders.REMOTE_PROVIDER_CONFIG,
@@ -56,6 +61,7 @@ export function createResumeProviderShim(deps: ResumeProviderShimDeps) {
         isNonInteractive: deps.isNonInteractive,
         note: (message) => console.log(`${D}${message}${R}`),
         replaceNamedCredential: deps.replaceNamedCredential,
+        revalidatePolicyRequirements,
         validateNvidiaApiKeyValue,
         log: (message) => console.log(message),
         warn: (message) => console.error(message),

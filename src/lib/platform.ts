@@ -271,7 +271,7 @@ function detectDockerHost(opts: DockerHostDetectionOptions = {}): DockerHostDete
     const dockerHost = `unix://${socketPath}`;
     const observation = probe(dockerHost);
     if (!observation.reachable) continue;
-    if (observation.identity === "unknown") return null;
+    if (observation.identity === "unknown") continue;
     if (selectedIdentity && observation.identity !== selectedIdentity) return null;
     if (selection) continue;
     selection = { dockerHost, source: "socket", socketPath };

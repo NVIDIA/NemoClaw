@@ -298,6 +298,37 @@ describe("Portable OpenClaw pairing settlement", () => {
     expect(scope.runApproval).not.toHaveBeenCalled();
   });
 
+  it("does not repair a legacy registry row when authority changes while acquiring the lifecycle lock (#9833)", async () => {
+    let revalidatePolicyRequirements = () => undefined;
+    const updateSandbox = vi.fn(() => true);
+    const scope = settlementDeps({
+      getSandbox: vi.fn(() => ({ ...ENTRY, agent: null })),
+      updateSandbox,
+      withSandboxLock: vi.fn(async (_name, operation) => {
+        revalidatePolicyRequirements = () => {
+          throw new Error("policy authority changed");
+        };
+        return operation();
+      }),
+    });
+
+    await expect(
+      settlePortableOpenClawPairing(
+        "alpha",
+        {
+          portableRequired: true,
+          revalidatePolicyRequirements: () => revalidatePolicyRequirements(),
+        },
+        scope.deps,
+      ),
+    ).rejects.toThrow("policy authority changed");
+
+    expect(updateSandbox).not.toHaveBeenCalled();
+    expect(scope.observePairing).not.toHaveBeenCalled();
+    expect(scope.runProducer).not.toHaveBeenCalled();
+    expect(scope.runApproval).not.toHaveBeenCalled();
+  });
+
   it.each<[string, boolean]>([
     ["registry update fails", false],
     ["registry readback remains unchanged", true],
@@ -577,6 +608,128 @@ describe("Portable OpenClaw pairing settlement", () => {
     expect(scope.runProducer).not.toHaveBeenCalled();
     expect(scope.runApproval).toHaveBeenCalledOnce();
     expect(scope.observeFinalPairing).toHaveBeenCalledOnce();
+  });
+
+  it("does not produce or approve a request when authority changes during initial observation (#9833)", async () => {
+    let revalidatePolicyRequirements = () => undefined;
+    const scope = settlementDeps();
+    scope.observePairing.mockImplementationOnce(() => {
+      revalidatePolicyRequirements = () => {
+        throw new Error("policy authority changed");
+      };
+      return {
+        state: "pairing-only",
+        deviceIdentitySha256: "b".repeat(64),
+      };
+    });
+
+    await expect(
+      settlePortableOpenClawPairing(
+        "alpha",
+        {
+          revalidatePolicyRequirements: () => revalidatePolicyRequirements(),
+        },
+        scope.deps,
+      ),
+    ).rejects.toThrow("policy authority changed");
+
+    expect(scope.runProducer).not.toHaveBeenCalled();
+    expect(scope.runApproval).not.toHaveBeenCalled();
+    expect(scope.observePairing).toHaveBeenCalledOnce();
+  });
+
+  it("does not approve a request when authority changes during request production (#9833)", async () => {
+    let revalidatePolicyRequirements = () => undefined;
+    const scope = settlementDeps({
+      runPortablePairingProducer: vi.fn(() => {
+        revalidatePolicyRequirements = () => {
+          throw new Error("policy authority changed");
+        };
+      }),
+    });
+    scope.observePairing.mockReturnValueOnce({
+      state: "pairing-only",
+      deviceIdentitySha256: "b".repeat(64),
+    });
+
+    await expect(
+      settlePortableOpenClawPairing(
+        "alpha",
+        {
+          revalidatePolicyRequirements: () => revalidatePolicyRequirements(),
+        },
+        scope.deps,
+      ),
+    ).rejects.toThrow("policy authority changed");
+
+    expect(scope.deps.runPortablePairingProducer).toHaveBeenCalledOnce();
+    expect(scope.runApproval).not.toHaveBeenCalled();
+    expect(scope.observePairing).toHaveBeenCalledOnce();
+  });
+
+  it("does not publish settled pairing when authority changes during initial observation (#9833)", async () => {
+    let revalidatePolicyRequirements = () => undefined;
+    const scope = settlementDeps();
+    scope.observePairing.mockImplementationOnce(() => {
+      revalidatePolicyRequirements = () => {
+        throw new Error("policy authority changed");
+      };
+      return {
+        state: "settled",
+        deviceIdentitySha256: "b".repeat(64),
+      };
+    });
+
+    await expect(
+      settlePortableOpenClawPairing(
+        "alpha",
+        {
+          revalidatePolicyRequirements: () => revalidatePolicyRequirements(),
+        },
+        scope.deps,
+      ),
+    ).rejects.toThrow("policy authority changed");
+
+    expect(scope.runProducer).not.toHaveBeenCalled();
+    expect(scope.runApproval).not.toHaveBeenCalled();
+    expect(scope.observePairing).toHaveBeenCalledOnce();
+  });
+
+  it("does not publish settled pairing when authority changes during final observation (#9833)", async () => {
+    let revalidatePolicyRequirements = () => undefined;
+    const scope = settlementDeps();
+    scope.observeFinalPairing.mockReturnValueOnce({
+      state: "settled",
+      deviceIdentitySha256: "b".repeat(64),
+    });
+    scope.observePairing
+      .mockReturnValueOnce({
+        state: "pairing-only",
+        deviceIdentitySha256: "b".repeat(64),
+      })
+      .mockImplementationOnce(() => {
+        revalidatePolicyRequirements = () => {
+          throw new Error("policy authority changed");
+        };
+        return {
+          state: "settled",
+          deviceIdentitySha256: "b".repeat(64),
+        };
+      });
+
+    await expect(
+      settlePortableOpenClawPairing(
+        "alpha",
+        {
+          revalidatePolicyRequirements: () => revalidatePolicyRequirements(),
+        },
+        scope.deps,
+      ),
+    ).rejects.toThrow("policy authority changed");
+
+    expect(scope.runProducer).toHaveBeenCalledOnce();
+    expect(scope.runApproval).toHaveBeenCalledOnce();
+    expect(scope.observePairing).toHaveBeenCalledTimes(2);
   });
 
   it.each(["ambiguous", "no-request", "rejected", "unavailable"] as const)(
