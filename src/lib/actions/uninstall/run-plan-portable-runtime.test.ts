@@ -112,8 +112,8 @@ function modeledSandboxStatus(
 
 const temporaryDirectories: string[] = [];
 
-function sharedOpenShellFixture(prefix: string) {
-  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+function sharedOpenShellFixture(prefix: string, parentDir = os.tmpdir()) {
+  const homeDir = fs.mkdtempSync(path.join(parentDir, prefix));
   temporaryDirectories.push(homeDir);
   const paths = defaultUninstallPaths({ home: homeDir });
   const localInstallPaths = paths.openshellInstallPaths.filter((target) =>
@@ -438,6 +438,7 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
     const registeredSandboxes = new Set(["alpha", "unrelated"]);
     const { homeDir, sharedPaths: sharedOpenShellPaths } = sharedOpenShellFixture(
       "nemoclaw-portable-success-",
+      process.cwd(),
     );
     const gatewayStateDir = path.join(homeDir, "external-gateway-state");
     const gatewayStateMarker = path.join(gatewayStateDir, "keep");
