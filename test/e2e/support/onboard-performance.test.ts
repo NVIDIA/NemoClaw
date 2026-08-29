@@ -499,7 +499,7 @@ describe("onboard performance evidence", () => {
   it("records malformed OpenClaw duration metadata as unavailable", () => {
     expect(
       extractOpenClawAgentDurationEvidence(
-        `progress\n${JSON.stringify({ payloads: [], meta: { durationMs: "8916" } })}`,
+        `progress\n${JSON.stringify({ status: "ok", result: { payloads: [], meta: { durationMs: "8916" } } })}`,
       ),
     ).toEqual({ reason: "malformed", status: "unavailable" });
   });

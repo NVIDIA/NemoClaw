@@ -33,16 +33,10 @@ const OPENCLAW_CONTAINER_KEYS = [
   "segments",
 ] as const;
 
-function openClawAgentJsonDocuments(value: unknown): OpenClawAgentJsonDocument[] {
-  const values = Array.isArray(value) ? value : [value];
-  return values.filter(
-    (entry): entry is OpenClawAgentJsonDocument =>
-      typeof entry === "object" && entry !== null && !Array.isArray(entry),
-  );
-}
-
 export function parseOpenClawAgentJsonDocuments(raw: string): OpenClawAgentJsonDocument[] {
-  return openClawAgentJsonDocuments(parseOpenClawJsonDocuments(raw));
+  return parseOpenClawJsonDocuments(raw).filter(
+    (document): document is OpenClawAgentJsonDocument => openClawAgentResponseRecord(document) !== null,
+  );
 }
 
 function collectOpenClawAssistantText(
@@ -76,15 +70,12 @@ function collectOpenClawAssistantText(
 
 export function parseOpenClawAgentText(raw: string): string {
   if (containsToolCallOutput(raw)) return "";
-  const documents = parseOpenClawAgentJsonDocuments(raw);
-  if (documents.some(containsToolCallStructure)) return "";
+  const document = parseOpenClawAgentJsonDocuments(raw).at(-1);
+  if (!document || containsToolCallStructure(document)) return "";
+  const response = openClawAgentResponseRecord(document);
+  if (!response || containsToolCallStructure(response)) return "";
   const parts: string[] = [];
-  for (const document of documents) {
-    const response = openClawAgentResponseRecord(document);
-    if (response && Array.isArray(response.payloads)) {
-      collectOpenClawAssistantText(response.payloads, parts, new Set());
-    }
-  }
+  collectOpenClawAssistantText(response.payloads, parts, new Set());
   const reply = parts.join("\n");
   return containsToolCallOutput(reply) ? "" : reply;
 }
