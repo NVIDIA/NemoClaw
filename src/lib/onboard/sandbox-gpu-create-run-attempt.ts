@@ -19,12 +19,15 @@ import {
 import { printSandboxCreateRecoveryHints } from "../build-context";
 import { streamSandboxCreate, type StreamSandboxCreateResult } from "../sandbox/create-stream";
 import { getReadyCheckOutputPatternsForAgent } from "../sandbox/create-stream-ready-gate";
-import { getSandboxFailurePhase, isSandboxReady } from "../state/gateway";
 import type { SandboxGpuProofResult } from "../state/registry";
 import { classifySandboxCreateFailure } from "../validation";
 import { reportSandboxCreateFailure } from "./created-sandbox-failure";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
+import {
+  isSandboxBridgeGatewayReachable,
+  verifySandboxBridgeGatewayReachableOrExit,
+} from "./gateway-sandbox-reachability";
 import { createDockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
 import { installPortableDemoSandboxLifecycle } from "./experimental/portable-demo-lifecycle";
 import { enforceManagedBootstrapRecoveryForSandbox } from "./managed-bootstrap/adapter";
@@ -372,8 +375,25 @@ class ManagedBootstrapCreateStreamFailure extends Error {
   }
 }
 
-export const verifySelectedSandboxBridgeReachability =
-  sandboxReadinessTracing.verifySelectedSandboxBridgeReachability;
+export async function verifySelectedSandboxBridgeReachability(
+  input: SandboxGpuCreateFlowInput,
+): Promise<void> {
+  const managedBootstrap = input.managedBootstrap;
+  const reachabilityImpl = managedBootstrap
+    ? (options: Parameters<typeof isSandboxBridgeGatewayReachable>[0]) => {
+        const gatewayRuntime = managedBootstrap.runtimeProvider.gateway.prepareHostRuntime({
+          environment: input.hostEnv ?? process.env,
+          platform: process.platform,
+        });
+        return isSandboxBridgeGatewayReachable({ ...options, gatewayRuntime });
+      }
+    : undefined;
+  await verifySandboxBridgeGatewayReachableOrExit(true, {
+    skip: false,
+    port: input.gatewayPort,
+    ...(reachabilityImpl ? { reachabilityImpl } : {}),
+  });
+}
 
 export function createSandboxGpuCreateAttemptRunner(
   input: SandboxGpuCreateFlowInput,
@@ -623,7 +643,7 @@ export function createSandboxGpuCreateAttemptRunner(
             ...(input.createWorkingDirectory ? { cwd: input.createWorkingDirectory } : {}),
             readyCheck: () => {
               const list = captureSandboxReadiness(["sandbox", "list"], { ignoreError: true });
-              return isSandboxReady(list, input.sandboxName);
+              return sandboxGpuCreateAttempt.isSandboxReady(list, input.sandboxName);
             },
             ...(deferPostCreateEffects
               ? {}
@@ -706,8 +726,8 @@ export function createSandboxGpuCreateAttemptRunner(
                 sandboxName: input.sandboxName,
                 timeoutSecs: input.sandboxReadyTimeoutSecs,
                 runCaptureOpenshell: captureSandboxReadiness,
-                isSandboxReady,
-                getSandboxFailurePhase,
+                isSandboxReady: sandboxGpuCreateAttempt.isSandboxReady,
+                getSandboxFailurePhase: sandboxGpuCreateAttempt.getSandboxFailurePhase,
                 stableReadyPolls: REPLACEMENT_STABLE_READY_POLLS,
                 sleep: deps.sleep,
               });
@@ -727,7 +747,7 @@ export function createSandboxGpuCreateAttemptRunner(
               const list = captureSandboxReadiness(["sandbox", "list"], {
                 ignoreError: true,
               });
-              if (!isSandboxReady(list, input.sandboxName)) {
+              if (!sandboxGpuCreateAttempt.isSandboxReady(list, input.sandboxName)) {
                 if (createAttemptNonce) persistIdentitySettlementRecovery();
                 throw new Error(
                   "Managed bootstrap create completed without an authoritative Ready sandbox.",
@@ -932,8 +952,8 @@ export function createSandboxGpuCreateAttemptRunner(
       sandboxName: input.sandboxName,
       timeoutSecs: input.sandboxReadyTimeoutSecs,
       runCaptureOpenshell: captureSandboxReadiness,
-      isSandboxReady,
-      getSandboxFailurePhase,
+      isSandboxReady: sandboxGpuCreateAttempt.isSandboxReady,
+      getSandboxFailurePhase: sandboxGpuCreateAttempt.getSandboxFailurePhase,
       stableReadyPolls:
         compatibility || managedBootstrap || expectedRecreatedSandboxId
           ? REPLACEMENT_STABLE_READY_POLLS
