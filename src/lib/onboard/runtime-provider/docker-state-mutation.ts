@@ -1164,14 +1164,6 @@ function writePrivateTransportFile(filePath: string, value: Buffer): void {
   }
 }
 
-function copyHelperTransportFile(
-  capture: HelperTransportCapture,
-  command: PersistedEngineLifecycleExactCommand,
-  timeoutMs = HELPER_TRANSPORT_COMMAND_TIMEOUT_MS,
-): ContainerEngineCommandResult {
-  return capture(command, timeoutMs);
-}
-
 function readHelperTransportFile(
   capture: HelperTransportCapture,
   runtimeId: string,
@@ -1187,8 +1179,7 @@ function readHelperTransportFile(
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) fail(`root helper ${action} transport response did not arrive`);
       fs.rmSync(destination, { force: true });
-      const result = copyHelperTransportFile(
-        capture,
+      const result = capture(
         helperTransportCopyFromCommand(runtimeId, containerPath, destination),
         Math.min(HELPER_TRANSPORT_COMMAND_TIMEOUT_MS, remainingMs),
       );
@@ -1220,13 +1211,13 @@ function probeHelperTransport(
 ): boolean {
   return withHelperTransportHostDirectory(options.hostTransportRoot, (temporary) => {
     const destination = path.join(temporary, "ready");
-    const result = copyHelperTransportFile(
-      capture,
+    const result = capture(
       helperTransportCopyFromCommand(
         options.runtimeId,
         `${helperTransportSessionPath(transactionId)}/ready`,
         destination,
       ),
+      HELPER_TRANSPORT_COMMAND_TIMEOUT_MS,
     );
     if (result.error || result.status !== 0 || result.stderr.length !== 0) return false;
     const ready = fs.readFileSync(destination);
@@ -1302,13 +1293,13 @@ function finishReleasedHelperTransport(
     const resumed = path.join(temporary, "resumed");
     writePrivateTransportFile(resumed, Buffer.from(`${transactionId}\n`, "ascii"));
     requireCommandSuccess(
-      copyHelperTransportFile(
-        capture,
+      capture(
         helperTransportCopyToCommand(
           options.runtimeId,
           resumed,
           `${helperTransportSessionPath(transactionId)}/resumed`,
         ),
+        HELPER_TRANSPORT_COMMAND_TIMEOUT_MS,
       ),
       "root helper transport release finalization",
     );
@@ -1398,13 +1389,13 @@ function invokeHelperTransport(
     const request = path.join(temporary, "request");
     writePrivateTransportFile(request, input);
     requireCommandSuccess(
-      copyHelperTransportFile(
-        capture,
+      capture(
         helperTransportCopyToCommand(
           options.runtimeId,
           request,
           `${sessionPath}/${identity}.${action}.incoming`,
         ),
+        HELPER_TRANSPORT_COMMAND_TIMEOUT_MS,
       ),
       "root helper transport request publication",
     );
@@ -1420,13 +1411,13 @@ function invokeHelperTransport(
     const acknowledgement = path.join(temporary, "ack");
     writePrivateTransportFile(acknowledgement, Buffer.from(`${identity}\n`, "ascii"));
     requireCommandSuccess(
-      copyHelperTransportFile(
-        capture,
+      capture(
         helperTransportCopyToCommand(
           options.runtimeId,
           acknowledgement,
           `${sessionPath}/${identity}.ack`,
         ),
+        HELPER_TRANSPORT_COMMAND_TIMEOUT_MS,
       ),
       "root helper transport response acknowledgement",
     );
