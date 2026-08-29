@@ -595,7 +595,7 @@ function collectManagedImageOpenClawPluginInstalls(env: Env): OpenClawPluginInst
   const installs: OpenClawPluginInstall[] = [];
   const seen = new Set<string>();
 
-  for (const manifest of BUILT_IN_CHANNEL_MANIFESTS) {
+  for (const manifest of BUILT_IN_CHANNEL_MANIFESTS as readonly ChannelManifest[]) {
     for (const packageSpec of manifest.agentPackages ?? []) {
       if (packageSpec.agent !== "openclaw" || packageSpec.manager !== "openclaw-plugin") continue;
       const spec = resolveOpenClawPackageSpec(packageSpec.spec, env);
