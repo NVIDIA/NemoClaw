@@ -744,6 +744,19 @@ export async function reclaimStalePublicationLock(
     throw error;
   }
   if (now - lockStat.mtimeMs <= PUBLICATION_LOCK_STALE_MS) return false;
+  let owner: { pid?: unknown };
+  try {
+    owner = JSON.parse(await readFile(path.join(lock, "owner.json"), "utf8"));
+  } catch {
+    return false;
+  }
+  if (!Number.isSafeInteger(owner.pid) || Number(owner.pid) <= 0) return false;
+  try {
+    process.kill(Number(owner.pid), 0);
+    return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") return false;
+  }
   const stale = lock + ".stale-" + process.pid + "-" + now;
   try {
     await rename(lock, stale);

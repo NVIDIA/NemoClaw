@@ -493,7 +493,7 @@ describe("pull request value-stream analysis", () => {
     const destination = path.join(publicationRoot, "pr-42");
     const staging = path.join(publicationRoot, "staging");
     const lock = destination + ".lock";
-    await Promise.all([mkdir(destination), mkdir(staging), mkdir(lock)]);
+    await Promise.all([mkdir(destination), mkdir(staging)]);
     await Promise.all([
       writeFile(path.join(destination, "manifest.json"), "current"),
       writeFile(path.join(staging, "manifest.json"), "stale"),
@@ -506,15 +506,13 @@ describe("pull request value-stream analysis", () => {
         throw new Error("pull request head changed during lifetime analysis");
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    await rm(lock, { recursive: true });
     await expect(publication).rejects.toThrow("pull request head changed during lifetime analysis");
     await expect(readFile(path.join(destination, "manifest.json"), "utf8")).resolves.toBe(
       "current",
     );
   });
 
-  test("prevents a displaced publisher from replacing newer artifacts (#10542)", async () => {
+  test("does not reclaim a lock while its publisher is alive (#10542)", async () => {
     const publicationRoot = await mkdtemp(path.join(tmpdir(), "value-stream-fence-"));
     temporaryDirectories.push(publicationRoot);
     const destination = path.join(publicationRoot, "pr-42");
@@ -527,6 +525,10 @@ describe("pull request value-stream analysis", () => {
       writeFile(path.join(second, "manifest.json"), "second"),
     ]);
     let resumeFirst!: () => void;
+    let firstOwnsLock!: () => void;
+    const firstEnteredValidation = new Promise<void>((resolve) => {
+      firstOwnsLock = resolve;
+    });
     const firstBlocked = new Promise<void>((resolve) => {
       resumeFirst = resolve;
     });
@@ -534,13 +536,16 @@ describe("pull request value-stream analysis", () => {
       staging: first,
       destination,
       lock,
-      validate: () => firstBlocked,
+      validate: () => {
+        firstOwnsLock();
+        return firstBlocked;
+      },
     });
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(await reclaimStalePublicationLock(lock, Date.now() + 6 * 60 * 1_000)).toBe(true);
-    await publishStagedDirectory({ staging: second, destination, lock });
+    await firstEnteredValidation;
+    expect(await reclaimStalePublicationLock(lock, Date.now() + 6 * 60 * 1_000)).toBe(false);
     resumeFirst();
-    await expect(firstPublication).rejects.toThrow("lock ownership changed");
+    await firstPublication;
+    await publishStagedDirectory({ staging: second, destination, lock });
     await expect(readFile(path.join(destination, "manifest.json"), "utf8")).resolves.toBe("second");
   });
 
@@ -549,9 +554,12 @@ describe("pull request value-stream analysis", () => {
     temporaryDirectories.push(publicationRoot);
     const lock = path.join(publicationRoot, "pr-42.lock");
     await mkdir(lock);
+    await writeFile(path.join(lock, "owner.json"), JSON.stringify({ pid: process.pid }));
     expect(await reclaimStalePublicationLock(lock)).toBe(false);
     const stale = new Date(Date.now() - 6 * 60 * 1_000);
     await utimes(lock, stale, stale);
+    expect(await reclaimStalePublicationLock(lock)).toBe(false);
+    await writeFile(path.join(lock, "owner.json"), JSON.stringify({ pid: 2_147_483_647 }));
     expect(await reclaimStalePublicationLock(lock)).toBe(true);
     await expect(stat(lock)).rejects.toThrow();
   });
