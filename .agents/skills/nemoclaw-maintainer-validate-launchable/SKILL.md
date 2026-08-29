@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-validate-launchable
-description: Validate the user-facing staging Brev Launchable deployment, exact NemoClaw image and runtime identity, onboarding, CLI behavior, and inference. Use when a maintainer asks to test the staging Launchable in the Brev web interface, provides a deployed Brev environment URL, hands a Launchable instance to Codex, or needs advisory web validation separate from automated Launchable E2E.
+description: Validate the user-facing staging Brev Launchable deployment, NemoClaw image and runtime identity, onboarding, CLI behavior, and inference. Use when a maintainer asks to test the staging Launchable in the Brev web interface, provides a deployed Brev environment URL, hands a Launchable instance to Codex, or needs advisory web validation separate from automated Launchable E2E.
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -33,7 +33,7 @@ Keep the Launchable ID in this default URL equal to the `NEMOCLAW_STAGING_LAUNCH
 Require all of these results for a complete pass:
 
 1. The Launchable web page and deployment flow work in an authenticated browser session.
-2. The deployed environment boots the exact concrete image recorded by the selected automated Launchable workflow artifact.
+2. The deployed environment boots the concrete image recorded by the selected automated Launchable workflow artifact.
 3. The baked provision receipt and source checkout without tracked or untracked changes identify the selected NemoClaw commit.
 4. The preinstalled user journey completes onboarding, CLI checks, sandbox inference, recovery, logs, and cleanup.
 5. A hosted inference request and the sandbox inference request succeed with a securely supplied credential.
@@ -51,7 +51,7 @@ When one or more checks ran without failure but another required check did not r
 ## Resolve the Candidate and Image Evidence
 
 Record the expected NemoClaw commit SHA before deployment.
-Use the latest successful `Exact staging Brev Launchable` job for that exact SHA.
+Use the latest successful `Staging Brev Launchable` job for that SHA.
 Record the selected workflow and job URLs and the producer run ID selected in that job's log.
 Download its private artifact and require `launchable-e2e.json` to report:
 
@@ -103,7 +103,7 @@ Perform these checks without changing the instance:
 1. Use the supplied environment ID as the authoritative identity. If a name is also supplied, require it to match that environment. Use an instance-name lookup only when no environment ID is available, and require exactly one match.
 2. Require the environment to report its successful running state.
 3. Establish the user-facing SSH or terminal access path shown by Brev.
-4. Read the GCE instance image metadata and require exact equality with `boot.bootImage` from `launchable-e2e.json`.
+4. Read the GCE instance image metadata and require equality with `boot.bootImage` from `launchable-e2e.json`.
 5. Read `/etc/nemoclaw/provision.json` with the privileges provided by the image.
 6. Require the provision receipt, source repository, source path, image-repository commit SHA, and NemoClaw commit SHA to match the selected artifact and candidate.
 7. Require the baked source checkout to have no tracked or untracked changes and no runtime override receipt.
@@ -124,7 +124,7 @@ Run the validation from a short-lived local process that receives the key throug
 The local validation process and its SSH child can read the key; the remote shell exports it to the baked full E2E process, so candidate code can read and use it.
 Before exposing the key, record the authorized candidate repository and commit SHA, require the repository to be `NVIDIA/NemoClaw`, and reject a candidate from a fork pull request.
 Explain that the selected candidate code can read and use the key, then obtain explicit maintainer approval immediately before starting the credential-bearing process.
-If the issuing service cannot rotate or revoke the inference API key after the run, require a maintainer-approved waiver tied to the exact candidate commit SHA and selected automated Launchable run ID before starting validation.
+If the issuing service cannot rotate or revoke the inference API key after the run, require a maintainer-approved waiver tied to the candidate commit SHA and selected automated Launchable run ID before starting validation.
 Do not persist the key in shell startup files, temporary files, SSH configuration, or the Brev environment after the test process exits.
 If it is unavailable:
 
@@ -138,14 +138,14 @@ Require the baked full E2E success sentinel and retain only redacted logs.
 The test must remove its `e2e-` sandbox and verify the expected cleanup result even after a test failure.
 After the local and remote test processes exit, unset any shell variable created for the run and verify that no temporary credential file remains.
 Unless the approved waiver applies, rotate or revoke the inference API key in the issuing NVIDIA service after the run and record non-sensitive confirmation.
-When the waiver applies, record its approver, exact candidate commit SHA, selected automated Launchable run ID, and the accepted period of later API-key access without recording the key.
+When the waiver applies, record its approver, candidate commit SHA, selected automated Launchable run ID, and the accepted period of later API-key access without recording the key.
 
 ## Finish the Instance Handoff
 
 Report whether the Brev instance remains running.
 Ask whether the maintainer wants to keep, stop, or delete it.
-Before a stop or delete, resolve the exact environment again and repeat the action and target for confirmation.
-After an authorized delete, verify that the exact environment is absent.
+Before a stop or delete, resolve the environment again and repeat the action and target for confirmation.
+After an authorized delete, verify that the environment is absent.
 
 ## Report the Result
 
@@ -167,7 +167,7 @@ Return this structure:
 - Overall: complete pass / partially blocked / failed / not run
 - Web deployment: passed / failed / not run by Codex
 - Environment access: passed / failed / not run
-- Exact image identity: passed / failed / not run
+- image identity: passed / failed / not run
 - Baked runtime identity: passed / failed / not run
 - Preinstalled user journey: passed / failed / partially blocked / not run
 - Hosted inference: passed / failed / partially blocked / not run

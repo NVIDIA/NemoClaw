@@ -157,12 +157,12 @@ COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
-# Reassert the npm-private brace-expansion fix for the exact final filesystem.
+# Reassert the npm-private brace-expansion fix for the final filesystem.
 # hadolint ignore=DL3059
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
-# Reassert the npm-private ip-address fix for the exact final filesystem. When
+# Reassert the npm-private ip-address fix for the final filesystem. When
 # onboarding supplied a corporate CA, use it for the registry-backed download.
 # hadolint ignore=DL3059
 RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
@@ -210,8 +210,8 @@ COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 # The first-party profile plugin uses Deep Agents' supported entry-point hook to
 # register managed aliases without modifying third-party package source. The
 # managed-runtime patch independently hardens DCode entrypoints and installs the
-# reviewed Relay observability boundary. Build validation keeps both exact and
-# fail closed in one layer.
+# reviewed Relay observability boundary. Build validation verifies both artifacts and
+# fails closed in one layer.
 # invalidState: a no-deps plugin install can precede missing base dependencies.
 # sourceBoundary: Dockerfile.base owns dependencies; this layer only proves them.
 # whyNotSourceFix: dependency completeness is a NemoClaw image-build contract.

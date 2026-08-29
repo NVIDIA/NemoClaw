@@ -33,6 +33,10 @@ import type {
 } from "../managed-workload/hermes-state-volume";
 import type { OwnedSandboxRecreateRuntime } from "../onboard-recreate-journal";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
+import type {
+  CreatedSandboxLifecycle,
+  CreatedSandboxLifecycleRegistration,
+} from "../sandbox-recreate-transaction";
 import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
 import type {
   InferenceRouteReservationAuthority,
@@ -65,6 +69,43 @@ function cancelRecoveryIdentity(
   return {
     lifecycleLiveIdentityFingerprint: requireVerifiedPolicyGate().lifecycleLiveIdentityFingerprint,
   };
+}
+
+export function createOnboardCreatedSandboxRegistrationWithManagedLifecycle(input: {
+  readonly sandboxName: string;
+  readonly managedBootstrap: boolean;
+  readonly sandboxGpuEnabled: boolean;
+  readonly createdLifecycle: CreatedSandboxLifecycle;
+  readonly getRecordedRegistration: () => CreatedSandboxLifecycleRegistration;
+  readonly createRegistration: SandboxCreateOrchestrationRuntime["createOnboardCreatedSandboxRegistration"];
+  readonly registration: Omit<
+    Parameters<SandboxCreateOrchestrationRuntime["createOnboardCreatedSandboxRegistration"]>[0],
+    "createdLifecycle"
+  >;
+}) {
+  let createdLifecycle = input.createdLifecycle;
+  if (input.managedBootstrap) {
+    const capture = input.sandboxGpuEnabled
+      ? input.createdLifecycle.capture
+      : ({ lifecycleGeneration }: Pick<SandboxEntry, "lifecycleGeneration">) => {
+          const recordedRegistration = input.getRecordedRegistration();
+          if (lifecycleGeneration !== recordedRegistration.lifecycleGeneration) {
+            throw new Error(
+              `Cannot register sandbox '${input.sandboxName}': lifecycle setup did not preserve its generation.`,
+            );
+          }
+          return recordedRegistration;
+        };
+    createdLifecycle = {
+      ...input.createdLifecycle,
+      capture,
+      revalidate: (registration) =>
+        input.createdLifecycle.revalidate(registration, {
+          allowNotReadyWithMatchingIdentity: true,
+        }),
+    };
+  }
+  return input.createRegistration({ ...input.registration, createdLifecycle });
 }
 
 /** Persist one create-attempt recovery message through the onboard session owner. */
@@ -563,10 +604,7 @@ export function reconcileCreatedHermesCredentialEnvironment(
     deps.revalidatePolicyAuthority(
       `reconciling Hermes messaging credentials for sandbox '${input.sandboxName}'`,
     );
-    const reconciliation = deps.reconcileCredentialEnv(
-      input.plan,
-      deps.revalidatePolicyAuthority,
-    );
+    const reconciliation = deps.reconcileCredentialEnv(input.plan, deps.revalidatePolicyAuthority);
     deps.revalidatePolicyAuthority(
       `confirming Hermes messaging credential reconciliation for sandbox '${input.sandboxName}'`,
     );
@@ -2293,6 +2331,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       }
       return policySourcePath;
     };
+    let managedBootstrapCreateFinished = false;
     const revalidateCreatedSandboxIdentity = (
       expectedIdentity: string,
       operation: string,
@@ -2304,6 +2343,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           lifecycleLiveIdentityFingerprint: expectedIdentity,
         },
         getSandboxRecreateObservation,
+        { allowNotReadyWithMatchingIdentity: managedBootstrapCreateFinished },
       );
     };
     const requireVerifiedPolicyGate = (): NonNullable<typeof verifiedPolicyGate> => {
@@ -2553,10 +2593,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             sandboxName,
             message,
             ...(exactIdentity ? { sandboxIdentityFingerprint: exactIdentity } : {}),
-            recoveryContext: retainedSandboxRecoveryContext(
-              verifiedPolicyGate,
-              createAttemptNonce,
-            ),
+            recoveryContext: retainedSandboxRecoveryContext(verifiedPolicyGate, createAttemptNonce),
           },
           onboardSession.markRetainedSandboxRecovery,
         ),
@@ -2682,8 +2719,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               await runDeferredProviderEffects(context);
             }
           : undefined,
-        create: (verifyCreatedSandbox) =>
-          sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
+        create: async (verifyCreatedSandbox) => {
+          const created = await sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
             {
               sandboxName,
               ...(resumeVerifiedCreateInput
@@ -2723,6 +2760,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               terminalAgent: agentDefs.isTerminalAgent(agent),
               managedBootstrap,
               verifyCreatedSandboxBeforeEffects: async (identity) => {
+                managedBootstrapCreateFinished = managedBootstrap !== null;
                 await verifyCreatedSandbox(identity);
               },
               revalidateVerifiedSandboxBeforeEffect: (operation) =>
@@ -2736,7 +2774,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               openshellArgv,
               verifyDirectSandboxGpu: createGpuVerifier,
             },
-          ),
+          );
+          return created;
+        },
       });
     };
 
@@ -2827,13 +2867,27 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       preparedSandboxWorkload,
       note,
     );
-    const completeCreatedSandboxRegistration = createOnboardCreatedSandboxRegistration({
-      completion: createdSandboxCompletion,
-      createdLifecycle: createdSandboxLifecycle,
-      cleanupBuildContext,
-      manageDashboard,
-      sandboxGpuEnabled: effectiveSandboxGpuConfig.sandboxGpuEnabled,
-    });
+    // Managed bootstrap can invalidate OpenShell's cached Ready state after it
+    // replaces the container. Registry publication stays bound to the durable
+    // sandbox identity recorded before that replacement.
+    const completeCreatedSandboxRegistration =
+      createOnboardCreatedSandboxRegistrationWithManagedLifecycle({
+        sandboxName,
+        managedBootstrap: managedBootstrap !== null,
+        sandboxGpuEnabled: effectiveSandboxGpuConfig.sandboxGpuEnabled,
+        createdLifecycle: createdSandboxLifecycle,
+        getRecordedRegistration: () =>
+          requireDurableCreatedSandboxIdentity(
+            requireVerifiedPolicyGate().lifecycleLiveIdentityFingerprint,
+          ),
+        createRegistration: createOnboardCreatedSandboxRegistration,
+        registration: {
+          completion: createdSandboxCompletion,
+          cleanupBuildContext,
+          manageDashboard,
+          sandboxGpuEnabled: effectiveSandboxGpuConfig.sandboxGpuEnabled,
+        },
+      });
 
     const providerPreparationInput = {
       openshellDriver: sandboxRuntimeFields.openshellDriver,
@@ -3002,6 +3056,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           {
             sandboxName,
             sandboxWasLiveDefault,
+            gatewayPort: GATEWAY_PORT,
             runtimeFields: sandboxRuntimeFields,
             messagingProviders,
             liveExists,

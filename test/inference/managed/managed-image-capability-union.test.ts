@@ -49,7 +49,6 @@ describe("managed-image capability union", () => {
     );
     expect(collectManagedImageHermesUvPackages()).toEqual([
       "microsoft-teams-apps==2.0.13.4",
-      "aiohttp==3.14.3",
       "google-cloud-pubsub==2.39.0",
       "google-api-python-client==2.194.0",
       "google-auth==2.55.1",
@@ -152,7 +151,7 @@ describe("managed-image capability union", () => {
         NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
       });
       expect(fs.readFileSync(trace, "utf8").trim()).toBe(
-        "pip install --python /opt/hermes/.venv/bin/python --no-cache -- microsoft-teams-apps==2.0.13.4 aiohttp==3.14.3 google-cloud-pubsub==2.39.0 google-api-python-client==2.194.0 google-auth==2.55.1",
+        "pip install --python /opt/hermes/.venv/bin/python --no-cache -- microsoft-teams-apps==2.0.13.4 google-cloud-pubsub==2.39.0 google-api-python-client==2.194.0 google-auth==2.55.1",
       );
     } finally {
       fs.rmSync(temporaryRoot, { force: true, recursive: true });

@@ -161,8 +161,9 @@ export interface ChannelHostForwardSpec {
 }
 
 /** Agent-runtime metadata consumed by shared runtime setup and diagnostics. */
-export interface ChannelRuntimeByAgentSpec
-  extends Partial<Record<MessagingAgentId, ChannelRuntimeSpec>> {
+export interface ChannelRuntimeByAgentSpec extends Partial<
+  Record<MessagingAgentId, ChannelRuntimeSpec>
+> {
   readonly openclaw?: ChannelOpenClawRuntimeSpec;
   readonly hermes?: ChannelRuntimeSpec;
 }
@@ -199,7 +200,10 @@ export interface ChannelRuntimeNodePreloadSpec {
 }
 
 export interface ChannelRuntimeEnvAliasSpec {
+  /** Provider environment key populated by OpenShell. */
   readonly envKey: string;
+  /** Agent-native environment key that receives the runtime provider placeholder. */
+  readonly targetEnvKey?: string;
   readonly match: string;
   readonly value: string;
   readonly message?: string;

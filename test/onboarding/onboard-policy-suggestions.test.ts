@@ -40,8 +40,8 @@ const { computeSetupPresetSuggestions, filterSetupPolicyPresets, getSuggestedPol
       webSearchConfig?: { fetchEnabled?: boolean; provider?: "brave" | "tavily" } | null;
     }) => string[];
   };
-const { mergeRequiredSetupPolicyPresets, suppressedAgentRequiredPresets } =
-  require("../../src/lib/onboard/policy-selection") as {
+const { mergeRequiredSetupPolicyPresets } =
+  require("../../src/lib/onboard/policy-preset-reconciliation") as {
     mergeRequiredSetupPolicyPresets: (
       policyPresets: string[],
       options?: {
@@ -55,12 +55,12 @@ const { mergeRequiredSetupPolicyPresets, suppressedAgentRequiredPresets } =
         webSearchConfig?: { fetchEnabled?: boolean; provider?: "brave" | "tavily" } | null;
       },
     ) => string[];
-    suppressedAgentRequiredPresets: (
-      tierName: string,
-      agent: string | null | undefined,
-    ) => string[];
   };
-const { agentRequiredPresetAdditions, filterSuppressedAgentRequiredPresets } =
+const {
+  agentRequiredPresetAdditions,
+  filterSuppressedAgentRequiredPresets,
+  suppressedAgentRequiredPresets,
+} =
   require("../../src/lib/onboard/policy-tier-suppression") as {
     agentRequiredPresetAdditions: (
       agent: string | null | undefined,
@@ -69,6 +69,10 @@ const { agentRequiredPresetAdditions, filterSuppressedAgentRequiredPresets } =
     filterSuppressedAgentRequiredPresets: (
       presetNames: string[],
       tierName: string | null | undefined,
+      agent: string | null | undefined,
+    ) => string[];
+    suppressedAgentRequiredPresets: (
+      tierName: string,
       agent: string | null | undefined,
     ) => string[];
   };
@@ -417,15 +421,15 @@ describe("onboard policy preset suggestions", () => {
     ).not.toContain("observability-otlp-local");
   });
 
-  it("returns balanced tier defaults without messaging presets when no channels enabled", () => {
+  it("returns all balanced tier defaults without messaging presets when no channels enabled", () => {
     const suggestions = computeSetupPresetSuggestions("balanced", {
       enabledChannels: [],
       knownPresetNames: known,
     });
-    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew"]);
+    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew", "brave"]);
   });
 
-  it("adds Brave to balanced tier defaults only when web search is configured", () => {
+  it("keeps Brave in balanced tier defaults when built-in search is configured", () => {
     const suggestions = computeSetupPresetSuggestions("balanced", {
       enabledChannels: [],
       knownPresetNames: known,
@@ -435,17 +439,36 @@ describe("onboard policy preset suggestions", () => {
     expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew", "brave"]);
   });
 
-  it("selects Tavily and removes the stale Brave tier default", () => {
-    const knownWithTavily = [...known, "tavily"];
-    const suggestions = computeSetupPresetSuggestions("balanced", {
+  it.each(["balanced", "open"])(
+    "selects Tavily and preserves the $tier Brave tier default for OpenClaw",
+    (tier) => {
+      const suggestions = computeSetupPresetSuggestions(tier, {
+        enabledChannels: [],
+        knownPresetNames: known,
+        agent: "openclaw",
+        webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+        webSearchSupported: true,
+      });
+
+      expect(suggestions).toContain("tavily");
+      expect(suggestions).toContain("brave");
+    },
+  );
+
+  it("removes Brave when Tavily is selected outside a Brave-default tier", () => {
+    const suggestions = computeSetupPresetSuggestions("restricted", {
       enabledChannels: [],
-      knownPresetNames: knownWithTavily,
+      knownPresetNames: known,
+      agent: "openclaw",
       webSearchConfig: { fetchEnabled: true, provider: "tavily" },
       webSearchSupported: true,
     });
 
     expect(suggestions).toContain("tavily");
     expect(suggestions).not.toContain("brave");
+  });
+
+  it("selects Tavily without activating the conflicting Hermes web gateway", () => {
     expect(
       getSuggestedPolicyPresets({
         enabledChannels: [],
@@ -455,7 +478,7 @@ describe("onboard policy preset suggestions", () => {
 
     const hermesOpen = computeSetupPresetSuggestions("open", {
       enabledChannels: [],
-      knownPresetNames: knownWithTavily,
+      knownPresetNames: known,
       agent: "hermes",
       hermesToolGateways: ["nous-web", "nous-audio"],
       webSearchConfig: { fetchEnabled: true, provider: "tavily" },
@@ -468,7 +491,7 @@ describe("onboard policy preset suggestions", () => {
       mergeRequiredSetupPolicyPresets(["nous-audio"], {
         agent: "hermes",
         hermesToolGateways: ["nous-web", "nous-audio"],
-        knownPresetNames: knownWithTavily,
+        knownPresetNames: known,
         webSearchConfig: { fetchEnabled: true, provider: "tavily" },
       }),
     ).toEqual(["nous-audio"]);
@@ -581,7 +604,7 @@ describe("onboard policy preset suggestions", () => {
     });
     expect(suggestions).toContain("telegram");
     expect(suggestions).toContain("npm");
-    expect(suggestions).not.toContain("brave");
+    expect(suggestions).toContain("brave");
 
     const multi = computeSetupPresetSuggestions("balanced", {
       enabledChannels: ["discord", "slack"],

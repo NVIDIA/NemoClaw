@@ -1529,9 +1529,46 @@ refresh_path() {
   fi
 }
 
+prefer_homebrew_openshell() {
+  [[ "$(uname -s)" == "Darwin" ]] || return 1
+  command -v brew >/dev/null 2>&1 || return 1
+  if [[ "${1:-}" != "verified-install" ]]; then
+    macos_openshell_homebrew_gateway_service_installed || return 1
+  fi
+
+  local brew_prefix openshell_bin gateway_bin
+  brew_prefix="$(brew --prefix 2>/dev/null)" || return 1
+  [ -n "$brew_prefix" ] || return 1
+  openshell_bin="${brew_prefix%/}/bin/openshell"
+  gateway_bin="${brew_prefix%/}/bin/openshell-gateway"
+  [ -x "$openshell_bin" ] && [ -x "$gateway_bin" ] || return 1
+  export NEMOCLAW_OPENSHELL_BIN="$openshell_bin"
+  export NEMOCLAW_OPENSHELL_GATEWAY_BIN="$gateway_bin"
+  export PATH="${brew_prefix%/}/bin:$PATH"
+}
+
+observed_macos_openshell_install_method() {
+  if command -v brew >/dev/null 2>&1; then
+    printf '%s\n' "homebrew"
+  else
+    printf '%s\n' "standalone"
+  fi
+}
+
 prefer_user_local_openshell() {
   local local_bin="${XDG_BIN_HOME:-${HOME}/.local/bin}"
   local openshell_bin="${local_bin}/openshell"
+  local gateway_bin="${local_bin}/openshell-gateway"
+  if [[ "${1:-}" == "verified-install" ]]; then
+    [[ "$local_bin" == /* ]] || return 1
+    [[ -x "$openshell_bin" && -x "$gateway_bin" ]] || return 1
+    export NEMOCLAW_OPENSHELL_BIN="$openshell_bin"
+    export NEMOCLAW_OPENSHELL_GATEWAY_BIN="$gateway_bin"
+    if [[ ":$PATH:" != *":$local_bin:"* ]]; then
+      export PATH="$local_bin:$PATH"
+    fi
+    return 0
+  fi
   if [[ -x "$openshell_bin" ]]; then
     export NEMOCLAW_OPENSHELL_BIN="$openshell_bin"
     if [[ ":$PATH:" != *":$local_bin:"* ]]; then
@@ -1539,6 +1576,7 @@ prefer_user_local_openshell() {
     fi
   fi
 }
+
 
 NEMOCLAW_GATEWAY_SERVICE_MARKER="NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1"
 NEMOCLAW_GATEWAY_SERVICE_MARKER_LINE="# ${NEMOCLAW_GATEWAY_SERVICE_MARKER}"
@@ -3184,8 +3222,10 @@ NODE
 maybe_install_openshell_during_install() {
   local mode="${1:-force}"
   local explicit_openshell_bin="${NEMOCLAW_OPENSHELL_BIN:-}"
+  local platform macos_install_method="" observed_install_method=""
   require_stable_installer_gateway_management
   [[ "$_NEMOCLAW_INSTALL_GATEWAY_MANAGEMENT_MODE" == "external" ]] && return 0
+  platform="$(uname -s)" || return 1
   if truthy_env "${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}"; then
     info "Deferring OpenShell CLI installation until after pre-upgrade backup."
     return 0
@@ -4398,6 +4438,265 @@ EOF
   esac
 }
 
+stop_macos_openshell_gateway_user_service() {
+  [ "$(uname -s)" = "Darwin" ] || return 1
+
+  local gateway_port service_label service_path service_domain service_program
+  local brew_prefix expected_program active_service active_program
+  gateway_port="$(resolve_nemoclaw_gateway_port)" || return 1
+  [ "$gateway_port" -eq 8080 ] || return 1
+  command_exists brew || return 1
+  command_exists launchctl || return 1
+  command_exists plutil || return 1
+
+  service_label="homebrew.mxcl.openshell"
+  service_path="${HOME}/Library/LaunchAgents/${service_label}.plist"
+  [ -f "$service_path" ] || return 1
+  if [ -L "$service_path" ] || ! [ -O "$service_path" ]; then
+    error "Refusing to retire the OpenShell gateway from an untrusted macOS user service: ${service_path}"
+  fi
+
+  service_program="$(plutil -extract ProgramArguments.0 raw -o - "$service_path" 2>/dev/null || true)"
+  [ "$(plutil -extract Label raw -o - "$service_path" 2>/dev/null || true)" = "$service_label" ] \
+    || error "Refusing to retire an OpenShell gateway from a macOS user service with an unexpected label: ${service_path}"
+  brew_prefix="$(brew --prefix 2>/dev/null || true)"
+  [ -n "$brew_prefix" ] || return 1
+  expected_program="${brew_prefix%/}/opt/openshell/libexec/openshell-gateway-homebrew-service"
+  [ "$service_program" = "$expected_program" ] && [ -x "$service_program" ] \
+    || error "Refusing to retire an OpenShell gateway from a macOS user service with an untrusted executable: ${service_program:-<empty>}"
+
+  service_domain="gui/$(id -u)/${service_label}"
+  active_service="$(launchctl print "$service_domain" 2>/dev/null)" || return 1
+  active_program="$(printf '%s\n' "$active_service" | sed -n 's/^[[:space:]]*program = //p' | head -1)"
+  [ "$active_program" = "$expected_program" ] \
+    || error "Refusing to retire an OpenShell gateway from an active macOS user service with an untrusted executable: ${active_program:-<empty>}"
+  launchctl bootout "$service_domain" >/dev/null 2>&1 \
+    || error "Could not stop the trusted OpenShell Homebrew gateway user service. Run 'launchctl print ${service_domain}' for details."
+  launchctl print "$service_domain" >/dev/null 2>&1 \
+    && error "The trusted OpenShell Homebrew gateway user service remained active after the stop command."
+  return 0
+}
+
+stop_nemoclaw_openshell_gateway_user_service() {
+  [ "$(uname -s)" = "Linux" ] || return 1
+
+  local gateway_port service_name service_path fragment_path gateway_bin
+  gateway_port="$(resolve_nemoclaw_gateway_port)" || return 1
+  [ "$gateway_port" -eq 8080 ] || return 1
+  command_exists systemctl || return 1
+
+  service_name="${NEMOCLAW_GATEWAY_SERVICE_NAME}.service"
+  service_path="$(openshell_user_config_home)/systemd/user/${service_name}"
+  [ -f "$service_path" ] || return 1
+  if [ -L "$service_path" ] || ! [ -O "$service_path" ]; then
+    error "Refusing to retire the OpenShell gateway from an untrusted user service: ${service_path}"
+  fi
+  is_nemoclaw_openshell_gateway_user_service "$service_path" \
+    || error "Refusing to retire the OpenShell gateway from a non-NemoClaw user service: ${service_path}"
+  systemctl --user is-active --quiet "$service_name" 2>/dev/null || return 1
+
+  fragment_path="$(systemctl --user show "$service_name" --property=FragmentPath --value 2>/dev/null)" \
+    || return 1
+  [ "$fragment_path" = "$service_path" ] \
+    || error "Refusing to retire the OpenShell gateway because the active user service does not match ${service_path}."
+  gateway_bin="$(resolve_openshell_gateway_bin_for_user_service "$service_name")" \
+    || return 1
+  trusted_openshell_gateway_bin_for_service "$gateway_bin" \
+    || error "Refusing to retire an OpenShell gateway user service with an untrusted binary: ${gateway_bin}"
+
+  systemctl --user stop "$service_name" \
+    || error "Could not stop the trusted NemoClaw OpenShell gateway user service. Run 'systemctl --user status ${service_name}' for details."
+  systemctl --user is-active --quiet "$service_name" 2>/dev/null \
+    && error "The trusted NemoClaw OpenShell gateway user service remained active after the stop command."
+  return 0
+}
+
+trusted_macos_openshell_gateway_process() {
+  [ "$(uname -s)" = "Darwin" ] || return 1
+
+  local pid="$1" gateway_port="$2" expected_generation="${3:-}"
+  local gateway_name gateway_command gateway_exe gateway_lsof_output
+  local process_generation_before process_generation_after
+  local observation_diagnostics_file observation_status observation_valid
+  local user_bin_home brew_prefix trusted_brew_gateway
+  command_exists ps || return 1
+  command_exists lsof || return 1
+
+  gateway_name="$(nemoclaw_gateway_name)" || return 1
+  observation_diagnostics_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-process-observation-XXXXXX" 2>/dev/null)" \
+    || return 1
+  _cleanup_files+=("$observation_diagnostics_file")
+  observation_valid=true
+
+  observation_status=0
+  process_generation_before="$(ps -p "$pid" -o lstart= 2>"$observation_diagnostics_file")" \
+    || observation_status=$?
+  if [ "$observation_status" -ne 0 ] || [ -s "$observation_diagnostics_file" ] || [ -z "$process_generation_before" ]; then
+    observation_valid=false
+  fi
+
+  if $observation_valid; then
+    : >"$observation_diagnostics_file"
+    observation_status=0
+    gateway_command="$(ps -p "$pid" -o args= 2>"$observation_diagnostics_file")" \
+      || observation_status=$?
+    if [ "$observation_status" -ne 0 ] || [ -s "$observation_diagnostics_file" ] \
+      || [ "$gateway_command" != "openshell-gateway[nemoclaw=${gateway_name};port=${gateway_port}]" ]; then
+      observation_valid=false
+    fi
+  fi
+
+  if $observation_valid; then
+    : >"$observation_diagnostics_file"
+    observation_status=0
+    gateway_lsof_output="$(lsof -a -p "$pid" -d txt -Fn 2>"$observation_diagnostics_file")" \
+      || observation_status=$?
+    if [ "$observation_status" -ne 0 ] || [ -s "$observation_diagnostics_file" ] \
+      || [[ "$gateway_lsof_output" != "p${pid}"$'\n'* ]]; then
+      observation_valid=false
+    else
+      gateway_exe="$(printf '%s\n' "$gateway_lsof_output" | sed -n '/^n\// { s/^n//; p; }' | head -1)"
+      [ -n "$gateway_exe" ] || observation_valid=false
+    fi
+  fi
+
+  if $observation_valid; then
+    : >"$observation_diagnostics_file"
+    observation_status=0
+    process_generation_after="$(ps -p "$pid" -o lstart= 2>"$observation_diagnostics_file")" \
+      || observation_status=$?
+    if [ "$observation_status" -ne 0 ] || [ -s "$observation_diagnostics_file" ] \
+      || [ "$process_generation_after" != "$process_generation_before" ]; then
+      observation_valid=false
+    fi
+  fi
+
+  rm -f "$observation_diagnostics_file"
+  _cleanup_files=("${_cleanup_files[@]/$observation_diagnostics_file/}")
+  $observation_valid || return 1
+  if [ -n "$expected_generation" ] && [ "$process_generation_before" != "$expected_generation" ]; then
+    return 1
+  fi
+
+  user_bin_home="${XDG_BIN_HOME:-${HOME}/.local/bin}"
+  if [ "${user_bin_home#/}" = "$user_bin_home" ]; then
+    user_bin_home="${HOME}/.local/bin"
+  fi
+  case "$gateway_exe" in
+    "${user_bin_home%/}/openshell-gateway" | /usr/local/bin/openshell-gateway | /usr/bin/openshell-gateway)
+      printf '%s\n' "$process_generation_before"
+      return 0
+      ;;
+  esac
+
+  command_exists brew || return 1
+  brew_prefix="$(brew --prefix 2>/dev/null || true)"
+  [ -n "$brew_prefix" ] || return 1
+  trusted_brew_gateway="${brew_prefix%/}/opt/openshell/bin/openshell-gateway"
+  [ -e "$trusted_brew_gateway" ] || return 1
+  trusted_brew_gateway="$(cd -P "$(dirname "$trusted_brew_gateway")" 2>/dev/null && printf '%s/%s\n' "$PWD" "$(basename "$trusted_brew_gateway")")" \
+    || return 1
+  [ "$gateway_exe" = "$trusted_brew_gateway" ] || return 1
+  printf '%s\n' "$process_generation_before"
+}
+
+stop_macos_legacy_openshell_gateway_process() {
+  local platform
+  platform="$(uname -s)"
+  [ "$platform" = "Darwin" ] || return 1
+
+  local gateway_port runtime_dir pid_file pid gateway_exe listener_pids attempt process_generation
+  local listener_diagnostics_file listener_status listener_observation_valid
+  gateway_port="$(resolve_nemoclaw_gateway_port)" || return 2
+  if [ -n "${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR:-}" ]; then
+    runtime_dir="${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR}"
+  elif [ "$gateway_port" -eq 8080 ]; then
+    runtime_dir="${HOME}/.local/state/nemoclaw/openshell-docker-gateway"
+  else
+    runtime_dir="${HOME}/.local/state/nemoclaw/openshell-docker-gateway-${gateway_port}"
+  fi
+  pid_file="${runtime_dir}/openshell-gateway.pid"
+  [ -f "$pid_file" ] || return 1
+  if [ -L "$pid_file" ] || ! [ -O "$pid_file" ]; then
+    error "Refusing to retire the legacy OpenShell gateway from an untrusted PID file: ${pid_file}"
+  fi
+
+  IFS= read -r pid <"$pid_file" || return 2
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] \
+    || error "Refusing to retire the legacy OpenShell gateway from an invalid PID file: ${pid_file}"
+  if ! kill -0 "$pid" 2>/dev/null; then
+    if [ "$platform" = "Darwin" ]; then
+      command_exists lsof \
+        || error "Could not verify gateway port ${gateway_port} because lsof is unavailable. The PID file, OpenShell registration, and sandbox backups were preserved."
+      listener_diagnostics_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-lsof-XXXXXX" 2>/dev/null)" \
+        || error "Could not prepare gateway port verification. The PID file, OpenShell registration, and sandbox backups were preserved."
+      _cleanup_files+=("$listener_diagnostics_file")
+      listener_status=0
+      listener_pids="$(lsof -nP -iTCP:"${gateway_port}" -sTCP:LISTEN -t 2>"$listener_diagnostics_file")" \
+        || listener_status=$?
+      listener_observation_valid=false
+      # lsof uses status 1 for both no matches and some operational failures.
+      if [ ! -s "$listener_diagnostics_file" ]; then
+        case "$listener_status" in
+          0) [ -n "$listener_pids" ] && listener_observation_valid=true ;;
+          1) [ -z "$listener_pids" ] && listener_observation_valid=true ;;
+        esac
+      fi
+      rm -f "$listener_diagnostics_file"
+      _cleanup_files=("${_cleanup_files[@]/$listener_diagnostics_file/}")
+      $listener_observation_valid \
+        || error "Could not verify gateway port ${gateway_port} because lsof did not produce a conclusive listener observation. The PID file, OpenShell registration, and sandbox backups were preserved."
+      [ -z "$listener_pids" ] \
+        || error "Refusing to retire the legacy OpenShell gateway from stale PID file ${pid_file}: gateway port ${gateway_port} still has listener PID(s): $(printf '%s' "$listener_pids" | tr '\n' ' '). Stop the listener or restore the correct owned PID file, then retry; sandbox backups were preserved."
+    fi
+    rm -f "$pid_file"
+    return 0
+  fi
+
+  if [ "$platform" = "Darwin" ]; then
+    process_generation="$(trusted_macos_openshell_gateway_process "$pid" "$gateway_port")" \
+      || error "Refusing to stop PID ${pid}: the recorded macOS process is not the expected NemoClaw OpenShell gateway."
+    if ! trusted_macos_openshell_gateway_process "$pid" "$gateway_port" "$process_generation" >/dev/null; then
+      if ! kill -0 "$pid" 2>/dev/null; then
+        rm -f "$pid_file"
+        return 0
+      fi
+      error "Refusing to stop PID ${pid}: the recorded macOS process changed or could not be verified immediately before signaling. The PID file, OpenShell registration, and sandbox backups were preserved."
+    fi
+  else
+    gateway_exe="$(readlink "/proc/${pid}/exe" 2>/dev/null || true)"
+    [ "${gateway_exe##*/}" = "openshell-gateway" ] \
+      || error "Refusing to stop PID ${pid}: the recorded process is not openshell-gateway."
+  fi
+
+  kill "$pid" 2>/dev/null \
+    || error "Could not stop the recorded legacy OpenShell gateway process ${pid}."
+  for attempt in {1..50}; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.2
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    if [ "$platform" = "Darwin" ] \
+      && ! trusted_macos_openshell_gateway_process "$pid" "$gateway_port" "$process_generation" >/dev/null; then
+      if ! kill -0 "$pid" 2>/dev/null; then
+        rm -f "$pid_file"
+        return 0
+      fi
+      error "Refusing to forcibly terminate PID ${pid}: the recorded macOS process changed or could not be verified after SIGTERM. The PID file, OpenShell registration, and sandbox backups were preserved."
+    fi
+    kill -KILL "$pid" 2>/dev/null \
+      || error "Could not terminate the recorded legacy OpenShell gateway process ${pid}."
+    for attempt in {1..10}; do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.1
+    done
+  fi
+  kill -0 "$pid" 2>/dev/null \
+    && error "The recorded legacy OpenShell gateway process ${pid} did not stop."
+  rm -f "$pid_file"
+}
+
+
 LEGACY_GATEWAY_PROCESS_STATUS=""
 LEGACY_GATEWAY_PROCESS_PID=""
 LEGACY_GATEWAY_PID_FILE_IDENTITY=""
@@ -4891,6 +5190,10 @@ legacy_openshell_gateway_process_stopped() {
 }
 
 stop_legacy_openshell_gateway_process() {
+  if [ "$(uname -s)" = "Darwin" ]; then
+    stop_macos_legacy_openshell_gateway_process
+    return $?
+  fi
   [ "$(uname -s)" = "Linux" ] || return 1
 
   local old_openshell_version="${1:-}"
@@ -5148,6 +5451,9 @@ preinstall_backup_and_retire_legacy_gateway() {
         || { { revalidate_openshell_gateway_retirement_service_set \
           "$retirement_service_set_identity" "$gateway_port" \
           && stop_nemoclaw_openshell_gateway_user_service \
+          || { revalidate_openshell_gateway_retirement_service_set \
+              "$retirement_service_set_identity" "$gateway_port" \
+            && stop_macos_openshell_gateway_user_service; } \
           || {
             revalidate_openshell_gateway_retirement_service_set \
               "$retirement_service_set_identity" "$gateway_port"
@@ -5165,6 +5471,9 @@ preinstall_backup_and_retire_legacy_gateway() {
         || { { revalidate_openshell_gateway_retirement_service_set \
           "$retirement_service_set_identity" "$gateway_port" \
           && stop_nemoclaw_openshell_gateway_user_service \
+          || { revalidate_openshell_gateway_retirement_service_set \
+              "$retirement_service_set_identity" "$gateway_port" \
+            && stop_macos_openshell_gateway_user_service; } \
           || {
             revalidate_openshell_gateway_retirement_service_set \
               "$retirement_service_set_identity" "$gateway_port"
