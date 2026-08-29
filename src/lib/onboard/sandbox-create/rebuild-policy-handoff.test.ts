@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   materializeRebuildPolicyHandoff,
-  mergeReplacementFilesystemAccess,
+  mergeReplacementPolicyAccess,
 } from "./rebuild-policy-handoff";
 
 const roots: string[] = [];
@@ -28,7 +28,7 @@ afterEach(() => {
 });
 
 describe("rebuild policy handoff", () => {
-  it("adds only replacement filesystem access while preserving OpenShell's live policy", () => {
+  it("adds missing replacement access while preserving OpenShell's live choices", () => {
     const live = `
 version: 1
 filesystem_policy:
@@ -41,6 +41,9 @@ network_policies:
   host_edit:
     name: host_edit
     endpoints: [{host: host.example.com, port: 443}]
+  host_npm_alias:
+    name: npm
+    endpoints: [{host: host-npm.example.com, port: 443}]
 `;
     const replacement = `
 version: 1
@@ -49,12 +52,18 @@ filesystem_policy:
   read_only: [/usr, /replacement-read, /replacement-write]
   read_write: [/sandbox, /host-read]
 network_policies:
+  host_edit:
+    name: host_edit
+    endpoints: [{host: replacement-host.example.com, port: 443}]
+  npm:
+    name: npm
+    endpoints: [{host: registry.npmjs.org, port: 443}]
   replacement_network:
     name: replacement_network
     endpoints: [{host: replacement.example.com, port: 443}]
 `;
 
-    const merged = mergeReplacementFilesystemAccess(live, replacement);
+    const merged = mergeReplacementPolicyAccess(live, replacement);
     const policy = YAML.parse(merged.source) as {
       filesystem_policy: { include_workdir: boolean; read_only: string[]; read_write: string[] };
       network_policies: Record<string, unknown>;
@@ -71,15 +80,39 @@ network_policies:
         name: "host_edit",
         endpoints: [{ host: "host.example.com", port: 443 }],
       },
+      host_npm_alias: {
+        name: "npm",
+        endpoints: [{ host: "host-npm.example.com", port: 443 }],
+      },
+      replacement_network: {
+        name: "replacement_network",
+        endpoints: [{ host: "replacement.example.com", port: 443 }],
+      },
     });
-    expect(policy.network_policies).not.toHaveProperty("replacement_network");
+    expect(policy.network_policies).not.toHaveProperty("npm");
   });
 
   it("reuses the exact live source when the replacement needs no additional access", () => {
     const live = "version: 1\nfilesystem_policy:\n  read_only: [/usr]\n  read_write: [/sandbox]\n";
-    expect(mergeReplacementFilesystemAccess(live, live)).toEqual({
+    expect(mergeReplacementPolicyAccess(live, live)).toEqual({
       changed: false,
       source: live,
+    });
+  });
+
+  it("adds missing baseline network access when no filesystem change is needed", () => {
+    const live = "version: 1\nnetwork_policies:\n  host_edit: {name: host_edit}\n";
+    const replacement =
+      "version: 1\nnetwork_policies:\n  managed_inference: {name: managed_inference}\n";
+    const merged = mergeReplacementPolicyAccess(live, replacement);
+
+    expect(merged.changed).toBe(true);
+    expect(YAML.parse(merged.source)).toEqual({
+      version: 1,
+      network_policies: {
+        host_edit: { name: "host_edit" },
+        managed_inference: { name: "managed_inference" },
+      },
     });
   });
 
@@ -107,7 +140,7 @@ network_policies:
     expect(fs.statSync(handoff.policyPath).mode & 0o777).toBe(0o600);
     expect(YAML.parse(fs.readFileSync(handoff.policyPath, "utf8"))).toMatchObject({
       filesystem_policy: { read_only: ["/usr", "/run/replacement"] },
-      network_policies: { host_edit: {} },
+      network_policies: { host_edit: {}, replacement: {} },
     });
     expect(handoff.appliedPresets).toEqual([]);
     expect(handoff.cleanup?.()).toBe(true);

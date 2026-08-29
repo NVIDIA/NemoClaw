@@ -263,10 +263,11 @@ A gateway that reports no live inference route does not stop the rebuild. Replac
 
 <AgentOnly variant="openclaw">
   The rebuild command preserves the mounted workspace and carries the complete current OpenShell
-  policy into sandbox recreation. For that one replacement create, NemoClaw adds only filesystem
-  access paths required by the current replacement image when they are absent from the live policy.
-  It does not add replacement network entries, save a desired-policy copy, or enforce that handoff
-  after OpenShell creates the sandbox. When no host web-search key is staged, rebuild preflight
+  policy into sandbox recreation. For that one replacement create, NemoClaw adds filesystem paths
+  and baseline network entries required by the current replacement image when they are absent from
+  the live policy. Existing keys and same-name live entries win, so host changes are not overwritten.
+  NemoClaw does not save a desired-policy copy or enforce that handoff after OpenShell creates the
+  sandbox. When no host web-search key is staged, rebuild preflight
   reuses an existing Brave or Tavily credential only when the provider name, type, and credential
   key match the sandbox's binding on its recorded OpenShell gateway. A missing or mismatched binding
   stops before recreation and requires the matching host environment variable before you retry.
@@ -278,7 +279,7 @@ A gateway that reports no live inference route does not stop the rebuild. Replac
 
 <AgentOnly variant="hermes">
 The rebuild command preserves Hermes state, the complete current OpenShell policy, and managed MCP configuration while recreating the container.
-For that one replacement create, NemoClaw adds only filesystem access paths required by the current replacement image when they are absent from the live policy. It does not add replacement network entries, save a desired-policy copy, or enforce that handoff after OpenShell creates the sandbox.
+For that one replacement create, NemoClaw adds filesystem paths and baseline network entries required by the current replacement image when they are absent from the live policy. Existing keys and same-name live entries win, so host changes are not overwritten. NemoClaw does not save a desired-policy copy or enforce that handoff after OpenShell creates the sandbox.
 It reuses a messaging provider only when its exact type and credential keys match the recorded channel binding.
 A stopped channel remains inactive and contributes no token upsert, rendered runtime configuration, channel startup effect, or inactive built-in messaging preset.
 Custom and host-edited policy entries are preserved as part of that one OpenShell policy handoff, not by a separate replay system.

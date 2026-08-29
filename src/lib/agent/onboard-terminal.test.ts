@@ -130,8 +130,8 @@ describe("Deep Agents Code terminal onboard acceptance", () => {
       ),
     ).toHaveLength(3);
     expect(sleepSeconds).toHaveBeenCalledTimes(2);
-    expect(sleepSeconds).toHaveBeenNthCalledWith(1, 0.5);
-    expect(sleepSeconds).toHaveBeenNthCalledWith(2, 0.5);
+    expect(sleepSeconds).toHaveBeenNthCalledWith(1, 1);
+    expect(sleepSeconds).toHaveBeenNthCalledWith(2, 1);
     expect(context.recordStepFailed).not.toHaveBeenCalled();
     expect(context.recordStepComplete).toHaveBeenCalledOnce();
   });

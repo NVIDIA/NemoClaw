@@ -58,6 +58,7 @@ export interface OnboardContext {
   ) => CaptureOpenshellResult;
   openshellShellCommand: (args: string[], options?: { openshellBinary?: string }) => string;
   openshellBinary: string;
+  gatewayName?: string;
   startRecordedStep: (stepName: string, updates: LooseObject) => Promise<void>;
   recordStepComplete: (stepName: string, updates: LooseObject) => Promise<unknown>;
   recordStepFailed: (stepName: string, message: string | null) => Promise<unknown>;
@@ -296,8 +297,8 @@ function resolveAgentHealthProbeUrl(
   );
 }
 
-const AGENT_BINARY_OBSERVATION_ATTEMPTS = 5;
-const AGENT_BINARY_OBSERVATION_DELAY_SECONDS = 0.5;
+const AGENT_BINARY_OBSERVATION_ATTEMPTS = 31;
+const AGENT_BINARY_OBSERVATION_DELAY_SECONDS = 1;
 
 /** Retry only an unobservable read-only exec while a newly Ready sandbox settles. */
 function waitForAgentBinaryObservation(
@@ -305,8 +306,9 @@ function waitForAgentBinaryObservation(
   agent: AgentDefinition,
   runCaptureOpenshell: OnboardContext["runCaptureOpenshell"],
   wait: (seconds: number) => void,
+  gatewayName?: string,
 ) {
-  let result = verifyAgentBinaryAvailable(sandboxName, agent, runCaptureOpenshell);
+  let result = verifyAgentBinaryAvailable(sandboxName, agent, runCaptureOpenshell, gatewayName);
   for (
     let attempt = 1;
     !result.available &&
@@ -315,7 +317,7 @@ function waitForAgentBinaryObservation(
     attempt += 1
   ) {
     wait(AGENT_BINARY_OBSERVATION_DELAY_SECONDS);
-    result = verifyAgentBinaryAvailable(sandboxName, agent, runCaptureOpenshell);
+    result = verifyAgentBinaryAvailable(sandboxName, agent, runCaptureOpenshell, gatewayName);
   }
   return result;
 }
@@ -356,6 +358,7 @@ export async function handleAgentSetup(
       agent,
       runCaptureOpenshell,
       ctx.sleepSeconds ?? sleep,
+      ctx.gatewayName,
     );
 
   const syncNemoClawConfig = (): void => {
@@ -379,7 +382,12 @@ export async function handleAgentSetup(
       const binaryAvailability = waitForBinaryObservation();
       if (binaryAvailability.available) {
         syncNemoClawConfig();
-        const smokeResult = runAgentSmokeCommands(sandboxName, agent, runSmokeCapture);
+        const smokeResult = runAgentSmokeCommands(
+          sandboxName,
+          agent,
+          runSmokeCapture,
+          ctx.gatewayName,
+        );
         if (smokeResult.ok) {
           await enforceTerminalAgentVersion(sandboxName, agent, runCaptureOpenshell, {
             beforeFailure: () => {
@@ -454,7 +462,7 @@ export async function handleAgentSetup(
   syncNemoClawConfig();
 
   if (isTerminalAgent(agent)) {
-    const smokeResult = runAgentSmokeCommands(sandboxName, agent, runSmokeCapture);
+    const smokeResult = runAgentSmokeCommands(sandboxName, agent, runSmokeCapture, ctx.gatewayName);
     if (!smokeResult.ok) {
       await failAgentSetup(
         sandboxName,

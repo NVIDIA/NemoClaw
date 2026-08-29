@@ -3285,6 +3285,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             ...{ step, runCaptureOpenshell, captureOpenshell },
             openshellShellCommand,
             openshellBinary: getOpenshellBinary(),
+            gatewayName: GATEWAY_NAME,
             startRecordedStep,
             recordStepComplete,
             recordStepFailed,

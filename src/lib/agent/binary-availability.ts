@@ -26,6 +26,7 @@ export function verifyAgentBinaryAvailable(
   sandboxName: string,
   agent: AgentDefinition,
   runCaptureOpenshell: RunCaptureOpenshell,
+  gatewayName?: string,
 ): AgentBinaryAvailability {
   const executable = agentExecutableName(agent);
   const binaryPath = typeof agent.binary_path === "string" ? agent.binary_path.trim() : "";
@@ -43,10 +44,19 @@ export function verifyAgentBinaryAvailable(
         `[ -n "$resolved" ] && [ -x "$resolved" ] && echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}ok`)} || echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}not_found`)}`,
       ].join("; ");
   const result = runCaptureOpenshell(
-    ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", script],
-    {
-      ignoreError: true,
-    },
+    [
+      "sandbox",
+      "exec",
+      "-n",
+      sandboxName,
+      ...(gatewayName ? ["-g", gatewayName] : []),
+      "--no-tty",
+      "--",
+      "sh",
+      "-lc",
+      script,
+    ],
+    { ignoreError: true },
   );
   const status = result?.trim() ?? "";
   const marker = status

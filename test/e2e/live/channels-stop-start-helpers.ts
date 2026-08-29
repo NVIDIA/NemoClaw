@@ -58,6 +58,9 @@ type PolicyChannelDependenciesModule =
 type OpenshellRuntimeModule = typeof import("../../../src/lib/adapters/openshell/runtime.ts");
 type CredentialProviderRegistrationModule =
   typeof import("../../../src/lib/onboard/credential-provider-registration.ts");
+type LiveE2eCredentialProviderOverrideInput = Parameters<
+  CredentialProviderRegistrationModule["installLiveE2eCredentialProviderRegistrationOverride"]
+>[0];
 type MessagingBridgeProviderModule =
   typeof import("../../../src/lib/onboard/messaging-bridge-provider.ts");
 type StatePathsModule = typeof import("../../../src/lib/state/paths.ts");
@@ -144,7 +147,9 @@ type InstalledGooglechatCredentialFixture = (() => void) & {
 
 export const GOOGLECHAT_E2E_ACCESS_TOKEN = "e2e-fake-googlechat-access-token";
 
-const PROVIDER_TYPE_BY_AGENT: Readonly<Record<AgentKind, string>> = {
+const PROVIDER_TYPE_BY_AGENT: Readonly<
+  Record<AgentKind, "google-chat-bridge" | "google-chat-hermes-bridge">
+> = {
   openclaw: "google-chat-bridge",
   hermes: "google-chat-hermes-bridge",
 };
@@ -233,9 +238,10 @@ export function installGooglechatCredentialFixture(
   };
   const providerDependencies =
     dependencies.providerDependencies ?? credentialProviderRegistrationDependencies;
+  const injectedProviderDependencies = dependencies.providerDependencies !== undefined;
   const effectiveLegacyProviderDependencies =
     dependencies.legacyProviderDependencies ??
-    (dependencies.providerDependencies ? providerDependencies : legacyProviderDependencies);
+    (injectedProviderDependencies ? providerDependencies : legacyProviderDependencies);
   const root = dependencies.root ?? ROOT;
   const run = dependencies.run ?? runOpenshell;
   const originalRegistrationUpsert = providerDependencies.upsertMessagingProviders;
@@ -313,13 +319,21 @@ export function installGooglechatCredentialFixture(
     const registered = new Set([...delegatedProviderNames, expectedName]);
     return tokenDefs.map(({ name }) => name).filter((name) => registered.has(name));
   };
-  providerDependencies.upsertMessagingProviders = fixtureUpsert;
-  effectiveLegacyProviderDependencies.upsertMessagingProviders = fixtureUpsert;
-
-  const restore = () => {
-    providerDependencies.upsertMessagingProviders = originalRegistrationUpsert;
-    effectiveLegacyProviderDependencies.upsertMessagingProviders = originalLegacyUpsert;
-  };
+  let restore: () => void;
+  if (injectedProviderDependencies) {
+    providerDependencies.upsertMessagingProviders = fixtureUpsert;
+    effectiveLegacyProviderDependencies.upsertMessagingProviders = fixtureUpsert;
+    restore = () => {
+      providerDependencies.upsertMessagingProviders = originalRegistrationUpsert;
+      effectiveLegacyProviderDependencies.upsertMessagingProviders = originalLegacyUpsert;
+    };
+  } else {
+    restore = credentialProviderRegistration.installLiveE2eCredentialProviderRegistrationOverride({
+      expectedName,
+      expectedType,
+      upsert: fixtureUpsert as LiveE2eCredentialProviderOverrideInput["upsert"],
+    });
+  }
   return Object.assign(restore, { upsertMessagingProviders: directUpsert });
 }
 

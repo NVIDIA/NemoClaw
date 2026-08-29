@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { credentialProviderRegistrationDependencies } from "../../../src/lib/onboard/credential-provider-registration.ts";
 import {
   addAndRebuildGooglechatForChannelsStopStartLiveE2e,
   GOOGLECHAT_E2E_ACCESS_TOKEN,
@@ -45,6 +46,7 @@ describe("channels stop/start Google Chat live composition", () => {
     const restore = installGooglechatCredentialFixture(sandboxName, "openclaw", {
       channelDependencies,
       ensureProfiles: vi.fn(),
+      providerDependencies: { upsertMessagingProviders: vi.fn(() => []) },
       root: "/repo",
     });
 
@@ -77,6 +79,44 @@ describe("channels stop/start Google Chat live composition", () => {
 
     restore();
     expect(channelDependencies.upsertMessagingProviders).toBe(originalUpsert);
+  });
+
+  it("routes rebuild registration through the process-global live fixture", () => {
+    vi.stubEnv("NEMOCLAW_RUN_LIVE_E2E", "1");
+    const sandboxName = "e2e-oc-ch-cycle";
+    const expectedName = `${sandboxName}-googlechat-bridge`;
+    const runMock = vi.fn((args: string[]) => ({
+      status: args[1] === "get" ? 1 : 0,
+      stdout: "",
+      stderr: "",
+    }));
+    const run = runMock as unknown as FixtureRunner;
+    const restore = installGooglechatCredentialFixture(sandboxName, "openclaw", {
+      ensureProfiles: vi.fn(),
+      root: "/repo",
+      run,
+    });
+    try {
+      expect(
+        credentialProviderRegistrationDependencies.upsertMessagingProviders(
+          [
+            {
+              name: expectedName,
+              envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+              token: null,
+              providerType: "google-chat-bridge",
+            },
+          ],
+          run,
+          {},
+        ),
+      ).toEqual([expectedName]);
+      expect(runMock.mock.calls.some(([args]) => args[1] === "create")).toBe(true);
+      expect(runMock.mock.calls.some(([args]) => args.includes("refresh"))).toBe(false);
+    } finally {
+      restore();
+      vi.unstubAllEnvs();
+    }
   });
 
   it("grants a process-local audience capability to the exact live sandbox", async () => {

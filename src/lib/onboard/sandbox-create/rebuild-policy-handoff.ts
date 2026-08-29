@@ -34,21 +34,12 @@ function optionalPolicyPaths(mapping: PolicyMapping, field: string, label: strin
   return mapping[field] === undefined ? [] : policyPaths(mapping[field], `${label}.${field}`);
 }
 
-/**
- * Build one replacement-create input from OpenShell's live policy. Only filesystem
- * access needed by the replacement image is added; network and every other live
- * policy field remain OpenShell's exact choices.
- */
-export function mergeReplacementFilesystemAccess(
-  livePolicySource: string,
-  replacementPolicySource: string,
-): { readonly changed: boolean; readonly source: string } {
-  const live = structuredClone(parseOpenShellPolicy(livePolicySource).policy) as PolicyMapping;
-  const replacement = parseOpenShellPolicy(replacementPolicySource).policy as PolicyMapping;
+function mergeReplacementFilesystemAccess(
+  live: PolicyMapping,
+  replacement: PolicyMapping,
+): boolean {
   const replacementFilesystemValue = replacement.filesystem_policy;
-  if (replacementFilesystemValue === undefined) {
-    return { changed: false, source: livePolicySource };
-  }
+  if (replacementFilesystemValue === undefined) return false;
   const replacementFilesystem = policyMapping(
     replacementFilesystemValue,
     "replacement filesystem_policy",
@@ -63,9 +54,7 @@ export function mergeReplacementFilesystemAccess(
     "read_write",
     "replacement filesystem_policy",
   );
-  if (requiredReadOnly.length === 0 && requiredReadWrite.length === 0) {
-    return { changed: false, source: livePolicySource };
-  }
+  if (requiredReadOnly.length === 0 && requiredReadWrite.length === 0) return false;
 
   const liveFilesystemValue = live.filesystem_policy;
   const liveFilesystem =
@@ -91,12 +80,61 @@ export function mergeReplacementFilesystemAccess(
     readOnly.push(requiredPath);
     changed = true;
   }
-  if (!changed) return { changed: false, source: livePolicySource };
+  if (!changed) return false;
 
   liveFilesystem.read_only = readOnly;
   liveFilesystem.read_write = readWrite;
   live.filesystem_policy = liveFilesystem;
-  return { changed: true, source: YAML.stringify(live) };
+  return true;
+}
+
+function networkPolicyIdentity(key: string, value: unknown): string {
+  if (!isPolicyMapping(value)) return key;
+  const name = value.name;
+  return typeof name === "string" && name.trim().length > 0 ? name : key;
+}
+
+function mergeReplacementNetworkPolicies(live: PolicyMapping, replacement: PolicyMapping): boolean {
+  const replacementNetworkValue = replacement.network_policies;
+  if (replacementNetworkValue === undefined) return false;
+  const replacementNetwork = policyMapping(replacementNetworkValue, "replacement network_policies");
+  const liveNetworkValue = live.network_policies;
+  const liveNetwork =
+    liveNetworkValue === undefined
+      ? {}
+      : structuredClone(policyMapping(liveNetworkValue, "live network_policies"));
+  const liveIdentities = new Set(
+    Object.entries(liveNetwork).flatMap(([key, value]) => [key, networkPolicyIdentity(key, value)]),
+  );
+  let changed = false;
+  for (const [key, value] of Object.entries(replacementNetwork)) {
+    const identity = networkPolicyIdentity(key, value);
+    if (liveIdentities.has(key) || liveIdentities.has(identity)) continue;
+    liveNetwork[key] = structuredClone(value);
+    liveIdentities.add(key);
+    liveIdentities.add(identity);
+    changed = true;
+  }
+  if (changed) live.network_policies = liveNetwork;
+  return changed;
+}
+
+/**
+ * Build one replacement-create input from OpenShell's live policy. Host edits
+ * and same-name entries win; only missing current-image access is added.
+ */
+export function mergeReplacementPolicyAccess(
+  livePolicySource: string,
+  replacementPolicySource: string,
+): { readonly changed: boolean; readonly source: string } {
+  const live = structuredClone(parseOpenShellPolicy(livePolicySource).policy) as PolicyMapping;
+  const replacement = parseOpenShellPolicy(replacementPolicySource).policy as PolicyMapping;
+  const filesystemChanged = mergeReplacementFilesystemAccess(live, replacement);
+  const networkChanged = mergeReplacementNetworkPolicies(live, replacement);
+  const changed = filesystemChanged || networkChanged;
+  return changed
+    ? { changed: true, source: YAML.stringify(live) }
+    : { changed: false, source: livePolicySource };
 }
 
 /** Materialize the single ephemeral policy input consumed by an explicit rebuild. */
@@ -108,7 +146,7 @@ export function materializeRebuildPolicyHandoff(input: {
   const replacementSource =
     input.replacementPolicy.sourceBytes?.toString("utf8") ??
     fs.readFileSync(input.replacementPolicy.policyPath, "utf8");
-  const merged = mergeReplacementFilesystemAccess(liveSource, replacementSource);
+  const merged = mergeReplacementPolicyAccess(liveSource, replacementSource);
   if (!merged.changed) {
     return {
       ...input.replacementPolicy,

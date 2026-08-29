@@ -610,7 +610,7 @@ test(
     });
     expect(paused.status).toBe("failed");
     expect(paused.resumable).toBe(true);
-    expect(paused.machine.state).toBe("post_verify");
+    expect(paused.machine.state).toBe("failed");
 
     fake = await startFakeOpenAiCompatibleServer({
       apiKey: FAKE_COMPATIBLE_AUTH_VALUE,

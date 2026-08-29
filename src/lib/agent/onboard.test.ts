@@ -630,7 +630,7 @@ describe("handleAgentSetup guards", () => {
       "alpha",
       makeAgent({ name: "hermes", binary_path: "/usr/local/bin/hermes" }),
       (args) => {
-        script = String(args[7] || "");
+        script = String(args.at(-1) || "");
         return "openshell noise\nNEMOCLAW_AGENT_BINARY_CHECK:ok";
       },
     );
@@ -646,7 +646,7 @@ describe("handleAgentSetup guards", () => {
       "alpha",
       makeAgent({ name: "hermes", binary_path: "/usr/local/bin/hermes" }),
       (args) => {
-        script = String(args[7] || "");
+        script = String(args.at(-1) || "");
         return "openshell noise\nNEMOCLAW_AGENT_BINARY_CHECK:ok";
       },
     );
@@ -661,7 +661,7 @@ describe("handleAgentSetup guards", () => {
       "alpha",
       makeAgent({ name: "hermes", binary_path: "/usr/local/bin/hermes" }),
       (args) => {
-        script = String(args[7] || "");
+        script = String(args.at(-1) || "");
         return "openshell noise\nNEMOCLAW_AGENT_BINARY_CHECK:not_executable";
       },
     );
@@ -686,6 +686,35 @@ describe("handleAgentSetup guards", () => {
       reason: "unobservable",
       binaryPath: "/usr/local/bin/pi",
     });
+  });
+
+  it("targets the owning gateway and disables TTY allocation for the binary probe", () => {
+    const runCaptureOpenshell = vi.fn(() => "NEMOCLAW_AGENT_BINARY_CHECK:ok");
+
+    expect(
+      verifyAgentBinaryAvailable(
+        "alpha",
+        makeAgent({ name: "pi", binary_path: "/usr/local/bin/pi" }),
+        runCaptureOpenshell,
+        "nemoclaw",
+      ),
+    ).toEqual({ available: true });
+    expect(runCaptureOpenshell).toHaveBeenCalledWith(
+      [
+        "sandbox",
+        "exec",
+        "-n",
+        "alpha",
+        "-g",
+        "nemoclaw",
+        "--no-tty",
+        "--",
+        "sh",
+        "-lc",
+        expect.stringContaining("NEMOCLAW_AGENT_BINARY_CHECK"),
+      ],
+      { ignoreError: true },
+    );
   });
 });
 
