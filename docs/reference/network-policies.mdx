@@ -133,12 +133,14 @@ During onboarding, the wizard prompts for a policy tier that determines the defa
 The baseline policy is always applied regardless of the selected tier.
 An operator can persistently exclude a specific baseline entry with [`policy exclude`](#excluding-a-baseline-entry) when they accept reduced, unsupported functionality.
 This is the supported registry-backed way to replay a live key removal during rebuild; raw `openshell policy set` edits are not replayed, while edits made to the source baseline itself are applied when the sandbox is recreated.
+The table records canonical tier membership, which also determines whether an existing preset can be retained during reuse or rebuild.
+Fresh onboarding filters those presets by the active agent and selected integrations before it presents the policy review.
 
 | Tier | Presets included | Description |
 |------|------------------|-------------|
 | Restricted | No tier defaults | Starts from the baseline policy. Web search or messaging integrations selected earlier can still suggest their required presets; deselect them during policy review for baseline-only access. Restricted suppresses other agent-required additions; reapply them later with `policy add` only after reviewing the additional egress. |
-| Balanced (default) | `npm`, `pypi`, `huggingface`, `brew`, `brave`; selected `tavily` web search access when supported | Full dev tooling and tier-default Brave egress. Selecting Tavily adds its preset when the active agent supports it; the `brave` tier default remains applied. No messaging platform access. Apply the `weather` preset explicitly if your agent needs read-only weather lookups. |
-| Open | `npm`, `pypi`, `huggingface`, `brew`, `brave`, `weather`, `public-reference`, `slack`, `discord`, `telegram`, `wechat` (experimental), `whatsapp` (experimental), `teams` (experimental), `jira`, `outlook`; selected `tavily` web search access when supported | Broad access across third-party services including messaging, productivity, weather, and public-reference APIs. Selecting Tavily adds its preset; the `brave` tier default remains applied. |
+| Balanced (default) | `npm`, `pypi`, `huggingface`, `brew`, `brave`; selected `tavily` web search access when supported | Full dev tooling. Fresh onboarding filters web-search egress to the provider selected for the active agent. No messaging platform access. Apply the `weather` preset explicitly if your agent needs read-only weather lookups. |
+| Open | `npm`, `pypi`, `huggingface`, `brew`, `brave`, `weather`, `public-reference`, `slack`, `discord`, `telegram`, `wechat` (experimental), `whatsapp` (experimental), `teams` (experimental), `jira`, `outlook`; selected `tavily` web search access when supported | Broad access across third-party services including messaging, productivity, weather, and public-reference APIs. Fresh onboarding filters web-search egress to the provider selected for the active agent. |
 | Personal | `personal-open-internet` (mandatory) | Lets every sandbox binary open TCP connections to public and private address ranges on destination ports `80` and `443`. The broad route replaces overlapping web endpoints while preserving non-web policy. Unspecified, loopback, and link-local ranges remain blocked. |
 
 When Personal is selected or carried forward, the `personal-open-internet` preset is mandatory for every agent and every onboarding entry point.
@@ -179,7 +181,8 @@ Deep Agents can use the maintained `tavily` opt-in path, but messaging channel p
 </AgentOnly>
 NemoClaw automatically suggests the preset that matches the selected provider and removes stale web search presets during resume reconciliation when you switch providers or disable web search.
 <AgentOnly variant="openclaw">
-When reuse or rebuild retains a recorded Balanced or Open tier, NemoClaw keeps an applied `brave` preset even if you disable web search or select Tavily.
+On fresh onboarding, OpenClaw suggests `brave` only when you select Brave Search and `tavily` only when you select Tavily Search.
+When reuse or rebuild retains a recorded Balanced or Open tier, NemoClaw keeps an already-applied `brave` preset even if you disable web search or select Tavily.
 NemoClaw removes a built-in web search preset only when it is neither required by the recorded tier nor selected by the active web search provider.
 </AgentOnly>
 <AgentOnly variant="openclaw,hermes">
