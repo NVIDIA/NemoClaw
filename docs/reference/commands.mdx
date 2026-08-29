@@ -459,14 +459,17 @@ When available, NemoClaw records and prints the create-attempt label as the exac
 When available, NemoClaw also records a durable identity fingerprint and verified policy evidence for recovery.
 Automatic and explicit resume, reuse, recreation, and fresh onboarding with that sandbox name remain blocked.
 When the recovery record contains a durable identity fingerprint, run `$$nemoclaw <sandbox-name> destroy` to attempt identity-bound recovery.
-Destroy completes recovery only after OpenShell confirms the retained sandbox is absent. It then verifies one retained recovery record and its immutable runtime identity. For Docker-backed sandboxes, destroy additionally verifies the immutable Docker sandbox identity and removes only qualified residual containers. It clears the matching recovery record only after verified cleanup.
-If OpenShell still reports the sandbox present, destroy preserves the record and removes no resources because OpenShell deletion accepts only the mutable sandbox name. For a record with a durable identity fingerprint, give the displayed create-attempt label to an OpenShell administrator when present and ask them to remove that exact sandbox through an identity-bound procedure. If no label is available, preserve the terminal output and ask the administrator to identify the exact sandbox from gateway or controller evidence. After the administrator removes the exact sandbox, rerun destroy.
-An ambiguous recovery record or failed immutable runtime-identity check stops cleanup and preserves the record. For Docker-backed sandboxes, a foreign container, changed Docker identity, or failed Docker probe also stops cleanup and preserves the record.
-If OpenShell did not return a durable identity fingerprint, `destroy` cannot complete recovery.
-If the terminal output includes a create-attempt label, ask an OpenShell administrator to resolve it to one exact sandbox and use an identity-bound recovery or removal procedure.
-If neither a durable identity fingerprint nor a create-attempt label is available, automatic recovery is unavailable. Preserve the terminal output and ask an OpenShell administrator to identify the exact sandbox from gateway or controller evidence.
-If NemoClaw reports that it could not save the recovery evidence, preserve the terminal output. Give the administrator its create-attempt label when present; otherwise ask them to identify the exact sandbox from gateway or controller evidence.
-Do not delete the retained sandbox manually by mutable name.
+
+Use the result from `destroy` to choose the next action:
+
+- If OpenShell still reports the sandbox present, `destroy` preserves the record and removes no resources. Do not delete the sandbox manually by mutable name. Give the displayed create-attempt label to an OpenShell administrator when present and ask them to remove that exact sandbox through an identity-bound procedure. Without a label, preserve the terminal output and ask the administrator to identify the exact sandbox from gateway or controller evidence.
+- After the administrator removes the exact sandbox, rerun `$$nemoclaw <sandbox-name> destroy`.
+- If OpenShell confirms the sandbox is absent, `destroy` verifies one retained recovery record and its immutable runtime identity. For Docker-backed sandboxes, it also verifies the immutable Docker sandbox identity and removes only qualified residual containers. It clears the matching recovery record only after verified cleanup.
+- If the recovery record is ambiguous or immutable runtime-identity verification fails, cleanup stops and the record remains. For Docker-backed sandboxes, a foreign container, changed Docker identity, or failed Docker probe has the same fail-closed result.
+
+If OpenShell did not return a durable identity fingerprint, `destroy` cannot complete recovery. A create-attempt label can help an OpenShell administrator identify and remove the exact sandbox, but it does not let NemoClaw retire the record without immutable identity authority. If neither a fingerprint nor a label is available, preserve the terminal output and ask the administrator to identify the exact sandbox from gateway or controller evidence. If NemoClaw reports that it could not save recovery evidence, preserve the terminal output and follow the same escalation.
+
+This fail-closed record keeps only the affected sandbox name unavailable. It is not retired from mutable-name absence alone, and this command does not accept administrator-supplied identity authority.
 To onboard another sandbox while the record remains unresolved, supply a different explicit name:
 
 ```bash
