@@ -95,12 +95,26 @@ function cleanupArtifact(result: unknown): string {
   return typeof artifacts?.result === "string" ? artifacts.result : "redacted command artifact";
 }
 
-function requireCleanupSuccess(label: string, result: unknown): void {
+function isMissingSandboxResult(result: unknown): boolean {
+  if (!result || typeof result !== "object") return false;
+  const { stdout, stderr } = result as { stderr?: unknown; stdout?: unknown };
+  const output = [stdout, stderr]
+    .filter((value): value is string => typeof value === "string")
+    .join("\n");
+  return /sandbox (?:.* )?(?:does not exist|not found|not present)|no such sandbox/iu.test(output);
+}
+
+function requireCleanupSuccess(
+  label: string,
+  result: unknown,
+  acceptNonzero?: (value: unknown) => boolean,
+): void {
   if (
     result &&
     typeof result === "object" &&
     "exitCode" in result &&
-    (result as { exitCode: unknown }).exitCode !== 0
+    (result as { exitCode: unknown }).exitCode !== 0 &&
+    !acceptNonzero?.(result)
   ) {
     throw new Error(`cleanup failed (${label}); see ${cleanupArtifact(result)}`);
   }
@@ -134,12 +148,13 @@ async function runCleanupStep(
   label: string,
   run: () => Promise<unknown>,
   progress?: AgentTurnProgress,
+  acceptNonzero?: (value: unknown) => boolean,
 ): Promise<void> {
   emitProgressEvent(progress, `${label} started`);
   const finishActivity = startProgressActivity(progress, `cleanup: ${label}`);
   try {
     const result = await run();
-    requireCleanupSuccess(label, result);
+    requireCleanupSuccess(label, result, acceptNonzero);
     emitProgressEvent(progress, `${label} passed`);
   } catch (error) {
     emitProgressEvent(progress, `${label} failed`);
@@ -362,6 +377,7 @@ export async function cleanupTurnSandboxes(
           timeoutMs: 60_000,
         }),
       progress,
+      isMissingSandboxResult,
     );
   }
   await runCleanupStep(
@@ -408,9 +424,7 @@ export async function cleanupTurnSandbox(
       output,
     )
   ) {
-    throw new Error(
-      `cleanup failed (destroy ${agent} sandbox); see ${cleanupArtifact(result)}`,
-    );
+    throw new Error(`cleanup failed (destroy ${agent} sandbox); see ${cleanupArtifact(result)}`);
   }
 }
 

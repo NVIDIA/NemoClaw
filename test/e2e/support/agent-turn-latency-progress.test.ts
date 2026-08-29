@@ -393,6 +393,26 @@ describe("live test progress", () => {
     });
   });
 
+  it("accepts absent OpenShell sandboxes during idempotent pre-clean", async () => {
+    const command = vi.fn<HostCliClient["command"]>(async () => successfulProbe());
+    const openshell = vi
+      .fn<SandboxClient["openshell"]>()
+      .mockResolvedValueOnce(
+        failedProbe(
+          "Error: code: 'Some requested entity was not found', message: \"sandbox not found\"",
+        ),
+      )
+      .mockResolvedValueOnce(failedProbe("no such sandbox"))
+      .mockResolvedValue(successfulProbe());
+    const host = { command } as unknown as HostCliClient;
+    const sandbox = { openshell } as unknown as SandboxClient;
+
+    await expect(cleanupTurnSandboxes(host, sandbox, fakeInference())).resolves.toBeUndefined();
+
+    expect(command).toHaveBeenCalledTimes(2);
+    expect(openshell).toHaveBeenCalledTimes(4);
+  });
+
   it("aborts pre-clean on a nonzero command and identifies its redacted artifact", async () => {
     const failed = failedProbe("opaque-cleanup-secret");
     failed.artifacts.result = "artifacts/cleanup-openclaw-destroy.json";
