@@ -272,6 +272,34 @@ describe("OpenClaw agent-output fixture", () => {
     ).toBe("42");
   });
 
+  it("ignores tool schemas in successful OpenClaw run metadata (#10215)", () => {
+    expect(
+      parseOpenClawAgentText(
+        JSON.stringify({
+          runId: "run-1",
+          status: "ok",
+          summary: "completed",
+          result: {
+            payloads: [{ text: "42", mediaUrl: null }],
+            meta: {
+              tools: {
+                entries: [
+                  {
+                    name: "read",
+                    description: "Read a file",
+                    input_schema: { type: "object" },
+                  },
+                ],
+              },
+            },
+            finalAssistantRawText: "42",
+            completion: { stopReason: "stop", finishReason: "stop" },
+          },
+        }),
+      ),
+    ).toBe("42");
+  });
+
   it.each([
     ["timeout phase", { timeoutPhase: "provider" }],
     ["abandoned liveness", { livenessState: "abandoned" }],

@@ -4,6 +4,7 @@
 import {
   openClawAgentIncompleteTurnSignal,
   openClawAgentResponseRecord,
+  openClawUnframedJsonText,
   parseOpenClawJsonDocuments,
 } from "../../../src/lib/openclaw/agent-json-provenance.ts";
 import {
@@ -27,6 +28,17 @@ const OPENCLAW_CONTAINER_KEYS = [
   "items",
   "segments",
 ] as const;
+
+function responseContainsToolCallStructure(
+  document: unknown,
+  response: Record<string, unknown>,
+): boolean {
+  const { meta: _meta, ...replyFields } = response;
+  if (containsToolCallStructure(replyFields)) return true;
+  if (document === response || !document || typeof document !== "object") return false;
+  const { result: _result, ...wrapperFields } = document as Record<string, unknown>;
+  return containsToolCallStructure(wrapperFields);
+}
 
 function collectOpenClawAssistantText(
   value: unknown,
@@ -58,14 +70,18 @@ function collectOpenClawAssistantText(
 }
 
 function openClawAgentTextParts(raw: string): string[] {
-  if (containsToolCallOutput(raw) || openClawAgentIncompleteTurnSignal(raw)) return [];
+  if (containsToolCallOutput(openClawUnframedJsonText(raw)) || openClawAgentIncompleteTurnSignal(raw)) {
+    return [];
+  }
   const documents = parseOpenClawJsonDocuments(raw);
-  if (documents.some(containsToolCallStructure)) return [];
   const parts: string[] = [];
   for (const document of documents) {
     const response = openClawAgentResponseRecord(document);
     if (response && Array.isArray(response.payloads)) {
+      if (responseContainsToolCallStructure(document, response)) return [];
       collectOpenClawAssistantText(response.payloads, parts, new Set());
+    } else if (containsToolCallStructure(document)) {
+      return [];
     }
   }
   return parts;

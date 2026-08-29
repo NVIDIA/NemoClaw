@@ -60,6 +60,14 @@ describe("E2E answer assertions", () => {
     expect(containsAnswer("I cannot make tool calls, but the answer is 42.", "42")).toBe(true);
   });
 
+  it.each([
+    ["initial", "Acknowledged.", "acknowledged"],
+    ["resumed", "56", "56"],
+    ["continued", "The integer is 56.", "56"],
+  ])("accepts the semantic %s reply used by the Hermes follow-up sequence", (_turn, output, answer) => {
+    expect(containsAnswer(output, answer)).toBe(true);
+  });
+
   it("matches deterministic reply tokens split by streaming whitespace", () => {
     expect(containsReplyTokenAllowingWhitespace("A\n2603-REPLY", "A2603-REPLY")).toBe(true);
     expect(containsReplyTokenAllowingWhitespace("B 2603-REPLY", "B2603-REPLY")).toBe(true);

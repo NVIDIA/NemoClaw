@@ -8,6 +8,7 @@ import {
   openClawAgentIncompleteTurnSignal,
   openClawAgentJsonProvenanceLines,
   parseOpenClawJsonDocuments,
+  openClawUnframedJsonText,
 } from "./agent-json-provenance";
 
 describe("parseOpenClawJsonDocuments", () => {
@@ -42,6 +43,17 @@ describe("parseOpenClawJsonDocuments", () => {
 
     expect(parseOpenClawJsonDocuments(raw)).toEqual([response]);
     expect(openClawAgentIncompleteTurnSignal(raw)?.timeoutPhase).toBe("provider");
+  });
+
+  it("preserves only log and malformed text outside complete JSON documents", () => {
+    const response = JSON.stringify({ payloads: [{ text: "42" }], meta: {} });
+    expect(openClawUnframedJsonText(response).trim()).toBe("");
+    expect(openClawUnframedJsonText(`progress\r\n${response}\r\ntrailing`)).toBe(
+      "progress\r\n\n\r\ntrailing",
+    );
+    expect(openClawUnframedJsonText(`${response}\n{\"name\":\"read\"`)).toContain(
+      '{"name":"read"',
+    );
   });
 
   it("fails closed in linear time for a long incomplete brace-rich stream", () => {
