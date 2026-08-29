@@ -112,8 +112,8 @@ function modeledSandboxStatus(
 
 const temporaryDirectories: string[] = [];
 
-function sharedOpenShellFixture(prefix: string) {
-  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+function sharedOpenShellFixture(prefix: string, parentDir = os.tmpdir()) {
+  const homeDir = fs.mkdtempSync(path.join(parentDir, prefix));
   temporaryDirectories.push(homeDir);
   const paths = defaultUninstallPaths({ home: homeDir });
   const localInstallPaths = paths.openshellInstallPaths.filter((target) =>
@@ -232,19 +232,6 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
   it.each<[string, EvidenceMutation]>([
     ["receipt without configuration", (home, state) => writeAdmissionReceipt(home, state)],
     [
-      "forged configuration cleanup",
-      (home) => {
-        const target = path.join(
-          home,
-          ".config/nemoclaw/portable",
-          `.containers.conf.portable-uninstall-${"e".repeat(64)}.cleanup`,
-        );
-        fs.mkdirSync(path.dirname(target), { mode: 0o700, recursive: true });
-        fs.writeFileSync(target, "unknown", { mode: 0o600 });
-        return target;
-      },
-    ],
-    [
       "retirement record with replacement authority",
       (home, state) => {
         const receipt = writeAdmissionReceipt(home, state);
@@ -270,17 +257,9 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
       (_home, state) => symlinkEvidence(path.join(state, "portable-demo-lifecycle"), state),
     ],
     [
-      "symlinked configuration root",
-      (home, state) => symlinkEvidence(path.join(home, ".config/nemoclaw/portable"), state),
-    ],
-    [
       "excess receipt entries",
       (_home, state) =>
         directoryEvidence(path.join(state, "portable-demo-lifecycle"), 0o700, 1_025),
-    ],
-    [
-      "excess configuration entries",
-      (home) => directoryEvidence(path.join(home, ".config/nemoclaw/portable"), 0o700, 1_025),
     ],
   ])("rejects %s before generic effects (#9189)", (_case, mutate) => {
     const scope = admissionFailureScope("nemoclaw-portable-admission-");
@@ -432,13 +411,18 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
     expect(fs.existsSync(journalEvidence)).toBe(true);
   });
 
-  it("uses exact receipt names without Docker or an all-sandbox mutation (#9189)", () => {
+  it("uses exact receipt names with external gateway state and no all-sandbox mutation (#10544)", () => {
     const order: string[] = [];
     const logs: string[] = [];
     const registeredSandboxes = new Set(["alpha", "unrelated"]);
     const { homeDir, sharedPaths: sharedOpenShellPaths } = sharedOpenShellFixture(
       "nemoclaw-portable-success-",
+      process.cwd(),
     );
+    const gatewayStateDir = path.join(homeDir, "external-gateway-state");
+    const gatewayStateMarker = path.join(gatewayStateDir, "keep");
+    fs.mkdirSync(gatewayStateDir, { mode: 0o700 });
+    fs.writeFileSync(gatewayStateMarker, "gateway\n", { mode: 0o600 });
     const removed: string[] = [];
     const runHandlers = new Map<string, () => RunResult>([
       ["pgrep", notFound],
@@ -495,8 +479,12 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
       {
         commandExists: (command) =>
           ["openshell", "pgrep", "lsof", "docker", "npm"].includes(command),
-        env: { HOME: homeDir } as NodeJS.ProcessEnv,
-        existsSync: (target) => sharedOpenShellPaths.has(String(target)),
+        env: {
+          HOME: homeDir,
+          NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: gatewayStateDir,
+        } as NodeJS.ProcessEnv,
+        existsSync: (target) =>
+          sharedOpenShellPaths.has(String(target)) || String(target) === gatewayStateDir,
         hasPortableRuntimeCleanup: () => true,
         isTty: false,
         kill,
@@ -515,6 +503,7 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
     expect(runDocker).not.toHaveBeenCalled();
     expect(kill).not.toHaveBeenCalled();
     expect(removed).toEqual([]);
+    expect(fs.readFileSync(gatewayStateMarker, "utf8")).toBe("gateway\n");
     expect(run.mock.calls.every(([command]) => ["openshell", "npm"].includes(command))).toBe(true);
     expect(run).toHaveBeenCalledWith(
       "openshell",

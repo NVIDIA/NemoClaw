@@ -26,6 +26,13 @@ export type RegistryOwnerStatus = "ordinary" | "original" | "recycled" | "unveri
 export type RegistryLockDecision = "break" | "wait";
 export type ProcessBoundLockHandle = object;
 
+export class ProcessBoundLockContentionError extends Error {
+  constructor(directory: string, retries: number) {
+    super(`Failed to acquire lock on ${directory} after ${String(retries)} retries`);
+    this.name = "ProcessBoundLockContentionError";
+  }
+}
+
 const handles = new WeakMap<ProcessBoundLockHandle, Acquired>();
 const at = (directory: string): Paths => ({ directory, owner: path.join(directory, "owner"), processStart: path.join(directory, "process-start") });
 const identity = (target: string): Identity | null => {
@@ -223,7 +230,7 @@ function acquire(directory: string, exact: boolean, deps: RegistryLockDeps): Acq
     }
     return { ...generation, ownerFile, processFile, processRecord: record };
   }
-  throw new Error(`Failed to acquire lock on ${directory} after ${String(retries)} retries`);
+  throw new ProcessBoundLockContentionError(directory, retries);
 }
 
 function release(acquired: Acquired): void {

@@ -6,6 +6,7 @@ import YAML from "yaml";
 
 import { loadManagedToolGatewayMatrix } from "../../agents/hermes/config/managed-tool-gateway.ts";
 import { loadAgent } from "../../src/lib/agent/defs.ts";
+import { requiredMessagingChannelPolicyPresets } from "../../src/lib/onboard/messaging-policy-presets.ts";
 import * as policies from "../../src/lib/policy";
 
 type AllowRule = {
@@ -18,6 +19,7 @@ type AllowRule = {
 type Endpoint = {
   host?: string;
   port?: number;
+  path?: string;
   protocol?: string;
   enforcement?: string;
   access?: string;
@@ -112,6 +114,14 @@ function expectInspectedWebSocket(endpoint: Endpoint): void {
       { method: "WEBSOCKET_TEXT", path: "/**" },
     ]),
   );
+}
+
+function expectDistinctSlackCredentialSelectors(policy: NetworkPolicy): void {
+  const selectors = (policy.endpoints ?? [])
+    .filter((endpoint) => endpoint.host === "slack.com" && endpoint.port === 443)
+    .map((endpoint) => endpoint.path ?? "");
+  expect(selectors).toEqual(["/api/apps.connections.open", ""]);
+  expect(new Set(selectors).size).toBe(selectors.length);
 }
 
 describe("effective built-in policy contracts", () => {
@@ -464,6 +474,7 @@ describe("effective built-in policy contracts", () => {
 
     const discord = requireNetworkPolicy(effective, "discord");
     const slack = requireNetworkPolicy(effective, "slack");
+    expectDistinctSlackCredentialSelectors(slack);
     for (const host of ["gateway.discord.gg", "*.discord.gg"]) {
       expectInspectedWebSocket(requireEndpoint(discord, host));
     }
@@ -476,7 +487,6 @@ describe("effective built-in policy contracts", () => {
         request_body_credential_rewrite: true,
       });
     }
-
     const telegram = requireEndpoint(
       requireNetworkPolicy(effective, "telegram_bot"),
       "api.telegram.org",
@@ -499,11 +509,24 @@ describe("effective built-in policy contracts", () => {
     }
   });
 
+  it("composes Hermes WeChat's required preset into the bridge policy (#10079)", () => {
+    const effective = composePresets(requiredMessagingChannelPolicyPresets(["wechat"]), "hermes");
+    const wechat = requireNetworkPolicy(effective, "wechat_bridge");
+
+    expect(requireEndpoint(wechat, "ilinkai.weixin.qq.com").credential_binding).toEqual({
+      provider: "effective-policy-wechat-bridge",
+    });
+    expect(requireEndpoint(wechat, "ilinkai.wechat.com").credential_binding).toEqual({
+      provider: "effective-policy-wechat-bridge",
+    });
+  });
+
   it("composes Hermes-specific messaging mutation and runtime identity rules", () => {
     const effective = composePresets(["discord", "slack", "wechat"], "hermes");
     const discord = requireNetworkPolicy(effective, "discord");
     const slack = requireNetworkPolicy(effective, "slack");
     const wechat = requireNetworkPolicy(effective, "wechat_bridge");
+    expectDistinctSlackCredentialSelectors(slack);
 
     for (const policy of [discord, slack, wechat]) {
       expect(binaries(policy)).toEqual(
@@ -522,7 +545,6 @@ describe("effective built-in policy contracts", () => {
         request_body_credential_rewrite: true,
       });
     }
-
     const mutationRules = (discord.endpoints ?? [])
       .filter((endpoint) => endpoint.host !== "discord.com")
       .flatMap((endpoint) => rules(endpoint))
