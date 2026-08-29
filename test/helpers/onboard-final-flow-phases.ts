@@ -58,7 +58,10 @@ export type RecorderOverrides = {
     agent: Agent | null,
   ) => void;
   reportDeploymentReadiness?: (healthy: boolean) => void;
-  getActiveSandbox?: PoliciesStateOptions<Agent | null, WebSearchConfig>["deps"]["getActiveSandbox"];
+  getActiveSandbox?: PoliciesStateOptions<
+    Agent | null,
+    WebSearchConfig
+  >["deps"]["getActiveSandbox"];
   setupPoliciesWithSelection?: PoliciesStateOptions<
     Agent | null,
     WebSearchConfig
@@ -217,7 +220,7 @@ export function createPhases(
       setupOpenclaw: vi.fn(async () => {
         order.push("openclaw");
       }),
-      syncNemoClawConfigInSandbox: vi.fn(),
+      configureOpenclawSandbox: vi.fn(async () => undefined),
       recordStepComplete:
         recorders.recordStepComplete ??
         vi.fn(async (_stepName: string, updates: SessionUpdates = {}) =>

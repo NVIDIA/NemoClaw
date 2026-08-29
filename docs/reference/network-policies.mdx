@@ -137,8 +137,8 @@ This is the supported registry-backed way to replay a live key removal during re
 | Tier | Presets included | Description |
 |------|------------------|-------------|
 | Restricted | No tier defaults | Starts from the baseline policy. Web search or messaging integrations selected earlier can still suggest their required presets; deselect them during policy review for baseline-only access. Restricted suppresses other agent-required additions; reapply them later with `policy add` only after reviewing the additional egress. |
-| Balanced (default) | `npm`, `pypi`, `huggingface`, `brew`, selected `brave` or `tavily` web search preset | Full dev tooling and web search when you select a provider the active agent supports. No messaging platform access. Apply the `weather` preset explicitly if your agent needs read-only weather lookups. |
-| Open | `npm`, `pypi`, `huggingface`, `brew`, selected `brave` or `tavily` web search preset, `weather`, `public-reference`, `slack`, `discord`, `telegram`, `wechat` (experimental), `whatsapp` (experimental), `teams` (experimental), `jira`, `outlook` | Broad access across third-party services including messaging, productivity, weather, and public-reference APIs. |
+| Balanced (default) | `npm`, `pypi`, `huggingface`, `brew`, `brave`; selected `tavily` web search access when supported | Full dev tooling and tier-default Brave egress. Selecting Tavily adds its preset when the active agent supports it; the `brave` tier default remains applied. No messaging platform access. Apply the `weather` preset explicitly if your agent needs read-only weather lookups. |
+| Open | `npm`, `pypi`, `huggingface`, `brew`, `brave`, `weather`, `public-reference`, `slack`, `discord`, `telegram`, `wechat` (experimental), `whatsapp` (experimental), `teams` (experimental), `jira`, `outlook`; selected `tavily` web search access when supported | Broad access across third-party services including messaging, productivity, weather, and public-reference APIs. Selecting Tavily adds its preset; the `brave` tier default remains applied. |
 | Personal | `personal-open-internet` (mandatory) | Lets every sandbox binary open TCP connections to public and private address ranges on destination ports `80` and `443`. The broad route replaces overlapping web endpoints while preserving non-web policy. Unspecified, loopback, and link-local ranges remain blocked. |
 
 When Personal is selected or carried forward, the `personal-open-internet` preset is mandatory for every agent and every onboarding entry point.
@@ -178,6 +178,10 @@ Hermes can select `tavily` only.
 Deep Agents can use the maintained `tavily` opt-in path, but messaging channel presets are omitted because the terminal harness does not run a NemoClaw messaging bridge today.
 </AgentOnly>
 NemoClaw automatically suggests the preset that matches the selected provider and removes stale web search presets during resume reconciliation when you switch providers or disable web search.
+<AgentOnly variant="openclaw">
+When reuse or rebuild retains a recorded Balanced or Open tier, NemoClaw keeps an applied `brave` preset even if you disable web search or select Tavily.
+NemoClaw removes a built-in web search preset only when it is neither required by the recorded tier nor selected by the active web search provider.
+</AgentOnly>
 <AgentOnly variant="openclaw,hermes">
 When a later onboarding run does not select a messaging channel and the environment no longer supplies that channel's required values, NemoClaw treats the channel as disabled.
 NemoClaw then removes that channel's matching policy preset instead of carrying it forward.

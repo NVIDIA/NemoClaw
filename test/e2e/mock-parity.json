@@ -320,9 +320,16 @@
     },
     {
       "live": "test/e2e/live/brave-search.test.ts",
+      "liveSources": ["test/e2e/live/brave-search-helpers.ts"],
       "fast": [
+        "src/lib/adapters/openshell/sandbox-identity.test.ts",
+        "src/lib/actions/sandbox/rebuild-backup-phase.test.ts",
+        "src/lib/onboard/machine/handlers/agent-setup.test.ts",
+        "src/lib/onboard/openclaw-setup.test.ts",
+        "src/lib/onboard/policy-resume-selection.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/onboard-performance.test.ts"
       ]
     },
     {
