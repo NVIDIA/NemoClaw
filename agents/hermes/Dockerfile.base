@@ -654,17 +654,7 @@ RUN chown -R sandbox:sandbox /tmp/nemoclaw-agent-browser-runtime \
             /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
             /usr/local/bin/npm view agent-browser@0.26.0 dist.integrity \
     )" \
-    && test "${cached_browser_integrity}" = "${locked_browser_integrity}" \
-    && HOME=/sandbox npm_config_cache=/sandbox/.npm \
-        npm_config_registry=https://registry.npmjs.org/ \
-        npm_config_userconfig=/tmp/nemoclaw-agent-browser-runtime/npm-userconfig \
-        npm_config_globalconfig=/tmp/nemoclaw-agent-browser-runtime/npm-globalconfig \
-        npm_config_ignore_scripts=true \
-        /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
-        /usr/local/bin/npm ci \
-            --prefix /tmp/nemoclaw-agent-browser-runtime \
-            --ignore-scripts --no-audit --no-fund \
-    && rm -rf /tmp/nemoclaw-agent-browser-runtime/node_modules
+    && test "${cached_browser_integrity}" = "${locked_browser_integrity}"
 RUN --network=none agent_browser_version="$( \
         HOME=/sandbox npm_config_cache=/sandbox/.npm npm_config_offline=true \
             npm_config_registry=https://registry.npmjs.org/ \

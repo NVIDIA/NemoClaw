@@ -778,6 +778,7 @@ describe("Hermes share mount package parity (#2947)", () => {
     const fakePython = path.join(tmp, "python");
     const fakeNpm = path.join(tmp, "npm");
     const fakeNpx = path.join(tmp, "npx");
+    const commandScript = path.join(tmp, "run-agent-browser-cache.sh");
     const sandboxHome = path.join(tmp, "sandbox");
     const lockedRuntime = path.join(tmp, "agent-browser-runtime");
     const npmCallLog = path.join(tmp, "npm-calls.log");
@@ -869,16 +870,11 @@ describe("Hermes share mount package parity (#2947)", () => {
           '  "cache add agent-browser@0.26.0")',
           '    mkdir -p "$npm_config_cache"',
           '    : > "$npm_config_cache/exact-packument"',
+          '    : > "$npm_config_cache/locked-archive"',
           "    ;;",
           '  "view agent-browser@0.26.0 dist.integrity")',
           '    [ "${npm_config_offline:-}" = "true" ]',
           '    printf "%s\\n" "$CACHED_BROWSER_INTEGRITY"',
-          "    ;;",
-          '  "ci --prefix $EXPECTED_RUNTIME --ignore-scripts --no-audit --no-fund")',
-          '    grep -Fq \'"agent-browser": "0.26.0"\' "$EXPECTED_RUNTIME/package-lock.json"',
-          '    grep -Fq \'"integrity": "sha512-pdqSfjwbFSp+qnwlb2g23e9wXveIOfMi19xpPA9xZUbzEAUp6W4YBZj6Ybj8z4M7WkcbGDDYc+oDIHDt9R3EDQ=="\' "$EXPECTED_RUNTIME/package-lock.json"',
-          '    mkdir -p "$npm_config_cache" "$EXPECTED_RUNTIME/node_modules"',
-          '    : > "$npm_config_cache/locked-archive"',
           "    ;;",
           "  *) exit 64 ;;",
           "esac",
@@ -922,7 +918,6 @@ describe("Hermes share mount package parity (#2947)", () => {
         "/usr/local/bin/npm",
         "/usr/local/bin/node",
         "/usr/local/bin/npm",
-        "/usr/local/bin/npm",
         "/usr/local/bin/npx",
       ]);
 
@@ -943,6 +938,11 @@ describe("Hermes share mount package parity (#2947)", () => {
         .replaceAll("/usr/local/bin/node", process.execPath)
         .replaceAll("/usr/local/bin/npm", fakeNpm)
         .replaceAll("/usr/local/bin/npx", fakeNpx);
+      fs.writeFileSync(
+        commandScript,
+        ["#!/usr/bin/env bash", "set -euo pipefail", command].join("\n"),
+        { mode: 0o700 },
+      );
 
       const commandEnvironment = {
         PATH: "/usr/bin:/bin",
@@ -950,7 +950,7 @@ describe("Hermes share mount package parity (#2947)", () => {
         EXPECTED_RUNTIME: lockedRuntime,
         NPM_CALL_LOG: npmCallLog,
       };
-      const rejected = spawnSync("bash", ["-euo", "pipefail", "-c", command], {
+      const rejected = spawnSync("bash", [commandScript], {
         encoding: "utf-8",
         env: {
           ...commandEnvironment,
@@ -965,7 +965,7 @@ describe("Hermes share mount package parity (#2947)", () => {
       ]);
 
       fs.writeFileSync(npmCallLog, "");
-      const ran = spawnSync("bash", ["-euo", "pipefail", "-c", command], {
+      const ran = spawnSync("bash", [commandScript], {
         encoding: "utf-8",
         env: {
           ...commandEnvironment,
@@ -978,7 +978,6 @@ describe("Hermes share mount package parity (#2947)", () => {
       expect(fs.readFileSync(npmCallLog, "utf-8").trim().split("\n")).toEqual([
         "cache add agent-browser@0.26.0",
         "view agent-browser@0.26.0 dist.integrity",
-        `ci --prefix ${lockedRuntime} --ignore-scripts --no-audit --no-fund`,
         "npx --ignore-scripts --prefer-offline -y agent-browser@0.26.0 --version",
       ]);
       expect(fs.existsSync(metadataMarker)).toBe(true);

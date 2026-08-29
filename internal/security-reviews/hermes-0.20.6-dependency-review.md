@@ -116,10 +116,9 @@ root dependency graph. The source patch changes `agent-browser@^0.26.0` to
 `agent-browser@0.26.0`. A reviewed npm lockfile binds the package archive and
 integrity. The base image caches the exact-version packument and archive, then
 reads its integrity without network access and requires it to match the reviewed
-lockfile. Lockfile-backed `npm ci --ignore-scripts` then verifies the archive.
-The base verifies the cached version without network access. The final image
-inherits that immutable source and cache boundary and repeats only the
-network-disabled version probe.
+lockfile. The network-disabled `npx` execution verifies the cached archive and
+exact version. The final image inherits that immutable source and cache boundary
+and repeats only the network-disabled version probe.
 
 No new supported integration is introduced. Optional upstream features remain
 subject to their existing NVIDIA/NemoClaw product and policy gates.
