@@ -520,6 +520,10 @@
     },
     {
       "live": "test/e2e/live/messaging-providers.test.ts",
+      "liveSources": [
+        "test/e2e/live/messaging-providers-helpers.ts",
+        "test/e2e/live/messaging-providers-wechat-runtime-proof.ts"
+      ],
       "fast": [
         "src/lib/messaging/channels/discord/credential-injection.test.ts",
         "src/lib/onboard/credential-provider-registration.test.ts",
