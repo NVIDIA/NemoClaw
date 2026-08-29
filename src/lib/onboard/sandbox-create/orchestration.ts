@@ -2217,6 +2217,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         sandboxName,
         gatewayName: GATEWAY_NAME,
         gatewayPort: GATEWAY_PORT,
+        lifecycleLiveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
         policySourcePath,
         operation: `resume sandbox creation for '${sandboxName}'`,
       });
@@ -2247,6 +2248,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         sandboxName,
         gatewayName: GATEWAY_NAME,
         gatewayPort: GATEWAY_PORT,
+        lifecycleLiveIdentityFingerprint: boundary.lifecycleLiveIdentityFingerprint,
         policySourcePath: boundary.policySourcePath,
         operation,
       });

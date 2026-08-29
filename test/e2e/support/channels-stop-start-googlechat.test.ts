@@ -24,7 +24,60 @@ type FixtureProviderDependencies = {
   ): string[];
 };
 
+type FixtureChannelDependencies = Pick<
+  (typeof import("../../../src/lib/actions/sandbox/policy-channel-dependencies.ts"))["policyChannelDependencies"],
+  "runGatewayOpenshell" | "upsertMessagingProviders"
+>;
+
 describe("channels stop/start Google Chat live composition", () => {
+  it("intercepts the live policy-channel boundary before gateway refresh minting", () => {
+    const sandboxName = "e2e-oc-ch-cycle";
+    const expectedName = `${sandboxName}-googlechat-bridge`;
+    const calls: string[][] = [];
+    const originalUpsert = vi.fn(() => []);
+    const channelDependencies: FixtureChannelDependencies = {
+      upsertMessagingProviders: originalUpsert,
+      runGatewayOpenshell: vi.fn((_gatewayName, args) => {
+        calls.push(args);
+        return { status: args[1] === "get" ? 1 : 0 } as never;
+      }),
+    };
+    const restore = installGooglechatCredentialFixture(sandboxName, "openclaw", {
+      channelDependencies,
+      ensureProfiles: vi.fn(),
+      root: "/repo",
+    });
+
+    expect(
+      channelDependencies.upsertMessagingProviders(
+        [
+          {
+            name: expectedName,
+            envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+            token: null,
+            providerType: "google-chat-bridge",
+          },
+        ],
+        "nemoclaw",
+        { bestEffort: true, requireExactBindings: true },
+      ),
+    ).toEqual([expectedName]);
+    expect(originalUpsert).not.toHaveBeenCalled();
+    expect(calls).toContainEqual([
+      "provider",
+      "create",
+      "--name",
+      expectedName,
+      "--type",
+      "google-chat-bridge",
+      "--credential",
+      "GOOGLE_CHAT_ACCESS_TOKEN",
+    ]);
+
+    restore();
+    expect(channelDependencies.upsertMessagingProviders).toBe(originalUpsert);
+  });
+
   it("grants a process-local audience capability to the exact live sandbox", async () => {
     const addSandboxChannel = vi.fn(async () => {});
     const rebuildSandbox = vi.fn(async () => {});

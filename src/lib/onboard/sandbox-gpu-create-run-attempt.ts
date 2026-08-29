@@ -732,10 +732,12 @@ export function createSandboxGpuCreateAttemptRunner(
                 : resolveOpenShellSandboxId(input.sandboxName, deps.runCaptureOpenshell);
             } catch (error) {
               if (createAttemptNonce) persistIdentitySettlementRecovery();
+              const diagnostic =
+                error instanceof Error ? ` ${error.message}` : " Identity settlement failed.";
               throw new Error(
                 createFailure?.kind === "sandbox_create_incomplete"
-                  ? "Managed bootstrap incomplete create did not return one exact durable sandbox identity after Ready."
-                  : "Managed bootstrap create did not return one exact durable sandbox identity after Ready.",
+                  ? `Managed bootstrap incomplete create did not return one exact durable sandbox identity after Ready.${diagnostic}`
+                  : `Managed bootstrap create did not return one exact durable sandbox identity after Ready.${diagnostic}`,
                 { cause: error },
               );
             }

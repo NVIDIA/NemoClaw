@@ -92,6 +92,8 @@ describe("runtime state mutation controller", () => {
     expect(harnessResult.writer_scans_remaining).toBe(0);
     expect(harnessResult.unstoppable_writer).toBe("writer-exclusion-timeout");
     expect(harnessResult.unknown_writer).toBe("unreadable-writer-process");
+    expect(harnessResult.pid_reuse_signal).toBe("ok");
+    expect(harnessResult.pid_reuse_signal_calls).toEqual([]);
   });
 
   it("publishes, rolls an activated fence back, and recovers every durable phase (#7744)", () => {

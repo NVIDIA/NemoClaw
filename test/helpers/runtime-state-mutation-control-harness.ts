@@ -40,6 +40,7 @@ real_verify_activation_receipt = control._verify_activation_receipt
 real_health_status = control._health_status
 real_release_activation_hold = control._release_activation_hold
 real_parse_proc_uids = control._parse_proc_uids
+real_capture_process = control._capture_process
 real_recapture_reference = control._recapture_reference
 real_signal_exact_process = control._signal_exact_process
 real_wait_for_reference_running = control._wait_for_reference_running
@@ -198,6 +199,7 @@ gateway = process(
     177,
 )
 auxiliary = process(78, "S", 10, "708", 1001, (b"tail", b"-F"), 178)
+
 stdout_drain = process(
     75,
     "S",
@@ -243,6 +245,36 @@ activation = control.ActivationProof(
 )
 
 results = {}
+had_pidfd_open = hasattr(os, "pidfd_open")
+original_pidfd_open = getattr(os, "pidfd_open", None)
+had_pidfd_send_signal = hasattr(signal, "pidfd_send_signal")
+original_pidfd_send_signal = getattr(signal, "pidfd_send_signal", None)
+pidfd_signals = []
+os.pidfd_open = lambda _pid, _flags: os.open(os.devnull, os.O_RDONLY)
+signal.pidfd_send_signal = lambda _fd, requested: pidfd_signals.append(requested)
+control._capture_process = lambda _pid: process(
+    gateway.pid,
+    "S",
+    gateway.parent_pid,
+    "replacement-start",
+    gateway.uids[0],
+    gateway.command,
+    gateway.proc_inode + 1,
+)
+results["pid_reuse_signal"] = code(
+    lambda: real_signal_exact_process(gateway, signal.SIGTERM)
+)
+results["pid_reuse_signal_calls"] = list(pidfd_signals)
+control._capture_process = real_capture_process
+if had_pidfd_open:
+    os.pidfd_open = original_pidfd_open
+else:
+    del os.pidfd_open
+if had_pidfd_send_signal:
+    signal.pidfd_send_signal = original_pidfd_send_signal
+else:
+    del signal.pidfd_send_signal
+
 with tempfile.TemporaryDirectory() as atomic_root:
     atomic_root_fd = os.open(atomic_root, os.O_RDONLY | os.O_DIRECTORY)
     atomic_creation_modes = []

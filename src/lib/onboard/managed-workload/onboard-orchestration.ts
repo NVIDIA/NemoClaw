@@ -227,7 +227,10 @@ export function createManagedWorkloadOnboardRuntime(
   const discoveredRuntimeCapabilities = resolveSandboxWorkloadRuntimeCapabilities(
     input.computePlan,
   );
-  const strictManagedRuntime = input.tempManagedRuntime || input.managedWorkloadRebuild !== null;
+  const strictManagedRuntime =
+    input.tempManagedRuntime ||
+    input.tempManagedRuntimeCatalog !== null ||
+    input.managedWorkloadRebuild !== null;
   const runtimeCapabilities =
     strictManagedRuntime || input.stockManagedRuntime
       ? discoveredRuntimeCapabilities

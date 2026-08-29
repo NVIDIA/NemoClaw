@@ -110,6 +110,7 @@ function policyRequirementsInput(
     sandboxName: boundary.sandboxName,
     gatewayName: boundary.gatewayName,
     gatewayPort: boundary.gatewayPort,
+    lifecycleLiveIdentityFingerprint: boundary.lifecycleLiveIdentityFingerprint,
     policySourcePath: boundary.policySourcePath,
     operation: "continue composed Hermes Portable onboarding",
   };
@@ -210,6 +211,7 @@ network_policies:
             sandboxName: "alpha",
             gatewayName: "nemoclaw",
             gatewayPort: GATEWAY_PORT,
+            lifecycleLiveIdentityFingerprint: HERMES_PORTABLE_TEST_LIVE_IDENTITY,
             policySourcePath: effectivePolicySourcePath,
             operation: "verify composed Hermes Portable policy",
           });

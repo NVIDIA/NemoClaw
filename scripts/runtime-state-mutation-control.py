@@ -2588,7 +2588,11 @@ def _signal_exact_process(process: ProcessIdentity, requested_signal: int) -> No
         if current is None:
             return
         if current.identity_key() != process.identity_key():
-            _fail("writer-pid-reused")
+            # The pidfd remains bound to the original process, so a numeric PID
+            # replacement cannot receive this signal. Treat the old writer as
+            # gone; the caller's next complete writer scan will independently
+            # discover and handle the replacement identity.
+            return
         try:
             signal.pidfd_send_signal(pidfd, requested_signal)
         except ProcessLookupError:
