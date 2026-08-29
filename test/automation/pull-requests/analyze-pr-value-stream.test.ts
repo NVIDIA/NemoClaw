@@ -104,7 +104,7 @@ else if (args.includes("/actions/runs/") && !args.includes("/jobs") && !args.inc
 else if (args.includes("/artifacts?") && scenario === "artifact-failure") { console.error("Authorization: secret-token"); process.exit(1); }
 else if (args.includes("/artifacts?")) value = {total_count:1,artifacts:[{id:31,name:"cli-blob-report-1",size_in_bytes:Number(process.env.VALUE_STREAM_ARTIFACT_SIZE),expired:false,workflow_run:{id:11,head_sha:sha},workflow_run_id:11,workflow_run_head_sha:sha}]};
 else if (args.includes("/actions/artifacts/31/zip")) { if (scenario === "artifact-cancel") setInterval(() => {}, 1000); else { process.stdout.write(fs.readFileSync(process.env.VALUE_STREAM_ARTIFACT)); process.exit(0); } }
-else if (args.includes("/check-runs?")) { const checks=scenario.startsWith("legacy-") ? [] : [{id:1,name:"required-a",status:"completed",conclusion:"success",created_at:"2026-01-01T00:00:35Z",started_at:"2026-01-01T00:00:45Z",completed_at:scenario === "early-check" ? "2026-01-01T00:00:20Z" : "2026-01-01T00:02:30Z",html_url:"",app:{id:scenario === "wrong-app" ? 8 : 7,slug:"actions"}}]; if (scenario !== "incomplete" && scenario !== "wrong-app" && scenario !== "any-app" && scenario !== "app-status-denied" && scenario !== "early-check" && !scenario.startsWith("legacy-")) checks.push({...checks[0],id:2,name:"required-b",created_at:"2026-01-01T00:00:40Z",completed_at:"2026-01-01T00:02:40Z"}); value=checks; }
+else if (args.includes("/check-runs?")) { const checks=scenario.startsWith("legacy-") ? [] : [{id:1,name:"required-a",status:"completed",conclusion:"success",created_at:"2026-01-01T00:00:35Z",started_at:"2026-01-01T00:00:45Z",completed_at:scenario === "early-check" ? "2026-01-01T00:00:20Z" : "2026-01-01T00:02:30Z",html_url:"",app:{id:scenario === "wrong-app" ? 8 : 7,slug:"actions"}}]; if (scenario === "duplicate-checks" && args.includes("filter=all")) checks.push({...checks[0],id:3,created_at:"2026-01-01T00:00:30Z"}); if (scenario !== "incomplete" && scenario !== "wrong-app" && scenario !== "any-app" && scenario !== "app-status-denied" && scenario !== "early-check" && !scenario.startsWith("legacy-")) checks.push({...checks[0],id:2,name:"required-b",created_at:"2026-01-01T00:00:40Z",completed_at:"2026-01-01T00:02:40Z"}); value=checks; }
 else if (args.includes("/status?")) {
   if (scenario === "app-status-denied") { console.error("Commit statuses forbidden"); process.exit(1); }
   const page = Number(new URL("https://example.test/?" + args.split("?")[1].split(" ")[0]).searchParams.get("page"));
@@ -270,6 +270,21 @@ describe("pull request value-stream analysis", () => {
       offsetSeconds: null,
       durationSeconds: null,
     });
+  });
+
+  test("retains every external check attempt with the same name (#10542)", async () => {
+    const result = await run("duplicate-checks");
+    const report = JSON.parse(result.stdout);
+    expect(report.lifetime.externalChecks).toBe(3);
+    const trace = JSON.parse(
+      await readFile(path.join(result.directory, report.lifetime.trace), "utf8"),
+    );
+    expect(
+      trace.traceEvents.filter(
+        (event: { cat?: string; name?: string }) =>
+          event.cat === "ci.external-check" && event.name === "required-a",
+      ),
+    ).toHaveLength(2);
   });
 
   test("does not settle automation when a required exact-head check is absent (#10542)", async () => {

@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdir, mkdtemp, rename, rm, stat, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { validateChromeTrace } from "./validate-chrome-trace.mts";
@@ -71,6 +72,8 @@ type ExportInput = {
   number: number;
   report: unknown;
   githubRead: GithubRead;
+  trackTemporaryPath?: (path: string) => void;
+  releaseTemporaryPath?: (path: string) => void;
 };
 
 function parseTime(value: unknown, label: string): number {
@@ -289,7 +292,7 @@ async function readExternalChecks(input: ExportInput, commits: Commit[]): Promis
   const groups = await mapBounded(commits, async (commit) => {
     const collection = await readPages({
       githubRead: input.githubRead,
-      endpoint: "repos/" + input.repository + "/commits/" + commit.oid + "/check-runs",
+      endpoint: "repos/" + input.repository + "/commits/" + commit.oid + "/check-runs?filter=all",
       projection:
         "[.check_runs[] | {id,name,status,conclusion,created_at,started_at,completed_at,html_url,app:{id:.app.id,slug:.app.slug}}]",
       label: "check runs",
@@ -690,16 +693,26 @@ export async function reclaimStalePublicationLock(
   return true;
 }
 
-async function acquirePublicationLock(lock: string): Promise<void> {
+async function lockOwnershipMatches(lock: string, token: string): Promise<boolean> {
+  try {
+    const owner = JSON.parse(await readFile(path.join(lock, "owner.json"), "utf8"));
+    return owner?.token === token;
+  } catch {
+    return false;
+  }
+}
+
+async function acquirePublicationLock(lock: string): Promise<string> {
   for (let attempt = 0; attempt < 300; attempt += 1) {
     try {
       await mkdir(lock);
+      const token = randomUUID();
       await writeFile(
         path.join(lock, "owner.json"),
-        JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }) + "\n",
+        JSON.stringify({ token, pid: process.pid, createdAt: new Date().toISOString() }) + "\n",
         { mode: 0o600 },
       );
-      return;
+      return token;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       if (await reclaimStalePublicationLock(lock)) continue;
@@ -714,8 +727,14 @@ export async function publishStagedDirectory(input: {
   destination: string;
   lock: string;
   validate?: () => Promise<void>;
+  track?: (path: string) => void;
+  release?: (path: string) => void;
 }): Promise<void> {
-  await acquirePublicationLock(input.lock);
+  const token = await acquirePublicationLock(input.lock);
+  input.track?.(input.lock);
+  const heartbeat = setInterval(() => {
+    void utimes(input.lock, new Date(), new Date()).catch(() => undefined);
+  }, PUBLICATION_LOCK_STALE_MS / 3);
   const backup = input.staging + "-previous";
   let movedPrevious = false;
   try {
@@ -734,7 +753,10 @@ export async function publishStagedDirectory(input: {
     }
     if (movedPrevious) await rm(backup, { recursive: true, force: true });
   } finally {
-    await rm(input.lock, { recursive: true, force: true });
+    clearInterval(heartbeat);
+    if (await lockOwnershipMatches(input.lock, token))
+      await rm(input.lock, { recursive: true, force: true });
+    input.release?.(input.lock);
   }
 }
 
@@ -828,6 +850,7 @@ export async function exportLifetimeTrace(input: ExportInput): Promise<LifetimeA
     ) + "\n";
   await mkdir(parentDirectory, { recursive: true, mode: 0o700 });
   const staging = await mkdtemp(path.join(parentDirectory, ".pr-" + input.number + "-staging-"));
+  input.trackTemporaryPath?.(staging);
   const tracePath = path.join(staging, "trace.json");
   const summaryPath = path.join(staging, "summary.json");
   const manifestPath = path.join(staging, "manifest.json");
@@ -842,6 +865,8 @@ export async function exportLifetimeTrace(input: ExportInput): Promise<LifetimeA
       staging,
       destination: directory,
       lock: directory + ".lock",
+      track: input.trackTemporaryPath,
+      release: input.releaseTemporaryPath,
       validate: async () => {
         const currentPull = await readPull(input);
         if (currentPull.headRefOid !== pull.headRefOid)
@@ -850,7 +875,9 @@ export async function exportLifetimeTrace(input: ExportInput): Promise<LifetimeA
     });
   } catch (error) {
     await rm(staging, { recursive: true, force: true });
+    input.releaseTemporaryPath?.(staging);
     throw error;
   }
+  input.releaseTemporaryPath?.(staging);
   return artifacts;
 }

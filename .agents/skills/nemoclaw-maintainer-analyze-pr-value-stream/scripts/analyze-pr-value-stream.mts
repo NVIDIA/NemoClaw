@@ -195,6 +195,11 @@ async function handleCancellation(signal: (typeof cancellationSignals)[number]):
   process.kill(process.pid, signal);
 }
 
+function releaseTrackedPath(path: string): void {
+  artifactDirectories.delete(path);
+  if (artifactDirectories.size === 0 && cancellationHandlersInstalled) removeCancellationHandlers();
+}
+
 function trackArtifactDirectory(directory: string): void {
   artifactDirectories.add(directory);
   if (cancellationHandlersInstalled) return;
@@ -1495,6 +1500,8 @@ async function main(): Promise<void> {
     number: normalized.number,
     report,
     githubRead: async (args) => runGithubCli({ workdir: normalized.workdir, args }),
+    trackTemporaryPath: trackArtifactDirectory,
+    releaseTemporaryPath: releaseTrackedPath,
   });
   const output = `${JSON.stringify(report, null, 2)}\n`;
   if (Buffer.byteLength(output) > MAX_JSON_OUTPUT)
