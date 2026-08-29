@@ -803,13 +803,7 @@ async function acquirePublicationLock(
       const token = randomUUID();
       await mkdir(lock);
       track?.(lock, async () => {
-        let ownerMissing = false;
-        try {
-          await stat(path.join(lock, "owner.json"));
-        } catch (error) {
-          ownerMissing = (error as NodeJS.ErrnoException).code === "ENOENT";
-        }
-        if (ownerMissing || (await lockOwnershipMatches(lock, token)))
+        if (await lockOwnershipMatches(lock, token))
           await rm(lock, { recursive: true, force: true });
       });
       const startIdentity = await processStartIdentity(process.pid);
