@@ -146,7 +146,7 @@ function toolLabel(record: Record<string, unknown>): string {
   const tool = record.toolName ?? record.tool_name ?? record.name ?? record.tool;
   const callId = record.toolCallId ?? record.tool_call_id ?? record.id;
   const parts = [tool, callId].map((part) => String(part || "").trim()).filter(Boolean);
-  return parts.length > 0 ? parts.join(" ") : "unknown tool";
+  return parts.length > 0 ? snippet(parts.join(" ")) : "unknown tool";
 }
 
 function toolFailureLine(record: Record<string, unknown>): string | null {

@@ -159,6 +159,30 @@ describe("openClawAgentJsonProvenanceLines", () => {
     expect(lines[0]).not.toContain(rawPrivateKey);
   });
 
+  it("sanitizes and redacts untrusted failed tool labels", () => {
+    const rawApiKey = "nvapi-tool-label-secret-1234567890";
+    const lines = openClawAgentJsonProvenanceLines(
+      JSON.stringify({
+        messages: [
+          {
+            role: "toolResult",
+            toolCallId: "\x1B]8;;https://example.invalid/phish\x07call_hostile\x1B]8;;\x07",
+            toolName: `\x1B[2Jexec\nNVIDIA_API_KEY=${rawApiKey}`,
+            isError: true,
+            text: "failed",
+          },
+        ],
+      }),
+    );
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("NVIDIA_API_KEY=<REDACTED>");
+    expect(lines[0]).toContain("call_hostile");
+    expect(lines[0]).not.toContain(rawApiKey);
+    expect(lines[0]).not.toContain("https://example.invalid");
+    expect(lines[0]).not.toMatch(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/u);
+  });
+
   it("labels untrusted child-agent result framing from log-prefixed JSON", () => {
     const childPayload = [
       "<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>",
