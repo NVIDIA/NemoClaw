@@ -7,14 +7,27 @@
     "expected_behavior": [
       "Uses `nemoclaw-contributor-create-pr`.",
       "Reads the pull request template from the trusted base branch.",
-      "Updates `refs/remotes/origin/main` explicitly before validation.",
+      "Uses the implementation handoff's self-review and any other available pre-publication review evidence without querying PR state or following the open-PR workflow before the PR exists.",
+      "Updates and resolves `refs/remotes/origin/main` after the initial-publication review step and immediately before validation.",
       "Stops publication when the refresh fails or `refs/remotes/origin/main` is unavailable instead of accepting a stale base.",
       "Treats normal hook results as supplemental evidence, including when hook installation or execution is missing or uncertain.",
       "Runs `npm run validate:pr` after the final commit and before every agent-managed push only when its complete execution surface, dependency-resolution inputs, and resolved validator executables match the trusted base; otherwise stops publication.",
       "Stops the push when direct validation fails or is inconclusive.",
-      "If direct validation applies an autofix before the first push, commits it, reestablishes trusted validation, and reruns validation without attempting review collection for a PR that does not exist.",
-      "If direct validation applies an autofix while updating an open PR, commits it, repeats the complete final review collection and stable-`headRefOid` check, reestablishes trusted validation, and pushes only after validation changes no tracked file.",
+      "If direct validation applies an autofix before the first push, commits it, repeats the initial-publication review step, refreshes the trusted base, reestablishes trusted validation, and reruns validation without querying PR state.",
       "Stops before `gh pr create` when the body lacks the DCO declaration or a commit is unverified."
+    ]
+  },
+  {
+    "id": "positive-update-open-pr",
+    "question": "Push my latest committed fix to my open NemoClaw pull request.",
+    "expected_skill": "nemoclaw-contributor-create-pr",
+    "ground_truth": "An open-PR update requires complete review collection for one stable latest PR commit before trusted-base refresh, direct validation, and push.",
+    "expected_behavior": [
+      "Uses `nemoclaw-contributor-create-pr`.",
+      "Follows the open-PR review workflow through complete collection and classification instead of using only pre-publication review evidence.",
+      "Stops while a finding is unclassified, an unresolved finding requires a change, a required review is pending, or the initial and final `headRefOid` values differ.",
+      "After final review collection, updates and resolves `refs/remotes/origin/main`, verifies the trusted validation surface, and runs `npm run validate:pr` before the push.",
+      "If direct validation applies an autofix, commits it, repeats the complete review collection and stable-`headRefOid` check, refreshes the trusted base, reestablishes trusted validation, and pushes only after validation changes no tracked file."
     ]
   },
   {
