@@ -8,15 +8,23 @@ import type { ShellProbeRunOptions } from "../fixtures/shell-probe.ts";
 import { prepareOwnedSandboxForOnboard } from "../live/mcp-bridge-cleanup.ts";
 
 function cleanupClient(owner: string, calls: string[]) {
+  const cleanupSandbox = vi.fn(async (_name: string, options: ShellProbeRunOptions = {}) => {
+    calls.push(`${owner}:${options.artifactName}`);
+  });
   return {
-    cleanupSandbox: vi.fn(async (_name: string, options: ShellProbeRunOptions = {}) => {
-      calls.push(`${owner}:${options.artifactName}`);
+    cleanupSandbox,
+    bestEffortCleanupSandbox: vi.fn(async (name: string, options: ShellProbeRunOptions = {}) => {
+      try {
+        await cleanupSandbox(name, options);
+      } catch {
+        // Match HostCliClient: the administrator fallback must still run.
+      }
     }),
   };
 }
 
 describe("MCP bridge owned-sandbox cleanup", () => {
-  it("deletes OpenShell state before reconciling NemoClaw recovery state", async () => {
+  it("initializes the gateway before administrator deletion and final reconciliation", async () => {
     const calls: string[] = [];
     const host = cleanupClient("host", calls);
     const sandbox = cleanupClient("openshell", calls);
@@ -24,6 +32,7 @@ describe("MCP bridge owned-sandbox cleanup", () => {
 
     await prepareOwnedSandboxForOnboard(host, sandbox, cleanup, "e2e-mcp-bridge");
     expect(calls).toEqual([
+      "host:precleanup-initialize-gateway",
       "openshell:precleanup-delete-openshell-sandbox",
       "host:precleanup-destroy-sandbox",
     ]);
@@ -32,6 +41,7 @@ describe("MCP bridge owned-sandbox cleanup", () => {
 
     expect(result.failures).toEqual([]);
     expect(calls).toEqual([
+      "host:precleanup-initialize-gateway",
       "openshell:precleanup-delete-openshell-sandbox",
       "host:precleanup-destroy-sandbox",
       "openshell:cleanup-delete-openshell-sandbox",
@@ -56,5 +66,20 @@ describe("MCP bridge owned-sandbox cleanup", () => {
       },
     ]);
     expect(calls.at(-1)).toBe("host:cleanup-destroy-sandbox");
+  });
+
+  it("uses administrator deletion when safe gateway initialization refuses cleanup", async () => {
+    const calls: string[] = [];
+    const host = cleanupClient("host", calls);
+    const sandbox = cleanupClient("openshell", calls);
+    const cleanup = new CleanupRegistry();
+    host.cleanupSandbox.mockRejectedValueOnce(new Error("retained identity requires recovery"));
+
+    await prepareOwnedSandboxForOnboard(host, sandbox, cleanup, "e2e-mcp-bridge");
+
+    expect(calls).toEqual([
+      "openshell:precleanup-delete-openshell-sandbox",
+      "host:precleanup-destroy-sandbox",
+    ]);
   });
 });

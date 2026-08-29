@@ -21,7 +21,7 @@ const MCP_BRIDGE_ALREADY_ABSENT =
 
 /** Prepare a sandbox name exclusively owned by this isolated qualification job. */
 export async function prepareOwnedSandboxForOnboard(
-  host: Pick<HostCliClient, "cleanupSandbox">,
+  host: Pick<HostCliClient, "bestEffortCleanupSandbox" | "cleanupSandbox">,
   sandbox: Pick<SandboxClient, "cleanupSandbox">,
   cleanup: CleanupRegistry,
   sandboxName: string,
@@ -40,6 +40,14 @@ export async function prepareOwnedSandboxForOnboard(
       timeoutMs: 15 * 60_000,
     }),
   );
+  // A fresh qualification runner has no active OpenShell gateway yet. Let the
+  // production CLI initialize it and perform any cleanup it can prove safe.
+  // Retained-state refusal remains non-fatal here because the identity-bound
+  // administrator deletion below is the isolated E2E fallback.
+  await host.bestEffortCleanupSandbox(sandboxName, {
+    artifactName: "precleanup-initialize-gateway",
+    timeoutMs: 15 * 60_000,
+  });
   await sandbox.cleanupSandbox(sandboxName, {
     artifactName: "precleanup-delete-openshell-sandbox",
     timeoutMs: 15 * 60_000,
