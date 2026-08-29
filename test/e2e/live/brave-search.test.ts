@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -54,7 +55,7 @@ test("Brave search preset wires policy/config, performs real searches, and survi
       "OpenClaw agent can perform a Brave-backed web search",
       "BRAVE_API_KEY is absent or a placeholder in the live agent and sandbox shell environments",
       "curl from inside the sandbox can query Brave using the placeholder token header",
-      "re-onboard reuse with web search disabled exits zero and keeps the sandbox ready",
+      "re-onboard reuse with web search disabled exits zero and retains the durable OpenShell sandbox identity",
       "the reused OpenClaw config records web search as disabled",
       "the reused Balanced-tier policy retains api.search.brave.com and can reach it",
     ],
@@ -130,11 +131,30 @@ test("Brave search preset wires policy/config, performs real searches, and survi
   assertBraveResponse(resultText(curl));
 
   progress.phase("re-onboard the existing sandbox with web search disabled");
+  const sandboxBeforeReuse = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
+    artifactName: "phase-5-pre-reuse-sandbox-identity",
+    env: commandEnv({ NEMOCLAW_RECREATE_SANDBOX: "0" }),
+    timeoutMs: 60_000,
+  });
+  expect(sandboxBeforeReuse.exitCode, resultText(sandboxBeforeReuse)).toBe(0);
+  const sandboxIdBeforeReuse = parseOpenShellSandboxId(resultText(sandboxBeforeReuse));
+  expect(sandboxIdBeforeReuse, resultText(sandboxBeforeReuse)).not.toBeNull();
+
   const reuse = await reuseBraveSandboxWithWebSearchDisabled(host, inferenceKey);
   expect(reuse.exitCode, resultText(reuse)).toBe(0);
-  expect(resultText(reuse)).toMatch(/exists and is ready.*reusing it/iu);
 
   progress.phase("verify reused runtime identity and retained Brave egress");
+  const sandboxAfterReuse = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
+    artifactName: "phase-6-post-reuse-sandbox-identity",
+    env: commandEnv({ NEMOCLAW_RECREATE_SANDBOX: "0" }),
+    timeoutMs: 60_000,
+  });
+  expect(sandboxAfterReuse.exitCode, resultText(sandboxAfterReuse)).toBe(0);
+  expect(
+    parseOpenShellSandboxId(resultText(sandboxAfterReuse)),
+    resultText(sandboxAfterReuse),
+  ).toBe(sandboxIdBeforeReuse);
+
   const status = await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "status"], {
     artifactName: "phase-6-reused-runtime-status",
     cwd: REPO_ROOT,
