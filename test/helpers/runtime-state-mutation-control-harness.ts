@@ -50,6 +50,7 @@ real_resume_reference = control._resume_reference
 real_prove_released_activation = control._prove_released_activation
 real_prove_parent_acknowledged_activation = control._prove_parent_acknowledged_activation
 real_resume_acknowledged_parent = control._resume_acknowledged_parent
+real_transport_broker_reference = control._transport_broker_reference
 control._assert_private_procfs = lambda: None
 control._open_activation_guard_pidfd = lambda _reference: os.open(
     os.devnull, os.O_RDONLY
@@ -186,6 +187,44 @@ def process(pid, state, parent, start, uid, command, inode, executable_inode=Non
         executable_inode,
     )
 
+fixed_transport_broker = process(
+    88,
+    "S",
+    1,
+    "788",
+    control.ROOT_UID,
+    (
+        b"/opt/hermes/.venv/bin/python3",
+        b"-I",
+        control.TRANSPORT_BROKER_PATH,
+        b"a" * 64,
+    ),
+    188,
+)
+dynamic_transport_broker = process(
+    89,
+    "S",
+    1,
+    "789",
+    control.ROOT_UID,
+    (
+        b"/opt/hermes/.venv/bin/python3",
+        b"-I",
+        b"-c",
+        b"dynamic-source",
+        b"encoded-source",
+        b"/usr/local/lib/nemoclaw/runtime-state-mutation-control.py",
+        b"a" * 64,
+    ),
+    189,
+)
+control._capture_process = lambda _pid: fixed_transport_broker
+fixed_transport_broker_reference = real_transport_broker_reference()
+results = {"fixed_transport_broker": fixed_transport_broker_reference.pid}
+control._capture_process = lambda _pid: dynamic_transport_broker
+results["dynamic_transport_broker_rejected"] = real_transport_broker_reference() is None
+control._capture_process = real_capture_process
+
 root_uid = control.ROOT_UID
 pid1 = process(1, "S", 0, "100", root_uid, (control.OPENSHELL_ARGV0,), 101)
 stopped_pid1 = process(1, "T", 0, "100", root_uid, (control.OPENSHELL_ARGV0,), 101)
@@ -250,7 +289,6 @@ activation = control.ActivationProof(
     ),
 )
 
-results = {}
 with tempfile.TemporaryDirectory() as process_probe:
     process_metadata = os.stat(process_probe, follow_symlinks=False)
     real_os_stat = control.os.stat

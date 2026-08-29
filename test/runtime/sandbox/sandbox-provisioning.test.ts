@@ -1052,6 +1052,10 @@ describe("Hermes sandbox provisioning", () => {
       localLib,
       "runtime-state-mutation-control.py",
     );
+    const runtimeStateMutationTransportBrokerPath = path.join(
+      localLib,
+      "runtime-state-mutation-transport-broker.py",
+    );
     const runtimeStateMutationStartupGatePath = path.join(
       localLib,
       "runtime-state-mutation-startup-gate.py",
@@ -1103,6 +1107,7 @@ describe("Hermes sandbox provisioning", () => {
       gatewaySupervisorPath,
       stateDirGuardPath,
       runtimeStateMutationControlPath,
+      runtimeStateMutationTransportBrokerPath,
       runtimeStateMutationStartupGatePath,
       runtimeStateMutationPublisherPath,
       stateLockPlanPath,
@@ -1141,7 +1146,7 @@ describe("Hermes sandbox provisioning", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(calls).toContain(
-        `chown root:root ${gatewayControlPath} ${gatewaySupervisorPath} ${stateDirGuardPath} ${runtimeStateMutationControlPath} ${runtimeStateMutationStartupGatePath} ${runtimeStateMutationPublisherPath} ${stateLockPlanPath} ${runtimeStateMutationCapabilityPath} ${managedGatewayControlPath} ${buildMcpDigestPath} ${hermesCronRestoreControlPath} ${mcpManifest}`,
+        `chown root:root ${gatewayControlPath} ${gatewaySupervisorPath} ${stateDirGuardPath} ${runtimeStateMutationControlPath} ${runtimeStateMutationTransportBrokerPath} ${runtimeStateMutationStartupGatePath} ${runtimeStateMutationPublisherPath} ${stateLockPlanPath} ${runtimeStateMutationCapabilityPath} ${managedGatewayControlPath} ${buildMcpDigestPath} ${hermesCronRestoreControlPath} ${mcpManifest}`,
       );
       expect((fs.statSync(gatewayControlPath).mode & 0o777).toString(8)).toBe("700");
       expect((fs.statSync(hermesCronRestoreControlPath).mode & 0o777).toString(8)).toBe("700");
@@ -1154,6 +1159,9 @@ describe("Hermes sandbox provisioning", () => {
       expect((fs.statSync(corporateCaRuntimePath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(stateDirGuardPath).mode & 0o777).toString(8)).toBe("500");
       expect((fs.statSync(runtimeStateMutationControlPath).mode & 0o777).toString(8)).toBe("500");
+      expect(
+        (fs.statSync(runtimeStateMutationTransportBrokerPath).mode & 0o777).toString(8),
+      ).toBe("500");
       expect((fs.statSync(runtimeStateMutationStartupGatePath).mode & 0o777).toString(8)).toBe(
         "555",
       );

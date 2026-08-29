@@ -4,7 +4,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { deflateRawSync } from "node:zlib";
 
 import type {
   ContainerEngine,
@@ -54,6 +53,8 @@ const DOCKER_PROVIDER_ID = "docker";
 const SUPPORTED_STATE_ROOT = "/sandbox/.hermes";
 const HELPER_PYTHON_PATH = "/opt/hermes/.venv/bin/python3";
 const HELPER_PATH = "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py";
+const HELPER_TRANSPORT_BROKER_PATH =
+  "/usr/local/lib/nemoclaw/runtime-state-mutation-transport-broker.py";
 const HELPER_FAST_TIMEOUT_MS = 30_000;
 const HELPER_ACTIVATION_RETRY_ACK_TIMEOUT_MS = 5_000;
 const HELPER_ACTIVATION_CHECKPOINT_TIMEOUT_MS = 150_000;
@@ -85,8 +86,6 @@ except FileNotFoundError:
 except Exception:
  raise SystemExit(${HELPER_TRANSPORT_SESSION_INSPECTION_FAILED_STATUS})
 raise SystemExit(${HELPER_TRANSPORT_SESSION_PRESENT_STATUS})`;
-export const DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_BOOTSTRAP =
-  "import base64,sys,zlib;source=zlib.decompress(base64.b64decode(sys.argv.pop(1)),-15);exec(compile(source,'<nemoclaw-state-mutation-transport>','exec'))";
 const MAX_HELPER_TRANSPORT_BYTES = 128 * 1024;
 const MAX_INSPECTION_BYTES = 1024 * 1024;
 const MAX_MOUNTS = 256;
@@ -102,320 +101,6 @@ const MOUNT_NAMESPACE = /^mnt:\[[1-9][0-9]*\]$/u;
 const POSITIVE_DECIMAL = /^[1-9][0-9]*$/u;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
 const helperTransportPoll = new Int32Array(new SharedArrayBuffer(4));
-
-export interface DockerStateMutationHelperTransportBrokerSourceOptions {
-  readonly root: string;
-  readonly expectedUid: number;
-  readonly expectedGid: number;
-  readonly activateTimeoutSeconds: number;
-}
-
-export function createDockerStateMutationHelperTransportBrokerSource(
-  options: DockerStateMutationHelperTransportBrokerSourceOptions,
-): string {
-  return String.raw`
-import fcntl
-import hashlib
-import json
-import os
-import re
-import signal
-import stat
-import subprocess
-import sys
-import time
-
-ROOT = ${JSON.stringify(options.root)}
-EXPECTED_UID = ${options.expectedUid}
-EXPECTED_GID = ${options.expectedGid}
-MAXIMUM = 128 * 1024
-TIMEOUTS = {"acquire": 30, "assert": 30, "publish": 900, "recover": 900, "rollback": 900, "activate": ${options.activateTimeoutSeconds}, "release": ${HELPER_RELEASE_TIMEOUT_MS / 1000}}
-IDENTITY = re.compile(r"[a-f0-9]{64}\Z")
-INCOMING = re.compile(r"([a-f0-9]{64})\.(acquire|assert|publish|recover|rollback|activate|release)\.incoming\Z")
-PUBLICATION_SETTLE_SECONDS = 5
-
-def fail(code):
-    raise RuntimeError(code)
-
-def directory(path):
-    metadata = os.lstat(path)
-    if (not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != EXPECTED_UID or
-        metadata.st_gid != EXPECTED_GID or
-        stat.S_IMODE(metadata.st_mode) != 0o700):
-        fail("transport-directory-invalid")
-
-def atomic(path, payload):
-    temporary = path + ".tmp-" + str(os.getpid())
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600)
-    try:
-        offset = 0
-        while offset < len(payload):
-            written = os.write(descriptor, payload[offset:])
-            if written <= 0:
-                fail("transport-write-failed")
-            offset += written
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-    os.replace(temporary, path)
-
-def private_file(path):
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
-    try:
-        before = os.fstat(descriptor)
-        payload = os.read(descriptor, MAXIMUM + 1)
-        after = os.fstat(descriptor)
-        if (not stat.S_ISREG(before.st_mode) or before.st_uid != EXPECTED_UID or
-            before.st_gid != EXPECTED_GID or
-            stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1 or
-            len(payload) > MAXIMUM or os.read(descriptor, 1) or
-            (before.st_dev, before.st_ino, before.st_mode, before.st_nlink, before.st_uid,
-             before.st_gid, before.st_size, before.st_mtime_ns, before.st_ctime_ns) !=
-            (after.st_dev, after.st_ino, after.st_mode, after.st_nlink, after.st_uid,
-             after.st_gid, after.st_size, after.st_mtime_ns, after.st_ctime_ns)):
-            fail("transport-file-invalid")
-        return payload
-    finally:
-        os.close(descriptor)
-
-def copied_file(path):
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
-    try:
-        before = os.fstat(descriptor)
-        payload = bytearray()
-        while len(payload) <= MAXIMUM:
-            chunk = os.read(descriptor, min(64 * 1024, MAXIMUM + 1 - len(payload)))
-            if not chunk:
-                break
-            payload.extend(chunk)
-        after = os.fstat(descriptor)
-        if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or len(payload) > MAXIMUM or
-            (before.st_dev, before.st_ino, before.st_nlink, before.st_uid, before.st_gid,
-             before.st_size, before.st_mtime_ns, before.st_ctime_ns) !=
-            (after.st_dev, after.st_ino, after.st_nlink, after.st_uid, after.st_gid,
-             after.st_size, after.st_mtime_ns, after.st_ctime_ns)):
-            fail("transport-copied-file-invalid")
-        return bytes(payload)
-    finally:
-        os.close(descriptor)
-
-def response_payload(action, identity, status, stdout, stderr):
-    return json.dumps({"schemaVersion": 1, "action": action, "identity": identity,
-        "status": status, "stdout": stdout, "stderr": stderr},
-        ensure_ascii=True, separators=(",", ":")).encode("utf-8") + b"\n"
-
-def failure_stderr(action, code):
-    return json.dumps({"schemaVersion": 1, "action": action, "status": "failed", "code": code},
-        ensure_ascii=True, separators=(",", ":")) + "\n"
-
-def post_validation_failure_code(error):
-    if isinstance(error, RuntimeError):
-        code = str(error)
-        if code in ("helper-file-missing", "helper-file-invalid", "transport-response-too-large"):
-            return code
-        return "transport-runtime-failed"
-    if isinstance(error, UnicodeError):
-        return "transport-response-encoding-invalid"
-    if isinstance(error, FileNotFoundError):
-        return "transport-resource-missing"
-    if isinstance(error, PermissionError):
-        return "transport-permission-denied"
-    if isinstance(error, OSError):
-        return "transport-io-failed"
-    return "transport-response-invalid"
-
-def normalize_helper_stderr(action, status, stderr):
-    if not stderr:
-        return stderr
-    try:
-        failure = json.loads(stderr.decode("utf-8", "strict"))
-        if (isinstance(failure, dict) and failure.get("schemaVersion") == 1 and
-            failure.get("action") == action and failure.get("status") == "failed" and
-            isinstance(failure.get("code"), str) and
-            re.fullmatch(r"[a-z][a-z0-9-]{0,127}", failure["code"]) is not None):
-            return stderr
-    except (UnicodeError, ValueError):
-        pass
-    code = "helper-process-failed" if status != 0 else "helper-protocol-stderr"
-    return failure_stderr(action, code).encode("utf-8")
-
-def publisher_phase_failure(action, stderr):
-    if action != "publish":
-        return stderr
-    try:
-        failure = json.loads(stderr.decode("utf-8", "strict"))
-        if (not isinstance(failure, dict) or failure.get("schemaVersion") != 1 or
-            failure.get("action") != "publish" or failure.get("status") != "failed" or
-            failure.get("code") != "publisher-guard-failed"):
-            return stderr
-        journal = json.loads(private_file(
-            "/var/lib/nemoclaw/runtime-state-mutation/hermes-publisher.json"
-        ).decode("utf-8", "strict"))
-        operation = journal.get("operation") if isinstance(journal, dict) else None
-        phase = operation.get("phase") if isinstance(operation, dict) else None
-        if phase not in ("intent", "begun", "state-applied", "top-applied"):
-            return stderr
-        failure["code"] = "publisher-guard-" + phase + "-failed"
-        return (json.dumps(failure, ensure_ascii=True, separators=(",", ":")) + "\n").encode("utf-8")
-    except (OSError, RuntimeError, UnicodeError, ValueError):
-        return stderr
-
-def run_helper(action, request):
-    try:
-        metadata = os.lstat(helper)
-    except FileNotFoundError:
-        fail("helper-file-missing")
-    if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != EXPECTED_UID or
-        metadata.st_gid != EXPECTED_GID or
-        stat.S_IMODE(metadata.st_mode) & 0o022):
-        fail("helper-file-invalid")
-    deadline = time.monotonic() + TIMEOUTS[action]
-    completed = None
-    for _ in range(2):
-        process = subprocess.Popen([sys.executable, "-I", helper, action], stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
-        try:
-            stdout, stderr = process.communicate(
-                request, timeout=max(0.001, deadline - time.monotonic()))
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except OSError:
-                try:
-                    process.kill()
-                except OSError:
-                    pass
-            try:
-                process.communicate(timeout=5)
-            except (subprocess.TimeoutExpired, OSError):
-                pass
-            raise
-        completed = subprocess.CompletedProcess(
-            process.args, process.returncode, stdout=stdout, stderr=stderr)
-        if completed.returncode >= 0:
-            return completed
-        # Replay one signal exit inside this action's deadline.
-    return completed
-
-helper = sys.argv[1]
-transaction = sys.argv[2]
-if IDENTITY.fullmatch(transaction) is None:
-    fail("transport-transaction-invalid")
-os.makedirs(ROOT, mode=0o700, exist_ok=True)
-directory(ROOT)
-session = os.path.join(ROOT, transaction)
-os.makedirs(session, mode=0o700, exist_ok=True)
-directory(session)
-lock = os.open(os.path.join(session, "broker.lock"), os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
-try:
-    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-except BlockingIOError:
-    raise SystemExit(0)
-atomic(os.path.join(session, "ready"), (transaction + "\n").encode("ascii"))
-pending = {}
-
-while True:
-    names = sorted(os.listdir(session))
-    if "released" in names and "resumed" in names:
-        try:
-            expected = (transaction + "\n").encode("ascii")
-            if (private_file(os.path.join(session, "released")) == expected and
-                copied_file(os.path.join(session, "resumed")) == expected):
-                for name in ("released", "resumed", "ready", "broker.lock"):
-                    try:
-                        os.unlink(os.path.join(session, name))
-                    except FileNotFoundError:
-                        pass
-                try:
-                    os.rmdir(session)
-                except OSError:
-                    pass
-                raise SystemExit(0)
-        except (OSError, RuntimeError, UnicodeError, ValueError):
-            pass
-    for name in names:
-        incoming = INCOMING.fullmatch(name)
-        if incoming is None:
-            continue
-        identity, action = incoming.groups()
-        request_path = os.path.join(session, name)
-        response_path = os.path.join(session, identity + ".response")
-        if os.path.exists(response_path):
-            continue
-        validated = False
-        try:
-            request = copied_file(request_path)
-            if not request.endswith(b"\n") or hashlib.sha256(request).hexdigest() != identity:
-                fail("transport-request-invalid")
-            envelope = json.loads(request.decode("utf-8", "strict"))
-            if (not isinstance(envelope, dict) or envelope.get("action") != action or
-                envelope.get("transactionId") != transaction):
-                fail("transport-request-invalid")
-            validated = True
-            pending.pop(name, None)
-            os.unlink(request_path)
-            completed = run_helper(action, request)
-            if len(completed.stdout) > MAXIMUM or len(completed.stderr) > MAXIMUM:
-                fail("transport-response-too-large")
-            status = completed.returncode if completed.returncode >= 0 else 128 - completed.returncode
-            stderr = publisher_phase_failure(action, completed.stderr)
-            stderr = normalize_helper_stderr(action, status, stderr)
-            response = response_payload(action, identity, status,
-                completed.stdout.decode("utf-8", "strict"), stderr.decode("utf-8", "strict"))
-        except subprocess.TimeoutExpired:
-            response = response_payload(action, identity, 1, "", failure_stderr(action, "helper-timeout"))
-        except (OSError, RuntimeError, UnicodeError, ValueError) as error:
-            if not validated:
-                first_observed = pending.setdefault(name, time.monotonic())
-                if time.monotonic() - first_observed < PUBLICATION_SETTLE_SECONDS:
-                    continue
-                pending.pop(name, None)
-                try:
-                    os.unlink(request_path)
-                except FileNotFoundError:
-                    pass
-                response = response_payload(action, identity, 1, "",
-                    failure_stderr(action, "transport-request-invalid"))
-            else:
-                # Preserve a safe, actionable failure class without returning
-                # exception text, host paths, or request contents to the caller.
-                response = response_payload(action, identity, 1, "",
-                    failure_stderr(action, post_validation_failure_code(error)))
-        atomic(response_path, response)
-    for name in names:
-        if not name.endswith(".ack"):
-            continue
-        identity = name[:-4]
-        if IDENTITY.fullmatch(identity) is None:
-            continue
-        response_path = os.path.join(session, identity + ".response")
-        if not os.path.exists(response_path):
-            continue
-        try:
-            response = json.loads(private_file(response_path).decode("utf-8", "strict"))
-            if copied_file(os.path.join(session, name)) != (identity + "\n").encode("ascii"):
-                fail("transport-ack-invalid")
-            successful_release = response.get("action") == "release" and response.get("status") == 0
-            for suffix in (".response", ".ack"):
-                try:
-                    os.unlink(os.path.join(session, identity + suffix))
-                except FileNotFoundError:
-                    pass
-            if successful_release:
-                atomic(os.path.join(session, "released"), (transaction + "\n").encode("ascii"))
-        except (OSError, RuntimeError, UnicodeError, ValueError):
-            pass
-    time.sleep(0.05)
-`;
-}
-
-export const DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE =
-  createDockerStateMutationHelperTransportBrokerSource({
-    root: HELPER_TRANSPORT_ROOT,
-    expectedUid: 0,
-    expectedGid: 0,
-    activateTimeoutSeconds: DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS / 1000,
-  });
 
 type HelperAction =
   | "acquire"
@@ -1388,12 +1073,7 @@ function helperTransportBrokerCommand(
       runtimeId,
       HELPER_PYTHON_PATH,
       "-I",
-      "-c",
-      DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_BOOTSTRAP,
-      deflateRawSync(Buffer.from(DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE, "utf8"), {
-        level: 9,
-      }).toString("base64"),
-      HELPER_PATH,
+      HELPER_TRANSPORT_BROKER_PATH,
       transactionId,
     ]),
     targetIndex: 5,

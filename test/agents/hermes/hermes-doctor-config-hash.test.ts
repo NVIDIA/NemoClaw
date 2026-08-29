@@ -121,6 +121,10 @@ describe("Hermes doctor and config hash boundary", () => {
     );
     const stateLockPlanPath = path.join(tmp, "state-lock-plan.json");
     const runtimeStateMutationControlPath = path.join(libDir, "runtime-state-mutation-control.py");
+    const runtimeStateMutationTransportBrokerPath = path.join(
+      libDir,
+      "runtime-state-mutation-transport-broker.py",
+    );
     const runtimeStateMutationStartupGatePath = path.join(
       libDir,
       "runtime-state-mutation-startup-gate.py",
@@ -168,6 +172,7 @@ describe("Hermes doctor and config hash boundary", () => {
         mcpCredentialBoundaryPath,
         path.join(libDir, "state-dir-guard.py"),
         runtimeStateMutationControlPath,
+        runtimeStateMutationTransportBrokerPath,
         runtimeStateMutationStartupGatePath,
         runtimeStateMutationPublisherPath,
         stateLockPlanPath,
@@ -184,6 +189,7 @@ describe("Hermes doctor and config hash boundary", () => {
       }
 
       fs.writeFileSync(runtimeStateMutationControlPath, "# controller fixture\n");
+      fs.writeFileSync(runtimeStateMutationTransportBrokerPath, "# broker fixture\n");
       fs.writeFileSync(runtimeStateMutationStartupGatePath, "# startup gate fixture\n");
       fs.writeFileSync(runtimeStateMutationPublisherPath, "# publisher fixture\n");
       fs.writeFileSync(path.join(libDir, "hermes-runtime-config-guard.py"), "# guard fixture\n");
@@ -219,7 +225,7 @@ describe("Hermes doctor and config hash boundary", () => {
       expect(result.stderr).toBe("");
       expect(fs.readFileSync(chownLogPath, "utf-8")).toBe(
         [
-          `root:root ${path.join(binDir, "nemoclaw-gateway-control")} ${path.join(libDir, "gateway-supervisor.sh")} ${path.join(libDir, "state-dir-guard.py")} ${runtimeStateMutationControlPath} ${runtimeStateMutationStartupGatePath} ${runtimeStateMutationPublisherPath} ${stateLockPlanPath} ${runtimeStateMutationCapabilityPath} ${path.join(libDir, "managed-gateway-control.py")} ${buildMcpDigestPath} ${hermesCronRestoreControlPath} ${mcpCredentialBoundaryPath}`,
+          `root:root ${path.join(binDir, "nemoclaw-gateway-control")} ${path.join(libDir, "gateway-supervisor.sh")} ${path.join(libDir, "state-dir-guard.py")} ${runtimeStateMutationControlPath} ${runtimeStateMutationTransportBrokerPath} ${runtimeStateMutationStartupGatePath} ${runtimeStateMutationPublisherPath} ${stateLockPlanPath} ${runtimeStateMutationCapabilityPath} ${path.join(libDir, "managed-gateway-control.py")} ${buildMcpDigestPath} ${hermesCronRestoreControlPath} ${mcpCredentialBoundaryPath}`,
           `-R 0:0 ${preloadsDir}`,
           "",
         ].join("\n"),
@@ -237,6 +243,7 @@ describe("Hermes doctor and config hash boundary", () => {
       expect(mode(path.join(libDir, "gateway-supervisor.sh"))).toBe("444");
       expect(mode(path.join(libDir, "state-dir-guard.py"))).toBe("500");
       expect(mode(runtimeStateMutationControlPath)).toBe("500");
+      expect(mode(runtimeStateMutationTransportBrokerPath)).toBe("500");
       expect(mode(runtimeStateMutationStartupGatePath)).toBe("555");
       expect(mode(runtimeStateMutationPublisherPath)).toBe("500");
       expect(mode(stateLockPlanPath)).toBe("444");

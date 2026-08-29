@@ -117,11 +117,9 @@ START_LOG_PATH = b"/tmp/nemoclaw-start.log"
 START_LOG_DRAIN_PATHS = (b"tee", b"/usr/bin/tee", b"/bin/tee")
 STARTUP_GATE_PYTHON = b"/opt/hermes/.venv/bin/python3"
 STARTUP_GATE_HELPER = b"/usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py"
-TRANSPORT_BROKER_BOOTSTRAP = (
-    b"import base64,sys,zlib;source=zlib.decompress(base64.b64decode(sys.argv.pop(1)),-15);"
-    b"exec(compile(source,'<nemoclaw-state-mutation-transport>','exec'))"
+TRANSPORT_BROKER_PATH = (
+    b"/usr/local/lib/nemoclaw/runtime-state-mutation-transport-broker.py"
 )
-TRANSPORT_BROKER_HELPER_PATH = b"/usr/local/lib/nemoclaw/runtime-state-mutation-control.py"
 
 HEX_64 = re.compile(r"[0-9a-f]{64}\Z")
 SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
@@ -3190,12 +3188,10 @@ def _transport_broker_reference() -> ProcessReference | None:
         process.pid <= 1
         or process.state in ("Z", "X", "x")
         or process.uids != (ROOT_UID,) * 4
-        or len(command) != 7
+        or len(command) != 4
         or command[1] != b"-I"
-        or command[2] != b"-c"
-        or command[3] != TRANSPORT_BROKER_BOOTSTRAP
-        or command[5] != TRANSPORT_BROKER_HELPER_PATH
-        or re.fullmatch(rb"[0-9a-f]{64}", command[6]) is None
+        or command[2] != TRANSPORT_BROKER_PATH
+        or re.fullmatch(rb"[0-9a-f]{64}", command[3]) is None
     ):
         return None
     return _process_reference(process)

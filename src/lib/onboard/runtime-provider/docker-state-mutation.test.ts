@@ -26,10 +26,36 @@ import {
 import { createDockerOperationAuthority } from "./docker-operation-authority";
 import {
   DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS,
-  createDockerStateMutationHelperTransportBrokerSource,
   createDockerStateMutationOwner,
   createDockerStateMutationSurface,
 } from "./docker-state-mutation";
+
+const TRANSPORT_BROKER = path.join(
+  import.meta.dirname,
+  "..",
+  "..",
+  "..",
+  "..",
+  "scripts",
+  "runtime-state-mutation-transport-broker.py",
+);
+
+const TRANSPORT_BROKER_HARNESS = String.raw`
+import importlib.util
+import os
+import sys
+
+spec = importlib.util.spec_from_file_location("runtime_state_mutation_transport_broker", sys.argv[1])
+broker = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = broker
+spec.loader.exec_module(broker)
+broker.ROOT = sys.argv[2]
+broker.EXPECTED_UID = os.getuid()
+broker.EXPECTED_GID = os.getgid()
+broker.TIMEOUTS = {**broker.TIMEOUTS, "activate": float(sys.argv[3])}
+broker.HELPER = sys.argv[4]
+raise SystemExit(broker.main([sys.argv[5]]))
+`;
 
 function ownerThatStopsAfterPrepare(runtime: ReturnType<typeof harness>) {
   const acquireMutationExecution = vi.fn(() => {
@@ -103,18 +129,21 @@ async function createBrokerRuntime(
   const helper = path.join(root, "helper.py");
   const transaction = randomBytes(32).toString("hex");
   const session = path.join(root, transaction);
-  const uid = process.getuid?.() ?? 0;
-  const gid = process.getgid?.() ?? 0;
-  const brokerSource = createDockerStateMutationHelperTransportBrokerSource({
-    root,
-    expectedUid: uid,
-    expectedGid: gid,
-    activateTimeoutSeconds,
-  });
   fs.writeFileSync(helper, helperSource(root), { mode: 0o500 });
-  const broker = spawn("python3", ["-I", "-c", brokerSource, helper, transaction], {
-    stdio: ["ignore", "ignore", "pipe"],
-  });
+  const broker = spawn(
+    "python3",
+    [
+      "-I",
+      "-c",
+      TRANSPORT_BROKER_HARNESS,
+      TRANSPORT_BROKER,
+      root,
+      String(activateTimeoutSeconds),
+      helper,
+      transaction,
+    ],
+    { stdio: ["ignore", "ignore", "pipe"] },
+  );
   const brokerExit = new Promise<void>((resolve, reject) => {
     broker.once("exit", () => resolve());
     broker.once("error", reject);
@@ -566,7 +595,7 @@ describe("Docker state mutation owner", () => {
       runtime.capture.mock.calls.filter(
         ([, args]) =>
           args.includes("--detach") &&
-          args.includes("/usr/local/lib/nemoclaw/runtime-state-mutation-control.py"),
+          args.includes("/usr/local/lib/nemoclaw/runtime-state-mutation-transport-broker.py"),
       ),
     ).toHaveLength(1);
     expect(helperCalls.map(([, args, timeout]) => [args.at(-1), timeout])).toEqual([

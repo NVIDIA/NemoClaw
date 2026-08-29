@@ -74,6 +74,8 @@ describe("runtime state mutation controller", () => {
       start_identity_drift: "start-process-identity-drift",
       startup_support_identity_drift: "startup-support-identity-drift",
       running_supervisor_hold: "supervisor-not-host-stopped",
+      fixed_transport_broker: 88,
+      dynamic_transport_broker_rejected: true,
     });
     expect(harnessResult.hold_events).toEqual([
       ["stop", 10],
