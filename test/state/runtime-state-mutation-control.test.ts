@@ -116,6 +116,21 @@ describe("runtime state mutation controller", () => {
     expect(harnessResult.reference_signal_timeout).toBe("writer-pid-reused");
   });
 
+  it("signals the same kernel task after mutable process metadata changes (#9485)", () => {
+    const sigstop = harnessResult.sigstop as number;
+    expect(harnessResult.same_task_signal).toBe("ok");
+    expect(harnessResult.same_task_signal_events).toEqual([
+      ["open", 10, 0],
+      ["signal", 91, sigstop],
+      ["close", 91],
+    ]);
+    expect(harnessResult.replacement_task_signal).toBe("writer-pid-reused");
+    expect(harnessResult.replacement_task_signal_events).toEqual([
+      ["open", 10, 0],
+      ["close", 91],
+    ]);
+  });
+
   it("publishes, rolls an activated fence back, and recovers every durable phase (#7744)", () => {
     expect(harnessResult).toMatchObject({
       publish: "published",

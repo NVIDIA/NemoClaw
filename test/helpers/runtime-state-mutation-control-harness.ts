@@ -264,6 +264,58 @@ with tempfile.TemporaryDirectory() as process_probe:
     finally:
         control.os.stat = real_os_stat
         control._read_proc_file = real_read_proc_file
+same_task_after_exec = process(
+    start.pid,
+    start.state,
+    start.parent_pid + 1,
+    start.start_identity,
+    1000,
+    (b"/usr/local/bin/hermes", b"gateway"),
+    start.proc_inode,
+)
+replacement_task = process(
+    start.pid,
+    start.state,
+    start.parent_pid,
+    str(int(start.start_identity) + 1),
+    1001,
+    start.command,
+    start.proc_inode + 1,
+)
+real_pidfd_open = getattr(control.os, "pidfd_open", None)
+real_pidfd_send_signal = getattr(control.signal, "pidfd_send_signal", None)
+real_os_close = control.os.close
+pidfd_signal_events = []
+control.os.pidfd_open = lambda pid, flags: (
+    pidfd_signal_events.append(["open", pid, flags]) or 91
+)
+control.signal.pidfd_send_signal = lambda pidfd, requested: pidfd_signal_events.append(
+    ["signal", pidfd, requested]
+)
+control.os.close = lambda pidfd: pidfd_signal_events.append(["close", pidfd])
+try:
+    control._capture_process = lambda _pid: same_task_after_exec
+    results["same_task_signal"] = code(
+        lambda: real_signal_exact_process(start, signal.SIGSTOP)
+    )
+    results["same_task_signal_events"] = list(pidfd_signal_events)
+    pidfd_signal_events.clear()
+    control._capture_process = lambda _pid: replacement_task
+    results["replacement_task_signal"] = code(
+        lambda: real_signal_exact_process(start, signal.SIGSTOP)
+    )
+    results["replacement_task_signal_events"] = list(pidfd_signal_events)
+finally:
+    control._capture_process = real_capture_process
+    if real_pidfd_open is None:
+        del control.os.pidfd_open
+    else:
+        control.os.pidfd_open = real_pidfd_open
+    if real_pidfd_send_signal is None:
+        del control.signal.pidfd_send_signal
+    else:
+        control.signal.pidfd_send_signal = real_pidfd_send_signal
+    control.os.close = real_os_close
 reference_signal_attempts = []
 control._recapture_reference = lambda _reference, _code="fenced-process-drift": start
 def signal_reference_after_rescan(selected, requested):

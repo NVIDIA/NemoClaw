@@ -212,6 +212,14 @@ class ProcessIdentity:
             self.proc_inode,
         )
 
+    def kernel_task_key(self) -> tuple[object, ...]:
+        return (
+            self.pid,
+            self.start_identity,
+            self.proc_device,
+            self.proc_inode,
+        )
+
 
 @dataclass(frozen=True)
 class ProcessReference:
@@ -2743,7 +2751,12 @@ def _signal_exact_process(process: ProcessIdentity, requested_signal: int) -> No
         current = _capture_process(process.pid)
         if current is None:
             return
-        if current.identity_key() != process.identity_key():
+        # The full process reference was authenticated before opening the
+        # pidfd. Recheck only immutable kernel task identity here: parent,
+        # credentials, and argv can change on the same task between the two
+        # observations. The pidfd remains bound to that task, while a real PID
+        # replacement changes its start time or procfs inode and fails closed.
+        if current.kernel_task_key() != process.kernel_task_key():
             _fail("writer-pid-reused")
         try:
             signal.pidfd_send_signal(pidfd, requested_signal)
