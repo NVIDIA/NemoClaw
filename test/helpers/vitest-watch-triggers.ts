@@ -136,6 +136,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: (_file, match) => {
       if (match[1] === "agents/hermes/") {
         return [
+          "src/lib/onboard/experimental/hermes-portable-build-context.test.ts",
           "src/lib/onboard/managed-startup-profile.test.ts",
           "test/agents/hermes/hermes-mcp-runtime-capability.test.ts",
         ];
