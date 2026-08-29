@@ -471,16 +471,6 @@ describe("E2E workflow plan", () => {
       },
     ],
     [
-      "gpu-hermes-response-validation",
-      {
-        profile: "standard",
-        runner: "linux-amd64-gpu-rtxpro6000-latest-1",
-        hostPreparation: "hermes-swap",
-        runnerComparison: true,
-        prAdvisorSelectable: true,
-      },
-    ],
-    [
       "hermes-shields-config",
       {
         profile: "standard",

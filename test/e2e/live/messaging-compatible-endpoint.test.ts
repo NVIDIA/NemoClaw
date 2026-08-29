@@ -18,7 +18,7 @@ import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { parseOpenClawBroadAgentText as parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import {
   closeServer,
   writeJsonResponse as jsonResponse,

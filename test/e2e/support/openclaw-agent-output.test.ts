@@ -4,7 +4,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  parseOpenClawBroadAgentText,
   parseOpenClawAgentJsonDocuments,
   parseOpenClawAgentText,
 } from "../fixtures/openclaw-agent-output.ts";
@@ -26,6 +25,14 @@ describe("OpenClaw agent-output fixture", () => {
         `progress\n${JSON.stringify({ result: { payloads: [{ text: "NEMOCLAW_E2E_READY_6002" }] } })}`,
       ),
     ).toBe("NEMOCLAW_E2E_READY_6002");
+  });
+
+  it("accepts a log-framed array of agent-output payloads", () => {
+    expect(
+      parseOpenClawAgentText(
+        `progress\n${JSON.stringify([{ payloads: [{ text: "ARRAY_REPLY" }] }])}`,
+      ),
+    ).toBe("ARRAY_REPLY");
   });
 
   it("joins top-level payload fragments", () => {
@@ -59,7 +66,7 @@ describe("OpenClaw agent-output fixture", () => {
 
   it("centralizes broad legacy envelope traversal without accepting tool output", () => {
     expect(
-      parseOpenClawBroadAgentText(
+      parseOpenClawAgentText(
         JSON.stringify({
           response: {
             choices: [
@@ -71,7 +78,7 @@ describe("OpenClaw agent-output fixture", () => {
       ),
     ).toBe("Final reply.\nReasoning fragment.");
     expect(
-      parseOpenClawBroadAgentText(
+      parseOpenClawAgentText(
         JSON.stringify({
           output: { content: "56", tool_calls: [{ name: "calculator", input: { value: 56 } }] },
         }),
@@ -91,7 +98,7 @@ describe("OpenClaw agent-output fixture", () => {
 
   it("extracts Brave response text without accepting echoed user or tool content", () => {
     expect(
-      parseOpenClawBroadAgentText(
+      parseOpenClawAgentText(
         JSON.stringify({
           messages: [
             { role: "user", content: "SEARCH_TOKEN" },
@@ -106,7 +113,7 @@ describe("OpenClaw agent-output fixture", () => {
 
   it("rejects structured tool-call records as reply evidence", () => {
     expect(
-      parseOpenClawBroadAgentText(
+      parseOpenClawAgentText(
         JSON.stringify({ messages: [{ type: "tool_use", text: "56", input: {} }] }),
       ),
     ).toBe("");
@@ -120,6 +127,16 @@ describe("OpenClaw agent-output fixture", () => {
         JSON.stringify({ response: { function: { name: "read" }, payload: { text: "56" } } }),
       ),
     ).toBe("");
+  });
+
+  it("accepts an assistant reply with null tool metadata", () => {
+    expect(
+      parseOpenClawAgentText(
+        JSON.stringify({
+          choices: [{ message: { role: "assistant", content: "42", tool_calls: null } }],
+        }),
+      ),
+    ).toBe("42");
   });
 
   it("fails closed in linear time for a long incomplete brace-rich stream", () => {

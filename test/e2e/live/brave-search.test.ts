@@ -5,7 +5,7 @@ import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/san
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { parseOpenClawBroadAgentText as parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import {
   assertBraveConfig,

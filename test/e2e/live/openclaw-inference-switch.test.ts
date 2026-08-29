@@ -45,7 +45,7 @@ import {
   writeInferenceSwitchRetryEvidence,
 } from "../fixtures/inference-switch-retry.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
-import { parseOpenClawBroadAgentText } from "../fixtures/openclaw-agent-output.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { runBoundedRetry } from "../fixtures/retry-policy.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
@@ -777,7 +777,7 @@ exit "$rc"
     timeoutMs: AGENT_TIMEOUT_MS,
   });
   const [raw = "", warnings = ""] = result.stdout.split("\n__NEMOCLAW_AGENT_STDERR__\n", 2);
-  const reply = parseOpenClawBroadAgentText(raw);
+  const reply = parseOpenClawAgentText(raw);
   const fallbackOrPairing =
     /EMBEDDED FALLBACK|gateway connect failed|scope upgrade pending approval|device pairing required|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded/i.test(
       [raw, warnings, result.stderr].filter(Boolean).join("\n"),

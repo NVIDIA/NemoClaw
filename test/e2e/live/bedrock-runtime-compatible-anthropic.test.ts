@@ -30,7 +30,7 @@ import {
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { testHomeEnvironment } from "../fixtures/environment-profiles.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
-import { parseOpenClawBroadAgentText } from "../fixtures/openclaw-agent-output.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import type { TestProgress, TestProgressCapability } from "../fixtures/progress.ts";
 import { summarizeSandboxSnapshot } from "./bedrock-runtime-compatible-anthropic-artifacts.ts";
 import {
@@ -936,7 +936,7 @@ async function assertOpenClawAgentTurn(sandbox: SandboxClient, home: string): Pr
     /SsrFBlockedError|Blocked hostname|transport error|ECONNREFUSED|EAI_AGAIN|gateway unavailable|network connection error|bedrock_runtime_error/i,
   );
   expectExitZero(raw, "OpenClaw agent turn through Bedrock adapter");
-  expect(parseOpenClawBroadAgentText(raw.stdout || raw.stderr)).toMatch(/PONG/i);
+  expect(parseOpenClawAgentText(raw.stdout || raw.stderr)).toMatch(/PONG/i);
 }
 
 async function assertHermesApiChat(sandbox: SandboxClient, home: string): Promise<void> {

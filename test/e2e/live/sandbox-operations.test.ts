@@ -33,7 +33,7 @@ import {
   resourceLimitOutputFilterScript,
 } from "../fixtures/resource-limit-diagnostics.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { parseOpenClawBroadAgentText } from "../fixtures/openclaw-agent-output.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { ubuntuRepoDocker } from "../registry/matrix.ts";
 
 const ENVIRONMENT = ubuntuRepoDocker("cloud-openclaw");
@@ -199,7 +199,7 @@ async function assertAgentCanAnswer(
       timeoutMs: 120_000,
     },
   );
-  const reply = parseOpenClawBroadAgentText(result.stdout);
+  const reply = parseOpenClawAgentText(result.stdout);
   expectExitZero(result, `nemoclaw ${sandboxName} agent --json`);
   expect(containsAnswer(reply, "42"), resultText(result)).toBe(true);
 }

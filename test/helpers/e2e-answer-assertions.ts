@@ -10,7 +10,15 @@ export function containsToolCallStructure(value: unknown): boolean {
   if (Array.isArray(value)) return value.some(containsToolCallStructure);
 
   const record = value as Record<string, unknown>;
-  if (record.type === "tool_use" || "function" in record || "tool_calls" in record) return true;
+  if (
+    record.type === "tool_use" ||
+    record.type === "function" ||
+    record.function != null ||
+    record.function_call != null ||
+    record.tool_calls != null
+  ) {
+    return true;
+  }
   if (
     typeof record.name === "string" &&
     ["arguments", "description", "input", "input_schema", "parameters"].some((key) => key in record)

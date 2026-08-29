@@ -50,7 +50,7 @@ export function parseOpenClawAgentJsonDocuments(raw: string): OpenClawAgentJsonD
   for (let index = 0; index < raw.length; index += 1) {
     const character = raw[index];
     if (start < 0) {
-      if (character === "{") {
+      if (character === "{" || character === "[") {
         start = index;
         depth = 1;
       }
@@ -66,8 +66,8 @@ export function parseOpenClawAgentJsonDocuments(raw: string): OpenClawAgentJsonD
       inString = true;
       continue;
     }
-    if (character === "{") depth += 1;
-    else if (character === "}") depth -= 1;
+    if (character === "{" || character === "[") depth += 1;
+    else if (character === "}" || character === "]") depth -= 1;
     if (depth !== 0) continue;
 
     try {
@@ -86,49 +86,39 @@ export function parseOpenClawAgentJsonDocuments(raw: string): OpenClawAgentJsonD
   return documents;
 }
 
-function collectOpenClawAssistantText(value: unknown): string[] {
-  const parts: string[] = [];
-  const visited = new Set<unknown>();
-  const collect = (candidate: unknown): void => {
-    if (candidate == null || visited.has(candidate)) return;
-    visited.add(candidate);
-    if (typeof candidate === "string") {
-      if (candidate.trim()) parts.push(candidate.trim());
-      return;
-    }
-    if (Array.isArray(candidate)) {
-      candidate.forEach(collect);
-      return;
-    }
-    if (typeof candidate !== "object") return;
+function collectOpenClawAssistantText(
+  value: unknown,
+  parts: string[],
+  visited: Set<unknown>,
+): void {
+  if (value == null || visited.has(value)) return;
+  if (typeof value === "string") {
+    if (value.trim()) parts.push(value.trim());
+    return;
+  }
+  if (typeof value !== "object") return;
+  visited.add(value);
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectOpenClawAssistantText(item, parts, visited));
+    return;
+  }
 
-    const record = candidate as Record<string, unknown>;
-    if (["user", "tool", "function"].includes(String(record.role))) return;
-    for (const key of OPENCLAW_TEXT_KEYS) collect(record[key]);
-    for (const key of OPENCLAW_CONTAINER_KEYS) collect(record[key]);
-  };
-
-  collect(value);
-  return parts;
-}
-
-export function parseOpenClawBroadAgentTextParts(raw: string): string[] {
-  const documents = parseOpenClawAgentJsonDocuments(raw);
-  if (documents.some(containsToolCallStructure)) return [];
-  return documents.flatMap(collectOpenClawAssistantText);
-}
-
-export function parseOpenClawBroadAgentText(raw: string): string {
-  return parseOpenClawBroadAgentTextParts(raw).join("\n");
+  const record = value as Record<string, unknown>;
+  if (["user", "tool", "function"].includes(String(record.role))) return;
+  for (const key of OPENCLAW_TEXT_KEYS) {
+    collectOpenClawAssistantText(record[key], parts, visited);
+  }
+  for (const key of OPENCLAW_CONTAINER_KEYS) {
+    collectOpenClawAssistantText(record[key], parts, visited);
+  }
 }
 
 export function parseOpenClawAgentText(raw: string): string {
   const documents = parseOpenClawAgentJsonDocuments(raw);
   if (documents.some(containsToolCallStructure)) return "";
-  return documents
-    .flatMap((document) => document.payloads ?? document.result?.payloads ?? [])
-    .map((payload) => payload.text)
-    .filter((value): value is string => typeof value === "string")
-    .join("\n")
-    .trim();
+  const parts: string[] = [];
+  for (const document of documents) {
+    collectOpenClawAssistantText(document, parts, new Set());
+  }
+  return parts.join("\n");
 }
