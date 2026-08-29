@@ -58,6 +58,7 @@ type MessagingBridgeProviderModule =
   typeof import("../../../src/lib/onboard/messaging-bridge-provider.ts");
 type StatePathsModule = typeof import("../../../src/lib/state/paths.ts");
 type ProviderUpsertOptions = {
+  readonly allowedSandboxes?: readonly string[];
   readonly bestEffort?: boolean;
   readonly replaceExisting?: boolean;
   readonly requireExactBindings?: boolean;
@@ -67,6 +68,13 @@ type ProviderDependencies = {
   upsertMessagingProviders(
     tokenDefs: Parameters<typeof policyChannelDependencies.upsertMessagingProviders>[0],
     gatewayName: string,
+    options?: ProviderUpsertOptions,
+  ): string[];
+};
+type LegacyProviderDependencies = {
+  upsertMessagingProviders(
+    tokenDefs: Parameters<ProviderDependencies["upsertMessagingProviders"]>[0],
+    run: typeof runOpenshell,
     options?: ProviderUpsertOptions,
   ): string[];
 };
@@ -114,6 +122,7 @@ interface GooglechatLiveE2eDependencies {
 
 interface GooglechatCredentialFixtureDependencies {
   readonly ensureProfiles?: typeof ensureMessagingBridgeProfiles;
+  readonly legacyProviderDependencies?: LegacyProviderDependencies;
   readonly providerDependencies?: ProviderDependencies;
   readonly root?: string;
   readonly run?: typeof runOpenshell;
@@ -142,15 +151,22 @@ export function installGooglechatCredentialFixture(
   const ensureProfiles = dependencies.ensureProfiles ?? ensureMessagingBridgeProfiles;
   const providerDependencies: ProviderDependencies =
     dependencies.providerDependencies ?? policyChannelDependencies;
+  const legacyProviderDependencies: LegacyProviderDependencies =
+    dependencies.legacyProviderDependencies ??
+    (require("../../../src/lib/onboard/providers") as LegacyProviderDependencies);
   const root = dependencies.root ?? ROOT;
   const expectedName = `${sandboxName}-googlechat-bridge`;
   const expectedType = PROVIDER_TYPE_BY_AGENT[agent];
-  const original = providerDependencies.upsertMessagingProviders;
+  const originalProviderUpsert = providerDependencies.upsertMessagingProviders;
+  const originalLegacyUpsert = legacyProviderDependencies.upsertMessagingProviders;
 
-  providerDependencies.upsertMessagingProviders = (
+  const upsertFixtureProvider = (
     tokenDefs: Parameters<ProviderDependencies["upsertMessagingProviders"]>[0],
-    gatewayName: string,
-    options: ProviderUpsertOptions = {},
+    baseRun: typeof runOpenshell,
+    options: ProviderUpsertOptions,
+    delegate: (
+      delegatedTokenDefs: Parameters<ProviderDependencies["upsertMessagingProviders"]>[0],
+    ) => string[],
   ): string[] => {
     const fixtureTokenDefs = tokenDefs.filter(({ name }) => name === expectedName);
     const fixtureTokenDef = fixtureTokenDefs[0];
@@ -164,11 +180,7 @@ export function installGooglechatCredentialFixture(
 
     const delegatedTokenDefs = tokenDefs.filter(({ name }) => name !== expectedName);
     const delegatedProviderNames =
-      delegatedTokenDefs.length === 0 ? [] : original(delegatedTokenDefs, gatewayName, options);
-    const baseRun =
-      dependencies.run ??
-      ((args, runOptions) =>
-        policyChannelDependencies.runGatewayOpenshell(gatewayName, args, runOptions));
+      delegatedTokenDefs.length === 0 ? [] : delegate(delegatedTokenDefs);
     const revalidate = () =>
       options.revalidatePolicyRequirements?.(
         `manage Google Chat live fixture provider '${expectedName}'`,
@@ -221,8 +233,23 @@ export function installGooglechatCredentialFixture(
     return tokenDefs.map(({ name }) => name).filter((name) => registered.has(name));
   };
 
+  providerDependencies.upsertMessagingProviders = (tokenDefs, gatewayName, options = {}) =>
+    upsertFixtureProvider(
+      tokenDefs,
+      dependencies.run ??
+        ((args, runOptions) =>
+          policyChannelDependencies.runGatewayOpenshell(gatewayName, args, runOptions)),
+      options,
+      (delegatedTokenDefs) => originalProviderUpsert(delegatedTokenDefs, gatewayName, options),
+    );
+  legacyProviderDependencies.upsertMessagingProviders = (tokenDefs, run, options = {}) =>
+    upsertFixtureProvider(tokenDefs, dependencies.run ?? run, options, (delegatedTokenDefs) =>
+      originalLegacyUpsert(delegatedTokenDefs, run, options),
+    );
+
   return () => {
-    providerDependencies.upsertMessagingProviders = original;
+    providerDependencies.upsertMessagingProviders = originalProviderUpsert;
+    legacyProviderDependencies.upsertMessagingProviders = originalLegacyUpsert;
   };
 }
 

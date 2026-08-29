@@ -23,6 +23,13 @@ type FixtureProviderDependencies = {
     },
   ): string[];
 };
+type FixtureLegacyProviderDependencies = {
+  upsertMessagingProviders(
+    tokenDefs: Parameters<FixtureProviderDependencies["upsertMessagingProviders"]>[0],
+    run: FixtureRunner,
+    options?: Parameters<FixtureProviderDependencies["upsertMessagingProviders"]>[2],
+  ): string[];
+};
 
 describe("channels stop/start Google Chat live composition", () => {
   it("grants a process-local audience capability to the exact live sandbox", async () => {
@@ -229,6 +236,10 @@ describe("channels stop/start Google Chat live composition", () => {
       const providerDependencies: FixtureProviderDependencies = {
         upsertMessagingProviders: originalUpsert,
       };
+      const originalLegacyUpsert = vi.fn(() => []);
+      const legacyProviderDependencies: FixtureLegacyProviderDependencies = {
+        upsertMessagingProviders: originalLegacyUpsert,
+      };
       const ensureProfiles = vi.fn();
       const runMock = vi.fn((args: string[], _options?: { env?: NodeJS.ProcessEnv }) => ({
         status: args[1] === "get" ? 1 : 0,
@@ -236,23 +247,22 @@ describe("channels stop/start Google Chat live composition", () => {
       const run = runMock as unknown as FixtureRunner;
       const revalidatePolicyRequirements = vi.fn();
       const gatewayName = "nemoclaw";
+      const googlechatTokenDef = {
+        name: `${sandboxName}-googlechat-bridge`,
+        envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+        token: null,
+        providerType,
+      };
 
       const restore = installGooglechatCredentialFixture(sandboxName, agent, {
         ensureProfiles,
+        legacyProviderDependencies,
         providerDependencies,
         root: "/repo",
         run,
       });
       const providerNames = providerDependencies.upsertMessagingProviders(
-        [
-          delegatedTokenDef,
-          {
-            name: `${sandboxName}-googlechat-bridge`,
-            envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-            token: null,
-            providerType,
-          },
-        ],
+        [delegatedTokenDef, googlechatTokenDef],
         gatewayName,
         { revalidatePolicyRequirements },
       );
@@ -261,7 +271,11 @@ describe("channels stop/start Google Chat live composition", () => {
       expect(originalUpsert).toHaveBeenCalledWith([delegatedTokenDef], gatewayName, {
         revalidatePolicyRequirements,
       });
-      expect(ensureProfiles).toHaveBeenCalledOnce();
+      expect(
+        legacyProviderDependencies.upsertMessagingProviders([googlechatTokenDef], run),
+      ).toEqual([`${sandboxName}-googlechat-bridge`]);
+      expect(originalLegacyUpsert).not.toHaveBeenCalled();
+      expect(ensureProfiles).toHaveBeenCalledTimes(2);
       const profileDependencies = ensureProfiles.mock.calls[0]?.[1] as {
         redact: (value: string) => string;
         root: string;
@@ -290,6 +304,7 @@ describe("channels stop/start Google Chat live composition", () => {
 
       restore();
       expect(providerDependencies.upsertMessagingProviders).toBe(originalUpsert);
+      expect(legacyProviderDependencies.upsertMessagingProviders).toBe(originalLegacyUpsert);
     },
   );
 
@@ -330,6 +345,10 @@ describe("channels stop/start Google Chat live composition", () => {
       const providerDependencies: FixtureProviderDependencies = {
         upsertMessagingProviders: vi.fn(() => []),
       };
+      const originalLegacyUpsert = vi.fn(() => []);
+      const legacyProviderDependencies: FixtureLegacyProviderDependencies = {
+        upsertMessagingProviders: originalLegacyUpsert,
+      };
       const calls: string[][] = [];
       const run = ((args: string[]) => {
         calls.push(args);
@@ -337,6 +356,7 @@ describe("channels stop/start Google Chat live composition", () => {
       }) as unknown as FixtureRunner;
       const restore = installGooglechatCredentialFixture("e2e-oc-ch-cycle", "openclaw", {
         ensureProfiles: vi.fn(),
+        legacyProviderDependencies,
         providerDependencies,
         root: "/repo",
         run,
@@ -358,6 +378,7 @@ describe("channels stop/start Google Chat live composition", () => {
 
       expect(calls).toEqual(expectedCalls);
       restore();
+      expect(legacyProviderDependencies.upsertMessagingProviders).toBe(originalLegacyUpsert);
     },
   );
 });
