@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -8,7 +11,7 @@ import {
   GOOGLECHAT_E2E_ACCESS_TOKEN,
   installGooglechatCredentialFixture,
   rebuildGooglechatForChannelsStopStartLiveE2e,
-} from "../live/channels-stop-start-helpers.ts";
+} from "../live/channels-stop-start-googlechat-entry.ts";
 
 type FixtureRunner = typeof import("../../../src/lib/adapters/openshell/runtime.ts").runOpenshell;
 type FixtureProviderDependencies = {
@@ -24,7 +27,34 @@ type FixtureProviderDependencies = {
   ): string[];
 };
 
+const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
+
 describe("channels stop/start Google Chat live composition", () => {
+  it("loads the fixture through the standalone live-E2E process boundary", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "-e",
+        [
+          'import("./test/e2e/live/channels-stop-start-googlechat-entry.ts")',
+          "  .then((module) => console.log(typeof module.installGooglechatCredentialFixture))",
+          "  .catch((error) => { console.error(error); process.exitCode = 1; });",
+        ].join("\n"),
+      ],
+      {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        env: { ...process.env, NODE_NO_WARNINGS: "1" },
+        timeout: 10_000,
+      },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("function");
+  });
+
   it("grants a process-local audience capability to the exact live sandbox", async () => {
     const addSandboxChannel = vi.fn(async () => {});
     const rebuildSandbox = vi.fn(async () => {});
