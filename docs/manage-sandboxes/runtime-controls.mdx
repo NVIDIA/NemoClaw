@@ -101,18 +101,18 @@ NemoClaw selects this contract only when all these conditions apply:
 
 - The registered sandbox is a managed Hermes image.
 - The sandbox registry records its lifecycle generation.
-- The image exposes the exact root-owned capability installed by NemoClaw.
+- The image exposes the root-owned capability installed by NemoClaw.
 
 An older managed image uses the sealed-plan transition only after NemoClaw proves that the capability is absent.
 A custom image, including a legacy Dockerfile workflow, remains on its existing sealed-plan or compatibility contract and cannot opt in by adding a similarly named file.
 An invalid capability that is present fails closed and requires a rebuild with a current managed image.
 
-The Docker provider binds each transition to the registered lifecycle generation, exact container, qualified Docker engine authority, mount namespace, `/sandbox/.hermes` inode, AgentDefinition-derived plan and projection, target posture, rollback posture, and fresh nonce.
+The Docker provider binds each transition to the registered lifecycle generation, container, qualified Docker engine authority, mount namespace, `/sandbox/.hermes` inode, AgentDefinition-derived plan and projection, target posture, rollback posture, and fresh nonce.
 Before the provider fence becomes active, NemoClaw drains any earlier privileged sandbox execution lease.
 While the fence is active, new direct-container, SSH, and OpenShell command transports are rejected before a sandbox command starts.
-The installed root-owned controller and Hermes publisher apply and verify the exact target posture, then the provider starts only the bound Hermes entrypoint and proves the replacement gateway and startup checkpoint before it releases the fence.
+The installed root-owned controller and Hermes publisher apply and verify the target posture, then the provider starts only the bound Hermes entrypoint and proves the replacement gateway and startup checkpoint before it releases the fence.
 
-The owner-only ledger under `~/.nemoclaw/state/runtime-provider-lifecycle/` survives a host controller restart and remains authoritative for recovery of the exact target.
+The owner-only ledger under `~/.nemoclaw/state/runtime-provider-lifecycle/` survives a host controller restart and remains authoritative for recovery of the target.
 The next Shields command, including `shields status`, must recover a retained fence before it can report or change posture.
 Hermes startup also checks the image-owned startup gate before it reads mutable state and remains held when the runtime provider state mutation is active or cannot be authenticated.
 While recovery is incomplete, do not:
@@ -134,17 +134,17 @@ Run `$$nemoclaw <name> shields down` before the change, then restore lockdown wi
 ## Timed Shields Windows
 
 NemoClaw serializes host-side gateway recovery, config and inference writes, snapshot mutation, sandbox destruction, and shields transitions for each sandbox.
-When `shields down --timeout` is active, each mutation binds to that exact timer generation so a replaced or expired timer cannot race a later command or a new sandbox that reuses the same name.
+When `shields down --timeout` is active, each mutation binds to that timer generation so a replaced or expired timer cannot race a later command or a new sandbox that reuses the same name.
 
 ### Restore Lockdown After Expiration
 
 If the timeout expires while a mutation is changing sandbox state, auto-restore closes the per-sandbox lifecycle deadline gate.
-The gate blocks new mutations and waits for the recorded live owner to release its exact lock generation.
+The gate blocks new mutations and waits for the recorded live owner to release its lock generation.
 NemoClaw does not signal that process because portable process inspection cannot prove that all descendants stopped.
 After the owner releases the lock, auto-restore restores the restrictive policy and configuration posture.
 The ownership check includes both the process ID and process start identity so PID reuse does not grant control over an unrelated process.
 
-### Complete Exact-Generation Recovery
+### Complete Generation Recovery
 
 An interactive command can take over an expired timer.
 Interactive recovery has separate transition-takeover and restoration phases.
@@ -153,28 +153,28 @@ Detached recovery uses one 7-attempt budget across deadline setup, main-generati
 The deadline gate remains closed during those attempts.
 
 If restoration cannot commit, NemoClaw attempts to record durable containment.
-If that containment commit also fails, NemoClaw retains any exact lifecycle and deadline gates it already owns.
+If that containment commit also fails, NemoClaw retains any lifecycle and deadline gates it already owns.
 A state-directory failure that prevented gate publication also prevents normal mutation-lock acquisition.
-Correct the reported state-directory write failure, then run `$$nemoclaw <name> shields status` to resume recovery or receive exact-generation recovery guidance.
+Correct the reported state-directory write failure, then run `$$nemoclaw <name> shields status` to resume recovery or receive generation recovery guidance.
 When recovery cannot complete, an interactive command returns an error, or the detached timer exits with a failure status.
 
 NemoClaw also records durable containment when an owner exits before it can prove that the owner's descendants stopped, or when ownership becomes ambiguous.
-Durable containment, retained exact gates, or the fail-closed state-directory error keeps new mutations blocked until you complete exact-generation operator recovery.
+Durable containment, retained gates, or the fail-closed state-directory error keeps new mutations blocked until you complete generation operator recovery.
 A `--dry-run` run of a `channels` or `policy` command takes no mutation lock, so you can still preview the change while mutations are blocked.
 
 Stop all NemoClaw processes for the sandbox, then follow the paths, identities, tokens, and removal order in the reported error.
-Verify each recorded generation is unchanged, remove only the exact stale generations first, and remove the exact containment generation last.
+Verify each recorded generation is unchanged, remove only the stale generations first, and remove the containment generation last.
 
 ### Preserve Managed MCP Policy
 
-Before a manual Shields transition replaces a policy, NemoClaw requires exact Model Context Protocol (MCP) agreement among the sandbox registry, generated-policy record, and live gateway policy.
+Before a manual Shields transition replaces a policy, NemoClaw requires the managed Model Context Protocol (MCP) entries to match among the sandbox registry, generated-policy record, and live gateway policy.
 `shields down` carries the proven managed MCP policy entries into the relaxed policy.
-Restoration removes snapshot-time managed MCP entries before it overlays current exact entries.
-If exact agreement is absent, a manual Shields transition refuses the replacement policy.
+Restoration removes snapshot-time managed MCP entries before it overlays current entries.
+If agreement is absent, a manual Shields transition refuses the replacement policy.
 
 At an expired deadline, auto-restore omits unproven managed MCP policy entries, restores lockdown, and records the omission count in its audit entry.
 An MCP server removed during the shields-down window stays removed.
-A surviving server keeps its recorded endpoint and address pins while its policy ownership remains exact.
+A surviving server keeps its recorded endpoint and address pins while it retains policy ownership.
 
 ## Related Topics
 
