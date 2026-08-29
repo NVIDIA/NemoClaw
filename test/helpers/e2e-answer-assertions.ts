@@ -15,7 +15,8 @@ export function containsToolCallStructure(value: unknown): boolean {
     record.type === "function" ||
     record.function != null ||
     record.function_call != null ||
-    record.tool_calls != null
+    (record.tool_calls != null &&
+      (!Array.isArray(record.tool_calls) || record.tool_calls.length > 0))
   ) {
     return true;
   }

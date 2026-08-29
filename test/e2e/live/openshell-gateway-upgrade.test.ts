@@ -40,6 +40,7 @@ import {
   startFakeOpenAiCompatibleServer,
 } from "../fixtures/fake-openai-compatible.ts";
 import { registerOpenShellHostMockFirewall } from "../fixtures/host-mock-firewall.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
@@ -461,7 +462,7 @@ async function assertOpenClawAgentSecretBoundary(
     },
   );
   expectExitZero(agent, `${phase} sandbox-user OpenClaw agent turn`);
-  expect(resultText(agent).toLowerCase()).toContain("ok");
+  expect(parseOpenClawAgentText(agent.stdout).toLowerCase()).toContain("ok");
   const requests = fake
     .requests()
     .slice(requestOffset)

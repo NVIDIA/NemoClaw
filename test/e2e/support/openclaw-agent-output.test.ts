@@ -119,6 +119,13 @@ describe("OpenClaw agent-output fixture", () => {
     ).toBe("");
     expect(
       parseOpenClawAgentText(
+        JSON.stringify({
+          choices: [{ message: { role: "assistant", content: "56", tool_calls: [{}] } }],
+        }),
+      ),
+    ).toBe("");
+    expect(
+      parseOpenClawAgentText(
         JSON.stringify({ response: { type: "function", payload: { text: "56" } } }),
       ),
     ).toBe("");
@@ -129,11 +136,18 @@ describe("OpenClaw agent-output fixture", () => {
     ).toBe("");
   });
 
-  it("accepts an assistant reply with null tool metadata", () => {
+  it("accepts an assistant reply with null or empty tool metadata", () => {
     expect(
       parseOpenClawAgentText(
         JSON.stringify({
           choices: [{ message: { role: "assistant", content: "42", tool_calls: null } }],
+        }),
+      ),
+    ).toBe("42");
+    expect(
+      parseOpenClawAgentText(
+        JSON.stringify({
+          choices: [{ message: { role: "assistant", content: "42", tool_calls: [] } }],
         }),
       ),
     ).toBe("42");
