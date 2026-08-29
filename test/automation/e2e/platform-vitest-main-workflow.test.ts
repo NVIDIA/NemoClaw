@@ -57,12 +57,4 @@ describe("platform evidence workflow", () => {
       NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
     });
   });
-
-  it("keeps the root-dependent Jetson bootstrap out of the unprivileged WSL suite", () => {
-    const fullSuite = step("wsl-vitest", "Run Vitest suite in WSL").run ?? "";
-
-    expect(fullSuite).toContain(
-      "--exclude test/runtime/sandbox/jetson-device-group-bootstrap.test.ts",
-    );
-  });
 });

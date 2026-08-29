@@ -577,7 +577,7 @@ COPY --chmod=0444 scripts/lib/corporate-ca-runtime.sh /usr/local/lib/nemoclaw/co
 COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh
 COPY scripts/lib/gateway-supervisor.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh
 COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
-COPY scripts/jetson-device-group-bootstrap.sh /usr/local/lib/nemoclaw/jetson-device-group-bootstrap.sh
+COPY --chown=root:root --chmod=0500 scripts/jetson-device-group-bootstrap.sh /usr/local/lib/nemoclaw/jetson-device-group-bootstrap.sh
 COPY scripts/lib/openclaw_device_approval_policy.py /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py
 COPY scripts/lib/clean_runtime_shell_env_shim.py /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py
 COPY scripts/lib/normalize_mutable_config_perms.py /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py
@@ -1941,14 +1941,12 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
     && chown root:root /usr/local/bin/nemoclaw-gateway-control \
         /usr/local/lib/nemoclaw/gateway-supervisor.sh \
-        /usr/local/lib/nemoclaw/jetson-device-group-bootstrap.sh \
         /usr/local/lib/nemoclaw/state-dir-guard.py \
         /usr/local/share/nemoclaw/state-lock-plan.json \
         /usr/local/lib/nemoclaw/openclaw-config-guard.py \
         /usr/local/lib/nemoclaw/managed-gateway-control.py \
     && chmod 700 /usr/local/bin/nemoclaw-gateway-control \
-    && chmod 500 /usr/local/lib/nemoclaw/jetson-device-group-bootstrap.sh \
-        /usr/local/lib/nemoclaw/state-dir-guard.py \
+    && chmod 500 /usr/local/lib/nemoclaw/state-dir-guard.py \
         /usr/local/lib/nemoclaw/openclaw-config-guard.py \
         /usr/local/lib/nemoclaw/managed-gateway-control.py \
     && chmod 444 /usr/local/share/nemoclaw/state-lock-plan.json \
