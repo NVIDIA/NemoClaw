@@ -925,19 +925,6 @@ The sandbox name is required, and the command takes no flags. The sandbox must a
 
 When you want a shell inside the sandbox rather than an agent session, use `$$nemoclaw <name> connect`.
 
-### `$$nemoclaw deploy`
-
-<Warning>
-  The `$$nemoclaw deploy` command is deprecated. Prefer provisioning the remote host separately,
-  then running the standard NemoClaw installer and `$$nemoclaw onboard` on that host.
-</Warning>
-
-Deploy NemoClaw to a remote GPU instance through [Brev](https://brev.nvidia.com). This command remains as a compatibility wrapper for the older Brev-specific bootstrap flow. The Brev instance name is the positional argument. The sandbox name comes from `NEMOCLAW_SANDBOX_NAME` and defaults to `my-assistant`; invalid sandbox names fail before Brev provisioning starts.
-
-```bash
-$$nemoclaw deploy <instance-name>
-```
-
 ### `$$nemoclaw <name> connect`
 
 Connect to a sandbox by name. Bare `$$nemoclaw connect` (no sandbox name) connects to the registry default. NemoClaw uses the stored default when it names a non-pending registered sandbox, then falls back to the first non-pending registration. If only pending registrations remain, the command exits non-zero and tells you to wait for onboarding or remove the incomplete sandbox. If the registry remains empty after recovery, it tells you to run `$$nemoclaw onboard`. A registered sandbox literally named `connect` keeps the name-first reading. If the sandbox is not yet in the `Ready` phase, `connect` polls `openshell sandbox list` every few seconds and prints the current phase. This gives you progress output right after onboarding, when the 2.4 GB image is still pulling, instead of a silent hang. Control the wait budget with `NEMOCLAW_CONNECT_TIMEOUT` in integer seconds. An interactive connection defaults to `120` seconds, while `--probe-only` and [`$$nemoclaw <name> start`](#$$nemoclaw-name-start) default to `300` seconds so a scripted health check can wait through a cold sandbox start. When the deadline expires, `connect` exits non-zero with the last-seen phase.
@@ -3903,20 +3890,6 @@ The following flags change defaults for commands that manage existing sandboxes.
 | `NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP` | Exactly `1` to opt in (`true`, `yes`, `0` are not accepted) | Applies to standalone `$$nemoclaw backup-all` runs. Skips running sandboxes whose in-sandbox SSH endpoint does not answer. It does not relax the installer's strict pre-upgrade backup, which still aborts if any registered sandbox is skipped or fails. Any uncommitted state since the last successful backup is not included in the skipped backup. |
 | `NEMOCLAW_UNINSTALL_ALL_GATEWAY_PORTS` | `1` to opt in | Makes `$$nemoclaw uninstall` remove every gateway port on the host instead of only the port `NEMOCLAW_GATEWAY_PORT` selects. Equivalent to passing the `--all-gateway-ports` flag; the whole-host `Proceed?` confirmation still applies unless `--yes` is also passed. Each port runs as its own uninstall, and the variable is dropped from those runs so the sweep cannot re-enter itself. |
 | `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA` | `1` to opt in | Acknowledges data loss during `$$nemoclaw uninstall`, skips eligible fresh sandbox backups, and removes the otherwise-preserved entries (`rebuild-backups/`, `backups/`, `sandboxes.json`) in the selected gateway's state root. It does not select the explicit `--destroy-user-data` CLI-shim removal path; shim handling follows the ordinary selected-gateway scope. The global `Proceed?` confirmation still applies unless `--yes` is also passed. |
-
-<AgentOnly variant="openclaw">
-### Deprecated Brev Deployment
-
-The following variables configure the deprecated `$$nemoclaw deploy` compatibility command. The maintained remote-server path does not use these variables. For the current remote-server deployment path, refer to [Deploy to a Headless Server](../deployment/deploy-to-headless-server).
-
-| Variable | Default | Effect |
-| --- | --- | --- |
-| `NEMOCLAW_BREV_PROVIDER` | `gcp` | Cloud provider for Brev instance creation. |
-| `NEMOCLAW_GPU` | `a2-highgpu-1g:nvidia-tesla-a100:1` | GPU specification (instance type and GPU model) for the Brev instance. |
-| `NEMOCLAW_DEPLOY_NO_CONNECT` | unset | When set to `1`, skips the automatic `connect` step after the remote deploy completes. |
-| `NEMOCLAW_DEPLOY_NO_START_SERVICES` | unset | When set to `1`, skips starting services automatically after the remote deploy. |
-
-</AgentOnly>
 
 ### Legacy `$$nemoclaw setup`
 
