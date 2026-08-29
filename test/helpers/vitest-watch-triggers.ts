@@ -128,6 +128,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
+    pattern: /(?:^|\/)agents\/hermes\/patch-session-list-preview\.py$/,
+    testsToRun: runTests("test/agents/hermes/hermes-session-list-preview-patch.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)(agents\/(?:hermes|langchain-deepagents-code)\/)?Dockerfile$/,
     testsToRun: (_file, match) => {
       if (match[1] === "agents/hermes/") {

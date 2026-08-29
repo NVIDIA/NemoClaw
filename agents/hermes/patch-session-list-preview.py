@@ -38,7 +38,7 @@ def patch_file(path: Path) -> None:
     new_count = source.count(NEW)
     if old_count == 0 and new_count == EXPECTED_OCCURRENCES:
         return
-    if old_count != EXPECTED_OCCURRENCES:
+    if old_count != EXPECTED_OCCURRENCES or new_count != 0:
         raise SystemExit(
             "ERROR: Hermes session preview query shape changed; "
             f"expected {EXPECTED_OCCURRENCES} unpatched occurrences, found {old_count} "

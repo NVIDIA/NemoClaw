@@ -9,6 +9,8 @@ import { expect, it } from "vitest";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const PATCH = path.join(ROOT, "agents", "hermes", "whatsapp-proxy.patch");
+const MS_2_1_3_INTEGRITY =
+  "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==";
 
 it("stores Hermes dashboard pairing state in the gateway session directory (#8184)", () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-whatsapp-dashboard-"));
@@ -41,4 +43,10 @@ it("leaves the Hermes CLI and gateway unpatched (#8184)", () => {
   const patch = fs.readFileSync(PATCH, "utf8");
   expect(patch).not.toContain("diff --git a/hermes_cli/main.py");
   expect(patch).not.toContain("diff --git a/gateway/");
+});
+
+it("pins the reviewed ms 2.1.3 registry integrity in the bridge lockfile (#8184)", () => {
+  const patch = fs.readFileSync(PATCH, "utf8");
+  expect(patch).toContain(`+      "integrity": "${MS_2_1_3_INTEGRITY}",`);
+  expect(patch).not.toContain("sha512-6FlzubTLZGJ2a/");
 });

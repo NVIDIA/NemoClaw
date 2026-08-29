@@ -112,7 +112,7 @@ index 74fe2df3..7a023bfa 100644
 +    "node_modules/https-proxy-agent/node_modules/ms": {
 +      "version": "2.1.3",
 +      "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
-+      "integrity": "sha512-6FlzubTLZGJ2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
++      "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
 +      "license": "MIT"
 +    },
      "node_modules/iconv-lite": {

@@ -14,9 +14,10 @@ the published `v2026.8.27` / `0.20.6` release. The target source is
 `5fc308a70719a83cccdbba4c0e39c23f5a8239d5`.
 
 The migration is acceptable for a draft only with the exact source bindings,
-compatibility patches, and focused tests in this change. Normal Linux CI and
-canonical end-to-end testing remain required before qualification. This review
-does not treat the Mac authoring run or a missing Brev shadow as qualification.
+compatibility patches, and focused tests in this change. The `CI / Pull Request`
+workflow and the trusted manual PR plan in `.github/workflows/e2e.yaml` remain
+required before qualification. This review does not treat the Mac authoring run
+or a missing Brev shadow as qualification.
 
 ## Reviewed identities
 
@@ -108,9 +109,12 @@ subject to their existing NVIDIA/NemoClaw product and policy gates.
 The Mac authoring checks prove exact source selection, patch applicability,
 contract updates, and deterministic repository changes. They do not prove the
 Linux image, OpenShell sandbox, upgrade recovery, or canonical end-to-end path.
-Those checks belong to the draft pull request. Brev may produce background
-shadow evidence, but it is nonqualifying and cannot substitute for a supported
-scenario receipt.
+The trusted manual PR plan is defined by `.github/workflows/e2e.yaml` and
+`tools/e2e/target-catalogue.mts`. For this migration it includes `cloud-onboard`,
+`managed-image-multiarch-startup`, `security-posture`, `hermes-e2e`,
+`hermes-inference-switch`, `onboard-repair`, and `onboard-resume`. Brev may
+produce background shadow evidence, but it is nonqualifying and cannot replace
+any of these results or a supported scenario receipt.
 
 Unresolved upgrade-created high-impact concerns: `0` in the authored source
 diff. Qualification remains pending the required authenticated CI evidence.
