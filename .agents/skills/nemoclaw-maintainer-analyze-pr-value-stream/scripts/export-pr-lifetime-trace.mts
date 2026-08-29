@@ -732,6 +732,19 @@ function renderTrace(input: {
   return { events, lifecycleEvents };
 }
 
+async function processStartIdentity(pid: number): Promise<string | null> {
+  try {
+    const value = await readFile("/proc/" + pid + "/stat", "utf8");
+    const fields = value
+      .slice(value.lastIndexOf(")") + 2)
+      .trim()
+      .split(/\s+/u);
+    return fields[19] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function reclaimStalePublicationLock(
   lock: string,
   now = Date.now(),
@@ -744,18 +757,23 @@ export async function reclaimStalePublicationLock(
     throw error;
   }
   if (now - lockStat.mtimeMs <= PUBLICATION_LOCK_STALE_MS) return false;
-  let owner: { pid?: unknown };
+  let owner: { pid?: unknown; startIdentity?: unknown } | null = null;
   try {
     owner = JSON.parse(await readFile(path.join(lock, "owner.json"), "utf8"));
   } catch {
-    return false;
+    // An old lock can be left before owner metadata is written.
   }
-  if (!Number.isSafeInteger(owner.pid) || Number(owner.pid) <= 0) return false;
-  try {
-    process.kill(Number(owner.pid), 0);
-    return false;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ESRCH") return false;
+  if (owner && Number.isSafeInteger(owner.pid) && Number(owner.pid) > 0) {
+    const observedIdentity = await processStartIdentity(Number(owner.pid));
+    if (observedIdentity !== null && observedIdentity === owner.startIdentity) return false;
+    if (observedIdentity === null) {
+      try {
+        process.kill(Number(owner.pid), 0);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ESRCH") owner = null;
+      }
+      if (owner !== null) return false;
+    }
   }
   const stale = lock + ".stale-" + process.pid + "-" + now;
   try {
@@ -787,9 +805,15 @@ async function acquirePublicationLock(lock: string): Promise<string> {
     try {
       await mkdir(lock);
       const token = randomUUID();
+      const startIdentity = await processStartIdentity(process.pid);
       await writeFile(
         path.join(lock, "owner.json"),
-        JSON.stringify({ token, pid: process.pid, createdAt: new Date().toISOString() }) + "\n",
+        JSON.stringify({
+          token,
+          pid: process.pid,
+          startIdentity,
+          createdAt: new Date().toISOString(),
+        }) + "\n",
         { mode: 0o600 },
       );
       return token;

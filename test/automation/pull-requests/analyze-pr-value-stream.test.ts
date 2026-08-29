@@ -469,7 +469,7 @@ describe("pull request value-stream analysis", () => {
     );
   });
 
-  test("recovers a complete artifact set stranded by interrupted publication (#10542)", async () => {
+  test("removes an interrupted backup before publishing replacement artifacts (#10542)", async () => {
     const publicationRoot = await mkdtemp(path.join(tmpdir(), "value-stream-recover-"));
     temporaryDirectories.push(publicationRoot);
     const destination = path.join(publicationRoot, "pr-42");
@@ -487,7 +487,7 @@ describe("pull request value-stream analysis", () => {
     await expect(stat(backup)).rejects.toThrow();
   });
 
-  test("validates freshness after publication lock contention (#10542)", async () => {
+  test("preserves published artifacts when freshness validation fails (#10542)", async () => {
     const publicationRoot = await mkdtemp(path.join(tmpdir(), "value-stream-contention-"));
     temporaryDirectories.push(publicationRoot);
     const destination = path.join(publicationRoot, "pr-42");
@@ -554,12 +554,26 @@ describe("pull request value-stream analysis", () => {
     temporaryDirectories.push(publicationRoot);
     const lock = path.join(publicationRoot, "pr-42.lock");
     await mkdir(lock);
-    await writeFile(path.join(lock, "owner.json"), JSON.stringify({ pid: process.pid }));
+    const liveStart = await readFile("/proc/" + process.pid + "/stat", "utf8");
+    const liveIdentity = liveStart
+      .slice(liveStart.lastIndexOf(")") + 2)
+      .trim()
+      .split(/\s+/u)[19];
+    await writeFile(
+      path.join(lock, "owner.json"),
+      JSON.stringify({ pid: process.pid, startIdentity: liveIdentity }),
+    );
     expect(await reclaimStalePublicationLock(lock)).toBe(false);
     const stale = new Date(Date.now() - 6 * 60 * 1_000);
     await utimes(lock, stale, stale);
     expect(await reclaimStalePublicationLock(lock)).toBe(false);
-    await writeFile(path.join(lock, "owner.json"), JSON.stringify({ pid: 2_147_483_647 }));
+    await writeFile(
+      path.join(lock, "owner.json"),
+      JSON.stringify({ pid: process.pid, startIdentity: "reused-owner" }),
+    );
+    expect(await reclaimStalePublicationLock(lock)).toBe(true);
+    await mkdir(lock);
+    await utimes(lock, stale, stale);
     expect(await reclaimStalePublicationLock(lock)).toBe(true);
     await expect(stat(lock)).rejects.toThrow();
   });
