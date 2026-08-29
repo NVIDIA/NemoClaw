@@ -3358,27 +3358,19 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               {
                 executeSandboxCommand: (sandbox: string, script: string) =>
                   executeSandboxCommandForVerification(sandbox, script),
-                probeHostPort: (port: number, probePath: string) => {
-                  const result = runCapture(
-                    [
-                      "curl",
-                      "-so",
-                      "/dev/null",
-                      "-w",
-                      "%{http_code}",
-                      "--max-time",
-                      "3",
-                      `http://127.0.0.1:${port}${probePath}`,
-                    ],
-                    { ignoreError: true },
-                  );
-                  return parseInt(result.trim(), 10) || 0;
-                },
+                probeHostPort: onboardDashboard.probeVerificationHostPort,
                 captureForwardList: () =>
                   runCaptureOpenshell(["forward", "list"], { ignoreError: true }) || null,
                 getMessagingChannels: () => liveFinalFlowContext.selectedMessagingChannels || [],
                 providerExistsInGateway: (providerName: string) =>
                   providerExistsInGateway(providerName),
+                probeInferenceInvocation: () =>
+                  verifyDeploymentModule.probeOnboardInferenceInvocation({
+                    ...liveFinalFlowContext,
+                    sandboxName: name,
+                    gatewayName: GATEWAY_NAME,
+                    agentName: agent?.name,
+                  }),
               },
               {
                 diagnoseCustomOpenClawRuntime:
@@ -3386,6 +3378,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                     liveFinalFlowContext.fromDockerfile,
                     agent?.name,
                   ),
+                inferenceRouteContext: {
+                  agentName: agent?.name,
+                  provider: liveFinalFlowContext.provider,
+                },
               },
             );
           },

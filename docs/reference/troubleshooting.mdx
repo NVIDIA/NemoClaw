@@ -1232,6 +1232,31 @@ bash uninstall.sh --yes
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
+<AgentOnly variant="openclaw,hermes">
+
+### Onboarding fails because the inference route served no model catalog
+
+Onboarding verifies the sandbox inference route before it reports the deployment healthy.
+When `https://inference.local/v1/models` keeps returning `HTTP 404`, the route answered but served no model catalog, so nothing validated your selected model against the provider.
+Onboarding retries for the usual startup budget, then marks the `inference` check failed and exits nonzero instead of reporting a verified deployment.
+
+Re-check the route and the recorded provider and model:
+
+```bash
+$$nemoclaw <name> status
+```
+
+`$$nemoclaw <name> status` applies the same HTTP 404 rule, so onboarding and status agree about the model catalog.
+
+Confirm the provider and model are configured for this sandbox and that the endpoint serves `/v1/models`.
+This result is resumable, so correct the endpoint and continue the recorded session:
+
+```bash
+$$nemoclaw onboard --resume
+```
+
+</AgentOnly>
+
 ## Runtime
 
 <AgentOnly variant="openclaw">

@@ -792,3 +792,27 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     stopAllDashboardForwards,
   };
 }
+
+const HOST_PROBE_MAX_SECONDS = "3";
+
+/**
+ * Probe a dashboard-chain port on the host through its forward, for the
+ * onboarding deployment verification. Returns the HTTP status, or 0 when the
+ * forward is down.
+ */
+export function probeVerificationHostPort(port: number, probePath: string): number {
+  const result = defaultRunCapture(
+    [
+      "curl",
+      "-so",
+      "/dev/null",
+      "-w",
+      "%{http_code}",
+      "--max-time",
+      HOST_PROBE_MAX_SECONDS,
+      `http://127.0.0.1:${port}${probePath}`,
+    ],
+    { ignoreError: true },
+  );
+  return parseInt(result.trim(), 10) || 0;
+}
