@@ -3087,6 +3087,11 @@ function isUnusedConfiguredGatewayReservation(
 
 type OpenShellCleanupDisposition = "normal" | "reservation-removed" | "blocked";
 
+interface PreparedOpenShellCleanup {
+  disposition: OpenShellCleanupDisposition;
+  stateLifecycleLock?: Exclude<ReturnType<typeof tryAcquireManagedGatewayStateLifecycleLock>, null>;
+}
+
 function prepareOpenShellCleanup(
   paths: UninstallPaths,
   options: UninstallRunOptions,
@@ -3094,7 +3099,7 @@ function prepareOpenShellCleanup(
   scopedToSelectedGateway: boolean,
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
-): OpenShellCleanupDisposition {
+): PreparedOpenShellCleanup {
   const configuredStateDir = runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim();
   let stateLifecycleLock:
     | Exclude<ReturnType<typeof tryAcquireManagedGatewayStateLifecycleLock>, null>
@@ -3108,14 +3113,21 @@ function prepareOpenShellCleanup(
     runtime.warn(
       `Unable to validate and lock the configured gateway state directory; it was preserved: ${formatError(error)}. Correct the reported path, ownership, permissions, or lock state, then rerun uninstall.`,
     );
-    return "blocked";
+    return { disposition: "blocked" };
   }
   if (configuredStateDir && !stateLifecycleLock) {
     runtime.warn(
       "The configured gateway state directory is owned by an active onboarding lifecycle; preserving it. Wait for onboarding to finish, then rerun uninstall.",
     );
-    return "blocked";
+    return { disposition: "blocked" };
   }
+  let stateLifecycleLockTransferred = false;
+  const retainStateLifecycleLock = (
+    disposition: OpenShellCleanupDisposition,
+  ): PreparedOpenShellCleanup => {
+    stateLifecycleLockTransferred = true;
+    return { disposition, stateLifecycleLock };
+  };
   try {
     if (
       !isUnusedConfiguredGatewayReservation(
@@ -3125,22 +3137,25 @@ function prepareOpenShellCleanup(
         teardownAuthority,
         portableRuntimeCleanup,
       )
-    )
-      return canBeginOpenShellCleanup(
-        paths,
-        options,
-        runtime,
-        scopedToSelectedGateway,
-        teardownAuthority,
-        portableRuntimeCleanup,
-      )
-        ? "normal"
-        : "blocked";
+    ) {
+      return retainStateLifecycleLock(
+        canBeginOpenShellCleanup(
+          paths,
+          options,
+          runtime,
+          scopedToSelectedGateway,
+          teardownAuthority,
+          portableRuntimeCleanup,
+        )
+          ? "normal"
+          : "blocked",
+      );
+    }
     if (!(runtime.isPortFree ?? isHostPortFree)(GATEWAY_PORT)) {
       runtime.warn(
         `No gateway resources were created, but gateway port ${String(GATEWAY_PORT)} has a listener. The unused configured gateway state reservation was preserved; inspect and stop the listener, then rerun uninstall after the port is free.`,
       );
-      return "blocked";
+      return retainStateLifecycleLock("blocked");
     }
     try {
       assertManagedGatewayStateDirectoryParentTrusted(paths.selectedGatewayLocalStateDir);
@@ -3148,20 +3163,22 @@ function prepareOpenShellCleanup(
       runtime.warn(
         `The configured gateway state reservation became unsafe before removal and was preserved: ${formatError(error)}. Correct the reported path, ownership, or permissions, then rerun uninstall.`,
       );
-      return "blocked";
+      return retainStateLifecycleLock("blocked");
     }
     if (!removePath(paths.selectedGatewayLocalStateDir, runtime)) {
       runtime.warn(
         "The configured gateway state reservation changed during validation; preserving current state for retry.",
       );
-      return "blocked";
+      return retainStateLifecycleLock("blocked");
     }
     runtime.log(
       "Removed the unused configured gateway state reservation; no gateway resources were created.",
     );
-    return "reservation-removed";
+    return retainStateLifecycleLock("reservation-removed");
   } finally {
-    if (stateLifecycleLock) releaseManagedGatewayStateLifecycleLock(stateLifecycleLock);
+    if (!stateLifecycleLockTransferred && stateLifecycleLock) {
+      releaseManagedGatewayStateLifecycleLock(stateLifecycleLock);
+    }
   }
 }
 
@@ -3180,8 +3197,7 @@ function executePlan(
   portableRuntimeCleanup: boolean,
   portableRetirementEntries: ReturnType<typeof portableRetirementPreservationEntries>,
 ): { ok: boolean } {
-  const externallySupervised = isExternallySupervised(teardownAuthority);
-  const openShellCleanup = prepareOpenShellCleanup(
+  const preparedOpenShellCleanup = prepareOpenShellCleanup(
     paths,
     options,
     runtime,
@@ -3189,7 +3205,47 @@ function executePlan(
     teardownAuthority,
     portableRuntimeCleanup,
   );
-  if (openShellCleanup === "blocked") return { ok: false };
+  const { disposition: openShellCleanup, stateLifecycleLock } = preparedOpenShellCleanup;
+  try {
+    if (openShellCleanup === "blocked") return { ok: false };
+    return executePreparedPlan(
+      plan,
+      paths,
+      options,
+      runtime,
+      preserveUnderStateDir,
+      scopedToSelectedGateway,
+      sharedRegistryMustBePreserved,
+      otherGatewayPorts,
+      sandboxNames,
+      managedHermesStateVolumes,
+      teardownAuthority,
+      portableRuntimeCleanup,
+      portableRetirementEntries,
+      openShellCleanup,
+    );
+  } finally {
+    if (stateLifecycleLock) releaseManagedGatewayStateLifecycleLock(stateLifecycleLock);
+  }
+}
+
+function executePreparedPlan(
+  plan: UninstallPlan,
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  preserveUnderStateDir: readonly string[],
+  scopedToSelectedGateway: boolean,
+  sharedRegistryMustBePreserved: boolean,
+  otherGatewayPorts: readonly number[],
+  sandboxNames: readonly string[],
+  managedHermesStateVolumes: readonly ManagedHermesStateVolumeContext[],
+  teardownAuthority: GatewayOwner,
+  portableRuntimeCleanup: boolean,
+  portableRetirementEntries: ReturnType<typeof portableRetirementPreservationEntries>,
+  openShellCleanup: Exclude<OpenShellCleanupDisposition, "blocked">,
+): { ok: boolean } {
+  const externallySupervised = isExternallySupervised(teardownAuthority);
   let ok = true;
   const failedManagedLlamaStateDirs: string[] = [];
   const branding = runtimeBranding(runtime);

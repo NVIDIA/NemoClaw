@@ -24,6 +24,7 @@ import {
   acquireManagedGatewayStateLifecycleLock,
   managedGatewayStateLifecycleLockPath,
   releaseManagedGatewayStateLifecycleLock,
+  tryAcquireManagedGatewayStateLifecycleLock,
 } from "../../onboard/gateway/state-lifecycle-lock";
 import {
   type RunResult,
@@ -502,6 +503,63 @@ describe("uninstall selected gateway-port segregation (#3053)", () => {
       } finally {
         releaseManagedGatewayStateLifecycleLock(onboardingLock);
       }
+    } finally {
+      fs.rmSync(tmpHome, { force: true, recursive: true });
+    }
+  });
+
+  it("holds the configured state lifecycle lock through destructive cleanup (#10544)", async () => {
+    const tmpHome = fs.mkdtempSync(path.join(process.cwd(), "nemoclaw-uninstall-plan-lock-"));
+    const port = 9123;
+    const customGatewayState = path.join(tmpHome, "managed-gateway-state");
+    try {
+      vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(port));
+      vi.resetModules();
+      const runPortUninstall = bindManagedGatewayAuthority(
+        (await import("./run-plan")).runUninstallPlan,
+      );
+      writeScopedGatewayState(tmpHome, port, customGatewayState);
+      let competingOnboardingWasBlocked = false;
+
+      const result = runPortUninstall(
+        {
+          assumeYes: true,
+          deleteModels: false,
+          destroyUserData: true,
+          gatewayName: `nemoclaw-${String(port)}`,
+          keepOpenShell: false,
+        },
+        {
+          commandExists: (command) => command === "openshell",
+          env: {
+            HOME: tmpHome,
+            NEMOCLAW_GATEWAY_PORT: String(port),
+            NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: customGatewayState,
+          },
+          existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
+          hasPortableRuntimeCleanup: () => false,
+          isTty: false,
+          log: (message) => {
+            const competingLock = message.startsWith("[")
+              ? tryAcquireManagedGatewayStateLifecycleLock(customGatewayState)
+              : null;
+            expect(competingLock).toBeNull();
+            competingOnboardingWasBlocked ||= message.startsWith("[1/");
+          },
+          rmSync: fs.rmSync,
+          run: (_command, args) =>
+            args[0] === "gateway" && args[1] === "list"
+              ? ok(JSON.stringify([{ name: `nemoclaw-${String(port)}` }]))
+              : ok(),
+          runDocker: () => ok(),
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(competingOnboardingWasBlocked).toBe(true);
+      expect(fs.existsSync(customGatewayState)).toBe(false);
+      const postUninstallLock = acquireManagedGatewayStateLifecycleLock(customGatewayState);
+      releaseManagedGatewayStateLifecycleLock(postUninstallLock);
     } finally {
       fs.rmSync(tmpHome, { force: true, recursive: true });
     }
