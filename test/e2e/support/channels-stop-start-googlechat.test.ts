@@ -16,7 +16,7 @@ type FixtureProviderDependencies = {
     tokenDefs: Parameters<
       (typeof import("../../../src/lib/actions/sandbox/policy-channel-dependencies.ts"))["policyChannelDependencies"]["upsertMessagingProviders"]
     >[0],
-    run: FixtureRunner,
+    gatewayName: string,
     options?: {
       readonly replaceExisting?: boolean;
       readonly revalidatePolicyRequirements?: (operation: string) => void;
@@ -235,6 +235,7 @@ describe("channels stop/start Google Chat live composition", () => {
       }));
       const run = runMock as unknown as FixtureRunner;
       const revalidatePolicyRequirements = vi.fn();
+      const gatewayName = "nemoclaw";
 
       const restore = installGooglechatCredentialFixture(sandboxName, agent, {
         ensureProfiles,
@@ -252,12 +253,12 @@ describe("channels stop/start Google Chat live composition", () => {
             providerType,
           },
         ],
-        run,
+        gatewayName,
         { revalidatePolicyRequirements },
       );
 
       expect(providerNames).toEqual([delegatedName, `${sandboxName}-googlechat-bridge`]);
-      expect(originalUpsert).toHaveBeenCalledWith([delegatedTokenDef], run, {
+      expect(originalUpsert).toHaveBeenCalledWith([delegatedTokenDef], gatewayName, {
         revalidatePolicyRequirements,
       });
       expect(ensureProfiles).toHaveBeenCalledOnce();
@@ -340,6 +341,7 @@ describe("channels stop/start Google Chat live composition", () => {
         root: "/repo",
         run,
       });
+      const gatewayName = "nemoclaw";
 
       providerDependencies.upsertMessagingProviders(
         [
@@ -350,7 +352,7 @@ describe("channels stop/start Google Chat live composition", () => {
             providerType: "google-chat-bridge",
           },
         ],
-        run,
+        gatewayName,
         options,
       );
 

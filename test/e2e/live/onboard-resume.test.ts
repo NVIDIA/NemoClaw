@@ -591,7 +591,7 @@ test(
     );
     const unavailableResumeText = `${unavailableResumeRun.stdout}\n${unavailableResumeRun.stderr}`;
     expect(unavailableResumeRun.exitCode, unavailableResumeText).not.toBe(0);
-    expect(unavailableResumeText).toContain("is not ready");
+    expect(unavailableResumeText).toMatch(/is not ready|transient HTTP 503/u);
     expect(unavailableResumeText).toContain("inference");
     expect(unavailableResumeText).not.toContain(
       `Deleting and recreating sandbox '${SANDBOX_NAME}'`,

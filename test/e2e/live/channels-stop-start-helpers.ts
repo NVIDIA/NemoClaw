@@ -10,7 +10,6 @@ import * as policyChannelDependenciesModule from "../../../src/lib/actions/sandb
 import * as policyChannelModule from "../../../src/lib/actions/sandbox/policy-channel.ts";
 import * as openshellRuntimeModule from "../../../src/lib/adapters/openshell/runtime.ts";
 import * as messagingBridgeProviderModule from "../../../src/lib/onboard/messaging-bridge-provider.ts";
-import * as onboardProvidersModule from "../../../src/lib/onboard/providers.ts";
 import * as statePathsModule from "../../../src/lib/state/paths.ts";
 import {
   assertCleanupSucceededOrAbsent,
@@ -59,13 +58,15 @@ type MessagingBridgeProviderModule =
   typeof import("../../../src/lib/onboard/messaging-bridge-provider.ts");
 type StatePathsModule = typeof import("../../../src/lib/state/paths.ts");
 type ProviderUpsertOptions = {
+  readonly bestEffort?: boolean;
   readonly replaceExisting?: boolean;
+  readonly requireExactBindings?: boolean;
   readonly revalidatePolicyRequirements?: (operation: string) => void;
 };
 type ProviderDependencies = {
   upsertMessagingProviders(
     tokenDefs: Parameters<typeof policyChannelDependencies.upsertMessagingProviders>[0],
-    run: typeof runOpenshell,
+    gatewayName: string,
     options?: ProviderUpsertOptions,
   ): string[];
 };
@@ -90,9 +91,6 @@ const messagingBridgeProvider = (
     : messagingBridgeProviderModule
 ) as MessagingBridgeProviderModule;
 const { ensureMessagingBridgeProfiles } = messagingBridgeProvider;
-const onboardProviders = (
-  "default" in onboardProvidersModule ? onboardProvidersModule.default : onboardProvidersModule
-) as ProviderDependencies;
 const statePaths = (
   "default" in statePathsModule ? statePathsModule.default : statePathsModule
 ) as StatePathsModule;
@@ -142,14 +140,18 @@ export function installGooglechatCredentialFixture(
 ): () => void {
   assertChannelsStopStartSandboxName(sandboxName, agent);
   const ensureProfiles = dependencies.ensureProfiles ?? ensureMessagingBridgeProfiles;
-  const providerDependencies = dependencies.providerDependencies ?? onboardProviders;
+  const providerDependencies: ProviderDependencies =
+    dependencies.providerDependencies ?? policyChannelDependencies;
   const root = dependencies.root ?? ROOT;
-  const run = dependencies.run ?? runOpenshell;
   const expectedName = `${sandboxName}-googlechat-bridge`;
   const expectedType = PROVIDER_TYPE_BY_AGENT[agent];
   const original = providerDependencies.upsertMessagingProviders;
 
-  providerDependencies.upsertMessagingProviders = (tokenDefs, providerRun, options = {}) => {
+  providerDependencies.upsertMessagingProviders = (
+    tokenDefs: Parameters<ProviderDependencies["upsertMessagingProviders"]>[0],
+    gatewayName: string,
+    options: ProviderUpsertOptions = {},
+  ): string[] => {
     const fixtureTokenDefs = tokenDefs.filter(({ name }) => name === expectedName);
     const fixtureTokenDef = fixtureTokenDefs[0];
     if (
@@ -162,8 +164,11 @@ export function installGooglechatCredentialFixture(
 
     const delegatedTokenDefs = tokenDefs.filter(({ name }) => name !== expectedName);
     const delegatedProviderNames =
-      delegatedTokenDefs.length === 0 ? [] : original(delegatedTokenDefs, providerRun, options);
-    const baseRun = providerRun ?? run;
+      delegatedTokenDefs.length === 0 ? [] : original(delegatedTokenDefs, gatewayName, options);
+    const baseRun =
+      dependencies.run ??
+      ((args, runOptions) =>
+        policyChannelDependencies.runGatewayOpenshell(gatewayName, args, runOptions));
     const revalidate = () =>
       options.revalidatePolicyRequirements?.(
         `manage Google Chat live fixture provider '${expectedName}'`,
