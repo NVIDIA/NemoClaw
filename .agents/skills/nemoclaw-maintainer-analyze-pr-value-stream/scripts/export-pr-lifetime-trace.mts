@@ -492,6 +492,41 @@ function renderTrace(input: {
       },
     });
   }
+  const openRequests = new Map<string, { at: number; id: number | null }>();
+  for (const row of input.lifecycle.timeline) {
+    const reviewer = row?.requested_reviewer;
+    const at = optionalTime(row?.created_at);
+    if (typeof reviewer !== "string" || at === null) continue;
+    if (row.event === "review_requested") openRequests.set(reviewer, { at, id: row.id ?? null });
+    if (row.event !== "review_request_removed") continue;
+    const request = openRequests.get(reviewer);
+    if (request === undefined) continue;
+    addSpan(events, {
+      name: "Review requested: " + reviewer,
+      category: "review.request",
+      start: request.at,
+      end: at,
+      pid: 3,
+      tid: 2,
+      args: {
+        reviewer,
+        requestEventId: request.id,
+        terminalEventId: row.id ?? null,
+        terminalState: "removed",
+      },
+    });
+    openRequests.delete(reviewer);
+  }
+  for (const [reviewer, request] of openRequests)
+    addSpan(events, {
+      name: "Review requested: " + reviewer,
+      category: "review.request",
+      start: request.at,
+      end: observedEnd,
+      pid: 3,
+      tid: 2,
+      args: { reviewer, requestEventId: request.id, terminalState: "open" },
+    });
   for (const review of validateArray(input.pull.reviews ?? [], "pull request reviews")) {
     const submitted = optionalTime(review?.submittedAt);
     if (submitted === null) continue;
