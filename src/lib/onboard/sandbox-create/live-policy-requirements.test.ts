@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
   assertGateway: vi.fn(),
+  captureBasePolicy: vi.fn(),
   inspectPolicy: vi.fn(),
   inspectReadiness: vi.fn(),
 }));
@@ -12,6 +13,7 @@ const state = vi.hoisted(() => ({
 vi.mock("../../adapters/openshell/policy-state", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../adapters/openshell/policy-state")>()),
   assertOpenShellGatewayPortBinding: state.assertGateway,
+  captureSandboxBasePolicy: state.captureBasePolicy,
   inspectOpenShellSandboxPolicyReadiness: state.inspectReadiness,
   inspectSandboxPolicy: state.inspectPolicy,
 }));
@@ -36,8 +38,8 @@ function inspection(activeVersion: number) {
       version: 1,
       network_policies: {
         required: {
-          name: "required",
-          endpoints: [{ host: "example.com", port: 443 }],
+          name: "provider-composed-drift",
+          endpoints: [{ host: "provider.example.com", port: 443 }],
         },
       },
     },
@@ -63,6 +65,7 @@ function verify(sleep = vi.fn()) {
 describe("live created sandbox policy requirements", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    state.captureBasePolicy.mockReturnValue(REQUIRED_POLICY);
     state.inspectPolicy.mockReturnValue(inspection(7));
   });
 
@@ -82,6 +85,16 @@ describe("live created sandbox policy requirements", () => {
       policyVersion: 7,
     });
     expect(state.inspectPolicy).toHaveBeenCalledTimes(3);
+    expect(state.captureBasePolicy).toHaveBeenCalledTimes(3);
+  });
+
+  it("checks requirements against OpenShell's base policy, not provider composition", () => {
+    state.inspectReadiness.mockReturnValue({ state: "ready" });
+
+    verify();
+
+    expect(state.inspectPolicy).toHaveBeenCalledTimes(2);
+    expect(state.captureBasePolicy).toHaveBeenCalledTimes(2);
   });
 
   it("fails after the bounded OpenShell convergence window", () => {

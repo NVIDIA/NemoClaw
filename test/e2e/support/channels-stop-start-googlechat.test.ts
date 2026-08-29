@@ -49,7 +49,7 @@ describe("channels stop/start Google Chat live composition", () => {
     });
 
     expect(
-      channelDependencies.upsertMessagingProviders(
+      restore.upsertMessagingProviders(
         [
           {
             name: expectedName,
@@ -63,6 +63,7 @@ describe("channels stop/start Google Chat live composition", () => {
       ),
     ).toEqual([expectedName]);
     expect(originalUpsert).not.toHaveBeenCalled();
+    expect(channelDependencies.upsertMessagingProviders).toBe(originalUpsert);
     expect(calls).toContainEqual([
       "provider",
       "create",

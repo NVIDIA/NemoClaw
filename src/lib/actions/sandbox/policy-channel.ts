@@ -157,6 +157,7 @@ function withSandboxMutationLockUnlessPreview<T>(
  */
 export interface AddSandboxChannelDependencies {
   readonly googlechatNonInteractiveAudienceCapability?: GooglechatNonInteractiveAudienceCapability;
+  readonly upsertMessagingProviders?: typeof policyChannelDependencies.upsertMessagingProviders;
 }
 
 const messagingManifestRegistry = createBuiltInChannelManifestRegistry();
@@ -795,6 +796,7 @@ async function applyChannelAddToGatewayAndRegistry(
   channelName: string,
   acquired: Record<string, string>,
   applyPolicyAfterAttachment?: () => boolean,
+  upsertMessagingProviders = policyChannelDependencies.upsertMessagingProviders,
 ): Promise<boolean | null> {
   const sandboxAgent = registry.getSandbox(sandboxName)?.agent;
   const staticProviderType = staticMessagingProviderTypeForChannel(channelName, sandboxAgent);
@@ -850,14 +852,10 @@ async function applyChannelAddToGatewayAndRegistry(
   try {
     // bestEffort: failures throw (instead of process.exit inside the helper)
     // so a partial add can be torn down below before exiting.
-    const providerNames = policyChannelDependencies.upsertMessagingProviders(
-      tokenDefs,
-      gatewayName,
-      {
-        bestEffort: true,
-        requireExactBindings: true,
-      },
-    );
+    const providerNames = upsertMessagingProviders(tokenDefs, gatewayName, {
+      bestEffort: true,
+      requireExactBindings: true,
+    });
     for (const providerName of providerNames) {
       revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName);
       const attached = runOpenshell(
@@ -1440,7 +1438,13 @@ async function addSandboxChannelUnlocked(
     ) {
       process.exit(1);
     }
-    await applyChannelAddToGatewayAndRegistry(sandboxName, canonical, {});
+    await applyChannelAddToGatewayAndRegistry(
+      sandboxName,
+      canonical,
+      {},
+      undefined,
+      dependencies.upsertMessagingProviders,
+    );
     if (!MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan)) {
       console.error(`  ${YW}⚠${R} Could not persist messaging plan for '${sandboxName}'.`);
       removeChannelPresetIfPresent(sandboxName, canonical);
@@ -1492,6 +1496,7 @@ async function addSandboxChannelUnlocked(
       applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
         disclosedPresetState,
       }),
+    dependencies.upsertMessagingProviders,
   );
   if (registeredBridge === null) {
     await rollbackChannelAdd(sandboxName, channelDef, canonical, {

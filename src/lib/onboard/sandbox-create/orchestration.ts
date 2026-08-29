@@ -46,9 +46,8 @@ import {
   pendingSandboxCreateIdentityForBoundary,
   sandboxCreateBoundaryFromPendingIdentity,
 } from "./identity-boundary";
-import {
-  verifyLiveCreatedSandboxPolicyRequirements,
-} from "./live-policy-requirements";
+import { verifyLiveCreatedSandboxPolicyRequirements } from "./live-policy-requirements";
+import { materializeRebuildCreatePolicy } from "./rebuild-policy-requirements";
 import {
   attachProvidersAfterSandboxCreation,
   publishAttachedProvidersBeforeDockerSandboxCreation,
@@ -60,7 +59,8 @@ function cancelRecoveryIdentity(
 ): { readonly lifecycleLiveIdentityFingerprint?: string } {
   if (liveExists) return {};
   return {
-    lifecycleLiveIdentityFingerprint: requireVerifiedCreateBoundary().lifecycleLiveIdentityFingerprint,
+    lifecycleLiveIdentityFingerprint:
+      requireVerifiedCreateBoundary().lifecycleLiveIdentityFingerprint,
   };
 }
 
@@ -2036,17 +2036,14 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       },
     } = preparedOnboardLaunch;
     const initialSandboxPolicy = createIntent?.rebuildPolicySourcePath
-      ? {
-          policyPath: createIntent.rebuildPolicySourcePath,
-          appliedPresets: [],
-          sourceBytes: fs.readFileSync(createIntent.rebuildPolicySourcePath),
-        }
+      ? materializeRebuildCreatePolicy({
+          livePolicyPath: createIntent.rebuildPolicySourcePath,
+          currentPolicy: materializedInitialSandboxPolicy,
+        })
       : materializedInitialSandboxPolicy;
     const createArgv = createIntent?.rebuildPolicySourcePath
       ? materializedCreateArgv.map((value, index, argv) =>
-          index > 0 && argv[index - 1] === "--policy"
-            ? createIntent.rebuildPolicySourcePath!
-            : value,
+          index > 0 && argv[index - 1] === "--policy" ? initialSandboxPolicy.policyPath : value,
         )
       : materializedCreateArgv;
     const restoreBackupPath =
@@ -2202,10 +2199,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         policySourcePath,
       };
       admittedCreateReservation = admitCreateReservation();
-      registry.requireCurrentPendingSandboxCreateIdentity(
-        admittedCreateReservation,
-        checkpoint,
-      );
+      registry.requireCurrentPendingSandboxCreateIdentity(admittedCreateReservation, checkpoint);
       durableCreatedSandboxIdentity = createdSandboxLifecycle.recordExactIdentity(
         checkpoint.sandboxIdentityFingerprint,
       );
@@ -2225,10 +2219,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         checkpoint.sandboxIdentityFingerprint,
         `resuming sandbox creation for '${sandboxName}'`,
       );
-      registry.requireCurrentPendingSandboxCreateIdentity(
-        admittedCreateReservation,
-        checkpoint,
-      );
+      registry.requireCurrentPendingSandboxCreateIdentity(admittedCreateReservation, checkpoint);
       pendingCreateIdentity = checkpoint;
       verifiedCreateBoundary = boundary;
       return {
@@ -2300,7 +2291,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             sandboxName,
             message,
             ...(exactIdentity ? { sandboxIdentityFingerprint: exactIdentity } : {}),
-            recoveryContext: retainedSandboxRecoveryContext(verifiedCreateBoundary, createAttemptNonce),
+            recoveryContext: retainedSandboxRecoveryContext(
+              verifiedCreateBoundary,
+              createAttemptNonce,
+            ),
           },
           onboardSession.markRetainedSandboxRecovery,
         ),

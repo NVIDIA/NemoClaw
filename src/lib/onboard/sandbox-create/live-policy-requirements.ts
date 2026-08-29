@@ -5,6 +5,7 @@ import fs from "node:fs";
 
 import {
   assertOpenShellGatewayPortBinding,
+  captureSandboxBasePolicy,
   inspectOpenShellSandboxPolicyReadiness,
   inspectSandboxPolicy,
   PolicyObservationError,
@@ -27,6 +28,7 @@ export interface LiveCreatedSandboxPolicyRequirementsInput {
 }
 
 export interface LiveCreatedSandboxPolicyRequirementsDeps {
+  readonly captureBasePolicy?: typeof captureSandboxBasePolicy;
   readonly readFile?: (path: string, encoding: "utf8") => string;
   readonly inspectPolicy?: typeof inspectSandboxPolicy;
   readonly inspectPolicyReadiness?: typeof inspectOpenShellSandboxPolicyReadiness;
@@ -59,6 +61,18 @@ export function verifyLiveCreatedSandboxPolicyRequirements(
   const inspectPolicy = deps.inspectPolicy ?? inspectSandboxPolicy;
   const inspectPolicyReadiness =
     deps.inspectPolicyReadiness ?? inspectOpenShellSandboxPolicyReadiness;
+  const captureBasePolicy = deps.captureBasePolicy ?? captureSandboxBasePolicy;
+  const assertBasePolicyRequirements = (
+    inspection: ReturnType<typeof inspectSandboxPolicy>,
+  ): void => {
+    const basePolicy = parseOpenShellPolicy(
+      captureBasePolicy(input.sandboxName, input.gatewayName),
+    ).policy;
+    assertPolicyRequirementContainment(
+      { ...inspection, effectivePolicy: basePolicy },
+      requiredPolicy,
+    );
+  };
   let lastFailure = "the exact sandbox policy did not converge";
   let ready = false;
   for (let attempt = 0; attempt < POLICY_READINESS_MAX_OBSERVATIONS; attempt += 1) {
@@ -68,7 +82,7 @@ export function verifyLiveCreatedSandboxPolicyRequirements(
         gatewayName: input.gatewayName,
       });
       try {
-        assertPolicyRequirementContainment(before, requiredPolicy);
+        assertBasePolicyRequirements(before);
       } catch (error) {
         lastFailure = error instanceof Error ? error.message : String(error);
         return false;
@@ -98,7 +112,7 @@ export function verifyLiveCreatedSandboxPolicyRequirements(
         return false;
       }
       try {
-        assertPolicyRequirementContainment(after, requiredPolicy);
+        assertBasePolicyRequirements(after);
         return true;
       } catch (error) {
         lastFailure = error instanceof Error ? error.message : String(error);
