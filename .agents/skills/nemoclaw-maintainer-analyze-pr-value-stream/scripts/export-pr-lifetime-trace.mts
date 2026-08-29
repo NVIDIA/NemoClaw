@@ -794,11 +794,24 @@ async function requirePublicationLockOwnership(lock: string, token: string): Pro
     throw new Error("lifetime artifact publication lock ownership changed: " + lock);
 }
 
-async function acquirePublicationLock(lock: string): Promise<string> {
+async function acquirePublicationLock(
+  lock: string,
+  track?: (path: string, cleanup?: () => Promise<void>) => void,
+): Promise<string> {
   for (let attempt = 0; attempt < 300; attempt += 1) {
     try {
-      await mkdir(lock);
       const token = randomUUID();
+      await mkdir(lock);
+      track?.(lock, async () => {
+        let ownerMissing = false;
+        try {
+          await stat(path.join(lock, "owner.json"));
+        } catch (error) {
+          ownerMissing = (error as NodeJS.ErrnoException).code === "ENOENT";
+        }
+        if (ownerMissing || (await lockOwnershipMatches(lock, token)))
+          await rm(lock, { recursive: true, force: true });
+      });
       const startIdentity = await processStartIdentity(process.pid);
       await writeFile(
         path.join(lock, "owner.json"),
@@ -867,11 +880,7 @@ export async function publishStagedDirectory(input: {
   track?: (path: string, cleanup?: () => Promise<void>) => void;
   release?: (path: string) => void;
 }): Promise<void> {
-  const token = await acquirePublicationLock(input.lock);
-  input.track?.(input.lock, async () => {
-    if (await lockOwnershipMatches(input.lock, token))
-      await rm(input.lock, { recursive: true, force: true });
-  });
+  const token = await acquirePublicationLock(input.lock, input.track);
   const heartbeat = setInterval(() => {
     void utimes(input.lock, new Date(), new Date()).catch(() => undefined);
   }, PUBLICATION_LOCK_STALE_MS / 3);
