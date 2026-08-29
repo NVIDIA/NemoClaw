@@ -5,7 +5,7 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 const ROOT = path.join(import.meta.dirname, "../..");
 const PUBLISHER = path.join(ROOT, "scripts", "runtime_state_mutation_hermes_publisher.py");
@@ -460,8 +460,14 @@ function entrypointGateEnvironment(
 }
 
 describe("Hermes runtime state mutation publisher", () => {
+  let harnessResult: Record<string, unknown>;
+
+  beforeAll(() => {
+    harnessResult = runHarness();
+  });
+
   it("publishes and rolls back only the exact installed full plan (#7744)", () => {
-    const result = runHarness();
+    const result = harnessResult;
     expect(result.first).toMatchObject({
       protocol: "nemoclaw-runtime-state-mutation-publisher-v1",
       posture: "locked",
@@ -506,7 +512,7 @@ describe("Hermes runtime state mutation publisher", () => {
   });
 
   it("recovers nonce-bound begin and finish response loss without replaying them (#7744)", () => {
-    const result = runHarness();
+    const result = harnessResult;
     expect(result).toMatchObject({
       begin_loss: "simulated-begin-response-loss",
       finish_loss: "simulated-finish-response-loss",
@@ -519,7 +525,7 @@ describe("Hermes runtime state mutation publisher", () => {
   });
 
   it("can publish the exact rollback after a target begin response is lost (#7744)", () => {
-    const result = runHarness();
+    const result = harnessResult;
     expect(result).toMatchObject({
       rollback_begin_loss: "simulated-begin-response-loss",
       rollback_after_begin_loss: { posture: "mutable", nonce: "5".repeat(64) },
