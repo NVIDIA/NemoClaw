@@ -800,7 +800,12 @@ async function acquirePublicationLock(
     const token = randomUUID();
     const candidate = lock + ".candidate-" + token;
     await mkdir(candidate);
-    track?.(candidate);
+    track?.(candidate, async () => {
+      if (await lockOwnershipMatches(candidate, token))
+        await rm(candidate, { recursive: true, force: true });
+      else if (await lockOwnershipMatches(lock, token))
+        await rm(lock, { recursive: true, force: true });
+    });
     try {
       const startIdentity = await processStartIdentity(process.pid);
       await writeFile(
@@ -814,11 +819,11 @@ async function acquirePublicationLock(
         { mode: 0o600 },
       );
       await rename(candidate, lock);
-      release?.(candidate);
       track?.(lock, async () => {
         if (await lockOwnershipMatches(lock, token))
           await rm(lock, { recursive: true, force: true });
       });
+      release?.(candidate);
       return token;
     } catch (error) {
       await rm(candidate, { recursive: true, force: true });
