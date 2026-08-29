@@ -93,7 +93,6 @@ export function createMessagingBoundaryPlan(agent: unknown) {
           value: {
             enabled: true,
             appId: TEAMS_APP_ID,
-            appPassword: TEAMS_SECRET_PLACEHOLDER,
             tenantId: TEAMS_TENANT_ID,
             webhook: { port: 3978, path: "/api/messages" },
             healthMonitor: { enabled: false },
@@ -401,11 +400,13 @@ function assertOpenClawEvidence(runner: DockerRunner, image: string): void {
   const plugins = isObject(config) && isObject(config.plugins) ? config.plugins : {};
   const pluginEntries = isObject(plugins.entries) ? plugins.entries : {};
   const teamsPlugin = pluginEntries.msteams;
+  if (isObject(teams) && Object.hasOwn(teams, "appPassword")) {
+    throw new Error("OpenClaw image Teams render must omit appPassword");
+  }
   if (
     !isObject(teams) ||
     teams.enabled !== true ||
     teams.appId !== TEAMS_APP_ID ||
-    teams.appPassword !== TEAMS_SECRET_PLACEHOLDER ||
     teams.tenantId !== TEAMS_TENANT_ID ||
     !isObject(teamsPlugin) ||
     teamsPlugin.enabled !== true

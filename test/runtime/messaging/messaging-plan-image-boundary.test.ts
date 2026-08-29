@@ -80,7 +80,24 @@ function openClawInspectReport(): any {
   };
 }
 
-function successfulDockerRunner(agent: Agent, openClawInspect = openClawInspectReport()) {
+function openClawConfig(): any {
+  return {
+    channels: {
+      msteams: {
+        enabled: true,
+        appId: TEAMS_APP_ID,
+        tenantId: TEAMS_TENANT_ID,
+      },
+    },
+    plugins: { entries: { msteams: { enabled: true } } },
+  };
+}
+
+function successfulDockerRunner(
+  agent: Agent,
+  openClawInspect = openClawInspectReport(),
+  renderedOpenClawConfig = openClawConfig(),
+) {
   const expected: Array<{ args: string[]; result: DockerResult }> = [
     {
       args: ["image", "inspect", IMAGE],
@@ -103,17 +120,7 @@ function successfulDockerRunner(agent: Agent, openClawInspect = openClawInspectR
             args: imageFileArgs("/sandbox/.openclaw/openclaw.json"),
             result: {
               status: 0,
-              stdout: JSON.stringify({
-                channels: {
-                  msteams: {
-                    enabled: true,
-                    appId: TEAMS_APP_ID,
-                    appPassword: TEAMS_SECRET_PLACEHOLDER,
-                    tenantId: TEAMS_TENANT_ID,
-                  },
-                },
-                plugins: { entries: { msteams: { enabled: true } } },
-              }),
+              stdout: JSON.stringify(renderedOpenClawConfig),
             },
           },
           {
@@ -223,11 +230,11 @@ describe("messaging plan image boundary helper", () => {
         path: "channels.msteams",
         value: expect.objectContaining({
           appId: TEAMS_APP_ID,
-          appPassword: TEAMS_SECRET_PLACEHOLDER,
         }),
       }),
       expect.objectContaining({ target: "openclaw.json", path: "plugins.entries.msteams" }),
     ]);
+    expect(openclaw.agentRender[0].value).not.toHaveProperty("appPassword");
     expect(openclaw.runtimeSetup.nodePreloads).toEqual([
       expect.objectContaining({
         module: "msteams-message-hints",
@@ -286,6 +293,16 @@ describe("messaging plan image boundary helper", () => {
 
     expect(() => verifyMessagingPlanImageBoundary(IMAGE, "openclaw", mock.runner)).toThrow(
       "OpenClaw Teams plugin evidence must be loaded from the managed npm project",
+    );
+  });
+
+  it("rejects an OpenClaw image that renders the retired appPassword field", () => {
+    const config = openClawConfig();
+    config.channels.msteams.appPassword = TEAMS_SECRET_PLACEHOLDER;
+    const mock = successfulDockerRunner("openclaw", openClawInspectReport(), config);
+
+    expect(() => verifyMessagingPlanImageBoundary(IMAGE, "openclaw", mock.runner)).toThrow(
+      "OpenClaw image Teams render must omit appPassword",
     );
   });
 
