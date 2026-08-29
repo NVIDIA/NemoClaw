@@ -64,6 +64,16 @@ describe("OpenClaw agent-output fixture", () => {
     ).toBe("");
   });
 
+  it("accepts conversational text that only mentions tool-call capability", () => {
+    expect(
+      parseOpenClawAgentText(
+        JSON.stringify({
+          payloads: [{ text: "I cannot make tool calls, but the answer is 42." }],
+        }),
+      ),
+    ).toBe("I cannot make tool calls, but the answer is 42.");
+  });
+
   it("centralizes broad legacy envelope traversal without accepting tool output", () => {
     expect(
       parseOpenClawAgentText(

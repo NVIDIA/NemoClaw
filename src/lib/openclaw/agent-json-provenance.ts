@@ -221,7 +221,7 @@ function collectUntrustedChildProvenance(raw: string, docs: unknown[]): string[]
   return lines;
 }
 
-function parseLogPrefixedJsonDocs(raw: string): unknown[] {
+function parseLogPrefixedJsonDocuments(raw: string): unknown[] {
   const docs: unknown[] = [];
   let start: number | null = null;
   let depth = 0;
@@ -256,6 +256,7 @@ function parseLogPrefixedJsonDocs(raw: string): unknown[] {
   return docs;
 }
 
+/** Parse clean or log-prefixed OpenClaw JSON without retrying every candidate suffix. */
 export function parseOpenClawJsonDocuments(raw: string): unknown[] {
   try {
     const parsed = JSON.parse(raw) as unknown;
@@ -270,7 +271,7 @@ export function parseOpenClawJsonDocuments(raw: string): unknown[] {
     // guarantee stable clean JSON framing on stdout.
   }
 
-  return parseLogPrefixedJsonDocs(raw);
+  return parseLogPrefixedJsonDocuments(raw);
 }
 
 function dedupe(lines: string[]): string[] {

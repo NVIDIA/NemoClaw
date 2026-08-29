@@ -326,7 +326,8 @@
       "fast": [
         "test/e2e/support/bedrock-runtime-compatible-anthropic-progress.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/openclaw-agent-output.test.ts"
       ]
     },
     {
@@ -340,7 +341,8 @@
         "src/lib/onboard/policy-resume-selection.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/brave-search-config.test.ts"
+        "test/e2e/support/brave-search-config.test.ts",
+        "test/e2e/support/openclaw-agent-output.test.ts"
       ]
     },
     {
@@ -376,10 +378,15 @@
     },
     {
       "live": "test/e2e/live/common-egress-agent.test.ts",
+      "liveSources": [
+        "test/e2e/live/common-egress-agent-helpers.ts",
+        "test/e2e/live/openclaw-agent-assertion.ts"
+      ],
       "fast": [
+        "test/e2e/support/common-egress-agent-helpers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/common-egress-agent-helpers.test.ts"
+        "test/e2e/support/openclaw-agent-output.test.ts"
       ]
     },
     {
@@ -531,9 +538,11 @@
     },
     {
       "live": "test/e2e/live/messaging-compatible-endpoint.test.ts",
+      "liveSources": ["test/e2e/live/messaging-compatible-endpoint-helpers.ts"],
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/openclaw-agent-output.test.ts"
       ]
     },
     {
@@ -580,7 +589,8 @@
         "src/lib/actions/inference-set-compatible-provider.test.ts",
         "test/e2e/support/compatible-anthropic-switch.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/openclaw-agent-output.test.ts"
       ]
     },
     {
@@ -611,7 +621,8 @@
       "live": "test/e2e/live/openshell-gateway-upgrade.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/openclaw-agent-output.test.ts"
       ]
     },
     {

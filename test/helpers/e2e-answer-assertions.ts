@@ -23,7 +23,9 @@ export function containsToolCallStructure(value: unknown): boolean {
   }
   if (
     typeof record.name === "string" &&
-    ["arguments", "description", "input", "input_schema", "param", "parameters"].some((key) => key in record)
+    ["arguments", "description", "input", "input_schema", "param", "parameters"].some(
+      (key) => key in record,
+    )
   ) {
     return true;
   }
@@ -42,14 +44,12 @@ function containsStructuredToolOutput(text: string): boolean {
 export function containsToolCallOutput(text: string): boolean {
   const trimmed = text.trim();
   const jsonLike = trimmed.replace(/^```(?:json)?\s*/iu, "");
-  const toolBearingText = jsonLike.replace(
-    /"(?:function|function_call|tool_calls)"\s*:\s*(?:null|\[\s*\])/gu,
-    "",
-  );
   const containsJsonToolField =
-    /(?:"(?:function|arguments|parameters|param|input|input_schema|tool_use|tool_calls)")\s*:/u.test(
-      toolBearingText,
-    ) || (/"name"\s*:/u.test(jsonLike) && /"description"\s*:/u.test(jsonLike));
+    /"(?:arguments|input|input_schema|param|parameters|tool_use)"\s*:/u.test(jsonLike) ||
+    /"(?:function|function_call)"\s*:\s*(?!null\b)/u.test(jsonLike) ||
+    /"tool_calls"\s*:\s*(?!null\b|\[\s*\])/u.test(jsonLike) ||
+    /"type"\s*:\s*"(?:function|tool_use)"/u.test(jsonLike) ||
+    (/"name"\s*:/u.test(jsonLike) && /"description"\s*:/u.test(jsonLike));
   return (
     /^tool[ _-]?calls?\s*:/iu.test(trimmed) ||
     containsJsonToolField ||

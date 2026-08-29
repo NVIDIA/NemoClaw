@@ -6,7 +6,32 @@ import { describe, expect, it } from "vitest";
 import {
   openClawAgentIncompleteTurnSignal,
   openClawAgentJsonProvenanceLines,
+  parseOpenClawJsonDocuments,
 } from "./agent-json-provenance";
+
+describe("parseOpenClawJsonDocuments", () => {
+  it("parses clean object and array documents", () => {
+    expect(parseOpenClawJsonDocuments('{"payloads":[{"text":"one"}]}')).toEqual([
+      { payloads: [{ text: "one" }] },
+    ]);
+    expect(parseOpenClawJsonDocuments('[{"text":"one"},{"text":"two"}]')).toEqual([
+      { text: "one" },
+      { text: "two" },
+    ]);
+  });
+
+  it("frames log-prefixed objects and arrays while respecting JSON strings", () => {
+    expect(
+      parseOpenClawJsonDocuments(
+        'progress {not-json}\n{"text":"object with {braces}"}\n[{"text":"array with [brackets]"}]',
+      ),
+    ).toEqual([{ text: "object with {braces}" }, { text: "array with [brackets]" }]);
+  });
+
+  it("ignores malformed and incomplete candidates", () => {
+    expect(parseOpenClawJsonDocuments('progress {not-json}\n{"text":"incomplete"')).toEqual([]);
+  });
+});
 
 describe("openClawAgentJsonProvenanceLines", () => {
   it("returns no provenance for plain successful assistant payloads", () => {
