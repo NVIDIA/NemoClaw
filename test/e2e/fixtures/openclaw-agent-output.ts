@@ -1,10 +1,29 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { containsToolCallStructure } from "../../helpers/e2e-answer-assertions.ts";
+
 export interface OpenClawAgentJsonDocument {
   payloads?: Array<{ text?: unknown }>;
   result?: { meta?: unknown; payloads?: Array<{ text?: unknown }> };
 }
+
+const OPENCLAW_TEXT_KEYS = ["text", "content", "reasoning_content"] as const;
+const OPENCLAW_CONTAINER_KEYS = [
+  "result",
+  "payloads",
+  "payload",
+  "messages",
+  "choices",
+  "message",
+  "delta",
+  "response",
+  "data",
+  "output",
+  "outputs",
+  "items",
+  "segments",
+] as const;
 
 function openClawAgentJsonDocuments(value: unknown): OpenClawAgentJsonDocument[] {
   const values = Array.isArray(value) ? value : [value];
@@ -66,8 +85,45 @@ export function parseOpenClawAgentJsonDocuments(raw: string): OpenClawAgentJsonD
   return documents;
 }
 
+function collectOpenClawAssistantText(value: unknown): string[] {
+  const parts: string[] = [];
+  const visited = new Set<unknown>();
+  const collect = (candidate: unknown): void => {
+    if (candidate == null || visited.has(candidate)) return;
+    visited.add(candidate);
+    if (typeof candidate === "string") {
+      if (candidate.trim()) parts.push(candidate.trim());
+      return;
+    }
+    if (Array.isArray(candidate)) {
+      candidate.forEach(collect);
+      return;
+    }
+    if (typeof candidate !== "object") return;
+
+    const record = candidate as Record<string, unknown>;
+    for (const key of OPENCLAW_TEXT_KEYS) collect(record[key]);
+    for (const key of OPENCLAW_CONTAINER_KEYS) collect(record[key]);
+  };
+
+  collect(value);
+  return parts;
+}
+
+export function parseOpenClawBroadAgentTextParts(raw: string): string[] {
+  const documents = parseOpenClawAgentJsonDocuments(raw);
+  if (documents.some(containsToolCallStructure)) return [];
+  return documents.flatMap(collectOpenClawAssistantText);
+}
+
+export function parseOpenClawBroadAgentText(raw: string): string {
+  return parseOpenClawBroadAgentTextParts(raw).join("\n");
+}
+
 export function parseOpenClawAgentText(raw: string): string {
-  return parseOpenClawAgentJsonDocuments(raw)
+  const documents = parseOpenClawAgentJsonDocuments(raw);
+  if (documents.some(containsToolCallStructure)) return "";
+  return documents
     .flatMap((document) => document.payloads ?? document.result?.payloads ?? [])
     .map((payload) => payload.text)
     .filter((value): value is string => typeof value === "string")

@@ -5,9 +5,9 @@ export function compactAnswerText(text: string): string {
   return text.replace(/\s+/g, "");
 }
 
-function containsToolCallValue(value: unknown): boolean {
+export function containsToolCallStructure(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
-  if (Array.isArray(value)) return value.some(containsToolCallValue);
+  if (Array.isArray(value)) return value.some(containsToolCallStructure);
 
   const record = value as Record<string, unknown>;
   if (record.type === "tool_use" || "function" in record || "tool_calls" in record) return true;
@@ -17,13 +17,13 @@ function containsToolCallValue(value: unknown): boolean {
   ) {
     return true;
   }
-  return Object.values(record).some(containsToolCallValue);
+  return Object.values(record).some(containsToolCallStructure);
 }
 
 function containsStructuredToolOutput(text: string): boolean {
   try {
     const value = JSON.parse(text.trim()) as unknown;
-    return containsToolCallValue(value);
+    return containsToolCallStructure(value);
   } catch {
     return false;
   }

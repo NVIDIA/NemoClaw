@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  parseOpenClawBroadAgentText,
   parseOpenClawAgentJsonDocuments,
   parseOpenClawAgentText,
 } from "../fixtures/openclaw-agent-output.ts";
@@ -35,6 +36,47 @@ describe("OpenClaw agent-output fixture", () => {
         }),
       ),
     ).toBe("NEMOCLAW_\nE2E_READY_6002");
+  });
+
+  it("rejects an answer-bearing envelope that also contains tool-call structure", () => {
+    expect(
+      parseOpenClawAgentText(
+        JSON.stringify({
+          payloads: [{ text: "56" }],
+          tool_calls: [{ function: { name: "calculator", arguments: '{"value":56}' } }],
+        }),
+      ),
+    ).toBe("");
+    expect(
+      parseOpenClawAgentText(
+        JSON.stringify({
+          result: { payloads: [{ text: "56" }] },
+          function: { name: "calculator", parameters: { value: 56 } },
+        }),
+      ),
+    ).toBe("");
+  });
+
+  it("centralizes broad legacy envelope traversal without accepting tool output", () => {
+    expect(
+      parseOpenClawBroadAgentText(
+        JSON.stringify({
+          response: {
+            choices: [
+              { message: { content: "Final reply." } },
+              { delta: { reasoning_content: "Reasoning fragment." } },
+            ],
+          },
+        }),
+      ),
+    ).toBe("Final reply.\nReasoning fragment.");
+    expect(
+      parseOpenClawBroadAgentText(
+        JSON.stringify({
+          output: { content: "56", tool_calls: [{ name: "calculator", input: { value: 56 } }] },
+        }),
+      ),
+    ).toBe("");
   });
 
   it("frames consecutive documents without treating braces in strings as structure", () => {

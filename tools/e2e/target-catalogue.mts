@@ -732,6 +732,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "authenticated",
     restoreCli: true,
     exposeCliBin: true,
+    selector: "^GPU.Ollama.onboard.+sandbox.inference$",
     environment: {
       ...nonInteractive,
       NEMOCLAW_MODEL: "qwen3.5:9b",
@@ -754,6 +755,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     exposeCliBin: true,
     hostPreparation: "hermes-swap",
     runnerComparison: true,
+    testFile: "test/e2e/live/gpu-e2e.test.ts",
+    owningPaths: ["test/e2e/live/hermes-cli-adapter-live.ts"],
+    selector: "^Hermes.rejects.tool-call.output.+GPU.Ollama.replies.+10215.$",
     environment: {
       ...nonInteractive,
       NEMOCLAW_AGENT: "hermes",

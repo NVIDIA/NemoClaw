@@ -10,7 +10,7 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
-import { parseOpenClawAgentJsonDocuments } from "../fixtures/openclaw-agent-output.ts";
+import { parseOpenClawBroadAgentTextParts } from "../fixtures/openclaw-agent-output.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
@@ -83,37 +83,8 @@ export async function cleanupBraveNemoClawSandbox(host: HostCliClient): Promise<
   ).toBe(true);
 }
 
-function collectAssistantText(value: unknown): string[] {
-  if (typeof value === "string" && value.trim()) return [value.trim()];
-  if (!value || typeof value !== "object") return [];
-  if (Array.isArray(value)) return value.flatMap(collectAssistantText);
-  const record = value as Record<string, unknown>;
-  const texts: string[] = [];
-  for (const key of [
-    "result",
-    "payloads",
-    "payload",
-    "messages",
-    "choices",
-    "message",
-    "delta",
-    "content",
-    "reasoning_content",
-    "response",
-    "data",
-    "output",
-    "outputs",
-    "items",
-    "segments",
-    "text",
-  ]) {
-    if (key in record) texts.push(...collectAssistantText(record[key]));
-  }
-  return texts;
-}
-
 export function extractOpenClawAgentText(output: string): string {
-  return parseOpenClawAgentJsonDocuments(output).flatMap(collectAssistantText)[0] ?? "";
+  return parseOpenClawBroadAgentTextParts(output)[0] ?? "";
 }
 
 export function assertDockerAvailable(

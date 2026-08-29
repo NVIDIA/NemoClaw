@@ -228,9 +228,7 @@ describe("E2E workflow plan", () => {
     expect(selectedWorkflowJobs(plan)).toEqual(["catalogue-nvidia-api"]);
   });
 
-  it.each(["hermes-slack", "openclaw-inference-switch", "sandbox-operations"])(
-    "preserves the profile, timeout, install mode, packages, and environment for migrated targets [%s]",
-    (target) => {
+  it("preserves the profile, timeout, install mode, packages, and environment for migrated targets", () => {
       expect(catalogueTarget("gateway-guard-recovery")).toMatchObject({
         profile: "nvidia-inference",
         timeoutMinutes: 45,
@@ -388,9 +386,10 @@ describe("E2E workflow plan", () => {
       );
       const retainedJobs = readFreeStandingJobsInventory().allowedJobs;
 
-      expect(retainedJobs).not.toContain(target);
-    },
-  );
+    expect(retainedJobs).not.toEqual(
+      expect.arrayContaining(["hermes-slack", "openclaw-inference-switch", "sandbox-operations"]),
+    );
+  });
 
   it.each([
     [
@@ -703,6 +702,14 @@ describe("E2E workflow plan", () => {
       gpuHermesResponse.runner,
       llamaCpp.runner,
     ]).toEqual([expectedRunner, expectedRunner, expectedRunner, expectedRunner]);
+    expect(gpuE2e).toMatchObject({
+      selector: "^GPU.Ollama.onboard.+sandbox.inference$",
+      testFile: "test/e2e/live/gpu-e2e.test.ts",
+    });
+    expect(gpuHermesResponse).toMatchObject({
+      selector: "^Hermes.rejects.tool-call.output.+GPU.Ollama.replies.+10215.$",
+      testFile: "test/e2e/live/gpu-e2e.test.ts",
+    });
     expect(llamaCpp.environment).toEqual(
       expect.objectContaining({
         NEMOCLAW_LLAMACPP_RECIPE: "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",
