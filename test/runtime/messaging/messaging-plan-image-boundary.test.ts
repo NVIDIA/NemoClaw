@@ -6,7 +6,6 @@ import {
   createMessagingBoundaryPlan,
   encodeMessagingBoundaryPlan,
   FULL_PLAN_ONLY_SENTINEL,
-  HERMES_AIOHTTP_PACKAGE_SPEC,
   HERMES_TEAMS_PACKAGE_SPEC,
   OPENCLAW_TEAMS_PACKAGE_SPEC,
   OPENCLAW_TEAMS_PACKAGE_VERSION,
@@ -52,7 +51,18 @@ function reducedArtifact(agent: Agent): string {
               },
             ]
           : [],
-      envAliases: [],
+      envAliases:
+        agent === "hermes"
+          ? [
+              {
+                channelId: "teams",
+                envKey: "MSTEAMS_APP_PASSWORD",
+                targetEnvKey: "TEAMS_CLIENT_SECRET",
+                match: "^openshell:resolve:env:v[0-9]+_MSTEAMS_APP_PASSWORD$",
+                value: TEAMS_SECRET_PLACEHOLDER,
+              },
+            ]
+          : [],
       secretScans: [],
     },
   });
@@ -144,7 +154,6 @@ function successfulDockerRunner(agent: Agent, openClawInspect = openClawInspectR
               status: 0,
               stdout: [
                 `TEAMS_CLIENT_ID=${TEAMS_APP_ID}`,
-                `TEAMS_CLIENT_SECRET=${TEAMS_SECRET_PLACEHOLDER}`,
                 `TEAMS_TENANT_ID=${TEAMS_TENANT_ID}`,
                 "TEAMS_PORT=3978",
                 "",
@@ -225,7 +234,6 @@ describe("messaging plan image boundary helper", () => {
     expect(planSpecs).toEqual(manifestSpecs);
     expect(OPENCLAW_TEAMS_PACKAGE_SPEC).toBe("npm:@openclaw/msteams@{{openclaw.version}}");
     expect(HERMES_TEAMS_PACKAGE_SPEC).toBe("microsoft-teams-apps==2.0.13.4");
-    expect(HERMES_AIOHTTP_PACKAGE_SPEC).toBe("aiohttp==3.14.3");
   });
 
   it("emits agent-specific Teams render, install, and runtime outputs", () => {
@@ -253,16 +261,22 @@ describe("messaging plan image boundary helper", () => {
     expect(hermes.agentRender).toEqual([
       expect.objectContaining({
         target: "~/.hermes/.env",
-        lines: expect.arrayContaining([
-          `TEAMS_CLIENT_ID=${TEAMS_APP_ID}`,
-          `TEAMS_CLIENT_SECRET=${TEAMS_SECRET_PLACEHOLDER}`,
-        ]),
+        lines: expect.arrayContaining([`TEAMS_CLIENT_ID=${TEAMS_APP_ID}`]),
       }),
       expect.objectContaining({ target: "~/.hermes/config.yaml", path: "platforms.teams" }),
     ]);
+    expect(JSON.stringify(hermes.agentRender)).not.toContain("TEAMS_CLIENT_SECRET=");
+    expect(hermes.runtimeSetup.envAliases).toEqual([
+      {
+        channelId: "teams",
+        envKey: "MSTEAMS_APP_PASSWORD",
+        targetEnvKey: "TEAMS_CLIENT_SECRET",
+        match: "^openshell:resolve:env:v[0-9]+_MSTEAMS_APP_PASSWORD$",
+        value: TEAMS_SECRET_PLACEHOLDER,
+      },
+    ]);
     expect(hermes.buildSteps.map((step: any) => step.value.spec)).toEqual([
       HERMES_TEAMS_PACKAGE_SPEC,
-      HERMES_AIOHTTP_PACKAGE_SPEC,
     ]);
   });
 

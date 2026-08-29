@@ -32,7 +32,8 @@ WeChat is DM-only with `allowIdsMode: "dm"`.
 NemoClaw adds the operator who scanned the QR to `WECHAT_ALLOWED_IDS` automatically.
 
 You can append more comma-separated WeChat user IDs through the same variable.
-Set `NEMOCLAW_WECHAT_QUIET=1` after the flow is stable if you want to silence host-side `[wechat]` diagnostics such as poll status and IDC redirects.
+If you want to suppress host-side QR-login diagnostics, set `NEMOCLAW_WECHAT_QUIET=1` before `$$nemoclaw onboard` or `$$nemoclaw <sandbox> channels add wechat`.
+This setting suppresses `[wechat]` messages about poll status and IDC redirects, but not in-sandbox WeChat diagnostics.
 
 Tencent's iLink gateway is a third-party service.
 Review your organization's terms-of-service, compliance, and data-residency constraints before enabling WeChat.

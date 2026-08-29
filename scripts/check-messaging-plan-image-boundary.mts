@@ -144,7 +144,6 @@ export function createMessagingBoundaryPlan(agent: unknown) {
         target: "~/.hermes/.env",
         lines: [
           `TEAMS_CLIENT_ID=${TEAMS_APP_ID}`,
-          `TEAMS_CLIENT_SECRET=${TEAMS_SECRET_PLACEHOLDER}`,
           `TEAMS_TENANT_ID=${TEAMS_TENANT_ID}`,
           "TEAMS_PORT=3978",
         ],
@@ -167,15 +166,20 @@ export function createMessagingBoundaryPlan(agent: unknown) {
         required: true,
         value: { manager: "hermes-uv-pip", spec: HERMES_TEAMS_PACKAGE_SPEC },
       },
-      {
-        channelId: "teams",
-        kind: "package-install",
-        outputId: "hermesAiohttpPackage",
-        required: true,
-        value: { manager: "hermes-uv-pip", spec: HERMES_AIOHTTP_PACKAGE_SPEC },
-      },
     ],
-    runtimeSetup: { nodePreloads: [], envAliases: [], secretScans: [] },
+    runtimeSetup: {
+      nodePreloads: [],
+      envAliases: [
+        {
+          channelId: "teams",
+          envKey: "MSTEAMS_APP_PASSWORD",
+          targetEnvKey: "TEAMS_CLIENT_SECRET",
+          match: "^openshell:resolve:env:v[0-9]+_MSTEAMS_APP_PASSWORD$",
+          value: TEAMS_SECRET_PLACEHOLDER,
+        },
+      ],
+      secretScans: [],
+    },
   };
 }
 
@@ -238,7 +242,9 @@ export function verifyMessagingPlanImageBoundary(
 }
 
 function assertReducedRuntimeArtifact(text: string, agent: MessagingBoundaryAgent): void {
-  assertDoesNotContainFullPlanData("reduced runtime plan", text);
+  assertDoesNotContainFullPlanData("reduced runtime plan", text, {
+    allowPlaceholder: agent === "hermes",
+  });
   const artifact = parseJson(text, "reduced runtime plan");
   if (
     !isObject(artifact) ||
@@ -338,7 +344,7 @@ function assertReducedRuntimeArtifact(text: string, agent: MessagingBoundaryAgen
   );
   assertRuntimeSetupEntryAllowlist(
     runtimeSetup.envAliases,
-    ["channelId", "envKey", "match", "value", "message"],
+    ["channelId", "envKey", "targetEnvKey", "match", "value", "message"],
     "envAliases",
   );
   assertRuntimeSetupEntryAllowlist(
@@ -346,8 +352,8 @@ function assertReducedRuntimeArtifact(text: string, agent: MessagingBoundaryAgen
     ["channelId", "path", "pattern", "message", "exitCode"],
     "secretScans",
   );
-  if (runtimeSetup.envAliases.length !== 0 || runtimeSetup.secretScans.length !== 0) {
-    throw new Error("reduced runtime plan contains unexpected Teams runtime setup entries");
+  if (runtimeSetup.secretScans.length !== 0) {
+    throw new Error("reduced runtime plan contains unexpected Teams secret scans");
   }
   if (agent === "openclaw") {
     const [preload] = runtimeSetup.nodePreloads;
@@ -363,8 +369,23 @@ function assertReducedRuntimeArtifact(text: string, agent: MessagingBoundaryAgen
     ) {
       throw new Error("reduced runtime plan does not contain the sanitized Teams node preload");
     }
-  } else if (runtimeSetup.nodePreloads.length !== 0) {
-    throw new Error("Hermes reduced runtime plan unexpectedly contains node preloads");
+    if (runtimeSetup.envAliases.length !== 0) {
+      throw new Error("OpenClaw reduced runtime plan unexpectedly contains environment aliases");
+    }
+  } else {
+    const [alias] = runtimeSetup.envAliases;
+    if (
+      runtimeSetup.nodePreloads.length !== 0 ||
+      runtimeSetup.envAliases.length !== 1 ||
+      !isObject(alias) ||
+      alias.channelId !== "teams" ||
+      alias.envKey !== "MSTEAMS_APP_PASSWORD" ||
+      alias.targetEnvKey !== "TEAMS_CLIENT_SECRET" ||
+      alias.match !== "^openshell:resolve:env:v[0-9]+_MSTEAMS_APP_PASSWORD$" ||
+      alias.value !== TEAMS_SECRET_PLACEHOLDER
+    ) {
+      throw new Error("Hermes reduced runtime plan is missing the Teams credential alias");
+    }
   }
 }
 
@@ -449,16 +470,16 @@ function assertOpenClawEvidence(runner: DockerRunner, image: string): void {
 function assertHermesEvidence(runner: DockerRunner, image: string): void {
   const envText = readImageFile(runner, image, HERMES_ENV_PATH);
   assertDoesNotContainFullPlanData("Hermes rendered .env", envText, {
-    allowPlaceholder: true,
     allowRenderedConfig: true,
   });
   const renderedEnv = parseEnvFile(envText);
   if (
     renderedEnv.TEAMS_CLIENT_ID !== TEAMS_APP_ID ||
-    renderedEnv.TEAMS_CLIENT_SECRET !== TEAMS_SECRET_PLACEHOLDER ||
-    renderedEnv.TEAMS_TENANT_ID !== TEAMS_TENANT_ID
+    renderedEnv.TEAMS_TENANT_ID !== TEAMS_TENANT_ID ||
+    renderedEnv.TEAMS_PORT !== "3978" ||
+    Object.hasOwn(renderedEnv, "TEAMS_CLIENT_SECRET")
   ) {
-    throw new Error("Hermes image is missing the expected Teams .env render output");
+    throw new Error("Hermes image has unexpected Teams .env render output");
   }
 
   const yaml = readImageFile(runner, image, HERMES_CONFIG_PATH);
