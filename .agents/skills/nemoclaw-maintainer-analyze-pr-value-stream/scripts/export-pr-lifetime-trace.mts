@@ -92,7 +92,6 @@ type TraceEvent = {
 type Commit = {
   oid: string;
   authoredAt: number;
-  committedAt: number;
   subject: string;
 };
 
@@ -101,7 +100,6 @@ type Run = {
   event: string;
   head_sha: string;
   created_at: string;
-  run_started_at: string | null;
   updated_at: string;
   status: string;
   conclusion: string | null;
@@ -282,7 +280,6 @@ function normalizeCommits(pull: any): Commit[] {
   return rows.map((commit: any) => ({
     oid: validateObjectId(commit?.oid),
     authoredAt: parseTime(commit?.authoredDate ?? commit?.committedDate, "commit authoredDate"),
-    committedAt: parseTime(commit?.committedDate, "commit committedDate"),
     subject:
       boundedText(commit?.messageHeadline, 200) ||
       "Commit " + String(commit?.oid ?? "").slice(0, 8),
@@ -297,7 +294,7 @@ async function readPull(input: ExportInput): Promise<any> {
     "--repo",
     input.repository,
     "--json",
-    "number,url,state,isDraft,createdAt,mergedAt,updatedAt,author,assignees,baseRefName,headRefName,headRefOid,commits,reviews",
+    "number,url,state,isDraft,createdAt,mergedAt,updatedAt,author,headRefOid,commits,reviews",
   ]);
   const pull = JSON.parse(result.stdout);
   if (pull?.number !== input.number || typeof pull?.url !== "string")
@@ -315,7 +312,7 @@ async function readRuns(
       endpoint:
         "repos/" + input.repository + "/actions/runs?head_sha=" + encodeURIComponent(commit.oid),
       projection:
-        "[.workflow_runs[] | {id,event,head_sha,created_at,run_started_at,updated_at,status,conclusion,name,html_url}]",
+        "[.workflow_runs[] | {id,event,head_sha,created_at,updated_at,status,conclusion,name,html_url}]",
       label: "workflow runs",
     });
     if (collection.truncated)
@@ -336,7 +333,7 @@ async function readJobs(input: ExportInput, runs: Run[]): Promise<any[]> {
       "api",
       "repos/" + input.repository + "/actions/runs/" + run.id + "/jobs?filter=all&per_page=100",
       "--jq",
-      "{total_count,jobs:[.jobs[] | {id,name,status,conclusion,created_at,started_at,completed_at,runner_name,runner_group_name,labels,html_url,steps}]}",
+      "{total_count,jobs:[.jobs[] | {id,name,status,conclusion,created_at,started_at,completed_at,runner_name,runner_group_name,html_url,steps}]}",
     ]);
     const payload = JSON.parse(result.stdout);
     const jobs = validateArray(payload?.jobs, "workflow jobs");
