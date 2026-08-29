@@ -394,9 +394,9 @@ export async function cleanupTurnSandboxes(
     progress,
   );
   await runCleanupStep(
-    "destroy OpenShell gateway",
+    "remove OpenShell gateway",
     () =>
-      sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
+      host.cleanupGatewayRegistration("nemoclaw", {
         artifactName: "cleanup-gateway-destroy-turn-latency",
         env: buildAvailabilityProbeEnv(),
         onOutput: progress?.onOutput,

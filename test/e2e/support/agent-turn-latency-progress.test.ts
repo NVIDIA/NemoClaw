@@ -347,8 +347,9 @@ describe("live test progress", () => {
 
   it("reports each pre-clean boundary and closes its heartbeat activity", async () => {
     const command = vi.fn<HostCliClient["command"]>(async () => successfulProbe());
+    const cleanupGatewayRegistration = vi.fn(async () => undefined);
     const openshell = vi.fn<SandboxClient["openshell"]>(async () => successfulProbe());
-    const host = { command } as unknown as HostCliClient;
+    const host = { cleanupGatewayRegistration, command } as unknown as HostCliClient;
     const sandbox = { openshell } as unknown as SandboxClient;
     const activityFinishes: ReturnType<typeof vi.fn>[] = [];
     const progress = {
@@ -364,14 +365,21 @@ describe("live test progress", () => {
     await cleanupTurnSandboxes(host, sandbox, fakeInference(), progress);
 
     expect(command).toHaveBeenCalledTimes(2);
-    expect(openshell).toHaveBeenCalledTimes(4);
+    expect(openshell).toHaveBeenCalledTimes(3);
+    expect(cleanupGatewayRegistration).toHaveBeenCalledWith(
+      "nemoclaw",
+      expect.objectContaining({
+        artifactName: "cleanup-gateway-destroy-turn-latency",
+        timeoutMs: 60_000,
+      }),
+    );
     expect(progress.activity.mock.calls).toEqual([
       ["cleanup: destroy openclaw sandbox"],
       ["cleanup: delete openclaw sandbox"],
       ["cleanup: destroy hermes sandbox"],
       ["cleanup: delete hermes sandbox"],
       ["cleanup: stop Hermes API forward"],
-      ["cleanup: destroy OpenShell gateway"],
+      ["cleanup: remove OpenShell gateway"],
     ]);
     expect(progress.event.mock.calls).toEqual([
       ["destroy openclaw sandbox started"],
@@ -384,8 +392,8 @@ describe("live test progress", () => {
       ["delete hermes sandbox passed"],
       ["stop Hermes API forward started"],
       ["stop Hermes API forward passed"],
-      ["destroy OpenShell gateway started"],
-      ["destroy OpenShell gateway passed"],
+      ["remove OpenShell gateway started"],
+      ["remove OpenShell gateway passed"],
     ]);
     expect(activityFinishes).toHaveLength(6);
     activityFinishes.forEach((finish) => {
@@ -395,6 +403,7 @@ describe("live test progress", () => {
 
   it("accepts absent OpenShell sandboxes during idempotent pre-clean", async () => {
     const command = vi.fn<HostCliClient["command"]>(async () => successfulProbe());
+    const cleanupGatewayRegistration = vi.fn(async () => undefined);
     const openshell = vi
       .fn<SandboxClient["openshell"]>()
       .mockResolvedValueOnce(
@@ -404,13 +413,14 @@ describe("live test progress", () => {
       )
       .mockResolvedValueOnce(failedProbe("no such sandbox"))
       .mockResolvedValue(successfulProbe());
-    const host = { command } as unknown as HostCliClient;
+    const host = { cleanupGatewayRegistration, command } as unknown as HostCliClient;
     const sandbox = { openshell } as unknown as SandboxClient;
 
     await expect(cleanupTurnSandboxes(host, sandbox, fakeInference())).resolves.toBeUndefined();
 
     expect(command).toHaveBeenCalledTimes(2);
-    expect(openshell).toHaveBeenCalledTimes(4);
+    expect(openshell).toHaveBeenCalledTimes(3);
+    expect(cleanupGatewayRegistration).toHaveBeenCalledOnce();
   });
 
   it("aborts pre-clean on a nonzero command and identifies its redacted artifact", async () => {
