@@ -85,6 +85,10 @@ const MAX_INSTALLER_INPUT_BYTES = 1024 * 1024;
 // operational template. Its exact prospective digests are repeated only for
 // release records that can select that same template; dependent installer
 // hash tests execute the corresponding release and qualification fixtures.
+// The shared gateway state resolver likewise changes the version-independent
+// supervisor runtime template. Its prospective digest is repeated only for
+// release records with a supervisor identity, and its trust test constructs
+// the exact follow-up template before the runtime change can land.
 const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
   {
     brevTemplateSha256: ["c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a"],

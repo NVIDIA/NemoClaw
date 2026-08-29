@@ -247,6 +247,11 @@
       "category": "security"
     },
     {
+      "file": "test/install/installer-supervisor-manifest-trust.test.ts",
+      "test": "accepts the prospective shared gateway state resolver template (#10544)",
+      "category": "security"
+    },
+    {
       "file": "test/mcp/mcp-tool-discovery-image-contract.test.ts",
       "test": "pins the reviewed image runtime artifacts exactly",
       "category": "security"
