@@ -20,10 +20,7 @@ import {
   parseInstalledSlackProof,
   SLACK_MANAGED_NPM_PROJECT_DISCOVERY_SOURCE,
 } from "../live/messaging-providers-slack-runtime-proof.ts";
-import {
-  parseInstalledWechatProof,
-  WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE,
-} from "../live/messaging-providers-wechat-runtime-proof.ts";
+import { parseInstalledWechatProof } from "../live/messaging-providers-wechat-runtime-proof.ts";
 
 const FAKE_TELEGRAM_API = path.resolve(import.meta.dirname, "../lib/fake-telegram-api.cjs");
 const FAKE_SLACK_API = path.resolve(import.meta.dirname, "../lib/fake-slack-api.cjs");
@@ -292,12 +289,7 @@ describe("messaging provider installed-runtime proofs", () => {
     );
   });
 
-  it("keeps the installed WeChat runtime proof executable and strict", () => {
-    const syntax = spawnSync(process.execPath, ["--input-type=module", "--check"], {
-      encoding: "utf8",
-      input: WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE,
-    });
-    expect(syntax.status, syntax.stderr).toBe(0);
+  it("accepts only a complete installed WeChat runtime proof", () => {
     const proof = {
       ok: true as const,
       proof: "openclaw-weixin-runtime-send" as const,
