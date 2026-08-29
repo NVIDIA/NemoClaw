@@ -271,6 +271,31 @@ function identityFromConfig(config: string): string {
 }
 
 describe("created DCode sandbox finalization", () => {
+  it("refuses a changed pre-upgrade snapshot before sandbox creation (#10546)", () => {
+    vi.spyOn(sandboxState, "getLatestBackup").mockReturnValue({
+      backupPath: "/tmp/newer-backup",
+    } as ReturnType<typeof sandboxState.getLatestBackup>);
+    const completionArgs = [
+      "openclaw",
+      "/tmp/selected-backup",
+      "/tmp/selected-backup",
+      null,
+      null,
+      { customOpenClawImage: false, isManagedDcodeAgent: false },
+      {
+        provider: "compatible-endpoint",
+        model: "demo",
+        preferredInferenceApi: "openai-completions",
+        endpointUrl: null,
+      },
+      { createIntent: null, resolvedCreateIntent: {} },
+    ] as unknown as Parameters<typeof createOnboardCreatedSandboxCompletion>;
+
+    expect(() => createOnboardCreatedSandboxCompletion(...completionArgs)).toThrow(
+      /Selected restore snapshot.*changed before sandbox creation/u,
+    );
+  });
+
   it("merges stale backup preferences before live validation and registry publication (#6311)", () => {
     const fixture = makeRestoreFixture();
     const order: string[] = [];
@@ -848,6 +873,63 @@ describe("created OpenClaw sandbox finalization", () => {
       freshOpenClawImagePluginInstalls: pluginInstalls,
     });
     expect(register).toHaveBeenCalledWith(pluginInstalls);
+  });
+
+  it("restores through a revalidated target row before publishing it (#10546)", () => {
+    const order: string[] = [];
+    const prepared = { name: "openclaw" } as SandboxEntry;
+    const register = vi.fn((_plugins, target) => {
+      order.push("register");
+      expect(target).toBe(prepared);
+      return target;
+    });
+
+    const result = finalizeCreatedSandbox(
+      {
+        sandboxName: "openclaw",
+        restoreBackupPath: "/tmp/managed-openclaw-backup",
+        preUpgradeBackup: true,
+        targetAgentType: "openclaw",
+        validateManagedDcode: false,
+        provider: "compatible-endpoint",
+        model: "demo",
+        preferredInferenceApi: "openai-completions",
+      },
+      {
+        discoverFreshOpenClawImagePluginInstalls: vi.fn(),
+        prepareRegistration: () => {
+          order.push("prepare");
+          return prepared;
+        },
+        revalidatePreparedRegistration: (target) => {
+          order.push("revalidate");
+          expect(target).toBe(prepared);
+          return target;
+        },
+        restoreRecreatedSandboxState: (_name, _backupPath, _options, resolveTarget) => {
+          order.push("restore");
+          expect(resolveTarget?.()).toBe(prepared);
+          return {
+            success: true,
+            restoredDirs: ["workspace"],
+            failedDirs: [],
+            restoredFiles: [],
+            failedFiles: [],
+          };
+        },
+        getDcodeSelectionDrift: vi.fn(),
+        register,
+        note: vi.fn(),
+        error: vi.fn(),
+        exitProcess: (code): never => {
+          throw new Error(`exit ${code}`);
+        },
+      },
+    );
+
+    expect(result).toBe(prepared);
+    expect(order).toEqual(["prepare", "restore", "revalidate", "register"]);
+    expect(register).toHaveBeenCalledWith(undefined, prepared);
   });
 
   it("defers managed restore before unregistered target authority can be bound", () => {

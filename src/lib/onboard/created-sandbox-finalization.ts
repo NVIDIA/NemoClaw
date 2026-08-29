@@ -3,7 +3,9 @@
 
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-
+import { restoreRecreatedSandboxStateWithManagedAuthority } from "../actions/sandbox/snapshot/restore-authority";
+import * as buildContext from "../build-context";
+import { resolveSandboxImageTagFromCreateOutput } from "../domain/sandbox/image-tag";
 import type {
   OpenClawImagePluginInstall,
   OpenClawManagedExtensionDiscoveryResult,
@@ -12,38 +14,39 @@ import * as openClawPluginRestore from "../state/openclaw-plugin-restore";
 import type { SandboxEntry, SandboxGpuProofResult } from "../state/registry";
 import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
 import type { SandboxWorkloadReceipt } from "../state/registry/types";
+import * as sandboxState from "../state/sandbox";
 import {
   MANAGED_SNAPSHOT_RESTORE_AUTHORITY_ERROR,
   OPENCLAW_IMAGE_PLUGIN_PROVENANCE_RESTORE_ERROR,
   type RecreatedSandboxRestoreOptions,
   type RestoreResult,
 } from "../state/sandbox";
-import * as sandboxState from "../state/sandbox";
-import * as buildContext from "../build-context";
-import { resolveSandboxImageTagFromCreateOutput } from "../domain/sandbox/image-tag";
-import { restoreDefaultAfterRecreate } from "./default-preservation";
 import { createDcodeSelectionDriftReader } from "./dcode-selection-drift";
+import { restoreDefaultAfterRecreate } from "./default-preservation";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
-import type { HermesDashboardOnboardState } from "./hermes-dashboard";
 import type { HermesPortableConfiguredReceipt } from "./experimental/hermes-portable-receipt";
+import type { HermesDashboardOnboardState } from "./hermes-dashboard";
 import { warnIfLandlockUnsupported } from "./landlock-warning";
 import * as managedWorkloadOnboard from "./managed-workload/onboard-orchestration";
 import { printMessagingProviderMissing } from "./preflight-messages";
 import { pendingSandboxPolicyVerificationForBoundary } from "./sandbox-create/policy-creation-receipt";
 import type { SandboxGpuCreateFlowResult } from "./sandbox-gpu-create-flow";
-import type { VerifiedSandboxPolicyBoundary, VerifiedSandboxPolicyRegistration } from "./types";
-import type { SelectionDrift } from "./selection-drift";
-import { applyOnboardVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
-import {
-  creationFidelity,
-  registerCreatedSandbox,
-  selection,
-  type CreatedSandboxRegistrationInput,
-} from "./sandbox-registration";
 import type {
   CreatedSandboxLifecycle,
   CreatedSandboxLifecycleRegistration,
 } from "./sandbox-recreate-transaction";
+import {
+  type CreatedSandboxRegistrationInput,
+  creationFidelity,
+  prepareCreatedSandboxRegistration,
+  registerCreatedSandbox,
+  registerPreparedCreatedSandbox,
+  revalidatePreparedCreatedSandboxRegistration,
+  selection,
+} from "./sandbox-registration";
+import type { SelectionDrift } from "./selection-drift";
+import type { VerifiedSandboxPolicyBoundary, VerifiedSandboxPolicyRegistration } from "./types";
+import { applyOnboardVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 
 export type CreatedSandboxFinalizationOptions = {
   sandboxName: string;
@@ -69,6 +72,7 @@ export type CreatedSandboxFinalizationDeps = {
     sandboxName: string,
     backupPath: string,
     options: RecreatedSandboxRestoreOptions,
+    resolveTarget?: () => SandboxEntry,
   ): RestoreResult;
   getDcodeSelectionDrift(
     sandboxName: string,
@@ -77,8 +81,16 @@ export type CreatedSandboxFinalizationDeps = {
     preferredInferenceApi: string | null,
     endpointUrl: string | null,
   ): SelectionDrift;
+  prepareRegistration?(
+    openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
+  ): SandboxEntry;
+  revalidatePreparedRegistration?(
+    prepared: SandboxEntry,
+    openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
+  ): SandboxEntry;
   register(
     openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
+    prepared?: SandboxEntry,
   ): SandboxEntry | void;
   note(message: string): void;
   error(message: string): void;
@@ -154,9 +166,12 @@ export interface CreatedSandboxCompletionOptions {
 
 export interface CreatedSandboxCompletionDeps extends Omit<
   CreatedSandboxFinalizationDeps,
-  "register"
+  "prepareRegistration" | "register" | "revalidatePreparedRegistration"
 > {
+  readonly prepareCreatedSandboxRegistration?: typeof prepareCreatedSandboxRegistration;
   readonly registerCreatedSandbox?: typeof registerCreatedSandbox;
+  readonly registerPreparedCreatedSandbox?: typeof registerPreparedCreatedSandbox;
+  readonly revalidatePreparedCreatedSandboxRegistration?: typeof revalidatePreparedCreatedSandboxRegistration;
 }
 
 export interface CreatedSandboxCompletionActions {
@@ -466,54 +481,85 @@ export function createCreatedSandboxCompletionActions(
         `publishing sandbox '${options.finalization.sandboxName}' registry authority`,
       );
       const verifiedPolicyRegistration = verifiedPolicyBoundary.registration;
+      const registrationInput = (
+        openclawImagePluginInstalls: readonly OpenClawImagePluginInstall[] | undefined,
+        revalidateLifecycle: boolean,
+      ): CreatedSandboxRegistrationInput => {
+        const currentLifecycle = revalidateLifecycle
+          ? lifecycle.revalidate(finalLifecycle)
+          : finalLifecycle;
+        assertVerifiedPolicyBoundaryMatchesLifecycle(
+          verifiedPolicyBoundary,
+          options.finalization.sandboxName,
+          options.registration.gatewayName,
+          options.registration.gatewayPort,
+          currentLifecycle,
+        );
+        const verifiedCreate = options.policy.getVerifiedCreateRegistrationAuthority();
+        assertVerifiedCreateMatchesPolicyBoundary(verifiedPolicyBoundary, verifiedCreate);
+        const verifiedInferenceRouteReservation = verifiedCreate.reservation;
+        if (
+          inferenceRouteReservation &&
+          !isDeepStrictEqual(inferenceRouteReservation, verifiedInferenceRouteReservation)
+        ) {
+          throw new Error(
+            "Sandbox registration inference route differs from its verified create reservation.",
+          );
+        }
+        return {
+          ...options.registration,
+          inferenceSelection: verifiedInferenceRouteReservation.authority.selection,
+          runtimeFields: {
+            ...options.registration.runtimeFields,
+            sandboxGpuProof:
+              options.gpu.config.sandboxGpuProof ??
+              options.registration.runtimeFields.sandboxGpuProof,
+            openshellVersion:
+              configuredReceipt?.openshellExecutableAuthority.version ??
+              options.registration.runtimeFields.openshellVersion,
+          },
+          hermesPortableLifecycle: configuredReceipt !== null,
+          imageTag: resolved.resolvedImageTag,
+          workload: resolved.workloadReceipt,
+          openclawImagePluginInstalls,
+          hermesDashboardState,
+          dashboardPort,
+          ...currentLifecycle,
+          appliedPolicies:
+            verifiedPolicyRegistration.policyAuthority === "externally-managed"
+              ? []
+              : options.registration.appliedPolicies,
+          policyAuthority: verifiedPolicyRegistration.policyAuthority,
+          ...(verifiedPolicyRegistration.policyAuthority === "nemoclaw-managed"
+            ? {
+                policyCreationReceipt: verifiedPolicyRegistration.policyCreationReceipt,
+              }
+            : {}),
+          inferenceRouteReservation: verifiedInferenceRouteReservation,
+          verifiedCreate,
+        };
+      };
       return finalizeCreatedSandbox(
         { ...options.finalization, gatewayName: options.registration.gatewayName },
         {
           ...deps,
-          register: (openclawImagePluginInstalls) => {
-            const verifiedCreate = options.policy.getVerifiedCreateRegistrationAuthority();
-            assertVerifiedCreateMatchesPolicyBoundary(verifiedPolicyBoundary, verifiedCreate);
-            const verifiedInferenceRouteReservation = verifiedCreate.reservation;
-            if (
-              inferenceRouteReservation &&
-              !isDeepStrictEqual(inferenceRouteReservation, verifiedInferenceRouteReservation)
-            ) {
-              throw new Error(
-                "Sandbox registration inference route differs from its verified create reservation.",
-              );
-            }
-            return (deps.registerCreatedSandbox ?? registerCreatedSandbox)({
-              ...options.registration,
-              inferenceSelection: verifiedInferenceRouteReservation.authority.selection,
-              runtimeFields: {
-                ...options.registration.runtimeFields,
-                sandboxGpuProof:
-                  options.gpu.config.sandboxGpuProof ??
-                  options.registration.runtimeFields.sandboxGpuProof,
-                openshellVersion:
-                  configuredReceipt?.openshellExecutableAuthority.version ??
-                  options.registration.runtimeFields.openshellVersion,
-              },
-              hermesPortableLifecycle: configuredReceipt !== null,
-              imageTag: resolved.resolvedImageTag,
-              workload: resolved.workloadReceipt,
-              openclawImagePluginInstalls,
-              hermesDashboardState,
-              dashboardPort,
-              ...finalLifecycle,
-              appliedPolicies:
-                verifiedPolicyRegistration.policyAuthority === "externally-managed"
-                  ? []
-                  : options.registration.appliedPolicies,
-              policyAuthority: verifiedPolicyRegistration.policyAuthority,
-              ...(verifiedPolicyRegistration.policyAuthority === "nemoclaw-managed"
-                ? {
-                    policyCreationReceipt: verifiedPolicyRegistration.policyCreationReceipt,
-                  }
-                : {}),
-              inferenceRouteReservation: verifiedInferenceRouteReservation,
-              verifiedCreate,
-            });
+          prepareRegistration: (openclawImagePluginInstalls) =>
+            (deps.prepareCreatedSandboxRegistration ?? prepareCreatedSandboxRegistration)(
+              registrationInput(openclawImagePluginInstalls, true),
+            ),
+          revalidatePreparedRegistration: (prepared, openclawImagePluginInstalls) =>
+            (
+              deps.revalidatePreparedCreatedSandboxRegistration ??
+              revalidatePreparedCreatedSandboxRegistration
+            )(registrationInput(openclawImagePluginInstalls, true), prepared),
+          register: (openclawImagePluginInstalls, prepared) => {
+            const input = registrationInput(openclawImagePluginInstalls, prepared !== undefined);
+            return prepared
+              ? (deps.registerPreparedCreatedSandbox ?? registerPreparedCreatedSandbox)(
+                  input,
+                  prepared,
+                )
+              : (deps.registerCreatedSandbox ?? registerCreatedSandbox)(input);
           },
         },
       );
@@ -650,6 +696,12 @@ export function createOnboardCreatedSandboxCompletion(
 ): CreatedSandboxCompletionActions {
   const { provider, model, preferredInferenceApi, endpointUrl } = inference;
   const { createIntent, resolvedCreateIntent } = createContext;
+  const restoreManifest = restoreBackupPath ? sandboxState.getLatestBackup(sandboxName) : null;
+  if (restoreBackupPath && restoreManifest?.backupPath !== restoreBackupPath) {
+    throw new Error(
+      `Selected restore snapshot for '${sandboxName}' changed before sandbox creation. Retry the upgrade so it can bind current snapshot authority.`,
+    );
+  }
   return createCreatedSandboxCompletionActions(
     {
       finalization: {
@@ -740,7 +792,17 @@ export function createOnboardCreatedSandboxCompletion(
           sandboxState,
           agent?.configPaths.dir,
         ),
-      restoreRecreatedSandboxState: sandboxState.restoreRecreatedSandboxState,
+      restoreRecreatedSandboxState: (name, backupPath, restoreOptions, resolveTarget) =>
+        restoreManifest && resolveTarget
+          ? restoreRecreatedSandboxStateWithManagedAuthority(
+              name,
+              restoreManifest,
+              restoreOptions,
+              {
+                getSandbox: (requestedName) => (requestedName === name ? resolveTarget() : null),
+              },
+            )
+          : sandboxState.restoreRecreatedSandboxState(name, backupPath, restoreOptions),
       getDcodeSelectionDrift: createDcodeSelectionDriftReader(
         runCaptureOpenshell,
         () => gateway.gatewayName,
@@ -780,6 +842,7 @@ export function finalizeCreatedSandbox(
     freshOpenClawImagePluginInstalls = discovery.pluginInstalls;
   }
 
+  let preparedRegistration: SandboxEntry | undefined;
   if (options.restoreBackupPath) {
     deps.note(
       options.preUpgradeBackup
@@ -787,17 +850,33 @@ export function finalizeCreatedSandbox(
         : "  Restoring workspace state from pre-recreate backup...",
     );
     deps.revalidatePolicyAuthority?.(`restoring files for sandbox '${options.sandboxName}'`);
-    const restore = deps.restoreRecreatedSandboxState(
-      options.sandboxName,
-      options.restoreBackupPath,
-      {
-        targetAgentType: options.targetAgentType,
-        ...(options.customImage ? { allowCustomImageWholeStateFileRestore: true } : {}),
-        ...(freshOpenClawImagePluginInstalls !== undefined
-          ? { freshOpenClawImagePluginInstalls }
-          : {}),
-      },
-    );
+    preparedRegistration = deps.prepareRegistration?.(freshOpenClawImagePluginInstalls);
+    const restoreOptions = {
+      targetAgentType: options.targetAgentType,
+      ...(options.customImage ? { allowCustomImageWholeStateFileRestore: true } : {}),
+      ...(freshOpenClawImagePluginInstalls !== undefined
+        ? { freshOpenClawImagePluginInstalls }
+        : {}),
+    } satisfies RecreatedSandboxRestoreOptions;
+    const resolveTarget = preparedRegistration
+      ? () =>
+          deps.revalidatePreparedRegistration?.(
+            preparedRegistration!,
+            freshOpenClawImagePluginInstalls,
+          ) ?? preparedRegistration!
+      : undefined;
+    const restore = resolveTarget
+      ? deps.restoreRecreatedSandboxState(
+          options.sandboxName,
+          options.restoreBackupPath,
+          restoreOptions,
+          resolveTarget,
+        )
+      : deps.restoreRecreatedSandboxState(
+          options.sandboxName,
+          options.restoreBackupPath,
+          restoreOptions,
+        );
     deps.revalidatePolicyAuthority?.(
       `reporting restored state for sandbox '${options.sandboxName}'`,
     );
@@ -877,5 +956,7 @@ export function finalizeCreatedSandbox(
   }
 
   deps.revalidatePolicyAuthority?.(`registering sandbox '${options.sandboxName}'`);
-  return deps.register(freshOpenClawImagePluginInstalls);
+  return preparedRegistration
+    ? deps.register(freshOpenClawImagePluginInstalls, preparedRegistration)
+    : deps.register(freshOpenClawImagePluginInstalls);
 }
