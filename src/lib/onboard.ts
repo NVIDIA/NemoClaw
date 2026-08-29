@@ -2596,7 +2596,7 @@ const setupOpenclaw = openclawSetup.createOpenclawSetup({
   run,
   openshellArgv,
   cleanupTempDir,
-  reconcileWebSearch: openclawSetup.disableOpenClawWebSearchForFreshReuse,
+  reconcileWebSearch: openclawSetup.reconcileOpenClawWebSearchForReuse,
 });
 
 const {
@@ -3357,6 +3357,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           startRecordedStep,
           setupOpenclaw,
           syncNemoClawConfigInSandbox,
+          reconcileOpenclawWebSearch: openclawSetup.reconcileOpenClawWebSearchForReuse,
           recordStepComplete,
           toSessionUpdates: (updates) =>
             toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),

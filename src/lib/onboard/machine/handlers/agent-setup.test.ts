@@ -28,6 +28,7 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
     startStep: vi.fn(async () => undefined),
     setupOpenclaw: vi.fn(async () => undefined),
     syncConfig: vi.fn(),
+    reconcileWebSearch: vi.fn(async () => undefined),
     complete: vi.fn(async (stepName: string, updates: SessionUpdates = {}) => {
       session.steps[stepName].status = "complete";
       Object.assign(session, updates);
@@ -48,6 +49,7 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
       startRecordedStep: calls.startStep,
       setupOpenclaw: calls.setupOpenclaw,
       syncNemoClawConfigInSandbox: calls.syncConfig,
+      reconcileOpenclawWebSearch: calls.reconcileWebSearch,
       recordStepComplete: calls.complete,
       toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
       ...overrides,
@@ -213,6 +215,7 @@ describe("handleAgentSetupState", () => {
     expect(calls.startStep).not.toHaveBeenCalled();
     expect(calls.setupOpenclaw).not.toHaveBeenCalled();
     expect(calls.syncConfig).toHaveBeenCalledWith("my-assistant", "provider", "model");
+    expect(calls.reconcileWebSearch).toHaveBeenCalledWith("my-assistant", null);
     expect(calls.complete).toHaveBeenCalledWith(
       "openclaw",
       expect.objectContaining({
@@ -235,6 +238,29 @@ describe("handleAgentSetupState", () => {
       model: "model",
       steps: { openclaw: { status: "complete" }, agent_setup: { status: "skipped" } },
     });
+  });
+
+  it("reconciles disabled web search after config sync on ready resume", async () => {
+    const { deps, calls } = createDeps({ isOpenclawReady: vi.fn(() => true) });
+
+    await handleAgentSetupState({
+      ...baseOptions(deps),
+      resume: true,
+      webSearchConfig: { fetchEnabled: false },
+    });
+
+    expect(calls.reconcileWebSearch).toHaveBeenCalledExactlyOnceWith("my-assistant", {
+      fetchEnabled: false,
+    });
+    expect(calls.syncConfig.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.reconcileWebSearch.mock.invocationCallOrder[0],
+    );
+    expect(calls.reconcileWebSearch.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.recordSkip.mock.invocationCallOrder[0],
+    );
+    expect(calls.reconcileWebSearch.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.complete.mock.invocationCallOrder[0],
+    );
   });
 
   it("runs OpenClaw setup and skips agent_setup for the default agent", async () => {

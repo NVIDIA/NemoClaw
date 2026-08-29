@@ -218,6 +218,7 @@ export function createPhases(
         order.push("openclaw");
       }),
       syncNemoClawConfigInSandbox: vi.fn(),
+      reconcileOpenclawWebSearch: vi.fn(async () => undefined),
       recordStepComplete:
         recorders.recordStepComplete ??
         vi.fn(async (_stepName: string, updates: SessionUpdates = {}) =>

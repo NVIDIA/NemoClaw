@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
-import { createOpenclawSetup, disableOpenClawWebSearchForFreshReuse } from "./openclaw-setup";
+import { createOpenclawSetup, reconcileOpenClawWebSearchForReuse } from "./openclaw-setup";
 
 describe("OpenClaw sandbox setup", () => {
   it("syncs config through noninteractive sandbox exec", async () => {
@@ -88,7 +88,7 @@ describe("fresh OpenClaw reuse web search reconciliation", () => {
   it("disables stale live web search when fresh re-onboard selects disabled (#10404)", async () => {
     const disable = vi.fn(async () => undefined);
 
-    await disableOpenClawWebSearchForFreshReuse("alpha", null, {
+    await reconcileOpenClawWebSearchForReuse("alpha", null, {
       readEnabled: () => true,
       disable,
     });
@@ -99,7 +99,7 @@ describe("fresh OpenClaw reuse web search reconciliation", () => {
   it("leaves an already-disabled live config unchanged (#10404)", async () => {
     const disable = vi.fn(async () => undefined);
 
-    await disableOpenClawWebSearchForFreshReuse("alpha", null, {
+    await reconcileOpenClawWebSearchForReuse("alpha", null, {
       readEnabled: () => false,
       disable,
     });
@@ -110,7 +110,7 @@ describe("fresh OpenClaw reuse web search reconciliation", () => {
   it("leaves a config without a stale enabled flag unchanged (#10404)", async () => {
     const disable = vi.fn(async () => undefined);
 
-    await disableOpenClawWebSearchForFreshReuse("alpha", null, {
+    await reconcileOpenClawWebSearchForReuse("alpha", null, {
       readEnabled: () => undefined,
       disable,
     });
@@ -122,7 +122,7 @@ describe("fresh OpenClaw reuse web search reconciliation", () => {
     const readEnabled = vi.fn(() => true);
     const disable = vi.fn(async () => undefined);
 
-    await disableOpenClawWebSearchForFreshReuse(
+    await reconcileOpenClawWebSearchForReuse(
       "alpha",
       { fetchEnabled: true },
       { readEnabled, disable },

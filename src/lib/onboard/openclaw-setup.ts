@@ -37,11 +37,11 @@ const defaultWebSearchReuseDeps: OpenClawWebSearchReuseDeps = {
 };
 
 /**
- * A fresh onboarding can reuse an already-ready sandbox. The image generator
- * does not run again on that path, so explicitly apply a newly disabled web
- * search choice to the live OpenClaw config through its guarded config writer.
+ * Onboarding can reuse an already-ready sandbox without rerunning the image
+ * generator. Apply a newly disabled web-search choice to the live OpenClaw
+ * config through its guarded config writer on both fresh and resumed reuse.
  */
-export async function disableOpenClawWebSearchForFreshReuse(
+export async function reconcileOpenClawWebSearchForReuse(
   sandboxName: string,
   webSearchConfig: WebSearchSelection,
   deps: OpenClawWebSearchReuseDeps = defaultWebSearchReuseDeps,

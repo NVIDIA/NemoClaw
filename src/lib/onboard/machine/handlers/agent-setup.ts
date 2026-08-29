@@ -53,6 +53,10 @@ export interface AgentSetupStateOptions<Agent> {
       revalidatePolicyRequirements?: (operation: string) => void,
     ): Promise<void>;
     syncNemoClawConfigInSandbox(sandboxName: string, provider: string, model: string): void;
+    reconcileOpenclawWebSearch(
+      sandboxName: string,
+      webSearchConfig: WebSearchSelection,
+    ): Promise<void>;
     recordStepComplete(stepName: string, updates: SessionUpdates): Promise<Session>;
     toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
   };
@@ -114,6 +118,8 @@ export async function handleAgentSetupState<Agent>({
     deps.skippedStepMessage("openclaw", sandboxName);
     revalidatePolicyRequirements?.(`synchronize OpenClaw in sandbox '${sandboxName}'`);
     deps.syncNemoClawConfigInSandbox(sandboxName, provider, model);
+    revalidatePolicyRequirements?.(`reconcile OpenClaw web search in sandbox '${sandboxName}'`);
+    await deps.reconcileOpenclawWebSearch(sandboxName, webSearchConfig);
     revalidatePolicyRequirements?.(`record resumed OpenClaw setup for sandbox '${sandboxName}'`);
     await deps.recordStateSkipped("openclaw", { reason: "resume", sandboxName });
     revalidatePolicyRequirements?.(`complete resumed OpenClaw setup for sandbox '${sandboxName}'`);
