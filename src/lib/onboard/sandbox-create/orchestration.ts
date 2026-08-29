@@ -490,10 +490,16 @@ export async function completeHermesPortableSandboxRegistration(input: {
 }
 
 type CreatedHermesCredentialEnvReconciliationDeps = {
-  readonly reconcileCredentialEnv: (plan: SandboxMessagingPlan) => {
+  readonly reconcileCredentialEnv: (
+    plan: SandboxMessagingPlan,
+    revalidatePolicyAuthority: (operation: string) => void,
+  ) => {
     readonly changed: boolean;
   };
-  readonly restartGateway: (sandboxName: string) => {
+  readonly restartGateway: (
+    sandboxName: string,
+    revalidatePolicyAuthority: (operation: string) => void,
+  ) => {
     readonly status: number;
     readonly stdout: string;
     readonly stderr: string;
@@ -505,7 +511,10 @@ type CreatedHermesCredentialEnvReconciliationDeps = {
       readonly stderr: string;
     } | null,
   ) => unknown | null;
-  readonly waitForGateway: (sandboxName: string) => boolean;
+  readonly waitForGateway: (
+    sandboxName: string,
+    revalidatePolicyAuthority: (operation: string) => void,
+  ) => boolean;
   readonly revalidatePolicyAuthority: (operation: string) => void;
 };
 
@@ -528,19 +537,22 @@ export function reconcileCreatedHermesCredentialEnvironment(
     deps.revalidatePolicyAuthority(
       `reconciling Hermes messaging credentials for sandbox '${input.sandboxName}'`,
     );
-    const reconciliation = deps.reconcileCredentialEnv(input.plan);
+    const reconciliation = deps.reconcileCredentialEnv(
+      input.plan,
+      deps.revalidatePolicyAuthority,
+    );
     deps.revalidatePolicyAuthority(
       `confirming Hermes messaging credential reconciliation for sandbox '${input.sandboxName}'`,
     );
     if (!reconciliation.changed) return;
 
-    const restart = deps.restartGateway(input.sandboxName);
+    const restart = deps.restartGateway(input.sandboxName, deps.revalidatePolicyAuthority);
     if (!deps.parseRestartCompletion(restart)) {
       throw new Error(
         `Hermes messaging credential reconciliation changed the gateway environment for sandbox '${input.sandboxName}', but the managed gateway restart did not complete.`,
       );
     }
-    if (!deps.waitForGateway(input.sandboxName)) {
+    if (!deps.waitForGateway(input.sandboxName, deps.revalidatePolicyAuthority)) {
       throw new Error(
         `Hermes messaging credential reconciliation restarted sandbox '${input.sandboxName}', but the managed gateway did not remain healthy.`,
       );
@@ -2350,6 +2362,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       return {
         route: resumed.checkpoint.route,
         liveIdentityFingerprint: resumed.checkpoint.sandboxIdentityFingerprint,
+        createAttemptNonce: resumed.checkpoint.createAttemptNonce,
       };
     })();
     const revalidateVerifiedPolicyRegistration = (
@@ -2385,8 +2398,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     };
     const retainedSandboxRecoveryContext = (
       boundary: VerifiedSandboxPolicyBoundary | null,
+      createAttemptNonceOverride: string | null = null,
     ): RetainedSandboxRecoveryContext => {
       const checkpoint = boundary ? pendingSandboxPolicyVerificationForBoundary(boundary) : null;
+      const createAttemptNonce = boundary?.createAttemptNonce ?? createAttemptNonceOverride;
+      if (!createAttemptNonce) {
+        throw new Error("Retained sandbox recovery requires exact create-attempt authority.");
+      }
       return {
         gatewayName: GATEWAY_NAME,
         gatewayPort: GATEWAY_PORT,
@@ -2394,6 +2412,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         verifiedEffectivePolicyIdentity: checkpoint
           ? { hash: checkpoint.policyHash, activeVersion: checkpoint.policyVersion }
           : null,
+        createAttemptNonce,
+        policyCreationReceipt:
+          boundary?.registration.policyAuthority === "nemoclaw-managed"
+            ? boundary.registration.policyCreationReceipt
+            : null,
       };
     };
     const recordPostCreateRecovery = (
@@ -2415,6 +2438,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const persistCreateFlowRecovery = (
       message: string,
       exactIdentity: string | null = null,
+      createAttemptNonce: string | null = null,
     ): boolean =>
       persistRetainedSandboxRecoveryWithRetry(postCreateRecoveryRetryOwner, () =>
         persistRetainedSandboxRecoveryMessage(
@@ -2422,7 +2446,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             sandboxName,
             message,
             ...(exactIdentity ? { sandboxIdentityFingerprint: exactIdentity } : {}),
-            recoveryContext: retainedSandboxRecoveryContext(verifiedPolicyGate),
+            recoveryContext: retainedSandboxRecoveryContext(verifiedPolicyGate, createAttemptNonce),
           },
           onboardSession.markRetainedSandboxRecovery,
         ),
@@ -2500,6 +2524,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             gatewayPort: GATEWAY_PORT,
             lifecycleGeneration: createdSandboxLifecycle.generation,
             lifecycleLiveIdentityFingerprint: identity.liveIdentityFingerprint,
+            createAttemptNonce: identity.createAttemptNonce,
             route: identity.route,
             policySourcePath,
           };
@@ -2522,13 +2547,16 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         revalidateVerifiedPolicy: (_identity, _exactIdentity, boundary, operation) => {
           revalidateVerifiedPolicyRegistration(boundary, operation);
         },
-        persistRetainedSandboxRecovery: (message, exactIdentity, boundary) =>
+        persistRetainedSandboxRecovery: (message, exactIdentity, boundary, created) =>
           persistRetainedSandboxRecoveryMessage(
             {
               sandboxName,
               message,
               ...(exactIdentity ? { sandboxIdentityFingerprint: exactIdentity } : {}),
-              recoveryContext: retainedSandboxRecoveryContext(boundary),
+              recoveryContext: retainedSandboxRecoveryContext(
+                boundary,
+                created?.createAttemptNonce ?? null,
+              ),
             },
             onboardSession.markRetainedSandboxRecovery,
           ),
@@ -2568,8 +2596,16 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                     },
                   }
                 : {}),
-              persistRetainedSandboxRecovery: (message, sandboxIdentityFingerprint) =>
-                persistCreateFlowRecovery(message, sandboxIdentityFingerprint ?? null),
+              persistRetainedSandboxRecovery: (
+                message,
+                sandboxIdentityFingerprint,
+                createAttemptNonce,
+              ) =>
+                persistCreateFlowRecovery(
+                  message,
+                  sandboxIdentityFingerprint ?? null,
+                  createAttemptNonce ?? null,
+                ),
               provider,
               sandboxGpuConfig: effectiveSandboxGpuConfig,
               gpuRoutePlan,
@@ -2885,6 +2921,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           {
             sandboxName,
             sandboxWasLiveDefault,
+            gatewayPort: GATEWAY_PORT,
             runtimeFields: sandboxRuntimeFields,
             messagingProviders,
             liveExists,
