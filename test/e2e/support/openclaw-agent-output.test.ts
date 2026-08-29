@@ -68,6 +68,16 @@ describe("OpenClaw agent-output fixture", () => {
         JSON.stringify({ messages: [{ type: "tool_use", text: "56", input: {} }] }),
       ),
     ).toBe("");
+    expect(
+      parseOpenClawAgentText(
+        JSON.stringify({ response: { type: "function", payload: { text: "56" } } }),
+      ),
+    ).toBe("");
+    expect(
+      parseOpenClawAgentText(
+        JSON.stringify({ response: { function: { name: "read" }, payload: { text: "56" } } }),
+      ),
+    ).toBe("");
   });
 
   it("fails closed in linear time for a long incomplete brace-rich stream", () => {

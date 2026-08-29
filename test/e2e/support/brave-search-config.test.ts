@@ -3,7 +3,6 @@
 
 import { describe, expect, it } from "vitest";
 
-import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { assertBraveConfig } from "../live/brave-search-helpers.ts";
 
 const VERSIONED_PLACEHOLDER = "openshell:resolve:env:v12590243949725316565_BRAVE_API_KEY";
@@ -44,11 +43,4 @@ describe("Brave Search E2E configuration assertion", () => {
     ).toThrow();
   });
 
-  it("extracts assistant text from the broader Brave response envelope", () => {
-    expect(
-      parseOpenClawAgentText(
-        `progress\n${JSON.stringify({ response: { text: "Brave search completed." } })}`,
-      ),
-    ).toBe("Brave search completed.");
-  });
 });

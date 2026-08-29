@@ -97,7 +97,14 @@ function collectAgentText(value: unknown, parts: string[], visited: Set<unknown>
   }
   const record = value as Record<string, unknown>;
   if (["user", "tool", "function"].includes(String(record.role))) return;
-  if (record.type === "tool_use" || "tool_calls" in record || "function_call" in record) return;
+  if (
+    ["tool_use", "function"].includes(String(record.type)) ||
+    "tool_calls" in record ||
+    "function_call" in record ||
+    "function" in record
+  ) {
+    return;
+  }
   for (const key of TEXT_KEYS) collectAgentText(record[key], parts, visited);
   for (const key of CONTAINER_KEYS) collectAgentText(record[key], parts, visited);
 }
