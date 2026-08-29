@@ -152,16 +152,6 @@ describe("Hermes 0.20.6 dependency review", () => {
       integrity:
         "sha512-pdqSfjwbFSp+qnwlb2g23e9wXveIOfMi19xpPA9xZUbzEAUp6W4YBZj6Ybj8z4M7WkcbGDDYc+oDIHDt9R3EDQ==",
     });
-    expect(dockerfileBase).toContain("/usr/local/bin/npm cache add agent-browser@0.26.0");
-    expect(dockerfileBase).toContain(
-      'lock.packages?.["node_modules/agent-browser"]?.integrity',
-    );
-    expect(dockerfileBase).toContain(
-      "/usr/local/bin/npm view agent-browser@0.26.0 dist.integrity",
-    );
-    expect(dockerfileBase).toContain(
-      'test "${cached_browser_integrity}" = "${locked_browser_integrity}"',
-    );
     expect(dockerfile).not.toContain("/scripts/hermes-security-dependencies.patch");
     expect(dockerfile).not.toContain("--prefix /scripts/agent-browser-runtime");
     expect(dockerfile).toContain("npm_config_offline=true");

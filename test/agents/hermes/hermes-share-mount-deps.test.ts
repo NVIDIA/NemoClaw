@@ -791,10 +791,6 @@ describe("Hermes share mount package parity (#2947)", () => {
       fs.mkdirSync(sandboxHome);
       fs.mkdirSync(lockedRuntime);
       fs.copyFileSync(
-        path.join(ROOT, "agents", "hermes", "agent-browser-runtime", "package.json"),
-        path.join(lockedRuntime, "package.json"),
-      );
-      fs.copyFileSync(
         path.join(ROOT, "agents", "hermes", "agent-browser-runtime", "package-lock.json"),
         path.join(lockedRuntime, "package-lock.json"),
       );

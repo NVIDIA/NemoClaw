@@ -446,7 +446,7 @@ RUN pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}" \
 # intentionally hostile security-test fixtures. Remove them in the extraction
 # RUN so their bytes never enter a published image layer.
 COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies.patch
-COPY agents/hermes/agent-browser-runtime/package.json agents/hermes/agent-browser-runtime/package-lock.json /tmp/nemoclaw-agent-browser-runtime/
+COPY agents/hermes/agent-browser-runtime/package-lock.json /tmp/nemoclaw-agent-browser-runtime/package-lock.json
 COPY agents/hermes/whatsapp-proxy.patch /tmp/hermes-whatsapp-proxy.patch
 COPY scripts/checks/download-hermes-source-archive.sh /tmp/nemoclaw-download-hermes-source-archive.sh
 RUN mkdir -p /opt/hermes \
