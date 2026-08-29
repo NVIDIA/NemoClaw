@@ -3,12 +3,13 @@
 
 import {
   createMxcOpenShellAttachmentTestAuthority,
-  createMxcOpenShellDistributionAuthority,
-  MXC_OPENSHELL_V0_0_24_QUALIFICATION_PROFILE_ID,
+  createMxcOpenShellDistributionTestAuthority,
+  MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
   type MxcOpenShellAttachmentAuthority,
   type MxcOpenShellAttachmentObservation,
   type MxcOpenShellDistributionAuthority,
 } from "./mxc-openshell-attachment";
+import type { MxcOpenShellAttachmentObservationRequest } from "./mxc-openshell-observer";
 
 export const MXC_OPENSHELL_ATTACHMENT_TEST_DIGESTS = {
   distribution: "1".repeat(64),
@@ -17,6 +18,9 @@ export const MXC_OPENSHELL_ATTACHMENT_TEST_DIGESTS = {
   wxcExec: "4".repeat(64),
   config: "5".repeat(64),
 } as const;
+
+export const MXC_OPENSHELL_ATTACHMENT_TEST_DISTRIBUTION_ARTIFACT_PATH =
+  "C:\\OpenShell\\packages\\openshell-test.zip";
 
 export function mxcOpenShellAttachmentFixture(version = "0.0.21"): {
   readonly authority: MxcOpenShellAttachmentAuthority;
@@ -53,31 +57,52 @@ export function mxcOpenShellAttachmentFixture(version = "0.0.21"): {
   };
 }
 
-export function mxcOpenShellV0_0_24QualificationFixture(): {
+export function mxcOpenShellDistributionTestFixture(version = "0.0.21"): {
   readonly authority: MxcOpenShellDistributionAuthority;
   readonly observation: MxcOpenShellAttachmentObservation;
 } {
-  const source = mxcOpenShellAttachmentFixture("0.0.24").observation;
+  const source = mxcOpenShellAttachmentFixture(version).observation;
   return {
-    authority: createMxcOpenShellDistributionAuthority(
-      MXC_OPENSHELL_V0_0_24_QUALIFICATION_PROFILE_ID,
-    ),
-    observation: {
-      ...source,
-      distribution: {
-        version: "0.0.24",
-        revision: "e1b48323e4efcb560900508bdcd76d2b5d216678",
-        sha256: "296ba2677f8f692b1c3f14b4fae6bb2a75d52f94c071ec2ebdf676405a80613d",
-      },
-      components: {
-        cliSha256: "23d00a88daa5f2aa6151d9112a6845e843ca1e08cbaf55f8eaa337b72dd9155a",
-        gatewaySha256: "62b3e231f5d40c5d178d08172ddb65536f124bdb8c7c04d90fb9dca50a5ac137",
-        wxcExecSha256: "6049c64723af1173c3739dc6cd6b2f33f6c021bb2832c4216233cba7f71aee9a",
-      },
-      gateway: {
-        ...source.gateway,
-        configSha256: "1c86a32a52d068677b5140975c6b870d5ed46dc553500ebb790b58e207ac7290",
-      },
+    authority: createMxcOpenShellDistributionTestAuthority(version),
+    observation: source,
+  };
+}
+
+export function mxcOpenShellAttachmentObservationRequest(
+  observed = mxcOpenShellDistributionTestFixture().observation,
+): MxcOpenShellAttachmentObservationRequest {
+  return {
+    contractVersion: MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
+    providerId: "mxc",
+    mode: "attach-existing",
+    observedDistribution: {
+      version: observed.distribution.version,
+      revision: observed.distribution.revision,
+    },
+    observedGateway: {
+      driver: "mxc",
+      backend: "process_container",
+    },
+    installation: {
+      distributionArtifactPath: MXC_OPENSHELL_ATTACHMENT_TEST_DISTRIBUTION_ARTIFACT_PATH,
+      distributionRoot: observed.distributionRoot,
+      mxcRoot: observed.mxcRoot,
+      cliPath: observed.cliPath,
+      gatewayPath: observed.gatewayPath,
+      wxcExecPath: observed.wxcExecPath,
+      gatewayConfigPath: observed.gatewayConfigPath,
     },
   };
+}
+
+export function mxcOpenShellAttachmentDigestMap(
+  observed = mxcOpenShellDistributionTestFixture().observation,
+): Map<string, string> {
+  return new Map([
+    [MXC_OPENSHELL_ATTACHMENT_TEST_DISTRIBUTION_ARTIFACT_PATH, observed.distribution.sha256],
+    [observed.cliPath, observed.components.cliSha256],
+    [observed.gatewayPath, observed.components.gatewaySha256],
+    [observed.wxcExecPath, observed.components.wxcExecSha256],
+    [observed.gatewayConfigPath, observed.gateway.configSha256],
+  ]);
 }
