@@ -35,6 +35,8 @@ describe("E2E answer assertions", () => {
     '{"type":"tool_use","name":"calculator","input":{"expected":56}}',
     '{"response":{"name":"read","input":{"value":56}}}',
     '{"response":{"name":"read","input":{"value":56}',
+    '{"name":"calculator","input_schema":{"type":"object","default":56}}\nextra output',
+    '{"type":"tool_use","name":"calculator","input":{"default":56}}\nextra output',
     "Tool call: read returned 56",
   ])("rejects tool-call output containing the expected answer: %s (#10215)", (output) => {
     expect(containsAnswer(output, "56"), output).toBe(false);

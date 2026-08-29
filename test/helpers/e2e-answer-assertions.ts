@@ -34,7 +34,7 @@ function containsStructuredToolOutput(text: string): boolean {
 function containsToolCallOutput(text: string): boolean {
   return (
     /\btool[ _-]?calls?\b/i.test(text) ||
-    /"(?:function|arguments|parameters|param|input)"\s*:/u.test(text) ||
+    /"(?:function|arguments|parameters|param|input|input_schema|tool_use)"\s*:/u.test(text) ||
     containsStructuredToolOutput(text)
   );
 }
