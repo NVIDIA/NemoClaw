@@ -108,6 +108,10 @@ describe("Hermes 0.20.6 dependency review", () => {
       "git -C /opt/hermes apply --check /tmp/hermes-security-dependencies.patch",
     );
     expect(dockerfileBase).toContain("uv pip check --python /opt/hermes/.venv/bin/python");
+    expect(dockerfileBase).toContain("assert mcp_tool._ensure_mcp_sdk()");
+    expect(dockerfile).toContain(
+      "mcp_tool._ensure_mcp_sdk() or sys.exit",
+    );
     expect(dockerfile).toContain("--include=plugins/memory/hindsight/plugin.yaml");
     expect(dockerfile).not.toContain("--include=hermes_cli/memory_setup.py");
     expect(dockerfile).toContain(

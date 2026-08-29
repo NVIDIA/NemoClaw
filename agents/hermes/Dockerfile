@@ -311,7 +311,7 @@ RUN set -eu; \
 # optional dependency group. This is a build-time package/import guard; live
 # protocol behavior remains a separate E2E concern.
 RUN /opt/hermes/.venv/bin/python -I -c \
-    'import importlib.metadata as metadata; import sys; import acp; import mcp; from acp_adapter.server import HermesACPAgent; from tools import mcp_tool; metadata.version("agent-client-protocol") == "0.9.0" or sys.exit("Hermes ACP SDK version is unavailable"); getattr(mcp_tool, "_MCP_AVAILABLE", False) or sys.exit("Hermes MCP client runtime is unavailable"); getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False) or sys.exit("Hermes MCP Streamable HTTP runtime is unavailable")'
+    'import importlib.metadata as metadata; import sys; import acp; import mcp; from acp_adapter.server import HermesACPAgent; from tools import mcp_tool; metadata.version("agent-client-protocol") == "0.9.0" or sys.exit("Hermes ACP SDK version is unavailable"); mcp_tool._ensure_mcp_sdk() or sys.exit("Hermes MCP client runtime is unavailable"); getattr(mcp_tool, "_MCP_AVAILABLE", False) or sys.exit("Hermes MCP client runtime is unavailable"); getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False) or sys.exit("Hermes MCP Streamable HTTP runtime is unavailable")'
 
 RUN chmod -R a+rX /opt/hermes/.venv \
     && test -r /opt/hermes/.venv/pyvenv.cfg \

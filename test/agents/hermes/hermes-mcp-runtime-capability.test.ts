@@ -51,8 +51,13 @@ function runHermesOptionalRuntimeValidation({
     fs.writeFileSync(path.join(toolsDir, "__init__.py"), "");
     fs.writeFileSync(
       path.join(toolsDir, "mcp_tool.py"),
-      `_MCP_AVAILABLE = ${mcpAvailable ? "True" : "False"}\n` +
-        `_MCP_HTTP_AVAILABLE = ${httpAvailable ? "True" : "False"}\n`,
+      "_MCP_AVAILABLE = False\n" +
+        "_MCP_HTTP_AVAILABLE = False\n" +
+        "def _ensure_mcp_sdk():\n" +
+        "    global _MCP_AVAILABLE, _MCP_HTTP_AVAILABLE\n" +
+        `    _MCP_AVAILABLE = ${mcpAvailable ? "True" : "False"}\n` +
+        `    _MCP_HTTP_AVAILABLE = ${httpAvailable ? "True" : "False"}\n` +
+        "    return _MCP_AVAILABLE\n",
     );
     return {
       imageCommand,
@@ -79,6 +84,7 @@ describe("Hermes managed optional runtime capability", () => {
     expect(complete.imageCommand).toContain(
       "from acp_adapter.server import HermesACPAgent",
     );
+    expect(complete.imageCommand).toContain("mcp_tool._ensure_mcp_sdk()");
     expect(complete.imageCommand).not.toContain("assert ");
     expect(complete.result.status, complete.result.stderr).toBe(0);
 
