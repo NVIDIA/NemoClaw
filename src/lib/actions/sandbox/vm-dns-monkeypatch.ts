@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { type CaptureOpenshellResult, stripAnsi } from "../../adapters/openshell/client";
 import { captureOpenshell } from "../../adapters/openshell/runtime";
+import { resolveDockerDriverGatewayStateDir } from "../../onboard/host-gateway-process";
 import type { SandboxEntry } from "../../state/registry";
 
 const GVPROXY_DNS = "192.168.127.1";
@@ -45,10 +46,12 @@ export function shouldApplyVmDnsMonkeypatch(
   return platform === "darwin" || env.NEMOCLAW_FORCE_VM_DNS_MONKEYPATCH === "1";
 }
 
-function dockerDriverGatewayStateDir(env: NodeJS.ProcessEnv, homeDir: string): string {
-  const configured = env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
-  if (configured && configured.trim()) return path.resolve(configured.trim());
-  return path.join(homeDir, ".local", "state", "nemoclaw", "openshell-docker-gateway");
+function dockerDriverGatewayStateDir(
+  env: NodeJS.ProcessEnv,
+  homeDir: string,
+  gatewayPort?: number | null,
+): string {
+  return resolveDockerDriverGatewayStateDir(env, homeDir, gatewayPort ?? undefined);
 }
 
 export function parseSandboxIdFromGetOutput(output: string): string | null {
@@ -271,7 +274,7 @@ function buildGuestInitPatch(
 
 export function applyOpenShellVmDnsMonkeypatch(
   sandboxName: string,
-  entry: Pick<SandboxEntry, "openshellDriver"> | null | undefined,
+  entry: Pick<SandboxEntry, "gatewayPort" | "openshellDriver"> | null | undefined,
   deps: {
     capture?: CaptureFn;
     env?: NodeJS.ProcessEnv;
@@ -298,7 +301,9 @@ export function applyOpenShellVmDnsMonkeypatch(
     return fail("could not resolve OpenShell sandbox id");
   }
 
-  const stateDir = deps.stateDir ?? dockerDriverGatewayStateDir(env, deps.homeDir ?? os.homedir());
+  const stateDir =
+    deps.stateDir ??
+    dockerDriverGatewayStateDir(env, deps.homeDir ?? os.homedir(), entry?.gatewayPort);
   const stateDirPath = path.resolve(stateDir);
   const stateDirReal = realpathIfPresent(stateDirPath);
   if (!stateDirReal) {

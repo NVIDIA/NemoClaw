@@ -70,6 +70,7 @@ export function createFinalOnboardFlowPhases<
       sandboxName: context.sandboxName,
       model: context.model,
       provider: context.provider,
+      webSearchConfig: context.webSearchConfig,
       resume: context.resume,
       session: context.session,
       hermesAuthMethod: context.hermesAuthMethod,

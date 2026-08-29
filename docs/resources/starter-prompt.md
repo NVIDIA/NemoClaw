@@ -232,7 +232,8 @@ Collect messaging before policy selection so the first image includes channel co
 - WeChat requires an interactive QR handshake; explain the limitation before installation and never leave an unsupported UI waiting.
 
 Collect messaging secrets through the reviewed helper and URL-specific SSH flow.
-Do not manually set `NEMOCLAW_MESSAGING_CHANNELS_B64`; let NemoClaw generate it.
+Do not manually set `NEMOCLAW_MESSAGING_PLAN_B64`; NemoClaw compiles the selected messaging configuration into this derived sandbox image build artifact and removes the full plan from the runtime environment.
+The plan contains OpenShell credential placeholders instead of raw messaging credentials.
 Use `channels add` and rebuild only for channels omitted from initial onboarding or changed later.
 
 ## Policy, Approval, and Verification

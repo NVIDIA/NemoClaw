@@ -71,6 +71,7 @@ describe("new sandbox cancellation recovery", () => {
         {
           sandboxName: "new-sandbox",
           sandboxWasLiveDefault: false,
+          gatewayPort: 8080,
           runtimeFields: { openshellDriver: "docker" } as never,
           messagingProviders: [],
           liveExists: false,

@@ -2733,6 +2733,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           {
             sandboxName,
             sandboxWasLiveDefault,
+            gatewayPort: GATEWAY_PORT,
             runtimeFields: sandboxRuntimeFields,
             messagingProviders,
             liveExists,

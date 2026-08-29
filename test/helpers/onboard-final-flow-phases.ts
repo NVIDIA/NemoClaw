@@ -209,7 +209,7 @@ export function createPhases(
       setupOpenclaw: vi.fn(async () => {
         order.push("openclaw");
       }),
-      syncNemoClawConfigInSandbox: vi.fn(),
+      configureOpenclawSandbox: vi.fn(async () => undefined),
       recordStepComplete:
         recorders.recordStepComplete ??
         vi.fn(async (_stepName: string, updates: SessionUpdates = {}) =>

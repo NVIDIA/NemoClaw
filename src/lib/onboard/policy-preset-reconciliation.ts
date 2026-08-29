@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
-import { filterSetupPolicyPresetNamesForAgent } from "./agent-policy-presets";
+import {
+  filterSetupPolicyPresetNamesForAgent,
+  setupPolicyPresetAppliesToAgent,
+} from "./agent-policy-presets";
 import { mergeRequiredHermesToolGatewayPolicyPresets } from "./hermes-managed-tools";
 import {
   mergeEnabledMessagingChannelPolicyPresets,
@@ -92,18 +95,6 @@ export function mergeRequiredSetupPolicyPresets(
   );
 }
 
-export function isStaleBuiltinBravePolicyPreset(
-  name: string,
-  options: {
-    webSearchConfig?: WebSearchConfig | null;
-    customPresetNames?: ReadonlySet<string> | null;
-    tierName?: string | null;
-    agentName?: string | null;
-  } = {},
-): boolean {
-  return isStaleBuiltinWebSearchPolicyPreset(name, options);
-}
-
 export function isStaleBuiltinWebSearchPolicyPreset(
   name: string,
   options: {
@@ -120,7 +111,12 @@ export function isStaleBuiltinWebSearchPolicyPreset(
   // default, not a stale web-search leftover — keep it regardless of the web-search
   // provider choice. A tier supplied by the active selection flow can exempt
   // its own default, but no tier is read from durable sandbox state.
-  if (getTier(options.tierName ?? "")?.presets.some((preset) => preset.name === name)) {
+  if (
+    setupPolicyPresetAppliesToAgent(name, options.agentName) &&
+    getTier(options.tierName ?? "")?.presets.some(
+      (preset) => preset.name.trim().toLowerCase() === name.trim().toLowerCase(),
+    )
+  ) {
     return false;
   }
   if (name === "nous-web") {

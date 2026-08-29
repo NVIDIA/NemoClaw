@@ -3079,7 +3079,14 @@ Outside portable cleanup, uninstall also stops matching Ollama auth proxy proces
 
 For Hermes setups, uninstall inspects the selected gateway's managed port-forward watcher state, stops each verified watcher process and its sandbox-scoped forward, and leaves sibling gateway state untouched. If any watcher or forward cleanup cannot be confirmed, uninstall exits nonzero and preserves the selected gateway's watcher state so you can retry cleanup.
 
-Outside portable cleanup, Linux uninstall removes `~/.local/state/nemoclaw` unless you pass `--keep-openshell`, the gateway is externally supervised, or another gateway-port environment remains on the host. That directory contains NemoClaw-owned Docker-driver gateway configuration and SQLite data, audit logs, VM-driver state, and standalone-fallback gateway PID files. Uninstall preserves it when the managed or externally supervised gateway process remains because that process depends on the state. When another gateway-port environment remains, uninstall removes only the selected gateway port's subdirectory of that directory and keeps the other ports' subdirectories. Run `$$nemoclaw uninstall --all-gateway-ports` to remove every gateway port on the host. Keep a declared external gateway state directory outside that NemoClaw-owned path. Uninstall does not otherwise target the declared external directory.
+Outside portable cleanup, Linux uninstall removes `~/.local/state/nemoclaw` unless you pass `--keep-openshell`, the gateway is externally supervised, or another gateway-port environment remains on the host.
+That directory contains NemoClaw-owned Docker-driver gateway configuration and SQLite data, audit logs, VM-driver state, and standalone-fallback gateway PID files.
+Uninstall preserves it when the managed or externally supervised gateway process remains because that process depends on the state.
+When another gateway-port environment remains, uninstall removes only the selected gateway port's subdirectory of that directory and keeps the other ports' subdirectories.
+Run `$$nemoclaw uninstall --all-gateway-ports` to remove every gateway port on the host.
+Keep an externally supervised lifecycle authority's declared `stateDir` outside that NemoClaw-owned path.
+Uninstall preserves that externally supervised directory.
+This differs from a managed `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` override, which successful managed cleanup removes unless `--keep-openshell` or portable cleanup applies.
 
 | Flag | Effect |
 | --- | --- |
@@ -3103,11 +3110,109 @@ Outside portable cleanup, Linux uninstall removes `~/.local/state/nemoclaw` unle
 $$nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models] [--destroy-user-data] [--all-gateway-ports] [--gateway <name>]
 ```
 
-`NEMOCLAW_GATEWAY_PORT` selects the gateway instance and state root to uninstall. Port `8080` selects `nemoclaw` and the shared `~/.nemoclaw/` root; a non-default port selects `nemoclaw-<port>` and `~/.nemoclaw/gateways/<port>/`. For example, `NEMOCLAW_GATEWAY_PORT=9123 $$nemoclaw uninstall` selects `nemoclaw-9123`. The compatibility `--gateway` flag cannot select another instance: when present, it must match the name derived from `NEMOCLAW_GATEWAY_PORT`, or uninstall exits before cleanup. Default-port uninstall removes NemoClaw-managed entries in `openshell/gateway.env`. For a NemoClaw-managed authority, it also removes only NemoClaw's marked Linux gateway unit. It preserves upstream Linux package units, the macOS Homebrew service, and unrelated environment entries. Gateway-scoped cleanup removes that gateway's OpenShell resources first, then the marked Linux unit. The OpenShell gateway service therefore keeps running while uninstall deletes the selected gateway's sandboxes. If OpenShell resource cleanup fails, uninstall exits nonzero and preserves the marked Linux unit and gateway process. If marked Linux unit cleanup fails, uninstall exits nonzero before it scans for or stops a remaining gateway process or continues with later Docker and gateway-state cleanup. OpenShell resource and Linux unit cleanup can partially complete before either failure. After selected sandbox cleanup succeeds, uninstall removes those entries from `sandboxes.json` before gateway registration and Linux unit cleanup. If a later step fails, the retry skips the completed sandbox deletions and resumes the remaining cleanup. Resolve the reported error. Inspect the remaining gateways with `openshell gateway list`. Rerun `NEMOCLAW_GATEWAY_PORT=<port> $$nemoclaw uninstall` with the gateway port from the failed uninstall. For an externally supervised authority, uninstall preserves the selected local gateway state in both full and gateway-scoped cleanup. It also preserves the gateway process, supervisor resources, marked Linux unit, Docker resources, OpenShell binaries, and the declared external state directory. A custom-port uninstall does not stop or remove the default gateway service or its environment file. Uninstall does not stop an `openshell-gateway` process that another non-root user owns and that this installation did not record. It names the owner and process ID, leaves that process running, and continues with the remaining cleanup. If no other cleanup fails, uninstall exits with status `0` even though that process can keep its port in use. Uninstall still tries to stop a `root`-owned process and the gateway process that this installation recorded. If either stop fails, uninstall reports the process without printing a reusable privileged kill command. Do not signal a PID from saved output. Immediately before a privileged stop, verify that the live process owner and `openshell-gateway` command line match the exact gateway name and port. Also prove that the PID file, runtime marker, and loaded sandbox namespace still match the selected state directory. Rerun uninstall after the process stops. A gateway-scoped uninstall and every `--all-gateway-ports` pass exit nonzero after that failure. A single full uninstall reports the process and continues. Before each sandbox deletion during scoped Docker cleanup, NemoClaw proves the selected configuration and running gateway identity again and passes the selected gateway name to OpenShell. The configuration and running process must use the state-root-specific OpenShell sandbox namespace that NemoClaw generated. For a standalone NemoClaw-managed gateway, the live proof also binds the process owner, PID file, runtime marker, and command line to the exact gateway name and port. For a package-managed gateway, NemoClaw instead binds the trusted active service's current main process, executable, owner, and loaded sandbox namespace to the default gateway. For an externally supervised gateway, NemoClaw proves the configured state. It binds the supervisor's current main process to its owner, loaded sandbox namespace, declared executable, selected gateway name, and selected port. When NemoClaw can prove an owner-private, generated configuration and complete JWT bundle that predate state-root scoping, restart keeps the legacy gateway ID, JWT bundle, and Docker driver's `default` namespace. That compatibility keeps the gateway able to find existing containers and keeps their non-expiring sandbox JWT issuer valid. NemoClaw regenerates the other gateway settings from the current runtime configuration. For a proven legacy Podman gateway, NemoClaw preserves the gateway ID that existing sandbox JWTs use; the supported Podman schema has no `sandbox_namespace` setting to preserve. If the existing identity is ambiguous or unsafe, or durable gateway state remains without its configuration, restart fails closed without rewriting the configuration or JWT bundle. Fresh state roots and already scoped configurations continue to use the state-root-specific identity. The legacy `default` namespace is not isolated across gateways, so it cannot satisfy the scoped-uninstall proof while sibling gateways remain. Scoped uninstall stops before it deletes a sandbox, registry row, or gateway registration and preserves the selected gateway's runtime evidence and local state. Because the supported OpenShell Podman schema does not expose `sandbox_namespace`, scoped Podman uninstall fails closed before signaling and preserves the gateway runtime evidence and local state. Full single-gateway Podman uninstall for the portable experimental profile uses exact receipt-owned durable retirement and preserves shared OpenShell providers, the gateway service and process, binaries, configuration, model stores, and Podman images under the [portable authority, retry, and preservation contract](../manage-sandboxes/operate-sandboxes/uninstall-nemoclaw). For Docker, if any proof is absent, uninstall exits nonzero before it signals the host gateway. NemoClaw preserves the gateway runtime evidence and local state. Keep that state intact. For an already scoped gateway with stale runtime evidence, restore it through the supported install or onboarding recovery flow, verify the generated identity, and retry. A proven legacy gateway is not silently converted by onboarding. To retire one, first remove sibling gateways through their own proven scoped cleanup, verify that only the legacy gateway remains, and then use the full single-gateway uninstall path. For an ambiguous or incomplete identity, stop the gateway and restore the exact generated `openshell-gateway.toml` and complete `jwt/` directory from a dedicated host-level backup path, represented here as `<gateway-identity-backup>`. The backup must have been captured from that gateway's exact state directory before the failure and kept under the owning user's exclusive access. Keep the `<gateway-identity-backup>` directory and its nested `jwt/` directory at mode `0700`, and keep the configuration and JWT files at mode `0600`. The default gateway stores them under `~/.local/state/nemoclaw/openshell-docker-gateway/`; a non-default gateway uses `~/.local/state/nemoclaw/openshell-docker-gateway-<port>/`. Restore them as the owning user. Keep the gateway state root and its `jwt/` directory at mode `0700`, and do not grant group or other access to the configuration or JWT files. NemoClaw does not reconstruct gateway identity from sandbox snapshots or `backup-all`; if no matching gateway-state backup exists, keep the state intact rather than attempting a scoped cleanup. Verify every gateway with `openshell gateway list`. Retain `<gateway-identity-backup>` only until that command reports the restored gateway and the affected existing sandboxes authenticate successfully. Then remove that dedicated backup directory as the owning user and verify its absence by replacing the placeholder in `test ! -e '<gateway-identity-backup>'` with the full backup path. If verification fails, keep the backup under the same access restrictions and stop. Do not add `sandbox_namespace` manually to a live gateway configuration because the running process can still be using its previous namespace.
+`NEMOCLAW_GATEWAY_PORT` selects the gateway instance and state root to uninstall.
+Port `8080` selects `nemoclaw` and the shared `~/.nemoclaw/` root; a non-default port selects `nemoclaw-<port>` and `~/.nemoclaw/gateways/<port>/`.
+For example, `NEMOCLAW_GATEWAY_PORT=9123 $$nemoclaw uninstall` selects `nemoclaw-9123`.
+If onboarding also set `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR`, pass its original resolved absolute directory to uninstall so configuration, namespace, process, and state cleanup target that exact directory.
+Use the dedicated gateway state directory created for that port, not a shared or parent directory.
+Onboarding rejects relative overrides, the shared NemoClaw state root or its parents, and existing nonempty directories without valid NemoClaw-managed gateway configuration.
+Let onboarding create the directory when possible. Every existing ancestor, from its containing directory to the filesystem root, must be a real directory owned by the current user or root and must not be group- or world-writable. If the state directory already exists, it must be an owner-controlled, non-symbolic-link directory with mode `0700`.
+If onboarding stops immediately after reserving that directory, uninstall removes the marker-only reservation only while the selected gateway port is free. Gateway configuration, a runtime marker, or a PID file moves cleanup to the managed-gateway checks instead. A port-bound marked gateway with valid generated configuration can be retired after the port is free and a complete process scan proves that no live process claims its state; a listener or unproven process preserves the directory. Inspect and stop the listener or matching gateway process, then rerun uninstall after the port is free.
+Onboarding holds an exclusive lifecycle lock from reservation through gateway initialization. If uninstall reports that onboarding owns the state directory, wait for onboarding to finish and rerun uninstall; the reservation is preserved.
+Successful managed cleanup recursively removes that directory and all contents; portable cleanup and `--keep-openshell` preserve it.
+Before cleanup, uninstall validates port-bound state-root ownership and exact live process identity. A marked, stopped gateway can instead use a free port plus a complete process-absence scan; pre-marker gateways can use their owner-private generated configuration as the legacy ownership proof only with live process identity.
+
+```bash
+NEMOCLAW_GATEWAY_PORT=<port> \
+NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="<original-absolute-path>" \
+  $$nemoclaw uninstall
+```
+
+The compatibility `--gateway` flag cannot select another instance: when present, it must match the name derived from `NEMOCLAW_GATEWAY_PORT`, or uninstall exits before cleanup.
+Default-port uninstall removes NemoClaw-managed entries in `openshell/gateway.env`.
+For a NemoClaw-managed authority, it also removes only NemoClaw's marked Linux gateway unit.
+It preserves upstream Linux package units, the macOS Homebrew service, and unrelated environment entries.
+Gateway-scoped cleanup removes that gateway's OpenShell resources first, then the marked Linux unit.
+The OpenShell gateway service therefore keeps running while uninstall deletes the selected gateway's sandboxes.
+If OpenShell resource cleanup fails, uninstall exits nonzero and preserves the marked Linux unit and gateway process.
+If marked Linux unit cleanup fails, uninstall exits nonzero before it scans for or stops a remaining gateway process or continues with later Docker and gateway-state cleanup.
+OpenShell resource and Linux unit cleanup can partially complete before either failure.
+After selected sandbox cleanup succeeds, uninstall removes those entries from `sandboxes.json` before gateway registration and Linux unit cleanup.
+If a later step fails, the retry skips the completed sandbox deletions and resumes the remaining cleanup.
+Resolve the reported error.
+Inspect the remaining gateways with `openshell gateway list`.
+Rerun `NEMOCLAW_GATEWAY_PORT=<port> $$nemoclaw uninstall` with the gateway port from the failed uninstall.
+For an externally supervised authority, uninstall preserves the selected local gateway state in both full and gateway-scoped cleanup.
+It also preserves the gateway process, supervisor resources, marked Linux unit, Docker resources, OpenShell binaries, and the declared external state directory.
+A custom-port uninstall does not stop or remove the default gateway service or its environment file.
+Uninstall does not stop an `openshell-gateway` process that another non-root user owns and that this installation did not record.
+It names the owner and process ID, leaves that process running, and continues with the remaining cleanup.
+If no other cleanup fails, uninstall exits with status `0` even though that process can keep its port in use.
+Uninstall still tries to stop a `root`-owned process and the gateway process that this installation recorded.
+If either stop fails, uninstall reports the process without printing a reusable privileged kill command.
+Do not signal a PID from saved output.
+Immediately before a privileged stop, verify that the live process owner and `openshell-gateway` command line match the gateway name and port.
+Also prove that the PID file, runtime marker, and loaded sandbox namespace still match the selected state directory.
+Rerun uninstall after the process stops.
+A gateway-scoped uninstall and every `--all-gateway-ports` pass exit nonzero after that failure.
+A single full uninstall reports the process and continues.
+Before each sandbox deletion during scoped Docker cleanup, NemoClaw proves the selected configuration and running gateway identity again and passes the selected gateway name to OpenShell.
+The configuration and running process must use the state-root-specific OpenShell sandbox namespace that NemoClaw generated.
+For a standalone NemoClaw-managed gateway, the live proof also binds the process owner, PID file, runtime marker, and command line to the gateway name and port.
+For a package-managed gateway, NemoClaw instead binds the trusted active service's current main process, executable, owner, and loaded sandbox namespace to the default gateway.
+For an externally supervised gateway, NemoClaw proves the configured state.
+It binds the supervisor's current main process to its owner, loaded sandbox namespace, declared executable, selected gateway name, and selected port.
+When NemoClaw can prove an owner-private, generated configuration and complete JWT bundle that predate state-root scoping, restart keeps the legacy gateway ID, JWT bundle, and Docker driver's `default` namespace.
+That compatibility keeps the gateway able to find existing containers and keeps their non-expiring sandbox JWT issuer valid.
+NemoClaw regenerates the other gateway settings from the current runtime configuration.
+For a proven legacy Podman gateway, NemoClaw preserves the gateway ID that existing sandbox JWTs use; the supported Podman schema has no `sandbox_namespace` setting to preserve.
+If the existing identity is ambiguous or unsafe, or durable gateway state remains without its configuration, restart fails closed without rewriting the configuration or JWT bundle.
+Fresh state roots and already scoped configurations continue to use the state-root-specific identity.
+The legacy `default` namespace is not isolated across gateways, so it cannot satisfy the scoped-uninstall proof while sibling gateways remain.
+Scoped uninstall stops before it deletes a sandbox, registry row, or gateway registration and preserves the selected gateway's runtime evidence and local state.
+Because the supported OpenShell Podman schema does not expose `sandbox_namespace`, scoped Podman uninstall fails closed before signaling and preserves the gateway runtime evidence and local state.
+Full single-gateway Podman uninstall for the portable experimental profile uses receipt-owned durable retirement and preserves shared OpenShell providers, the gateway service and process, binaries, configuration, model stores, and Podman images under the [portable authority, retry, and preservation contract](../manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
+For Docker, if any proof is absent, uninstall exits nonzero before it signals the host gateway.
+NemoClaw preserves the gateway runtime evidence and local state.
+Keep that state intact.
+For an already scoped gateway with stale runtime evidence, restore it through the supported install or onboarding recovery flow, verify the generated identity, and retry.
+A proven legacy gateway is not silently converted by onboarding.
+To retire one, first remove sibling gateways through their own proven scoped cleanup, verify that only the legacy gateway remains, and then use the full single-gateway uninstall path.
+For an ambiguous or incomplete identity, stop the gateway and restore the generated `openshell-gateway.toml` and complete `jwt/` directory from a dedicated host-level backup path, represented here as `<gateway-identity-backup>`.
+The backup must have been captured from that gateway's state directory before the failure and kept under the owning user's exclusive access.
+Keep the `<gateway-identity-backup>` directory and its nested `jwt/` directory at mode `0700`, and keep the configuration and JWT files at mode `0600`.
+The default gateway stores them under `~/.local/state/nemoclaw/openshell-docker-gateway/`; a non-default gateway uses `~/.local/state/nemoclaw/openshell-docker-gateway-<port>/`.
+Restore them as the owning user.
+Keep the gateway state root and its `jwt/` directory at mode `0700`, and do not grant group or other access to the configuration or JWT files.
+NemoClaw does not reconstruct gateway identity from sandbox snapshots or `backup-all`; if no matching gateway-state backup exists, keep the state intact rather than attempting a scoped cleanup.
+Verify every gateway with `openshell gateway list`.
+Retain `<gateway-identity-backup>` only until that command reports the restored gateway and the affected existing sandboxes authenticate successfully.
+Then remove that dedicated backup directory as the owning user and verify its absence by replacing the placeholder in `test ! -e '<gateway-identity-backup>'` with the full backup path.
+If verification fails, keep the backup under the same access restrictions and stop.
+Do not add `sandbox_namespace` manually to a live gateway configuration because the running process can still be using its previous namespace.
 
 ##### Uninstalling Every Gateway Port
 
-A single uninstall is scoped to one gateway port, so the other ports on the host keep running and keep their ports bound. When uninstall detects other gateway-port environments, it names each one, gives the `NEMOCLAW_GATEWAY_PORT=<port>` command that removes one of them, and points at the whole-host sweep. A gateway environment whose port cannot be read is reported as an unidentified environment rather than omitted.
+A single uninstall is scoped to one gateway port, so the other ports on the host keep running and keep their ports bound.
+When uninstall detects other gateway-port environments, it names each one, gives the `NEMOCLAW_GATEWAY_PORT=<port>` command that removes one of them, and points at the whole-host sweep.
+A gateway environment whose port cannot be read is reported as an unidentified environment rather than omitted.
+
+`--all-gateway-ports`, or `NEMOCLAW_UNINSTALL_ALL_GATEWAY_PORTS=1`, uninstalls all of them in one run.
+The sweep enumerates the default state root and the non-default roots under `~/.nemoclaw/gateways/`.
+When the sweep finds more than one port, it confirms once against the resulting port list, then uninstalls each other port before the port `NEMOCLAW_GATEWAY_PORT` selects.
+When it finds only the selected port, it uses the standard uninstall confirmation without a port list and runs that port once.
+Each port runs as its own uninstall so that every port-scoped value, including the state root, registry file, gateway name, and Docker resource names, resolves from that port rather than from the calling environment.
+An ambient `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` applies only to the currently selected port, which runs last.
+Child passes for other ports use their default per-port gateway state directories.
+If another port with a custom directory fails, rerun `NEMOCLAW_GATEWAY_PORT=<failed-port> NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="<original-absolute-path>" $$nemoclaw uninstall`.
+Outside portable cleanup, the selected port runs last so its pass can remove the shared host resources once no other environment remains.
+`--delete-models`, `--destroy-user-data`, and `--keep-openshell` apply to every port, subject to the portable preservation contract; `--gateway` remains a check against the selected port only.
+A failure to enumerate the gateway state roots safely stops the sweep before any port uninstall begins.
+The sweep cannot select an unidentified environment until its gateway port can be determined.
+A port that fails to uninstall is reported, the sweep continues, and the exit code is nonzero.
+That port still counts as a live sibling, so the final pass falls back to gateway-scoped cleanup and preserves the shared host resources.
+Cleanup that completed before a port failure is not rolled back.
+Resolve the reported error, inspect the remaining gateways with `openshell gateway list`, and rerun the sweep or the named per-port command.
 
 `--all-gateway-ports`, or `NEMOCLAW_UNINSTALL_ALL_GATEWAY_PORTS=1`, uninstalls all of them in one run. The sweep enumerates the default state root and the non-default roots under `~/.nemoclaw/gateways/`. When the sweep finds more than one port, it confirms once against the resulting port list, then uninstalls each other port before the port `NEMOCLAW_GATEWAY_PORT` selects. When it finds only the selected port, it uses the standard uninstall confirmation without a port list and runs that port once. Each port runs as its own uninstall so that every port-scoped value, including the state root, registry file, gateway name, and Docker resource names, resolves from that port rather than from the calling environment. Outside portable cleanup, the selected port runs last so its pass can remove the shared host resources once no other environment remains. `--delete-models`, `--destroy-user-data`, and `--keep-openshell` apply to every port, subject to the portable preservation contract; `--gateway` remains a check against the selected port only. A failure to enumerate the gateway state roots safely stops the sweep before any port uninstall begins. The sweep cannot select an unidentified environment until its gateway port can be determined. A port that fails to uninstall is reported, the sweep continues, and the exit code is nonzero. That port still counts as a live sibling, so the final pass falls back to gateway-scoped cleanup and preserves the shared host resources. Cleanup that completed before a port failure is not rolled back. Resolve the reported error, inspect the remaining gateways with `openshell gateway list`, and rerun the sweep or the named per-port command.
 
@@ -3544,72 +3649,24 @@ The following flags toggle optional behaviors during onboarding. Set them before
 | `NEMOCLAW_OVERLAY_SNAPSHOTTER` | snapshotter name | Selects the containerd overlay snapshotter for sandbox builds. Empty (default) preserves containerd's choice. |
 
 <AgentOnly variant="openclaw,hermes">
-  | `NEMOCLAW_SKIP_TELEGRAM_REACHABILITY` | `1` to enable | Skips the Telegram bot reachability
-  probe during onboard (useful in restricted networks). | | `NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION` |
-  `1`, `true`, `yes`, or `on` to enable | Skips the live Slack `auth.test` and
-  `apps.connections.open` credential probes during onboard and `channels add slack`. Use only in
-  restricted networks or hermetic test environments; Slack token format checks still apply. |
+| `NEMOCLAW_SKIP_TELEGRAM_REACHABILITY` | `1` to enable | Skips the Telegram bot reachability probe during onboard (useful in restricted networks). |
+| `NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION` | `1`, `true`, `yes`, or `on` to enable | Skips the live Slack `auth.test` and `apps.connections.open` credential probes during onboard and `channels add slack`. Use only in restricted networks or hermetic test environments; Slack token format checks still apply. |
 </AgentOnly>
-| `NEMOCLAW_RESOURCE_PROFILE` | profile name or `default` | Selects a sandbox CPU/RAM resource
-profile from the blueprint during onboarding. `default` means no resource preference, so NemoClaw
-passes no OpenShell CPU or memory flags. Unknown names fail fast. | | `NEMOCLAW_CPU` | percentage or
-Kubernetes CPU quantity | Overrides the selected profile's CPU size passed to OpenShell `--cpu`.
-Percentages resolve against detected capacity. | | `NEMOCLAW_RAM` | percentage or Kubernetes memory
-quantity | Overrides the selected profile's memory size passed to OpenShell `--memory`. Percentages
-resolve against detected capacity. | | `NEMOCLAW_SANDBOX_GPU` | `auto`, `1`, or `0` | Controls
-sandbox GPU passthrough during onboarding. `auto` enables GPU passthrough when an NVIDIA GPU is
-detected, `1` requires GPU passthrough, and `0` forces CPU-only sandbox creation. | |
-`NEMOCLAW_SANDBOX_GPU_DEVICE` | NVIDIA GPU index, UUID, or CDI device name | Selects the GPU through
-OpenShell driver config on native Docker and Podman routes, or through the equivalent
-container-runtime selector on a compatibility route. Requires explicit sandbox GPU enablement with
-`NEMOCLAW_SANDBOX_GPU=1` (or `--sandbox-gpu` for CLI-driven onboarding); otherwise onboarding
-rejects the selector instead of treating it as an implicit opt-in. | |
-`NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH` | `1`, `true`, `yes`, or `on` to enable | Bypasses recorded
-sandbox base-image resolution metadata during onboarding, recreation, and rebuild. NemoClaw reruns
-candidate resolution but can still use a compatible image from Docker's local image store. Versioned
-release candidates that exist locally but fail validation are refreshed from the registry once
-during normal resolution. This setting does not discard onboarding session state. | |
-`NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD` | unset or `auto` (default); `1`, `true`, `yes`, or `on` to
-enable; `0`, `false`, `no`, or `off` to disable | Controls whether base-image resolution may build a
-compatible image locally. The default allows builds during normal CLI runs and disables them when
-`NODE_ENV=test` or `VITEST=true`. When source inputs or a missing/incompatible release-version base
-require a fresh build, disabling local builds makes resolution fail instead of using an unproven
-image. | | `NEMOCLAW_DOCKER_GPU_PATCH` | unset, `auto`, `fallback`, `1`, or `0`; other legacy
-nonzero values remain accepted through `v0.0.x` and will be removed in `v0.1.0` | Selects Linux
-Docker-driver GPU routing. Unset, `auto`, or `0` uses native OpenShell GPU injection on ordinary
-native Linux. `fallback` explicitly opts into one native attempt followed by one bounded
-compatibility retry when trusted host evidence identifies a GPU-routing failure. `1` and legacy
-nonzero values select the compatibility patch from the outset. Docker Desktop WSL and Jetson/Tegra
-use the compatibility path by default; Docker Desktop WSL ignores `0`, while Jetson/Tegra accepts
-`0` only as a troubleshooting override that bypasses device-group propagation. Portable onboarding
-requires native OpenShell GPU injection for every agent and does not use this setting. | |
-`NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH` | `1` to enable; disabled by default | This setting
-explicitly opts into the Linux gateway compatibility container for an older host ABI or a diagnostic
-run; use it only on a trusted local host because it uses host networking and mounts the Docker
-socket read-only even though the socket still exposes the privileged Docker API; prefer OpenShell
-0.0.106's directly supported glibc 2.39+ path; see [Gateway Compatibility
-Container](/user-guide/openclaw/security/security-controls/gateway-authentication-controls#gateway-compatibility-container)
-for the container boundary and removal conditions. | | `NEMOCLAW_OPENSHELL_GATEWAY_BIN` | path |
-Advanced override for the `openshell-gateway` binary used by Linux Docker-driver startup. For the
-default port, the installer accepts the binary under an absolute `XDG_BIN_HOME` when set, otherwise
-`~/.local/bin/openshell-gateway`; it also accepts `/usr/local/bin/openshell-gateway` or
-`/usr/bin/openshell-gateway`. Another path fails service staging. The macOS Homebrew service uses
-the formula's binary. Defaults to the binary next to `openshell`, then common install paths. | |
-`NEMOCLAW_OPENSHELL_SANDBOX_BIN` | path | Advanced override for the `openshell-sandbox` binary used
-by Linux Docker-driver startup. The macOS Homebrew service uses the formula's driver layout.
-Defaults to the binary next to `openshell`, then common install paths. | |
-`NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` | path | Advanced override for the Linux Docker-driver
-gateway SQLite state directory and standalone-fallback PID file. Defaults to
-`~/.local/state/nemoclaw/openshell-docker-gateway`. | | `NEMOCLAW_AUTO_FIX_FIREWALL` | `1` to enable
-| Opts in to automatic UFW remediation when Linux Docker-driver sandbox containers cannot reach the
-host gateway after a proven TCP failure. NemoClaw runs `sudo -n` only, validates the narrow Docker
-bridge subnet → gateway IP:port rule before invoking UFW, re-probes after applying it, and otherwise
-falls back to the printed manual command. |
+| `NEMOCLAW_RESOURCE_PROFILE` | profile name or `default` | Selects a sandbox CPU/RAM resource profile from the blueprint during onboarding. `default` means no resource preference, so NemoClaw passes no OpenShell CPU or memory flags. Unknown names fail fast. |
+| `NEMOCLAW_CPU` | percentage or Kubernetes CPU quantity | Overrides the selected profile's CPU size passed to OpenShell `--cpu`. Percentages resolve against detected capacity. |
+| `NEMOCLAW_RAM` | percentage or Kubernetes memory quantity | Overrides the selected profile's memory size passed to OpenShell `--memory`. Percentages resolve against detected capacity. |
+| `NEMOCLAW_SANDBOX_GPU` | `auto`, `1`, or `0` | Controls sandbox GPU passthrough during onboarding. `auto` enables GPU passthrough when an NVIDIA GPU is detected, `1` requires GPU passthrough, and `0` forces CPU-only sandbox creation. |
+| `NEMOCLAW_SANDBOX_GPU_DEVICE` | NVIDIA GPU index, UUID, or CDI device name | Selects the GPU through OpenShell driver config on native Docker and Podman routes, or through the equivalent container-runtime selector on a compatibility route. Requires explicit sandbox GPU enablement with `NEMOCLAW_SANDBOX_GPU=1` (or `--sandbox-gpu` for CLI-driven onboarding); otherwise onboarding rejects the selector instead of treating it as an implicit opt-in. |
+| `NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH` | `1`, `true`, `yes`, or `on` to enable | Bypasses recorded sandbox base-image resolution metadata during onboarding, recreation, and rebuild. NemoClaw reruns candidate resolution but can still use a compatible image from Docker's local image store. Versioned release candidates that exist locally but fail validation are refreshed from the registry once during normal resolution. This setting does not discard onboarding session state. |
+| `NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD` | unset or `auto` (default); `1`, `true`, `yes`, or `on` to enable; `0`, `false`, `no`, or `off` to disable | Controls whether base-image resolution may build a compatible image locally. The default allows builds during normal CLI runs and disables them when `NODE_ENV=test` or `VITEST=true`. When source inputs or a missing/incompatible release-version base require a fresh build, disabling local builds makes resolution fail instead of using an unproven image. |
+| `NEMOCLAW_DOCKER_GPU_PATCH` | unset, `auto`, `fallback`, `1`, or `0`; other legacy nonzero values remain accepted through `v0.0.x` and will be removed in `v0.1.0` | Selects Linux Docker-driver GPU routing. Unset, `auto`, or `0` uses native OpenShell GPU injection on ordinary native Linux. `fallback` explicitly opts into one native attempt followed by one bounded compatibility retry when trusted host evidence identifies a GPU-routing failure. `1` and legacy nonzero values select the compatibility patch from the outset. Docker Desktop WSL and Jetson/Tegra use the compatibility path by default; Docker Desktop WSL ignores `0`, while Jetson/Tegra accepts `0` only as a troubleshooting override that bypasses device-group propagation. Portable onboarding requires native OpenShell GPU injection for every agent and does not use this setting. |
+| `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH` | `1` to enable; disabled by default | This setting explicitly opts into the Linux gateway compatibility container for an older host ABI or a diagnostic run; use it only on a trusted local host because it uses host networking and mounts the Docker socket read-only even though the socket still exposes the privileged Docker API; prefer OpenShell 0.0.106's directly supported glibc 2.39+ path; see [Gateway Compatibility Container](/user-guide/openclaw/security/security-controls/gateway-authentication-controls#gateway-compatibility-container) for the container boundary and removal conditions. |
+| `NEMOCLAW_OPENSHELL_GATEWAY_BIN` | path | Advanced override for the `openshell-gateway` binary used by Linux Docker-driver startup. For the default port, the installer accepts the binary under an absolute `XDG_BIN_HOME` when set, otherwise `~/.local/bin/openshell-gateway`; it also accepts `/usr/local/bin/openshell-gateway` or `/usr/bin/openshell-gateway`. Another path fails service staging. The macOS Homebrew service uses the formula's binary. Defaults to the binary next to `openshell`, then common install paths. |
+| `NEMOCLAW_OPENSHELL_SANDBOX_BIN` | path | Advanced override for the `openshell-sandbox` binary used by Linux Docker-driver startup. The macOS Homebrew service uses the formula's driver layout. Defaults to the binary next to `openshell`, then common install paths. |
+| `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` | path | Advanced override for the Linux Docker-driver gateway SQLite state directory and standalone-fallback PID file. Use a dedicated absolute directory; onboarding rejects relative paths, the shared NemoClaw state root or its parents, and existing nonempty directories without valid managed gateway configuration. Let onboarding create it when possible; its containing directory must be owned by the current user or root without group or world write access, and a pre-created state directory must be owner-controlled, non-symbolic, and mode `0700`. Pass the original resolved absolute value with `NEMOCLAW_GATEWAY_PORT` when uninstalling that gateway. Port `8080` defaults to `~/.local/state/nemoclaw/openshell-docker-gateway`; non-default ports default to `~/.local/state/nemoclaw/openshell-docker-gateway-<port>`. |
+| `NEMOCLAW_AUTO_FIX_FIREWALL` | `1` to enable | Opts in to automatic UFW remediation when Linux Docker-driver sandbox containers cannot reach the host gateway after a proven TCP failure. NemoClaw runs `sudo -n` only, validates the narrow Docker bridge subnet → gateway IP:port rule before invoking UFW, re-probes after applying it, and otherwise falls back to the printed manual command. |
 <AgentOnly variant="openclaw,hermes">
-  | `NEMOCLAW_WECHAT_QUIET` | `1` to enable | Silences the `[wechat]` diagnostic lines printed
-  during the host-side WeChat QR login (poll status, IDC redirects, swallowed gateway errors), which
-  are visible by default while the experimental WeChat path stabilizes; set `1` once the flow is
-  reliable in your environment. |
+| `NEMOCLAW_WECHAT_QUIET` | `1` to enable | Silences `[wechat]` poll diagnostics, including status updates and recoverable errors, during the host-side WeChat QR login. Host-side IDC redirect notices remain visible. |
 </AgentOnly>
 
 <AgentOnly variant="openclaw">

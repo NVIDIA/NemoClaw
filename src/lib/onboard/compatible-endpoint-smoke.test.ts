@@ -22,7 +22,6 @@ import {
   buildCompatibleEndpointSandboxSmokeCommand,
   buildCompatibleEndpointSandboxSmokeScript,
   buildProviderNeutralInferenceSandboxSmokeScript,
-  shouldRunCompatibleEndpointSandboxSmoke,
   spawnOutputToString,
   verifyCompatibleEndpointSandboxSmoke,
 } from "./compatible-endpoint-smoke";
@@ -255,20 +254,22 @@ time.sleep = lambda seconds: sleep_delays.append(seconds)
 }
 
 describe("compatible endpoint sandbox smoke helpers", () => {
-  it("runs only for OpenClaw compatible-endpoint sandboxes with messaging", () => {
-    expect(shouldRunCompatibleEndpointSandboxSmoke("compatible-endpoint", ["telegram"])).toBe(true);
-    expect(
-      shouldRunCompatibleEndpointSandboxSmoke("compatible-endpoint", ["telegram"], {
-        name: "openclaw",
-      }),
-    ).toBe(true);
-    expect(
-      shouldRunCompatibleEndpointSandboxSmoke("compatible-endpoint", ["telegram"], {
-        name: "hermes",
-      }),
-    ).toBe(false);
-    expect(shouldRunCompatibleEndpointSandboxSmoke("nvidia-prod", ["telegram"])).toBe(false);
-    expect(shouldRunCompatibleEndpointSandboxSmoke("compatible-endpoint", [])).toBe(false);
+  it.each([
+    { agent: { name: "hermes" as const }, provider: "compatible-endpoint" },
+    { agent: { name: "openclaw" as const }, provider: "nvidia-prod" },
+  ])("skips sandbox smoke for $agent.name with $provider", ({ agent, provider }) => {
+    const runOpenshell = vi.fn();
+
+    verifyCompatibleEndpointSandboxSmoke({
+      sandboxName: "smoke-sandbox",
+      provider,
+      model: "nvidia/nemotron-3-ultra",
+      runOpenshell,
+      redact: (value) => value,
+      agent,
+    });
+
+    expect(runOpenshell).not.toHaveBeenCalled();
   });
 
   it("normalizes spawn output values to strings", () => {
@@ -364,6 +365,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
       label: "provider-neutral",
       forceCanonicalRoute: true,
       provider: "vllm-local",
+      messagingChannels: [] as string[],
       expected: ["Provider-neutral inference provider", "inference.local route cannot reach"],
       unexpected: "Telegram",
     },
@@ -371,8 +373,17 @@ describe("compatible endpoint sandbox smoke helpers", () => {
       label: "compatible-endpoint messaging",
       forceCanonicalRoute: false,
       provider: "compatible-endpoint",
-      expected: ["Compatible endpoint provider", "sandbox would start Telegram"],
-      unexpected: "Provider-neutral inference provider",
+      messagingChannels: ["telegram"],
+      expected: ["Compatible endpoint provider", "inference.local route cannot reach"],
+      unexpected: "Telegram",
+    },
+    {
+      label: "compatible-endpoint without messaging",
+      forceCanonicalRoute: false,
+      provider: "compatible-endpoint",
+      messagingChannels: [] as string[],
+      expected: ["Compatible endpoint provider", "inference.local route cannot reach"],
+      unexpected: "Telegram",
     },
   ])("reports mode-accurate $label provider lookup failures", (testCase) => {
     const errors: string[] = [];
@@ -391,7 +402,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
           model: "qwen3.5-9b",
           runOpenshell: vi.fn().mockReturnValue({ status: 1, stderr: "provider query failed" }),
           redact: (value) => value,
-          messagingChannels: ["telegram"],
+          messagingChannels: testCase.messagingChannels,
           forceCanonicalRoute: testCase.forceCanonicalRoute,
         }),
       ).toThrow("process.exit(1)");
@@ -407,6 +418,51 @@ describe("compatible endpoint sandbox smoke helpers", () => {
       error.mockRestore();
     }
   });
+
+  it.each([
+    { label: "none", messagingChannels: [] as string[] },
+    { label: "Telegram", messagingChannels: ["telegram"] },
+  ])(
+    "reports a channel-agnostic sandbox smoke failure for $label messaging (#10405)",
+    ({ messagingChannels }) => {
+    const errors: string[] = [];
+    const error = vi.spyOn(console, "error").mockImplementation((message) => {
+      errors.push(String(message));
+    });
+    const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`process.exit(${code})`);
+    });
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "provider ready" })
+      .mockReturnValueOnce({ status: 1, stderr: "curl exit 7" });
+
+    try {
+      expect(() =>
+        verifyCompatibleEndpointSandboxSmoke({
+          sandboxName: "no-messaging-sandbox",
+          provider: "compatible-endpoint",
+          model: "issue-10405-model",
+          runOpenshell,
+          redact: (value) => value,
+          messagingChannels,
+        }),
+      ).toThrow("process.exit(1)");
+
+      expect(runOpenshell).toHaveBeenCalledTimes(2);
+      const diagnostics = errors.join("\n");
+      expect(diagnostics).toContain("Compatible endpoint sandbox smoke check failed");
+      expect(diagnostics).toContain(
+        "Messaging setup is not the root cause; the sandbox inference.local route failed.",
+      );
+      expect(diagnostics).toContain("curl exit 7");
+      expect(diagnostics).not.toContain("Telegram");
+    } finally {
+      exit.mockRestore();
+      error.mockRestore();
+    }
+    },
+  );
 
   it.each(providerNeutralCases)(
     "runs a real provider-neutral $service request inside the $agentName sandbox",

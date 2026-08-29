@@ -187,7 +187,7 @@ describe("inactive native Windows OpenShell MXC onboarding", () => {
         ...input,
         bootstrap: { ...input.bootstrap, workload } as typeof input.bootstrap,
       }),
-    ).rejects.toThrow(/does not match the attached provider workload contract/u);
+    ).rejects.toThrow(/does not match the provider workload contract/u);
     expect(nativeBoundary.observeFileDigest).toHaveBeenCalledTimes(5);
     expect(operations.verifyAndCreate).not.toHaveBeenCalled();
   });
