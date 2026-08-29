@@ -30,6 +30,7 @@ type LabeledSandboxContainer = {
 
 const DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS = 5000;
 const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
+const DOCKER_VOLUME_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/u;
 const OFFLINE_WECHAT_STATE_PATHS = new Set([
   "/sandbox/.openclaw/wechat",
   "/sandbox/.openclaw/openclaw-weixin",
@@ -237,10 +238,10 @@ function findStoppedDirectSandboxContainer(sandboxName: string): string | null {
 }
 
 type InspectedStoppedContainer = {
-  readonly hasWritableSandboxMount: boolean;
   readonly id: string;
   readonly image: string;
   readonly running: boolean;
+  readonly sandboxVolumeName: string | null;
 };
 
 /** Read immutable image, lifecycle, and shared-state mount data for one container ID. */
@@ -273,16 +274,22 @@ function inspectStoppedContainer(containerId: string): InspectedStoppedContainer
   } catch {
     return null;
   }
-  const hasWritableSandboxMount =
-    Array.isArray(mounts) &&
-    mounts.some(
-      (mount) =>
-        typeof mount === "object" &&
-        mount !== null &&
-        (mount as Record<string, unknown>).Destination === "/sandbox" &&
-        (mount as Record<string, unknown>).RW === true,
-    );
-  return { hasWritableSandboxMount, id, image, running: running === "true" };
+  if (!Array.isArray(mounts)) return null;
+  const sandboxMounts = mounts.filter(
+    (mount) =>
+      typeof mount === "object" &&
+      mount !== null &&
+      (mount as Record<string, unknown>).Destination === "/sandbox",
+  ) as Array<Record<string, unknown>>;
+  const sandboxMount = sandboxMounts.length === 1 ? sandboxMounts[0] : undefined;
+  const sandboxVolumeName =
+    sandboxMount?.Type === "volume" &&
+    sandboxMount.RW === true &&
+    typeof sandboxMount.Name === "string" &&
+    DOCKER_VOLUME_NAME_RE.test(sandboxMount.Name)
+      ? sandboxMount.Name
+      : null;
+  return { id, image, running: running === "true", sandboxVolumeName };
 }
 
 /** Clear OpenClaw WeChat state without starting a failed Docker sandbox. */
@@ -309,7 +316,7 @@ function clearStoppedDockerSandboxChannelState(
         !inspected ||
         inspected.running ||
         inspected.id !== containerId ||
-        !inspected.hasWritableSandboxMount
+        !inspected.sandboxVolumeName
       ) {
         return false;
       }
@@ -333,8 +340,8 @@ function clearStoppedDockerSandboxChannelState(
           "--pids-limit",
           "64",
           ...NEUTRALIZED_OFFLINE_HELPER_ENV,
-          "--volumes-from",
-          `${inspected.id}:rw`,
+          "--mount",
+          `type=volume,src=${inspected.sandboxVolumeName},dst=/sandbox,volume-nocopy`,
           "--entrypoint",
           "/usr/bin/env",
           inspected.image,
@@ -349,7 +356,9 @@ function clearStoppedDockerSandboxChannelState(
       if (cleared.status !== 0) return false;
       const confirmed = inspectStoppedContainer(containerId);
       return (
-        confirmed?.id === inspected.id && confirmed.hasWritableSandboxMount && !confirmed.running
+        confirmed?.id === inspected.id &&
+        confirmed.sandboxVolumeName === inspected.sandboxVolumeName &&
+        !confirmed.running
       );
     });
   } catch {

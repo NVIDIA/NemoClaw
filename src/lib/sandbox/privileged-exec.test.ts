@@ -181,17 +181,31 @@ describe("privileged sandbox exec routing", () => {
   it("clears stopped OpenClaw WeChat state through an isolated immutable-image helper", () => {
     const containerId = "a".repeat(64);
     const imageId = `sha256:${"b".repeat(64)}`;
+    const mounts = JSON.stringify([
+      {
+        Type: "volume",
+        Name: "nemoclaw-alpha-state",
+        Destination: "/sandbox",
+        RW: true,
+      },
+      {
+        Type: "bind",
+        Source: "/home/operator/project",
+        Destination: "/sandbox/project",
+        RW: false,
+      },
+    ]);
     const results = [
       {
         status: 0,
-        stdout: `${containerId}\t${imageId}\tfalse\t[{"Destination":"/sandbox","RW":true}]\n`,
+        stdout: `${containerId}\t${imageId}\tfalse\t${mounts}\n`,
         stderr: "",
         error: null,
       },
       { status: 0, stdout: "", stderr: "", error: null },
       {
         status: 0,
-        stdout: `${containerId}\t${imageId}\tfalse\t[{"Destination":"/sandbox","RW":true}]\n`,
+        stdout: `${containerId}\t${imageId}\tfalse\t${mounts}\n`,
         stderr: "",
         error: null,
       },
@@ -229,11 +243,14 @@ describe("privileged sandbox exec routing", () => {
         "ALL",
         "--cap-add",
         "DAC_OVERRIDE",
-        "--volumes-from",
-        `${containerId}:rw`,
+        "--mount",
+        "type=volume,src=nemoclaw-alpha-state,dst=/sandbox,volume-nocopy",
         imageId,
       ]),
     );
+    expect(helperArgv).not.toContain("--volumes-from");
+    expect(helperArgv?.join("\0")).not.toContain("/home/operator/project");
+    expect(helperArgv?.join("\0")).not.toContain("/sandbox/project");
     expect(helperArgv).not.toContain("start");
     expect(helperArgv?.at(-1)).toContain(
       "rm -rf -- /sandbox/.openclaw/wechat /sandbox/.openclaw/openclaw-weixin",
