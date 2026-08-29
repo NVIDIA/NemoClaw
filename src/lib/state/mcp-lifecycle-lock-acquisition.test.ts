@@ -525,10 +525,72 @@ describe("MCP lifecycle lock acquisition", () => {
     expect(fs.existsSync(`${lockPath}.deadline`)).toBe(false);
   });
 
+  it("denies completed auto-restore cleanup while the exact timer owner is still live", () => {
+    const processToken = "c".repeat(32);
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    writeTimerMarker(processToken);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify(createMcpLifecycleLockOwner(SANDBOX_NAME, "live-main", processToken)),
+    );
+    const operation = vi.fn();
+
+    expect(() =>
+      withMcpLifecycleDeadlineFenceSync(SANDBOX_NAME, processToken, operation, {
+        ...options(),
+        completedAutoRestoreRecovery: {
+          ownerPid: process.pid,
+          assertAuthority: vi.fn(),
+        },
+      }),
+    ).toThrow("main generation is not the exact stale timer owner");
+
+    expect(operation).not.toHaveBeenCalled();
+    expect(fs.existsSync(lockPath)).toBe(true);
+  });
+
+  it("preserves a terminal auto-restore containment with the same timer token", () => {
+    const processToken = "d".repeat(32);
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    const containmentPath = `${lockPath}.containment`;
+    writeTimerMarker(processToken);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(
+      containmentPath,
+      JSON.stringify({
+        ...createMcpLifecycleLockOwner(
+          SANDBOX_NAME,
+          "terminal-containment",
+          processToken,
+        ),
+        pid: 2_147_483_647,
+        processIdentity: "dead-containment-owner",
+        containmentReason:
+          "Auto-restore recovery failed while the exact timer generation still owned recovery authority",
+      }),
+    );
+    const operation = vi.fn();
+
+    expect(() =>
+      withMcpLifecycleDeadlineFenceSync(SANDBOX_NAME, processToken, operation, {
+        ...options(),
+        completedAutoRestoreRecovery: {
+          ownerPid: 2_147_483_646,
+          assertAuthority: vi.fn(),
+        },
+      }),
+    ).toThrow("does not identify a recoverable completed timer generation");
+
+    expect(operation).not.toHaveBeenCalled();
+    expect(fs.existsSync(containmentPath)).toBe(true);
+  });
+
   it("retains exact synchronous deadline and main generations after an uncommitted durable-containment failure", () => {
     const processToken = "f".repeat(32);
     const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
     const deadlinePath = `${lockPath}.deadline`;
+    const onReleased = vi.fn();
     writeTimerMarker(processToken);
 
     expect(() =>
@@ -541,7 +603,7 @@ describe("MCP lifecycle lock acquisition", () => {
             lockPath,
           );
         },
-        options(),
+        { ...options(), onReleased },
       ),
     ).toThrow("containment state is read-only");
 
@@ -558,6 +620,7 @@ describe("MCP lifecycle lock acquisition", () => {
       shieldsTakeoverToken: processToken,
     });
     expect(fs.existsSync(`${lockPath}.containment`)).toBe(false);
+    expect(onReleased).not.toHaveBeenCalled();
   });
 
   it("releases owned generations when committed containment is proven present", () => {
@@ -963,6 +1026,24 @@ describe("MCP lifecycle lock acquisition", () => {
         onReleased,
       }),
     ).resolves.toBe("complete");
+    expect(onReleased).toHaveBeenCalledOnce();
+  });
+
+  it("runs synchronous release completion only after exact gates are absent (#10094)", () => {
+    const processToken = "9".repeat(32);
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    writeTimerMarker(processToken);
+    const onReleased = vi.fn(() => {
+      expect(fs.existsSync(lockPath)).toBe(false);
+      expect(fs.existsSync(`${lockPath}.deadline`)).toBe(false);
+    });
+
+    expect(
+      withMcpLifecycleDeadlineFenceSync(SANDBOX_NAME, processToken, () => "complete", {
+        ...options(),
+        onReleased,
+      }),
+    ).toBe("complete");
     expect(onReleased).toHaveBeenCalledOnce();
   });
 

@@ -63,7 +63,10 @@ const {
   timerMarkerPath,
   readTimerMarker,
   clearTimerMarker,
+  clearTimerMarkerGeneration,
+  sameTimerMarkerGeneration,
   hasExactTimerAuthorizationProof,
+  isShieldsTimerDeadlineAbandoned,
   isProcessAlive,
   readProcessStartIdentity,
   processInspectionDeadlineAfter,
@@ -489,23 +492,6 @@ type ShieldsDownTransition = {
 };
 
 const transitionPollBuffer = new Int32Array(new SharedArrayBuffer(4));
-
-function sameTimerMarkerGeneration(current: TimerMarker | null, expected: TimerMarker): boolean {
-  return (
-    current?.pid === expected.pid &&
-    current.sandboxName === expected.sandboxName &&
-    current.snapshotPath === expected.snapshotPath &&
-    current.restoreAt === expected.restoreAt &&
-    current.processToken === expected.processToken &&
-    current.timerProcessStartIdentity === expected.timerProcessStartIdentity &&
-    current.allowLegacyHermesProtocol === expected.allowLegacyHermesProtocol &&
-    current.agentName === expected.agentName &&
-    current.configPath === expected.configPath &&
-    current.configDir === expected.configDir &&
-    current.leaseOwnerPid === expected.leaseOwnerPid &&
-    current.leaseOwnerStartIdentity === expected.leaseOwnerStartIdentity
-  );
-}
 
 function assertTimerMarkerGeneration(sandboxName: string, expected: TimerMarker): void {
   if (!sameTimerMarkerGeneration(readTimerMarker(sandboxName), expected)) {
@@ -2330,6 +2316,18 @@ function inspectExpiredAutoRestoreMarker(sandboxName: string): TimerMarker | nul
   return isExactLiveFutureTimerAuthority(marker) ? null : marker;
 }
 
+function inspectCompletedAbandonedAutoRestoreMarker(
+  sandboxName: string,
+): (TimerMarker & { processToken: string }) | null {
+  const state = loadShieldsState(sandboxName);
+  if (state._isCorrupt || state.shieldsDown !== false) return null;
+  const marker = readTimerMarker(sandboxName);
+  if (!marker?.processToken || !/^[0-9a-f]{32}$/.test(marker.processToken)) return null;
+  if (!isShieldsTimerDeadlineAbandoned(sandboxName, STATE_DIR)) return null;
+  if (readShieldsDownTransition(sandboxName, marker.processToken)) return null;
+  return marker as TimerMarker & { processToken: string };
+}
+
 function inspectExpiredAutoRestoreTakeover(
   sandboxName: string,
   marker = inspectExpiredAutoRestoreMarker(sandboxName),
@@ -2463,6 +2461,42 @@ function withExpiredAutoRestoreDeadlineFence<T>(
   fallbackTakeoverToken?: string,
   assertCommandAvailable?: () => void,
 ): T {
+  const completedMarker = inspectCompletedAbandonedAutoRestoreMarker(sandboxName);
+  if (completedMarker) {
+    const assertCompletedAuthority = () => {
+      const currentState = loadShieldsState(sandboxName);
+      if (
+        currentState._isCorrupt ||
+        currentState.shieldsDown !== false ||
+        readShieldsDownTransition(sandboxName, completedMarker.processToken) ||
+        !sameTimerMarkerGeneration(readTimerMarker(sandboxName), completedMarker) ||
+        !isShieldsTimerDeadlineAbandoned(sandboxName, STATE_DIR)
+      ) {
+        throw new Error("Completed auto-restore recovery authority changed");
+      }
+    };
+    return withMcpLifecycleDeadlineFenceSync(
+      sandboxName,
+      completedMarker.processToken,
+      () => {
+        assertCompletedAuthority();
+        assertCommandAvailable?.();
+        return operation(false);
+      },
+      {
+        stateDir: STATE_DIR,
+        throwOnCommittedContainment: true,
+        completedAutoRestoreRecovery: {
+          ownerPid: completedMarker.pid,
+          assertAuthority: assertCompletedAuthority,
+        },
+        onReleased: () => {
+          const result = clearTimerMarkerGeneration(sandboxName, completedMarker);
+          if (result.warning) console.warn(`  ${result.warning}`);
+        },
+      },
+    );
+  }
   const expiredMarker = inspectExpiredAutoRestoreMarker(sandboxName);
   const takeover = inspectExpiredAutoRestoreTakeover(sandboxName, expiredMarker);
   const runWithHostLock = (callback: () => T) =>

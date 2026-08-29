@@ -15,6 +15,7 @@ import {
   createAsynchronousLockReplacementClock,
   createSynchronousLockReplacementClock,
 } from "../helpers/mcp-lifecycle-lock-deadline-clock";
+import { reproduceCompletedAutoRestoreContainment } from "../helpers/completed-auto-restore-process";
 
 const requireDist = createRequire(import.meta.url);
 const lockModulePath = requireDist.resolve("../../src/lib/state/mcp-lifecycle-lock.js");
@@ -501,6 +502,41 @@ const releasePath = process.argv[3];
     expect(onContainment).toHaveBeenCalledOnce();
     expect(fs.existsSync(deadlinePath)).toBe(true);
     expect(fs.existsSync(containmentPath)).toBe(true);
+  });
+
+  it("recovers real orphaned auto-restore gates and exact containment (#10094)", {
+    timeout: 20_000,
+  }, async () => {
+    const processToken = "c".repeat(32);
+    const lockPath = lifecycleLock.getMcpLifecycleLockPath("alpha", stateDir);
+    const orphan = await reproduceCompletedAutoRestoreContainment({
+      nodePath: process.execPath,
+      lockModulePath,
+      stateDir,
+      sandboxName: "alpha",
+      processToken,
+    });
+    const assertAuthority = () =>
+      expect(JSON.parse(fs.readFileSync(orphan.markerPath, "utf8"))).toMatchObject({
+        pid: orphan.timerPid,
+        processToken,
+      });
+
+    expect(
+      lifecycleLock.withMcpLifecycleDeadlineFenceSync("alpha", processToken, () => "recovered", {
+        ...options(),
+        completedAutoRestoreRecovery: { ownerPid: orphan.timerPid, assertAuthority },
+        onReleased: () => fs.rmSync(orphan.markerPath),
+      }),
+    ).toBe("recovered");
+    expect(
+      [lockPath, `${lockPath}.deadline`, `${lockPath}.containment`].map((file) =>
+        fs.existsSync(file),
+      ),
+    ).toEqual([false, false, false]);
+    await expect(
+      lifecycleLock.withMcpLifecycleLock("alpha", () => "ordinary", options()),
+    ).resolves.toBe("ordinary");
   });
 
   it("waits for a foreign-host owner instead of reaping it with local PID checks", async () => {

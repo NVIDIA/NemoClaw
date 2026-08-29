@@ -8,7 +8,9 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 
 import {
+  isShieldsTimerDeadlineAbandoned,
   readShieldsTimerMarker,
+  readShieldsTimerMarkerFile,
   readShieldsTimerTakeoverToken,
   readTimerProcessStartIdentity,
   type ShieldsTimerMarker,
@@ -236,6 +238,67 @@ function clearTimerMarker(sandboxName: string): ClearTimerMarkerResult {
   }
 }
 
+function sameTimerMarkerGeneration(
+  current: ShieldsTimerMarker | null,
+  expected: ShieldsTimerMarker,
+): boolean {
+  return (
+    current?.pid === expected.pid &&
+    current.sandboxName === expected.sandboxName &&
+    current.snapshotPath === expected.snapshotPath &&
+    current.restoreAt === expected.restoreAt &&
+    current.processToken === expected.processToken &&
+    current.timerProcessStartIdentity === expected.timerProcessStartIdentity &&
+    current.allowLegacyHermesProtocol === expected.allowLegacyHermesProtocol &&
+    current.agentName === expected.agentName &&
+    current.configPath === expected.configPath &&
+    current.configDir === expected.configDir &&
+    current.leaseOwnerPid === expected.leaseOwnerPid &&
+    current.leaseOwnerStartIdentity === expected.leaseOwnerStartIdentity
+  );
+}
+
+function clearTimerMarkerGeneration(
+  sandboxName: string,
+  expected: ShieldsTimerMarker,
+): ClearTimerMarkerResult {
+  const markerPath = timerMarkerPath(sandboxName);
+  const quarantinePath = `${markerPath}.completed-${String(process.pid)}-${Date.now().toString(16)}`;
+  try {
+    fs.renameSync(markerPath, quarantinePath);
+  } catch (error) {
+    const errno = error as NodeJS.ErrnoException;
+    if (errno.code === "ENOENT") return { cleared: false };
+    return {
+      cleared: false,
+      warning: `Failed to claim shields timer marker '${markerPath}': ${errno.message}`,
+    };
+  }
+
+  if (sameTimerMarkerGeneration(readShieldsTimerMarkerFile(quarantinePath), expected)) {
+    fs.unlinkSync(quarantinePath);
+    removeTimerAuthorizationProof(sandboxName, expected.processToken);
+    const directoryFd = fs.openSync(path.dirname(markerPath), "r");
+    try {
+      fs.fsyncSync(directoryFd);
+    } finally {
+      fs.closeSync(directoryFd);
+    }
+    return { cleared: true };
+  }
+
+  try {
+    fs.linkSync(quarantinePath, markerPath);
+    fs.unlinkSync(quarantinePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+  return {
+    cleared: false,
+    warning: `Shields timer authority changed while retiring completed marker '${markerPath}'`,
+  };
+}
+
 function readProcessState(pid: number, deadline = processInspectionDeadline()): string | null {
   if (!Number.isInteger(pid) || pid <= 0) return null;
   if (remainingProcessInspectionTimeout(deadline) === null) return null;
@@ -410,7 +473,9 @@ function killTimer(sandboxName: string): KillTimerResult {
 export type { ClearTimerMarkerResult, KillTimerResult, ShieldsTimerMarker as TimerMarker };
 export {
   clearTimerMarker,
+  clearTimerMarkerGeneration,
   hasExactTimerAuthorizationProof,
+  isShieldsTimerDeadlineAbandoned,
   isProcessAlive,
   killTimer,
   processInspectionDeadlineAfter,
@@ -423,6 +488,7 @@ export {
   timerAuthoritySha256,
   timerAuthorizationProofPath,
   timerMarkerPath,
+  sameTimerMarkerGeneration,
   verifyTimerMarkerIdentity,
   writeTimerAuthorizationProofForMarker,
 };

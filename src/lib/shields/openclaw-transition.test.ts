@@ -502,9 +502,119 @@ describe("OpenClaw shields flow rollback and recovery", () => {
     };
   }
 
+  function writeCompletedAutoRestoreOrphanFixture() {
+    const sandboxName = "openclaw";
+    const processToken = "c".repeat(32);
+    const timerPid = 2_147_483_647;
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
+    const lifecycleLock = requireSource(
+      "../state/mcp-lifecycle-lock.js"
+    ) as typeof import("../state/mcp-lifecycle-lock.js");
+    const lockPath = lifecycleLock.getMcpLifecycleLockPath(sandboxName, stateDir);
+    const deadlinePath = `${lockPath}.deadline`;
+    const containmentPath = `${lockPath}.containment`;
+    const timerOwner = {
+      version: 1,
+      sandboxName,
+      pid: timerPid,
+      processIdentity: "dead-auto-restore-owner",
+      hostIdentity: lifecycleLock.readMcpLockHostIdentity(),
+      pidNamespaceIdentity: lifecycleLock.readMcpLockPidNamespaceIdentity(),
+      shieldsTakeoverToken: processToken,
+      token: "orphaned-auto-restore-main",
+      acquiredAt: new Date(Date.now() - 60_000).toISOString(),
+    };
+
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(
+      path.join(stateDir, `shields-${sandboxName}.json`),
+      JSON.stringify({
+        shieldsDown: false,
+        shieldsDownAt: null,
+        shieldsDownTimeout: null,
+        shieldsDownReason: null,
+        shieldsDownPolicy: null,
+        fileHashes: { "/sandbox/.openclaw/openclaw.json": "a".repeat(64) },
+        updatedAt: new Date(Date.now() - 60_000).toISOString(),
+      }),
+    );
+    fs.writeFileSync(
+      markerPath,
+      JSON.stringify({
+        pid: timerPid,
+        sandboxName,
+        snapshotPath: path.join(stateDir, "completed-auto-restore-snapshot.yaml"),
+        restoreAt: new Date(Date.now() - 60_000).toISOString(),
+        processToken,
+        timerProcessStartIdentity: "dead-auto-restore-timer",
+      }),
+    );
+    fs.writeFileSync(lockPath, JSON.stringify(timerOwner));
+    fs.writeFileSync(
+      deadlinePath,
+      JSON.stringify({ ...timerOwner, token: "orphaned-auto-restore-deadline" }),
+    );
+    const mainStat = fs.statSync(lockPath);
+    fs.writeFileSync(
+      containmentPath,
+      JSON.stringify({
+        ...timerOwner,
+        pid: timerPid - 1,
+        processIdentity: "dead-containment-owner",
+        token: "completed-auto-restore-containment",
+        containmentReason: `The sandbox mutation owner PID ${String(
+          timerPid,
+        )} was already gone before takeover; contained generation ${String(mainStat.dev)}:${String(
+          mainStat.ino,
+        )}:${timerOwner.token}`,
+      }),
+    );
+    return { containmentPath, deadlinePath, lockPath, markerPath };
+  }
+
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "shields-openclaw-recovery-"));
     vi.stubEnv("HOME", tmpDir);
+  });
+
+  it("retires an orphaned completed auto-restore generation and containment (#10094)", {
+    timeout: 15_000,
+  }, () => {
+    const harness = createHarness();
+    const paths = writeCompletedAutoRestoreOrphanFixture();
+    const status = () =>
+      harness.shieldsStatus("openclaw", true, {
+        verifyLockState: () => ({ ok: true, issues: [] }),
+        verifyStateLockPlan: () => [],
+      });
+
+    status();
+    status();
+
+    expect(harness.logSpy).toHaveBeenCalledWith("  Shields: UP (lockdown active)");
+    expect(Object.values(paths).map((file) => fs.existsSync(file))).toEqual([
+      false,
+      false,
+      false,
+      false,
+    ]);
+  });
+
+  it("preserves completed containment for a live ambiguous timer PID", () => {
+    const harness = createHarness();
+    const paths = writeCompletedAutoRestoreOrphanFixture();
+    const marker = JSON.parse(fs.readFileSync(paths.markerPath, "utf8"));
+    marker.pid = process.pid;
+    delete marker.timerProcessStartIdentity;
+    fs.writeFileSync(paths.markerPath, JSON.stringify(marker));
+
+    expect(() => harness.shieldsStatus("openclaw")).toThrow("containment is active");
+    expect([paths.lockPath, paths.containmentPath, paths.markerPath].map(fs.existsSync)).toEqual([
+      true,
+      true,
+      true,
+    ]);
   });
 
   afterEach(() => {

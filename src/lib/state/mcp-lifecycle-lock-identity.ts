@@ -25,6 +25,8 @@ export interface McpLifecycleLockOwner {
   shieldsTakeoverToken?: string;
   token: string;
   acquiredAt: string;
+  /** Exact stale-generation evidence recorded by a durable containment owner. */
+  containmentReason?: string;
 }
 
 export interface LockObservation {
@@ -68,7 +70,9 @@ export function isMcpLifecycleLockOwner(value: unknown): value is McpLifecycleLo
         /^[0-9a-f]{32}$/.test(candidate.shieldsTakeoverToken))) &&
     typeof candidate.token === "string" &&
     candidate.token.length > 0 &&
-    typeof candidate.acquiredAt === "string"
+    typeof candidate.acquiredAt === "string" &&
+    (candidate.containmentReason === undefined ||
+      typeof candidate.containmentReason === "string")
   );
 }
 
