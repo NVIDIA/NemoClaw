@@ -53,7 +53,17 @@ const SECURITY_PROBE = String.raw`
 const fs = require("node:fs");
 const path = require("node:path");
 const credentialName = /(?:^|_)(?:API_?KEY|AUTH_?TOKEN|ACCESS_?TOKEN|REFRESH_?TOKEN|CLIENT_?SECRET|PASSWORD|CREDENTIAL)(?:$|_)/i;
-const credentialNames = Object.keys(process.env).filter((name) => credentialName.test(name));
+const credentialBindings = Object.entries(process.env)
+  .filter(([name]) => credentialName.test(name))
+  .map(([name, value]) => ({
+    name,
+    kind: value === "openshell:resolve:env:" + name || new RegExp("^openshell:resolve:env:v[0-9]+_" + name + "$").test(value || "")
+      ? "managed-reference"
+      : "unexpected-value",
+  }));
+const unexpectedCredentialNames = credentialBindings
+  .filter(({kind}) => kind !== "managed-reference")
+  .map(({name}) => name);
 const stack = ["/sandbox"];
 const credentialFiles = [];
 let bytes = 0;
@@ -92,9 +102,9 @@ while (stack.length > 0 && files < 10000 && bytes < 32 * 1024 * 1024) {
   }
 }
 const dockerSockets = ["/var/run/docker.sock", "/run/docker.sock"].filter((candidate) => fs.existsSync(candidate));
-const result = {credentialNames, credentialFiles, dockerSockets, files, bytes};
+const result = {credentialBindings, unexpectedCredentialNames, credentialFiles, dockerSockets, files, bytes};
 process.stdout.write(JSON.stringify(result) + "\n");
-process.exit(credentialNames.length === 0 && credentialFiles.length === 0 && dockerSockets.length === 0 ? 0 : 1);
+process.exit(unexpectedCredentialNames.length === 0 && credentialFiles.length === 0 && dockerSockets.length === 0 ? 0 : 1);
 `;
 const NETWORK_DENIAL_PROBE = String.raw`
 const timer = setTimeout(() => process.exit(2), 20000);
