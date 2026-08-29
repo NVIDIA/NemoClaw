@@ -691,7 +691,7 @@ async function hermesChannelIsActive(
   channel: string,
   context: string,
   redactions: string[],
-): Promise<boolean> {
+): Promise<{ readonly active: boolean; readonly detail: string }> {
   const probes: Record<string, string> = {
     // Telegram and Discord render no token line, for the same reason as Slack
     // below: OpenShell injects the revision-scoped placeholder into the process
@@ -738,7 +738,25 @@ async function hermesChannelIsActive(
     },
   );
   expectExitZero(result, `read Hermes channel ${channel} ${context}`);
-  return result.stdout.trim() === "yes";
+  const active = result.stdout.trim() === "yes";
+  if (active || (channel !== "wechat" && channel !== "teams")) {
+    return { active, detail: result.stdout.trim() };
+  }
+
+  const sourceEnvKey = channel === "wechat" ? "WECHAT_BOT_TOKEN" : "MSTEAMS_APP_PASSWORD";
+  const targetEnvKey = channel === "wechat" ? "WEIXIN_TOKEN" : "TEAMS_CLIENT_SECRET";
+  const allowlistEnvKey = channel === "wechat" ? "WEIXIN_ALLOWED_USERS" : "TEAMS_ALLOWED_USERS";
+  const diagnostic = await sandboxSh(
+    sandbox,
+    SANDBOX_NAME,
+    `source_count=0; target_count=0; executables=""; for proc in /proc/[0-9]*; do [ -r "$proc/environ" ] || continue; env_keys="$(tr '\\000' '\\n' <"$proc/environ" 2>/dev/null || true)"; source_seen=0; target_seen=0; printf '%s\\n' "$env_keys" | grep -q "^${sourceEnvKey}=" && source_seen=1; printf '%s\\n' "$env_keys" | grep -q "^${targetEnvKey}=" && target_seen=1; source_count=$((source_count + source_seen)); target_count=$((target_count + target_seen)); if [ "$source_seen" -eq 1 ] || [ "$target_seen" -eq 1 ]; then executable="$(readlink "$proc/exe" 2>/dev/null || true)"; case ",$executables," in *",$executable,"*) ;; *) executables="\${executables:+$executables,}$executable" ;; esac; fi; done; env_readable=0; allowlist_present=0; target_persisted=0; [ -r /sandbox/.hermes/.env ] && env_readable=1; grep -q "^${allowlistEnvKey}=." /sandbox/.hermes/.env 2>/dev/null && allowlist_present=1; grep -qE "^[[:space:]]*(export[[:space:]]+)?${targetEnvKey}=" /sandbox/.hermes/.env 2>/dev/null && target_persisted=1; printf 'envReadable=%s allowlistPresent=%s targetPersisted=%s sourceProcesses=%s targetProcesses=%s credentialExecutables=%s\\n' "$env_readable" "$allowlist_present" "$target_persisted" "$source_count" "$target_count" "\${executables:-none}"`,
+    {
+      artifactName: `config-channel-${AGENT}-${channel}-${context}-diagnostic`,
+      redactionValues: redactions,
+    },
+  );
+  expectExitZero(diagnostic, `diagnose Hermes channel ${channel} ${context}`);
+  return { active: false, detail: diagnostic.stdout.trim() };
 }
 
 async function expectAgentConfig(
@@ -759,8 +777,10 @@ async function expectAgentConfig(
       continue;
     }
 
-    const active = await hermesChannelIsActive(sandbox, channel, context, redactions);
-    expect(active, `${AGENT}/${channel} config ${expected}`).toBe(expected === "active");
+    const observed = await hermesChannelIsActive(sandbox, channel, context, redactions);
+    expect(observed.active, `${AGENT}/${channel} config ${expected}; ${observed.detail}`).toBe(
+      expected === "active",
+    );
   }
 }
 
